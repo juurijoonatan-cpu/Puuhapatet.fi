@@ -1,0 +1,136 @@
+RAKENNA: “Puuhapatet Laskutus” (PWA Web App) – asiakasnäkymä + admin-paneeli
+TAVOITE: Maksimaalinen laatu ja sulavuus, mutta paras money-to-result ratio. Ei ylispeksejä, ei turhaa over-engineeringia. Suunnittele enterprise-tasoisesti, rakenna vaiheittain.
+
+0) TOIMINTATAPA (TÄRKEIN)
+- Olet nyt PLAN-tilassa.
+- Ensin tuotat yksityiskohtaisen, mutta tiiviin “Build Plan” -dokumentin (sivukartta, data-mallit, API-integraatio, komponentit, tietoturva, testisuunnitelma, riskit, työvaiheet).
+- ÄLÄ ala kirjoittaa koodia ennen kuin lopussa pyydät minulta “OK BUILD” (yksi selkeä kysymys).
+- Suunnitelma pitää minimoida krediittikulutus: priorisoi MVP→V1, yksi asia kerrallaan.
+- Jos jokin kohta on epäselvä, tee paras oletus, listaa se “Assumptions”-osioon, älä jää jumiin.
+
+1) TUOTEKUVAUS
+Puuhapatet Laskutus on web-sovellus, joka toimii PWA:na (lisättävissä kotinäytölle, appimainen). Kaksi puolta:
+A) Asiakasnäkymä (public)
+- Monivaiheinen tilaus-/varauslomake (selkeä, kevyt, “premium clean”).
+- Valitaan palvelu/paketit, lisävalinnat, osoite, ajankohta (voi olla “toivottu aika” alkuun), yhteystiedot, lisähuomiot.
+- Lopuksi “lähetä” luo työn (job) Google Sheetiin API:n kautta.
+
+B) Admin-paneeli (private)
+- Kirjautuminen (kevyt, mutta siisti).
+- Dashboard: korttipohjainen yleisnäkymä (päivän työt, viikon työt, status-jakauma).
+- Työlista: filtterit, haku, statusmuutos, työn detail-näkymä.
+- Paketit: näytä paketit Sheetsistä (read-only alkuun).
+- Kaikki sulavaa mobiilissa, myös desktopissa.
+
+2) VISUAALINEN SUUNTA (EI PIXEL-SPEKSEJÄ)
+Tyyli: moderni, minimalistinen, väljä, symmetrinen, premium. Sama henki kuin “rounded cards + soft shadows + breathing room”.
+- Kortit: pyöristetyt kulmat, kevyt varjo, paljon tyhjää tilaa.
+- Typografia: Poppins tai vastaava moderni sans (selkeä hierarkia).
+- Värit: vaalea pohja, hillityt accentit. Sovita Puuhapatet-brändiin (jos logon värejä ei saatavilla, valitse “muted military/forest green” pääaccentiksi + pehmeät vaaleat taustasävyt).
+- Navigaatio: mobiilissa alhaalla “liquid glass” -tyylinen pill-nav (kuten referenssi), mutta Puuhapatet-väreillä.
+- Mikromotiot: hyvin hillitty (hover, press, loading), ei raskasta animaatiota.
+
+3) TEKNOLOGIAVALINTA (COST-EFFICIENT, ENTERPRISE-KELPOINEN)
+Valitse yksinkertaisin stack, jolla saat:
+- Responsiivinen UI, hyvä komponenttikirjasto, nopea kehitys
+- PWA-tuki
+- Selkeä arkkitehtuuri
+Suositus (mutta voit perustella muun):
+- Vite + React + TypeScript
+- TailwindCSS + shadcn/ui (tai vastaava kevyt komponenttipohja)
+- React Router
+- PWA plugin (esim. vite-plugin-pwa)
+- Zod validointiin (lomake + API payload)
+- TanStack Query (tai kevyt fetch-wrapper) datan hakuun ja cacheen
+
+4) API-INTEGRAATIO (VALMIINA OLEVA GOOGLE APPS SCRIPT)
+Perus-URL (web app deployment):
+https://script.google.com/macros/s/AKfycbx_6MzJ4WTa00fzDGIjOW6P1RVA8-2PgJ413lKmP2qWIy7lsKtRNlqLCPxI3QcC7nfpIA/exec
+
+GET:
+- ?action=health  -> odotetaan { ok:true, ts:... }
+- ?action=packages -> palauttaa paketit (listaus)
+- ilman actionia palauttaa { ok:true, actions:[...] } (nyt näkyy: health, packages, get_job (POST), upsert_job (POST))
+
+POST:
+- ?action=upsert_job
+- ?action=get_job
+HUOM: Käytännössä POST on toiminut “text/plain” -sisältötyypillä, jossa body on JSON-string.
+=> Tee fetch niin, että Content-Type = text/plain ja body = JSON.stringify(payload).
+Älä pakota application/json, ellei ole pakko. Rakennetaan toimivan käytännön varaan.
+
+Pakollinen testaus suunnitelmassa:
+- 1) health GET
+- 2) packages GET
+- 3) upsert_job POST: luo testirivi (JobID esim. PP-MANUAL-100)
+- 4) get_job POST: hae samalla JobID:llä (jos endpoint tukee)
+
+5) “LIST JOBS” TILANNE (TÄRKEÄ)
+Admin tarvitsee työlistan. Tällä hetkellä actions-listassa ei näy list_jobs.
+PLAN-vaiheessa tee näin:
+- Oletus A (suositus): Lisätään Apps Scriptiin GET action=list_jobs, joka palauttaa viimeisimmät työt (limit, sinceDays). Tee tästä pieni, turvallinen muutosehdotus, joka ei riko nykyisiä actioneita.
+- Oletus B (fallback jos en halua koskea Apps Scriptiin): Admin-näkymä toimii “job detail by JobID” -haulla + viimeisimmät työt näytetään vain, jos list_jobs on saatavilla. (Tämä on huonompi, mutta varmistaa ettei mikään hajoa.)
+Älä tee muutosta automaattisesti. Kirjoita PLANiin valinta ja pyydä minulta lupa ennen kuin rakennat list_jobsin varaan.
+
+6) DATA-MALLI (JOUSTAVA, SHEETS-YHTEENSOPIVA)
+Job payload minimissään (toimiva):
+{
+  "JobID": "PP-XXXX",
+  "WorkflowStatus": "DRAFT|NEW|SCHEDULED|IN_PROGRESS|DONE|CANCELLED",
+  "AssignedTo": "nimi tai tyhjä",
+  "Source": "WEBAPP",
+  ... muut kentät lomakkeesta
+}
+Lisää asiakaslomakkeesta: nimi, puhelin, osoite, toivottu aika, palvelu/paketti, lisävalinnat, lisätiedot, arviohinta (jos käytössä), kuvat (linkit) optional.
+Pidä kentät selkeinä ja nimetä ne niin, että sheetiin on helppo lukea.
+
+7) SIVUT / ROUTET
+Public:
+- / (landing + CTA “Tilaa työ”)
+- /tilaus (multi-step form)
+- /kiitos (confirmation, näyttää JobID)
+Admin:
+- /admin/login
+- /admin (dashboard)
+- /admin/jobs (lista + filtterit)
+- /admin/jobs/:id (detail + statusmuutos)
+- /admin/packages (read-only listaus)
+- /admin/settings (minimi: profiili, logout)
+
+8) KÄYTTÖKOKEMUS (ENTERPRISE)
+- Selkeät loading-tilat, virhetilat, retry.
+- Lomakevalidointi reaaliajassa (Zod).
+- Optimistiset päivitykset statusmuutoksiin jos mahdollista.
+- Lokitus dev-tilassa (console), tuotannossa hillitty.
+- PWA: perus offline-cache UI:lle. Datan kirjoitus vaatii verkon, näytä selkeä ilmoitus.
+- A11y: fokus, kontrasti, napit, lomakevirheet.
+
+9) TIETOTURVA (KEVYT, JÄRKEVÄ)
+- Admin-login: yksinkertainen password (Replit env), session localStorage tai cookie (mielellään cookie + expiry).
+- Älä tallenna mitään API-avaimia clientiin (meillä ei nyt ole avainta).
+- Jos myöhemmin halutaan API-suojaus: suunnittele valmius lisätä header token ja Apps Script -tarkistus, mutta älä implementoi ilman lupaa.
+
+10) DELIVERABLES (MITÄ PLANIN PITÄÄ SISÄLTÄÄ)
+A) Build Plan (otsikoituna)
+- Assumptions
+- MVP scope (pakollinen)
+- V1 scope (nice-to-have)
+- Routes & navigation
+- UI component map (kortit, nav, form, tables)
+- Data model
+- API client strategy (text/plain JSON)
+- Auth strategy
+- PWA strategy
+- Error handling & observability
+- Test checklist (manuaalinen)
+- Riskit + mitigointi
+B) Work breakdown: 6–10 vaihetta, jokaisessa “Definition of Done”
+C) Lopussa: kysy minulta “OK BUILD?” ennen kuin kirjoitat koodia.
+
+11) TÄRKEÄ PRIORISOINTI (BUDJETTI)
+- Rakenna ensin: skeleton UI + navigation + API health/packages + upsert_job end-to-end.
+- Vasta sitten: admin dashboard + list jobs (jos endpoint ok).
+- Älä tee turhia integraatioita, analyticsia, monimutkaista roolihallintaa tai isoja chart-kirjastoja MVP:hen.
+- Kaikki mitä teet, pitää suoraan tukea “puuhapatet laskutus ja työnhallinta” -arvoa.
+
+Aloita nyt tuottamalla Build Plan edellä olevien vaatimusten mukaan. Älä koodaa vielä.

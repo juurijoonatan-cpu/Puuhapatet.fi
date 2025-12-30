@@ -9,7 +9,7 @@ export default function ServicesPage() {
   const { t } = useI18n();
 
   return (
-    <div className="min-h-screen bg-background pt-8 md:pt-24 pb-28">
+    <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28">
       <div className="container mx-auto px-4 max-w-4xl">
         <div className="text-center mb-12">
           <h1 className="text-3xl md:text-4xl font-semibold text-foreground mb-4">

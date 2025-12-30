@@ -73,7 +73,7 @@ export default function ConfirmationPage() {
   const isSuccess = bookingData.response.ok && bookingData.response.data?.ok;
 
   return (
-    <div className="min-h-screen bg-background pt-12 md:pt-24 pb-28">
+    <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28">
       <div className="container mx-auto px-4 max-w-lg">
         <div className="text-center mb-8">
           <div 

@@ -24,7 +24,7 @@ export default function LandingPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <section className="relative pt-24 md:pt-32 pb-16 md:pb-24 overflow-hidden">
+      <section className="relative pt-20 md:pt-32 pb-16 md:pb-24 overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-primary/3 pointer-events-none" />
         
         <div className="container mx-auto px-4 md:px-6 relative z-10">

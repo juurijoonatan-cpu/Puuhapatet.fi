@@ -22,6 +22,16 @@ export function LiquidGlassNav() {
 
   return (
     <>
+      <header className="fixed top-0 left-0 right-0 z-50 glass-nav md:hidden">
+        <div className="flex items-center justify-center h-14 px-4">
+          <Link href="/">
+            <span className="text-lg font-semibold text-foreground tracking-tight cursor-pointer" data-testid="logo-text-mobile">
+              Puuhapatet
+            </span>
+          </Link>
+        </div>
+      </header>
+
       <nav 
         className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 glass-nav rounded-[20px] px-2 py-2 md:hidden"
         role="navigation"

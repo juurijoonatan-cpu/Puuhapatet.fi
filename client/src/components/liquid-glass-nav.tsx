@@ -1,25 +1,24 @@
 import { Link, useLocation } from "wouter";
-import { Home, ClipboardList, Info, Lock, Sun, Moon } from "lucide-react";
-import { useTheme } from "@/lib/theme";
+import { Home, Grid3X3, HelpCircle, Users } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
   icon: typeof Home;
-  label: string;
+  labelKey: string;
   href: string;
-  isAdmin?: boolean;
 }
 
 const publicNavItems: NavItem[] = [
-  { icon: Home, label: "Etusivu", href: "/" },
-  { icon: ClipboardList, label: "Tilaus", href: "/tilaus" },
-  { icon: Info, label: "Tietoja", href: "/tietoja" },
-  { icon: Lock, label: "Admin", href: "/admin/login", isAdmin: true },
+  { icon: Home, labelKey: "nav.home", href: "/" },
+  { icon: Grid3X3, labelKey: "nav.services", href: "/palvelut" },
+  { icon: HelpCircle, labelKey: "nav.faq", href: "/ukk" },
+  { icon: Users, labelKey: "nav.about", href: "/meista" },
 ];
 
 export function LiquidGlassNav() {
   const [location] = useLocation();
-  const { theme, toggleTheme } = useTheme();
+  const { lang, toggleLang, t } = useI18n();
 
   return (
     <>
@@ -43,9 +42,9 @@ export function LiquidGlassNav() {
                       ? "text-primary scale-105" 
                       : "text-muted-foreground"
                   )}
-                  aria-label={item.label}
+                  aria-label={t(item.labelKey)}
                   aria-current={isActive ? "page" : undefined}
-                  data-testid={`nav-${item.label.toLowerCase()}`}
+                  data-testid={`nav-${item.labelKey}`}
                 >
                   <Icon className="w-6 h-6" strokeWidth={isActive ? 2.5 : 2} />
                 </button>
@@ -54,16 +53,12 @@ export function LiquidGlassNav() {
           })}
           
           <button
-            onClick={toggleTheme}
-            className="flex items-center justify-center w-12 h-12 rounded-2xl text-muted-foreground transition-all duration-200"
-            aria-label={theme === "light" ? "Vaihda tummaan tilaan" : "Vaihda vaaleaan tilaan"}
-            data-testid="nav-theme-toggle"
+            onClick={toggleLang}
+            className="flex items-center justify-center w-12 h-12 rounded-2xl text-muted-foreground transition-all duration-200 font-medium text-sm"
+            aria-label={lang === "fi" ? "Switch to English" : "Vaihda suomeksi"}
+            data-testid="nav-lang-toggle"
           >
-            {theme === "light" ? (
-              <Moon className="w-5 h-5" />
-            ) : (
-              <Sun className="w-5 h-5" />
-            )}
+            {lang.toUpperCase()}
           </button>
         </div>
       </nav>
@@ -91,26 +86,22 @@ export function LiquidGlassNav() {
                         ? "text-primary bg-primary/5" 
                         : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                     )}
-                    data-testid={`nav-desktop-${item.label.toLowerCase()}`}
+                    data-testid={`nav-desktop-${item.labelKey}`}
                   >
                     <Icon className="w-4 h-4" />
-                    <span className="text-sm font-medium">{item.label}</span>
+                    <span className="text-sm font-medium">{t(item.labelKey)}</span>
                   </button>
                 </Link>
               );
             })}
             
             <button
-              onClick={toggleTheme}
-              className="flex items-center justify-center w-10 h-10 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all duration-200 ml-2"
-              aria-label={theme === "light" ? "Vaihda tummaan tilaan" : "Vaihda vaaleaan tilaan"}
-              data-testid="nav-desktop-theme-toggle"
+              onClick={toggleLang}
+              className="flex items-center justify-center px-4 py-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all duration-200 ml-2 font-medium text-sm"
+              aria-label={lang === "fi" ? "Switch to English" : "Vaihda suomeksi"}
+              data-testid="nav-desktop-lang-toggle"
             >
-              {theme === "light" ? (
-                <Moon className="w-4 h-4" />
-              ) : (
-                <Sun className="w-4 h-4" />
-              )}
+              {lang.toUpperCase()}
             </button>
           </nav>
         </div>

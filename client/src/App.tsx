@@ -4,13 +4,16 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/lib/theme";
+import { I18nProvider } from "@/lib/i18n";
 import { LiquidGlassNav } from "@/components/liquid-glass-nav";
 import { ProtectedRoute } from "@/components/protected-route";
 
 import LandingPage from "@/pages/landing";
+import ServicesPage from "@/pages/services";
+import FAQPage from "@/pages/faq";
+import AboutPage from "@/pages/about";
 import BookingPage from "@/pages/booking";
 import ConfirmationPage from "@/pages/confirmation";
-import AboutPage from "@/pages/about";
 import AdminLoginPage from "@/pages/admin/login";
 import AdminDashboard from "@/pages/admin/dashboard";
 import AdminJobsPage from "@/pages/admin/jobs";
@@ -35,6 +38,21 @@ function Router() {
           <LandingPage />
         </PublicLayout>
       </Route>
+      <Route path="/palvelut">
+        <PublicLayout>
+          <ServicesPage />
+        </PublicLayout>
+      </Route>
+      <Route path="/ukk">
+        <PublicLayout>
+          <FAQPage />
+        </PublicLayout>
+      </Route>
+      <Route path="/meista">
+        <PublicLayout>
+          <AboutPage />
+        </PublicLayout>
+      </Route>
       <Route path="/tilaus">
         <PublicLayout>
           <BookingPage />
@@ -43,11 +61,6 @@ function Router() {
       <Route path="/kiitos">
         <PublicLayout>
           <ConfirmationPage />
-        </PublicLayout>
-      </Route>
-      <Route path="/tietoja">
-        <PublicLayout>
-          <AboutPage />
         </PublicLayout>
       </Route>
       
@@ -88,10 +101,12 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <TooltipProvider>
-          <Toaster />
-          <Router />
-        </TooltipProvider>
+        <I18nProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Router />
+          </TooltipProvider>
+        </I18nProvider>
       </ThemeProvider>
     </QueryClientProvider>
   );

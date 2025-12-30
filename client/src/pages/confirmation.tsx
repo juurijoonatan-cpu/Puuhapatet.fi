@@ -4,6 +4,7 @@ import { CheckCircle, Home, Copy, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
+import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 interface BookingData {
@@ -26,6 +27,7 @@ export default function ConfirmationPage() {
   const [bookingData, setBookingData] = useState<BookingData | null>(null);
   const [showDebug, setShowDebug] = useState(false);
   const { toast } = useToast();
+  const { t } = useI18n();
 
   useEffect(() => {
     const stored = sessionStorage.getItem("lastBooking");
@@ -42,8 +44,8 @@ export default function ConfirmationPage() {
     if (bookingData?.jobId) {
       navigator.clipboard.writeText(bookingData.jobId);
       toast({
-        title: "Kopioitu!",
-        description: "Tilausnumero kopioitu leikepöydälle.",
+        title: t("success.copied"),
+        description: "Puuha-ID kopioitu leikepöydälle.",
       });
     }
   };
@@ -54,12 +56,12 @@ export default function ConfirmationPage() {
         <div className="container mx-auto px-4 max-w-lg text-center">
           <Card className="p-8 bg-card border-0 premium-shadow">
             <p className="text-muted-foreground mb-4">
-              Tilaustietoja ei löytynyt. Olet ehkä jo poistutnut sivulta.
+              Pyyntötietoja ei löytynyt. Olet ehkä jo poistunut sivulta.
             </p>
             <Link href="/">
               <Button data-testid="back-home">
                 <Home className="w-4 h-4 mr-2" />
-                Palaa etusivulle
+                {t("success.home")}
               </Button>
             </Link>
           </Card>
@@ -89,19 +91,16 @@ export default function ConfirmationPage() {
           </div>
           
           <h1 className="text-2xl md:text-3xl font-semibold text-foreground mb-3">
-            {isSuccess ? "Kiitos tilauksestasi!" : "Tilaus lähetetty"}
+            {t("success.title")}
           </h1>
           <p className="text-muted-foreground text-lg">
-            {isSuccess 
-              ? "Olemme vastaanottaneet tilauksesi ja otamme sinuun yhteyttä pian."
-              : "Tilauksesi on lähetetty käsittelyyn."
-            }
+            {t("success.subtitle")}
           </p>
         </div>
 
         <Card className="p-6 bg-card border-0 premium-shadow mb-6">
           <div className="text-center">
-            <p className="text-sm text-muted-foreground mb-2">Tilausnumero</p>
+            <p className="text-sm text-muted-foreground mb-2">{t("success.id.label")}</p>
             <div className="flex items-center justify-center gap-2">
               <span 
                 className="text-2xl font-semibold text-primary font-mono tracking-wider"
@@ -119,26 +118,28 @@ export default function ConfirmationPage() {
                 <Copy className="w-4 h-4" />
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground mt-2">
-              Säilytä tämä numero yhteydenottoja varten
+            <p className="text-xs text-muted-foreground mt-3 max-w-xs mx-auto">
+              {t("success.id.hint")}
             </p>
           </div>
         </Card>
 
         <Card className="p-6 bg-card border-0 premium-shadow mb-6">
-          <h2 className="text-base font-semibold text-foreground mb-4">Mitä seuraavaksi?</h2>
+          <h2 className="text-base font-semibold text-foreground mb-4">
+            {t("hero.tagline")}
+          </h2>
           <ul className="space-y-3 text-sm">
             <li className="flex items-start gap-3">
               <span className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 text-xs font-medium text-primary">1</span>
-              <span className="text-muted-foreground">Käsittelemme tilauksesi ja tarkistamme tiedot.</span>
+              <span className="text-muted-foreground">Käsittelemme pyyntösi ja tarkistamme tiedot.</span>
             </li>
             <li className="flex items-start gap-3">
               <span className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 text-xs font-medium text-primary">2</span>
-              <span className="text-muted-foreground">Otamme sinuun yhteyttä vahvistaaksemme ajankohdan.</span>
+              <span className="text-muted-foreground">Otamme sinuun yhteyttä sovittuaksemme yksityiskohdista.</span>
             </li>
             <li className="flex items-start gap-3">
               <span className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 text-xs font-medium text-primary">3</span>
-              <span className="text-muted-foreground">Saavumme paikalle sovittuna aikana.</span>
+              <span className="text-muted-foreground">Tyypillisesti vastaamme saman päivän aikana.</span>
             </li>
           </ul>
         </Card>
@@ -186,12 +187,12 @@ export default function ConfirmationPage() {
           <Link href="/">
             <Button variant="outline" className="w-full sm:w-auto" data-testid="back-home-btn">
               <Home className="w-4 h-4 mr-2" />
-              Palaa etusivulle
+              {t("success.home")}
             </Button>
           </Link>
           <Link href="/tilaus">
             <Button className="w-full sm:w-auto" data-testid="new-booking-btn">
-              Tee uusi tilaus
+              {t("success.new")}
             </Button>
           </Link>
         </div>

@@ -1,0 +1,173 @@
+
+TOIMI TÄSMÄLLEEN NÄIN. ÄLÄ KOSKE ADMIN-PUOLEEN.
+
+KONTEKSTI
+Rakennamme Puuhapatet.fi asiakaspuolen (public/customer-facing) MVP:n. Nykyinen ulkoasu on jo “melkein” hyvä: vaalea tausta, isot otsikot, kortit, ja erityisesti alhaalla oleva liquid glass -navipalkki ikonien kanssa. Se liquid glass -tyyli pitää säilyttää. Nyt korjataan sisältö, informaatioarkkitehtuuri ja yksinkertaistetaan toiminnallisuus. Tavoite: enterprise-tason selkeys ja luotettavuus, ei “AI-tekemän sekava” fiilis.
+
+KRIITTINEN RAJAUS
+1) ÄLÄ MUUTA admin-routes, admin-komponentteja, adminin tietorakenteita tai adminin UI:ta.
+2) ÄLÄ lisää adminiin uusia ominaisuuksia “vahingossa”.
+3) Jos jokin muutos koskee dataa, sen pitää olla asiakaspuolen lomakkeen kannalta pakollinen. Muuten jätä tekemättä.
+1. ainoa korjaa kun tällä hetkellä kaksi viteadmin passwordia kait niin säilytä configuraatiossa oleva VITE_ADMIN_PASSWORD joka toimii admin kirjautumiseen.
+
+BRÄNDI (asiakaspuolelle)
+- Nimi: Puuhapatet.fi
+- Slogan/henki: “Ei säätöä – Puuhapatet hoitaa.” (voi näkyä esim. pienempänä trust-linjanä)
+- Palvelun ydin: laadukas ja tehokas ikkunoiden pesu (ulkopinnat, sisäpinnat, parvekkeet), lasipinnat ja peilit, erikoistyöt sopimuksen mukaan.
+- Toiminta-alue: Espoo länsi, erityisesti Westend, Haukilahti, Saunalahti, Suvisaaristo (ja Talvikiilto: mahdollisesti Nuottaniemi, Soukan ranta-alueet, Kauniainen).
+- Maksu: MobilePay for Business. Kuitti automaattisesti. Kotitalousvähennys hyödynnettävissä. Lasku tilisiirto
+- Ilme: moderni, minimalistinen. Värimaailma valkoinen + vaalea ruskea + (nykyinen hillitty vihreä aksenttina saa jäädä, koska se näkyy jo UI:ssa). Paljon whitespacea, ei turhaa tavaraa.
+
+Pidä alavalikon liquid glass -tyyli täysin samana (älä muuta blur/opacity/rounded/shadow/height/spacing).
+
+Muuta valikossa sisältö:
+- 5 itemiä: Etusivu (Home), Palvelut (Grid3x3), UKK (HelpCircle), Meistä (Users), ja viimeinen on kielinappi.
+- Kielinappi on pelkkä teksti “FI” (default) ja painallus togglaa FI<->EN. Ei erillistä ikonia.
+- Kielivaihto vaihtaa vain tekstisisällöt (hero, otsikot, napit, kortit jne), layout pysyy samana.
+- Poista/korvaa nykyinen theme/darkmode -nappi kielinapilla.
+- Ei muutoksia adminiin.
+
+SIVUJEN SISÄLTÖ JA RAKENNE
+
+A) ETUSIVU (Home)
+Tyyli: kuten nyt, mutta pihanhoito-tekstit pois. Focus ikkunoihin ja lasipintoihin.
+
+Hero:
+- Pieni ylälabel-pill (kuten nyt): vaihda tekstiksi “Ikkunanpesu & lasipinnat”
+- Pääotsikko: “Ammattitaitoista ikkunanpesua sinun tarpeisiisi”
+- Alateksti: “Tilaa laadukas ikkunanpesu helposti. Sisä- ja ulkopinnat, parvekelasit ja lasipinnat. Siisti työnjälki, selkeä hinnoittelu.”
+- Typewriter-efekti: tee hero-tekstin toinen rivi (tai vaihtoehtoisesti alatekstin ensimmäinen lause) typewriter-tyylillä. Pidä animointi rauhallisena ja premiumina, ei “lelu”.
+  Esim typewriter-lauseita kiertoon (FI):
+  1) “Kirkkaat ikkunat, ilman säätöä.”
+  2) “Sisältä ja ulkoa. Siististi. Ajallaan.”
+  3) “Talvellakin: Talvikiilto™.”
+  EN-versiot vastaavasti:
+  1) “Crystal-clear windows, no hassle.”
+  2) “Inside and out. Clean. On time.”
+  3) “Even in winter: Talvikiilto™.”
+
+CTA-painike:
+- Nykyinen “Tilaa palvelu” voi olla ok, mutta tee siitä pehmeämpi: “Pyydä yhteydenotto” tai “Tee pyyntö”
+- CTA vie alas lomake-osioon (ankkuri), ei “paketin valintaan”.
+
+Trust-kortit (3 kpl) kuten nyt korttityylillä:
+1) “Ammattitaitoinen työnjälki” – “Kokeneet tekijät, siisti lopputulos, ei raitoja.”
+2) “Joustava aikataulu” – “Sovitaan aika helposti. Nopea vaste.”
+3) “Luotettava kumppani” – “Selkeä toimintatapa. Asiakas tietää, mitä saa.”
+
+Myös siistist pinei note tulossa senioriselko ™.
+
+Lisää pieni “Talvikiilto™” highlight heti trust-korttien jälkeen:
+- Otsikko: “Talvikiilto™ (talvikauden ikkunahuolto)”
+- 2 lausetta: “Talvikiilto™ yhdistää sisäpuolen täyspesun ja ulkopintojen kuivapuhdistuksen ilman jäätymisriskiä. Ikkunat, jotka eivät tunne vuodenaikoja.”
+- Pieni “Lue lisää” joka vie Palvelut-sivun Talvikiilto-osioon.
+
+Quick contact -rivi (kompakti, ei sekavaa):
+- WhatsApp-nappi: “WhatsApp” (avaa wa.me linkin, numero placeholderina jos ei löydy)
+- Instagram-nappi: “Instagram” (placeholder linkki)
+- Sähköposti: mailto
+
+B) PALVELUT (Services)
+Tavoite: erittäin selkeä lista, ei pakettivalintaa, ei checkoutia. Vain mitä tarjoamme.
+
+Rakenne:
+1) “Perusikkunanpesu”
+   - Sisä- ja ulkopinnat
+   - Parvekelasit
+   - Puitteet/karmit kevyt pyyhintä (jos haluat pitää tämän peruslupauksena)
+2) “senioriselko”
+   - – Puhelin, joka toimii. Aina. Käyttäjän iästä huolimatta tulossa!
+3) “Erikoistyöt”
+   - Liikehuoneistojen lasit sopimuksen mukaan
+4) “Talvikiilto™”
+   - Selitä lyhyesti konsepti: sisäpuolen täyspesu + ulkopintojen kuivapuhdistus, ei jäätymisriskiä
+   - Miksi: “Puhtaat näkymät myös pakkaskaudella”
+   - Sisältö bulletit:
+     • Sisäpuoli: lämminvesipesu, lasta, mikrokuitu
+     • Ulkopuoli: kuiva/kevyesti kostutettu mikrokuitu, poistaa pölyn ja sään jäljet
+     • Lisä: parvekelasit sisäpinnat, peilit, muut sisätilojen lasit
+2. Ja 4. Kohta toisinpäin järjestyksessä kun esitellään palveluita
+Paketit-osio (informatiivinen, EI valittava)
+- Otsikko: “Paketit (tulossa)”
+- Näytä 3 korttia, mutta vain “info”, ei valintaa:
+  1) “Kertakäynti” – “Selkeä käynti sovitulle kokonaisuudelle.”
+  2) “Toistuva huolto” – “Säännöllinen pesu, pysyvä kirkkaus.”
+  3) “3x Kiilto-setti (tulossa)” – “Säästä merkittävästi ensimmäisestä käynnistä ja lukitse huoltoaikataulu.”
+- Kaikissa: badge “Tulossa” ja pieni teksti “Pyydä yhteydenotto, sovitaan paras kokonaisuus.”
+
+C) UKK (FAQ)
+Pidä kyssät järkevinä, ei SenioriSelko-kysymystä tänne. Tee 6–9 kysymystä.
+FI-kysymykset + vastaukset (malli):
+1) “Missä alueilla palvelette?” – “Espoon länsialueet, erityisesti Westend, Haukilahti, Saunalahti ja Suvisaaristo. Tarvittaessa sovitaan erikseen.”
+2) “Mitä ikkunanpesuun kuuluu?” – “Sisä- ja ulkopinnat sovitun mukaan, parvekelasit ja lasipinnat. Tavoite on siisti, raitaton lopputulos.”
+3) “Miten hinta määräytyy?” – “Selkeä kokonaisuus kohteen koon ja ikkunoiden määrän mukaan. Sovitaan etukäteen tai arvioidaan nopeasti paikan päällä.”
+4) “Miten valmistaudun käyntiin?” – “Vapauta ikkunalaudat, siirrä herkät esineet ja varmista kulku ikkunoille.”
+5) “Miten maksu toimii?” – “MobilePay for Business. Kuitti automaattisesti, kotitalousvähennys hyödynnettävissä.”
+6) “Peseekö Puuhapatet talvella?” – “Kyllä. Talvella suosittelemme Talvikiilto™-huoltopuhdistusta.”
+7) “Kuinka nopeasti vastaatte?” – “Tyypillisesti saman päivän aikana, viimeistään seuraavana.”
+8) “Teettekö liikehuoneistot?” – “Kyllä sopimuksen mukaan.”
+
+EN-versiot samasta sisällöstä.
+
+D) MEISTÄ (Keitä olemme / Työntekijämme)
+Tärkeää: ei random-stock-kuvia, ei keksittyjä työntekijöitä. Tee “placeholder”-henkinen, mutta silti luotettava.
+- Otsikko: “Keitä olemme”
+- 3–5 riviä: espoolainen palveluyritys, nuori ammattimainen, selkeä toimintatapa, viimeistelty työnjälki.
+- Lisää “Työntekijämme (tulossa)” blokki: “Esittelemme tekijät ja referenssit pian.”
+- Lisää kompakti yhteystieto-osio: sähköposti + WhatsApp + IG. (Numerot voi olla placeholder, jotta niitä ei kovakoodata jos ei haluta.)
+
+LOMAKE (asiakaspuolen tärkein)
+- Lomake pitää olla olemassa ja tuottaa “hakemuskoodi / asiakas-ID”, joka näytetään käyttäjälle ja tallennetaan.
+- MUTTA: lomake EI saa olla “valitse paketti ja checkout”.
+- Muuta “paketti”-kenttä muotoon:
+  - “Onko sinulla jo alustava näkemys?” (valinnainen)
+  - valinnat: “En vielä”, “Kertakäynti (arvio)”, “Toistuva huolto (arvio)”, “Talvikiilto™ (arvio)”, “3x Kiilto-setti (tulossa)”
+  - selite: “Tämä ei sido mihinkään. Sovimme kokonaisuuden yhteydenoton jälkeen.”
+- Pakolliset kentät:
+  - Nimi
+  - Puhelin
+  - Sähköposti
+  - Osoite / alue (kaupunginosa tai postinumero riittää)
+- “Mitä tarvitset?” monivalinta:
+  - Ikkunat (sisä)
+  - Ikkunat (ulko)
+  - Parvekelasit
+  - Lasipinnat/peilit
+  - Talvikiilto™
+  - Erikoistyö / liikehuoneisto
+- Aikatoive:
+  - “Mahdollisimman pian”
+  - “Tällä viikolla”
+  - “Ensi viikolla”
+  - “Sovitaan erikseen”
+- Lisätiedot (textarea)
+- Lähetyksen jälkeen:
+  - Näytä selkeä success state (kortti)
+  - Näytä hakemuskoodi isolla: esim. “Puuha-ID: PUU-XXXXXX”
+  - Copy-to-clipboard nappi
+  - Pieni ohje: “Säästä tämä koodi. Tarvitset sitä, jos palaat asiaan tai kun yhdistämme pyynnön käsittelyyn.” Kyllä ja tämä koodi toimii jo nykyisessä asiaks hakemuksessa ylläpidä!
+
+TEKNINEN OHJE (vain asiakaspuoli)
+- Säilytä nykyinen liquid glass -komponentti ja animaatiot, älä riko niitä.
+- Pidä UI erittäin kevyt: ei uusia isoja kirjastoja.
+- Kielen vaihto: yksi state ja tekstisanakirjat per sivu/komponentti.
+- Varmista, että kaikki asiakaspuolen tekstit vaihtuvat FI/EN.
+- Varmista mobiili: spacing, safe-area, nav ei peitä sisältöä.
+- Poista pihanhoito-terminologia kokonaan (hero pill, otsikot, kuvaukset).
+
+FAVICON / BRAND MARK
+- Lisää favicon (yksinkertainen): “P” tai lehti-ikoni, vihreä/harmaa. Ei monimutkaista.
+- Lisää myös headeriin pieni Puuhapatet-logo/wordmark (tekstinä “Puuhapatet”) hero-alueen yläosaan tai vasempaan yläkulmaan, minimalistisesti.
+
+KOPIO (FI) LYHYESTI, PREMIUM, EI AI-SÖSSÖTYSTÄ
+Pidä lauseet lyhyinä. Ei liikaa superlatiiveja. Luottamus syntyy selkeydestä.
+
+LOPUKSI
+Tee muutos niin, että kun avaan asiakaspuolen:
+- se näyttää samalta tyyliltä kuin nyt (hyvä), mutta
+- sisältö on täysin Puuhapatet-ikkunanpesu -linjassa,
+- alavalikko toimii ja sisältää FI/EN toggle,
+- lomake on oikein (ei paketin pakko-valintaa), ja
+- adminiin ei ole koskettu.
+
+Jos jokin kohta vaatii arvausta (esim. IG-linkki), tee placeholder ja kommentoi kohtaan “TODO: add real link”, mutta älä keksi mitään satunnaista

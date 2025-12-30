@@ -1,0 +1,26 @@
+{
+  "name": "Puuhapatet Laskutus",
+  "short_name": "Puuhapatet",
+  "description": "Tilaa piha- ja puutarhapalvelut helposti. Premium-laatu, nopea palvelu.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FAFBFA",
+  "theme_color": "#4A5D4F",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/favicon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "lifestyle"],
+  "lang": "fi"
+}

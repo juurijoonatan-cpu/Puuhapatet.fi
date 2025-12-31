@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { AnimatedCounter } from "@/components/animated-counter";
 import { useI18n } from "@/lib/i18n";
 import { Star, Quote, CheckCircle, Sparkle, MapPin } from "lucide-react";
@@ -14,6 +15,8 @@ interface ReviewFormData {
   rating: number | null;
   service: string | null;
   comment: string;
+  name: string;
+  area: string;
 }
 
 export function ReviewsSection() {
@@ -23,6 +26,8 @@ export function ReviewsSection() {
     rating: null,
     service: null,
     comment: "",
+    name: "",
+    area: "",
   });
   const [submitted, setSubmitted] = useState(false);
 
@@ -36,12 +41,16 @@ export function ReviewsSection() {
     setStep(3);
   };
 
+  const handleCommentNext = () => {
+    setStep(4);
+  };
+
   const handleSubmit = () => {
     setSubmitted(true);
     setTimeout(() => {
       setSubmitted(false);
       setStep(1);
-      setFormData({ rating: null, service: null, comment: "" });
+      setFormData({ rating: null, service: null, comment: "", name: "", area: "" });
     }, 3000);
   };
 
@@ -136,7 +145,7 @@ export function ReviewsSection() {
           ) : (
             <>
               <div className="flex items-center justify-center gap-2 mb-6">
-                {[1, 2, 3].map((s) => (
+                {[1, 2, 3, 4].map((s) => (
                   <div
                     key={s}
                     className={cn(
@@ -203,6 +212,34 @@ export function ReviewsSection() {
                     placeholder={t("reviews.leave.placeholder")}
                     className="min-h-24 resize-none"
                     data-testid="review-comment"
+                  />
+                  <Button 
+                    onClick={handleCommentNext} 
+                    className="w-full"
+                    size="lg"
+                    data-testid="next-step"
+                  >
+                    {t("reviews.leave.next")}
+                  </Button>
+                </div>
+              )}
+
+              {step === 4 && (
+                <div className="space-y-4">
+                  <p className="text-center text-muted-foreground mb-2">
+                    {t("reviews.leave.step4")}
+                  </p>
+                  <Input
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    placeholder={t("reviews.leave.name")}
+                    data-testid="review-name"
+                  />
+                  <Input
+                    value={formData.area}
+                    onChange={(e) => setFormData({ ...formData, area: e.target.value })}
+                    placeholder={t("reviews.leave.area")}
+                    data-testid="review-area"
                   />
                   <Button 
                     onClick={handleSubmit} 

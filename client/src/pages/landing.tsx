@@ -5,6 +5,7 @@ import { ArrowRight, Sparkles, Clock, Shield, Snowflake } from "lucide-react";
 import { SiWhatsapp, SiInstagram } from "react-icons/si";
 import { Mail } from "lucide-react";
 import { Typewriter } from "@/components/typewriter";
+import { ReviewsSection } from "@/components/reviews-section";
 import { useI18n } from "@/lib/i18n";
 
 export default function LandingPage() {
@@ -162,6 +163,8 @@ export default function LandingPage() {
           </div>
         </div>
       </section>
+
+      <ReviewsSection />
 
       <section className="py-16 md:py-24">
         <div className="container mx-auto px-4 md:px-6">

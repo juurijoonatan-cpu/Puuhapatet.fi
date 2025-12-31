@@ -1,0 +1,274 @@
+PROJECT: PUUHAPATET – Customer Site + Admin Ops (PWA-style web app)
+GOAL: Build an enterprise-simple, ultra-clear, fast iPad-first admin tool for door-to-door sales + job ops, paired with a clean customer-facing site. Keep everything minimal, robust, and controlled. No feature creep.
+
+IMPORTANT OPERATING RULES (to minimize wasted work/credits)
+1) DO NOT redesign customer pages unless explicitly required for field mapping or branding consistency.
+2) Focus on Admin first (core workflows). Customer side changes only: ensure lead/contact form fields match admin intake and brand says Puuhapatet (logo/name/favicons).
+3) Keep UI minimal and consistent with our established “liquid glass nav” style. Do not add random modules.
+4) If something is unclear, choose the simplest enterprise solution and document assumptions in comments, but do not build extra features.
+5) This is a web app that can be added to home screen (PWA-like). Keep it app-like, fast, and uncluttered.
+
+DESIGN DIRECTION (NO pixel specs; but strict vibe constraints)
+- “Enterprise-simple”: clarity > wow effects. Minimal but premium. Not “AI-generated random”.
+- Liquid glass bottom navigation must remain (blurred translucent pill, icon-based). That’s our core UI identity.
+- Customer pages: slightly more marketing/brand feel. Admin: more tool/ops feel.
+- Use Puuhapatet brand: show Puuhapatet name + small logo in header. Replace generic “luotettava palvelu” style with real brand.
+- Typography: clean, modern, not playful. Generous spacing. Few cards. No clutter.
+- Interactions: smooth but subtle transitions. No heavy animation libraries.
+
+LANGUAGE + TOGGLES
+- Both customer and admin support FI/EN toggle.
+- In customer UI, language toggle is NOT a separate glass bar; it is a small FI/EN pill/button (tap toggles).
+- In admin UI, language toggle can be in header or Settings. Keep it accessible but minimal.
+- Content texts: Finnish default. English available.
+
+TECH / ARCHITECTURE PREFERENCE
+- Keep the current stack Replit started: Vite + React + TypeScript + Tailwind + shadcn/ui (Radix) is fine.
+- Keep routing simple: public pages and /admin pages.
+- Use a single API adapter layer for Google Apps Script.
+- Don’t introduce complex backend. Apps Script + Sheets is our “backend” for now.
+
+SECURITY NOTE (must be explicit in the app)
+- Admin auth is a lightweight client-side gate (env password / localStorage session). It is NOT a real security boundary.
+- Document clearly inside README and in Settings (small note). Keep code ready for future real auth, but do NOT implement real auth now.
+
+GOOGLE APPS SCRIPT / SHEETS INTEGRATION (current reality)
+We have a deployed Apps Script Web App endpoint (BASE_URL). It currently supports:
+- GET ?action=health  -> JSON
+- GET ?action=packages -> JSON
+- POST ?action=upsert_job -> JSON, content-type text/plain body JSON
+- POST ?action=get_job -> JSON, body contains jobId/JobID
+(list_jobs will be added later; for now, admin must work without it)
+
+All requests must support Content-Type: text/plain for POST to avoid errors.
+Build the API adapter to gracefully handle missing list_jobs (Phase 3 later).
+
+CUSTOMER SITE (keep it simple, brand-correct, no “package selection as the main contact gate”)
+Customer navigation (liquid glass bottom nav):
+- Etusivu (Home)
+- Keitä olemme / Työntekijämme (About/Team) – content minimal now, no real photos yet (use placeholders)
+- FAQ
+- Palvelut / Paketit (Services) – show offerings, but “Tulossa” for bundle deals; do NOT force selecting a package to contact
+- Yhteydenotto (Contact / Request) – simple lead form
+
+Customer hero text:
+- Must mention window cleaning / our core offering (not random “pihanhoito”).
+- Add typewriter effect on the main headline/subheadline (subtle, premium).
+- Include WhatsApp + Instagram quick contact (simple buttons). Also show phone/contact in a clean way.
+
+Customer lead form behavior:
+- Must NOT be “choose package first”. It’s a general request.
+- Fields:
+  - Name
+  - Phone
+  - Address (or area)
+  - Optional notes
+  - Optional “I have a rough idea of service” (light selection, not mandatory)
+  - Language preference (FI/EN)
+- On submit: create a Lead/Job entry in Sheets through upsert_job.
+- Generate a unique “Asiakas-ID / Lead-ID” (JobID format) and show confirmation. This ID is what field staff can use in admin later to prefill customer info.
+- Confirmation page shows the ID clearly + next steps.
+
+ADMIN (THIS IS THE CORE; build it as the main product)
+Admin must be a fast iPad-first tool for door-to-door selling + job operations.
+
+ADMIN NAV (liquid glass bottom bar, icons, minimal):
+- Dashboard
+- Uusi (New)  -> this is the “New Customer / New Job” wizard entry point
+- Kalenteri
+- Keikat
+- Asetukset
+
+ADMIN USERS / ROLES (simple but real)
+Roles:
+- HOST (Joonatan Juuri): full permissions.
+- BOARD MEMBER: near-admin permissions, can manage content/settings similarly.
+- STAFF: operational permissions.
+
+User onboarding flow:
+- Login with admin password gate (env). After login:
+  - If user profile is incomplete, force “Complete profile” first (no other pages accessible):
+    - name
+    - role (assigned by Host/Board, not self-selected)
+    - profile photo upload (required)
+    - optional phone
+- Host can invite a new user:
+  - Host creates “invite code” and assigns intended role (e.g., Matias -> Board Member or Staff)
+  - New user enters invite code, sets their profile details + photo, then is allowed in.
+
+Permission behavior (keep simple):
+- Host can do everything.
+- Board can do most admin tasks.
+- Staff can create jobs, update operational fields, generate invoice links if allowed by Host.
+- Staff DISCOUNTS: Staff can give discount “within guidelines” without a hard-coded numeric limit for now. BUT:
+  - Every discount must require a “discount reason”
+  - Always record “discount_given_by” + timestamp
+  - Show a subtle warning if discount is unusually high (soft warning only, not a block)
+  - Host/Board can always override.
+
+ADMIN DASHBOARD (minimal, clear, not cluttered)
+Dashboard cards (few, high-signal):
+- Yhteydenotot (Leads) count
+- Aktiiviset keikat count
+- Suoritetut keikat count
+- Laskut: Generated / Sent / Paid counts
+Do not invent complicated analytics. Show 4–6 tiles max.
+
+Because list_jobs is missing, dashboard should:
+- Show real numbers only if you can compute from local cached jobs or last accessed items.
+- Otherwise show clear “Data available after list endpoint” empty states.
+Do NOT add fake analytics.
+
+ADMIN CORE WORKFLOW 1: “UUSI KEIKKA” WIZARD (this is the heart)
+This wizard is used on doors/in-person and must be smooth.
+
+Step 0: Optional prefill by Lead-ID
+- Input: “Asiakas-ID / Lead-ID”
+- If provided:
+  - call get_job and prefill customer info if found
+- If not found or user presses “Ohita”:
+  - continue with fully manual entry
+
+Step 1: Customer (Customer fills this)
+- name
+- phone
+- address/area
+- language FI/EN
+- any notes
+Then a “Next” button. Keep fields clean.
+
+Step 2: Employer (staff fills this, customer hands iPad back)
+Capture operational assessment:
+- property type (apartment/house/other)
+- floors (1/2/3+)
+- window count estimate / size category
+- access constraints (ladder needed? difficult access?)
+- weather notes / season notes
+- optional photos (can be added later too)
+- internal notes for team
+Keep it as structured select + short text. Do not overbuild.
+
+Step 3: Package proposal (AI-assisted but controlled)
+We want a guided package offer based on Step 1–2. Implementation approach:
+- For now, implement as a “proposal generator” module that can be:
+  A) rules-based (simple mapping) OR
+  B) future AI hook (placeholder)
+But deliver usable output now:
+- Show 2–3 suggested packages with:
+  - name
+  - what it includes
+  - why it fits this customer (short)
+  - price (editable)
+- Price logic:
+  - Use your existing Sheets package catalog as baseline + adjust based on inputs.
+  - Allow staff to edit final price.
+- Discount:
+  - staff can add discount percent OR amount
+  - must add discount reason if discount > 0
+  - record discount metadata
+
+Step 4: Agreement / contract (customer + staff)
+- Show a simple contract text generated using our template logic:
+  - Should feel trustworthy and professional
+  - Should include key protection for the company (liability boundaries, access, cancellations, etc.)
+  - Must still feel fair to customer
+- Signature capture:
+  - Customer signature
+  - Staff signature
+- After signing: job is marked “Agreed / Ready”
+
+Step 5: Completion (after work)
+When work is done:
+- staff marks job “Done”
+- Add final notes (duration, costs, issues)
+- Add photos (optional)
+- Submit updates to Sheets via upsert_job
+
+ADMIN WORKFLOW 2: JOBS (“Keikat”)
+Because list_jobs not ready, “Keikat” must work without it:
+- Primary mode: JobID search + recent locally cached jobs list (from previously opened jobs)
+- When list_jobs arrives later, seamlessly upgrade to real jobs list with filters.
+
+Job detail page must show:
+- customer info
+- assessment info
+- chosen package + price + discount + reason
+- statuses: NEW / SCHEDULED / IN_PROGRESS / DONE / CANCELLED
+- audit: created_by, updated_by, timestamps
+- actions: update status, generate invoice link, mark sent/paid
+
+ADMIN WORKFLOW 3: CALENDAR
+Simple scheduling tool:
+- Week view default + Day view toggle + Today button
+- Create event: time range, customer (link job optional), address, assigned staff, type (estimate/work/etc), short note
+- From a job: “Schedule visit” creates event prefilled
+- From event: “Create job from this” if job missing
+No reminders, no Google Calendar sync.
+
+ADMIN WORKFLOW 4: INVOICING (half-automatic)
+We already have a Sheets-based invoice system built with effort. Use it.
+In job detail:
+- Invoice section with:
+  - “Generate invoice (Sheets)” button -> calls Apps Script endpoint (to be implemented or already exists)
+  - Store invoice_sheet_url and optional invoice_pdf_url in the job
+  - “Open invoice”, “Copy link”
+  - Manual buttons:
+    - Mark as Sent
+    - Mark as Paid
+No auto-email sending now.
+
+SETTINGS (the only place for admin/maintenance tools)
+Settings sections:
+1) Profile (photo, name, role view)
+2) Theme (light/dark toggle) – keep minimal
+3) Language FI/EN
+4) Users & Invites (Host/Board only)
+   - create invite code
+   - list users
+   - change role
+5) API Diagnostics (very important)
+   - Run health
+   - Run packages
+   - Run upsert_job test (creates PP-TEST-.. job)
+   - Run get_job by JobID
+   - Later: list_jobs test
+   - Show raw JSON in collapsible viewer
+This diagnostics page is critical to reduce debugging time.
+
+DATA MODEL / FIELD MAPPING (must align with Sheets; do NOT reinvent)
+- Ensure the customer lead form fields match the admin wizard’s customer fields exactly.
+- Use JobID as the universal key across customer lead and admin.
+- Use upsert_job for both creating and updating.
+- Keep a clear mapping layer (TypeScript types + Zod validation).
+- Store the minimal required fields in Sheets now; additional fields can be appended later.
+
+BRANDING REQUIREMENTS
+- Customer pages: Puuhapatet name + logo visible (top).
+- Admin: small “Puuhapatet Admin” mark in header, not huge.
+- Favicon + PWA icons: Puuhapatet “P” or logo mark.
+
+PERFORMANCE / UX RULES
+- Must be very fast on iPad.
+- Avoid heavy libs. Use simple transitions.
+- Use skeleton loaders for all API calls.
+- Avoid long pages with clutter; prefer clean sections.
+
+PHASE CONTROL (avoid Replit going wild)
+Implement in this order:
+Phase A (Admin foundation): auth gate, profile completion gate, nav, settings shell, API adapter, diagnostics
+Phase B (Admin core): New Job wizard end-to-end (JobID prefill + create/update via upsert_job)
+Phase C (Calendar + Invoicing UI hooks): calendar, invoice link storage/actions
+Phase D (Customer tidy): ensure brand + typewriter hero + contact links + lead form to upsert_job
+
+DO NOT:
+- build a complex marketing site
+- build complex analytics
+- build payment integrations
+- build real security/auth server
+- build list_jobs before endpoint exists
+- add random features like inventory, staff performance graphs, etc.
+
+OUTPUT EXPECTATIONS
+- Clean repo structure, clear types, comments where assumptions.
+- Keep code ready to extend later (list_jobs integration, real auth).
+- Keep UI minimal and aligned with our liquid glass identity.

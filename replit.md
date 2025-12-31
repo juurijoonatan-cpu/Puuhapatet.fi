@@ -38,12 +38,17 @@ This is the core product. iPad-first tool for field operations.
 - Dashboard with greeting and metric cards
 - Settings with profile management, theme toggle, user management, API diagnostics
 
-**Phase B In Progress:**
-- "Uusi Keikka" wizard skeleton implemented (6 steps)
+**Phase B Complete:**
+- "Uusi Keikka" wizard fully implemented (6 steps):
+  - Step 0: Prefill by Lead-ID/JobID
+  - Step 1: Customer info (iPad-first for customer to fill)
+  - Step 2: Property assessment (staff fills after handback)
+  - Step 3: Package selection with pricing and discount slider
+  - Step 4: Agreement summary + signature canvases (customer + staff)
+  - Step 5: Completion with API submission
 - Calendar placeholder with week/day views
 
-**Remaining:**
-- Complete New Job wizard (package selection, agreement/signatures, completion)
+**Remaining (Phase C):**
 - Calendar event creation and job linking
 - Jobs list with API integration (awaiting list_jobs endpoint)
 - Invoice link generation
@@ -131,11 +136,14 @@ client/src/
 - 2024-12-31: **Phase A Admin** - Profile system, roles, invite codes, profile completion gate
 - 2024-12-31: **Phase A Admin** - Updated admin nav (Dashboard, Uusi, Kalenteri, Keikat, Asetukset)
 - 2024-12-31: **Phase A Admin** - Settings with profile, theme, users/invites, API diagnostics
-- 2024-12-31: **Phase B Admin** - New Job wizard skeleton (6 steps: prefill, customer, assessment, package, agreement, completion)
+- 2024-12-31: **Phase B Admin** - New Job wizard fully implemented with:
+  - Package selection from API (with fallback mock data)
+  - Discount slider with reason field
+  - Signature canvas for customer and staff (touch-enabled for iPad)
+  - Agreement confirmation and API submission
 - 2024-12-31: **Phase B Admin** - Calendar placeholder with week/day toggle
 
-## Next Steps (Admin Focus)
-1. Complete Uusi Keikka wizard - package selection UI, agreement/signature step, job completion
-2. Calendar integration - event creation, link to jobs
-3. Jobs page - await list_jobs API, implement local caching
-4. Invoice link generation
+## Next Steps (Phase C - Admin Focus)
+1. Calendar integration - event creation, link to jobs
+2. Jobs page - await list_jobs API, implement local caching
+3. Invoice link generation

@@ -7,22 +7,24 @@
  * 0. Optional prefill by Lead-ID / JobID
  * 1. Customer info (customer fills on iPad)
  * 2. Employer assessment (staff fills after handback)
- * 3. Package proposal (guided/AI-assisted)
+ * 3. Package proposal with pricing
  * 4. Agreement/contract with signatures
- * 5. Completion (after work done)
+ * 5. Completion (submit to API)
  */
 
-import { useState } from "react";
-import { Link } from "wouter";
-import { ArrowLeft, ArrowRight, Search, User, ClipboardCheck, Package, FileText, CheckCircle } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { Link, useLocation } from "wouter";
+import { ArrowLeft, ArrowRight, Search, User, ClipboardCheck, Package, FileText, CheckCircle, Loader2, Percent, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { api, generateJobId } from "@/lib/api";
+import { api, generateJobId, ApiPackage, normalizePackage, NormalizedPackage } from "@/lib/api";
+import { getAdminProfile } from "@/lib/admin-profile";
 import { cn } from "@/lib/utils";
 
 type WizardStep = 0 | 1 | 2 | 3 | 4 | 5;
@@ -31,6 +33,7 @@ interface JobFormData {
   jobId: string;
   customerName: string;
   customerPhone: string;
+  customerEmail: string;
   customerAddress: string;
   customerLanguage: "fi" | "en";
   customerNotes: string;
@@ -41,10 +44,14 @@ interface JobFormData {
   weatherNotes: string;
   internalNotes: string;
   selectedPackage: string;
+  selectedPackageName: string;
   originalPrice: number;
-  finalPrice: number;
   discountPercent: number;
   discountReason: string;
+  finalPrice: number;
+  customerSignature: string;
+  staffSignature: string;
+  agreedTerms: boolean;
 }
 
 const steps = [
@@ -58,14 +65,26 @@ const steps = [
 
 export default function NewJobPage() {
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const [currentStep, setCurrentStep] = useState<WizardStep>(0);
   const [prefillJobId, setPrefillJobId] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [packages, setPackages] = useState<NormalizedPackage[]>([]);
+  const [packagesLoading, setPackagesLoading] = useState(false);
+  
+  const customerSigRef = useRef<HTMLCanvasElement>(null);
+  const staffSigRef = useRef<HTMLCanvasElement>(null);
+  const [isDrawingCustomer, setIsDrawingCustomer] = useState(false);
+  const [isDrawingStaff, setIsDrawingStaff] = useState(false);
+
+  const profile = getAdminProfile();
 
   const [formData, setFormData] = useState<JobFormData>({
     jobId: "",
     customerName: "",
     customerPhone: "",
+    customerEmail: "",
     customerAddress: "",
     customerLanguage: "fi",
     customerNotes: "",
@@ -76,14 +95,58 @@ export default function NewJobPage() {
     weatherNotes: "",
     internalNotes: "",
     selectedPackage: "",
+    selectedPackageName: "",
     originalPrice: 0,
-    finalPrice: 0,
     discountPercent: 0,
     discountReason: "",
+    finalPrice: 0,
+    customerSignature: "",
+    staffSignature: "",
+    agreedTerms: false,
   });
 
   const updateForm = (updates: Partial<JobFormData>) => {
-    setFormData((prev) => ({ ...prev, ...updates }));
+    setFormData((prev) => {
+      const newData = { ...prev, ...updates };
+      if ("originalPrice" in updates || "discountPercent" in updates) {
+        const price = updates.originalPrice ?? prev.originalPrice;
+        const discount = updates.discountPercent ?? prev.discountPercent;
+        newData.finalPrice = Math.round(price * (1 - discount / 100) * 100) / 100;
+      }
+      return newData;
+    });
+  };
+
+  useEffect(() => {
+    if (currentStep === 3 && packages.length === 0) {
+      loadPackages();
+    }
+  }, [currentStep, packages.length]);
+
+  const loadPackages = async () => {
+    setPackagesLoading(true);
+    try {
+      const result = await api.packages();
+      if (result.ok && result.data?.packages) {
+        const normalized = result.data.packages
+          .filter((p: ApiPackage) => p.Active !== false)
+          .map(normalizePackage);
+        setPackages(normalized);
+      } else {
+        setPackages([
+          { id: "BASIC", name: "Peruspesu", description: "Ikkunoiden peruspesu", price: 89, durationMinutes: 60, active: true },
+          { id: "FULL", name: "Täyspesu", description: "Ikkunat ja karmit", price: 149, durationMinutes: 90, active: true },
+          { id: "PREMIUM", name: "Premium", description: "Kaikki pinnat, sisä ja ulko", price: 249, durationMinutes: 120, active: true },
+        ]);
+      }
+    } catch {
+      setPackages([
+        { id: "BASIC", name: "Peruspesu", description: "Ikkunoiden peruspesu", price: 89, durationMinutes: 60, active: true },
+        { id: "FULL", name: "Täyspesu", description: "Ikkunat ja karmit", price: 149, durationMinutes: 90, active: true },
+        { id: "PREMIUM", name: "Premium", description: "Kaikki pinnat, sisä ja ulko", price: 249, durationMinutes: 120, active: true },
+      ]);
+    }
+    setPackagesLoading(false);
   };
 
   const handlePrefill = async () => {
@@ -105,6 +168,7 @@ export default function NewJobPage() {
           jobId: (job.JobID as string) || prefillJobId,
           customerName: (job.CustomerName as string) || "",
           customerPhone: (job.CustomerPhone as string) || "",
+          customerEmail: (job.CustomerEmail as string) || "",
           customerAddress: (job.Address as string) || "",
           customerNotes: (job.Notes as string) || "",
         });
@@ -135,7 +199,207 @@ export default function NewJobPage() {
     setCurrentStep(1);
   };
 
+  const selectPackage = (pkg: NormalizedPackage) => {
+    updateForm({
+      selectedPackage: pkg.id,
+      selectedPackageName: pkg.name,
+      originalPrice: pkg.price,
+      finalPrice: pkg.price * (1 - formData.discountPercent / 100),
+    });
+  };
+
+  const initCanvas = (canvas: HTMLCanvasElement | null) => {
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.scale(dpr, dpr);
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+  };
+
+  const startDrawing = (e: React.MouseEvent | React.TouchEvent, isCustomer: boolean) => {
+    if ("touches" in e) {
+      e.preventDefault();
+    }
+    
+    const canvas = isCustomer ? customerSigRef.current : staffSigRef.current;
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const clientX = "touches" in e ? e.touches[0].clientX : e.clientX;
+    const clientY = "touches" in e ? e.touches[0].clientY : e.clientY;
+    
+    ctx.beginPath();
+    ctx.moveTo(clientX - rect.left, clientY - rect.top);
+    
+    if (isCustomer) {
+      setIsDrawingCustomer(true);
+    } else {
+      setIsDrawingStaff(true);
+    }
+  };
+
+  const draw = (e: React.MouseEvent | React.TouchEvent, isCustomer: boolean) => {
+    const isDrawing = isCustomer ? isDrawingCustomer : isDrawingStaff;
+    if (!isDrawing) return;
+
+    if ("touches" in e) {
+      e.preventDefault();
+    }
+
+    const canvas = isCustomer ? customerSigRef.current : staffSigRef.current;
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const clientX = "touches" in e ? e.touches[0].clientX : e.clientX;
+    const clientY = "touches" in e ? e.touches[0].clientY : e.clientY;
+    
+    ctx.lineTo(clientX - rect.left, clientY - rect.top);
+    ctx.stroke();
+  };
+
+  const stopDrawing = (isCustomer: boolean) => {
+    const canvas = isCustomer ? customerSigRef.current : staffSigRef.current;
+    if (canvas) {
+      const dataUrl = canvas.toDataURL();
+      if (isCustomer) {
+        updateForm({ customerSignature: dataUrl });
+        setIsDrawingCustomer(false);
+      } else {
+        updateForm({ staffSignature: dataUrl });
+        setIsDrawingStaff(false);
+      }
+    }
+  };
+
+  const clearSignature = (isCustomer: boolean) => {
+    const canvas = isCustomer ? customerSigRef.current : staffSigRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (isCustomer) {
+      updateForm({ customerSignature: "" });
+    } else {
+      updateForm({ staffSignature: "" });
+    }
+  };
+
+  const handleSubmitJob = async () => {
+    if (!formData.selectedPackage) {
+      toast({
+        variant: "destructive",
+        title: "Valitse paketti",
+        description: "Valitse palvelupaketti ennen sopimuksen lähettämistä.",
+      });
+      return;
+    }
+    if (!formData.customerSignature) {
+      toast({
+        variant: "destructive",
+        title: "Allekirjoitus puuttuu",
+        description: "Asiakkaan allekirjoitus vaaditaan.",
+      });
+      return;
+    }
+    if (!formData.agreedTerms) {
+      toast({
+        variant: "destructive",
+        title: "Hyväksy ehdot",
+        description: "Palveluehdot on hyväksyttävä ennen lähettämistä.",
+      });
+      return;
+    }
+
+    setIsSubmitting(true);
+    
+    const jobData = {
+      JobID: formData.jobId,
+      WorkflowStatus: "CONFIRMED",
+      AssignedTo: profile?.name || "",
+      Source: "ADMIN",
+      CustomerName: formData.customerName,
+      CustomerPhone: formData.customerPhone,
+      CustomerEmail: formData.customerEmail,
+      Address: formData.customerAddress,
+      Language: formData.customerLanguage,
+      PreferredTime: "flexible",
+      ServicePackage: formData.selectedPackageName,
+      PropertyType: formData.propertyType,
+      Floors: formData.floors,
+      WindowCount: formData.windowCount,
+      AccessConstraints: formData.accessConstraints,
+      WeatherNotes: formData.weatherNotes,
+      OriginalPrice: formData.originalPrice,
+      DiscountPercent: formData.discountPercent,
+      DiscountReason: formData.discountReason,
+      FinalPrice: formData.finalPrice,
+      Notes: formData.customerNotes,
+      InternalNotes: formData.internalNotes,
+      CustomerSignature: formData.customerSignature ? "SIGNED" : "",
+      StaffSignature: formData.staffSignature ? "SIGNED" : "",
+      CreatedBy: profile?.name || "Admin",
+    };
+
+    try {
+      const result = await api.upsertJob(jobData);
+      if (result.ok && result.data?.ok) {
+        toast({
+          title: "Keikka luotu!",
+          description: `Tilausnumero: ${formData.jobId}`,
+        });
+        setCurrentStep(5);
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Virhe tallennuksessa",
+          description: result.data?.error || "Yritä uudelleen.",
+        });
+      }
+    } catch {
+      toast({
+        variant: "destructive",
+        title: "Yhteysvirhe",
+        description: "Tarkista verkkoyhteys ja yritä uudelleen.",
+      });
+    }
+    
+    setIsSubmitting(false);
+  };
+
   const goNext = () => {
+    if (currentStep === 2) {
+      if (!formData.propertyType || !formData.floors || !formData.windowCount) {
+        toast({
+          variant: "destructive",
+          title: "Täytä pakolliset kentät",
+          description: "Valitse kiinteistötyyppi, kerrokset ja ikkunamäärä.",
+        });
+        return;
+      }
+    }
+    if (currentStep === 3) {
+      if (!formData.selectedPackage) {
+        toast({
+          variant: "destructive",
+          title: "Valitse paketti",
+          description: "Valitse palvelupaketti ennen jatkamista.",
+        });
+        return;
+      }
+    }
     if (currentStep < 5) {
       setCurrentStep((prev) => (prev + 1) as WizardStep);
     }
@@ -145,6 +409,35 @@ export default function NewJobPage() {
     if (currentStep > 0) {
       setCurrentStep((prev) => (prev - 1) as WizardStep);
     }
+  };
+
+  const resetWizard = () => {
+    setFormData({
+      jobId: "",
+      customerName: "",
+      customerPhone: "",
+      customerEmail: "",
+      customerAddress: "",
+      customerLanguage: "fi",
+      customerNotes: "",
+      propertyType: "",
+      floors: "",
+      windowCount: "",
+      accessConstraints: "",
+      weatherNotes: "",
+      internalNotes: "",
+      selectedPackage: "",
+      selectedPackageName: "",
+      originalPrice: 0,
+      discountPercent: 0,
+      discountReason: "",
+      finalPrice: 0,
+      customerSignature: "",
+      staffSignature: "",
+      agreedTerms: false,
+    });
+    setCurrentStep(0);
+    setPrefillJobId("");
   };
 
   return (
@@ -162,6 +455,7 @@ export default function NewJobPage() {
             </h1>
             <p className="text-sm text-muted-foreground">
               {steps[currentStep].label}
+              {formData.jobId && ` • ${formData.jobId}`}
             </p>
           </div>
         </div>
@@ -222,7 +516,7 @@ export default function NewJobPage() {
                     disabled={isLoading || !prefillJobId.trim()}
                     data-testid="btn-prefill"
                   >
-                    {isLoading ? "..." : "Hae"}
+                    {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Hae"}
                   </Button>
                 </div>
               </div>
@@ -281,6 +575,19 @@ export default function NewJobPage() {
                   placeholder="+358 40 123 4567"
                   className="mt-2"
                   data-testid="input-customer-phone"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="customerEmail">Sähköposti</Label>
+                <Input
+                  id="customerEmail"
+                  type="email"
+                  value={formData.customerEmail}
+                  onChange={(e) => updateForm({ customerEmail: e.target.value })}
+                  placeholder="email@esimerkki.fi"
+                  className="mt-2"
+                  data-testid="input-customer-email"
                 />
               </div>
 
@@ -451,6 +758,7 @@ export default function NewJobPage() {
                 <Button
                   className="flex-1"
                   onClick={goNext}
+                  disabled={!formData.propertyType || !formData.floors || !formData.windowCount}
                   data-testid="btn-next"
                 >
                   Seuraava
@@ -470,18 +778,94 @@ export default function NewJobPage() {
               Valitse sopiva paketti asiakkaalle.
             </p>
 
-            <div className="text-center py-12 text-muted-foreground">
-              <Package className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p>Pakettivalinta tulossa...</p>
-              <p className="text-sm">Tämä osio rakennetaan Phase B:ssä.</p>
-            </div>
+            {packagesLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : (
+              <>
+                <div className="space-y-3 mb-6">
+                  {packages.map((pkg) => (
+                    <button
+                      key={pkg.id}
+                      type="button"
+                      onClick={() => selectPackage(pkg)}
+                      className={cn(
+                        "w-full p-4 rounded-xl border-2 text-left transition-all",
+                        formData.selectedPackage === pkg.id
+                          ? "border-primary bg-primary/5"
+                          : "border-border hover:border-muted-foreground/50"
+                      )}
+                      data-testid={`package-${pkg.id}`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-semibold text-foreground">{pkg.name}</span>
+                        <span className="font-semibold text-foreground">{pkg.price} EUR</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground">{pkg.description}</p>
+                    </button>
+                  ))}
+                </div>
 
-            <div className="flex gap-3 pt-4">
+                {formData.selectedPackage && (
+                  <div className="space-y-4 border-t pt-6">
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Perushinta</span>
+                      <span className="font-medium">{formData.originalPrice} EUR</span>
+                    </div>
+                    
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <Label className="flex items-center gap-2">
+                          <Percent className="w-4 h-4" />
+                          Alennus
+                        </Label>
+                        <span className="font-medium">{formData.discountPercent}%</span>
+                      </div>
+                      <Slider
+                        value={[formData.discountPercent]}
+                        onValueChange={([v]) => updateForm({ discountPercent: v })}
+                        max={50}
+                        step={5}
+                        className="my-2"
+                        data-testid="slider-discount"
+                      />
+                    </div>
+
+                    {formData.discountPercent > 0 && (
+                      <div>
+                        <Label htmlFor="discountReason">Alennuksen syy</Label>
+                        <Input
+                          id="discountReason"
+                          value={formData.discountReason}
+                          onChange={(e) => updateForm({ discountReason: e.target.value })}
+                          placeholder="Esim. ensimmäinen tilaus, useita ikkunoita..."
+                          className="mt-2"
+                          data-testid="input-discount-reason"
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between pt-4 border-t">
+                      <span className="text-lg font-semibold text-foreground">Lopullinen hinta</span>
+                      <span className="text-2xl font-bold text-primary">{formData.finalPrice} EUR</span>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            <div className="flex gap-3 pt-6">
               <Button variant="outline" onClick={goBack} data-testid="btn-back">
                 <ArrowLeft className="w-4 h-4 mr-2" />
                 Takaisin
               </Button>
-              <Button className="flex-1" onClick={goNext} data-testid="btn-next">
+              <Button
+                className="flex-1"
+                onClick={goNext}
+                disabled={!formData.selectedPackage}
+                data-testid="btn-next"
+              >
                 Seuraava
                 <ArrowRight className="w-4 h-4 ml-2" />
               </Button>
@@ -495,23 +879,118 @@ export default function NewJobPage() {
               Sopimus
             </h2>
             <p className="text-sm text-muted-foreground mb-6">
-              Allekirjoitukset ja vahvistus.
+              Yhteenveto ja allekirjoitukset.
             </p>
 
-            <div className="text-center py-12 text-muted-foreground">
-              <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p>Sopimus ja allekirjoitukset tulossa...</p>
-              <p className="text-sm">Tämä osio rakennetaan Phase B:ssä.</p>
+            <div className="space-y-4 mb-6 p-4 bg-muted/50 rounded-xl">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Asiakas</span>
+                <span className="font-medium">{formData.customerName}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Osoite</span>
+                <span className="font-medium">{formData.customerAddress}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Paketti</span>
+                <span className="font-medium">{formData.selectedPackageName}</span>
+              </div>
+              <div className="flex justify-between text-sm border-t pt-4">
+                <span className="text-foreground font-semibold">Hinta</span>
+                <span className="text-primary font-bold">{formData.finalPrice} EUR</span>
+              </div>
             </div>
 
-            <div className="flex gap-3 pt-4">
+            <div className="space-y-6">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <Label>Asiakkaan allekirjoitus</Label>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => clearSignature(true)}
+                    data-testid="btn-clear-customer-sig"
+                  >
+                    Tyhjennä
+                  </Button>
+                </div>
+                <canvas
+                  ref={(el) => { customerSigRef.current = el; initCanvas(el); }}
+                  width={300}
+                  height={100}
+                  className="w-full border rounded-xl bg-white touch-none"
+                  style={{ touchAction: "none", height: "100px" }}
+                  onMouseDown={(e) => startDrawing(e, true)}
+                  onMouseMove={(e) => draw(e, true)}
+                  onMouseUp={() => stopDrawing(true)}
+                  onMouseLeave={() => stopDrawing(true)}
+                  onTouchStart={(e) => startDrawing(e, true)}
+                  onTouchMove={(e) => draw(e, true)}
+                  onTouchEnd={() => stopDrawing(true)}
+                  data-testid="canvas-customer-signature"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <Label>Työntekijän allekirjoitus</Label>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => clearSignature(false)}
+                    data-testid="btn-clear-staff-sig"
+                  >
+                    Tyhjennä
+                  </Button>
+                </div>
+                <canvas
+                  ref={(el) => { staffSigRef.current = el; initCanvas(el); }}
+                  width={300}
+                  height={100}
+                  className="w-full border rounded-xl bg-white touch-none"
+                  style={{ touchAction: "none", height: "100px" }}
+                  onMouseDown={(e) => startDrawing(e, false)}
+                  onMouseMove={(e) => draw(e, false)}
+                  onMouseUp={() => stopDrawing(false)}
+                  onMouseLeave={() => stopDrawing(false)}
+                  onTouchStart={(e) => startDrawing(e, false)}
+                  onTouchMove={(e) => draw(e, false)}
+                  onTouchEnd={() => stopDrawing(false)}
+                  data-testid="canvas-staff-signature"
+                />
+              </div>
+
+              <label className="flex items-start gap-3 p-4 bg-muted/30 rounded-xl cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.agreedTerms}
+                  onChange={(e) => updateForm({ agreedTerms: e.target.checked })}
+                  className="mt-1"
+                  data-testid="checkbox-agree-terms"
+                />
+                <span className="text-sm text-muted-foreground">
+                  Hyväksyn Puuhapatet-palvelun ehdot ja vahvistan tilauksen.
+                </span>
+              </label>
+            </div>
+
+            <div className="flex gap-3 pt-6">
               <Button variant="outline" onClick={goBack} data-testid="btn-back">
                 <ArrowLeft className="w-4 h-4 mr-2" />
                 Takaisin
               </Button>
-              <Button className="flex-1" onClick={goNext} data-testid="btn-next">
-                Seuraava
-                <ArrowRight className="w-4 h-4 ml-2" />
+              <Button
+                className="flex-1"
+                onClick={handleSubmitJob}
+                disabled={isSubmitting || !formData.agreedTerms || !formData.customerSignature}
+                data-testid="btn-submit"
+              >
+                {isSubmitting ? (
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                ) : (
+                  <Check className="w-4 h-4 mr-2" />
+                )}
+                Vahvista ja lähetä
               </Button>
             </div>
           </Card>
@@ -525,8 +1004,11 @@ export default function NewJobPage() {
             <h2 className="text-xl font-semibold text-foreground mb-2">
               Valmis!
             </h2>
-            <p className="text-muted-foreground mb-6">
-              Keikka on luotu. Voit nyt siirtyä töihin tai aikatauluttaa käynnin.
+            <p className="text-muted-foreground mb-2">
+              Keikka on tallennettu.
+            </p>
+            <p className="font-mono text-primary mb-6">
+              {formData.jobId}
             </p>
 
             <div className="space-y-3">
@@ -535,11 +1017,14 @@ export default function NewJobPage() {
                   Näytä keikat
                 </Button>
               </Link>
-              <Link href="/admin/new">
-                <Button variant="outline" className="w-full" data-testid="btn-new-job">
-                  Luo uusi keikka
-                </Button>
-              </Link>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={resetWizard}
+                data-testid="btn-new-job"
+              >
+                Luo uusi keikka
+              </Button>
             </div>
           </Card>
         )}

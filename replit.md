@@ -26,18 +26,26 @@ Customer site features completed:
 - Mobile header with Puuhapatet branding
 - Responsive design
 
-### ADMIN SITE - IN PROGRESS (PRIORITY)
+### ADMIN SITE - PHASE A COMPLETE, PHASE B IN PROGRESS
 This is the core product. iPad-first tool for field operations.
 
-Admin features needed:
-- Auth gate (env password, client-side only - NOT real security)
-- Profile completion gate (name, role, photo required)
-- Dashboard with key metrics
-- "Uusi Keikka" wizard (New Job - the heart of admin)
-- Calendar (simple scheduling)
-- Jobs list/search (Keikat)
-- Settings with API diagnostics
-- User management (Host can invite, assign roles)
+**Phase A Complete:**
+- Auth gate with password (client-side UI gate)
+- Profile system with roles (HOST/BOARD_MEMBER/STAFF)
+- Profile completion gate (first user = HOST)
+- Invite code system for adding new users
+- Admin nav with liquid glass style (Dashboard, Uusi, Kalenteri, Keikat, Asetukset)
+- Dashboard with greeting and metric cards
+- Settings with profile management, theme toggle, user management, API diagnostics
+
+**Phase B In Progress:**
+- "Uusi Keikka" wizard skeleton implemented (6 steps)
+- Calendar placeholder with week/day views
+
+**Remaining:**
+- Complete New Job wizard (package selection, agreement/signatures, completion)
+- Calendar event creation and job linking
+- Jobs list with API integration (awaiting list_jobs endpoint)
 - Invoice link generation
 
 ## Architecture
@@ -87,13 +95,17 @@ client/src/
 │   ├── confirmation.tsx
 │   └── admin/
 │       ├── login.tsx
+│       ├── profile-setup.tsx  # Profile completion flow
 │       ├── dashboard.tsx
+│       ├── new-job.tsx        # Uusi Keikka wizard
+│       ├── calendar.tsx       # Scheduling calendar
 │       ├── jobs.tsx
 │       ├── packages.tsx
 │       └── settings.tsx
 ├── lib/
 │   ├── i18n.tsx      # Bilingual translations
 │   ├── api.ts        # Google Apps Script adapter
+│   ├── admin-profile.ts  # Profile/roles/invites system
 │   ├── theme.tsx
 │   └── queryClient.ts
 └── App.tsx
@@ -116,11 +128,14 @@ client/src/
 - 2024-12-31: Added 4-step review form (rating, service, comment, name/area)
 - 2024-12-31: Added mobile header with Puuhapatet branding
 - 2024-12-31: Bilingual FI/EN system implemented
+- 2024-12-31: **Phase A Admin** - Profile system, roles, invite codes, profile completion gate
+- 2024-12-31: **Phase A Admin** - Updated admin nav (Dashboard, Uusi, Kalenteri, Keikat, Asetukset)
+- 2024-12-31: **Phase A Admin** - Settings with profile, theme, users/invites, API diagnostics
+- 2024-12-31: **Phase B Admin** - New Job wizard skeleton (6 steps: prefill, customer, assessment, package, agreement, completion)
+- 2024-12-31: **Phase B Admin** - Calendar placeholder with week/day toggle
 
 ## Next Steps (Admin Focus)
-1. Implement auth gate with profile completion flow
-2. Build Dashboard with key metrics
-3. Create "Uusi Keikka" wizard (5 steps)
-4. Add Calendar functionality
-5. Add Jobs search/list
-6. Settings with API diagnostics
+1. Complete Uusi Keikka wizard - package selection UI, agreement/signature step, job completion
+2. Calendar integration - event creation, link to jobs
+3. Jobs page - await list_jobs API, implement local caching
+4. Invoice link generation

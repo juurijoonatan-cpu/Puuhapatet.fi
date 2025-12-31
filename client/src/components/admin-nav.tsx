@@ -1,7 +1,15 @@
+/**
+ * Admin Navigation
+ * 
+ * Liquid glass bottom nav for mobile, header nav for desktop.
+ * Items: Dashboard, Uusi (New Job), Kalenteri, Keikat, Asetukset
+ */
+
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, ClipboardList, Package, Settings, Sun, Moon, LogOut } from "lucide-react";
+import { LayoutDashboard, Plus, Calendar, ClipboardList, Settings, Sun, Moon, LogOut } from "lucide-react";
 import { useTheme } from "@/lib/theme";
 import { clearAdminSession } from "@/pages/admin/login";
+import { clearAdminProfile, getAdminProfile } from "@/lib/admin-profile";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -12,22 +20,43 @@ interface NavItem {
 
 const adminNavItems: NavItem[] = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/admin/dashboard" },
-  { icon: ClipboardList, label: "Tilaukset", href: "/admin/jobs" },
-  { icon: Package, label: "Paketit", href: "/admin/packages" },
+  { icon: Plus, label: "Uusi", href: "/admin/new" },
+  { icon: Calendar, label: "Kalenteri", href: "/admin/calendar" },
+  { icon: ClipboardList, label: "Keikat", href: "/admin/jobs" },
   { icon: Settings, label: "Asetukset", href: "/admin/settings" },
 ];
 
 export function AdminNav() {
   const [location, navigate] = useLocation();
   const { theme, toggleTheme } = useTheme();
+  
+  const currentPath = location || "";
+  const profile = typeof window !== "undefined" ? getAdminProfile() : null;
 
   const handleLogout = () => {
     clearAdminSession();
+    clearAdminProfile();
     navigate("/admin/login");
+  };
+
+  const isActive = (href: string) => {
+    if (!currentPath) return false;
+    if (href === "/admin/dashboard") {
+      return currentPath === "/admin/dashboard" || currentPath === "/admin";
+    }
+    return currentPath === href || currentPath.startsWith(href + "/");
   };
 
   return (
     <>
+      <header className="fixed top-0 left-0 right-0 z-50 glass-nav md:hidden">
+        <div className="flex items-center justify-center h-14 px-4">
+          <span className="text-lg font-semibold text-foreground tracking-tight">
+            Puuhapatet <span className="text-muted-foreground font-normal text-sm">Admin</span>
+          </span>
+        </div>
+      </header>
+
       <nav 
         className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 glass-nav rounded-[20px] px-2 py-2 md:hidden"
         role="navigation"
@@ -35,7 +64,7 @@ export function AdminNav() {
       >
         <div className="flex items-center gap-1">
           {adminNavItems.map((item) => {
-            const isActive = location === item.href;
+            const active = isActive(item.href);
             const Icon = item.icon;
             
             return (
@@ -43,32 +72,19 @@ export function AdminNav() {
                 <button
                   className={cn(
                     "flex items-center justify-center w-12 h-12 rounded-2xl transition-all duration-200",
-                    isActive 
+                    active 
                       ? "text-primary scale-105" 
                       : "text-muted-foreground"
                   )}
                   aria-label={item.label}
-                  aria-current={isActive ? "page" : undefined}
+                  aria-current={active ? "page" : undefined}
                   data-testid={`admin-nav-${item.label.toLowerCase()}`}
                 >
-                  <Icon className="w-6 h-6" strokeWidth={isActive ? 2.5 : 2} />
+                  <Icon className="w-6 h-6" strokeWidth={active ? 2.5 : 2} />
                 </button>
               </Link>
             );
           })}
-          
-          <button
-            onClick={toggleTheme}
-            className="flex items-center justify-center w-12 h-12 rounded-2xl text-muted-foreground transition-all duration-200"
-            aria-label={theme === "light" ? "Vaihda tummaan tilaan" : "Vaihda vaaleaan tilaan"}
-            data-testid="admin-nav-theme-toggle"
-          >
-            {theme === "light" ? (
-              <Moon className="w-5 h-5" />
-            ) : (
-              <Sun className="w-5 h-5" />
-            )}
-          </button>
         </div>
       </nav>
 
@@ -82,7 +98,7 @@ export function AdminNav() {
           
           <nav className="flex items-center gap-1" role="navigation" aria-label="Admin-valikko">
             {adminNavItems.map((item) => {
-              const isActive = location === item.href;
+              const active = isActive(item.href);
               const Icon = item.icon;
               
               return (
@@ -90,7 +106,7 @@ export function AdminNav() {
                   <button
                     className={cn(
                       "flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-200",
-                      isActive 
+                      active 
                         ? "text-primary bg-primary/5" 
                         : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                     )}
@@ -115,6 +131,17 @@ export function AdminNav() {
                 <Sun className="w-4 h-4" />
               )}
             </button>
+
+            {profile?.photoUrl && (
+              <Link href="/admin/settings">
+                <img 
+                  src={profile.photoUrl} 
+                  alt={profile.name}
+                  className="w-8 h-8 rounded-full object-cover ml-2 cursor-pointer"
+                  data-testid="admin-nav-profile-photo"
+                />
+              </Link>
+            )}
             
             <button
               onClick={handleLogout}

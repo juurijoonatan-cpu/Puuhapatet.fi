@@ -1,31 +1,12 @@
-import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AnimatedCounter } from "@/components/animated-counter";
 import { useI18n } from "@/lib/i18n";
-import { Star, Quote, MapPin, Sparkle, ExternalLink } from "lucide-react";
-
-const FALLBACK_RATING = 4.8;
-const FALLBACK_RECOMMEND = 96;
+import { Star, MapPin, Sparkle, ExternalLink, Quote } from "lucide-react";
+import { reviews, GOOGLE_RATING, GOOGLE_REVIEW_COUNT } from "@/data/reviews";
 
 const GOOGLE_REVIEW_URL = "https://g.page/r/CQo_lx1fQ57lEAE/review";
-
-interface GoogleReview {
-  author_name: string;
-  profile_photo_url?: string;
-  rating: number;
-  relative_time_description: string;
-  text: string;
-  time: number;
-}
-
-interface ReviewsApiResponse {
-  ok: boolean;
-  configured: boolean;
-  rating: number;
-  totalRatings: number;
-  reviews: GoogleReview[];
-}
+const RECOMMEND_PERCENT = 96;
 
 // Google "G" logo SVG
 function GoogleLogo({ className }: { className?: string }) {
@@ -55,24 +36,6 @@ function StarRating({ rating, size = "sm" }: { rating: number; size?: "sm" | "md
 
 export function ReviewsSection() {
   const { t } = useI18n();
-  const [apiData, setApiData] = useState<ReviewsApiResponse | null>(null);
-
-  useEffect(() => {
-    fetch("/api/reviews")
-      .then((r) => r.json())
-      .then((data: ReviewsApiResponse) => setApiData(data))
-      .catch(() => {/* fall through to fallback */});
-  }, []);
-
-  const rating = apiData?.rating ?? FALLBACK_RATING;
-  const totalRatings = apiData?.totalRatings ?? 0;
-  const liveReviews = apiData?.configured && apiData.reviews.length > 0 ? apiData.reviews : null;
-
-  const fallbackReviews = [
-    { textKey: "reviews.sample.1.text", nameKey: "reviews.sample.1.name", locationKey: "reviews.sample.1.location", rating: 5 },
-    { textKey: "reviews.sample.2.text", nameKey: "reviews.sample.2.name", locationKey: "reviews.sample.2.location", rating: 5 },
-    { textKey: "reviews.sample.3.text", nameKey: "reviews.sample.3.name", locationKey: "reviews.sample.3.location", rating: 5 },
-  ];
 
   return (
     <section className="py-16 md:py-24 bg-muted/30">
@@ -92,21 +55,19 @@ export function ReviewsSection() {
         {/* Stats */}
         <div className="grid grid-cols-2 gap-6 mb-12 max-w-2xl mx-auto">
           <Card className="p-6 text-center bg-card border-0 premium-shadow">
-            <div className="flex items-center justify-center gap-2 mb-2">
-              <AnimatedCounter end={rating} decimals={1} duration={2000} className="text-4xl md:text-5xl font-bold text-primary" />
+            <div className="flex items-center justify-center gap-1 mb-2">
+              <AnimatedCounter end={GOOGLE_RATING} decimals={1} duration={2000} className="text-4xl md:text-5xl font-bold text-primary" />
               <span className="text-4xl md:text-5xl font-bold text-primary">/5</span>
             </div>
             <div className="flex items-center justify-center gap-1.5 mb-1">
               <GoogleLogo className="w-4 h-4" />
               <p className="text-sm text-muted-foreground">{t("reviews.stats.google")}</p>
             </div>
-            {totalRatings > 0 && (
-              <p className="text-xs text-muted-foreground">{totalRatings} {t("reviews.stats.total")}</p>
-            )}
+            <p className="text-xs text-muted-foreground">{GOOGLE_REVIEW_COUNT} {t("reviews.stats.total")}</p>
           </Card>
           <Card className="p-6 text-center bg-card border-0 premium-shadow">
             <div className="text-4xl md:text-5xl font-bold text-primary mb-2">
-              <AnimatedCounter end={FALLBACK_RECOMMEND} suffix="%" duration={2000} />
+              <AnimatedCounter end={RECOMMEND_PERCENT} suffix="%" duration={2000} />
             </div>
             <p className="text-sm text-muted-foreground">
               {t("reviews.stats.recommend")}
@@ -116,64 +77,41 @@ export function ReviewsSection() {
 
         {/* Reviews grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-          {liveReviews
-            ? liveReviews.slice(0, 3).map((review, index) => (
-                <Card
-                  key={index}
-                  className="p-6 bg-card border-0 premium-shadow flex flex-col"
-                  data-testid={`review-card-${index}`}
-                >
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex items-center gap-3">
-                      {review.profile_photo_url ? (
-                        <img
-                          src={review.profile_photo_url}
-                          alt={review.author_name}
-                          className="w-10 h-10 rounded-full object-cover"
-                          referrerPolicy="no-referrer"
-                        />
-                      ) : (
-                        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-sm">
-                          {review.author_name.charAt(0)}
-                        </div>
-                      )}
-                      <div>
-                        <p className="font-medium text-foreground text-sm leading-tight">{review.author_name}</p>
-                        <p className="text-xs text-muted-foreground">{review.relative_time_description}</p>
-                      </div>
+          {reviews.slice(0, 3).map((review, index) => (
+            <Card
+              key={index}
+              className="p-6 bg-card border-0 premium-shadow flex flex-col"
+              data-testid={`review-card-${index}`}
+            >
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  {review.profile_photo_url ? (
+                    <img
+                      src={review.profile_photo_url}
+                      alt={review.author_name}
+                      className="w-10 h-10 rounded-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-sm">
+                      {review.author_name.charAt(0)}
                     </div>
-                    <GoogleLogo className="w-5 h-5 flex-shrink-0" />
-                  </div>
-                  <StarRating rating={review.rating} />
-                  {review.text && (
-                    <p className="text-foreground mt-3 leading-relaxed text-sm flex-1">
-                      "{review.text}"
-                    </p>
                   )}
-                </Card>
-              ))
-            : fallbackReviews.map((review, index) => (
-                <Card
-                  key={index}
-                  className="p-6 bg-card border-0 premium-shadow"
-                  data-testid={`review-card-${index}`}
-                >
-                  <Quote className="w-8 h-8 text-primary/20 mb-4" />
-                  <p className="text-foreground mb-4 leading-relaxed">
-                    "{t(review.textKey)}"
-                  </p>
-                  <StarRating rating={review.rating} />
-                  <div className="flex items-center justify-between mt-3">
-                    <span className="font-medium text-foreground text-sm">
-                      {t(review.nameKey)}
-                    </span>
-                    <span className="text-xs text-muted-foreground flex items-center gap-1">
-                      <MapPin className="w-3 h-3" />
-                      {t(review.locationKey)}
-                    </span>
+                  <div>
+                    <p className="font-medium text-foreground text-sm leading-tight">{review.author_name}</p>
+                    <p className="text-xs text-muted-foreground">{review.relative_time_description}</p>
                   </div>
-                </Card>
-              ))}
+                </div>
+                <GoogleLogo className="w-5 h-5 flex-shrink-0" />
+              </div>
+              <StarRating rating={review.rating} />
+              {review.text && (
+                <p className="text-foreground mt-3 leading-relaxed text-sm flex-1">
+                  "{review.text}"
+                </p>
+              )}
+            </Card>
+          ))}
         </div>
 
         {/* Google CTA */}

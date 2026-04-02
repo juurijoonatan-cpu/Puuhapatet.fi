@@ -2,7 +2,7 @@ import { Link } from "wouter";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowRight, Sparkles, Snowflake, Smartphone, Building2, Check } from "lucide-react";
+import { ArrowRight, Sparkles, Snowflake, Car, Building2, Check } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 
 export default function ServicesPage() {
@@ -87,23 +87,34 @@ export default function ServicesPage() {
             </div>
           </Card>
 
-          <Card className="p-6 md:p-8 bg-card border-0 premium-shadow opacity-80" data-testid="service-senior">
+          <Card className="p-6 md:p-8 bg-card border-0 premium-shadow" data-testid="service-cardetailing">
             <div className="flex items-start gap-4">
-              <div className="w-12 h-12 rounded-xl bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center flex-shrink-0">
-                <Smartphone className="w-6 h-6 text-purple-600 dark:text-purple-400" />
+              <div className="w-12 h-12 rounded-xl bg-green-100 dark:bg-green-900/30 flex items-center justify-center flex-shrink-0">
+                <Car className="w-6 h-6 text-green-700 dark:text-green-400" />
               </div>
               <div className="flex-1">
-                <div className="flex items-center gap-2 mb-2">
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
                   <h2 className="text-xl font-semibold text-foreground">
-                    {t("service.senior.title")}
+                    {t("service.cardetailing.title")}
                   </h2>
-                  <Badge variant="outline" className="text-purple-600 border-purple-200 bg-purple-50 dark:bg-purple-900/30 dark:border-purple-800">
-                    {t("service.senior.coming")}
+                  <Badge variant="outline" className="text-green-700 border-green-300 bg-green-50 dark:bg-green-900/30 dark:border-green-800 text-xs">
+                    {t("service.cardetailing.partner")}
                   </Badge>
+                  <span className="text-sm font-semibold text-green-700 dark:text-green-400">
+                    {t("service.cardetailing.price")}
+                  </span>
                 </div>
-                <p className="text-muted-foreground">
-                  {t("service.senior.desc")}
+                <p className="text-muted-foreground mb-3">
+                  {t("service.cardetailing.desc")}
                 </p>
+                <ul className="space-y-2">
+                  {(["1","2","3","4","5"] as const).map((n) => (
+                    <li key={n} className="flex items-center gap-2 text-muted-foreground text-sm">
+                      <Check className="w-4 h-4 text-green-700 dark:text-green-400 flex-shrink-0" />
+                      <span>{t(`service.cardetailing.${n}` as any)}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
             </div>
           </Card>
@@ -117,9 +128,23 @@ export default function ServicesPage() {
                 <h2 className="text-xl font-semibold text-foreground mb-2">
                   {t("service.special.title")}
                 </h2>
-                <p className="text-muted-foreground">
+                <p className="text-muted-foreground mb-3">
                   {t("service.special.desc")}
                 </p>
+                <ul className="space-y-2 mb-4">
+                  {(["1","2","3"] as const).map((n) => (
+                    <li key={n} className="flex items-center gap-2 text-muted-foreground text-sm">
+                      <Check className="w-4 h-4 text-orange-600 dark:text-orange-400 flex-shrink-0" />
+                      <span>{t(`service.special.${n}` as any)}</span>
+                    </li>
+                  ))}
+                </ul>
+                <Link href="/tilaus">
+                  <Button variant="outline" size="sm" className="text-orange-600 border-orange-300 hover:bg-orange-50 dark:text-orange-400 dark:border-orange-800 dark:hover:bg-orange-900/20">
+                    {t("service.special.cta")}
+                    <ArrowRight className="w-4 h-4 ml-1" />
+                  </Button>
+                </Link>
               </div>
             </div>
           </Card>

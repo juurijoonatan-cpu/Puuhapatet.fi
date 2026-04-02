@@ -6,7 +6,7 @@ import { Star, MapPin, Sparkle, ExternalLink, Quote } from "lucide-react";
 import { reviews, GOOGLE_RATING, GOOGLE_REVIEW_COUNT } from "@/data/reviews";
 
 const GOOGLE_REVIEW_URL = "https://g.page/r/CQo_lx1fQ57lEAE/review";
-const RECOMMEND_PERCENT = 96;
+const RECOMMEND_PERCENT = 100;
 
 // Google "G" logo SVG
 function GoogleLogo({ className }: { className?: string }) {

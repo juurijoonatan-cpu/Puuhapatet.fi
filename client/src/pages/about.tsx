@@ -87,7 +87,7 @@ export default function AboutPage() {
           
           <div className="flex flex-wrap gap-3 mt-6 pt-6 border-t border-border">
             <a 
-              href="https://wa.me/358000000000" 
+              href="https://wa.me/358400389999" 
               target="_blank" 
               rel="noopener noreferrer"
             >

@@ -34,19 +34,27 @@ export default function ServicesPage() {
                 <Sparkles className="w-6 h-6 text-primary" />
               </div>
               <div className="flex-1">
-                <h2 className="text-xl font-semibold text-foreground mb-3">
-                  {t("service.basic.title")}
-                </h2>
+                <div className="flex items-center gap-2 mb-2">
+                  <h2 className="text-xl font-semibold text-foreground">
+                    {t("service.basic.title")}
+                  </h2>
+                  <Badge className="bg-primary text-primary-foreground border-0 text-xs">
+                    {t("service.basic.popular")}
+                  </Badge>
+                </div>
+                <p className="text-muted-foreground mb-3">
+                  {t("service.basic.desc")}
+                </p>
                 <ul className="space-y-2">
-                  <li className="flex items-center gap-2 text-muted-foreground">
+                  <li className="flex items-center gap-2 text-muted-foreground text-sm">
                     <Check className="w-4 h-4 text-primary flex-shrink-0" />
                     <span>{t("service.basic.1")}</span>
                   </li>
-                  <li className="flex items-center gap-2 text-muted-foreground">
+                  <li className="flex items-center gap-2 text-muted-foreground text-sm">
                     <Check className="w-4 h-4 text-primary flex-shrink-0" />
                     <span>{t("service.basic.2")}</span>
                   </li>
-                  <li className="flex items-center gap-2 text-muted-foreground">
+                  <li className="flex items-center gap-2 text-muted-foreground text-sm">
                     <Check className="w-4 h-4 text-primary flex-shrink-0" />
                     <span>{t("service.basic.3")}</span>
                   </li>

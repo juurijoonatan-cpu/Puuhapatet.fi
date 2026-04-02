@@ -150,36 +150,39 @@ export default function LandingPage() {
 
       <section className="py-12 md:py-16">
         <div className="container mx-auto px-4 md:px-6">
-          <div className="flex flex-wrap justify-center gap-3 md:gap-4">
-            <a 
-              href="https://wa.me/358000000000" 
-              target="_blank" 
+          <div className="grid grid-cols-3 gap-3 md:gap-4 max-w-xl mx-auto">
+            <a
+              href="https://wa.me/358000000000"
+              target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex"
+              className="col-span-1"
             >
-              <Button variant="outline" size="sm" className="gap-2" data-testid="contact-whatsapp">
-                <SiWhatsapp className="w-4 h-4" />
-                {t("contact.whatsapp")}
+              <Button variant="outline" size="lg" className="gap-2 w-full" data-testid="contact-whatsapp">
+                <SiWhatsapp className="w-5 h-5" />
+                <span className="hidden sm:inline">{t("contact.whatsapp")}</span>
+                <span className="sm:hidden">WA</span>
               </Button>
             </a>
-            <a 
-              href="https://instagram.com/puuhapatet" 
-              target="_blank" 
+            <a
+              href="https://instagram.com/puuhapatet"
+              target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex"
+              className="col-span-1"
             >
-              <Button variant="outline" size="sm" className="gap-2" data-testid="contact-instagram">
-                <SiInstagram className="w-4 h-4" />
-                {t("contact.instagram")}
+              <Button variant="outline" size="lg" className="gap-2 w-full" data-testid="contact-instagram">
+                <SiInstagram className="w-5 h-5" />
+                <span className="hidden sm:inline">{t("contact.instagram")}</span>
+                <span className="sm:hidden">IG</span>
               </Button>
             </a>
-            <a 
-              href="mailto:info@puuhapatet.fi" 
-              className="inline-flex"
+            <a
+              href="mailto:info@puuhapatet.fi"
+              className="col-span-1"
             >
-              <Button variant="outline" size="sm" className="gap-2" data-testid="contact-email">
-                <Mail className="w-4 h-4" />
-                {t("contact.email")}
+              <Button variant="outline" size="lg" className="gap-2 w-full" data-testid="contact-email">
+                <Mail className="w-5 h-5" />
+                <span className="hidden sm:inline">{t("contact.email")}</span>
+                <span className="sm:hidden">Email</span>
               </Button>
             </a>
           </div>

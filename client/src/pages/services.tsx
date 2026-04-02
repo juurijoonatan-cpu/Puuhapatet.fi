@@ -2,7 +2,7 @@ import { Link } from "wouter";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowRight, Sparkles, Snowflake, Car, Building2, Check, Leaf, PaintBucket, ShieldCheck } from "lucide-react";
+import { ArrowRight, Sparkles, Snowflake, Car, Building2, Check, Leaf, PaintBucket, ShieldCheck, Shovel } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 
 export default function ServicesPage() {
@@ -89,6 +89,30 @@ export default function ServicesPage() {
                     <Check className="w-4 h-4 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
                     <span>{t("service.talvikiilto.3")}</span>
                   </li>
+                </ul>
+              </div>
+            </div>
+          </Card>
+
+          <Card className="p-6 md:p-8 bg-card border-0 premium-shadow" data-testid="service-lumityot">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-xl bg-sky-100 dark:bg-sky-900/30 flex items-center justify-center flex-shrink-0">
+                <Shovel className="w-6 h-6 text-sky-600 dark:text-sky-400" />
+              </div>
+              <div className="flex-1">
+                <h2 className="text-xl font-semibold text-foreground mb-2">
+                  {t("service.lumityot.title")}
+                </h2>
+                <p className="text-muted-foreground mb-3">
+                  {t("service.lumityot.desc")}
+                </p>
+                <ul className="space-y-2">
+                  {(["1","2","3"] as const).map((n) => (
+                    <li key={n} className="flex items-center gap-2 text-muted-foreground text-sm">
+                      <Check className="w-4 h-4 text-sky-600 dark:text-sky-400 flex-shrink-0" />
+                      <span>{t(`service.lumityot.${n}` as any)}</span>
+                    </li>
+                  ))}
                 </ul>
               </div>
             </div>

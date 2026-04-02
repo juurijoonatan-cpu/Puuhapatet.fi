@@ -1,7 +1,7 @@
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { ArrowRight, Sparkles, Clock, Shield, Snowflake } from "lucide-react";
+import { ArrowRight, Sparkles, Clock, Shield, Snowflake, Leaf, Car, PaintBucket, Shovel } from "lucide-react";
 import { SiWhatsapp, SiInstagram } from "react-icons/si";
 import { Mail } from "lucide-react";
 import { Typewriter } from "@/components/typewriter";
@@ -22,6 +22,21 @@ export default function LandingPage() {
     { icon: Clock, titleKey: "trust.2.title", descKey: "trust.2.desc" },
     { icon: Shield, titleKey: "trust.3.title", descKey: "trust.3.desc" },
   ];
+
+  const month = new Date().getMonth(); // 0 = Jan, 11 = Dec
+  const isWinter = month >= 10 || month <= 1; // Nov–Feb
+
+  const seasonalServices = isWinter
+    ? [
+        { icon: Snowflake, titleKey: "service.talvikiilto.title", descKey: "service.talvikiilto.desc", color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-500/10" },
+        { icon: Shovel, titleKey: "service.lumityot.title", descKey: "service.lumityot.desc", color: "text-sky-600 dark:text-sky-400", bg: "bg-sky-500/10" },
+      ]
+    : [
+        { icon: Sparkles, titleKey: "service.basic.title", descKey: "service.basic.1", color: "text-primary", bg: "bg-primary/10" },
+        { icon: Leaf, titleKey: "service.gardening.title", descKey: "service.gardening.desc", color: "text-lime-700 dark:text-lime-400", bg: "bg-lime-500/10" },
+        { icon: Car, titleKey: "service.cardetailing.title", descKey: "service.cardetailing.desc", color: "text-green-700 dark:text-green-400", bg: "bg-green-500/10" },
+        { icon: PaintBucket, titleKey: "service.painting.title", descKey: "service.painting.desc", color: "text-yellow-700 dark:text-yellow-400", bg: "bg-yellow-500/10" },
+      ];
 
   return (
     <div className="min-h-screen bg-background">
@@ -97,32 +112,39 @@ export default function LandingPage() {
             })}
           </div>
           
-          <Card className="p-6 md:p-8 bg-gradient-to-br from-blue-50 to-blue-100/50 dark:from-blue-950/30 dark:to-blue-900/20 border-0">
-            <div className="flex flex-col md:flex-row items-start md:items-center gap-4 md:gap-6">
-              <div className="w-14 h-14 rounded-xl bg-blue-500/20 flex items-center justify-center flex-shrink-0">
-                <Snowflake className="w-7 h-7 text-blue-600 dark:text-blue-400" />
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <h3 className="text-xl font-semibold text-foreground">
-                    {t("talvikiilto.title")}
-                  </h3>
-                  <span className="text-sm text-muted-foreground">
-                    ({t("talvikiilto.subtitle")})
-                  </span>
-                </div>
-                <p className="text-muted-foreground leading-relaxed mb-4">
-                  {t("talvikiilto.desc")}
-                </p>
-                <Link href="/palvelut#talvikiilto">
-                  <Button variant="outline" size="sm" data-testid="talvikiilto-cta">
-                    {t("talvikiilto.cta")}
-                    <ArrowRight className="w-4 h-4 ml-2" />
-                  </Button>
-                </Link>
-              </div>
+          <div>
+            <h2 className="text-xl font-semibold text-foreground mb-4 text-center">
+              {t("featured.title")}
+            </h2>
+            <div className={`grid gap-4 ${seasonalServices.length === 2 ? "md:grid-cols-2" : "md:grid-cols-2 lg:grid-cols-4"}`}>
+              {seasonalServices.map((svc, i) => {
+                const Icon = svc.icon;
+                return (
+                  <Link href="/palvelut" key={i}>
+                    <Card className="p-5 bg-card border-0 premium-shadow hover:premium-shadow-hover hover:-translate-y-0.5 transition-all duration-200 cursor-pointer h-full">
+                      <div className={`w-10 h-10 rounded-xl ${svc.bg} flex items-center justify-center mb-3`}>
+                        <Icon className={`w-5 h-5 ${svc.color}`} />
+                      </div>
+                      <h3 className="font-semibold text-foreground mb-1 text-sm">
+                        {t(svc.titleKey as any)}
+                      </h3>
+                      <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+                        {t(svc.descKey as any)}
+                      </p>
+                    </Card>
+                  </Link>
+                );
+              })}
             </div>
-          </Card>
+            <div className="text-center mt-4">
+              <Link href="/palvelut">
+                <Button variant="ghost" size="sm" className="text-muted-foreground">
+                  {t("featured.cta")}
+                  <ArrowRight className="w-4 h-4 ml-1" />
+                </Button>
+              </Link>
+            </div>
+          </div>
         </div>
       </section>
 

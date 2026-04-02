@@ -55,11 +55,20 @@ const translations: Record<Language, Record<string, string>> = {
     "service.gardening.4": "Kausihuolto sopimuksen mukaan",
 
     "service.painting.title": "Maalaus",
-    "service.painting.desc": "Sisä- ja ulkomaalausta ammattitaidolla.",
-    "service.painting.1": "Sisäseinät ja katot",
-    "service.painting.2": "Ulkovuoraus ja puuosat",
-    "service.painting.3": "Ikkunankarmit ja listat",
+    "service.painting.desc": "Kevyet maalausurakat – karmit, listat, parvekkeet ja pienet sisätyöt.",
+    "service.painting.1": "Ikkunankarmit ja ovienkarmit",
+    "service.painting.2": "Listat, parvekkeet ja pienet puuosat",
+    "service.painting.3": "Pienet sisäseinätyöt",
     "service.painting.4": "Pyydä tarjous – arvioidaan yhdessä",
+
+    "service.lumityot.title": "Lumityöt",
+    "service.lumityot.desc": "Piha- ja kulkuväylät auki koko talven.",
+    "service.lumityot.1": "Auraus ja luonti pihasta ja kulkuväyliltä",
+    "service.lumityot.2": "Hiekoitus liukkauden torjuntaan",
+    "service.lumityot.3": "Kausihuolto sopimuksella tai tarvittaessa",
+
+    "featured.title": "Ajankohtaiset palvelut",
+    "featured.cta": "Katso kaikki palvelut",
     
     "service.basic.title": "Perusikkunanpesu",
     "service.basic.1": "Sisä- ja ulkopinnat",
@@ -244,11 +253,20 @@ const translations: Record<Language, Record<string, string>> = {
     "service.gardening.4": "Seasonal maintenance by agreement",
 
     "service.painting.title": "Painting",
-    "service.painting.desc": "Interior and exterior painting done professionally.",
-    "service.painting.1": "Interior walls and ceilings",
-    "service.painting.2": "Exterior cladding and wooden surfaces",
-    "service.painting.3": "Window frames and trim",
+    "service.painting.desc": "Light painting jobs – frames, trim, balconies and small interior work.",
+    "service.painting.1": "Window frames and door frames",
+    "service.painting.2": "Trim, balconies and small wooden parts",
+    "service.painting.3": "Small interior wall jobs",
     "service.painting.4": "Request a quote – we'll assess together",
+
+    "service.lumityot.title": "Snow Removal",
+    "service.lumityot.desc": "Yard and pathways clear all winter.",
+    "service.lumityot.1": "Plowing and shoveling yards and walkways",
+    "service.lumityot.2": "Sanding for ice prevention",
+    "service.lumityot.3": "Seasonal contract or on-demand",
+
+    "featured.title": "Current Services",
+    "featured.cta": "See all services",
     
     "service.basic.title": "Basic Window Cleaning",
     "service.basic.1": "Interior and exterior surfaces",

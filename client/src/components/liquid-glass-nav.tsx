@@ -26,7 +26,7 @@ export function LiquidGlassNav() {
         <div className="flex items-center justify-center h-14 px-4">
           <Link href="/">
             <span className="text-lg font-semibold text-foreground tracking-tight cursor-pointer" data-testid="logo-text-mobile">
-              Puuhapatet
+              Puuhapatet.
             </span>
           </Link>
         </div>
@@ -77,7 +77,7 @@ export function LiquidGlassNav() {
         <div className="container mx-auto px-6 h-16 flex items-center justify-between">
           <Link href="/">
             <span className="text-xl font-semibold text-foreground tracking-tight cursor-pointer" data-testid="logo-text">
-              Puuhapatet
+              Puuhapatet.
             </span>
           </Link>
           

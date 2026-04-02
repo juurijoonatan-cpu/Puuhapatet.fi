@@ -45,6 +45,21 @@ const translations: Record<Language, Record<string, string>> = {
     
     "services.title": "Palvelut",
     "services.subtitle": "Mitä tarjoamme",
+    "services.promise": "Jokaisessa palvelussamme toimimme vakuutuksen alaisena ja täysin lainmukaisesti. Asiakkaan etu on meille ykkösprioriteetti — ei nopeus eikä raha. Jos työ kestää kauemmin kuin arvioitu, teemme sen silti huolellisesti loppuun. Siitä ei lisälaskuteta.",
+
+    "service.gardening.title": "Piha & puutarhapalvelut",
+    "service.gardening.desc": "Nurmikosta puihin — pidetään pihasi kunnossa.",
+    "service.gardening.1": "Nurmikon leikkuu",
+    "service.gardening.2": "Pensaiden ja puiden kevyt leikkaus",
+    "service.gardening.3": "Piha-alueen siistiminen ja haravointi",
+    "service.gardening.4": "Kausihuolto sopimuksen mukaan",
+
+    "service.painting.title": "Maalaus",
+    "service.painting.desc": "Sisä- ja ulkomaalausta ammattitaidolla.",
+    "service.painting.1": "Sisäseinät ja katot",
+    "service.painting.2": "Ulkovuoraus ja puuosat",
+    "service.painting.3": "Ikkunankarmit ja listat",
+    "service.painting.4": "Pyydä tarjous – arvioidaan yhdessä",
     
     "service.basic.title": "Perusikkunanpesu",
     "service.basic.1": "Sisä- ja ulkopinnat",
@@ -198,6 +213,21 @@ const translations: Record<Language, Record<string, string>> = {
     
     "services.title": "Services",
     "services.subtitle": "What we offer",
+    "services.promise": "All our services are covered by insurance and fully comply with Finnish law. The customer's interest comes first — not speed, not money. If a job takes longer than estimated, we finish it properly anyway. No extra charge for that.",
+
+    "service.gardening.title": "Yard & Garden Services",
+    "service.gardening.desc": "From lawns to trees — we keep your yard in shape.",
+    "service.gardening.1": "Lawn mowing",
+    "service.gardening.2": "Light trimming of shrubs and trees",
+    "service.gardening.3": "Yard tidying and raking",
+    "service.gardening.4": "Seasonal maintenance by agreement",
+
+    "service.painting.title": "Painting",
+    "service.painting.desc": "Interior and exterior painting done professionally.",
+    "service.painting.1": "Interior walls and ceilings",
+    "service.painting.2": "Exterior cladding and wooden surfaces",
+    "service.painting.3": "Window frames and trim",
+    "service.painting.4": "Request a quote – we'll assess together",
     
     "service.basic.title": "Basic Window Cleaning",
     "service.basic.1": "Interior and exterior surfaces",

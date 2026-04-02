@@ -2,7 +2,7 @@ import { Link } from "wouter";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowRight, Sparkles, Snowflake, Car, Building2, Check } from "lucide-react";
+import { ArrowRight, Sparkles, Snowflake, Car, Building2, Check, Leaf, PaintBucket, ShieldCheck } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 
 export default function ServicesPage() {
@@ -17,6 +17,13 @@ export default function ServicesPage() {
           </h1>
           <p className="text-lg text-muted-foreground max-w-xl mx-auto leading-relaxed">
             {t("services.subtitle")}
+          </p>
+        </div>
+
+        <div className="rounded-2xl bg-primary/5 border border-primary/10 p-5 md:p-6 mb-10 flex gap-4 items-start">
+          <ShieldCheck className="w-6 h-6 text-primary flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            {t("services.promise")}
           </p>
         </div>
 
@@ -142,6 +149,59 @@ export default function ServicesPage() {
                 <Link href="/tilaus">
                   <Button variant="outline" size="sm" className="text-orange-600 border-orange-300 hover:bg-orange-50 dark:text-orange-400 dark:border-orange-800 dark:hover:bg-orange-900/20">
                     {t("service.special.cta")}
+                    <ArrowRight className="w-4 h-4 ml-1" />
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          </Card>
+          <Card className="p-6 md:p-8 bg-card border-0 premium-shadow" data-testid="service-gardening">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-xl bg-lime-100 dark:bg-lime-900/30 flex items-center justify-center flex-shrink-0">
+                <Leaf className="w-6 h-6 text-lime-700 dark:text-lime-400" />
+              </div>
+              <div className="flex-1">
+                <h2 className="text-xl font-semibold text-foreground mb-2">
+                  {t("service.gardening.title")}
+                </h2>
+                <p className="text-muted-foreground mb-3">
+                  {t("service.gardening.desc")}
+                </p>
+                <ul className="space-y-2">
+                  {(["1","2","3","4"] as const).map((n) => (
+                    <li key={n} className="flex items-center gap-2 text-muted-foreground text-sm">
+                      <Check className="w-4 h-4 text-lime-700 dark:text-lime-400 flex-shrink-0" />
+                      <span>{t(`service.gardening.${n}` as any)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </Card>
+
+          <Card className="p-6 md:p-8 bg-card border-0 premium-shadow" data-testid="service-painting">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-xl bg-yellow-100 dark:bg-yellow-900/30 flex items-center justify-center flex-shrink-0">
+                <PaintBucket className="w-6 h-6 text-yellow-700 dark:text-yellow-400" />
+              </div>
+              <div className="flex-1">
+                <h2 className="text-xl font-semibold text-foreground mb-2">
+                  {t("service.painting.title")}
+                </h2>
+                <p className="text-muted-foreground mb-3">
+                  {t("service.painting.desc")}
+                </p>
+                <ul className="space-y-2 mb-4">
+                  {(["1","2","3"] as const).map((n) => (
+                    <li key={n} className="flex items-center gap-2 text-muted-foreground text-sm">
+                      <Check className="w-4 h-4 text-yellow-700 dark:text-yellow-400 flex-shrink-0" />
+                      <span>{t(`service.painting.${n}` as any)}</span>
+                    </li>
+                  ))}
+                </ul>
+                <Link href="/tilaus">
+                  <Button variant="outline" size="sm" className="text-yellow-700 border-yellow-300 hover:bg-yellow-50 dark:text-yellow-400 dark:border-yellow-800 dark:hover:bg-yellow-900/20">
+                    {t("service.painting.4")}
                     <ArrowRight className="w-4 h-4 ml-1" />
                   </Button>
                 </Link>

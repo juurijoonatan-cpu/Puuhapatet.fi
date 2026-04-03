@@ -44,22 +44,23 @@ export default function BookingPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("https://formsubmit.co/ajax/info@puuhapatet.fi", {
+      const res = await fetch("https://api.web3forms.com/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({
+          access_key:  "f70be445-1acf-4e5a-87f8-e27056edf67e",
+          subject:     `Uusi yhteydenotto: ${data.name}`,
+          from_name:   "Puuhapatet.fi",
           Nimi:        data.name,
           Puhelin:     data.phone,
           Sähköposti:  data.email || "—",
           Alue:        data.address,
           Kiireellisyys: data.urgency === "this_week" ? "Tällä viikolla" : data.urgency === "flexible" ? "Ei kiireellinen" : "—",
           Viesti:      data.message,
-          _subject:    `Uusi yhteydenotto: ${data.name}`,
-          _template:   "table",
-          _captcha:    "false",
         }),
       });
-      if (!res.ok) throw new Error("Lähetys epäonnistui");
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error("Lähetys epäonnistui");
       setSent(true);
     } catch {
       setError("Jotain meni pieleen. Soita suoraan: 0400 389 999");

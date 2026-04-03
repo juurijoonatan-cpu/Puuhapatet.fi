@@ -15,7 +15,7 @@ const translations: Record<Language, Record<string, string>> = {
     "nav.faq": "UKK",
     "nav.about": "Meistä",
     
-    "hero.pill": "Kevät on täällä — ikkunanpesu & pihatyöt ajankohtaisia",
+    "hero.pill": "Kevät on täällä!",
     "hero.title": "Ammattitaitoista ikkunanpesua",
     "hero.titleAccent": "sinun tarpeisiisi",
     "hero.subtitle": "Pesemme ikkunat sisältä ja ulkoa, parvekelasit ja lasiterassit — oikeilla välineillä ja hyväksi todetuilla tuotteilla. Raitatonta jälkeä, selkeä hinta.",

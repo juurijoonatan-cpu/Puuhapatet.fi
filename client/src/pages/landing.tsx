@@ -1,7 +1,7 @@
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { ArrowRight, Sparkles, Clock, Shield, Snowflake, Leaf, Car, PaintBucket, Shovel, CheckCircle2, CalendarCheck } from "lucide-react";
+import { ArrowRight, Sparkles, Clock, Shield, Snowflake, Leaf, Car, PaintBucket, Shovel } from "lucide-react";
 import { SiWhatsapp, SiInstagram } from "react-icons/si";
 import { Mail } from "lucide-react";
 import { Typewriter } from "@/components/typewriter";
@@ -58,59 +58,9 @@ export default function LandingPage() {
         
         <div className="container mx-auto px-4 md:px-6 relative z-10">
           <div className="max-w-3xl mx-auto text-center">
-            {/* Animated hero chips */}
-            <style>{`
-              @keyframes chipEnter {
-                from { opacity: 0; transform: translateY(14px) scale(0.95); }
-                to   { opacity: 1; transform: translateY(0)    scale(1); }
-              }
-              @keyframes chipFloat {
-                0%, 100% { transform: translateY(0px); }
-                50%       { transform: translateY(-4px); }
-              }
-              @keyframes seasonPulse {
-                0%, 100% { box-shadow: 0 0 0 0 rgba(var(--primary-rgb, 49,123,34), 0.18); }
-                60%       { box-shadow: 0 0 0 8px rgba(var(--primary-rgb, 49,123,34), 0); }
-              }
-              .chip-enter {
-                animation: chipEnter 0.5s cubic-bezier(.22,.68,0,1.2) both,
-                           chipFloat 4s ease-in-out infinite;
-              }
-              .season-pill {
-                animation: chipEnter 0.45s cubic-bezier(.22,.68,0,1.2) both,
-                           seasonPulse 3s ease-in-out 1s infinite;
-              }
-            `}</style>
-
-            <div className="flex flex-col items-center gap-3 mb-7">
-              {/* Seasonal top pill */}
-              <div
-                className="season-pill inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 border border-primary/20 text-primary text-sm font-medium"
-                style={{ animationDelay: "0ms, 600ms" }}
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>{seasonalPill}</span>
-              </div>
-
-              {/* Trust chips row */}
-              <div className="flex flex-wrap justify-center gap-2">
-                {trustChips.map((chip, i) => {
-                  const Icon = chip.icon;
-                  return (
-                    <div
-                      key={i}
-                      className="chip-enter inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-card border border-border text-muted-foreground text-xs font-medium premium-shadow"
-                      style={{
-                        animationDelay: `${(i + 1) * 120}ms, ${(i + 1) * 120 + 800}ms`,
-                        animationDuration: "0.5s, 3.8s",
-                      }}
-                    >
-                      <Icon className="w-3 h-3 text-primary" />
-                      <span>{chip.label}</span>
-                    </div>
-                  );
-                })}
-              </div>
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium mb-6">
+              <Sparkles className="w-4 h-4" />
+              <span>{t("hero.pill")}</span>
             </div>
             
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-semibold text-foreground leading-tight mb-4 text-balance">

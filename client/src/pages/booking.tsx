@@ -49,6 +49,7 @@ export default function BookingPage() {
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({
           access_key:  "f70be445-1acf-4e5a-87f8-e27056edf67e",
+          botcheck:    false,
           subject:     `Uusi yhteydenotto: ${data.name}`,
           from_name:   "Puuhapatet.fi",
           Nimi:        data.name,

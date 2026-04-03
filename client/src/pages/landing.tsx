@@ -26,6 +26,19 @@ export default function LandingPage() {
   const month = new Date().getMonth(); // 0 = Jan, 11 = Dec
   const isWinter = month >= 10 || month <= 1; // Nov–Feb
 
+  const seasonalPill = (() => {
+    if (month >= 2 && month <= 4) return "Kevät on täällä — ikkunat ja piha kuntoon";
+    if (month >= 5 && month <= 8) return "Kesä on parasta aikaa — tilaa helposti";
+    if (month >= 9 && month <= 10) return "Syksy tulossa — piha kuntoon ennen talvea";
+    return "Talvipalvelut nyt saatavilla";
+  })();
+
+  const trustChips = [
+    { icon: CalendarCheck, label: "Joustava aikataulu" },
+    { icon: Shield,        label: "Luotettava kumppani" },
+    { icon: CheckCircle2,  label: "Vakuutettu työ" },
+  ];
+
   const seasonalServices = isWinter
     ? [
         { icon: Snowflake, titleKey: "service.talvikiilto.title", descKey: "service.talvikiilto.desc", color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-500/10" },

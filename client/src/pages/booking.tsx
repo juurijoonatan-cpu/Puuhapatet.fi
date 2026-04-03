@@ -19,11 +19,12 @@ import {
 import { useI18n } from "@/lib/i18n";
 
 const schema = z.object({
-  name:    z.string().min(2,  "Nimi on pakollinen"),
-  phone:   z.string().min(6,  "Puhelinnumero on pakollinen"),
-  email:   z.string().email("Virheellinen sähköposti").or(z.literal("")),
-  address: z.string().min(2,  "Osoite tai alue on pakollinen"),
-  message: z.string().min(5,  "Kerro lyhyesti mitä tarvitset"),
+  name:      z.string().min(2,  "Nimi on pakollinen"),
+  phone:     z.string().min(6,  "Puhelinnumero on pakollinen"),
+  email:     z.string().email("Virheellinen sähköposti").or(z.literal("")),
+  address:   z.string().min(2,  "Osoite tai alue on pakollinen"),
+  message:   z.string().min(5,  "Kerro lyhyesti mitä tarvitset"),
+  urgency:   z.enum(["this_week", "flexible"]).optional(),
 });
 
 type FormData = z.infer<typeof schema>;
@@ -36,7 +37,7 @@ export default function BookingPage() {
 
   const form = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { name: "", phone: "", email: "", address: "", message: "" },
+    defaultValues: { name: "", phone: "", email: "", address: "", message: "", urgency: undefined },
   });
 
   const onSubmit = async (data: FormData) => {
@@ -51,6 +52,7 @@ export default function BookingPage() {
           Puhelin:     data.phone,
           Sähköposti:  data.email || "—",
           Alue:        data.address,
+          Kiireellisyys: data.urgency === "this_week" ? "Tällä viikolla" : data.urgency === "flexible" ? "Ei kiireellinen" : "—",
           Viesti:      data.message,
           _subject:    `Uusi yhteydenotto: ${data.name}`,
           _template:   "table",
@@ -148,6 +150,31 @@ export default function BookingPage() {
                 </FormItem>
               )} />
 
+              <FormField control={form.control} name="urgency" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Kiireellisyys <span className="text-muted-foreground font-normal">(vapaaehtoinen)</span></FormLabel>
+                  <div className="grid grid-cols-2 gap-3 mt-1">
+                    {([
+                      { value: "this_week", label: "Tällä viikolla" },
+                      { value: "flexible",  label: "Ei kiireellinen" },
+                    ] as const).map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => field.onChange(field.value === opt.value ? undefined : opt.value)}
+                        className={`py-2.5 px-4 rounded-xl border text-sm font-medium transition-all ${
+                          field.value === opt.value
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-border bg-background text-muted-foreground hover:border-primary/50"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </FormItem>
+              )} />
+
               <FormField control={form.control} name="message" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Mitä tarvitset? *</FormLabel>
@@ -167,20 +194,21 @@ export default function BookingPage() {
                 <p className="text-sm text-destructive text-center">{error}</p>
               )}
 
-              <Button type="submit" size="lg" className="w-full" disabled={loading}>
-                {loading ? (
-                  <><Loader2 className="w-5 h-5 mr-2 animate-spin" /> Lähetetään...</>
-                ) : (
-                  <><Send className="w-5 h-5 mr-2" /> {t("form.submit")}</>
-                )}
-              </Button>
-
-              <p className="text-center text-xs text-muted-foreground">
-                Tai soita suoraan:{" "}
-                <a href="tel:+358400389999" className="font-medium text-foreground hover:underline">
-                  0400 389 999
-                </a>
-              </p>
+              <div className="pt-2 space-y-3">
+                <Button type="submit" size="lg" className="w-full h-14 text-base font-semibold rounded-2xl" disabled={loading}>
+                  {loading ? (
+                    <><Loader2 className="w-5 h-5 mr-2 animate-spin" /> Lähetetään...</>
+                  ) : (
+                    <><Send className="w-4 h-4 mr-2" /> Lähetä viesti</>
+                  )}
+                </Button>
+                <p className="text-center text-xs text-muted-foreground">
+                  Tai soita:{" "}
+                  <a href="tel:+358400389999" className="font-medium text-foreground hover:underline">
+                    0400 389 999
+                  </a>
+                </p>
+              </div>
             </form>
           </Form>
         </Card>

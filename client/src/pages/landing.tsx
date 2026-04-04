@@ -235,6 +235,11 @@ export default function LandingPage() {
                   Sopimusehdot
                 </span>
               </Link>
+              <Link href="/tietosuoja">
+                <span className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
+                  Tietosuoja
+                </span>
+              </Link>
               <Link href="/admin/login">
                 <span className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
                   {t("footer.admin")}

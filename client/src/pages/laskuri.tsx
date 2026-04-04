@@ -5,165 +5,254 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowRight, Minus, Plus, Send, Loader2, CheckCircle2, Info } from "lucide-react";
 
-// ─── SVG illustrations ────────────────────────────────────────────────────────
+// ─── SVG illustrations — blue glass, shine lines, handles ────────────────────
+// Glass color constant — light blue used throughout
+const G = "#bfdbfe"; // glass fill
+const G2 = "#dbeafe"; // lighter glass
+const FR = "#f1f5f9"; // frame fill (light)
+const shine = (x1: number, y1: number, x2: number, y2: number, k: number) =>
+  <line key={k} x1={x1} y1={y1} x2={x2} y2={y2} stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeOpacity=".75"/>;
 
+// 2-pintainen ikkuna — two side-by-side panes, front view
 const Svg2Pin = () => (
-  <svg viewBox="0 0 72 60" fill="none" className="w-full h-full">
-    <rect x="4" y="4" width="64" height="52" rx="3" stroke="currentColor" strokeWidth="2.5"/>
-    <rect x="10" y="10" width="23" height="40" rx="1" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity=".06"/>
-    <rect x="39" y="10" width="23" height="40" rx="1" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity=".06"/>
-    <line x1="36" y1="10" x2="36" y2="50" stroke="currentColor" strokeWidth="2"/>
+  <svg viewBox="0 0 84 70" fill="none" className="w-full h-full">
+    <rect x="2" y="2" width="80" height="66" rx="3" fill={FR} stroke="currentColor" strokeWidth="2.5"/>
+    <rect x="7" y="7" width="32" height="56" rx="1" fill={G} stroke="currentColor" strokeWidth="1.8"/>
+    <rect x="45" y="7" width="32" height="56" rx="1" fill={G} stroke="currentColor" strokeWidth="1.8"/>
+    <rect x="39" y="2" width="6" height="66" fill={FR} stroke="currentColor" strokeWidth="1"/>
+    {shine(13,11,24,22,0)}{shine(18,11,29,22,1)}
+    {shine(51,11,62,22,2)}{shine(56,11,67,22,3)}
   </svg>
 );
 
+// Tuuletusikkuna kahvalla — main pane + small top vent with handle
 const SvgVentilation = () => (
-  <svg viewBox="0 0 72 60" fill="none" className="w-full h-full">
-    <rect x="4" y="4" width="64" height="52" rx="3" stroke="currentColor" strokeWidth="2.5"/>
-    <rect x="10" y="10" width="52" height="28" rx="1" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity=".06"/>
-    <line x1="36" y1="10" x2="36" y2="38" stroke="currentColor" strokeWidth="1.5"/>
-    <rect x="10" y="42" width="52" height="10" rx="1" stroke="currentColor" strokeWidth="1.5"/>
-    <circle cx="36" cy="47" r="2.5" fill="currentColor"/>
+  <svg viewBox="0 0 72 72" fill="none" className="w-full h-full">
+    <rect x="2" y="2" width="68" height="68" rx="3" fill={FR} stroke="currentColor" strokeWidth="2.5"/>
+    <rect x="7" y="7" width="58" height="40" rx="1" fill={G} stroke="currentColor" strokeWidth="1.8"/>
+    <rect x="7" y="52" width="58" height="13" rx="1" fill={G2} stroke="currentColor" strokeWidth="1.8"/>
+    <line x1="7" y1="51" x2="65" y2="51" stroke="currentColor" strokeWidth="2"/>
+    <rect x="32" y="55" width="8" height="4" rx="1" fill="currentColor" fillOpacity=".5"/>
+    {shine(13,11,22,20,0)}{shine(18,11,27,20,1)}{shine(23,11,32,20,2)}
   </svg>
 );
 
+// Avautuva 4-pintainen — casement window open to left, frame depth visible
 const Svg4Pin = () => (
-  <svg viewBox="0 0 72 60" fill="none" className="w-full h-full">
-    <rect x="4" y="4" width="64" height="52" rx="3" stroke="currentColor" strokeWidth="2.5"/>
-    <rect x="10" y="10" width="52" height="40" rx="1" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity=".06"/>
-    <line x1="36" y1="10" x2="36" y2="50" stroke="currentColor" strokeWidth="1.5"/>
-    <line x1="10" y1="30" x2="62" y2="30" stroke="currentColor" strokeWidth="1.5"/>
-    <circle cx="38" cy="30" r="2.5" fill="currentColor"/>
-    <path d="M20 20 L28 26" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+  <svg viewBox="0 0 84 76" fill="none" className="w-full h-full">
+    {/* Fixed outer frame */}
+    <rect x="2" y="2" width="60" height="72" rx="3" fill={FR} stroke="currentColor" strokeWidth="2.5"/>
+    {/* Right-side depth (frame thickness) */}
+    <path d="M62 2 L80 8 L80 66 L62 72 Z" fill={FR} stroke="currentColor" strokeWidth="1.5"/>
+    <line x1="71" y1="5" x2="71" y2="69" stroke="currentColor" strokeWidth="1"/>
+    {/* Glass pane */}
+    <rect x="8" y="8" width="48" height="60" rx="1" fill={G} stroke="currentColor" strokeWidth="1.8"/>
+    {/* Handle */}
+    <rect x="52" y="32" width="5" height="12" rx="2" fill="currentColor" fillOpacity=".6"/>
+    <rect x="54" y="35" width="6" height="6" rx="1" fill={FR} stroke="currentColor" strokeWidth="1"/>
+    {shine(14,13,26,25,0)}{shine(20,13,32,25,1)}{shine(26,13,38,25,2)}{shine(32,13,44,25,3)}{shine(38,13,50,25,4)}
   </svg>
 );
 
+// Avautuva 6-pintainen — double casement, both sashes visible open
 const Svg6Pin = () => (
-  <svg viewBox="0 0 72 60" fill="none" className="w-full h-full">
-    <rect x="4" y="4" width="64" height="52" rx="3" stroke="currentColor" strokeWidth="2.5"/>
-    <line x1="28" y1="4" x2="28" y2="56" stroke="currentColor" strokeWidth="2"/>
-    <line x1="44" y1="4" x2="44" y2="56" stroke="currentColor" strokeWidth="2"/>
-    <rect x="10" y="10" width="14" height="40" rx="1" stroke="currentColor" strokeWidth="1" fill="currentColor" fillOpacity=".06"/>
-    <rect x="30" y="10" width="12" height="40" rx="1" stroke="currentColor" strokeWidth="1" fill="currentColor" fillOpacity=".06"/>
-    <rect x="48" y="10" width="14" height="40" rx="1" stroke="currentColor" strokeWidth="1" fill="currentColor" fillOpacity=".06"/>
-    <line x1="10" y1="30" x2="62" y2="30" stroke="currentColor" strokeWidth="1.5"/>
-    <circle cx="30" cy="30" r="2" fill="currentColor"/>
+  <svg viewBox="0 0 96 76" fill="none" className="w-full h-full">
+    {/* Fixed frame */}
+    <rect x="2" y="2" width="92" height="72" rx="3" fill={FR} stroke="currentColor" strokeWidth="2.5"/>
+    {/* Left sash */}
+    <rect x="7" y="7" width="37" height="62" rx="1" fill={G} stroke="currentColor" strokeWidth="1.8"/>
+    {/* Right sash */}
+    <rect x="52" y="7" width="37" height="62" rx="1" fill={G} stroke="currentColor" strokeWidth="1.8"/>
+    {/* Center divider */}
+    <rect x="44" y="2" width="8" height="72" fill={FR} stroke="currentColor" strokeWidth="1"/>
+    {/* Left handle */}
+    <rect x="40" y="31" width="4" height="14" rx="2" fill="currentColor" fillOpacity=".55"/>
+    {/* Right handle */}
+    <rect x="52" y="31" width="4" height="14" rx="2" fill="currentColor" fillOpacity=".55"/>
+    {shine(11,11,20,20,0)}{shine(16,11,25,20,1)}{shine(21,11,30,20,2)}
+    {shine(56,11,65,20,3)}{shine(61,11,70,20,4)}{shine(66,11,75,20,5)}
   </svg>
 );
 
-const SvgBalcony = () => (
-  <svg viewBox="0 0 72 60" fill="none" className="w-full h-full">
-    <line x1="4" y1="6" x2="68" y2="6" stroke="currentColor" strokeWidth="3"/>
-    <line x1="4" y1="54" x2="68" y2="54" stroke="currentColor" strokeWidth="3"/>
-    <rect x="6" y="6" width="15" height="48" rx="1" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity=".06"/>
-    <rect x="24" y="6" width="11" height="48" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity=".08"/>
-    <rect x="38" y="6" width="11" height="48" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity=".08"/>
-    <rect x="52" y="6" width="15" height="48" rx="1" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity=".06"/>
-    <path d="M26 22 L22 30" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-  </svg>
-);
-
-const SvgTerrace = () => (
-  <svg viewBox="0 0 80 52" fill="none" className="w-full h-full">
-    <line x1="2" y1="5" x2="78" y2="5" stroke="currentColor" strokeWidth="3"/>
-    <line x1="2" y1="48" x2="78" y2="48" stroke="currentColor" strokeWidth="3"/>
-    <rect x="4" y="5" width="17" height="43" rx="1" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity=".06"/>
-    <rect x="23" y="5" width="16" height="43" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity=".08"/>
-    <rect x="41" y="5" width="16" height="43" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity=".08"/>
-    <rect x="59" y="5" width="17" height="43" rx="1" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity=".06"/>
-  </svg>
-);
-
-const SvgRailing = () => (
-  <svg viewBox="0 0 80 52" fill="none" className="w-full h-full">
-    <rect x="4" y="14" width="72" height="30" rx="2" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity=".06"/>
-    <line x1="2" y1="12" x2="78" y2="12" stroke="currentColor" strokeWidth="4"/>
-    <line x1="2" y1="46" x2="78" y2="46" stroke="currentColor" strokeWidth="4"/>
-    <line x1="21" y1="12" x2="21" y2="46" stroke="currentColor" strokeWidth="1.5"/>
-    <line x1="40" y1="12" x2="40" y2="46" stroke="currentColor" strokeWidth="1.5"/>
-    <line x1="59" y1="12" x2="59" y2="46" stroke="currentColor" strokeWidth="1.5"/>
-  </svg>
-);
-
+// Ruudukkoikkunat — 3×3 grid of small panes
 const SvgGrid = () => (
-  <svg viewBox="0 0 72 60" fill="none" className="w-full h-full">
-    <rect x="4" y="4" width="64" height="52" rx="3" stroke="currentColor" strokeWidth="2.5"/>
-    <line x1="28" y1="4" x2="28" y2="56" stroke="currentColor" strokeWidth="1.5"/>
-    <line x1="44" y1="4" x2="44" y2="56" stroke="currentColor" strokeWidth="1.5"/>
-    <line x1="4" y1="23" x2="68" y2="23" stroke="currentColor" strokeWidth="1.5"/>
-    <line x1="4" y1="37" x2="68" y2="37" stroke="currentColor" strokeWidth="1.5"/>
-    <rect x="8" y="8" width="16" height="11" fill="currentColor" fillOpacity=".07"/>
-    <rect x="30" y="8" width="10" height="11" fill="currentColor" fillOpacity=".07"/>
-    <rect x="46" y="8" width="18" height="11" fill="currentColor" fillOpacity=".07"/>
-    <rect x="8" y="27" width="16" height="6" fill="currentColor" fillOpacity=".07"/>
-    <rect x="30" y="27" width="10" height="6" fill="currentColor" fillOpacity=".07"/>
-    <rect x="46" y="27" width="18" height="6" fill="currentColor" fillOpacity=".07"/>
-  </svg>
-);
-
-const SvgMirror = () => (
-  <svg viewBox="0 0 72 60" fill="none" className="w-full h-full">
-    <rect x="14" y="4" width="44" height="48" rx="4" stroke="currentColor" strokeWidth="2.5" fill="currentColor" fillOpacity=".06"/>
-    <rect x="20" y="10" width="32" height="36" rx="2" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity=".1"/>
-    <path d="M26 24 Q28 20 32 22" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
-    <circle cx="36" cy="18" r="3" stroke="currentColor" strokeWidth="1.5"/>
-    <line x1="28" y1="52" x2="44" y2="52" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
-  </svg>
-);
-
-const SvgDoor = () => (
-  <svg viewBox="0 0 72 60" fill="none" className="w-full h-full">
-    <rect x="16" y="4" width="40" height="52" rx="3" stroke="currentColor" strokeWidth="2.5" fill="currentColor" fillOpacity=".06"/>
-    <rect x="22" y="10" width="28" height="20" rx="1" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity=".08"/>
-    <rect x="22" y="34" width="28" height="16" rx="1" stroke="currentColor" strokeWidth="1.5"/>
-    <circle cx="50" cy="32" r="2.5" fill="currentColor"/>
-  </svg>
-);
-
-const SvgPole = () => (
-  <svg viewBox="0 0 72 60" fill="none" className="w-full h-full">
-    <rect x="4" y="6" width="40" height="40" rx="3" stroke="currentColor" strokeWidth="2"/>
-    <rect x="10" y="12" width="28" height="28" rx="1" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity=".06"/>
-    <line x1="46" y1="6" x2="46" y2="46" stroke="currentColor" strokeWidth="1.5"/>
-    <line x1="44" y1="22" x2="68" y2="14" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-    <rect x="62" y="8" width="7" height="10" rx="2" stroke="currentColor" strokeWidth="1.5"/>
-    <line x1="44" y1="30" x2="60" y2="26" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeDasharray="3 2"/>
-  </svg>
-);
-
-const SvgBathroom = () => (
-  <svg viewBox="0 0 72 60" fill="none" className="w-full h-full">
-    <rect x="10" y="4" width="24" height="52" rx="2" stroke="currentColor" strokeWidth="2" fill="currentColor" fillOpacity=".06"/>
-    <rect x="38" y="4" width="24" height="52" rx="2" stroke="currentColor" strokeWidth="2" fill="currentColor" fillOpacity=".06"/>
-    <line x1="34" y1="4" x2="38" y2="4" stroke="currentColor" strokeWidth="2"/>
-    <line x1="34" y1="56" x2="38" y2="56" stroke="currentColor" strokeWidth="2"/>
-    <line x1="34" y1="4" x2="34" y2="56" stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 3"/>
-    <circle cx="36" cy="30" r="2.5" fill="currentColor"/>
-  </svg>
-);
-
-const SvgBlinds = () => (
-  <svg viewBox="0 0 72 60" fill="none" className="w-full h-full">
-    <rect x="4" y="4" width="64" height="52" rx="3" stroke="currentColor" strokeWidth="2"/>
-    {[14, 22, 30, 38, 46].map(y => (
-      <rect key={y} x="10" y={y} width="52" height="5" rx="1" stroke="currentColor" strokeWidth="1" fill="currentColor" fillOpacity=".12"/>
+  <svg viewBox="0 0 78 72" fill="none" className="w-full h-full">
+    <rect x="2" y="2" width="74" height="68" rx="3" fill={FR} stroke="currentColor" strokeWidth="2.5"/>
+    {/* Vertical dividers */}
+    <line x1="28" y1="2" x2="28" y2="70" stroke="currentColor" strokeWidth="2.5"/>
+    <line x1="50" y1="2" x2="50" y2="70" stroke="currentColor" strokeWidth="2.5"/>
+    {/* Horizontal dividers */}
+    <line x1="2" y1="27" x2="76" y2="27" stroke="currentColor" strokeWidth="2.5"/>
+    <line x1="2" y1="48" x2="76" y2="48" stroke="currentColor" strokeWidth="2.5"/>
+    {/* All 9 panes */}
+    {[[7,7,17,16],[31,7,15,16],[54,7,18,16],
+      [7,31,17,13],[31,31,15,13],[54,31,18,13],
+      [7,52,17,14],[31,52,15,14],[54,52,18,14]].map(([x,y,w,h],i) => (
+      <rect key={i} x={x} y={y} width={w} height={h} fill={G} stroke="currentColor" strokeWidth="1"/>
     ))}
-    <line x1="36" y1="4" x2="36" y2="14" stroke="currentColor" strokeWidth="1.5"/>
-    <line x1="30" y1="4" x2="30" y2="14" stroke="currentColor" strokeWidth="1.5"/>
-    <line x1="42" y1="4" x2="42" y2="14" stroke="currentColor" strokeWidth="1.5"/>
   </svg>
 );
 
+// Parvekelasit — folding accordion balcony glass panels
+const SvgBalcony = () => (
+  <svg viewBox="0 0 90 66" fill="none" className="w-full h-full">
+    <line x1="2" y1="5" x2="88" y2="5" stroke="currentColor" strokeWidth="3.5"/>
+    <line x1="2" y1="61" x2="88" y2="61" stroke="currentColor" strokeWidth="3.5"/>
+    {/* Panel 1 — slightly angled (open) */}
+    <path d="M6 5 L18 8 L18 58 L6 61 Z" fill={G} stroke="currentColor" strokeWidth="1.8"/>
+    {/* Panel 2 */}
+    <rect x="18" y="5" width="16" height="56" fill={G2} stroke="currentColor" strokeWidth="1.8"/>
+    {/* Panel 3 */}
+    <rect x="36" y="5" width="16" height="56" fill={G} stroke="currentColor" strokeWidth="1.8"/>
+    {/* Panel 4 */}
+    <rect x="54" y="5" width="16" height="56" fill={G2} stroke="currentColor" strokeWidth="1.8"/>
+    {/* Panel 5 — angled edge */}
+    <path d="M70 5 L84 8 L84 58 L70 61 Z" fill={G} stroke="currentColor" strokeWidth="1.8"/>
+    {/* Open arrow hint */}
+    <path d="M22 28 L28 33 L22 38" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+  </svg>
+);
+
+// Terassilasit — wide sliding terrace glass
+const SvgTerrace = () => (
+  <svg viewBox="0 0 96 58" fill="none" className="w-full h-full">
+    <line x1="2" y1="4" x2="94" y2="4" stroke="currentColor" strokeWidth="3.5"/>
+    <line x1="2" y1="54" x2="94" y2="54" stroke="currentColor" strokeWidth="3.5"/>
+    <rect x="4" y="4" width="20" height="50" fill={G} stroke="currentColor" strokeWidth="2"/>
+    <rect x="26" y="4" width="20" height="50" fill={G2} stroke="currentColor" strokeWidth="2"/>
+    <rect x="48" y="4" width="20" height="50" fill={G} stroke="currentColor" strokeWidth="2"/>
+    <rect x="70" y="4" width="22" height="50" fill={G2} stroke="currentColor" strokeWidth="2"/>
+    {/* Sliding arrows */}
+    <path d="M30 25 L36 29 L30 33" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+    <path d="M66 25 L60 29 L66 33" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+    {shine(8,8,16,16,0)}{shine(50,8,58,16,1)}
+  </svg>
+);
+
+// Lasikaide — glass railing with handrail and floor mount
+const SvgRailing = () => (
+  <svg viewBox="0 0 88 58" fill="none" className="w-full h-full">
+    {/* Top rail */}
+    <rect x="2" y="6" width="84" height="6" rx="3" fill={FR} stroke="currentColor" strokeWidth="2"/>
+    {/* Glass panel */}
+    <rect x="6" y="12" width="76" height="32" fill={G} stroke="currentColor" strokeWidth="1.5"/>
+    {/* Bottom mount */}
+    <rect x="2" y="44" width="84" height="7" rx="2" fill={FR} stroke="currentColor" strokeWidth="2"/>
+    {/* Vertical posts */}
+    <rect x="6" y="6" width="4" height="45" fill={FR} stroke="currentColor" strokeWidth="1.5"/>
+    <rect x="78" y="6" width="4" height="45" fill={FR} stroke="currentColor" strokeWidth="1.5"/>
+    {shine(14,16,28,28,0)}{shine(22,16,36,28,1)}{shine(30,16,44,28,2)}
+  </svg>
+);
+
+// Pesu jatkovarrella — window + long extension pole from outside
+const SvgPole = () => (
+  <svg viewBox="0 0 84 72" fill="none" className="w-full h-full">
+    {/* Wall section */}
+    <rect x="2" y="2" width="52" height="62" rx="2" fill="#f8fafc" stroke="currentColor" strokeWidth="2"/>
+    {/* Window opening */}
+    <rect x="8" y="8" width="40" height="50" rx="1" fill={G} stroke="currentColor" strokeWidth="1.8"/>
+    {/* Window frame cross */}
+    <line x1="28" y1="8" x2="28" y2="58" stroke="currentColor" strokeWidth="1.5"/>
+    <line x1="8" y1="33" x2="48" y2="33" stroke="currentColor" strokeWidth="1.5"/>
+    {/* Extension pole */}
+    <line x1="56" y1="68" x2="66" y2="10" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
+    {/* Squeegee head */}
+    <rect x="60" y="6" width="14" height="7" rx="2" fill={FR} stroke="currentColor" strokeWidth="2"/>
+    <line x1="60" y1="9.5" x2="74" y2="9.5" stroke="currentColor" strokeWidth="1.5"/>
+    {shine(12,12,20,20,0)}{shine(32,12,40,20,1)}
+  </svg>
+);
+
+// Peili — rectangular mirror with thick frame, diagonal shine
+const SvgMirror = () => (
+  <svg viewBox="0 0 72 72" fill="none" className="w-full h-full">
+    {/* Outer frame */}
+    <rect x="8" y="4" width="56" height="60" rx="4" fill={FR} stroke="currentColor" strokeWidth="3"/>
+    {/* Mirror glass */}
+    <rect x="16" y="12" width="40" height="44" rx="1" fill="#e0f2fe" stroke="currentColor" strokeWidth="1.5"/>
+    {/* Shine diagonals — more prominent for mirror */}
+    <line x1="22" y1="16" x2="44" y2="38" stroke="white" strokeWidth="3" strokeOpacity=".8" strokeLinecap="round"/>
+    <line x1="30" y1="16" x2="52" y2="38" stroke="white" strokeWidth="2" strokeOpacity=".6" strokeLinecap="round"/>
+    <line x1="22" y1="24" x2="34" y2="36" stroke="white" strokeWidth="1.5" strokeOpacity=".5" strokeLinecap="round"/>
+    {/* Wall mount bracket */}
+    <line x1="28" y1="64" x2="44" y2="64" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+  </svg>
+);
+
+// Ovi — glass door with frame, upper glass panel, handle
+const SvgDoor = () => (
+  <svg viewBox="0 0 66 80" fill="none" className="w-full h-full">
+    {/* Door frame */}
+    <rect x="2" y="2" width="62" height="76" rx="3" fill={FR} stroke="currentColor" strokeWidth="2.5"/>
+    {/* Upper glass panel */}
+    <rect x="10" y="8" width="46" height="34" rx="1" fill={G} stroke="currentColor" strokeWidth="1.8"/>
+    {/* Lower panel */}
+    <rect x="10" y="48" width="46" height="24" rx="1" fill={FR} stroke="currentColor" strokeWidth="1.5"/>
+    {/* Horizontal cross in lower panel */}
+    <line x1="10" y1="60" x2="56" y2="60" stroke="currentColor" strokeWidth="1"/>
+    <line x1="33" y1="48" x2="33" y2="72" stroke="currentColor" strokeWidth="1"/>
+    {/* Handle */}
+    <rect x="46" y="36" width="6" height="12" rx="3" fill="currentColor" fillOpacity=".55"/>
+    <rect x="44" y="43" width="10" height="4" rx="2" fill={FR} stroke="currentColor" strokeWidth="1.2"/>
+    {shine(15,12,26,23,0)}{shine(21,12,32,23,1)}{shine(27,12,38,23,2)}
+  </svg>
+);
+
+// Kylpyhuoneen lasi — frameless shower glass panel(s)
+const SvgBathroom = () => (
+  <svg viewBox="0 0 80 72" fill="none" className="w-full h-full">
+    {/* Wall bar */}
+    <rect x="2" y="2" width="8" height="68" rx="2" fill={FR} stroke="currentColor" strokeWidth="2"/>
+    {/* Fixed panel */}
+    <rect x="12" y="4" width="26" height="64" rx="1" fill={G} stroke="currentColor" strokeWidth="1.8"/>
+    {/* Hinged door panel (slightly open) */}
+    <path d="M40 4 L68 8 L68 64 L40 68 Z" fill={G2} stroke="currentColor" strokeWidth="1.8"/>
+    {/* Hinge dots */}
+    <circle cx="40" cy="18" r="2.5" fill="currentColor" fillOpacity=".5"/>
+    <circle cx="40" cy="54" r="2.5" fill="currentColor" fillOpacity=".5"/>
+    {/* Handle on door */}
+    <rect x="62" y="32" width="4" height="10" rx="2" fill="currentColor" fillOpacity=".5"/>
+    {shine(16,8,24,16,0)}{shine(44,10,54,20,1)}
+  </svg>
+);
+
+// Sälekaihdinten puhdistus — window with horizontal slat blinds
+const SvgBlinds = () => (
+  <svg viewBox="0 0 78 70" fill="none" className="w-full h-full">
+    <rect x="2" y="2" width="74" height="66" rx="3" fill={FR} stroke="currentColor" strokeWidth="2.5"/>
+    {/* Pull cord at top */}
+    <line x1="28" y1="2" x2="28" y2="10" stroke="currentColor" strokeWidth="1.5"/>
+    <line x1="38" y1="2" x2="38" y2="10" stroke="currentColor" strokeWidth="1.5"/>
+    <line x1="48" y1="2" x2="48" y2="10" stroke="currentColor" strokeWidth="1.5"/>
+    {/* Valance bar */}
+    <rect x="7" y="10" width="64" height="5" rx="1" fill={FR} stroke="currentColor" strokeWidth="1.5"/>
+    {/* Slats */}
+    {[18,26,34,42,50,58].map(y => (
+      <rect key={y} x="7" y={y} width="64" height="5" rx="1"
+        fill="#e0e7ef" stroke="currentColor" strokeWidth="1.2"/>
+    ))}
+  </svg>
+);
+
+// Avautuva ikkuna 3–5 m — window up high + step ladder beside it
 const SvgHighWindow = () => (
-  <svg viewBox="0 0 72 60" fill="none" className="w-full h-full">
-    <rect x="22" y="4" width="30" height="36" rx="2" stroke="currentColor" strokeWidth="2"/>
-    <rect x="28" y="10" width="18" height="24" rx="1" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity=".06"/>
-    <line x1="37" y1="10" x2="37" y2="34" stroke="currentColor" strokeWidth="1.5"/>
-    <line x1="8" y1="56" x2="16" y2="40" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-    <line x1="20" y1="56" x2="16" y2="40" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-    <line x1="8" y1="56" x2="20" y2="56" stroke="currentColor" strokeWidth="2"/>
-    <line x1="10" y1="50" x2="18" y2="50" stroke="currentColor" strokeWidth="1.5"/>
-    <line x1="11" y1="44" x2="19" y2="44" stroke="currentColor" strokeWidth="1.5"/>
-    <line x1="16" y1="40" x2="16" y2="56" stroke="currentColor" strokeWidth="1.5"/>
+  <svg viewBox="0 0 84 76" fill="none" className="w-full h-full">
+    {/* Window */}
+    <rect x="28" y="2" width="48" height="44" rx="3" fill={FR} stroke="currentColor" strokeWidth="2.5"/>
+    <rect x="34" y="8" width="36" height="32" rx="1" fill={G} stroke="currentColor" strokeWidth="1.8"/>
+    <line x1="52" y1="8" x2="52" y2="40" stroke="currentColor" strokeWidth="1.5"/>
+    {/* Handle */}
+    <rect x="49" y="22" width="5" height="9" rx="2" fill="currentColor" fillOpacity=".5"/>
+    {/* Step ladder */}
+    <line x1="6" y1="74" x2="20" y2="4" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
+    <line x1="24" y1="74" x2="18" y2="20" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
+    <line x1="7" y1="68" x2="23" y2="68" stroke="currentColor" strokeWidth="2"/>
+    <line x1="9" y1="58" x2="22" y2="58" stroke="currentColor" strokeWidth="2"/>
+    <line x1="11" y1="48" x2="21" y2="48" stroke="currentColor" strokeWidth="2"/>
+    <line x1="13" y1="38" x2="20" y2="38" stroke="currentColor" strokeWidth="2"/>
+    <line x1="15" y1="28" x2="19" y2="28" stroke="currentColor" strokeWidth="1.5"/>
+    {shine(38,11,46,19,0)}{shine(43,11,51,19,1)}
   </svg>
 );
 

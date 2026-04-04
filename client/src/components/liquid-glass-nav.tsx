@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Home, Grid3X3, HelpCircle, Users } from "lucide-react";
+import { Home, Grid3X3, HelpCircle, Users, Calculator } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -12,6 +12,7 @@ interface NavItem {
 const publicNavItems: NavItem[] = [
   { icon: Home, labelKey: "nav.home", href: "/" },
   { icon: Grid3X3, labelKey: "nav.services", href: "/palvelut" },
+  { icon: Calculator, labelKey: "nav.calculator", href: "/laskuri" },
   { icon: HelpCircle, labelKey: "nav.faq", href: "/ukk" },
   { icon: Users, labelKey: "nav.about", href: "/meista" },
 ];

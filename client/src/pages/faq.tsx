@@ -70,6 +70,11 @@ export default function FAQPage() {
               <ArrowRight className="w-5 h-5 ml-2" />
             </Button>
           </Link>
+          <p className="text-xs text-muted-foreground mt-4">
+            <Link href="/ehdot">
+              <span className="underline underline-offset-2 hover:text-foreground transition-colors cursor-pointer">Sopimusehdot ja vakuutustiedot</span>
+            </Link>
+          </p>
         </div>
       </div>
     </div>

@@ -14,6 +14,7 @@ import FAQPage from "@/pages/faq";
 import AboutPage from "@/pages/about";
 import BookingPage from "@/pages/booking";
 import ConfirmationPage from "@/pages/confirmation";
+import EhdotPage from "@/pages/ehdot";
 import AdminLoginPage from "@/pages/admin/login";
 import AdminProfileSetup from "@/pages/admin/profile-setup";
 import AdminDashboard from "@/pages/admin/dashboard";
@@ -64,6 +65,11 @@ function Router() {
       <Route path="/kiitos">
         <PublicLayout>
           <ConfirmationPage />
+        </PublicLayout>
+      </Route>
+      <Route path="/ehdot">
+        <PublicLayout>
+          <EhdotPage />
         </PublicLayout>
       </Route>
       

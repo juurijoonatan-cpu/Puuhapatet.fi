@@ -230,6 +230,11 @@ export default function LandingPage() {
                   {t("nav.about")}
                 </span>
               </Link>
+              <Link href="/ehdot">
+                <span className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
+                  Sopimusehdot
+                </span>
+              </Link>
               <Link href="/admin/login">
                 <span className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
                   {t("footer.admin")}

@@ -295,6 +295,12 @@ export default function ServicesPage() {
               <ArrowRight className="w-5 h-5 ml-2" />
             </Button>
           </Link>
+          <p className="text-xs text-muted-foreground mt-4">
+            Kaikki työmme tehdään vastuuvakuutuksen alaisena.{" "}
+            <Link href="/ehdot">
+              <span className="underline underline-offset-2 hover:text-foreground transition-colors cursor-pointer">Lue sopimusehdot</span>
+            </Link>
+          </p>
         </div>
       </div>
     </div>

@@ -16,6 +16,7 @@ import BookingPage from "@/pages/booking";
 import ConfirmationPage from "@/pages/confirmation";
 import EhdotPage from "@/pages/ehdot";
 import TietosuojaPage from "@/pages/tietosuoja";
+import LaskuriPage from "@/pages/laskuri";
 import AdminLoginPage from "@/pages/admin/login";
 import AdminProfileSetup from "@/pages/admin/profile-setup";
 import AdminDashboard from "@/pages/admin/dashboard";
@@ -76,6 +77,11 @@ function Router() {
       <Route path="/tietosuoja">
         <PublicLayout>
           <TietosuojaPage />
+        </PublicLayout>
+      </Route>
+      <Route path="/laskuri">
+        <PublicLayout>
+          <LaskuriPage />
         </PublicLayout>
       </Route>
       

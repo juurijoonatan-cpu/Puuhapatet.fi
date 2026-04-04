@@ -14,6 +14,7 @@ const translations: Record<Language, Record<string, string>> = {
     "nav.services": "Palvelut",
     "nav.faq": "UKK",
     "nav.about": "Meistä",
+    "nav.calculator": "Laskuri",
     
     "hero.pill": "Kevät on täällä!",
     "hero.title": "Ammattitaitoista ikkunanpesua",
@@ -197,6 +198,7 @@ const translations: Record<Language, Record<string, string>> = {
     "nav.services": "Services",
     "nav.faq": "FAQ",
     "nav.about": "About Us",
+    "nav.calculator": "Calculator",
     
     "hero.pill": "Professional Window Cleaning",
     "hero.title": "Professional window cleaning",

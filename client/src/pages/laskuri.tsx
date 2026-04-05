@@ -314,55 +314,56 @@ const HOUSE_TYPES = [
 type HouseKey = (typeof HOUSE_TYPES)[number]["key"];
 
 // Square meter ranges with base "kaikki pinnat" price
+// Prices set below competitor + kotitalousvähennys shown as headline in UI
 const SQM_RANGES: Record<HouseKey, { label: string; price: number }[]> = {
   omakoti: [
-    { label: "alle 60 m²",     price: 159 },
-    { label: "60–80 m²",       price: 189 },
-    { label: "80–100 m²",      price: 229 },
-    { label: "100–120 m²",     price: 269 },
-    { label: "120–140 m²",     price: 309 },
-    { label: "140–160 m²",     price: 349 },
-    { label: "160–180 m²",     price: 389 },
-    { label: "180–200 m²",     price: 439 },
-    { label: "200–220 m²",     price: 489 },
-    { label: "220–240 m²",     price: 549 },
-    { label: "240–260 m²",     price: 609 },
-    { label: "260–280 m²",     price: 669 },
-    { label: "yli 280 m²",     price: 729 },
-  ],
-  paritalo: [
-    { label: "alle 60 m²",     price: 159 },
-    { label: "60–80 m²",       price: 189 },
-    { label: "80–100 m²",      price: 229 },
-    { label: "100–120 m²",     price: 269 },
-    { label: "120–140 m²",     price: 309 },
-    { label: "140–160 m²",     price: 349 },
-    { label: "160–180 m²",     price: 389 },
-    { label: "180–200 m²",     price: 439 },
-    { label: "200–220 m²",     price: 489 },
-    { label: "220–240 m²",     price: 549 },
-    { label: "240–260 m²",     price: 609 },
-    { label: "260–280 m²",     price: 669 },
-    { label: "yli 280 m²",     price: 729 },
-  ],
-  rivitalo: [
-    { label: "alle 40 m²",     price:  99 },
-    { label: "40–60 m²",       price: 119 },
-    { label: "60–80 m²",       price: 139 },
-    { label: "80–100 m²",      price: 159 },
-    { label: "100–120 m²",     price: 189 },
-    { label: "120–140 m²",     price: 219 },
-    { label: "140–160 m²",     price: 249 },
-    { label: "yli 160 m²",     price: 309 },
-  ],
-  kerrostalo: [
-    { label: "alle 40 m²",     price: 119 },
-    { label: "40–60 m²",       price: 139 },
+    { label: "alle 60 m²",     price: 139 },
     { label: "60–80 m²",       price: 169 },
     { label: "80–100 m²",      price: 199 },
-    { label: "100–120 m²",     price: 239 },
-    { label: "120–140 m²",     price: 289 },
-    { label: "yli 140 m²",     price: 379 },
+    { label: "100–120 m²",     price: 229 },
+    { label: "120–140 m²",     price: 269 },
+    { label: "140–160 m²",     price: 309 },
+    { label: "160–180 m²",     price: 349 },
+    { label: "180–200 m²",     price: 389 },
+    { label: "200–220 m²",     price: 439 },
+    { label: "220–240 m²",     price: 489 },
+    { label: "240–260 m²",     price: 549 },
+    { label: "260–280 m²",     price: 609 },
+    { label: "yli 280 m²",     price: 669 },
+  ],
+  paritalo: [
+    { label: "alle 60 m²",     price: 139 },
+    { label: "60–80 m²",       price: 169 },
+    { label: "80–100 m²",      price: 199 },
+    { label: "100–120 m²",     price: 229 },
+    { label: "120–140 m²",     price: 269 },
+    { label: "140–160 m²",     price: 309 },
+    { label: "160–180 m²",     price: 349 },
+    { label: "180–200 m²",     price: 389 },
+    { label: "200–220 m²",     price: 439 },
+    { label: "220–240 m²",     price: 489 },
+    { label: "240–260 m²",     price: 549 },
+    { label: "260–280 m²",     price: 609 },
+    { label: "yli 280 m²",     price: 669 },
+  ],
+  rivitalo: [
+    { label: "alle 40 m²",     price:  89 },
+    { label: "40–60 m²",       price: 109 },
+    { label: "60–80 m²",       price: 129 },
+    { label: "80–100 m²",      price: 149 },
+    { label: "100–120 m²",     price: 169 },
+    { label: "120–140 m²",     price: 199 },
+    { label: "140–160 m²",     price: 229 },
+    { label: "yli 160 m²",     price: 279 },
+  ],
+  kerrostalo: [
+    { label: "alle 40 m²",     price:  99 },
+    { label: "40–60 m²",       price: 119 },
+    { label: "60–80 m²",       price: 149 },
+    { label: "80–100 m²",      price: 179 },
+    { label: "100–120 m²",     price: 209 },
+    { label: "120–140 m²",     price: 249 },
+    { label: "yli 140 m²",     price: 329 },
   ],
 };
 
@@ -782,17 +783,25 @@ export default function LaskuriPage() {
                 <div>
                   <p className="text-sm font-medium text-foreground mb-3">Kohteen koko</p>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                    {SQM_RANGES[houseType].map((r, i) => (
-                      <button key={i}
-                        onClick={() => setSqmIdx(i)}
-                        className={`p-2.5 rounded-xl border-2 text-left transition-all ${sqmIdx === i ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"}`}
-                        data-testid={`sqm-${i}`}
-                      >
-                        <p className="text-xs font-semibold text-foreground">{r.label}</p>
-                        <p className="text-[10px] text-muted-foreground mt-0.5">alk. {Math.round(r.price * region.mult)} €</p>
-                      </button>
-                    ))}
+                    {SQM_RANGES[houseType].map((r, i) => {
+                      const fullPrice = Math.round(r.price * region.mult);
+                      const afterKv = Math.round(fullPrice * (1 - KOTITALOUS_PCT));
+                      return (
+                        <button key={i}
+                          onClick={() => setSqmIdx(i)}
+                          className={`p-2.5 rounded-xl border-2 text-left transition-all ${sqmIdx === i ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"}`}
+                          data-testid={`sqm-${i}`}
+                        >
+                          <p className="text-xs font-semibold text-foreground">{r.label}</p>
+                          <p className="text-sm font-bold text-primary mt-0.5">alk. ~{afterKv} €<span className="text-[9px] font-normal text-primary/70 ml-0.5">*</span></p>
+                          <p className="text-[9px] text-muted-foreground leading-tight">norm. {fullPrice} €</p>
+                        </button>
+                      );
+                    })}
                   </div>
+                  <p className="text-[10px] text-muted-foreground mt-2">
+                    <span className="text-primary font-medium">*</span> Kotitalousvähennyksellä (35 %) maksat vain noin kaksi kolmasosaa — vähennys tehdään verotuksessa automaattisesti.
+                  </p>
                 </div>
 
                 {/* Service tier */}
@@ -810,9 +819,16 @@ export default function LaskuriPage() {
                           <p className="text-sm font-medium text-foreground">{label}</p>
                           <p className="text-xs text-muted-foreground">{sub}</p>
                         </div>
-                        {sqmIdx !== null && (
-                          <span className="text-sm font-bold text-primary">{Math.round(sqmBase * mult * region.mult)} €</span>
-                        )}
+                        {sqmIdx !== null && (() => {
+                          const full = Math.round(sqmBase * mult * region.mult);
+                          const kv = Math.round(full * (1 - KOTITALOUS_PCT));
+                          return (
+                            <div className="text-right">
+                              <p className="text-sm font-bold text-primary">~{kv} €<span className="text-[9px] font-normal ml-0.5">*</span></p>
+                              <p className="text-[9px] text-muted-foreground">{full} €</p>
+                            </div>
+                          );
+                        })()}
                       </button>
                     ))}
                   </div>
@@ -948,17 +964,15 @@ export default function LaskuriPage() {
 
                 {hasResult && (
                   <div className="border-t border-border pt-3 space-y-2">
+                    {/* Kotitalousvähennys-hinta päähinnat */}
+                    <div className="bg-primary/5 rounded-xl px-3 py-2.5 text-center">
+                      <p className="text-[10px] text-muted-foreground mb-0.5">Maksat kotitalousväh. jälkeen</p>
+                      <p className="text-2xl font-bold text-primary">~{afterKotitalous} €</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">Väh. {kotitalous} € verotuksessa automaattisesti</p>
+                    </div>
                     <div className="flex justify-between items-center">
-                      <span className="text-xs text-muted-foreground">Hinta-arvio (sis. ALV)</span>
-                      <span className="text-base font-bold text-foreground">{activeTotal} €</span>
-                    </div>
-                    <div className="flex justify-between items-center text-primary">
-                      <span className="text-xs">Kotitalousvähennys</span>
-                      <span className="text-xs font-medium">−{kotitalous} €</span>
-                    </div>
-                    <div className="flex justify-between items-center bg-primary/5 rounded-xl px-2 py-1.5">
-                      <span className="text-xs font-semibold text-foreground">Maksat itse</span>
-                      <span className="text-base font-bold text-primary">~{afterKotitalous} €</span>
+                      <span className="text-[10px] text-muted-foreground">Normaali hinta (sis. ALV)</span>
+                      <span className="text-xs font-medium text-muted-foreground line-through">{activeTotal} €</span>
                     </div>
                   </div>
                 )}

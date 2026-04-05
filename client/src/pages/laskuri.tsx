@@ -383,29 +383,143 @@ const ADDONS = [
 type AddonKey = (typeof ADDONS)[number]["key"];
 
 // Regional multipliers by postal-code prefix
+// Wealth score → price multiplier mapping.
+// Score 1.0 (Westend) = premium market → ×1.22
+// Score 0.55 (keskiluokka) = volume market → ×0.80
+// Score by neighborhood sourced from market analysis.
+const AREA_TABLE: Record<string, { mult: number; label: string }> = {
+  // ── Ultra-premium (score 0.95–1.0) ────────────────────────────────────────
+  "02160": { mult: 1.22, label: "Westend" },           // score 1.0 — Suomen kalleimpia
+  "00340": { mult: 1.18, label: "Kuusisaari" },        // score 0.95 — diplomaatti/luksus
+  "02380": { mult: 1.15, label: "Suvisaaristo" },      // score 0.90 — uniikki saaristo
+  "00570": { mult: 1.15, label: "Kulosaari" },         // score 0.90 — vanha eliittialue
+  "00830": { mult: 1.12, label: "Herttoniemenranta" }, // score 0.87 — merellinen premium
+  // ── Premium (score 0.82–0.90) ──────────────────────────────────────────────
+  "02170": { mult: 1.10, label: "Haukilahti" },        // score 0.85 — merellinen, arvostettu
+  "00140": { mult: 1.10, label: "Kaivopuisto" },       // score 0.88 — yksi Hkin arvostetuimmista
+  "00150": { mult: 1.08, label: "Punavuori / Eira" },  // score 0.85
+  "00160": { mult: 1.08, label: "Ullanlinna" },        // score 0.85
+  "00210": { mult: 1.05, label: "Lehtisaari" },        // score 0.83
+  "02100": { mult: 1.05, label: "Tapiola" },           // score 0.82
+  "02110": { mult: 1.05, label: "Otaniemi" },
+  "02150": { mult: 1.05, label: "Otsolahti" },
+  "00170": { mult: 1.05, label: "Kruununhaka" },
+  // ── Hyvä / varakas (score 0.70–0.82) ─────────────────────────────────────
+  "00330": { mult: 1.00, label: "Munkkiniemi" },       // score 0.75
+  "00200": { mult: 0.97, label: "Lauttasaari" },       // score 0.70
+  "00250": { mult: 1.02, label: "Töölö" },
+  "00270": { mult: 0.98, label: "Pikku-Huopalahti" },
+  "00280": { mult: 0.95, label: "Etelä-Haaga" },
+  "02120": { mult: 0.97, label: "Laajalahti" },
+  "02130": { mult: 0.97, label: "Kanta-Tapiola" },
+  "02140": { mult: 0.95, label: "Kivenlahti" },
+  "02180": { mult: 0.95, label: "Matinkylä" },
+  "02200": { mult: 0.95, label: "Espoo keskus" },
+  "02230": { mult: 0.97, label: "Leppävaara" },
+  "02360": { mult: 0.95, label: "Espoonlahti" },
+  // ── Keskiluokka (score 0.55–0.70) ─────────────────────────────────────────
+  "00320": { mult: 0.84, label: "Munkkivuori" },       // score 0.60
+  "00300": { mult: 0.87, label: "Pikku-Huopalahti" },
+  "00350": { mult: 0.87, label: "Kannelmäki" },
+  "00360": { mult: 0.85, label: "Paloheinä" },
+  "00370": { mult: 0.85, label: "Pihlajamäki" },
+  "00400": { mult: 0.87, label: "Oulunkylä" },
+  "00420": { mult: 0.85, label: "Maunula" },
+  "00430": { mult: 0.83, label: "Malminkartano" },
+  "00440": { mult: 0.84, label: "Lassila" },
+  "00500": { mult: 0.87, label: "Sörnäinen" },
+  "00510": { mult: 0.87, label: "Alppiharju" },
+  "00520": { mult: 0.86, label: "Vanhakaupunki" },
+  "00530": { mult: 0.86, label: "Kallio" },
+  "00550": { mult: 0.86, label: "Vallila" },
+  "00560": { mult: 0.88, label: "Toukola" },
+  "00610": { mult: 0.84, label: "Käpylä" },
+  "00620": { mult: 0.84, label: "Metsälä" },
+  "00630": { mult: 0.83, label: "Maunula" },
+  "00640": { mult: 0.82, label: "Oulunkylä" },
+  "00650": { mult: 0.83, label: "Viikki" },
+  "00660": { mult: 0.83, label: "Latokartano" },
+  "00670": { mult: 0.82, label: "Malmi" },
+  "00680": { mult: 0.82, label: "Pukinmäki" },
+  "00690": { mult: 0.82, label: "Tapanila" },
+  "00700": { mult: 0.83, label: "Tapaninkylä" },
+  "00710": { mult: 0.83, label: "Pihlajisto" },
+  "00720": { mult: 0.82, label: "Puistola" },
+  "00730": { mult: 0.82, label: "Jakomäki" },
+  "00740": { mult: 0.81, label: "Siltamäki" },
+  "00750": { mult: 0.80, label: "Tammisto" },
+  "00760": { mult: 0.82, label: "Suutarila" },
+  "00770": { mult: 0.82, label: "Tattariharju" },
+  "00780": { mult: 0.82, label: "Tapaninvainio" },
+  "00790": { mult: 0.82, label: "Torpparinmäki" },
+  "00800": { mult: 0.86, label: "Länsi-Herttoniemi" },
+  "00810": { mult: 0.84, label: "Roihuvuori" },
+  "00820": { mult: 0.84, label: "Itä-Herttoniemi" },
+  "00840": { mult: 0.84, label: "Tammisalo" },
+  "00850": { mult: 0.85, label: "Vartiokylä" },
+  "00860": { mult: 0.84, label: "Marjaniemi" },
+  "00870": { mult: 0.84, label: "Mellunmäki" },
+  "00880": { mult: 0.83, label: "Kontula" },
+  "00890": { mult: 0.82, label: "Vuosaari" },
+  "00900": { mult: 0.80, label: "Puotinharju" },
+  "00920": { mult: 0.82, label: "Itäkeskus" },
+  "00930": { mult: 0.82, label: "Laajasalo" },
+  "00940": { mult: 0.82, label: "Roihupelto" },
+  "00950": { mult: 0.81, label: "Vartioharju" },
+  "00960": { mult: 0.81, label: "Mellunmäki" },
+  "00980": { mult: 0.81, label: "Vuosaari" },
+  "00990": { mult: 0.80, label: "Sipoo-raja" },
+  // Saunalahti & Espoon eteläiset alueet
+  "02330": { mult: 0.82, label: "Saunalahti" },        // score 0.55 — uudehko perhealue
+  "02340": { mult: 0.82, label: "Suomenoja" },
+  "02320": { mult: 0.83, label: "Soukka" },
+  "02310": { mult: 0.84, label: "Nöykkiönlaakso" },
+  // Vantaa
+  "01200": { mult: 0.85, label: "Keimola" },
+  "01300": { mult: 0.83, label: "Tikkurila" },
+  "01350": { mult: 0.83, label: "Hiekkaharju" },
+  "01360": { mult: 0.83, label: "Länsimäki" },
+  "01370": { mult: 0.82, label: "Hakunila" },
+  "01380": { mult: 0.82, label: "Itä-Hakkila" },
+  "01390": { mult: 0.82, label: "Länsimäki" },
+  "01400": { mult: 0.84, label: "Vantaankoski" },
+  "01420": { mult: 0.85, label: "Myyrmäki" },
+  "01450": { mult: 0.85, label: "Myyrmäki" },
+  "01480": { mult: 0.83, label: "Martinlaakso" },
+  "01490": { mult: 0.82, label: "Varisto" },
+  "01600": { mult: 0.84, label: "Vantaa" },
+  "01610": { mult: 0.83, label: "Lentokenttä" },
+  "01620": { mult: 0.83, label: "Aviapolis" },
+  "01630": { mult: 0.83, label: "Pakkala" },
+  "01640": { mult: 0.83, label: "Veromies" },
+  "01650": { mult: 0.84, label: "Koivuhaka" },
+  "01660": { mult: 0.84, label: "Tammisto" },
+  "01670": { mult: 0.83, label: "Askisto" },
+  "01700": { mult: 0.85, label: "Kaivoksela" },
+  "01720": { mult: 0.85, label: "Ylästö" },
+  "01730": { mult: 0.84, label: "Petikko" },
+  "01740": { mult: 0.84, label: "Vantaa" },
+  "01800": { mult: 0.84, label: "Klaukkala" },
+};
+
 function regionMultiplier(pc: string): { mult: number; label: string } {
   const p = pc.trim();
   if (!/^\d{5}$/.test(p)) return { mult: 1.00, label: "Pääkaupunkiseutu" };
-  // Westend, Tapiola, Haukilahti, Kuusisaari, Lehtisaari (premium Espoo)
-  if (["02100","02110","02130","02140","02150","02160","02170","02180","02360"].includes(p))
-    return { mult: 1.12, label: "Westend / Tapiola" };
-  // Eira, Kaivopuisto, Ullanlinna, Kuusisaari
-  if (["00140","00150","00160","00170","00340"].includes(p))
-    return { mult: 1.12, label: "Hki etelä (premium)" };
-  // Helsinki keskusta & kantakaupunki
-  if (p.startsWith("001") || p.startsWith("002"))
-    return { mult: 1.06, label: "Helsinki keskusta" };
+  // Exact match first
+  if (AREA_TABLE[p]) return AREA_TABLE[p];
+  // Helsinki kantakaupunki fallback (001xx)
+  if (p.startsWith("001")) return { mult: 1.05, label: "Helsinki kantakaupunki" };
+  if (p.startsWith("002")) return { mult: 0.97, label: "Helsinki länsi" };
   // Muu Helsinki
-  if (p.startsWith("00"))
-    return { mult: 1.00, label: "Helsinki" };
-  // Muu Espoo & Kauniainen
-  if (p.startsWith("02"))
-    return { mult: 1.00, label: "Espoo / Kauniainen" };
-  // Vantaa
-  if (p.startsWith("01"))
-    return { mult: 0.96, label: "Vantaa" };
-  // Kauempi
-  return { mult: 0.94, label: "Muu alue" };
+  if (p.startsWith("00")) return { mult: 0.84, label: "Helsinki" };
+  // Muu Espoo
+  if (p.startsWith("02")) return { mult: 0.88, label: "Espoo" };
+  // Kauniainen
+  if (p.startsWith("028")) return { mult: 1.02, label: "Kauniainen" };
+  // Vantaa fallback
+  if (p.startsWith("01")) return { mult: 0.83, label: "Vantaa" };
+  // Kauempi (Kirkkonummi, Järvenpää, jne.)
+  return { mult: 0.78, label: "Muu alue" };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────

@@ -282,24 +282,19 @@ const WINDOW_TYPES = [
 type WindowKey = (typeof WINDOW_TYPES)[number]["key"];
 
 const CAR_SIZES = [
-  { key: "small",  label: "Pieni auto",    sub: "Hatchback, city" },
-  { key: "medium", label: "Keskikokoinen", sub: "Sedan, pieni SUV" },
-  { key: "large",  label: "Iso auto",      sub: "SUV, tila-auto" },
+  { key: "small",  label: "Pikkuauto",      sub: "Hatchback, city-auto", price: 30 },
+  { key: "medium", label: "Keskikokoinen",  sub: "Sedan, pieni SUV",     price: 40 },
+  { key: "large",  label: "Iso auto",       sub: "SUV, tila-auto, vm",   price: 50 },
 ] as const;
 type CarSize = (typeof CAR_SIZES)[number]["key"];
 
-const DIRT_LEVELS = [
-  { key: "normal", label: "Normaali",           sub: "Tavallinen arkilika" },
-  { key: "dirty",  label: "Likainen",           sub: "Selkeästi likaisempi" },
-  { key: "very",   label: "Erittäin likainen",  sub: "Tahroja, lemmikkejä" },
-] as const;
-type DirtLevel = (typeof DIRT_LEVELS)[number]["key"];
-
-const CAR_PRICES: Record<CarSize, Record<DirtLevel, number>> = {
-  small:  { normal: 89,  dirty: 119, very: 149 },
-  medium: { normal: 109, dirty: 139, very: 179 },
-  large:  { normal: 129, dirty: 169, very: 219 },
-};
+const CAR_INCLUDES = [
+  "Imurointi",
+  "Kojelaudan ja pintojen puhdistus",
+  "Ovien sisäpinnat",
+  "Keskikonsoli",
+  "Auton sisäikkunoiden kevyt putsaus",
+];
 
 // ─── NELIÖHINNAT (per-m² pricing) ────────────────────────────────────────────
 // Base prices for "Kaikkien pintojen pesu" (sisä + ulko). Aggressive — clearly under competitor.
@@ -531,7 +526,6 @@ export default function LaskuriPage() {
     Object.fromEntries(WINDOW_TYPES.map(t => [t.key, 0])) as Record<WindowKey, number>
   );
   const [carSize, setCarSize] = useState<CarSize | null>(null);
-  const [dirtLevel, setDirtLevel] = useState<DirtLevel>("normal");
 
   // Neliöhinnat state
   const [postalCode, setPostalCode] = useState<string>(() => {
@@ -560,7 +554,7 @@ export default function LaskuriPage() {
   // Calculations
   const windowSubtotal = WINDOW_TYPES.reduce((s, t) => s + t.price * counts[t.key], 0);
   const windowTotal = Math.max(windowSubtotal + (windowSubtotal > 0 ? START_FEE : 0), windowSubtotal > 0 ? MIN_ORDER : 0);
-  const carPrice = carSize ? CAR_PRICES[carSize][dirtLevel] : 0;
+  const carPrice = carSize ? CAR_SIZES.find(c => c.key === carSize)!.price : 0;
 
   // Neliö calculations
   const region = regionMultiplier(postalCode);
@@ -591,7 +585,7 @@ export default function LaskuriPage() {
       const serviceDesc = tab === "ikkunat"
         ? selectedWindows.map(t => `${t.label}: ${counts[t.key]} ${t.unit}`).join(", ")
         : tab === "auto"
-        ? `Auton sisäpuhdistus — ${CAR_SIZES.find(c => c.key === carSize)?.label}, ${DIRT_LEVELS.find(d => d.key === dirtLevel)?.label}`
+        ? `Sisäfreesaus — ${CAR_SIZES.find(c => c.key === carSize)?.label} (${carPrice} €). Sisältää: ${CAR_INCLUDES.join(", ")}.`
         : `Neliöhinta — ${houseLabel} ${sqmLabel}, ${tierObj.label}. Lisät: ${addonsList}. Alue: ${region.label} (${region.mult}×). Postinumero: ${postalCode || "—"}`;
       const res = await fetch("https://api.web3forms.com/submit", {
         method: "POST",
@@ -695,7 +689,7 @@ export default function LaskuriPage() {
           {(["nelio", "ikkunat", "auto"] as const).map(t => (
             <button key={t} onClick={() => { setTab(t); setShowForm(false); }}
               className={`flex-1 py-2.5 px-2 rounded-xl text-xs md:text-sm font-medium transition-all ${tab === t ? "bg-card premium-shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-              {t === "nelio" ? "Neliöhinnat" : t === "ikkunat" ? "Ikkuna­laskuri" : "Autopesu"}
+              {t === "nelio" ? "Neliöhinnat" : t === "ikkunat" ? "Ikkuna­laskuri" : "Sisä­freesaus"}
             </button>
           ))}
         </div>
@@ -888,37 +882,47 @@ export default function LaskuriPage() {
               </div>
             )}
 
-            {/* ── CAR ── */}
+            {/* ── SISÄFREESAUS ── */}
             {tab === "auto" && (
               <div className="space-y-5">
+                {/* Header badge */}
+                <div className="rounded-2xl bg-primary/5 border border-primary/20 px-4 py-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-primary/70 mb-0.5">Puuhapatet × KJ Cardetailing</p>
+                  <p className="text-base font-bold text-foreground">Sisäfreesaus</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Kevyt ja vaivaton auton sisäpuhdistus · 20–30 min · Kuivapesu</p>
+                </div>
+
+                {/* Car size picker */}
                 <div>
-                  <p className="text-sm font-medium text-foreground mb-3">Auton koko</p>
+                  <p className="text-sm font-medium text-foreground mb-3">Valitse autosi koko</p>
                   <div className="grid grid-cols-3 gap-3">
-                    {CAR_SIZES.map(({ key, label, sub }) => (
+                    {CAR_SIZES.map(({ key, label, sub, price }) => (
                       <button key={key} onClick={() => setCarSize(key)}
-                        className={`p-3 rounded-2xl border-2 text-center transition-all ${carSize === key ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"}`}>
+                        className={`p-3.5 rounded-2xl border-2 text-center transition-all ${carSize === key ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"}`}>
                         <p className="text-xs font-semibold text-foreground">{label}</p>
                         <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{sub}</p>
+                        <p className="text-lg font-bold text-primary mt-2">{price} €</p>
                       </button>
                     ))}
                   </div>
                 </div>
-                <div>
-                  <p className="text-sm font-medium text-foreground mb-3">Likaantumisaste</p>
-                  <div className="space-y-2">
-                    {DIRT_LEVELS.map(({ key, label, sub }) => (
-                      <button key={key} onClick={() => setDirtLevel(key)}
-                        className={`w-full p-3.5 rounded-2xl border-2 text-left flex items-center gap-3 transition-all ${dirtLevel === key ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"}`}>
-                        <div className={`w-3 h-3 rounded-full flex-shrink-0 ${dirtLevel === key ? "bg-primary" : "bg-muted-foreground/30"}`} />
-                        <div>
-                          <p className="text-sm font-medium text-foreground">{label}</p>
-                          <p className="text-xs text-muted-foreground">{sub}</p>
-                        </div>
-                        {carSize && <span className="ml-auto text-sm font-bold text-primary">{CAR_PRICES[carSize][key]} €</span>}
-                      </button>
+
+                {/* What's included */}
+                <div className="rounded-2xl border border-border bg-card p-4">
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">Sisältää</p>
+                  <ul className="space-y-2">
+                    {CAR_INCLUDES.map((item, i) => (
+                      <li key={i} className="flex items-center gap-2.5 text-sm text-foreground">
+                        <span className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />
+                        {item}
+                      </li>
                     ))}
-                  </div>
+                  </ul>
                 </div>
+
+                <p className="text-[10px] text-muted-foreground text-center">
+                  Varaa aika soittamalla tai laskurin kautta — tulemme luoksesi.
+                </p>
               </div>
             )}
           </div>
@@ -953,11 +957,8 @@ export default function LaskuriPage() {
                 {tab === "auto" && carSize && (
                   <div className="space-y-1.5 mb-3">
                     <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">{CAR_SIZES.find(c => c.key === carSize)?.label}</span>
+                      <span className="text-muted-foreground">Sisäfreesaus · {CAR_SIZES.find(c => c.key === carSize)?.label}</span>
                       <span className="text-foreground font-medium">{carPrice} €</span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">{DIRT_LEVELS.find(d => d.key === dirtLevel)?.label}</span>
                     </div>
                   </div>
                 )}

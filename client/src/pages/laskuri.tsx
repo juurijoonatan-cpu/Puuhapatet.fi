@@ -301,15 +301,139 @@ const CAR_PRICES: Record<CarSize, Record<DirtLevel, number>> = {
   large:  { normal: 129, dirty: 169, very: 219 },
 };
 
+// ─── NELIÖHINNAT (per-m² pricing) ────────────────────────────────────────────
+// Base prices for "Kaikkien pintojen pesu" (sisä + ulko). Aggressive — clearly under competitor.
+// Competitor ikkunanpesu.com: omakoti 189–799, rivitalo 129–349, kerrostalo 149–449.
+
+const HOUSE_TYPES = [
+  { key: "omakoti",   label: "Omakotitalo",    sub: "Erillistalo" },
+  { key: "paritalo",  label: "Paritalo",       sub: "2 huoneistoa" },
+  { key: "rivitalo",  label: "Rivitalo",       sub: "Oma huoneisto" },
+  { key: "kerrostalo",label: "Kerrostalo",     sub: "Huoneisto" },
+] as const;
+type HouseKey = (typeof HOUSE_TYPES)[number]["key"];
+
+// Square meter ranges with base "kaikki pinnat" price
+const SQM_RANGES: Record<HouseKey, { label: string; price: number }[]> = {
+  omakoti: [
+    { label: "alle 60 m²",     price: 159 },
+    { label: "60–80 m²",       price: 189 },
+    { label: "80–100 m²",      price: 229 },
+    { label: "100–120 m²",     price: 269 },
+    { label: "120–140 m²",     price: 309 },
+    { label: "140–160 m²",     price: 349 },
+    { label: "160–180 m²",     price: 389 },
+    { label: "180–200 m²",     price: 439 },
+    { label: "200–220 m²",     price: 489 },
+    { label: "220–240 m²",     price: 549 },
+    { label: "240–260 m²",     price: 609 },
+    { label: "260–280 m²",     price: 669 },
+    { label: "yli 280 m²",     price: 729 },
+  ],
+  paritalo: [
+    { label: "alle 60 m²",     price: 159 },
+    { label: "60–80 m²",       price: 189 },
+    { label: "80–100 m²",      price: 229 },
+    { label: "100–120 m²",     price: 269 },
+    { label: "120–140 m²",     price: 309 },
+    { label: "140–160 m²",     price: 349 },
+    { label: "160–180 m²",     price: 389 },
+    { label: "180–200 m²",     price: 439 },
+    { label: "200–220 m²",     price: 489 },
+    { label: "220–240 m²",     price: 549 },
+    { label: "240–260 m²",     price: 609 },
+    { label: "260–280 m²",     price: 669 },
+    { label: "yli 280 m²",     price: 729 },
+  ],
+  rivitalo: [
+    { label: "alle 40 m²",     price:  99 },
+    { label: "40–60 m²",       price: 119 },
+    { label: "60–80 m²",       price: 139 },
+    { label: "80–100 m²",      price: 159 },
+    { label: "100–120 m²",     price: 189 },
+    { label: "120–140 m²",     price: 219 },
+    { label: "140–160 m²",     price: 249 },
+    { label: "yli 160 m²",     price: 309 },
+  ],
+  kerrostalo: [
+    { label: "alle 40 m²",     price: 119 },
+    { label: "40–60 m²",       price: 139 },
+    { label: "60–80 m²",       price: 169 },
+    { label: "80–100 m²",      price: 199 },
+    { label: "100–120 m²",     price: 239 },
+    { label: "120–140 m²",     price: 289 },
+    { label: "yli 140 m²",     price: 379 },
+  ],
+};
+
+const SERVICE_TIERS = [
+  { key: "all",      label: "Kaikkien pintojen pesu",  sub: "Sisä + ulko",           mult: 1.00 },
+  { key: "outside",  label: "Vain ulkopintojen pesu",  sub: "Nopea ja edullinen",    mult: 0.58 },
+  { key: "annual",   label: "Vuosipaketti (2×/v)",     sub: "10 % alennus",          mult: 1.80 },
+] as const;
+type TierKey = (typeof SERVICE_TIERS)[number]["key"];
+
+const ADDONS = [
+  { key: "balcony",  label: "Parveke-/terassilasitus", price: 39 },
+  { key: "railing",  label: "Lasikaide",               price: 39 },
+  { key: "mirror",   label: "Peilien pesu",            price: 19 },
+  { key: "canopy",   label: "Terassin lasikate",       price: 89 },
+  { key: "gutter",   label: "Rännien puhdistus",       price: 69 },
+] as const;
+type AddonKey = (typeof ADDONS)[number]["key"];
+
+// Regional multipliers by postal-code prefix
+function regionMultiplier(pc: string): { mult: number; label: string } {
+  const p = pc.trim();
+  if (!/^\d{5}$/.test(p)) return { mult: 1.00, label: "Pääkaupunkiseutu" };
+  // Westend, Tapiola, Haukilahti, Kuusisaari, Lehtisaari (premium Espoo)
+  if (["02100","02110","02130","02140","02150","02160","02170","02180","02360"].includes(p))
+    return { mult: 1.12, label: "Westend / Tapiola" };
+  // Eira, Kaivopuisto, Ullanlinna, Kuusisaari
+  if (["00140","00150","00160","00170","00340"].includes(p))
+    return { mult: 1.12, label: "Hki etelä (premium)" };
+  // Helsinki keskusta & kantakaupunki
+  if (p.startsWith("001") || p.startsWith("002"))
+    return { mult: 1.06, label: "Helsinki keskusta" };
+  // Muu Helsinki
+  if (p.startsWith("00"))
+    return { mult: 1.00, label: "Helsinki" };
+  // Muu Espoo & Kauniainen
+  if (p.startsWith("02"))
+    return { mult: 1.00, label: "Espoo / Kauniainen" };
+  // Vantaa
+  if (p.startsWith("01"))
+    return { mult: 0.96, label: "Vantaa" };
+  // Kauempi
+  return { mult: 0.94, label: "Muu alue" };
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function LaskuriPage() {
-  const [tab, setTab] = useState<"ikkunat" | "auto">("ikkunat");
+  const [tab, setTab] = useState<"ikkunat" | "auto" | "nelio">("nelio");
   const [counts, setCounts] = useState<Record<WindowKey, number>>(
     Object.fromEntries(WINDOW_TYPES.map(t => [t.key, 0])) as Record<WindowKey, number>
   );
   const [carSize, setCarSize] = useState<CarSize | null>(null);
   const [dirtLevel, setDirtLevel] = useState<DirtLevel>("normal");
+
+  // Neliöhinnat state
+  const [postalCode, setPostalCode] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    return window.localStorage.getItem("pp_postal") || "";
+  });
+  const [showPcModal, setShowPcModal] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return !window.localStorage.getItem("pp_postal");
+  });
+  const [pcInput, setPcInput] = useState("");
+  const [houseType, setHouseType] = useState<HouseKey>("omakoti");
+  const [sqmIdx, setSqmIdx] = useState<number | null>(null);
+  const [tier, setTier] = useState<TierKey>("all");
+  const [addons, setAddons] = useState<Record<AddonKey, boolean>>(
+    Object.fromEntries(ADDONS.map(a => [a.key, false])) as Record<AddonKey, boolean>
+  );
 
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: "", phone: "", email: "", address: "", urgency: "" as "" | "this_week" | "flexible", message: "" });
@@ -321,8 +445,18 @@ export default function LaskuriPage() {
   const windowSubtotal = WINDOW_TYPES.reduce((s, t) => s + t.price * counts[t.key], 0);
   const windowTotal = Math.max(windowSubtotal + (windowSubtotal > 0 ? START_FEE : 0), windowSubtotal > 0 ? MIN_ORDER : 0);
   const carPrice = carSize ? CAR_PRICES[carSize][dirtLevel] : 0;
-  const activeTotal = tab === "ikkunat" ? windowTotal : carPrice;
-  const hasResult = tab === "ikkunat" ? windowSubtotal > 0 : carSize !== null;
+
+  // Neliö calculations
+  const region = regionMultiplier(postalCode);
+  const sqmBase = sqmIdx !== null ? SQM_RANGES[houseType][sqmIdx].price : 0;
+  const tierObj = SERVICE_TIERS.find(t => t.key === tier)!;
+  const sqmTiered = Math.round(sqmBase * tierObj.mult);
+  const addonsTotal = ADDONS.reduce((s, a) => s + (addons[a.key] ? a.price : 0), 0);
+  const sqmPreRegion = sqmTiered + addonsTotal;
+  const sqmTotal = Math.round(sqmPreRegion * region.mult);
+
+  const activeTotal = tab === "ikkunat" ? windowTotal : tab === "auto" ? carPrice : sqmTotal;
+  const hasResult = tab === "ikkunat" ? windowSubtotal > 0 : tab === "auto" ? carSize !== null : sqmIdx !== null;
   const kotitalous = Math.round(activeTotal * KOTITALOUS_PCT);
   const afterKotitalous = activeTotal - kotitalous;
 
@@ -335,9 +469,14 @@ export default function LaskuriPage() {
     if (!form.name || !form.phone || !form.address) return;
     setSending(true); setSendError("");
     try {
+      const houseLabel = HOUSE_TYPES.find(h => h.key === houseType)?.label;
+      const sqmLabel = sqmIdx !== null ? SQM_RANGES[houseType][sqmIdx].label : "";
+      const addonsList = ADDONS.filter(a => addons[a.key]).map(a => a.label).join(", ") || "—";
       const serviceDesc = tab === "ikkunat"
         ? selectedWindows.map(t => `${t.label}: ${counts[t.key]} ${t.unit}`).join(", ")
-        : `Auton sisäpuhdistus — ${CAR_SIZES.find(c => c.key === carSize)?.label}, ${DIRT_LEVELS.find(d => d.key === dirtLevel)?.label}`;
+        : tab === "auto"
+        ? `Auton sisäpuhdistus — ${CAR_SIZES.find(c => c.key === carSize)?.label}, ${DIRT_LEVELS.find(d => d.key === dirtLevel)?.label}`
+        : `Neliöhinta — ${houseLabel} ${sqmLabel}, ${tierObj.label}. Lisät: ${addonsList}. Alue: ${region.label} (${region.mult}×). Postinumero: ${postalCode || "—"}`;
       const res = await fetch("https://api.web3forms.com/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -376,6 +515,55 @@ export default function LaskuriPage() {
 
   return (
     <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28">
+      {/* Postal code modal */}
+      {showPcModal && (
+        <div className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-end md:items-center justify-center p-4">
+          <Card className="w-full max-w-sm p-6 bg-card border-0 premium-shadow space-y-4" data-testid="postal-modal">
+            <div>
+              <h2 className="text-lg font-semibold text-foreground mb-1">Missä asut?</h2>
+              <p className="text-xs text-muted-foreground">Postinumeron perusteella tarkennamme hinta-arviota alueellesi.</p>
+            </div>
+            <Input
+              type="text"
+              inputMode="numeric"
+              maxLength={5}
+              placeholder="02100"
+              value={pcInput}
+              onChange={e => setPcInput(e.target.value.replace(/\D/g, "").slice(0, 5))}
+              className="text-center text-lg font-semibold tabular-nums h-12"
+              data-testid="postal-input"
+              autoFocus
+            />
+            {pcInput.length === 5 && (
+              <p className="text-xs text-center text-muted-foreground">
+                {regionMultiplier(pcInput).label}
+              </p>
+            )}
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => { setShowPcModal(false); if (typeof window !== "undefined") window.localStorage.setItem("pp_postal", postalCode || ""); }}
+              >
+                Ohita
+              </Button>
+              <Button
+                className="flex-1"
+                disabled={pcInput.length !== 5}
+                onClick={() => {
+                  setPostalCode(pcInput);
+                  if (typeof window !== "undefined") window.localStorage.setItem("pp_postal", pcInput);
+                  setShowPcModal(false);
+                }}
+                data-testid="postal-confirm"
+              >
+                Vahvista
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
       <div className="container mx-auto px-4 max-w-5xl">
 
         {/* Header */}
@@ -387,11 +575,11 @@ export default function LaskuriPage() {
         </div>
 
         {/* Tab */}
-        <div className="flex rounded-2xl bg-muted p-1 mb-6 max-w-sm mx-auto">
-          {(["ikkunat", "auto"] as const).map(t => (
+        <div className="flex rounded-2xl bg-muted p-1 mb-6 max-w-xl mx-auto">
+          {(["nelio", "ikkunat", "auto"] as const).map(t => (
             <button key={t} onClick={() => { setTab(t); setShowForm(false); }}
-              className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${tab === t ? "bg-card premium-shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-              {t === "ikkunat" ? "Ikkunanpesu" : "Auton sisäpuhdistus"}
+              className={`flex-1 py-2.5 px-2 rounded-xl text-xs md:text-sm font-medium transition-all ${tab === t ? "bg-card premium-shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+              {t === "nelio" ? "Neliöhinnat" : t === "ikkunat" ? "Ikkuna­laskuri" : "Autopesu"}
             </button>
           ))}
         </div>
@@ -435,6 +623,111 @@ export default function LaskuriPage() {
                 </div>
                 <p className="text-[10px] text-muted-foreground text-center pt-1">
                   Aloitusmaksu {START_FEE} € sisältyy hintaan · Minimitilaus {MIN_ORDER} €
+                </p>
+              </div>
+            )}
+
+            {/* ── NELIÖHINNAT ── */}
+            {tab === "nelio" && (
+              <div className="space-y-5">
+                {/* Postal code bar */}
+                <button
+                  onClick={() => { setPcInput(postalCode); setShowPcModal(true); }}
+                  className="w-full p-3 rounded-2xl border border-border bg-card hover:border-primary/50 flex items-center justify-between transition-all"
+                  data-testid="postal-bar"
+                >
+                  <div className="text-left">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Alue</p>
+                    <p className="text-sm font-semibold text-foreground">
+                      {postalCode ? `${postalCode} · ${region.label}` : "Syötä postinumero"}
+                    </p>
+                  </div>
+                  <span className="text-xs text-primary font-medium">
+                    {postalCode ? (region.mult === 1 ? "Vakio" : region.mult > 1 ? `+${Math.round((region.mult-1)*100)} %` : `−${Math.round((1-region.mult)*100)} %`) : "Muuta"}
+                  </span>
+                </button>
+
+                {/* House type */}
+                <div>
+                  <p className="text-sm font-medium text-foreground mb-3">Talotyyppi</p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    {HOUSE_TYPES.map(({ key, label, sub }) => (
+                      <button key={key}
+                        onClick={() => { setHouseType(key); setSqmIdx(null); }}
+                        className={`p-3 rounded-2xl border-2 text-center transition-all ${houseType === key ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"}`}
+                        data-testid={`house-${key}`}
+                      >
+                        <p className="text-xs font-semibold text-foreground">{label}</p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{sub}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Square meters */}
+                <div>
+                  <p className="text-sm font-medium text-foreground mb-3">Kohteen koko</p>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                    {SQM_RANGES[houseType].map((r, i) => (
+                      <button key={i}
+                        onClick={() => setSqmIdx(i)}
+                        className={`p-2.5 rounded-xl border-2 text-left transition-all ${sqmIdx === i ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"}`}
+                        data-testid={`sqm-${i}`}
+                      >
+                        <p className="text-xs font-semibold text-foreground">{r.label}</p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">alk. {Math.round(r.price * region.mult)} €</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Service tier */}
+                <div>
+                  <p className="text-sm font-medium text-foreground mb-3">Palvelu</p>
+                  <div className="space-y-2">
+                    {SERVICE_TIERS.map(({ key, label, sub, mult }) => (
+                      <button key={key}
+                        onClick={() => setTier(key)}
+                        className={`w-full p-3.5 rounded-2xl border-2 text-left flex items-center gap-3 transition-all ${tier === key ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"}`}
+                        data-testid={`tier-${key}`}
+                      >
+                        <div className={`w-3 h-3 rounded-full flex-shrink-0 ${tier === key ? "bg-primary" : "bg-muted-foreground/30"}`} />
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-foreground">{label}</p>
+                          <p className="text-xs text-muted-foreground">{sub}</p>
+                        </div>
+                        {sqmIdx !== null && (
+                          <span className="text-sm font-bold text-primary">{Math.round(sqmBase * mult * region.mult)} €</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Add-ons */}
+                <div>
+                  <p className="text-sm font-medium text-foreground mb-3">Lisäpalvelut</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {ADDONS.map(({ key, label, price }) => (
+                      <button key={key}
+                        onClick={() => setAddons(p => ({ ...p, [key]: !p[key] }))}
+                        className={`p-3 rounded-xl border-2 text-left flex items-center justify-between gap-2 transition-all ${addons[key] ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"}`}
+                        data-testid={`addon-${key}`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${addons[key] ? "border-primary bg-primary" : "border-muted-foreground/40"}`}>
+                            {addons[key] && <CheckCircle2 className="w-3 h-3 text-white" />}
+                          </div>
+                          <span className="text-xs font-medium text-foreground">{label}</span>
+                        </div>
+                        <span className="text-xs font-semibold text-primary">+{price} €</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <p className="text-[10px] text-muted-foreground text-center pt-1">
+                  Suuntaa-antava arvio. Lopullinen hinta vahvistetaan katselmuksen jälkeen.
                 </p>
               </div>
             )}
@@ -510,6 +803,32 @@ export default function LaskuriPage() {
                     <div className="flex justify-between text-xs">
                       <span className="text-muted-foreground">{DIRT_LEVELS.find(d => d.key === dirtLevel)?.label}</span>
                     </div>
+                  </div>
+                )}
+
+                {tab === "nelio" && sqmIdx !== null && (
+                  <div className="space-y-1.5 mb-3">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground truncate mr-2">
+                        {HOUSE_TYPES.find(h => h.key === houseType)?.label} · {SQM_RANGES[houseType][sqmIdx].label}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">{tierObj.label}</span>
+                      <span className="text-foreground font-medium">{sqmTiered} €</span>
+                    </div>
+                    {ADDONS.filter(a => addons[a.key]).map(a => (
+                      <div key={a.key} className="flex justify-between text-xs">
+                        <span className="text-muted-foreground truncate mr-2">{a.label}</span>
+                        <span className="text-foreground font-medium">+{a.price} €</span>
+                      </div>
+                    ))}
+                    {region.mult !== 1 && (
+                      <div className="flex justify-between text-xs border-t border-border pt-1.5 mt-1.5">
+                        <span className="text-muted-foreground">Alue ({region.label})</span>
+                        <span className="text-foreground font-medium">{region.mult > 1 ? "+" : ""}{Math.round((region.mult - 1) * 100)} %</span>
+                      </div>
+                    )}
                   </div>
                 )}
 

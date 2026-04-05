@@ -549,6 +549,7 @@ export default function LaskuriPage() {
   const [addons, setAddons] = useState<Record<AddonKey, boolean>>(
     Object.fromEntries(ADDONS.map(a => [a.key, false])) as Record<AddonKey, boolean>
   );
+  const [kvEligible, setKvEligible] = useState(true);
 
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: "", phone: "", email: "", address: "", urgency: "" as "" | "this_week" | "flexible", message: "" });
@@ -572,7 +573,7 @@ export default function LaskuriPage() {
 
   const activeTotal = tab === "ikkunat" ? windowTotal : tab === "auto" ? carPrice : sqmTotal;
   const hasResult = tab === "ikkunat" ? windowSubtotal > 0 : tab === "auto" ? carSize !== null : sqmIdx !== null;
-  const kotitalous = Math.round(activeTotal * KOTITALOUS_PCT);
+  const kotitalous = kvEligible ? Math.round(activeTotal * KOTITALOUS_PCT) : 0;
   const afterKotitalous = activeTotal - kotitalous;
 
   const selectedWindows = WINDOW_TYPES.filter(t => counts[t.key] > 0);
@@ -745,22 +746,39 @@ export default function LaskuriPage() {
             {/* ── NELIÖHINNAT ── */}
             {tab === "nelio" && (
               <div className="space-y-5">
-                {/* Postal code bar */}
-                <button
-                  onClick={() => { setPcInput(postalCode); setShowPcModal(true); }}
-                  className="w-full p-3 rounded-2xl border border-border bg-card hover:border-primary/50 flex items-center justify-between transition-all"
-                  data-testid="postal-bar"
-                >
-                  <div className="text-left">
-                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Alue</p>
-                    <p className="text-sm font-semibold text-foreground">
-                      {postalCode ? `${postalCode} · ${region.label}` : "Syötä postinumero"}
+                {/* Postal code bar + KV toggle */}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setPcInput(postalCode); setShowPcModal(true); }}
+                    className="flex-1 p-3 rounded-2xl border border-border bg-card hover:border-primary/50 flex items-center justify-between transition-all"
+                    data-testid="postal-bar"
+                  >
+                    <div className="text-left">
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Alue</p>
+                      <p className="text-sm font-semibold text-foreground">
+                        {postalCode ? `${postalCode} · ${region.label}` : "Syötä postinumero"}
+                      </p>
+                    </div>
+                    <span className="text-xs text-primary font-medium">
+                      {postalCode ? (region.mult === 1 ? "Vakio" : region.mult > 1 ? `+${Math.round((region.mult-1)*100)} %` : `−${Math.round((1-region.mult)*100)} %`) : "Muuta"}
+                    </span>
+                  </button>
+
+                  {/* Kotitalousvähennys toggle */}
+                  <button
+                    onClick={() => setKvEligible(v => !v)}
+                    className={`p-3 rounded-2xl border-2 flex flex-col items-center justify-center gap-1 min-w-[80px] transition-all ${kvEligible ? "border-primary bg-primary/5" : "border-border bg-card"}`}
+                    data-testid="kv-toggle"
+                    title="Kotitalousvähennys"
+                  >
+                    <div className={`w-8 h-4 rounded-full relative transition-colors ${kvEligible ? "bg-primary" : "bg-muted-foreground/30"}`}>
+                      <div className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-all shadow-sm ${kvEligible ? "left-4" : "left-0.5"}`} />
+                    </div>
+                    <p className="text-[9px] font-medium leading-tight text-center">
+                      {kvEligible ? <span className="text-primary">Kotitalous­väh.</span> : <span className="text-muted-foreground">Ei väh.</span>}
                     </p>
-                  </div>
-                  <span className="text-xs text-primary font-medium">
-                    {postalCode ? (region.mult === 1 ? "Vakio" : region.mult > 1 ? `+${Math.round((region.mult-1)*100)} %` : `−${Math.round((1-region.mult)*100)} %`) : "Muuta"}
-                  </span>
-                </button>
+                  </button>
+                </div>
 
                 {/* House type */}
                 <div>
@@ -786,6 +804,7 @@ export default function LaskuriPage() {
                     {SQM_RANGES[houseType].map((r, i) => {
                       const fullPrice = Math.round(r.price * region.mult);
                       const afterKv = Math.round(fullPrice * (1 - KOTITALOUS_PCT));
+                      const displayPrice = kvEligible ? afterKv : fullPrice;
                       return (
                         <button key={i}
                           onClick={() => setSqmIdx(i)}
@@ -793,15 +812,19 @@ export default function LaskuriPage() {
                           data-testid={`sqm-${i}`}
                         >
                           <p className="text-xs font-semibold text-foreground">{r.label}</p>
-                          <p className="text-sm font-bold text-primary mt-0.5">alk. ~{afterKv} €<span className="text-[9px] font-normal text-primary/70 ml-0.5">*</span></p>
-                          <p className="text-[9px] text-muted-foreground leading-tight">norm. {fullPrice} €</p>
+                          <p className="text-sm font-bold text-primary mt-0.5">
+                            {kvEligible ? "~" : ""}{displayPrice} €{kvEligible && <span className="text-[9px] font-normal text-primary/70 ml-0.5">*</span>}
+                          </p>
+                          {kvEligible && <p className="text-[9px] text-muted-foreground leading-tight">norm. {fullPrice} €</p>}
                         </button>
                       );
                     })}
                   </div>
-                  <p className="text-[10px] text-muted-foreground mt-2">
-                    <span className="text-primary font-medium">*</span> Kotitalousvähennyksellä (35 %) maksat vain noin kaksi kolmasosaa — vähennys tehdään verotuksessa automaattisesti.
-                  </p>
+                  {kvEligible && (
+                    <p className="text-[10px] text-muted-foreground mt-2">
+                      <span className="text-primary font-medium">*</span> Kotitalousvähennyksellä (35 %) maksat vain noin kaksi kolmasosaa — vähennys tehdään verotuksessa automaattisesti.
+                    </p>
+                  )}
                 </div>
 
                 {/* Service tier */}
@@ -822,10 +845,13 @@ export default function LaskuriPage() {
                         {sqmIdx !== null && (() => {
                           const full = Math.round(sqmBase * mult * region.mult);
                           const kv = Math.round(full * (1 - KOTITALOUS_PCT));
+                          const display = kvEligible ? kv : full;
                           return (
                             <div className="text-right">
-                              <p className="text-sm font-bold text-primary">~{kv} €<span className="text-[9px] font-normal ml-0.5">*</span></p>
-                              <p className="text-[9px] text-muted-foreground">{full} €</p>
+                              <p className="text-sm font-bold text-primary">
+                                {kvEligible ? "~" : ""}{display} €{kvEligible && <span className="text-[9px] font-normal ml-0.5">*</span>}
+                              </p>
+                              {kvEligible && <p className="text-[9px] text-muted-foreground">{full} €</p>}
                             </div>
                           );
                         })()}
@@ -964,16 +990,26 @@ export default function LaskuriPage() {
 
                 {hasResult && (
                   <div className="border-t border-border pt-3 space-y-2">
-                    {/* Kotitalousvähennys-hinta päähinnat */}
                     <div className="bg-primary/5 rounded-xl px-3 py-2.5 text-center">
-                      <p className="text-[10px] text-muted-foreground mb-0.5">Maksat kotitalousväh. jälkeen</p>
-                      <p className="text-2xl font-bold text-primary">~{afterKotitalous} €</p>
-                      <p className="text-[10px] text-muted-foreground mt-0.5">Väh. {kotitalous} € verotuksessa automaattisesti</p>
+                      {kvEligible ? (
+                        <>
+                          <p className="text-[10px] text-muted-foreground mb-0.5">Maksat kotitalousväh. jälkeen</p>
+                          <p className="text-2xl font-bold text-primary">~{afterKotitalous} €</p>
+                          <p className="text-[10px] text-muted-foreground mt-0.5">Väh. {kotitalous} € verotuksessa automaattisesti</p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-[10px] text-muted-foreground mb-0.5">Hinta-arvio (sis. ALV)</p>
+                          <p className="text-2xl font-bold text-primary">{activeTotal} €</p>
+                        </>
+                      )}
                     </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-[10px] text-muted-foreground">Normaali hinta (sis. ALV)</span>
-                      <span className="text-xs font-medium text-muted-foreground line-through">{activeTotal} €</span>
-                    </div>
+                    {kvEligible && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] text-muted-foreground">Normaali hinta (sis. ALV)</span>
+                        <span className="text-xs font-medium text-muted-foreground line-through">{activeTotal} €</span>
+                      </div>
+                    )}
                   </div>
                 )}
 

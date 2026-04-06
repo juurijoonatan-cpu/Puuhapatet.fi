@@ -93,6 +93,7 @@ export default function LandingPage() {
               {t("hero.tagline")}
             </p>
           </div>
+        </div>
       </section>
 
       <section className="py-16 md:py-24 bg-muted/30">

@@ -1,102 +1,91 @@
+import { pgTable, text, integer, timestamp, pgEnum, serial } from "drizzle-orm/pg-core";
+import { relations } from "drizzle-orm";
+import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-export const WorkflowStatusEnum = z.enum([
-  "DRAFT",
-  "NEW", 
-  "SCHEDULED",
-  "IN_PROGRESS",
-  "DONE",
-  "CANCELLED"
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+export const jobStatusEnum = pgEnum("job_status", [
+  "lead",
+  "scheduled",
+  "in_progress",
+  "done",
+  "cancelled",
 ]);
 
-export type WorkflowStatus = z.infer<typeof WorkflowStatusEnum>;
+// ─── Customers ────────────────────────────────────────────────────────────────
 
-export const jobSchema = z.object({
-  JobID: z.string(),
-  WorkflowStatus: WorkflowStatusEnum,
-  AssignedTo: z.string().optional().default(""),
-  Source: z.enum(["WEBAPP", "MANUAL"]),
-  CustomerName: z.string().min(2, "Nimi vaaditaan"),
-  CustomerPhone: z.string().min(6, "Puhelinnumero vaaditaan"),
-  CustomerEmail: z.string().email("Virheellinen sähköposti").optional().or(z.literal("")),
-  Address: z.string().min(5, "Osoite vaaditaan"),
-  PreferredTime: z.string().min(1, "Toivottu aika vaaditaan"),
-  ServicePackage: z.string().min(1, "Valitse palvelu"),
-  AdditionalServices: z.array(z.string()).optional().default([]),
-  Notes: z.string().optional().default(""),
-  EstimatedPrice: z.number().optional(),
-  CreatedAt: z.string().optional(),
-  UpdatedAt: z.string().optional(),
+export const customers = pgTable("customers", {
+  id:        serial("id").primaryKey(),
+  name:      text("name").notNull(),
+  phone:     text("phone").notNull(),
+  email:     text("email"),
+  address:   text("address").notNull(),
+  notes:     text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-export type Job = z.infer<typeof jobSchema>;
+export const customersRelations = relations(customers, ({ many }) => ({
+  jobs: many(jobs),
+}));
 
-export const insertJobSchema = jobSchema.omit({
-  CreatedAt: true,
-  UpdatedAt: true,
+export const insertCustomerSchema = createInsertSchema(customers).omit({ id: true, createdAt: true });
+export type Customer = typeof customers.$inferSelect;
+export type InsertCustomer = z.infer<typeof insertCustomerSchema>;
+
+// ─── Jobs ─────────────────────────────────────────────────────────────────────
+
+export const jobs = pgTable("jobs", {
+  id:          serial("id").primaryKey(),
+  customerId:  integer("customer_id").references(() => customers.id).notNull(),
+  scheduledAt: timestamp("scheduled_at"),
+  description: text("description").notNull(),
+  agreedPrice: integer("agreed_price").notNull(),  // senttiä (€ × 100)
+  status:      jobStatusEnum("status").default("lead").notNull(),
+  assignedTo:  text("assigned_to"),               // yrittäjän nimi
+  notes:       text("notes"),
+  createdAt:   timestamp("created_at").defaultNow().notNull(),
+  updatedAt:   timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const jobsRelations = relations(jobs, ({ one, many }) => ({
+  customer: one(customers, { fields: [jobs.customerId], references: [customers.id] }),
+  expenses: many(expenses),
+}));
+
+export const insertJobSchema = createInsertSchema(jobs).omit({ id: true, createdAt: true, updatedAt: true });
+export type Job = typeof jobs.$inferSelect;
 export type InsertJob = z.infer<typeof insertJobSchema>;
 
-export const bookingFormSchema = z.object({
-  CustomerName: z.string().min(2, "Nimi vaaditaan (vähintään 2 merkkiä)"),
-  CustomerPhone: z.string().min(6, "Puhelinnumero vaaditaan"),
-  CustomerEmail: z.string().email("Virheellinen sähköposti").optional().or(z.literal("")),
-  Address: z.string().min(5, "Osoite vaaditaan (vähintään 5 merkkiä)"),
-  PreferredTime: z.string().min(1, "Valitse toivottu ajankohta"),
-  ServicePackage: z.string().min(1, "Valitse palvelu"),
-  AdditionalServices: z.array(z.string()).optional().default([]),
-  Notes: z.string().optional().default(""),
+// ─── Expenses ─────────────────────────────────────────────────────────────────
+
+export const expenses = pgTable("expenses", {
+  id:          serial("id").primaryKey(),
+  jobId:       integer("job_id").references(() => jobs.id).notNull(),
+  description: text("description").notNull(),
+  amount:      integer("amount").notNull(),  // senttiä (€ × 100)
+  createdAt:   timestamp("created_at").defaultNow().notNull(),
 });
 
-export type BookingFormData = z.infer<typeof bookingFormSchema>;
+export const expensesRelations = relations(expenses, ({ one }) => ({
+  job: one(jobs, { fields: [expenses.jobId], references: [jobs.id] }),
+}));
 
-export const packageSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  description: z.string(),
-  durationMinutes: z.number(),
-  price: z.number(),
-  category: z.string().optional(),
-  active: z.boolean().default(true),
+export const insertExpenseSchema = createInsertSchema(expenses).omit({ id: true, createdAt: true });
+export type Expense = typeof expenses.$inferSelect;
+export type InsertExpense = z.infer<typeof insertExpenseSchema>;
+
+// ─── Users (admin accounts — seeded, ei itserekisteröitymistä) ───────────────
+
+export const users = pgTable("users", {
+  id:           serial("id").primaryKey(),
+  name:         text("name").notNull(),
+  username:     text("username").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  role:         text("role").notNull().default("staff"), // host | staff
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
 });
 
-export type Package = z.infer<typeof packageSchema>;
-
-export interface HealthResponse {
-  ok: boolean;
-  ts: string;
-}
-
-export interface PackagesResponse {
-  ok: boolean;
-  packages: Package[];
-}
-
-export interface UpsertJobResponse {
-  ok: boolean;
-  jobId?: string;
-  message?: string;
-  error?: string;
-}
-
-export interface GetJobResponse {
-  ok: boolean;
-  job?: Job;
-  error?: string;
-}
-
-export interface ListJobsResponse {
-  ok: boolean;
-  jobs: Job[];
-  total?: number;
-  error?: string;
-}
-
-export const users = {};
-export const insertUserSchema = z.object({
-  username: z.string(),
-  password: z.string(),
-});
+export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
+export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
-export type User = { id: string; username: string; password: string };

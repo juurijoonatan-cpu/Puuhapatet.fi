@@ -87,6 +87,16 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* Hero image banner */}
+      <div className="w-full overflow-hidden" style={{ maxHeight: "420px" }}>
+        <img
+          src="/hero-workers.jpg"
+          alt="Ikkunanpesijät työssä rakennuksen julkisivulla"
+          className="w-full object-cover object-center"
+          style={{ maxHeight: "420px" }}
+        />
+      </div>
+
       <section className="py-16 md:py-24 bg-muted/30">
         <div className="container mx-auto px-4 md:px-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">

@@ -40,7 +40,7 @@ export default function LandingPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <section className="relative pt-20 md:pt-28 pb-0 overflow-hidden">
+      <section className="relative pt-20 md:pt-28 pb-16 md:pb-24 overflow-hidden">
         {/* Background image with overlay */}
         <div className="absolute inset-0">
           <img
@@ -93,18 +93,6 @@ export default function LandingPage() {
               {t("hero.tagline")}
             </p>
           </div>
-        </div>
-
-        {/* Image peek at the bottom — shows photo fading in */}
-        <div className="relative z-10 mt-10 overflow-hidden" style={{ height: "220px" }}>
-          <img
-            src="/hero-workers.jpg"
-            alt="Ikkunanpesijät työssä rakennuksen julkisivulla"
-            className="w-full object-cover object-[center_30%]"
-            style={{ height: "320px", marginTop: "-50px" }}
-          />
-          <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-transparent to-transparent" />
-        </div>
       </section>
 
       <section className="py-16 md:py-24 bg-muted/30">

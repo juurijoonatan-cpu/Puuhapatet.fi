@@ -40,32 +40,41 @@ export default function LandingPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <section className="relative pt-20 md:pt-32 pb-16 md:pb-24 overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-primary/3 pointer-events-none" />
-        
+      <section className="relative pt-20 md:pt-28 pb-0 overflow-hidden">
+        {/* Background image with overlay */}
+        <div className="absolute inset-0">
+          <img
+            src="/hero-workers.jpg"
+            alt=""
+            className="w-full h-full object-cover object-center"
+          />
+          <div className="absolute inset-0 bg-background/82" />
+          <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-transparent to-background/40" />
+        </div>
+
         <div className="container mx-auto px-4 md:px-6 relative z-10">
           <div className="max-w-3xl mx-auto text-center">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium mb-6">
               <Sparkles className="w-4 h-4" />
               <span>{t("hero.pill")}</span>
             </div>
-            
+
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-semibold text-foreground leading-tight mb-4 text-balance">
               {t("hero.title")}
               <span className="text-primary"> {t("hero.titleAccent")}</span>
             </h1>
-            
+
             <div className="h-8 mb-4">
-              <Typewriter 
-                texts={typewriterTexts} 
+              <Typewriter
+                texts={typewriterTexts}
                 className="text-lg md:text-xl text-primary/80 font-medium"
               />
             </div>
-            
+
             <p className="text-lg md:text-xl text-muted-foreground leading-relaxed mb-8 max-w-2xl mx-auto text-balance">
               {t("hero.subtitle")}
             </p>
-            
+
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Link href="/tilaus">
                 <Button size="lg" className="w-full sm:w-auto text-base px-8" data-testid="cta-booking">
@@ -79,23 +88,24 @@ export default function LandingPage() {
                 </Button>
               </Link>
             </div>
-            
+
             <p className="text-sm text-muted-foreground mt-6 italic">
               {t("hero.tagline")}
             </p>
           </div>
         </div>
-      </section>
 
-      {/* Hero image banner */}
-      <div className="w-full overflow-hidden" style={{ maxHeight: "420px" }}>
-        <img
-          src="/hero-workers.jpg"
-          alt="Ikkunanpesijät työssä rakennuksen julkisivulla"
-          className="w-full object-cover object-center"
-          style={{ maxHeight: "420px" }}
-        />
-      </div>
+        {/* Image peek at the bottom — shows photo fading in */}
+        <div className="relative z-10 mt-10 overflow-hidden" style={{ height: "220px" }}>
+          <img
+            src="/hero-workers.jpg"
+            alt="Ikkunanpesijät työssä rakennuksen julkisivulla"
+            className="w-full object-cover object-[center_30%]"
+            style={{ height: "320px", marginTop: "-50px" }}
+          />
+          <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-transparent to-transparent" />
+        </div>
+      </section>
 
       <section className="py-16 md:py-24 bg-muted/30">
         <div className="container mx-auto px-4 md:px-6">

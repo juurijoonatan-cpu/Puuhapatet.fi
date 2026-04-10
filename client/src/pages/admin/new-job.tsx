@@ -23,7 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { api, generateJobId, ApiPackage, normalizePackage, NormalizedPackage } from "@/lib/api";
+import { api, generateJobId, NormalizedPackage } from "@/lib/api";
 import { getAdminProfile } from "@/lib/admin-profile";
 import { cn } from "@/lib/utils";
 
@@ -71,7 +71,7 @@ export default function NewJobPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [packages, setPackages] = useState<NormalizedPackage[]>([]);
-  const [packagesLoading, setPackagesLoading] = useState(false);
+  const [packagesLoading] = useState(false);
   
   const customerSigRef = useRef<HTMLCanvasElement>(null);
   const staffSigRef = useRef<HTMLCanvasElement>(null);
@@ -123,30 +123,12 @@ export default function NewJobPage() {
     }
   }, [currentStep, packages.length]);
 
-  const loadPackages = async () => {
-    setPackagesLoading(true);
-    try {
-      const result = await api.packages();
-      if (result.ok && result.data?.packages) {
-        const normalized = result.data.packages
-          .filter((p: ApiPackage) => p.Active !== false)
-          .map(normalizePackage);
-        setPackages(normalized);
-      } else {
-        setPackages([
-          { id: "BASIC", name: "Peruspesu", description: "Ikkunoiden peruspesu", price: 89, durationMinutes: 60, active: true },
-          { id: "FULL", name: "Täyspesu", description: "Ikkunat ja karmit", price: 149, durationMinutes: 90, active: true },
-          { id: "PREMIUM", name: "Premium", description: "Kaikki pinnat, sisä ja ulko", price: 249, durationMinutes: 120, active: true },
-        ]);
-      }
-    } catch {
-      setPackages([
-        { id: "BASIC", name: "Peruspesu", description: "Ikkunoiden peruspesu", price: 89, durationMinutes: 60, active: true },
-        { id: "FULL", name: "Täyspesu", description: "Ikkunat ja karmit", price: 149, durationMinutes: 90, active: true },
-        { id: "PREMIUM", name: "Premium", description: "Kaikki pinnat, sisä ja ulko", price: 249, durationMinutes: 120, active: true },
-      ]);
-    }
-    setPackagesLoading(false);
+  const loadPackages = () => {
+    setPackages([
+      { id: "BASIC",   name: "Peruspesu", description: "Ikkunoiden peruspesu ulkoa",          price: 89,  durationMinutes: 60,  active: true },
+      { id: "FULL",    name: "Täyspesu",  description: "Ikkunat ja karmit sisä + ulko",        price: 149, durationMinutes: 90,  active: true },
+      { id: "PREMIUM", name: "Premium",   description: "Kaikki pinnat, sisä ja ulko + karmit", price: 249, durationMinutes: 120, active: true },
+    ]);
   };
 
   const handlePrefill = async () => {
@@ -324,50 +306,73 @@ export default function NewJobPage() {
     }
 
     setIsSubmitting(true);
-    
-    const jobData = {
-      JobID: formData.jobId,
-      WorkflowStatus: "CONFIRMED",
-      AssignedTo: profile?.name || "",
-      Source: "ADMIN",
-      CustomerName: formData.customerName,
-      CustomerPhone: formData.customerPhone,
-      CustomerEmail: formData.customerEmail,
-      Address: formData.customerAddress,
-      Language: formData.customerLanguage,
-      PreferredTime: "flexible",
-      ServicePackage: formData.selectedPackageName,
-      PropertyType: formData.propertyType,
-      Floors: formData.floors,
-      WindowCount: formData.windowCount,
-      AccessConstraints: formData.accessConstraints,
-      WeatherNotes: formData.weatherNotes,
-      OriginalPrice: formData.originalPrice,
-      DiscountPercent: formData.discountPercent,
-      DiscountReason: formData.discountReason,
-      FinalPrice: formData.finalPrice,
-      Notes: formData.customerNotes,
-      InternalNotes: formData.internalNotes,
-      CustomerSignature: formData.customerSignature ? "SIGNED" : "",
-      StaffSignature: formData.staffSignature ? "SIGNED" : "",
-      CreatedBy: profile?.name || "Admin",
-    };
 
     try {
-      const result = await api.upsertJob(jobData);
-      if (result.ok && result.data?.ok) {
-        toast({
-          title: "Keikka luotu!",
-          description: `Tilausnumero: ${formData.jobId}`,
-        });
-        setCurrentStep(5);
-      } else {
+      // 1. Create or find customer
+      const customerRes = await api.createCustomer({
+        name: formData.customerName,
+        phone: formData.customerPhone,
+        email: formData.customerEmail || undefined,
+        address: formData.customerAddress,
+        notes: formData.customerNotes || undefined,
+      });
+
+      if (!customerRes.ok || !customerRes.data?.id) {
         toast({
           variant: "destructive",
-          title: "Virhe tallennuksessa",
-          description: result.data?.error || "Yritä uudelleen.",
+          title: "Asiakastietojen tallennus epäonnistui",
+          description: customerRes.error || "Yritä uudelleen.",
         });
+        setIsSubmitting(false);
+        return;
       }
+
+      const customerId = customerRes.data.id;
+
+      // 2. Create job
+      const description = [
+        formData.selectedPackageName,
+        formData.propertyType && `Kohde: ${formData.propertyType}`,
+        formData.floors && `Kerrokset: ${formData.floors}`,
+        formData.windowCount && `Ikkunat: ${formData.windowCount}`,
+        formData.accessConstraints && `Rajoitteet: ${formData.accessConstraints}`,
+        formData.discountPercent > 0 && `Alennus: ${formData.discountPercent}% (${formData.discountReason})`,
+      ]
+        .filter(Boolean)
+        .join(" | ");
+
+      const internalNotes = [
+        formData.internalNotes,
+        formData.weatherNotes && `Sää: ${formData.weatherNotes}`,
+        `Allekirjoitettu: asiakas=${formData.customerSignature ? "kyllä" : "ei"}, henkilöstö=${formData.staffSignature ? "kyllä" : "ei"}`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      const jobRes = await api.createJob({
+        customerId,
+        description,
+        agreedPrice: Math.round(formData.finalPrice * 100), // euros → cents
+        status: "lead",
+        assignedTo: profile?.name || undefined,
+        notes: internalNotes || undefined,
+      });
+
+      if (!jobRes.ok || !jobRes.data?.id) {
+        toast({
+          variant: "destructive",
+          title: "Keikan tallennus epäonnistui",
+          description: jobRes.error || "Yritä uudelleen.",
+        });
+        setIsSubmitting(false);
+        return;
+      }
+
+      toast({
+        title: "Keikka luotu!",
+        description: `Asiakas #${customerId} · Keikka #${jobRes.data.id}`,
+      });
+      setCurrentStep(5);
     } catch {
       toast({
         variant: "destructive",
@@ -375,7 +380,7 @@ export default function NewJobPage() {
         description: "Tarkista verkkoyhteys ja yritä uudelleen.",
       });
     }
-    
+
     setIsSubmitting(false);
   };
 

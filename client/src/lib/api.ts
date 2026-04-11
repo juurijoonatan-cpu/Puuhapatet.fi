@@ -22,7 +22,14 @@ async function request<T>(
       body: body ? JSON.stringify(body) : undefined,
       mode: "cors",
     });
-    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    if (!res.ok) {
+      try {
+        const errData = await res.json();
+        return { ok: false, error: errData.error || `HTTP ${res.status}` };
+      } catch {
+        return { ok: false, error: `HTTP ${res.status}` };
+      }
+    }
     const data = await res.json();
     return { ok: true, data };
   } catch (e) {

@@ -95,9 +95,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.patch("/api/jobs/:id", async (req, res) => {
     try {
+      const body = { ...req.body };
+      // Drizzle timestamp columns expect Date objects, not ISO strings
+      if (typeof body.scheduledAt === "string") {
+        body.scheduledAt = new Date(body.scheduledAt);
+      }
+      if (body.scheduledAt === null) {
+        body.scheduledAt = null; // explicitly NULL — clears the field
+      }
       const [row] = await db
         .update(jobs)
-        .set({ ...req.body, updatedAt: new Date() })
+        .set({ ...body, updatedAt: new Date() })
         .where(eq(jobs.id, Number(req.params.id)))
         .returning();
       if (!row) return res.status(404).json({ error: "Ei löydy" });

@@ -171,6 +171,24 @@ export const api = {
   deleteExpense: (expenseId: number) =>
     request<unknown>("DELETE", `/api/expenses/${expenseId}`),
 
+  getInvestments: () =>
+    request<unknown[]>("GET", "/api/investments"),
+
+  addInvestment: (data: {
+    description: string;
+    amount: number;
+    category?: string;
+    boughtBy: string;
+    splitWith?: string | null;
+    note?: string;
+  }) => request<unknown>("POST", "/api/investments", data),
+
+  updateInvestment: (id: number, data: Record<string, unknown>) =>
+    request<unknown>("PATCH", `/api/investments/${id}`, data),
+
+  deleteInvestment: (id: number) =>
+    request<{ ok: boolean }>("DELETE", `/api/investments/${id}`),
+
   // Legacy compat stubs
   getJob: (_jobId: string): Promise<ApiResponse<{ ok: boolean; job?: unknown }>> =>
     Promise.resolve({ ok: false }),

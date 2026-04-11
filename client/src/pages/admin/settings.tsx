@@ -4,7 +4,7 @@
 
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { ArrowLeft, LogOut, User, Sun, Moon, Banknote, CheckCircle, BookOpen, FileSpreadsheet } from "lucide-react";
+import { ArrowLeft, LogOut, User, Sun, Moon, Banknote, CheckCircle, BookOpen, FileSpreadsheet, ShoppingCart } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -133,6 +133,24 @@ export default function AdminSettingsPage() {
                 <div>
                   <p className="font-semibold text-foreground">Verotuloste</p>
                   <p className="text-sm text-muted-foreground">Keikat verotusta varten · CSV / tulosta</p>
+                </div>
+              </div>
+              <ArrowLeft className="w-4 h-4 text-muted-foreground rotate-180" />
+            </div>
+          </Card>
+        </Link>
+
+        {/* Investoinnit link */}
+        <Link href="/admin/investments">
+          <Card className="p-5 bg-card border-0 premium-shadow mb-4 cursor-pointer hover:opacity-95 transition-opacity">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center">
+                  <ShoppingCart className="w-5 h-5 text-orange-600 dark:text-orange-400" />
+                </div>
+                <div>
+                  <p className="font-semibold text-foreground">Investoinnit & Välineet</p>
+                  <p className="text-sm text-muted-foreground">Hankinnat ja jaetut kulut</p>
                 </div>
               </div>
               <ArrowLeft className="w-4 h-4 text-muted-foreground rotate-180" />

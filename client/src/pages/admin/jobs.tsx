@@ -280,10 +280,11 @@ export default function AdminJobsPage() {
       : new Date(job.createdAt).toLocaleDateString("fi-FI");
     const priceEur = (job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" });
     const paymentLine = paymentMethod ? `Maksutapa: ${PAYMENT_METHODS.find(m => m.key === paymentMethod)?.label ?? paymentMethod}\n` : "";
-    const subject = encodeURIComponent(`Kuitti — Ikkunapesu ${date} | Puuhapatet`);
+    const phoneLine = senderProfile?.phone ? `→ Tai suoraan: ${senderProfile.phone}\n` : "";
+    const subject = encodeURIComponent(`Kuitti — Puuhapatet ${date}`);
     const body = encodeURIComponent(
       `Hei ${customer?.name ?? ""}!\n\n` +
-      `Kiitos tilauksestanne — ikkuna loistaa taas! ✨\n\n` +
+      `Kiitos tilauksestanne — hienoa yhteistyötä! ✨\n\n` +
       `══════════════════════════\n` +
       `           KUITTI\n` +
       `══════════════════════════\n` +
@@ -293,12 +294,17 @@ export default function AdminJobsPage() {
       `──────────────────────────\n` +
       `Palvelu:     ${job.description}\n` +
       `Hinta:       ${priceEur}\n` +
-      (paymentLine ? `${paymentLine}` : "") +
+      (paymentLine ? paymentLine : "") +
       `══════════════════════════\n\n` +
-      `Haluatko varata seuraavan pesun jo ennakkoon?\n` +
+      `KOTITALOUSVÄHENNYS\n` +
+      `Tämä palvelu on kotitalousvähennyskelpoinen!\n` +
+      `Voit vähentää 40 % työn osuudesta verotuksessa\n` +
+      `(enintään 2 250 € / henkilö / vuosi).\n` +
+      `Lisätietoa: vero.fi/kotitalousvahennys\n\n` +
+      `Haluatko varata seuraavan palvelun?\n` +
       `→ puuhapatet.fi/tilaus\n` +
-      `→ Tai suoraan: ${senderProfile?.phone ?? "0400 389 999"}\n\n` +
-      `Meiltä löytyy myös piha- ja puutarhapalvelut,\n` +
+      phoneLine +
+      `\nMeiltä löytyy ikkunapesu, piha- ja puutarhapalvelut,\n` +
       `roskakatos- ja terassihuollot — kysy lisää!\n\n` +
       `Terveisin,\n` +
       `${senderName}\n` +

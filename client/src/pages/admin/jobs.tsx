@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/empty-state";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
-import { USERS } from "@/lib/admin-profile";
+import { USERS, getAdminProfile } from "@/lib/admin-profile";
 import { cn } from "@/lib/utils";
 
 type DbStatus = "lead" | "scheduled" | "in_progress" | "done" | "cancelled";
@@ -69,6 +69,9 @@ export default function AdminJobsPage() {
   // Workers selection
   const [selectedWorkers, setSelectedWorkers] = useState<string[]>([]);
   const [savingWorkers, setSavingWorkers] = useState(false);
+
+  // Payment method for receipt
+  const [paymentMethod, setPaymentMethod] = useState<string>("");
 
   const loadJobs = () => {
     setLoading(true);
@@ -260,29 +263,47 @@ export default function AdminJobsPage() {
   const expensesPerWorker = Math.round(expensesTotal / numWorkers);
 
   // ── Mailto receipt ────────────────────────────────────────────────────────
+  const PAYMENT_METHODS = [
+    { key: "käteinen",   label: "Käteinen" },
+    { key: "mobilepay",  label: "MobilePay" },
+    { key: "tilisiirto", label: "Tilisiirto" },
+    { key: "kortti",     label: "Kortti" },
+  ];
+
   const buildMailtoReceipt = () => {
     if (!selected) return "#";
     const { job, customer } = selected;
+    const senderProfile = getAdminProfile();
+    const senderName = senderProfile?.name ?? "Puuhapatet";
     const date = job.scheduledAt
       ? new Date(job.scheduledAt).toLocaleDateString("fi-FI")
       : new Date(job.createdAt).toLocaleDateString("fi-FI");
     const priceEur = (job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" });
-    const subject = encodeURIComponent(`Kuitti — Puuhapatet Ikkunapesu ${date}`);
+    const paymentLine = paymentMethod ? `Maksutapa: ${PAYMENT_METHODS.find(m => m.key === paymentMethod)?.label ?? paymentMethod}\n` : "";
+    const subject = encodeURIComponent(`Kuitti — Ikkunapesu ${date} | Puuhapatet`);
     const body = encodeURIComponent(
-      `Hyvä ${customer?.name ?? "asiakas"},\n\n` +
-      `Kiitos tilauksestanne! Tässä kuittinne ikkunanpesusta.\n\n` +
-      `─────────────────────────\n` +
-      `KUITTI\n` +
-      `─────────────────────────\n` +
-      `Asiakas: ${customer?.name ?? ""}\n` +
-      `Osoite:  ${customer?.address ?? ""}\n` +
-      `Päivämäärä: ${date}\n` +
-      `Palvelu: ${job.description}\n` +
-      `Hinta: ${priceEur}\n` +
-      `─────────────────────────\n\n` +
-      `Puuhapatet Oy\n` +
-      `puuhapatet.fi\n` +
-      `puh. 0400 389 999\n`
+      `Hei ${customer?.name ?? ""}!\n\n` +
+      `Kiitos tilauksestanne — ikkuna loistaa taas! ✨\n\n` +
+      `══════════════════════════\n` +
+      `           KUITTI\n` +
+      `══════════════════════════\n` +
+      `Asiakas:     ${customer?.name ?? ""}\n` +
+      `Osoite:      ${customer?.address ?? ""}\n` +
+      `Päivämäärä:  ${date}\n` +
+      `──────────────────────────\n` +
+      `Palvelu:     ${job.description}\n` +
+      `Hinta:       ${priceEur}\n` +
+      (paymentLine ? `${paymentLine}` : "") +
+      `══════════════════════════\n\n` +
+      `Haluatko varata seuraavan pesun jo ennakkoon?\n` +
+      `→ puuhapatet.fi/tilaus\n` +
+      `→ Tai suoraan: ${senderProfile?.phone ?? "0400 389 999"}\n\n` +
+      `Meiltä löytyy myös piha- ja puutarhapalvelut,\n` +
+      `roskakatos- ja terassihuollot — kysy lisää!\n\n` +
+      `Terveisin,\n` +
+      `${senderName}\n` +
+      `Puuhapatet\n` +
+      `info@puuhapatet.fi\n`
     );
     const to = customer?.email ? encodeURIComponent(customer.email) : "";
     return `mailto:${to}?subject=${subject}&body=${body}`;
@@ -623,14 +644,40 @@ export default function AdminJobsPage() {
             </Card>
           )}
 
-          {/* Receipt button */}
+          {/* Receipt — payment method + send */}
           {customer?.email && (
-            <a href={buildMailtoReceipt()} className="block mb-4">
-              <Button variant="outline" className="w-full gap-2">
-                <Mail className="w-4 h-4" />
-                Lähetä kuitti asiakkaalle
-              </Button>
-            </a>
+            <Card className="p-5 bg-card border-0 premium-shadow mb-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Mail className="w-4 h-4 text-muted-foreground" />
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  Kuitti asiakkaalle
+                </p>
+              </div>
+              <p className="text-xs text-muted-foreground mb-3">Valitse maksutapa (valinnainen)</p>
+              <div className="flex flex-wrap gap-2 mb-4">
+                {PAYMENT_METHODS.map((m) => (
+                  <button
+                    key={m.key}
+                    type="button"
+                    onClick={() => setPaymentMethod(prev => prev === m.key ? "" : m.key)}
+                    className={cn(
+                      "px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all",
+                      paymentMethod === m.key
+                        ? "border-primary bg-primary/5 text-foreground"
+                        : "border-border text-muted-foreground hover:border-muted-foreground/40",
+                    )}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              <a href={buildMailtoReceipt()}>
+                <Button className="w-full gap-2">
+                  <Mail className="w-4 h-4" />
+                  Avaa kuitti sähköpostiin
+                </Button>
+              </a>
+            </Card>
           )}
         </div>
       </div>

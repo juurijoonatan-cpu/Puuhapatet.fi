@@ -28,7 +28,7 @@ export const USERS: AdminProfile[] = [
   {
     id: "matias",
     name: "Matias Pitkänen",
-    role: "STAFF",
+    role: "HOST",
     photoUrl: "/matias.jpg.jpeg",
     phone: "+358 45 765 4321",
   },

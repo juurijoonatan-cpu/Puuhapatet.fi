@@ -86,7 +86,7 @@ export interface NewJob {
   status?: string;
   assignedTo?: string;
   notes?: string;
-  scheduledAt?: string;
+  scheduledAt?: string | null;
 }
 
 export interface StatsResponse {

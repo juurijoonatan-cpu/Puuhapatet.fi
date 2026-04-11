@@ -14,7 +14,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { ArrowLeft, ArrowRight, Search, User, ClipboardCheck, Package, FileText, CheckCircle, Loader2, Percent, Check } from "lucide-react";
+import { ArrowLeft, ArrowRight, User, ClipboardCheck, Package, FileText, CheckCircle, Loader2, Percent, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -27,7 +27,7 @@ import { api, generateJobId, NormalizedPackage } from "@/lib/api";
 import { getAdminProfile } from "@/lib/admin-profile";
 import { cn } from "@/lib/utils";
 
-type WizardStep = 0 | 1 | 2 | 3 | 4 | 5;
+type WizardStep = 0 | 1 | 2 | 3 | 4;
 
 interface JobFormData {
   jobId: string;
@@ -55,20 +55,17 @@ interface JobFormData {
 }
 
 const steps = [
-  { icon: Search, label: "Hae", short: "ID" },
-  { icon: User, label: "Asiakas", short: "Tiedot" },
+  { icon: User,         label: "Asiakas", short: "Tiedot"   },
   { icon: ClipboardCheck, label: "Arviointi", short: "Kohde" },
-  { icon: Package, label: "Paketti", short: "Ehdotus" },
-  { icon: FileText, label: "Sopimus", short: "Allekirj." },
-  { icon: CheckCircle, label: "Valmis", short: "Valmis" },
+  { icon: Package,      label: "Paketti",  short: "Ehdotus" },
+  { icon: FileText,     label: "Sopimus",  short: "Allekirj." },
+  { icon: CheckCircle,  label: "Valmis",   short: "Valmis"  },
 ];
 
 export default function NewJobPage() {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const [currentStep, setCurrentStep] = useState<WizardStep>(0);
-  const [prefillJobId, setPrefillJobId] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [packages, setPackages] = useState<NormalizedPackage[]>([]);
   const [packagesLoading] = useState(false);
@@ -118,7 +115,11 @@ export default function NewJobPage() {
   };
 
   useEffect(() => {
-    if (currentStep === 3 && packages.length === 0) {
+    updateForm({ jobId: generateJobId() });
+  }, []);
+
+  useEffect(() => {
+    if (currentStep === 2 && packages.length === 0) {
       loadPackages();
     }
   }, [currentStep, packages.length]);
@@ -129,56 +130,6 @@ export default function NewJobPage() {
       { id: "FULL",    name: "Täyspesu",  description: "Ikkunat ja karmit sisä + ulko",        price: 149, durationMinutes: 90,  active: true },
       { id: "PREMIUM", name: "Premium",   description: "Kaikki pinnat, sisä ja ulko + karmit", price: 249, durationMinutes: 120, active: true },
     ]);
-  };
-
-  const handlePrefill = async () => {
-    if (!prefillJobId.trim()) {
-      toast({
-        variant: "destructive",
-        title: "Anna tilausnumero",
-        description: "Syötä Asiakas-ID/Lead-ID hakeaksesi tietoja.",
-      });
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const result = await api.getJob(prefillJobId.trim());
-      if (result.ok && result.data?.ok && result.data.job) {
-        const job = result.data.job as Record<string, unknown>;
-        updateForm({
-          jobId: (job.JobID as string) || prefillJobId,
-          customerName: (job.CustomerName as string) || "",
-          customerPhone: (job.CustomerPhone as string) || "",
-          customerEmail: (job.CustomerEmail as string) || "",
-          customerAddress: (job.Address as string) || "",
-          customerNotes: (job.Notes as string) || "",
-        });
-        toast({
-          title: "Tiedot haettu",
-          description: "Asiakastiedot ladattu onnistuneesti.",
-        });
-        setCurrentStep(1);
-      } else {
-        toast({
-          variant: "destructive",
-          title: "Tilausta ei löytynyt",
-          description: "Tarkista tilausnumero tai jatka uutena tilauksena.",
-        });
-      }
-    } catch {
-      toast({
-        variant: "destructive",
-        title: "Virhe haussa",
-        description: "Yhteysongelma. Yritä uudelleen.",
-      });
-    }
-    setIsLoading(false);
-  };
-
-  const handleSkipPrefill = () => {
-    updateForm({ jobId: generateJobId() });
-    setCurrentStep(1);
   };
 
   const selectPackage = (pkg: NormalizedPackage) => {
@@ -372,7 +323,7 @@ export default function NewJobPage() {
         title: "Keikka luotu!",
         description: `Asiakas #${customerId} · Keikka #${jobRes.data.id}`,
       });
-      setCurrentStep(5);
+      setCurrentStep(4);
     } catch {
       toast({
         variant: "destructive",
@@ -385,7 +336,7 @@ export default function NewJobPage() {
   };
 
   const goNext = () => {
-    if (currentStep === 2) {
+    if (currentStep === 1) {
       if (!formData.propertyType || !formData.floors || !formData.windowCount) {
         toast({
           variant: "destructive",
@@ -395,7 +346,7 @@ export default function NewJobPage() {
         return;
       }
     }
-    if (currentStep === 3) {
+    if (currentStep === 2) {
       if (!formData.selectedPackage) {
         toast({
           variant: "destructive",
@@ -405,7 +356,7 @@ export default function NewJobPage() {
         return;
       }
     }
-    if (currentStep < 5) {
+    if (currentStep < 4) {
       setCurrentStep((prev) => (prev + 1) as WizardStep);
     }
   };
@@ -442,7 +393,6 @@ export default function NewJobPage() {
       agreedTerms: false,
     });
     setCurrentStep(0);
-    setPrefillJobId("");
   };
 
   return (
@@ -460,7 +410,6 @@ export default function NewJobPage() {
             </h1>
             <p className="text-sm text-muted-foreground">
               {steps[currentStep].label}
-              {formData.jobId && ` • ${formData.jobId}`}
             </p>
           </div>
         </div>
@@ -495,60 +444,6 @@ export default function NewJobPage() {
         </div>
 
         {currentStep === 0 && (
-          <Card className="p-6 bg-card border-0 premium-shadow">
-            <h2 className="text-lg font-semibold text-foreground mb-4">
-              Onko asiakkaalla jo Puuha-ID?
-            </h2>
-            <p className="text-sm text-muted-foreground mb-6">
-              Jos asiakas on jättänyt yhteydenottopyynnön verkkosivuilla, 
-              hän on saanut Puuha-ID:n jolla tiedot voidaan hakea.
-            </p>
-
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="prefillJobId">Asiakas-ID / Lead-ID</Label>
-                <div className="flex gap-2 mt-2">
-                  <Input
-                    id="prefillJobId"
-                    value={prefillJobId}
-                    onChange={(e) => setPrefillJobId(e.target.value.toUpperCase())}
-                    placeholder="PP-XXXX-XXXX"
-                    className="font-mono flex-1"
-                    data-testid="input-prefill-job-id"
-                  />
-                  <Button
-                    onClick={handlePrefill}
-                    disabled={isLoading || !prefillJobId.trim()}
-                    data-testid="btn-prefill"
-                  >
-                    {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Hae"}
-                  </Button>
-                </div>
-              </div>
-
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center">
-                  <span className="w-full border-t" />
-                </div>
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-card px-2 text-muted-foreground">tai</span>
-                </div>
-              </div>
-
-              <Button
-                variant="outline"
-                className="w-full"
-                onClick={handleSkipPrefill}
-                data-testid="btn-skip-prefill"
-              >
-                Jatka ilman ID:tä (uusi asiakas)
-                <ArrowRight className="w-4 h-4 ml-2" />
-              </Button>
-            </div>
-          </Card>
-        )}
-
-        {currentStep === 1 && (
           <Card className="p-6 bg-card border-0 premium-shadow">
             <h2 className="text-lg font-semibold text-foreground mb-2">
               Asiakkaan tiedot
@@ -655,7 +550,7 @@ export default function NewJobPage() {
           </Card>
         )}
 
-        {currentStep === 2 && (
+        {currentStep === 1 && (
           <Card className="p-6 bg-card border-0 premium-shadow">
             <h2 className="text-lg font-semibold text-foreground mb-2">
               Kohteen arviointi
@@ -774,7 +669,7 @@ export default function NewJobPage() {
           </Card>
         )}
 
-        {currentStep === 3 && (
+        {currentStep === 2 && (
           <Card className="p-6 bg-card border-0 premium-shadow">
             <h2 className="text-lg font-semibold text-foreground mb-2">
               Pakettiehdotus
@@ -878,7 +773,7 @@ export default function NewJobPage() {
           </Card>
         )}
 
-        {currentStep === 4 && (
+        {currentStep === 3 && (
           <Card className="p-6 bg-card border-0 premium-shadow">
             <h2 className="text-lg font-semibold text-foreground mb-2">
               Sopimus
@@ -1001,7 +896,7 @@ export default function NewJobPage() {
           </Card>
         )}
 
-        {currentStep === 5 && (
+        {currentStep === 4 && (
           <Card className="p-6 bg-card border-0 premium-shadow text-center">
             <div className="w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto mb-4">
               <CheckCircle className="w-8 h-8 text-green-600 dark:text-green-400" />
@@ -1009,11 +904,8 @@ export default function NewJobPage() {
             <h2 className="text-xl font-semibold text-foreground mb-2">
               Valmis!
             </h2>
-            <p className="text-muted-foreground mb-2">
-              Keikka on tallennettu.
-            </p>
-            <p className="font-mono text-primary mb-6">
-              {formData.jobId}
+            <p className="text-muted-foreground mb-6">
+              Keikka on tallennettu tietokantaan.
             </p>
 
             <div className="space-y-3">

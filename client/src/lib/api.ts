@@ -140,12 +140,24 @@ export const api = {
   updateJob: (id: number, data: Partial<NewJob>) =>
     request<unknown>("PATCH", `/api/jobs/${id}`, data),
 
-  // Legacy compat — new-job wizard still calls these during prefill step
+  updateCustomer: (id: number, data: Partial<NewCustomer>) =>
+    request<unknown>("PATCH", `/api/customers/${id}`, data),
+
+  getExpenses: (jobId: number) =>
+    request<unknown[]>("GET", `/api/jobs/${jobId}/expenses`),
+
+  addExpense: (jobId: number, data: { description: string; amount: number }) =>
+    request<unknown>("POST", `/api/jobs/${jobId}/expenses`, data),
+
+  deleteExpense: (expenseId: number) =>
+    request<unknown>("DELETE", `/api/expenses/${expenseId}`),
+
+  // Legacy compat stubs
   getJob: (_jobId: string): Promise<ApiResponse<{ ok: boolean; job?: unknown }>> =>
     Promise.resolve({ ok: false }),
 
   upsertJob: (_job: unknown): Promise<ApiResponse<{ ok: boolean; jobId?: string; error?: string }>> =>
-    Promise.resolve({ ok: false, error: "Deprecated — use createCustomer + createJob" }),
+    Promise.resolve({ ok: false, error: "Deprecated" }),
 };
 
 export { API_BASE };

@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, ChevronDown, ChevronUp, Phone, Mail, AlertTriangle, Star, ClipboardList, Euro, Users, Shield } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, Phone, Mail, AlertTriangle, Star, ClipboardList, Euro, Users, Shield, Laptop, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -234,6 +234,131 @@ const sections: Section[] = [
     ),
   },
   {
+    id: "adminpanel",
+    icon: Laptop,
+    title: "Hallintapaneelin käyttö",
+    color: "text-indigo-600 dark:text-indigo-400",
+    bg: "bg-indigo-100 dark:bg-indigo-900/30",
+    content: (
+      <div>
+        <H>Uusi keikka</H>
+        <ul className="space-y-1.5 mb-3">
+          <Li><strong>Dashboard → Uusi keikka:</strong> avaa ohjattu 4-vaiheinen wizard</Li>
+          <Li><strong>Vaihe 1 — Asiakas:</strong> nimi, puhelin, osoite. Järjestelmä luo asiakasprofiilin automaattisesti.</Li>
+          <Li><strong>Vaihe 2 — Arviointi:</strong> muistiinpanot kohteesta (valinnainen)</Li>
+          <Li><strong>Vaihe 3 — Hinnoittelu:</strong> valitse palvelutyyppi (ikkunapesu → käytä laskuria; muut → syötä hinta käsin)</Li>
+          <Li><strong>Vaihe 4 — Sopimus:</strong> allekirjoitukset. Valmis!</Li>
+        </ul>
+
+        <H>Keikka-näkymä (Keikat)</H>
+        <ul className="space-y-1.5 mb-3">
+          <Li><strong>Status:</strong> vaihda napautuksella: Liidi → Ajoitettu → Käynnissä → Valmis</Li>
+          <Li><strong>Ajankohta:</strong> aseta päivämäärä ja kellonaika — näkyy kalenterissa</Li>
+          <Li><strong>Tekijät:</strong> valitse kuka tai ketkä tekee keikan (jaetaan tasan)</Li>
+          <Li><strong>Kulut:</strong> lisää materiaali- ym. kulut euroa/kpl — vähentää automaattisesti netosta</Li>
+          <Li><strong>Tilitys-kortti:</strong> näyttää jokaisen tekijän netto-osuuden automaattisesti</Li>
+          <Li><strong>Kuitti:</strong> valitse maksutapa → "Avaa kuitti sähköpostiin" — avautuu sähköpostiohjelma valmiilla viestillä</Li>
+        </ul>
+
+        <H>Kalenteri</H>
+        <ul className="space-y-1.5 mb-3">
+          <Li><strong>Lista-näkymä (oletus):</strong> kaikki tulevat aikataulutetut keikat aikajärjestyksessä</Li>
+          <Li><strong>Viikko-näkymä:</strong> 7 päivää vierekkäin, keikat näkyvät omassa solussa</Li>
+          <Li><strong>Päivä-näkymä:</strong> yksittäisen päivän keikat</Li>
+          <Li>Näkyy vain keikat joilla on ajankohta — aseta se keikkasivulta</Li>
+        </ul>
+
+        <H>Asiakkaat</H>
+        <ul className="space-y-1.5 mb-3">
+          <Li>Kaikki asiakkaat listalla. Naputa asiakasta nähdäksesi kaikki heidän keikkansa.</Li>
+          <Li>Voit muokata nimeä, puhelinta, osoitetta ja sähköpostia</Li>
+        </ul>
+
+        <H>Asetukset</H>
+        <ul className="space-y-1.5 mb-3">
+          <Li><strong>Vaihda salasana:</strong> vaihda oma henkilökohtainen kirjautumissalasanasi</Li>
+          <Li><strong>Verotuloste:</strong> lataa CSV tai tulosta keikat verotusta varten (ks. alla)</Li>
+          <Li><strong>Investoinnit &amp; välineet:</strong> kirjaa hankinnat (oma tai 50/50 toisen kanssa)</Li>
+          <Li><strong>Palvelumaksuvelat (vain HOST):</strong> näet kertyneet velat per tekijä — paina "Maksettu" kun on maksettu</Li>
+        </ul>
+      </div>
+    ),
+  },
+  {
+    id: "tax",
+    icon: FileText,
+    title: "Veroilmoitus — 4H-yrittäjä (OmaVero)",
+    color: "text-emerald-600 dark:text-emerald-400",
+    bg: "bg-emerald-100 dark:bg-emerald-900/30",
+    content: (
+      <div>
+        <P>
+          4H-yrittäjänä ilmoitat tulot OmaVerossa kohdassa <strong>Muut ansiotulot</strong>.
+          Käytä Verotuloste-sivua saadaksesi oikeat luvut helposti. Alla vaihe vaiheelta.
+        </P>
+
+        <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-3 mb-4">
+          <p className="text-xs font-bold text-blue-800 dark:text-blue-300 mb-2">
+            Ohje huoltajalle — kirjautuminen alaikäisen puolesta
+          </p>
+          <ol className="text-xs text-blue-700 dark:text-blue-400 space-y-1 list-decimal list-inside">
+            <li>Kirjaudu <strong>OmaVeroon</strong> omilla pankkitunnuksilla</li>
+            <li>Valitse <strong>Asioi toisen puolesta</strong></li>
+            <li>Valitse <strong>Siirry Valtuudet-palveluun</strong></li>
+            <li>Valitse <strong>kenen puolesta asioit</strong> (nuori yrittäjä)</li>
+          </ol>
+        </div>
+
+        <H>Esitäytetty veroilmoitus</H>
+        <ol className="space-y-1.5 mb-4 list-decimal list-inside">
+          <li className="text-sm text-foreground leading-relaxed">Avaa <strong>Esitäytetty veroilmoitus</strong> -laatikko</li>
+          <li className="text-sm text-foreground leading-relaxed">Valitse <strong>Korjaa esitäytetyn veroilmoituksen tietoja</strong> (ohjeet oikeassa laidassa)</li>
+          <li className="text-sm text-foreground leading-relaxed">Jos vuosi on jo esivalittu → valitse alhaalta <strong>Tulojen ja vähennysten ilmoittaminen</strong> (henkilökohtainen veroilmoitus)</li>
+          <li className="text-sm text-foreground leading-relaxed">Tarkista taustatiedot</li>
+        </ol>
+
+        <H>Tulot — tärkein kohta</H>
+        <div className="bg-green-50 dark:bg-green-900/20 rounded-xl p-3 mb-4">
+          <ol className="text-sm text-green-800 dark:text-green-300 space-y-1.5 list-decimal list-inside">
+            <li>Siirry <strong>Tuotot</strong>-sivulle</li>
+            <li>Lisää <strong>Muut tulot → Muut ansiotulot</strong></li>
+            <li>Kuvaus: <em>"4H-toiminnan tulot"</em></li>
+            <li>Summa: <strong>nettoansio</strong> (se mitä jäi käteen tulojen ja menojen jälkeen — löytyy Verotulosteesta)</li>
+          </ol>
+        </div>
+
+        <H>Matkakulut (lisävähennys)</H>
+        <ol className="space-y-1.5 mb-4 list-decimal list-inside">
+          <li className="text-sm text-foreground leading-relaxed">Muut vähennykset → <strong>Matkakulut</strong></li>
+          <li className="text-sm text-foreground leading-relaxed">Valitse: <em>Muu kuin asunnon ja työpaikan välinen matka</em></li>
+          <li className="text-sm text-foreground leading-relaxed">Valitse: <em>Tilapäiset työmatkat ja erityisalan matkat</em></li>
+          <li className="text-sm text-foreground leading-relaxed">Kulkuneuvo: valitse käyttämäsi</li>
+          <li className="text-sm text-foreground leading-relaxed">Säännöllinen sama matka: <strong>Ei</strong></li>
+          <li className="text-sm text-foreground leading-relaxed">Työpaikan osoite: kirjoita <em>"useita kohteita"</em></li>
+          <li className="text-sm text-foreground leading-relaxed">Yhden päivän matkan keskipituus: kokonaiskilometrit ÷ työpäivien määrä</li>
+          <li className="text-sm text-foreground leading-relaxed">Matkapäivien lukumäärä: sama jakaja</li>
+        </ol>
+
+        <H>Muut tulonhankkimismenot</H>
+        <ul className="space-y-1.5 mb-4">
+          <Li>Muut vähennykset → <strong>Tulonhankkimismenot</strong></Li>
+          <Li>→ Muiden kuin palkkatulojen tulonhankkimismenot</Li>
+          <Li>Vähennyskelpoisia: 4H-jäsenmaksu, 4H-yrittäjän vakuutus, pesuaineet ja välineet (jos ei kirjattu jo Investoinnit-osioon)</Li>
+        </ul>
+
+        <div className="bg-yellow-50 dark:bg-yellow-900/20 rounded-xl p-3 border border-yellow-200 dark:border-yellow-800">
+          <p className="text-xs font-bold text-yellow-800 dark:text-yellow-300 mb-1">
+            Muista säilyttää kuitit!
+          </p>
+          <p className="text-xs text-yellow-700 dark:text-yellow-400">
+            Kaikista vähennetyistä kuluista täytyy olla kuitti mahdollista verotarkastusta varten.
+            Tämän sovelluksen Verotuloste-sivu toimii kirjanpitona keikkatuloista.
+          </p>
+        </div>
+      </div>
+    ),
+  },
+  {
     id: "contact",
     icon: Phone,
     title: "Yhteystiedot — apua ongelmiin",
@@ -303,8 +428,8 @@ export default function AdminGuidePage() {
             </Button>
           </Link>
           <div>
-            <h1 className="text-2xl font-semibold text-foreground">Työntekijän opas</h1>
-            <p className="text-sm text-muted-foreground">Puuhapatet · versio 1.0</p>
+            <h1 className="text-2xl font-semibold text-foreground">Opas</h1>
+            <p className="text-sm text-muted-foreground">Puuhapatet · käyttöohjeet ja ehdot</p>
           </div>
         </div>
 

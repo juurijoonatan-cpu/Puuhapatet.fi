@@ -4,11 +4,12 @@
 
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { ArrowLeft, LogOut, User, Sun, Moon, Banknote, CheckCircle, BookOpen, FileSpreadsheet, ShoppingCart } from "lucide-react";
+import { ArrowLeft, LogOut, User, Sun, Moon, Banknote, CheckCircle, BookOpen, FileSpreadsheet, ShoppingCart, KeyRound, Eye, EyeOff } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { clearAdminSession } from "./login";
+import { Input } from "@/components/ui/input";
+import { clearAdminSession, getEffectivePassword, setUserPassword } from "./login";
 import { useToast } from "@/hooks/use-toast";
 import { useTheme } from "@/lib/theme";
 import { getAdminProfile, clearAdminProfile, USERS } from "@/lib/admin-profile";
@@ -25,6 +26,13 @@ export default function AdminSettingsPage() {
 
   const [workerStats, setWorkerStats] = useState<WorkerStatsResponse | null>(null);
   const [markingPaid, setMarkingPaid] = useState<string | null>(null);
+
+  // Password change state
+  const [currentPwd, setCurrentPwd] = useState("");
+  const [newPwd, setNewPwd] = useState("");
+  const [confirmPwd, setConfirmPwd] = useState("");
+  const [showPwds, setShowPwds] = useState(false);
+  const [savingPwd, setSavingPwd] = useState(false);
 
   const loadStats = () => {
     if (isHost) {
@@ -51,6 +59,31 @@ export default function AdminSettingsPage() {
       toast({ variant: "destructive", title: "Virhe", description: res.error });
     }
     setMarkingPaid(null);
+  };
+
+  const handleChangePassword = () => {
+    if (!profile) return;
+    if (!currentPwd || !newPwd || !confirmPwd) {
+      toast({ variant: "destructive", title: "Täytä kaikki kentät" });
+      return;
+    }
+    if (currentPwd !== getEffectivePassword(profile.id)) {
+      toast({ variant: "destructive", title: "Nykyinen salasana on väärin" });
+      return;
+    }
+    if (newPwd.length < 4) {
+      toast({ variant: "destructive", title: "Uusi salasana on liian lyhyt (min 4 merkkiä)" });
+      return;
+    }
+    if (newPwd !== confirmPwd) {
+      toast({ variant: "destructive", title: "Salasanat eivät täsmää" });
+      return;
+    }
+    setSavingPwd(true);
+    setUserPassword(profile.id, newPwd);
+    setCurrentPwd(""); setNewPwd(""); setConfirmPwd("");
+    setSavingPwd(false);
+    toast({ title: "Salasana vaihdettu" });
   };
 
   const handleLogout = () => {
@@ -122,6 +155,58 @@ export default function AdminSettingsPage() {
           </div>
         </Card>
 
+        {/* Password change */}
+        <Card className="p-6 bg-card border-0 premium-shadow mb-6">
+          <div className="flex items-center gap-2 mb-4">
+            <KeyRound className="w-5 h-5 text-muted-foreground" />
+            <h2 className="text-lg font-semibold text-foreground">Vaihda salasana</h2>
+          </div>
+          <div className="space-y-3">
+            <div className="relative">
+              <Input
+                type={showPwds ? "text" : "password"}
+                placeholder="Nykyinen salasana"
+                value={currentPwd}
+                onChange={e => setCurrentPwd(e.target.value)}
+                className="pr-10 text-sm"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPwds(p => !p)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                {showPwds ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <Input
+              type={showPwds ? "text" : "password"}
+              placeholder="Uusi salasana (min 4 merkkiä)"
+              value={newPwd}
+              onChange={e => setNewPwd(e.target.value)}
+              className="text-sm"
+            />
+            <Input
+              type={showPwds ? "text" : "password"}
+              placeholder="Uusi salasana uudelleen"
+              value={confirmPwd}
+              onChange={e => setConfirmPwd(e.target.value)}
+              className="text-sm"
+              onKeyDown={e => e.key === "Enter" && handleChangePassword()}
+            />
+            <Button
+              onClick={handleChangePassword}
+              disabled={savingPwd || !currentPwd || !newPwd || !confirmPwd}
+              className="w-full"
+              variant="outline"
+            >
+              Tallenna uusi salasana
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground mt-3">
+            Salasana tallennetaan tähän laitteeseen. Jos kirjaudut toiselta laitteelta, käytä alkuperäistä salasanaa.
+          </p>
+        </Card>
+
         {/* Tax export link */}
         <Link href="/admin/tax-export">
           <Card className="p-5 bg-card border-0 premium-shadow mb-4 cursor-pointer hover:opacity-95 transition-opacity">
@@ -167,8 +252,8 @@ export default function AdminSettingsPage() {
                   <BookOpen className="w-5 h-5 text-blue-600 dark:text-blue-400" />
                 </div>
                 <div>
-                  <p className="font-semibold text-foreground">Työntekijän opas</p>
-                  <p className="text-sm text-muted-foreground">Ohjeet, ehdot ja yhteystiedot</p>
+                  <p className="font-semibold text-foreground">Opas & ohjeet</p>
+                  <p className="text-sm text-muted-foreground">Paneeli, verot, ehdot, yhteystiedot</p>
                 </div>
               </div>
               <ArrowLeft className="w-4 h-4 text-muted-foreground rotate-180" />

@@ -6,7 +6,7 @@
  */
 
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Plus, Calendar, ClipboardList, Settings, Sun, Moon, LogOut } from "lucide-react";
+import { LayoutDashboard, Plus, Calendar, ClipboardList, Users, Settings, Sun, Moon, LogOut } from "lucide-react";
 import { useTheme } from "@/lib/theme";
 import { clearAdminSession } from "@/pages/admin/login";
 import { clearAdminProfile, getAdminProfile } from "@/lib/admin-profile";
@@ -18,12 +18,23 @@ interface NavItem {
   href: string;
 }
 
+// Mobile bottom bar — keep to 5 most-used items (Calendar is placeholder)
+const mobileNavItems: NavItem[] = [
+  { icon: LayoutDashboard, label: "Dashboard", href: "/admin/dashboard" },
+  { icon: Plus,            label: "Uusi",      href: "/admin/new" },
+  { icon: ClipboardList,   label: "Keikat",    href: "/admin/jobs" },
+  { icon: Users,           label: "Asiakkaat", href: "/admin/customers" },
+  { icon: Settings,        label: "Asetukset", href: "/admin/settings" },
+];
+
+// Desktop top nav — show all
 const adminNavItems: NavItem[] = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/admin/dashboard" },
-  { icon: Plus, label: "Uusi", href: "/admin/new" },
-  { icon: Calendar, label: "Kalenteri", href: "/admin/calendar" },
-  { icon: ClipboardList, label: "Keikat", href: "/admin/jobs" },
-  { icon: Settings, label: "Asetukset", href: "/admin/settings" },
+  { icon: Plus,            label: "Uusi",      href: "/admin/new" },
+  { icon: Calendar,        label: "Kalenteri", href: "/admin/calendar" },
+  { icon: ClipboardList,   label: "Keikat",    href: "/admin/jobs" },
+  { icon: Users,           label: "Asiakkaat", href: "/admin/customers" },
+  { icon: Settings,        label: "Asetukset", href: "/admin/settings" },
 ];
 
 export function AdminNav() {
@@ -63,17 +74,17 @@ export function AdminNav() {
         aria-label="Admin-valikko"
       >
         <div className="flex items-center gap-1">
-          {adminNavItems.map((item) => {
+          {mobileNavItems.map((item) => {
             const active = isActive(item.href);
             const Icon = item.icon;
-            
+
             return (
               <Link key={item.href} href={item.href}>
                 <button
                   className={cn(
                     "flex items-center justify-center w-12 h-12 rounded-2xl transition-all duration-200",
-                    active 
-                      ? "text-primary scale-105" 
+                    active
+                      ? "text-primary scale-105"
                       : "text-muted-foreground"
                   )}
                   aria-label={item.label}

@@ -26,6 +26,7 @@ import AdminPackagesPage from "@/pages/admin/packages";
 import AdminSettingsPage from "@/pages/admin/settings";
 import AdminCustomersPage from "@/pages/admin/customers";
 import AdminGuidePage from "@/pages/admin/guide";
+import AdminTaxExportPage from "@/pages/admin/tax-export";
 import NotFound from "@/pages/not-found";
 
 function PublicLayout({ children }: { children: React.ReactNode }) {
@@ -127,6 +128,11 @@ function Router() {
       <Route path="/admin/guide">
         <ProtectedRoute>
           <AdminGuidePage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/admin/tax-export">
+        <ProtectedRoute>
+          <AdminTaxExportPage />
         </ProtectedRoute>
       </Route>
       <Route path="/admin">

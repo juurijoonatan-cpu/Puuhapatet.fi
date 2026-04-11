@@ -4,7 +4,7 @@
 
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { ArrowLeft, LogOut, User, Sun, Moon, Banknote, CheckCircle, BookOpen } from "lucide-react";
+import { ArrowLeft, LogOut, User, Sun, Moon, Banknote, CheckCircle, BookOpen, FileSpreadsheet } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -121,6 +121,24 @@ export default function AdminSettingsPage() {
             </Button>
           </div>
         </Card>
+
+        {/* Tax export link */}
+        <Link href="/admin/tax-export">
+          <Card className="p-5 bg-card border-0 premium-shadow mb-4 cursor-pointer hover:opacity-95 transition-opacity">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                  <FileSpreadsheet className="w-5 h-5 text-green-600 dark:text-green-400" />
+                </div>
+                <div>
+                  <p className="font-semibold text-foreground">Verotuloste</p>
+                  <p className="text-sm text-muted-foreground">Keikat verotusta varten · CSV / tulosta</p>
+                </div>
+              </div>
+              <ArrowLeft className="w-4 h-4 text-muted-foreground rotate-180" />
+            </div>
+          </Card>
+        </Link>
 
         {/* Opas link */}
         <Link href="/admin/guide">

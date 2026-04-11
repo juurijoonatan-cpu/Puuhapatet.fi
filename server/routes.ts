@@ -149,28 +149,38 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.get("/api/stats", async (_req, res) => {
     try {
-      const [totals] = await db.select({
-        totalJobs:    sql<number>`count(*)`,
-        totalRevenue: sql<number>`coalesce(sum(${jobs.agreedPrice}), 0)`,
-        upcoming:     sql<number>`count(*) filter (where ${jobs.status} = 'scheduled')`,
+      // Counts: all non-cancelled jobs
+      const [counts] = await db.select({
+        totalJobs: sql<number>`count(*) filter (where ${jobs.status} != 'cancelled')`,
+        upcoming:  sql<number>`count(*) filter (where ${jobs.status} = 'scheduled')`,
       }).from(jobs);
 
-      const [expenseTotals] = await db.select({
-        totalExpenses: sql<number>`coalesce(sum(${expenses.amount}), 0)`,
-      }).from(expenses);
+      // Financial figures: done jobs only (completed work)
+      const doneJobs = await db.select().from(jobs).where(eq(jobs.status, "done"));
+      const allExpenses = await db.select().from(expenses);
 
-      const totalRevenue = Number(totals.totalRevenue);
-      const totalExpenses = Number(expenseTotals.totalExpenses);
-      const serviceFeeTotal = Math.round(totalRevenue * 0.10); // 10% palvelumaksu
+      const expensesByJob: Record<number, number> = {};
+      for (const e of allExpenses) {
+        expensesByJob[e.jobId] = (expensesByJob[e.jobId] ?? 0) + e.amount;
+      }
+
+      let totalRevenue = 0, totalExpenses = 0, serviceFeeTotal = 0;
+      for (const job of doneJobs) {
+        const jobExp = expensesByJob[job.id] ?? 0;
+        totalRevenue += job.agreedPrice;
+        totalExpenses += jobExp;
+        // Service fee: 10% of net revenue (same formula as workers/stats)
+        serviceFeeTotal += Math.round(Math.max(0, job.agreedPrice - jobExp) * 0.10);
+      }
       const netIncome = totalRevenue - totalExpenses - serviceFeeTotal;
 
       res.json({
-        totalJobs:       Number(totals.totalJobs),
-        totalRevenue,    // senttiä
+        totalJobs:       Number(counts.totalJobs),
+        totalRevenue,    // senttiä — valmistuneista keikoista
         totalExpenses,   // senttiä
-        serviceFeeTotal, // senttiä — maksamaton palvelumaksu brändille
+        serviceFeeTotal, // senttiä — 10 % nettotuloista
         netIncome,       // senttiä — verotettava nettotulo
-        upcoming:        Number(totals.upcoming),
+        upcoming:        Number(counts.upcoming),
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

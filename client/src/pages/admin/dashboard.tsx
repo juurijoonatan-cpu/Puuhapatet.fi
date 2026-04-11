@@ -97,6 +97,33 @@ export default function AdminDashboard() {
           })}
         </div>
 
+        {/* Revenue breakdown — shown below the stat cards */}
+        {!loading && stats && (
+          <Card className="p-4 bg-card border-0 premium-shadow mb-8">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+              Talous — erittely
+            </p>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Tulot</p>
+                <p className="text-lg font-semibold text-foreground">{fmt(stats.totalRevenue)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Kulut</p>
+                <p className="text-lg font-semibold text-foreground">{fmt(stats.totalExpenses)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Palvelumaksu</p>
+                <p className="text-lg font-semibold text-foreground">{fmt(stats.serviceFeeTotal)}</p>
+              </div>
+            </div>
+            <div className="mt-3 pt-3 border-t border-border flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">Nettotulo</p>
+              <p className="text-lg font-bold text-green-600 dark:text-green-400">{fmt(stats.netIncome)}</p>
+            </div>
+          </Card>
+        )}
+
         <Link href="/admin/new">
           <Card className="p-6 bg-primary text-primary-foreground border-0 mb-8 cursor-pointer hover:opacity-95 transition-opacity">
             <div className="flex items-center justify-between">

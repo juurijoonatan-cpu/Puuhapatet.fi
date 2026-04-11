@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
-import { Loader2, ClipboardList, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Check, CalendarClock } from "lucide-react";
+import { Loader2, ClipboardList, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Check, CalendarClock, Save } from "lucide-react";
 import { Link } from "wouter";
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/empty-state";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
@@ -51,6 +53,10 @@ export default function AdminJobsPage() {
   const [selected, setSelected] = useState<JobRow | null>(null);
   const [updating, setUpdating] = useState(false);
   const [savingDate, setSavingDate] = useState(false);
+  const [editPrice, setEditPrice] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [savingFields, setSavingFields] = useState(false);
 
   const loadJobs = () => {
     setLoading(true);
@@ -61,6 +67,15 @@ export default function AdminJobsPage() {
   };
 
   useEffect(() => { loadJobs(); }, []);
+
+  // Populate edit fields whenever a job is selected
+  useEffect(() => {
+    if (selected) {
+      setEditPrice(String(selected.job.agreedPrice / 100));
+      setEditDescription(selected.job.description);
+      setEditNotes(selected.job.notes ?? "");
+    }
+  }, [selected?.job.id]);
 
   const updateStatus = async (newStatus: DbStatus) => {
     if (!selected || selected.job.status === newStatus) return;
@@ -100,6 +115,45 @@ export default function AdminJobsPage() {
     }
     setSavingDate(false);
   };
+
+  const saveFields = async () => {
+    if (!selected) return;
+    setSavingFields(true);
+    const agreedPrice = Math.round(parseFloat(editPrice) * 100);
+    if (isNaN(agreedPrice) || agreedPrice < 0) {
+      toast({ variant: "destructive", title: "Virheellinen hinta" });
+      setSavingFields(false);
+      return;
+    }
+    const res = await api.updateJob(selected.job.id, {
+      agreedPrice,
+      description: editDescription.trim() || selected.job.description,
+      notes: editNotes.trim() || undefined,
+    });
+    if (res.ok) {
+      const updated: JobRow = {
+        ...selected,
+        job: {
+          ...selected.job,
+          agreedPrice,
+          description: editDescription.trim() || selected.job.description,
+          notes: editNotes.trim() || null,
+        },
+      };
+      setSelected(updated);
+      setJobs((prev) => prev.map((r) => (r.job.id === selected.job.id ? updated : r)));
+      toast({ title: "Tiedot tallennettu" });
+    } else {
+      toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
+    }
+    setSavingFields(false);
+  };
+
+  const hasFieldChanges = selected
+    ? editPrice !== String(selected.job.agreedPrice / 100) ||
+      editDescription !== selected.job.description ||
+      editNotes !== (selected.job.notes ?? "")
+    : false;
 
   // ── Detail view ───────────────────────────────────────────────────────────
   if (selected) {
@@ -176,79 +230,92 @@ export default function AdminJobsPage() {
 
           {/* Info card */}
           <Card className="p-6 bg-card border-0 premium-shadow mb-4">
-            <div className="flex items-start justify-between mb-5">
-              <div>
-                <p className="text-sm text-muted-foreground mb-1">Sovittu hinta</p>
-                <p className="text-2xl font-semibold text-primary">
-                  {(job.agreedPrice / 100).toLocaleString("fi-FI", {
-                    style: "currency",
-                    currency: "EUR",
-                  })}
-                </p>
+            {/* Customer info — read-only */}
+            {customer && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
+                <div>
+                  <p className="text-xs text-muted-foreground mb-0.5">Asiakas</p>
+                  <p className="text-foreground font-medium">{customer.name}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Phone className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <a href={`tel:${customer.phone}`} className="text-foreground hover:text-primary">
+                    {customer.phone}
+                  </a>
+                </div>
+                {customer.email && (
+                  <div className="flex items-center gap-2 col-span-full">
+                    <Mail className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <a href={`mailto:${customer.email}`} className="text-foreground hover:text-primary text-sm">
+                      {customer.email}
+                    </a>
+                  </div>
+                )}
+                <div className="flex items-center gap-2 col-span-full">
+                  <MapPin className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <span className="text-foreground text-sm">{customer.address}</span>
+                </div>
               </div>
-              <Badge className={cn("text-xs", meta.bg, meta.color)}>
-                {meta.label}
-              </Badge>
+            )}
+
+            <div className="border-t border-border mb-5" />
+
+            {/* Editable fields */}
+            <div className="space-y-4">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">Sovittu hinta (€)</p>
+                <Input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={editPrice}
+                  onChange={(e) => setEditPrice(e.target.value)}
+                  className="text-lg font-semibold text-primary"
+                />
+              </div>
+
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">Kuvaus</p>
+                <Textarea
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  rows={3}
+                  className="text-sm resize-none"
+                />
+              </div>
+
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">Muistiinpanot</p>
+                <Textarea
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  placeholder="Sisäiset muistiinpanot…"
+                  rows={2}
+                  className="text-sm resize-none"
+                />
+              </div>
+
+              {hasFieldChanges && (
+                <Button
+                  onClick={saveFields}
+                  disabled={savingFields}
+                  className="w-full"
+                >
+                  {savingFields ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : (
+                    <Save className="w-4 h-4 mr-2" />
+                  )}
+                  Tallenna muutokset
+                </Button>
+              )}
             </div>
 
-            <div className="space-y-4">
-              {customer && (
-                <>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-0.5">Asiakas</p>
-                      <p className="text-foreground font-medium">{customer.name}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Phone className="w-4 h-4 text-muted-foreground shrink-0" />
-                      <a href={`tel:${customer.phone}`} className="text-foreground hover:text-primary">
-                        {customer.phone}
-                      </a>
-                    </div>
-                    {customer.email && (
-                      <div className="flex items-center gap-2">
-                        <Mail className="w-4 h-4 text-muted-foreground shrink-0" />
-                        <a href={`mailto:${customer.email}`} className="text-foreground hover:text-primary text-sm">
-                          {customer.email}
-                        </a>
-                      </div>
-                    )}
-                    <div className="flex items-center gap-2">
-                      <MapPin className="w-4 h-4 text-muted-foreground shrink-0" />
-                      <span className="text-foreground text-sm">{customer.address}</span>
-                    </div>
-                  </div>
-                  <div className="border-t border-border" />
-                </>
-              )}
-
-              <div>
-                <p className="text-xs text-muted-foreground mb-0.5">Kuvaus</p>
-                <p className="text-foreground text-sm">{job.description}</p>
-              </div>
-
-              {job.scheduledAt && (
-                <div>
-                  <p className="text-xs text-muted-foreground mb-0.5">Ajankohta</p>
-                  <p className="text-foreground text-sm">
-                    {new Date(job.scheduledAt).toLocaleString("fi-FI")}
-                  </p>
-                </div>
-              )}
-
-              {job.notes && (
-                <div>
-                  <p className="text-xs text-muted-foreground mb-0.5">Muistiinpanot</p>
-                  <p className="text-foreground text-sm whitespace-pre-wrap">{job.notes}</p>
-                </div>
-              )}
-
-              <div className="pt-3 border-t border-border">
-                <p className="text-xs text-muted-foreground">
-                  Vastuuhenkilö: {job.assignedTo || "Ei määritetty"} ·
-                  Luotu: {new Date(job.createdAt).toLocaleDateString("fi-FI")}
-                </p>
-              </div>
+            <div className="pt-4 mt-4 border-t border-border">
+              <p className="text-xs text-muted-foreground">
+                Vastuuhenkilö: {job.assignedTo || "Ei määritetty"} ·
+                Luotu: {new Date(job.createdAt).toLocaleDateString("fi-FI")}
+              </p>
             </div>
           </Card>
         </div>

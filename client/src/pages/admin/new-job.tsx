@@ -1,20 +1,20 @@
 /**
  * New Job Wizard - "Uusi Keikka"
- * 
- * The heart of the admin tool for door-to-door sales.
- * 
+ *
  * Steps:
- * 0. Optional prefill by Lead-ID / JobID
- * 1. Customer info (customer fills on iPad)
- * 2. Employer assessment (staff fills after handback)
- * 3. Package proposal with pricing
- * 4. Agreement/contract with signatures
- * 5. Completion (submit to API)
+ * 0. Customer info (customer fills on iPad)
+ * 1. Site assessment notes (staff fills)
+ * 2. Pricing — same model as laskuri.tsx
+ * 3. Contract + signatures
+ * 4. Done
  */
 
 import { useState, useRef, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { ArrowLeft, ArrowRight, User, ClipboardCheck, Package, FileText, CheckCircle, Loader2, Percent, Check } from "lucide-react";
+import {
+  ArrowLeft, ArrowRight, User, ClipboardCheck, Package,
+  FileText, CheckCircle, Loader2, Percent, Check,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -23,53 +23,176 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { api, generateJobId, NormalizedPackage } from "@/lib/api";
+import { api, generateJobId } from "@/lib/api";
 import { getAdminProfile } from "@/lib/admin-profile";
 import { cn } from "@/lib/utils";
 
 type WizardStep = 0 | 1 | 2 | 3 | 4;
 
+// ─── Pricing tables — same values as laskuri.tsx ─────────────────────────────
+
+const HOUSE_TYPES = [
+  { key: "omakoti",    label: "Omakotitalo", sub: "Erillistalo" },
+  { key: "paritalo",   label: "Paritalo",    sub: "2 huoneistoa" },
+  { key: "rivitalo",   label: "Rivitalo",    sub: "Oma huoneisto" },
+  { key: "kerrostalo", label: "Kerrostalo",  sub: "Huoneisto" },
+] as const;
+type HouseKey = (typeof HOUSE_TYPES)[number]["key"];
+
+const SQM_RANGES: Record<HouseKey, { label: string; price: number }[]> = {
+  omakoti: [
+    { label: "alle 60 m²",  price: 139 },
+    { label: "60–80 m²",    price: 169 },
+    { label: "80–100 m²",   price: 199 },
+    { label: "100–120 m²",  price: 229 },
+    { label: "120–140 m²",  price: 269 },
+    { label: "140–160 m²",  price: 309 },
+    { label: "160–180 m²",  price: 349 },
+    { label: "180–200 m²",  price: 389 },
+    { label: "200–220 m²",  price: 439 },
+    { label: "220–240 m²",  price: 489 },
+    { label: "240–260 m²",  price: 549 },
+    { label: "260–280 m²",  price: 609 },
+    { label: "yli 280 m²",  price: 669 },
+  ],
+  paritalo: [
+    { label: "alle 60 m²",  price: 139 },
+    { label: "60–80 m²",    price: 169 },
+    { label: "80–100 m²",   price: 199 },
+    { label: "100–120 m²",  price: 229 },
+    { label: "120–140 m²",  price: 269 },
+    { label: "140–160 m²",  price: 309 },
+    { label: "160–180 m²",  price: 349 },
+    { label: "180–200 m²",  price: 389 },
+    { label: "200–220 m²",  price: 439 },
+    { label: "220–240 m²",  price: 489 },
+    { label: "240–260 m²",  price: 549 },
+    { label: "260–280 m²",  price: 609 },
+    { label: "yli 280 m²",  price: 669 },
+  ],
+  rivitalo: [
+    { label: "alle 40 m²",  price:  89 },
+    { label: "40–60 m²",    price: 109 },
+    { label: "60–80 m²",    price: 129 },
+    { label: "80–100 m²",   price: 149 },
+    { label: "100–120 m²",  price: 169 },
+    { label: "120–140 m²",  price: 199 },
+    { label: "140–160 m²",  price: 229 },
+    { label: "yli 160 m²",  price: 279 },
+  ],
+  kerrostalo: [
+    { label: "alle 40 m²",  price:  99 },
+    { label: "40–60 m²",    price: 119 },
+    { label: "60–80 m²",    price: 149 },
+    { label: "80–100 m²",   price: 179 },
+    { label: "100–120 m²",  price: 209 },
+    { label: "120–140 m²",  price: 249 },
+    { label: "yli 140 m²",  price: 329 },
+  ],
+};
+
+const SERVICE_TIERS = [
+  { key: "all",     label: "Kaikki pinnat",   sub: "Sisä + ulko",        mult: 1.00 },
+  { key: "outside", label: "Vain ulkopinnat", sub: "Nopea ja edullinen", mult: 0.58 },
+  { key: "annual",  label: "Vuosipaketti 2×", sub: "10 % alennus",       mult: 1.80 },
+] as const;
+type TierKey = (typeof SERVICE_TIERS)[number]["key"];
+
+const ADDONS = [
+  { key: "balcony", label: "Parveke-/terassilasit", price: 39 },
+  { key: "railing", label: "Lasikaide",             price: 39 },
+  { key: "mirror",  label: "Peilien pesu",          price: 19 },
+  { key: "canopy",  label: "Terassin lasikate",     price: 89 },
+  { key: "gutter",  label: "Rännien puhdistus",     price: 69 },
+] as const;
+type AddonKey = (typeof ADDONS)[number]["key"];
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 interface JobFormData {
   jobId: string;
+  // Customer
   customerName: string;
   customerPhone: string;
   customerEmail: string;
   customerAddress: string;
   customerLanguage: "fi" | "en";
   customerNotes: string;
-  propertyType: string;
-  floors: string;
-  windowCount: string;
+  // Assessment
   accessConstraints: string;
   weatherNotes: string;
   internalNotes: string;
-  selectedPackage: string;
-  selectedPackageName: string;
+  // Pricing
+  houseType: HouseKey | "";
+  sqmIdx: number | null;
+  serviceTier: TierKey;
+  selectedAddons: AddonKey[];
   originalPrice: number;
   discountPercent: number;
   discountReason: string;
   finalPrice: number;
+  // Contract
   customerSignature: string;
   staffSignature: string;
   agreedTerms: boolean;
 }
 
+const EMPTY_FORM: JobFormData = {
+  jobId: "",
+  customerName: "",
+  customerPhone: "",
+  customerEmail: "",
+  customerAddress: "",
+  customerLanguage: "fi",
+  customerNotes: "",
+  accessConstraints: "",
+  weatherNotes: "",
+  internalNotes: "",
+  houseType: "",
+  sqmIdx: null,
+  serviceTier: "all",
+  selectedAddons: [],
+  originalPrice: 0,
+  discountPercent: 0,
+  discountReason: "",
+  finalPrice: 0,
+  customerSignature: "",
+  staffSignature: "",
+  agreedTerms: false,
+};
+
 const steps = [
-  { icon: User,         label: "Asiakas", short: "Tiedot"   },
-  { icon: ClipboardCheck, label: "Arviointi", short: "Kohde" },
-  { icon: Package,      label: "Paketti",  short: "Ehdotus" },
-  { icon: FileText,     label: "Sopimus",  short: "Allekirj." },
-  { icon: CheckCircle,  label: "Valmis",   short: "Valmis"  },
+  { icon: User,          label: "Asiakas",     short: "Tiedot" },
+  { icon: ClipboardCheck,label: "Arviointi",   short: "Kohde" },
+  { icon: Package,       label: "Hinnoittelu", short: "Hinta" },
+  { icon: FileText,      label: "Sopimus",     short: "Allekirj." },
+  { icon: CheckCircle,   label: "Valmis",      short: "Valmis" },
 ];
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function calcPrice(data: JobFormData): { original: number; final: number } {
+  const ht = data.houseType as HouseKey | "";
+  const si = data.sqmIdx;
+  const tierMult = SERVICE_TIERS.find(t => t.key === data.serviceTier)?.mult ?? 1.0;
+  const addonsTotal = ADDONS.reduce((s, a) => s + (data.selectedAddons.includes(a.key) ? a.price : 0), 0);
+  let original = addonsTotal;
+  if (ht && si !== null) {
+    const base = SQM_RANGES[ht]?.[si]?.price ?? 0;
+    original = Math.round(base * tierMult) + addonsTotal;
+  }
+  const final = Math.round(original * (1 - data.discountPercent / 100) * 100) / 100;
+  return { original, final };
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function NewJobPage() {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const [currentStep, setCurrentStep] = useState<WizardStep>(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [packages, setPackages] = useState<NormalizedPackage[]>([]);
-  const [packagesLoading] = useState(false);
-  
+
   const customerSigRef = useRef<HTMLCanvasElement>(null);
   const staffSigRef = useRef<HTMLCanvasElement>(null);
   const [isDrawingCustomer, setIsDrawingCustomer] = useState(false);
@@ -77,69 +200,41 @@ export default function NewJobPage() {
 
   const profile = getAdminProfile();
 
-  const [formData, setFormData] = useState<JobFormData>({
-    jobId: "",
-    customerName: "",
-    customerPhone: "",
-    customerEmail: "",
-    customerAddress: "",
-    customerLanguage: "fi",
-    customerNotes: "",
-    propertyType: "",
-    floors: "",
-    windowCount: "",
-    accessConstraints: "",
-    weatherNotes: "",
-    internalNotes: "",
-    selectedPackage: "",
-    selectedPackageName: "",
-    originalPrice: 0,
-    discountPercent: 0,
-    discountReason: "",
-    finalPrice: 0,
-    customerSignature: "",
-    staffSignature: "",
-    agreedTerms: false,
-  });
+  const [formData, setFormData] = useState<JobFormData>(EMPTY_FORM);
+
+  useEffect(() => {
+    setFormData((prev) => ({ ...prev, jobId: generateJobId() }));
+  }, []);
 
   const updateForm = (updates: Partial<JobFormData>) => {
     setFormData((prev) => {
-      const newData = { ...prev, ...updates };
-      if ("originalPrice" in updates || "discountPercent" in updates) {
-        const price = updates.originalPrice ?? prev.originalPrice;
-        const discount = updates.discountPercent ?? prev.discountPercent;
-        newData.finalPrice = Math.round(price * (1 - discount / 100) * 100) / 100;
+      const next = { ...prev, ...updates };
+
+      // Changing house type resets sqm and prices
+      if ("houseType" in updates && updates.houseType !== prev.houseType) {
+        next.sqmIdx = null;
+        next.originalPrice = 0;
+        next.finalPrice = 0;
+        return next;
       }
-      return newData;
+
+      // Recalculate price when any pricing input changes
+      if (
+        "sqmIdx" in updates ||
+        "serviceTier" in updates ||
+        "selectedAddons" in updates ||
+        "discountPercent" in updates
+      ) {
+        const { original, final } = calcPrice(next);
+        next.originalPrice = original;
+        next.finalPrice = final;
+      }
+
+      return next;
     });
   };
 
-  useEffect(() => {
-    updateForm({ jobId: generateJobId() });
-  }, []);
-
-  useEffect(() => {
-    if (currentStep === 2 && packages.length === 0) {
-      loadPackages();
-    }
-  }, [currentStep, packages.length]);
-
-  const loadPackages = () => {
-    setPackages([
-      { id: "BASIC",   name: "Peruspesu", description: "Ikkunoiden peruspesu ulkoa",          price: 89,  durationMinutes: 60,  active: true },
-      { id: "FULL",    name: "Täyspesu",  description: "Ikkunat ja karmit sisä + ulko",        price: 149, durationMinutes: 90,  active: true },
-      { id: "PREMIUM", name: "Premium",   description: "Kaikki pinnat, sisä ja ulko + karmit", price: 249, durationMinutes: 120, active: true },
-    ]);
-  };
-
-  const selectPackage = (pkg: NormalizedPackage) => {
-    updateForm({
-      selectedPackage: pkg.id,
-      selectedPackageName: pkg.name,
-      originalPrice: pkg.price,
-      finalPrice: pkg.price * (1 - formData.discountPercent / 100),
-    });
-  };
+  // ── Canvas signatures ──────────────────────────────────────────────────────
 
   const initCanvas = (canvas: HTMLCanvasElement | null) => {
     if (!canvas) return;
@@ -157,48 +252,30 @@ export default function NewJobPage() {
   };
 
   const startDrawing = (e: React.MouseEvent | React.TouchEvent, isCustomer: boolean) => {
-    if ("touches" in e) {
-      e.preventDefault();
-    }
-    
+    if ("touches" in e) e.preventDefault();
     const canvas = isCustomer ? customerSigRef.current : staffSigRef.current;
     if (!canvas) return;
-    
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
     const rect = canvas.getBoundingClientRect();
     const clientX = "touches" in e ? e.touches[0].clientX : e.clientX;
     const clientY = "touches" in e ? e.touches[0].clientY : e.clientY;
-    
     ctx.beginPath();
     ctx.moveTo(clientX - rect.left, clientY - rect.top);
-    
-    if (isCustomer) {
-      setIsDrawingCustomer(true);
-    } else {
-      setIsDrawingStaff(true);
-    }
+    if (isCustomer) setIsDrawingCustomer(true);
+    else setIsDrawingStaff(true);
   };
 
   const draw = (e: React.MouseEvent | React.TouchEvent, isCustomer: boolean) => {
-    const isDrawing = isCustomer ? isDrawingCustomer : isDrawingStaff;
-    if (!isDrawing) return;
-
-    if ("touches" in e) {
-      e.preventDefault();
-    }
-
+    if (!(isCustomer ? isDrawingCustomer : isDrawingStaff)) return;
+    if ("touches" in e) e.preventDefault();
     const canvas = isCustomer ? customerSigRef.current : staffSigRef.current;
     if (!canvas) return;
-    
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
     const rect = canvas.getBoundingClientRect();
     const clientX = "touches" in e ? e.touches[0].clientX : e.clientX;
     const clientY = "touches" in e ? e.touches[0].clientY : e.clientY;
-    
     ctx.lineTo(clientX - rect.left, clientY - rect.top);
     ctx.stroke();
   };
@@ -207,13 +284,8 @@ export default function NewJobPage() {
     const canvas = isCustomer ? customerSigRef.current : staffSigRef.current;
     if (canvas) {
       const dataUrl = canvas.toDataURL();
-      if (isCustomer) {
-        updateForm({ customerSignature: dataUrl });
-        setIsDrawingCustomer(false);
-      } else {
-        updateForm({ staffSignature: dataUrl });
-        setIsDrawingStaff(false);
-      }
+      if (isCustomer) { updateForm({ customerSignature: dataUrl }); setIsDrawingCustomer(false); }
+      else             { updateForm({ staffSignature: dataUrl });    setIsDrawingStaff(false); }
     }
   };
 
@@ -223,43 +295,28 @@ export default function NewJobPage() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (isCustomer) {
-      updateForm({ customerSignature: "" });
-    } else {
-      updateForm({ staffSignature: "" });
-    }
+    if (isCustomer) updateForm({ customerSignature: "" });
+    else            updateForm({ staffSignature: "" });
   };
 
+  // ── Submit ─────────────────────────────────────────────────────────────────
+
   const handleSubmitJob = async () => {
-    if (!formData.selectedPackage) {
-      toast({
-        variant: "destructive",
-        title: "Valitse paketti",
-        description: "Valitse palvelupaketti ennen sopimuksen lähettämistä.",
-      });
+    if (!formData.houseType || formData.sqmIdx === null) {
+      toast({ variant: "destructive", title: "Hinnoittelu puuttuu", description: "Valitse kiinteistötyyppi ja koko." });
       return;
     }
     if (!formData.customerSignature) {
-      toast({
-        variant: "destructive",
-        title: "Allekirjoitus puuttuu",
-        description: "Asiakkaan allekirjoitus vaaditaan.",
-      });
+      toast({ variant: "destructive", title: "Allekirjoitus puuttuu", description: "Asiakkaan allekirjoitus vaaditaan." });
       return;
     }
     if (!formData.agreedTerms) {
-      toast({
-        variant: "destructive",
-        title: "Hyväksy ehdot",
-        description: "Palveluehdot on hyväksyttävä ennen lähettämistä.",
-      });
+      toast({ variant: "destructive", title: "Hyväksy ehdot", description: "Palveluehdot on hyväksyttävä ennen lähettämistä." });
       return;
     }
 
     setIsSubmitting(true);
-
     try {
-      // 1. Create or find customer
       const customerRes = await api.createCustomer({
         name: formData.customerName,
         phone: formData.customerPhone,
@@ -269,135 +326,100 @@ export default function NewJobPage() {
       });
 
       if (!customerRes.ok || !customerRes.data?.id) {
-        toast({
-          variant: "destructive",
-          title: "Asiakastietojen tallennus epäonnistui",
-          description: customerRes.error || "Yritä uudelleen.",
-        });
+        toast({ variant: "destructive", title: "Asiakastietojen tallennus epäonnistui", description: customerRes.error || "Yritä uudelleen." });
         setIsSubmitting(false);
         return;
       }
 
       const customerId = customerRes.data.id;
 
-      // 2. Create job
+      const houseLabel = HOUSE_TYPES.find(h => h.key === formData.houseType)?.label ?? "";
+      const sqmLabel   = formData.houseType && formData.sqmIdx !== null
+        ? SQM_RANGES[formData.houseType as HouseKey]?.[formData.sqmIdx]?.label ?? ""
+        : "";
+      const tierLabel  = SERVICE_TIERS.find(t => t.key === formData.serviceTier)?.label ?? "";
+      const addonLabels = ADDONS.filter(a => formData.selectedAddons.includes(a.key)).map(a => a.label);
+
       const description = [
-        formData.selectedPackageName,
-        formData.propertyType && `Kohde: ${formData.propertyType}`,
-        formData.floors && `Kerrokset: ${formData.floors}`,
-        formData.windowCount && `Ikkunat: ${formData.windowCount}`,
-        formData.accessConstraints && `Rajoitteet: ${formData.accessConstraints}`,
-        formData.discountPercent > 0 && `Alennus: ${formData.discountPercent}% (${formData.discountReason})`,
-      ]
-        .filter(Boolean)
-        .join(" | ");
+        `${houseLabel} ${sqmLabel}`.trim(),
+        tierLabel,
+        ...addonLabels,
+        formData.discountPercent > 0 && `Alennus: ${formData.discountPercent}% (${formData.discountReason || "—"})`,
+      ].filter(Boolean).join(" | ");
 
       const internalNotes = [
         formData.internalNotes,
+        formData.accessConstraints && `Kulkurajoitukset: ${formData.accessConstraints}`,
         formData.weatherNotes && `Sää: ${formData.weatherNotes}`,
         `Allekirjoitettu: asiakas=${formData.customerSignature ? "kyllä" : "ei"}, henkilöstö=${formData.staffSignature ? "kyllä" : "ei"}`,
-      ]
-        .filter(Boolean)
-        .join("\n");
+      ].filter(Boolean).join("\n");
 
       const jobRes = await api.createJob({
         customerId,
         description,
-        agreedPrice: Math.round(formData.finalPrice * 100), // euros → cents
+        agreedPrice: Math.round(formData.finalPrice * 100),
         status: "lead",
         assignedTo: profile?.name || undefined,
         notes: internalNotes || undefined,
       });
 
       if (!jobRes.ok || !jobRes.data?.id) {
-        toast({
-          variant: "destructive",
-          title: "Keikan tallennus epäonnistui",
-          description: jobRes.error || "Yritä uudelleen.",
-        });
+        toast({ variant: "destructive", title: "Keikan tallennus epäonnistui", description: jobRes.error || "Yritä uudelleen." });
         setIsSubmitting(false);
         return;
       }
 
-      toast({
-        title: "Keikka luotu!",
-        description: `Asiakas #${customerId} · Keikka #${jobRes.data.id}`,
-      });
+      toast({ title: "Keikka luotu!", description: `Asiakas #${customerId} · Keikka #${jobRes.data.id}` });
       setCurrentStep(4);
     } catch {
-      toast({
-        variant: "destructive",
-        title: "Yhteysvirhe",
-        description: "Tarkista verkkoyhteys ja yritä uudelleen.",
-      });
+      toast({ variant: "destructive", title: "Yhteysvirhe", description: "Tarkista verkkoyhteys ja yritä uudelleen." });
     }
-
     setIsSubmitting(false);
   };
 
+  // ── Navigation ─────────────────────────────────────────────────────────────
+
   const goNext = () => {
-    if (currentStep === 1) {
-      if (!formData.propertyType || !formData.floors || !formData.windowCount) {
-        toast({
-          variant: "destructive",
-          title: "Täytä pakolliset kentät",
-          description: "Valitse kiinteistötyyppi, kerrokset ja ikkunamäärä.",
-        });
+    if (currentStep === 0) {
+      if (!formData.customerName || !formData.customerPhone || !formData.customerAddress) {
+        toast({ variant: "destructive", title: "Täytä pakolliset kentät", description: "Nimi, puhelin ja osoite vaaditaan." });
         return;
       }
     }
     if (currentStep === 2) {
-      if (!formData.selectedPackage) {
-        toast({
-          variant: "destructive",
-          title: "Valitse paketti",
-          description: "Valitse palvelupaketti ennen jatkamista.",
-        });
+      if (!formData.houseType || formData.sqmIdx === null) {
+        toast({ variant: "destructive", title: "Valitse kohde", description: "Valitse kiinteistötyyppi ja koko ennen jatkamista." });
         return;
       }
     }
-    if (currentStep < 4) {
-      setCurrentStep((prev) => (prev + 1) as WizardStep);
-    }
+    if (currentStep < 4) setCurrentStep((prev) => (prev + 1) as WizardStep);
   };
 
   const goBack = () => {
-    if (currentStep > 0) {
-      setCurrentStep((prev) => (prev - 1) as WizardStep);
-    }
+    if (currentStep > 0) setCurrentStep((prev) => (prev - 1) as WizardStep);
   };
 
   const resetWizard = () => {
-    setFormData({
-      jobId: "",
-      customerName: "",
-      customerPhone: "",
-      customerEmail: "",
-      customerAddress: "",
-      customerLanguage: "fi",
-      customerNotes: "",
-      propertyType: "",
-      floors: "",
-      windowCount: "",
-      accessConstraints: "",
-      weatherNotes: "",
-      internalNotes: "",
-      selectedPackage: "",
-      selectedPackageName: "",
-      originalPrice: 0,
-      discountPercent: 0,
-      discountReason: "",
-      finalPrice: 0,
-      customerSignature: "",
-      staffSignature: "",
-      agreedTerms: false,
-    });
+    setFormData({ ...EMPTY_FORM, jobId: generateJobId() });
     setCurrentStep(0);
   };
+
+  // ── Contract summary helpers ───────────────────────────────────────────────
+
+  const houseLabel = HOUSE_TYPES.find(h => h.key === formData.houseType)?.label ?? "";
+  const sqmLabel   = formData.houseType && formData.sqmIdx !== null
+    ? SQM_RANGES[formData.houseType as HouseKey]?.[formData.sqmIdx]?.label ?? ""
+    : "";
+  const tierLabel  = SERVICE_TIERS.find(t => t.key === formData.serviceTier)?.label ?? "";
+  const addonLabels = ADDONS.filter(a => formData.selectedAddons.includes(a.key)).map(a => a.label);
+
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28">
       <div className="container mx-auto px-4 max-w-2xl">
+
+        {/* Header */}
         <div className="flex items-center gap-4 mb-6">
           <Link href="/admin/dashboard">
             <Button variant="ghost" size="icon" data-testid="back-to-dashboard">
@@ -405,36 +427,34 @@ export default function NewJobPage() {
             </Button>
           </Link>
           <div>
-            <h1 className="text-2xl font-semibold text-foreground">
-              Uusi keikka
-            </h1>
+            <h1 className="text-2xl font-semibold text-foreground">Uusi keikka</h1>
             <p className="text-sm text-muted-foreground">
               {steps[currentStep].label}
+              {formData.jobId && ` · ${formData.jobId}`}
             </p>
           </div>
         </div>
 
+        {/* Progress bar */}
         <div className="flex items-center justify-between mb-8 px-2">
           {steps.map((step, index) => {
             const Icon = step.icon;
-            const isActive = index === currentStep;
+            const isActive    = index === currentStep;
             const isCompleted = index < currentStep;
             return (
               <div key={index} className="flex flex-col items-center gap-1">
-                <div
-                  className={cn(
-                    "w-10 h-10 rounded-xl flex items-center justify-center transition-all",
-                    isActive && "bg-primary text-primary-foreground",
-                    isCompleted && "bg-primary/20 text-primary",
-                    !isActive && !isCompleted && "bg-muted text-muted-foreground"
-                  )}
-                >
+                <div className={cn(
+                  "w-10 h-10 rounded-xl flex items-center justify-center transition-all",
+                  isActive    && "bg-primary text-primary-foreground",
+                  isCompleted && "bg-primary/20 text-primary",
+                  !isActive && !isCompleted && "bg-muted text-muted-foreground",
+                )}>
                   <Icon className="w-5 h-5" />
                 </div>
                 <span className={cn(
                   "text-xs",
                   isActive && "text-primary font-medium",
-                  !isActive && "text-muted-foreground"
+                  !isActive && "text-muted-foreground",
                 )}>
                   {step.short}
                 </span>
@@ -443,14 +463,11 @@ export default function NewJobPage() {
           })}
         </div>
 
+        {/* ── Step 0: Customer info ── */}
         {currentStep === 0 && (
           <Card className="p-6 bg-card border-0 premium-shadow">
-            <h2 className="text-lg font-semibold text-foreground mb-2">
-              Asiakkaan tiedot
-            </h2>
-            <p className="text-sm text-muted-foreground mb-6">
-              Anna iPad asiakkaalle täytettäväksi.
-            </p>
+            <h2 className="text-lg font-semibold text-foreground mb-2">Asiakkaan tiedot</h2>
+            <p className="text-sm text-muted-foreground mb-6">Anna iPad asiakkaalle täytettäväksi.</p>
 
             <div className="space-y-4">
               <div>
@@ -464,7 +481,6 @@ export default function NewJobPage() {
                   data-testid="input-customer-name"
                 />
               </div>
-
               <div>
                 <Label htmlFor="customerPhone">Puhelin *</Label>
                 <Input
@@ -477,7 +493,6 @@ export default function NewJobPage() {
                   data-testid="input-customer-phone"
                 />
               </div>
-
               <div>
                 <Label htmlFor="customerEmail">Sähköposti</Label>
                 <Input
@@ -490,54 +505,32 @@ export default function NewJobPage() {
                   data-testid="input-customer-email"
                 />
               </div>
-
               <div>
-                <Label htmlFor="customerAddress">Osoite / alue *</Label>
+                <Label htmlFor="customerAddress">Osoite *</Label>
                 <Input
                   id="customerAddress"
                   value={formData.customerAddress}
                   onChange={(e) => updateForm({ customerAddress: e.target.value })}
-                  placeholder="Katuosoite tai alue"
+                  placeholder="Katuosoite"
                   className="mt-2"
                   data-testid="input-customer-address"
                 />
               </div>
-
               <div>
-                <Label htmlFor="customerLanguage">Kieli</Label>
-                <Select
-                  value={formData.customerLanguage}
-                  onValueChange={(v) => updateForm({ customerLanguage: v as "fi" | "en" })}
-                >
-                  <SelectTrigger className="mt-2" data-testid="select-customer-language">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="fi">Suomi</SelectItem>
-                    <SelectItem value="en">English</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label htmlFor="customerNotes">Lisätiedot (valinnainen)</Label>
+                <Label htmlFor="customerNotes">Lisätiedot</Label>
                 <Textarea
                   id="customerNotes"
                   value={formData.customerNotes}
                   onChange={(e) => updateForm({ customerNotes: e.target.value })}
-                  placeholder="Muita huomioita..."
-                  className="mt-2 min-h-20"
+                  placeholder="Muita huomioita…"
+                  className="mt-2 min-h-20 resize-none"
                   data-testid="input-customer-notes"
                 />
               </div>
 
-              <div className="flex gap-3 pt-4">
-                <Button variant="outline" onClick={goBack} data-testid="btn-back">
-                  <ArrowLeft className="w-4 h-4 mr-2" />
-                  Takaisin
-                </Button>
+              <div className="pt-4">
                 <Button
-                  className="flex-1"
+                  className="w-full"
                   onClick={goNext}
                   disabled={!formData.customerName || !formData.customerPhone || !formData.customerAddress}
                   data-testid="btn-next"
@@ -550,102 +543,45 @@ export default function NewJobPage() {
           </Card>
         )}
 
+        {/* ── Step 1: Site assessment ── */}
         {currentStep === 1 && (
           <Card className="p-6 bg-card border-0 premium-shadow">
-            <h2 className="text-lg font-semibold text-foreground mb-2">
-              Kohteen arviointi
-            </h2>
+            <h2 className="text-lg font-semibold text-foreground mb-2">Kohteen arviointi</h2>
             <p className="text-sm text-muted-foreground mb-6">
-              Täytä henkilökunnan arvio kohteesta.
+              Henkilökunnan huomiot kohteesta (kaikki valinnaisia).
             </p>
 
             <div className="space-y-4">
-              <div>
-                <Label>Kiinteistötyyppi</Label>
-                <Select
-                  value={formData.propertyType}
-                  onValueChange={(v) => updateForm({ propertyType: v })}
-                >
-                  <SelectTrigger className="mt-2" data-testid="select-property-type">
-                    <SelectValue placeholder="Valitse..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="apartment">Kerrostalo</SelectItem>
-                    <SelectItem value="townhouse">Rivitalo</SelectItem>
-                    <SelectItem value="house">Omakotitalo</SelectItem>
-                    <SelectItem value="commercial">Liiketila</SelectItem>
-                    <SelectItem value="other">Muu</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label>Kerroksia</Label>
-                <Select
-                  value={formData.floors}
-                  onValueChange={(v) => updateForm({ floors: v })}
-                >
-                  <SelectTrigger className="mt-2" data-testid="select-floors">
-                    <SelectValue placeholder="Valitse..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="1">1 kerros</SelectItem>
-                    <SelectItem value="2">2 kerrosta</SelectItem>
-                    <SelectItem value="3+">3+ kerrosta</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label>Ikkunoiden määrä (arvio)</Label>
-                <Select
-                  value={formData.windowCount}
-                  onValueChange={(v) => updateForm({ windowCount: v })}
-                >
-                  <SelectTrigger className="mt-2" data-testid="select-window-count">
-                    <SelectValue placeholder="Valitse..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="small">Pieni (1-5 ikkunaa)</SelectItem>
-                    <SelectItem value="medium">Keskikokoinen (6-12 ikkunaa)</SelectItem>
-                    <SelectItem value="large">Suuri (13-20 ikkunaa)</SelectItem>
-                    <SelectItem value="xlarge">Erittäin suuri (21+ ikkunaa)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
               <div>
                 <Label htmlFor="accessConstraints">Kulkurajoitukset</Label>
                 <Input
                   id="accessConstraints"
                   value={formData.accessConstraints}
                   onChange={(e) => updateForm({ accessConstraints: e.target.value })}
-                  placeholder="Esim. tikkaat tarvitaan, hankala pääsy..."
+                  placeholder="Esim. tikkaat tarvitaan, hankala pääsy…"
                   className="mt-2"
                   data-testid="input-access-constraints"
                 />
               </div>
-
               <div>
-                <Label htmlFor="weatherNotes">Sää/kausihuomiot</Label>
+                <Label htmlFor="weatherNotes">Sää / kausihuomiot</Label>
                 <Input
                   id="weatherNotes"
                   value={formData.weatherNotes}
                   onChange={(e) => updateForm({ weatherNotes: e.target.value })}
-                  placeholder="Esim. talvikausi, pakkasraja..."
+                  placeholder="Esim. pakkasraja, märkä pinta…"
                   className="mt-2"
                   data-testid="input-weather-notes"
                 />
               </div>
-
               <div>
                 <Label htmlFor="internalNotes">Sisäiset muistiinpanot</Label>
                 <Textarea
                   id="internalNotes"
                   value={formData.internalNotes}
                   onChange={(e) => updateForm({ internalNotes: e.target.value })}
-                  placeholder="Tiimin sisäisiä huomioita..."
-                  className="mt-2 min-h-20"
+                  placeholder="Tiimin sisäisiä huomioita…"
+                  className="mt-2 min-h-20 resize-none"
                   data-testid="input-internal-notes"
                 />
               </div>
@@ -655,12 +591,7 @@ export default function NewJobPage() {
                   <ArrowLeft className="w-4 h-4 mr-2" />
                   Takaisin
                 </Button>
-                <Button
-                  className="flex-1"
-                  onClick={goNext}
-                  disabled={!formData.propertyType || !formData.floors || !formData.windowCount}
-                  data-testid="btn-next"
-                >
+                <Button className="flex-1" onClick={goNext} data-testid="btn-next">
                   Seuraava
                   <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>
@@ -669,91 +600,182 @@ export default function NewJobPage() {
           </Card>
         )}
 
+        {/* ── Step 2: Pricing ── */}
         {currentStep === 2 && (
           <Card className="p-6 bg-card border-0 premium-shadow">
-            <h2 className="text-lg font-semibold text-foreground mb-2">
-              Pakettiehdotus
-            </h2>
-            <p className="text-sm text-muted-foreground mb-6">
-              Valitse sopiva paketti asiakkaalle.
-            </p>
+            <h2 className="text-lg font-semibold text-foreground mb-2">Hinnoittelu</h2>
+            <p className="text-sm text-muted-foreground mb-6">Valitse kohde ja palvelut.</p>
 
-            {packagesLoading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-              </div>
-            ) : (
-              <>
-                <div className="space-y-3 mb-6">
-                  {packages.map((pkg) => (
+            <div className="space-y-6">
+
+              {/* House type */}
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                  Kiinteistötyyppi
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {HOUSE_TYPES.map((ht) => (
                     <button
-                      key={pkg.id}
+                      key={ht.key}
                       type="button"
-                      onClick={() => selectPackage(pkg)}
+                      onClick={() => updateForm({ houseType: ht.key })}
                       className={cn(
-                        "w-full p-4 rounded-xl border-2 text-left transition-all",
-                        formData.selectedPackage === pkg.id
+                        "p-3 rounded-xl border-2 text-left transition-all",
+                        formData.houseType === ht.key
                           ? "border-primary bg-primary/5"
-                          : "border-border hover:border-muted-foreground/50"
+                          : "border-border hover:border-muted-foreground/40",
                       )}
-                      data-testid={`package-${pkg.id}`}
+                      data-testid={`house-${ht.key}`}
                     >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-semibold text-foreground">{pkg.name}</span>
-                        <span className="font-semibold text-foreground">{pkg.price} EUR</span>
-                      </div>
-                      <p className="text-sm text-muted-foreground">{pkg.description}</p>
+                      <p className="font-medium text-sm text-foreground">{ht.label}</p>
+                      <p className="text-xs text-muted-foreground">{ht.sub}</p>
                     </button>
                   ))}
                 </div>
+              </div>
 
-                {formData.selectedPackage && (
-                  <div className="space-y-4 border-t pt-6">
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Perushinta</span>
-                      <span className="font-medium">{formData.originalPrice} EUR</span>
-                    </div>
-                    
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <Label className="flex items-center gap-2">
-                          <Percent className="w-4 h-4" />
-                          Alennus
-                        </Label>
-                        <span className="font-medium">{formData.discountPercent}%</span>
+              {/* Sqm range */}
+              {formData.houseType && (
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                    Koko
+                  </p>
+                  <Select
+                    value={formData.sqmIdx !== null ? String(formData.sqmIdx) : ""}
+                    onValueChange={(v) => updateForm({ sqmIdx: parseInt(v, 10) })}
+                  >
+                    <SelectTrigger data-testid="select-sqm">
+                      <SelectValue placeholder="Valitse koko…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SQM_RANGES[formData.houseType as HouseKey].map((r, i) => (
+                        <SelectItem key={i} value={String(i)}>
+                          {r.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              {/* Service tier */}
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                  Palvelu
+                </p>
+                <div className="space-y-2">
+                  {SERVICE_TIERS.map((t) => (
+                    <button
+                      key={t.key}
+                      type="button"
+                      onClick={() => updateForm({ serviceTier: t.key })}
+                      className={cn(
+                        "w-full p-3 rounded-xl border-2 text-left transition-all flex items-center justify-between",
+                        formData.serviceTier === t.key
+                          ? "border-primary bg-primary/5"
+                          : "border-border hover:border-muted-foreground/40",
+                      )}
+                      data-testid={`tier-${t.key}`}
+                    >
+                      <div>
+                        <p className="font-medium text-sm text-foreground">{t.label}</p>
+                        <p className="text-xs text-muted-foreground">{t.sub}</p>
                       </div>
-                      <Slider
-                        value={[formData.discountPercent]}
-                        onValueChange={([v]) => updateForm({ discountPercent: v })}
-                        max={50}
-                        step={5}
-                        className="my-2"
-                        data-testid="slider-discount"
+                      {formData.serviceTier === t.key && (
+                        <Check className="w-4 h-4 text-primary shrink-0" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Addons */}
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                  Lisäpalvelut
+                </p>
+                <div className="space-y-2">
+                  {ADDONS.map((a) => {
+                    const isOn = formData.selectedAddons.includes(a.key);
+                    return (
+                      <button
+                        key={a.key}
+                        type="button"
+                        onClick={() => {
+                          const next = isOn
+                            ? formData.selectedAddons.filter(k => k !== a.key)
+                            : [...formData.selectedAddons, a.key];
+                          updateForm({ selectedAddons: next });
+                        }}
+                        className={cn(
+                          "w-full p-3 rounded-xl border-2 text-left flex items-center justify-between transition-all",
+                          isOn
+                            ? "border-primary bg-primary/5"
+                            : "border-border hover:border-muted-foreground/40",
+                        )}
+                        data-testid={`addon-${a.key}`}
+                      >
+                        <span className="text-sm font-medium text-foreground">{a.label}</span>
+                        <span className={cn("text-sm font-semibold shrink-0 ml-2", isOn ? "text-primary" : "text-muted-foreground")}>
+                          +{a.price} €
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Pricing summary + discount */}
+              {formData.sqmIdx !== null && (
+                <div className="border-t pt-5 space-y-4">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Perushinta</span>
+                    <span className="font-medium text-foreground">{formData.originalPrice} €</span>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <Label className="flex items-center gap-1.5 text-sm">
+                        <Percent className="w-3.5 h-3.5" />
+                        Alennus
+                      </Label>
+                      <span className="font-medium text-sm">{formData.discountPercent} %</span>
+                    </div>
+                    <Slider
+                      value={[formData.discountPercent]}
+                      onValueChange={([v]) => updateForm({ discountPercent: v })}
+                      max={50}
+                      step={5}
+                      className="my-2"
+                      data-testid="slider-discount"
+                    />
+                  </div>
+
+                  {formData.discountPercent > 0 && (
+                    <div>
+                      <Label htmlFor="discountReason">Alennuksen syy</Label>
+                      <Input
+                        id="discountReason"
+                        value={formData.discountReason}
+                        onChange={(e) => updateForm({ discountReason: e.target.value })}
+                        placeholder="Esim. ensimmäinen tilaus…"
+                        className="mt-1.5"
+                        data-testid="input-discount-reason"
                       />
                     </div>
+                  )}
 
-                    {formData.discountPercent > 0 && (
-                      <div>
-                        <Label htmlFor="discountReason">Alennuksen syy</Label>
-                        <Input
-                          id="discountReason"
-                          value={formData.discountReason}
-                          onChange={(e) => updateForm({ discountReason: e.target.value })}
-                          placeholder="Esim. ensimmäinen tilaus, useita ikkunoita..."
-                          className="mt-2"
-                          data-testid="input-discount-reason"
-                        />
-                      </div>
-                    )}
-
-                    <div className="flex items-center justify-between pt-4 border-t">
-                      <span className="text-lg font-semibold text-foreground">Lopullinen hinta</span>
-                      <span className="text-2xl font-bold text-primary">{formData.finalPrice} EUR</span>
-                    </div>
+                  <div className="flex items-center justify-between pt-4 border-t">
+                    <span className="font-semibold text-foreground">Lopullinen hinta</span>
+                    <span className="text-2xl font-bold text-primary">{formData.finalPrice} €</span>
                   </div>
-                )}
-              </>
-            )}
+
+                  <p className="text-xs text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/20 rounded-lg px-3 py-2">
+                    Kotitalousvähennys ~{Math.round(formData.finalPrice * 0.35)} € → asiakkaalle ~{Math.round(formData.finalPrice * 0.65)} €
+                  </p>
+                </div>
+              )}
+            </div>
 
             <div className="flex gap-3 pt-6">
               <Button variant="outline" onClick={goBack} data-testid="btn-back">
@@ -763,7 +785,7 @@ export default function NewJobPage() {
               <Button
                 className="flex-1"
                 onClick={goNext}
-                disabled={!formData.selectedPackage}
+                disabled={!formData.houseType || formData.sqmIdx === null}
                 data-testid="btn-next"
               >
                 Seuraava
@@ -773,44 +795,54 @@ export default function NewJobPage() {
           </Card>
         )}
 
+        {/* ── Step 3: Contract + signatures ── */}
         {currentStep === 3 && (
           <Card className="p-6 bg-card border-0 premium-shadow">
-            <h2 className="text-lg font-semibold text-foreground mb-2">
-              Sopimus
-            </h2>
-            <p className="text-sm text-muted-foreground mb-6">
-              Yhteenveto ja allekirjoitukset.
-            </p>
+            <h2 className="text-lg font-semibold text-foreground mb-2">Sopimus</h2>
+            <p className="text-sm text-muted-foreground mb-6">Yhteenveto ja allekirjoitukset.</p>
 
-            <div className="space-y-4 mb-6 p-4 bg-muted/50 rounded-xl">
-              <div className="flex justify-between text-sm">
+            {/* Summary */}
+            <div className="space-y-3 mb-6 p-4 bg-muted/50 rounded-xl text-sm">
+              <div className="flex justify-between">
                 <span className="text-muted-foreground">Asiakas</span>
                 <span className="font-medium">{formData.customerName}</span>
               </div>
-              <div className="flex justify-between text-sm">
+              <div className="flex justify-between">
                 <span className="text-muted-foreground">Osoite</span>
                 <span className="font-medium">{formData.customerAddress}</span>
               </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Paketti</span>
-                <span className="font-medium">{formData.selectedPackageName}</span>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Kohde</span>
+                <span className="font-medium">{houseLabel} {sqmLabel}</span>
               </div>
-              <div className="flex justify-between text-sm border-t pt-4">
-                <span className="text-foreground font-semibold">Hinta</span>
-                <span className="text-primary font-bold">{formData.finalPrice} EUR</span>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Palvelu</span>
+                <span className="font-medium">{tierLabel}</span>
+              </div>
+              {addonLabels.length > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Lisäpalvelut</span>
+                  <span className="font-medium text-right max-w-[55%]">{addonLabels.join(", ")}</span>
+                </div>
+              )}
+              {formData.discountPercent > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Alennus</span>
+                  <span className="font-medium text-orange-600 dark:text-orange-400">−{formData.discountPercent} %</span>
+                </div>
+              )}
+              <div className="flex justify-between border-t pt-3">
+                <span className="font-semibold text-foreground">Hinta</span>
+                <span className="text-primary font-bold text-xl">{formData.finalPrice} €</span>
               </div>
             </div>
 
+            {/* Signatures */}
             <div className="space-y-6">
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <Label>Asiakkaan allekirjoitus</Label>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => clearSignature(true)}
-                    data-testid="btn-clear-customer-sig"
-                  >
+                  <Button variant="ghost" size="sm" onClick={() => clearSignature(true)} data-testid="btn-clear-customer-sig">
                     Tyhjennä
                   </Button>
                 </div>
@@ -834,12 +866,7 @@ export default function NewJobPage() {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <Label>Työntekijän allekirjoitus</Label>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => clearSignature(false)}
-                    data-testid="btn-clear-staff-sig"
-                  >
+                  <Button variant="ghost" size="sm" onClick={() => clearSignature(false)} data-testid="btn-clear-staff-sig">
                     Tyhjennä
                   </Button>
                 </div>
@@ -896,17 +923,15 @@ export default function NewJobPage() {
           </Card>
         )}
 
+        {/* ── Step 4: Done ── */}
         {currentStep === 4 && (
           <Card className="p-6 bg-card border-0 premium-shadow text-center">
             <div className="w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto mb-4">
               <CheckCircle className="w-8 h-8 text-green-600 dark:text-green-400" />
             </div>
-            <h2 className="text-xl font-semibold text-foreground mb-2">
-              Valmis!
-            </h2>
-            <p className="text-muted-foreground mb-6">
-              Keikka on tallennettu tietokantaan.
-            </p>
+            <h2 className="text-xl font-semibold text-foreground mb-2">Valmis!</h2>
+            <p className="text-muted-foreground mb-2">Keikka on tallennettu.</p>
+            <p className="font-mono text-primary mb-6">{formData.jobId}</p>
 
             <div className="space-y-3">
               <Link href="/admin/jobs">
@@ -914,17 +939,13 @@ export default function NewJobPage() {
                   Näytä keikat
                 </Button>
               </Link>
-              <Button
-                variant="outline"
-                className="w-full"
-                onClick={resetWizard}
-                data-testid="btn-new-job"
-              >
+              <Button variant="outline" className="w-full" onClick={resetWizard} data-testid="btn-new-job">
                 Luo uusi keikka
               </Button>
             </div>
           </Card>
         )}
+
       </div>
     </div>
   );

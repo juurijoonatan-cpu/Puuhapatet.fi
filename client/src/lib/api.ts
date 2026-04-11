@@ -125,6 +125,9 @@ export const api = {
   getCustomers: () =>
     request<unknown[]>("GET", "/api/customers"),
 
+  getCustomer: (id: number) =>
+    request<unknown>("GET", `/api/customers/${id}`),
+
   createJob: (data: NewJob) =>
     request<{ id: number } & NewJob>("POST", "/api/jobs", data),
 

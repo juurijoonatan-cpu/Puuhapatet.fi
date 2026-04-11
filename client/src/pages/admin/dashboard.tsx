@@ -14,6 +14,7 @@ import {
   Plus,
   ArrowRight,
   List,
+  Users,
 } from "lucide-react";
 import { getAdminProfile } from "@/lib/admin-profile";
 import { api, StatsResponse } from "@/lib/api";
@@ -115,22 +116,40 @@ export default function AdminDashboard() {
           </Card>
         </Link>
 
-        <Link href="/admin/jobs">
-          <Card className="p-6 bg-card border-0 premium-shadow mb-6 cursor-pointer hover:opacity-95 transition-opacity">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center">
-                  <List className="w-5 h-5 text-muted-foreground" />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          <Link href="/admin/jobs">
+            <Card className="p-5 bg-card border-0 premium-shadow cursor-pointer hover:opacity-95 transition-opacity h-full">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center">
+                    <List className="w-5 h-5 text-muted-foreground" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-foreground">Keikat</h3>
+                    <p className="text-sm text-muted-foreground">Selaa ja hae keikkoja</p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="font-semibold text-foreground">Kaikki keikat</h3>
-                  <p className="text-sm text-muted-foreground">Selaa ja hae keikkoja</p>
-                </div>
+                <ArrowRight className="w-5 h-5 text-muted-foreground" />
               </div>
-              <ArrowRight className="w-5 h-5 text-muted-foreground" />
-            </div>
-          </Card>
-        </Link>
+            </Card>
+          </Link>
+          <Link href="/admin/customers">
+            <Card className="p-5 bg-card border-0 premium-shadow cursor-pointer hover:opacity-95 transition-opacity h-full">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center">
+                    <Users className="w-5 h-5 text-muted-foreground" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-foreground">Asiakkaat</h3>
+                    <p className="text-sm text-muted-foreground">Asiakasrekisteri</p>
+                  </div>
+                </div>
+                <ArrowRight className="w-5 h-5 text-muted-foreground" />
+              </div>
+            </Card>
+          </Link>
+        </div>
 
         {profile?.role && (
           <div className="text-center text-xs text-muted-foreground">

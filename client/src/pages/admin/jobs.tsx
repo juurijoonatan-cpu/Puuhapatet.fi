@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Loader2, ClipboardList, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Check, CalendarClock, Save } from "lucide-react";
+import { Loader2, ClipboardList, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Check, CalendarClock, Save, Plus, Trash2, Receipt } from "lucide-react";
 import { Link } from "wouter";
 
 import { Card } from "@/components/ui/card";
@@ -58,6 +58,13 @@ export default function AdminJobsPage() {
   const [editNotes, setEditNotes] = useState("");
   const [savingFields, setSavingFields] = useState(false);
 
+  interface Expense { id: number; description: string; amount: number; }
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [expensesLoading, setExpensesLoading] = useState(false);
+  const [newExpenseDesc, setNewExpenseDesc] = useState("");
+  const [newExpenseAmount, setNewExpenseAmount] = useState("");
+  const [addingExpense, setAddingExpense] = useState(false);
+
   const loadJobs = () => {
     setLoading(true);
     api.getJobs().then((res) => {
@@ -68,12 +75,20 @@ export default function AdminJobsPage() {
 
   useEffect(() => { loadJobs(); }, []);
 
-  // Populate edit fields whenever a job is selected
+  // Populate edit fields + load expenses whenever a job is selected
   useEffect(() => {
     if (selected) {
       setEditPrice(String(selected.job.agreedPrice / 100));
       setEditDescription(selected.job.description);
       setEditNotes(selected.job.notes ?? "");
+      setExpenses([]);
+      setNewExpenseDesc("");
+      setNewExpenseAmount("");
+      setExpensesLoading(true);
+      api.getExpenses(selected.job.id).then((res) => {
+        if (res.ok && res.data) setExpenses(res.data as Expense[]);
+        setExpensesLoading(false);
+      });
     }
   }, [selected?.job.id]);
 
@@ -147,6 +162,34 @@ export default function AdminJobsPage() {
       toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
     }
     setSavingFields(false);
+  };
+
+  const addExpense = async () => {
+    if (!selected || !newExpenseDesc.trim() || !newExpenseAmount) return;
+    const amount = Math.round(parseFloat(newExpenseAmount) * 100);
+    if (isNaN(amount) || amount <= 0) return;
+    setAddingExpense(true);
+    const res = await api.addExpense(selected.job.id, {
+      description: newExpenseDesc.trim(),
+      amount,
+    });
+    if (res.ok && res.data) {
+      setExpenses((prev) => [...prev, res.data as Expense]);
+      setNewExpenseDesc("");
+      setNewExpenseAmount("");
+    } else {
+      toast({ variant: "destructive", title: "Kulun lisäys epäonnistui" });
+    }
+    setAddingExpense(false);
+  };
+
+  const removeExpense = async (expenseId: number) => {
+    const res = await api.deleteExpense(expenseId);
+    if (res.ok) {
+      setExpenses((prev) => prev.filter((e) => e.id !== expenseId));
+    } else {
+      toast({ variant: "destructive", title: "Poisto epäonnistui" });
+    }
   };
 
   const hasFieldChanges = selected
@@ -317,6 +360,75 @@ export default function AdminJobsPage() {
                 Luotu: {new Date(job.createdAt).toLocaleDateString("fi-FI")}
               </p>
             </div>
+          </Card>
+          {/* Expenses card */}
+          <Card className="p-5 bg-card border-0 premium-shadow mb-4">
+            <div className="flex items-center gap-2 mb-4">
+              <Receipt className="w-4 h-4 text-muted-foreground" />
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Kulut
+              </p>
+              {expenses.length > 0 && (
+                <span className="ml-auto text-xs font-semibold text-foreground">
+                  {(expenses.reduce((s, e) => s + e.amount, 0) / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}
+                </span>
+              )}
+            </div>
+
+            {expensesLoading ? (
+              <div className="flex justify-center py-4">
+                <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : (
+              <>
+                {expenses.length > 0 && (
+                  <div className="space-y-2 mb-4">
+                    {expenses.map((e) => (
+                      <div key={e.id} className="flex items-center justify-between p-2 rounded-lg bg-muted/30">
+                        <span className="text-sm text-foreground">{e.description}</span>
+                        <div className="flex items-center gap-2 shrink-0 ml-2">
+                          <span className="text-sm font-medium">
+                            {(e.amount / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}
+                          </span>
+                          <button
+                            onClick={() => removeExpense(e.id)}
+                            className="text-muted-foreground hover:text-destructive transition-colors"
+                            aria-label="Poista"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Kuvaus"
+                    value={newExpenseDesc}
+                    onChange={(e) => setNewExpenseDesc(e.target.value)}
+                    className="text-sm flex-1"
+                    onKeyDown={(e) => e.key === "Enter" && addExpense()}
+                  />
+                  <Input
+                    type="number"
+                    placeholder="€"
+                    value={newExpenseAmount}
+                    onChange={(e) => setNewExpenseAmount(e.target.value)}
+                    className="text-sm w-20"
+                    onKeyDown={(e) => e.key === "Enter" && addExpense()}
+                  />
+                  <Button
+                    size="icon"
+                    onClick={addExpense}
+                    disabled={addingExpense || !newExpenseDesc.trim() || !newExpenseAmount}
+                  >
+                    {addingExpense ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                  </Button>
+                </div>
+              </>
+            )}
           </Card>
         </div>
       </div>

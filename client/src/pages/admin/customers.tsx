@@ -1,12 +1,14 @@
 import { useState, useEffect } from "react";
-import { Loader2, Users, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Search } from "lucide-react";
+import { Loader2, Users, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Search, Save } from "lucide-react";
 import { Link } from "wouter";
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/empty-state";
+import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -48,11 +50,20 @@ interface Customer {
 }
 
 export default function AdminCustomersPage() {
+  const { toast } = useToast();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Customer | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+
+  // Customer edit state
+  const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editAddress, setEditAddress] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [savingCustomer, setSavingCustomer] = useState(false);
 
   useEffect(() => {
     api.getCustomers().then((res) => {
@@ -63,14 +74,60 @@ export default function AdminCustomersPage() {
 
   const openCustomer = async (c: Customer) => {
     setSelected({ ...c, jobs: undefined });
+    setEditName(c.name);
+    setEditPhone(c.phone);
+    setEditEmail(c.email ?? "");
+    setEditAddress(c.address);
+    setEditNotes(c.notes ?? "");
     setDetailLoading(true);
     const res = await api.getCustomer(c.id);
     if (res.ok && res.data) {
       const data = res.data as Customer & { jobs: CustomerJob[] };
       setSelected(data);
+      setEditName(data.name);
+      setEditPhone(data.phone);
+      setEditEmail(data.email ?? "");
+      setEditAddress(data.address);
+      setEditNotes(data.notes ?? "");
     }
     setDetailLoading(false);
   };
+
+  const saveCustomer = async () => {
+    if (!selected) return;
+    setSavingCustomer(true);
+    const res = await api.updateCustomer(selected.id, {
+      name: editName.trim() || selected.name,
+      phone: editPhone.trim() || selected.phone,
+      email: editEmail.trim() || undefined,
+      address: editAddress.trim() || selected.address,
+      notes: editNotes.trim() || undefined,
+    });
+    if (res.ok) {
+      const updated: Customer = {
+        ...selected,
+        name: editName.trim() || selected.name,
+        phone: editPhone.trim() || selected.phone,
+        email: editEmail.trim() || null,
+        address: editAddress.trim() || selected.address,
+        notes: editNotes.trim() || null,
+      };
+      setSelected(updated);
+      setCustomers((prev) => prev.map((c) => (c.id === selected.id ? updated : c)));
+      toast({ title: "Asiakastiedot tallennettu" });
+    } else {
+      toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
+    }
+    setSavingCustomer(false);
+  };
+
+  const hasCustomerChanges = selected
+    ? editName !== selected.name ||
+      editPhone !== selected.phone ||
+      editEmail !== (selected.email ?? "") ||
+      editAddress !== selected.address ||
+      editNotes !== (selected.notes ?? "")
+    : false;
 
   const filtered = customers.filter((c) => {
     const q = search.toLowerCase();
@@ -100,32 +157,70 @@ export default function AdminCustomersPage() {
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-4">
               Yhteystiedot
             </h2>
-            <div className="space-y-3">
-              <div className="flex items-center gap-3">
-                <Phone className="w-4 h-4 text-muted-foreground shrink-0" />
-                <a href={`tel:${selected.phone}`} className="text-foreground hover:text-primary">
-                  {selected.phone}
-                </a>
+            <div className="space-y-4">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">Nimi</p>
+                <Input
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="text-sm"
+                />
               </div>
-              {selected.email && (
-                <div className="flex items-center gap-3">
-                  <Mail className="w-4 h-4 text-muted-foreground shrink-0" />
-                  <a href={`mailto:${selected.email}`} className="text-foreground hover:text-primary">
-                    {selected.email}
-                  </a>
-                </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                  <Phone className="w-3.5 h-3.5" /> Puhelin
+                </p>
+                <Input
+                  value={editPhone}
+                  onChange={(e) => setEditPhone(e.target.value)}
+                  type="tel"
+                  className="text-sm"
+                />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                  <Mail className="w-3.5 h-3.5" /> Sähköposti
+                </p>
+                <Input
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  type="email"
+                  placeholder="(ei pakollinen)"
+                  className="text-sm"
+                />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                  <MapPin className="w-3.5 h-3.5" /> Osoite
+                </p>
+                <Input
+                  value={editAddress}
+                  onChange={(e) => setEditAddress(e.target.value)}
+                  className="text-sm"
+                />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">Muistiinpanot</p>
+                <Textarea
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  placeholder="Sisäiset muistiinpanot…"
+                  rows={2}
+                  className="text-sm resize-none"
+                />
+              </div>
+
+              {hasCustomerChanges && (
+                <Button onClick={saveCustomer} disabled={savingCustomer} className="w-full">
+                  {savingCustomer ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : (
+                    <Save className="w-4 h-4 mr-2" />
+                  )}
+                  Tallenna muutokset
+                </Button>
               )}
-              <div className="flex items-center gap-3">
-                <MapPin className="w-4 h-4 text-muted-foreground shrink-0" />
-                <span className="text-foreground">{selected.address}</span>
-              </div>
             </div>
-            {selected.notes && (
-              <div className="mt-4 pt-4 border-t border-border">
-                <p className="text-xs text-muted-foreground mb-1">Muistiinpanot</p>
-                <p className="text-sm text-foreground">{selected.notes}</p>
-              </div>
-            )}
           </Card>
 
           <Card className="p-6 bg-card border-0 premium-shadow">

@@ -13,6 +13,9 @@ export interface AdminProfile {
   role: UserRole;
   photoUrl?: string;
   phone?: string;
+  hasYTunnus?: boolean;   // Y-tunnus → elinkeinotoiminnan veroilmoitus (lomake 5)
+  isUnder18?: boolean;    // alle 18v → huoltaja hoitaa OmaVerossa
+  startupBonus?: number;  // senttiä — yritysseteli/aloitustuki 4H-yhdistykseltä
 }
 
 // ─── Hard-coded team members ─────────────────────────────────────────────────
@@ -24,6 +27,9 @@ export const USERS: AdminProfile[] = [
     role: "HOST",
     photoUrl: "/joonatan.jpg.jpeg",
     phone: "+358 45 123 4567",
+    hasYTunnus: true,
+    isUnder18: true,   // 17v
+    startupBonus: 30000, // 300 €
   },
   {
     id: "matias",
@@ -31,6 +37,9 @@ export const USERS: AdminProfile[] = [
     role: "HOST",
     photoUrl: "/matias.jpg.jpeg",
     phone: "+358 45 765 4321",
+    hasYTunnus: true,
+    isUnder18: false,  // 18v
+    startupBonus: 30000, // 300 €
   },
 ];
 

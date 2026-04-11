@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, ChevronDown, ChevronUp, Phone, Mail, AlertTriangle, Star, ClipboardList, Euro, Users, Shield } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, Phone, Mail, AlertTriangle, Star, ClipboardList, Euro, Users, Shield, Laptop, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -234,6 +234,203 @@ const sections: Section[] = [
     ),
   },
   {
+    id: "adminpanel",
+    icon: Laptop,
+    title: "Hallintapaneelin käyttö",
+    color: "text-indigo-600 dark:text-indigo-400",
+    bg: "bg-indigo-100 dark:bg-indigo-900/30",
+    content: (
+      <div>
+        <H>Uusi keikka</H>
+        <ul className="space-y-1.5 mb-3">
+          <Li><strong>Dashboard → Uusi keikka:</strong> avaa ohjattu 4-vaiheinen wizard</Li>
+          <Li><strong>Vaihe 1 — Asiakas:</strong> nimi, puhelin, osoite. Järjestelmä luo asiakasprofiilin automaattisesti.</Li>
+          <Li><strong>Vaihe 2 — Arviointi:</strong> muistiinpanot kohteesta (valinnainen)</Li>
+          <Li><strong>Vaihe 3 — Hinnoittelu:</strong> valitse palvelutyyppi (ikkunapesu → käytä laskuria; muut → syötä hinta käsin)</Li>
+          <Li><strong>Vaihe 4 — Sopimus:</strong> allekirjoitukset. Valmis!</Li>
+        </ul>
+
+        <H>Keikka-näkymä (Keikat)</H>
+        <ul className="space-y-1.5 mb-3">
+          <Li><strong>Status:</strong> vaihda napautuksella: Liidi → Ajoitettu → Käynnissä → Valmis</Li>
+          <Li><strong>Ajankohta:</strong> aseta päivämäärä ja kellonaika — näkyy kalenterissa</Li>
+          <Li><strong>Tekijät:</strong> valitse kuka tai ketkä tekee keikan (jaetaan tasan)</Li>
+          <Li><strong>Kulut:</strong> lisää materiaali- ym. kulut euroa/kpl — vähentää automaattisesti netosta</Li>
+          <Li><strong>Tilitys-kortti:</strong> näyttää jokaisen tekijän netto-osuuden automaattisesti</Li>
+          <Li><strong>Kuitti:</strong> valitse maksutapa → "Avaa kuitti sähköpostiin" — avautuu sähköpostiohjelma valmiilla viestillä</Li>
+        </ul>
+
+        <H>Kalenteri</H>
+        <ul className="space-y-1.5 mb-3">
+          <Li><strong>Lista-näkymä (oletus):</strong> kaikki tulevat aikataulutetut keikat aikajärjestyksessä</Li>
+          <Li><strong>Viikko-näkymä:</strong> 7 päivää vierekkäin, keikat näkyvät omassa solussa</Li>
+          <Li><strong>Päivä-näkymä:</strong> yksittäisen päivän keikat</Li>
+          <Li>Näkyy vain keikat joilla on ajankohta — aseta se keikkasivulta</Li>
+        </ul>
+
+        <H>Asiakkaat</H>
+        <ul className="space-y-1.5 mb-3">
+          <Li>Kaikki asiakkaat listalla. Naputa asiakasta nähdäksesi kaikki heidän keikkansa.</Li>
+          <Li>Voit muokata nimeä, puhelinta, osoitetta ja sähköpostia</Li>
+        </ul>
+
+        <H>Asetukset</H>
+        <ul className="space-y-1.5 mb-3">
+          <Li><strong>Vaihda salasana:</strong> vaihda oma henkilökohtainen kirjautumissalasanasi</Li>
+          <Li><strong>Verotuloste:</strong> lataa CSV tai tulosta keikat verotusta varten (ks. alla)</Li>
+          <Li><strong>Investoinnit &amp; välineet:</strong> kirjaa hankinnat (oma tai 50/50 toisen kanssa)</Li>
+          <Li><strong>Palvelumaksuvelat (vain HOST):</strong> näet kertyneet velat per tekijä — paina "Maksettu" kun on maksettu</Li>
+        </ul>
+      </div>
+    ),
+  },
+  {
+    id: "tax",
+    icon: FileText,
+    title: "Verotus — 4H-yrittäjä",
+    color: "text-emerald-600 dark:text-emerald-400",
+    bg: "bg-emerald-100 dark:bg-emerald-900/30",
+    content: (
+      <div>
+        <P>
+          4H-yrittäjänä maksat veroa saamistasi tuloista henkilökohtaisen veroprosentin mukaan
+          (verokortissa olevat rajat). <strong>Arvonlisäverovelvollisuutta ei ole</strong> —
+          4H-yrityksen myynti jää rajan alle. Kirjanpito kuitteineen pitää säilyttää
+          <strong> 6 vuoden ajan</strong>.
+        </P>
+
+        <div className="bg-yellow-50 dark:bg-yellow-900/20 rounded-xl p-3 mb-4 border border-yellow-200 dark:border-yellow-800">
+          <p className="text-xs font-bold text-yellow-800 dark:text-yellow-300 mb-1">Tärkeää!</p>
+          <ul className="text-xs text-yellow-700 dark:text-yellow-400 space-y-1">
+            <li>• Kaikki vuoden tulot lasketaan yhteen: 4H-tulot + palkat + etuudet</li>
+            <li>• 4H-yrittäjä <strong>ei liitä kuitteja</strong> veroilmoitukseen — verottaja pyytää tarvittaessa</li>
+            <li>• Silti säilytä kaikki kuitit 6 vuotta varmuuden vuoksi</li>
+          </ul>
+        </div>
+
+        {/* Path selector */}
+        <div className="grid grid-cols-2 gap-3 mb-5">
+          <div className="p-3 rounded-xl bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800">
+            <p className="text-xs font-bold text-purple-800 dark:text-purple-300 mb-1">EI Y-tunnusta</p>
+            <p className="text-xs text-purple-700 dark:text-purple-400">
+              Itsenäinen tulonhankkiminen → henkilökohtainen veroilmoitus, Muut ansiotulot
+            </p>
+          </div>
+          <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800">
+            <p className="text-xs font-bold text-indigo-800 dark:text-indigo-300 mb-1">Y-tunnus on</p>
+            <p className="text-xs text-indigo-700 dark:text-indigo-400">
+              Yksityinen elinkeinonharjoittaja → elinkeinotoiminnan veroilmoitus (lomake 5)
+            </p>
+          </div>
+        </div>
+
+        {/* No Y-tunnus path */}
+        <H>Polku 1: Ei Y-tunnusta — henkilökohtainen veroilmoitus</H>
+
+        <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-3 mb-3">
+          <p className="text-xs font-bold text-blue-800 dark:text-blue-300 mb-1.5">
+            Alle 16-vuotiaan verokortti — tilaa erikseen!
+          </p>
+          <p className="text-xs text-blue-700 dark:text-blue-400">
+            Alle 16-vuotiaille verokorttia ei lähetetä automaattisesti.
+            Tilaa se heti toiminnan alkaessa OmaVeron kautta — muuten veroilmoituslomakekaan ei tule automaattisesti.
+            Huoltajat voivat hoitaa alle 18-vuotiaiden asioita OmaVerossa.
+          </p>
+        </div>
+
+        <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-3 mb-3">
+          <p className="text-xs font-bold text-blue-800 dark:text-blue-300 mb-1.5">
+            Huoltaja kirjautuu alaikäisen puolesta
+          </p>
+          <ol className="text-xs text-blue-700 dark:text-blue-400 space-y-1 list-decimal list-inside">
+            <li>Kirjaudu OmaVeroon omilla pankkitunnuksilla</li>
+            <li>Valitse <strong>Asioi toisen puolesta</strong></li>
+            <li>Valitse <strong>Siirry Valtuudet-palveluun</strong></li>
+            <li>Valitse kenen puolesta asioit (nuori yrittäjä)</li>
+          </ol>
+          <p className="text-xs text-blue-600 dark:text-blue-400 mt-1.5">
+            Jos alaikäinen tekee ilmoituksen itse OmaVerossa, huoltajan allekirjoitusta ei tarvita.
+            Paperilomakkeessa tarvitaan huoltajan allekirjoitus.
+          </p>
+        </div>
+
+        <p className="text-xs text-muted-foreground mb-3">
+          Esitäytetty veroilmoitus tulee OmaVero-palveluun maalis-huhtikuussa.
+          Sitä ennen Muut ansiotulot -kohta ei välttämättä ole näkyvissä.
+        </p>
+
+        <ol className="space-y-1.5 mb-3 list-decimal list-inside">
+          <li className="text-sm text-foreground leading-relaxed">Avaa <strong>Esitäytetty veroilmoitus</strong></li>
+          <li className="text-sm text-foreground leading-relaxed">Valitse <strong>Korjaa esitäytetyn veroilmoituksen tietoja</strong></li>
+          <li className="text-sm text-foreground leading-relaxed">Tarvittaessa valitse <strong>Tulojen ja vähennysten ilmoittaminen</strong> alhaalta</li>
+          <li className="text-sm text-foreground leading-relaxed">Tarkista taustatiedot</li>
+        </ol>
+
+        <div className="bg-green-50 dark:bg-green-900/20 rounded-xl p-3 mb-3">
+          <p className="text-xs font-bold text-green-800 dark:text-green-300 mb-1.5">Tulot — kirjaa tämä</p>
+          <ol className="text-xs text-green-700 dark:text-green-400 space-y-1 list-decimal list-inside">
+            <li>Tuotot-sivu → <strong>Muut tulot → Muut ansiotulot</strong></li>
+            <li>Kuvaus: <em>"4H-toiminnan tulot"</em> (tai lisätiedot-kenttään)</li>
+            <li>Summa: <strong>nettoansio</strong> — se mitä jäi käteen tulojen ja menojen jälkeen (löytyy Verotulosteesta)</li>
+          </ol>
+        </div>
+
+        <H>Matkakulut (valinnainen lisävähennys)</H>
+        <ol className="space-y-1.5 mb-3 list-decimal list-inside">
+          <li className="text-sm text-foreground leading-relaxed">Muut vähennykset → <strong>Matkakulut</strong> → Muu kuin asunnon ja työpaikan välinen matka</li>
+          <li className="text-sm text-foreground leading-relaxed">→ Tilapäiset työmatkat ja erityisalan matkat → valitse kulkuneuvo</li>
+          <li className="text-sm text-foreground leading-relaxed">Säännöllinen sama matka: <strong>Ei</strong></li>
+          <li className="text-sm text-foreground leading-relaxed">Työpaikan osoite: <em>"useita kohteita"</em></li>
+          <li className="text-sm text-foreground leading-relaxed">Matkan keskipituus / päivä: kokonaiskilometrit ÷ työpäivät</li>
+          <li className="text-sm text-foreground leading-relaxed">Matkapäivien lukumäärä: sama jakaja</li>
+        </ol>
+
+        <H>Muut tulonhankkimismenot</H>
+        <ul className="space-y-1.5 mb-4">
+          <Li>Muut vähennykset → <strong>Tulonhankkimismenot → Muiden kuin palkkatulojen tulonhankkimismenot</strong></Li>
+          <Li>Vähennyskelpoisia: 4H-jäsenmaksu, 4H-yrittäjän vakuutus, pesuaineet, välineet (jos ei jo kirjattu Investointeihin)</Li>
+        </ul>
+
+        {/* Y-tunnus path */}
+        <div className="border-t border-border pt-4 mt-2">
+          <H>Polku 2: Y-tunnus on — elinkeinotoiminnan veroilmoitus</H>
+          <ul className="space-y-1.5 mb-3">
+            <Li>Ilmoitat tulot, menot ja tuloksen <strong>elinkeinotoiminnan veroilmoituksessa (lomake 5)</strong> OmaVeron kautta</Li>
+            <Li>Verottaja ei lähetä lomaketta postitse — tee ilmoitus OmaVerossa tai tulosta lomake 5 vero.fi:stä</Li>
+            <Li><strong>Deadline: 1.4.</strong> — myöhästymisestä voi tulla sanktio</Li>
+            <Li>Veroilmoitus on tehtävä <strong>vaikka toimintaa ei olisi ollut</strong></Li>
+            <Li>Y-tunnuksen hakemisen yhteydessä olet ilmoittautunut ennakonperintärekisteriin — verottaja voi periä ennakkoveroa</Li>
+            <Li>Autokulut: elinkeinotoiminnan veroilmoituksessa on erillinen kohta, jos omistat ajokortin</Li>
+          </ul>
+          <p className="text-xs text-muted-foreground">
+            Lisätietoja: vero.fi/elinkeinotoiminnan-veroilmoitus tai suoraan verotoimistosta yritysverotuksen puolelta.
+          </p>
+        </div>
+
+        {/* Yritysseteli */}
+        <div className="border-t border-border pt-4 mt-4">
+          <H>Yritysseteli / starttituki — erityisohje</H>
+          <P>
+            Jos olet saanut 4H-yhdistykseltä starttitukea (kesäyrittäjyysseteli tai yritysseteli),
+            tilaa ensin uusi muutosverokortti:
+          </P>
+          <ol className="space-y-1.5 mb-3 list-decimal list-inside">
+            <li className="text-sm text-foreground leading-relaxed">Kirjaudu OmaVeroon</li>
+            <li className="text-sm text-foreground leading-relaxed">Valitse <strong>Tilaa uusi verokortti → Koko hakemus</strong></li>
+            <li className="text-sm text-foreground leading-relaxed">Muut tulot → <strong>Muut ansiotulot</strong> — kirjaa saamasi tuki euroina</li>
+            <li className="text-sm text-foreground leading-relaxed">Toimita uusi muutosverokortti omaan 4H-yhdistykseesi</li>
+          </ol>
+          <div className="bg-muted/30 rounded-xl p-3 text-xs text-muted-foreground">
+            <p className="mb-1"><strong>Seuraavan vuoden veroilmoituksessa:</strong></p>
+            <p>4H-yhdistys ilmoittaa tuen tulorekisteriin → näkyy esitäytetyssä ilmoituksessa automaattisesti.</p>
+            <p className="mt-1">Jos ei ole Y-tunnusta: tarkista vain että tiedot ovat oikein.</p>
+            <p className="mt-1">Jos on Y-tunnus: poista tuki henkilöasiakkaan veroilmoituksesta ja lisää se elinkeinotoiminnan lomakkeeseen (lomake 5).</p>
+          </div>
+        </div>
+      </div>
+    ),
+  },
+  {
     id: "contact",
     icon: Phone,
     title: "Yhteystiedot — apua ongelmiin",
@@ -303,8 +500,8 @@ export default function AdminGuidePage() {
             </Button>
           </Link>
           <div>
-            <h1 className="text-2xl font-semibold text-foreground">Työntekijän opas</h1>
-            <p className="text-sm text-muted-foreground">Puuhapatet · versio 1.0</p>
+            <h1 className="text-2xl font-semibold text-foreground">Opas</h1>
+            <p className="text-sm text-muted-foreground">Puuhapatet · käyttöohjeet ja ehdot</p>
           </div>
         </div>
 

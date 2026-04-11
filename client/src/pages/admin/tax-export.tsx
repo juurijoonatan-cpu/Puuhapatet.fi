@@ -5,12 +5,12 @@
 
 import { useState, useEffect } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, Download, Printer } from "lucide-react";
+import { ArrowLeft, Download, Printer, ChevronDown, ChevronUp, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
-import { getAdminProfile } from "@/lib/admin-profile";
+import { getAdminProfile, USERS } from "@/lib/admin-profile";
+import { cn } from "@/lib/utils";
 
 interface JobRow {
   job: {
@@ -29,52 +29,67 @@ interface JobRow {
   } | null;
 }
 
-interface Expense {
-  id: number;
-  jobId: number;
-  description: string;
-  amount: number;
+/** Normalize assignedTo value to array of user IDs */
+function parseWorkerIds(assignedTo: string | null): string[] {
+  if (!assignedTo) return [];
+  return assignedTo
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map(s => {
+      const byName = USERS.find(u => u.name === s);
+      return byName ? byName.id : s;
+    });
 }
 
 export default function TaxExportPage() {
-  const { toast } = useToast();
   const profile = getAdminProfile();
 
   const [jobs, setJobs] = useState<JobRow[]>([]);
-  const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
   const [year, setYear] = useState(new Date().getFullYear());
+  const [showGuide, setShowGuide] = useState(false);
 
   useEffect(() => {
-    Promise.all([api.getJobs(), api.getExpenses(0)]).then(([jobsRes]) => {
-      if (jobsRes.ok && jobsRes.data) {
-        setJobs((jobsRes.data as JobRow[]).filter(r => r.job.status === "done"));
+    api.getJobs().then((res) => {
+      if (res.ok && res.data) {
+        setJobs((res.data as JobRow[]).filter(r => r.job.status === "done"));
       }
       setLoading(false);
     });
-    // Fetch all expenses via a workaround: get them per-job lazily
-    // For now we use the stats endpoint that aggregates them
   }, []);
 
-  // Filter jobs by selected year
-  const yearJobs = jobs.filter(r => {
+  // Filter to current user's jobs only
+  const myJobs = jobs.filter(r => {
+    if (!profile) return true;
+    const workers = parseWorkerIds(r.job.assignedTo);
+    return workers.length === 0 || workers.includes(profile.id);
+  });
+
+  // Filter by selected year
+  const yearJobs = myJobs.filter(r => {
     const d = r.job.scheduledAt || r.job.createdAt;
     return new Date(d).getFullYear() === year;
   });
 
-  // Build per-job rows (expenses loaded lazily per job on demand — for now use 0)
+  // Build per-job rows with user's proportional share
   const rows = yearJobs.map(r => {
-    const jobExpenses = allExpenses.filter(e => e.jobId === r.job.id);
-    const expenses = jobExpenses.reduce((s, e) => s + e.amount, 0);
-    const netRevenue = Math.max(0, r.job.agreedPrice - expenses);
+    const workers = parseWorkerIds(r.job.assignedTo);
+    const numWorkers = Math.max(workers.length, 1);
+    const share = 1 / numWorkers;
+
+    const myRevenue = Math.round(r.job.agreedPrice * share);
+    // expenses not tracked per-job here (would require per-job fetch); use 0 for now
+    const expenses = 0;
+    const netRevenue = Math.max(0, myRevenue - expenses);
     const serviceFee = Math.round(netRevenue * 0.10);
     const net = netRevenue - serviceFee;
-    return { ...r, expenses, netRevenue, serviceFee, net };
+    return { ...r, myRevenue, expenses, netRevenue, serviceFee, net, numWorkers };
   });
 
   const totals = rows.reduce(
     (acc, r) => ({
-      revenue: acc.revenue + r.job.agreedPrice,
+      revenue: acc.revenue + r.myRevenue,
       expenses: acc.expenses + r.expenses,
       serviceFee: acc.serviceFee + r.serviceFee,
       net: acc.net + r.net,
@@ -89,21 +104,22 @@ export default function TaxExportPage() {
     iso ? new Date(iso).toLocaleDateString("fi-FI") : "—";
 
   const availableYears = Array.from(
-    new Set(jobs.map(r => new Date(r.job.scheduledAt || r.job.createdAt).getFullYear()))
+    new Set(myJobs.map(r => new Date(r.job.scheduledAt || r.job.createdAt).getFullYear()))
   ).sort((a, b) => b - a);
+
+  const years = availableYears.length > 0 ? availableYears : [new Date().getFullYear()];
 
   const handlePrint = () => window.print();
 
   const handleCsv = () => {
-    const header = "Päivämäärä;Asiakas;Osoite;Palvelu;Bruttokorvaus (€);Kulut (€);Palvelumaksu (€);Nettoansio (€)";
+    const header = "Päivämäärä;Asiakas;Osoite;Palvelu;Brutto-osuus (€);Palvelumaksu (€);Netto (€)";
     const lines = rows.map(r =>
       [
         fmtDate(r.job.scheduledAt || r.job.createdAt),
         r.customer?.name ?? "",
         r.customer?.address ?? "",
         `"${r.job.description}"`,
-        (r.job.agreedPrice / 100).toFixed(2).replace(".", ","),
-        (r.expenses / 100).toFixed(2).replace(".", ","),
+        (r.myRevenue / 100).toFixed(2).replace(".", ","),
         (r.serviceFee / 100).toFixed(2).replace(".", ","),
         (r.net / 100).toFixed(2).replace(".", ","),
       ].join(";")
@@ -117,8 +133,6 @@ export default function TaxExportPage() {
     a.click();
     URL.revokeObjectURL(url);
   };
-
-  const years = availableYears.length > 0 ? availableYears : [new Date().getFullYear()];
 
   return (
     <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28 print:pt-4 print:pb-4">
@@ -134,7 +148,7 @@ export default function TaxExportPage() {
           <div className="flex-1">
             <h1 className="text-2xl font-semibold text-foreground">Verotuloste</h1>
             <p className="text-sm text-muted-foreground">
-              Valmistuneet keikat · käytä OmaVero-ilmoitukseen
+              {profile?.name ?? "Omat"} keikat · OmaVero-ilmoitukseen
             </p>
           </div>
           <div className="flex gap-2">
@@ -171,9 +185,27 @@ export default function TaxExportPage() {
             Tekijä: {profile?.name ?? "—"} · Tulostettu: {new Date().toLocaleDateString("fi-FI")}
           </p>
           <p className="text-xs text-gray-500 mt-1">
-            Tämä tuloste on tarkoitettu OmaVero-ilmoituksen tueksi. Bruttokorvaus = veronalainen tulo.
-            Kulut ja palvelumaksu ovat vähennyskelpoisia menoja.
+            4H-yrityksen tulos = nettoansio. Ilmoita kohdassa "Muut ansiotulot" OmaVerossa.
           </p>
+        </div>
+
+        {/* Profile status bar */}
+        <div className="flex flex-wrap gap-2 mb-5 print:hidden">
+          {profile?.hasYTunnus && (
+            <span className="text-xs px-3 py-1 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 font-medium">
+              Y-tunnus → Lomake 5 · deadline 1.4.
+            </span>
+          )}
+          {profile?.isUnder18 && (
+            <span className="text-xs px-3 py-1 rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 font-medium">
+              Alle 18v — huoltaja hoitaa OmaVerossa
+            </span>
+          )}
+          {profile?.startupBonus != null && profile.startupBonus > 0 && (
+            <span className="text-xs px-3 py-1 rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 font-medium">
+              Aloitusbonus {(profile.startupBonus / 100).toFixed(0)} € — ks. yritysseteli-ohje alta
+            </span>
+          )}
         </div>
 
         {loading ? (
@@ -184,13 +216,31 @@ export default function TaxExportPage() {
           </Card>
         ) : (
           <>
+            {/* Key figure — what to enter in OmaVero */}
+            <Card className="p-5 bg-green-50 dark:bg-green-900/20 border-0 premium-shadow mb-6">
+              <p className="text-xs font-bold uppercase tracking-wide text-green-800 dark:text-green-300 mb-1">
+                {profile?.hasYTunnus
+                  ? `Elinkeinotoiminnan tulos (lomake 5) — ${year}`
+                  : `OmaVeroon ilmoitettava tulos — ${year}`}
+              </p>
+              <p className="text-4xl font-bold text-green-700 dark:text-green-400 mb-1">
+                {fmt(totals.net)}
+              </p>
+              <p className="text-xs text-green-700 dark:text-green-400">
+                {profile?.hasYTunnus
+                  ? <>4H-yrityksen tulos · ilmoita <strong>elinkeinotoiminnan veroilmoituksessa (lomake 5)</strong> · OmaVero</>
+                  : <>4H-yrityksen tulos · kirjaa kohtaan <strong>Muut ansiotulot</strong> → "4H-toiminnan tulot"</>
+                }
+              </p>
+            </Card>
+
             {/* Summary cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6 print:grid-cols-4">
               {[
-                { label: "Bruttokorvaus",  value: fmt(totals.revenue),    note: "Veronalainen tulo",        color: "text-blue-600" },
-                { label: "Kulut",          value: fmt(totals.expenses),   note: "Vähennyskelpoiset menot",  color: "text-orange-600" },
-                { label: "Palvelumaksu",   value: fmt(totals.serviceFee), note: "10 % nettotuloista",       color: "text-purple-600" },
-                { label: "Nettoansio",     value: fmt(totals.net),        note: "Ilmoitettava tulo",        color: "text-green-600" },
+                { label: "Bruttokorvaus",  value: fmt(totals.revenue),    note: "Asiakkailta laskutettu",   color: "text-blue-600" },
+                { label: "Kulut",          value: fmt(totals.expenses),   note: "Materiaalit ym.",           color: "text-orange-600" },
+                { label: "Palvelumaksu",   value: fmt(totals.serviceFee), note: "10 % nettotuloista",        color: "text-purple-600" },
+                { label: "4H-tulos",       value: fmt(totals.net),        note: "Ilmoita OmaVeroon",         color: "text-green-600" },
               ].map((c, i) => (
                 <Card key={i} className="p-4 bg-card border-0 premium-shadow print:shadow-none print:border print:border-gray-200">
                   <p className={`text-lg font-bold ${c.color}`}>{c.value}</p>
@@ -200,16 +250,173 @@ export default function TaxExportPage() {
               ))}
             </div>
 
-            {/* OmaVero hint */}
-            <Card className="p-4 bg-blue-50 dark:bg-blue-900/20 border-0 mb-6 print:hidden">
-              <p className="text-sm font-semibold text-blue-800 dark:text-blue-300 mb-1">
-                OmaVero-ilmoitukseen (elinkeinotoiminta / freelancer):
-              </p>
-              <ul className="text-sm text-blue-700 dark:text-blue-400 space-y-0.5">
-                <li>• <strong>Tulot:</strong> {fmt(totals.revenue)} (bruttokorvaus)</li>
-                <li>• <strong>Menot:</strong> {fmt(totals.expenses + totals.serviceFee)} (kulut + palvelumaksu)</li>
-                <li>• <strong>Verotettava tulo:</strong> {fmt(totals.net)}</li>
-              </ul>
+            {/* Startup bonus / yritysseteli reminder */}
+            {profile?.startupBonus != null && profile.startupBonus > 0 && (
+              <Card className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border-0 premium-shadow mb-5 print:hidden">
+                <p className="text-xs font-bold text-yellow-800 dark:text-yellow-300 mb-2">
+                  Aloitusbonus / Yritysseteli — {fmt(profile.startupBonus)} — muista ilmoittaa!
+                </p>
+                <p className="text-xs text-yellow-700 dark:text-yellow-400 mb-1.5">
+                  4H-yhdistys on ilmoittanut tuen tulorekisteriin — tarkista esitäytetty veroilmoitus.
+                </p>
+                {profile.hasYTunnus ? (
+                  <p className="text-xs text-yellow-700 dark:text-yellow-400">
+                    Y-tunnus: poista tuki henkilöasiakkaan veroilmoituksesta ja siirrä elinkeinotoiminnan lomakkeeseen (lomake 5).
+                  </p>
+                ) : (
+                  <p className="text-xs text-yellow-700 dark:text-yellow-400">
+                    Ei Y-tunnusta: tarkista vain että tuki näkyy oikein esitäytetyssä veroilmoituksessa.
+                  </p>
+                )}
+              </Card>
+            )}
+
+            {/* OmaVero step-by-step guide (collapsible) */}
+            <Card className="bg-card border-0 premium-shadow mb-6 print:hidden overflow-hidden">
+              <button
+                className="w-full flex items-center justify-between p-4 text-left"
+                onClick={() => setShowGuide(g => !g)}
+              >
+                <div className="flex items-center gap-2">
+                  <Info className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  <span className="text-sm font-semibold text-foreground">
+                    {profile?.hasYTunnus
+                      ? "Veroilmoitus: Lomake 5 (Y-tunnus) · OmaVero-ohjeet"
+                      : "Veroilmoitus: OmaVero-ohjeet (ei Y-tunnusta)"}
+                  </span>
+                </div>
+                {showGuide
+                  ? <ChevronUp className="w-4 h-4 text-muted-foreground shrink-0" />
+                  : <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                }
+              </button>
+              {showGuide && (
+                <div className="px-5 pb-5 border-t border-border pt-4 space-y-4 text-sm">
+
+                  {/* Key facts */}
+                  <div className="p-3 rounded-xl bg-muted/40 text-xs text-muted-foreground space-y-1">
+                    <p>• 4H-yrittäjänä maksat veroa henkilökohtaisen veroprosentin mukaan</p>
+                    <p>• <strong>Ei arvonlisäverovelvollisuutta</strong> (myynti jää rajan alle)</p>
+                    <p>• Kirjanpito kuitteineen säilytetään <strong>6 vuotta</strong></p>
+                    <p>• Et liitä kuitteja veroilmoitukseen — verottaja pyytää tarvittaessa</p>
+                  </div>
+
+                  {/* Y-tunnus path (prominent if applicable) */}
+                  {profile?.hasYTunnus ? (
+                    <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800">
+                      <p className="text-xs font-bold text-indigo-800 dark:text-indigo-300 mb-1.5">
+                        Sinulla on Y-tunnus → käytä Elinkeinotoiminnan veroilmoitusta (Lomake 5)
+                      </p>
+                      <ul className="text-xs text-indigo-700 dark:text-indigo-400 space-y-1">
+                        <li>• Avaa OmaVero → <strong>Elinkeinotoiminnan veroilmoitus</strong> (lomake 5)</li>
+                        <li>• Ilmoita tulos, tulot ja menot siellä — <strong>ei</strong> henkilökohtaisessa</li>
+                        <li>• Deadline: <strong>1.4.</strong> — myöhästymisestä voi tulla sanktio</li>
+                        <li>• Pakollinen vaikka ei toimintaa olisi ollut</li>
+                        <li>• Autokulut: erillinen kohta, jos omistaa ajokortin</li>
+                        <li>• Lisätietoja: vero.fi tai suoraan verotoimistosta (yritysverotus)</li>
+                      </ul>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="p-3 rounded-xl bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800">
+                        <p className="text-xs font-bold text-purple-800 dark:text-purple-300 mb-1">Ei Y-tunnusta</p>
+                        <p className="text-xs text-purple-700 dark:text-purple-400">
+                          Henkilökohtainen veroilmoitus → Muut ansiotulot → "4H-toiminnan tulot"
+                        </p>
+                      </div>
+                      <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800">
+                        <p className="text-xs font-bold text-indigo-800 dark:text-indigo-300 mb-1">Y-tunnus on</p>
+                        <p className="text-xs text-indigo-700 dark:text-indigo-400">
+                          Lomake 5 · deadline 1.4. · pakollinen vaikka ei toimintaa
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Guardian / under-18 */}
+                  {profile?.isUnder18 && (
+                    <div className="p-3 rounded-xl bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800">
+                      <p className="text-xs font-bold text-orange-800 dark:text-orange-300 mb-1.5">
+                        Alle 18-vuotias — huoltajan kautta OmaVeroon
+                      </p>
+                      <ul className="text-xs text-orange-700 dark:text-orange-400 space-y-1">
+                        <li>• Huoltaja: kirjaudu omilla tunnuksilla → <strong>Asioi toisen puolesta → Valtuudet-palvelu</strong></li>
+                        <li>• Alle 16v: tilaa verokortti OmaVerosta heti — ei tule automaattisesti</li>
+                        <li>• Jos teet itse OmaVerossa, huoltajan allekirjoitusta ei tarvita</li>
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Steps — shown only for no Y-tunnus */}
+                  {!profile?.hasYTunnus && (
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-2">
+                        Vaihe vaiheelta (ei Y-tunnusta)
+                      </p>
+                      <ol className="space-y-1.5 list-decimal list-inside text-sm text-foreground">
+                        <li>Avaa OmaVerossa <strong>Esitäytetty veroilmoitus</strong></li>
+                        <li>Korjaa esitäytetyn veroilmoituksen tietoja</li>
+                        <li>Tarvittaessa valitse alhaalta <strong>Tulojen ja vähennysten ilmoittaminen</strong></li>
+                        <li>Tarkista taustatiedot</li>
+                      </ol>
+                    </div>
+                  )}
+
+                  {/* Key figure */}
+                  <div className="p-3 rounded-xl bg-green-50 dark:bg-green-900/20">
+                    <p className="text-xs font-bold text-green-800 dark:text-green-300 mb-1.5">
+                      Ilmoitettava summa: <strong>{fmt(totals.net)}</strong>
+                    </p>
+                    {profile?.hasYTunnus ? (
+                      <p className="text-xs text-green-700 dark:text-green-400">
+                        Kirjaa elinkeinotoiminnan veroilmoitukseen (lomake 5) tulona.
+                        Kulut ja palvelumaksu ({fmt(totals.serviceFee)}) menoina.
+                      </p>
+                    ) : (
+                      <ol className="text-xs text-green-700 dark:text-green-400 space-y-1 list-decimal list-inside">
+                        <li>Tuotot-sivu → <strong>Muut tulot → Muut ansiotulot</strong></li>
+                        <li>Kuvaus: <em>"4H-toiminnan tulot"</em></li>
+                        <li>Tulon määrä: <strong>{fmt(totals.net)}</strong></li>
+                      </ol>
+                    )}
+                  </div>
+
+                  {/* Travel */}
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1.5">
+                      Matkakulut (lisävähennys)
+                    </p>
+                    <ol className="space-y-1 list-decimal list-inside text-xs text-foreground">
+                      <li>Muut vähennykset → Matkakulut → <em>Muu kuin asunnon ja työpaikan välinen matka</em></li>
+                      <li>→ Tilapäiset työmatkat → valitse kulkuneuvo</li>
+                      <li>Säännöllinen sama matka: <strong>Ei</strong> · Osoite: <em>"useita kohteita"</em></li>
+                      <li>Matkan keskipituus/päivä: km ÷ työpäivät · Matkapäivien lkm: sama jakaja</li>
+                    </ol>
+                  </div>
+
+                  {/* Other deductions */}
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1">
+                      Muut tulonhankkimismenot
+                    </p>
+                    <p className="text-xs text-foreground mb-1">
+                      Muut vähennykset → <strong>Tulonhankkimismenot → Muiden kuin palkkatulojen tulonhankkimismenot</strong>
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Vähennyskelpoisia: 4H-jäsenmaksu, 4H-yrittäjän vakuutus, pesuaineet, välineet
+                    </p>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800">
+                    <p className="text-xs font-bold text-yellow-800 dark:text-yellow-300 mb-1">Muista</p>
+                    <ul className="text-xs text-yellow-700 dark:text-yellow-400 space-y-0.5">
+                      <li>• Veroilmoitus on yrittäjän vastuulla — tee vaikka lomake ei tulisi automaattisesti</li>
+                      <li>• Lisäaikaa voi hakea OmaVeron kautta</li>
+                      <li>• Tarkemmat ohjeet: Opas → Verotus-osio</li>
+                    </ul>
+                  </div>
+                </div>
+              )}
             </Card>
 
             {/* Jobs table */}
@@ -221,7 +428,6 @@ export default function TaxExportPage() {
                     <th className="pb-2 pr-3 text-xs font-semibold text-muted-foreground uppercase">Asiakas</th>
                     <th className="pb-2 pr-3 text-xs font-semibold text-muted-foreground uppercase hidden md:table-cell print:table-cell">Palvelu</th>
                     <th className="pb-2 pr-3 text-xs font-semibold text-muted-foreground uppercase text-right">Brutto</th>
-                    <th className="pb-2 pr-3 text-xs font-semibold text-muted-foreground uppercase text-right hidden md:table-cell print:table-cell">Kulut</th>
                     <th className="pb-2 pr-3 text-xs font-semibold text-muted-foreground uppercase text-right hidden md:table-cell print:table-cell">Maksu</th>
                     <th className="pb-2 text-xs font-semibold text-muted-foreground uppercase text-right">Netto</th>
                   </tr>
@@ -235,14 +441,14 @@ export default function TaxExportPage() {
                       <td className="py-2 pr-3">
                         <p className="font-medium text-foreground">{r.customer?.name ?? "—"}</p>
                         <p className="text-xs text-muted-foreground">{r.customer?.address ?? ""}</p>
+                        {r.numWorkers > 1 && (
+                          <p className="text-xs text-blue-600 dark:text-blue-400">1/{r.numWorkers} osuus</p>
+                        )}
                       </td>
                       <td className="py-2 pr-3 text-muted-foreground hidden md:table-cell print:table-cell max-w-xs">
                         <span className="line-clamp-2">{r.job.description}</span>
                       </td>
-                      <td className="py-2 pr-3 text-right font-medium">{fmt(r.job.agreedPrice)}</td>
-                      <td className="py-2 pr-3 text-right text-orange-600 dark:text-orange-400 hidden md:table-cell print:table-cell">
-                        {r.expenses > 0 ? `−${fmt(r.expenses)}` : "—"}
-                      </td>
+                      <td className="py-2 pr-3 text-right font-medium">{fmt(r.myRevenue)}</td>
                       <td className="py-2 pr-3 text-right text-purple-600 dark:text-purple-400 hidden md:table-cell print:table-cell">
                         −{fmt(r.serviceFee)}
                       </td>
@@ -257,9 +463,6 @@ export default function TaxExportPage() {
                     <td colSpan={3} className="pt-3 text-foreground hidden md:table-cell print:table-cell">Yhteensä</td>
                     <td colSpan={3} className="pt-3 text-foreground md:hidden print:hidden">Yhteensä</td>
                     <td className="pt-3 text-right">{fmt(totals.revenue)}</td>
-                    <td className="pt-3 text-right text-orange-600 hidden md:table-cell print:table-cell">
-                      {totals.expenses > 0 ? `−${fmt(totals.expenses)}` : "—"}
-                    </td>
                     <td className="pt-3 text-right text-purple-600 hidden md:table-cell print:table-cell">
                       −{fmt(totals.serviceFee)}
                     </td>
@@ -273,8 +476,9 @@ export default function TaxExportPage() {
             <div className="hidden print:block mt-8 text-xs text-gray-500 border-t pt-4">
               <p>Puuhapatet · info@puuhapatet.fi · puuhapatet.fi</p>
               <p className="mt-1">
-                Kulut ja palvelumaksu ({fmt(totals.expenses + totals.serviceFee)}) ovat vähennyskelpoisia.
-                Nettoansio ({fmt(totals.net)}) on ilmoitettava verotettavana tulona.
+                4H-yrityksen tulos ({fmt(totals.net)}) ilmoitetaan OmaVerossa kohdassa
+                Muut ansiotulot → "4H-toiminnan tulot".
+                Palvelumaksu ({fmt(totals.serviceFee)}) on vähennyskelpoisena kirjattu netosta.
               </p>
             </div>
           </>

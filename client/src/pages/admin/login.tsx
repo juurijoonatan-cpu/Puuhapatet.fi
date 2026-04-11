@@ -18,6 +18,29 @@ import { cn } from "@/lib/utils";
 const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD || "admin123";
 const SESSION_KEY = "puuhapatet_admin_session";
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
+const CUSTOM_PASSWORDS_KEY = "puuhapatet_custom_passwords";
+
+/** Returns the effective password for a user (custom or default) */
+export function getEffectivePassword(userId: string): string {
+  try {
+    const stored = localStorage.getItem(CUSTOM_PASSWORDS_KEY);
+    if (stored) {
+      const passwords = JSON.parse(stored) as Record<string, string>;
+      if (passwords[userId]) return passwords[userId];
+    }
+  } catch {}
+  return ADMIN_PASSWORD;
+}
+
+/** Saves a new custom password for a user */
+export function setUserPassword(userId: string, newPassword: string): void {
+  try {
+    const stored = localStorage.getItem(CUSTOM_PASSWORDS_KEY);
+    const passwords = stored ? (JSON.parse(stored) as Record<string, string>) : {};
+    passwords[userId] = newPassword;
+    localStorage.setItem(CUSTOM_PASSWORDS_KEY, JSON.stringify(passwords));
+  } catch {}
+}
 
 export function isAdminAuthenticated(): boolean {
   try {
@@ -57,7 +80,7 @@ export default function AdminLoginPage() {
 
     await new Promise((r) => setTimeout(r, 300));
 
-    if (password === ADMIN_PASSWORD) {
+    if (password === getEffectivePassword(selected.id)) {
       setAdminSession();
       setAdminProfile(selected);
       toast({

@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { type Server } from "http";
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, desc, sql, ne } from "drizzle-orm";
 import { db } from "./db";
 import { customers, jobs, expenses, insertCustomerSchema, insertJobSchema, insertExpenseSchema } from "@shared/schema";
 
@@ -172,6 +172,55 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         netIncome,       // senttiä — verotettava nettotulo
         upcoming:        Number(totals.upcoming),
       });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Worker stats (host view) ─────────────────────────────────────────────────
+
+  // Normalize assignedTo field: handles old "Full Name" format and new "id" format
+  function normalizeWorkerIds(assignedTo: string | null): string[] {
+    if (!assignedTo) return [];
+    const nameToId: Record<string, string> = {
+      "Joonatan Juuri": "joonatan",
+      "Matias Pitkänen": "matias",
+    };
+    return assignedTo
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((s) => nameToId[s] ?? s);
+  }
+
+  // Returns accumulated service-fee debt per worker across all "done" jobs
+  app.get("/api/workers/stats", async (_req, res) => {
+    try {
+      const doneJobs = await db.select().from(jobs).where(eq(jobs.status, "done"));
+      const allExpenses = await db.select().from(expenses);
+
+      const expensesByJob: Record<number, number> = {};
+      for (const e of allExpenses) {
+        expensesByJob[e.jobId] = (expensesByJob[e.jobId] ?? 0) + e.amount;
+      }
+
+      const workerFees: Record<string, number> = {};
+      const workerJobCount: Record<string, number> = {};
+
+      for (const job of doneJobs) {
+        const jobExpenses = expensesByJob[job.id] ?? 0;
+        const netRevenue = Math.max(0, job.agreedPrice - jobExpenses);
+        const serviceFee = Math.round(netRevenue * 0.10);
+        const workerIds = normalizeWorkerIds(job.assignedTo);
+        if (workerIds.length === 0) continue;
+        const feePerWorker = Math.round(serviceFee / workerIds.length);
+        for (const wid of workerIds) {
+          workerFees[wid] = (workerFees[wid] ?? 0) + feePerWorker;
+          workerJobCount[wid] = (workerJobCount[wid] ?? 0) + 1;
+        }
+      }
+
+      res.json({ workerFees, workerJobCount });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

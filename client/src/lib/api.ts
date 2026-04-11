@@ -105,6 +105,11 @@ export interface StatsResponse {
   upcoming: number;
 }
 
+export interface WorkerStatsResponse {
+  workerFees: Record<string, number>;     // cents owed per worker ID
+  workerJobCount: Record<string, number>; // done job count per worker ID
+}
+
 // ─── Static package list (no packages table yet) ──────────────────────────────
 
 const STATIC_PACKAGES: NormalizedPackage[] = [
@@ -121,6 +126,9 @@ export const api = {
 
   stats: () =>
     request<StatsResponse>("GET", "/api/stats"),
+
+  workersStats: () =>
+    request<WorkerStatsResponse>("GET", "/api/workers/stats"),
 
   // packages() returns static list — no packages table in DB yet
   packages: (): Promise<ApiResponse<{ ok: boolean; packages: ApiPackage[] }>> =>

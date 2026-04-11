@@ -16,19 +16,27 @@ import {
   List,
   Users,
 } from "lucide-react";
-import { getAdminProfile } from "@/lib/admin-profile";
-import { api, StatsResponse } from "@/lib/api";
+import { getAdminProfile, USERS } from "@/lib/admin-profile";
+import { api, StatsResponse, WorkerStatsResponse } from "@/lib/api";
 
 export default function AdminDashboard() {
   const profile = getAdminProfile();
+  const isHost = profile?.role === "HOST";
+
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [workerStats, setWorkerStats] = useState<WorkerStatsResponse | null>(null);
 
   useEffect(() => {
     api.stats().then((res) => {
       if (res.ok && res.data) setStats(res.data);
       setLoading(false);
     });
+    if (isHost) {
+      api.workersStats().then((res) => {
+        if (res.ok && res.data) setWorkerStats(res.data);
+      });
+    }
   }, []);
 
   const fmt = (cents: number) =>
@@ -97,7 +105,7 @@ export default function AdminDashboard() {
           })}
         </div>
 
-        {/* Revenue breakdown — shown below the stat cards */}
+        {/* Revenue breakdown */}
         {!loading && stats && (
           <Card className="p-4 bg-card border-0 premium-shadow mb-8">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
@@ -121,6 +129,55 @@ export default function AdminDashboard() {
               <p className="text-sm text-muted-foreground">Nettotulo</p>
               <p className="text-lg font-bold text-green-600 dark:text-green-400">{fmt(stats.netIncome)}</p>
             </div>
+          </Card>
+        )}
+
+        {/* Worker service fee debts — HOST only */}
+        {isHost && workerStats && (
+          <Card className="p-4 bg-card border-0 premium-shadow mb-8">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-4">
+              Tekijöiden palvelumaksut — maksamatta
+            </p>
+            <div className="space-y-3">
+              {USERS.map((u) => {
+                const owed = workerStats.workerFees[u.id] ?? 0;
+                const jobCount = workerStats.workerJobCount[u.id] ?? 0;
+                return (
+                  <div key={u.id} className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      {u.photoUrl ? (
+                        <img
+                          src={u.photoUrl}
+                          alt={u.name}
+                          className="w-8 h-8 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+                          <span className="text-xs font-semibold text-muted-foreground">
+                            {u.name[0]}
+                          </span>
+                        </div>
+                      )}
+                      <div>
+                        <p className="text-sm font-medium text-foreground">{u.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {jobCount} valmista keikkaa
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className={`text-base font-bold ${owed > 0 ? "text-purple-600 dark:text-purple-400" : "text-muted-foreground"}`}>
+                        {fmt(owed)}
+                      </p>
+                      <p className="text-xs text-muted-foreground">velassa</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground mt-4 pt-3 border-t border-border">
+              Laskettu valmistuneista keikoista: (hinta − kulut) × 10 % per tekijä
+            </p>
           </Card>
         )}
 

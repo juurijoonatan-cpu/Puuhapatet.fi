@@ -161,10 +161,10 @@ export default function AdminSettingsPage() {
     updateTest("getJob", { status: "loading" });
     try {
       const result = await api.getJob(testJobId.trim());
-      updateTest("getJob", { 
-        status: result.ok && result.data?.ok ? "success" : "error", 
+      updateTest("getJob", {
+        status: result.ok ? "success" : "error",
         response: result.data,
-        error: result.error || result.data?.error,
+        error: result.error,
       });
     } catch (error) {
       updateTest("getJob", { 
@@ -177,15 +177,15 @@ export default function AdminSettingsPage() {
   const runListJobsTest = async () => {
     updateTest("listJobs", { status: "loading" });
     try {
-      const result = await api.listJobs();
-      updateTest("listJobs", { 
-        status: result.ok && result.data?.ok ? "success" : "error", 
+      const result = await api.getJobs();
+      updateTest("listJobs", {
+        status: result.ok ? "success" : "error",
         response: result.data,
-        error: result.error || result.data?.error || "Endpoint not available",
+        error: result.error,
       });
     } catch (error) {
-      updateTest("listJobs", { 
-        status: "error", 
+      updateTest("listJobs", {
+        status: "error",
         error: error instanceof Error ? error.message : "Unknown error",
       });
     }
@@ -459,7 +459,7 @@ export default function AdminSettingsPage() {
                     {test.error && (
                       <p className="text-sm text-red-500 mb-2">{test.error}</p>
                     )}
-                    {test.response && (
+                    {test.response != null && (
                       <pre className="text-xs bg-background p-3 rounded-lg overflow-x-auto font-mono max-h-60 overflow-y-auto">
                         {JSON.stringify(test.response, null, 2)}
                       </pre>

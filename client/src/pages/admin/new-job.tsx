@@ -920,7 +920,7 @@ export default function NewJobPage() {
                   </Button>
                 </div>
                 <canvas
-                  ref={(el) => { customerSigRef.current = el; initCanvas(el); }}
+                  ref={(el) => { (customerSigRef as React.MutableRefObject<HTMLCanvasElement | null>).current = el; initCanvas(el); }}
                   width={300}
                   height={100}
                   className="w-full border rounded-xl bg-white touch-none"
@@ -949,7 +949,7 @@ export default function NewJobPage() {
                   </Button>
                 </div>
                 <canvas
-                  ref={(el) => { staffSigRef.current = el; initCanvas(el); }}
+                  ref={(el) => { (staffSigRef as React.MutableRefObject<HTMLCanvasElement | null>).current = el; initCanvas(el); }}
                   width={300}
                   height={100}
                   className="w-full border rounded-xl bg-white touch-none"

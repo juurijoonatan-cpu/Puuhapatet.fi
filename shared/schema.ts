@@ -89,6 +89,24 @@ export const insertWorkerPaymentSchema = createInsertSchema(workerPayments).omit
 export type WorkerPayment = typeof workerPayments.$inferSelect;
 export type InsertWorkerPayment = z.infer<typeof insertWorkerPaymentSchema>;
 
+// ─── Investments (välineet ja hankinnat) ─────────────────────────────────────
+
+export const investments = pgTable("investments", {
+  id:          serial("id").primaryKey(),
+  description: text("description").notNull(),
+  amount:      integer("amount").notNull(),       // senttiä (€ × 100)
+  category:    text("category").notNull().default("välineet"), // välineet | kuljetukset | muu
+  boughtBy:    text("bought_by").notNull(),        // "joonatan" | "matias"
+  splitWith:   text("split_with"),                 // null = oma, toisen ID = 50/50
+  purchasedAt: timestamp("purchased_at").defaultNow().notNull(),
+  note:        text("note"),
+  createdAt:   timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertInvestmentSchema = createInsertSchema(investments).omit({ id: true, createdAt: true });
+export type Investment = typeof investments.$inferSelect;
+export type InsertInvestment = z.infer<typeof insertInvestmentSchema>;
+
 // ─── Users (admin accounts — seeded, ei itserekisteröitymistä) ───────────────
 
 export const users = pgTable("users", {

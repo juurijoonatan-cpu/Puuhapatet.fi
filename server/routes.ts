@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { type Server } from "http";
 import { eq, desc, sql, ne } from "drizzle-orm";
 import { db } from "./db";
-import { customers, jobs, expenses, workerPayments, insertCustomerSchema, insertJobSchema, insertExpenseSchema } from "@shared/schema";
+import { customers, jobs, expenses, workerPayments, investments, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema } from "@shared/schema";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
 
@@ -262,6 +262,54 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         .values({ workerId, amountPaid: Math.round(amount) })
         .returning();
       res.status(201).json(row);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Investments ──────────────────────────────────────────────────────────────
+
+  app.get("/api/investments", async (_req, res) => {
+    try {
+      const rows = await db.select().from(investments).orderBy(desc(investments.purchasedAt));
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/investments", async (req, res) => {
+    try {
+      const body = { ...req.body };
+      if (typeof body.purchasedAt === "string") {
+        body.purchasedAt = new Date(body.purchasedAt);
+      }
+      const data = insertInvestmentSchema.parse(body);
+      const [row] = await db.insert(investments).values(data).returning();
+      res.status(201).json(row);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/investments/:id", async (req, res) => {
+    try {
+      const body = { ...req.body };
+      if (typeof body.purchasedAt === "string") {
+        body.purchasedAt = new Date(body.purchasedAt);
+      }
+      const [row] = await db.update(investments).set(body).where(eq(investments.id, Number(req.params.id))).returning();
+      if (!row) return res.status(404).json({ error: "Ei löydy" });
+      res.json(row);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/investments/:id", async (req, res) => {
+    try {
+      await db.delete(investments).where(eq(investments.id, Number(req.params.id)));
+      res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

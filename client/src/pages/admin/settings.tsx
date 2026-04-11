@@ -7,7 +7,7 @@
  * 3. Users & Invites (Host/Board only)
  */
 
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import { ArrowLeft, LogOut, User, Sun, Moon } from "lucide-react";
 
 import { Card } from "@/components/ui/card";

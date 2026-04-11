@@ -74,16 +74,10 @@ export default function AdminSettingsPage() {
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Link href="/admin/profile-setup">
-                <Button variant="outline" size="sm" data-testid="btn-edit-profile">
-                  Muokkaa
-                </Button>
-              </Link>
-              <Button variant="outline" size="sm" onClick={handleLogout} data-testid="btn-logout">
-                <LogOut className="w-4 h-4" />
-              </Button>
-            </div>
+            <Button variant="outline" size="sm" onClick={handleLogout} data-testid="btn-logout">
+              <LogOut className="w-4 h-4" />
+              <span className="ml-2">Kirjaudu ulos</span>
+            </Button>
           </div>
         </Card>
 

@@ -129,6 +129,28 @@ export default function AdminSettingsPage() {
                   {profile?.role === "HOST" ? "Perustaja / Host" : "Työntekijä"}
                   {profile?.phone && ` · ${profile.phone}`}
                 </p>
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {profile?.hasYTunnus && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 font-medium">
+                      Y-tunnus
+                    </span>
+                  )}
+                  {profile?.isUnder18 !== undefined && (
+                    <span className={cn(
+                      "text-xs px-2 py-0.5 rounded-full font-medium",
+                      profile.isUnder18
+                        ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300"
+                        : "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300"
+                    )}>
+                      {profile.isUnder18 ? "Alle 18v" : "Yli 18v"}
+                    </span>
+                  )}
+                  {profile?.startupBonus != null && profile.startupBonus > 0 && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 font-medium">
+                      Aloitusbonus {(profile.startupBonus / 100).toFixed(0)} €
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
             <Button variant="outline" size="sm" onClick={handleLogout} data-testid="btn-logout">

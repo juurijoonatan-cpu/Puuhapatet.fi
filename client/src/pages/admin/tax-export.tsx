@@ -189,6 +189,25 @@ export default function TaxExportPage() {
           </p>
         </div>
 
+        {/* Profile status bar */}
+        <div className="flex flex-wrap gap-2 mb-5 print:hidden">
+          {profile?.hasYTunnus && (
+            <span className="text-xs px-3 py-1 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 font-medium">
+              Y-tunnus → Lomake 5 · deadline 1.4.
+            </span>
+          )}
+          {profile?.isUnder18 && (
+            <span className="text-xs px-3 py-1 rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 font-medium">
+              Alle 18v — huoltaja hoitaa OmaVerossa
+            </span>
+          )}
+          {profile?.startupBonus != null && profile.startupBonus > 0 && (
+            <span className="text-xs px-3 py-1 rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 font-medium">
+              Aloitusbonus {(profile.startupBonus / 100).toFixed(0)} € — ks. yritysseteli-ohje alta
+            </span>
+          )}
+        </div>
+
         {loading ? (
           <p className="text-muted-foreground text-center py-12">Ladataan…</p>
         ) : rows.length === 0 ? (
@@ -200,13 +219,18 @@ export default function TaxExportPage() {
             {/* Key figure — what to enter in OmaVero */}
             <Card className="p-5 bg-green-50 dark:bg-green-900/20 border-0 premium-shadow mb-6">
               <p className="text-xs font-bold uppercase tracking-wide text-green-800 dark:text-green-300 mb-1">
-                OmaVeroon ilmoitettava tulos ({year})
+                {profile?.hasYTunnus
+                  ? `Elinkeinotoiminnan tulos (lomake 5) — ${year}`
+                  : `OmaVeroon ilmoitettava tulos — ${year}`}
               </p>
               <p className="text-4xl font-bold text-green-700 dark:text-green-400 mb-1">
                 {fmt(totals.net)}
               </p>
               <p className="text-xs text-green-700 dark:text-green-400">
-                4H-yrityksen tulos · kirjaa kohtaan <strong>Muut ansiotulot</strong> → "4H-toiminnan tulot"
+                {profile?.hasYTunnus
+                  ? <>4H-yrityksen tulos · ilmoita <strong>elinkeinotoiminnan veroilmoituksessa (lomake 5)</strong> · OmaVero</>
+                  : <>4H-yrityksen tulos · kirjaa kohtaan <strong>Muut ansiotulot</strong> → "4H-toiminnan tulot"</>
+                }
               </p>
             </Card>
 
@@ -226,6 +250,27 @@ export default function TaxExportPage() {
               ))}
             </div>
 
+            {/* Startup bonus / yritysseteli reminder */}
+            {profile?.startupBonus != null && profile.startupBonus > 0 && (
+              <Card className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border-0 premium-shadow mb-5 print:hidden">
+                <p className="text-xs font-bold text-yellow-800 dark:text-yellow-300 mb-2">
+                  Aloitusbonus / Yritysseteli — {fmt(profile.startupBonus)} — muista ilmoittaa!
+                </p>
+                <p className="text-xs text-yellow-700 dark:text-yellow-400 mb-1.5">
+                  4H-yhdistys on ilmoittanut tuen tulorekisteriin — tarkista esitäytetty veroilmoitus.
+                </p>
+                {profile.hasYTunnus ? (
+                  <p className="text-xs text-yellow-700 dark:text-yellow-400">
+                    Y-tunnus: poista tuki henkilöasiakkaan veroilmoituksesta ja siirrä elinkeinotoiminnan lomakkeeseen (lomake 5).
+                  </p>
+                ) : (
+                  <p className="text-xs text-yellow-700 dark:text-yellow-400">
+                    Ei Y-tunnusta: tarkista vain että tuki näkyy oikein esitäytetyssä veroilmoituksessa.
+                  </p>
+                )}
+              </Card>
+            )}
+
             {/* OmaVero step-by-step guide (collapsible) */}
             <Card className="bg-card border-0 premium-shadow mb-6 print:hidden overflow-hidden">
               <button
@@ -235,7 +280,9 @@ export default function TaxExportPage() {
                 <div className="flex items-center gap-2">
                   <Info className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                   <span className="text-sm font-semibold text-foreground">
-                    Näin teet veroilmoituksen OmaVerossa (4H-yrittäjä)
+                    {profile?.hasYTunnus
+                      ? "Veroilmoitus: Lomake 5 (Y-tunnus) · OmaVero-ohjeet"
+                      : "Veroilmoitus: OmaVero-ohjeet (ei Y-tunnusta)"}
                   </span>
                 </div>
                 {showGuide
@@ -254,57 +301,84 @@ export default function TaxExportPage() {
                     <p>• Et liitä kuitteja veroilmoitukseen — verottaja pyytää tarvittaessa</p>
                   </div>
 
-                  {/* Two paths */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="p-3 rounded-xl bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800">
-                      <p className="text-xs font-bold text-purple-800 dark:text-purple-300 mb-1">Ei Y-tunnusta</p>
-                      <p className="text-xs text-purple-700 dark:text-purple-400">
-                        Henkilökohtainen veroilmoitus → Muut ansiotulot → "4H-toiminnan tulot"
-                      </p>
-                    </div>
+                  {/* Y-tunnus path (prominent if applicable) */}
+                  {profile?.hasYTunnus ? (
                     <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800">
-                      <p className="text-xs font-bold text-indigo-800 dark:text-indigo-300 mb-1">Y-tunnus on</p>
-                      <p className="text-xs text-indigo-700 dark:text-indigo-400">
-                        Elinkeinotoiminnan veroilmoitus (lomake 5) · deadline 1.4. · pakollinen vaikka ei toimintaa
+                      <p className="text-xs font-bold text-indigo-800 dark:text-indigo-300 mb-1.5">
+                        Sinulla on Y-tunnus → käytä Elinkeinotoiminnan veroilmoitusta (Lomake 5)
                       </p>
+                      <ul className="text-xs text-indigo-700 dark:text-indigo-400 space-y-1">
+                        <li>• Avaa OmaVero → <strong>Elinkeinotoiminnan veroilmoitus</strong> (lomake 5)</li>
+                        <li>• Ilmoita tulos, tulot ja menot siellä — <strong>ei</strong> henkilökohtaisessa</li>
+                        <li>• Deadline: <strong>1.4.</strong> — myöhästymisestä voi tulla sanktio</li>
+                        <li>• Pakollinen vaikka ei toimintaa olisi ollut</li>
+                        <li>• Autokulut: erillinen kohta, jos omistaa ajokortin</li>
+                        <li>• Lisätietoja: vero.fi tai suoraan verotoimistosta (yritysverotus)</li>
+                      </ul>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="p-3 rounded-xl bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800">
+                        <p className="text-xs font-bold text-purple-800 dark:text-purple-300 mb-1">Ei Y-tunnusta</p>
+                        <p className="text-xs text-purple-700 dark:text-purple-400">
+                          Henkilökohtainen veroilmoitus → Muut ansiotulot → "4H-toiminnan tulot"
+                        </p>
+                      </div>
+                      <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800">
+                        <p className="text-xs font-bold text-indigo-800 dark:text-indigo-300 mb-1">Y-tunnus on</p>
+                        <p className="text-xs text-indigo-700 dark:text-indigo-400">
+                          Lomake 5 · deadline 1.4. · pakollinen vaikka ei toimintaa
+                        </p>
+                      </div>
+                    </div>
+                  )}
 
-                  {/* Guardian / under-16 */}
-                  <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-900/20">
-                    <p className="text-xs font-bold text-blue-800 dark:text-blue-300 mb-1.5">
-                      Alle 16-vuotias tai huoltaja asioi OmaVerossa
-                    </p>
-                    <ul className="text-xs text-blue-700 dark:text-blue-400 space-y-1">
-                      <li>• Alle 16-vuotiaille verokorttia ei lähetetä automaattisesti — tilaa OmaVerosta heti toiminnan alkaessa</li>
-                      <li>• Huoltaja: kirjaudu omilla tunnuksilla → <strong>Asioi toisen puolesta → Valtuudet-palvelu</strong> → valitse lapsi</li>
-                      <li>• Jos nuori tekee ilmoituksen itse OmaVerossa, huoltajan allekirjoitusta ei tarvita</li>
-                    </ul>
-                  </div>
+                  {/* Guardian / under-18 */}
+                  {profile?.isUnder18 && (
+                    <div className="p-3 rounded-xl bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800">
+                      <p className="text-xs font-bold text-orange-800 dark:text-orange-300 mb-1.5">
+                        Alle 18-vuotias — huoltajan kautta OmaVeroon
+                      </p>
+                      <ul className="text-xs text-orange-700 dark:text-orange-400 space-y-1">
+                        <li>• Huoltaja: kirjaudu omilla tunnuksilla → <strong>Asioi toisen puolesta → Valtuudet-palvelu</strong></li>
+                        <li>• Alle 16v: tilaa verokortti OmaVerosta heti — ei tule automaattisesti</li>
+                        <li>• Jos teet itse OmaVerossa, huoltajan allekirjoitusta ei tarvita</li>
+                      </ul>
+                    </div>
+                  )}
 
-                  {/* Steps */}
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-2">
-                      Vaihe vaiheelta (ei Y-tunnusta)
-                    </p>
-                    <ol className="space-y-1.5 list-decimal list-inside text-sm text-foreground">
-                      <li>Avaa OmaVerossa <strong>Esitäytetty veroilmoitus</strong></li>
-                      <li>Korjaa esitäytetyn veroilmoituksen tietoja</li>
-                      <li>Tarvittaessa valitse alhaalta <strong>Tulojen ja vähennysten ilmoittaminen</strong></li>
-                      <li>Tarkista taustatiedot</li>
-                    </ol>
-                  </div>
+                  {/* Steps — shown only for no Y-tunnus */}
+                  {!profile?.hasYTunnus && (
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-2">
+                        Vaihe vaiheelta (ei Y-tunnusta)
+                      </p>
+                      <ol className="space-y-1.5 list-decimal list-inside text-sm text-foreground">
+                        <li>Avaa OmaVerossa <strong>Esitäytetty veroilmoitus</strong></li>
+                        <li>Korjaa esitäytetyn veroilmoituksen tietoja</li>
+                        <li>Tarvittaessa valitse alhaalta <strong>Tulojen ja vähennysten ilmoittaminen</strong></li>
+                        <li>Tarkista taustatiedot</li>
+                      </ol>
+                    </div>
+                  )}
 
                   {/* Key figure */}
                   <div className="p-3 rounded-xl bg-green-50 dark:bg-green-900/20">
                     <p className="text-xs font-bold text-green-800 dark:text-green-300 mb-1.5">
-                      Kirjaa tämä summa: <strong>{fmt(totals.net)}</strong>
+                      Ilmoitettava summa: <strong>{fmt(totals.net)}</strong>
                     </p>
-                    <ol className="text-xs text-green-700 dark:text-green-400 space-y-1 list-decimal list-inside">
-                      <li>Tuotot-sivu → <strong>Muut tulot → Muut ansiotulot</strong></li>
-                      <li>Kuvaus: <em>"4H-toiminnan tulot"</em></li>
-                      <li>Tulon määrä: <strong>{fmt(totals.net)}</strong></li>
-                    </ol>
+                    {profile?.hasYTunnus ? (
+                      <p className="text-xs text-green-700 dark:text-green-400">
+                        Kirjaa elinkeinotoiminnan veroilmoitukseen (lomake 5) tulona.
+                        Kulut ja palvelumaksu ({fmt(totals.serviceFee)}) menoina.
+                      </p>
+                    ) : (
+                      <ol className="text-xs text-green-700 dark:text-green-400 space-y-1 list-decimal list-inside">
+                        <li>Tuotot-sivu → <strong>Muut tulot → Muut ansiotulot</strong></li>
+                        <li>Kuvaus: <em>"4H-toiminnan tulot"</em></li>
+                        <li>Tulon määrä: <strong>{fmt(totals.net)}</strong></li>
+                      </ol>
+                    )}
                   </div>
 
                   {/* Travel */}

@@ -292,6 +292,20 @@ export default function InvestmentsPage() {
           </Card>
         )}
 
+        {/* Expensive equipment info */}
+        {investments.some(i => i.amount >= 15000) && (
+          <Card className="p-4 bg-amber-50 dark:bg-amber-900/20 border-0 premium-shadow mb-4">
+            <p className="text-xs font-bold text-amber-800 dark:text-amber-300 mb-1.5">
+              Kalliin kaluston käyttö keikalla — näin se hoidetaan
+            </p>
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              Jos joku käyttää toisen omistamaa kalustoa (150 €+) keikalla, lisää keikan kuluihin
+              <strong> "Kalustovuokra — [omistaja]"</strong> (esim. 10–20 € / keikka).
+              Omistaja saa osuuden kertyvistä kulukorvauksista. Sopikaa summa etukäteen.
+            </p>
+          </Card>
+        )}
+
         {/* List */}
         {loading ? (
           <div className="flex justify-center py-16">
@@ -311,8 +325,12 @@ export default function InvestmentsPage() {
                 const buyer = USERS.find(u => u.id === inv.boughtBy);
                 const splitUser = inv.splitWith ? USERS.find(u => u.id === inv.splitWith) : null;
                 const half = Math.round(inv.amount / 2);
+                const isExpensive = inv.amount >= 15000; // 150€+
                 return (
-                  <Card key={inv.id} className="p-4 bg-card border-0 premium-shadow">
+                  <Card key={inv.id} className={cn(
+                    "p-4 bg-card border-0 premium-shadow",
+                    isExpensive && "ring-1 ring-amber-200 dark:ring-amber-800"
+                  )}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -320,6 +338,11 @@ export default function InvestmentsPage() {
                           <span className={cn("text-xs px-2 py-0.5 rounded-full shrink-0", categoryColor(inv.category))}>
                             {CATEGORIES.find(c => c.key === inv.category)?.label ?? inv.category}
                           </span>
+                          {isExpensive && (
+                            <span className="text-xs px-2 py-0.5 rounded-full shrink-0 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300">
+                              Kallis kalusto
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-1.5 text-xs text-muted-foreground flex-wrap">
                           <span>{fmtDate(inv.purchasedAt)}</span>
@@ -339,6 +362,11 @@ export default function InvestmentsPage() {
                             <span className="text-muted-foreground">· oma kulu</span>
                           )}
                         </div>
+                        {isExpensive && (
+                          <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                            Kun käytetään keikalla → lisää keikan kuluihin "Kalustovuokra — {buyer?.name.split(" ")[0] ?? inv.boughtBy}{splitUser ? ` & ${splitUser.name.split(" ")[0]}` : ""}"
+                          </p>
+                        )}
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
                         <p className="text-base font-bold text-foreground">{fmt(inv.amount)}</p>

@@ -107,6 +107,23 @@ const ADDONS = [
 ] as const;
 type AddonKey = (typeof ADDONS)[number]["key"];
 
+// ─── Other service categories (manual pricing) ───────────────────────────────
+
+const SERVICE_CATEGORIES = [
+  { key: "ikkunapesu", label: "Ikkunanpesu",              sub: "Laskuri-hinta",        emoji: "🪟" },
+  { key: "pihatyot",   label: "Piha- ja puutarhatyöt",   sub: "Sovittu hinta",         emoji: "🌿" },
+  { key: "siivous",    label: "Siivous",                  sub: "Sovittu hinta",         emoji: "🧹" },
+  { key: "autopesu",   label: "Autopesut / detailing",   sub: "Sovittu hinta",          emoji: "🚗" },
+  { key: "roskakatos", label: "Roskakatos / piharakenne", sub: "Sovittu hinta",         emoji: "🏚️" },
+  { key: "muu",        label: "Muu palvelu",              sub: "Vapaa kuvaus + hinta",  emoji: "✨" },
+] as const;
+type ServiceCategoryKey = (typeof SERVICE_CATEGORIES)[number]["key"];
+
+// Round price to nearest 5 € (e.g. 187 → 185, 93 → 95)
+function roundTo5(euros: number): number {
+  return Math.round(euros / 5) * 5;
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface JobFormData {
@@ -123,6 +140,8 @@ interface JobFormData {
   weatherNotes: string;
   internalNotes: string;
   // Pricing
+  serviceCategory: ServiceCategoryKey | "";
+  // Window cleaning
   houseType: HouseKey | "";
   sqmIdx: number | null;
   serviceTier: TierKey;
@@ -131,6 +150,9 @@ interface JobFormData {
   discountPercent: number;
   discountReason: string;
   finalPrice: number;
+  // Other service types
+  manualPrice: string;
+  serviceDescription: string;
   // Contract
   customerSignature: string;
   staffSignature: string;
@@ -148,6 +170,7 @@ const EMPTY_FORM: JobFormData = {
   accessConstraints: "",
   weatherNotes: "",
   internalNotes: "",
+  serviceCategory: "",
   houseType: "",
   sqmIdx: null,
   serviceTier: "all",
@@ -156,6 +179,8 @@ const EMPTY_FORM: JobFormData = {
   discountPercent: 0,
   discountReason: "",
   finalPrice: 0,
+  manualPrice: "",
+  serviceDescription: "",
   customerSignature: "",
   staffSignature: "",
   agreedTerms: false,
@@ -179,9 +204,11 @@ function calcPrice(data: JobFormData): { original: number; final: number } {
   let original = addonsTotal;
   if (ht && si !== null) {
     const base = SQM_RANGES[ht]?.[si]?.price ?? 0;
-    original = Math.round(base * tierMult) + addonsTotal;
+    // Round tiered price to nearest 5 € before adding addons
+    original = roundTo5(Math.round(base * tierMult)) + addonsTotal;
   }
-  const final = Math.round(original * (1 - data.discountPercent / 100) * 100) / 100;
+  // Round final price to nearest 5 € after discount
+  const final = roundTo5(Math.round(original * (1 - data.discountPercent / 100)));
   return { original, final };
 }
 
@@ -209,6 +236,20 @@ export default function NewJobPage() {
   const updateForm = (updates: Partial<JobFormData>) => {
     setFormData((prev) => {
       const next = { ...prev, ...updates };
+
+      // Changing service category resets all pricing
+      if ("serviceCategory" in updates && updates.serviceCategory !== prev.serviceCategory) {
+        next.houseType = "";
+        next.sqmIdx = null;
+        next.originalPrice = 0;
+        next.finalPrice = 0;
+        next.manualPrice = "";
+        next.serviceDescription = "";
+        next.selectedAddons = [];
+        next.discountPercent = 0;
+        next.discountReason = "";
+        return next;
+      }
 
       // Changing house type resets sqm and prices
       if ("houseType" in updates && updates.houseType !== prev.houseType) {
@@ -302,8 +343,18 @@ export default function NewJobPage() {
   // ── Submit ─────────────────────────────────────────────────────────────────
 
   const handleSubmitJob = async () => {
-    if (!formData.houseType || formData.sqmIdx === null) {
+    const isWindowCleaning = formData.serviceCategory === "ikkunapesu";
+
+    if (!formData.serviceCategory) {
+      toast({ variant: "destructive", title: "Valitse palvelutyyppi", description: "Valitse palvelun tyyppi hinnoitteluvaiheessa." });
+      return;
+    }
+    if (isWindowCleaning && (!formData.houseType || formData.sqmIdx === null)) {
       toast({ variant: "destructive", title: "Hinnoittelu puuttuu", description: "Valitse kiinteistötyyppi ja koko." });
+      return;
+    }
+    if (!isWindowCleaning && (!formData.manualPrice || parseFloat(formData.manualPrice) <= 0)) {
+      toast({ variant: "destructive", title: "Hinta puuttuu", description: "Syötä sovittu hinta." });
       return;
     }
     if (!formData.customerSignature) {
@@ -333,19 +384,28 @@ export default function NewJobPage() {
 
       const customerId = customerRes.data.id;
 
-      const houseLabel = HOUSE_TYPES.find(h => h.key === formData.houseType)?.label ?? "";
-      const sqmLabel   = formData.houseType && formData.sqmIdx !== null
-        ? SQM_RANGES[formData.houseType as HouseKey]?.[formData.sqmIdx]?.label ?? ""
-        : "";
-      const tierLabel  = SERVICE_TIERS.find(t => t.key === formData.serviceTier)?.label ?? "";
-      const addonLabels = ADDONS.filter(a => formData.selectedAddons.includes(a.key)).map(a => a.label);
+      let description = "";
+      let agreedPrice = 0;
 
-      const description = [
-        `${houseLabel} ${sqmLabel}`.trim(),
-        tierLabel,
-        ...addonLabels,
-        formData.discountPercent > 0 && `Alennus: ${formData.discountPercent}% (${formData.discountReason || "—"})`,
-      ].filter(Boolean).join(" | ");
+      if (isWindowCleaning) {
+        const houseLabel = HOUSE_TYPES.find(h => h.key === formData.houseType)?.label ?? "";
+        const sqmLabel   = formData.houseType && formData.sqmIdx !== null
+          ? SQM_RANGES[formData.houseType as HouseKey]?.[formData.sqmIdx]?.label ?? ""
+          : "";
+        const tierLabel  = SERVICE_TIERS.find(t => t.key === formData.serviceTier)?.label ?? "";
+        const addonLabels = ADDONS.filter(a => formData.selectedAddons.includes(a.key)).map(a => a.label);
+        description = [
+          `${houseLabel} ${sqmLabel}`.trim(),
+          tierLabel,
+          ...addonLabels,
+          formData.discountPercent > 0 && `Alennus: ${formData.discountPercent}% (${formData.discountReason || "—"})`,
+        ].filter(Boolean).join(" | ");
+        agreedPrice = Math.round(formData.finalPrice * 100);
+      } else {
+        const catLabel = SERVICE_CATEGORIES.find(c => c.key === formData.serviceCategory)?.label ?? formData.serviceCategory;
+        description = [catLabel, formData.serviceDescription].filter(Boolean).join(" | ");
+        agreedPrice = roundTo5(Math.round(parseFloat(formData.manualPrice))) * 100;
+      }
 
       const internalNotes = [
         formData.internalNotes,
@@ -357,9 +417,9 @@ export default function NewJobPage() {
       const jobRes = await api.createJob({
         customerId,
         description,
-        agreedPrice: Math.round(formData.finalPrice * 100),
+        agreedPrice,
         status: "lead",
-        assignedTo: profile?.name || undefined,
+        assignedTo: profile?.id || undefined,
         notes: internalNotes || undefined,
       });
 
@@ -387,8 +447,16 @@ export default function NewJobPage() {
       }
     }
     if (currentStep === 2) {
-      if (!formData.houseType || formData.sqmIdx === null) {
+      if (!formData.serviceCategory) {
+        toast({ variant: "destructive", title: "Valitse palvelutyyppi", description: "Valitse ensin palvelun tyyppi." });
+        return;
+      }
+      if (formData.serviceCategory === "ikkunapesu" && (!formData.houseType || formData.sqmIdx === null)) {
         toast({ variant: "destructive", title: "Valitse kohde", description: "Valitse kiinteistötyyppi ja koko ennen jatkamista." });
+        return;
+      }
+      if (formData.serviceCategory !== "ikkunapesu" && (!formData.manualPrice || parseFloat(formData.manualPrice) <= 0)) {
+        toast({ variant: "destructive", title: "Syötä hinta", description: "Sovittu hinta vaaditaan." });
         return;
       }
     }
@@ -406,12 +474,17 @@ export default function NewJobPage() {
 
   // ── Contract summary helpers ───────────────────────────────────────────────
 
-  const houseLabel = HOUSE_TYPES.find(h => h.key === formData.houseType)?.label ?? "";
-  const sqmLabel   = formData.houseType && formData.sqmIdx !== null
+  const isWindowCleaning = formData.serviceCategory === "ikkunapesu";
+  const houseLabel  = HOUSE_TYPES.find(h => h.key === formData.houseType)?.label ?? "";
+  const sqmLabel    = formData.houseType && formData.sqmIdx !== null
     ? SQM_RANGES[formData.houseType as HouseKey]?.[formData.sqmIdx]?.label ?? ""
     : "";
-  const tierLabel  = SERVICE_TIERS.find(t => t.key === formData.serviceTier)?.label ?? "";
+  const tierLabel   = SERVICE_TIERS.find(t => t.key === formData.serviceTier)?.label ?? "";
   const addonLabels = ADDONS.filter(a => formData.selectedAddons.includes(a.key)).map(a => a.label);
+  const catLabel    = SERVICE_CATEGORIES.find(c => c.key === formData.serviceCategory)?.label ?? "";
+  const contractPrice = isWindowCleaning
+    ? formData.finalPrice
+    : roundTo5(Math.round(parseFloat(formData.manualPrice || "0")));
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -604,9 +677,74 @@ export default function NewJobPage() {
         {currentStep === 2 && (
           <Card className="p-6 bg-card border-0 premium-shadow">
             <h2 className="text-lg font-semibold text-foreground mb-2">Hinnoittelu</h2>
-            <p className="text-sm text-muted-foreground mb-6">Valitse kohde ja palvelut.</p>
+            <p className="text-sm text-muted-foreground mb-6">Valitse palvelutyyppi ja hinnoittele.</p>
 
             <div className="space-y-6">
+
+              {/* Service category picker */}
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                  Palvelun tyyppi
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {SERVICE_CATEGORIES.map((cat) => (
+                    <button
+                      key={cat.key}
+                      type="button"
+                      onClick={() => updateForm({ serviceCategory: cat.key })}
+                      className={cn(
+                        "p-3 rounded-xl border-2 text-left transition-all",
+                        formData.serviceCategory === cat.key
+                          ? "border-primary bg-primary/5"
+                          : "border-border hover:border-muted-foreground/40",
+                      )}
+                    >
+                      <p className="font-medium text-sm text-foreground">{cat.emoji} {cat.label}</p>
+                      <p className="text-xs text-muted-foreground">{cat.sub}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Manual price — non-window-cleaning */}
+              {formData.serviceCategory && formData.serviceCategory !== "ikkunapesu" && (
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="serviceDescription">Kuvaus</Label>
+                    <Input
+                      id="serviceDescription"
+                      value={formData.serviceDescription}
+                      onChange={(e) => updateForm({ serviceDescription: e.target.value })}
+                      placeholder="Mitä tehdään…"
+                      className="mt-2"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="manualPrice">Sovittu hinta (€)</Label>
+                    <Input
+                      id="manualPrice"
+                      type="number"
+                      min="0"
+                      step="5"
+                      value={formData.manualPrice}
+                      onChange={(e) => updateForm({ manualPrice: e.target.value })}
+                      placeholder="0"
+                      className="mt-2 text-lg font-semibold"
+                    />
+                  </div>
+                  {formData.manualPrice && parseFloat(formData.manualPrice) > 0 && (
+                    <div className="flex items-center justify-between pt-3 border-t">
+                      <span className="text-sm text-muted-foreground">Pyöristetty hinta</span>
+                      <span className="text-2xl font-bold text-primary">
+                        {roundTo5(Math.round(parseFloat(formData.manualPrice)))} €
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Window cleaning pricing — only shown when ikkunapesu selected */}
+              {formData.serviceCategory === "ikkunapesu" && <>
 
               {/* House type */}
               <div>
@@ -775,6 +913,8 @@ export default function NewJobPage() {
                   </p>
                 </div>
               )}
+              </> /* end ikkunapesu section */}
+
             </div>
 
             <div className="flex gap-3 pt-6">
@@ -785,7 +925,11 @@ export default function NewJobPage() {
               <Button
                 className="flex-1"
                 onClick={goNext}
-                disabled={!formData.houseType || formData.sqmIdx === null}
+                disabled={
+                  !formData.serviceCategory ||
+                  (formData.serviceCategory === "ikkunapesu" && (!formData.houseType || formData.sqmIdx === null)) ||
+                  (formData.serviceCategory !== "ikkunapesu" && (!formData.manualPrice || parseFloat(formData.manualPrice) <= 0))
+                }
                 data-testid="btn-next"
               >
                 Seuraava
@@ -812,28 +956,43 @@ export default function NewJobPage() {
                 <span className="font-medium">{formData.customerAddress}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Kohde</span>
-                <span className="font-medium">{houseLabel} {sqmLabel}</span>
-              </div>
-              <div className="flex justify-between">
                 <span className="text-muted-foreground">Palvelu</span>
-                <span className="font-medium">{tierLabel}</span>
+                <span className="font-medium">{catLabel}</span>
               </div>
-              {addonLabels.length > 0 && (
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Lisäpalvelut</span>
-                  <span className="font-medium text-right max-w-[55%]">{addonLabels.join(", ")}</span>
-                </div>
-              )}
-              {formData.discountPercent > 0 && (
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Alennus</span>
-                  <span className="font-medium text-orange-600 dark:text-orange-400">−{formData.discountPercent} %</span>
-                </div>
+              {isWindowCleaning ? (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Kohde</span>
+                    <span className="font-medium">{houseLabel} {sqmLabel}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Tyyppi</span>
+                    <span className="font-medium">{tierLabel}</span>
+                  </div>
+                  {addonLabels.length > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Lisäpalvelut</span>
+                      <span className="font-medium text-right max-w-[55%]">{addonLabels.join(", ")}</span>
+                    </div>
+                  )}
+                  {formData.discountPercent > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Alennus</span>
+                      <span className="font-medium text-orange-600 dark:text-orange-400">−{formData.discountPercent} %</span>
+                    </div>
+                  )}
+                </>
+              ) : (
+                formData.serviceDescription && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Kuvaus</span>
+                    <span className="font-medium text-right max-w-[60%]">{formData.serviceDescription}</span>
+                  </div>
+                )
               )}
               <div className="flex justify-between border-t pt-3">
                 <span className="font-semibold text-foreground">Hinta</span>
-                <span className="text-primary font-bold text-xl">{formData.finalPrice} €</span>
+                <span className="text-primary font-bold text-xl">{contractPrice} €</span>
               </div>
             </div>
 

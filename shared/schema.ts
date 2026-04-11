@@ -75,6 +75,20 @@ export const insertExpenseSchema = createInsertSchema(expenses).omit({ id: true,
 export type Expense = typeof expenses.$inferSelect;
 export type InsertExpense = z.infer<typeof insertExpenseSchema>;
 
+// ─── Worker Payments (palvelumaksuvelkojen kirjaukset) ───────────────────────
+
+export const workerPayments = pgTable("worker_payments", {
+  id:         serial("id").primaryKey(),
+  workerId:   text("worker_id").notNull(),      // "joonatan" | "matias"
+  amountPaid: integer("amount_paid").notNull(), // senttiä
+  paidAt:     timestamp("paid_at").defaultNow().notNull(),
+  note:       text("note"),
+});
+
+export const insertWorkerPaymentSchema = createInsertSchema(workerPayments).omit({ id: true, paidAt: true });
+export type WorkerPayment = typeof workerPayments.$inferSelect;
+export type InsertWorkerPayment = z.infer<typeof insertWorkerPaymentSchema>;
+
 // ─── Users (admin accounts — seeded, ei itserekisteröitymistä) ───────────────
 
 export const users = pgTable("users", {

@@ -106,8 +106,9 @@ export interface StatsResponse {
 }
 
 export interface WorkerStatsResponse {
-  workerFees: Record<string, number>;     // cents owed per worker ID
+  workerFees: Record<string, number>;     // current debt (cents) per worker ID
   workerJobCount: Record<string, number>; // done job count per worker ID
+  brandCash: number;                      // total paid to brand so far (cents)
 }
 
 // ─── Static package list (no packages table yet) ──────────────────────────────
@@ -129,6 +130,9 @@ export const api = {
 
   workersStats: () =>
     request<WorkerStatsResponse>("GET", "/api/workers/stats"),
+
+  markWorkerPaid: (workerId: string, amount: number) =>
+    request<{ id: number }>("POST", `/api/workers/${workerId}/mark-paid`, { amount }),
 
   // packages() returns static list — no packages table in DB yet
   packages: (): Promise<ApiResponse<{ ok: boolean; packages: ApiPackage[] }>> =>

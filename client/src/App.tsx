@@ -25,6 +25,7 @@ import AdminJobsPage from "@/pages/admin/jobs";
 import AdminPackagesPage from "@/pages/admin/packages";
 import AdminSettingsPage from "@/pages/admin/settings";
 import AdminCustomersPage from "@/pages/admin/customers";
+import AdminGuidePage from "@/pages/admin/guide";
 import NotFound from "@/pages/not-found";
 
 function PublicLayout({ children }: { children: React.ReactNode }) {
@@ -121,6 +122,11 @@ function Router() {
       <Route path="/admin/settings">
         <ProtectedRoute>
           <AdminSettingsPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/admin/guide">
+        <ProtectedRoute>
+          <AdminGuidePage />
         </ProtectedRoute>
       </Route>
       <Route path="/admin">

@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { type Server } from "http";
 import { eq, desc, sql, ne } from "drizzle-orm";
 import { db } from "./db";
-import { customers, jobs, expenses, insertCustomerSchema, insertJobSchema, insertExpenseSchema } from "@shared/schema";
+import { customers, jobs, expenses, workerPayments, insertCustomerSchema, insertJobSchema, insertExpenseSchema } from "@shared/schema";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
 
@@ -193,18 +193,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       .map((s) => nameToId[s] ?? s);
   }
 
-  // Returns accumulated service-fee debt per worker across all "done" jobs
+  // Returns accumulated service-fee debt per worker (fees earned − payments made)
   app.get("/api/workers/stats", async (_req, res) => {
     try {
       const doneJobs = await db.select().from(jobs).where(eq(jobs.status, "done"));
       const allExpenses = await db.select().from(expenses);
+      const allPayments = await db.select().from(workerPayments);
 
       const expensesByJob: Record<number, number> = {};
       for (const e of allExpenses) {
         expensesByJob[e.jobId] = (expensesByJob[e.jobId] ?? 0) + e.amount;
       }
 
-      const workerFees: Record<string, number> = {};
+      const totalPaidByWorker: Record<string, number> = {};
+      for (const p of allPayments) {
+        totalPaidByWorker[p.workerId] = (totalPaidByWorker[p.workerId] ?? 0) + p.amountPaid;
+      }
+
+      const workerFeesTotal: Record<string, number> = {};
       const workerJobCount: Record<string, number> = {};
 
       for (const job of doneJobs) {
@@ -215,12 +221,37 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         if (workerIds.length === 0) continue;
         const feePerWorker = Math.round(serviceFee / workerIds.length);
         for (const wid of workerIds) {
-          workerFees[wid] = (workerFees[wid] ?? 0) + feePerWorker;
+          workerFeesTotal[wid] = (workerFeesTotal[wid] ?? 0) + feePerWorker;
           workerJobCount[wid] = (workerJobCount[wid] ?? 0) + 1;
         }
       }
 
-      res.json({ workerFees, workerJobCount });
+      // Net debt = fees earned - payments already made
+      const workerFees: Record<string, number> = {};
+      const allWorkerIds = Array.from(new Set([...Object.keys(workerFeesTotal), ...Object.keys(totalPaidByWorker)]));
+      for (const wid of allWorkerIds) {
+        workerFees[wid] = Math.max(0, (workerFeesTotal[wid] ?? 0) - (totalPaidByWorker[wid] ?? 0));
+      }
+
+      // Brand cash = total service fees paid by workers so far
+      const brandCash = Object.values(totalPaidByWorker).reduce((s, v) => s + v, 0);
+
+      res.json({ workerFees, workerJobCount, brandCash });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Mark a worker's current debt as paid (inserts a payment record)
+  app.post("/api/workers/:id/mark-paid", async (req, res) => {
+    try {
+      const workerId = req.params.id;
+      const { amount } = req.body; // senttiä
+      if (!amount || amount <= 0) return res.status(400).json({ error: "Virheellinen summa" });
+      const [row] = await db.insert(workerPayments)
+        .values({ workerId, amountPaid: Math.round(amount) })
+        .returning();
+      res.status(201).json(row);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

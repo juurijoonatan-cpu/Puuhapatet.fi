@@ -1,31 +1,28 @@
 import { useState, useEffect } from "react";
-import { Loader2, ClipboardList, ArrowLeft, ArrowRight } from "lucide-react";
+import { Loader2, ClipboardList, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Check } from "lucide-react";
 import { Link } from "wouter";
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/empty-state";
+import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 type DbStatus = "lead" | "scheduled" | "in_progress" | "done" | "cancelled";
 
-const statusLabels: Record<DbStatus, string> = {
-  lead: "Liidi",
-  scheduled: "Ajoitettu",
-  in_progress: "Käynnissä",
-  done: "Valmis",
-  cancelled: "Peruutettu",
-};
+const STATUS_FLOW: { key: DbStatus; label: string; color: string; bg: string }[] = [
+  { key: "lead",        label: "Liidi",      color: "text-blue-700 dark:text-blue-300",   bg: "bg-blue-100 dark:bg-blue-900/50" },
+  { key: "scheduled",   label: "Ajoitettu",  color: "text-orange-700 dark:text-orange-300", bg: "bg-orange-100 dark:bg-orange-900/50" },
+  { key: "in_progress", label: "Käynnissä",  color: "text-purple-700 dark:text-purple-300", bg: "bg-purple-100 dark:bg-purple-900/50" },
+  { key: "done",        label: "Valmis",     color: "text-green-700 dark:text-green-300",  bg: "bg-green-100 dark:bg-green-900/50" },
+  { key: "cancelled",   label: "Peruutettu", color: "text-red-700 dark:text-red-300",     bg: "bg-red-100 dark:bg-red-900/50" },
+];
 
-const statusColors: Record<DbStatus, string> = {
-  lead: "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300",
-  scheduled: "bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300",
-  in_progress: "bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300",
-  done: "bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300",
-  cancelled: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300",
-};
+function statusMeta(s: DbStatus) {
+  return STATUS_FLOW.find((x) => x.key === s) ?? STATUS_FLOW[0];
+}
 
 interface JobRow {
   job: {
@@ -48,19 +45,47 @@ interface JobRow {
 }
 
 export default function AdminJobsPage() {
+  const { toast } = useToast();
   const [jobs, setJobs] = useState<JobRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<JobRow | null>(null);
+  const [updating, setUpdating] = useState(false);
 
-  useEffect(() => {
+  const loadJobs = () => {
+    setLoading(true);
     api.getJobs().then((res) => {
       if (res.ok && res.data) setJobs(res.data as JobRow[]);
       setLoading(false);
     });
-  }, []);
+  };
 
+  useEffect(() => { loadJobs(); }, []);
+
+  const updateStatus = async (newStatus: DbStatus) => {
+    if (!selected || selected.job.status === newStatus) return;
+    setUpdating(true);
+    const res = await api.updateJob(selected.job.id, { status: newStatus });
+    if (res.ok) {
+      const updated: JobRow = {
+        ...selected,
+        job: { ...selected.job, status: newStatus },
+      };
+      setSelected(updated);
+      setJobs((prev) =>
+        prev.map((r) => (r.job.id === selected.job.id ? updated : r)),
+      );
+      toast({ title: "Status päivitetty", description: STATUS_FLOW.find(s => s.key === newStatus)?.label });
+    } else {
+      toast({ variant: "destructive", title: "Päivitys epäonnistui", description: res.error });
+    }
+    setUpdating(false);
+  };
+
+  // ── Detail view ───────────────────────────────────────────────────────────
   if (selected) {
     const { job, customer } = selected;
+    const meta = statusMeta(job.status);
+
     return (
       <div className="min-h-screen bg-background pt-8 md:pt-24 pb-28">
         <div className="container mx-auto px-4 max-w-3xl">
@@ -74,52 +99,97 @@ export default function AdminJobsPage() {
             </div>
           </div>
 
-          <Card className="p-6 bg-card border-0 premium-shadow">
-            <div className="flex items-start justify-between mb-6">
+          {/* Status stepper */}
+          <Card className="p-5 bg-card border-0 premium-shadow mb-4">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+              Status
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {STATUS_FLOW.map((s) => {
+                const isCurrent = job.status === s.key;
+                return (
+                  <button
+                    key={s.key}
+                    disabled={updating}
+                    onClick={() => updateStatus(s.key)}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all border-2",
+                      isCurrent
+                        ? `${s.bg} ${s.color} border-current`
+                        : "bg-muted/40 text-muted-foreground border-transparent hover:border-muted-foreground/30",
+                      updating && "opacity-50 cursor-not-allowed",
+                    )}
+                  >
+                    {isCurrent && <Check className="w-3.5 h-3.5" />}
+                    {s.label}
+                  </button>
+                );
+              })}
+            </div>
+            {updating && (
+              <div className="flex items-center gap-2 mt-3 text-xs text-muted-foreground">
+                <Loader2 className="w-3 h-3 animate-spin" /> Tallennetaan…
+              </div>
+            )}
+          </Card>
+
+          {/* Info card */}
+          <Card className="p-6 bg-card border-0 premium-shadow mb-4">
+            <div className="flex items-start justify-between mb-5">
               <div>
-                <p className="text-sm text-muted-foreground mb-1">Hinta</p>
-                <p className="text-xl font-semibold text-primary">
-                  {(job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}
+                <p className="text-sm text-muted-foreground mb-1">Sovittu hinta</p>
+                <p className="text-2xl font-semibold text-primary">
+                  {(job.agreedPrice / 100).toLocaleString("fi-FI", {
+                    style: "currency",
+                    currency: "EUR",
+                  })}
                 </p>
               </div>
-              <Badge className={cn("text-xs", statusColors[job.status])}>
-                {statusLabels[job.status]}
+              <Badge className={cn("text-xs", meta.bg, meta.color)}>
+                {meta.label}
               </Badge>
             </div>
 
             <div className="space-y-4">
               {customer && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-1">Asiakas</p>
-                    <p className="text-foreground font-medium">{customer.name}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-1">Puhelin</p>
-                    <p className="text-foreground">{customer.phone}</p>
-                  </div>
-                  {customer.email && (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
-                      <p className="text-sm text-muted-foreground mb-1">Sähköposti</p>
-                      <p className="text-foreground">{customer.email}</p>
+                      <p className="text-xs text-muted-foreground mb-0.5">Asiakas</p>
+                      <p className="text-foreground font-medium">{customer.name}</p>
                     </div>
-                  )}
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-1">Osoite</p>
-                    <p className="text-foreground">{customer.address}</p>
+                    <div className="flex items-center gap-2">
+                      <Phone className="w-4 h-4 text-muted-foreground shrink-0" />
+                      <a href={`tel:${customer.phone}`} className="text-foreground hover:text-primary">
+                        {customer.phone}
+                      </a>
+                    </div>
+                    {customer.email && (
+                      <div className="flex items-center gap-2">
+                        <Mail className="w-4 h-4 text-muted-foreground shrink-0" />
+                        <a href={`mailto:${customer.email}`} className="text-foreground hover:text-primary text-sm">
+                          {customer.email}
+                        </a>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <MapPin className="w-4 h-4 text-muted-foreground shrink-0" />
+                      <span className="text-foreground text-sm">{customer.address}</span>
+                    </div>
                   </div>
-                </div>
+                  <div className="border-t border-border" />
+                </>
               )}
 
               <div>
-                <p className="text-sm text-muted-foreground mb-1">Kuvaus</p>
-                <p className="text-foreground">{job.description}</p>
+                <p className="text-xs text-muted-foreground mb-0.5">Kuvaus</p>
+                <p className="text-foreground text-sm">{job.description}</p>
               </div>
 
               {job.scheduledAt && (
                 <div>
-                  <p className="text-sm text-muted-foreground mb-1">Ajankohta</p>
-                  <p className="text-foreground">
+                  <p className="text-xs text-muted-foreground mb-0.5">Ajankohta</p>
+                  <p className="text-foreground text-sm">
                     {new Date(job.scheduledAt).toLocaleString("fi-FI")}
                   </p>
                 </div>
@@ -127,12 +197,12 @@ export default function AdminJobsPage() {
 
               {job.notes && (
                 <div>
-                  <p className="text-sm text-muted-foreground mb-1">Sisäiset muistiinpanot</p>
-                  <p className="text-foreground">{job.notes}</p>
+                  <p className="text-xs text-muted-foreground mb-0.5">Muistiinpanot</p>
+                  <p className="text-foreground text-sm whitespace-pre-wrap">{job.notes}</p>
                 </div>
               )}
 
-              <div className="pt-4 border-t border-border">
+              <div className="pt-3 border-t border-border">
                 <p className="text-xs text-muted-foreground">
                   Vastuuhenkilö: {job.assignedTo || "Ei määritetty"} ·
                   Luotu: {new Date(job.createdAt).toLocaleDateString("fi-FI")}
@@ -145,6 +215,7 @@ export default function AdminJobsPage() {
     );
   }
 
+  // ── List view ─────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-background pt-8 md:pt-24 pb-28">
       <div className="container mx-auto px-4 max-w-3xl">
@@ -156,7 +227,9 @@ export default function AdminJobsPage() {
           </Link>
           <div>
             <h1 className="text-2xl md:text-3xl font-semibold text-foreground">Keikat</h1>
-            <p className="text-muted-foreground">Kaikki kirjatut keikat</p>
+            <p className="text-muted-foreground">
+              {loading ? "Ladataan…" : `${jobs.length} keikkaa`}
+            </p>
           </div>
         </div>
 
@@ -176,36 +249,42 @@ export default function AdminJobsPage() {
 
         {!loading && jobs.length > 0 && (
           <div className="space-y-3">
-            {jobs.map((row) => (
-              <Card
-                key={row.job.id}
-                className="p-4 bg-card border-0 premium-shadow cursor-pointer hover:opacity-90 transition-opacity"
-                onClick={() => setSelected(row)}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <p className="font-medium text-foreground truncate">
-                        {row.customer?.name || "Tuntematon asiakas"}
+            {jobs.map((row) => {
+              const meta = statusMeta(row.job.status);
+              return (
+                <Card
+                  key={row.job.id}
+                  className="p-4 bg-card border-0 premium-shadow cursor-pointer hover:opacity-90 transition-opacity"
+                  onClick={() => setSelected(row)}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <p className="font-medium text-foreground truncate">
+                          {row.customer?.name || "Tuntematon asiakas"}
+                        </p>
+                        <Badge className={cn("text-xs shrink-0", meta.bg, meta.color)}>
+                          {meta.label}
+                        </Badge>
+                      </div>
+                      <p className="text-sm text-muted-foreground truncate">{row.job.description}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {row.customer?.address} · {new Date(row.job.createdAt).toLocaleDateString("fi-FI")}
                       </p>
-                      <Badge className={cn("text-xs shrink-0", statusColors[row.job.status])}>
-                        {statusLabels[row.job.status]}
-                      </Badge>
                     </div>
-                    <p className="text-sm text-muted-foreground truncate">{row.job.description}</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {row.customer?.address} · {new Date(row.job.createdAt).toLocaleDateString("fi-FI")}
-                    </p>
+                    <div className="flex items-center gap-3 ml-4 shrink-0">
+                      <p className="text-sm font-semibold text-foreground">
+                        {(row.job.agreedPrice / 100).toLocaleString("fi-FI", {
+                          style: "currency",
+                          currency: "EUR",
+                        })}
+                      </p>
+                      <ArrowRight className="w-4 h-4 text-muted-foreground" />
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 ml-4 shrink-0">
-                    <p className="text-sm font-semibold text-foreground">
-                      {(row.job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}
-                    </p>
-                    <ArrowRight className="w-4 h-4 text-muted-foreground" />
-                  </div>
-                </div>
-              </Card>
-            ))}
+                </Card>
+              );
+            })}
           </div>
         )}
       </div>

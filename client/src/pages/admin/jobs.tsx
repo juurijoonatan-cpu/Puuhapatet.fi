@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Loader2, ClipboardList, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Check } from "lucide-react";
+import { Loader2, ClipboardList, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Check, CalendarClock } from "lucide-react";
 import { Link } from "wouter";
 
 import { Card } from "@/components/ui/card";
@@ -50,6 +50,7 @@ export default function AdminJobsPage() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<JobRow | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [savingDate, setSavingDate] = useState(false);
 
   const loadJobs = () => {
     setLoading(true);
@@ -79,6 +80,25 @@ export default function AdminJobsPage() {
       toast({ variant: "destructive", title: "Päivitys epäonnistui", description: res.error });
     }
     setUpdating(false);
+  };
+
+  const updateScheduledAt = async (value: string) => {
+    if (!selected) return;
+    setSavingDate(true);
+    const scheduledAt = value ? new Date(value).toISOString() : null;
+    const res = await api.updateJob(selected.job.id, { scheduledAt: scheduledAt ?? undefined });
+    if (res.ok) {
+      const updated: JobRow = {
+        ...selected,
+        job: { ...selected.job, scheduledAt },
+      };
+      setSelected(updated);
+      setJobs((prev) => prev.map((r) => (r.job.id === selected.job.id ? updated : r)));
+      toast({ title: "Ajankohta tallennettu" });
+    } else {
+      toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
+    }
+    setSavingDate(false);
   };
 
   // ── Detail view ───────────────────────────────────────────────────────────
@@ -131,6 +151,27 @@ export default function AdminJobsPage() {
                 <Loader2 className="w-3 h-3 animate-spin" /> Tallennetaan…
               </div>
             )}
+          </Card>
+
+          {/* Schedule card */}
+          <Card className="p-5 bg-card border-0 premium-shadow mb-4">
+            <div className="flex items-center gap-2 mb-3">
+              <CalendarClock className="w-4 h-4 text-muted-foreground" />
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Ajankohta
+              </p>
+              {savingDate && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground ml-auto" />}
+            </div>
+            <input
+              type="datetime-local"
+              defaultValue={
+                job.scheduledAt
+                  ? new Date(job.scheduledAt).toISOString().slice(0, 16)
+                  : ""
+              }
+              onChange={(e) => updateScheduledAt(e.target.value)}
+              className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            />
           </Card>
 
           {/* Info card */}

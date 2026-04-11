@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Loader2, ClipboardList, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Check, CalendarClock, Save, Plus, Trash2, Receipt } from "lucide-react";
+import { Loader2, ClipboardList, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Check, CalendarClock, Save, Plus, Trash2, Receipt, Users, TrendingUp } from "lucide-react";
 import { Link } from "wouter";
 
 import { Card } from "@/components/ui/card";
@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/empty-state";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
+import { USERS } from "@/lib/admin-profile";
 import { cn } from "@/lib/utils";
 
 type DbStatus = "lead" | "scheduled" | "in_progress" | "done" | "cancelled";
@@ -65,6 +66,10 @@ export default function AdminJobsPage() {
   const [newExpenseAmount, setNewExpenseAmount] = useState("");
   const [addingExpense, setAddingExpense] = useState(false);
 
+  // Workers selection
+  const [selectedWorkers, setSelectedWorkers] = useState<string[]>([]);
+  const [savingWorkers, setSavingWorkers] = useState(false);
+
   const loadJobs = () => {
     setLoading(true);
     api.getJobs().then((res) => {
@@ -84,6 +89,8 @@ export default function AdminJobsPage() {
       setExpenses([]);
       setNewExpenseDesc("");
       setNewExpenseAmount("");
+      // Parse workers from assignedTo (comma-separated IDs or single name)
+      setSelectedWorkers(parseWorkerIds(selected.job.assignedTo));
       setExpensesLoading(true);
       api.getExpenses(selected.job.id).then((res) => {
         if (res.ok && res.data) setExpenses(res.data as Expense[]);
@@ -91,6 +98,51 @@ export default function AdminJobsPage() {
       });
     }
   }, [selected?.job.id]);
+
+  // Parse assignedTo string into array of user IDs
+  // Handles both old format ("Joonatan Juuri") and new ("joonatan,matias")
+  function parseWorkerIds(assignedTo: string | null): string[] {
+    if (!assignedTo) return [];
+    const parts = assignedTo.split(",").map(s => s.trim()).filter(Boolean);
+    return parts.map(part => {
+      // If it's already a known user ID, keep it
+      if (USERS.find(u => u.id === part)) return part;
+      // Try to match by full name (old format)
+      const byName = USERS.find(u => u.name === part);
+      return byName ? byName.id : part;
+    });
+  }
+
+  function workerIdsToString(ids: string[]): string {
+    return ids.join(",");
+  }
+
+  const saveWorkers = async (newWorkers: string[]) => {
+    if (!selected) return;
+    setSavingWorkers(true);
+    const res = await api.updateJob(selected.job.id, {
+      assignedTo: newWorkers.length > 0 ? workerIdsToString(newWorkers) : undefined,
+    });
+    if (res.ok) {
+      const updated: JobRow = {
+        ...selected,
+        job: { ...selected.job, assignedTo: newWorkers.length > 0 ? workerIdsToString(newWorkers) : null },
+      };
+      setSelected(updated);
+      setJobs((prev) => prev.map((r) => (r.job.id === selected.job.id ? updated : r)));
+    } else {
+      toast({ variant: "destructive", title: "Tekijöiden tallennus epäonnistui", description: res.error });
+    }
+    setSavingWorkers(false);
+  };
+
+  const toggleWorker = (userId: string) => {
+    const next = selectedWorkers.includes(userId)
+      ? selectedWorkers.filter(id => id !== userId)
+      : [...selectedWorkers, userId];
+    setSelectedWorkers(next);
+    saveWorkers(next);
+  };
 
   const updateStatus = async (newStatus: DbStatus) => {
     if (!selected || selected.job.status === newStatus) return;
@@ -197,6 +249,44 @@ export default function AdminJobsPage() {
       editDescription !== selected.job.description ||
       editNotes !== (selected.job.notes ?? "")
     : false;
+
+  // ── Service fee calculation ───────────────────────────────────────────────
+  const expensesTotal = expenses.reduce((s, e) => s + e.amount, 0);
+  const numWorkers = selectedWorkers.length || 1;
+  const netRevenue = (selected?.job.agreedPrice ?? 0) - expensesTotal;
+  const totalServiceFee = Math.round(Math.max(0, netRevenue) * 0.10);
+  const feePerWorker = Math.round(totalServiceFee / numWorkers);
+  const netPerWorker = Math.round(Math.max(0, netRevenue - totalServiceFee) / numWorkers);
+  const expensesPerWorker = Math.round(expensesTotal / numWorkers);
+
+  // ── Mailto receipt ────────────────────────────────────────────────────────
+  const buildMailtoReceipt = () => {
+    if (!selected) return "#";
+    const { job, customer } = selected;
+    const date = job.scheduledAt
+      ? new Date(job.scheduledAt).toLocaleDateString("fi-FI")
+      : new Date(job.createdAt).toLocaleDateString("fi-FI");
+    const priceEur = (job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" });
+    const subject = encodeURIComponent(`Kuitti — Puuhapatet Ikkunapesu ${date}`);
+    const body = encodeURIComponent(
+      `Hyvä ${customer?.name ?? "asiakas"},\n\n` +
+      `Kiitos tilauksestanne! Tässä kuittinne ikkunanpesusta.\n\n` +
+      `─────────────────────────\n` +
+      `KUITTI\n` +
+      `─────────────────────────\n` +
+      `Asiakas: ${customer?.name ?? ""}\n` +
+      `Osoite:  ${customer?.address ?? ""}\n` +
+      `Päivämäärä: ${date}\n` +
+      `Palvelu: ${job.description}\n` +
+      `Hinta: ${priceEur}\n` +
+      `─────────────────────────\n\n` +
+      `Puuhapatet Oy\n` +
+      `puuhapatet.fi\n` +
+      `puh. 0400 389 999\n`
+    );
+    const to = customer?.email ? encodeURIComponent(customer.email) : "";
+    return `mailto:${to}?subject=${subject}&body=${body}`;
+  };
 
   // ── Detail view ───────────────────────────────────────────────────────────
   if (selected) {
@@ -356,11 +446,48 @@ export default function AdminJobsPage() {
 
             <div className="pt-4 mt-4 border-t border-border">
               <p className="text-xs text-muted-foreground">
-                Vastuuhenkilö: {job.assignedTo || "Ei määritetty"} ·
                 Luotu: {new Date(job.createdAt).toLocaleDateString("fi-FI")}
               </p>
             </div>
           </Card>
+
+          {/* Workers card */}
+          <Card className="p-5 bg-card border-0 premium-shadow mb-4">
+            <div className="flex items-center gap-2 mb-4">
+              <Users className="w-4 h-4 text-muted-foreground" />
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Tekijät
+              </p>
+              {savingWorkers && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground ml-auto" />}
+            </div>
+            <div className="flex gap-2">
+              {USERS.map((u) => {
+                const isOn = selectedWorkers.includes(u.id);
+                return (
+                  <button
+                    key={u.id}
+                    type="button"
+                    disabled={savingWorkers}
+                    onClick={() => toggleWorker(u.id)}
+                    className={cn(
+                      "flex items-center gap-2 px-3 py-2 rounded-xl border-2 text-sm font-medium transition-all",
+                      isOn
+                        ? "border-primary bg-primary/5 text-foreground"
+                        : "border-border text-muted-foreground hover:border-muted-foreground/40",
+                      savingWorkers && "opacity-50 cursor-not-allowed",
+                    )}
+                  >
+                    {u.photoUrl && (
+                      <img src={u.photoUrl} alt={u.name} className="w-5 h-5 rounded-full object-cover" />
+                    )}
+                    {u.name.split(" ")[0]}
+                    {isOn && <Check className="w-3.5 h-3.5 text-primary" />}
+                  </button>
+                );
+              })}
+            </div>
+          </Card>
+
           {/* Expenses card */}
           <Card className="p-5 bg-card border-0 premium-shadow mb-4">
             <div className="flex items-center gap-2 mb-4">
@@ -430,6 +557,81 @@ export default function AdminJobsPage() {
               </>
             )}
           </Card>
+
+          {/* Service fee breakdown */}
+          {!expensesLoading && (
+            <Card className="p-5 bg-card border-0 premium-shadow mb-4">
+              <div className="flex items-center gap-2 mb-4">
+                <TrendingUp className="w-4 h-4 text-muted-foreground" />
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  Tilitys
+                </p>
+                <span className="ml-auto text-xs text-muted-foreground">
+                  {numWorkers} tekijä{numWorkers > 1 ? "ä" : ""}
+                </span>
+              </div>
+
+              <div className="space-y-2 mb-4 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Sovittu hinta</span>
+                  <span className="font-medium">{(job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}</span>
+                </div>
+                {expensesTotal > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Kulut yhteensä</span>
+                    <span className="font-medium text-orange-600 dark:text-orange-400">
+                      −{(expensesTotal / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}
+                    </span>
+                  </div>
+                )}
+                <div className="flex justify-between border-t pt-2">
+                  <span className="text-muted-foreground">Palvelumaksu 10 %</span>
+                  <span className="font-medium text-purple-600 dark:text-purple-400">
+                    −{(totalServiceFee / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}
+                  </span>
+                </div>
+              </div>
+
+              {numWorkers > 1 ? (
+                <div className="space-y-2">
+                  {selectedWorkers.map((wid) => {
+                    const user = USERS.find(u => u.id === wid);
+                    return (
+                      <div key={wid} className="flex items-center justify-between p-2.5 rounded-xl bg-muted/30">
+                        <div className="flex items-center gap-2">
+                          {user?.photoUrl && <img src={user.photoUrl} alt={user.name} className="w-5 h-5 rounded-full object-cover" />}
+                          <span className="text-sm font-medium">{user?.name.split(" ")[0] ?? wid}</span>
+                          <span className="text-xs text-muted-foreground">kulut −{(expensesPerWorker / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })} · maksu −{(feePerWorker / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}</span>
+                        </div>
+                        <span className="text-sm font-bold text-green-600 dark:text-green-400">
+                          {(netPerWorker / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="flex items-center justify-between pt-2 border-t">
+                  <span className="font-semibold text-sm text-foreground">
+                    {selectedWorkers[0] ? (USERS.find(u => u.id === selectedWorkers[0])?.name.split(" ")[0] ?? selectedWorkers[0]) : "Tekijä"} saa
+                  </span>
+                  <span className="text-lg font-bold text-green-600 dark:text-green-400">
+                    {(netPerWorker / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}
+                  </span>
+                </div>
+              )}
+            </Card>
+          )}
+
+          {/* Receipt button */}
+          {customer?.email && (
+            <a href={buildMailtoReceipt()} className="block mb-4">
+              <Button variant="outline" className="w-full gap-2">
+                <Mail className="w-4 h-4" />
+                Lähetä kuitti asiakkaalle
+              </Button>
+            </a>
+          )}
         </div>
       </div>
     );

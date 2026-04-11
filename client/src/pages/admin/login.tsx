@@ -1,23 +1,19 @@
 /**
- * Admin Login Page
- * 
- * IMPORTANT SECURITY NOTICE:
- * This is a CLIENT-SIDE UI gate only, NOT a security boundary.
- * The password is stored in VITE_ADMIN_PASSWORD which is bundled into the client JS.
- * Anyone can view the password in browser dev tools.
- * 
- * This is intentional for MVP - it prevents accidental access, not malicious access.
- * For production security, implement proper server-side authentication.
+ * Admin Login
+ *
+ * Pick your profile → enter shared password → logged in.
+ * Client-side gate only — not a security boundary.
  */
 
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { Lock, Eye, EyeOff, AlertTriangle } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { USERS, setAdminProfile, type AdminProfile } from "@/lib/admin-profile";
+import { cn } from "@/lib/utils";
 
 const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD || "admin123";
 const SESSION_KEY = "puuhapatet_admin_session";
@@ -35,11 +31,10 @@ export function isAdminAuthenticated(): boolean {
 }
 
 export function setAdminSession(): void {
-  const session = {
-    authenticated: true,
-    expiry: Date.now() + SESSION_DURATION_MS,
-  };
-  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  localStorage.setItem(
+    SESSION_KEY,
+    JSON.stringify({ authenticated: true, expiry: Date.now() + SESSION_DURATION_MS }),
+  );
 }
 
 export function clearAdminSession(): void {
@@ -48,21 +43,25 @@ export function clearAdminSession(): void {
 
 export default function AdminLoginPage() {
   const [, navigate] = useLocation();
+  const { toast } = useToast();
+
+  const [selected, setSelected] = useState<AdminProfile | null>(null);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const { toast } = useToast();
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selected) return;
     setIsLoading(true);
 
     await new Promise((r) => setTimeout(r, 300));
 
     if (password === ADMIN_PASSWORD) {
       setAdminSession();
+      setAdminProfile(selected);
       toast({
-        title: "Kirjautuminen onnistui",
+        title: `Hei, ${selected.name.split(" ")[0]}!`,
         description: "Tervetuloa hallintapaneeliin.",
       });
       navigate("/admin/dashboard");
@@ -70,7 +69,7 @@ export default function AdminLoginPage() {
       toast({
         variant: "destructive",
         title: "Virheellinen salasana",
-        description: "Tarkista salasana ja yritä uudelleen.",
+        description: "Yritä uudelleen.",
       });
     }
 
@@ -81,66 +80,80 @@ export default function AdminLoginPage() {
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
-            <Lock className="w-8 h-8 text-primary" />
-          </div>
-          <h1 className="text-2xl font-semibold text-foreground mb-2">
-            Ylläpito
-          </h1>
-          <p className="text-muted-foreground">
-            Kirjaudu hallintapaneeliin
-          </p>
+          <h1 className="text-2xl font-semibold text-foreground mb-1">Puuhapatet</h1>
+          <p className="text-muted-foreground">Kuka kirjautuu?</p>
         </div>
 
-        <Card className="p-6 bg-card border-0 premium-shadow">
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div>
-              <Label htmlFor="password">Salasana</Label>
-              <div className="relative mt-2">
+        {/* User selector */}
+        <div className="grid grid-cols-2 gap-3 mb-6">
+          {USERS.map((user) => (
+            <button
+              key={user.id}
+              type="button"
+              onClick={() => { setSelected(user); setPassword(""); }}
+              className={cn(
+                "flex flex-col items-center gap-3 p-4 rounded-2xl border-2 transition-all",
+                selected?.id === user.id
+                  ? "border-primary bg-primary/5"
+                  : "border-border bg-card hover:border-muted-foreground/40",
+              )}
+              data-testid={`btn-select-user-${user.id}`}
+            >
+              {user.photoUrl ? (
+                <img
+                  src={user.photoUrl}
+                  alt={user.name}
+                  className="w-16 h-16 rounded-xl object-cover object-top"
+                />
+              ) : (
+                <div className="w-16 h-16 rounded-xl bg-muted flex items-center justify-center text-2xl font-semibold text-muted-foreground">
+                  {user.name[0]}
+                </div>
+              )}
+              <span className="text-sm font-medium text-foreground leading-tight text-center">
+                {user.name.split(" ")[0]}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {/* Password form — shown after selecting a user */}
+        {selected && (
+          <Card className="p-5 bg-card border-0 premium-shadow">
+            <p className="text-sm text-muted-foreground mb-3 text-center">
+              Hei <strong>{selected.name.split(" ")[0]}</strong> — syötä salasana
+            </p>
+            <form onSubmit={handleLogin} className="space-y-3">
+              <div className="relative">
                 <Input
-                  id="password"
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Syötä salasana"
+                  placeholder="Salasana"
                   className="pr-10"
+                  autoFocus
                   data-testid="input-admin-password"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                  aria-label={showPassword ? "Piilota salasana" : "Näytä salasana"}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label={showPassword ? "Piilota" : "Näytä"}
                 >
-                  {showPassword ? (
-                    <EyeOff className="w-4 h-4" />
-                  ) : (
-                    <Eye className="w-4 h-4" />
-                  )}
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-            </div>
-
-            <Button 
-              type="submit" 
-              className="w-full" 
-              disabled={isLoading || !password}
-              data-testid="btn-admin-login"
-            >
-              {isLoading ? "Kirjaudutaan..." : "Kirjaudu"}
-            </Button>
-          </form>
-        </Card>
-
-        <div className="mt-6 p-4 bg-muted/50 rounded-xl">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-muted-foreground flex-shrink-0 mt-0.5" />
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              <strong>Huomio:</strong> Tämä on kevyt käyttöliittymäportti, ei turvallisuusrajapinta. 
-              Tuotantokäyttöön suositellaan palvelinpuolen autentikointia.
-            </p>
-          </div>
-        </div>
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={isLoading || !password}
+                data-testid="btn-admin-login"
+              >
+                {isLoading ? "Kirjaudutaan…" : "Kirjaudu"}
+              </Button>
+            </form>
+          </Card>
+        )}
       </div>
     </div>
   );

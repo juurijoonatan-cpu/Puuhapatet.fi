@@ -6,7 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/lib/theme";
 import { I18nProvider } from "@/lib/i18n";
 import { LiquidGlassNav } from "@/components/liquid-glass-nav";
-import { ProtectedRoute, ProfileSetupRoute } from "@/components/protected-route";
+import { ProtectedRoute } from "@/components/protected-route";
 
 import LandingPage from "@/pages/landing";
 import ServicesPage from "@/pages/services";
@@ -18,7 +18,6 @@ import EhdotPage from "@/pages/ehdot";
 import TietosuojaPage from "@/pages/tietosuoja";
 import LaskuriPage from "@/pages/laskuri";
 import AdminLoginPage from "@/pages/admin/login";
-import AdminProfileSetup from "@/pages/admin/profile-setup";
 import AdminDashboard from "@/pages/admin/dashboard";
 import AdminNewJobPage from "@/pages/admin/new-job";
 import AdminCalendarPage from "@/pages/admin/calendar";
@@ -88,11 +87,6 @@ function Router() {
       
       <Route path="/admin/login" component={AdminLoginPage} />
       
-      <Route path="/admin/profile-setup">
-        <ProfileSetupRoute>
-          <AdminProfileSetup />
-        </ProfileSetupRoute>
-      </Route>
 
       <Route path="/admin/dashboard">
         <ProtectedRoute>

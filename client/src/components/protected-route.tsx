@@ -21,7 +21,7 @@ interface ProtectedRouteProps {
 
 export function ProtectedRoute({ children, requireProfile = true }: ProtectedRouteProps) {
   const [, navigate] = useLocation();
-  const [authState, setAuthState] = useState<"checking" | "unauthenticated" | "no-profile" | "ready">("checking");
+  const [authState, setAuthState] = useState<"checking" | "unauthenticated" | "ready">("checking");
 
   useEffect(() => {
     const checkAuth = () => {
@@ -40,11 +40,9 @@ export function ProtectedRoute({ children, requireProfile = true }: ProtectedRou
 
       if (requireProfile) {
         const profile = getAdminProfile();
-        const complete = isProfileComplete(profile);
-        
-        if (!complete) {
-          setAuthState("no-profile");
-          navigate("/admin/profile-setup", { replace: true });
+        if (!isProfileComplete(profile)) {
+          setAuthState("unauthenticated");
+          navigate("/admin/login", { replace: true });
           return;
         }
       }
@@ -59,7 +57,7 @@ export function ProtectedRoute({ children, requireProfile = true }: ProtectedRou
     return <PageLoadingSkeleton />;
   }
 
-  if (authState === "unauthenticated" || authState === "no-profile") {
+  if (authState === "unauthenticated") {
     return <PageLoadingSkeleton />;
   }
 

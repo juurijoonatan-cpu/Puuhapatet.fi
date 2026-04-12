@@ -59,6 +59,8 @@ export default function LandingPage() {
 
         <div className="container mx-auto px-4 md:px-6 relative z-10">
           <div className="max-w-3xl mx-auto text-center">
+            {/* Frosted glass backdrop for readability */}
+            <div className="bg-background/55 backdrop-blur-md rounded-3xl px-6 py-10 md:px-10 shadow-lg">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium mb-6">
               <Sparkles className="w-4 h-4" />
               <span>{t("hero.pill")}</span>
@@ -97,6 +99,7 @@ export default function LandingPage() {
             <p className="text-sm text-muted-foreground mt-6 italic">
               {t("hero.tagline")}
             </p>
+            </div>
           </div>
         </div>
       </section>

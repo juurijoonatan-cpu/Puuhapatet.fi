@@ -6,7 +6,8 @@ import { db } from "./db";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
-const FROM_EMAIL = process.env.FROM_EMAIL || "Puuhapatet <info@puuhapatet.fi>";
+// Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
+const FROM_EMAIL = process.env.FROM_EMAIL || "Puuhapatet <onboarding@resend.dev>";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
 

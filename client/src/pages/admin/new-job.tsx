@@ -13,7 +13,7 @@ import { useState, useRef, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import {
   ArrowLeft, ArrowRight, User, ClipboardCheck, Package,
-  FileText, CheckCircle, Loader2, Percent, Check,
+  FileText, CheckCircle, Loader2, Percent, Check, UserCheck, Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -214,6 +214,15 @@ function calcPrice(data: JobFormData): { original: number; final: number } {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
+interface ExistingCustomer {
+  id: number;
+  name: string;
+  phone: string;
+  email: string | null;
+  address: string;
+  notes: string | null;
+}
+
 export default function NewJobPage() {
   const { toast } = useToast();
   const [, navigate] = useLocation();
@@ -229,9 +238,44 @@ export default function NewJobPage() {
 
   const [formData, setFormData] = useState<JobFormData>(EMPTY_FORM);
 
+  // Returning customer state
+  const [isReturning, setIsReturning] = useState(false);
+  const [existingCustomers, setExistingCustomers] = useState<ExistingCustomer[]>([]);
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
+  const [loadingCustomers, setLoadingCustomers] = useState(false);
+
   useEffect(() => {
     setFormData((prev) => ({ ...prev, jobId: generateJobId() }));
   }, []);
+
+  // Load customers when "returning" is toggled on
+  useEffect(() => {
+    if (isReturning && existingCustomers.length === 0) {
+      setLoadingCustomers(true);
+      api.getCustomers().then((res) => {
+        if (res.ok && res.data) setExistingCustomers(res.data as ExistingCustomer[]);
+        setLoadingCustomers(false);
+      });
+    }
+  }, [isReturning]);
+
+  const filteredCustomers = existingCustomers.filter(c => {
+    const q = customerSearch.toLowerCase();
+    return c.name.toLowerCase().includes(q) || c.phone.includes(q) || c.address.toLowerCase().includes(q);
+  });
+
+  const selectExistingCustomer = (c: ExistingCustomer) => {
+    setSelectedCustomerId(c.id);
+    updateForm({
+      customerName: c.name,
+      customerPhone: c.phone,
+      customerEmail: c.email ?? "",
+      customerAddress: c.address,
+      customerNotes: c.notes ?? "",
+    });
+    setCustomerSearch("");
+  };
 
   const updateForm = (updates: Partial<JobFormData>) => {
     setFormData((prev) => {
@@ -368,21 +412,34 @@ export default function NewJobPage() {
 
     setIsSubmitting(true);
     try {
-      const customerRes = await api.createCustomer({
-        name: formData.customerName,
-        phone: formData.customerPhone,
-        email: formData.customerEmail || undefined,
-        address: formData.customerAddress,
-        notes: formData.customerNotes || undefined,
-      });
+      let customerId: number;
 
-      if (!customerRes.ok || !customerRes.data?.id) {
-        toast({ variant: "destructive", title: "Asiakastietojen tallennus epäonnistui", description: customerRes.error || "Yritä uudelleen." });
-        setIsSubmitting(false);
-        return;
+      if (isReturning && selectedCustomerId) {
+        // Use existing customer — update their info in case it changed
+        await api.updateCustomer(selectedCustomerId, {
+          name: formData.customerName,
+          phone: formData.customerPhone,
+          email: formData.customerEmail || undefined,
+          address: formData.customerAddress,
+          notes: formData.customerNotes || undefined,
+        });
+        customerId = selectedCustomerId;
+      } else {
+        const customerRes = await api.createCustomer({
+          name: formData.customerName,
+          phone: formData.customerPhone,
+          email: formData.customerEmail || undefined,
+          address: formData.customerAddress,
+          notes: formData.customerNotes || undefined,
+        });
+
+        if (!customerRes.ok || !customerRes.data?.id) {
+          toast({ variant: "destructive", title: "Asiakastietojen tallennus epäonnistui", description: customerRes.error || "Yritä uudelleen." });
+          setIsSubmitting(false);
+          return;
+        }
+        customerId = customerRes.data.id;
       }
-
-      const customerId = customerRes.data.id;
 
       let description = "";
       let agreedPrice = 0;
@@ -421,6 +478,8 @@ export default function NewJobPage() {
         status: "lead",
         assignedTo: profile?.id || undefined,
         notes: internalNotes || undefined,
+        customerSignature: formData.customerSignature || undefined,
+        staffSignature: formData.staffSignature || undefined,
       });
 
       if (!jobRes.ok || !jobRes.data?.id) {
@@ -470,6 +529,9 @@ export default function NewJobPage() {
   const resetWizard = () => {
     setFormData({ ...EMPTY_FORM, jobId: generateJobId() });
     setCurrentStep(0);
+    setIsReturning(false);
+    setSelectedCustomerId(null);
+    setCustomerSearch("");
   };
 
   // ── Contract summary helpers ───────────────────────────────────────────────
@@ -540,7 +602,82 @@ export default function NewJobPage() {
         {currentStep === 0 && (
           <Card className="p-6 bg-card border-0 premium-shadow">
             <h2 className="text-lg font-semibold text-foreground mb-2">Asiakkaan tiedot</h2>
-            <p className="text-sm text-muted-foreground mb-6">Anna iPad asiakkaalle täytettäväksi.</p>
+            <p className="text-sm text-muted-foreground mb-4">Anna iPad asiakkaalle täytettäväksi.</p>
+
+            {/* New/returning toggle */}
+            <div className="flex gap-2 mb-6">
+              <button
+                type="button"
+                onClick={() => { setIsReturning(false); setSelectedCustomerId(null); }}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border-2 text-sm font-medium transition-all",
+                  !isReturning
+                    ? "border-primary bg-primary/5 text-foreground"
+                    : "border-border text-muted-foreground hover:border-muted-foreground/40",
+                )}
+              >
+                <User className="w-4 h-4" />
+                Uusi asiakas
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsReturning(true)}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border-2 text-sm font-medium transition-all",
+                  isReturning
+                    ? "border-primary bg-primary/5 text-foreground"
+                    : "border-border text-muted-foreground hover:border-muted-foreground/40",
+                )}
+              >
+                <UserCheck className="w-4 h-4" />
+                Palaava asiakas
+              </button>
+            </div>
+
+            {/* Customer search for returning customers */}
+            {isReturning && (
+              <div className="mb-6">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    value={customerSearch}
+                    onChange={(e) => setCustomerSearch(e.target.value)}
+                    placeholder="Hae nimellä, puhelimella tai osoitteella…"
+                    className="pl-10 text-sm"
+                  />
+                </div>
+                {loadingCustomers && (
+                  <p className="text-xs text-muted-foreground mt-2">Ladataan…</p>
+                )}
+                {!loadingCustomers && customerSearch.length > 0 && (
+                  <div className="mt-2 max-h-48 overflow-y-auto rounded-xl border divide-y">
+                    {filteredCustomers.length === 0 && (
+                      <p className="p-3 text-sm text-muted-foreground">Ei tuloksia</p>
+                    )}
+                    {filteredCustomers.map(c => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => selectExistingCustomer(c)}
+                        className={cn(
+                          "w-full text-left p-3 hover:bg-muted/50 transition-colors text-sm",
+                          selectedCustomerId === c.id && "bg-primary/5",
+                        )}
+                      >
+                        <p className="font-medium text-foreground">{c.name}</p>
+                        <p className="text-xs text-muted-foreground">{c.phone} · {c.address}</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {selectedCustomerId && (
+                  <p className="text-xs text-green-600 dark:text-green-400 mt-2 flex items-center gap-1">
+                    <Check className="w-3 h-3" />
+                    Asiakas valittu — tiedot esitäytetty. Voit muokata alla.
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="space-y-4">
               <div>

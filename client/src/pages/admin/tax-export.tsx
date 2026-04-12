@@ -521,11 +521,21 @@ export default function TaxExportPage() {
 
             {/* Print footer */}
             <div className="hidden print:block mt-8 text-xs text-gray-500 border-t pt-4">
-              <p>Puuhapatet · info@puuhapatet.fi · puuhapatet.fi</p>
-              <p className="mt-1">
-                4H-yrityksen tulos ({fmt(totals.net)}) ilmoitetaan OmaVerossa kohdassa
-                Muut ansiotulot → "4H-toiminnan tulot".
-                Palvelumaksu ({fmt(totals.serviceFee)}) on vähennyskelpoisena kirjattu netosta.
+              <div className="flex justify-between">
+                <div>
+                  <p className="font-medium text-gray-700">{profile?.name ?? "Puuhapatet"}</p>
+                  {profile?.yTunnus && <p>Y-tunnus: {profile.yTunnus}</p>}
+                </div>
+                <div className="text-right">
+                  <p>Puuhapatet · info@puuhapatet.fi</p>
+                  <p>puuhapatet.fi</p>
+                </div>
+              </div>
+              <p className="mt-2">
+                {profile?.hasYTunnus
+                  ? `Elinkeinotoiminnan tulos ${year}: ${fmt(totals.net)} — ilmoita lomakkeella 5 (OmaVero). Palvelumaksu ${fmt(totals.serviceFee)} vähennetty.`
+                  : `4H-yrityksen tulos ${year}: ${fmt(totals.net)} — ilmoita kohdassa "Muut ansiotulot" (OmaVero). Palvelumaksu ${fmt(totals.serviceFee)} vähennetty.`
+                }
               </p>
             </div>
           </>

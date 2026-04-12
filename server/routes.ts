@@ -1,8 +1,13 @@
 import type { Express } from "express";
 import { type Server } from "http";
 import { eq, desc, sql, ne, and } from "drizzle-orm";
+import { Resend } from "resend";
 import { db } from "./db";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
+
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+// Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
+const FROM_EMAIL = process.env.FROM_EMAIL || "Puuhapatet <onboarding@resend.dev>";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
 
@@ -380,6 +385,121 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
       await db.delete(startupBonusUsages).where(eq(startupBonusUsages.id, id));
       res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Email receipt ────────────────────────────────────────────────────────────
+
+  app.post("/api/send-receipt", async (req, res) => {
+    if (!resend) {
+      return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä — aseta RESEND_API_KEY ympäristömuuttuja." });
+    }
+    try {
+      const { to, customerName, customerAddress, date, description, price, paymentMethod, workerName, workerPhone, workerYTunnus, isReturning } = req.body;
+      if (!to || !customerName || !description || !price) {
+        return res.status(400).json({ error: "Puuttuvia kenttiä" });
+      }
+
+      const greeting = isReturning
+        ? `Hienoa saada sinut taas asiakkaaksemme, ${customerName}! Kiitos jatkuvasta luottamuksestasi.`
+        : `Kiitos tilauksestasi, ${customerName}!`;
+
+      const paymentLine = paymentMethod ? `<tr><td style="padding:6px 0;color:#666">Maksutapa</td><td style="padding:6px 0;font-weight:600;text-align:right">${paymentMethod}</td></tr>` : "";
+
+      const html = `
+<!DOCTYPE html>
+<html lang="fi">
+<head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f4f4f5">
+  <div style="max-width:560px;margin:24px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1)">
+
+    <!-- Header -->
+    <div style="background:#18181b;padding:28px 32px;text-align:center">
+      <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700;letter-spacing:0.5px">PUUHAPATET</h1>
+      <p style="margin:6px 0 0;color:#a1a1aa;font-size:13px">Kuitti · ${date}</p>
+    </div>
+
+    <!-- Body -->
+    <div style="padding:28px 32px">
+      <p style="color:#18181b;font-size:15px;line-height:1.6;margin:0 0 20px">${greeting}</p>
+
+      <!-- Receipt table -->
+      <div style="background:#fafafa;border-radius:12px;padding:20px;margin-bottom:24px">
+        <table style="width:100%;border-collapse:collapse;font-size:14px">
+          <tr><td style="padding:6px 0;color:#666">Asiakas</td><td style="padding:6px 0;font-weight:600;text-align:right">${customerName}</td></tr>
+          <tr><td style="padding:6px 0;color:#666">Osoite</td><td style="padding:6px 0;font-weight:600;text-align:right">${customerAddress || "—"}</td></tr>
+          <tr style="border-top:1px solid #e4e4e7"><td style="padding:6px 0;color:#666">Palvelu</td><td style="padding:6px 0;font-weight:600;text-align:right">${description}</td></tr>
+          ${paymentLine}
+          <tr style="border-top:2px solid #18181b"><td style="padding:10px 0;color:#18181b;font-weight:700;font-size:16px">Hinta</td><td style="padding:10px 0;font-weight:700;font-size:20px;text-align:right;color:#18181b">${price}</td></tr>
+        </table>
+      </div>
+
+      <!-- Household deduction -->
+      <div style="background:#ecfdf5;border-radius:12px;padding:16px;margin-bottom:24px">
+        <p style="margin:0 0 6px;font-weight:700;color:#065f46;font-size:13px">KOTITALOUSVÄHENNYS</p>
+        <p style="margin:0;color:#047857;font-size:13px;line-height:1.5">
+          Tämä palvelu on kotitalousvähennyskelpoinen! Voit vähentää 40 % työn osuudesta verotuksessa (enintään 2 250 € / henkilö / vuosi).
+          <a href="https://vero.fi/kotitalousvahennys" style="color:#047857;font-weight:600">vero.fi/kotitalousvähennys</a>
+        </p>
+      </div>
+
+      <!-- CTA -->
+      <div style="text-align:center;margin-bottom:24px">
+        <p style="color:#52525b;font-size:14px;margin:0 0 12px">Haluatko varata seuraavan palvelun?</p>
+        <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;background:#18181b;color:#fff;padding:12px 28px;border-radius:10px;text-decoration:none;font-weight:600;font-size:14px">Varaa aika →</a>
+      </div>
+
+      <p style="color:#71717a;font-size:13px;text-align:center;margin:0 0 4px">
+        Ikkunapesu · piha- ja puutarhapalvelut · roskakatos- ja terassihuollot — kysy lisää!
+      </p>
+    </div>
+
+    <!-- Footer -->
+    <div style="background:#fafafa;padding:20px 32px;border-top:1px solid #e4e4e7">
+      <table style="width:100%;font-size:12px;color:#71717a">
+        <tr>
+          <td>
+            <strong style="color:#18181b">${workerName || "Puuhapatet"}</strong><br>
+            ${workerPhone ? workerPhone + "<br>" : ""}
+            ${workerYTunnus ? "Y-tunnus: " + workerYTunnus + "<br>" : ""}
+          </td>
+          <td style="text-align:right;vertical-align:top">
+            <strong style="color:#18181b">Puuhapatet</strong><br>
+            <a href="mailto:info@puuhapatet.fi" style="color:#71717a">info@puuhapatet.fi</a><br>
+            <a href="https://puuhapatet.fi" style="color:#71717a">puuhapatet.fi</a>
+          </td>
+        </tr>
+      </table>
+    </div>
+  </div>
+</body>
+</html>`;
+
+      const result = await resend.emails.send({
+        from: FROM_EMAIL,
+        to,
+        subject: `Kuitti — Puuhapatet ${date}`,
+        html,
+      });
+
+      res.json({ ok: true, id: result.data?.id });
+    } catch (e: any) {
+      console.error("Email send error:", e);
+      res.status(500).json({ error: e.message || "Sähköpostin lähetys epäonnistui" });
+    }
+  });
+
+  // ─── Customer job count (for returning customer check) ──────────────────────
+
+  app.get("/api/customers/:id/job-count", async (req, res) => {
+    try {
+      const [result] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(jobs)
+        .where(eq(jobs.customerId, Number(req.params.id)));
+      res.json({ count: result?.count ?? 0 });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

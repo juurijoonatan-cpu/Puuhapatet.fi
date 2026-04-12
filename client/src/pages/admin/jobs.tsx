@@ -37,6 +37,8 @@ interface JobRow {
     notes: string | null;
     scheduledAt: string | null;
     createdAt: string;
+    customerSignature: string | null;
+    staffSignature: string | null;
   };
   customer: {
     id: number;
@@ -72,6 +74,7 @@ export default function AdminJobsPage() {
 
   // Payment method for receipt
   const [paymentMethod, setPaymentMethod] = useState<string>("");
+  const [sendingEmail, setSendingEmail] = useState(false);
 
   const loadJobs = () => {
     setLoading(true);
@@ -653,38 +656,103 @@ export default function AdminJobsPage() {
           )}
 
           {/* Receipt — payment method + send */}
-          {customer?.email && (
-            <Card className="p-5 bg-card border-0 premium-shadow mb-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Mail className="w-4 h-4 text-muted-foreground" />
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                  Kuitti asiakkaalle
-                </p>
-              </div>
-              <p className="text-xs text-muted-foreground mb-3">Valitse maksutapa (valinnainen)</p>
-              <div className="flex flex-wrap gap-2 mb-4">
-                {PAYMENT_METHODS.map((m) => (
-                  <button
-                    key={m.key}
-                    type="button"
-                    onClick={() => setPaymentMethod(prev => prev === m.key ? "" : m.key)}
-                    className={cn(
-                      "px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all",
-                      paymentMethod === m.key
-                        ? "border-primary bg-primary/5 text-foreground"
-                        : "border-border text-muted-foreground hover:border-muted-foreground/40",
-                    )}
-                  >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
+          <Card className="p-5 bg-card border-0 premium-shadow mb-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Mail className="w-4 h-4 text-muted-foreground" />
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Kuitti asiakkaalle
+              </p>
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">Valitse maksutapa (valinnainen)</p>
+            <div className="flex flex-wrap gap-2 mb-4">
+              {PAYMENT_METHODS.map((m) => (
+                <button
+                  key={m.key}
+                  type="button"
+                  onClick={() => setPaymentMethod(prev => prev === m.key ? "" : m.key)}
+                  className={cn(
+                    "px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all",
+                    paymentMethod === m.key
+                      ? "border-primary bg-primary/5 text-foreground"
+                      : "border-border text-muted-foreground hover:border-muted-foreground/40",
+                  )}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            <div className="space-y-2">
+              {customer?.email && (
+                <Button
+                  className="w-full gap-2"
+                  disabled={sendingEmail}
+                  onClick={async () => {
+                    if (!customer?.email) return;
+                    setSendingEmail(true);
+                    const senderProfile = getAdminProfile();
+                    const date = job.scheduledAt
+                      ? new Date(job.scheduledAt).toLocaleDateString("fi-FI")
+                      : new Date(job.createdAt).toLocaleDateString("fi-FI");
+                    const priceEur = (job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" });
+                    const res = await api.sendReceipt({
+                      to: customer.email,
+                      customerName: customer.name,
+                      customerAddress: customer.address,
+                      date,
+                      description: job.description,
+                      price: priceEur,
+                      paymentMethod: paymentMethod ? PAYMENT_METHODS.find(m => m.key === paymentMethod)?.label : undefined,
+                      workerName: senderProfile?.name,
+                      workerPhone: senderProfile?.phone,
+                      workerYTunnus: senderProfile?.yTunnus,
+                      isReturning: false, // could check job count
+                    });
+                    if (res.ok) {
+                      toast({ title: "Kuitti lähetetty!", description: `Sähköposti lähetetty: ${customer.email}` });
+                    } else {
+                      toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error || "Yritä uudelleen" });
+                    }
+                    setSendingEmail(false);
+                  }}
+                >
+                  {sendingEmail ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+                  Lähetä kuitti sähköpostilla
+                </Button>
+              )}
               <a href={buildMailtoReceipt()}>
-                <Button className="w-full gap-2">
+                <Button variant="outline" className="w-full gap-2">
                   <Mail className="w-4 h-4" />
-                  Avaa kuitti sähköpostiin
+                  Avaa sähköpostiohjelmassa
                 </Button>
               </a>
+              {!customer?.email && (
+                <p className="text-xs text-muted-foreground">
+                  Lisää asiakkaalle sähköpostiosoite lähettääksesi kuitin suoraan.
+                </p>
+              )}
+            </div>
+          </Card>
+
+          {/* Signatures */}
+          {(job.customerSignature || job.staffSignature) && (
+            <Card className="p-5 bg-card border-0 premium-shadow mb-4">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                Allekirjoitukset
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                {job.customerSignature && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">Asiakas</p>
+                    <img src={job.customerSignature} alt="Asiakkaan allekirjoitus" className="w-full h-20 object-contain bg-white rounded-lg border p-1" />
+                  </div>
+                )}
+                {job.staffSignature && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">Työntekijä</p>
+                    <img src={job.staffSignature} alt="Työntekijän allekirjoitus" className="w-full h-20 object-contain bg-white rounded-lg border p-1" />
+                  </div>
+                )}
+              </div>
             </Card>
           )}
         </div>

@@ -343,3 +343,21 @@
     inset: -1px;
   }
 }
+
+/* ─── Print styles ─────────────────────────────────────────────────────────── */
+@media print {
+  body {
+    font-size: 11pt;
+    color: #000 !important;
+    background: #fff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  @page {
+    margin: 1.5cm;
+  }
+  /* Force visible colours for badges */
+  .bg-green-50, .bg-yellow-50, .bg-indigo-100 {
+    background-color: inherit !important;
+  }
+}

@@ -281,6 +281,7 @@ export default function AdminJobsPage() {
     const priceEur = (job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" });
     const paymentLine = paymentMethod ? `Maksutapa: ${PAYMENT_METHODS.find(m => m.key === paymentMethod)?.label ?? paymentMethod}\n` : "";
     const phoneLine = senderProfile?.phone ? `→ Tai suoraan: ${senderProfile.phone}\n` : "";
+    const yTunnusLine = senderProfile?.yTunnus ? `Y-tunnus:    ${senderProfile.yTunnus}\n` : "";
     const subject = encodeURIComponent(`Kuitti — Puuhapatet ${date}`);
     const body = encodeURIComponent(
       `Hei ${customer?.name ?? ""}!\n\n` +
@@ -309,6 +310,7 @@ export default function AdminJobsPage() {
       `Terveisin,\n` +
       `${senderName}\n` +
       `Puuhapatet\n` +
+      yTunnusLine +
       `info@puuhapatet.fi\n`
     );
     const to = customer?.email ? encodeURIComponent(customer.email) : "";

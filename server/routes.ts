@@ -402,18 +402,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ error: "Puuttuvia kenttiä" });
       }
 
+      const firstName = customerName.split(" ")[0];
+      const workerFirst = workerName ? workerName.split(" ")[0] : "Puuhapatet";
+
       const greeting = isReturning
-        ? `Hienoa saada sinut taas asiakkaaksemme, ${customerName}! Kiitos jatkuvasta luottamuksestasi.`
-        : `Kiitos tilauksestasi, ${customerName}!`;
+        ? `Moi ${firstName}! Mukava nähdä sinut taas — homma on nyt hoidettu, kiitos jatkuvasta luottamuksesta.`
+        : `Moi ${firstName}! Homma on hoidettu — kiitos kun valitsit Puuhapatetin.`;
 
       const paymentLine = paymentMethod ? `<tr><td style="padding:6px 0;color:#666">Maksutapa</td><td style="padding:6px 0;font-weight:600;text-align:right">${paymentMethod}</td></tr>` : "";
 
       const html = `
 <!DOCTYPE html>
 <html lang="fi">
-<head><meta charset="UTF-8"></head>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f4f4f5">
-  <div style="max-width:560px;margin:24px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1)">
+  <div style="max-width:560px;margin:24px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.12)">
 
     <!-- Header -->
     <div style="background:#18181b;padding:28px 32px;text-align:center">
@@ -438,37 +441,52 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       <!-- Household deduction -->
       <div style="background:#ecfdf5;border-radius:12px;padding:16px;margin-bottom:24px">
-        <p style="margin:0 0 6px;font-weight:700;color:#065f46;font-size:13px">KOTITALOUSVÄHENNYS</p>
-        <p style="margin:0;color:#047857;font-size:13px;line-height:1.5">
-          Tämä palvelu on kotitalousvähennyskelpoinen! Voit vähentää 40 % työn osuudesta verotuksessa (enintään 2 250 € / henkilö / vuosi).
-          <a href="https://vero.fi/kotitalousvahennys" style="color:#047857;font-weight:600">vero.fi/kotitalousvähennys</a>
+        <p style="margin:0 0 6px;font-weight:700;color:#065f46;font-size:13px">MUISTA KOTITALOUSVÄHENNYS</p>
+        <p style="margin:0;color:#047857;font-size:13px;line-height:1.6">
+          Tämä palvelu on <strong>kotitalousvähennyskelpoinen</strong>. Voit hakea verotuksessa 40 % työn osuudesta takaisin — enintään 2 250 € / henkilö / vuosi. Lasku toimii dokumenttina, ei erillistä kuittia tarvita.<br><br>
+          Lisätietoa: <a href="https://vero.fi/kotitalousvahennys" style="color:#047857;font-weight:600">vero.fi/kotitalousvähennys</a>
         </p>
       </div>
 
-      <!-- CTA -->
-      <div style="text-align:center;margin-bottom:24px">
-        <p style="color:#52525b;font-size:14px;margin:0 0 12px">Haluatko varata seuraavan palvelun?</p>
-        <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;background:#18181b;color:#fff;padding:12px 28px;border-radius:10px;text-decoration:none;font-weight:600;font-size:14px">Varaa aika →</a>
+      <!-- Google review ask -->
+      <div style="background:#fffbeb;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #f59e0b">
+        <p style="margin:0 0 6px;font-weight:700;color:#92400e;font-size:13px">PIENI PYYNTÖ</p>
+        <p style="margin:0;color:#78350f;font-size:13px;line-height:1.6">
+          Jos palvelu miellytti, Google-arvostelu auttaa meitä enemmän kuin osaat kuvitella — olemme pienyritys ja jokainen arvostelu merkitsee. Se vie 60 sekuntia.
+        </p>
+        <a href="https://g.page/r/puuhapatet/review" style="display:inline-block;margin-top:10px;background:#f59e0b;color:#fff;padding:8px 18px;border-radius:8px;text-decoration:none;font-weight:600;font-size:13px">Jätä arvostelu →</a>
       </div>
 
-      <p style="color:#71717a;font-size:13px;text-align:center;margin:0 0 4px">
-        Ikkunapesu · piha- ja puutarhapalvelut · roskakatos- ja terassihuollot — kysy lisää!
+      <!-- Next booking CTA -->
+      <div style="text-align:center;margin-bottom:20px">
+        <p style="color:#52525b;font-size:14px;margin:0 0 6px;line-height:1.6">
+          Tarvitsetko apua pihatöissä, maalauksessa tai lumitöissä?<br>
+          <span style="font-size:13px;color:#71717a">Teemme myös ne — sovitaan yhdessä.</span>
+        </p>
+        <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;margin-top:10px;background:#18181b;color:#fff;padding:12px 28px;border-radius:10px;text-decoration:none;font-weight:600;font-size:14px">Varaa seuraava aika →</a>
+      </div>
+
+      <p style="color:#a1a1aa;font-size:12px;text-align:center;margin:16px 0 0">
+        Ikkunapesu · pihatyöt · maalaus · lumityöt · roskakatos- ja terassihuollot
       </p>
     </div>
 
     <!-- Footer -->
     <div style="background:#fafafa;padding:20px 32px;border-top:1px solid #e4e4e7">
+      <p style="margin:0 0 12px;color:#52525b;font-size:13px;line-height:1.5">
+        — ${workerFirst}
+      </p>
       <table style="width:100%;font-size:12px;color:#71717a">
         <tr>
-          <td>
+          <td style="vertical-align:top">
             <strong style="color:#18181b">${workerName || "Puuhapatet"}</strong><br>
             ${workerPhone ? workerPhone + "<br>" : ""}
             ${workerYTunnus ? "Y-tunnus: " + workerYTunnus + "<br>" : ""}
           </td>
           <td style="text-align:right;vertical-align:top">
             <strong style="color:#18181b">Puuhapatet</strong><br>
-            <a href="mailto:info@puuhapatet.fi" style="color:#71717a">info@puuhapatet.fi</a><br>
-            <a href="https://puuhapatet.fi" style="color:#71717a">puuhapatet.fi</a>
+            <a href="mailto:info@puuhapatet.fi" style="color:#71717a;text-decoration:none">info@puuhapatet.fi</a><br>
+            <a href="https://puuhapatet.fi" style="color:#71717a;text-decoration:none">puuhapatet.fi</a>
           </td>
         </tr>
       </table>
@@ -480,7 +498,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const result = await resend.emails.send({
         from: FROM_EMAIL,
         to,
-        subject: `Kuitti — Puuhapatet ${date}`,
+        subject: `Kuitti tehty — Puuhapatet, ${date}`,
         html,
       });
 

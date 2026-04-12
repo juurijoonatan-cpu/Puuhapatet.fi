@@ -12,7 +12,7 @@ const founders = [
     role: "Perustaja",
     photo: "/matias.jpg.jpeg",
     initials: "MP",
-    bio: "Olen 18 ja opiskelen Otaniemen lukiossa toista vuotta. Jalkapallo on vienyt minut pitkälle — olen pelannut kilpatasolla pitkään ja sali kuuluu arkeen. Urheilutausta on opettanut sen, mitä yrittäjyyskin vaatii: sitoutumista, pitkäjänteisyyttä ja halua kehittyä. Puuhapatet on minulle ensimmäinen askel isompaan, ja otan sen vakavasti.",
+    bio: "Olen 18 ja opiskelen Otaniemen lukiossa toista vuotta. Jalkapallo on vienyt minut pitkälle — olen pelannut kilpatasolla pitkään ja sali kuuluu arkeen. Urheilutausta on opettanut sen, mitä yrittäjyyskin vaatii: sitoutumista, systemaattisuutta ja halua kehittyä. Puuhapatet on ensimmäinen oikea askeleni yrittäjyyteen — ja aion ottaa sen vakavasti.",
     linkedin: "https://linkedin.com/in/matias-pitkanen",
     phone: "+358400389999",
   },
@@ -22,7 +22,7 @@ const founders = [
     role: "Perustaja",
     photo: "/joonatan.jpg.jpeg",
     initials: "JJ",
-    bio: "Olen 17 ja Otaniemen lukion toinen vuosi menossa. Taustani on kansainvälinen — olen opiskellut ja asunut ulkomailla, mikä on avannut silmät aika laajasti jo nuorena. Tennis on lajini, kilpaurheilu vie paljon aikaa ja sali täydentää viikon. Yrittäjyys tuntuu luontevalta, koska haluan tehdä asioita itse — ei vain opiskella niitä.",
+    bio: "Olen 17 ja Otaniemen lukion toinen vuosi menossa. Taustani on kansainvälinen — olen opiskellut ja asunut ulkomailla, mikä on avannut perspektiiviä jo nuorena. Tennis on lajini, kilpaurheilu vie ison osan ajasta. Yrittäjyys tuntuu luontevalta, koska haluan tehdä ja rakentaa asioita itse — ei vain opiskella, miten muut ovat tehneet.",
     linkedin: "https://linkedin.com/in/joonatan-juuri",
     phone: "+358400389999",
   },
@@ -51,11 +51,12 @@ export default function AboutPage() {
             <p>{t("about.story.1")}</p>
             <p>{t("about.story.2")}</p>
             <p>
-              Puuhapatet sai alkunsa siitä, että meillä molemmilla oli jo kokemusta käytännön töistä oman perhepiirin kautta.
-              Halusimme kanavoida sen johonkin oikeaan — harjoitella yrittämistä, kartuttaa kokemusta ja samalla rahoittaa isompia
-              tulevaisuuden suunnitelmia. Perustimme Puuhapatetin vuonna 2026, vaikka suunnittelu alkoi jo hyvissä ajoin edellisvuonna.
-              Opiskelemme molemmat täysillä koulun ohella, mutta rehellisesti sanottuna asiakkaiden tyytyväisyys ja yhdessä tekeminen
-              on se, mikä todella motivoi. Mikään muu ei vedä vertoja.
+              Puuhapatet sai alkunsa yksinkertaisesta halusta: tehdä töitä kunnolla ja rakentaa jotain omaa.
+              Meillä molemmilla oli jo pohjaa käytännön töistä, mutta halusimme kanavoida sen johonkin oikeaan —
+              ei pelkästään tienata rahaa kesällä, vaan harjoitella oikeaa yrittämistä ja rakentaa mainetta, joka kestää.
+              Perustimme Puuhapatetin vuonna 2026, suunnittelu alkoi jo hyvissä ajoin edellisvuonna.
+              Opiskelemme molemmat täysillä koulun ohella, mutta rehellisesti sanottuna asiakkaiden aito tyytyväisyys
+              ja yhdessä tekeminen on se, mikä parhaiten motivoi. Mikään muu ei vedä vertoja.
             </p>
             <p>{t("about.story.3")}</p>
           </div>

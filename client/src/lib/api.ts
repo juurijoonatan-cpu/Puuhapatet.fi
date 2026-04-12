@@ -94,6 +94,8 @@ export interface NewJob {
   assignedTo?: string;
   notes?: string;
   scheduledAt?: string | null;
+  customerSignature?: string;
+  staffSignature?: string;
 }
 
 export interface StatsResponse {
@@ -202,6 +204,23 @@ export const api = {
 
   deleteStartupBonusUsage: (id: number) =>
     request<{ ok: boolean }>("DELETE", `/api/startup-bonus-usages/${id}`),
+
+  sendReceipt: (data: {
+    to: string;
+    customerName: string;
+    customerAddress?: string;
+    date: string;
+    description: string;
+    price: string;
+    paymentMethod?: string;
+    workerName?: string;
+    workerPhone?: string;
+    workerYTunnus?: string;
+    isReturning?: boolean;
+  }) => request<{ ok: boolean; id?: string }>("POST", "/api/send-receipt", data),
+
+  getCustomerJobCount: (customerId: number) =>
+    request<{ count: number }>("GET", `/api/customers/${customerId}/job-count`),
 
   // Legacy compat stubs
   getJob: (_jobId: string): Promise<ApiResponse<{ ok: boolean; job?: unknown }>> =>

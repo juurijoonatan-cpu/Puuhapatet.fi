@@ -36,16 +36,18 @@ export type InsertCustomer = z.infer<typeof insertCustomerSchema>;
 // ─── Jobs ─────────────────────────────────────────────────────────────────────
 
 export const jobs = pgTable("jobs", {
-  id:          serial("id").primaryKey(),
-  customerId:  integer("customer_id").references(() => customers.id).notNull(),
-  scheduledAt: timestamp("scheduled_at"),
-  description: text("description").notNull(),
-  agreedPrice: integer("agreed_price").notNull(),  // senttiä (€ × 100)
-  status:      jobStatusEnum("status").default("lead").notNull(),
-  assignedTo:  text("assigned_to"),               // yrittäjän nimi
-  notes:       text("notes"),
-  createdAt:   timestamp("created_at").defaultNow().notNull(),
-  updatedAt:   timestamp("updated_at").defaultNow().notNull(),
+  id:                serial("id").primaryKey(),
+  customerId:        integer("customer_id").references(() => customers.id).notNull(),
+  scheduledAt:       timestamp("scheduled_at"),
+  description:       text("description").notNull(),
+  agreedPrice:       integer("agreed_price").notNull(),  // senttiä (€ × 100)
+  status:            jobStatusEnum("status").default("lead").notNull(),
+  assignedTo:        text("assigned_to"),               // yrittäjän nimi
+  notes:             text("notes"),
+  customerSignature: text("customer_signature"),         // base64 data URL
+  staffSignature:    text("staff_signature"),            // base64 data URL
+  createdAt:         timestamp("created_at").defaultNow().notNull(),
+  updatedAt:         timestamp("updated_at").defaultNow().notNull(),
 });
 
 export const jobsRelations = relations(jobs, ({ one, many }) => ({

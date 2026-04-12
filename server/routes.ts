@@ -405,6 +405,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const firstName = customerName.split(" ")[0];
       const workerFirst = workerName ? workerName.split(" ")[0] : "Puuhapatet";
 
+      // Generate a personalized referral code
+      const nameTag = firstName.replace(/[^a-z]/gi, "").slice(0, 5).toUpperCase().padEnd(4, "X");
+      const randTag = Math.random().toString(36).slice(2, 5).toUpperCase();
+      const referralCode = `${nameTag}-${randTag}`;
+      const referralLink = `https://puuhapatet.fi/tilaus?ref=${referralCode}`;
+
       const greeting = isReturning
         ? `Moi ${firstName}! Mukava nähdä sinut taas — homma on nyt hoidettu, kiitos jatkuvasta luottamuksesta.`
         : `Moi ${firstName}! Homma on hoidettu — kiitos kun valitsit Puuhapatetin.`;
@@ -452,22 +458,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       <div style="background:#fffbeb;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #f59e0b">
         <p style="margin:0 0 6px;font-weight:700;color:#92400e;font-size:13px">PIENI PYYNTÖ</p>
         <p style="margin:0;color:#78350f;font-size:13px;line-height:1.6">
-          Jos palvelu miellytti, Google-arvostelu auttaa meitä enemmän kuin osaat kuvitella — olemme pienyritys ja jokainen arvostelu merkitsee. Se vie 60 sekuntia.
+          Jokainen arvostelu merkitsee meille enemmän kuin osaat kuvitella — olipa se sitten positiivinen tai parannettavaa antava, jokainen auttaa meitä kehittymään. Olemme pieni yritys ja rehellinen palaute on kullanarvoista.
         </p>
-        <a href="https://g.page/r/puuhapatet/review" style="display:inline-block;margin-top:10px;background:#f59e0b;color:#fff;padding:8px 18px;border-radius:8px;text-decoration:none;font-weight:600;font-size:13px">Jätä arvostelu →</a>
+        <a href="https://g.page/r/CQo_lx1fQ57lEAE/review" style="display:inline-block;margin-top:10px;background:#f59e0b;color:#fff;padding:8px 18px;border-radius:8px;text-decoration:none;font-weight:600;font-size:13px">Jätä arvostelu →</a>
+      </div>
+
+      <!-- Referral -->
+      <div style="background:#f0f9ff;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #0ea5e9">
+        <p style="margin:0 0 6px;font-weight:700;color:#075985;font-size:13px">JAA KAVEREILLE — 5 % ALENNUS</p>
+        <p style="margin:0 0 10px;color:#0369a1;font-size:13px;line-height:1.6">
+          Jos suosittelet meitä kaverille tai naapurille, he saavat <strong>5 % alennuksen</strong> ensimmäisestä tilauksestaan. Voimassa 30 päivää. Henkilökohtainen koodisi:
+        </p>
+        <div style="background:#fff;border:1px solid #bae6fd;border-radius:8px;padding:10px 14px;text-align:center;margin-bottom:10px">
+          <span style="font-family:monospace;font-size:18px;font-weight:700;color:#0c4a6e;letter-spacing:2px">${referralCode}</span>
+        </div>
+        <a href="${referralLink}" style="display:inline-block;background:#0ea5e9;color:#fff;padding:8px 18px;border-radius:8px;text-decoration:none;font-weight:600;font-size:13px">Jaa linkki →</a>
       </div>
 
       <!-- Next booking CTA -->
       <div style="text-align:center;margin-bottom:20px">
         <p style="color:#52525b;font-size:14px;margin:0 0 6px;line-height:1.6">
-          Tarvitsetko apua pihatöissä, maalauksessa tai lumitöissä?<br>
-          <span style="font-size:13px;color:#71717a">Teemme myös ne — sovitaan yhdessä.</span>
+          Tarvitsetko apua muissa kotihommissa?<br>
+          <span style="font-size:13px;color:#71717a">Nurmikon leikkuu · siivouspalvelut · pihahoito · maalaus</span>
         </p>
         <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;margin-top:10px;background:#18181b;color:#fff;padding:12px 28px;border-radius:10px;text-decoration:none;font-weight:600;font-size:14px">Varaa seuraava aika →</a>
       </div>
 
       <p style="color:#a1a1aa;font-size:12px;text-align:center;margin:16px 0 0">
-        Ikkunapesu · pihatyöt · maalaus · lumityöt · roskakatos- ja terassihuollot
+        Ikkunapesu · nurmikko · siivous · pihahoito · maalaus · roskakatos- ja terassihuollot
       </p>
     </div>
 

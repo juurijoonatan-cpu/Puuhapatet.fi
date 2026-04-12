@@ -5,7 +5,7 @@
 
 import { useState, useEffect } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, Download, Printer, ChevronDown, ChevronUp, Info } from "lucide-react";
+import { ArrowLeft, Download, Printer, ChevronDown, ChevronUp, Info, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { api } from "@/lib/api";
@@ -42,6 +42,16 @@ function parseWorkerIds(assignedTo: string | null): string[] {
     });
 }
 
+interface BonusUsage {
+  id: number;
+  userId: string;
+  amount: number;
+  description: string;
+  category: string;
+  usedAt: string;
+  investmentId: number | null;
+}
+
 export default function TaxExportPage() {
   const profile = getAdminProfile();
 
@@ -49,6 +59,7 @@ export default function TaxExportPage() {
   const [loading, setLoading] = useState(true);
   const [year, setYear] = useState(new Date().getFullYear());
   const [showGuide, setShowGuide] = useState(false);
+  const [allBonusUsages, setAllBonusUsages] = useState<BonusUsage[]>([]);
 
   useEffect(() => {
     api.getJobs().then((res) => {
@@ -57,6 +68,11 @@ export default function TaxExportPage() {
       }
       setLoading(false);
     });
+    if (profile?.startupBonus && profile.startupBonus > 0) {
+      api.getStartupBonusUsages(profile.id).then((res) => {
+        if (res.ok && res.data) setAllBonusUsages(res.data as BonusUsage[]);
+      });
+    }
   }, []);
 
   // Filter to current user's jobs only
@@ -102,6 +118,12 @@ export default function TaxExportPage() {
 
   const fmtDate = (iso: string | null) =>
     iso ? new Date(iso).toLocaleDateString("fi-FI") : "—";
+
+  // Startup bonus usages for the selected year
+  const yearBonusUsages = allBonusUsages.filter(
+    u => new Date(u.usedAt).getFullYear() === year
+  );
+  const yearBonusTotal = yearBonusUsages.reduce((s, u) => s + u.amount, 0);
 
   const availableYears = Array.from(
     new Set(myJobs.map(r => new Date(r.job.scheduledAt || r.job.createdAt).getFullYear()))
@@ -182,10 +204,14 @@ export default function TaxExportPage() {
         <div className="hidden print:block mb-6">
           <h1 className="text-xl font-bold">Puuhapatet — Kirjanpitovuosi {year}</h1>
           <p className="text-sm text-gray-600">
-            Tekijä: {profile?.name ?? "—"} · Tulostettu: {new Date().toLocaleDateString("fi-FI")}
+            Tekijä: {profile?.name ?? "—"}
+            {profile?.yTunnus && ` · Y-tunnus: ${profile.yTunnus}`}
+            {" "}· Tulostettu: {new Date().toLocaleDateString("fi-FI")}
           </p>
           <p className="text-xs text-gray-500 mt-1">
-            4H-yrityksen tulos = nettoansio. Ilmoita kohdassa "Muut ansiotulot" OmaVerossa.
+            {profile?.hasYTunnus
+              ? "Y-tunnus: ilmoita elinkeinotoiminnan veroilmoituksessa (lomake 5) OmaVerossa."
+              : "4H-yrityksen tulos = nettoansio. Ilmoita kohdassa \"Muut ansiotulot\" OmaVerossa."}
           </p>
         </div>
 
@@ -250,24 +276,45 @@ export default function TaxExportPage() {
               ))}
             </div>
 
-            {/* Startup bonus / yritysseteli reminder */}
+            {/* Startup bonus / yritysseteli — full section */}
             {profile?.startupBonus != null && profile.startupBonus > 0 && (
-              <Card className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border-0 premium-shadow mb-5 print:hidden">
-                <p className="text-xs font-bold text-yellow-800 dark:text-yellow-300 mb-2">
-                  Aloitusbonus / Yritysseteli — {fmt(profile.startupBonus)} — muista ilmoittaa!
-                </p>
-                <p className="text-xs text-yellow-700 dark:text-yellow-400 mb-1.5">
-                  4H-yhdistys on ilmoittanut tuen tulorekisteriin — tarkista esitäytetty veroilmoitus.
-                </p>
-                {profile.hasYTunnus ? (
-                  <p className="text-xs text-yellow-700 dark:text-yellow-400">
-                    Y-tunnus: poista tuki henkilöasiakkaan veroilmoituksesta ja siirrä elinkeinotoiminnan lomakkeeseen (lomake 5).
+              <Card className="p-5 bg-yellow-50 dark:bg-yellow-900/20 border-0 premium-shadow mb-5">
+                <div className="flex items-center gap-2 mb-3">
+                  <Sparkles className="w-4 h-4 text-yellow-600 dark:text-yellow-400" />
+                  <p className="text-sm font-bold text-yellow-800 dark:text-yellow-300">
+                    Aloitustuki / Yritysseteli — {fmt(profile.startupBonus)}
                   </p>
+                </div>
+
+                <p className="text-xs text-yellow-700 dark:text-yellow-400 mb-3">
+                  4H-yhdistys on ilmoittanut tuen tulorekisteriin — tarkista esitäytetty veroilmoitus.
+                  {profile.hasYTunnus
+                    ? " Y-tunnus: siirrä tuki elinkeinotoiminnan lomakkeeseen (lomake 5)."
+                    : " Tarkista että tuki näkyy oikein esitäytetyssä veroilmoituksessa."}
+                </p>
+
+                {/* Usage list for this year */}
+                {yearBonusUsages.length > 0 ? (
+                  <div className="space-y-1.5 mb-3">
+                    <p className="text-xs font-semibold text-yellow-800 dark:text-yellow-300">
+                      Käytetty {year}: {fmt(yearBonusTotal)}
+                    </p>
+                    {yearBonusUsages.map(u => (
+                      <div key={u.id} className="flex justify-between text-xs text-yellow-800 dark:text-yellow-200 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg px-3 py-2">
+                        <span>{u.description}{u.investmentId ? " (investointi)" : ""}</span>
+                        <span className="font-semibold shrink-0 ml-2">{fmt(u.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
                 ) : (
-                  <p className="text-xs text-yellow-700 dark:text-yellow-400">
-                    Ei Y-tunnusta: tarkista vain että tuki näkyy oikein esitäytetyssä veroilmoituksessa.
+                  <p className="text-xs text-yellow-700 dark:text-yellow-400 mb-3 italic">
+                    Ei kirjattuja käyttöjä vuodelle {year}. Kirjaa käyttö Asetuksista tai Investoinneista.
                   </p>
                 )}
+
+                <p className="text-xs text-yellow-700 dark:text-yellow-400 print:hidden">
+                  Y-tunnus: {profile.yTunnus ?? "—"}
+                </p>
               </Card>
             )}
 

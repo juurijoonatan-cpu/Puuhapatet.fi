@@ -4,7 +4,7 @@
 
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { ArrowLeft, LogOut, User, Sun, Moon, Banknote, CheckCircle, BookOpen, FileSpreadsheet, ShoppingCart, KeyRound, Eye, EyeOff } from "lucide-react";
+import { ArrowLeft, LogOut, User, Sun, Moon, Banknote, CheckCircle, BookOpen, FileSpreadsheet, ShoppingCart, KeyRound, Eye, EyeOff, Sparkles, Plus, Trash2 } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,16 @@ import { useTheme } from "@/lib/theme";
 import { getAdminProfile, clearAdminProfile, USERS } from "@/lib/admin-profile";
 import { api, WorkerStatsResponse } from "@/lib/api";
 import { cn } from "@/lib/utils";
+
+interface BonusUsage {
+  id: number;
+  userId: string;
+  amount: number;
+  description: string;
+  category: string;
+  usedAt: string;
+  investmentId: number | null;
+}
 
 export default function AdminSettingsPage() {
   const [, navigate] = useLocation();
@@ -34,6 +44,14 @@ export default function AdminSettingsPage() {
   const [showPwds, setShowPwds] = useState(false);
   const [savingPwd, setSavingPwd] = useState(false);
 
+  // Startup bonus state
+  const [bonusUsages, setBonusUsages] = useState<BonusUsage[]>([]);
+  const [bonusDesc, setBonusDesc] = useState("");
+  const [bonusAmount, setBonusAmount] = useState("");
+  const [bonusCategory, setBonusCategory] = useState("muu");
+  const [addingBonus, setAddingBonus] = useState(false);
+  const [showBonusForm, setShowBonusForm] = useState(false);
+
   const loadStats = () => {
     if (isHost) {
       api.workersStats().then((res) => {
@@ -42,7 +60,15 @@ export default function AdminSettingsPage() {
     }
   };
 
-  useEffect(() => { loadStats(); }, []);
+  const loadBonusUsages = () => {
+    if (profile?.startupBonus && profile.startupBonus > 0) {
+      api.getStartupBonusUsages(profile.id).then((res) => {
+        if (res.ok && res.data) setBonusUsages(res.data as BonusUsage[]);
+      });
+    }
+  };
+
+  useEffect(() => { loadStats(); loadBonusUsages(); }, []);
 
   const fmt = (cents: number) =>
     (cents / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
@@ -92,6 +118,45 @@ export default function AdminSettingsPage() {
     toast({ title: "Uloskirjautuminen onnistui" });
     navigate("/admin/login");
   };
+
+  const bonusUsed = bonusUsages.reduce((s, u) => s + u.amount, 0);
+  const bonusTotal = profile?.startupBonus ?? 0;
+  const bonusRemaining = Math.max(0, bonusTotal - bonusUsed);
+  const bonusFullyUsed = bonusUsed >= bonusTotal && bonusTotal > 0;
+
+  const handleAddBonusUsage = async () => {
+    if (!bonusDesc.trim() || !bonusAmount || !profile) return;
+    const amountCents = Math.round(parseFloat(bonusAmount) * 100);
+    if (isNaN(amountCents) || amountCents <= 0) return;
+    setAddingBonus(true);
+    const res = await api.addStartupBonusUsage({
+      userId: profile.id,
+      amount: amountCents,
+      description: bonusDesc.trim(),
+      category: bonusCategory,
+    });
+    if (res.ok) {
+      toast({ title: "Käyttö kirjattu" });
+      setBonusDesc(""); setBonusAmount(""); setShowBonusForm(false);
+      loadBonusUsages();
+    } else {
+      toast({ variant: "destructive", title: "Virhe", description: res.error });
+    }
+    setAddingBonus(false);
+  };
+
+  const handleDeleteBonusUsage = async (id: number) => {
+    const res = await api.deleteStartupBonusUsage(id);
+    if (res.ok) {
+      setBonusUsages(prev => prev.filter(u => u.id !== id));
+      toast({ title: "Poistettu" });
+    } else {
+      toast({ variant: "destructive", title: res.error ?? "Virhe" });
+    }
+  };
+
+  const fmtFull = (cents: number) =>
+    (cents / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" });
 
   return (
     <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28">
@@ -228,6 +293,119 @@ export default function AdminSettingsPage() {
             Salasana tallennetaan tähän laitteeseen. Jos kirjaudut toiselta laitteelta, käytä alkuperäistä salasanaa.
           </p>
         </Card>
+
+        {/* Startup bonus tracker — only shown when profile has a bonus and it's not fully used */}
+        {bonusTotal > 0 && !bonusFullyUsed && (
+          <Card className="p-6 bg-card border-0 premium-shadow mb-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Sparkles className="w-5 h-5 text-yellow-500" />
+              <h2 className="text-lg font-semibold text-foreground">Aloitustuki — {fmtFull(bonusTotal)}</h2>
+            </div>
+
+            {/* Progress bar */}
+            <div className="mb-4">
+              <div className="flex justify-between text-xs text-muted-foreground mb-1.5">
+                <span>Käytetty: {fmtFull(bonusUsed)}</span>
+                <span>Jäljellä: <strong className="text-yellow-600 dark:text-yellow-400">{fmtFull(bonusRemaining)}</strong></span>
+              </div>
+              <div className="h-2 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-yellow-400 dark:bg-yellow-500 rounded-full transition-all"
+                  style={{ width: `${Math.min(100, (bonusUsed / bonusTotal) * 100)}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Usage list */}
+            {bonusUsages.length > 0 && (
+              <div className="space-y-2 mb-4">
+                {bonusUsages.map(u => (
+                  <div key={u.id} className="flex items-center justify-between text-sm p-2.5 rounded-lg bg-muted/30">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-foreground truncate">{u.description}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {new Date(u.usedAt).toLocaleDateString("fi-FI")}
+                        {u.investmentId && " · investoinnin kautta"}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 ml-3">
+                      <span className="font-semibold text-yellow-700 dark:text-yellow-300">{fmtFull(u.amount)}</span>
+                      {!u.investmentId && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteBonusUsage(u.id)}
+                          className="text-muted-foreground hover:text-destructive transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Add manual usage */}
+            {!showBonusForm ? (
+              <Button variant="outline" size="sm" onClick={() => setShowBonusForm(true)} className="w-full">
+                <Plus className="w-3.5 h-3.5 mr-1.5" />
+                Kirjaa manuaalinen käyttö
+              </Button>
+            ) : (
+              <div className="space-y-2 border-t pt-4">
+                <Input
+                  placeholder="Kuvaus (mihin käytit)"
+                  value={bonusDesc}
+                  onChange={e => setBonusDesc(e.target.value)}
+                  className="text-sm"
+                />
+                <Input
+                  type="number"
+                  placeholder="Summa (€)"
+                  value={bonusAmount}
+                  onChange={e => setBonusAmount(e.target.value)}
+                  className="text-sm"
+                  min="0"
+                  step="0.01"
+                />
+                <div className="flex gap-2">
+                  {["välineet", "kuljetukset", "muu"].map(cat => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setBonusCategory(cat)}
+                      className={cn(
+                        "px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all capitalize",
+                        bonusCategory === cat
+                          ? "border-yellow-400 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200"
+                          : "border-border text-muted-foreground hover:border-muted-foreground/40",
+                      )}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setShowBonusForm(false)} className="flex-1">
+                    Peruuta
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={handleAddBonusUsage}
+                    disabled={addingBonus || !bonusDesc.trim() || !bonusAmount}
+                    className="flex-1"
+                  >
+                    Tallenna
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            <p className="text-xs text-muted-foreground mt-3">
+              Investoinnin kautta lisätyt käytöt merkitään automaattisesti. Kun 300 € on kokonaan käytetty, tämä osio häviää — käyttöhistoria näkyy silti verotustulosteessa.
+            </p>
+          </Card>
+        )}
 
         {/* Tax export link */}
         <Link href="/admin/tax-export">

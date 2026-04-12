@@ -98,6 +98,7 @@ export const investments = pgTable("investments", {
   category:    text("category").notNull().default("välineet"), // välineet | kuljetukset | muu
   boughtBy:    text("bought_by").notNull(),        // "joonatan" | "matias"
   splitWith:   text("split_with"),                 // null = oma, toisen ID = 50/50
+  bonusBy:     text("bonus_by"),                   // null | "boughtBy" | "splitWith" | "both" — aloitustuella rahoitettu
   purchasedAt: timestamp("purchased_at").defaultNow().notNull(),
   note:        text("note"),
   createdAt:   timestamp("created_at").defaultNow().notNull(),
@@ -106,6 +107,23 @@ export const investments = pgTable("investments", {
 export const insertInvestmentSchema = createInsertSchema(investments).omit({ id: true, createdAt: true });
 export type Investment = typeof investments.$inferSelect;
 export type InsertInvestment = z.infer<typeof insertInvestmentSchema>;
+
+// ─── Startup bonus usages (aloitustuen käyttö) ────────────────────────────────
+
+export const startupBonusUsages = pgTable("startup_bonus_usages", {
+  id:           serial("id").primaryKey(),
+  userId:       text("user_id").notNull(),         // "joonatan" | "matias"
+  amount:       integer("amount").notNull(),        // senttiä (€ × 100) — käytetty summa tästä tukirahasta
+  description:  text("description").notNull(),
+  category:     text("category").notNull().default("muu"), // välineet | kuljetukset | muu
+  usedAt:       timestamp("used_at").defaultNow().notNull(),
+  investmentId: integer("investment_id"),           // jos linkitetty investointiin
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertStartupBonusUsageSchema = createInsertSchema(startupBonusUsages).omit({ id: true, createdAt: true });
+export type StartupBonusUsage = typeof startupBonusUsages.$inferSelect;
+export type InsertStartupBonusUsage = z.infer<typeof insertStartupBonusUsageSchema>;
 
 // ─── Users (admin accounts — seeded, ei itserekisteröitymistä) ───────────────
 

@@ -1,11 +1,12 @@
 /**
  * Investoinnit & Välineet
- * Track equipment purchases — solo or 50/50 split between workers
+ * Track equipment purchases — solo or 50/50 split between workers.
+ * Optionally mark funded by startup bonus (aloitustuki).
  */
 
 import { useState, useEffect } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, Plus, Trash2, Package, Loader2, Users } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Package, Loader2, Users, Sparkles } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +28,7 @@ interface Investment {
   category: string;
   boughtBy: string;
   splitWith: string | null;
+  bonusBy: string | null;
   purchasedAt: string;
   note: string | null;
   createdAt: string;
@@ -46,6 +48,8 @@ export default function InvestmentsPage() {
   const [category, setCategory] = useState("välineet");
   const [boughtBy, setBoughtBy] = useState(profile?.id ?? USERS[0].id);
   const [splitWith, setSplitWith] = useState<string | null>(null);
+  // bonusBy: null=ei bonusta, "boughtBy"=ostajan bonus, "splitWith"=toisen bonus, "both"=kummankin bonus
+  const [bonusBy, setBonusBy] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
   const loadInvestments = () => {
@@ -71,12 +75,14 @@ export default function InvestmentsPage() {
       category,
       boughtBy,
       splitWith: splitWith ?? null,
+      bonusBy: bonusBy ?? null,
     });
     if (res.ok) {
       toast({ title: "Hankinta lisätty" });
       setDesc("");
       setAmount("");
       setSplitWith(null);
+      setBonusBy(null);
       setShowForm(false);
       loadInvestments();
     } else {
@@ -123,6 +129,19 @@ export default function InvestmentsPage() {
   };
 
   const otherUser = USERS.find(u => u.id !== boughtBy);
+
+  // Bonus picker options depend on whether the investment is split
+  const bonusOptions = splitWith
+    ? [
+        { key: null,        label: "Ei" },
+        { key: "boughtBy",  label: `${USERS.find(u => u.id === boughtBy)?.name.split(" ")[0]} käyttää` },
+        { key: "splitWith", label: `${USERS.find(u => u.id === splitWith)?.name.split(" ")[0]} käyttää` },
+        { key: "both",      label: "Kumpikin käyttää" },
+      ]
+    : [
+        { key: null,       label: "Ei" },
+        { key: "boughtBy", label: "Kyllä, käytän omaa" },
+      ];
 
   return (
     <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28">
@@ -221,7 +240,7 @@ export default function InvestmentsPage() {
                     <button
                       key={u.id}
                       type="button"
-                      onClick={() => { setBoughtBy(u.id); setSplitWith(null); }}
+                      onClick={() => { setBoughtBy(u.id); setSplitWith(null); setBonusBy(null); }}
                       className={cn(
                         "flex items-center gap-2 px-3 py-1.5 rounded-xl border-2 text-sm font-medium transition-all",
                         boughtBy === u.id
@@ -244,7 +263,7 @@ export default function InvestmentsPage() {
                 <div className="flex gap-2 flex-wrap">
                   <button
                     type="button"
-                    onClick={() => setSplitWith(null)}
+                    onClick={() => { setSplitWith(null); setBonusBy(null); }}
                     className={cn(
                       "px-3 py-1.5 rounded-xl border-2 text-sm font-medium transition-all",
                       !splitWith
@@ -257,7 +276,7 @@ export default function InvestmentsPage() {
                   {otherUser && (
                     <button
                       type="button"
-                      onClick={() => setSplitWith(prev => prev === otherUser.id ? null : otherUser.id)}
+                      onClick={() => { setSplitWith(prev => prev === otherUser.id ? null : otherUser.id); setBonusBy(null); }}
                       className={cn(
                         "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border-2 text-sm font-medium transition-all",
                         splitWith === otherUser.id
@@ -273,6 +292,41 @@ export default function InvestmentsPage() {
                 {splitWith && amount && !isNaN(parseFloat(amount)) && parseFloat(amount) > 0 && (
                   <p className="text-xs text-muted-foreground mt-1.5">
                     Kumpikin maksaa: {fmt(Math.round(parseFloat(amount) * 50))}
+                  </p>
+                )}
+              </div>
+
+              {/* Startup bonus funding */}
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1">
+                  <Sparkles className="w-3 h-3" />
+                  Rahoitettu aloitustuella?
+                </p>
+                <div className="flex gap-2 flex-wrap">
+                  {bonusOptions.map(opt => (
+                    <button
+                      key={String(opt.key)}
+                      type="button"
+                      onClick={() => setBonusBy(opt.key)}
+                      className={cn(
+                        "px-3 py-1.5 rounded-xl border-2 text-xs font-medium transition-all",
+                        bonusBy === opt.key
+                          ? "border-yellow-400 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200"
+                          : "border-border text-muted-foreground hover:border-muted-foreground/40",
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                {bonusBy && amount && !isNaN(parseFloat(amount)) && parseFloat(amount) > 0 && (
+                  <p className="text-xs text-yellow-700 dark:text-yellow-400 mt-1.5">
+                    {bonusBy === "both"
+                      ? `Kumpikin käyttää ${fmt(Math.round(parseFloat(amount) * 50))} aloitustukeaan`
+                      : bonusBy === "splitWith"
+                        ? `${USERS.find(u => u.id === splitWith)?.name.split(" ")[0]} käyttää ${fmt(Math.round(parseFloat(amount) * 50))} aloitustukeaan`
+                        : `Käytät ${fmt(Math.round(parseFloat(amount) * 100))} aloitustukeasi`
+                    }
                   </p>
                 )}
               </div>
@@ -341,6 +395,15 @@ export default function InvestmentsPage() {
                           {isExpensive && (
                             <span className="text-xs px-2 py-0.5 rounded-full shrink-0 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300">
                               Kallis kalusto
+                            </span>
+                          )}
+                          {inv.bonusBy && (
+                            <span className="text-xs px-2 py-0.5 rounded-full shrink-0 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 flex items-center gap-0.5">
+                              <Sparkles className="w-2.5 h-2.5" />
+                              Aloitustuki
+                              {inv.bonusBy === "both" ? " (molemmat)"
+                                : inv.bonusBy === "splitWith" ? ` (${splitUser?.name.split(" ")[0]})`
+                                : ` (${buyer?.name.split(" ")[0]})`}
                             </span>
                           )}
                         </div>

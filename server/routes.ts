@@ -1,8 +1,8 @@
 import type { Express } from "express";
 import { type Server } from "http";
-import { eq, desc, sql, ne } from "drizzle-orm";
+import { eq, desc, sql, ne, and } from "drizzle-orm";
 import { db } from "./db";
-import { customers, jobs, expenses, workerPayments, investments, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema } from "@shared/schema";
+import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
 
@@ -286,6 +286,32 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
       const data = insertInvestmentSchema.parse(body);
       const [row] = await db.insert(investments).values(data).returning();
+
+      // Auto-create startup bonus usage entries when bonusBy is set
+      if (row.bonusBy) {
+        const half = Math.round(row.amount / 2);
+        const isSplit = !!row.splitWith;
+        const usages: Array<{ userId: string; amount: number }> = [];
+        if (row.bonusBy === "both" && isSplit) {
+          usages.push({ userId: row.boughtBy,  amount: half });
+          usages.push({ userId: row.splitWith!, amount: half });
+        } else if (row.bonusBy === "boughtBy") {
+          usages.push({ userId: row.boughtBy, amount: isSplit ? half : row.amount });
+        } else if (row.bonusBy === "splitWith" && isSplit) {
+          usages.push({ userId: row.splitWith!, amount: half });
+        }
+        for (const u of usages) {
+          await db.insert(startupBonusUsages).values({
+            userId:       u.userId,
+            amount:       u.amount,
+            description:  row.description,
+            category:     row.category,
+            usedAt:       row.purchasedAt,
+            investmentId: row.id,
+          });
+        }
+      }
+
       res.status(201).json(row);
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -308,7 +334,51 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.delete("/api/investments/:id", async (req, res) => {
     try {
-      await db.delete(investments).where(eq(investments.id, Number(req.params.id)));
+      const id = Number(req.params.id);
+      // Remove linked bonus usage entries first
+      await db.delete(startupBonusUsages).where(eq(startupBonusUsages.investmentId, id));
+      await db.delete(investments).where(eq(investments.id, id));
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Startup bonus usages ─────────────────────────────────────────────────────
+
+  app.get("/api/startup-bonus-usages", async (req, res) => {
+    try {
+      const userId = req.query.userId as string | undefined;
+      const rows = userId
+        ? await db.select().from(startupBonusUsages).where(eq(startupBonusUsages.userId, userId)).orderBy(desc(startupBonusUsages.usedAt))
+        : await db.select().from(startupBonusUsages).orderBy(desc(startupBonusUsages.usedAt));
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/startup-bonus-usages", async (req, res) => {
+    try {
+      const body = { ...req.body };
+      if (typeof body.usedAt === "string") body.usedAt = new Date(body.usedAt);
+      const data = insertStartupBonusUsageSchema.parse(body);
+      const [row] = await db.insert(startupBonusUsages).values(data).returning();
+      res.status(201).json(row);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/startup-bonus-usages/:id", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      // Don't allow deleting entries that are linked to an investment (delete the investment instead)
+      const [existing] = await db.select().from(startupBonusUsages).where(eq(startupBonusUsages.id, id));
+      if (existing?.investmentId) {
+        return res.status(400).json({ error: "Poista investointi — käyttömerkintä poistuu automaattisesti" });
+      }
+      await db.delete(startupBonusUsages).where(eq(startupBonusUsages.id, id));
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

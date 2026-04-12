@@ -180,6 +180,7 @@ export const api = {
     category?: string;
     boughtBy: string;
     splitWith?: string | null;
+    bonusBy?: string | null;
     note?: string;
   }) => request<unknown>("POST", "/api/investments", data),
 
@@ -188,6 +189,19 @@ export const api = {
 
   deleteInvestment: (id: number) =>
     request<{ ok: boolean }>("DELETE", `/api/investments/${id}`),
+
+  getStartupBonusUsages: (userId: string) =>
+    request<unknown[]>("GET", `/api/startup-bonus-usages?userId=${encodeURIComponent(userId)}`),
+
+  addStartupBonusUsage: (data: {
+    userId: string;
+    amount: number;
+    description: string;
+    category?: string;
+  }) => request<unknown>("POST", "/api/startup-bonus-usages", data),
+
+  deleteStartupBonusUsage: (id: number) =>
+    request<{ ok: boolean }>("DELETE", `/api/startup-bonus-usages/${id}`),
 
   // Legacy compat stubs
   getJob: (_jobId: string): Promise<ApiResponse<{ ok: boolean; job?: unknown }>> =>

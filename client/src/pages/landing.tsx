@@ -41,13 +41,18 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen bg-background">
       <section className="relative pt-20 md:pt-28 pb-16 md:pb-24 overflow-hidden">
-        {/* Background image with overlay */}
+        {/* Background video with overlay */}
         <div className="absolute inset-0">
-          <img
-            src="/hero-workers.jpg"
-            alt=""
+          <video
+            autoPlay
+            muted
+            loop
+            playsInline
             className="w-full h-full object-cover object-center"
-          />
+            poster="/hero-workers.jpg"
+          >
+            <source src="/hero-bg.mp4" type="video/mp4" />
+          </video>
           <div className="absolute inset-0 bg-background/82" />
           <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-transparent to-background/40" />
         </div>

@@ -546,7 +546,10 @@ export default function LaskuriPage() {
   const [kvEligible, setKvEligible] = useState(true);
 
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: "", phone: "", email: "", address: "", urgency: "" as "" | "this_week" | "flexible", message: "" });
+  const [form, setForm] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return { name: "", phone: "", email: "", address: "", urgency: "" as "" | "this_week" | "flexible", message: "", coupon: params.get("ref") || "" };
+  });
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [sendError, setSendError] = useState("");
@@ -601,6 +604,7 @@ export default function LaskuriPage() {
           Palvelu: serviceDesc,
           "Hinta-arvio": `${activeTotal} € (kotitalousväh. jälkeen ~${afterKotitalous} €)`,
           Lisätiedot: form.message || "—",
+          Alennuskoodi: form.coupon || "—",
         }),
       });
       const json = await res.json();
@@ -1067,6 +1071,20 @@ export default function LaskuriPage() {
                   </button>
                 ))}
               </div>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                Alennuskoodi <span className="text-muted-foreground font-normal">(vapaaehtoinen)</span>
+              </label>
+              <Input
+                placeholder="esim. MATTI-X4Z"
+                value={form.coupon}
+                onChange={e => setForm(f => ({ ...f, coupon: e.target.value.toUpperCase() }))}
+                className="font-mono tracking-wider text-sm"
+              />
+              {form.coupon && (
+                <p className="text-xs text-primary mt-1">Koodi lisätty — 5 % alennus vahvistetaan yhteydenoton yhteydessä.</p>
+              )}
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Lisätiedot</label>

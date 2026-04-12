@@ -34,6 +34,10 @@ export default function BookingPage() {
   const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [coupon, setCoupon] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("ref") || "";
+  });
 
   const form = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -58,6 +62,7 @@ export default function BookingPage() {
           Alue:        data.address,
           Kiireellisyys: data.urgency === "this_week" ? "Tällä viikolla" : data.urgency === "flexible" ? "Ei kiireellinen" : "—",
           Viesti:      data.message,
+          Alennuskoodi: coupon || "—",
         }),
       });
       const json = await res.json();
@@ -191,6 +196,21 @@ export default function BookingPage() {
                   <FormMessage />
                 </FormItem>
               )} />
+
+              <div>
+                <label className="text-sm font-medium text-muted-foreground mb-1 block">
+                  Alennuskoodi <span className="font-normal">(vapaaehtoinen)</span>
+                </label>
+                <Input
+                  placeholder="esim. MATTI-X4Z"
+                  value={coupon}
+                  onChange={e => setCoupon(e.target.value.toUpperCase())}
+                  className="font-mono tracking-wider"
+                />
+                {coupon && (
+                  <p className="text-xs text-primary mt-1">Koodi lisätty — 5 % alennus vahvistetaan yhteydenoton yhteydessä.</p>
+                )}
+              </div>
 
               {error && (
                 <p className="text-sm text-destructive text-center">{error}</p>

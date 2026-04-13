@@ -84,6 +84,10 @@ export default function AdminJobsPage() {
   const [selectedWorkers, setSelectedWorkers] = useState<string[]>([]);
   const [savingWorkers, setSavingWorkers] = useState(false);
 
+  // Tip
+  const [tipAmount, setTipAmount] = useState("");
+  const [savingTip, setSavingTip] = useState(false);
+
   // Payment method + language for receipt
   const [paymentMethod, setPaymentMethod] = useState<string>("");
   const [receiptLang, setReceiptLang] = useState<"fi" | "en">("fi");
@@ -133,6 +137,7 @@ export default function AdminJobsPage() {
       setProgressNotes("");
       setContinuationPlan("");
       setContinuationDate("");
+      setTipAmount("");
       // Parse workers from assignedTo (comma-separated IDs or single name)
       setSelectedWorkers(parseWorkerIds(selected.job.assignedTo));
       setExpensesLoading(true);
@@ -258,6 +263,35 @@ export default function AdminJobsPage() {
       toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
     }
     setSavingFields(false);
+  };
+
+  const saveTip = async () => {
+    if (!selected || !tipAmount) return;
+    const tipCents = Math.round(parseFloat(tipAmount) * 100);
+    if (isNaN(tipCents) || tipCents <= 0) return;
+    setSavingTip(true);
+    const newPrice = selected.job.agreedPrice + tipCents;
+    const tipStr = (tipCents / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" });
+    const stamp = new Date().toLocaleDateString("fi-FI");
+    const appendedNotes = selected.job.notes
+      ? `${selected.job.notes}\n${stamp}: Tippi +${tipStr}`
+      : `${stamp}: Tippi +${tipStr}`;
+    const res = await api.updateJob(selected.job.id, { agreedPrice: newPrice, notes: appendedNotes });
+    if (res.ok) {
+      const updated: JobRow = {
+        ...selected,
+        job: { ...selected.job, agreedPrice: newPrice, notes: appendedNotes },
+      };
+      setSelected(updated);
+      setJobs(prev => prev.map(r => r.job.id === selected.job.id ? updated : r));
+      setEditPrice(String(newPrice / 100));
+      setEditNotes(appendedNotes);
+      setTipAmount("");
+      toast({ title: `Tippi kirjattu: +${tipStr}`, description: "Lisätty kirjanpitoon." });
+    } else {
+      toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
+    }
+    setSavingTip(false);
   };
 
   const handleSendPauseUpdate = async () => {
@@ -1028,6 +1062,39 @@ export default function AdminJobsPage() {
               )}
             </Card>
           )}
+
+          {/* Tip */}
+          <Card className="p-5 bg-card border-0 premium-shadow mb-4">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+              Tippi
+            </p>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Input
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="0"
+                  value={tipAmount}
+                  onChange={(e) => setTipAmount(e.target.value)}
+                  className="pr-8 text-lg font-semibold"
+                  onKeyDown={(e) => e.key === "Enter" && saveTip()}
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">€</span>
+              </div>
+              <Button
+                onClick={saveTip}
+                disabled={savingTip || !tipAmount || parseFloat(tipAmount) <= 0}
+                className="gap-2"
+              >
+                {savingTip ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                Kirjaa
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-2">
+              Tippi lisätään sovittuun hintaan ja kirjataan muistiinpanoihin.
+            </p>
+          </Card>
 
           {/* Receipt — payment method + send */}
           <Card className="p-5 bg-card border-0 premium-shadow mb-4">

@@ -130,7 +130,7 @@ const translations: Record<Language, Record<string, string>> = {
     "faq.q8": "Teettekö töitä taloyhtiöille tai liiketiloihin?",
     "faq.a8": "Kyllä. Teemme ikkunanpesua taloyhtiöille, kerrostaloihin ja liiketiloihin sopimuksen mukaan. Meillä on varusteet jopa 10 metrin korkuisiin kohteisiin.",
     "faq.q9": "Onko työnne vakuutettua ja riskitöntä tilaajalle?",
-    "faq.a9": "Kyllä. Toimimme vastuuvakuutuksen alaisena ja kaikki työmme on lainmukaista. Jos jotain menee vikaan, se on meidän vastuullamme — ei sinun.",
+    "faq.a9": "Toimimme vastuuvakuutuksen alaisena ja kaikki työmme on lainmukaista. Työskentelemme aina huolellisesti ja turvallisuus edellä. Jos työn aikana syntyy vahinkoa, meillä on vakuutusturva sen varalle — ja käsittelemme mahdolliset tilanteet aina asiallisesti yhdessä.",
     "faq.q10": "Onko palvelunne kotitalousvähennyskelpoinen?",
     "faq.a10": "Kyllä. Esimerkiksi ikkunanpesu on kotitalousvähennyskelpoinen palvelu. Lasku tulee aina sinulle, joten vähennyksen hakeminen verotuksessa on suoraviivaista.",
     
@@ -314,7 +314,7 @@ const translations: Record<Language, Record<string, string>> = {
     "faq.q8": "Do you work for housing companies or commercial spaces?",
     "faq.a8": "Yes. We clean windows for housing companies, apartment buildings and commercial premises by agreement. We have equipment for targets up to 10 metres high.",
     "faq.q9": "Is your work insured and risk-free for the customer?",
-    "faq.a9": "Yes. We operate under liability insurance and everything we do is legally compliant. If something goes wrong, it's our responsibility — not yours.",
+    "faq.a9": "We operate under liability insurance and everything we do is legally compliant. We always work carefully and with safety first. If damage occurs during a job, we have insurance cover for that — and we handle any situations professionally together.",
     "faq.q10": "Is your service eligible for the Finnish household tax deduction?",
     "faq.a10": "Yes. Services like window cleaning qualify for the kotitalousvähennys household deduction. You always receive an invoice from us, which makes claiming the deduction straightforward.",
     

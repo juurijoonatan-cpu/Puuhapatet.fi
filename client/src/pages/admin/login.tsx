@@ -13,6 +13,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { USERS, setAdminProfile, type AdminProfile } from "@/lib/admin-profile";
+import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD || "admin123";
@@ -78,9 +79,11 @@ export default function AdminLoginPage() {
     if (!selected) return;
     setIsLoading(true);
 
-    await new Promise((r) => setTimeout(r, 300));
+    // Fetch password from backend (cross-device), fall back to localStorage/default
+    const pwRes = await api.getUserPassword(selected.id);
+    const effectivePwd = (pwRes.ok && pwRes.data?.password) ? pwRes.data.password : getEffectivePassword(selected.id);
 
-    if (password === getEffectivePassword(selected.id)) {
+    if (password === effectivePwd) {
       setAdminSession();
       setAdminProfile(selected);
       toast({

@@ -3,7 +3,7 @@ import { type Server } from "http";
 import { eq, desc, sql, ne, and } from "drizzle-orm";
 import { Resend } from "resend";
 import { db } from "./db";
-import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
+import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 // Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
@@ -667,6 +667,35 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (e: any) {
       console.error("Email send error:", e);
       res.status(500).json({ error: e.message || "Sähköpostin lähetys epäonnistui" });
+    }
+  });
+
+  // ─── Admin user passwords (cross-device persistent) ─────────────────────────
+  // Note: client-side gate only, not a real security boundary.
+
+  app.get("/api/admin/user-password/:userId", async (req, res) => {
+    try {
+      const [row] = await db.select({ pw: users.passwordHash }).from(users).where(eq(users.username, req.params.userId));
+      res.json({ password: row?.pw ?? null }); // null = caller should use default
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/admin/user-password/:userId", async (req, res) => {
+    try {
+      const userId = req.params.userId;
+      const { password } = req.body;
+      if (!password || password.length < 4) return res.status(400).json({ error: "Liian lyhyt salasana" });
+      const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.username, userId));
+      if (existing) {
+        await db.update(users).set({ passwordHash: password }).where(eq(users.username, userId));
+      } else {
+        await db.insert(users).values({ name: userId, username: userId, passwordHash: password, role: "staff" });
+      }
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
   });
 

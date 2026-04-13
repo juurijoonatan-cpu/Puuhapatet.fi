@@ -87,13 +87,16 @@ export default function AdminSettingsPage() {
     setMarkingPaid(null);
   };
 
-  const handleChangePassword = () => {
+  const handleChangePassword = async () => {
     if (!profile) return;
     if (!currentPwd || !newPwd || !confirmPwd) {
       toast({ variant: "destructive", title: "Täytä kaikki kentät" });
       return;
     }
-    if (currentPwd !== getEffectivePassword(profile.id)) {
+    // Check current password: backend first, then localStorage/default
+    const pwRes = await api.getUserPassword(profile.id);
+    const activePwd = (pwRes.ok && pwRes.data?.password) ? pwRes.data.password : getEffectivePassword(profile.id);
+    if (currentPwd !== activePwd) {
       toast({ variant: "destructive", title: "Nykyinen salasana on väärin" });
       return;
     }
@@ -106,10 +109,16 @@ export default function AdminSettingsPage() {
       return;
     }
     setSavingPwd(true);
+    // Save to backend (cross-device) and localStorage (offline fallback)
+    const saveRes = await api.setUserPasswordRemote(profile.id, newPwd);
     setUserPassword(profile.id, newPwd);
     setCurrentPwd(""); setNewPwd(""); setConfirmPwd("");
     setSavingPwd(false);
-    toast({ title: "Salasana vaihdettu" });
+    if (saveRes.ok) {
+      toast({ title: "Salasana vaihdettu", description: "Toimii nyt kaikilla laitteilla." });
+    } else {
+      toast({ title: "Salasana vaihdettu", description: "Tallennettu tälle laitteelle (verkkovirhe)." });
+    }
   };
 
   const handleLogout = () => {
@@ -290,7 +299,7 @@ export default function AdminSettingsPage() {
             </Button>
           </div>
           <p className="text-xs text-muted-foreground mt-3">
-            Salasana tallennetaan tähän laitteeseen. Jos kirjaudut toiselta laitteelta, käytä alkuperäistä salasanaa.
+            Salasana tallennetaan pysyvästi — toimii kaikilla laitteilla.
           </p>
         </Card>
 

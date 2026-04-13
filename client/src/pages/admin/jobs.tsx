@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Loader2, ClipboardList, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Check, CalendarClock, Save, Plus, Trash2, Receipt, Users, TrendingUp } from "lucide-react";
+import { Loader2, ClipboardList, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Check, CalendarClock, Save, Plus, Trash2, Receipt, Users, TrendingUp, Clock } from "lucide-react";
 import { Link } from "wouter";
 
 import { Card } from "@/components/ui/card";
@@ -89,6 +89,14 @@ export default function AdminJobsPage() {
   const [receiptLang, setReceiptLang] = useState<"fi" | "en">("fi");
   const [sendingEmail, setSendingEmail] = useState(false);
 
+  // "Jatka myöhemmin" pause form
+  const [showPauseForm, setShowPauseForm] = useState(false);
+  const [progressNotes, setProgressNotes] = useState("");
+  const [continuationPlan, setContinuationPlan] = useState("");
+  const [continuationDate, setContinuationDate] = useState("");
+  const [pauseLang, setPauseLang] = useState<"fi" | "en">("fi");
+  const [sendingPauseEmail, setSendingPauseEmail] = useState(false);
+
   // Signatures
   const customerSigRef = useRef<HTMLCanvasElement>(null);
   const staffSigRef    = useRef<HTMLCanvasElement>(null);
@@ -121,6 +129,10 @@ export default function AdminJobsPage() {
       setEditingCustomerSig(false);
       setEditingStaffSig(false);
       setLocalAddons(new Set());
+      setShowPauseForm(false);
+      setProgressNotes("");
+      setContinuationPlan("");
+      setContinuationDate("");
       // Parse workers from assignedTo (comma-separated IDs or single name)
       setSelectedWorkers(parseWorkerIds(selected.job.assignedTo));
       setExpensesLoading(true);
@@ -246,6 +258,47 @@ export default function AdminJobsPage() {
       toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
     }
     setSavingFields(false);
+  };
+
+  const handleSendPauseUpdate = async () => {
+    if (!selected || !progressNotes.trim()) return;
+    setSendingPauseEmail(true);
+
+    // Append progress notes to the job's internal notes
+    const stamp = new Date().toLocaleDateString("fi-FI");
+    const appendedNotes = selected.job.notes
+      ? `${selected.job.notes}\n\n--- ${stamp} ---\n${progressNotes.trim()}`
+      : `--- ${stamp} ---\n${progressNotes.trim()}`;
+    await api.updateJob(selected.job.id, { notes: appendedNotes });
+    setEditNotes(appendedNotes);
+    const updatedRow: JobRow = { ...selected, job: { ...selected.job, notes: appendedNotes } };
+    setSelected(updatedRow);
+    setJobs(prev => prev.map(r => r.job.id === selected.job.id ? updatedRow : r));
+
+    if (selected.customer?.email) {
+      const senderProfile = getAdminProfile();
+      const res = await api.sendProgressUpdate({
+        to: selected.customer.email,
+        customerName: selected.customer.name,
+        description: selected.job.description,
+        progressNotes: progressNotes.trim(),
+        continuationPlan: continuationPlan.trim() || undefined,
+        continuationDate: continuationDate || undefined,
+        workerName: senderProfile?.name,
+        workerPhone: senderProfile?.phone,
+        lang: pauseLang,
+      });
+      if (res.ok) {
+        toast({ title: "Päivitys lähetetty!", description: `Sähköposti: ${selected.customer.email}` });
+      } else {
+        toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error });
+      }
+    } else {
+      toast({ title: "Muistiinpanot tallennettu", description: "Asiakkaalla ei ole sähköpostia." });
+    }
+
+    setShowPauseForm(false);
+    setSendingPauseEmail(false);
   };
 
   const toggleAddon = (key: AddonKey, price: number) => {
@@ -514,7 +567,116 @@ export default function AdminJobsPage() {
                 <Loader2 className="w-3 h-3 animate-spin" /> Tallennetaan…
               </div>
             )}
+            {job.status === "in_progress" && !showPauseForm && (
+              <div className="mt-3 pt-3 border-t border-border">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 text-orange-600 border-orange-300 hover:bg-orange-50 dark:hover:bg-orange-950/30"
+                  onClick={() => setShowPauseForm(true)}
+                >
+                  <Clock className="w-4 h-4" />
+                  Jatka myöhemmin — lähetä päivitys
+                </Button>
+              </div>
+            )}
           </Card>
+
+          {/* Pause / progress update form */}
+          {showPauseForm && (
+            <Card className="p-5 bg-card border-0 premium-shadow mb-4 border-l-4 border-orange-400">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-orange-500" />
+                  <p className="text-sm font-semibold text-foreground">Keikkapäivitys asiakkaalle</p>
+                </div>
+                <button
+                  onClick={() => setShowPauseForm(false)}
+                  className="text-muted-foreground hover:text-foreground text-lg leading-none"
+                  aria-label="Sulje"
+                >
+                  ×
+                </button>
+              </div>
+
+              {/* Language toggle */}
+              <div className="flex items-center gap-1.5 mb-4">
+                <span className="text-xs text-muted-foreground mr-1">Kieli:</span>
+                {(["fi", "en"] as const).map((l) => (
+                  <button
+                    key={l}
+                    type="button"
+                    onClick={() => setPauseLang(l)}
+                    className={cn(
+                      "px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all",
+                      pauseLang === l
+                        ? "border-primary bg-primary/5 text-foreground"
+                        : "border-border text-muted-foreground hover:border-muted-foreground/40",
+                    )}
+                  >
+                    {l === "fi" ? "🇫🇮 Suomi" : "🇬🇧 English"}
+                  </button>
+                ))}
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1.5">Mitä on tehty *</p>
+                  <Textarea
+                    value={progressNotes}
+                    onChange={(e) => setProgressNotes(e.target.value)}
+                    placeholder="Esim: Pestiin ikkunat ensimmäisessä kerroksessa ja parvekelasinpuhdistus tehty…"
+                    rows={3}
+                    className="text-sm resize-none"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1.5">Jatkosuunnitelma</p>
+                  <Textarea
+                    value={continuationPlan}
+                    onChange={(e) => setContinuationPlan(e.target.value)}
+                    placeholder="Esim: Seuraavalla käynnillä pestään yläkerran ikkunat ja terassi…"
+                    rows={2}
+                    className="text-sm resize-none"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1.5">Suunniteltu jatkopäivä</p>
+                  <input
+                    type="datetime-local"
+                    value={continuationDate}
+                    onChange={(e) => setContinuationDate(e.target.value)}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 mt-4">
+                <Button
+                  className="flex-1 gap-2"
+                  disabled={sendingPauseEmail || !progressNotes.trim()}
+                  onClick={handleSendPauseUpdate}
+                >
+                  {sendingPauseEmail
+                    ? <Loader2 className="w-4 h-4 animate-spin" />
+                    : <Mail className="w-4 h-4" />}
+                  {customer?.email ? "Lähetä asiakkaalle & tallenna" : "Tallenna muistiinpanot"}
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={sendingPauseEmail}
+                  onClick={() => setShowPauseForm(false)}
+                >
+                  Peruuta
+                </Button>
+              </div>
+              {!customer?.email && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Asiakkaalla ei ole sähköpostia — tallennetaan vain keikalle.
+                </p>
+              )}
+            </Card>
+          )}
 
           {/* Schedule card */}
           <Card className="p-5 bg-card border-0 premium-shadow mb-4">

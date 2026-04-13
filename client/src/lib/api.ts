@@ -226,6 +226,18 @@ export const api = {
     lang?: "fi" | "en";
   }) => request<{ ok: boolean; id?: string }>("POST", "/api/send-receipt", data),
 
+  sendProgressUpdate: (data: {
+    to: string;
+    customerName: string;
+    description?: string;
+    progressNotes: string;
+    continuationPlan?: string;
+    continuationDate?: string;
+    workerName?: string;
+    workerPhone?: string;
+    lang?: "fi" | "en";
+  }) => request<{ ok: boolean; id?: string }>("POST", "/api/send-progress-update", data),
+
   getCustomerJobCount: (customerId: number) =>
     request<{ count: number }>("GET", `/api/customers/${customerId}/job-count`),
 

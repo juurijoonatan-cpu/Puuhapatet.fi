@@ -670,6 +670,138 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Progress update email ────────────────────────────────────────────────────
+
+  app.post("/api/send-progress-update", async (req, res) => {
+    if (!resend) {
+      return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä — aseta RESEND_API_KEY ympäristömuuttuja." });
+    }
+    try {
+      const { to, customerName, description, progressNotes, continuationPlan, continuationDate, workerName, workerPhone, lang } = req.body;
+      if (!to || !customerName || !progressNotes) {
+        return res.status(400).json({ error: "Puuttuvia kenttiä" });
+      }
+
+      const isEn = lang === "en";
+      const firstName = customerName.split(" ")[0];
+      const workerFirst = workerName ? workerName.split(" ")[0] : "Puuhapatet";
+      const today = new Date().toLocaleDateString(isEn ? "en-GB" : "fi-FI");
+
+      const nextDateLine = continuationDate
+        ? (() => {
+            const d = new Date(continuationDate);
+            return d.toLocaleDateString(isEn ? "en-GB" : "fi-FI") + (
+              d.getHours() || d.getMinutes()
+                ? " " + d.toLocaleTimeString(isEn ? "en-GB" : "fi-FI", { hour: "2-digit", minute: "2-digit" })
+                : ""
+            );
+          })()
+        : null;
+
+      const html = `
+<!DOCTYPE html>
+<html lang="${isEn ? "en" : "fi"}">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f4f4f5">
+  <div style="max-width:560px;margin:24px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.12)">
+
+    <!-- Header -->
+    <div style="background:#18181b;padding:28px 32px;text-align:center">
+      <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700;letter-spacing:-0.3px">Puuhapatet.</h1>
+      <p style="margin:6px 0 0;color:#a1a1aa;font-size:13px">${isEn ? "Job update" : "Keikkapäivitys"} · ${today}</p>
+    </div>
+
+    <!-- Body -->
+    <div style="padding:28px 32px">
+
+      <!-- Greeting -->
+      <p style="color:#18181b;font-size:15px;line-height:1.6;margin:0 0 24px">
+        ${isEn
+          ? `Hi ${firstName}! We've been working on your property today and wanted to keep you in the loop on where things stand.`
+          : `Moi ${firstName}! Olemme käyneet luonanne tänään ja halusimme pitää sinut ajan tasalla tilanteesta.`}
+      </p>
+
+      <!-- What was done -->
+      <div style="background:#f0fdf4;border-radius:12px;padding:20px;margin-bottom:16px;border-left:4px solid #22c55e">
+        <p style="margin:0 0 8px;font-weight:700;color:#166534;font-size:12px;letter-spacing:.5px;text-transform:uppercase">${isEn ? "What we did today" : "Mitä tehtiin"}</p>
+        <p style="margin:0;color:#15803d;font-size:14px;line-height:1.7;white-space:pre-wrap">${progressNotes}</p>
+      </div>
+
+      ${continuationPlan ? `
+      <!-- Continuation plan -->
+      <div style="background:#eff6ff;border-radius:12px;padding:20px;margin-bottom:16px;border-left:4px solid #3b82f6">
+        <p style="margin:0 0 8px;font-weight:700;color:#1e40af;font-size:12px;letter-spacing:.5px;text-transform:uppercase">${isEn ? "Next visit plan" : "Jatkosuunnitelma"}</p>
+        <p style="margin:0;color:#1d4ed8;font-size:14px;line-height:1.7;white-space:pre-wrap">${continuationPlan}</p>
+      </div>` : ""}
+
+      ${nextDateLine ? `
+      <!-- Next date -->
+      <div style="background:#fafafa;border-radius:12px;padding:16px 20px;margin-bottom:16px;display:flex;align-items:center;gap:16px">
+        <div style="background:#18181b;border-radius:10px;padding:12px;flex-shrink:0;text-align:center;min-width:48px">
+          <span style="color:#fff;font-size:18px">📅</span>
+        </div>
+        <div>
+          <p style="margin:0 0 2px;font-weight:700;color:#18181b;font-size:12px;letter-spacing:.5px;text-transform:uppercase">${isEn ? "Scheduled next visit" : "Sovittu jatkopäivä"}</p>
+          <p style="margin:0;color:#52525b;font-size:15px;font-weight:600">${nextDateLine}</p>
+        </div>
+      </div>` : ""}
+
+      <!-- Service label -->
+      ${description ? `<p style="color:#a1a1aa;font-size:12px;margin:0 0 20px">
+        ${isEn ? "Service" : "Palvelu"}: ${description}
+      </p>` : ""}
+
+      <!-- CTA -->
+      <div style="text-align:center;margin-bottom:24px">
+        <p style="color:#52525b;font-size:13px;margin:0 0 10px;line-height:1.6">
+          ${isEn ? "Questions? Feel free to reach out directly." : "Kysyttävää? Ota rohkeasti yhteyttä suoraan."}
+        </p>
+        ${workerPhone
+          ? `<a href="tel:${workerPhone}" style="display:inline-block;background:#18181b;color:#fff;padding:10px 24px;border-radius:10px;text-decoration:none;font-weight:600;font-size:14px">${isEn ? "Call us →" : "Soita →"} ${workerPhone}</a>`
+          : `<a href="mailto:info@puuhapatet.fi" style="display:inline-block;background:#18181b;color:#fff;padding:10px 24px;border-radius:10px;text-decoration:none;font-weight:600;font-size:14px">info@puuhapatet.fi</a>`
+        }
+      </div>
+
+      <p style="color:#a1a1aa;font-size:12px;text-align:center;margin:0">
+        ${isEn ? "Window cleaning · lawn mowing · cleaning · yard care · painting" : "Ikkunapesu · nurmikko · siivous · pihahoito · maalaus"}
+      </p>
+    </div>
+
+    <!-- Footer -->
+    <div style="background:#fafafa;padding:20px 32px;border-top:1px solid #e4e4e7">
+      <p style="margin:0 0 12px;color:#52525b;font-size:13px;line-height:1.5">— ${workerFirst}</p>
+      <table style="width:100%;font-size:12px;color:#71717a">
+        <tr>
+          <td style="vertical-align:top">
+            <strong style="color:#18181b">${workerName || "Puuhapatet"}</strong><br>
+            ${workerPhone ? workerPhone + "<br>" : ""}
+          </td>
+          <td style="text-align:right;vertical-align:top">
+            <strong style="color:#18181b">Puuhapatet</strong><br>
+            <a href="mailto:info@puuhapatet.fi" style="color:#71717a;text-decoration:none">info@puuhapatet.fi</a><br>
+            <a href="https://puuhapatet.fi" style="color:#71717a;text-decoration:none">puuhapatet.fi</a>
+          </td>
+        </tr>
+      </table>
+    </div>
+  </div>
+</body>
+</html>`;
+
+      const result = await resend.emails.send({
+        from: FROM_EMAIL,
+        to,
+        subject: isEn ? `Job update — Puuhapatet, ${today}` : `Keikkapäivitys — Puuhapatet, ${today}`,
+        html,
+      });
+
+      res.json({ ok: true, id: result.data?.id });
+    } catch (e: any) {
+      console.error("Progress update email error:", e);
+      res.status(500).json({ error: e.message || "Sähköpostin lähetys epäonnistui" });
+    }
+  });
+
   // ─── Admin user passwords (cross-device persistent) ─────────────────────────
   // Note: client-side gate only, not a real security boundary.
 

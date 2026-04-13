@@ -48,14 +48,20 @@ export default function CalendarPage() {
   const webcalUrl = icsUrl.replace(/^https?:\/\//, "webcal://");
 
   const handleSubscribe = () => {
-    window.location.href = webcalUrl;
+    // iOS requires a real anchor click to trigger Calendar subscription prompt
+    const a = document.createElement("a");
+    a.href = webcalUrl;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   };
 
   const handleCopyUrl = async () => {
     try {
       await navigator.clipboard.writeText(icsUrl);
       setCopied(true);
-      toast({ title: "Linkki kopioitu!", description: "Liitä se iOS Kalenteriin: Lisää kalenteri → Tilattu kalenteri." });
+      toast({ title: "Linkki kopioitu!", description: "Avaa Kalenteri-app → Lisää tili → Tilattu kalenteri → liitä linkki." });
       setTimeout(() => setCopied(false), 2500);
     } catch {
       toast({ title: "Kopioi manuaalisesti", description: icsUrl });

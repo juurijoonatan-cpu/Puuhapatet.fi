@@ -209,6 +209,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.delete("/api/customers/:id", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      // Cascade: delete expenses → jobs → customer
+      const customerJobs = await db.select({ id: jobs.id }).from(jobs).where(eq(jobs.customerId, id));
+      for (const j of customerJobs) {
+        await db.delete(expenses).where(eq(expenses.jobId, j.id));
+      }
+      await db.delete(jobs).where(eq(jobs.customerId, id));
+      const [row] = await db.delete(customers).where(eq(customers.id, id)).returning();
+      if (!row) return res.status(404).json({ error: "Ei löydy" });
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── Expenses ─────────────────────────────────────────────────────────────────
 
   app.get("/api/jobs/:id/expenses", async (req, res) => {
@@ -486,11 +503,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä — aseta RESEND_API_KEY ympäristömuuttuja." });
     }
     try {
-      const { to, customerName, customerAddress, date, description, price, paymentMethod, workerName, workerPhone, workerYTunnus, isReturning } = req.body;
+      const { to, customerName, customerAddress, date, description, price, paymentMethod, workerName, workerPhone, workerYTunnus, isReturning, lang } = req.body;
       if (!to || !customerName || !description || !price) {
         return res.status(400).json({ error: "Puuttuvia kenttiä" });
       }
 
+      const isEn = lang === "en";
       const firstName = customerName.split(" ")[0];
       const workerFirst = workerName ? workerName.split(" ")[0] : "Puuhapatet";
 
@@ -500,50 +518,38 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const referralCode = `${nameTag}-${randTag}`;
       const referralLink = `https://puuhapatet.fi/tilaus?ref=${referralCode}`;
 
-      const greeting = isReturning
-        ? `Moi ${firstName}! Mukava nähdä sinut taas — homma on nyt hoidettu, kiitos jatkuvasta luottamuksesta.`
-        : `Moi ${firstName}! Homma on hoidettu — kiitos kun valitsit Puuhapatet.`;
+      // Detect service type from description
+      const descLower = description.toLowerCase();
+      const isWindowJob = /ikkuna|lasi|ikkunanpesu|window/.test(descLower);
+      const isLawnJob = /nurmik|leikkuu|ruohon/.test(descLower);
 
-      const paymentLine = paymentMethod ? `<tr><td style="padding:6px 0;color:#666">Maksutapa</td><td style="padding:6px 0;font-weight:600;text-align:right">${paymentMethod}</td></tr>` : "";
+      const greeting = isEn
+        ? (isReturning
+            ? `Hi ${firstName}! Great to see you again — all done, thanks for your continued trust.`
+            : `Hi ${firstName}! All done — thank you for choosing Puuhapatet.`)
+        : (isReturning
+            ? `Moi ${firstName}! Mukava nähdä sinut taas — homma on nyt hoidettu, kiitos jatkuvasta luottamuksesta.`
+            : `Moi ${firstName}! Homma on hoidettu — kiitos kun valitsit Puuhapatet.`);
 
-      const html = `
-<!DOCTYPE html>
-<html lang="fi">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f4f4f5">
-  <div style="max-width:560px;margin:24px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.12)">
+      const paymentLine = paymentMethod
+        ? `<tr><td style="padding:6px 0;color:#666">${isEn ? "Payment method" : "Maksutapa"}</td><td style="padding:6px 0;font-weight:600;text-align:right">${paymentMethod}</td></tr>`
+        : "";
 
-    <!-- Header -->
-    <div style="background:#18181b;padding:28px 32px;text-align:center">
-      <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700;letter-spacing:-0.3px">Puuhapatet.</h1>
-      <p style="margin:6px 0 0;color:#a1a1aa;font-size:13px">Kuitti · ${date}</p>
-    </div>
-
-    <!-- Body -->
-    <div style="padding:28px 32px">
-      <p style="color:#18181b;font-size:15px;line-height:1.6;margin:0 0 20px">${greeting}</p>
-
-      <!-- Receipt table -->
-      <div style="background:#fafafa;border-radius:12px;padding:20px;margin-bottom:24px">
-        <table style="width:100%;border-collapse:collapse;font-size:14px">
-          <tr><td style="padding:6px 0;color:#666">Asiakas</td><td style="padding:6px 0;font-weight:600;text-align:right">${customerName}</td></tr>
-          <tr><td style="padding:6px 0;color:#666">Osoite</td><td style="padding:6px 0;font-weight:600;text-align:right">${customerAddress || "—"}</td></tr>
-          <tr style="border-top:1px solid #e4e4e7"><td style="padding:6px 0;color:#666">Palvelu</td><td style="padding:6px 0;font-weight:600;text-align:right">${description}</td></tr>
-          ${paymentLine}
-          <tr style="border-top:2px solid #18181b"><td style="padding:10px 0;color:#18181b;font-weight:700;font-size:16px">Hinta</td><td style="padding:10px 0;font-weight:700;font-size:20px;text-align:right;color:#18181b">${price}</td></tr>
+      // ── Tips block ──────────────────────────────────────────────────────────
+      const tipsBlock = isWindowJob
+        ? (isEn ? `
+      <div style="background:#f8fafc;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #94a3b8">
+        <p style="margin:0 0 10px;font-weight:700;color:#334155;font-size:13px">WINDOW CARE TIPS</p>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;color:#475569">
+          <tr><td style="padding:4px 0;vertical-align:top;width:16px">🪟</td><td style="padding:4px 0 4px 6px">Wipe dust from window frames with a soft cloth before rain — this prevents dirt from running down onto the glass.</td></tr>
+          <tr><td style="padding:4px 0;vertical-align:top">☀️</td><td style="padding:4px 0 4px 6px">Don't clean windows in direct sunlight — detergent dries too quickly and leaves streaks. Shade or overcast works better.</td></tr>
+          <tr><td style="padding:4px 0;vertical-align:top">🧴</td><td style="padding:4px 0 4px 6px">For a quick touch-up, a clean microfibre cloth with just water is enough — detergent isn't always necessary.</td></tr>
         </table>
-      </div>
-
-      <!-- Household deduction -->
-      <div style="background:#ecfdf5;border-radius:12px;padding:16px;margin-bottom:24px">
-        <p style="margin:0 0 6px;font-weight:700;color:#065f46;font-size:13px">MUISTA KOTITALOUSVÄHENNYS</p>
-        <p style="margin:0;color:#047857;font-size:13px;line-height:1.6">
-          Tämä palvelu on <strong>kotitalousvähennyskelpoinen</strong>. Voit hakea verotuksessa 40 % työn osuudesta takaisin — enintään 2 250 € / henkilö / vuosi. Lasku toimii dokumenttina, ei erillistä kuittia tarvita.<br><br>
-          Lisätietoa: <a href="https://vero.fi/kotitalousvahennys" style="color:#047857;font-weight:600">vero.fi/kotitalousvähennys</a>
-        </p>
-      </div>
-
-      <!-- Window care tips -->
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0">
+          <p style="margin:0 0 4px;font-weight:600;color:#334155;font-size:12px">WHEN SHOULD YOU REBOOK?</p>
+          <p style="margin:0;color:#64748b;font-size:12px;line-height:1.6">Detached house: <strong>1–2 times per year</strong> — spring (dust and winter residue) and autumn before snow is the ideal combination. Apartment / terraced house: <strong>once a year</strong> is enough for most. Autumn is a great time — windows stay cleaner throughout winter.</p>
+        </div>
+      </div>` : `
       <div style="background:#f8fafc;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #94a3b8">
         <p style="margin:0 0 10px;font-weight:700;color:#334155;font-size:13px">VINKIT IKKUNOIDEN YLLÄPITOON</p>
         <table style="width:100%;border-collapse:collapse;font-size:13px;color:#475569">
@@ -555,40 +561,135 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           <p style="margin:0 0 4px;font-weight:600;color:#334155;font-size:12px">MILLOIN KANNATTAA TEHDÄ UUDELLEEN?</p>
           <p style="margin:0;color:#64748b;font-size:12px;line-height:1.6">Omakotitalo: <strong>1–2 kertaa vuodessa</strong> — kevät (pölyt ja talven jäljet) ja syksy ennen lumia on paras yhdistelmä. Kerrostalo ja rivitalo: <strong>kerran vuodessa</strong> riittää useimmille. Syksy on erinomainen ajankohta — ikkunat pysyvät puhtaampina koko talven läpi.</p>
         </div>
+      </div>`)
+        : isLawnJob
+        ? (isEn ? `
+      <div style="background:#f0fdf4;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #86efac">
+        <p style="margin:0 0 10px;font-weight:700;color:#166534;font-size:13px">LAWN CARE TIPS</p>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;color:#15803d">
+          <tr><td style="padding:4px 0;vertical-align:top;width:16px">🌿</td><td style="padding:4px 0 4px 6px">Mow regularly — overgrown grass stresses the lawn and becomes uneven.</td></tr>
+          <tr><td style="padding:4px 0;vertical-align:top">💧</td><td style="padding:4px 0 4px 6px">Water in the morning, not the evening — overnight moisture can encourage mould.</td></tr>
+          <tr><td style="padding:4px 0;vertical-align:top">🌱</td><td style="padding:4px 0 4px 6px">Leave grass clippings on the lawn occasionally — they act as a natural fertiliser.</td></tr>
+        </table>
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #bbf7d0">
+          <p style="margin:0 0 4px;font-weight:600;color:#166534;font-size:12px">WHEN TO MOW AGAIN?</p>
+          <p style="margin:0;color:#15803d;font-size:12px;line-height:1.6">Every <strong>1–2 weeks</strong> during the growing season. In the hottest part of summer you can mow less frequently.</p>
+        </div>
+      </div>` : `
+      <div style="background:#f0fdf4;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #86efac">
+        <p style="margin:0 0 10px;font-weight:700;color:#166534;font-size:13px">NURMIKON HOITOVINKIT</p>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;color:#15803d">
+          <tr><td style="padding:4px 0;vertical-align:top;width:16px">🌿</td><td style="padding:4px 0 4px 6px">Leikkaa nurmi säännöllisesti — liian pitkä ruoho stressaa kasveja ja tulee epätasaiseksi.</td></tr>
+          <tr><td style="padding:4px 0;vertical-align:top">💧</td><td style="padding:4px 0 4px 6px">Kastele aamuisin, ei illalla — kosteus yöllä voi edesauttaa homehtumista.</td></tr>
+          <tr><td style="padding:4px 0;vertical-align:top">🌱</td><td style="padding:4px 0 4px 6px">Jätä leikkuujäte ajoittain nurmelle — se toimii luonnollisena lannoitteena.</td></tr>
+        </table>
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #bbf7d0">
+          <p style="margin:0 0 4px;font-weight:600;color:#166534;font-size:12px">MILLOIN KANNATTAA TEHDÄ UUDELLEEN?</p>
+          <p style="margin:0;color:#15803d;font-size:12px;line-height:1.6">Kasvukaudella <strong>1–2 viikon välein</strong>. Kesä–heinäkuun kuumimpaan aikaan voi leikata harvemmin.</p>
+        </div>
+      </div>`)
+        : (isEn ? `
+      <div style="background:#f8fafc;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #94a3b8">
+        <p style="margin:0 0 10px;font-weight:700;color:#334155;font-size:13px">SERVICE COMPLETE — WHAT'S NEXT?</p>
+        <p style="margin:0;color:#475569;font-size:13px;line-height:1.6">
+          Good maintenance is preventive — regular upkeep saves time and money in the long run. If you notice anything that needs attention, get in touch directly — we respond quickly.
+        </p>
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0">
+          <p style="margin:0 0 4px;font-weight:600;color:#334155;font-size:12px">ALSO REMEMBER:</p>
+          <p style="margin:0;color:#64748b;font-size:12px;line-height:1.6">We offer a range of home services — window cleaning, lawn mowing, cleaning, yard maintenance, and painting. Easier when one trusted team handles everything.</p>
+        </div>
+      </div>` : `
+      <div style="background:#f8fafc;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #94a3b8">
+        <p style="margin:0 0 10px;font-weight:700;color:#334155;font-size:13px">PALVELU SUORITETTU — MITÄ SEURAAVAKSI?</p>
+        <p style="margin:0;color:#475569;font-size:13px;line-height:1.6">
+          Hyvä huolto on ennaltaehkäisevää — säännöllinen huolehtiminen säästää vaivaa ja kuluja pitkässä juoksussa. Jos huomaat jatkossa jotain, mitä haluaisit hoidetuksi, ota suoraan yhteyttä — vastaamme nopeasti.
+        </p>
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0">
+          <p style="margin:0 0 4px;font-weight:600;color:#334155;font-size:12px">MUISTA MYÖS:</p>
+          <p style="margin:0;color:#64748b;font-size:12px;line-height:1.6">Meiltä saat apua moniin kotitöihin — ikkunanpesu, nurmikon leikkuu, siivous, pihahoito ja maalaus. Helpompaa kun yksi luotettu tekijä hoitaa useamman asian.</p>
+        </div>
+      </div>`);
+
+      const html = `
+<!DOCTYPE html>
+<html lang="${isEn ? "en" : "fi"}">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f4f4f5">
+  <div style="max-width:560px;margin:24px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.12)">
+
+    <!-- Header -->
+    <div style="background:#18181b;padding:28px 32px;text-align:center">
+      <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700;letter-spacing:-0.3px">Puuhapatet.</h1>
+      <p style="margin:6px 0 0;color:#a1a1aa;font-size:13px">${isEn ? "Receipt" : "Kuitti"} · ${date}</p>
+    </div>
+
+    <!-- Body -->
+    <div style="padding:28px 32px">
+      <p style="color:#18181b;font-size:15px;line-height:1.6;margin:0 0 20px">${greeting}</p>
+
+      <!-- Receipt table -->
+      <div style="background:#fafafa;border-radius:12px;padding:20px;margin-bottom:24px">
+        <table style="width:100%;border-collapse:collapse;font-size:14px">
+          <tr><td style="padding:6px 0;color:#666">${isEn ? "Customer" : "Asiakas"}</td><td style="padding:6px 0;font-weight:600;text-align:right">${customerName}</td></tr>
+          <tr><td style="padding:6px 0;color:#666">${isEn ? "Address" : "Osoite"}</td><td style="padding:6px 0;font-weight:600;text-align:right">${customerAddress || "—"}</td></tr>
+          <tr style="border-top:1px solid #e4e4e7"><td style="padding:6px 0;color:#666">${isEn ? "Service" : "Palvelu"}</td><td style="padding:6px 0;font-weight:600;text-align:right">${description}</td></tr>
+          ${paymentLine}
+          <tr style="border-top:2px solid #18181b"><td style="padding:10px 0;color:#18181b;font-weight:700;font-size:16px">${isEn ? "Price" : "Hinta"}</td><td style="padding:10px 0;font-weight:700;font-size:20px;text-align:right;color:#18181b">${price}</td></tr>
+        </table>
       </div>
+
+      <!-- Household deduction -->
+      <div style="background:#ecfdf5;border-radius:12px;padding:16px;margin-bottom:24px">
+        <p style="margin:0 0 6px;font-weight:700;color:#065f46;font-size:13px">${isEn ? "HOUSEHOLD TAX DEDUCTION (KOTITALOUSVÄHENNYS)" : "MUISTA KOTITALOUSVÄHENNYS"}</p>
+        <p style="margin:0;color:#047857;font-size:13px;line-height:1.6">
+          ${isEn
+            ? `This service qualifies for the Finnish <strong>household tax deduction</strong>. You can reclaim 40% of the labour cost in your taxes — up to €2,250 per person per year. This invoice serves as documentation, no separate receipt needed.<br><br>More info: <a href="https://vero.fi/en/individuals/tax-cards-and-tax-returns/deductions/household-deduction/" style="color:#047857;font-weight:600">vero.fi (household deduction)</a>`
+            : `Tämä palvelu on <strong>kotitalousvähennyskelpoinen</strong>. Voit hakea verotuksessa 40 % työn osuudesta takaisin — enintään 2 250 € / henkilö / vuosi. Lasku toimii dokumenttina, ei erillistä kuittia tarvita.<br><br>Lisätietoa: <a href="https://vero.fi/kotitalousvahennys" style="color:#047857;font-weight:600">vero.fi/kotitalousvähennys</a>`
+          }
+        </p>
+      </div>
+
+      <!-- Service tips -->
+      ${tipsBlock}
 
       <!-- Google review ask -->
       <div style="background:#fffbeb;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #f59e0b">
-        <p style="margin:0 0 6px;font-weight:700;color:#92400e;font-size:13px">PIENI PYYNTÖ</p>
+        <p style="margin:0 0 6px;font-weight:700;color:#92400e;font-size:13px">${isEn ? "A SMALL REQUEST" : "PIENI PYYNTÖ"}</p>
         <p style="margin:0;color:#78350f;font-size:13px;line-height:1.6">
-          Jokainen arvostelu merkitsee meille enemmän kuin osaat kuvitella — olipa se sitten positiivinen tai parannettavaa antava, jokainen auttaa meitä kehittymään. Olemme pieni yritys ja rehellinen palaute on kullanarvoista.
+          ${isEn
+            ? "Every review means more to us than you might imagine — whether positive or constructive, each one helps us grow. We're a small business and honest feedback is invaluable."
+            : "Jokainen arvostelu merkitsee meille enemmän kuin osaat kuvitella — olipa se sitten positiivinen tai parannettavaa antava, jokainen auttaa meitä kehittymään. Olemme pieni yritys ja rehellinen palaute on kullanarvoista."
+          }
         </p>
-        <a href="https://g.page/r/CQo_lx1fQ57lEAE/review" style="display:inline-block;margin-top:10px;background:#f59e0b;color:#fff;padding:8px 18px;border-radius:8px;text-decoration:none;font-weight:600;font-size:13px">Jätä arvostelu →</a>
+        <a href="https://g.page/r/CQo_lx1fQ57lEAE/review" style="display:inline-block;margin-top:10px;background:#f59e0b;color:#fff;padding:8px 18px;border-radius:8px;text-decoration:none;font-weight:600;font-size:13px">${isEn ? "Leave a review →" : "Jätä arvostelu →"}</a>
       </div>
 
       <!-- Referral -->
       <div style="background:#f0f9ff;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #0ea5e9">
-        <p style="margin:0 0 6px;font-weight:700;color:#075985;font-size:13px">JAA KAVEREILLE — 5 % ALENNUS</p>
+        <p style="margin:0 0 6px;font-weight:700;color:#075985;font-size:13px">${isEn ? "SHARE WITH FRIENDS — 5% OFF" : "JAA KAVEREILLE — 5 % ALENNUS"}</p>
         <p style="margin:0 0 10px;color:#0369a1;font-size:13px;line-height:1.6">
-          Jos suosittelet meitä kaverille tai naapurille, he saavat <strong>5 % alennuksen</strong> ensimmäisestä tilauksestaan. Voimassa 30 päivää. Henkilökohtainen koodisi:
+          ${isEn
+            ? `If you recommend us to a friend or neighbour, they'll get <strong>5% off</strong> their first order. Valid for 30 days. Your personal code:`
+            : `Jos suosittelet meitä kaverille tai naapurille, he saavat <strong>5 % alennuksen</strong> ensimmäisestä tilauksestaan. Voimassa 30 päivää. Henkilökohtainen koodisi:`
+          }
         </p>
         <div style="background:#fff;border:1px solid #bae6fd;border-radius:8px;padding:10px 14px;text-align:center;margin-bottom:10px">
           <span style="font-family:monospace;font-size:18px;font-weight:700;color:#0c4a6e;letter-spacing:2px">${referralCode}</span>
         </div>
-        <a href="${referralLink}" style="display:inline-block;background:#0ea5e9;color:#fff;padding:8px 18px;border-radius:8px;text-decoration:none;font-weight:600;font-size:13px">Jaa linkki →</a>
+        <a href="${referralLink}" style="display:inline-block;background:#0ea5e9;color:#fff;padding:8px 18px;border-radius:8px;text-decoration:none;font-weight:600;font-size:13px">${isEn ? "Share link →" : "Jaa linkki →"}</a>
       </div>
 
       <!-- Next booking CTA -->
       <div style="text-align:center;margin-bottom:20px">
         <p style="color:#52525b;font-size:14px;margin:0 0 6px;line-height:1.6">
-          Tarvitsetko apua muissa kotihommissa?<br>
-          <span style="font-size:13px;color:#71717a">Nurmikon leikkuu · siivouspalvelut · pihahoito · maalaus</span>
+          ${isEn ? "Need help with other home tasks?" : "Tarvitsetko apua muissa kotihommissa?"}<br>
+          <span style="font-size:13px;color:#71717a">${isEn ? "Lawn mowing · cleaning · yard care · painting" : "Nurmikon leikkuu · siivouspalvelut · pihahoito · maalaus"}</span>
         </p>
-        <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;margin-top:10px;background:#18181b;color:#fff;padding:12px 28px;border-radius:10px;text-decoration:none;font-weight:600;font-size:14px">Varaa seuraava aika →</a>
+        <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;margin-top:10px;background:#18181b;color:#fff;padding:12px 28px;border-radius:10px;text-decoration:none;font-weight:600;font-size:14px">${isEn ? "Book your next service →" : "Varaa seuraava aika →"}</a>
       </div>
 
       <p style="color:#a1a1aa;font-size:12px;text-align:center;margin:16px 0 0">
-        Ikkunapesu · nurmikko · siivous · pihahoito · maalaus · roskakatos- ja terassihuollot
+        ${isEn ? "Window cleaning · lawn mowing · cleaning · yard care · painting" : "Ikkunapesu · nurmikko · siivous · pihahoito · maalaus · roskakatos- ja terassihuollot"}
       </p>
     </div>
 
@@ -619,7 +720,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const result = await resend.emails.send({
         from: FROM_EMAIL,
         to,
-        subject: `Kuitti tehty — Puuhapatet, ${date}`,
+        subject: isEn ? `Receipt — Puuhapatet, ${date}` : `Kuitti tehty — Puuhapatet, ${date}`,
         html,
       });
 

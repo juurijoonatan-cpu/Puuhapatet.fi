@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Loader2, Users, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Search, Save } from "lucide-react";
+import { Loader2, Users, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Search, Save, Trash2 } from "lucide-react";
 import { Link } from "wouter";
 
 import { Card } from "@/components/ui/card";
@@ -64,6 +64,8 @@ export default function AdminCustomersPage() {
   const [editAddress, setEditAddress] = useState("");
   const [editNotes, setEditNotes] = useState("");
   const [savingCustomer, setSavingCustomer] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     api.getCustomers().then((res) => {
@@ -72,7 +74,23 @@ export default function AdminCustomersPage() {
     });
   }, []);
 
+  const handleDeleteCustomer = async () => {
+    if (!selected) return;
+    setDeleting(true);
+    const res = await api.deleteCustomer(selected.id);
+    if (res.ok) {
+      setCustomers(prev => prev.filter(c => c.id !== selected.id));
+      setSelected(null);
+      setConfirmDelete(false);
+      toast({ title: "Asiakas poistettu", description: "Asiakas ja kaikki keikkatiedot on poistettu." });
+    } else {
+      toast({ variant: "destructive", title: "Poisto epäonnistui", description: res.error });
+    }
+    setDeleting(false);
+  };
+
   const openCustomer = async (c: Customer) => {
+    setConfirmDelete(false);
     setSelected({ ...c, jobs: undefined });
     setEditName(c.name);
     setEditPhone(c.phone);
@@ -223,7 +241,7 @@ export default function AdminCustomersPage() {
             </div>
           </Card>
 
-          <Card className="p-6 bg-card border-0 premium-shadow">
+          <Card className="p-6 bg-card border-0 premium-shadow mb-4">
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-4">
               Keikkahistoria
             </h2>
@@ -261,6 +279,46 @@ export default function AdminCustomersPage() {
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+          </Card>
+          <Card className="p-5 border border-destructive/20 bg-destructive/5">
+            <p className="text-xs font-semibold text-destructive uppercase tracking-wide mb-3">Vaaravyöhyke</p>
+            {!confirmDelete ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2 border-destructive/40 text-destructive hover:bg-destructive hover:text-destructive-foreground"
+                onClick={() => setConfirmDelete(true)}
+              >
+                <Trash2 className="w-4 h-4" />
+                Poista asiakas kokonaan
+              </Button>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm text-destructive font-medium">
+                  Poistetaanko {selected.name} pysyvästi? Kaikki keikkatiedot poistetaan myös. Tätä ei voi perua.
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    disabled={deleting}
+                    onClick={handleDeleteCustomer}
+                    className="gap-2"
+                  >
+                    {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                    Kyllä, poista pysyvästi
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={deleting}
+                    onClick={() => setConfirmDelete(false)}
+                  >
+                    Peruuta
+                  </Button>
+                </div>
               </div>
             )}
           </Card>

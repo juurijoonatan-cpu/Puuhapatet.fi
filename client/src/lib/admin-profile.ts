@@ -54,7 +54,10 @@ export function getAdminProfile(): AdminProfile | null {
   try {
     const stored = localStorage.getItem(PROFILE_KEY);
     if (!stored) return null;
-    return JSON.parse(stored) as AdminProfile;
+    const parsed = JSON.parse(stored) as AdminProfile;
+    // Always return fresh data from USERS (overrides any stale localStorage cache)
+    const fresh = USERS.find(u => u.id === parsed.id);
+    return fresh ?? parsed;
   } catch {
     return null;
   }

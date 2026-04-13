@@ -229,6 +229,12 @@ export const api = {
   getCustomerJobCount: (customerId: number) =>
     request<{ count: number }>("GET", `/api/customers/${customerId}/job-count`),
 
+  getUserPassword: (userId: string) =>
+    request<{ password: string | null }>("GET", `/api/admin/user-password/${userId}`),
+
+  setUserPasswordRemote: (userId: string, password: string) =>
+    request<{ ok: boolean }>("POST", `/api/admin/user-password/${userId}`, { password }),
+
   // Legacy compat stubs
   getJob: (_jobId: string): Promise<ApiResponse<{ ok: boolean; job?: unknown }>> =>
     Promise.resolve({ ok: false }),

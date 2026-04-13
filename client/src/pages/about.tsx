@@ -14,7 +14,7 @@ const founders = [
     initials: "MP",
     bio: "Olen 18 ja opiskelen Otaniemen lukiossa toista vuotta. Jalkapallo on vienyt minut pitkälle — olen pelannut kilpatasolla pitkään ja sali kuuluu arkeen. Urheilutausta on opettanut sen, mitä yrittäjyyskin vaatii: sitoutumista, systemaattisuutta ja halua kehittyä. Puuhapatet on ensimmäinen oikea askeleni yrittäjyyteen — ja aion ottaa sen vakavasti.",
     linkedin: "https://linkedin.com/in/matias-pitkanen",
-    phone: "+358400389999",
+    phone: "+358442350881",
   },
   {
     name: "Joonatan Juuri",

@@ -269,9 +269,34 @@ export default function AdminJobsPage() {
     const appendedNotes = selected.job.notes
       ? `${selected.job.notes}\n\n--- ${stamp} ---\n${progressNotes.trim()}`
       : `--- ${stamp} ---\n${progressNotes.trim()}`;
-    await api.updateJob(selected.job.id, { notes: appendedNotes });
+
+    // Build the patch: always update notes; if continuation date given,
+    // also reschedule the job (moves the calendar entry to the new date)
+    const patch: Parameters<typeof api.updateJob>[1] = {
+      notes: appendedNotes,
+      ...(continuationDate
+        ? {
+            scheduledAt: new Date(continuationDate).toISOString(),
+            status: "scheduled",
+          }
+        : {}),
+    };
+
+    await api.updateJob(selected.job.id, patch);
     setEditNotes(appendedNotes);
-    const updatedRow: JobRow = { ...selected, job: { ...selected.job, notes: appendedNotes } };
+    const updatedRow: JobRow = {
+      ...selected,
+      job: {
+        ...selected.job,
+        notes: appendedNotes,
+        ...(continuationDate
+          ? {
+              scheduledAt: new Date(continuationDate).toISOString(),
+              status: "scheduled" as const,
+            }
+          : {}),
+      },
+    };
     setSelected(updatedRow);
     setJobs(prev => prev.map(r => r.job.id === selected.job.id ? updatedRow : r));
 
@@ -289,12 +314,14 @@ export default function AdminJobsPage() {
         lang: pauseLang,
       });
       if (res.ok) {
-        toast({ title: "Päivitys lähetetty!", description: `Sähköposti: ${selected.customer.email}` });
+        const calMsg = continuationDate ? " Keikka siirretty kalenteriin." : "";
+        toast({ title: "Päivitys lähetetty!", description: `Sähköposti: ${selected.customer.email}.${calMsg}` });
       } else {
         toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error });
       }
     } else {
-      toast({ title: "Muistiinpanot tallennettu", description: "Asiakkaalla ei ole sähköpostia." });
+      const calMsg = continuationDate ? " Jatkopäivä lisätty kalenteriin." : "";
+      toast({ title: "Muistiinpanot tallennettu", description: `Asiakkaalla ei ole sähköpostia.${calMsg}` });
     }
 
     setShowPauseForm(false);

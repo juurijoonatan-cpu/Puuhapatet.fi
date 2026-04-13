@@ -500,6 +500,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const referralCode = `${nameTag}-${randTag}`;
       const referralLink = `https://puuhapatet.fi/tilaus?ref=${referralCode}`;
 
+      // Detect service type from description
+      const descLower = description.toLowerCase();
+      const isWindowJob = /ikkuna|lasi|ikkunanpesu|window/.test(descLower);
+      const isLawnJob = /nurmik|leikkuu|ruohon/.test(descLower);
+
       const greeting = isReturning
         ? `Moi ${firstName}! Mukava nähdä sinut taas — homma on nyt hoidettu, kiitos jatkuvasta luottamuksesta.`
         : `Moi ${firstName}! Homma on hoidettu — kiitos kun valitsit Puuhapatet.`;
@@ -543,7 +548,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         </p>
       </div>
 
-      <!-- Window care tips -->
+      <!-- Service tips -->
+      ${isWindowJob ? `
       <div style="background:#f8fafc;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #94a3b8">
         <p style="margin:0 0 10px;font-weight:700;color:#334155;font-size:13px">VINKIT IKKUNOIDEN YLLÄPITOON</p>
         <table style="width:100%;border-collapse:collapse;font-size:13px;color:#475569">
@@ -555,7 +561,29 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           <p style="margin:0 0 4px;font-weight:600;color:#334155;font-size:12px">MILLOIN KANNATTAA TEHDÄ UUDELLEEN?</p>
           <p style="margin:0;color:#64748b;font-size:12px;line-height:1.6">Omakotitalo: <strong>1–2 kertaa vuodessa</strong> — kevät (pölyt ja talven jäljet) ja syksy ennen lumia on paras yhdistelmä. Kerrostalo ja rivitalo: <strong>kerran vuodessa</strong> riittää useimmille. Syksy on erinomainen ajankohta — ikkunat pysyvät puhtaampina koko talven läpi.</p>
         </div>
-      </div>
+      </div>` : isLawnJob ? `
+      <div style="background:#f0fdf4;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #86efac">
+        <p style="margin:0 0 10px;font-weight:700;color:#166534;font-size:13px">NURMIKON HOITOVINKIT</p>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;color:#15803d">
+          <tr><td style="padding:4px 0;vertical-align:top;width:16px">🌿</td><td style="padding:4px 0 4px 6px">Leikkaa nurmi säännöllisesti — liian pitkä ruoho stressaa kasveja ja tulee epätasaiseksi.</td></tr>
+          <tr><td style="padding:4px 0;vertical-align:top">💧</td><td style="padding:4px 0 4px 6px">Kastele aamuisin, ei illalla — kosteus yöllä voi edesauttaa homehtumista.</td></tr>
+          <tr><td style="padding:4px 0;vertical-align:top">🌱</td><td style="padding:4px 0 4px 6px">Jätä leikkuujäte ajoittain nurmelle — se toimii luonnollisena lannoitteena.</td></tr>
+        </table>
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #bbf7d0">
+          <p style="margin:0 0 4px;font-weight:600;color:#166534;font-size:12px">MILLOIN KANNATTAA TEHDÄ UUDELLEEN?</p>
+          <p style="margin:0;color:#15803d;font-size:12px;line-height:1.6">Kasvukaudella <strong>1–2 viikon välein</strong>. Kesä–heinäkuun kuumimpaan aikaan voi leikata harvemmin.</p>
+        </div>
+      </div>` : `
+      <div style="background:#f8fafc;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #94a3b8">
+        <p style="margin:0 0 10px;font-weight:700;color:#334155;font-size:13px">PALVELU SUORITETTU — MITÄ SEURAAVAKSI?</p>
+        <p style="margin:0;color:#475569;font-size:13px;line-height:1.6">
+          Hyvä huolto on ennaltaehkäisevää — säännöllinen huolehtiminen säästää vaivaa ja kuluja pitkässä juoksussa. Jos huomaat jatkossa jotain, mitä haluaisit hoidetuksi, ota suoraan yhteyttä — vastaamme nopeasti.
+        </p>
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0">
+          <p style="margin:0 0 4px;font-weight:600;color:#334155;font-size:12px">MUISTA MYÖS:</p>
+          <p style="margin:0;color:#64748b;font-size:12px;line-height:1.6">Meiltä saat apua moniin kotitöihin — ikkunanpesu, nurmikon leikkuu, siivous, pihahoito ja maalaus. Helpompaa kun yksi luotettu tekijä hoitaa useamman asian.</p>
+        </div>
+      </div>`}
 
       <!-- Google review ask -->
       <div style="background:#fffbeb;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #f59e0b">

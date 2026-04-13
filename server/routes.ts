@@ -515,7 +515,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
     <!-- Header -->
     <div style="background:#18181b;padding:28px 32px;text-align:center">
-      <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700;letter-spacing:0.5px">PUUHAPATET</h1>
+      <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700;letter-spacing:-0.3px">Puuhapatet.</h1>
       <p style="margin:6px 0 0;color:#a1a1aa;font-size:13px">Kuitti · ${date}</p>
     </div>
 

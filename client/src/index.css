@@ -355,9 +355,31 @@
   }
   @page {
     margin: 1.5cm;
+    size: A4;
   }
-  /* Force visible colours for badges */
-  .bg-green-50, .bg-yellow-50, .bg-indigo-100 {
-    background-color: inherit !important;
+  /* Hide all navigation — header, footer, bottom nav */
+  header, nav, footer,
+  [role="navigation"],
+  .glass-nav {
+    display: none !important;
   }
+  /* Remove screen-only padding (nav offset) */
+  .min-h-screen {
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    min-height: unset !important;
+  }
+  /* Keep colour backgrounds for summary cards */
+  .bg-green-50  { background-color: #f0fdf4 !important; }
+  .bg-yellow-50 { background-color: #fefce8 !important; }
+  .bg-indigo-100 { background-color: #e0e7ff !important; }
+  .bg-blue-50   { background-color: #eff6ff !important; }
+  /* Prevent cards from breaking across pages */
+  .premium-shadow {
+    box-shadow: none !important;
+    border: 1px solid #e5e7eb !important;
+    break-inside: avoid;
+  }
+  /* Table rows shouldn't orphan */
+  tr { break-inside: avoid; }
 }

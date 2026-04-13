@@ -18,12 +18,12 @@ interface NavItem {
   href: string;
 }
 
-// Mobile bottom bar — keep to 5 most-used items (Calendar is placeholder)
+// Mobile bottom bar — 5 most-used items
 const mobileNavItems: NavItem[] = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/admin/dashboard" },
   { icon: Plus,            label: "Uusi",      href: "/admin/new" },
+  { icon: Calendar,        label: "Kalenteri", href: "/admin/calendar" },
   { icon: ClipboardList,   label: "Keikat",    href: "/admin/jobs" },
-  { icon: Users,           label: "Asiakkaat", href: "/admin/customers" },
   { icon: Settings,        label: "Asetukset", href: "/admin/settings" },
 ];
 

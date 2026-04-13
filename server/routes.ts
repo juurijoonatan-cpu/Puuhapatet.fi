@@ -8,12 +8,88 @@ import { customers, jobs, expenses, workerPayments, investments, startupBonusUsa
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 // Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
 const FROM_EMAIL = process.env.FROM_EMAIL || "Puuhapatet <onboarding@resend.dev>";
+// Optional: protect the calendar feed with a token (set CALENDAR_TOKEN env var on Render)
+const CALENDAR_TOKEN = process.env.CALENDAR_TOKEN || null;
+
+function escapeIcs(str: string): string {
+  return str.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
+}
+
+function toIcsDate(d: Date): string {
+  return d.toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z";
+}
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
 
   // ─── Health ──────────────────────────────────────────────────────────────────
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true, ts: new Date().toISOString() });
+  });
+
+  // ─── ICS Calendar feed ───────────────────────────────────────────────────────
+
+  app.get("/api/calendar.ics", async (req, res) => {
+    // Optional token check
+    if (CALENDAR_TOKEN && req.query.token !== CALENDAR_TOKEN) {
+      res.status(401).send("Unauthorized");
+      return;
+    }
+    try {
+      const rows = await db
+        .select({ job: jobs, customer: customers })
+        .from(jobs)
+        .leftJoin(customers, eq(jobs.customerId, customers.id))
+        .where(and(ne(jobs.status, "cancelled"), ne(jobs.status, "done")));
+
+      const now = toIcsDate(new Date());
+
+      const events = rows
+        .filter(r => r.job.scheduledAt)
+        .map(r => {
+          const start = new Date(r.job.scheduledAt!);
+          const end = new Date(start.getTime() + 2 * 60 * 60 * 1000); // +2h default duration
+          const summary = r.customer?.name
+            ? `${r.customer.name} — ${r.job.description}`
+            : r.job.description;
+          const price = (r.job.agreedPrice / 100).toFixed(2) + " €";
+          const desc = [
+            "Hinta: " + price,
+            r.customer?.phone ? "Puh: " + r.customer.phone : null,
+            r.job.notes ? "Muistiinpano: " + r.job.notes : null,
+          ].filter(Boolean).join("\\n");
+
+          return [
+            "BEGIN:VEVENT",
+            `UID:puuhapatet-job-${r.job.id}@puuhapatet.fi`,
+            `DTSTAMP:${now}`,
+            `DTSTART:${toIcsDate(start)}`,
+            `DTEND:${toIcsDate(end)}`,
+            `SUMMARY:${escapeIcs(summary)}`,
+            r.customer?.address ? `LOCATION:${escapeIcs(r.customer.address)}` : null,
+            `DESCRIPTION:${desc}`,
+            "END:VEVENT",
+          ].filter(Boolean).join("\r\n");
+        });
+
+      const ics = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Puuhapatet//Keikat//FI",
+        "X-WR-CALNAME:Puuhapatet Keikat",
+        "X-WR-CALDESC:Puuhapatetin aikataulutetut keikat",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+        ...events,
+        "END:VCALENDAR",
+      ].join("\r\n");
+
+      res.setHeader("Content-Type", "text/calendar; charset=utf-8");
+      res.setHeader("Content-Disposition", 'inline; filename="puuhapatet.ics"');
+      res.setHeader("Cache-Control", "no-cache, no-store");
+      res.send(ics);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   // ─── Customers ───────────────────────────────────────────────────────────────

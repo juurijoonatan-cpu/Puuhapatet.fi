@@ -8,12 +8,13 @@ import { useState, useEffect } from "react";
 import { Link } from "wouter";
 import {
   ArrowLeft, ChevronLeft, ChevronRight, Plus,
-  Calendar as CalendarIcon, MapPin, Loader2, Phone,
+  Calendar as CalendarIcon, MapPin, Loader2, Phone, Share2, Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
 
 type ViewMode = "list" | "week" | "day";
 
@@ -36,10 +37,30 @@ interface JobRow {
 }
 
 export default function CalendarPage() {
+  const { toast } = useToast();
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [currentDate, setCurrentDate] = useState(new Date());
   const [jobs, setJobs] = useState<JobRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [copied, setCopied] = useState(false);
+
+  const icsUrl = `${window.location.origin}/api/calendar.ics`;
+  const webcalUrl = icsUrl.replace(/^https?:\/\//, "webcal://");
+
+  const handleSubscribe = () => {
+    window.location.href = webcalUrl;
+  };
+
+  const handleCopyUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(icsUrl);
+      setCopied(true);
+      toast({ title: "Linkki kopioitu!", description: "Liitä se iOS Kalenteriin: Lisää kalenteri → Tilattu kalenteri." });
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      toast({ title: "Kopioi manuaalisesti", description: icsUrl });
+    }
+  };
 
   useEffect(() => {
     api.getJobs().then((res) => {
@@ -313,6 +334,38 @@ export default function CalendarPage() {
             ))}
           </div>
         </div>
+
+        {/* ── iOS Calendar subscribe ── */}
+        <Card className="flex items-center justify-between gap-3 px-4 py-3 bg-card border-0 premium-shadow mb-5">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-blue-500/10 flex items-center justify-center shrink-0">
+              <CalendarIcon className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-foreground leading-tight">iOS Kalenteri</p>
+              <p className="text-xs text-muted-foreground truncate">Synkronoi keikat suoraan puhelimeen</p>
+            </div>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <Button
+              size="sm"
+              className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs"
+              onClick={handleSubscribe}
+            >
+              <Share2 className="w-3.5 h-3.5" />
+              Tilaa
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5 text-xs"
+              onClick={handleCopyUrl}
+            >
+              {copied ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Share2 className="w-3.5 h-3.5" />}
+              {copied ? "Kopioitu" : "Kopioi"}
+            </Button>
+          </div>
+        </Card>
 
         {/* ── Loading ── */}
         {loading && (

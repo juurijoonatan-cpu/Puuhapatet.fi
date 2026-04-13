@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { Loader2, ClipboardList, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Check, CalendarClock, Save, Plus, Trash2, Receipt, Users, TrendingUp } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Loader2, ClipboardList, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Check, CalendarClock, Save, Plus, Trash2, Receipt, Users, TrendingUp, Clock } from "lucide-react";
 import { Link } from "wouter";
 
 import { Card } from "@/components/ui/card";
@@ -14,6 +14,15 @@ import { USERS, getAdminProfile } from "@/lib/admin-profile";
 import { cn } from "@/lib/utils";
 
 type DbStatus = "lead" | "scheduled" | "in_progress" | "done" | "cancelled";
+
+const ADDONS = [
+  { key: "balcony",  label: "Parveke-/terassilasitus", price: 39 },
+  { key: "railing",  label: "Lasikaide",               price: 39 },
+  { key: "mirror",   label: "Peilien pesu",            price: 19 },
+  { key: "canopy",   label: "Terassin lasikate",       price: 89 },
+  { key: "gutter",   label: "Rännien puhdistus",       price: 69 },
+] as const;
+type AddonKey = (typeof ADDONS)[number]["key"];
 
 const STATUS_FLOW: { key: DbStatus; label: string; color: string; bg: string }[] = [
   { key: "lead",        label: "Liidi",      color: "text-blue-700 dark:text-blue-300",   bg: "bg-blue-100 dark:bg-blue-900/50" },
@@ -62,6 +71,7 @@ export default function AdminJobsPage() {
   const [editDescription, setEditDescription] = useState("");
   const [editNotes, setEditNotes] = useState("");
   const [savingFields, setSavingFields] = useState(false);
+  const [localAddons, setLocalAddons] = useState<Set<AddonKey>>(new Set());
 
   interface Expense { id: number; description: string; amount: number; }
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -78,6 +88,24 @@ export default function AdminJobsPage() {
   const [paymentMethod, setPaymentMethod] = useState<string>("");
   const [receiptLang, setReceiptLang] = useState<"fi" | "en">("fi");
   const [sendingEmail, setSendingEmail] = useState(false);
+
+  // "Jatka myöhemmin" pause form
+  const [showPauseForm, setShowPauseForm] = useState(false);
+  const [progressNotes, setProgressNotes] = useState("");
+  const [continuationPlan, setContinuationPlan] = useState("");
+  const [continuationDate, setContinuationDate] = useState("");
+  const [pauseLang, setPauseLang] = useState<"fi" | "en">("fi");
+  const [sendingPauseEmail, setSendingPauseEmail] = useState(false);
+
+  // Signatures
+  const customerSigRef = useRef<HTMLCanvasElement>(null);
+  const staffSigRef    = useRef<HTMLCanvasElement>(null);
+  const [isDrawingCustomer, setIsDrawingCustomer] = useState(false);
+  const [isDrawingStaff,    setIsDrawingStaff]    = useState(false);
+  const [editingCustomerSig, setEditingCustomerSig] = useState(false);
+  const [editingStaffSig,    setEditingStaffSig]    = useState(false);
+  const [savingCustomerSig,  setSavingCustomerSig]  = useState(false);
+  const [savingStaffSig,     setSavingStaffSig]     = useState(false);
 
   const loadJobs = () => {
     setLoading(true);
@@ -98,6 +126,13 @@ export default function AdminJobsPage() {
       setExpenses([]);
       setNewExpenseDesc("");
       setNewExpenseAmount("");
+      setEditingCustomerSig(false);
+      setEditingStaffSig(false);
+      setLocalAddons(new Set());
+      setShowPauseForm(false);
+      setProgressNotes("");
+      setContinuationPlan("");
+      setContinuationDate("");
       // Parse workers from assignedTo (comma-separated IDs or single name)
       setSelectedWorkers(parseWorkerIds(selected.job.assignedTo));
       setExpensesLoading(true);
@@ -225,6 +260,88 @@ export default function AdminJobsPage() {
     setSavingFields(false);
   };
 
+  const handleSendPauseUpdate = async () => {
+    if (!selected || !progressNotes.trim()) return;
+    setSendingPauseEmail(true);
+
+    // Append progress notes to the job's internal notes
+    const stamp = new Date().toLocaleDateString("fi-FI");
+    const appendedNotes = selected.job.notes
+      ? `${selected.job.notes}\n\n--- ${stamp} ---\n${progressNotes.trim()}`
+      : `--- ${stamp} ---\n${progressNotes.trim()}`;
+
+    // Build the patch: always update notes; if continuation date given,
+    // also reschedule the job (moves the calendar entry to the new date)
+    const patch: Parameters<typeof api.updateJob>[1] = {
+      notes: appendedNotes,
+      ...(continuationDate
+        ? {
+            scheduledAt: new Date(continuationDate).toISOString(),
+            status: "scheduled",
+          }
+        : {}),
+    };
+
+    await api.updateJob(selected.job.id, patch);
+    setEditNotes(appendedNotes);
+    const updatedRow: JobRow = {
+      ...selected,
+      job: {
+        ...selected.job,
+        notes: appendedNotes,
+        ...(continuationDate
+          ? {
+              scheduledAt: new Date(continuationDate).toISOString(),
+              status: "scheduled" as const,
+            }
+          : {}),
+      },
+    };
+    setSelected(updatedRow);
+    setJobs(prev => prev.map(r => r.job.id === selected.job.id ? updatedRow : r));
+
+    if (selected.customer?.email) {
+      const senderProfile = getAdminProfile();
+      const res = await api.sendProgressUpdate({
+        to: selected.customer.email,
+        customerName: selected.customer.name,
+        description: selected.job.description,
+        progressNotes: progressNotes.trim(),
+        continuationPlan: continuationPlan.trim() || undefined,
+        continuationDate: continuationDate || undefined,
+        workerName: senderProfile?.name,
+        workerPhone: senderProfile?.phone,
+        lang: pauseLang,
+      });
+      if (res.ok) {
+        const calMsg = continuationDate ? " Keikka siirretty kalenteriin." : "";
+        toast({ title: "Päivitys lähetetty!", description: `Sähköposti: ${selected.customer.email}.${calMsg}` });
+      } else {
+        toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error });
+      }
+    } else {
+      const calMsg = continuationDate ? " Jatkopäivä lisätty kalenteriin." : "";
+      toast({ title: "Muistiinpanot tallennettu", description: `Asiakkaalla ei ole sähköpostia.${calMsg}` });
+    }
+
+    setShowPauseForm(false);
+    setSendingPauseEmail(false);
+  };
+
+  const toggleAddon = (key: AddonKey, price: number) => {
+    setLocalAddons(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+        setEditPrice(p => String(Math.max(0, parseFloat(p || "0") - price)));
+      } else {
+        next.add(key);
+        setEditPrice(p => String(parseFloat(p || "0") + price));
+      }
+      return next;
+    });
+  };
+
   const addExpense = async () => {
     if (!selected || !newExpenseDesc.trim() || !newExpenseAmount) return;
     const amount = Math.round(parseFloat(newExpenseAmount) * 100);
@@ -266,6 +383,95 @@ export default function AdminJobsPage() {
       toast({ variant: "destructive", title: "Poisto epäonnistui", description: res.error });
     }
     setDeleting(false);
+  };
+
+  // ── Canvas signatures ────────────────────────────────────────────────────────
+
+  const initCanvas = (canvas: HTMLCanvasElement | null) => {
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = rect.width  * dpr;
+    canvas.height = rect.height * dpr;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.scale(dpr, dpr);
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+  };
+
+  const startSigDraw = (e: React.MouseEvent | React.TouchEvent, isCustomer: boolean) => {
+    if ("touches" in e) e.preventDefault();
+    const canvas = isCustomer ? customerSigRef.current : staffSigRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const rect = canvas.getBoundingClientRect();
+    const clientX = "touches" in e ? e.touches[0].clientX : e.clientX;
+    const clientY = "touches" in e ? e.touches[0].clientY : e.clientY;
+    ctx.beginPath();
+    ctx.moveTo(clientX - rect.left, clientY - rect.top);
+    if (isCustomer) setIsDrawingCustomer(true); else setIsDrawingStaff(true);
+  };
+
+  const sigDraw = (e: React.MouseEvent | React.TouchEvent, isCustomer: boolean) => {
+    if (!(isCustomer ? isDrawingCustomer : isDrawingStaff)) return;
+    if ("touches" in e) e.preventDefault();
+    const canvas = isCustomer ? customerSigRef.current : staffSigRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const rect = canvas.getBoundingClientRect();
+    const clientX = "touches" in e ? e.touches[0].clientX : e.clientX;
+    const clientY = "touches" in e ? e.touches[0].clientY : e.clientY;
+    ctx.lineTo(clientX - rect.left, clientY - rect.top);
+    ctx.stroke();
+  };
+
+  const stopSigDraw = (isCustomer: boolean) => {
+    if (isCustomer) setIsDrawingCustomer(false); else setIsDrawingStaff(false);
+  };
+
+  const clearSigCanvas = (isCustomer: boolean) => {
+    const canvas = isCustomer ? customerSigRef.current : staffSigRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    ctx?.clearRect(0, 0, canvas.width, canvas.height);
+  };
+
+  const saveSignature = async (isCustomer: boolean) => {
+    if (!selected) return;
+    const canvas = isCustomer ? customerSigRef.current : staffSigRef.current;
+    if (!canvas) return;
+    const dataUrl = canvas.toDataURL();
+    if (isCustomer) setSavingCustomerSig(true); else setSavingStaffSig(true);
+    const patch = isCustomer ? { customerSignature: dataUrl } : { staffSignature: dataUrl };
+    const res = await api.updateJob(selected.job.id, patch as any);
+    if (res.ok) {
+      const updated: JobRow = { ...selected, job: { ...selected.job, ...patch } };
+      setSelected(updated);
+      setJobs(prev => prev.map(r => r.job.id === selected.job.id ? updated : r));
+      if (isCustomer) setEditingCustomerSig(false); else setEditingStaffSig(false);
+      toast({ title: "Allekirjoitus tallennettu" });
+    } else {
+      toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
+    }
+    if (isCustomer) setSavingCustomerSig(false); else setSavingStaffSig(false);
+  };
+
+  const clearSignatureField = async (isCustomer: boolean) => {
+    if (!selected) return;
+    const patch = isCustomer ? { customerSignature: null } : { staffSignature: null };
+    const res = await api.updateJob(selected.job.id, patch as any);
+    if (res.ok) {
+      const updated: JobRow = { ...selected, job: { ...selected.job, ...patch } };
+      setSelected(updated);
+      setJobs(prev => prev.map(r => r.job.id === selected.job.id ? updated : r));
+      clearSigCanvas(isCustomer);
+      if (isCustomer) setEditingCustomerSig(true); else setEditingStaffSig(true);
+    }
   };
 
   const hasFieldChanges = selected
@@ -388,7 +594,116 @@ export default function AdminJobsPage() {
                 <Loader2 className="w-3 h-3 animate-spin" /> Tallennetaan…
               </div>
             )}
+            {job.status === "in_progress" && !showPauseForm && (
+              <div className="mt-3 pt-3 border-t border-border">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 text-orange-600 border-orange-300 hover:bg-orange-50 dark:hover:bg-orange-950/30"
+                  onClick={() => setShowPauseForm(true)}
+                >
+                  <Clock className="w-4 h-4" />
+                  Jatka myöhemmin — lähetä päivitys
+                </Button>
+              </div>
+            )}
           </Card>
+
+          {/* Pause / progress update form */}
+          {showPauseForm && (
+            <Card className="p-5 bg-card border-0 premium-shadow mb-4 border-l-4 border-orange-400">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-orange-500" />
+                  <p className="text-sm font-semibold text-foreground">Keikkapäivitys asiakkaalle</p>
+                </div>
+                <button
+                  onClick={() => setShowPauseForm(false)}
+                  className="text-muted-foreground hover:text-foreground text-lg leading-none"
+                  aria-label="Sulje"
+                >
+                  ×
+                </button>
+              </div>
+
+              {/* Language toggle */}
+              <div className="flex items-center gap-1.5 mb-4">
+                <span className="text-xs text-muted-foreground mr-1">Kieli:</span>
+                {(["fi", "en"] as const).map((l) => (
+                  <button
+                    key={l}
+                    type="button"
+                    onClick={() => setPauseLang(l)}
+                    className={cn(
+                      "px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all",
+                      pauseLang === l
+                        ? "border-primary bg-primary/5 text-foreground"
+                        : "border-border text-muted-foreground hover:border-muted-foreground/40",
+                    )}
+                  >
+                    {l === "fi" ? "🇫🇮 Suomi" : "🇬🇧 English"}
+                  </button>
+                ))}
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1.5">Mitä on tehty *</p>
+                  <Textarea
+                    value={progressNotes}
+                    onChange={(e) => setProgressNotes(e.target.value)}
+                    placeholder="Esim: Pestiin ikkunat ensimmäisessä kerroksessa ja parvekelasinpuhdistus tehty…"
+                    rows={3}
+                    className="text-sm resize-none"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1.5">Jatkosuunnitelma</p>
+                  <Textarea
+                    value={continuationPlan}
+                    onChange={(e) => setContinuationPlan(e.target.value)}
+                    placeholder="Esim: Seuraavalla käynnillä pestään yläkerran ikkunat ja terassi…"
+                    rows={2}
+                    className="text-sm resize-none"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1.5">Suunniteltu jatkopäivä</p>
+                  <input
+                    type="datetime-local"
+                    value={continuationDate}
+                    onChange={(e) => setContinuationDate(e.target.value)}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 mt-4">
+                <Button
+                  className="flex-1 gap-2"
+                  disabled={sendingPauseEmail || !progressNotes.trim()}
+                  onClick={handleSendPauseUpdate}
+                >
+                  {sendingPauseEmail
+                    ? <Loader2 className="w-4 h-4 animate-spin" />
+                    : <Mail className="w-4 h-4" />}
+                  {customer?.email ? "Lähetä asiakkaalle & tallenna" : "Tallenna muistiinpanot"}
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={sendingPauseEmail}
+                  onClick={() => setShowPauseForm(false)}
+                >
+                  Peruuta
+                </Button>
+              </div>
+              {!customer?.email && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Asiakkaalla ei ole sähköpostia — tallennetaan vain keikalle.
+                </p>
+              )}
+            </Card>
+          )}
 
           {/* Schedule card */}
           <Card className="p-5 bg-card border-0 premium-shadow mb-4">
@@ -499,6 +814,47 @@ export default function AdminJobsPage() {
                 Luotu: {new Date(job.createdAt).toLocaleDateString("fi-FI")}
               </p>
             </div>
+          </Card>
+
+          {/* Add-ons card */}
+          <Card className="p-5 bg-card border-0 premium-shadow mb-4">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+              Lisäpalvelut
+            </p>
+            <div className="grid grid-cols-1 gap-2">
+              {ADDONS.map(({ key, label, price }) => {
+                const active = localAddons.has(key);
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => toggleAddon(key, price)}
+                    className={cn(
+                      "p-3 rounded-xl border-2 text-left flex items-center justify-between gap-2 transition-all",
+                      active
+                        ? "border-primary bg-primary/5"
+                        : "border-border bg-card hover:border-primary/40",
+                    )}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={cn(
+                        "w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0",
+                        active ? "border-primary bg-primary" : "border-muted-foreground/40",
+                      )}>
+                        {active && <Check className="w-3 h-3 text-white" />}
+                      </div>
+                      <span className="text-xs font-medium text-foreground">{label}</span>
+                    </div>
+                    <span className="text-xs font-semibold text-primary">+{price} €</span>
+                  </button>
+                );
+              })}
+            </div>
+            {localAddons.size > 0 && (
+              <p className="text-[11px] text-muted-foreground mt-3">
+                Lisätty sovittuun hintaan — tallenna muutokset Keikan tiedot -kortissa.
+              </p>
+            )}
           </Card>
 
           {/* Workers card */}
@@ -815,27 +1171,103 @@ export default function AdminJobsPage() {
             )}
           </Card>
 
-          {(job.customerSignature || job.staffSignature) && (
-            <Card className="p-5 bg-card border-0 premium-shadow mb-4">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-                Allekirjoitukset
-              </p>
-              <div className="grid grid-cols-2 gap-4">
-                {job.customerSignature && (
+          {/* Signatures — always editable */}
+          <Card className="p-5 bg-card border-0 premium-shadow mb-4">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-4">
+              Allekirjoitukset
+            </p>
+            <div className="grid grid-cols-2 gap-4">
+              {/* Customer signature */}
+              {(() => {
+                const showCanvas = !job.customerSignature || editingCustomerSig;
+                return (
                   <div>
-                    <p className="text-xs text-muted-foreground mb-1">Asiakas</p>
-                    <img src={job.customerSignature} alt="Asiakkaan allekirjoitus" className="w-full h-20 object-contain bg-white rounded-lg border p-1" />
+                    <p className="text-xs text-muted-foreground mb-1.5">Asiakas</p>
+                    {!showCanvas ? (
+                      <>
+                        <img src={job.customerSignature!} alt="Asiakkaan allekirjoitus" className="w-full h-20 object-contain bg-white rounded-lg border p-1 mb-2" />
+                        <Button variant="outline" size="sm" className="w-full text-xs gap-1.5" onClick={() => clearSignatureField(true)}>
+                          Muuta
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <canvas
+                          ref={canvas => { (customerSigRef as React.MutableRefObject<HTMLCanvasElement | null>).current = canvas; initCanvas(canvas); }}
+                          className="w-full h-20 border rounded-lg bg-white touch-none cursor-crosshair mb-2"
+                          onMouseDown={e => startSigDraw(e, true)}
+                          onMouseMove={e => sigDraw(e, true)}
+                          onMouseUp={() => stopSigDraw(true)}
+                          onMouseLeave={() => stopSigDraw(true)}
+                          onTouchStart={e => startSigDraw(e, true)}
+                          onTouchMove={e => sigDraw(e, true)}
+                          onTouchEnd={() => stopSigDraw(true)}
+                        />
+                        <div className="flex gap-1.5">
+                          <Button size="sm" className="flex-1 text-xs" disabled={savingCustomerSig} onClick={() => saveSignature(true)}>
+                            {savingCustomerSig ? <Loader2 className="w-3 h-3 animate-spin" /> : "Tallenna"}
+                          </Button>
+                          <Button variant="outline" size="sm" className="text-xs" onClick={() => clearSigCanvas(true)}>
+                            Tyhjennä
+                          </Button>
+                          {job.customerSignature && (
+                            <Button variant="ghost" size="sm" className="text-xs" onClick={() => setEditingCustomerSig(false)}>
+                              Peru
+                            </Button>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
-                )}
-                {job.staffSignature && (
+                );
+              })()}
+
+              {/* Staff signature */}
+              {(() => {
+                const showCanvas = !job.staffSignature || editingStaffSig;
+                return (
                   <div>
-                    <p className="text-xs text-muted-foreground mb-1">Työntekijä</p>
-                    <img src={job.staffSignature} alt="Työntekijän allekirjoitus" className="w-full h-20 object-contain bg-white rounded-lg border p-1" />
+                    <p className="text-xs text-muted-foreground mb-1.5">Työntekijä</p>
+                    {!showCanvas ? (
+                      <>
+                        <img src={job.staffSignature!} alt="Työntekijän allekirjoitus" className="w-full h-20 object-contain bg-white rounded-lg border p-1 mb-2" />
+                        <Button variant="outline" size="sm" className="w-full text-xs gap-1.5" onClick={() => clearSignatureField(false)}>
+                          Muuta
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <canvas
+                          ref={canvas => { (staffSigRef as React.MutableRefObject<HTMLCanvasElement | null>).current = canvas; initCanvas(canvas); }}
+                          className="w-full h-20 border rounded-lg bg-white touch-none cursor-crosshair mb-2"
+                          onMouseDown={e => startSigDraw(e, false)}
+                          onMouseMove={e => sigDraw(e, false)}
+                          onMouseUp={() => stopSigDraw(false)}
+                          onMouseLeave={() => stopSigDraw(false)}
+                          onTouchStart={e => startSigDraw(e, false)}
+                          onTouchMove={e => sigDraw(e, false)}
+                          onTouchEnd={() => stopSigDraw(false)}
+                        />
+                        <div className="flex gap-1.5">
+                          <Button size="sm" className="flex-1 text-xs" disabled={savingStaffSig} onClick={() => saveSignature(false)}>
+                            {savingStaffSig ? <Loader2 className="w-3 h-3 animate-spin" /> : "Tallenna"}
+                          </Button>
+                          <Button variant="outline" size="sm" className="text-xs" onClick={() => clearSigCanvas(false)}>
+                            Tyhjennä
+                          </Button>
+                          {job.staffSignature && (
+                            <Button variant="ghost" size="sm" className="text-xs" onClick={() => setEditingStaffSig(false)}>
+                              Peru
+                            </Button>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
-                )}
-              </div>
-            </Card>
-          )}
+                );
+              })()}
+            </div>
+          </Card>
         </div>
       </div>
     );

@@ -13,7 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { api } from "@/lib/api";
+import { api, API_BASE } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 
 type ViewMode = "list" | "week" | "day";
@@ -44,7 +44,9 @@ export default function CalendarPage() {
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
 
-  const icsUrl = `${window.location.origin}/api/calendar.ics`;
+  // Always use the backend URL (HTTPS on Render) — not window.location.origin
+  // because the frontend domain doesn't proxy /api/ requests
+  const icsUrl = `${API_BASE}/api/calendar.ics`;
   const webcalUrl = icsUrl.replace(/^https?:\/\//, "webcal://");
 
   const handleSubscribe = () => {

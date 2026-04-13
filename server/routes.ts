@@ -535,80 +535,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ? `<tr><td style="padding:6px 0;color:#666">${isEn ? "Payment method" : "Maksutapa"}</td><td style="padding:6px 0;font-weight:600;text-align:right">${paymentMethod}</td></tr>`
         : "";
 
-      // ── Tips block ──────────────────────────────────────────────────────────
-      const tipsBlock = isWindowJob
-        ? (isEn ? `
-      <div style="background:#f8fafc;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #94a3b8">
-        <p style="margin:0 0 10px;font-weight:700;color:#334155;font-size:13px">WINDOW CARE TIPS</p>
-        <table style="width:100%;border-collapse:collapse;font-size:13px;color:#475569">
-          <tr><td style="padding:4px 0;vertical-align:top;width:16px">🪟</td><td style="padding:4px 0 4px 6px">Wipe dust from window frames with a soft cloth before rain — this prevents dirt from running down onto the glass.</td></tr>
-          <tr><td style="padding:4px 0;vertical-align:top">☀️</td><td style="padding:4px 0 4px 6px">Don't clean windows in direct sunlight — detergent dries too quickly and leaves streaks. Shade or overcast works better.</td></tr>
-          <tr><td style="padding:4px 0;vertical-align:top">🧴</td><td style="padding:4px 0 4px 6px">For a quick touch-up, a clean microfibre cloth with just water is enough — detergent isn't always necessary.</td></tr>
-        </table>
-        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0">
-          <p style="margin:0 0 4px;font-weight:600;color:#334155;font-size:12px">WHEN SHOULD YOU REBOOK?</p>
-          <p style="margin:0;color:#64748b;font-size:12px;line-height:1.6">Detached house: <strong>1–2 times per year</strong> — spring (dust and winter residue) and autumn before snow is the ideal combination. Apartment / terraced house: <strong>once a year</strong> is enough for most. Autumn is a great time — windows stay cleaner throughout winter.</p>
-        </div>
-      </div>` : `
-      <div style="background:#f8fafc;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #94a3b8">
-        <p style="margin:0 0 10px;font-weight:700;color:#334155;font-size:13px">VINKIT IKKUNOIDEN YLLÄPITOON</p>
-        <table style="width:100%;border-collapse:collapse;font-size:13px;color:#475569">
-          <tr><td style="padding:4px 0;vertical-align:top;width:16px">🪟</td><td style="padding:4px 0 4px 6px">Pyyhi pölyt karmeilta pehmeällä kankaalla ennen sateita — näin lika ei valu itse lasiin.</td></tr>
-          <tr><td style="padding:4px 0;vertical-align:top">☀️</td><td style="padding:4px 0 4px 6px">Älä pese ikkunoita suorassa auringonpaisteessa — pesuaine kuivuu liian nopeasti ja jättää raitoja. Varjossa tai pilvisellä menee paremmin.</td></tr>
-          <tr><td style="padding:4px 0;vertical-align:top">🧴</td><td style="padding:4px 0 4px 6px">Väliaikapuhdistukseen riittää puhdas mikrokuituliina ja pelkkä vesi — pesuaine ei ole aina tarpeen.</td></tr>
-        </table>
-        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0">
-          <p style="margin:0 0 4px;font-weight:600;color:#334155;font-size:12px">MILLOIN KANNATTAA TEHDÄ UUDELLEEN?</p>
-          <p style="margin:0;color:#64748b;font-size:12px;line-height:1.6">Omakotitalo: <strong>1–2 kertaa vuodessa</strong> — kevät (pölyt ja talven jäljet) ja syksy ennen lumia on paras yhdistelmä. Kerrostalo ja rivitalo: <strong>kerran vuodessa</strong> riittää useimmille. Syksy on erinomainen ajankohta — ikkunat pysyvät puhtaampina koko talven läpi.</p>
-        </div>
-      </div>`)
+      // ── Tips block — short, human, placed near the end of the email ──────────
+      const tipText = isWindowJob
+        ? (isEn
+            ? "One small tip: windows clean best on a cloudy day — sunlight dries the soap too fast and leaves streaks. Once a year is usually enough, but feel free to reach out whenever you want a freshen-up."
+            : "Pieni vinkki: ikkunat pestään parhaiten pilvisellä säällä — auringossa pesuaine kuivuu liian nopeasti. Kerran vuodessa riittää useimmille, mutta ota yhteyttä aina kun tuntuu siltä, hoidamme mielellämme.")
         : isLawnJob
-        ? (isEn ? `
-      <div style="background:#f0fdf4;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #86efac">
-        <p style="margin:0 0 10px;font-weight:700;color:#166534;font-size:13px">LAWN CARE TIPS</p>
-        <table style="width:100%;border-collapse:collapse;font-size:13px;color:#15803d">
-          <tr><td style="padding:4px 0;vertical-align:top;width:16px">🌿</td><td style="padding:4px 0 4px 6px">Mow regularly — overgrown grass stresses the lawn and becomes uneven.</td></tr>
-          <tr><td style="padding:4px 0;vertical-align:top">💧</td><td style="padding:4px 0 4px 6px">Water in the morning, not the evening — overnight moisture can encourage mould.</td></tr>
-          <tr><td style="padding:4px 0;vertical-align:top">🌱</td><td style="padding:4px 0 4px 6px">Leave grass clippings on the lawn occasionally — they act as a natural fertiliser.</td></tr>
-        </table>
-        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #bbf7d0">
-          <p style="margin:0 0 4px;font-weight:600;color:#166534;font-size:12px">WHEN TO MOW AGAIN?</p>
-          <p style="margin:0;color:#15803d;font-size:12px;line-height:1.6">Every <strong>1–2 weeks</strong> during the growing season. In the hottest part of summer you can mow less frequently.</p>
-        </div>
-      </div>` : `
-      <div style="background:#f0fdf4;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #86efac">
-        <p style="margin:0 0 10px;font-weight:700;color:#166534;font-size:13px">NURMIKON HOITOVINKIT</p>
-        <table style="width:100%;border-collapse:collapse;font-size:13px;color:#15803d">
-          <tr><td style="padding:4px 0;vertical-align:top;width:16px">🌿</td><td style="padding:4px 0 4px 6px">Leikkaa nurmi säännöllisesti — liian pitkä ruoho stressaa kasveja ja tulee epätasaiseksi.</td></tr>
-          <tr><td style="padding:4px 0;vertical-align:top">💧</td><td style="padding:4px 0 4px 6px">Kastele aamuisin, ei illalla — kosteus yöllä voi edesauttaa homehtumista.</td></tr>
-          <tr><td style="padding:4px 0;vertical-align:top">🌱</td><td style="padding:4px 0 4px 6px">Jätä leikkuujäte ajoittain nurmelle — se toimii luonnollisena lannoitteena.</td></tr>
-        </table>
-        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #bbf7d0">
-          <p style="margin:0 0 4px;font-weight:600;color:#166534;font-size:12px">MILLOIN KANNATTAA TEHDÄ UUDELLEEN?</p>
-          <p style="margin:0;color:#15803d;font-size:12px;line-height:1.6">Kasvukaudella <strong>1–2 viikon välein</strong>. Kesä–heinäkuun kuumimpaan aikaan voi leikata harvemmin.</p>
-        </div>
-      </div>`)
-        : (isEn ? `
-      <div style="background:#f8fafc;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #94a3b8">
-        <p style="margin:0 0 10px;font-weight:700;color:#334155;font-size:13px">SERVICE COMPLETE — WHAT'S NEXT?</p>
-        <p style="margin:0;color:#475569;font-size:13px;line-height:1.6">
-          Good maintenance is preventive — regular upkeep saves time and money in the long run. If you notice anything that needs attention, get in touch directly — we respond quickly.
-        </p>
-        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0">
-          <p style="margin:0 0 4px;font-weight:600;color:#334155;font-size:12px">ALSO REMEMBER:</p>
-          <p style="margin:0;color:#64748b;font-size:12px;line-height:1.6">We offer a range of home services — window cleaning, lawn mowing, cleaning, yard maintenance, and painting. Easier when one trusted team handles everything.</p>
-        </div>
-      </div>` : `
-      <div style="background:#f8fafc;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #94a3b8">
-        <p style="margin:0 0 10px;font-weight:700;color:#334155;font-size:13px">PALVELU SUORITETTU — MITÄ SEURAAVAKSI?</p>
-        <p style="margin:0;color:#475569;font-size:13px;line-height:1.6">
-          Hyvä huolto on ennaltaehkäisevää — säännöllinen huolehtiminen säästää vaivaa ja kuluja pitkässä juoksussa. Jos huomaat jatkossa jotain, mitä haluaisit hoidetuksi, ota suoraan yhteyttä — vastaamme nopeasti.
-        </p>
-        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0">
-          <p style="margin:0 0 4px;font-weight:600;color:#334155;font-size:12px">MUISTA MYÖS:</p>
-          <p style="margin:0;color:#64748b;font-size:12px;line-height:1.6">Meiltä saat apua moniin kotitöihin — ikkunanpesu, nurmikon leikkuu, siivous, pihahoito ja maalaus. Helpompaa kun yksi luotettu tekijä hoitaa useamman asian.</p>
-        </div>
-      </div>`);
+        ? (isEn
+            ? "A quick tip: mowing every 1–2 weeks during the growing season keeps the lawn in great shape. Consistent height is the secret — and we're always happy to take it off your hands."
+            : "Nopea vinkki: 1–2 viikon leikkuuväli kasvukaudella pitää nurmikon hyvässä kunnossa. Tasainen korkeus on salaisuus — ja hoidamme mielellämme aina tarvittaessa.")
+        : (isEn
+            ? "If you notice anything else around the house that needs attention, just reach out — we'll get back to you quickly with a quote. No job too small."
+            : "Jos huomaat jotain muuta, mitä kannattaisi huoltaa, ota vain yhteyttä — vastaamme nopeasti ja tehdään tarjous samantien. Mikään keikka ei ole liian pieni.");
+      const tipsBlock = `<p style="color:#94a3b8;font-size:12px;line-height:1.7;text-align:center;margin:0 0 16px;padding:0 8px">${tipText}</p>`;
 
       const html = `
 <!DOCTYPE html>
@@ -649,9 +588,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         </p>
       </div>
 
-      <!-- Service tips -->
-      ${tipsBlock}
-
       <!-- Google review ask -->
       <div style="background:#fffbeb;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #f59e0b">
         <p style="margin:0 0 6px;font-weight:700;color:#92400e;font-size:13px">${isEn ? "A SMALL REQUEST" : "PIENI PYYNTÖ"}</p>
@@ -688,7 +624,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;margin-top:10px;background:#18181b;color:#fff;padding:12px 28px;border-radius:10px;text-decoration:none;font-weight:600;font-size:14px">${isEn ? "Book your next service →" : "Varaa seuraava aika →"}</a>
       </div>
 
-      <p style="color:#a1a1aa;font-size:12px;text-align:center;margin:16px 0 0">
+      <!-- Service tip — short, end of email -->
+      ${tipsBlock}
+
+      <p style="color:#a1a1aa;font-size:12px;text-align:center;margin:0 0 0">
         ${isEn ? "Window cleaning · lawn mowing · cleaning · yard care · painting" : "Ikkunapesu · nurmikko · siivous · pihahoito · maalaus · roskakatos- ja terassihuollot"}
       </p>
     </div>

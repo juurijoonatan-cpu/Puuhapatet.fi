@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Loader2, ClipboardList, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Check, CalendarClock, Save, Plus, Trash2, Receipt, Users, TrendingUp } from "lucide-react";
 import { Link } from "wouter";
 
@@ -79,6 +79,16 @@ export default function AdminJobsPage() {
   const [receiptLang, setReceiptLang] = useState<"fi" | "en">("fi");
   const [sendingEmail, setSendingEmail] = useState(false);
 
+  // Signatures
+  const customerSigRef = useRef<HTMLCanvasElement>(null);
+  const staffSigRef    = useRef<HTMLCanvasElement>(null);
+  const [isDrawingCustomer, setIsDrawingCustomer] = useState(false);
+  const [isDrawingStaff,    setIsDrawingStaff]    = useState(false);
+  const [editingCustomerSig, setEditingCustomerSig] = useState(false);
+  const [editingStaffSig,    setEditingStaffSig]    = useState(false);
+  const [savingCustomerSig,  setSavingCustomerSig]  = useState(false);
+  const [savingStaffSig,     setSavingStaffSig]     = useState(false);
+
   const loadJobs = () => {
     setLoading(true);
     api.getJobs().then((res) => {
@@ -98,6 +108,8 @@ export default function AdminJobsPage() {
       setExpenses([]);
       setNewExpenseDesc("");
       setNewExpenseAmount("");
+      setEditingCustomerSig(false);
+      setEditingStaffSig(false);
       // Parse workers from assignedTo (comma-separated IDs or single name)
       setSelectedWorkers(parseWorkerIds(selected.job.assignedTo));
       setExpensesLoading(true);
@@ -266,6 +278,95 @@ export default function AdminJobsPage() {
       toast({ variant: "destructive", title: "Poisto epäonnistui", description: res.error });
     }
     setDeleting(false);
+  };
+
+  // ── Canvas signatures ────────────────────────────────────────────────────────
+
+  const initCanvas = (canvas: HTMLCanvasElement | null) => {
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = rect.width  * dpr;
+    canvas.height = rect.height * dpr;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.scale(dpr, dpr);
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+  };
+
+  const startSigDraw = (e: React.MouseEvent | React.TouchEvent, isCustomer: boolean) => {
+    if ("touches" in e) e.preventDefault();
+    const canvas = isCustomer ? customerSigRef.current : staffSigRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const rect = canvas.getBoundingClientRect();
+    const clientX = "touches" in e ? e.touches[0].clientX : e.clientX;
+    const clientY = "touches" in e ? e.touches[0].clientY : e.clientY;
+    ctx.beginPath();
+    ctx.moveTo(clientX - rect.left, clientY - rect.top);
+    if (isCustomer) setIsDrawingCustomer(true); else setIsDrawingStaff(true);
+  };
+
+  const sigDraw = (e: React.MouseEvent | React.TouchEvent, isCustomer: boolean) => {
+    if (!(isCustomer ? isDrawingCustomer : isDrawingStaff)) return;
+    if ("touches" in e) e.preventDefault();
+    const canvas = isCustomer ? customerSigRef.current : staffSigRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const rect = canvas.getBoundingClientRect();
+    const clientX = "touches" in e ? e.touches[0].clientX : e.clientX;
+    const clientY = "touches" in e ? e.touches[0].clientY : e.clientY;
+    ctx.lineTo(clientX - rect.left, clientY - rect.top);
+    ctx.stroke();
+  };
+
+  const stopSigDraw = (isCustomer: boolean) => {
+    if (isCustomer) setIsDrawingCustomer(false); else setIsDrawingStaff(false);
+  };
+
+  const clearSigCanvas = (isCustomer: boolean) => {
+    const canvas = isCustomer ? customerSigRef.current : staffSigRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    ctx?.clearRect(0, 0, canvas.width, canvas.height);
+  };
+
+  const saveSignature = async (isCustomer: boolean) => {
+    if (!selected) return;
+    const canvas = isCustomer ? customerSigRef.current : staffSigRef.current;
+    if (!canvas) return;
+    const dataUrl = canvas.toDataURL();
+    if (isCustomer) setSavingCustomerSig(true); else setSavingStaffSig(true);
+    const patch = isCustomer ? { customerSignature: dataUrl } : { staffSignature: dataUrl };
+    const res = await api.updateJob(selected.job.id, patch as any);
+    if (res.ok) {
+      const updated: JobRow = { ...selected, job: { ...selected.job, ...patch } };
+      setSelected(updated);
+      setJobs(prev => prev.map(r => r.job.id === selected.job.id ? updated : r));
+      if (isCustomer) setEditingCustomerSig(false); else setEditingStaffSig(false);
+      toast({ title: "Allekirjoitus tallennettu" });
+    } else {
+      toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
+    }
+    if (isCustomer) setSavingCustomerSig(false); else setSavingStaffSig(false);
+  };
+
+  const clearSignatureField = async (isCustomer: boolean) => {
+    if (!selected) return;
+    const patch = isCustomer ? { customerSignature: null } : { staffSignature: null };
+    const res = await api.updateJob(selected.job.id, patch as any);
+    if (res.ok) {
+      const updated: JobRow = { ...selected, job: { ...selected.job, ...patch } };
+      setSelected(updated);
+      setJobs(prev => prev.map(r => r.job.id === selected.job.id ? updated : r));
+      clearSigCanvas(isCustomer);
+      if (isCustomer) setEditingCustomerSig(true); else setEditingStaffSig(true);
+    }
   };
 
   const hasFieldChanges = selected
@@ -815,27 +916,103 @@ export default function AdminJobsPage() {
             )}
           </Card>
 
-          {(job.customerSignature || job.staffSignature) && (
-            <Card className="p-5 bg-card border-0 premium-shadow mb-4">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-                Allekirjoitukset
-              </p>
-              <div className="grid grid-cols-2 gap-4">
-                {job.customerSignature && (
+          {/* Signatures — always editable */}
+          <Card className="p-5 bg-card border-0 premium-shadow mb-4">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-4">
+              Allekirjoitukset
+            </p>
+            <div className="grid grid-cols-2 gap-4">
+              {/* Customer signature */}
+              {(() => {
+                const showCanvas = !job.customerSignature || editingCustomerSig;
+                return (
                   <div>
-                    <p className="text-xs text-muted-foreground mb-1">Asiakas</p>
-                    <img src={job.customerSignature} alt="Asiakkaan allekirjoitus" className="w-full h-20 object-contain bg-white rounded-lg border p-1" />
+                    <p className="text-xs text-muted-foreground mb-1.5">Asiakas</p>
+                    {!showCanvas ? (
+                      <>
+                        <img src={job.customerSignature!} alt="Asiakkaan allekirjoitus" className="w-full h-20 object-contain bg-white rounded-lg border p-1 mb-2" />
+                        <Button variant="outline" size="sm" className="w-full text-xs gap-1.5" onClick={() => clearSignatureField(true)}>
+                          Muuta
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <canvas
+                          ref={canvas => { (customerSigRef as React.MutableRefObject<HTMLCanvasElement | null>).current = canvas; initCanvas(canvas); }}
+                          className="w-full h-20 border rounded-lg bg-white touch-none cursor-crosshair mb-2"
+                          onMouseDown={e => startSigDraw(e, true)}
+                          onMouseMove={e => sigDraw(e, true)}
+                          onMouseUp={() => stopSigDraw(true)}
+                          onMouseLeave={() => stopSigDraw(true)}
+                          onTouchStart={e => startSigDraw(e, true)}
+                          onTouchMove={e => sigDraw(e, true)}
+                          onTouchEnd={() => stopSigDraw(true)}
+                        />
+                        <div className="flex gap-1.5">
+                          <Button size="sm" className="flex-1 text-xs" disabled={savingCustomerSig} onClick={() => saveSignature(true)}>
+                            {savingCustomerSig ? <Loader2 className="w-3 h-3 animate-spin" /> : "Tallenna"}
+                          </Button>
+                          <Button variant="outline" size="sm" className="text-xs" onClick={() => clearSigCanvas(true)}>
+                            Tyhjennä
+                          </Button>
+                          {job.customerSignature && (
+                            <Button variant="ghost" size="sm" className="text-xs" onClick={() => setEditingCustomerSig(false)}>
+                              Peru
+                            </Button>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
-                )}
-                {job.staffSignature && (
+                );
+              })()}
+
+              {/* Staff signature */}
+              {(() => {
+                const showCanvas = !job.staffSignature || editingStaffSig;
+                return (
                   <div>
-                    <p className="text-xs text-muted-foreground mb-1">Työntekijä</p>
-                    <img src={job.staffSignature} alt="Työntekijän allekirjoitus" className="w-full h-20 object-contain bg-white rounded-lg border p-1" />
+                    <p className="text-xs text-muted-foreground mb-1.5">Työntekijä</p>
+                    {!showCanvas ? (
+                      <>
+                        <img src={job.staffSignature!} alt="Työntekijän allekirjoitus" className="w-full h-20 object-contain bg-white rounded-lg border p-1 mb-2" />
+                        <Button variant="outline" size="sm" className="w-full text-xs gap-1.5" onClick={() => clearSignatureField(false)}>
+                          Muuta
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <canvas
+                          ref={canvas => { (staffSigRef as React.MutableRefObject<HTMLCanvasElement | null>).current = canvas; initCanvas(canvas); }}
+                          className="w-full h-20 border rounded-lg bg-white touch-none cursor-crosshair mb-2"
+                          onMouseDown={e => startSigDraw(e, false)}
+                          onMouseMove={e => sigDraw(e, false)}
+                          onMouseUp={() => stopSigDraw(false)}
+                          onMouseLeave={() => stopSigDraw(false)}
+                          onTouchStart={e => startSigDraw(e, false)}
+                          onTouchMove={e => sigDraw(e, false)}
+                          onTouchEnd={() => stopSigDraw(false)}
+                        />
+                        <div className="flex gap-1.5">
+                          <Button size="sm" className="flex-1 text-xs" disabled={savingStaffSig} onClick={() => saveSignature(false)}>
+                            {savingStaffSig ? <Loader2 className="w-3 h-3 animate-spin" /> : "Tallenna"}
+                          </Button>
+                          <Button variant="outline" size="sm" className="text-xs" onClick={() => clearSigCanvas(false)}>
+                            Tyhjennä
+                          </Button>
+                          {job.staffSignature && (
+                            <Button variant="ghost" size="sm" className="text-xs" onClick={() => setEditingStaffSig(false)}>
+                              Peru
+                            </Button>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
-                )}
-              </div>
-            </Card>
-          )}
+                );
+              })()}
+            </div>
+          </Card>
         </div>
       </div>
     );

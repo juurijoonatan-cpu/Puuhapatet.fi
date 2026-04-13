@@ -76,7 +76,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         "VERSION:2.0",
         "PRODID:-//Puuhapatet//Keikat//FI",
         "X-WR-CALNAME:Puuhapatet Keikat",
-        "X-WR-CALDESC:Puuhapatetin aikataulutetut keikat",
+        "X-WR-CALDESC:Puuhapatet keikat",
         "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH",
         ...events,
@@ -502,7 +502,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const greeting = isReturning
         ? `Moi ${firstName}! Mukava nähdä sinut taas — homma on nyt hoidettu, kiitos jatkuvasta luottamuksesta.`
-        : `Moi ${firstName}! Homma on hoidettu — kiitos kun valitsit Puuhapatetin.`;
+        : `Moi ${firstName}! Homma on hoidettu — kiitos kun valitsit Puuhapatet.`;
 
       const paymentLine = paymentMethod ? `<tr><td style="padding:6px 0;color:#666">Maksutapa</td><td style="padding:6px 0;font-weight:600;text-align:right">${paymentMethod}</td></tr>` : "";
 
@@ -541,6 +541,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           Tämä palvelu on <strong>kotitalousvähennyskelpoinen</strong>. Voit hakea verotuksessa 40 % työn osuudesta takaisin — enintään 2 250 € / henkilö / vuosi. Lasku toimii dokumenttina, ei erillistä kuittia tarvita.<br><br>
           Lisätietoa: <a href="https://vero.fi/kotitalousvahennys" style="color:#047857;font-weight:600">vero.fi/kotitalousvähennys</a>
         </p>
+      </div>
+
+      <!-- Window care tips -->
+      <div style="background:#f8fafc;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #94a3b8">
+        <p style="margin:0 0 10px;font-weight:700;color:#334155;font-size:13px">VINKIT IKKUNOIDEN YLLÄPITOON</p>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;color:#475569">
+          <tr><td style="padding:4px 0;vertical-align:top;width:16px">🪟</td><td style="padding:4px 0 4px 6px">Pyyhi pölyt karmeilta pehmeällä kankaalla ennen sateita — näin lika ei valu itse lasiin.</td></tr>
+          <tr><td style="padding:4px 0;vertical-align:top">☀️</td><td style="padding:4px 0 4px 6px">Älä pese ikkunoita suorassa auringonpaisteessa — pesuaine kuivuu liian nopeasti ja jättää raitoja. Varjossa tai pilvisellä menee paremmin.</td></tr>
+          <tr><td style="padding:4px 0;vertical-align:top">🧴</td><td style="padding:4px 0 4px 6px">Väliaikapuhdistukseen riittää puhdas mikrokuituliina ja pelkkä vesi — pesuaine ei ole aina tarpeen.</td></tr>
+        </table>
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0">
+          <p style="margin:0 0 4px;font-weight:600;color:#334155;font-size:12px">MILLOIN KANNATTAA TEHDÄ UUDELLEEN?</p>
+          <p style="margin:0;color:#64748b;font-size:12px;line-height:1.6">Omakotitalo: <strong>1–2 kertaa vuodessa</strong> — kevät (pölyt ja talven jäljet) ja syksy ennen lumia on paras yhdistelmä. Kerrostalo ja rivitalo: <strong>kerran vuodessa</strong> riittää useimmille. Syksy on erinomainen ajankohta — ikkunat pysyvät puhtaampina koko talven läpi.</p>
+        </div>
       </div>
 
       <!-- Google review ask -->

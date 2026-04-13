@@ -55,6 +55,8 @@ export default function AdminJobsPage() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<JobRow | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [savingDate, setSavingDate] = useState(false);
   const [editPrice, setEditPrice] = useState("");
   const [editDescription, setEditDescription] = useState("");
@@ -250,6 +252,21 @@ export default function AdminJobsPage() {
     }
   };
 
+  const handleDeleteJob = async () => {
+    if (!selected) return;
+    setDeleting(true);
+    const res = await api.deleteJob(selected.job.id);
+    if (res.ok) {
+      setJobs(prev => prev.filter(r => r.job.id !== selected.job.id));
+      setSelected(null);
+      setConfirmDelete(false);
+      toast({ title: "Keikka poistettu", description: "Keikka on poistettu tietokannasta." });
+    } else {
+      toast({ variant: "destructive", title: "Poisto epäonnistui", description: res.error });
+    }
+    setDeleting(false);
+  };
+
   const hasFieldChanges = selected
     ? editPrice !== String(selected.job.agreedPrice / 100) ||
       editDescription !== selected.job.description ||
@@ -329,7 +346,7 @@ export default function AdminJobsPage() {
       <div className="min-h-screen bg-background pt-8 md:pt-24 pb-28">
         <div className="container mx-auto px-4 max-w-3xl">
           <div className="flex items-center gap-4 mb-8">
-            <Button variant="ghost" size="icon" onClick={() => setSelected(null)}>
+            <Button variant="ghost" size="icon" onClick={() => { setSelected(null); setConfirmDelete(false); }}>
               <ArrowLeft className="w-5 h-5" />
             </Button>
             <div>
@@ -734,6 +751,48 @@ export default function AdminJobsPage() {
           </Card>
 
           {/* Signatures */}
+          {/* Danger zone */}
+          <Card className="p-5 border border-destructive/20 bg-destructive/5 mb-4">
+            <p className="text-xs font-semibold text-destructive uppercase tracking-wide mb-3">Vaaravyöhyke</p>
+            {!confirmDelete ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2 border-destructive/40 text-destructive hover:bg-destructive hover:text-destructive-foreground"
+                onClick={() => setConfirmDelete(true)}
+              >
+                <Trash2 className="w-4 h-4" />
+                Poista keikka kokonaan
+              </Button>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm text-destructive font-medium">
+                  Poistetaanko keikka #{job.id} ({customer?.name}) pysyvästi? Tätä ei voi perua.
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    disabled={deleting}
+                    onClick={handleDeleteJob}
+                    className="gap-2"
+                  >
+                    {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                    Kyllä, poista pysyvästi
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={deleting}
+                    onClick={() => setConfirmDelete(false)}
+                  >
+                    Peruuta
+                  </Button>
+                </div>
+              </div>
+            )}
+          </Card>
+
           {(job.customerSignature || job.staffSignature) && (
             <Card className="p-5 bg-card border-0 premium-shadow mb-4">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">

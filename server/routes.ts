@@ -120,6 +120,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.delete("/api/jobs/:id", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      // Delete child expenses first (foreign key)
+      await db.delete(expenses).where(eq(expenses.jobId, id));
+      const [row] = await db.delete(jobs).where(eq(jobs.id, id)).returning();
+      if (!row) return res.status(404).json({ error: "Ei löydy" });
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── Expenses ─────────────────────────────────────────────────────────────────
 
   app.get("/api/jobs/:id/expenses", async (req, res) => {

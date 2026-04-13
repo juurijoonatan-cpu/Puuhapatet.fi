@@ -77,7 +77,7 @@ const sections: Section[] = [
           pidämme lupauksemme ja rakennamme pitkiä asiakassuhteita.
         </P>
         <P>
-          Olet osa pientä, luotettavaa tiimiä. Jokainen keikka on Puuhapatetin mainos —
+          Olet osa pientä, luotettavaa tiimiä. Jokainen keikka on mainos Puuhapatet-brändille —
           hyvä työ tuo lisää asiakkaita kaikille.
         </P>
         <H>Arvomme</H>

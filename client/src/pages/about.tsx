@@ -54,7 +54,7 @@ export default function AboutPage() {
               Puuhapatet sai alkunsa yksinkertaisesta halusta: tehdä töitä kunnolla ja rakentaa jotain omaa.
               Meillä molemmilla oli jo pohjaa käytännön töistä, mutta halusimme kanavoida sen johonkin oikeaan —
               ei pelkästään tienata rahaa kesällä, vaan harjoitella oikeaa yrittämistä ja rakentaa mainetta, joka kestää.
-              Perustimme Puuhapatetin vuonna 2026, suunnittelu alkoi jo hyvissä ajoin edellisvuonna.
+              Puuhapatet perustettiin vuonna 2026, suunnittelu alkoi jo hyvissä ajoin edellisvuonna.
               Opiskelemme molemmat täysillä koulun ohella, mutta rehellisesti sanottuna asiakkaiden aito tyytyväisyys
               ja yhdessä tekeminen on se, mikä parhaiten motivoi. Mikään muu ei vedä vertoja.
             </p>

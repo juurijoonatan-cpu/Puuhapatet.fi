@@ -208,6 +208,9 @@ export const api = {
   deleteStartupBonusUsage: (id: number) =>
     request<{ ok: boolean }>("DELETE", `/api/startup-bonus-usages/${id}`),
 
+  deleteCustomer: (id: number) =>
+    request<{ ok: boolean }>("DELETE", `/api/customers/${id}`),
+
   sendReceipt: (data: {
     to: string;
     customerName: string;
@@ -220,6 +223,7 @@ export const api = {
     workerPhone?: string;
     workerYTunnus?: string;
     isReturning?: boolean;
+    lang?: "fi" | "en";
   }) => request<{ ok: boolean; id?: string }>("POST", "/api/send-receipt", data),
 
   getCustomerJobCount: (customerId: number) =>

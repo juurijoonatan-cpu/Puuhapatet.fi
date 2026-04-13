@@ -74,8 +74,9 @@ export default function AdminJobsPage() {
   const [selectedWorkers, setSelectedWorkers] = useState<string[]>([]);
   const [savingWorkers, setSavingWorkers] = useState(false);
 
-  // Payment method for receipt
+  // Payment method + language for receipt
   const [paymentMethod, setPaymentMethod] = useState<string>("");
+  const [receiptLang, setReceiptLang] = useState<"fi" | "en">("fi");
   const [sendingEmail, setSendingEmail] = useState(false);
 
   const loadJobs = () => {
@@ -680,7 +681,27 @@ export default function AdminJobsPage() {
                 Kuitti asiakkaalle
               </p>
             </div>
-            <p className="text-xs text-muted-foreground mb-3">Valitse maksutapa (valinnainen)</p>
+            {/* Language toggle */}
+            <div className="flex items-center gap-1.5 mb-4">
+              <span className="text-xs text-muted-foreground mr-1">Kieli:</span>
+              {(["fi", "en"] as const).map((l) => (
+                <button
+                  key={l}
+                  type="button"
+                  onClick={() => setReceiptLang(l)}
+                  className={cn(
+                    "px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all",
+                    receiptLang === l
+                      ? "border-primary bg-primary/5 text-foreground"
+                      : "border-border text-muted-foreground hover:border-muted-foreground/40",
+                  )}
+                >
+                  {l === "fi" ? "🇫🇮 Suomi" : "🇬🇧 English"}
+                </button>
+              ))}
+            </div>
+
+            <p className="text-xs text-muted-foreground mb-3">Maksutapa (valinnainen)</p>
             <div className="flex flex-wrap gap-2 mb-4">
               {PAYMENT_METHODS.map((m) => (
                 <button
@@ -722,7 +743,8 @@ export default function AdminJobsPage() {
                       workerName: senderProfile?.name,
                       workerPhone: senderProfile?.phone,
                       workerYTunnus: senderProfile?.yTunnus,
-                      isReturning: false, // could check job count
+                      isReturning: false,
+                      lang: receiptLang,
                     });
                     if (res.ok) {
                       toast({ title: "Kuitti lähetetty!", description: `Sähköposti lähetetty: ${customer.email}` });

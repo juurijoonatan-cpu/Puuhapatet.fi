@@ -161,6 +161,9 @@ export const api = {
   updateJob: (id: number, data: Partial<NewJob>) =>
     request<unknown>("PATCH", `/api/jobs/${id}`, data),
 
+  deleteJob: (id: number) =>
+    request<{ ok: boolean }>("DELETE", `/api/jobs/${id}`),
+
   updateCustomer: (id: number, data: Partial<NewCustomer>) =>
     request<unknown>("PATCH", `/api/customers/${id}`, data),
 

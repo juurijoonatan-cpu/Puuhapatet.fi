@@ -49,7 +49,6 @@ export default function LandingPage() {
             loop
             playsInline
             className="w-full h-full object-cover object-center"
-            poster="/hero-workers.jpg"
           >
             <source src="/hero-bg.mp4" type="video/mp4" />
           </video>

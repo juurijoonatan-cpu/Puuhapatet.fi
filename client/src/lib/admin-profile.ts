@@ -27,7 +27,7 @@ export const USERS: AdminProfile[] = [
     name: "Joonatan Juuri",
     role: "HOST",
     photoUrl: "/joonatan.jpg.jpeg",
-    phone: "+358 45 123 4567",
+    phone: "+358400389999",
     yTunnus: "3598782-9",
     hasYTunnus: true,
     isUnder18: true,   // 17v
@@ -38,7 +38,7 @@ export const USERS: AdminProfile[] = [
     name: "Matias Pitkänen",
     role: "HOST",
     photoUrl: "/matias.jpg.jpeg",
-    phone: "+358 45 765 4321",
+    phone: "+358442350881",
     yTunnus: "3609912-9",
     hasYTunnus: true,
     isUnder18: false,  // 18v

@@ -263,7 +263,7 @@ export default function CalendarPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background pt-8 md:pt-24 pb-28">
+    <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28">
       <div className="container mx-auto px-4 max-w-5xl">
 
         {/* ── Header ── */}

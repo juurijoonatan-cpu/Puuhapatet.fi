@@ -141,7 +141,7 @@ export default function AdminCustomersPage() {
   // ── Detail view ───────────────────────────────────────────────────────────
   if (selected) {
     return (
-      <div className="min-h-screen bg-background pt-8 md:pt-24 pb-28">
+      <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28">
         <div className="container mx-auto px-4 max-w-3xl">
           <div className="flex items-center gap-4 mb-8">
             <Button variant="ghost" size="icon" onClick={() => setSelected(null)}>
@@ -271,7 +271,7 @@ export default function AdminCustomersPage() {
 
   // ── List view ─────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-background pt-8 md:pt-24 pb-28">
+    <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28">
       <div className="container mx-auto px-4 max-w-3xl">
         <div className="flex items-center gap-4 mb-8">
           <Link href="/admin/dashboard">

@@ -15,6 +15,15 @@ import { cn } from "@/lib/utils";
 
 type DbStatus = "lead" | "scheduled" | "in_progress" | "done" | "cancelled";
 
+const ADDONS = [
+  { key: "balcony",  label: "Parveke-/terassilasitus", price: 39 },
+  { key: "railing",  label: "Lasikaide",               price: 39 },
+  { key: "mirror",   label: "Peilien pesu",            price: 19 },
+  { key: "canopy",   label: "Terassin lasikate",       price: 89 },
+  { key: "gutter",   label: "Rännien puhdistus",       price: 69 },
+] as const;
+type AddonKey = (typeof ADDONS)[number]["key"];
+
 const STATUS_FLOW: { key: DbStatus; label: string; color: string; bg: string }[] = [
   { key: "lead",        label: "Liidi",      color: "text-blue-700 dark:text-blue-300",   bg: "bg-blue-100 dark:bg-blue-900/50" },
   { key: "scheduled",   label: "Ajoitettu",  color: "text-orange-700 dark:text-orange-300", bg: "bg-orange-100 dark:bg-orange-900/50" },
@@ -62,6 +71,7 @@ export default function AdminJobsPage() {
   const [editDescription, setEditDescription] = useState("");
   const [editNotes, setEditNotes] = useState("");
   const [savingFields, setSavingFields] = useState(false);
+  const [localAddons, setLocalAddons] = useState<Set<AddonKey>>(new Set());
 
   interface Expense { id: number; description: string; amount: number; }
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -110,6 +120,7 @@ export default function AdminJobsPage() {
       setNewExpenseAmount("");
       setEditingCustomerSig(false);
       setEditingStaffSig(false);
+      setLocalAddons(new Set());
       // Parse workers from assignedTo (comma-separated IDs or single name)
       setSelectedWorkers(parseWorkerIds(selected.job.assignedTo));
       setExpensesLoading(true);
@@ -235,6 +246,20 @@ export default function AdminJobsPage() {
       toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
     }
     setSavingFields(false);
+  };
+
+  const toggleAddon = (key: AddonKey, price: number) => {
+    setLocalAddons(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+        setEditPrice(p => String(Math.max(0, parseFloat(p || "0") - price)));
+      } else {
+        next.add(key);
+        setEditPrice(p => String(parseFloat(p || "0") + price));
+      }
+      return next;
+    });
   };
 
   const addExpense = async () => {
@@ -600,6 +625,47 @@ export default function AdminJobsPage() {
                 Luotu: {new Date(job.createdAt).toLocaleDateString("fi-FI")}
               </p>
             </div>
+          </Card>
+
+          {/* Add-ons card */}
+          <Card className="p-5 bg-card border-0 premium-shadow mb-4">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+              Lisäpalvelut
+            </p>
+            <div className="grid grid-cols-1 gap-2">
+              {ADDONS.map(({ key, label, price }) => {
+                const active = localAddons.has(key);
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => toggleAddon(key, price)}
+                    className={cn(
+                      "p-3 rounded-xl border-2 text-left flex items-center justify-between gap-2 transition-all",
+                      active
+                        ? "border-primary bg-primary/5"
+                        : "border-border bg-card hover:border-primary/40",
+                    )}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={cn(
+                        "w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0",
+                        active ? "border-primary bg-primary" : "border-muted-foreground/40",
+                      )}>
+                        {active && <Check className="w-3 h-3 text-white" />}
+                      </div>
+                      <span className="text-xs font-medium text-foreground">{label}</span>
+                    </div>
+                    <span className="text-xs font-semibold text-primary">+{price} €</span>
+                  </button>
+                );
+              })}
+            </div>
+            {localAddons.size > 0 && (
+              <p className="text-[11px] text-muted-foreground mt-3">
+                Lisätty sovittuun hintaan — tallenna muutokset Keikan tiedot -kortissa.
+              </p>
+            )}
           </Card>
 
           {/* Workers card */}

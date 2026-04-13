@@ -3,283 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowRight, Minus, Plus, Send, Loader2, CheckCircle2, Info } from "lucide-react";
+import { ArrowRight, Send, Loader2, CheckCircle2, Info } from "lucide-react";
 
-// ─── SVG illustrations — blue glass, shine lines, handles ────────────────────
-// Glass color constant — light blue used throughout
-const G = "#bfdbfe"; // glass fill
-const G2 = "#dbeafe"; // lighter glass
-const FR = "#f1f5f9"; // frame fill (light)
-const shine = (x1: number, y1: number, x2: number, y2: number, k: number) =>
-  <line key={k} x1={x1} y1={y1} x2={x2} y2={y2} stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeOpacity=".75"/>;
-
-// 2-pintainen ikkuna — two side-by-side panes, front view
-const Svg2Pin = () => (
-  <svg viewBox="0 0 84 70" fill="none" className="w-full h-full">
-    <rect x="2" y="2" width="80" height="66" rx="3" fill={FR} stroke="currentColor" strokeWidth="2.5"/>
-    <rect x="7" y="7" width="32" height="56" rx="1" fill={G} stroke="currentColor" strokeWidth="1.8"/>
-    <rect x="45" y="7" width="32" height="56" rx="1" fill={G} stroke="currentColor" strokeWidth="1.8"/>
-    <rect x="39" y="2" width="6" height="66" fill={FR} stroke="currentColor" strokeWidth="1"/>
-    {shine(13,11,24,22,0)}{shine(18,11,29,22,1)}
-    {shine(51,11,62,22,2)}{shine(56,11,67,22,3)}
-  </svg>
-);
-
-// Tuuletusikkuna kahvalla — main pane + small top vent with handle
-const SvgVentilation = () => (
-  <svg viewBox="0 0 72 72" fill="none" className="w-full h-full">
-    <rect x="2" y="2" width="68" height="68" rx="3" fill={FR} stroke="currentColor" strokeWidth="2.5"/>
-    <rect x="7" y="7" width="58" height="40" rx="1" fill={G} stroke="currentColor" strokeWidth="1.8"/>
-    <rect x="7" y="52" width="58" height="13" rx="1" fill={G2} stroke="currentColor" strokeWidth="1.8"/>
-    <line x1="7" y1="51" x2="65" y2="51" stroke="currentColor" strokeWidth="2"/>
-    <rect x="32" y="55" width="8" height="4" rx="1" fill="currentColor" fillOpacity=".5"/>
-    {shine(13,11,22,20,0)}{shine(18,11,27,20,1)}{shine(23,11,32,20,2)}
-  </svg>
-);
-
-// Avautuva 4-pintainen — casement window open to left, frame depth visible
-const Svg4Pin = () => (
-  <svg viewBox="0 0 84 76" fill="none" className="w-full h-full">
-    {/* Fixed outer frame */}
-    <rect x="2" y="2" width="60" height="72" rx="3" fill={FR} stroke="currentColor" strokeWidth="2.5"/>
-    {/* Right-side depth (frame thickness) */}
-    <path d="M62 2 L80 8 L80 66 L62 72 Z" fill={FR} stroke="currentColor" strokeWidth="1.5"/>
-    <line x1="71" y1="5" x2="71" y2="69" stroke="currentColor" strokeWidth="1"/>
-    {/* Glass pane */}
-    <rect x="8" y="8" width="48" height="60" rx="1" fill={G} stroke="currentColor" strokeWidth="1.8"/>
-    {/* Handle */}
-    <rect x="52" y="32" width="5" height="12" rx="2" fill="currentColor" fillOpacity=".6"/>
-    <rect x="54" y="35" width="6" height="6" rx="1" fill={FR} stroke="currentColor" strokeWidth="1"/>
-    {shine(14,13,26,25,0)}{shine(20,13,32,25,1)}{shine(26,13,38,25,2)}{shine(32,13,44,25,3)}{shine(38,13,50,25,4)}
-  </svg>
-);
-
-// Avautuva 6-pintainen — double casement, both sashes visible open
-const Svg6Pin = () => (
-  <svg viewBox="0 0 96 76" fill="none" className="w-full h-full">
-    {/* Fixed frame */}
-    <rect x="2" y="2" width="92" height="72" rx="3" fill={FR} stroke="currentColor" strokeWidth="2.5"/>
-    {/* Left sash */}
-    <rect x="7" y="7" width="37" height="62" rx="1" fill={G} stroke="currentColor" strokeWidth="1.8"/>
-    {/* Right sash */}
-    <rect x="52" y="7" width="37" height="62" rx="1" fill={G} stroke="currentColor" strokeWidth="1.8"/>
-    {/* Center divider */}
-    <rect x="44" y="2" width="8" height="72" fill={FR} stroke="currentColor" strokeWidth="1"/>
-    {/* Left handle */}
-    <rect x="40" y="31" width="4" height="14" rx="2" fill="currentColor" fillOpacity=".55"/>
-    {/* Right handle */}
-    <rect x="52" y="31" width="4" height="14" rx="2" fill="currentColor" fillOpacity=".55"/>
-    {shine(11,11,20,20,0)}{shine(16,11,25,20,1)}{shine(21,11,30,20,2)}
-    {shine(56,11,65,20,3)}{shine(61,11,70,20,4)}{shine(66,11,75,20,5)}
-  </svg>
-);
-
-// Ruudukkoikkunat — 3×3 grid of small panes
-const SvgGrid = () => (
-  <svg viewBox="0 0 78 72" fill="none" className="w-full h-full">
-    <rect x="2" y="2" width="74" height="68" rx="3" fill={FR} stroke="currentColor" strokeWidth="2.5"/>
-    {/* Vertical dividers */}
-    <line x1="28" y1="2" x2="28" y2="70" stroke="currentColor" strokeWidth="2.5"/>
-    <line x1="50" y1="2" x2="50" y2="70" stroke="currentColor" strokeWidth="2.5"/>
-    {/* Horizontal dividers */}
-    <line x1="2" y1="27" x2="76" y2="27" stroke="currentColor" strokeWidth="2.5"/>
-    <line x1="2" y1="48" x2="76" y2="48" stroke="currentColor" strokeWidth="2.5"/>
-    {/* All 9 panes */}
-    {[[7,7,17,16],[31,7,15,16],[54,7,18,16],
-      [7,31,17,13],[31,31,15,13],[54,31,18,13],
-      [7,52,17,14],[31,52,15,14],[54,52,18,14]].map(([x,y,w,h],i) => (
-      <rect key={i} x={x} y={y} width={w} height={h} fill={G} stroke="currentColor" strokeWidth="1"/>
-    ))}
-  </svg>
-);
-
-// Parvekelasit — folding accordion balcony glass panels
-const SvgBalcony = () => (
-  <svg viewBox="0 0 90 66" fill="none" className="w-full h-full">
-    <line x1="2" y1="5" x2="88" y2="5" stroke="currentColor" strokeWidth="3.5"/>
-    <line x1="2" y1="61" x2="88" y2="61" stroke="currentColor" strokeWidth="3.5"/>
-    {/* Panel 1 — slightly angled (open) */}
-    <path d="M6 5 L18 8 L18 58 L6 61 Z" fill={G} stroke="currentColor" strokeWidth="1.8"/>
-    {/* Panel 2 */}
-    <rect x="18" y="5" width="16" height="56" fill={G2} stroke="currentColor" strokeWidth="1.8"/>
-    {/* Panel 3 */}
-    <rect x="36" y="5" width="16" height="56" fill={G} stroke="currentColor" strokeWidth="1.8"/>
-    {/* Panel 4 */}
-    <rect x="54" y="5" width="16" height="56" fill={G2} stroke="currentColor" strokeWidth="1.8"/>
-    {/* Panel 5 — angled edge */}
-    <path d="M70 5 L84 8 L84 58 L70 61 Z" fill={G} stroke="currentColor" strokeWidth="1.8"/>
-    {/* Open arrow hint */}
-    <path d="M22 28 L28 33 L22 38" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-  </svg>
-);
-
-// Terassilasit — wide sliding terrace glass
-const SvgTerrace = () => (
-  <svg viewBox="0 0 96 58" fill="none" className="w-full h-full">
-    <line x1="2" y1="4" x2="94" y2="4" stroke="currentColor" strokeWidth="3.5"/>
-    <line x1="2" y1="54" x2="94" y2="54" stroke="currentColor" strokeWidth="3.5"/>
-    <rect x="4" y="4" width="20" height="50" fill={G} stroke="currentColor" strokeWidth="2"/>
-    <rect x="26" y="4" width="20" height="50" fill={G2} stroke="currentColor" strokeWidth="2"/>
-    <rect x="48" y="4" width="20" height="50" fill={G} stroke="currentColor" strokeWidth="2"/>
-    <rect x="70" y="4" width="22" height="50" fill={G2} stroke="currentColor" strokeWidth="2"/>
-    {/* Sliding arrows */}
-    <path d="M30 25 L36 29 L30 33" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
-    <path d="M66 25 L60 29 L66 33" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
-    {shine(8,8,16,16,0)}{shine(50,8,58,16,1)}
-  </svg>
-);
-
-// Lasikaide — glass railing with handrail and floor mount
-const SvgRailing = () => (
-  <svg viewBox="0 0 88 58" fill="none" className="w-full h-full">
-    {/* Top rail */}
-    <rect x="2" y="6" width="84" height="6" rx="3" fill={FR} stroke="currentColor" strokeWidth="2"/>
-    {/* Glass panel */}
-    <rect x="6" y="12" width="76" height="32" fill={G} stroke="currentColor" strokeWidth="1.5"/>
-    {/* Bottom mount */}
-    <rect x="2" y="44" width="84" height="7" rx="2" fill={FR} stroke="currentColor" strokeWidth="2"/>
-    {/* Vertical posts */}
-    <rect x="6" y="6" width="4" height="45" fill={FR} stroke="currentColor" strokeWidth="1.5"/>
-    <rect x="78" y="6" width="4" height="45" fill={FR} stroke="currentColor" strokeWidth="1.5"/>
-    {shine(14,16,28,28,0)}{shine(22,16,36,28,1)}{shine(30,16,44,28,2)}
-  </svg>
-);
-
-// Pesu jatkovarrella — window + long extension pole from outside
-const SvgPole = () => (
-  <svg viewBox="0 0 84 72" fill="none" className="w-full h-full">
-    {/* Wall section */}
-    <rect x="2" y="2" width="52" height="62" rx="2" fill="#f8fafc" stroke="currentColor" strokeWidth="2"/>
-    {/* Window opening */}
-    <rect x="8" y="8" width="40" height="50" rx="1" fill={G} stroke="currentColor" strokeWidth="1.8"/>
-    {/* Window frame cross */}
-    <line x1="28" y1="8" x2="28" y2="58" stroke="currentColor" strokeWidth="1.5"/>
-    <line x1="8" y1="33" x2="48" y2="33" stroke="currentColor" strokeWidth="1.5"/>
-    {/* Extension pole */}
-    <line x1="56" y1="68" x2="66" y2="10" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
-    {/* Squeegee head */}
-    <rect x="60" y="6" width="14" height="7" rx="2" fill={FR} stroke="currentColor" strokeWidth="2"/>
-    <line x1="60" y1="9.5" x2="74" y2="9.5" stroke="currentColor" strokeWidth="1.5"/>
-    {shine(12,12,20,20,0)}{shine(32,12,40,20,1)}
-  </svg>
-);
-
-// Peili — rectangular mirror with thick frame, diagonal shine
-const SvgMirror = () => (
-  <svg viewBox="0 0 72 72" fill="none" className="w-full h-full">
-    {/* Outer frame */}
-    <rect x="8" y="4" width="56" height="60" rx="4" fill={FR} stroke="currentColor" strokeWidth="3"/>
-    {/* Mirror glass */}
-    <rect x="16" y="12" width="40" height="44" rx="1" fill="#e0f2fe" stroke="currentColor" strokeWidth="1.5"/>
-    {/* Shine diagonals — more prominent for mirror */}
-    <line x1="22" y1="16" x2="44" y2="38" stroke="white" strokeWidth="3" strokeOpacity=".8" strokeLinecap="round"/>
-    <line x1="30" y1="16" x2="52" y2="38" stroke="white" strokeWidth="2" strokeOpacity=".6" strokeLinecap="round"/>
-    <line x1="22" y1="24" x2="34" y2="36" stroke="white" strokeWidth="1.5" strokeOpacity=".5" strokeLinecap="round"/>
-    {/* Wall mount bracket */}
-    <line x1="28" y1="64" x2="44" y2="64" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
-  </svg>
-);
-
-// Ovi — glass door with frame, upper glass panel, handle
-const SvgDoor = () => (
-  <svg viewBox="0 0 66 80" fill="none" className="w-full h-full">
-    {/* Door frame */}
-    <rect x="2" y="2" width="62" height="76" rx="3" fill={FR} stroke="currentColor" strokeWidth="2.5"/>
-    {/* Upper glass panel */}
-    <rect x="10" y="8" width="46" height="34" rx="1" fill={G} stroke="currentColor" strokeWidth="1.8"/>
-    {/* Lower panel */}
-    <rect x="10" y="48" width="46" height="24" rx="1" fill={FR} stroke="currentColor" strokeWidth="1.5"/>
-    {/* Horizontal cross in lower panel */}
-    <line x1="10" y1="60" x2="56" y2="60" stroke="currentColor" strokeWidth="1"/>
-    <line x1="33" y1="48" x2="33" y2="72" stroke="currentColor" strokeWidth="1"/>
-    {/* Handle */}
-    <rect x="46" y="36" width="6" height="12" rx="3" fill="currentColor" fillOpacity=".55"/>
-    <rect x="44" y="43" width="10" height="4" rx="2" fill={FR} stroke="currentColor" strokeWidth="1.2"/>
-    {shine(15,12,26,23,0)}{shine(21,12,32,23,1)}{shine(27,12,38,23,2)}
-  </svg>
-);
-
-// Kylpyhuoneen lasi — frameless shower glass panel(s)
-const SvgBathroom = () => (
-  <svg viewBox="0 0 80 72" fill="none" className="w-full h-full">
-    {/* Wall bar */}
-    <rect x="2" y="2" width="8" height="68" rx="2" fill={FR} stroke="currentColor" strokeWidth="2"/>
-    {/* Fixed panel */}
-    <rect x="12" y="4" width="26" height="64" rx="1" fill={G} stroke="currentColor" strokeWidth="1.8"/>
-    {/* Hinged door panel (slightly open) */}
-    <path d="M40 4 L68 8 L68 64 L40 68 Z" fill={G2} stroke="currentColor" strokeWidth="1.8"/>
-    {/* Hinge dots */}
-    <circle cx="40" cy="18" r="2.5" fill="currentColor" fillOpacity=".5"/>
-    <circle cx="40" cy="54" r="2.5" fill="currentColor" fillOpacity=".5"/>
-    {/* Handle on door */}
-    <rect x="62" y="32" width="4" height="10" rx="2" fill="currentColor" fillOpacity=".5"/>
-    {shine(16,8,24,16,0)}{shine(44,10,54,20,1)}
-  </svg>
-);
-
-// Sälekaihdinten puhdistus — window with horizontal slat blinds
-const SvgBlinds = () => (
-  <svg viewBox="0 0 78 70" fill="none" className="w-full h-full">
-    <rect x="2" y="2" width="74" height="66" rx="3" fill={FR} stroke="currentColor" strokeWidth="2.5"/>
-    {/* Pull cord at top */}
-    <line x1="28" y1="2" x2="28" y2="10" stroke="currentColor" strokeWidth="1.5"/>
-    <line x1="38" y1="2" x2="38" y2="10" stroke="currentColor" strokeWidth="1.5"/>
-    <line x1="48" y1="2" x2="48" y2="10" stroke="currentColor" strokeWidth="1.5"/>
-    {/* Valance bar */}
-    <rect x="7" y="10" width="64" height="5" rx="1" fill={FR} stroke="currentColor" strokeWidth="1.5"/>
-    {/* Slats */}
-    {[18,26,34,42,50,58].map(y => (
-      <rect key={y} x="7" y={y} width="64" height="5" rx="1"
-        fill="#e0e7ef" stroke="currentColor" strokeWidth="1.2"/>
-    ))}
-  </svg>
-);
-
-// Avautuva ikkuna 3–5 m — window up high + step ladder beside it
-const SvgHighWindow = () => (
-  <svg viewBox="0 0 84 76" fill="none" className="w-full h-full">
-    {/* Window */}
-    <rect x="28" y="2" width="48" height="44" rx="3" fill={FR} stroke="currentColor" strokeWidth="2.5"/>
-    <rect x="34" y="8" width="36" height="32" rx="1" fill={G} stroke="currentColor" strokeWidth="1.8"/>
-    <line x1="52" y1="8" x2="52" y2="40" stroke="currentColor" strokeWidth="1.5"/>
-    {/* Handle */}
-    <rect x="49" y="22" width="5" height="9" rx="2" fill="currentColor" fillOpacity=".5"/>
-    {/* Step ladder */}
-    <line x1="6" y1="74" x2="20" y2="4" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
-    <line x1="24" y1="74" x2="18" y2="20" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
-    <line x1="7" y1="68" x2="23" y2="68" stroke="currentColor" strokeWidth="2"/>
-    <line x1="9" y1="58" x2="22" y2="58" stroke="currentColor" strokeWidth="2"/>
-    <line x1="11" y1="48" x2="21" y2="48" stroke="currentColor" strokeWidth="2"/>
-    <line x1="13" y1="38" x2="20" y2="38" stroke="currentColor" strokeWidth="2"/>
-    <line x1="15" y1="28" x2="19" y2="28" stroke="currentColor" strokeWidth="1.5"/>
-    {shine(38,11,46,19,0)}{shine(43,11,51,19,1)}
-  </svg>
-);
-
-// ─── Pricing ──────────────────────────────────────────────────────────────────
-
-const START_FEE = 25;
-const MIN_ORDER = 80;
 const KOTITALOUS_PCT = 0.35;
-
-const WINDOW_TYPES = [
-  { key: "w2",       label: "2-pintainen ikkuna",            price: 9,  unit: "kpl",   Icon: Svg2Pin },
-  { key: "vent",     label: "Tuuletusikkuna kahvalla",       price: 10, unit: "kpl",   Icon: SvgVentilation },
-  { key: "w4",       label: "Avautuva 4-pintainen",          price: 16, unit: "kpl",   Icon: Svg4Pin },
-  { key: "w6",       label: "Avautuva 6-pintainen",          price: 21, unit: "kpl",   Icon: Svg6Pin },
-  { key: "grid",     label: "Ruudukkoikkunat",               price: 21, unit: "kpl",   Icon: SvgGrid },
-  { key: "balcony",  label: "Parvekelasit",                  price: 7,  unit: "paneeli", Icon: SvgBalcony },
-  { key: "terrace",  label: "Terassilasit",                  price: 11, unit: "paneeli", Icon: SvgTerrace },
-  { key: "railing",  label: "Lasikaide",                     price: 7,  unit: "metri", Icon: SvgRailing },
-  { key: "pole",     label: "Pesu jatkovarrella",            price: 13, unit: "pinta", Icon: SvgPole },
-  { key: "mirror",   label: "Peili",                         price: 5,  unit: "kpl",   Icon: SvgMirror },
-  { key: "door",     label: "Ovi (lasinen)",                 price: 10, unit: "kpl",   Icon: SvgDoor },
-  { key: "bathroom", label: "Kylpyhuoneen lasi",             price: 7,  unit: "kpl",   Icon: SvgBathroom },
-  { key: "blinds",   label: "Sälekaihdinten puhdistus",      price: 8,  unit: "ikkuna", Icon: SvgBlinds },
-  { key: "high",     label: "Avautuva ikkuna 3–5 m",         price: 34, unit: "kpl",   Icon: SvgHighWindow },
-] as const;
-
-type WindowKey = (typeof WINDOW_TYPES)[number]["key"];
 
 const CAR_SIZES = [
   { key: "small",  label: "Pikkuauto",      sub: "Hatchback, city-auto", price: 30 },
@@ -521,10 +247,7 @@ function regionMultiplier(pc: string): { mult: number; label: string } {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function LaskuriPage() {
-  const [tab, setTab] = useState<"ikkunat" | "auto" | "nelio">("nelio");
-  const [counts, setCounts] = useState<Record<WindowKey, number>>(
-    Object.fromEntries(WINDOW_TYPES.map(t => [t.key, 0])) as Record<WindowKey, number>
-  );
+  const [tab, setTab] = useState<"auto" | "nelio">("nelio");
   const [carSize, setCarSize] = useState<CarSize | null>(null);
 
   // Neliöhinnat state
@@ -555,8 +278,6 @@ export default function LaskuriPage() {
   const [sendError, setSendError] = useState("");
 
   // Calculations
-  const windowSubtotal = WINDOW_TYPES.reduce((s, t) => s + t.price * counts[t.key], 0);
-  const windowTotal = Math.max(windowSubtotal + (windowSubtotal > 0 ? START_FEE : 0), windowSubtotal > 0 ? MIN_ORDER : 0);
   const carPrice = carSize ? CAR_SIZES.find(c => c.key === carSize)!.price : 0;
 
   // Neliö calculations
@@ -568,15 +289,10 @@ export default function LaskuriPage() {
   const sqmPreRegion = sqmTiered + addonsTotal;
   const sqmTotal = Math.round(sqmPreRegion * region.mult);
 
-  const activeTotal = tab === "ikkunat" ? windowTotal : tab === "auto" ? carPrice : sqmTotal;
-  const hasResult = tab === "ikkunat" ? windowSubtotal > 0 : tab === "auto" ? carSize !== null : sqmIdx !== null;
+  const activeTotal = tab === "auto" ? carPrice : sqmTotal;
+  const hasResult = tab === "auto" ? carSize !== null : sqmIdx !== null;
   const kotitalous = kvEligible ? Math.round(activeTotal * KOTITALOUS_PCT) : 0;
   const afterKotitalous = activeTotal - kotitalous;
-
-  const selectedWindows = WINDOW_TYPES.filter(t => counts[t.key] > 0);
-
-  const adjust = (key: WindowKey, d: number) =>
-    setCounts(p => ({ ...p, [key]: Math.max(0, p[key] + d) }));
 
   const handleSend = async () => {
     if (!form.name || !form.phone || !form.address) return;
@@ -585,9 +301,7 @@ export default function LaskuriPage() {
       const houseLabel = HOUSE_TYPES.find(h => h.key === houseType)?.label;
       const sqmLabel = sqmIdx !== null ? SQM_RANGES[houseType][sqmIdx].label : "";
       const addonsList = ADDONS.filter(a => addons[a.key]).map(a => a.label).join(", ") || "—";
-      const serviceDesc = tab === "ikkunat"
-        ? selectedWindows.map(t => `${t.label}: ${counts[t.key]} ${t.unit}`).join(", ")
-        : tab === "auto"
+      const serviceDesc = tab === "auto"
         ? `Sisäfreesaus — ${CAR_SIZES.find(c => c.key === carSize)?.label} (${carPrice} €). Sisältää: ${CAR_INCLUDES.join(", ")}.`
         : `Neliöhinta — ${houseLabel} ${sqmLabel}, ${tierObj.label}. Lisät: ${addonsList}. Alue: ${region.label} (${region.mult}×). Postinumero: ${postalCode || "—"}`;
       const res = await fetch("https://api.web3forms.com/submit", {
@@ -690,10 +404,10 @@ export default function LaskuriPage() {
 
         {/* Tab */}
         <div className="flex rounded-2xl bg-muted p-1 mb-6 max-w-xl mx-auto">
-          {(["nelio", "ikkunat", "auto"] as const).map(t => (
+          {(["nelio", "auto"] as const).map(t => (
             <button key={t} onClick={() => { setTab(t); setShowForm(false); }}
               className={`flex-1 py-2.5 px-2 rounded-xl text-xs md:text-sm font-medium transition-all ${tab === t ? "bg-card premium-shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-              {t === "nelio" ? "Neliöhinnat" : t === "ikkunat" ? "Ikkuna­laskuri" : "Sisä­freesaus"}
+              {t === "nelio" ? "Neliöhinnat" : "Sisä­freesaus"}
             </button>
           ))}
         </div>
@@ -703,43 +417,6 @@ export default function LaskuriPage() {
 
           {/* Left: items */}
           <div className="lg:col-span-2">
-
-            {/* ── WINDOW TYPES ── */}
-            {tab === "ikkunat" && (
-              <div className="space-y-2">
-                <div className="grid grid-cols-2 gap-2">
-                  {WINDOW_TYPES.map(({ key, label, price, unit, Icon }) => (
-                    <Card key={key} className="p-3 bg-card border-0 premium-shadow">
-                      <div className="flex flex-col items-center text-center gap-2">
-                        <div className="w-full h-14 text-primary/70">
-                          <Icon />
-                        </div>
-                        <div>
-                          <p className="text-xs font-semibold text-foreground leading-tight">{label}</p>
-                          <p className="text-[10px] text-muted-foreground">{price} € / {unit}</p>
-                        </div>
-                        <div className="flex items-center gap-2 mt-1">
-                          <button onClick={() => adjust(key, -1)}
-                            className="w-7 h-7 rounded-full border border-border flex items-center justify-center text-muted-foreground hover:text-primary hover:border-primary transition-all">
-                            <Minus className="w-3 h-3" />
-                          </button>
-                          <span className={`w-6 text-center text-sm font-bold tabular-nums ${counts[key] > 0 ? "text-primary" : "text-muted-foreground"}`}>
-                            {counts[key]}
-                          </span>
-                          <button onClick={() => adjust(key, 1)}
-                            className="w-7 h-7 rounded-full border border-border flex items-center justify-center text-muted-foreground hover:text-primary hover:border-primary transition-all">
-                            <Plus className="w-3 h-3" />
-                          </button>
-                        </div>
-                      </div>
-                    </Card>
-                  ))}
-                </div>
-                <p className="text-[10px] text-muted-foreground text-center pt-1">
-                  Aloitusmaksu {START_FEE} € sisältyy hintaan · Minimitilaus {MIN_ORDER} €
-                </p>
-              </div>
-            )}
 
             {/* ── NELIÖHINNAT ── */}
             {tab === "nelio" && (
@@ -943,21 +620,6 @@ export default function LaskuriPage() {
                   <p className="text-xs text-muted-foreground text-center py-4">Valitse palvelut vasemmalta</p>
                 )}
 
-                {tab === "ikkunat" && selectedWindows.length > 0 && (
-                  <div className="space-y-1.5 mb-3">
-                    {selectedWindows.map(t => (
-                      <div key={t.key} className="flex justify-between text-xs">
-                        <span className="text-muted-foreground truncate mr-2">{t.label} × {counts[t.key]}</span>
-                        <span className="text-foreground font-medium flex-shrink-0">{t.price * counts[t.key]} €</span>
-                      </div>
-                    ))}
-                    <div className="flex justify-between text-xs border-t border-border pt-1.5 mt-1.5">
-                      <span className="text-muted-foreground">Aloitusmaksu</span>
-                      <span className="text-foreground font-medium">{START_FEE} €</span>
-                    </div>
-                  </div>
-                )}
-
                 {tab === "auto" && carSize && (
                   <div className="space-y-1.5 mb-3">
                     <div className="flex justify-between text-xs">
@@ -1031,10 +693,9 @@ export default function LaskuriPage() {
                 <div className="flex items-start gap-2">
                   <Info className="w-3.5 h-3.5 text-muted-foreground mt-0.5 flex-shrink-0" />
                   <div className="space-y-1.5">
-                    <p className="text-[11px] text-muted-foreground leading-relaxed">Ikkunatyypit tarkistetaan paikan päällä</p>
                     <p className="text-[11px] text-muted-foreground leading-relaxed">Kaikki välineet mukana, ei lisäkuluja</p>
                     <p className="text-[11px] text-muted-foreground leading-relaxed">Isommille kohteille teemme erillisen tarjouksen</p>
-                    <p className="text-[11px] text-muted-foreground leading-relaxed">25 € aloitusmaksu sisältää matkan ja pesuaineet</p>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">Hinta tarkentuu katselmuksen yhteydessä</p>
                   </div>
                 </div>
               </Card>

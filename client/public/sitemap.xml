@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+
+  <!-- Etusivu – korkein prioriteetti -->
+  <url>
+    <loc>https://puuhapatet.fi/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+
+  <!-- Palvelut – ikkunanpesu, nurmikko, pihapalvelut -->
+  <url>
+    <loc>https://puuhapatet.fi/palvelut</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+  <!-- Hinta-arvio / laskuri -->
+  <url>
+    <loc>https://puuhapatet.fi/laskuri</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+  <!-- Tilaussivu -->
+  <url>
+    <loc>https://puuhapatet.fi/tilaus</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- UKK – Usein Kysytyt Kysymykset -->
+  <url>
+    <loc>https://puuhapatet.fi/ukk</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <!-- Meistä -->
+  <url>
+    <loc>https://puuhapatet.fi/meista</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+
+  <!-- Käyttöehdot -->
+  <url>
+    <loc>https://puuhapatet.fi/ehdot</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+  </url>
+
+  <!-- Tietosuoja -->
+  <url>
+    <loc>https://puuhapatet.fi/tietosuoja</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+  </url>
+
+</urlset>

@@ -13,6 +13,7 @@ export interface AdminProfile {
   role: UserRole;
   photoUrl?: string;
   phone?: string;
+  email?: string;         // Työntekijän sähköposti (piilokopio lähetettäviin viesteihin)
   yTunnus?: string;       // Y-tunnus (esim. "3598782-9")
   hasYTunnus?: boolean;   // Y-tunnus → elinkeinotoiminnan veroilmoitus (lomake 5)
   isUnder18?: boolean;    // alle 18v → huoltaja hoitaa OmaVerossa
@@ -28,6 +29,7 @@ export const USERS: AdminProfile[] = [
     role: "HOST",
     photoUrl: "/joonatan.jpg.jpeg",
     phone: "+358400389999",
+    email: "joonatan@puuhapatet.fi",
     yTunnus: "3598782-9",
     hasYTunnus: true,
     isUnder18: true,   // 17v
@@ -39,6 +41,7 @@ export const USERS: AdminProfile[] = [
     role: "HOST",
     photoUrl: "/matias.jpg.jpeg",
     phone: "+358442350881",
+    email: "matias@puuhapatet.fi",
     yTunnus: "3609912-9",
     hasYTunnus: true,
     isUnder18: false,  // 18v

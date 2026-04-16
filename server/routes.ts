@@ -813,143 +813,89 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const {
         to, bcc, quoteId, customerName, customerAddress,
-        items, subtotal, vatAmount, total, vatMode,
-        validDays, customMessage, workerName, workerPhone, workerEmail, lang,
+        items, total, validDays, customMessage,
+        workerName, workerPhone, workerEmail, lang,
       } = req.body;
 
       if (!to || !customerName || !quoteId || !items?.length) {
         return res.status(400).json({ error: "Puuttuvia kenttiä" });
       }
 
-      const isEn = lang === "en";
+      const isEn      = lang === "en";
       const firstName = (customerName as string).split(" ")[0];
-      const today = new Date().toLocaleDateString(isEn ? "en-GB" : "fi-FI");
-      const validUntil = new Date(Date.now() + (validDays || 14) * 24 * 60 * 60 * 1000)
+      const today     = new Date().toLocaleDateString(isEn ? "en-GB" : "fi-FI");
+      const vDays     = validDays || 14;
+      const validUntil = new Date(Date.now() + vDays * 24 * 60 * 60 * 1000)
         .toLocaleDateString(isEn ? "en-GB" : "fi-FI");
 
-      const TARJOUS_LABEL = isEn ? "QUOTE" : "TARJOUS";
-      const TO_LABEL     = isEn ? "Quote for" : "Tarjous asiakkaalle";
-      const FROM_LABEL   = isEn ? "From" : "Tarjouksen antaja";
-      const VALID_TEXT   = isEn ? "Valid until" : "Voimassa asti:";
+      const kotitalous = Math.round(Number(total) * 0.65);
 
+      // ── Default intro — reads naturally, pushes conversion ──────────────
       const defaultIntro = isEn
-        ? `Hi ${firstName}! Please find our quote for the requested services below. We'd be happy to answer any questions.`
-        : `Hei ${firstName}! Oheisessa tarjouksessa on pyytämäsi palvelut. Vastaamme mielellämme lisäkysymyksiin.`;
+        ? `Hi ${firstName}! Here's the quote we put together based on your property. Everything's included — no hidden extras. If you have questions or want to adjust anything, just give us a call.`
+        : `Hei ${firstName}! Tässä on kartoituksen perusteella tekemämme tarjous. Kaikki on hinnoiteltu avoimesti — ei piilokuluia. Jos jokin mietityttää tai haluatte muokata jotain, soittakaa rohkeasti.`;
 
       const introText = customMessage
         ? (customMessage as string).replace(/\n/g, "<br>")
         : defaultIntro;
 
-      // Line items rows
-      const lineItemsHtml = (items as Array<{ description: string; qty: number; unitPrice: number }>)
-        .filter(i => i.description?.trim())
+      // ── Service rows — title + optional detail on second line ────────────
+      const serviceRowsHtml = (items as Array<{ title: string; detail: string; price: number }>)
         .map((item, idx) => `
-          <tr style="border-bottom:1px solid #f1f5f9;background:${idx % 2 === 1 ? "#f8fafc" : "#fff"}">
-            <td style="padding:14px 0;color:#1e293b;font-weight:500;font-size:14px">${item.description}</td>
-            <td style="padding:14px 8px;text-align:center;color:#64748b;font-size:14px">${item.qty}</td>
-            <td style="padding:14px 0 14px 8px;text-align:right;color:#64748b;font-size:14px">${Number(item.unitPrice).toFixed(2)} €</td>
-            <td style="padding:14px 0;text-align:right;color:#0f172a;font-weight:700;font-size:14px">${(item.qty * Number(item.unitPrice)).toFixed(2)} €</td>
+          <tr style="border-bottom:1px solid #f1f5f9;background:${idx % 2 === 1 ? "#f8fafc" : "#ffffff"}">
+            <td style="padding:14px 20px 14px 0;vertical-align:top">
+              <p style="margin:0;color:#0f172a;font-size:14px;font-weight:600">${item.title}</p>
+              ${item.detail ? `<p style="margin:3px 0 0;color:#64748b;font-size:12px">${item.detail}</p>` : ""}
+            </td>
+            <td style="padding:14px 0;text-align:right;vertical-align:top;white-space:nowrap">
+              <span style="color:#0f172a;font-size:15px;font-weight:700">${Number(item.price).toFixed(0)} €</span>
+            </td>
           </tr>
         `).join("");
-
-      const vatExclRows = vatMode === "excl" ? `
-        <tr>
-          <td style="padding:8px 0 4px;color:#64748b;font-size:13px" colspan="2">${isEn ? "Net price (excl. VAT)" : "Veroton hinta"}</td>
-          <td style="padding:8px 0 4px;text-align:right;color:#64748b;font-size:13px" colspan="2">${Number(subtotal).toFixed(2)} €</td>
-        </tr>
-        <tr>
-          <td style="padding:4px 0 8px;color:#64748b;font-size:13px" colspan="2">ALV 24%</td>
-          <td style="padding:4px 0 8px;text-align:right;color:#64748b;font-size:13px" colspan="2">${Number(vatAmount).toFixed(2)} €</td>
-        </tr>
-      ` : "";
-
-      const totalLabel = isEn
-        ? `Total${vatMode === "incl" ? " (incl. VAT 24%)" : " (incl. VAT)"}`
-        : `Yhteensä${vatMode === "incl" ? " (ALV 24% sis.)" : ""}`;
-
-      const kotitalouspBlock = vatMode === "incl" ? `
-        <div style="background:#f0fdf4;border-radius:12px;padding:18px 20px;margin-top:20px;border-left:4px solid #22c55e">
-          <p style="margin:0 0 6px;font-weight:700;color:#166534;font-size:11px;letter-spacing:1px;text-transform:uppercase">
-            ${isEn ? "HOUSEHOLD TAX DEDUCTION" : "KOTITALOUSVÄHENNYS"}
-          </p>
-          <p style="margin:0;color:#15803d;font-size:13px;line-height:1.65">
-            ${isEn
-              ? `This service qualifies for the <strong>Finnish household tax deduction</strong>. You can reclaim 40% of the labour cost — your effective cost is approx. <strong>${Math.round(Number(total) * 0.65).toFixed(0)} €</strong>. This quote serves as documentation for your tax filing.`
-              : `Tämä palvelu on <strong>kotitalousvähennyskelpoinen</strong>. Työn osuudesta voit vähentää 40 % verotuksessa — tosiasiallinen kustannuksesi on noin <strong>${Math.round(Number(total) * 0.65).toFixed(0)} €</strong>. Tämä tarjous käy dokumenttina veroilmoitukseen.`
-            }
-          </p>
-        </div>
-      ` : "";
-
-      const validityBlock = `
-        <div style="background:#fffbeb;border-radius:12px;padding:18px 20px;margin-top:16px;border-left:4px solid #f59e0b">
-          <p style="margin:0 0 6px;font-weight:700;color:#92400e;font-size:11px;letter-spacing:1px;text-transform:uppercase">
-            ${isEn ? "QUOTE VALIDITY" : "TARJOUKSEN VOIMASSAOLO"}
-          </p>
-          <p style="margin:0;color:#78350f;font-size:13px;line-height:1.65">
-            ${isEn
-              ? `This quote is valid until <strong>${validUntil}</strong> (${validDays || 14} days). After this date prices may change. Contact us to confirm.`
-              : `Tarjous on voimassa <strong>${validUntil}</strong> asti (${validDays || 14} päivää). Tämän jälkeen hinnat saattavat muuttua. Ota yhteyttä vahvistaaksesi.`
-            }
-          </p>
-        </div>
-      `;
-
-      const phoneBtn = workerPhone
-        ? `<a href="tel:${workerPhone}" style="display:inline-block;background:#0f172a;color:#ffffff;padding:12px 24px;border-radius:10px;text-decoration:none;font-weight:700;font-size:14px;margin:4px">${isEn ? "📞 Call" : "📞 Soita"} ${workerPhone}</a>`
-        : "";
-
-      const onlineBtnLabel = isEn ? "Book online →" : "Varaa verkossa →";
-      const ctaText = isEn
-        ? "Ready to proceed? Confirm and we'll schedule your appointment right away."
-        : "Valmis tilaamaan? Vahvista ja sovitaan aika heti.";
 
       const html = `
 <!DOCTYPE html>
 <html lang="${isEn ? "en" : "fi"}">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<style>a{color:inherit}</style>
-</head>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:#f1f5f9">
-<table width="100%" cellpadding="0" cellspacing="0" style="min-width:100%;background:#f1f5f9"><tr><td align="center" style="padding:32px 16px">
-
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9"><tr><td align="center" style="padding:32px 16px">
 <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
 
   <!-- HEADER -->
   <tr>
-    <td style="background:#0f172a;border-radius:16px 16px 0 0;padding:36px 40px">
+    <td style="background:#18181b;border-radius:16px 16px 0 0;padding:32px 36px 28px">
       <table width="100%" cellpadding="0" cellspacing="0">
         <tr>
-          <td style="vertical-align:top">
-            <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:800;letter-spacing:-0.5px">Puuhapatet.</h1>
-            <p style="margin:4px 0 0;color:#475569;font-size:12px">Ikkunapesu &middot; Pihapalvelut &middot; Nurmikko</p>
+          <td>
+            <p style="margin:0;color:#ffffff;font-size:24px;font-weight:800;letter-spacing:-0.4px">Puuhapatet.</p>
+            <p style="margin:4px 0 0;color:#52525b;font-size:12px">Ikkunapesu &middot; Pihapalvelut &middot; Nurmikko</p>
           </td>
-          <td style="text-align:right;vertical-align:top">
-            <span style="display:inline-block;background:#4a5d4f;color:#a7f3d0;font-size:11px;font-weight:700;letter-spacing:2px;padding:5px 14px;border-radius:20px;text-transform:uppercase">${TARJOUS_LABEL}</span>
+          <td style="text-align:right;vertical-align:top;padding-top:2px">
+            <span style="display:inline-block;background:#4a5d4f;color:#bbf7d0;font-size:10px;font-weight:700;letter-spacing:2px;padding:4px 12px;border-radius:20px;text-transform:uppercase">${isEn ? "QUOTE" : "TARJOUS"}</span>
           </td>
         </tr>
       </table>
-      <div style="margin-top:28px;padding-top:20px;border-top:1px solid rgba(255,255,255,0.08)">
-        <p style="font-family:'Courier New',Courier,monospace;color:#e2e8f0;font-size:17px;font-weight:700;margin:0 0 6px;letter-spacing:1.5px">${quoteId}</p>
-        <p style="color:#475569;font-size:12px;margin:0">${today} &mdash; ${VALID_TEXT} <strong style="color:#94a3b8">${validUntil}</strong></p>
+      <div style="margin-top:24px;padding-top:18px;border-top:1px solid #27272a">
+        <p style="font-family:'Courier New',Courier,monospace;color:#d4d4d8;font-size:15px;font-weight:700;margin:0 0 4px;letter-spacing:1.5px">${quoteId}</p>
+        <p style="color:#52525b;font-size:12px;margin:0">${today} &nbsp;&middot;&nbsp; ${isEn ? "Valid until" : "Voimassa"} <strong style="color:#a1a1aa">${validUntil}</strong></p>
       </div>
     </td>
   </tr>
 
   <!-- TO / FROM -->
   <tr>
-    <td style="background:#f8fafc;border-left:1px solid #e2e8f0;border-right:1px solid #e2e8f0">
+    <td style="background:#fafafa;border-left:1px solid #e4e4e7;border-right:1px solid #e4e4e7">
       <table width="100%" cellpadding="0" cellspacing="0">
         <tr>
-          <td style="padding:20px 40px;border-right:1px solid #e2e8f0;width:50%;vertical-align:top">
-            <p style="margin:0 0 8px;color:#94a3b8;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">${TO_LABEL}</p>
-            <p style="margin:0 0 4px;color:#0f172a;font-size:15px;font-weight:700">${customerName}</p>
-            ${customerAddress ? `<p style="margin:0;color:#475569;font-size:12px;line-height:1.5">${customerAddress}</p>` : ""}
+          <td style="padding:18px 36px;border-right:1px solid #e4e4e7;width:50%;vertical-align:top">
+            <p style="margin:0 0 6px;color:#a1a1aa;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">${isEn ? "FOR" : "ASIAKKAALLE"}</p>
+            <p style="margin:0 0 2px;color:#18181b;font-size:14px;font-weight:700">${customerName}</p>
+            ${customerAddress ? `<p style="margin:0;color:#71717a;font-size:12px;line-height:1.5">${customerAddress}</p>` : ""}
           </td>
-          <td style="padding:20px 40px;width:50%;text-align:right;vertical-align:top">
-            <p style="margin:0 0 8px;color:#94a3b8;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">${FROM_LABEL}</p>
-            <p style="margin:0 0 4px;color:#0f172a;font-size:15px;font-weight:700">${workerName || "Puuhapatet"}</p>
-            ${workerPhone ? `<p style="margin:0;color:#475569;font-size:12px">${workerPhone}</p>` : ""}
+          <td style="padding:18px 36px;width:50%;text-align:right;vertical-align:top">
+            <p style="margin:0 0 6px;color:#a1a1aa;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">${isEn ? "FROM" : "LÄHETTÄJÄ"}</p>
+            <p style="margin:0 0 2px;color:#18181b;font-size:14px;font-weight:700">${workerName || "Puuhapatet"}</p>
+            ${workerPhone ? `<p style="margin:0;color:#71717a;font-size:12px">${workerPhone}</p>` : ""}
           </td>
         </tr>
       </table>
@@ -958,45 +904,74 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   <!-- BODY -->
   <tr>
-    <td style="background:#ffffff;border:1px solid #e2e8f0;border-top:none;padding:36px 40px">
+    <td style="background:#ffffff;border:1px solid #e4e4e7;border-top:none;padding:32px 36px">
 
       <!-- Intro -->
-      <p style="margin:0 0 28px;color:#334155;font-size:15px;line-height:1.75">${introText}</p>
+      <p style="margin:0 0 28px;color:#3f3f46;font-size:15px;line-height:1.75">${introText}</p>
 
-      <!-- Line items -->
-      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
-        <thead>
-          <tr style="border-bottom:2px solid #0f172a">
-            <th style="padding:10px 0;text-align:left;color:#64748b;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase">${isEn ? "SERVICE" : "PALVELU"}</th>
-            <th style="padding:10px 8px;text-align:center;color:#64748b;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;width:44px">${isEn ? "QTY" : "KPL"}</th>
-            <th style="padding:10px 0 10px 8px;text-align:right;color:#64748b;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;width:80px">${isEn ? "UNIT €" : "€/KPL"}</th>
-            <th style="padding:10px 0;text-align:right;color:#64748b;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;width:80px">${isEn ? "TOTAL" : "YHT."}</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${lineItemsHtml}
-        </tbody>
+      <!-- Services -->
+      <p style="margin:0 0 10px;color:#a1a1aa;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">${isEn ? "SERVICES" : "PALVELUT"}</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border-top:2px solid #18181b">
+        <tbody>${serviceRowsHtml}</tbody>
       </table>
 
-      <!-- Totals -->
-      <table width="100%" cellpadding="0" cellspacing="0" style="border-top:2px solid #0f172a;margin-top:0">
-        ${vatExclRows}
+      <!-- Total -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-top:2px solid #18181b;margin-top:0">
         <tr>
-          <td style="padding:16px 0;color:#0f172a;font-size:16px;font-weight:800" colspan="2">${totalLabel}</td>
-          <td style="padding:16px 0;text-align:right;color:#0f172a;font-size:28px;font-weight:900" colspan="2">${Number(total).toFixed(2)} €</td>
+          <td style="padding:16px 0;color:#18181b;font-size:15px;font-weight:700">${isEn ? "Total" : "Yhteensä"}</td>
+          <td style="padding:16px 0;text-align:right;color:#18181b;font-size:28px;font-weight:900">${Number(total).toFixed(0)} €</td>
         </tr>
       </table>
 
-      ${kotitalouspBlock}
-      ${validityBlock}
-
-      <!-- CTA -->
-      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:32px">
+      <!-- Kotitalousvähennys — the real price hero ─────────────────────── -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px">
         <tr>
-          <td style="text-align:center">
-            <p style="color:#64748b;font-size:13px;margin:0 0 16px;line-height:1.6">${ctaText}</p>
-            ${phoneBtn}
-            <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;background:#4a5d4f;color:#ffffff;padding:12px 24px;border-radius:10px;text-decoration:none;font-weight:700;font-size:14px;margin:4px">${onlineBtnLabel}</a>
+          <td style="background:#f0fdf4;border-radius:12px;padding:18px 20px;border-left:4px solid #22c55e">
+            <p style="margin:0 0 6px;font-weight:700;color:#166534;font-size:10px;letter-spacing:1px;text-transform:uppercase">${isEn ? "HOUSEHOLD TAX DEDUCTION — YOUR ACTUAL COST" : "KOTITALOUSVÄHENNYS — TOSIASIALLINEN HINTASI"}</p>
+            <p style="margin:0 0 8px;color:#15803d;font-size:14px;line-height:1.65">
+              ${isEn
+                ? `This service qualifies for the <strong>Finnish household tax deduction</strong>. You can reclaim 40% of the labour portion from your taxes — your real out-of-pocket cost is approx. <strong style="font-size:16px">${kotitalous} €</strong>.`
+                : `Tämä palvelu on <strong>kotitalousvähennyskelpoinen</strong>. Työn osuudesta saat 40 % takaisin verotuksessa — tosiasiallinen kustannuksesi on vain noin <strong style="font-size:16px">${kotitalous} €</strong>.`
+              }
+            </p>
+            <p style="margin:0;color:#16a34a;font-size:12px">
+              ${isEn
+                ? "This quote works as documentation — no separate receipt needed."
+                : "Tämä tarjous käy dokumenttina veroilmoitukseen, erillistä kuittia ei tarvita."}
+            </p>
+          </td>
+        </tr>
+      </table>
+
+      <!-- Validity ──────────────────────────────────────────────────────── -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px">
+        <tr>
+          <td style="background:#fffbeb;border-radius:12px;padding:14px 20px;border-left:4px solid #f59e0b">
+            <p style="margin:0;color:#78350f;font-size:13px;line-height:1.6">
+              <strong>${isEn ? "Offer valid until" : "Tarjous voimassa"} ${validUntil}</strong>${isEn ? "." : " asti."}
+              ${isEn
+                ? " After this date prices may be revised — confirm early to lock in this price."
+                : " Tämän jälkeen hintoja saatetaan tarkistaa — vahvista ajoissa, niin hinta pysyy."}
+            </p>
+          </td>
+        </tr>
+      </table>
+
+      <!-- CTA ───────────────────────────────────────────────────────────── -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px">
+        <tr>
+          <td style="text-align:center;padding:0 0 8px">
+            <p style="color:#52525b;font-size:14px;margin:0 0 16px;line-height:1.65">
+              ${isEn
+                ? "Ready to go? One call or click and we'll confirm the time."
+                : "Valmis? Yksi soitto tai klikkaus, ja vahvistetaan aika."}
+            </p>
+            ${workerPhone
+              ? `<a href="tel:${workerPhone}" style="display:inline-block;background:#18181b;color:#ffffff;padding:13px 28px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;margin:4px">📞 ${isEn ? "Call us" : "Soita"} — ${workerPhone}</a>`
+              : ""
+            }
+            <br>
+            <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;background:#4a5d4f;color:#ffffff;padding:13px 28px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;margin:8px 4px 4px">${isEn ? "Book online →" : "Varaa verkossa →"}</a>
           </td>
         </tr>
       </table>
@@ -1006,18 +981,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   <!-- FOOTER -->
   <tr>
-    <td style="background:#f8fafc;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 16px 16px;padding:20px 40px">
-      <table width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;color:#64748b">
+    <td style="background:#fafafa;border:1px solid #e4e4e7;border-top:none;border-radius:0 0 16px 16px;padding:18px 36px">
+      <table width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;color:#71717a">
         <tr>
           <td style="vertical-align:top">
-            <strong style="color:#0f172a;font-size:13px">${workerName || "Puuhapatet"}</strong><br>
-            ${workerPhone ? `<span>${workerPhone}</span><br>` : ""}
-            ${workerEmail ? `<a href="mailto:${workerEmail}" style="color:#64748b;text-decoration:none">${workerEmail}</a>` : ""}
+            <strong style="color:#18181b">${workerName || "Puuhapatet"}</strong><br>
+            ${workerPhone ? `${workerPhone}<br>` : ""}
+            ${workerEmail ? `<a href="mailto:${workerEmail}" style="color:#71717a;text-decoration:none">${workerEmail}</a>` : ""}
           </td>
           <td style="text-align:right;vertical-align:top">
-            <strong style="color:#0f172a;font-size:13px">Puuhapatet</strong><br>
-            <a href="mailto:info@puuhapatet.fi" style="color:#64748b;text-decoration:none">info@puuhapatet.fi</a><br>
-            <a href="https://puuhapatet.fi" style="color:#64748b;text-decoration:none">puuhapatet.fi</a>
+            <strong style="color:#18181b">Puuhapatet</strong><br>
+            <a href="mailto:info@puuhapatet.fi" style="color:#71717a;text-decoration:none">info@puuhapatet.fi</a><br>
+            <a href="https://puuhapatet.fi" style="color:#71717a;text-decoration:none">puuhapatet.fi</a>
           </td>
         </tr>
       </table>
@@ -1025,14 +1000,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   </tr>
 
 </table>
-
 </td></tr></table>
 </body>
 </html>`;
 
       const subject = isEn
-        ? `Quote ${quoteId} from Puuhapatet`
-        : `Tarjous ${quoteId} — Puuhapatet`;
+        ? `Your quote from Puuhapatet — ${Number(total).toFixed(0)} €`
+        : `Tarjous ${quoteId} — ${Number(total).toFixed(0)} € (Puuhapatet)`;
 
       const result = await resend.emails.send({
         from: FROM_EMAIL,

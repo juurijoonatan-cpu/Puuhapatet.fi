@@ -246,11 +246,8 @@ export const api = {
     quoteId: string;
     customerName: string;
     customerAddress?: string;
-    items: Array<{ description: string; qty: number; unitPrice: number }>;
-    subtotal: number;
-    vatAmount: number;
+    items: Array<{ title: string; detail: string; price: number }>;
     total: number;
-    vatMode: "incl" | "excl";
     validDays: number;
     customMessage?: string;
     workerName?: string;

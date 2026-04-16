@@ -281,7 +281,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         totalRevenue += job.agreedPrice;
         totalExpenses += jobExp;
         // Service fee: 10% of net revenue (same formula as workers/stats)
-        serviceFeeTotal += Math.round(Math.max(0, job.agreedPrice - jobExp) * 0.10);
+        serviceFeeTotal += job.waiveFee ? 0 : Math.round(Math.max(0, job.agreedPrice - jobExp) * 0.10);
       }
       const netIncome = totalRevenue - totalExpenses - serviceFeeTotal;
 
@@ -337,7 +337,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       for (const job of doneJobs) {
         const jobExpenses = expensesByJob[job.id] ?? 0;
         const netRevenue = Math.max(0, job.agreedPrice - jobExpenses);
-        const serviceFee = Math.round(netRevenue * 0.10);
+        const serviceFee = job.waiveFee ? 0 : Math.round(netRevenue * 0.10);
         const workerIds = normalizeWorkerIds(job.assignedTo);
         if (workerIds.length === 0) continue;
         const feePerWorker = Math.round(serviceFee / workerIds.length);

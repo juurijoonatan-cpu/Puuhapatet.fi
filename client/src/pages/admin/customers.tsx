@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Loader2, Users, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Search, Save, Trash2, FileText } from "lucide-react";
+import { Loader2, Users, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Search, Save, Trash2, FileText, UserPlus, X } from "lucide-react";
 import { Link, useLocation } from "wouter";
 
 import { Card } from "@/components/ui/card";
@@ -67,6 +67,14 @@ export default function AdminCustomersPage() {
   const [savingCustomer, setSavingCustomer] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // Add customer form
+  const [showAddForm, setShowAddForm]   = useState(false);
+  const [newName,    setNewName]        = useState("");
+  const [newPhone,   setNewPhone]       = useState("");
+  const [newEmail,   setNewEmail]       = useState("");
+  const [newAddress, setNewAddress]     = useState("");
+  const [addingCustomer, setAddingCustomer] = useState(false);
 
   useEffect(() => {
     api.getCustomers().then((res) => {
@@ -147,6 +155,30 @@ export default function AdminCustomersPage() {
       editAddress !== selected.address ||
       editNotes !== (selected.notes ?? "")
     : false;
+
+  const handleAddCustomer = async () => {
+    if (!newName.trim() || !newPhone.trim() || !newAddress.trim()) {
+      toast({ variant: "destructive", title: "Puuttuvia tietoja", description: "Nimi, puhelin ja osoite ovat pakollisia." });
+      return;
+    }
+    setAddingCustomer(true);
+    const res = await api.createCustomer({
+      name:    newName.trim(),
+      phone:   newPhone.trim(),
+      email:   newEmail.trim() || undefined,
+      address: newAddress.trim(),
+    });
+    setAddingCustomer(false);
+    if (res.ok && res.data) {
+      const created = res.data as Customer;
+      setCustomers(prev => [created, ...prev]);
+      setNewName(""); setNewPhone(""); setNewEmail(""); setNewAddress("");
+      setShowAddForm(false);
+      toast({ title: "Asiakas lisätty!", description: newName.trim() });
+    } else {
+      toast({ variant: "destructive", title: "Lisäys epäonnistui", description: (res as { error?: string }).error });
+    }
+  };
 
   const filtered = customers.filter((c) => {
     const q = search.toLowerCase();
@@ -355,13 +387,55 @@ export default function AdminCustomersPage() {
               <ArrowLeft className="w-5 h-5" />
             </Button>
           </Link>
-          <div>
+          <div className="flex-1">
             <h1 className="text-2xl md:text-3xl font-semibold text-foreground">Asiakkaat</h1>
             <p className="text-muted-foreground">
               {loading ? "Ladataan…" : `${customers.length} asiakasta`}
             </p>
           </div>
+          <Button
+            size="sm"
+            className="gap-2 shrink-0"
+            variant={showAddForm ? "outline" : "default"}
+            onClick={() => setShowAddForm(v => !v)}
+          >
+            {showAddForm ? <X className="w-4 h-4" /> : <UserPlus className="w-4 h-4" />}
+            {showAddForm ? "Peruuta" : "Lisää asiakas"}
+          </Button>
         </div>
+
+        {/* Inline add customer form */}
+        {showAddForm && (
+          <Card className="p-5 bg-card border-0 premium-shadow mb-5">
+            <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-4">Uusi asiakas</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">Nimi *</p>
+                <Input value={newName} onChange={e => setNewName(e.target.value)}
+                  placeholder="Etunimi Sukunimi" className="text-sm" />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">Puhelin *</p>
+                <Input value={newPhone} onChange={e => setNewPhone(e.target.value)}
+                  type="tel" placeholder="+358 40 000 0000" className="text-sm" />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">Sähköposti</p>
+                <Input value={newEmail} onChange={e => setNewEmail(e.target.value)}
+                  type="email" placeholder="(valinnainen)" className="text-sm" />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">Osoite *</p>
+                <Input value={newAddress} onChange={e => setNewAddress(e.target.value)}
+                  placeholder="Kadunnimi 1, 02100 Espoo" className="text-sm" />
+              </div>
+            </div>
+            <Button onClick={handleAddCustomer} disabled={addingCustomer} className="gap-2">
+              {addingCustomer ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
+              Lisää asiakas
+            </Button>
+          </Card>
+        )}
 
         <div className="relative mb-6">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />

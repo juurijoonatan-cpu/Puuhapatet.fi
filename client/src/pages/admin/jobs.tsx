@@ -48,6 +48,7 @@ interface JobRow {
     createdAt: string;
     customerSignature: string | null;
     staffSignature: string | null;
+    waiveFee: boolean;
   };
   customer: {
     id: number;
@@ -87,6 +88,9 @@ export default function AdminJobsPage() {
   // Tip
   const [tipAmount, setTipAmount] = useState("");
   const [savingTip, setSavingTip] = useState(false);
+
+  // Service fee waiver (HOST only)
+  const [waivingFee, setWaivingFee] = useState(false);
 
   // Payment method + language for receipt
   const [paymentMethod, setPaymentMethod] = useState<string>("");
@@ -509,6 +513,22 @@ export default function AdminJobsPage() {
     }
   };
 
+  const handleToggleWaiveFee = async () => {
+    if (!selected) return;
+    setWaivingFee(true);
+    const newVal = !selected.job.waiveFee;
+    const res = await api.updateJob(selected.job.id, { waiveFee: newVal });
+    if (res.ok) {
+      const updated: JobRow = { ...selected, job: { ...selected.job, waiveFee: newVal } };
+      setSelected(updated);
+      setJobs(prev => prev.map(r => r.job.id === selected.job.id ? updated : r));
+      toast({ title: newVal ? "Palvelumaksu poistettu tältä keikalta" : "Palvelumaksu palautettu" });
+    } else {
+      toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
+    }
+    setWaivingFee(false);
+  };
+
   const hasFieldChanges = selected
     ? editPrice !== String(selected.job.agreedPrice / 100) ||
       editDescription !== selected.job.description ||
@@ -519,7 +539,8 @@ export default function AdminJobsPage() {
   const expensesTotal = expenses.reduce((s, e) => s + e.amount, 0);
   const numWorkers = selectedWorkers.length || 1;
   const netRevenue = (selected?.job.agreedPrice ?? 0) - expensesTotal;
-  const totalServiceFee = Math.round(Math.max(0, netRevenue) * 0.10);
+  const feeWaived = selected?.job.waiveFee ?? false;
+  const totalServiceFee = feeWaived ? 0 : Math.round(Math.max(0, netRevenue) * 0.10);
   const feePerWorker = Math.round(totalServiceFee / numWorkers);
   const netPerWorker = Math.round(Math.max(0, netRevenue - totalServiceFee) / numWorkers);
   const expensesPerWorker = Math.round(expensesTotal / numWorkers);
@@ -1026,11 +1047,36 @@ export default function AdminJobsPage() {
                   </div>
                 )}
                 <div className="flex justify-between border-t pt-2">
-                  <span className="text-muted-foreground">Palvelumaksu 10 %</span>
-                  <span className="font-medium text-purple-600 dark:text-purple-400">
-                    −{(totalServiceFee / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}
+                  <span className={cn("text-muted-foreground", feeWaived && "line-through opacity-50")}>
+                    Palvelumaksu 10 %
+                  </span>
+                  <span className={cn("font-medium text-purple-600 dark:text-purple-400", feeWaived && "line-through opacity-50")}>
+                    −{(Math.round(Math.max(0, netRevenue) * 0.10) / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}
                   </span>
                 </div>
+                {getAdminProfile()?.role === "HOST" && (
+                  <button
+                    onClick={handleToggleWaiveFee}
+                    disabled={waivingFee}
+                    className={cn(
+                      "w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium border transition-all mt-1",
+                      feeWaived
+                        ? "border-green-500 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300"
+                        : "border-border bg-muted/30 text-muted-foreground hover:bg-muted/50"
+                    )}
+                  >
+                    <span>{feeWaived ? "Palvelumaksu poistettu (host-keikka)" : "Poista palvelumaksu (host)"}</span>
+                    <span className={cn(
+                      "w-8 h-4 rounded-full transition-all relative shrink-0",
+                      feeWaived ? "bg-green-500" : "bg-muted-foreground/30"
+                    )}>
+                      <span className={cn(
+                        "absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all",
+                        feeWaived ? "left-4" : "left-0.5"
+                      )} />
+                    </span>
+                  </button>
+                )}
               </div>
 
               {numWorkers > 1 ? (

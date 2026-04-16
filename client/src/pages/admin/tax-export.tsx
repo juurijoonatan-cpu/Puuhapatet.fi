@@ -21,6 +21,7 @@ interface JobRow {
     assignedTo: string | null;
     scheduledAt: string | null;
     createdAt: string;
+    waiveFee?: boolean;
   };
   customer: {
     id: number;
@@ -98,7 +99,7 @@ export default function TaxExportPage() {
     // expenses not tracked per-job here (would require per-job fetch); use 0 for now
     const expenses = 0;
     const netRevenue = Math.max(0, myRevenue - expenses);
-    const serviceFee = Math.round(netRevenue * 0.10);
+    const serviceFee = r.job.waiveFee ? 0 : Math.round(netRevenue * 0.10);
     const net = netRevenue - serviceFee;
     return { ...r, myRevenue, expenses, netRevenue, serviceFee, net, numWorkers };
   });

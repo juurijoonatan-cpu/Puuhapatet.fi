@@ -96,6 +96,7 @@ export interface NewJob {
   scheduledAt?: string | null;
   customerSignature?: string;
   staffSignature?: string;
+  waiveFee?: boolean;
 }
 
 export interface StatsResponse {

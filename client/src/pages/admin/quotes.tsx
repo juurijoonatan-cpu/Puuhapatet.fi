@@ -177,8 +177,9 @@ export default function AdminQuotesPage() {
     .toLocaleDateString("fi-FI");
 
   // Send state
-  const [sending, setSending] = useState(false);
-  const [sent,    setSent]    = useState(false);
+  const [sending,    setSending]    = useState(false);
+  const [sent,       setSent]       = useState(false);
+  const [createdJobId, setCreatedJobId] = useState<number | null>(null);
 
   // ── Load customer ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -300,12 +301,45 @@ export default function AdminQuotesPage() {
     });
 
     setSending(false);
-    if (res.ok) {
-      setSent(true);
-      toast({ title: "Tarjous lähetetty!", description: `${customerEmail.trim()}` });
-    } else {
+    if (!res.ok) {
       toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error });
+      return;
     }
+
+    // ── Auto-create lead job ─────────────────────────────────────────────────
+    // Get or create the customer in DB
+    let custId = customerId ? Number(customerId) : null;
+    if (!custId) {
+      const custRes = await api.createCustomer({
+        name:    customerName.trim() || "Asiakas",
+        phone:   customerPhone.trim() || "—",
+        email:   customerEmail.trim() || undefined,
+        address: customerAddress.trim() || "—",
+      });
+      if (custRes.ok && custRes.data) {
+        custId = (custRes.data as { id: number }).id;
+      }
+    }
+
+    if (custId) {
+      const descParts = serviceItems.map(i => i.title);
+      const description = descParts.join(" + ");
+      const scheduledAt = new Date(Date.now() + validDays * 24 * 60 * 60 * 1000).toISOString();
+      const jobRes = await api.createJob({
+        customerId:  custId,
+        description,
+        agreedPrice: Math.round(total * 100),
+        status:      "lead",
+        scheduledAt,
+        notes:       `Tarjous ${quoteId} lähetetty ${new Date().toLocaleDateString("fi-FI")}`,
+      });
+      if (jobRes.ok && jobRes.data) {
+        setCreatedJobId((jobRes.data as { id: number }).id);
+      }
+    }
+
+    setSent(true);
+    toast({ title: "Tarjous lähetetty!", description: `${customerEmail.trim()}` });
   };
 
   // ── Success ───────────────────────────────────────────────────────────────
@@ -319,8 +353,16 @@ export default function AdminQuotesPage() {
           </div>
           <h2 className="text-xl font-semibold mb-2">Tarjous lähetetty!</h2>
           <p className="text-xs font-mono bg-muted px-2 py-1 rounded inline-block mb-2">{quoteId}</p>
-          <p className="text-muted-foreground text-sm mb-7">{customerEmail}</p>
-          <div className="flex flex-col gap-2">
+          <p className="text-muted-foreground text-sm mb-1">{customerEmail}</p>
+          {createdJobId && (
+            <p className="text-xs text-emerald-600 dark:text-emerald-400 mb-6">
+              Liidi lisätty keikkalistan — vanhenee {new Date(Date.now() + validDays * 24 * 60 * 60 * 1000).toLocaleDateString("fi-FI")}
+            </p>
+          )}
+          <div className="flex flex-col gap-2 mt-4">
+            <Button onClick={() => navigate("/admin/jobs")}>
+              Avaa keikkalista
+            </Button>
             <Button variant="outline" onClick={() => navigate("/admin/customers")}>
               Takaisin asiakkaisiin
             </Button>

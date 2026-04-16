@@ -405,6 +405,29 @@ export default function LaskuriPage() {
                 {regionMultiplier(pcInput).label}
               </p>
             )}
+
+            {/* KV question — asked here together with area */}
+            <div className="border-t pt-4">
+              <p className="text-sm font-semibold text-foreground mb-1">Kotitalousvähennys käytössä?</p>
+              <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
+                Ikkunanpesu on kotitalousvähennyskelpoista. Vähennys haetaan itse OmaVero-palvelussa — enintään <strong>2 250 € / henkilö / vuosi</strong>.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setKvEligible(false)}
+                  className={`flex-1 py-2.5 rounded-xl border text-sm font-semibold transition-colors ${!kvEligible ? "border-foreground bg-foreground text-background" : "border-border text-muted-foreground hover:bg-muted"}`}
+                >
+                  Ei
+                </button>
+                <button
+                  onClick={() => setKvEligible(true)}
+                  className={`flex-1 py-2.5 rounded-xl border text-sm font-semibold transition-colors ${kvEligible ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-muted"}`}
+                >
+                  Kyllä, käytän
+                </button>
+              </div>
+            </div>
+
             <div className="flex gap-2">
               <Button
                 variant="outline"
@@ -459,39 +482,39 @@ export default function LaskuriPage() {
             {/* ── NELIÖHINNAT ── */}
             {tab === "nelio" && (
               <div className="space-y-5">
-                {/* Postal code bar + KV toggle */}
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => { setPcInput(postalCode); setShowPcModal(true); }}
-                    className="flex-1 p-3 rounded-2xl border border-border bg-card hover:border-primary/50 flex items-center justify-between transition-all"
-                    data-testid="postal-bar"
-                  >
-                    <div className="text-left">
-                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Alue</p>
-                      <p className="text-sm font-semibold text-foreground">
-                        {postalCode ? `${postalCode} · ${region.label}` : "Syötä postinumero"}
-                      </p>
-                    </div>
-                    <span className="text-xs text-primary font-medium">
-                      {postalCode ? (region.mult === 1 ? "Vakio" : region.mult > 1 ? `+${Math.round((region.mult-1)*100)} %` : `−${Math.round((1-region.mult)*100)} %`) : "Muuta"}
-                    </span>
-                  </button>
-
-                  {/* Kotitalousvähennys toggle */}
-                  <button
-                    onClick={() => setKvEligible(v => !v)}
-                    className={`p-3 rounded-2xl border-2 flex flex-col items-center justify-center gap-1 min-w-[80px] transition-all ${kvEligible ? "border-primary bg-primary/5" : "border-border bg-card"}`}
-                    data-testid="kv-toggle"
-                    title="Kotitalousvähennys"
-                  >
-                    <div className={`w-8 h-4 rounded-full relative transition-colors ${kvEligible ? "bg-primary" : "bg-muted-foreground/30"}`}>
-                      <div className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-all shadow-sm ${kvEligible ? "left-4" : "left-0.5"}`} />
-                    </div>
-                    <p className="text-[9px] font-medium leading-tight text-center">
-                      {kvEligible ? <span className="text-primary">Kotitalous­väh.</span> : <span className="text-muted-foreground">Ei väh.</span>}
+                {/* Postal code bar */}
+                <button
+                  onClick={() => { setPcInput(postalCode); setShowPcModal(true); }}
+                  className="w-full p-3 rounded-2xl border border-border bg-card hover:border-primary/50 flex items-center justify-between transition-all"
+                  data-testid="postal-bar"
+                >
+                  <div className="text-left">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Alue</p>
+                    <p className="text-sm font-semibold text-foreground">
+                      {postalCode ? `${postalCode} · ${region.label}` : "Syötä postinumero"}
                     </p>
-                  </button>
-                </div>
+                  </div>
+                  <span className="text-xs text-primary font-medium">
+                    {postalCode ? (region.mult === 1 ? "Vakio" : region.mult > 1 ? `+${Math.round((region.mult-1)*100)} %` : `−${Math.round((1-region.mult)*100)} %`) : "Muuta"}
+                  </span>
+                </button>
+
+                {/* Kotitalousvähennys — grouped with area */}
+                <button
+                  onClick={() => setKvEligible(v => !v)}
+                  className={`w-full flex items-center justify-between p-3 rounded-2xl border transition-all ${kvEligible ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/30"}`}
+                  data-testid="kv-toggle"
+                >
+                  <div className="text-left">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Kotitalousvähennys</p>
+                    <p className="text-sm font-semibold text-foreground">
+                      {kvEligible ? "Käytössä — haen OmaVerosta" : "Ei käytössä"}
+                    </p>
+                  </div>
+                  <div className={`w-10 h-6 rounded-full relative transition-colors shrink-0 ${kvEligible ? "bg-primary" : "bg-muted-foreground/30"}`}>
+                    <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-all shadow-sm ${kvEligible ? "left-5" : "left-1"}`} />
+                  </div>
+                </button>
 
                 {/* House type */}
                 <div>
@@ -535,7 +558,7 @@ export default function LaskuriPage() {
                   </div>
                   {kvEligible && (
                     <p className="text-[10px] text-muted-foreground mt-2">
-                      <span className="text-primary font-medium">*</span> Kotitalousvähennyksellä (35 %) maksat vain noin kaksi kolmasosaa — vähennys tehdään verotuksessa automaattisesti.
+                      <span className="text-primary font-medium">*</span> Kotitalousvähennyksellä (35 %) maksat vain noin kaksi kolmasosaa — vähennys haetaan itse OmaVero-palvelussa. Enintään 2 250 € / henkilö / vuosi.
                     </p>
                   )}
                 </div>
@@ -853,7 +876,7 @@ export default function LaskuriPage() {
                         <>
                           <p className="text-[10px] text-muted-foreground mb-0.5">Maksat kotitalousväh. jälkeen</p>
                           <p className="text-2xl font-bold text-primary">~{afterKotitalous} €</p>
-                          <p className="text-[10px] text-muted-foreground mt-0.5">Väh. {kotitalous} € verotuksessa automaattisesti</p>
+                          <p className="text-[10px] text-muted-foreground mt-0.5">Hae kotitalousvähennys OmaVerossa (max 2 250 € / hlö / v)</p>
                         </>
                       ) : (
                         <>

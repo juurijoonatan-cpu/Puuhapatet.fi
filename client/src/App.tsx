@@ -26,6 +26,7 @@ import AdminJobsPage from "@/pages/admin/jobs";
 import AdminPackagesPage from "@/pages/admin/packages";
 import AdminSettingsPage from "@/pages/admin/settings";
 import AdminCustomersPage from "@/pages/admin/customers";
+import AdminQuotesPage from "@/pages/admin/quotes";
 import AdminGuidePage from "@/pages/admin/guide";
 import AdminTaxExportPage from "@/pages/admin/tax-export";
 import AdminInvestmentsPage from "@/pages/admin/investments";
@@ -128,6 +129,11 @@ function Router() {
       <Route path="/admin/customers">
         <ProtectedRoute>
           <AdminCustomersPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/admin/quotes">
+        <ProtectedRoute>
+          <AdminQuotesPage />
         </ProtectedRoute>
       </Route>
       <Route path="/admin/settings">

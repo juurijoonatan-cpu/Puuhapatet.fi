@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { Loader2, Users, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Search, Save, Trash2 } from "lucide-react";
-import { Link } from "wouter";
+import { Loader2, Users, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Search, Save, Trash2, FileText } from "lucide-react";
+import { Link, useLocation } from "wouter";
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -51,6 +51,7 @@ interface Customer {
 
 export default function AdminCustomersPage() {
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -282,6 +283,23 @@ export default function AdminCustomersPage() {
               </div>
             )}
           </Card>
+          <Card className="p-6 bg-card border-0 premium-shadow mb-4">
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+              Tarjoukset
+            </h2>
+            <p className="text-sm text-muted-foreground mb-3">
+              Luo ja lähetä asiakkaalle visuaalinen, ammattimainen tarjous sähköpostilla.
+            </p>
+            <Button
+              className="gap-2 w-full sm:w-auto"
+              variant="outline"
+              onClick={() => navigate(`/admin/quotes?customerId=${selected.id}`)}
+            >
+              <FileText className="w-4 h-4" />
+              Luo tarjous
+            </Button>
+          </Card>
+
           <Card className="p-5 border border-destructive/20 bg-destructive/5">
             <p className="text-xs font-semibold text-destructive uppercase tracking-wide mb-3">Vaaravyöhyke</p>
             {!confirmDelete ? (

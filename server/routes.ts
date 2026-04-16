@@ -503,7 +503,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä — aseta RESEND_API_KEY ympäristömuuttuja." });
     }
     try {
-      const { to, customerName, customerAddress, date, description, price, paymentMethod, workerName, workerPhone, workerYTunnus, isReturning, lang } = req.body;
+      const { to, bcc, customerName, customerAddress, date, description, price, paymentMethod, workerName, workerPhone, workerYTunnus, isReturning, lang } = req.body;
       if (!to || !customerName || !description || !price) {
         return res.status(400).json({ error: "Puuttuvia kenttiä" });
       }
@@ -659,6 +659,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const result = await resend.emails.send({
         from: FROM_EMAIL,
         to,
+        ...(bcc ? { bcc } : {}),
         subject: isEn ? `Receipt — Puuhapatet, ${date}` : `Kuitti tehty — Puuhapatet, ${date}`,
         html,
       });
@@ -677,7 +678,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä — aseta RESEND_API_KEY ympäristömuuttuja." });
     }
     try {
-      const { to, customerName, description, progressNotes, continuationPlan, continuationDate, workerName, workerPhone, lang } = req.body;
+      const { to, bcc, customerName, description, progressNotes, continuationPlan, continuationDate, workerName, workerPhone, lang } = req.body;
       if (!to || !customerName || !progressNotes) {
         return res.status(400).json({ error: "Puuttuvia kenttiä" });
       }
@@ -791,6 +792,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const result = await resend.emails.send({
         from: FROM_EMAIL,
         to,
+        ...(bcc ? { bcc } : {}),
         subject: isEn ? `Job update — Puuhapatet, ${today}` : `Keikkapäivitys — Puuhapatet, ${today}`,
         html,
       });
@@ -798,6 +800,251 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json({ ok: true, id: result.data?.id });
     } catch (e: any) {
       console.error("Progress update email error:", e);
+      res.status(500).json({ error: e.message || "Sähköpostin lähetys epäonnistui" });
+    }
+  });
+
+  // ─── Quote email ──────────────────────────────────────────────────────────────
+
+  app.post("/api/send-quote", async (req, res) => {
+    if (!resend) {
+      return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä — aseta RESEND_API_KEY ympäristömuuttuja." });
+    }
+    try {
+      const {
+        to, bcc, quoteId, customerName, customerAddress,
+        items, subtotal, vatAmount, total, vatMode,
+        validDays, customMessage, workerName, workerPhone, workerEmail, lang,
+      } = req.body;
+
+      if (!to || !customerName || !quoteId || !items?.length) {
+        return res.status(400).json({ error: "Puuttuvia kenttiä" });
+      }
+
+      const isEn = lang === "en";
+      const firstName = (customerName as string).split(" ")[0];
+      const today = new Date().toLocaleDateString(isEn ? "en-GB" : "fi-FI");
+      const validUntil = new Date(Date.now() + (validDays || 14) * 24 * 60 * 60 * 1000)
+        .toLocaleDateString(isEn ? "en-GB" : "fi-FI");
+
+      const TARJOUS_LABEL = isEn ? "QUOTE" : "TARJOUS";
+      const TO_LABEL     = isEn ? "Quote for" : "Tarjous asiakkaalle";
+      const FROM_LABEL   = isEn ? "From" : "Tarjouksen antaja";
+      const VALID_TEXT   = isEn ? "Valid until" : "Voimassa asti:";
+
+      const defaultIntro = isEn
+        ? `Hi ${firstName}! Please find our quote for the requested services below. We'd be happy to answer any questions.`
+        : `Hei ${firstName}! Oheisessa tarjouksessa on pyytämäsi palvelut. Vastaamme mielellämme lisäkysymyksiin.`;
+
+      const introText = customMessage
+        ? (customMessage as string).replace(/\n/g, "<br>")
+        : defaultIntro;
+
+      // Line items rows
+      const lineItemsHtml = (items as Array<{ description: string; qty: number; unitPrice: number }>)
+        .filter(i => i.description?.trim())
+        .map((item, idx) => `
+          <tr style="border-bottom:1px solid #f1f5f9;background:${idx % 2 === 1 ? "#f8fafc" : "#fff"}">
+            <td style="padding:14px 0;color:#1e293b;font-weight:500;font-size:14px">${item.description}</td>
+            <td style="padding:14px 8px;text-align:center;color:#64748b;font-size:14px">${item.qty}</td>
+            <td style="padding:14px 0 14px 8px;text-align:right;color:#64748b;font-size:14px">${Number(item.unitPrice).toFixed(2)} €</td>
+            <td style="padding:14px 0;text-align:right;color:#0f172a;font-weight:700;font-size:14px">${(item.qty * Number(item.unitPrice)).toFixed(2)} €</td>
+          </tr>
+        `).join("");
+
+      const vatExclRows = vatMode === "excl" ? `
+        <tr>
+          <td style="padding:8px 0 4px;color:#64748b;font-size:13px" colspan="2">${isEn ? "Net price (excl. VAT)" : "Veroton hinta"}</td>
+          <td style="padding:8px 0 4px;text-align:right;color:#64748b;font-size:13px" colspan="2">${Number(subtotal).toFixed(2)} €</td>
+        </tr>
+        <tr>
+          <td style="padding:4px 0 8px;color:#64748b;font-size:13px" colspan="2">ALV 24%</td>
+          <td style="padding:4px 0 8px;text-align:right;color:#64748b;font-size:13px" colspan="2">${Number(vatAmount).toFixed(2)} €</td>
+        </tr>
+      ` : "";
+
+      const totalLabel = isEn
+        ? `Total${vatMode === "incl" ? " (incl. VAT 24%)" : " (incl. VAT)"}`
+        : `Yhteensä${vatMode === "incl" ? " (ALV 24% sis.)" : ""}`;
+
+      const kotitalouspBlock = vatMode === "incl" ? `
+        <div style="background:#f0fdf4;border-radius:12px;padding:18px 20px;margin-top:20px;border-left:4px solid #22c55e">
+          <p style="margin:0 0 6px;font-weight:700;color:#166534;font-size:11px;letter-spacing:1px;text-transform:uppercase">
+            ${isEn ? "HOUSEHOLD TAX DEDUCTION" : "KOTITALOUSVÄHENNYS"}
+          </p>
+          <p style="margin:0;color:#15803d;font-size:13px;line-height:1.65">
+            ${isEn
+              ? `This service qualifies for the <strong>Finnish household tax deduction</strong>. You can reclaim 40% of the labour cost — your effective cost is approx. <strong>${Math.round(Number(total) * 0.65).toFixed(0)} €</strong>. This quote serves as documentation for your tax filing.`
+              : `Tämä palvelu on <strong>kotitalousvähennyskelpoinen</strong>. Työn osuudesta voit vähentää 40 % verotuksessa — tosiasiallinen kustannuksesi on noin <strong>${Math.round(Number(total) * 0.65).toFixed(0)} €</strong>. Tämä tarjous käy dokumenttina veroilmoitukseen.`
+            }
+          </p>
+        </div>
+      ` : "";
+
+      const validityBlock = `
+        <div style="background:#fffbeb;border-radius:12px;padding:18px 20px;margin-top:16px;border-left:4px solid #f59e0b">
+          <p style="margin:0 0 6px;font-weight:700;color:#92400e;font-size:11px;letter-spacing:1px;text-transform:uppercase">
+            ${isEn ? "QUOTE VALIDITY" : "TARJOUKSEN VOIMASSAOLO"}
+          </p>
+          <p style="margin:0;color:#78350f;font-size:13px;line-height:1.65">
+            ${isEn
+              ? `This quote is valid until <strong>${validUntil}</strong> (${validDays || 14} days). After this date prices may change. Contact us to confirm.`
+              : `Tarjous on voimassa <strong>${validUntil}</strong> asti (${validDays || 14} päivää). Tämän jälkeen hinnat saattavat muuttua. Ota yhteyttä vahvistaaksesi.`
+            }
+          </p>
+        </div>
+      `;
+
+      const phoneBtn = workerPhone
+        ? `<a href="tel:${workerPhone}" style="display:inline-block;background:#0f172a;color:#ffffff;padding:12px 24px;border-radius:10px;text-decoration:none;font-weight:700;font-size:14px;margin:4px">${isEn ? "📞 Call" : "📞 Soita"} ${workerPhone}</a>`
+        : "";
+
+      const onlineBtnLabel = isEn ? "Book online →" : "Varaa verkossa →";
+      const ctaText = isEn
+        ? "Ready to proceed? Confirm and we'll schedule your appointment right away."
+        : "Valmis tilaamaan? Vahvista ja sovitaan aika heti.";
+
+      const html = `
+<!DOCTYPE html>
+<html lang="${isEn ? "en" : "fi"}">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>a{color:inherit}</style>
+</head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:#f1f5f9">
+<table width="100%" cellpadding="0" cellspacing="0" style="min-width:100%;background:#f1f5f9"><tr><td align="center" style="padding:32px 16px">
+
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
+
+  <!-- HEADER -->
+  <tr>
+    <td style="background:#0f172a;border-radius:16px 16px 0 0;padding:36px 40px">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="vertical-align:top">
+            <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:800;letter-spacing:-0.5px">Puuhapatet.</h1>
+            <p style="margin:4px 0 0;color:#475569;font-size:12px">Ikkunapesu &middot; Pihapalvelut &middot; Nurmikko</p>
+          </td>
+          <td style="text-align:right;vertical-align:top">
+            <span style="display:inline-block;background:#4a5d4f;color:#a7f3d0;font-size:11px;font-weight:700;letter-spacing:2px;padding:5px 14px;border-radius:20px;text-transform:uppercase">${TARJOUS_LABEL}</span>
+          </td>
+        </tr>
+      </table>
+      <div style="margin-top:28px;padding-top:20px;border-top:1px solid rgba(255,255,255,0.08)">
+        <p style="font-family:'Courier New',Courier,monospace;color:#e2e8f0;font-size:17px;font-weight:700;margin:0 0 6px;letter-spacing:1.5px">${quoteId}</p>
+        <p style="color:#475569;font-size:12px;margin:0">${today} &mdash; ${VALID_TEXT} <strong style="color:#94a3b8">${validUntil}</strong></p>
+      </div>
+    </td>
+  </tr>
+
+  <!-- TO / FROM -->
+  <tr>
+    <td style="background:#f8fafc;border-left:1px solid #e2e8f0;border-right:1px solid #e2e8f0">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="padding:20px 40px;border-right:1px solid #e2e8f0;width:50%;vertical-align:top">
+            <p style="margin:0 0 8px;color:#94a3b8;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">${TO_LABEL}</p>
+            <p style="margin:0 0 4px;color:#0f172a;font-size:15px;font-weight:700">${customerName}</p>
+            ${customerAddress ? `<p style="margin:0;color:#475569;font-size:12px;line-height:1.5">${customerAddress}</p>` : ""}
+          </td>
+          <td style="padding:20px 40px;width:50%;text-align:right;vertical-align:top">
+            <p style="margin:0 0 8px;color:#94a3b8;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">${FROM_LABEL}</p>
+            <p style="margin:0 0 4px;color:#0f172a;font-size:15px;font-weight:700">${workerName || "Puuhapatet"}</p>
+            ${workerPhone ? `<p style="margin:0;color:#475569;font-size:12px">${workerPhone}</p>` : ""}
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- BODY -->
+  <tr>
+    <td style="background:#ffffff;border:1px solid #e2e8f0;border-top:none;padding:36px 40px">
+
+      <!-- Intro -->
+      <p style="margin:0 0 28px;color:#334155;font-size:15px;line-height:1.75">${introText}</p>
+
+      <!-- Line items -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
+        <thead>
+          <tr style="border-bottom:2px solid #0f172a">
+            <th style="padding:10px 0;text-align:left;color:#64748b;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase">${isEn ? "SERVICE" : "PALVELU"}</th>
+            <th style="padding:10px 8px;text-align:center;color:#64748b;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;width:44px">${isEn ? "QTY" : "KPL"}</th>
+            <th style="padding:10px 0 10px 8px;text-align:right;color:#64748b;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;width:80px">${isEn ? "UNIT €" : "€/KPL"}</th>
+            <th style="padding:10px 0;text-align:right;color:#64748b;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;width:80px">${isEn ? "TOTAL" : "YHT."}</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${lineItemsHtml}
+        </tbody>
+      </table>
+
+      <!-- Totals -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-top:2px solid #0f172a;margin-top:0">
+        ${vatExclRows}
+        <tr>
+          <td style="padding:16px 0;color:#0f172a;font-size:16px;font-weight:800" colspan="2">${totalLabel}</td>
+          <td style="padding:16px 0;text-align:right;color:#0f172a;font-size:28px;font-weight:900" colspan="2">${Number(total).toFixed(2)} €</td>
+        </tr>
+      </table>
+
+      ${kotitalouspBlock}
+      ${validityBlock}
+
+      <!-- CTA -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:32px">
+        <tr>
+          <td style="text-align:center">
+            <p style="color:#64748b;font-size:13px;margin:0 0 16px;line-height:1.6">${ctaText}</p>
+            ${phoneBtn}
+            <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;background:#4a5d4f;color:#ffffff;padding:12px 24px;border-radius:10px;text-decoration:none;font-weight:700;font-size:14px;margin:4px">${onlineBtnLabel}</a>
+          </td>
+        </tr>
+      </table>
+
+    </td>
+  </tr>
+
+  <!-- FOOTER -->
+  <tr>
+    <td style="background:#f8fafc;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 16px 16px;padding:20px 40px">
+      <table width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;color:#64748b">
+        <tr>
+          <td style="vertical-align:top">
+            <strong style="color:#0f172a;font-size:13px">${workerName || "Puuhapatet"}</strong><br>
+            ${workerPhone ? `<span>${workerPhone}</span><br>` : ""}
+            ${workerEmail ? `<a href="mailto:${workerEmail}" style="color:#64748b;text-decoration:none">${workerEmail}</a>` : ""}
+          </td>
+          <td style="text-align:right;vertical-align:top">
+            <strong style="color:#0f172a;font-size:13px">Puuhapatet</strong><br>
+            <a href="mailto:info@puuhapatet.fi" style="color:#64748b;text-decoration:none">info@puuhapatet.fi</a><br>
+            <a href="https://puuhapatet.fi" style="color:#64748b;text-decoration:none">puuhapatet.fi</a>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+</table>
+
+</td></tr></table>
+</body>
+</html>`;
+
+      const subject = isEn
+        ? `Quote ${quoteId} from Puuhapatet`
+        : `Tarjous ${quoteId} — Puuhapatet`;
+
+      const result = await resend.emails.send({
+        from: FROM_EMAIL,
+        to,
+        ...(bcc ? { bcc } : {}),
+        subject,
+        html,
+      });
+
+      res.json({ ok: true, id: result.data?.id });
+    } catch (e: any) {
+      console.error("Quote email error:", e);
       res.status(500).json({ error: e.message || "Sähköpostin lähetys epäonnistui" });
     }
   });

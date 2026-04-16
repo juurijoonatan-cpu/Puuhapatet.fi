@@ -213,6 +213,7 @@ export const api = {
 
   sendReceipt: (data: {
     to: string;
+    bcc?: string;
     customerName: string;
     customerAddress?: string;
     date: string;
@@ -228,6 +229,7 @@ export const api = {
 
   sendProgressUpdate: (data: {
     to: string;
+    bcc?: string;
     customerName: string;
     description?: string;
     progressNotes: string;
@@ -237,6 +239,25 @@ export const api = {
     workerPhone?: string;
     lang?: "fi" | "en";
   }) => request<{ ok: boolean; id?: string }>("POST", "/api/send-progress-update", data),
+
+  sendQuote: (data: {
+    to: string;
+    bcc?: string;
+    quoteId: string;
+    customerName: string;
+    customerAddress?: string;
+    items: Array<{ description: string; qty: number; unitPrice: number }>;
+    subtotal: number;
+    vatAmount: number;
+    total: number;
+    vatMode: "incl" | "excl";
+    validDays: number;
+    customMessage?: string;
+    workerName?: string;
+    workerPhone?: string;
+    workerEmail?: string;
+    lang?: "fi" | "en";
+  }) => request<{ ok: boolean; id?: string }>("POST", "/api/send-quote", data),
 
   getCustomerJobCount: (customerId: number) =>
     request<{ count: number }>("GET", `/api/customers/${customerId}/job-count`),

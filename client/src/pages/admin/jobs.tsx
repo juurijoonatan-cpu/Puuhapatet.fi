@@ -338,6 +338,7 @@ export default function AdminJobsPage() {
       const senderProfile = getAdminProfile();
       const res = await api.sendProgressUpdate({
         to: selected.customer.email,
+        bcc: senderProfile?.email,
         customerName: selected.customer.name,
         description: selected.job.description,
         progressNotes: progressNotes.trim(),
@@ -1157,6 +1158,7 @@ export default function AdminJobsPage() {
                     const priceEur = (job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" });
                     const res = await api.sendReceipt({
                       to: customer.email,
+                      bcc: senderProfile?.email,
                       customerName: customer.name,
                       customerAddress: customer.address,
                       date,

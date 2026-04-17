@@ -1512,6 +1512,7 @@ export default function AdminJobsPage() {
                           label: e.label,
                           date: e.date ? new Date(e.date + "T12:00:00").toLocaleDateString("fi-FI") : "",
                         }));
+                        const senderUser = profile ? USERS.find(u => u.id === profile.id) : undefined;
                         const res = await api.sendJobSummary({
                           to: customer.email,
                           bcc: bccEmails.length > 0 ? bccEmails : undefined,
@@ -1529,6 +1530,8 @@ export default function AdminJobsPage() {
                           workerMessage: summaryMessage || undefined,
                           jobNotes: summaryNotes || undefined,
                           allWorkers: allWorkersData.length > 0 ? allWorkersData : undefined,
+                          senderName: senderUser?.name,
+                          senderAddress: senderUser?.address,
                           lang: summaryLang,
                         });
                         if (res.ok) {

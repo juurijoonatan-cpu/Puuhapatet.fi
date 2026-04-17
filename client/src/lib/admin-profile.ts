@@ -20,6 +20,7 @@ export interface AdminProfile {
   startupBonus?: number;  // senttiä — yritysseteli/aloitustuki 4H-yhdistykseltä
   iban?: string;          // Tilinumero tilisiirto-laskuille
   bic?: string;           // BIC/SWIFT-koodi
+  address?: string;       // Postiosoite (laskuille)
 }
 
 // ─── Hard-coded team members ─────────────────────────────────────────────────
@@ -38,6 +39,7 @@ export const USERS: AdminProfile[] = [
     startupBonus: 30000, // 300 €
     iban: "FI49 5780 2420 5091 79",
     bic: "OKOYFIHH",
+    address: "Braskarna 8, 02380 Espoo",
   },
   {
     id: "matias",
@@ -52,6 +54,7 @@ export const USERS: AdminProfile[] = [
     startupBonus: 30000, // 300 €
     iban: "FI49 5780 2420 5091 79",
     bic: "OKOYFIHH",
+    address: "Haapaniemenrinne 5A, 02940 Espoo",
   },
   {
     id: "testi1",

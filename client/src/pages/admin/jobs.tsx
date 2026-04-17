@@ -112,6 +112,7 @@ export default function AdminJobsPage() {
   const [summaryNotes, setSummaryNotes] = useState<string>("");
   const [summaryLang, setSummaryLang] = useState<"fi" | "en">("fi");
   const [sendingSummary, setSendingSummary] = useState(false);
+  const [summaryTimeline, setSummaryTimeline] = useState<{label: string; date: string}[]>([]);
 
   // "Jatka myöhemmin" pause form
   const [showPauseForm, setShowPauseForm] = useState(false);
@@ -609,8 +610,9 @@ export default function AdminJobsPage() {
 
   const openSummaryPanel = () => {
     if (!selected) return;
+    const { job } = selected;
     const profile = getAdminProfile();
-    const jobId = (selected.job as any).id as number;
+    const jobId = (job as any).id as number;
     // +14 days default due date
     const due = new Date();
     due.setDate(due.getDate() + 14);
@@ -620,8 +622,26 @@ export default function AdminJobsPage() {
     setSummaryViitenumero("PP" + String(jobId).padStart(6, "0"));
     setSummaryMessage("");
     setSummaryNotes("");
-    setSummaryPaymentMethod("");
+    setSummaryPaymentMethod((job as any).paymentMethod ?? "");
     setSummaryLang("fi");
+    // Pre-fill timeline from job data
+    const fmt = (d: Date) => d.toLocaleDateString("fi-FI");
+    const today = fmt(new Date());
+    const createdStr = fmt(new Date(job.createdAt));
+    const events: {label: string; date: string}[] = [];
+    events.push({ label: "Tilaus", date: createdStr });
+    if (job.scheduledAt) {
+      const schStr = fmt(new Date(job.scheduledAt));
+      if (schStr !== createdStr) {
+        events.push({ label: "Työ aloitettu", date: schStr });
+      }
+    }
+    if (job.status === "in_progress") {
+      events.push({ label: "Käynnissä", date: today });
+    } else {
+      events.push({ label: "Valmis ✓", date: today });
+    }
+    setSummaryTimeline(events);
     setShowSummaryPanel(true);
   };
 
@@ -1293,6 +1313,48 @@ export default function AdminJobsPage() {
                   ))}
                 </div>
 
+                {/* Timeline editor */}
+                <div>
+                  <p className="text-xs text-muted-foreground mb-2">Aikajana sähköpostiin</p>
+                  <div className="space-y-2">
+                    {summaryTimeline.map((evt, i) => (
+                      <div key={i} className="flex gap-2 items-center">
+                        <Input
+                          value={evt.label}
+                          onChange={e => setSummaryTimeline(prev => prev.map((v, j) => j === i ? {...v, label: e.target.value} : v))}
+                          className="text-xs h-8 flex-1"
+                          placeholder="Vaihe"
+                        />
+                        <Input
+                          type="date"
+                          value={evt.date.split(".").length === 3
+                            ? `${evt.date.split(".")[2]}-${evt.date.split(".")[1].padStart(2,"0")}-${evt.date.split(".")[0].padStart(2,"0")}`
+                            : evt.date}
+                          onChange={e => {
+                            const iso = e.target.value;
+                            const [y, m, d] = iso.split("-");
+                            const fi = `${parseInt(d)}.${parseInt(m)}.${y}`;
+                            setSummaryTimeline(prev => prev.map((v, j) => j === i ? {...v, date: fi} : v));
+                          }}
+                          className="text-xs h-8 w-36"
+                        />
+                        {summaryTimeline.length > 2 && (
+                          <button
+                            type="button"
+                            onClick={() => setSummaryTimeline(prev => prev.filter((_, j) => j !== i))}
+                            className="text-muted-foreground hover:text-destructive text-base leading-none px-1"
+                          >×</button>
+                        )}
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setSummaryTimeline(prev => [...prev, { label: "Vaihe", date: new Date().toLocaleDateString("fi-FI") }])}
+                      className="text-xs text-primary hover:underline"
+                    >+ Lisää vaihe</button>
+                  </div>
+                </div>
+
                 {/* Payment method */}
                 <div>
                   <p className="text-xs text-muted-foreground mb-2">Maksutapa *</p>
@@ -1389,17 +1451,14 @@ export default function AdminJobsPage() {
                       onClick={async () => {
                         if (!customer?.email || !summaryPaymentMethod) return;
                         setSendingSummary(true);
-                        const senderProfile = getAdminProfile();
-                        const jobDate = job.scheduledAt
-                          ? new Date(job.scheduledAt).toLocaleDateString("fi-FI")
-                          : new Date(job.createdAt).toLocaleDateString("fi-FI");
-                        const completionDate = new Date().toLocaleDateString("fi-FI");
                         const priceEur = (job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" });
-                        // BCC to all assigned workers
+                        // All assigned workers
                         const workerIds = (job.assignedTo ?? "").split(",").map(s => s.trim()).filter(Boolean);
-                        const bccEmails = workerIds
-                          .map(id => USERS.find(u => u.id === id)?.email)
-                          .filter((e): e is string => !!e);
+                        const allWorkersData = workerIds
+                          .map(id => USERS.find(u => u.id === id))
+                          .filter(Boolean)
+                          .map(u => ({ name: u!.name, phone: u!.phone, email: u!.email, yTunnus: u!.yTunnus }));
+                        const bccEmails = allWorkersData.map(w => w.email).filter((e): e is string => !!e);
                         const dueDateFormatted = summaryDueDate
                           ? new Date(summaryDueDate).toLocaleDateString("fi-FI")
                           : undefined;
@@ -1410,8 +1469,7 @@ export default function AdminJobsPage() {
                           bcc: bccEmails.length > 0 ? bccEmails : undefined,
                           customerName: customer.name,
                           customerAddress: customer.address,
-                          jobDate,
-                          completionDate,
+                          timelineEvents: summaryTimeline,
                           description: job.description,
                           price: priceEur,
                           paymentMethod: summaryPaymentMethod,
@@ -1421,9 +1479,7 @@ export default function AdminJobsPage() {
                           dueDate: dueDateFormatted,
                           workerMessage: summaryMessage || undefined,
                           jobNotes: summaryNotes || undefined,
-                          workerName: senderProfile?.name,
-                          workerPhone: senderProfile?.phone,
-                          workerYTunnus: senderProfile?.yTunnus,
+                          allWorkers: allWorkersData.length > 0 ? allWorkersData : undefined,
                           lang: summaryLang,
                         });
                         if (res.ok) {

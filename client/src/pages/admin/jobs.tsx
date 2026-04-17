@@ -609,7 +609,7 @@ export default function AdminJobsPage() {
     { key: "kortti",     label: "Kortti" },
   ];
 
-  const compressImage = (file: File, maxWidth = 960): Promise<string> =>
+  const compressImage = (file: File, maxWidth = 800): Promise<string> =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (ev) => {
@@ -620,7 +620,10 @@ export default function AdminJobsPage() {
           canvas.width = Math.round(img.width * ratio);
           canvas.height = Math.round(img.height * ratio);
           canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
-          resolve(canvas.toDataURL("image/jpeg", 0.82));
+          // Target < 500KB: try quality 0.75, drop to 0.55 if still too large
+          let dataUrl = canvas.toDataURL("image/jpeg", 0.75);
+          if (dataUrl.length > 700_000) dataUrl = canvas.toDataURL("image/jpeg", 0.55);
+          resolve(dataUrl);
         };
         img.onerror = reject;
         img.src = ev.target?.result as string;

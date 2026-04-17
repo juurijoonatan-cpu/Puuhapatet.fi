@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Loader2, Users, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Search, Save, Trash2, FileText, UserPlus, X } from "lucide-react";
+import { Loader2, Users, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Search, Save, Trash2, FileText, UserPlus, X, Check } from "lucide-react";
 import { Link, useLocation } from "wouter";
 
 import { Card } from "@/components/ui/card";
@@ -80,7 +80,7 @@ export default function AdminCustomersPage() {
   const [newPhone,   setNewPhone]       = useState("");
   const [newEmail,   setNewEmail]       = useState("");
   const [newAddress, setNewAddress]     = useState("");
-  const [newOwnedBy, setNewOwnedBy]     = useState(profile?.id ?? "");
+  const [newOwners, setNewOwners]       = useState<string[]>(profile?.id ? [profile.id] : []);
   const [addingCustomer, setAddingCustomer] = useState(false);
 
   useEffect(() => {
@@ -185,17 +185,17 @@ export default function AdminCustomersPage() {
       phone:   newPhone.trim(),
       email:   newEmail.trim() || undefined,
       address: newAddress.trim(),
-      ownedBy: newOwnedBy || undefined,
+      ownedBy: newOwners.length > 0 ? newOwners.join(",") : undefined,
     });
     setAddingCustomer(false);
     if (res.ok && res.data) {
       const created = res.data as Customer;
       setCustomers(prev => [created, ...prev]);
       // Also update myCustomerIds so the new customer is immediately visible
-      if (profile && newOwnedBy === profile.id) {
+      if (profile && newOwners.includes(profile.id)) {
         setMyCustomerIds(prev => new Set(Array.from(prev).concat(created.id)));
       }
-      setNewName(""); setNewPhone(""); setNewEmail(""); setNewAddress(""); setNewOwnedBy(profile?.id ?? "");
+      setNewName(""); setNewPhone(""); setNewEmail(""); setNewAddress(""); setNewOwners(profile?.id ? [profile.id] : []);
       setShowAddForm(false);
       toast({ title: "Asiakas lisätty!", description: newName.trim() });
     } else {
@@ -484,19 +484,30 @@ export default function AdminCustomersPage() {
                 <Input value={newAddress} onChange={e => setNewAddress(e.target.value)}
                   placeholder="Kadunnimi 1, 02100 Espoo" className="text-sm" />
               </div>
-              <div>
+              <div className="sm:col-span-2">
                 <p className="text-xs text-muted-foreground mb-1.5">Kenen asiakas</p>
-                <select
-                  value={newOwnedBy}
-                  onChange={e => setNewOwnedBy(e.target.value)}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                >
-                  {USERS.map(u => (
-                    <option key={u.id} value={u.id}>
-                      {u.name}{u.id === profile?.id ? " (sinä)" : ""}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex flex-wrap gap-2">
+                  {USERS.map(u => {
+                    const on = newOwners.includes(u.id);
+                    return (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => setNewOwners(prev =>
+                          on ? prev.filter(id => id !== u.id) : [...prev, u.id]
+                        )}
+                        className={cn(
+                          "flex items-center gap-2 px-3 py-2 rounded-xl border-2 text-sm font-medium transition-all",
+                          on ? "border-primary bg-primary/5 text-foreground" : "border-border text-muted-foreground"
+                        )}
+                      >
+                        {u.photoUrl && <img src={u.photoUrl} alt={u.name} className="w-5 h-5 rounded-full object-cover" />}
+                        {u.name.split(" ")[0]}{u.id === profile?.id ? " (sinä)" : ""}
+                        {on && <Check className="w-3.5 h-3.5 text-primary" />}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
             <Button onClick={handleAddCustomer} disabled={addingCustomer} className="gap-2">

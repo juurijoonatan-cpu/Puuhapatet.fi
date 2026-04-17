@@ -50,6 +50,7 @@ interface JobRow {
     customerSignature: string | null;
     staffSignature: string | null;
     waiveFee: boolean;
+    pendingWorkers: string | null;
   };
   customer: {
     id: number;
@@ -95,6 +96,10 @@ export default function AdminJobsPage() {
 
   // Service fee waiver (HOST only)
   const [waivingFee, setWaivingFee] = useState(false);
+
+  // Worker invite
+  const [sendingInvite, setSendingInvite] = useState(false);
+  const [inviteNote, setInviteNote] = useState("");
 
   // Payment method + language for receipt
   const [paymentMethod, setPaymentMethod] = useState<string>("");
@@ -514,6 +519,39 @@ export default function AdminJobsPage() {
       setJobs(prev => prev.map(r => r.job.id === selected.job.id ? updated : r));
       clearSigCanvas(isCustomer);
       if (isCustomer) setEditingCustomerSig(true); else setEditingStaffSig(true);
+    }
+  };
+
+  const parsePendingWorkers = (pw: string | null) =>
+    (pw ?? "").split(",").map(s => s.trim()).filter(Boolean);
+
+  const handleInviteWorker = async (invitedId: string) => {
+    if (!selected) return;
+    setSendingInvite(true);
+    const senderProfile = getAdminProfile();
+    const res = await api.inviteWorker(selected.job.id, invitedId, senderProfile?.name, inviteNote || undefined);
+    if (res.ok) {
+      const updated: JobRow = { ...selected, job: { ...selected.job, ...(res.data as any).job } };
+      setSelected(updated);
+      setJobs(prev => prev.map(r => r.job.id === selected.job.id ? updated : r));
+      setInviteNote("");
+      toast({ title: "Kutsu lähetetty!", description: `${USERS.find(u => u.id === invitedId)?.name ?? invitedId} kutsuttu keikalle` });
+    } else {
+      toast({ variant: "destructive", title: "Kutsu epäonnistui", description: res.error });
+    }
+    setSendingInvite(false);
+  };
+
+  const handleRespondInvite = async (accept: boolean) => {
+    if (!selected || !profile) return;
+    const res = await api.respondInvite(selected.job.id, profile.id, accept);
+    if (res.ok) {
+      const updated: JobRow = { ...selected, job: { ...selected.job, ...(res.data as any).job } };
+      setSelected(updated);
+      setJobs(prev => prev.map(r => r.job.id === selected.job.id ? updated : r));
+      toast({ title: accept ? "Keikka hyväksytty!" : "Keikka hylätty" });
+    } else {
+      toast({ variant: "destructive", title: "Virhe", description: res.error });
     }
   };
 
@@ -958,6 +996,90 @@ export default function AdminJobsPage() {
               })}
             </div>
           </Card>
+
+          {/* Invite / pending workers */}
+          {(() => {
+            const pending = parsePendingWorkers(selected.job.pendingWorkers);
+            const myPendingInvite = profile && pending.includes(profile.id);
+            const assignedIds = parseWorkerIds(selected.job.assignedTo);
+            const invitable = USERS.filter(u => !assignedIds.includes(u.id) && !pending.includes(u.id) && u.id !== profile?.id);
+            return (
+              <>
+                {/* My pending invite — accept / decline */}
+                {myPendingInvite && (
+                  <Card className="p-4 bg-orange-50 dark:bg-orange-900/20 border-0 premium-shadow mb-4">
+                    <p className="text-sm font-semibold text-orange-800 dark:text-orange-200 mb-1">
+                      Sinulle on keikkakutsu
+                    </p>
+                    <p className="text-xs text-orange-700 dark:text-orange-300 mb-3">
+                      {selected.customer?.name} · {selected.job.scheduledAt
+                        ? new Date(selected.job.scheduledAt).toLocaleDateString("fi-FI", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+                        : "Aika ei vahvistettu"}
+                    </p>
+                    <p className="text-xs text-orange-600 dark:text-orange-400 mb-3">Vastaa 4 tunnin sisällä</p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleRespondInvite(true)}
+                        className="flex-1 py-2 rounded-xl bg-green-600 text-white text-sm font-semibold"
+                      >
+                        Hyväksy
+                      </button>
+                      <button
+                        onClick={() => handleRespondInvite(false)}
+                        className="flex-1 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold"
+                      >
+                        Hylkää
+                      </button>
+                    </div>
+                  </Card>
+                )}
+
+                {/* HOST: invite others + show pending */}
+                {isHost && (invitable.length > 0 || pending.filter(id => id !== profile?.id).length > 0) && (
+                  <Card className="p-4 bg-card border-0 premium-shadow mb-4">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                      Kutsu tekijä
+                    </p>
+                    {pending.filter(id => id !== profile?.id).length > 0 && (
+                      <div className="mb-3 space-y-1">
+                        {pending.filter(id => id !== profile?.id).map(id => (
+                          <div key={id} className="flex items-center justify-between text-xs bg-orange-50 dark:bg-orange-900/20 rounded-lg px-3 py-2">
+                            <span className="text-orange-700 dark:text-orange-300 font-medium">
+                              ⏳ {USERS.find(u => u.id === id)?.name ?? id} — odottaa vastausta
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {invitable.length > 0 && (
+                      <>
+                        <input
+                          type="text"
+                          placeholder="Viesti (valinnainen)"
+                          value={inviteNote}
+                          onChange={e => setInviteNote(e.target.value)}
+                          className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm mb-2"
+                        />
+                        <div className="flex flex-wrap gap-2">
+                          {invitable.map(u => (
+                            <button
+                              key={u.id}
+                              onClick={() => handleInviteWorker(u.id)}
+                              disabled={sendingInvite}
+                              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-border text-sm font-medium text-foreground hover:bg-muted/40 transition-all disabled:opacity-50"
+                            >
+                              {u.photoUrl && <img src={u.photoUrl} alt={u.name} className="w-5 h-5 rounded-full object-cover" />}
+                              Kutsu {u.name.split(" ")[0]}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </Card>
+                )}
+              </>
+            );
+          })()}
 
           {/* Expenses card */}
           <Card className="p-5 bg-card border-0 premium-shadow mb-4">
@@ -1481,6 +1603,11 @@ export default function AdminJobsPage() {
                         <Badge className={cn("text-xs shrink-0", meta.bg, meta.color)}>
                           {meta.label}
                         </Badge>
+                        {profile && parsePendingWorkers(row.job.pendingWorkers).includes(profile.id) && (
+                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-orange-500 text-white font-semibold shrink-0">
+                            Kutsu
+                          </span>
+                        )}
                       </div>
                       <p className="text-sm text-muted-foreground truncate">{row.job.description}</p>
                       <p className="text-xs text-muted-foreground mt-0.5">

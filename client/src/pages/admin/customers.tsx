@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/empty-state";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
-import { getAdminProfile } from "@/lib/admin-profile";
+import { getAdminProfile, USERS } from "@/lib/admin-profile";
 import { getMyCustomerIds } from "@/lib/visibility";
 import { cn } from "@/lib/utils";
 
@@ -80,16 +80,19 @@ export default function AdminCustomersPage() {
   const [newPhone,   setNewPhone]       = useState("");
   const [newEmail,   setNewEmail]       = useState("");
   const [newAddress, setNewAddress]     = useState("");
+  const [newOwnedBy, setNewOwnedBy]     = useState(profile?.id ?? "");
   const [addingCustomer, setAddingCustomer] = useState(false);
 
   useEffect(() => {
     Promise.all([api.getCustomers(), api.getJobs()]).then(([custRes, jobsRes]) => {
-      if (custRes.ok && custRes.data) setCustomers(custRes.data as Customer[]);
+      const custs = (custRes.ok && custRes.data ? custRes.data : []) as Customer[];
+      setCustomers(custs);
       if (profile && jobsRes.ok && jobsRes.data) {
         const rows = jobsRes.data as { job: { customerId: number; assignedTo: string | null } }[];
         setMyCustomerIds(
           getMyCustomerIds(
             rows.map(r => ({ customerId: r.job.customerId, assignedTo: r.job.assignedTo })),
+            custs.map(c => ({ id: c.id, ownedBy: (c as any).ownedBy })),
             profile.id,
           ),
         );
@@ -182,12 +185,17 @@ export default function AdminCustomersPage() {
       phone:   newPhone.trim(),
       email:   newEmail.trim() || undefined,
       address: newAddress.trim(),
+      ownedBy: newOwnedBy || undefined,
     });
     setAddingCustomer(false);
     if (res.ok && res.data) {
       const created = res.data as Customer;
       setCustomers(prev => [created, ...prev]);
-      setNewName(""); setNewPhone(""); setNewEmail(""); setNewAddress("");
+      // Also update myCustomerIds so the new customer is immediately visible
+      if (profile && newOwnedBy === profile.id) {
+        setMyCustomerIds(prev => new Set(Array.from(prev).concat(created.id)));
+      }
+      setNewName(""); setNewPhone(""); setNewEmail(""); setNewAddress(""); setNewOwnedBy(profile?.id ?? "");
       setShowAddForm(false);
       toast({ title: "Asiakas lisätty!", description: newName.trim() });
     } else {
@@ -475,6 +483,20 @@ export default function AdminCustomersPage() {
                 <p className="text-xs text-muted-foreground mb-1.5">Osoite *</p>
                 <Input value={newAddress} onChange={e => setNewAddress(e.target.value)}
                   placeholder="Kadunnimi 1, 02100 Espoo" className="text-sm" />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">Kenen asiakas</p>
+                <select
+                  value={newOwnedBy}
+                  onChange={e => setNewOwnedBy(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  {USERS.map(u => (
+                    <option key={u.id} value={u.id}>
+                      {u.name}{u.id === profile?.id ? " (sinä)" : ""}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
             <Button onClick={handleAddCustomer} disabled={addingCustomer} className="gap-2">

@@ -1066,5 +1066,111 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Worker invite to job ─────────────────────────────────────────────────────
+
+  // Known workers (for email lookup — mirrors client admin-profile.ts)
+  const WORKER_INFO: Record<string, { name: string; email: string | null }> = {
+    joonatan: { name: "Joonatan Juuri",   email: "joonatan@puuhapatet.fi" },
+    matias:   { name: "Matias Pitkänen",  email: "matias@puuhapatet.fi" },
+    testi1:   { name: "Testi Ykkönen",    email: null },
+    testi2:   { name: "Testi Kakkonen",   email: null },
+  };
+
+  // POST /api/jobs/:id/invite — add a worker to pendingWorkers, send email invite
+  app.post("/api/jobs/:id/invite", async (req, res) => {
+    try {
+      const jobId = Number(req.params.id);
+      const { invitedUserId, inviterName, note } = req.body as {
+        invitedUserId: string;
+        inviterName?: string;
+        note?: string;
+      };
+      if (!invitedUserId) return res.status(400).json({ error: "invitedUserId puuttuu" });
+
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+
+      // Add to pendingWorkers (avoid duplicates)
+      const current = (job.pendingWorkers ?? "").split(",").map(s => s.trim()).filter(Boolean);
+      if (!current.includes(invitedUserId)) current.push(invitedUserId);
+      const [updated] = await db
+        .update(jobs)
+        .set({ pendingWorkers: current.join(","), updatedAt: new Date() })
+        .where(eq(jobs.id, jobId))
+        .returning();
+
+      // Send email notification if we have an email for this worker
+      const workerInfo = WORKER_INFO[invitedUserId];
+      if (resend && workerInfo?.email) {
+        const cust = await db.select().from(customers).where(eq(customers.id, job.customerId)).limit(1);
+        const customerName = cust[0]?.name ?? "Asiakas";
+        const dateStr = job.scheduledAt
+          ? new Date(job.scheduledAt).toLocaleDateString("fi-FI", { weekday: "short", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })
+          : "Aika ei vielä vahvistettu";
+
+        await resend.emails.send({
+          from: FROM_EMAIL,
+          to: workerInfo.email,
+          subject: `Keikkakutsu: ${customerName} — ${dateStr}`,
+          html: `
+            <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px">
+              <h2 style="margin:0 0 8px">Keikkakutsu 📋</h2>
+              <p style="color:#666;margin:0 0 20px">Sinulle on lähetetty kutsu keikalle</p>
+              <div style="background:#f5f5f5;border-radius:12px;padding:20px;margin-bottom:20px">
+                <p style="margin:0 0 6px"><strong>Asiakas:</strong> ${customerName}</p>
+                <p style="margin:0 0 6px"><strong>Ajankohta:</strong> ${dateStr}</p>
+                <p style="margin:0 0 6px"><strong>Palvelu:</strong> ${job.description}</p>
+                ${note ? `<p style="margin:12px 0 0;color:#555;font-style:italic">"${note}"</p>` : ""}
+              </div>
+              <p style="color:#888;font-size:13px">Kirjaudu Puuhapatet Admin -sovellukseen hyväksyäksesi tai hylätäksesi kutsu. Vastaa 4 tunnin sisällä.</p>
+              <p style="color:#888;font-size:13px">Lähettäjä: ${inviterName ?? "Puuhapatet"}</p>
+            </div>
+          `,
+        });
+      }
+
+      res.json({ ok: true, job: updated });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/jobs/:id/invite-respond — accept or decline a pending invite
+  app.post("/api/jobs/:id/invite-respond", async (req, res) => {
+    try {
+      const jobId = Number(req.params.id);
+      const { userId, accept } = req.body as { userId: string; accept: boolean };
+      if (!userId) return res.status(400).json({ error: "userId puuttuu" });
+
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+
+      // Remove from pending
+      const pending = (job.pendingWorkers ?? "").split(",").map(s => s.trim()).filter(s => s && s !== userId);
+
+      let newAssignedTo = job.assignedTo;
+      if (accept) {
+        // Add to assignedTo
+        const assigned = (job.assignedTo ?? "").split(",").map(s => s.trim()).filter(Boolean);
+        if (!assigned.includes(userId)) assigned.push(userId);
+        newAssignedTo = assigned.join(",");
+      }
+
+      const [updated] = await db
+        .update(jobs)
+        .set({
+          pendingWorkers: pending.length > 0 ? pending.join(",") : null,
+          assignedTo: newAssignedTo,
+          updatedAt: new Date(),
+        })
+        .where(eq(jobs.id, jobId))
+        .returning();
+
+      res.json({ ok: true, job: updated });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   return httpServer;
 }

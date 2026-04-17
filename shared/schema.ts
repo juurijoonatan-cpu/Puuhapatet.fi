@@ -22,6 +22,7 @@ export const customers = pgTable("customers", {
   email:     text("email"),
   address:   text("address").notNull(),
   notes:     text("notes"),
+  ownedBy:   text("owned_by"),          // user ID of the "owner" when no jobs yet
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -47,6 +48,7 @@ export const jobs = pgTable("jobs", {
   customerSignature: text("customer_signature"),         // base64 data URL
   staffSignature:    text("staff_signature"),            // base64 data URL
   waiveFee:          boolean("waive_fee").default(false).notNull(),
+  pendingWorkers:    text("pending_workers"),   // comma-separated invited user IDs not yet confirmed
   createdAt:         timestamp("created_at").defaultNow().notNull(),
   updatedAt:         timestamp("updated_at").defaultNow().notNull(),
 });

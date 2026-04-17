@@ -265,6 +265,7 @@ export const api = {
     dueDate?: string;
     workerMessage?: string;
     jobNotes?: string;
+    photoDataUrl?: string;
     allWorkers?: { name: string; phone?: string; email?: string; yTunnus?: string }[];
     lang?: "fi" | "en";
   }) => request<{ ok: boolean; id?: string }>("POST", "/api/send-job-summary", data),

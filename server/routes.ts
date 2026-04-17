@@ -686,6 +686,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         description, price, paymentMethod,
         iban, bic, viitenumero, dueDate,
         workerMessage, jobNotes,
+        photoDataUrl,
         allWorkers,
         lang,
       } = req.body;
@@ -813,6 +814,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           <p style="margin:0;color:#0369a1;font-size:13px;line-height:1.7;white-space:pre-line">${jobNotes}</p>
         </div>` : "";
 
+      // ── Job photo ────────────────────────────────────────────────────────────
+      const photoBlock = photoDataUrl ? `
+        <div style="margin-bottom:24px">
+          <img src="${photoDataUrl}" alt="${isEn ? "Job photo" : "Kuva keikasta"}" style="width:100%;max-width:100%;border-radius:12px;display:block;object-fit:cover" />
+        </div>` : "";
+
       // ── Kotitalousvähennys ───────────────────────────────────────────────────
       const taxHint = `
         <div style="background:#f9fafb;border:1px solid #e4e4e7;border-radius:12px;padding:14px 18px;margin-bottom:24px">
@@ -887,25 +894,40 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const html = `
 <!DOCTYPE html>
 <html lang="${isEn ? "en" : "fi"}">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f4f4f5">
-  <div style="max-width:560px;margin:24px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.12)">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <style>
+    body { margin:0; padding:0; background:#f0f2f0; }
+    @media only screen and (max-width:600px) {
+      .email-card { border-radius:0 !important; margin:0 !important; }
+      .email-body { padding:20px 20px !important; }
+      .email-footer { padding:16px 20px !important; }
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sans-serif;background:#f0f2f0;-webkit-font-smoothing:antialiased">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f0f2f0;min-height:100vh">
+    <tr><td align="center" style="padding:32px 16px">
+
+  <div class="email-card" style="max-width:600px;width:100%;background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.10);margin:0 auto">
 
     <!-- Header -->
-    <div style="background:#2d5016;padding:28px 32px;text-align:center">
-      <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700;letter-spacing:-0.3px">Puuhapatet.</h1>
-      <p style="margin:6px 0 0;color:#a8d97b;font-size:13px">${isInvoice ? (isEn ? "Invoice" : "Lasku") : (isEn ? "Job complete" : "Työ valmis")} · ${completionDate}</p>
+    <div style="background:linear-gradient(135deg,#2d5016 0%,#3d6b1f 100%);padding:32px 40px;text-align:center">
+      <h1 style="margin:0;color:#fff;font-size:24px;font-weight:800;letter-spacing:-0.5px">Puuhapatet.</h1>
+      <p style="margin:8px 0 0;color:#b8e07a;font-size:14px;font-weight:500">${isInvoice ? (isEn ? "Invoice" : "Lasku") : (isEn ? "Job complete" : "Työ valmis")} · ${completionDate}</p>
     </div>
 
     <!-- Body -->
-    <div style="padding:28px 32px">
+    <div class="email-body" style="padding:32px 40px">
 
       ${timelineHtml}
 
       <!-- Greeting + worker message -->
       ${workerMessage
-        ? `<p style="color:#18181b;font-size:15px;line-height:1.7;margin:0 0 20px;white-space:pre-line">${isEn ? `Hi ${firstName}!` : `Hei ${firstName}!`}<br><br>${workerMessage}</p>`
-        : `<p style="color:#18181b;font-size:15px;line-height:1.7;margin:0 0 20px">${isEn
+        ? `<p style="color:#1a1a1a;font-size:16px;line-height:1.75;margin:0 0 24px;white-space:pre-line">${isEn ? `Hi ${firstName}!` : `Hei ${firstName}!`}<br><br>${workerMessage}</p>`
+        : `<p style="color:#1a1a1a;font-size:16px;line-height:1.75;margin:0 0 24px">${isEn
             ? `Hi ${firstName}! The job is all done — thank you for choosing Puuhapatet.`
             : `Hei ${firstName}! Keikka on hoidettu — kiitos kun valitsit Puuhapatet.`}</p>`
       }
@@ -913,6 +935,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       ${invoiceBox}
       ${paidBox}
       ${summaryCard}
+      ${photoBlock}
       ${notesBox}
       ${taxHint}
       ${reviewBlock}
@@ -920,26 +943,29 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       ${nextBookingBlock}
       ${directContactBlock}
 
-      <p style="color:#a1a1aa;font-size:12px;text-align:center;margin:0 0 0">
+      <p style="color:#b0b0b0;font-size:12px;text-align:center;margin:8px 0 0;line-height:1.6">
         ${isEn ? "Window cleaning · lawn mowing · cleaning · yard care · painting" : "Ikkunapesu · nurmikko · siivous · pihahoito · maalaus"}
       </p>
     </div>
 
     <!-- Footer -->
-    <div style="background:#fafafa;padding:20px 32px;border-top:1px solid #e4e4e7">
-      ${workers.length > 0 ? `<p style="margin:0 0 12px;color:#52525b;font-size:13px">— ${workerNames}</p>` : ""}
-      <table style="width:100%;font-size:12px;color:#71717a">
+    <div class="email-footer" style="background:#f7f8f7;padding:24px 40px;border-top:1px solid #e8eae8">
+      ${workers.length > 0 ? `<p style="margin:0 0 14px;color:#555;font-size:13px;font-style:italic">— ${workerNames}</p>` : ""}
+      <table style="width:100%;font-size:12px;color:#777;border-collapse:collapse">
         <tr>
-          <td style="vertical-align:top">${footerWorkersHtml}</td>
-          <td style="text-align:right;vertical-align:top">
-            <strong style="color:#18181b">Puuhapatet</strong><br>
-            <a href="mailto:info@puuhapatet.fi" style="color:#71717a;text-decoration:none">info@puuhapatet.fi</a><br>
-            <a href="https://puuhapatet.fi" style="color:#71717a;text-decoration:none">puuhapatet.fi</a>
+          <td style="vertical-align:top;padding-right:16px">${footerWorkersHtml}</td>
+          <td style="text-align:right;vertical-align:top;white-space:nowrap">
+            <strong style="color:#2d5016">Puuhapatet</strong><br>
+            <a href="mailto:info@puuhapatet.fi" style="color:#777;text-decoration:none">info@puuhapatet.fi</a><br>
+            <a href="https://puuhapatet.fi" style="color:#777;text-decoration:none">puuhapatet.fi</a>
           </td>
         </tr>
       </table>
     </div>
   </div>
+
+    </td></tr>
+  </table>
 </body>
 </html>`;
 

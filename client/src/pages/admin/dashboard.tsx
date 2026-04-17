@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { getAdminProfile, USERS } from "@/lib/admin-profile";
 import { api, StatsResponse, WorkerStatsResponse } from "@/lib/api";
+import { isMyJob } from "@/lib/visibility";
 
 export default function AdminDashboard() {
   const profile = getAdminProfile();
@@ -26,6 +27,8 @@ export default function AdminDashboard() {
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [workerStats, setWorkerStats] = useState<WorkerStatsResponse | null>(null);
+  const [myJobTotal, setMyJobTotal] = useState<number | null>(null);
+  const [myJobUpcoming, setMyJobUpcoming] = useState<number | null>(null);
 
   useEffect(() => {
     api.stats().then((res) => {
@@ -36,6 +39,17 @@ export default function AdminDashboard() {
     api.workersStats().then((res) => {
       if (res.ok && res.data) setWorkerStats(res.data);
     });
+    // STAFF: compute own total and upcoming from jobs list
+    if (!isHost && profile) {
+      api.getJobs().then((res) => {
+        if (res.ok && res.data) {
+          const rows = res.data as { job: { assignedTo: string | null; status: string } }[];
+          const mine = rows.filter(r => isMyJob(r.job.assignedTo, profile.id));
+          setMyJobTotal(mine.length);
+          setMyJobUpcoming(mine.filter(r => r.job.status === "scheduled").length);
+        }
+      });
+    }
   }, []);
 
   const fmt = (cents: number) =>
@@ -81,23 +95,23 @@ export default function AdminDashboard() {
       ]
     : [
         {
-          title: "Keikat yhteensä",
-          value: loading ? "…" : String(stats?.totalJobs ?? "-"),
+          title: "Omat keikat",
+          value: myJobTotal === null ? "…" : String(myJobTotal),
           icon: Briefcase,
-          description: "Kaikki kirjatut keikat",
+          description: "Kaikki omat kirjatut keikat",
           color: "text-blue-600 dark:text-blue-400",
           bgColor: "bg-blue-100 dark:bg-blue-900/30",
         },
         {
           title: "Tulevat keikat",
-          value: loading ? "…" : String(stats?.upcoming ?? "-"),
+          value: myJobUpcoming === null ? "…" : String(myJobUpcoming),
           icon: Clock,
-          description: "Aikataulutettu",
+          description: "Aikataulutettu (omat)",
           color: "text-orange-600 dark:text-orange-400",
           bgColor: "bg-orange-100 dark:bg-orange-900/30",
         },
         {
-          title: "Omat keikat",
+          title: "Valmistuneet",
           value: myJobCount === null ? "…" : String(myJobCount),
           icon: TrendingUp,
           description: "Valmistuneet omat keikat",

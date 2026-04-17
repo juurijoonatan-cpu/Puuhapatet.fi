@@ -15,6 +15,8 @@ import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { api, API_BASE } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
+import { getAdminProfile } from "@/lib/admin-profile";
+import { isMyJob } from "@/lib/visibility";
 
 type ViewMode = "list" | "week" | "day";
 
@@ -30,6 +32,7 @@ interface JobRow {
     status: string;
     description: string;
     agreedPrice: number;
+    assignedTo: string | null;
     scheduledAt: string | null;
     createdAt: string;
   };
@@ -71,10 +74,14 @@ export default function CalendarPage() {
   };
 
   useEffect(() => {
+    const profile = getAdminProfile();
+    const isHost = profile?.role === "HOST";
     api.getJobs().then((res) => {
       if (res.ok && res.data) {
         const rows = res.data as JobRow[];
-        setJobs(rows.filter(r => r.job.scheduledAt && r.job.status !== "cancelled" && r.job.status !== "done"));
+        const active = rows.filter(r => r.job.scheduledAt && r.job.status !== "cancelled" && r.job.status !== "done");
+        // STAFF sees only their own scheduled jobs
+        setJobs(isHost || !profile ? active : active.filter(r => isMyJob(r.job.assignedTo, profile.id)));
       }
       setLoading(false);
     });

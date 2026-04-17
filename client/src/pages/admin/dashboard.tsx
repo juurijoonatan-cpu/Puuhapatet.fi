@@ -30,6 +30,7 @@ export default function AdminDashboard() {
   const [myJobTotal, setMyJobTotal] = useState<number | null>(null);
   const [myJobUpcoming, setMyJobUpcoming] = useState<number | null>(null);
   const [myRevenue, setMyRevenue] = useState<number | null>(null);
+  const [myInvestmentShare, setMyInvestmentShare] = useState<number | null>(null);
 
   useEffect(() => {
     api.stats().then((res) => {
@@ -51,6 +52,17 @@ export default function AdminDashboard() {
             .filter(r => r.job.status === "done")
             .reduce((sum, r) => sum + (r.job.agreedPrice ?? 0), 0);
           setMyRevenue(rev);
+        }
+      });
+      api.getInvestments().then((res) => {
+        if (res.ok && res.data) {
+          const rows = res.data as { boughtBy: string; splitWith?: string | null; amount: number }[];
+          const share = rows.reduce((sum, inv) => {
+            if (inv.boughtBy === profile.id) return sum + (inv.splitWith ? Math.round(inv.amount / 2) : inv.amount);
+            if (inv.splitWith === profile.id) return sum + Math.round(inv.amount / 2);
+            return sum;
+          }, 0);
+          setMyInvestmentShare(share);
         }
       });
     }
@@ -82,9 +94,11 @@ export default function AdminDashboard() {
         },
         {
           title: "Oma tulo",
-          value: myRevenue === null ? "…" : fmt(myRevenue),
+          value: myRevenue === null ? "…" : fmt(Math.max(0, myRevenue - (myInvestmentShare ?? 0))),
           icon: TrendingUp,
-          description: "Valmistuneiden omien keikkojen tulot",
+          description: myInvestmentShare
+            ? `Keikat ${myRevenue !== null ? fmt(myRevenue) : "…"} − investoinnit ${fmt(myInvestmentShare)}`
+            : "Valmistuneiden omien keikkojen tulot",
           color: "text-green-600 dark:text-green-400",
           bgColor: "bg-green-100 dark:bg-green-900/30",
         },

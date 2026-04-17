@@ -99,6 +99,7 @@ export interface NewJob {
   staffSignature?: string;
   waiveFee?: boolean;
   pendingWorkers?: string | null;
+  paymentMethod?: string | null;
 }
 
 export interface StatsResponse {
@@ -248,6 +249,28 @@ export const api = {
     workerPhone?: string;
     lang?: "fi" | "en";
   }) => request<{ ok: boolean; id?: string }>("POST", "/api/send-progress-update", data),
+
+  sendJobSummary: (data: {
+    to: string;
+    bcc?: string[];
+    customerName: string;
+    customerAddress?: string;
+    jobDate: string;
+    completionDate: string;
+    description: string;
+    price: string;
+    paymentMethod: string;
+    iban?: string;
+    bic?: string;
+    viitenumero?: string;
+    dueDate?: string;
+    workerMessage?: string;
+    jobNotes?: string;
+    workerName?: string;
+    workerPhone?: string;
+    workerYTunnus?: string;
+    lang?: "fi" | "en";
+  }) => request<{ ok: boolean; id?: string }>("POST", "/api/send-job-summary", data),
 
   sendQuote: (data: {
     to: string;

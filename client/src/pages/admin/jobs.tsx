@@ -101,10 +101,17 @@ export default function AdminJobsPage() {
   const [sendingInvite, setSendingInvite] = useState(false);
   const [inviteNote, setInviteNote] = useState("");
 
-  // Payment method + language for receipt
-  const [paymentMethod, setPaymentMethod] = useState<string>("");
-  const [receiptLang, setReceiptLang] = useState<"fi" | "en">("fi");
-  const [sendingEmail, setSendingEmail] = useState(false);
+  // Summary / invoice panel
+  const [showSummaryPanel, setShowSummaryPanel] = useState(false);
+  const [summaryPaymentMethod, setSummaryPaymentMethod] = useState<string>("");
+  const [summaryDueDate, setSummaryDueDate] = useState<string>("");
+  const [summaryIban, setSummaryIban] = useState<string>("");
+  const [summaryBic, setSummaryBic] = useState<string>("");
+  const [summaryViitenumero, setSummaryViitenumero] = useState<string>("");
+  const [summaryMessage, setSummaryMessage] = useState<string>("");
+  const [summaryNotes, setSummaryNotes] = useState<string>("");
+  const [summaryLang, setSummaryLang] = useState<"fi" | "en">("fi");
+  const [sendingSummary, setSendingSummary] = useState(false);
 
   // "Jatka myöhemmin" pause form
   const [showPauseForm, setShowPauseForm] = useState(false);
@@ -592,7 +599,7 @@ export default function AdminJobsPage() {
   const netPerWorker = Math.round(Math.max(0, netRevenue - totalServiceFee) / numWorkers);
   const expensesPerWorker = Math.round(expensesTotal / numWorkers);
 
-  // ── Mailto receipt ────────────────────────────────────────────────────────
+  // ── Summary / invoice helpers ─────────────────────────────────────────────
   const PAYMENT_METHODS = [
     { key: "käteinen",   label: "Käteinen" },
     { key: "mobilepay",  label: "MobilePay" },
@@ -600,51 +607,22 @@ export default function AdminJobsPage() {
     { key: "kortti",     label: "Kortti" },
   ];
 
-  const buildMailtoReceipt = () => {
-    if (!selected) return "#";
-    const { job, customer } = selected;
-    const senderProfile = getAdminProfile();
-    const senderName = senderProfile?.name ?? "Puuhapatet";
-    const date = job.scheduledAt
-      ? new Date(job.scheduledAt).toLocaleDateString("fi-FI")
-      : new Date(job.createdAt).toLocaleDateString("fi-FI");
-    const priceEur = (job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" });
-    const paymentLine = paymentMethod ? `Maksutapa: ${PAYMENT_METHODS.find(m => m.key === paymentMethod)?.label ?? paymentMethod}\n` : "";
-    const phoneLine = senderProfile?.phone ? `→ Tai suoraan: ${senderProfile.phone}\n` : "";
-    const yTunnusLine = senderProfile?.yTunnus ? `Y-tunnus:    ${senderProfile.yTunnus}\n` : "";
-    const subject = encodeURIComponent(`Kuitti — Puuhapatet ${date}`);
-    const body = encodeURIComponent(
-      `Hei ${customer?.name ?? ""}!\n\n` +
-      `Kiitos tilauksestanne — hienoa yhteistyötä! ✨\n\n` +
-      `══════════════════════════\n` +
-      `           KUITTI\n` +
-      `══════════════════════════\n` +
-      `Asiakas:     ${customer?.name ?? ""}\n` +
-      `Osoite:      ${customer?.address ?? ""}\n` +
-      `Päivämäärä:  ${date}\n` +
-      `──────────────────────────\n` +
-      `Palvelu:     ${job.description}\n` +
-      `Hinta:       ${priceEur}\n` +
-      (paymentLine ? paymentLine : "") +
-      `══════════════════════════\n\n` +
-      `KOTITALOUSVÄHENNYS\n` +
-      `Tämä palvelu on kotitalousvähennyskelpoinen!\n` +
-      `Voit vähentää 40 % työn osuudesta verotuksessa\n` +
-      `(enintään 2 250 € / henkilö / vuosi).\n` +
-      `Lisätietoa: vero.fi/kotitalousvahennys\n\n` +
-      `Haluatko varata seuraavan palvelun?\n` +
-      `→ puuhapatet.fi/tilaus\n` +
-      phoneLine +
-      `\nMeiltä löytyy ikkunapesu, piha- ja puutarhapalvelut,\n` +
-      `roskakatos- ja terassihuollot — kysy lisää!\n\n` +
-      `Terveisin,\n` +
-      `${senderName}\n` +
-      `Puuhapatet\n` +
-      yTunnusLine +
-      `info@puuhapatet.fi\n`
-    );
-    const to = customer?.email ? encodeURIComponent(customer.email) : "";
-    return `mailto:${to}?subject=${subject}&body=${body}`;
+  const openSummaryPanel = () => {
+    if (!selected) return;
+    const profile = getAdminProfile();
+    const jobId = (selected.job as any).id as number;
+    // +14 days default due date
+    const due = new Date();
+    due.setDate(due.getDate() + 14);
+    setSummaryDueDate(due.toISOString().slice(0, 10));
+    setSummaryIban(profile?.iban ?? "");
+    setSummaryBic(profile?.bic ?? "");
+    setSummaryViitenumero("PP" + String(jobId).padStart(6, "0"));
+    setSummaryMessage("");
+    setSummaryNotes("");
+    setSummaryPaymentMethod("");
+    setSummaryLang("fi");
+    setShowSummaryPanel(true);
   };
 
   // ── Detail view ───────────────────────────────────────────────────────────
@@ -1274,104 +1252,206 @@ export default function AdminJobsPage() {
             </p>
           </Card>
 
-          {/* Receipt — payment method + send */}
+          {/* Summary / Invoice panel */}
           <Card className="p-5 bg-card border-0 premium-shadow mb-4">
             <div className="flex items-center gap-2 mb-3">
               <Mail className="w-4 h-4 text-muted-foreground" />
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                Kuitti asiakkaalle
+                Lähetä yhteenveto asiakkaalle
               </p>
             </div>
-            {/* Language toggle */}
-            <div className="flex items-center gap-1.5 mb-4">
-              <span className="text-xs text-muted-foreground mr-1">Kieli:</span>
-              {(["fi", "en"] as const).map((l) => (
-                <button
-                  key={l}
-                  type="button"
-                  onClick={() => setReceiptLang(l)}
-                  className={cn(
-                    "px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all",
-                    receiptLang === l
-                      ? "border-primary bg-primary/5 text-foreground"
-                      : "border-border text-muted-foreground hover:border-muted-foreground/40",
-                  )}
-                >
-                  {l === "fi" ? "🇫🇮 Suomi" : "🇬🇧 English"}
-                </button>
-              ))}
-            </div>
 
-            <p className="text-xs text-muted-foreground mb-3">Maksutapa (valinnainen)</p>
-            <div className="flex flex-wrap gap-2 mb-4">
-              {PAYMENT_METHODS.map((m) => (
-                <button
-                  key={m.key}
-                  type="button"
-                  onClick={() => setPaymentMethod(prev => prev === m.key ? "" : m.key)}
-                  className={cn(
-                    "px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all",
-                    paymentMethod === m.key
-                      ? "border-primary bg-primary/5 text-foreground"
-                      : "border-border text-muted-foreground hover:border-muted-foreground/40",
-                  )}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
-            <div className="space-y-2">
-              {customer?.email && (
-                <Button
-                  className="w-full gap-2"
-                  disabled={sendingEmail}
-                  onClick={async () => {
-                    if (!customer?.email) return;
-                    setSendingEmail(true);
-                    const senderProfile = getAdminProfile();
-                    const date = job.scheduledAt
-                      ? new Date(job.scheduledAt).toLocaleDateString("fi-FI")
-                      : new Date(job.createdAt).toLocaleDateString("fi-FI");
-                    const priceEur = (job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" });
-                    const res = await api.sendReceipt({
-                      to: customer.email,
-                      bcc: senderProfile?.email,
-                      customerName: customer.name,
-                      customerAddress: customer.address,
-                      date,
-                      description: job.description,
-                      price: priceEur,
-                      paymentMethod: paymentMethod ? PAYMENT_METHODS.find(m => m.key === paymentMethod)?.label : undefined,
-                      workerName: senderProfile?.name,
-                      workerPhone: senderProfile?.phone,
-                      workerYTunnus: senderProfile?.yTunnus,
-                      isReturning: false,
-                      lang: receiptLang,
-                    });
-                    if (res.ok) {
-                      toast({ title: "Kuitti lähetetty!", description: `Sähköposti lähetetty: ${customer.email}` });
-                    } else {
-                      toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error || "Yritä uudelleen" });
-                    }
-                    setSendingEmail(false);
-                  }}
-                >
-                  {sendingEmail ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
-                  Lähetä kuitti sähköpostilla
-                </Button>
-              )}
-              <a href={buildMailtoReceipt()}>
-                <Button variant="outline" className="w-full gap-2">
+            {!showSummaryPanel ? (
+              <div className="space-y-2">
+                <Button className="w-full gap-2" onClick={openSummaryPanel}>
                   <Mail className="w-4 h-4" />
-                  Avaa sähköpostiohjelmassa
+                  Avaa lähetysvalikko
                 </Button>
-              </a>
-              {!customer?.email && (
-                <p className="text-xs text-muted-foreground">
-                  Lisää asiakkaalle sähköpostiosoite lähettääksesi kuitin suoraan.
-                </p>
-              )}
-            </div>
+                {!customer?.email && (
+                  <p className="text-xs text-muted-foreground">Lisää asiakkaalle sähköpostiosoite lähettääksesi yhteenvedon suoraan.</p>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Language */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-muted-foreground mr-1">Kieli:</span>
+                  {(["fi", "en"] as const).map((l) => (
+                    <button
+                      key={l}
+                      type="button"
+                      onClick={() => setSummaryLang(l)}
+                      className={cn(
+                        "px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all",
+                        summaryLang === l
+                          ? "border-primary bg-primary/5 text-foreground"
+                          : "border-border text-muted-foreground hover:border-muted-foreground/40",
+                      )}
+                    >
+                      {l === "fi" ? "🇫🇮 Suomi" : "🇬🇧 English"}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Payment method */}
+                <div>
+                  <p className="text-xs text-muted-foreground mb-2">Maksutapa *</p>
+                  <div className="flex flex-wrap gap-2">
+                    {PAYMENT_METHODS.map((m) => (
+                      <button
+                        key={m.key}
+                        type="button"
+                        onClick={() => setSummaryPaymentMethod(prev => prev === m.key ? "" : m.key)}
+                        className={cn(
+                          "px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all",
+                          summaryPaymentMethod === m.key
+                            ? "border-primary bg-primary/5 text-foreground"
+                            : "border-border text-muted-foreground hover:border-muted-foreground/40",
+                        )}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Tilisiirto invoice fields */}
+                {summaryPaymentMethod === "tilisiirto" && (
+                  <div className="space-y-3 p-4 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800">
+                    <p className="text-xs font-semibold text-amber-800 dark:text-amber-300 uppercase tracking-wide">Laskutiedot</p>
+                    <div>
+                      <label className="text-xs text-muted-foreground block mb-1">IBAN</label>
+                      <Input
+                        value={summaryIban}
+                        onChange={e => setSummaryIban(e.target.value)}
+                        placeholder="FI00 0000 0000 0000 00"
+                        className="font-mono text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground block mb-1">BIC/SWIFT</label>
+                      <Input
+                        value={summaryBic}
+                        onChange={e => setSummaryBic(e.target.value)}
+                        placeholder="OKOYFIHH"
+                        className="font-mono text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground block mb-1">Viitenumero</label>
+                      <Input
+                        value={summaryViitenumero}
+                        onChange={e => setSummaryViitenumero(e.target.value)}
+                        className="font-mono text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground block mb-1">Eräpäivä</label>
+                      <Input
+                        type="date"
+                        value={summaryDueDate}
+                        onChange={e => setSummaryDueDate(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Worker message */}
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Viesti asiakkaalle (valinnainen)</label>
+                  <Textarea
+                    value={summaryMessage}
+                    onChange={e => setSummaryMessage(e.target.value)}
+                    placeholder="Hei! Keikka meni hienosti..."
+                    className="text-sm resize-none"
+                    rows={3}
+                  />
+                </div>
+
+                {/* Job notes */}
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Huomioita keikasta (valinnainen)</label>
+                  <Textarea
+                    value={summaryNotes}
+                    onChange={e => setSummaryNotes(e.target.value)}
+                    placeholder="Eteläpuolen ikkunat olivat erittäin likaiset..."
+                    className="text-sm resize-none"
+                    rows={2}
+                  />
+                </div>
+
+                {/* Send button */}
+                <div className="space-y-2 pt-1">
+                  {customer?.email ? (
+                    <Button
+                      className="w-full gap-2"
+                      disabled={sendingSummary || !summaryPaymentMethod}
+                      onClick={async () => {
+                        if (!customer?.email || !summaryPaymentMethod) return;
+                        setSendingSummary(true);
+                        const senderProfile = getAdminProfile();
+                        const jobDate = job.scheduledAt
+                          ? new Date(job.scheduledAt).toLocaleDateString("fi-FI")
+                          : new Date(job.createdAt).toLocaleDateString("fi-FI");
+                        const completionDate = new Date().toLocaleDateString("fi-FI");
+                        const priceEur = (job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" });
+                        // BCC to all assigned workers
+                        const workerIds = (job.assignedTo ?? "").split(",").map(s => s.trim()).filter(Boolean);
+                        const bccEmails = workerIds
+                          .map(id => USERS.find(u => u.id === id)?.email)
+                          .filter((e): e is string => !!e);
+                        const dueDateFormatted = summaryDueDate
+                          ? new Date(summaryDueDate).toLocaleDateString("fi-FI")
+                          : undefined;
+                        // Save payment method to job
+                        await api.updateJob((job as any).id, { paymentMethod: summaryPaymentMethod });
+                        const res = await api.sendJobSummary({
+                          to: customer.email,
+                          bcc: bccEmails.length > 0 ? bccEmails : undefined,
+                          customerName: customer.name,
+                          customerAddress: customer.address,
+                          jobDate,
+                          completionDate,
+                          description: job.description,
+                          price: priceEur,
+                          paymentMethod: summaryPaymentMethod,
+                          iban: summaryIban || undefined,
+                          bic: summaryBic || undefined,
+                          viitenumero: summaryViitenumero || undefined,
+                          dueDate: dueDateFormatted,
+                          workerMessage: summaryMessage || undefined,
+                          jobNotes: summaryNotes || undefined,
+                          workerName: senderProfile?.name,
+                          workerPhone: senderProfile?.phone,
+                          workerYTunnus: senderProfile?.yTunnus,
+                          lang: summaryLang,
+                        });
+                        if (res.ok) {
+                          toast({ title: summaryPaymentMethod === "tilisiirto" ? "Lasku lähetetty!" : "Yhteenveto lähetetty!", description: `Sähköposti lähetetty: ${customer.email}` });
+                          setShowSummaryPanel(false);
+                        } else {
+                          toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error || "Yritä uudelleen" });
+                        }
+                        setSendingSummary(false);
+                      }}
+                    >
+                      {sendingSummary ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+                      {summaryPaymentMethod === "tilisiirto" ? "Lähetä lasku" : "Lähetä yhteenveto"}
+                    </Button>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Lisää asiakkaalle sähköpostiosoite lähettääksesi yhteenvedon suoraan.</p>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full text-muted-foreground"
+                    onClick={() => setShowSummaryPanel(false)}
+                  >
+                    Peruuta
+                  </Button>
+                </div>
+              </div>
+            )}
           </Card>
 
           {/* Signatures */}

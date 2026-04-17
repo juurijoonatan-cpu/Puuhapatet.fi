@@ -671,6 +671,211 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Job summary / invoice email ─────────────────────────────────────────────
+
+  app.post("/api/send-job-summary", async (req, res) => {
+    if (!resend) {
+      return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä — aseta RESEND_API_KEY ympäristömuuttuja." });
+    }
+    try {
+      const {
+        to, bcc, customerName, customerAddress,
+        jobDate, completionDate,
+        description, price, paymentMethod,
+        iban, bic, viitenumero, dueDate,
+        workerMessage, jobNotes,
+        workerName, workerPhone, workerYTunnus,
+        lang,
+      } = req.body;
+
+      if (!to || !customerName || !description || !price || !paymentMethod) {
+        return res.status(400).json({ error: "Puuttuvia kenttiä" });
+      }
+
+      const isEn = lang === "en";
+      const isInvoice = paymentMethod === "tilisiirto";
+      const firstName = customerName.split(" ")[0];
+      const workerFirst = workerName ? workerName.split(" ")[0] : "Puuhapatet";
+      const isMultiDay = jobDate !== completionDate;
+
+      // ── Timeline dots ────────────────────────────────────────────────────────
+      const dot = (label: string, sub: string, active: boolean) =>
+        `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1;min-width:0">
+          <div style="width:14px;height:14px;border-radius:50%;background:${active ? "#16a34a" : "#e4e4e7"};border:2px solid ${active ? "#16a34a" : "#d4d4d8"};flex-shrink:0"></div>
+          <span style="font-size:11px;font-weight:600;color:${active ? "#16a34a" : "#71717a"};text-align:center;white-space:nowrap">${label}</span>
+          <span style="font-size:10px;color:#a1a1aa;text-align:center;white-space:nowrap">${sub}</span>
+        </div>`;
+
+      const timelineDots = isMultiDay
+        ? [
+            dot(isEn ? "Booked" : "Tilaus", jobDate, false),
+            dot(isEn ? "In progress" : "Työ käynnissä", "", false),
+            dot(isEn ? "Done ✓" : "Valmis ✓", completionDate, true),
+          ]
+        : [
+            dot(isEn ? "Booked" : "Tilaus", jobDate, false),
+            dot(isEn ? "Done ✓" : "Valmis ✓", completionDate, true),
+          ];
+
+      const lineSegments = timelineDots.length - 1;
+      const timelineHtml = `
+        <div style="background:#fafafa;border-radius:12px;padding:20px 24px;margin-bottom:24px">
+          <div style="display:flex;align-items:flex-start;gap:0;position:relative">
+            ${timelineDots.map((d, i) =>
+              i < lineSegments
+                ? d + `<div style="height:2px;background:#e4e4e7;flex:2;margin-top:8px;align-self:flex-start"></div>`
+                : d
+            ).join("")}
+          </div>
+        </div>`;
+
+      // ── Invoice box ──────────────────────────────────────────────────────────
+      const invoiceBox = isInvoice ? `
+        <div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:12px;padding:20px;margin-bottom:24px">
+          <p style="margin:0 0 14px;font-weight:800;color:#92400e;font-size:15px;letter-spacing:0.5px">${isEn ? "INVOICE" : "LASKU"}</p>
+          <table style="width:100%;border-collapse:collapse;font-size:13px">
+            ${iban ? `<tr><td style="padding:5px 0;color:#78350f">${isEn ? "Account (IBAN)" : "Tilinumero (IBAN)"}</td><td style="padding:5px 0;text-align:right;font-family:monospace;font-weight:600;color:#1c1917">${iban}</td></tr>` : ""}
+            ${bic ? `<tr><td style="padding:5px 0;color:#78350f">BIC/SWIFT</td><td style="padding:5px 0;text-align:right;font-family:monospace;font-weight:600;color:#1c1917">${bic}</td></tr>` : ""}
+            ${viitenumero ? `<tr><td style="padding:5px 0;color:#78350f">${isEn ? "Reference" : "Viitenumero"}</td><td style="padding:5px 0;text-align:right;font-family:monospace;font-weight:600;color:#1c1917">${viitenumero}</td></tr>` : ""}
+            ${dueDate ? `<tr><td style="padding:5px 0;color:#78350f">${isEn ? "Due date" : "Eräpäivä"}</td><td style="padding:5px 0;text-align:right;font-weight:700;color:#92400e">${dueDate}</td></tr>` : ""}
+            <tr style="border-top:2px solid #f59e0b">
+              <td style="padding:10px 0 0;color:#78350f;font-weight:700;font-size:15px">${isEn ? "Total" : "Summa"}</td>
+              <td style="padding:10px 0 0;text-align:right;font-weight:800;font-size:22px;color:#92400e">${price}</td>
+            </tr>
+          </table>
+          ${dueDate ? `<p style="margin:12px 0 0;color:#78350f;font-size:12px">${isEn ? `Please pay by ${dueDate}.` : `Maksa ${dueDate} mennessä.`}</p>` : ""}
+        </div>` : "";
+
+      // ── Paid confirmation ────────────────────────────────────────────────────
+      const paidMethodLabel = paymentMethod === "käteinen" ? (isEn ? "Cash" : "Käteinen")
+        : paymentMethod === "mobilepay" ? "MobilePay"
+        : paymentMethod === "kortti" ? (isEn ? "Card" : "Kortti")
+        : paymentMethod;
+      const paidBox = !isInvoice ? `
+        <div style="background:#ecfdf5;border-radius:12px;padding:16px 20px;margin-bottom:24px;display:flex;align-items:center;gap:12px">
+          <span style="font-size:22px">✓</span>
+          <div>
+            <p style="margin:0;font-weight:700;color:#065f46;font-size:14px">${isEn ? "Payment received" : "Maksettu"}</p>
+            <p style="margin:2px 0 0;color:#047857;font-size:13px">${paidMethodLabel}</p>
+          </div>
+        </div>` : "";
+
+      // ── Job summary card ─────────────────────────────────────────────────────
+      const summaryCard = `
+        <div style="background:#fafafa;border-radius:12px;padding:20px;margin-bottom:24px">
+          <table style="width:100%;border-collapse:collapse;font-size:14px">
+            <tr><td style="padding:6px 0;color:#666;width:40%">${isEn ? "Customer" : "Asiakas"}</td><td style="padding:6px 0;font-weight:600;text-align:right">${customerName}</td></tr>
+            ${customerAddress ? `<tr><td style="padding:6px 0;color:#666">${isEn ? "Address" : "Osoite"}</td><td style="padding:6px 0;font-weight:600;text-align:right">${customerAddress}</td></tr>` : ""}
+            <tr style="border-top:1px solid #e4e4e7"><td style="padding:6px 0;color:#666">${isEn ? "Service" : "Palvelu"}</td><td style="padding:6px 0;font-weight:600;text-align:right">${description}</td></tr>
+            <tr><td style="padding:6px 0;color:#666">${isEn ? "Date" : "Päivämäärä"}</td><td style="padding:6px 0;font-weight:600;text-align:right">${completionDate}</td></tr>
+            ${!isInvoice ? `<tr style="border-top:2px solid #18181b"><td style="padding:10px 0;font-weight:700;font-size:15px">${isEn ? "Price" : "Hinta"}</td><td style="padding:10px 0;font-weight:800;font-size:18px;text-align:right;color:#18181b">${price}</td></tr>` : ""}
+          </table>
+        </div>`;
+
+      // ── Job notes / highlights ───────────────────────────────────────────────
+      const notesBox = jobNotes ? `
+        <div style="background:#f0f9ff;border-radius:12px;padding:16px 20px;margin-bottom:24px">
+          <p style="margin:0 0 8px;font-weight:700;color:#075985;font-size:12px;letter-spacing:0.5px">${isEn ? "NOTES FROM THE JOB" : "HUOMIOITA KEIKASTA"}</p>
+          <p style="margin:0;color:#0369a1;font-size:13px;line-height:1.7;white-space:pre-line">${jobNotes}</p>
+        </div>` : "";
+
+      // ── Kotitalousvähennys hint ──────────────────────────────────────────────
+      const taxHint = `
+        <div style="background:#f9fafb;border:1px solid #e4e4e7;border-radius:12px;padding:14px 18px;margin-bottom:24px">
+          <p style="margin:0 0 4px;font-weight:600;color:#374151;font-size:12px">${isEn ? "HOUSEHOLD TAX DEDUCTION" : "KOTITALOUSVÄHENNYS"}</p>
+          <p style="margin:0;color:#6b7280;font-size:12px;line-height:1.6">
+            ${isEn
+              ? "This document qualifies as proof for the Finnish household tax deduction. ~35% of the labour cost can be deducted from your taxes (up to €2,250/person/year). See vero.fi for details."
+              : "Tämä lasku käy kotitalousvähennyksen dokumenttina. ~35 % työn osuudesta voidaan vähentää veroista (enintään 2 250 € / henkilö / vuosi). Lisätietoa: vero.fi/kotitalousvahennys"}
+          </p>
+        </div>`;
+
+      const html = `
+<!DOCTYPE html>
+<html lang="${isEn ? "en" : "fi"}">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f4f4f5">
+  <div style="max-width:560px;margin:24px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.12)">
+
+    <!-- Header -->
+    <div style="background:#2d5016;padding:28px 32px;text-align:center">
+      <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700;letter-spacing:-0.3px">Puuhapatet.</h1>
+      <p style="margin:6px 0 0;color:#a8d97b;font-size:13px">${isInvoice ? (isEn ? "Invoice" : "Lasku") : (isEn ? "Job complete" : "Työ valmis")} · ${completionDate}</p>
+    </div>
+
+    <!-- Body -->
+    <div style="padding:28px 32px">
+
+      <!-- Timeline -->
+      ${timelineHtml}
+
+      <!-- Greeting + worker message -->
+      ${workerMessage
+        ? `<p style="color:#18181b;font-size:15px;line-height:1.7;margin:0 0 20px;white-space:pre-line">${isEn ? `Hi ${firstName}!` : `Hei ${firstName}!`}<br><br>${workerMessage}</p>`
+        : `<p style="color:#18181b;font-size:15px;line-height:1.7;margin:0 0 20px">${isEn ? `Hi ${firstName}! The job is all done — thank you for choosing Puuhapatet.` : `Hei ${firstName}! Keikka on hoidettu — kiitos kun valitsit Puuhapatet.`}</p>`
+      }
+
+      <!-- Invoice (tilisiirto only) -->
+      ${invoiceBox}
+
+      <!-- Paid confirmation (cash/card/mobilepay) -->
+      ${paidBox}
+
+      <!-- Job summary -->
+      ${summaryCard}
+
+      <!-- Notes -->
+      ${notesBox}
+
+      <!-- Tax hint -->
+      ${taxHint}
+
+      <p style="color:#a1a1aa;font-size:12px;text-align:center;margin:0">
+        ${isEn ? "Window cleaning · lawn mowing · cleaning · yard care · painting" : "Ikkunapesu · nurmikko · siivous · pihahoito · maalaus"}
+      </p>
+    </div>
+
+    <!-- Footer -->
+    <div style="background:#fafafa;padding:20px 32px;border-top:1px solid #e4e4e7">
+      <p style="margin:0 0 12px;color:#52525b;font-size:13px">— ${workerFirst}</p>
+      <table style="width:100%;font-size:12px;color:#71717a">
+        <tr>
+          <td style="vertical-align:top">
+            <strong style="color:#18181b">${workerName || "Puuhapatet"}</strong><br>
+            ${workerPhone ? workerPhone + "<br>" : ""}
+            ${workerYTunnus ? "Y-tunnus: " + workerYTunnus + "<br>" : ""}
+          </td>
+          <td style="text-align:right;vertical-align:top">
+            <strong style="color:#18181b">Puuhapatet</strong><br>
+            <a href="mailto:info@puuhapatet.fi" style="color:#71717a;text-decoration:none">info@puuhapatet.fi</a><br>
+            <a href="https://puuhapatet.fi" style="color:#71717a;text-decoration:none">puuhapatet.fi</a>
+          </td>
+        </tr>
+      </table>
+    </div>
+  </div>
+</body>
+</html>`;
+
+      const subject = isInvoice
+        ? (isEn ? `Invoice — Puuhapatet, ${completionDate}` : `Lasku — Puuhapatet, ${completionDate}`)
+        : (isEn ? `Job complete — Puuhapatet, ${completionDate}` : `Työ valmis — Puuhapatet, ${completionDate}`);
+
+      const result = await resend.emails.send({
+        from: FROM_EMAIL,
+        to,
+        ...(bcc && bcc.length > 0 ? { bcc } : {}),
+        subject,
+        html,
+      });
+
+      res.json({ ok: true, id: result.data?.id });
+    } catch (e: any) {
+      console.error("Job summary email error:", e);
+      res.status(500).json({ error: e.message || "Sähköpostin lähetys epäonnistui" });
+    }
+  });
+
   // ─── Progress update email ────────────────────────────────────────────────────
 
   app.post("/api/send-progress-update", async (req, res) => {

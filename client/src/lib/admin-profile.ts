@@ -18,6 +18,8 @@ export interface AdminProfile {
   hasYTunnus?: boolean;   // Y-tunnus → elinkeinotoiminnan veroilmoitus (lomake 5)
   isUnder18?: boolean;    // alle 18v → huoltaja hoitaa OmaVerossa
   startupBonus?: number;  // senttiä — yritysseteli/aloitustuki 4H-yhdistykseltä
+  iban?: string;          // Tilinumero tilisiirto-laskuille
+  bic?: string;           // BIC/SWIFT-koodi
 }
 
 // ─── Hard-coded team members ─────────────────────────────────────────────────
@@ -34,6 +36,8 @@ export const USERS: AdminProfile[] = [
     hasYTunnus: true,
     isUnder18: true,   // 17v
     startupBonus: 30000, // 300 €
+    iban: "FI49 5780 2420 5091 79",
+    bic: "OKOYFIHH",
   },
   {
     id: "matias",
@@ -46,6 +50,8 @@ export const USERS: AdminProfile[] = [
     hasYTunnus: true,
     isUnder18: false,  // 18v
     startupBonus: 30000, // 300 €
+    iban: "FI49 5780 2420 5091 79",
+    bic: "OKOYFIHH",
   },
   {
     id: "testi1",

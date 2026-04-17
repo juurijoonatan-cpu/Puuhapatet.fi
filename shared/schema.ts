@@ -49,6 +49,7 @@ export const jobs = pgTable("jobs", {
   staffSignature:    text("staff_signature"),            // base64 data URL
   waiveFee:          boolean("waive_fee").default(false).notNull(),
   pendingWorkers:    text("pending_workers"),   // comma-separated invited user IDs not yet confirmed
+  paymentMethod:     text("payment_method"),    // "käteinen"|"mobilepay"|"tilisiirto"|"kortti"
   createdAt:         timestamp("created_at").defaultNow().notNull(),
   updatedAt:         timestamp("updated_at").defaultNow().notNull(),
 });

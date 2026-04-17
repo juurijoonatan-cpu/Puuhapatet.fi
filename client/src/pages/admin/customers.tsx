@@ -10,6 +10,8 @@ import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/empty-state";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
+import { getAdminProfile } from "@/lib/admin-profile";
+import { getMyCustomerIds } from "@/lib/visibility";
 import { cn } from "@/lib/utils";
 
 type DbStatus = "lead" | "scheduled" | "in_progress" | "done" | "cancelled";
@@ -52,6 +54,10 @@ interface Customer {
 export default function AdminCustomersPage() {
   const { toast } = useToast();
   const [, navigate] = useLocation();
+  const profile = getAdminProfile();
+  const isHost = profile?.role === "HOST";
+  const [showAll, setShowAll] = useState(false);
+  const [myCustomerIds, setMyCustomerIds] = useState<Set<number>>(new Set());
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -77,8 +83,17 @@ export default function AdminCustomersPage() {
   const [addingCustomer, setAddingCustomer] = useState(false);
 
   useEffect(() => {
-    api.getCustomers().then((res) => {
-      if (res.ok && res.data) setCustomers(res.data as Customer[]);
+    Promise.all([api.getCustomers(), api.getJobs()]).then(([custRes, jobsRes]) => {
+      if (custRes.ok && custRes.data) setCustomers(custRes.data as Customer[]);
+      if (profile && jobsRes.ok && jobsRes.data) {
+        const rows = jobsRes.data as { job: { customerId: number; assignedTo: string | null } }[];
+        setMyCustomerIds(
+          getMyCustomerIds(
+            rows.map(r => ({ customerId: r.job.customerId, assignedTo: r.job.assignedTo })),
+            profile.id,
+          ),
+        );
+      }
       setLoading(false);
     });
   }, []);
@@ -180,7 +195,12 @@ export default function AdminCustomersPage() {
     }
   };
 
-  const filtered = customers.filter((c) => {
+  // Visibility: STAFF sees only their customers; HOST defaults to own, can toggle all.
+  const ownerFiltered = (isHost && showAll) || !profile
+    ? customers
+    : customers.filter(c => myCustomerIds.has(c.id));
+
+  const filtered = ownerFiltered.filter((c) => {
     const q = search.toLowerCase();
     return (
       c.name.toLowerCase().includes(q) ||
@@ -390,7 +410,7 @@ export default function AdminCustomersPage() {
           <div className="flex-1">
             <h1 className="text-2xl md:text-3xl font-semibold text-foreground">Asiakkaat</h1>
             <p className="text-muted-foreground">
-              {loading ? "Ladataan…" : `${customers.length} asiakasta`}
+              {loading ? "Ladataan…" : `${ownerFiltered.length} asiakasta${!showAll && profile ? " (omat)" : ""}`}
             </p>
           </div>
           <Button
@@ -403,6 +423,33 @@ export default function AdminCustomersPage() {
             {showAddForm ? "Peruuta" : "Lisää asiakas"}
           </Button>
         </div>
+
+        {isHost && (
+          <div className="flex gap-2 mb-5">
+            <button
+              onClick={() => setShowAll(false)}
+              className={cn(
+                "px-4 py-1.5 rounded-full text-sm font-medium border-2 transition-all",
+                !showAll
+                  ? "border-primary bg-primary/5 text-foreground"
+                  : "border-border text-muted-foreground"
+              )}
+            >
+              Omat
+            </button>
+            <button
+              onClick={() => setShowAll(true)}
+              className={cn(
+                "px-4 py-1.5 rounded-full text-sm font-medium border-2 transition-all",
+                showAll
+                  ? "border-primary bg-primary/5 text-foreground"
+                  : "border-border text-muted-foreground"
+              )}
+            >
+              Kaikki
+            </button>
+          </div>
+        )}
 
         {/* Inline add customer form */}
         {showAddForm && (
@@ -457,11 +504,15 @@ export default function AdminCustomersPage() {
         {!loading && filtered.length === 0 && (
           <EmptyState
             icon={Users}
-            title={search ? "Ei hakutuloksia" : "Ei asiakkaita"}
+            title={search ? "Ei hakutuloksia" : (showAll || !profile ? "Ei asiakkaita" : "Ei omia asiakkaita")}
             description={
               search
                 ? `Ei löytynyt hakusanalla "${search}".`
-                : "Asiakkaita ei vielä ole. Luo ensimmäinen keikka."
+                : showAll || !profile
+                  ? "Asiakkaita ei vielä ole. Luo ensimmäinen keikka."
+                  : isHost
+                    ? "Sinulla ei vielä ole omia asiakkaita. Paina Kaikki nähdäksesi koko tiimin asiakkaat."
+                    : "Sinulla ei vielä ole omia asiakkaita. Asiakas ilmestyy tänne, kun sinulle merkitään keikka."
             }
           />
         )}

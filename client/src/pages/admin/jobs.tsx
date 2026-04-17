@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/empty-state";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
 import { USERS, getAdminProfile } from "@/lib/admin-profile";
+import { isMyJob } from "@/lib/visibility";
 import { cn } from "@/lib/utils";
 
 type DbStatus = "lead" | "scheduled" | "in_progress" | "done" | "cancelled";
@@ -61,6 +62,9 @@ interface JobRow {
 
 export default function AdminJobsPage() {
   const { toast } = useToast();
+  const profile = getAdminProfile();
+  const isHost = profile?.role === "HOST";
+  const [showAll, setShowAll] = useState(false);
   const [jobs, setJobs] = useState<JobRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<JobRow | null>(null);
@@ -528,6 +532,11 @@ export default function AdminJobsPage() {
     }
     setWaivingFee(false);
   };
+
+  // ── Visibility filter: own vs all ─────────────────────────────────────────
+  const visibleJobs = (isHost && showAll) || !profile
+    ? jobs
+    : jobs.filter(r => isMyJob(r.job.assignedTo, profile.id));
 
   const hasFieldChanges = selected
     ? editPrice !== String(selected.job.agreedPrice / 100) ||
@@ -1392,7 +1401,7 @@ export default function AdminJobsPage() {
   return (
     <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28">
       <div className="container mx-auto px-4 max-w-3xl">
-        <div className="flex items-center gap-4 mb-8">
+        <div className="flex items-center gap-4 mb-6">
           <Link href="/admin/dashboard">
             <Button variant="ghost" size="icon" data-testid="back-to-dashboard">
               <ArrowLeft className="w-5 h-5" />
@@ -1401,10 +1410,37 @@ export default function AdminJobsPage() {
           <div>
             <h1 className="text-2xl md:text-3xl font-semibold text-foreground">Keikat</h1>
             <p className="text-muted-foreground">
-              {loading ? "Ladataan…" : `${jobs.length} keikkaa`}
+              {loading ? "Ladataan…" : `${visibleJobs.length} keikkaa${!showAll && profile ? " (omat)" : ""}`}
             </p>
           </div>
         </div>
+
+        {isHost && (
+          <div className="flex gap-2 mb-6">
+            <button
+              onClick={() => setShowAll(false)}
+              className={cn(
+                "px-4 py-1.5 rounded-full text-sm font-medium border-2 transition-all",
+                !showAll
+                  ? "border-primary bg-primary/5 text-foreground"
+                  : "border-border text-muted-foreground"
+              )}
+            >
+              Omat
+            </button>
+            <button
+              onClick={() => setShowAll(true)}
+              className={cn(
+                "px-4 py-1.5 rounded-full text-sm font-medium border-2 transition-all",
+                showAll
+                  ? "border-primary bg-primary/5 text-foreground"
+                  : "border-border text-muted-foreground"
+              )}
+            >
+              Kaikki
+            </button>
+          </div>
+        )}
 
         {loading && (
           <div className="flex items-center justify-center py-16">
@@ -1412,17 +1448,23 @@ export default function AdminJobsPage() {
           </div>
         )}
 
-        {!loading && jobs.length === 0 && (
+        {!loading && visibleJobs.length === 0 && (
           <EmptyState
             icon={ClipboardList}
-            title="Ei keikkoja"
-            description="Ei vielä yhtään kirjattua keikkaa. Luo ensimmäinen uusi keikka."
+            title={showAll || !profile ? "Ei keikkoja" : "Ei omia keikkoja"}
+            description={
+              showAll || !profile
+                ? "Ei vielä yhtään kirjattua keikkaa. Luo ensimmäinen uusi keikka."
+                : isHost
+                  ? "Sinulle ei ole merkitty keikkoja. Paina Kaikki nähdäksesi koko tiimin keikat."
+                  : "Sinulle ei ole vielä merkitty keikkoja. Kysy HOSTilta uusia keikkoja."
+            }
           />
         )}
 
-        {!loading && jobs.length > 0 && (
+        {!loading && visibleJobs.length > 0 && (
           <div className="space-y-3">
-            {jobs.map((row) => {
+            {visibleJobs.map((row) => {
               const meta = statusMeta(row.job.status);
               return (
                 <Card

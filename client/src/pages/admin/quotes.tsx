@@ -331,6 +331,7 @@ export default function AdminQuotesPage() {
         agreedPrice: Math.round(total * 100),
         status:      "lead",
         scheduledAt,
+        assignedTo:  profile?.id || undefined,
         notes:       `Tarjous ${quoteId} lähetetty ${new Date().toLocaleDateString("fi-FI")}`,
       });
       if (jobRes.ok && jobRes.data) {

@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { type Server } from "http";
 import { eq, desc, sql, ne, and } from "drizzle-orm";
 import { Resend } from "resend";
+import QRCode from "qrcode";
 import { db } from "./db";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 
@@ -679,12 +680,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
     try {
       const {
-        to, bcc, customerName, customerAddress,
-        jobDate, completionDate,
+        to, bcc,
+        customerName, customerAddress,
+        timelineEvents,
         description, price, paymentMethod,
         iban, bic, viitenumero, dueDate,
         workerMessage, jobNotes,
-        workerName, workerPhone, workerYTunnus,
+        allWorkers,
         lang,
       } = req.body;
 
@@ -695,39 +697,70 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const isEn = lang === "en";
       const isInvoice = paymentMethod === "tilisiirto";
       const firstName = customerName.split(" ")[0];
-      const workerFirst = workerName ? workerName.split(" ")[0] : "Puuhapatet";
-      const isMultiDay = jobDate !== completionDate;
 
-      // ── Timeline dots ────────────────────────────────────────────────────────
+      // All workers for footer / contact
+      const workers: { name: string; phone?: string; email?: string; yTunnus?: string }[] =
+        Array.isArray(allWorkers) && allWorkers.length > 0
+          ? allWorkers
+          : [];
+      const workerNames = workers.map(w => w.name.split(" ")[0]).join(" ja ");
+
+      // Completion date = last timeline event's date
+      const events: { label: string; date: string }[] = Array.isArray(timelineEvents) && timelineEvents.length > 0
+        ? timelineEvents
+        : [{ label: isEn ? "Done" : "Valmis", date: new Date().toLocaleDateString("fi-FI") }];
+      const completionDate = events[events.length - 1]?.date ?? new Date().toLocaleDateString("fi-FI");
+
+      // ── Referral code ────────────────────────────────────────────────────────
+      const nameTag = firstName.replace(/[^a-z]/gi, "").slice(0, 5).toUpperCase().padEnd(4, "X");
+      const randTag = Math.random().toString(36).slice(2, 5).toUpperCase();
+      const referralCode = `${nameTag}-${randTag}`;
+      const referralLink = `https://puuhapatet.fi/tilaus?ref=${referralCode}`;
+
+      // ── Timeline ─────────────────────────────────────────────────────────────
       const dot = (label: string, sub: string, active: boolean) =>
-        `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1;min-width:0">
-          <div style="width:14px;height:14px;border-radius:50%;background:${active ? "#16a34a" : "#e4e4e7"};border:2px solid ${active ? "#16a34a" : "#d4d4d8"};flex-shrink:0"></div>
-          <span style="font-size:11px;font-weight:600;color:${active ? "#16a34a" : "#71717a"};text-align:center;white-space:nowrap">${label}</span>
-          <span style="font-size:10px;color:#a1a1aa;text-align:center;white-space:nowrap">${sub}</span>
+        `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1;min-width:0;padding:0 2px">
+          <div style="width:14px;height:14px;border-radius:50%;background:${active ? "#16a34a" : "#d4d4d8"};border:2px solid ${active ? "#16a34a" : "#d4d4d8"};flex-shrink:0"></div>
+          <span style="font-size:11px;font-weight:${active ? "700" : "600"};color:${active ? "#16a34a" : "#71717a"};text-align:center">${label}</span>
+          <span style="font-size:10px;color:#a1a1aa;text-align:center">${sub}</span>
         </div>`;
 
-      const timelineDots = isMultiDay
-        ? [
-            dot(isEn ? "Booked" : "Tilaus", jobDate, false),
-            dot(isEn ? "In progress" : "Työ käynnissä", "", false),
-            dot(isEn ? "Done ✓" : "Valmis ✓", completionDate, true),
-          ]
-        : [
-            dot(isEn ? "Booked" : "Tilaus", jobDate, false),
-            dot(isEn ? "Done ✓" : "Valmis ✓", completionDate, true),
-          ];
-
-      const lineSegments = timelineDots.length - 1;
+      const timelineDots = events.map((e, i) => dot(e.label, e.date, i === events.length - 1));
       const timelineHtml = `
         <div style="background:#fafafa;border-radius:12px;padding:20px 24px;margin-bottom:24px">
-          <div style="display:flex;align-items:flex-start;gap:0;position:relative">
+          <div style="display:flex;align-items:flex-start">
             ${timelineDots.map((d, i) =>
-              i < lineSegments
+              i < timelineDots.length - 1
                 ? d + `<div style="height:2px;background:#e4e4e7;flex:2;margin-top:8px;align-self:flex-start"></div>`
                 : d
             ).join("")}
           </div>
         </div>`;
+
+      // ── SEPA EPC QR code (tilisiirto) ────────────────────────────────────────
+      let qrCodeHtml = "";
+      if (isInvoice && iban && bic) {
+        try {
+          const ibanClean = iban.replace(/\s/g, "");
+          const amountNum = parseFloat(price.replace(/[^\d,]/g, "").replace(",", ".")) || 0;
+          const sepaPayload = [
+            "BCD", "002", "1", "SCT",
+            bic.replace(/\s/g, ""),
+            "Puuhapatet",
+            ibanClean,
+            `EUR${amountNum.toFixed(2)}`,
+            "",
+            viitenumero || "",
+            "",
+          ].join("\n");
+          const qrDataUrl = await QRCode.toDataURL(sepaPayload, { width: 140, margin: 1, color: { dark: "#78350f", light: "#fffbeb" } });
+          qrCodeHtml = `
+            <div style="text-align:center;margin-top:14px">
+              <img src="${qrDataUrl}" width="120" height="120" alt="Maksu-QR" style="border-radius:8px" />
+              <p style="margin:6px 0 0;color:#78350f;font-size:11px">${isEn ? "Scan with your banking app to pay" : "Skannaa pankkisovelluksella maksaaksesi"}</p>
+            </div>`;
+        } catch {/* skip QR if generation fails */}
+      }
 
       // ── Invoice box ──────────────────────────────────────────────────────────
       const invoiceBox = isInvoice ? `
@@ -743,7 +776,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               <td style="padding:10px 0 0;text-align:right;font-weight:800;font-size:22px;color:#92400e">${price}</td>
             </tr>
           </table>
-          ${dueDate ? `<p style="margin:12px 0 0;color:#78350f;font-size:12px">${isEn ? `Please pay by ${dueDate}.` : `Maksa ${dueDate} mennessä.`}</p>` : ""}
+          ${dueDate ? `<p style="margin:10px 0 0;color:#78350f;font-size:12px">${isEn ? `Please pay by ${dueDate}.` : `Maksa ${dueDate} mennessä.`}</p>` : ""}
+          ${qrCodeHtml}
         </div>` : "";
 
       // ── Paid confirmation ────────────────────────────────────────────────────
@@ -772,23 +806,83 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           </table>
         </div>`;
 
-      // ── Job notes / highlights ───────────────────────────────────────────────
+      // ── Job notes ────────────────────────────────────────────────────────────
       const notesBox = jobNotes ? `
         <div style="background:#f0f9ff;border-radius:12px;padding:16px 20px;margin-bottom:24px">
           <p style="margin:0 0 8px;font-weight:700;color:#075985;font-size:12px;letter-spacing:0.5px">${isEn ? "NOTES FROM THE JOB" : "HUOMIOITA KEIKASTA"}</p>
           <p style="margin:0;color:#0369a1;font-size:13px;line-height:1.7;white-space:pre-line">${jobNotes}</p>
         </div>` : "";
 
-      // ── Kotitalousvähennys hint ──────────────────────────────────────────────
+      // ── Kotitalousvähennys ───────────────────────────────────────────────────
       const taxHint = `
         <div style="background:#f9fafb;border:1px solid #e4e4e7;border-radius:12px;padding:14px 18px;margin-bottom:24px">
           <p style="margin:0 0 4px;font-weight:600;color:#374151;font-size:12px">${isEn ? "HOUSEHOLD TAX DEDUCTION" : "KOTITALOUSVÄHENNYS"}</p>
           <p style="margin:0;color:#6b7280;font-size:12px;line-height:1.6">
             ${isEn
-              ? "This document qualifies as proof for the Finnish household tax deduction. ~35% of the labour cost can be deducted from your taxes (up to €2,250/person/year). See vero.fi for details."
-              : "Tämä lasku käy kotitalousvähennyksen dokumenttina. ~35 % työn osuudesta voidaan vähentää veroista (enintään 2 250 € / henkilö / vuosi). Lisätietoa: vero.fi/kotitalousvahennys"}
+              ? "This document qualifies as proof for the Finnish household tax deduction (~35% of the labour cost, up to €2,250/person/year). No separate receipt needed."
+              : "Tämä lasku käy kotitalousvähennyksen dokumenttina (~35 % työn osuudesta, enintään 2 250 € / henkilö / vuosi). Erillistä kuittia ei tarvita."}
           </p>
         </div>`;
+
+      // ── Google review ────────────────────────────────────────────────────────
+      const reviewBlock = `
+        <div style="background:#fffbeb;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #f59e0b">
+          <p style="margin:0 0 6px;font-weight:700;color:#92400e;font-size:13px">${isEn ? "A SMALL REQUEST" : "PIENI PYYNTÖ"}</p>
+          <p style="margin:0 0 10px;color:#78350f;font-size:13px;line-height:1.6">
+            ${isEn
+              ? "Every review helps us reach more customers — it takes 30 seconds and means the world to us."
+              : "Jokainen arvostelu auttaa meitä tavoittamaan uusia asiakkaita — se vie 30 sekuntia ja merkitsee meille valtavasti."}
+          </p>
+          <a href="https://g.page/r/CQo_lx1fQ57lEAE/review" style="display:inline-block;background:#f59e0b;color:#fff;padding:8px 18px;border-radius:8px;text-decoration:none;font-weight:600;font-size:13px">${isEn ? "Leave a review →" : "Jätä arvostelu →"}</a>
+        </div>`;
+
+      // ── Referral ─────────────────────────────────────────────────────────────
+      const referralBlock = `
+        <div style="background:#f0f9ff;border-radius:12px;padding:16px;margin-bottom:24px;border-left:3px solid #0ea5e9">
+          <p style="margin:0 0 6px;font-weight:700;color:#075985;font-size:13px">${isEn ? "SHARE WITH FRIENDS — 5% OFF" : "JAA KAVEREILLE — 5 % ALENNUS"}</p>
+          <p style="margin:0 0 10px;color:#0369a1;font-size:13px;line-height:1.6">
+            ${isEn
+              ? `Recommend us to a friend — they get <strong>5% off</strong> their first booking. Your personal code:`
+              : `Suosittele meitä kaverille — he saavat <strong>5 % alennuksen</strong> ensimmäisestä tilauksesta. Koodisi:`}
+          </p>
+          <div style="background:#fff;border:1px solid #bae6fd;border-radius:8px;padding:8px 14px;text-align:center;margin-bottom:10px">
+            <span style="font-family:monospace;font-size:17px;font-weight:700;color:#0c4a6e;letter-spacing:2px">${referralCode}</span>
+          </div>
+          <a href="${referralLink}" style="display:inline-block;background:#0ea5e9;color:#fff;padding:8px 18px;border-radius:8px;text-decoration:none;font-weight:600;font-size:13px">${isEn ? "Share link →" : "Jaa linkki →"}</a>
+        </div>`;
+
+      // ── Next booking CTA ─────────────────────────────────────────────────────
+      const nextBookingBlock = `
+        <div style="text-align:center;margin-bottom:28px">
+          <p style="color:#52525b;font-size:14px;margin:0 0 4px;line-height:1.6">
+            ${isEn ? "Need help with other home tasks?" : "Tarvitsetko apua muissa kotihommissa?"}<br>
+            <span style="font-size:12px;color:#71717a">${isEn ? "Lawn mowing · cleaning · yard care · painting" : "Nurmikon leikkuu · siivous · pihahoito · maalaus"}</span>
+          </p>
+          <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;margin-top:10px;background:#2d5016;color:#fff;padding:12px 28px;border-radius:10px;text-decoration:none;font-weight:600;font-size:14px">${isEn ? "Book your next service →" : "Varaa seuraava aika →"}</a>
+        </div>`;
+
+      // ── Direct worker contact ────────────────────────────────────────────────
+      const directContactBlock = workers.length > 0 ? `
+        <div style="background:#fafafa;border-radius:12px;padding:14px 18px;margin-bottom:24px">
+          <p style="margin:0 0 8px;font-weight:600;color:#374151;font-size:12px">${isEn ? "CONTACT US DIRECTLY" : "OTA YHTEYTTÄ SUORAAN"}</p>
+          ${workers.map(w => `
+            <div style="margin-bottom:4px">
+              <span style="font-weight:600;color:#18181b;font-size:13px">${w.name}</span>
+              ${w.phone ? `<span style="color:#52525b;font-size:13px"> · <a href="tel:${w.phone}" style="color:#52525b;text-decoration:none">${w.phone}</a></span>` : ""}
+              ${w.email ? `<span style="color:#52525b;font-size:13px"> · <a href="mailto:${w.email}" style="color:#52525b;text-decoration:none">${w.email}</a></span>` : ""}
+            </div>`).join("")}
+        </div>` : "";
+
+      // ── Footer workers ───────────────────────────────────────────────────────
+      const footerWorkersHtml = workers.length > 0
+        ? workers.map(w =>
+            `<div style="margin-bottom:8px">
+              <strong style="color:#18181b">${w.name}</strong><br>
+              ${w.phone ? `<span style="color:#71717a">${w.phone}</span><br>` : ""}
+              ${w.yTunnus ? `<span style="color:#71717a">Y-tunnus: ${w.yTunnus}</span><br>` : ""}
+            </div>`
+          ).join("")
+        : `<strong style="color:#18181b">Puuhapatet</strong><br>`;
 
       const html = `
 <!DOCTYPE html>
@@ -806,45 +900,37 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     <!-- Body -->
     <div style="padding:28px 32px">
 
-      <!-- Timeline -->
       ${timelineHtml}
 
       <!-- Greeting + worker message -->
       ${workerMessage
         ? `<p style="color:#18181b;font-size:15px;line-height:1.7;margin:0 0 20px;white-space:pre-line">${isEn ? `Hi ${firstName}!` : `Hei ${firstName}!`}<br><br>${workerMessage}</p>`
-        : `<p style="color:#18181b;font-size:15px;line-height:1.7;margin:0 0 20px">${isEn ? `Hi ${firstName}! The job is all done — thank you for choosing Puuhapatet.` : `Hei ${firstName}! Keikka on hoidettu — kiitos kun valitsit Puuhapatet.`}</p>`
+        : `<p style="color:#18181b;font-size:15px;line-height:1.7;margin:0 0 20px">${isEn
+            ? `Hi ${firstName}! The job is all done — thank you for choosing Puuhapatet.`
+            : `Hei ${firstName}! Keikka on hoidettu — kiitos kun valitsit Puuhapatet.`}</p>`
       }
 
-      <!-- Invoice (tilisiirto only) -->
       ${invoiceBox}
-
-      <!-- Paid confirmation (cash/card/mobilepay) -->
       ${paidBox}
-
-      <!-- Job summary -->
       ${summaryCard}
-
-      <!-- Notes -->
       ${notesBox}
-
-      <!-- Tax hint -->
       ${taxHint}
+      ${reviewBlock}
+      ${referralBlock}
+      ${nextBookingBlock}
+      ${directContactBlock}
 
-      <p style="color:#a1a1aa;font-size:12px;text-align:center;margin:0">
+      <p style="color:#a1a1aa;font-size:12px;text-align:center;margin:0 0 0">
         ${isEn ? "Window cleaning · lawn mowing · cleaning · yard care · painting" : "Ikkunapesu · nurmikko · siivous · pihahoito · maalaus"}
       </p>
     </div>
 
     <!-- Footer -->
     <div style="background:#fafafa;padding:20px 32px;border-top:1px solid #e4e4e7">
-      <p style="margin:0 0 12px;color:#52525b;font-size:13px">— ${workerFirst}</p>
+      ${workers.length > 0 ? `<p style="margin:0 0 12px;color:#52525b;font-size:13px">— ${workerNames}</p>` : ""}
       <table style="width:100%;font-size:12px;color:#71717a">
         <tr>
-          <td style="vertical-align:top">
-            <strong style="color:#18181b">${workerName || "Puuhapatet"}</strong><br>
-            ${workerPhone ? workerPhone + "<br>" : ""}
-            ${workerYTunnus ? "Y-tunnus: " + workerYTunnus + "<br>" : ""}
-          </td>
+          <td style="vertical-align:top">${footerWorkersHtml}</td>
           <td style="text-align:right;vertical-align:top">
             <strong style="color:#18181b">Puuhapatet</strong><br>
             <a href="mailto:info@puuhapatet.fi" style="color:#71717a;text-decoration:none">info@puuhapatet.fi</a><br>

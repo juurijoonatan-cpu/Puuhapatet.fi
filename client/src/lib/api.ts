@@ -255,8 +255,7 @@ export const api = {
     bcc?: string[];
     customerName: string;
     customerAddress?: string;
-    jobDate: string;
-    completionDate: string;
+    timelineEvents?: { label: string; date: string }[];
     description: string;
     price: string;
     paymentMethod: string;
@@ -266,9 +265,7 @@ export const api = {
     dueDate?: string;
     workerMessage?: string;
     jobNotes?: string;
-    workerName?: string;
-    workerPhone?: string;
-    workerYTunnus?: string;
+    allWorkers?: { name: string; phone?: string; email?: string; yTunnus?: string }[];
     lang?: "fi" | "en";
   }) => request<{ ok: boolean; id?: string }>("POST", "/api/send-job-summary", data),
 

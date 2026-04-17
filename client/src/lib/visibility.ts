@@ -31,14 +31,18 @@ export function isMyJob(
   return parseWorkerIds(assignedTo).includes(userId);
 }
 
-/** Set of customer IDs the user has at least one job on. */
+/** Set of customer IDs the user has at least one job on, or directly owns. */
 export function getMyCustomerIds(
   jobs: { customerId: number; assignedTo: string | null | undefined }[],
+  customers: { id: number; ownedBy?: string | null }[],
   userId: string,
 ): Set<number> {
   const ids = new Set<number>();
   for (const j of jobs) {
     if (isMyJob(j.assignedTo, userId)) ids.add(j.customerId);
+  }
+  for (const c of customers) {
+    if (c.ownedBy === userId) ids.add(c.id);
   }
   return ids;
 }

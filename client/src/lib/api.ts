@@ -84,6 +84,7 @@ export interface NewCustomer {
   email?: string;
   address: string;
   notes?: string;
+  ownedBy?: string;
 }
 
 export interface NewJob {
@@ -97,6 +98,7 @@ export interface NewJob {
   customerSignature?: string;
   staffSignature?: string;
   waiveFee?: boolean;
+  pendingWorkers?: string | null;
 }
 
 export interface StatsResponse {
@@ -211,6 +213,12 @@ export const api = {
 
   deleteCustomer: (id: number) =>
     request<{ ok: boolean }>("DELETE", `/api/customers/${id}`),
+
+  inviteWorker: (jobId: number, invitedUserId: string, inviterName?: string, note?: string) =>
+    request<{ ok: boolean; job: unknown }>("POST", `/api/jobs/${jobId}/invite`, { invitedUserId, inviterName, note }),
+
+  respondInvite: (jobId: number, userId: string, accept: boolean) =>
+    request<{ ok: boolean; job: unknown }>("POST", `/api/jobs/${jobId}/invite-respond`, { userId, accept }),
 
   sendReceipt: (data: {
     to: string;

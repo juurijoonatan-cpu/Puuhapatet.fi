@@ -69,10 +69,12 @@ app.use((req, res, next) => {
 
 (async () => {
   // Auto-migrate: add new columns if they don't exist yet
-  try {
-    await db.execute(sql`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS waive_fee boolean NOT NULL DEFAULT false`);
-  } catch (e: any) {
-    console.warn("Migration warning (waive_fee):", e.message);
+  for (const stmt of [
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS waive_fee       boolean NOT NULL DEFAULT false`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS pending_workers text`,
+    sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS owned_by        text`,
+  ]) {
+    try { await db.execute(stmt); } catch (e: any) { console.warn("Migration warning:", e.message); }
   }
 
   await registerRoutes(httpServer, app);

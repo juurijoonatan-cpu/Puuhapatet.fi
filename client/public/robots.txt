@@ -4,6 +4,7 @@
 User-agent: *
 Allow: /
 Disallow: /admin/
+Disallow: /hero-bg.mp4
 
 # ── AI / Generative Engine crawlers ─────────────────────────────────────────
 # Explicitly allow so GEO (AI search) indexes the site

@@ -48,7 +48,6 @@ export default function LandingPage() {
             muted
             loop
             playsInline
-            poster="/hero-workers.jpg"
             className="w-full h-full object-cover object-center"
           >
             <source src="/hero-bg.mp4" type="video/mp4" />

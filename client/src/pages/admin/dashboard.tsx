@@ -29,24 +29,28 @@ export default function AdminDashboard() {
   const [workerStats, setWorkerStats] = useState<WorkerStatsResponse | null>(null);
   const [myJobTotal, setMyJobTotal] = useState<number | null>(null);
   const [myJobUpcoming, setMyJobUpcoming] = useState<number | null>(null);
+  const [myRevenue, setMyRevenue] = useState<number | null>(null);
 
   useEffect(() => {
     api.stats().then((res) => {
       if (res.ok && res.data) setStats(res.data);
       setLoading(false);
     });
-    // HOST: team overview. STAFF: own debt/job count.
     api.workersStats().then((res) => {
       if (res.ok && res.data) setWorkerStats(res.data);
     });
-    // STAFF: compute own total and upcoming from jobs list
-    if (!isHost && profile) {
+    // Always fetch personal stats for both HOST and STAFF
+    if (profile) {
       api.getJobs().then((res) => {
         if (res.ok && res.data) {
-          const rows = res.data as { job: { assignedTo: string | null; status: string } }[];
+          const rows = res.data as { job: { assignedTo: string | null; status: string; agreedPrice: number; waiveFee?: boolean } }[];
           const mine = rows.filter(r => isMyJob(r.job.assignedTo, profile.id));
           setMyJobTotal(mine.length);
           setMyJobUpcoming(mine.filter(r => r.job.status === "scheduled").length);
+          const rev = mine
+            .filter(r => r.job.status === "done")
+            .reduce((sum, r) => sum + (r.job.agreedPrice ?? 0), 0);
+          setMyRevenue(rev);
         }
       });
     }
@@ -61,34 +65,34 @@ export default function AdminDashboard() {
   const cards = isHost
     ? [
         {
-          title: "Keikat yhteensä",
-          value: loading ? "…" : String(stats?.totalJobs ?? "-"),
+          title: "Omat keikat",
+          value: myJobTotal === null ? "…" : String(myJobTotal),
           icon: Briefcase,
-          description: "Kaikki kirjatut keikat",
+          description: "Kaikki omat kirjatut keikat",
           color: "text-blue-600 dark:text-blue-400",
           bgColor: "bg-blue-100 dark:bg-blue-900/30",
         },
         {
           title: "Tulevat keikat",
-          value: loading ? "…" : String(stats?.upcoming ?? "-"),
+          value: myJobUpcoming === null ? "…" : String(myJobUpcoming),
           icon: Clock,
-          description: "Aikataulutettu",
+          description: "Aikataulutettu (omat)",
           color: "text-orange-600 dark:text-orange-400",
           bgColor: "bg-orange-100 dark:bg-orange-900/30",
         },
         {
-          title: "Nettotulo",
-          value: loading ? "…" : stats ? fmt(stats.netIncome) : "-",
+          title: "Oma tulo",
+          value: myRevenue === null ? "…" : fmt(myRevenue),
           icon: TrendingUp,
-          description: "Tulot − kulut − palvelumaksu",
+          description: "Valmistuneiden omien keikkojen tulot",
           color: "text-green-600 dark:text-green-400",
           bgColor: "bg-green-100 dark:bg-green-900/30",
         },
         {
-          title: "Palveluvelka",
-          value: loading ? "…" : stats ? fmt(stats.serviceFeeTotal) : "-",
+          title: "Oma palveluvelka",
+          value: myDebt === null ? "…" : fmt(myDebt),
           icon: Banknote,
-          description: "10 % maksamatta brändille",
+          description: "10 % brändille maksamatta",
           color: "text-purple-600 dark:text-purple-400",
           bgColor: "bg-purple-100 dark:bg-purple-900/30",
         },

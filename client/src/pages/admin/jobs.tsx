@@ -113,6 +113,7 @@ export default function AdminJobsPage() {
   const [summaryLang, setSummaryLang] = useState<"fi" | "en">("fi");
   const [sendingSummary, setSendingSummary] = useState(false);
   const [summaryTimeline, setSummaryTimeline] = useState<{label: string; date: string}[]>([]);
+  const [summaryPhoto, setSummaryPhoto] = useState<string | null>(null);
 
   // "Jatka myöhemmin" pause form
   const [showPauseForm, setShowPauseForm] = useState(false);
@@ -608,10 +609,31 @@ export default function AdminJobsPage() {
     { key: "kortti",     label: "Kortti" },
   ];
 
+  const compressImage = (file: File, maxWidth = 960): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const img = new Image();
+        img.onload = () => {
+          const ratio = Math.min(1, maxWidth / img.width);
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.round(img.width * ratio);
+          canvas.height = Math.round(img.height * ratio);
+          canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL("image/jpeg", 0.82));
+        };
+        img.onerror = reject;
+        img.src = ev.target?.result as string;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
   const openSummaryPanel = () => {
     if (!selected) return;
     const { job } = selected;
     const profile = getAdminProfile();
+    setSummaryPhoto(null);
     const jobId = (job as any).id as number;
     // +14 days default due date
     const due = new Date();
@@ -624,23 +646,19 @@ export default function AdminJobsPage() {
     setSummaryNotes("");
     setSummaryPaymentMethod((job as any).paymentMethod ?? "");
     setSummaryLang("fi");
-    // Pre-fill timeline from job data
-    const fmt = (d: Date) => d.toLocaleDateString("fi-FI");
-    const today = fmt(new Date());
-    const createdStr = fmt(new Date(job.createdAt));
+    // Pre-fill timeline with ISO dates (YYYY-MM-DD) — avoids fi-FI conversion hacks
+    const toISO = (d: Date) => d.toISOString().slice(0, 10);
+    const todayISO = toISO(new Date());
+    const createdISO = toISO(new Date(job.createdAt));
     const events: {label: string; date: string}[] = [];
-    events.push({ label: "Tilaus", date: createdStr });
+    events.push({ label: "Tilaus", date: createdISO });
     if (job.scheduledAt) {
-      const schStr = fmt(new Date(job.scheduledAt));
-      if (schStr !== createdStr) {
-        events.push({ label: "Työ aloitettu", date: schStr });
+      const schISO = toISO(new Date(job.scheduledAt));
+      if (schISO !== createdISO) {
+        events.push({ label: "Työ aloitettu", date: schISO });
       }
     }
-    if (job.status === "in_progress") {
-      events.push({ label: "Käynnissä", date: today });
-    } else {
-      events.push({ label: "Valmis ✓", date: today });
-    }
+    events.push({ label: job.status === "in_progress" ? "Käynnissä" : "Valmis ✓", date: todayISO });
     setSummaryTimeline(events);
     setShowSummaryPanel(true);
   };
@@ -1327,15 +1345,8 @@ export default function AdminJobsPage() {
                         />
                         <Input
                           type="date"
-                          value={evt.date.split(".").length === 3
-                            ? `${evt.date.split(".")[2]}-${evt.date.split(".")[1].padStart(2,"0")}-${evt.date.split(".")[0].padStart(2,"0")}`
-                            : evt.date}
-                          onChange={e => {
-                            const iso = e.target.value;
-                            const [y, m, d] = iso.split("-");
-                            const fi = `${parseInt(d)}.${parseInt(m)}.${y}`;
-                            setSummaryTimeline(prev => prev.map((v, j) => j === i ? {...v, date: fi} : v));
-                          }}
+                          value={evt.date}
+                          onChange={e => setSummaryTimeline(prev => prev.map((v, j) => j === i ? {...v, date: e.target.value} : v))}
                           className="text-xs h-8 w-36"
                         />
                         {summaryTimeline.length > 2 && (
@@ -1349,10 +1360,39 @@ export default function AdminJobsPage() {
                     ))}
                     <button
                       type="button"
-                      onClick={() => setSummaryTimeline(prev => [...prev, { label: "Vaihe", date: new Date().toLocaleDateString("fi-FI") }])}
+                      onClick={() => setSummaryTimeline(prev => [...prev, { label: "Vaihe", date: new Date().toISOString().slice(0, 10) }])}
                       className="text-xs text-primary hover:underline"
                     >+ Lisää vaihe</button>
                   </div>
+                </div>
+
+                {/* Photo upload */}
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-2">Kuva keikasta (valinnainen)</label>
+                  {summaryPhoto ? (
+                    <div className="relative rounded-xl overflow-hidden">
+                      <img src={summaryPhoto} alt="Keikka" className="w-full object-cover max-h-48 rounded-xl" />
+                      <button
+                        type="button"
+                        onClick={() => setSummaryPhoto(null)}
+                        className="absolute top-2 right-2 bg-black/60 text-white rounded-full w-6 h-6 text-sm leading-none flex items-center justify-center"
+                      >×</button>
+                    </div>
+                  ) : (
+                    <label className="flex flex-col items-center gap-1 cursor-pointer border-2 border-dashed border-border rounded-xl p-4 hover:border-primary/40 transition-colors text-center">
+                      <span className="text-xs text-muted-foreground">Klikkaa lisätäksesi kuva tai vedä tänne</span>
+                      <span className="text-[10px] text-muted-foreground/60">JPG / PNG — pakataan automaattisesti</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (file) setSummaryPhoto(await compressImage(file));
+                        }}
+                      />
+                    </label>
+                  )}
                 </div>
 
                 {/* Payment method */}
@@ -1464,12 +1504,18 @@ export default function AdminJobsPage() {
                           : undefined;
                         // Save payment method to job
                         await api.updateJob((job as any).id, { paymentMethod: summaryPaymentMethod });
+                        // Convert ISO dates to fi-FI for display in email
+                        const displayEvents = summaryTimeline.map(e => ({
+                          label: e.label,
+                          date: e.date ? new Date(e.date + "T12:00:00").toLocaleDateString("fi-FI") : "",
+                        }));
                         const res = await api.sendJobSummary({
                           to: customer.email,
                           bcc: bccEmails.length > 0 ? bccEmails : undefined,
                           customerName: customer.name,
                           customerAddress: customer.address,
-                          timelineEvents: summaryTimeline,
+                          timelineEvents: displayEvents,
+                          photoDataUrl: summaryPhoto || undefined,
                           description: job.description,
                           price: priceEur,
                           paymentMethod: summaryPaymentMethod,

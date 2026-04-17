@@ -688,6 +688,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         workerMessage, jobNotes,
         photoDataUrl,
         allWorkers,
+        senderName, senderAddress,
         lang,
       } = req.body;
 
@@ -754,7 +755,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             viitenumero || "",
             "",
           ].join("\n");
-          const qrDataUrl = await QRCode.toDataURL(sepaPayload, { width: 140, margin: 1, color: { dark: "#78350f", light: "#fffbeb" } });
+          const qrDataUrl = await QRCode.toDataURL(sepaPayload, { width: 160, margin: 2 });
           qrCodeHtml = `
             <div style="text-align:center;margin-top:14px">
               <img src="${qrDataUrl}" width="120" height="120" alt="Maksu-QR" style="border-radius:8px" />
@@ -768,6 +769,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         <div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:12px;padding:20px;margin-bottom:24px">
           <p style="margin:0 0 14px;font-weight:800;color:#92400e;font-size:15px;letter-spacing:0.5px">${isEn ? "INVOICE" : "LASKU"}</p>
           <table style="width:100%;border-collapse:collapse;font-size:13px">
+            ${senderName ? `<tr><td style="padding:5px 0;color:#78350f">${isEn ? "Invoiced by" : "Laskuttaja"}</td><td style="padding:5px 0;text-align:right;font-weight:600;color:#1c1917">${senderName}</td></tr>` : ""}
+            ${senderAddress ? `<tr><td style="padding:5px 0;color:#78350f">${isEn ? "Address" : "Osoite"}</td><td style="padding:5px 0;text-align:right;font-weight:600;color:#1c1917">${senderAddress}</td></tr>` : ""}
+            ${workers[0]?.yTunnus ? `<tr><td style="padding:5px 0;color:#78350f">Y-tunnus</td><td style="padding:5px 0;text-align:right;font-family:monospace;font-weight:600;color:#1c1917">${workers[0].yTunnus}</td></tr>` : ""}
+            <tr><td colspan="2" style="padding:8px 0 2px;border-top:1px solid #fde68a"></td></tr>
+            <tr><td style="padding:5px 0;color:#78350f">${isEn ? "Customer" : "Asiakas"}</td><td style="padding:5px 0;text-align:right;font-weight:600;color:#1c1917">${customerName}</td></tr>
+            ${customerAddress ? `<tr><td style="padding:5px 0;color:#78350f">${isEn ? "Customer address" : "Asiakkaan osoite"}</td><td style="padding:5px 0;text-align:right;font-weight:600;color:#1c1917">${customerAddress}</td></tr>` : ""}
+            <tr><td colspan="2" style="padding:8px 0 2px;border-top:1px solid #fde68a"></td></tr>
             ${iban ? `<tr><td style="padding:5px 0;color:#78350f">${isEn ? "Account (IBAN)" : "Tilinumero (IBAN)"}</td><td style="padding:5px 0;text-align:right;font-family:monospace;font-weight:600;color:#1c1917">${iban}</td></tr>` : ""}
             ${bic ? `<tr><td style="padding:5px 0;color:#78350f">BIC/SWIFT</td><td style="padding:5px 0;text-align:right;font-family:monospace;font-weight:600;color:#1c1917">${bic}</td></tr>` : ""}
             ${viitenumero ? `<tr><td style="padding:5px 0;color:#78350f">${isEn ? "Reference" : "Viitenumero"}</td><td style="padding:5px 0;text-align:right;font-family:monospace;font-weight:600;color:#1c1917">${viitenumero}</td></tr>` : ""}
@@ -868,17 +876,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;margin-top:10px;background:#2d5016;color:#fff;padding:12px 28px;border-radius:10px;text-decoration:none;font-weight:600;font-size:14px">${isEn ? "Book your next service →" : "Varaa seuraava aika →"}</a>
         </div>`;
 
-      // ── Direct worker contact ────────────────────────────────────────────────
-      const directContactBlock = workers.length > 0 ? `
-        <div style="background:#fafafa;border-radius:12px;padding:14px 18px;margin-bottom:24px">
-          <p style="margin:0 0 8px;font-weight:600;color:#374151;font-size:12px">${isEn ? "CONTACT US DIRECTLY" : "OTA YHTEYTTÄ SUORAAN"}</p>
-          ${workers.map(w => `
-            <div style="margin-bottom:4px">
-              <span style="font-weight:600;color:#18181b;font-size:13px">${w.name}</span>
-              ${w.phone ? `<span style="color:#52525b;font-size:13px"> · <a href="tel:${w.phone}" style="color:#52525b;text-decoration:none">${w.phone}</a></span>` : ""}
-              ${w.email ? `<span style="color:#52525b;font-size:13px"> · <a href="mailto:${w.email}" style="color:#52525b;text-decoration:none">${w.email}</a></span>` : ""}
-            </div>`).join("")}
-        </div>` : "";
 
       // ── Footer workers ───────────────────────────────────────────────────────
       const footerWorkersHtml = workers.length > 0
@@ -941,7 +938,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       ${reviewBlock}
       ${referralBlock}
       ${nextBookingBlock}
-      ${directContactBlock}
 
       <p style="color:#b0b0b0;font-size:12px;text-align:center;margin:8px 0 0;line-height:1.6">
         ${isEn ? "Window cleaning · lawn mowing · cleaning · yard care · painting" : "Ikkunapesu · nurmikko · siivous · pihahoito · maalaus"}

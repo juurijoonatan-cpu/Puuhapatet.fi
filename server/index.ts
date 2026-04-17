@@ -72,6 +72,7 @@ app.use((req, res, next) => {
   for (const stmt of [
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS waive_fee       boolean NOT NULL DEFAULT false`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS pending_workers text`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS payment_method  text`,
     sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS owned_by        text`,
   ]) {
     try { await db.execute(stmt); } catch (e: any) { console.warn("Migration warning:", e.message); }

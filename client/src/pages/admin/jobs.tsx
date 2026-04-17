@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/empty-state";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
 import { USERS, getAdminProfile } from "@/lib/admin-profile";
-import { isMyJob } from "@/lib/visibility";
+import { isMyJob, parseWorkerIds } from "@/lib/visibility";
 import { cn } from "@/lib/utils";
 
 type DbStatus = "lead" | "scheduled" | "in_progress" | "done" | "cancelled";
@@ -1452,8 +1452,8 @@ export default function AdminJobsPage() {
                         if (!customer?.email || !summaryPaymentMethod) return;
                         setSendingSummary(true);
                         const priceEur = (job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" });
-                        // All assigned workers
-                        const workerIds = (job.assignedTo ?? "").split(",").map(s => s.trim()).filter(Boolean);
+                        // All assigned workers — parseWorkerIds handles both IDs and legacy full names
+                        const workerIds = parseWorkerIds(job.assignedTo);
                         const allWorkersData = workerIds
                           .map(id => USERS.find(u => u.id === id))
                           .filter(Boolean)

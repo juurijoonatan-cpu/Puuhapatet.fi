@@ -269,6 +269,8 @@ export const api = {
     allWorkers?: { name: string; phone?: string; email?: string; yTunnus?: string }[];
     senderName?: string;
     senderAddress?: string;
+    agreedPriceCents?: number;
+    expensesTotalCents?: number;
     lang?: "fi" | "en";
   }) => request<{ ok: boolean; id?: string }>("POST", "/api/send-job-summary", data),
 

@@ -1532,6 +1532,8 @@ export default function AdminJobsPage() {
                           allWorkers: allWorkersData.length > 0 ? allWorkersData : undefined,
                           senderName: senderUser?.name,
                           senderAddress: senderUser?.address,
+                          agreedPriceCents: job.agreedPrice,
+                          expensesTotalCents: expensesTotal > 0 ? expensesTotal : undefined,
                           lang: summaryLang,
                         });
                         if (res.ok) {

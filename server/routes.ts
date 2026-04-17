@@ -689,6 +689,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         photoDataUrl,
         allWorkers,
         senderName, senderAddress,
+        agreedPriceCents, expensesTotalCents,
         lang,
       } = req.body;
 
@@ -744,16 +745,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (isInvoice && iban && bic) {
         try {
           const ibanClean = iban.replace(/\s/g, "");
-          const amountNum = parseFloat(price.replace(/[^\d,]/g, "").replace(",", ".")) || 0;
+          const amountNum = agreedPriceCents ? agreedPriceCents / 100 : (parseFloat(price.replace(/[^\d.,\s]/g, "").replace(/\s/g, "").replace(",", ".")) || 0);
+          // EPC069-12 SEPA QR code — v001, 11 fields
+          // Field [10] = structured RF-reference (empty — Finnish viitenumero is not RF format)
+          // Field [11] = unstructured remittance info (our viitenumero goes here)
           const sepaPayload = [
-            "BCD", "002", "1", "SCT",
-            bic.replace(/\s/g, ""),
-            "Puuhapatet",
-            ibanClean,
-            `EUR${amountNum.toFixed(2)}`,
-            "",
-            viitenumero || "",
-            "",
+            "BCD",            // [1] Service tag
+            "001",            // [2] Version
+            "1",              // [3] Character set: UTF-8
+            "SCT",            // [4] Identification
+            bic.replace(/\s/g, ""),  // [5] BIC
+            "Puuhapatet",    // [6] Beneficiary name
+            ibanClean,        // [7] IBAN
+            `EUR${amountNum.toFixed(2)}`,  // [8] Amount
+            "",               // [9] Purpose code (empty)
+            "",               // [10] Structured creditor reference (empty — not RF format)
+            viitenumero || "", // [11] Unstructured remittance info
           ].join("\n");
           const qrDataUrl = await QRCode.toDataURL(sepaPayload, { width: 160, margin: 2 });
           qrCodeHtml = `
@@ -780,8 +787,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             ${bic ? `<tr><td style="padding:5px 0;color:#78350f">BIC/SWIFT</td><td style="padding:5px 0;text-align:right;font-family:monospace;font-weight:600;color:#1c1917">${bic}</td></tr>` : ""}
             ${viitenumero ? `<tr><td style="padding:5px 0;color:#78350f">${isEn ? "Reference" : "Viitenumero"}</td><td style="padding:5px 0;text-align:right;font-family:monospace;font-weight:600;color:#1c1917">${viitenumero}</td></tr>` : ""}
             ${dueDate ? `<tr><td style="padding:5px 0;color:#78350f">${isEn ? "Due date" : "Eräpäivä"}</td><td style="padding:5px 0;text-align:right;font-weight:700;color:#92400e">${dueDate}</td></tr>` : ""}
+            ${agreedPriceCents && expensesTotalCents ? (() => {
+              const fmtEur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+              const laborCents = agreedPriceCents - expensesTotalCents;
+              return `<tr><td colspan="2" style="padding:8px 0 2px;border-top:1px solid #fde68a"></td></tr>
+              <tr><td style="padding:4px 0;color:#78350f;font-size:12px">${isEn ? "Service (labour)" : "Palvelu (työ)"}</td><td style="padding:4px 0;text-align:right;font-size:12px;color:#1c1917">${fmtEur(laborCents)}</td></tr>
+              <tr><td style="padding:4px 0;color:#78350f;font-size:12px">${isEn ? "Materials" : "Materiaalit"}</td><td style="padding:4px 0;text-align:right;font-size:12px;color:#1c1917">${fmtEur(expensesTotalCents)}</td></tr>`;
+            })() : ""}
             <tr style="border-top:2px solid #f59e0b">
-              <td style="padding:10px 0 0;color:#78350f;font-weight:700;font-size:15px">${isEn ? "Total" : "Summa"}</td>
+              <td style="padding:10px 0 0;color:#78350f;font-weight:700;font-size:15px">${isEn ? "Total" : "Yhteensä"}</td>
               <td style="padding:10px 0 0;text-align:right;font-weight:800;font-size:22px;color:#92400e">${price}</td>
             </tr>
           </table>

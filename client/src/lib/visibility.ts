@@ -42,7 +42,8 @@ export function getMyCustomerIds(
     if (isMyJob(j.assignedTo, userId)) ids.add(j.customerId);
   }
   for (const c of customers) {
-    if (c.ownedBy === userId) ids.add(c.id);
+    // ownedBy can be comma-separated list of user IDs
+    if (c.ownedBy && parseWorkerIds(c.ownedBy).includes(userId)) ids.add(c.id);
   }
   return ids;
 }

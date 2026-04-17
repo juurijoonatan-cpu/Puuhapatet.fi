@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { getAdminProfile, USERS } from "@/lib/admin-profile";
 import { api, StatsResponse, WorkerStatsResponse } from "@/lib/api";
-import { isMyJob } from "@/lib/visibility";
+import { isMyJob, parseWorkerIds } from "@/lib/visibility";
 
 export default function AdminDashboard() {
   const profile = getAdminProfile();
@@ -50,7 +50,10 @@ export default function AdminDashboard() {
           setMyJobUpcoming(mine.filter(r => r.job.status === "scheduled").length);
           const rev = mine
             .filter(r => r.job.status === "done")
-            .reduce((sum, r) => sum + (r.job.agreedPrice ?? 0), 0);
+            .reduce((sum, r) => {
+              const workerCount = Math.max(1, parseWorkerIds(r.job.assignedTo).length);
+              return sum + Math.round((r.job.agreedPrice ?? 0) / workerCount);
+            }, 0);
           setMyRevenue(rev);
         }
       });

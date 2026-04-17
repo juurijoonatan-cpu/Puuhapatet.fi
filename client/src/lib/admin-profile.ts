@@ -47,6 +47,20 @@ export const USERS: AdminProfile[] = [
     isUnder18: false,  // 18v
     startupBonus: 30000, // 300 €
   },
+  {
+    id: "testi1",
+    name: "Testi Ykkönen",
+    role: "STAFF",
+    phone: "+358000000001",
+    isUnder18: false,
+  },
+  {
+    id: "testi2",
+    name: "Testi Kakkonen",
+    role: "STAFF",
+    phone: "+358000000002",
+    isUnder18: true,
+  },
 ];
 
 // ─── localStorage helpers ─────────────────────────────────────────────────────

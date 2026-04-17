@@ -32,50 +32,87 @@ export default function AdminDashboard() {
       if (res.ok && res.data) setStats(res.data);
       setLoading(false);
     });
-    if (isHost) {
-      api.workersStats().then((res) => {
-        if (res.ok && res.data) setWorkerStats(res.data);
-      });
-    }
+    // HOST: team overview. STAFF: own debt/job count.
+    api.workersStats().then((res) => {
+      if (res.ok && res.data) setWorkerStats(res.data);
+    });
   }, []);
 
   const fmt = (cents: number) =>
     (cents / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
 
-  const cards = [
-    {
-      title: "Keikat yhteensä",
-      value: loading ? "…" : String(stats?.totalJobs ?? "-"),
-      icon: Briefcase,
-      description: "Kaikki kirjatut keikat",
-      color: "text-blue-600 dark:text-blue-400",
-      bgColor: "bg-blue-100 dark:bg-blue-900/30",
-    },
-    {
-      title: "Tulevat keikat",
-      value: loading ? "…" : String(stats?.upcoming ?? "-"),
-      icon: Clock,
-      description: "Aikataulutettu",
-      color: "text-orange-600 dark:text-orange-400",
-      bgColor: "bg-orange-100 dark:bg-orange-900/30",
-    },
-    {
-      title: "Nettotulo",
-      value: loading ? "…" : stats ? fmt(stats.netIncome) : "-",
-      icon: TrendingUp,
-      description: "Tulot − kulut − palvelumaksu",
-      color: "text-green-600 dark:text-green-400",
-      bgColor: "bg-green-100 dark:bg-green-900/30",
-    },
-    {
-      title: "Palveluvelka",
-      value: loading ? "…" : stats ? fmt(stats.serviceFeeTotal) : "-",
-      icon: Banknote,
-      description: "10 % maksamatta brändille",
-      color: "text-purple-600 dark:text-purple-400",
-      bgColor: "bg-purple-100 dark:bg-purple-900/30",
-    },
-  ];
+  const myDebt = workerStats && profile ? (workerStats.workerFees[profile.id] ?? 0) : null;
+  const myJobCount = workerStats && profile ? (workerStats.workerJobCount[profile.id] ?? 0) : null;
+
+  const cards = isHost
+    ? [
+        {
+          title: "Keikat yhteensä",
+          value: loading ? "…" : String(stats?.totalJobs ?? "-"),
+          icon: Briefcase,
+          description: "Kaikki kirjatut keikat",
+          color: "text-blue-600 dark:text-blue-400",
+          bgColor: "bg-blue-100 dark:bg-blue-900/30",
+        },
+        {
+          title: "Tulevat keikat",
+          value: loading ? "…" : String(stats?.upcoming ?? "-"),
+          icon: Clock,
+          description: "Aikataulutettu",
+          color: "text-orange-600 dark:text-orange-400",
+          bgColor: "bg-orange-100 dark:bg-orange-900/30",
+        },
+        {
+          title: "Nettotulo",
+          value: loading ? "…" : stats ? fmt(stats.netIncome) : "-",
+          icon: TrendingUp,
+          description: "Tulot − kulut − palvelumaksu",
+          color: "text-green-600 dark:text-green-400",
+          bgColor: "bg-green-100 dark:bg-green-900/30",
+        },
+        {
+          title: "Palveluvelka",
+          value: loading ? "…" : stats ? fmt(stats.serviceFeeTotal) : "-",
+          icon: Banknote,
+          description: "10 % maksamatta brändille",
+          color: "text-purple-600 dark:text-purple-400",
+          bgColor: "bg-purple-100 dark:bg-purple-900/30",
+        },
+      ]
+    : [
+        {
+          title: "Keikat yhteensä",
+          value: loading ? "…" : String(stats?.totalJobs ?? "-"),
+          icon: Briefcase,
+          description: "Kaikki kirjatut keikat",
+          color: "text-blue-600 dark:text-blue-400",
+          bgColor: "bg-blue-100 dark:bg-blue-900/30",
+        },
+        {
+          title: "Tulevat keikat",
+          value: loading ? "…" : String(stats?.upcoming ?? "-"),
+          icon: Clock,
+          description: "Aikataulutettu",
+          color: "text-orange-600 dark:text-orange-400",
+          bgColor: "bg-orange-100 dark:bg-orange-900/30",
+        },
+        {
+          title: "Omat keikat",
+          value: myJobCount === null ? "…" : String(myJobCount),
+          icon: TrendingUp,
+          description: "Valmistuneet omat keikat",
+          color: "text-green-600 dark:text-green-400",
+          bgColor: "bg-green-100 dark:bg-green-900/30",
+        },
+        {
+          title: "Oma palveluvelka",
+          value: myDebt === null ? "…" : fmt(myDebt),
+          icon: Banknote,
+          description: "10 % brändille maksamatta",
+          color: "text-purple-600 dark:text-purple-400",
+          bgColor: "bg-purple-100 dark:bg-purple-900/30",
+        },
+      ];
 
   return (
     <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28">
@@ -105,11 +142,11 @@ export default function AdminDashboard() {
           })}
         </div>
 
-        {/* Revenue breakdown */}
-        {!loading && stats && (
+        {/* Revenue breakdown — HOST: team view, STAFF: personal earnings link */}
+        {!loading && stats && isHost && (
           <Card className="p-4 bg-card border-0 premium-shadow mb-8">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-              Talous — erittely
+              Talous — erittely (tiimi)
             </p>
             <div className="grid grid-cols-3 gap-4">
               <div>
@@ -130,6 +167,24 @@ export default function AdminDashboard() {
               <p className="text-lg font-bold text-green-600 dark:text-green-400">{fmt(stats.netIncome)}</p>
             </div>
           </Card>
+        )}
+        {!isHost && (
+          <Link href="/admin/tax-export">
+            <Card className="p-4 bg-card border-0 premium-shadow mb-8 cursor-pointer hover:opacity-95 transition-opacity">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
+                    Omat tulot
+                  </p>
+                  <p className="text-sm text-foreground font-medium">Katso oma verotuloste</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Omat keikat · palvelumaksu · nettotulo verotusta varten
+                  </p>
+                </div>
+                <ArrowRight className="w-5 h-5 text-muted-foreground shrink-0" />
+              </div>
+            </Card>
+          </Link>
         )}
 
         {/* Worker service fee debts — HOST only */}

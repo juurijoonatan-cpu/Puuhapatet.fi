@@ -114,6 +114,7 @@ export default function AdminJobsPage() {
   const [sendingSummary, setSendingSummary] = useState(false);
   const [summaryTimeline, setSummaryTimeline] = useState<{label: string; date: string}[]>([]);
   const [summaryPhoto, setSummaryPhoto] = useState<string | null>(null);
+  const [summaryHours, setSummaryHours] = useState<string>("");
 
   // "Jatka myöhemmin" pause form
   const [showPauseForm, setShowPauseForm] = useState(false);
@@ -1461,6 +1462,21 @@ export default function AdminJobsPage() {
                   </div>
                 )}
 
+                {/* Estimated hours — shown in invoice as line item */}
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Arvioitu työtuntimäärä (valinnainen)</label>
+                  <Input
+                    type="number"
+                    min="0.5"
+                    max="24"
+                    step="0.5"
+                    value={summaryHours}
+                    onChange={e => setSummaryHours(e.target.value)}
+                    placeholder="esim. 1.5"
+                    className="text-sm h-8 w-28"
+                  />
+                </div>
+
                 {/* Worker message */}
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">Viesti asiakkaalle (valinnainen)</label>
@@ -1502,9 +1518,6 @@ export default function AdminJobsPage() {
                           .filter(Boolean)
                           .map(u => ({ name: u!.name, phone: u!.phone, email: u!.email, yTunnus: u!.yTunnus }));
                         const bccEmails = allWorkersData.map(w => w.email).filter((e): e is string => !!e);
-                        const dueDateFormatted = summaryDueDate
-                          ? new Date(summaryDueDate).toLocaleDateString("fi-FI")
-                          : undefined;
                         // Save payment method to job
                         await api.updateJob((job as any).id, { paymentMethod: summaryPaymentMethod });
                         // Convert ISO dates to fi-FI for display in email
@@ -1526,7 +1539,7 @@ export default function AdminJobsPage() {
                           iban: summaryIban || undefined,
                           bic: summaryBic || undefined,
                           viitenumero: summaryViitenumero || undefined,
-                          dueDate: dueDateFormatted,
+                          dueDate: summaryDueDate || undefined,
                           workerMessage: summaryMessage || undefined,
                           jobNotes: summaryNotes || undefined,
                           allWorkers: allWorkersData.length > 0 ? allWorkersData : undefined,
@@ -1534,6 +1547,7 @@ export default function AdminJobsPage() {
                           senderAddress: senderUser?.address,
                           agreedPriceCents: job.agreedPrice,
                           expensesTotalCents: expensesTotal > 0 ? expensesTotal : undefined,
+                          estimatedHours: summaryHours ? Number(summaryHours) : undefined,
                           lang: summaryLang,
                         });
                         if (res.ok) {

@@ -271,6 +271,7 @@ export const api = {
     senderAddress?: string;
     agreedPriceCents?: number;
     expensesTotalCents?: number;
+    estimatedHours?: number;
     lang?: "fi" | "en";
   }) => request<{ ok: boolean; id?: string }>("POST", "/api/send-job-summary", data),
 

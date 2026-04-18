@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { type Server } from "http";
 import { eq, desc, sql, ne, and } from "drizzle-orm";
 import { Resend } from "resend";
-import QRCode from "qrcode";
+import bwipjs from "bwip-js";
 import { db } from "./db";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 
@@ -18,6 +18,50 @@ function escapeIcs(str: string): string {
 
 function toIcsDate(d: Date): string {
   return d.toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z";
+}
+
+// ─── Finnish payment barcode helpers ─────────────────────────────────────────
+
+function finnishRefWithCheckDigit(numericStr: string): string {
+  const s = numericStr.replace(/\D/g, "") || "0";
+  const weights = [7, 3, 1];
+  let sum = 0;
+  for (let i = 0; i < s.length; i++) sum += parseInt(s[s.length - 1 - i]) * weights[i % 3];
+  return s + ((10 - (sum % 10)) % 10);
+}
+
+function formatFinnishRef(ref: string): string {
+  // Display format: groups of 3 from right, e.g. "424" → "424", "000042" → "42"
+  const digits = ref.replace(/\D/g, "");
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+}
+
+async function generateFinnishBarcodeHtml(params: {
+  iban: string; amountCents: number; viitenumero: string; dueDateISO?: string; isEn: boolean;
+}): Promise<string> {
+  try {
+    const ibanDigits = params.iban.replace(/[\s]/g, "").replace(/^FI/, "").slice(0, 16).padStart(16, "0");
+    const euros = Math.floor(params.amountCents / 100);
+    const cents = params.amountCents % 100;
+    const amountStr = String(euros).padStart(6, "0") + String(cents).padStart(2, "0");
+    const numericBase = params.viitenumero.replace(/\D/g, "") || "1";
+    const refFull = finnishRefWithCheckDigit(numericBase);
+    const refPadded = refFull.padStart(20, "0");
+    let dueDateStr = "000000";
+    if (params.dueDateISO) {
+      const d = new Date(params.dueDateISO + "T12:00:00");
+      dueDateStr = String(d.getFullYear()).slice(-2) + String(d.getMonth() + 1).padStart(2, "0") + String(d.getDate()).padStart(2, "0");
+    }
+    const barcodeData = "4" + ibanDigits + amountStr + "000" + refPadded + dueDateStr;
+    const svg = (bwipjs as any).toSVG({ bcid: "code128", text: barcodeData, scale: 3, height: 12, includetext: false });
+    const b64 = Buffer.from(svg).toString("base64");
+    return `
+      <div style="text-align:center;margin-top:20px;padding-top:16px;border-top:1px dashed #fde68a">
+        <img src="data:image/svg+xml;base64,${b64}" alt="Pankkiviivakoodi" style="max-width:100%;height:56px;display:inline-block" />
+        <p style="margin:6px 0 0;font-size:10px;color:#78350f;font-family:'Courier New',monospace;letter-spacing:0.5px">${barcodeData}</p>
+        <p style="margin:4px 0 0;font-size:11px;color:#92400e">${params.isEn ? "Scan barcode with your banking app to pay" : "Skannaa pankkiviivakoodi pankkisovelluksella"}</p>
+      </div>`;
+  } catch { return ""; }
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
@@ -690,8 +734,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         allWorkers,
         senderName, senderAddress,
         agreedPriceCents, expensesTotalCents,
+        estimatedHours,
         lang,
       } = req.body;
+
+      // dueDate arrives as ISO (YYYY-MM-DD); format for display
+      const dueDateDisplay = dueDate
+        ? new Date(dueDate + "T12:00:00").toLocaleDateString(lang === "en" ? "en-GB" : "fi-FI")
+        : undefined;
 
       if (!to || !customerName || !description || !price || !paymentMethod) {
         return res.status(400).json({ error: "Puuttuvia kenttiä" });
@@ -740,67 +790,123 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           </div>
         </div>`;
 
-      // ── SEPA EPC QR code (tilisiirto) ────────────────────────────────────────
-      let qrCodeHtml = "";
-      if (isInvoice && iban && bic) {
-        try {
-          const ibanClean = iban.replace(/\s/g, "");
-          const amountNum = agreedPriceCents ? agreedPriceCents / 100 : (parseFloat(price.replace(/[^\d.,\s]/g, "").replace(/\s/g, "").replace(",", ".")) || 0);
-          // EPC069-12 SEPA QR code — v001, 11 fields
-          // Field [10] = structured RF-reference (empty — Finnish viitenumero is not RF format)
-          // Field [11] = unstructured remittance info (our viitenumero goes here)
-          const sepaPayload = [
-            "BCD",            // [1] Service tag
-            "001",            // [2] Version
-            "1",              // [3] Character set: UTF-8
-            "SCT",            // [4] Identification
-            bic.replace(/\s/g, ""),  // [5] BIC
-            "Puuhapatet",    // [6] Beneficiary name
-            ibanClean,        // [7] IBAN
-            `EUR${amountNum.toFixed(2)}`,  // [8] Amount
-            "",               // [9] Purpose code (empty)
-            "",               // [10] Structured creditor reference (empty — not RF format)
-            viitenumero || "", // [11] Unstructured remittance info
-          ].join("\n");
-          const qrDataUrl = await QRCode.toDataURL(sepaPayload, { width: 160, margin: 2 });
-          qrCodeHtml = `
-            <div style="text-align:center;margin-top:14px">
-              <img src="${qrDataUrl}" width="120" height="120" alt="Maksu-QR" style="border-radius:8px" />
-              <p style="margin:6px 0 0;color:#78350f;font-size:11px">${isEn ? "Scan with your banking app to pay" : "Skannaa pankkisovelluksella maksaaksesi"}</p>
-            </div>`;
-        } catch {/* skip QR if generation fails */}
+      // ── Helper: format cents to euros ───────────────────────────────────────
+      const fmtC = (c: number) =>
+        (c / 100).toLocaleString(isEn ? "en-GB" : "fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+
+      // ── Finnish payment barcode (tilisiirto) ─────────────────────────────────
+      let fiBarcodeHtml = "";
+      if (isInvoice && iban && agreedPriceCents) {
+        fiBarcodeHtml = await generateFinnishBarcodeHtml({
+          iban, amountCents: agreedPriceCents, viitenumero: viitenumero || "1",
+          dueDateISO: dueDate, isEn,
+        });
       }
 
-      // ── Invoice box ──────────────────────────────────────────────────────────
+      // ── Professional invoice box (tilisiirto) ────────────────────────────────
+      const laborCents = agreedPriceCents && expensesTotalCents
+        ? (agreedPriceCents - expensesTotalCents) : (agreedPriceCents || 0);
+      const hasExpenses = !!(agreedPriceCents && expensesTotalCents && expensesTotalCents > 0);
+      const numericRef = (viitenumero || "").replace(/\D/g, "") || "1";
+      const refDisplay = formatFinnishRef(finnishRefWithCheckDigit(numericRef));
+      const todayDisplay = new Date().toLocaleDateString(isEn ? "en-GB" : "fi-FI");
+
       const invoiceBox = isInvoice ? `
-        <div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:12px;padding:20px;margin-bottom:24px">
-          <p style="margin:0 0 14px;font-weight:800;color:#92400e;font-size:15px;letter-spacing:0.5px">${isEn ? "INVOICE" : "LASKU"}</p>
-          <table style="width:100%;border-collapse:collapse;font-size:13px">
-            ${senderName ? `<tr><td style="padding:5px 0;color:#78350f">${isEn ? "Invoiced by" : "Laskuttaja"}</td><td style="padding:5px 0;text-align:right;font-weight:600;color:#1c1917">${senderName}</td></tr>` : ""}
-            ${senderAddress ? `<tr><td style="padding:5px 0;color:#78350f">${isEn ? "Address" : "Osoite"}</td><td style="padding:5px 0;text-align:right;font-weight:600;color:#1c1917">${senderAddress}</td></tr>` : ""}
-            ${workers[0]?.yTunnus ? `<tr><td style="padding:5px 0;color:#78350f">Y-tunnus</td><td style="padding:5px 0;text-align:right;font-family:monospace;font-weight:600;color:#1c1917">${workers[0].yTunnus}</td></tr>` : ""}
-            <tr><td colspan="2" style="padding:8px 0 2px;border-top:1px solid #fde68a"></td></tr>
-            <tr><td style="padding:5px 0;color:#78350f">${isEn ? "Customer" : "Asiakas"}</td><td style="padding:5px 0;text-align:right;font-weight:600;color:#1c1917">${customerName}</td></tr>
-            ${customerAddress ? `<tr><td style="padding:5px 0;color:#78350f">${isEn ? "Customer address" : "Asiakkaan osoite"}</td><td style="padding:5px 0;text-align:right;font-weight:600;color:#1c1917">${customerAddress}</td></tr>` : ""}
-            <tr><td colspan="2" style="padding:8px 0 2px;border-top:1px solid #fde68a"></td></tr>
-            ${iban ? `<tr><td style="padding:5px 0;color:#78350f">${isEn ? "Account (IBAN)" : "Tilinumero (IBAN)"}</td><td style="padding:5px 0;text-align:right;font-family:monospace;font-weight:600;color:#1c1917">${iban}</td></tr>` : ""}
-            ${bic ? `<tr><td style="padding:5px 0;color:#78350f">BIC/SWIFT</td><td style="padding:5px 0;text-align:right;font-family:monospace;font-weight:600;color:#1c1917">${bic}</td></tr>` : ""}
-            ${viitenumero ? `<tr><td style="padding:5px 0;color:#78350f">${isEn ? "Reference" : "Viitenumero"}</td><td style="padding:5px 0;text-align:right;font-family:monospace;font-weight:600;color:#1c1917">${viitenumero}</td></tr>` : ""}
-            ${dueDate ? `<tr><td style="padding:5px 0;color:#78350f">${isEn ? "Due date" : "Eräpäivä"}</td><td style="padding:5px 0;text-align:right;font-weight:700;color:#92400e">${dueDate}</td></tr>` : ""}
-            ${agreedPriceCents && expensesTotalCents ? (() => {
-              const fmtEur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
-              const laborCents = agreedPriceCents - expensesTotalCents;
-              return `<tr><td colspan="2" style="padding:8px 0 2px;border-top:1px solid #fde68a"></td></tr>
-              <tr><td style="padding:4px 0;color:#78350f;font-size:12px">${isEn ? "Service (labour)" : "Palvelu (työ)"}</td><td style="padding:4px 0;text-align:right;font-size:12px;color:#1c1917">${fmtEur(laborCents)}</td></tr>
-              <tr><td style="padding:4px 0;color:#78350f;font-size:12px">${isEn ? "Materials" : "Materiaalit"}</td><td style="padding:4px 0;text-align:right;font-size:12px;color:#1c1917">${fmtEur(expensesTotalCents)}</td></tr>`;
-            })() : ""}
-            <tr style="border-top:2px solid #f59e0b">
-              <td style="padding:10px 0 0;color:#78350f;font-weight:700;font-size:15px">${isEn ? "Total" : "Yhteensä"}</td>
-              <td style="padding:10px 0 0;text-align:right;font-weight:800;font-size:22px;color:#92400e">${price}</td>
+        <div style="border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;margin-bottom:24px;font-size:13px">
+
+          <!-- Header bar -->
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#1e293b">
+            <tr>
+              <td style="padding:16px 24px;vertical-align:middle">
+                <div style="color:#fff;font-size:20px;font-weight:800;letter-spacing:1px">${isEn ? "INVOICE" : "LASKU"}</div>
+                <div style="color:#94a3b8;font-size:11px;margin-top:2px">#${refDisplay}</div>
+              </td>
+              <td style="padding:16px 24px;text-align:right;vertical-align:middle">
+                <div style="color:#94a3b8;font-size:11px">${isEn ? "Date" : "Päivämäärä"}: ${todayDisplay}</div>
+                ${dueDateDisplay ? `<div style="color:#fbbf24;font-size:12px;font-weight:700;margin-top:4px">${isEn ? "Due" : "Eräpäivä"}: ${dueDateDisplay}</div>` : ""}
+              </td>
             </tr>
           </table>
-          ${dueDate ? `<p style="margin:10px 0 0;color:#78350f;font-size:12px">${isEn ? `Please pay by ${dueDate}.` : `Maksa ${dueDate} mennessä.`}</p>` : ""}
-          ${qrCodeHtml}
+
+          <!-- Parties -->
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-bottom:1px solid #e5e7eb">
+            <tr>
+              <td width="50%" style="padding:16px 24px;vertical-align:top;border-right:1px solid #e5e7eb">
+                <div style="font-size:9px;font-weight:700;color:#9ca3af;letter-spacing:1px;margin-bottom:6px;text-transform:uppercase">${isEn ? "From" : "Laskuttaja"}</div>
+                ${senderName ? `<div style="font-weight:700;color:#111827;font-size:13px">${senderName}</div>` : ""}
+                ${senderAddress ? `<div style="color:#6b7280;font-size:12px;margin-top:2px">${senderAddress}</div>` : ""}
+                ${workers[0]?.yTunnus ? `<div style="color:#6b7280;font-size:12px;margin-top:2px">Y-tunnus: ${workers[0].yTunnus}</div>` : ""}
+              </td>
+              <td width="50%" style="padding:16px 24px;vertical-align:top">
+                <div style="font-size:9px;font-weight:700;color:#9ca3af;letter-spacing:1px;margin-bottom:6px;text-transform:uppercase">${isEn ? "Bill to" : "Laskutetaan"}</div>
+                <div style="font-weight:700;color:#111827;font-size:13px">${customerName}</div>
+                ${customerAddress ? `<div style="color:#6b7280;font-size:12px;margin-top:2px">${customerAddress}</div>` : ""}
+              </td>
+            </tr>
+          </table>
+
+          <!-- Line items -->
+          <table width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr style="background:#f9fafb;border-bottom:1px solid #e5e7eb">
+              <th style="padding:10px 24px;text-align:left;font-size:9px;font-weight:700;color:#6b7280;letter-spacing:0.8px;text-transform:uppercase">${isEn ? "Service" : "Palvelu"}</th>
+              ${estimatedHours ? `<th style="padding:10px 12px;text-align:center;font-size:9px;font-weight:700;color:#6b7280;letter-spacing:0.8px;text-transform:uppercase;white-space:nowrap">${isEn ? "Hours" : "Tunnit"}</th>` : ""}
+              <th style="padding:10px 24px;text-align:right;font-size:9px;font-weight:700;color:#6b7280;letter-spacing:0.8px;text-transform:uppercase">${isEn ? "Amount" : "Hinta"}</th>
+            </tr>
+            <tr style="border-bottom:1px solid #f3f4f6">
+              <td style="padding:14px 24px;vertical-align:top">
+                <div style="font-weight:600;color:#111827">${description}</div>
+                ${estimatedHours ? `<div style="font-size:11px;color:#9ca3af;margin-top:3px">${isEn ? `~${estimatedHours} hours` : `n. ${estimatedHours} tuntia`}</div>` : ""}
+              </td>
+              ${estimatedHours ? `<td style="padding:14px 12px;text-align:center;color:#6b7280;vertical-align:top">~${estimatedHours} h</td>` : ""}
+              <td style="padding:14px 24px;text-align:right;font-weight:600;color:#111827;vertical-align:top">${hasExpenses ? fmtC(laborCents) : price}</td>
+            </tr>
+            ${hasExpenses ? `
+            <tr style="border-bottom:1px solid #f3f4f6">
+              <td style="padding:10px 24px;color:#6b7280">${isEn ? "Materials" : "Materiaalit"}</td>
+              ${estimatedHours ? `<td style="padding:10px 12px"></td>` : ""}
+              <td style="padding:10px 24px;text-align:right;color:#6b7280">${fmtC(expensesTotalCents)}</td>
+            </tr>` : ""}
+            <tr style="background:#f9fafb">
+              <td colspan="${estimatedHours ? "2" : "1"}" style="padding:14px 24px;font-weight:700;color:#111827;font-size:14px">${isEn ? "Total" : "Yhteensä"}</td>
+              <td style="padding:14px 24px;text-align:right;font-size:20px;font-weight:800;color:#111827">${price}</td>
+            </tr>
+          </table>
+
+          ${hasExpenses ? `
+          <div style="padding:8px 24px;background:#f0fdf4;border-top:1px solid #bbf7d0">
+            <span style="font-size:11px;color:#166534">${isEn ? `Tax deduction eligible (labour): ${fmtC(laborCents)}` : `Kotitalousvähennykseen kelpaava työn osuus: ${fmtC(laborCents)}`}</span>
+          </div>` : `
+          <div style="padding:8px 24px;background:#f0fdf4;border-top:1px solid #bbf7d0">
+            <span style="font-size:11px;color:#166534">${isEn ? `Full amount qualifies for household tax deduction` : `Koko summa kotitalousvähennyskelpoinen`}</span>
+          </div>`}
+
+          <!-- Payment details -->
+          <div style="background:#fffbeb;border-top:2px solid #fbbf24;padding:20px 24px">
+            <div style="font-size:9px;font-weight:700;color:#92400e;letter-spacing:1px;text-transform:uppercase;margin-bottom:12px">${isEn ? "Payment details" : "Maksutiedot"}</div>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:12px">
+              ${iban ? `<tr>
+                <td style="padding:4px 0;color:#78350f;width:42%">${isEn ? "Account (IBAN)" : "Tilinumero (IBAN)"}</td>
+                <td style="padding:4px 0;font-family:'Courier New',monospace;font-weight:600;color:#111827" x-apple-data-detectors="false">${iban}</td>
+              </tr>` : ""}
+              ${bic ? `<tr>
+                <td style="padding:4px 0;color:#78350f">BIC/SWIFT</td>
+                <td style="padding:4px 0;font-family:'Courier New',monospace;font-weight:600;color:#111827">${bic}</td>
+              </tr>` : ""}
+              ${viitenumero ? `<tr>
+                <td style="padding:4px 0;color:#78350f">${isEn ? "Reference" : "Viitenumero"}</td>
+                <td style="padding:4px 0;font-family:'Courier New',monospace;font-weight:700;letter-spacing:1px;color:#111827" x-apple-data-detectors="false">${refDisplay}</td>
+              </tr>` : ""}
+              ${dueDateDisplay ? `<tr>
+                <td style="padding:4px 0;color:#78350f">${isEn ? "Due date" : "Eräpäivä"}</td>
+                <td style="padding:4px 0;font-weight:700;color:#92400e">${dueDateDisplay}</td>
+              </tr>` : ""}
+              <tr>
+                <td style="padding:8px 0 0;color:#78350f;font-weight:700;font-size:14px">${isEn ? "Total due" : "Maksettava"}</td>
+                <td style="padding:8px 0 0;font-size:18px;font-weight:800;color:#92400e">${price}</td>
+              </tr>
+            </table>
+            ${fiBarcodeHtml}
+          </div>
         </div>` : "";
 
       // ── Paid confirmation ────────────────────────────────────────────────────
@@ -817,17 +923,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           </div>
         </div>` : "";
 
-      // ── Job summary card ─────────────────────────────────────────────────────
-      const summaryCard = `
+      // ── Job summary card (non-invoice) ───────────────────────────────────────
+      const summaryCard = !isInvoice ? `
         <div style="background:#fafafa;border-radius:12px;padding:20px;margin-bottom:24px">
           <table style="width:100%;border-collapse:collapse;font-size:14px">
             <tr><td style="padding:6px 0;color:#666;width:40%">${isEn ? "Customer" : "Asiakas"}</td><td style="padding:6px 0;font-weight:600;text-align:right">${customerName}</td></tr>
             ${customerAddress ? `<tr><td style="padding:6px 0;color:#666">${isEn ? "Address" : "Osoite"}</td><td style="padding:6px 0;font-weight:600;text-align:right">${customerAddress}</td></tr>` : ""}
             <tr style="border-top:1px solid #e4e4e7"><td style="padding:6px 0;color:#666">${isEn ? "Service" : "Palvelu"}</td><td style="padding:6px 0;font-weight:600;text-align:right">${description}</td></tr>
             <tr><td style="padding:6px 0;color:#666">${isEn ? "Date" : "Päivämäärä"}</td><td style="padding:6px 0;font-weight:600;text-align:right">${completionDate}</td></tr>
-            ${!isInvoice ? `<tr style="border-top:2px solid #18181b"><td style="padding:10px 0;font-weight:700;font-size:15px">${isEn ? "Price" : "Hinta"}</td><td style="padding:10px 0;font-weight:800;font-size:18px;text-align:right;color:#18181b">${price}</td></tr>` : ""}
+            <tr style="border-top:2px solid #18181b"><td style="padding:10px 0;font-weight:700;font-size:15px">${isEn ? "Price" : "Hinta"}</td><td style="padding:10px 0;font-weight:800;font-size:18px;text-align:right;color:#18181b">${price}</td></tr>
           </table>
-        </div>`;
+        </div>` : "";
 
       // ── Job notes ────────────────────────────────────────────────────────────
       const notesBox = jobNotes ? `
@@ -842,8 +948,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           <img src="${photoDataUrl}" alt="${isEn ? "Job photo" : "Kuva keikasta"}" style="width:100%;max-width:100%;border-radius:12px;display:block;object-fit:cover" />
         </div>` : "";
 
-      // ── Kotitalousvähennys ───────────────────────────────────────────────────
-      const taxHint = `
+      // ── Kotitalousvähennys (non-invoice only — invoice already shows this) ───
+      const taxHint = !isInvoice ? `
         <div style="background:#f9fafb;border:1px solid #e4e4e7;border-radius:12px;padding:14px 18px;margin-bottom:24px">
           <p style="margin:0 0 4px;font-weight:600;color:#374151;font-size:12px">${isEn ? "HOUSEHOLD TAX DEDUCTION" : "KOTITALOUSVÄHENNYS"}</p>
           <p style="margin:0;color:#6b7280;font-size:12px;line-height:1.6">
@@ -851,7 +957,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               ? "This document qualifies as proof for the Finnish household tax deduction (~35% of the labour cost, up to €2,250/person/year). No separate receipt needed."
               : "Tämä lasku käy kotitalousvähennyksen dokumenttina (~35 % työn osuudesta, enintään 2 250 € / henkilö / vuosi). Erillistä kuittia ei tarvita."}
           </p>
-        </div>`;
+        </div>` : "";
 
       // ── Google review ────────────────────────────────────────────────────────
       const reviewBlock = `
@@ -909,6 +1015,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light">
+  <meta name="format-detection" content="telephone=no,date=no,address=no,email=no,url=no">
   <style>
     body { margin:0; padding:0; background:#f0f2f0; }
     @media only screen and (max-width:600px) {

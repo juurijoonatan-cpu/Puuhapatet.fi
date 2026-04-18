@@ -12,7 +12,7 @@ const founders = [
     role: "Perustaja",
     photo: "/matias.jpg.jpeg",
     initials: "MP",
-    bio: "Olen 18 ja opiskelen Otaniemen lukiossa toista vuotta. Jalkapallo on vienyt minut pitkälle — olen pelannut kilpatasolla pitkään ja sali kuuluu arkeen. Urheilutausta on opettanut sen, mitä yrittäjyyskin vaatii: sitoutumista, systemaattisuutta ja halua kehittyä. Puuhapatet on ensimmäinen oikea askeleni yrittäjyyteen — ja aion ottaa sen vakavasti.",
+    bio: "Olen 18 vuotias Otaniemen lukion opiskelija. Urheilu on aina ollut lähellä sydäntä. Jalkapalloa olen pelannut kymmenisen vuotta. Nykyään arkeen kuuluu mm. sali ja tennis. Urheilu on opetannut sen, mitä yrittäjyyskin vaatii: sitoutumista, systemaattisuutta ja halua kehittyä. Olen lähtenyt kehittämään tätä ideaa yhdessä Joonatanin kanssa suurella intohimolla ja reippaalla seikkailumielellä. Puuhapatet on ensimmäinen askeleeni yrittäjyyden maailmaan. Luonteeltani olen positiivinen, reipas ja rehellinen työntekijä. Pyrin pitämään työnjälkeni mahdollisimman hyvänä keikalla kuin keikalla. Toivottavasti pääsen palvelemaan juuri teitä!",
     linkedin: "https://linkedin.com/in/matias-pitkanen",
     phone: "+358442350881",
   },

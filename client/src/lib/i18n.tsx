@@ -49,9 +49,9 @@ const translations: Record<Language, Record<string, string>> = {
     "services.promise": "Jokainen työmme tehdään vastuuvakuutuksen alaisena ja lainmukaisesti. Meille tärkeintä on se, että asiakas on oikeasti tyytyväinen — ei se, kuinka nopeasti saamme työn alta pois. Jos homma ottaa kauemmin kuin arvioitu, teemme sen silti kunnolla loppuun. Siitä ei tule lisälaskua. Hinta sovitaan aina etukäteen — ei yllätyksiä.",
 
     "service.gardening.title": "Piha & puutarhapalvelut",
-    "service.gardening.desc": "Nurmikosta puihin — pidetään pihasi kunnossa.",
+    "service.gardening.desc": "Pidetään pihasi kunnossa nurmikoista puihin!",
     "service.gardening.1": "Nurmikon leikkuu",
-    "service.gardening.2": "Pensaiden ja puiden kevyt leikkaus",
+    "service.gardening.2": "Pensaiden ja puiden kevyt siistiminen asiakkaan toiveiden ja ohjeiden mukaisesti",
     "service.gardening.3": "Piha-alueen siistiminen ja haravointi",
     "service.gardening.4": "Kausihuolto sopimuksen mukaan",
 
@@ -233,9 +233,9 @@ const translations: Record<Language, Record<string, string>> = {
     "services.promise": "Every job we do is covered by liability insurance and fully compliant with Finnish law. What matters most to us is that the customer is genuinely happy — not how quickly we can move on. If a job takes longer than expected, we finish it properly regardless. No extra charge. Price is always agreed in advance — no surprises.",
 
     "service.gardening.title": "Yard & Garden Services",
-    "service.gardening.desc": "From lawns to trees — we keep your yard in shape.",
+    "service.gardening.desc": "Keeping your yard in shape — from lawns to trees!",
     "service.gardening.1": "Lawn mowing",
-    "service.gardening.2": "Light trimming of shrubs and trees",
+    "service.gardening.2": "Light tidying of shrubs and trees according to the customer's wishes and instructions",
     "service.gardening.3": "Yard tidying and raking",
     "service.gardening.4": "Seasonal maintenance by agreement",
 

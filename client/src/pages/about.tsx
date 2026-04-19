@@ -131,13 +131,10 @@ export default function AboutPage() {
               <div>
                 <h3 className="font-medium text-foreground mb-1">Toiminta-alue</h3>
                 <p className="text-muted-foreground text-sm">
-                  Espoo: Westend, Haukilahti, Saunalahti, Suvisaaristo
-                </p>
-                <p className="text-muted-foreground text-sm">
-                  Helsinki: Munkkiniemi, Munkkivuori, Lauttasaari, Kuusisaari
+                  Toimimme Espoon ja Helsingin alueella. Ydinaluettamme on Etelä-Espoo: mm. Suvisaaristo, Haukilahti, Nuottaniemi, Tapiola ja Westend.
                 </p>
                 <p className="text-muted-foreground text-sm mt-1 italic">
-                  Muut alueet sopimuksen mukaan — kysy vain.
+                  Muut alueet sopimuksen mukaan, kysy rohkeasti!
                 </p>
               </div>
             </div>

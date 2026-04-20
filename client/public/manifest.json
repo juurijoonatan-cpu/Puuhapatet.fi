@@ -1,11 +1,11 @@
 {
-  "name": "Puuhapatet Laskutus",
+  "name": "Puuhapatet",
   "short_name": "Puuhapatet",
-  "description": "Tilaa piha- ja puutarhapalvelut helposti. Premium-laatu, nopea palvelu.",
+  "description": "Kotitalouspalvelut Espoossa ja Helsingissä — ikkunapesu, nurmikko, pihahoito.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#FAFBFA",
-  "theme_color": "#4A5D4F",
+  "background_color": "#2d5016",
+  "theme_color": "#2d5016",
   "orientation": "portrait-primary",
   "icons": [
     {

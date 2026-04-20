@@ -9,20 +9,18 @@ const founders = [
   {
     name: "Matias Pitkänen",
     age: 18,
-    role: "Perustaja",
+    bioKey: "about.matias.bio" as const,
     photo: "/matias.jpg.jpeg",
     initials: "MP",
-    bio: "Olen 18 vuotias Otaniemen lukion opiskelija. Urheilu on aina ollut lähellä sydäntä. Jalkapalloa olen pelannut kymmenisen vuotta. Nykyään arkeen kuuluu mm. sali ja tennis. Urheilu on opetannut sen, mitä yrittäjyyskin vaatii: sitoutumista, systemaattisuutta ja halua kehittyä. Olen lähtenyt kehittämään tätä ideaa yhdessä Joonatanin kanssa suurella intohimolla ja reippaalla seikkailumielellä. Puuhapatet on ensimmäinen askeleeni yrittäjyyden maailmaan. Luonteeltani olen positiivinen, reipas ja rehellinen työntekijä. Pyrin pitämään työnjälkeni mahdollisimman hyvänä keikalla kuin keikalla. Toivottavasti pääsen palvelemaan juuri teitä!",
     linkedin: "https://linkedin.com/in/matias-pitkanen",
     phone: "+358442350881",
   },
   {
     name: "Joonatan Juuri",
     age: 17,
-    role: "Perustaja",
+    bioKey: "about.joonatan.bio" as const,
     photo: "/joonatan.jpg.jpeg",
     initials: "JJ",
-    bio: "Olen 17-vuotias Otaniemen lukion opiskelija. Urheilu on aina ollut lähellä sydäntä — kilpajuoksu, sali ja tennis kuuluvat arkeen. Urheilutausta on opettanut sen, mitä yrittäjyyskin vaatii: sitoutumista, systemaattisuutta ja halua kehittyä. Olen kasvanut neljässä eri maassa ja matkustellut laajasti ympäri maailmaa — se on opettanut heittäytymään uuteen ja katsomaan asioita tuoreesta kulmasta. Yrittäjyys on ollut mielessä jo pitkään ja kokeiluja on takana useampia. Puuhapatet on se projekti, jossa kaikki palaset loksahtavat kohdalleen. Luonteeltani olen energinen, suora ja kunnianhimoinen tekijä. Pyrin pitämään työnjälkeni mahdollisimman hyvänä keikalla kuin keikalla. Toivottavasti pääsen palvelemaan juuri teitä!",
     linkedin: "https://linkedin.com/in/joonatan-juuri",
     phone: "+358400389999",
   },
@@ -50,14 +48,7 @@ export default function AboutPage() {
           <div className="space-y-4 text-muted-foreground leading-relaxed">
             <p>{t("about.story.1")}</p>
             <p>{t("about.story.2")}</p>
-            <p>
-              Puuhapatet sai alkunsa yksinkertaisesta halusta: tehdä töitä kunnolla ja rakentaa jotain omaa.
-              Meillä molemmilla oli jo pohjaa käytännön töistä, mutta halusimme kanavoida sen johonkin oikeaan —
-              ei pelkästään tienata rahaa kesällä, vaan harjoitella oikeaa yrittämistä ja rakentaa mainetta, joka kestää.
-              Puuhapatet perustettiin vuonna 2026, suunnittelu alkoi jo hyvissä ajoin edellisvuonna.
-              Opiskelemme molemmat täysillä koulun ohella, mutta rehellisesti sanottuna asiakkaiden aito tyytyväisyys
-              ja yhdessä tekeminen on se, mikä parhaiten motivoi. Mikään muu ei vedä vertoja.
-            </p>
+            <p>{t("about.story.origin")}</p>
             <p>{t("about.story.3")}</p>
           </div>
         </Card>
@@ -85,13 +76,13 @@ export default function AboutPage() {
                 </div>
                 <div>
                   <h3 className="text-lg font-semibold text-foreground">{f.name}</h3>
-                  <p className="text-sm text-muted-foreground">{f.role} · {f.age} v · Otaniemen lukio</p>
+                  <p className="text-sm text-muted-foreground">{t("about.founder.role")} · {f.age} {t("about.age.suffix")} · Otaniemen lukio</p>
                 </div>
               </div>
 
               {/* Bio */}
               <p className="text-sm text-muted-foreground leading-relaxed">
-                {f.bio}
+                {t(f.bioKey)}
               </p>
 
               {/* Links */}
@@ -129,13 +120,9 @@ export default function AboutPage() {
                 <MapPin className="w-5 h-5 text-primary" />
               </div>
               <div>
-                <h3 className="font-medium text-foreground mb-1">Toiminta-alue</h3>
-                <p className="text-muted-foreground text-sm">
-                  Toimimme Espoon ja Helsingin alueella. Ydinaluettamme on Etelä-Espoo: mm. Suvisaaristo, Haukilahti, Nuottaniemi, Tapiola ja Westend.
-                </p>
-                <p className="text-muted-foreground text-sm mt-1 italic">
-                  Muut alueet sopimuksen mukaan, kysy rohkeasti!
-                </p>
+                <h3 className="font-medium text-foreground mb-1">{t("about.area.title")}</h3>
+                <p className="text-muted-foreground text-sm">{t("about.area.desc")}</p>
+                <p className="text-muted-foreground text-sm mt-1 italic">{t("about.area.other")}</p>
               </div>
             </div>
 

@@ -30,10 +30,10 @@ const translations: Record<Language, Record<string, string>> = {
     
     "trust.1.title": "Huolellinen ja viimeistelty jälki.",
     "trust.1.desc": "Kunnolliset työvälineet yhdistettynä aitoon panostukseen ja tekijöiden tarkkaan työsilmään jättävät siistin lopputuloksen, niin sisältä kuin ulkoa!",
-    "trust.2.title": "Joustava aikataulu",
-    "trust.2.desc": "Vastaamme saman päivän aikana. Nopein tapa: WhatsApp.",
-    "trust.3.title": "Selkeä hinta",
-    "trust.3.desc": "Hinta sovitaan ennen töitä. Ei yllätys-laskuja, ei epäselvyyksiä.",
+    "trust.2.title": "Joustava aikataulu.",
+    "trust.2.desc": "Sovitaan yhdessä sinulle sopiva aika! Laita ihmeessä viestiä tulemaan, vastaamme saman päivän aikana. Nopein tapa: WhatsApp.",
+    "trust.3.title": "Selkeä hinta.",
+    "trust.3.desc": "Hinta sovitaan ennen työn aloittamista. Ei yllätyslaskuja, ei epäselvyyksiä!",
     
     "talvikiilto.title": "Talvikiilto™",
     "talvikiilto.subtitle": "Talvikauden ikkunahuolto",
@@ -214,10 +214,10 @@ const translations: Record<Language, Record<string, string>> = {
     
     "trust.1.title": "Careful and polished results.",
     "trust.1.desc": "Proper tools combined with genuine effort and a sharp eye for detail leave a clean result — inside and out!",
-    "trust.2.title": "Flexible Scheduling",
-    "trust.2.desc": "We respond the same day. Fastest via WhatsApp.",
-    "trust.3.title": "Clear Pricing",
-    "trust.3.desc": "Price agreed before work starts. No surprise invoices.",
+    "trust.2.title": "Flexible Scheduling.",
+    "trust.2.desc": "We'll find a time that works for you! Drop us a message — we respond the same day. Fastest via WhatsApp.",
+    "trust.3.title": "Clear Pricing.",
+    "trust.3.desc": "Price agreed before work starts. No surprise invoices, no confusion!",
     
     "talvikiilto.title": "Talvikiilto™",
     "talvikiilto.subtitle": "Winter Window Care",

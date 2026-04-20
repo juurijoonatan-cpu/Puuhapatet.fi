@@ -5,7 +5,7 @@
  * Client-side gate only — not a security boundary.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,7 @@ const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD || "admin123";
 const SESSION_KEY = "puuhapatet_admin_session";
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
 const CUSTOM_PASSWORDS_KEY = "puuhapatet_custom_passwords";
+const LAST_USER_KEY = "puuhapatet_last_user";
 
 /** Returns the effective password for a user (custom or default) */
 export function getEffectivePassword(userId: string): string {
@@ -74,6 +75,16 @@ export default function AdminLoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
+  useEffect(() => {
+    try {
+      const lastId = localStorage.getItem(LAST_USER_KEY);
+      if (lastId) {
+        const u = USERS.find((x) => x.id === lastId);
+        if (u) setSelected(u);
+      }
+    } catch {}
+  }, []);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selected) return;
@@ -86,6 +97,7 @@ export default function AdminLoginPage() {
     if (password === effectivePwd) {
       setAdminSession();
       setAdminProfile(selected);
+      try { localStorage.setItem(LAST_USER_KEY, selected.id); } catch {}
       toast({
         title: `Hei, ${selected.name.split(" ")[0]}!`,
         description: "Tervetuloa hallintapaneeliin.",

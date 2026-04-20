@@ -18,7 +18,7 @@ const translations: Record<Language, Record<string, string>> = {
     
     "hero.pill": "Kevät on täällä!",
     "hero.title": "Ammattitaitoista ikkunanpesua",
-    "hero.titleAccent": "sinun tarpeisiisi",
+    "hero.titleAccent": "sinun tarpeisiisi!",
     "hero.subtitle": "Kaksi reipasta nuorta yrittäjää Espoon Otaniemestä — täydellä sydämellä töissä. Ikkunanpesu, pihatyöt ja käytännön kotitalouspalvelut oikeasti hyvin tehtyinä positiivisella ja intohimoisella asenteella! Ole rohkeasti yhteydessä!",
     "hero.cta": "Pyydä yhteydenotto",
     "hero.ctaSecondary": "Palvelut",
@@ -28,8 +28,8 @@ const translations: Record<Language, Record<string, string>> = {
     "typewriter.2": "Sisältä ja ulkoa. Siististi. Ajallaan.",
     "typewriter.3": "Talvellakin: Talvikiilto™.",
     
-    "trust.1.title": "Huolellinen jälki",
-    "trust.1.desc": "Oikeat välineet, aito panostus — sisältä ja ulkoa. Ei raitoja, ei jälkitöitä.",
+    "trust.1.title": "Huolellinen ja viimeistelty jälki.",
+    "trust.1.desc": "Kunnolliset työvälineet yhdistettynä aitoon panostukseen ja tekijöiden tarkkaan työsilmään jättävät siistin lopputuloksen, niin sisältä kuin ulkoa!",
     "trust.2.title": "Joustava aikataulu",
     "trust.2.desc": "Vastaamme saman päivän aikana. Nopein tapa: WhatsApp.",
     "trust.3.title": "Selkeä hinta",
@@ -202,7 +202,7 @@ const translations: Record<Language, Record<string, string>> = {
     
     "hero.pill": "Professional Window Cleaning",
     "hero.title": "Professional window cleaning",
-    "hero.titleAccent": "for your needs",
+    "hero.titleAccent": "for your needs!",
     "hero.subtitle": "Two young entrepreneurs from Otaniemi, Espoo — putting real effort in. Window cleaning, yard work and home services done properly. Streak-free finish, price agreed before we start.",
     "hero.cta": "Request Contact",
     "hero.ctaSecondary": "Services",
@@ -212,8 +212,8 @@ const translations: Record<Language, Record<string, string>> = {
     "typewriter.2": "Inside and out. Clean. On time.",
     "typewriter.3": "Even in winter: Talvikiilto™.",
     
-    "trust.1.title": "Careful Results",
-    "trust.1.desc": "Right tools, real effort — inside and out. No streaks, no touch-ups.",
+    "trust.1.title": "Careful and polished results.",
+    "trust.1.desc": "Proper tools combined with genuine effort and a sharp eye for detail leave a clean result — inside and out!",
     "trust.2.title": "Flexible Scheduling",
     "trust.2.desc": "We respond the same day. Fastest via WhatsApp.",
     "trust.3.title": "Clear Pricing",

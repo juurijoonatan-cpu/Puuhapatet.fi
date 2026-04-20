@@ -121,8 +121,7 @@ export default function AboutPage() {
               </div>
               <div>
                 <h3 className="font-medium text-foreground mb-1">{t("about.area.title")}</h3>
-                <p className="text-muted-foreground text-sm">{t("about.area.espoo")}</p>
-                <p className="text-muted-foreground text-sm">{t("about.area.helsinki")}</p>
+                <p className="text-muted-foreground text-sm">{t("about.area.desc")}</p>
                 <p className="text-muted-foreground text-sm mt-1 italic">{t("about.area.other")}</p>
               </div>
             </div>

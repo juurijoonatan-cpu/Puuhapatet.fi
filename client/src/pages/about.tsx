@@ -21,7 +21,7 @@ const founders = [
     bioKey: "about.joonatan.bio" as const,
     photo: "/joonatan.jpg.jpeg",
     initials: "JJ",
-    linkedin: "https://linkedin.com/in/joonatan-juuri",
+    linkedin: "https://www.linkedin.com/in/joonatan-juuri-575857255",
     phone: "+358400389999",
   },
 ];

@@ -50,6 +50,11 @@ export const jobs = pgTable("jobs", {
   waiveFee:          boolean("waive_fee").default(false).notNull(),
   pendingWorkers:    text("pending_workers"),   // comma-separated invited user IDs not yet confirmed
   paymentMethod:     text("payment_method"),    // "käteinen"|"mobilepay"|"tilisiirto"|"kortti"
+  quoteToken:        text("quote_token"),        // unique token for customer quote portal URL
+  quoteStatus:       text("quote_status"),       // "pending"|"accepted"|"declined"
+  suggestedTimes:    text("suggested_times"),    // JSON: string[] of ISO datetimes from customer
+  customerMessage:   text("customer_message"),   // customer's freeform message from quote portal
+  quoteVideoUrl:     text("quote_video_url"),    // optional YouTube/Vimeo/MP4 URL shown on portal
   createdAt:         timestamp("created_at").defaultNow().notNull(),
   updatedAt:         timestamp("updated_at").defaultNow().notNull(),
 });

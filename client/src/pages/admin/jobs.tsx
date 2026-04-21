@@ -51,6 +51,10 @@ interface JobRow {
     staffSignature: string | null;
     waiveFee: boolean;
     pendingWorkers: string | null;
+    quoteToken: string | null;
+    quoteStatus: string | null;
+    suggestedTimes: string | null;
+    customerMessage: string | null;
   };
   customer: {
     id: number;
@@ -848,6 +852,78 @@ export default function AdminJobsPage() {
               className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </Card>
+
+          {/* Quote response card — shown when a quote token exists */}
+          {job.quoteToken && (
+            <Card className={cn(
+              "p-5 border-0 premium-shadow mb-4",
+              job.quoteStatus === "accepted" ? "bg-green-50 dark:bg-green-900/20" :
+              job.quoteStatus === "declined" ? "bg-red-50 dark:bg-red-900/20" :
+              "bg-card"
+            )}>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                Tarjousvastaus
+              </p>
+
+              <div className="flex items-center gap-2 mb-3">
+                {job.quoteStatus === "accepted" && (
+                  <span className="px-2.5 py-1 rounded-full text-sm font-semibold bg-green-500 text-white">Hyväksytty ✓</span>
+                )}
+                {job.quoteStatus === "declined" && (
+                  <span className="px-2.5 py-1 rounded-full text-sm font-semibold bg-red-500 text-white">Hylätty</span>
+                )}
+                {job.quoteStatus === "pending" && (
+                  <span className="px-2.5 py-1 rounded-full text-sm font-semibold bg-muted text-muted-foreground">Odottaa vastausta</span>
+                )}
+                {!job.quoteStatus && (
+                  <span className="text-sm text-muted-foreground">Ei vastausta vielä</span>
+                )}
+              </div>
+
+              {job.customerMessage && (
+                <div className="mb-3">
+                  <p className="text-xs text-muted-foreground mb-1">Asiakkaan viesti</p>
+                  <p className="text-sm text-foreground bg-background rounded-lg px-3 py-2">{job.customerMessage}</p>
+                </div>
+              )}
+
+              {job.suggestedTimes && (() => {
+                try {
+                  const times: string[] = JSON.parse(job.suggestedTimes);
+                  if (times.length > 0) return (
+                    <div className="mb-3">
+                      <p className="text-xs text-muted-foreground mb-1">Ehdotetut ajankohdat</p>
+                      <div className="space-y-1">
+                        {times.map((t, i) => (
+                          <p key={i} className="text-sm text-foreground bg-background rounded-lg px-3 py-1.5">
+                            {new Date(t).toLocaleString("fi-FI", { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                } catch { return null; }
+              })()}
+
+              <div className="mt-2 pt-2 border-t border-border/50">
+                <p className="text-xs text-muted-foreground mb-1">Tarjouslinkki (asiakkaalle)</p>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-foreground font-mono bg-background rounded px-2 py-1 flex-1 truncate">
+                    puuhapatet.fi/tarjous/{job.quoteToken}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(`https://puuhapatet.fi/tarjous/${job.quoteToken}`);
+                    }}
+                    className="text-xs text-primary hover:underline shrink-0"
+                  >
+                    Kopioi
+                  </button>
+                </div>
+              </div>
+            </Card>
+          )}
 
           {/* Info card */}
           <Card className="p-6 bg-card border-0 premium-shadow mb-4">
@@ -1810,6 +1886,21 @@ export default function AdminJobsPage() {
                         {profile && parsePendingWorkers(row.job.pendingWorkers).includes(profile.id) && (
                           <span className="text-xs px-1.5 py-0.5 rounded-full bg-orange-500 text-white font-semibold shrink-0">
                             Kutsu
+                          </span>
+                        )}
+                        {row.job.quoteStatus === "accepted" && (
+                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-green-500 text-white font-semibold shrink-0">
+                            Hyväksytty ✓
+                          </span>
+                        )}
+                        {row.job.quoteStatus === "declined" && (
+                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-red-500 text-white font-semibold shrink-0">
+                            Hylätty
+                          </span>
+                        )}
+                        {row.job.quoteStatus === "pending" && (
+                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground font-semibold shrink-0">
+                            Tarjous lähetetty
                           </span>
                         )}
                       </div>

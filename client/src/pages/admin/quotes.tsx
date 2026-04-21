@@ -308,7 +308,11 @@ export default function AdminQuotesPage() {
       });
       if (jobRes.ok && jobRes.data) {
         setCreatedJobId((jobRes.data as { id: number }).id);
+      } else {
+        toast({ variant: "destructive", title: "Liidi ei tallentunut", description: jobRes.error ?? "Tuntematon virhe" });
       }
+    } else {
+      toast({ variant: "destructive", title: "Asiakas ei tallentunut", description: "Tarkista asiakastiedot." });
     }
 
     // ── 2. Send email ────────────────────────────────────────────────────────
@@ -357,32 +361,75 @@ export default function AdminQuotesPage() {
 
   if (sent) {
     return (
-      <div className="min-h-screen bg-background pt-20 pb-28 flex items-center justify-center">
-        <div className="text-center max-w-sm px-4">
-          <div className="w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto mb-5">
-            <Check className="w-8 h-8 text-green-600" />
+      <div className="min-h-screen bg-background flex flex-col">
+        {/* Video backdrop */}
+        <div className="relative w-full h-52 sm:h-64 overflow-hidden shrink-0">
+          <video
+            src="/quote-success-bg.mp4"
+            autoPlay
+            muted
+            loop
+            playsInline
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+          <div className="absolute inset-0 bg-black/50" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-white text-center px-4">
+            <div className="w-14 h-14 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center mb-3 ring-2 ring-white/40">
+              <Check className="w-7 h-7 text-white" />
+            </div>
+            <h2 className="text-2xl font-bold tracking-tight">Tarjous lähetetty!</h2>
+            <p className="text-white/80 text-sm mt-1">{customerEmail}</p>
           </div>
-          <h2 className="text-xl font-semibold mb-2">Tarjous lähetetty!</h2>
-          <p className="text-xs font-mono bg-muted px-2 py-1 rounded inline-block mb-2">{quoteId}</p>
-          <p className="text-muted-foreground text-sm mb-1">{customerEmail}</p>
-          {createdJobId && (
-            <p className="text-xs text-emerald-600 dark:text-emerald-400 mb-3">
-              Liidi lisätty keikkalistan — vanhenee {new Date(Date.now() + validDays * 24 * 60 * 60 * 1000).toLocaleDateString("fi-FI")}
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 flex items-start justify-center pt-8 pb-24 px-4">
+          <div className="w-full max-w-sm space-y-4">
+            <p className="text-center text-xs font-mono text-muted-foreground bg-muted px-2 py-1 rounded">
+              {quoteId}
             </p>
-          )}
-          <div className="bg-muted rounded-xl px-4 py-3 mb-4 text-left">
-            <p className="text-xs text-muted-foreground mb-1">Tarjousportaali-linkki (kopioi asiakkaalle)</p>
-            <p className="text-xs font-mono break-all text-foreground">
-              puuhapatet.fi/tarjous/{quoteToken}
-            </p>
-          </div>
-          <div className="flex flex-col gap-2 mt-4">
-            <Button onClick={() => navigate("/admin/jobs")}>
-              Avaa keikkalista
-            </Button>
-            <Button variant="outline" onClick={() => navigate("/admin/customers")}>
-              Takaisin asiakkaisiin
-            </Button>
+
+            {createdJobId ? (
+              <div className="flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl px-3 py-2">
+                <Check className="w-3.5 h-3.5 shrink-0" />
+                Liidi tallennettu keikkalistaan · vanhenee {new Date(Date.now() + validDays * 24 * 60 * 60 * 1000).toLocaleDateString("fi-FI")}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-xs text-destructive bg-red-50 dark:bg-red-900/20 rounded-xl px-3 py-2">
+                Liidi ei tallentunut — lähetys onnistui silti
+              </div>
+            )}
+
+            {/* Portal link */}
+            <div className="bg-card border border-border rounded-2xl overflow-hidden">
+              <div className="bg-muted/60 px-4 py-2.5 border-b border-border">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tarjousportaali-linkki</p>
+              </div>
+              <div className="px-4 py-3">
+                <p className="text-xs font-mono break-all text-foreground mb-2">
+                  puuhapatet.fi/tarjous/{quoteToken}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(`https://puuhapatet.fi/tarjous/${quoteToken}`);
+                    toast({ title: "Linkki kopioitu!" });
+                  }}
+                  className="text-xs font-semibold text-primary hover:underline"
+                >
+                  Kopioi linkki
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 pt-1">
+              <Button className="w-full" onClick={() => navigate("/admin/jobs")}>
+                Avaa keikkalista
+              </Button>
+              <Button variant="outline" className="w-full" onClick={() => navigate("/admin/customers")}>
+                Takaisin asiakkaisiin
+              </Button>
+            </div>
           </div>
         </div>
       </div>

@@ -112,7 +112,7 @@ export default function LandingPage() {
                 <img
                   src="/work-hero.jpg"
                   alt="Ikkunanpesu"
-                  className="w-full h-full object-cover object-center"
+                  className="w-full block"
                 />
               </div>
               {/* Right: all 3 trust cards stacked */}

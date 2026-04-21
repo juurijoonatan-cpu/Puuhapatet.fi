@@ -778,13 +778,6 @@ export default function AdminQuotesPage() {
               rows={3} className="text-sm resize-none" />
           </div>
 
-          <div className="mb-4">
-            <p className="text-xs text-muted-foreground mb-1.5">
-              Video-linkki <span className="font-normal">(valinnainen — YouTube, Vimeo tai MP4)</span>
-            </p>
-            <Input value={quoteVideoUrl} onChange={e => setQuoteVideoUrl(e.target.value)}
-              type="url" placeholder="https://youtube.com/..." className="text-sm" />
-          </div>
 
           {/* BCC to other worker */}
           {otherWorker && (

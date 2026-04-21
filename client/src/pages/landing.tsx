@@ -105,8 +105,8 @@ export default function LandingPage() {
 
       <section className="py-16 md:py-24 bg-muted/30">
         <div className="container mx-auto px-4 md:px-6">
-          <div className="mb-12">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="mb-20">
+            <div className="grid grid-cols-1 md:grid-cols-[5fr_6fr] gap-6">
               {/* Left: image, no crop, rounded corners */}
               <div className="rounded-2xl overflow-hidden premium-shadow">
                 <img

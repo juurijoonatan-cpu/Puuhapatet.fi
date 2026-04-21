@@ -71,10 +71,15 @@ app.use((req, res, next) => {
 (async () => {
   // Auto-migrate: add new columns if they don't exist yet
   for (const stmt of [
-    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS waive_fee       boolean NOT NULL DEFAULT false`,
-    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS pending_workers text`,
-    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS payment_method  text`,
-    sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS owned_by        text`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS waive_fee        boolean NOT NULL DEFAULT false`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS pending_workers  text`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS payment_method   text`,
+    sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS owned_by         text`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS quote_token      text`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS quote_status     text`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS suggested_times  text`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS customer_message text`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS quote_video_url  text`,
   ]) {
     try { await db.execute(stmt); } catch (e: any) { console.warn("Migration warning:", e.message); }
   }

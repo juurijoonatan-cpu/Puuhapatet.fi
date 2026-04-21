@@ -1246,10 +1246,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
     try {
       const {
-        to, bcc, quoteId, customerName, customerAddress,
+        to, bcc, quoteId, quoteToken, customerName, customerAddress,
         items, total, validDays, customMessage,
         workerName, workerPhone, workerEmail, lang,
       } = req.body;
+
+      const bccArr = bcc
+        ? (bcc as string).split(",").map((s: string) => s.trim()).filter(Boolean)
+        : undefined;
 
       if (!to || !customerName || !quoteId || !items?.length) {
         return res.status(400).json({ error: "Puuttuvia kenttiä" });
@@ -1405,7 +1409,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               : ""
             }
             <br>
-            <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;background:#4a5d4f;color:#ffffff;padding:13px 28px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;margin:8px 4px 4px">${isEn ? "Book online →" : "Varaa verkossa →"}</a>
+            <a href="https://puuhapatet.fi/${quoteToken ? `tarjous/${quoteToken}` : "tilaus"}" style="display:inline-block;background:#2d5016;color:#ffffff;padding:13px 28px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;margin:8px 4px 4px">${isEn ? "View & accept quote →" : "Katso ja hyväksy tarjous →"}</a>
           </td>
         </tr>
       </table>
@@ -1445,7 +1449,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const result = await resend.emails.send({
         from: FROM_EMAIL,
         to,
-        ...(bcc ? { bcc } : {}),
+        ...(bccArr?.length ? { bcc: bccArr } : {}),
         subject,
         html,
       });
@@ -1454,6 +1458,91 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (e: any) {
       console.error("Quote email error:", e);
       res.status(500).json({ error: e.message || "Sähköpostin lähetys epäonnistui" });
+    }
+  });
+
+  // ─── Public quote portal endpoints ──────────────────────────────────────────
+
+  const WORKER_NOTIFICATION_EMAILS = ["joonatan@puuhapatet.fi", "matias@puuhapatet.fi"];
+
+  app.get("/api/quote/:token", async (req, res) => {
+    try {
+      const rows = await db
+        .select({
+          id:            jobs.id,
+          description:   jobs.description,
+          agreedPrice:   jobs.agreedPrice,
+          scheduledAt:   jobs.scheduledAt,
+          quoteStatus:   jobs.quoteStatus,
+          quoteVideoUrl: jobs.quoteVideoUrl,
+          notes:         jobs.notes,
+          customerName:  customers.name,
+          customerAddress: customers.address,
+        })
+        .from(jobs)
+        .innerJoin(customers, eq(jobs.customerId, customers.id))
+        .where(eq(jobs.quoteToken, req.params.token));
+      if (!rows.length) return res.status(404).json({ error: "Tarjousta ei löydy" });
+      const row = rows[0];
+      // Derive quoteId from notes field (format: "Tarjous T-PP-xxx ...")
+      const quoteIdMatch = row.notes?.match(/T-PP-[A-Z0-9-]+/);
+      res.json({
+        quoteId:         quoteIdMatch ? quoteIdMatch[0] : req.params.token,
+        customerName:    row.customerName,
+        customerAddress: row.customerAddress,
+        description:     row.description,
+        agreedPriceCents: row.agreedPrice,
+        validUntil:      row.scheduledAt,
+        quoteStatus:     row.quoteStatus || "pending",
+        quoteVideoUrl:   row.quoteVideoUrl,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/quote/:token/respond", async (req, res) => {
+    try {
+      const { status, suggestedTimes, customerMessage } = req.body;
+      if (!status || !["accepted", "declined"].includes(status)) {
+        return res.status(400).json({ error: "Virheellinen status" });
+      }
+      const [updated] = await db
+        .update(jobs)
+        .set({
+          quoteStatus:     status,
+          suggestedTimes:  suggestedTimes?.length ? JSON.stringify(suggestedTimes) : null,
+          customerMessage: customerMessage || null,
+          updatedAt:       new Date(),
+        })
+        .where(eq(jobs.quoteToken, req.params.token))
+        .returning();
+      if (!updated) return res.status(404).json({ error: "Ei löydy" });
+
+      if (resend) {
+        const timesHtml = suggestedTimes?.length
+          ? `<p><strong>Ehdotetut ajat:</strong><br>${(suggestedTimes as string[]).filter(Boolean).map((t: string) => new Date(t).toLocaleString("fi-FI")).join("<br>")}</p>`
+          : "";
+        const msgHtml = customerMessage
+          ? `<p><strong>Viesti:</strong><br>${(customerMessage as string).replace(/\n/g, "<br>")}</p>`
+          : "";
+        await resend.emails.send({
+          from: FROM_EMAIL,
+          to: WORKER_NOTIFICATION_EMAILS,
+          subject: `Tarjous ${status === "accepted" ? "hyväksytty ✓" : "hylätty"} — ${updated.description?.slice(0, 50)}`,
+          html: `<div style="font-family:sans-serif;max-width:500px;margin:auto;padding:24px">
+            <h2 style="color:#2d5016">Tarjous ${status === "accepted" ? "hyväksytty ✓" : "hylätty"}</h2>
+            <p><strong>Palvelu:</strong> ${updated.description}</p>
+            <p><strong>Hinta:</strong> ${((updated.agreedPrice ?? 0) / 100).toFixed(0)} €</p>
+            ${timesHtml}${msgHtml}
+            <hr>
+            <p style="color:#888;font-size:12px">Puuhapatet Admin</p>
+          </div>`,
+        });
+      }
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
   });
 

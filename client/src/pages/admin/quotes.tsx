@@ -121,6 +121,7 @@ export default function AdminQuotesPage() {
   const customerId  = params.get("customerId");
 
   const [quoteId]    = useState<string>(generateQuoteId);
+  const [quoteToken] = useState<string>(() => Math.random().toString(36).slice(2, 12));
   const [lang, setLang] = useState<"fi" | "en">("fi");
 
   // Customer
@@ -133,6 +134,7 @@ export default function AdminQuotesPage() {
   // Quote settings
   const [validDays,     setValidDays]     = useState(14);
   const [customMessage, setCustomMessage] = useState("");
+  const [quoteVideoUrl, setQuoteVideoUrl] = useState("");
 
   // BCC to other worker
   const profile     = getAdminProfile();
@@ -294,13 +296,15 @@ export default function AdminQuotesPage() {
       const description = serviceItems.map(i => i.title).join(" + ");
       const scheduledAt = new Date(Date.now() + validDays * 24 * 60 * 60 * 1000).toISOString();
       const jobRes = await api.createJob({
-        customerId:  custId,
+        customerId:   custId,
         description,
-        agreedPrice: Math.round(total * 100),
-        status:      "lead",
+        agreedPrice:  Math.round(total * 100),
+        status:       "lead",
         scheduledAt,
-        assignedTo:  profile?.id || undefined,
-        notes:       `Tarjous ${quoteId} lähetetty ${new Date().toLocaleDateString("fi-FI")}`,
+        assignedTo:   profile?.id || undefined,
+        notes:        `Tarjous ${quoteId} lähetetty ${new Date().toLocaleDateString("fi-FI")}`,
+        quoteToken,
+        quoteVideoUrl: quoteVideoUrl.trim() || undefined,
       });
       if (jobRes.ok && jobRes.data) {
         setCreatedJobId((jobRes.data as { id: number }).id);
@@ -316,6 +320,8 @@ export default function AdminQuotesPage() {
       to:              customerEmail.trim(),
       bcc:             bccAddresses.length ? bccAddresses.join(",") : undefined,
       quoteId,
+      quoteToken,
+      quoteVideoUrl:   quoteVideoUrl.trim() || undefined,
       customerName:    customerName.trim() || "Asiakas",
       customerAddress: customerAddress.trim() || undefined,
       items:           serviceItems.map(i => ({
@@ -360,10 +366,16 @@ export default function AdminQuotesPage() {
           <p className="text-xs font-mono bg-muted px-2 py-1 rounded inline-block mb-2">{quoteId}</p>
           <p className="text-muted-foreground text-sm mb-1">{customerEmail}</p>
           {createdJobId && (
-            <p className="text-xs text-emerald-600 dark:text-emerald-400 mb-6">
+            <p className="text-xs text-emerald-600 dark:text-emerald-400 mb-3">
               Liidi lisätty keikkalistan — vanhenee {new Date(Date.now() + validDays * 24 * 60 * 60 * 1000).toLocaleDateString("fi-FI")}
             </p>
           )}
+          <div className="bg-muted rounded-xl px-4 py-3 mb-4 text-left">
+            <p className="text-xs text-muted-foreground mb-1">Tarjousportaali-linkki (kopioi asiakkaalle)</p>
+            <p className="text-xs font-mono break-all text-foreground">
+              puuhapatet.fi/tarjous/{quoteToken}
+            </p>
+          </div>
           <div className="flex flex-col gap-2 mt-4">
             <Button onClick={() => navigate("/admin/jobs")}>
               Avaa keikkalista
@@ -717,6 +729,14 @@ export default function AdminQuotesPage() {
                 ? "Hei! Kartoituksen perusteella tässä ehdotuksemme…"
                 : "Hi! Based on our assessment, here's our proposal…"}
               rows={3} className="text-sm resize-none" />
+          </div>
+
+          <div className="mb-4">
+            <p className="text-xs text-muted-foreground mb-1.5">
+              Video-linkki <span className="font-normal">(valinnainen — YouTube, Vimeo tai MP4)</span>
+            </p>
+            <Input value={quoteVideoUrl} onChange={e => setQuoteVideoUrl(e.target.value)}
+              type="url" placeholder="https://youtube.com/..." className="text-sm" />
           </div>
 
           {/* BCC to other worker */}

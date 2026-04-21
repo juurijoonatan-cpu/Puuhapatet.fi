@@ -100,6 +100,8 @@ export interface NewJob {
   waiveFee?: boolean;
   pendingWorkers?: string | null;
   paymentMethod?: string | null;
+  quoteToken?: string;
+  quoteVideoUrl?: string;
 }
 
 export interface StatsResponse {
@@ -279,6 +281,8 @@ export const api = {
     to: string;
     bcc?: string;
     quoteId: string;
+    quoteToken?: string;
+    quoteVideoUrl?: string;
     customerName: string;
     customerAddress?: string;
     items: Array<{ title: string; detail: string; price: number }>;
@@ -290,6 +294,24 @@ export const api = {
     workerEmail?: string;
     lang?: "fi" | "en";
   }) => request<{ ok: boolean; id?: string }>("POST", "/api/send-quote", data),
+
+  getQuote: (token: string) =>
+    request<{
+      quoteId: string;
+      customerName: string;
+      customerAddress: string;
+      description: string;
+      agreedPriceCents: number;
+      validUntil: string | null;
+      quoteStatus: string;
+      quoteVideoUrl: string | null;
+    }>("GET", `/api/quote/${token}`),
+
+  respondToQuote: (token: string, data: {
+    status: "accepted" | "declined";
+    suggestedTimes?: string[];
+    customerMessage?: string;
+  }) => request<{ ok: boolean }>("POST", `/api/quote/${token}/respond`, data),
 
   getCustomerJobCount: (customerId: number) =>
     request<{ count: number }>("GET", `/api/customers/${customerId}/job-count`),

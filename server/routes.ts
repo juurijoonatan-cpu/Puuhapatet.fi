@@ -211,7 +211,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.post("/api/jobs", async (req, res) => {
     try {
-      const data = insertJobSchema.parse(req.body);
+      const body = { ...req.body };
+      if (typeof body.scheduledAt === "string") body.scheduledAt = new Date(body.scheduledAt);
+      const data = insertJobSchema.parse(body);
       const [row] = await db.insert(jobs).values(data).returning();
       res.status(201).json(row);
     } catch (e: any) {

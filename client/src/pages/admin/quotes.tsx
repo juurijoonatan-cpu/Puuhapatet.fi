@@ -276,6 +276,38 @@ export default function AdminQuotesPage() {
     }
     setSending(true);
 
+    // ── 1. Save lead job first (independent of email) ──────────────────────
+    let custId = customerId ? Number(customerId) : null;
+    if (!custId) {
+      const custRes = await api.createCustomer({
+        name:    customerName.trim() || "Asiakas",
+        phone:   customerPhone.trim() || "—",
+        email:   customerEmail.trim() || undefined,
+        address: customerAddress.trim() || "—",
+      });
+      if (custRes.ok && custRes.data) {
+        custId = (custRes.data as { id: number }).id;
+      }
+    }
+
+    if (custId) {
+      const description = serviceItems.map(i => i.title).join(" + ");
+      const scheduledAt = new Date(Date.now() + validDays * 24 * 60 * 60 * 1000).toISOString();
+      const jobRes = await api.createJob({
+        customerId:  custId,
+        description,
+        agreedPrice: Math.round(total * 100),
+        status:      "lead",
+        scheduledAt,
+        assignedTo:  profile?.id || undefined,
+        notes:       `Tarjous ${quoteId} lähetetty ${new Date().toLocaleDateString("fi-FI")}`,
+      });
+      if (jobRes.ok && jobRes.data) {
+        setCreatedJobId((jobRes.data as { id: number }).id);
+      }
+    }
+
+    // ── 2. Send email ────────────────────────────────────────────────────────
     const bccAddresses: string[] = [];
     if (profile?.email) bccAddresses.push(profile.email);
     if (bccOther && otherWorker?.email) bccAddresses.push(otherWorker.email);
@@ -301,46 +333,18 @@ export default function AdminQuotesPage() {
     });
 
     setSending(false);
+
     if (!res.ok) {
-      toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error });
-      return;
-    }
-
-    // ── Auto-create lead job ─────────────────────────────────────────────────
-    // Get or create the customer in DB
-    let custId = customerId ? Number(customerId) : null;
-    if (!custId) {
-      const custRes = await api.createCustomer({
-        name:    customerName.trim() || "Asiakas",
-        phone:   customerPhone.trim() || "—",
-        email:   customerEmail.trim() || undefined,
-        address: customerAddress.trim() || "—",
+      toast({
+        variant: "destructive",
+        title: "Sähköposti epäonnistui",
+        description: `Liidi tallennettu, mutta sähköpostin lähetys epäonnistui: ${res.error}`,
       });
-      if (custRes.ok && custRes.data) {
-        custId = (custRes.data as { id: number }).id;
-      }
-    }
-
-    if (custId) {
-      const descParts = serviceItems.map(i => i.title);
-      const description = descParts.join(" + ");
-      const scheduledAt = new Date(Date.now() + validDays * 24 * 60 * 60 * 1000).toISOString();
-      const jobRes = await api.createJob({
-        customerId:  custId,
-        description,
-        agreedPrice: Math.round(total * 100),
-        status:      "lead",
-        scheduledAt,
-        assignedTo:  profile?.id || undefined,
-        notes:       `Tarjous ${quoteId} lähetetty ${new Date().toLocaleDateString("fi-FI")}`,
-      });
-      if (jobRes.ok && jobRes.data) {
-        setCreatedJobId((jobRes.data as { id: number }).id);
-      }
+    } else {
+      toast({ title: "Tarjous lähetetty!", description: `${customerEmail.trim()}` });
     }
 
     setSent(true);
-    toast({ title: "Tarjous lähetetty!", description: `${customerEmail.trim()}` });
   };
 
   // ── Success ───────────────────────────────────────────────────────────────

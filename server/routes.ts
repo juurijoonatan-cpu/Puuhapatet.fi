@@ -629,8 +629,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         <p style="margin:0 0 6px;font-weight:700;color:#065f46;font-size:13px">${isEn ? "HOUSEHOLD TAX DEDUCTION (KOTITALOUSVÄHENNYS)" : "MUISTA KOTITALOUSVÄHENNYS"}</p>
         <p style="margin:0;color:#047857;font-size:13px;line-height:1.6">
           ${isEn
-            ? `This service qualifies for the Finnish <strong>household tax deduction</strong>. You can reclaim 40% of the labour cost in your taxes — up to €2,250 per person per year. This invoice serves as documentation, no separate receipt needed.<br><br>More info: <a href="https://vero.fi/en/individuals/tax-cards-and-tax-returns/deductions/household-deduction/" style="color:#047857;font-weight:600">vero.fi (household deduction)</a>`
-            : `Tämä palvelu on <strong>kotitalousvähennyskelpoinen</strong>. Voit hakea verotuksessa 40 % työn osuudesta takaisin — enintään 2 250 € / henkilö / vuosi. Lasku toimii dokumenttina, ei erillistä kuittia tarvita.<br><br>Lisätietoa: <a href="https://vero.fi/kotitalousvahennys" style="color:#047857;font-weight:600">vero.fi/kotitalousvähennys</a>`
+            ? `This service qualifies for the Finnish <strong>household tax deduction</strong>. You can reclaim 35% of the labour cost in your taxes — up to €2,250 per person per year. This invoice serves as documentation, no separate receipt needed.<br><br>More info: <a href="https://vero.fi/en/individuals/tax-cards-and-tax-returns/deductions/household-deduction/" style="color:#047857;font-weight:600">vero.fi (household deduction)</a>`
+            : `Tämä palvelu on <strong>kotitalousvähennyskelpoinen</strong>. Voit hakea verotuksessa 35 % työn osuudesta takaisin — enintään 2 250 € / henkilö / vuosi. Lasku toimii dokumenttina, ei erillistä kuittia tarvita.<br><br>Lisätietoa: <a href="https://vero.fi/kotitalousvahennys" style="color:#047857;font-weight:600">vero.fi/kotitalousvähennys</a>`
           }
         </p>
       </div>
@@ -1370,8 +1370,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             <p style="margin:0 0 6px;font-weight:700;color:#166534;font-size:10px;letter-spacing:1px;text-transform:uppercase">${isEn ? "HOUSEHOLD TAX DEDUCTION — YOUR ACTUAL COST" : "KOTITALOUSVÄHENNYS — TOSIASIALLINEN HINTASI"}</p>
             <p style="margin:0 0 8px;color:#15803d;font-size:14px;line-height:1.65">
               ${isEn
-                ? `This service qualifies for the <strong>Finnish household tax deduction</strong>. You can reclaim 40% of the labour portion from your taxes — your real out-of-pocket cost is approx. <strong style="font-size:16px">${kotitalous} €</strong>.`
-                : `Tämä palvelu on <strong>kotitalousvähennyskelpoinen</strong>. Työn osuudesta saat 40 % takaisin verotuksessa — tosiasiallinen kustannuksesi on vain noin <strong style="font-size:16px">${kotitalous} €</strong>.`
+                ? `This service qualifies for the <strong>Finnish household tax deduction</strong>. You may reclaim approx. 35% of the labour portion from your taxes.`
+                : `Tämä palvelu on <strong>kotitalousvähennyskelpoinen</strong>. Työn osuudesta voit saada noin 35 % takaisin verotuksessa.`
               }
             </p>
             <p style="margin:0;color:#16a34a;font-size:12px">

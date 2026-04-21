@@ -155,28 +155,41 @@ export default function QuotePage() {
   return (
     <div className="min-h-screen bg-[#f1f5f9]" style={{ fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif" }}>
 
-      {/* Header */}
-      <div style={{ background: "#18181b" }} className="px-6 py-7">
-        <div className="max-w-lg mx-auto flex items-center justify-between">
-          <div>
-            <p className="text-white text-xl font-black tracking-tight">Puuhapatet.</p>
-            <p className="text-zinc-500 text-xs mt-0.5">Ikkunapesu · Pihapalvelut · Nurmikko</p>
+      {/* Video header */}
+      <div className="relative w-full overflow-hidden" style={{ height: "52vw", minHeight: 200, maxHeight: 340 }}>
+        <video
+          src="/tarjous-intro.mp4"
+          autoPlay
+          muted
+          loop
+          playsInline
+          className="absolute inset-0 w-full h-full object-cover"
+        />
+        {/* Dark gradient overlay */}
+        <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0.70) 100%)" }} />
+        {/* Brand + badge */}
+        <div className="absolute inset-0 flex flex-col justify-between px-5 py-5 max-w-lg mx-auto" style={{ left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 512 }}>
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-white text-xl font-black tracking-tight" style={{ textShadow: "0 1px 6px rgba(0,0,0,0.5)" }}>Puuhapatet.</p>
+              <p className="text-white/60 text-xs mt-0.5">Ikkunapesu · Pihapalvelut · Nurmikko</p>
+            </div>
+            <span className="text-xs font-bold tracking-widest uppercase px-3 py-1.5 rounded-full" style={{ background: "#2d5016", color: "#b8e07a" }}>
+              TARJOUS
+            </span>
           </div>
-          <span className="text-xs font-bold tracking-widest uppercase px-3 py-1.5 rounded-full" style={{ background: "#2d5016", color: "#b8e07a" }}>
-            TARJOUS
-          </span>
-        </div>
-        <div className="max-w-lg mx-auto mt-5 pt-4 border-t border-zinc-800">
-          <p className="font-mono text-zinc-400 text-sm font-bold tracking-widest">{quote.quoteId}</p>
-          <p className="text-zinc-500 text-xs mt-0.5">
-            {validDate ? `Voimassa ${validDate} asti` : "Tarjous"}
-          </p>
+          <div>
+            <p className="font-mono text-white/50 text-xs font-bold tracking-widest">{quote.quoteId}</p>
+            <p className="text-white/70 text-sm font-medium mt-0.5">
+              {validDate ? `Voimassa ${validDate} asti` : "Tarjous"}
+            </p>
+          </div>
         </div>
       </div>
 
       <div className="max-w-lg mx-auto px-4 py-6 space-y-4">
 
-        {/* Video */}
+        {/* Optional job-specific video from admin */}
         {quote.quoteVideoUrl && (() => {
           const vUrl = quote.quoteVideoUrl!;
           if (isYouTube(vUrl)) {
@@ -242,7 +255,8 @@ export default function QuotePage() {
             <p className="text-xs font-bold text-green-800 uppercase tracking-wide mb-1">Kotitalousvähennys</p>
             <p className="text-green-700 text-xs leading-relaxed">
               Tämä palvelu on kotitalousvähennyskelpoinen. Tosiasiallinen hintasi on vain noin{" "}
-              <strong className="text-base">{fmt(kotitalous)}</strong> — 35 % palautuu veroissa.
+              <strong className="text-base">{fmt(kotitalous)}</strong> — 35 % työn osuudesta palautuu veroissa.
+              Tilauksen vahvistuksen jälkeen saat laskun, joka käy dokumenttina verotukseen.
             </p>
           </div>
         </div>

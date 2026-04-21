@@ -106,23 +106,23 @@ export default function LandingPage() {
       <section className="py-16 md:py-24 bg-muted/30">
         <div className="container mx-auto px-4 md:px-6">
           <div className="mb-12">
-            {/* Top row: image left, trust.1 + trust.2 right */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-              <div className="rounded-2xl overflow-hidden premium-shadow h-full min-h-[260px] md:min-h-0">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Left: image, no crop, rounded corners */}
+              <div className="rounded-2xl overflow-hidden premium-shadow">
                 <img
                   src="/work-hero.jpg"
                   alt="Ikkunanpesu"
                   className="w-full h-full object-cover object-center"
-                  style={{ maxHeight: "420px" }}
                 />
               </div>
+              {/* Right: all 3 trust cards stacked */}
               <div className="flex flex-col gap-6">
-                {trustCards.slice(0, 2).map((card, index) => {
+                {trustCards.map((card, index) => {
                   const Icon = card.icon;
                   return (
                     <Card
                       key={index}
-                      className="p-6 bg-card border-0 premium-shadow hover:premium-shadow-hover hover:-translate-y-0.5 transition-all duration-200 flex-1"
+                      className="p-6 bg-card border-0 premium-shadow hover:premium-shadow-hover hover:-translate-y-0.5 transition-all duration-200"
                       data-testid={`trust-card-${index}`}
                     >
                       <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
@@ -139,27 +139,6 @@ export default function LandingPage() {
                 })}
               </div>
             </div>
-            {/* Bottom row: trust.3 full width */}
-            {(() => {
-              const card = trustCards[2];
-              const Icon = card.icon;
-              return (
-                <Card
-                  className="p-6 bg-card border-0 premium-shadow hover:premium-shadow-hover hover:-translate-y-0.5 transition-all duration-200"
-                  data-testid="trust-card-2"
-                >
-                  <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
-                    <Icon className="w-6 h-6 text-primary" />
-                  </div>
-                  <h3 className="text-lg font-semibold text-foreground mb-2">
-                    {t(card.titleKey)}
-                  </h3>
-                  <p className="text-muted-foreground text-sm leading-relaxed">
-                    {t(card.descKey)}
-                  </p>
-                </Card>
-              );
-            })()}
           </div>
           
           <div>

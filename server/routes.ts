@@ -1376,8 +1376,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             </p>
             <p style="margin:0;color:#16a34a;font-size:12px">
               ${isEn
-                ? "This quote works as documentation — no separate receipt needed."
-                : "Tämä tarjous käy dokumenttina veroilmoitukseen, erillistä kuittia ei tarvita."}
+                ? "After confirmation you will receive an invoice that serves as documentation for your tax return."
+                : "Tilauksen vahvistuksen jälkeen saat laskun, joka käy kotitalousvähennyksen dokumenttina verotukseen."}
             </p>
           </td>
         </tr>

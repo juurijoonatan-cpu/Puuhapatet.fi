@@ -45,7 +45,7 @@ const translations: Record<Language, Record<string, string>> = {
     "contact.email": "Sähköposti",
     
     "services.title": "Palvelut",
-    "services.subtitle": "Mitä tarjoamme",
+    "services.subtitle": "Mitä tarjoamme?",
     "services.promise": "Jokainen työmme tehdään vastuuvakuutuksen alaisena ja lainmukaisesti. Meille tärkeintä on se, että asiakas on oikeasti tyytyväinen — ei se, kuinka nopeasti saamme työn alta pois. Jos homma ottaa kauemmin kuin arvioitu, teemme sen silti kunnolla loppuun. Siitä ei tule lisälaskua. Hinta sovitaan aina etukäteen — ei yllätyksiä.",
 
     "service.gardening.title": "Piha & puutarhapalvelut",
@@ -79,8 +79,8 @@ const translations: Record<Language, Record<string, string>> = {
     "service.basic.3": "Puitteet ja karmit kevyt pyyhintä",
     
     "service.talvikiilto.title": "Talvikiilto™",
-    "service.talvikiilto.desc": "Sisäpuolen täyspesu sekä ulkopintojen kuivapuhdistus ilman jäätymisriskiä. Näkymä kirkastuu vaikka pakkasta olisi.",
-    "service.talvikiilto.why": "Puhtaat näkymät myös pakkaskaudella",
+    "service.talvikiilto.desc": "Sisäpuolen täyspesu sekä ulkopintojen kuivapuhdistus ilman jäätymisriskiä. Maisema kirkastuu vaikka pakkasta olisi.",
+    "service.talvikiilto.why": "Puhtaat ikkunat ja kirkkaat maisemat myös talvisin!",
     "service.talvikiilto.1": "Sisäpuoli: lämminvesipesu, lasta ja mikrokuitu",
     "service.talvikiilto.2": "Ulkopuoli: kuivalla tai kevyesti kostutetulla mikrokuidulla, pöly ja sään jäljet lähtevät",
     "service.talvikiilto.3": "Lisä: parvekelasit sisäpinnat ja lasiterassit",
@@ -326,7 +326,7 @@ const translations: Record<Language, Record<string, string>> = {
     "faq.q10": "Is your service eligible for the Finnish household tax deduction?",
     "faq.a10": "Yes. Services like window cleaning qualify for the kotitalousvähennys household deduction. You always receive an invoice from us, which makes claiming the deduction straightforward.",
     
-    "about.title": "Who We Are",
+    "about.title": "Who We Are?",
     "about.desc": "Two students from Otaniemi who take their work seriously.",
     "about.story.1": "Puuhapatet is an Espoo-based service company run by two secondary school students — Joonatan and Matias. We do window cleaning, yard work and other practical household services.",
     "about.story.2": "For us, entrepreneurship isn't a side project or a summer job. We want to build something real — and that shows in how we work. Everything gets done properly, on time and cleanly. No surprise invoices.",

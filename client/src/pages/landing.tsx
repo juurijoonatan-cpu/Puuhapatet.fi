@@ -106,23 +106,23 @@ export default function LandingPage() {
       <section className="py-16 md:py-24 bg-muted/30">
         <div className="container mx-auto px-4 md:px-6">
           <div className="mb-20">
-            <div className="grid grid-cols-1 md:grid-cols-[5fr_6fr] gap-6">
-              {/* Left: image, no crop, rounded corners */}
+            <div className="grid grid-cols-1 md:grid-cols-[5fr_6fr] gap-6 md:items-stretch">
+              {/* Left: image, rounded all corners */}
               <div className="rounded-2xl overflow-hidden premium-shadow">
                 <img
                   src="/work-hero.jpg"
                   alt="Ikkunanpesu"
-                  className="w-full block"
+                  className="w-full block rounded-2xl"
                 />
               </div>
-              {/* Right: all 3 trust cards stacked */}
-              <div className="flex flex-col gap-6">
+              {/* Right: all 3 trust cards stacked, same height as image */}
+              <div className="flex flex-col gap-3 h-full">
                 {trustCards.map((card, index) => {
                   const Icon = card.icon;
                   return (
                     <Card
                       key={index}
-                      className="p-6 bg-card border-0 premium-shadow hover:premium-shadow-hover hover:-translate-y-0.5 transition-all duration-200"
+                      className="p-6 bg-card border-0 premium-shadow hover:premium-shadow-hover hover:-translate-y-0.5 transition-all duration-200 flex-1 flex flex-col justify-center"
                       data-testid={`trust-card-${index}`}
                     >
                       <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4">

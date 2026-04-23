@@ -71,7 +71,7 @@ export default function AdminSettingsPage() {
   useEffect(() => { loadStats(); loadBonusUsages(); }, []);
 
   const fmt = (cents: number) =>
-    (cents / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
+    Math.round(cents / 100).toLocaleString("fi-FI") + " €";
 
   const handleMarkPaid = async (workerId: string) => {
     const owed = workerStats?.workerFees[workerId] ?? 0;

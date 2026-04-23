@@ -212,9 +212,7 @@ export default function CalendarPage() {
           </div>
           <div className="text-right shrink-0">
             <p className="text-sm font-bold text-foreground">
-              {(row.job.agreedPrice / 100).toLocaleString("fi-FI", {
-                style: "currency", currency: "EUR", maximumFractionDigits: 0,
-              })}
+              {Math.round(row.job.agreedPrice / 100).toLocaleString("fi-FI") + " €"}
             </p>
           </div>
         </div>

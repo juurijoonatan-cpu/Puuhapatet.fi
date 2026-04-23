@@ -215,11 +215,17 @@ export default function QuotePage() {
             <p className="text-sm font-semibold text-zinc-800">Yhteensä</p>
             <p className="text-2xl font-black text-zinc-900">{fmt(quote.agreedPriceCents)}</p>
           </div>
-          {/* Subtle kotitalousvähennys tip */}
-          <div className="mx-5 mb-4">
-            <p className="text-[11px] text-zinc-400 leading-relaxed">
-              💡 Vinkki: tämä palvelu on kotitalousvähennyskelpoinen — noin 35 % työn osuudesta voi hakea takaisin verotuksessa.
-            </p>
+          {/* Trust badges */}
+          <div className="mx-5 mb-4 flex flex-wrap gap-2">
+            {[
+              { emoji: "✅", label: "Kotitalousvähennys" },
+              { emoji: "⭐", label: "Tyytyväisyystakuu" },
+              { emoji: "🔒", label: "Vakuutettu työ" },
+            ].map(b => (
+              <span key={b.label} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium bg-zinc-100 text-zinc-500">
+                {b.emoji} {b.label}
+              </span>
+            ))}
           </div>
         </div>
 

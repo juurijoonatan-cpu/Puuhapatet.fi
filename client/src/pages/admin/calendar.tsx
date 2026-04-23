@@ -35,6 +35,7 @@ interface JobRow {
     assignedTo: string | null;
     scheduledAt: string | null;
     createdAt: string;
+    quoteToken: string | null;
   };
   customer: { name: string; address: string; phone?: string } | null;
 }
@@ -79,7 +80,8 @@ export default function CalendarPage() {
     api.getJobs().then((res) => {
       if (res.ok && res.data) {
         const rows = res.data as JobRow[];
-        const active = rows.filter(r => r.job.scheduledAt && r.job.status !== "cancelled" && r.job.status !== "done");
+        // Exclude quote jobs — their scheduledAt is the "valid until" date, not a real scheduled time
+        const active = rows.filter(r => r.job.scheduledAt && r.job.status !== "cancelled" && r.job.status !== "done" && !r.job.quoteToken);
         // STAFF sees only their own scheduled jobs
         setJobs(isHost || !profile ? active : active.filter(r => isMyJob(r.job.assignedTo, profile.id)));
       }

@@ -7,7 +7,38 @@ import { ThemeProvider } from "@/lib/theme";
 import { I18nProvider } from "@/lib/i18n";
 import { LiquidGlassNav } from "@/components/liquid-glass-nav";
 import { ProtectedRoute } from "@/components/protected-route";
-import { useEffect } from "react";
+import { useEffect, Component } from "react";
+import type { ReactNode, ErrorInfo } from "react";
+
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(_err: Error, _info: ErrorInfo) {}
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: 32, fontFamily: "sans-serif", textAlign: "center" }}>
+          <p style={{ marginBottom: 16, color: "#888" }}>Jotain meni pieleen.</p>
+          <p style={{ fontSize: 12, color: "#aaa", marginBottom: 24, wordBreak: "break-all" }}>
+            {this.state.error.message}
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            style={{ padding: "10px 24px", background: "#2d5016", color: "#fff", border: "none", borderRadius: 8, fontSize: 16 }}
+          >
+            Lataa uudelleen
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 import LandingPage from "@/pages/landing";
 import ServicesPage from "@/pages/services";
@@ -172,17 +203,21 @@ function Router() {
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider>
-        <I18nProvider>
-          <TooltipProvider>
-            <Toaster />
-            <ScrollToTop />
-            <Router />
-          </TooltipProvider>
-        </I18nProvider>
-      </ThemeProvider>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider>
+          <I18nProvider>
+            <TooltipProvider>
+              <ErrorBoundary>
+                <Toaster />
+                <ScrollToTop />
+                <Router />
+              </ErrorBoundary>
+            </TooltipProvider>
+          </I18nProvider>
+        </ThemeProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }
 

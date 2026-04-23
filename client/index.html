@@ -244,5 +244,12 @@
     </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Safety net: remove splash after 6s even if JS bundle fails to load
+      setTimeout(function() {
+        var s = document.getElementById("pp-splash");
+        if (s) { s.style.opacity = "0"; setTimeout(function(){ if(s.parentNode) s.parentNode.removeChild(s); }, 400); }
+      }, 6000);
+    </script>
   </body>
 </html>

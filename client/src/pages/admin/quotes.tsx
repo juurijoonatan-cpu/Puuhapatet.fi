@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import {
   ArrowLeft, Plus, Trash2, Send, Check, Loader2,
-  ChevronDown, ChevronUp, Home, Leaf, Wrench, X,
+  ChevronDown, ChevronUp, Home, Leaf, Wrench, X, Monitor,
 } from "lucide-react";
+import { QuotePresentation } from "@/components/quote-presentation";
 import { useLocation } from "wouter";
 
 import { Card } from "@/components/ui/card";
@@ -109,6 +110,13 @@ interface ServiceItem {
 
 type ConfigMode = "ikkuna" | "nurmikko" | "muu" | null;
 
+interface IkkunaMultipliers {
+  height: number;
+  access: number;
+  dirt: number;
+  windowType: number;
+}
+
 function uid(): string { return Math.random().toString(36).slice(2, 10); }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -153,11 +161,13 @@ export default function AdminQuotesPage() {
   const [iSqmIdx, setISqmIdx] = useState<number | null>(null);
   const [iTier,   setITier]   = useState<TierKey>("all");
   const [iAddons, setIAddons] = useState<Set<AddonKey>>(new Set());
+  const [iMult,   setIMult]   = useState<IkkunaMultipliers>({ height: 1, access: 1, dirt: 1, windowType: 1 });
 
-  const iBase      = iHouse && iSqmIdx !== null ? SQM_RANGES[iHouse][iSqmIdx].price : 0;
-  const iTierMult  = SERVICE_TIERS.find(t => t.key === iTier)?.mult ?? 1;
-  const iAddonSum  = Array.from(iAddons).reduce((s, k) => s + (IKK_ADDONS.find(a => a.key === k)?.price ?? 0), 0);
-  const iTotal     = iHouse && iSqmIdx !== null ? Math.round(iBase * iTierMult) + iAddonSum : 0;
+  const iBase         = iHouse && iSqmIdx !== null ? SQM_RANGES[iHouse][iSqmIdx].price : 0;
+  const iTierMult     = SERVICE_TIERS.find(t => t.key === iTier)?.mult ?? 1;
+  const iAddonSum     = Array.from(iAddons).reduce((s, k) => s + (IKK_ADDONS.find(a => a.key === k)?.price ?? 0), 0);
+  const iCombinedMult = iMult.height * iMult.access * iMult.dirt * iMult.windowType;
+  const iTotal        = iHouse && iSqmIdx !== null ? Math.round(iBase * iTierMult * iCombinedMult) + iAddonSum : 0;
 
   // ── Nurmikko configurator state ───────────────────────────────────────────
   const [nSizeIdx, setNSizeIdx]   = useState<number | null>(null);
@@ -177,6 +187,9 @@ export default function AdminQuotesPage() {
   const kotitalous = Math.round(total * 0.65);
   const validUntil = new Date(Date.now() + validDays * 24 * 60 * 60 * 1000)
     .toLocaleDateString("fi-FI");
+
+  // Presentation mode
+  const [presenting, setPresenting] = useState(false);
 
   // Send state
   const [sending,    setSending]    = useState(false);
@@ -204,7 +217,7 @@ export default function AdminQuotesPage() {
   const openConfig = (mode: ConfigMode) => {
     setConfigMode(prev => prev === mode ? null : mode);
     // reset on open
-    if (mode === "ikkuna") { setIHouse(""); setISqmIdx(null); setITier("all"); setIAddons(new Set()); }
+    if (mode === "ikkuna") { setIHouse(""); setISqmIdx(null); setITier("all"); setIAddons(new Set()); setIMult({ height: 1, access: 1, dirt: 1, windowType: 1 }); }
     if (mode === "nurmikko") { setNSizeIdx(null); setNPlanIdx(null); }
     if (mode === "muu") { setMuuDesc(""); setMuuPrice(""); }
   };
@@ -218,7 +231,16 @@ export default function AdminQuotesPage() {
     const sqmLabel   = SQM_RANGES[iHouse][iSqmIdx].label;
     const tierLabel  = SERVICE_TIERS.find(t => t.key === iTier)!.label;
     const addonLines = Array.from(iAddons).map(k => IKK_ADDONS.find(a => a.key === k)!.label);
-    const detail     = [tierLabel, ...addonLines].join(" · ");
+
+    // Build multiplier description if any factor > 1
+    const multParts: string[] = [];
+    if (iMult.height > 1)     multParts.push(`Korkeus ×${iMult.height.toFixed(2)}`);
+    if (iMult.access > 1)     multParts.push(`Pääsy ×${iMult.access.toFixed(2)}`);
+    if (iMult.dirt > 1)       multParts.push(`Likaisuus ×${iMult.dirt.toFixed(2)}`);
+    if (iMult.windowType > 1) multParts.push(`Ikkunatyyppi ×${iMult.windowType.toFixed(2)}`);
+    if (iCombinedMult > 1 && multParts.length > 1) multParts.push(`→ kerroin ×${iCombinedMult.toFixed(2)}`);
+
+    const detail = [tierLabel, ...addonLines, ...multParts].join(" · ");
     setServiceItems(prev => [...prev, {
       id: uid(), type: "ikkuna",
       title:  `Ikkunanpesu — ${houseLabel}, ${sqmLabel}`,
@@ -648,6 +670,80 @@ export default function AdminQuotesPage() {
                 </div>
               )}
 
+              {/* Vaikeuskertoimet */}
+              {iSqmIdx !== null && (
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">Vaikeuskertoimet (valinnainen)</p>
+                  {([
+                    {
+                      label: "Korkeus / kerrosluku",
+                      key: "height" as const,
+                      options: [
+                        { label: "Maantaso", value: 1 },
+                        { label: "Tikastus ×1.20", value: 1.20 },
+                        { label: "2. kerros ×1.40", value: 1.40 },
+                        { label: "Erikois ×1.65", value: 1.65 },
+                      ],
+                    },
+                    {
+                      label: "Pääsy / saavutettavuus",
+                      key: "access" as const,
+                      options: [
+                        { label: "Normaali", value: 1 },
+                        { label: "Haastava ×1.10", value: 1.10 },
+                        { label: "Vaikea ×1.25", value: 1.25 },
+                      ],
+                    },
+                    {
+                      label: "Likaisuus / rakennuslika",
+                      key: "dirt" as const,
+                      options: [
+                        { label: "Normaali", value: 1 },
+                        { label: "Tavallista enemmän ×1.15", value: 1.15 },
+                        { label: "Rakennuslika ×1.40", value: 1.40 },
+                      ],
+                    },
+                    {
+                      label: "Ikkunatyyppi",
+                      key: "windowType" as const,
+                      options: [
+                        { label: "Tavalliset", value: 1 },
+                        { label: "Kippi-käännös ×1.10", value: 1.10 },
+                        { label: "Erikoikoot ×1.25", value: 1.25 },
+                      ],
+                    },
+                  ] as const).map(group => (
+                    <div key={group.key}>
+                      <p className="text-xs text-muted-foreground mb-1.5">{group.label}</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {group.options.map(opt => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => setIMult(prev => ({ ...prev, [group.key]: opt.value }))}
+                            className={cn(
+                              "px-3 py-1.5 rounded-full text-xs font-medium border transition-colors",
+                              iMult[group.key] === opt.value
+                                ? "border-foreground bg-foreground text-background"
+                                : "border-border hover:bg-muted/50"
+                            )}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  {iCombinedMult > 1 && (
+                    <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 px-3 py-2">
+                      <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">
+                        Kokonaiskerroin ×{iCombinedMult.toFixed(2)} — hinta korotettu vaikeustekijöillä
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Price + add button */}
               {iSqmIdx !== null && (
                 <div className="flex justify-between items-center pt-2 border-t">
@@ -811,19 +907,47 @@ export default function AdminQuotesPage() {
           )}
         </Card>
 
-        {/* ── Send ─────────────────────────────────────────────────────── */}
-        <Button
-          className="w-full h-12 text-base font-semibold gap-2"
-          onClick={handleSend}
-          disabled={sending || !customerEmail.trim() || serviceItems.length === 0}
-        >
-          {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
-          {sending ? "Lähetetään…" : `Lähetä tarjous${total > 0 ? ` · ${total} €` : ""}`}
-        </Button>
+        {/* ── Send + Esitä ─────────────────────────────────────────────── */}
+        <div className="flex gap-2">
+          {serviceItems.length > 0 && (
+            <Button
+              variant="outline"
+              className="gap-2 shrink-0"
+              onClick={() => setPresenting(true)}
+              title="Esitä tarjous asiakkaalle koko ruudussa"
+            >
+              <Monitor className="w-4 h-4" />
+              Esitä
+            </Button>
+          )}
+          <Button
+            className="flex-1 h-12 text-base font-semibold gap-2"
+            onClick={handleSend}
+            disabled={sending || !customerEmail.trim() || serviceItems.length === 0}
+          >
+            {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+            {sending ? "Lähetetään…" : `Lähetä tarjous${total > 0 ? ` · ${total} €` : ""}`}
+          </Button>
+        </div>
         {(!customerEmail.trim() || serviceItems.length === 0) && (
           <p className="text-xs text-muted-foreground text-center mt-2">
             {!customerEmail.trim() ? "Syötä asiakkaan sähköposti" : "Lisää vähintään yksi palvelu"}
           </p>
+        )}
+
+        {/* ── Live-esitystila ───────────────────────────────────────────── */}
+        {presenting && (
+          <QuotePresentation
+            customerName={customerName || "Asiakas"}
+            customerAddress={customerAddress}
+            serviceItems={serviceItems}
+            total={total}
+            workerName={profile?.name ?? ""}
+            workerPhone={profile?.phone ?? ""}
+            onClose={() => setPresenting(false)}
+            onSend={handleSend}
+            sending={sending}
+          />
         )}
 
       </div>

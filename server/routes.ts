@@ -1383,6 +1383,25 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         </tr>
       </table>
 
+      <!-- Miksi Puuhapatet ─────────────────────────────────────────────── -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px">
+        <tr>
+          <td style="background:#fafafa;border-radius:12px;padding:18px 20px;border:1px solid #e4e4e7">
+            <p style="margin:0 0 12px;font-weight:700;color:#18181b;font-size:10px;letter-spacing:1px;text-transform:uppercase">${isEn ? "WHY PUUHAPATET" : "MIKSI PUUHAPATET"}</p>
+            <table width="100%" cellpadding="0" cellspacing="0">
+              ${[
+                { emoji: "✅", fi: "Kotitalousvähennyskelpoinen — jopa 40 % takaisin verotuksessa", en: "Tax-deductible household work — up to 40% back" },
+                { emoji: "⭐", fi: "Tyytyväisyystakuu — emme laskuta ennen kuin olet tyytyväinen", en: "Satisfaction guarantee — no invoice until you're happy" },
+                { emoji: "🔒", fi: "Vastuuvakuutettu työ — ei riskiä teille", en: "Fully insured work — zero risk for you" },
+              ].map(p => `
+              <tr>
+                <td style="padding:5px 0;font-size:13px;color:#3f3f46;line-height:1.5">${p.emoji} ${isEn ? p.en : p.fi}</td>
+              </tr>`).join("")}
+            </table>
+          </td>
+        </tr>
+      </table>
+
       <!-- Validity ──────────────────────────────────────────────────────── -->
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px">
         <tr>

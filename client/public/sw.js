@@ -1,8 +1,7 @@
-const CACHE = "puuhapatet-v1";
+const CACHE = "puuhapatet-v2";
 
 self.addEventListener("install", (e) => {
   self.skipWaiting();
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(["/"])));
 });
 
 self.addEventListener("activate", (e) => {
@@ -16,21 +15,39 @@ self.addEventListener("activate", (e) => {
 
 self.addEventListener("fetch", (e) => {
   const { request } = e;
-  // Skip non-GET, API calls, and cross-origin
   if (request.method !== "GET") return;
   if (request.url.includes("/api/")) return;
   if (!request.url.startsWith(self.location.origin)) return;
 
+  const url = new URL(request.url);
+
+  // HTML documents: always network-first so the page is never stale
+  if (request.headers.get("accept") && request.headers.get("accept").includes("text/html")) {
+    e.respondWith(
+      fetch(request).catch(() => caches.match(request))
+    );
+    return;
+  }
+
+  // JS/CSS assets with hash in filename: cache-first (they never change)
+  if (url.pathname.match(/\.(js|css)$/) && url.pathname.includes("-")) {
+    e.respondWith(
+      caches.match(request).then((cached) => {
+        if (cached) return cached;
+        return fetch(request).then((res) => {
+          if (res.ok) caches.open(CACHE).then((c) => c.put(request, res.clone()));
+          return res;
+        });
+      })
+    );
+    return;
+  }
+
+  // Everything else: network with cache fallback
   e.respondWith(
-    caches.match(request).then((cached) => {
-      const network = fetch(request).then((res) => {
-        if (res.ok) {
-          caches.open(CACHE).then((c) => c.put(request, res.clone()));
-        }
-        return res;
-      });
-      // Return cached immediately if available, otherwise wait for network
-      return cached || network;
-    })
+    fetch(request).then((res) => {
+      if (res.ok) caches.open(CACHE).then((c) => c.put(request, res.clone()));
+      return res;
+    }).catch(() => caches.match(request))
   );
 });

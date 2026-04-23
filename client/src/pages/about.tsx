@@ -22,7 +22,7 @@ const founders = [
     role: "Perustaja",
     photo: "/joonatan.jpg.jpeg",
     initials: "JJ",
-    bio: "Olen 17-vuotias Otaniemen lukion opiskelija kansainvälisellä taustalla. Olen asunut ja käynyt koulua ulkomailla, mikä on antanut minulle laajan näkökulman jo nuoresta asti. Pelaan tennistä kilpatasolla ja arvostan täsmällisyyttä niin kentällä kuin työssäkin. Puuhapatet on minulle aito tapa oppia yrittäjyyttä käytännössä. Olen iloinen, että saan olla mukana rakentamassa tätä yhdessä Matiaksen kanssa!",
+    bio: "Olen 17-vuotias Otaniemen lukion opiskelija. Urheilu on iso osa elämääni; kilpajuoksu, sali ja tennis kuuluvat arkeen. Urheilutausta on opettanut, että kehittyminen ja sitoutuminen ovat tärkeitä taitoja ja olennaisia taitoja melkein missä tahansa. Olen kasvanut neljässä eri maassa ja matkustellut laajasti ympäri maailmaa, mikä on helpottanut katsomaan asioita uudenlaisista ja erilaisista näkökulmista. Yrittäjyys on kiinnostanut jo pitkään ja kokeiluja on takana useampia. Puuhapatet on projekti, jossa kaikki palaset tuntuivat loksahtavan kohdalleen. Luonteeltani olen energinen, suora ja kunnianhimoinen tekijä. Ideoita minulta löytyy melkein mihin vain! Laitetaan ikkunat puhtaaksi!",
     linkedin: "https://linkedin.com/in/joonatan-juuri",
     phone: "+358400389999",
   },

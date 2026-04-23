@@ -16,6 +16,17 @@ import { cn } from "@/lib/utils";
 
 type DbStatus = "lead" | "scheduled" | "in_progress" | "done" | "cancelled";
 
+// datetime-local values ("YYYY-MM-DDTHH:MM") have no timezone — parse directly
+// to avoid UTC/local mismatch when using new Date(str)
+function formatSuggestedTime(t: string): string {
+  const [datePart = "", timePart = ""] = t.split("T");
+  const [y, m, d] = datePart.split("-").map(Number);
+  const [hh = 0, mm = 0] = timePart.split(":").map(Number);
+  if (!y || !m || !d) return t;
+  const date = new Date(y, m - 1, d, hh, mm);
+  return date.toLocaleString("fi-FI", { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 const ADDONS = [
   { key: "balcony",  label: "Parveke-/terassilasitus", price: 39 },
   { key: "railing",  label: "Lasikaide",               price: 39 },
@@ -896,7 +907,7 @@ export default function AdminJobsPage() {
                       <div className="space-y-1">
                         {times.map((t, i) => (
                           <p key={i} className="text-sm text-foreground bg-background rounded-lg px-3 py-1.5">
-                            {new Date(t).toLocaleString("fi-FI", { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                            {formatSuggestedTime(t)}
                           </p>
                         ))}
                       </div>

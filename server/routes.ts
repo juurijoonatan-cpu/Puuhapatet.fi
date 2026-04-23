@@ -1523,7 +1523,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       if (resend) {
         const timesHtml = suggestedTimes?.length
-          ? `<p><strong>Ehdotetut ajat:</strong><br>${(suggestedTimes as string[]).filter(Boolean).map((t: string) => new Date(t).toLocaleString("fi-FI")).join("<br>")}</p>`
+          ? `<p><strong>Ehdotetut ajat:</strong><br>${(suggestedTimes as string[]).filter(Boolean).map((t: string) => {
+            // datetime-local is "YYYY-MM-DDTHH:MM" with no timezone — format as literal
+            const [dp = "", tp = ""] = t.split("T");
+            const [y, mo, d] = dp.split("-");
+            const [hh, mm] = tp.split(":");
+            return `${d}.${mo}.${y} klo ${hh}:${mm}`;
+          }).join("<br>")}</p>`
           : "";
         const msgHtml = customerMessage
           ? `<p><strong>Viesti:</strong><br>${(customerMessage as string).replace(/\n/g, "<br>")}</p>`

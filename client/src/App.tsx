@@ -30,6 +30,7 @@ import AdminQuotesPage from "@/pages/admin/quotes";
 import AdminGuidePage from "@/pages/admin/guide";
 import AdminTaxExportPage from "@/pages/admin/tax-export";
 import AdminInvestmentsPage from "@/pages/admin/investments";
+import QuotePage from "@/pages/quote";
 import NotFound from "@/pages/not-found";
 
 function ScrollToTop() {
@@ -98,6 +99,8 @@ function Router() {
         </PublicLayout>
       </Route>
       
+      <Route path="/tarjous/:token" component={QuotePage} />
+
       <Route path="/admin/login" component={AdminLoginPage} />
       
 

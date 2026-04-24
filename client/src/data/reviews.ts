@@ -1,18 +1,8 @@
-/**
- * Google Reviews — päivitä manuaalisesti muutaman kuukauden välein.
- *
- * Kuinka päivittää:
- * 1. Avaa Google Maps ja etsi Puuhapatet
- * 2. Kopioi haluamasi arvostelut tähän tiedostoon
- * 3. Päivitä GOOGLE_RATING ja GOOGLE_REVIEW_COUNT vastaamaan nykyisiä lukuja
- * 4. Commitoi muutos
- */
-
 export interface Review {
   author_name: string;
   profile_photo_url?: string;
   rating: number;
-  relative_time_description: string;
+  date: string; // ISO date string — relative time computed dynamically
   text: string;
 }
 
@@ -23,13 +13,20 @@ export const reviews: Review[] = [
   {
     author_name: "Lisbeth Österman",
     rating: 5,
-    relative_time_description: "5 päivää sitten",
+    date: "2026-04-19",
     text: "Todella hyvä ikkunapesu, iloista, ammattitaitoista tekemistä, ja upea tulos! Kohtuu hinta",
   },
   {
     author_name: "Niilo T",
     rating: 5,
-    relative_time_description: "6 päivää sitten",
+    date: "2026-04-18",
     text: "Hoitivat kevään ikkunan pesun mallikkaasti! Aian sopiminen hoitui kätevästi 👍",
   },
+  // TODO: lisää kolmannen arvostelun tiedot Google Mapsista
+  // {
+  //   author_name: "",
+  //   rating: 5,
+  //   date: "2026-04-XX",
+  //   text: "",
+  // },
 ];

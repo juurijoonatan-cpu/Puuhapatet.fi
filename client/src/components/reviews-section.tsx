@@ -8,6 +8,21 @@ import { reviews, GOOGLE_RATING, GOOGLE_REVIEW_COUNT } from "@/data/reviews";
 const GOOGLE_REVIEW_URL = "https://g.page/r/CQo_lx1fQ57lEAE/review";
 const RECOMMEND_PERCENT = 100;
 
+function relativeTime(dateStr: string): string {
+  const then = new Date(dateStr).getTime();
+  const now = Date.now();
+  const days = Math.floor((now - then) / (1000 * 60 * 60 * 24));
+  if (days === 0) return "tänään";
+  if (days === 1) return "eilen";
+  if (days < 7) return `${days} päivää sitten`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return `${weeks} viikkoa sitten`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months} kuukautta sitten`;
+  const years = Math.floor(days / 365);
+  return `${years} vuotta sitten`;
+}
+
 // Google "G" logo SVG
 function GoogleLogo({ className }: { className?: string }) {
   return (
@@ -99,7 +114,7 @@ export function ReviewsSection() {
                   )}
                   <div>
                     <p className="font-medium text-foreground text-sm leading-tight">{review.author_name}</p>
-                    <p className="text-xs text-muted-foreground">{review.relative_time_description}</p>
+                    <p className="text-xs text-muted-foreground">{relativeTime(review.date)}</p>
                   </div>
                 </div>
                 <GoogleLogo className="w-5 h-5 flex-shrink-0" />

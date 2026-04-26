@@ -85,7 +85,7 @@ const translations: Record<Language, Record<string, string>> = {
     "service.talvikiilto.2": "Ulkopuoli: kuivalla tai kevyesti kostutetulla mikrokuidulla, pöly ja sään jäljet lähtevät",
     "service.talvikiilto.3": "Lisä: parvekelasit sisäpinnat ja lasiterassit",
     
-    "service.cardetailing.title": "Sisäfreesaus",
+    "service.cardetailing.title": "Auton sisäfreesaus",
     "service.cardetailing.partner": "Puuhapatet × KJ Cardetailing",
     "service.cardetailing.price": "40 € / auto",
     "service.cardetailing.desc": "Kevyt ja vaivaton auton sisäpuhdistus. 20–30 min, kuivapesu – ei kosteutta sisätiloihin.",

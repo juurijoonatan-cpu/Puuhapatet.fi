@@ -11,22 +11,21 @@ export const GOOGLE_REVIEW_COUNT = 3;
 
 export const reviews: Review[] = [
   {
+    author_name: "Ilari Sell",
+    rating: 5,
+    date: "2026-04-20",
+    text: "Loistava palvelu ja laadukasta jälkeä. Suosittelen!",
+  },
+  {
     author_name: "Lisbeth Österman",
     rating: 5,
-    date: "2026-04-19",
+    date: "2026-03-23",
     text: "Todella hyvä ikkunapesu, iloista, ammattitaitoista tekemistä, ja upea tulos! Kohtuu hinta",
   },
   {
     author_name: "Niilo T",
     rating: 5,
-    date: "2026-04-18",
+    date: "2026-03-23",
     text: "Hoitivat kevään ikkunan pesun mallikkaasti! Aian sopiminen hoitui kätevästi 👍",
   },
-  // TODO: lisää kolmannen arvostelun tiedot Google Mapsista
-  // {
-  //   author_name: "",
-  //   rating: 5,
-  //   date: "2026-04-XX",
-  //   text: "",
-  // },
 ];

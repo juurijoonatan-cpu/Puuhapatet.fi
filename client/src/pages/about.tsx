@@ -154,7 +154,7 @@ export default function AboutPage() {
               </Button>
             </a>
             <a
-              href="https://instagram.com/puuhapatet"
+              href="https://instagram.com/puuhapatet.fi"
               target="_blank"
               rel="noopener noreferrer"
             >

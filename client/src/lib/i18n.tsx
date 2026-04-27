@@ -96,10 +96,10 @@ const translations: Record<Language, Record<string, string>> = {
     "service.cardetailing.5": "Auton sisäikkunoiden kevyt putsaus",
 
     "service.special.title": "Erikoistyöt",
-    "service.special.desc": "Taloyhtiöiden ja liikehuoneistojen ikkunanpesu sopimuksen mukaan.",
+    "service.special.desc": "Kaipaako liiketilasi tai taloyhtiösi yleisilmeen teroittamista ikkunoiden puhtauden suhteen? Otamme mielellämme tällaisia projekteja vastaan, olethan yhteydessä matalalla kynnyksellä niin katsotaan sopiva paketti kuntoon!",
     "service.special.1": "Taloyhtiöt, kerrostalot ja liiketilat",
-    "service.special.2": "Varusteet 10 m korkuisiin kohteisiin asti",
-    "service.special.3": "Turvavarusteet ja -käytännöt aina käytössä",
+    "service.special.2": "Ikkunanpesuvarret jopa 10 metrin korkuisiin kohteisiin",
+    "service.special.3": "Pidämme huolen, että kokonaisuus hoituu turvallisesti ja sujuvasti",
     "service.special.cta": "Ota yhteyttä – sovitaan kokonaisuus",
     
     "packages.title": "Paketit",

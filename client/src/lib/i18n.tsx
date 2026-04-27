@@ -46,7 +46,7 @@ const translations: Record<Language, Record<string, string>> = {
     
     "services.title": "Palvelut",
     "services.subtitle": "Mitä tarjoamme?",
-    "services.promise": "Jokainen työmme tehdään vastuuvakuutuksen alaisena ja lainmukaisesti. Meille tärkeintä on se, että asiakas on oikeasti tyytyväinen — ei se, kuinka nopeasti saamme työn alta pois. Jos homma ottaa kauemmin kuin arvioitu, teemme sen silti kunnolla loppuun. Siitä ei tule lisälaskua. Hinta sovitaan aina etukäteen — ei yllätyksiä.",
+    "services.promise": "Jokainen työmme tehdään vastuuvakuutuksen alaisena. Meille tärkeintä on se, että asiakas on oikeasti tyytyväinen — ei se, kuinka nopeasti saamme työn alta pois. Jos homma ottaa kauemmin kuin arvioitu, teemme sen silti kunnolla loppuun. Siitä ei tule lisälaskua. Hinta sovitaan aina etukäteen — ei yllätyksiä.",
 
     "service.gardening.title": "Piha & puutarhapalvelut",
     "service.gardening.desc": "Pidetään pihasi kunnossa nurmikoista puihin!",
@@ -130,7 +130,7 @@ const translations: Record<Language, Record<string, string>> = {
     "faq.q8": "Teettekö töitä taloyhtiöille tai liiketiloihin?",
     "faq.a8": "Kyllä. Teemme ikkunanpesua taloyhtiöille, kerrostaloihin ja liiketiloihin sopimuksen mukaan. Meillä on varusteet jopa 10 metrin korkuisiin kohteisiin.",
     "faq.q9": "Onko työnne vakuutettua ja riskitöntä tilaajalle?",
-    "faq.a9": "Toimimme vastuuvakuutuksen alaisena ja kaikki työmme on lainmukaista. Työskentelemme aina huolellisesti ja turvallisuus edellä. Jos työn aikana syntyy vahinkoa, meillä on vakuutusturva sen varalle — ja käsittelemme mahdolliset tilanteet aina asiallisesti yhdessä.",
+    "faq.a9": "Toimimme vastuuvakuutuksen alaisena. Työskentelemme aina huolellisesti ja turvallisuus edellä. Jos työn aikana syntyy vahinkoa, meillä on vakuutusturva sen varalle — ja käsittelemme mahdolliset tilanteet aina asiallisesti yhdessä.",
     "faq.q10": "Onko palvelunne kotitalousvähennyskelpoinen?",
     "faq.a10": "Kyllä. Esimerkiksi ikkunanpesu on kotitalousvähennyskelpoinen palvelu. Lasku tulee aina sinulle, joten vähennyksen hakeminen verotuksessa on suoraviivaista.",
     

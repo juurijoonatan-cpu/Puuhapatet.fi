@@ -42,12 +42,6 @@ export default function EhdotPage() {
               Jokaisella toimijalla on oma vastuuvakuutus, joka kattaa toiminnan vastuun sekä tuotevastuun.
               Vakuutus on voimassa koko Euroopassa.
             </p>
-            <ul className="text-muted-foreground text-sm space-y-1 list-none pl-0">
-              <li>Henkilövahingot: enintään <strong className="text-foreground">500 000 €</strong> per vahinko</li>
-              <li>Esinevahingot: enintään <strong className="text-foreground">100 000 €</strong> per vahinko</li>
-              <li>Käsiteltävänä oleva omaisuus: enintään <strong className="text-foreground">5 000 €</strong> per vahinko</li>
-              <li>Vakuutuksen omavastuu: <strong className="text-foreground">300 €</strong></li>
-            </ul>
             <p className="text-muted-foreground leading-relaxed text-sm mt-3">
               Arvoesineet ja herkästi rikkoutuvat tavarat pyydämme siirtämään työkohteen läheisyydestä ennen työn aloittamista.
             </p>

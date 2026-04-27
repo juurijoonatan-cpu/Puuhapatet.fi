@@ -12,7 +12,7 @@ const founders = [
     bioKey: "about.matias.bio" as const,
     photo: "/matias.jpg.jpeg",
     initials: "MP",
-    linkedin: "https://linkedin.com/in/matias-pitkanen",
+    linkedin: "https://www.linkedin.com/in/matias-pitk%C3%A4nen-b513273a6/",
     phone: "+358442350881",
   },
   {

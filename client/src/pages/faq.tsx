@@ -72,7 +72,7 @@ export default function FAQPage() {
           </Link>
           <p className="text-xs text-muted-foreground mt-4">
             <Link href="/ehdot">
-              <span className="underline underline-offset-2 hover:text-foreground transition-colors cursor-pointer">Sopimusehdot ja vakuutustiedot</span>
+              <span className="underline underline-offset-2 hover:text-foreground transition-colors cursor-pointer">Sopimusehdot</span>
             </Link>
           </p>
         </div>

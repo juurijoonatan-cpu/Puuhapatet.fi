@@ -193,7 +193,7 @@ export default function LandingPage() {
               </Button>
             </a>
             <a
-              href="https://instagram.com/puuhapatet"
+              href="https://instagram.com/puuhapatet.fi"
               target="_blank"
               rel="noopener noreferrer"
               className="col-span-1"

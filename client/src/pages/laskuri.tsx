@@ -107,7 +107,10 @@ const SQM_RANGES: Record<HouseKey, { label: string; price: number }[]> = {
     { label: "80–100 m²",      price: 179 },
     { label: "100–120 m²",     price: 209 },
     { label: "120–140 m²",     price: 249 },
-    { label: "yli 140 m²",     price: 329 },
+    { label: "140–160 m²",     price: 369 },
+    { label: "160–180 m²",     price: 389 },
+    { label: "180–200 m²",     price: 409 },
+    { label: "yli 200 m²",     price: 449 },
   ],
 };
 
@@ -495,7 +498,7 @@ export default function LaskuriPage() {
                     </p>
                   </div>
                   <span className="text-xs text-primary font-medium">
-                    {postalCode ? (region.mult === 1 ? "Vakio" : region.mult > 1 ? `+${Math.round((region.mult-1)*100)} %` : `−${Math.round((1-region.mult)*100)} %`) : "Muuta"}
+                    {postalCode ? "Muuta" : "Muuta"}
                   </span>
                 </button>
 
@@ -860,7 +863,7 @@ export default function LaskuriPage() {
                         <span className="text-foreground font-medium">+{a.price} €</span>
                       </div>
                     ))}
-                    {region.mult !== 1 && (
+                    {false && (
                       <div className="flex justify-between text-xs border-t border-border pt-1.5 mt-1.5">
                         <span className="text-muted-foreground">Alue ({region.label})</span>
                         <span className="text-foreground font-medium">{region.mult > 1 ? "+" : ""}{Math.round((region.mult - 1) * 100)} %</span>

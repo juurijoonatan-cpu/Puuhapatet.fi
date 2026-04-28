@@ -139,48 +139,55 @@ type AddonKey = (typeof ADDONS)[number]["key"];
 // Score by neighborhood sourced from market analysis.
 const AREA_TABLE: Record<string, { mult: number; label: string }> = {
   // ── Ultra-premium (score 0.95–1.0) ────────────────────────────────────────
-  "02160": { mult: 1.22, label: "Westend" },           // score 1.0 — Suomen kalleimpia
-  "00340": { mult: 1.18, label: "Kuusisaari" },        // score 0.95 — diplomaatti/luksus
-  "02380": { mult: 1.15, label: "Suvisaaristo" },      // score 0.90 — uniikki saaristo
-  "00570": { mult: 1.15, label: "Kulosaari" },         // score 0.90 — vanha eliittialue
-  "00830": { mult: 1.12, label: "Herttoniemenranta" }, // score 0.87 — merellinen premium
+  "02160": { mult: 1.22, label: "Westend" },              // score 1.0 — Suomen kalleimpia
+  "00340": { mult: 1.18, label: "Kuusisaari / Lehtisaari" }, // score 0.95 — diplomaatti/luksus
+  "02380": { mult: 1.15, label: "Suvisaaristo" },          // score 0.90 — uniikki saaristo
+  "00570": { mult: 1.15, label: "Kulosaari" },             // score 0.90 — vanha eliittialue
+  "00830": { mult: 1.12, label: "Herttoniemenranta" },     // score 0.87 — merellinen premium
   // ── Premium (score 0.82–0.90) ──────────────────────────────────────────────
-  "02170": { mult: 1.10, label: "Haukilahti" },        // score 0.85 — merellinen, arvostettu
-  "00140": { mult: 1.10, label: "Kaivopuisto" },       // score 0.88 — yksi Hkin arvostetuimmista
-  "00150": { mult: 1.08, label: "Punavuori / Eira" },  // score 0.85
-  "00160": { mult: 1.08, label: "Ullanlinna" },        // score 0.85
-  "00210": { mult: 1.05, label: "Lehtisaari" },        // score 0.83
-  "02100": { mult: 1.05, label: "Tapiola" },           // score 0.82
+  "02170": { mult: 1.10, label: "Haukilahti" },            // score 0.85 — merellinen, arvostettu
+  "00140": { mult: 1.10, label: "Kaivopuisto" },           // score 0.88 — yksi Hkin arvostetuimmista
+  "00130": { mult: 1.08, label: "Kaartinkaupunki" },
+  "00150": { mult: 1.08, label: "Eira" },                  // score 0.85
+  "00160": { mult: 1.08, label: "Katajanokka" },           // score 0.85
+  "00210": { mult: 1.05, label: "Lauttasaari" },           // score 0.83
+  "00100": { mult: 1.05, label: "Etu-Töölö / Keskusta" },
+  "00120": { mult: 1.05, label: "Punavuori" },
+  "00170": { mult: 1.05, label: "Kruununhaka" },
+  "02100": { mult: 1.05, label: "Tapiola" },               // score 0.82
   "02110": { mult: 1.05, label: "Otaniemi" },
   "02150": { mult: 1.05, label: "Otsolahti" },
-  "00170": { mult: 1.05, label: "Kruununhaka" },
   // ── Hyvä / varakas (score 0.70–0.82) ─────────────────────────────────────
-  "00330": { mult: 1.00, label: "Munkkiniemi" },       // score 0.75
-  "00200": { mult: 0.97, label: "Lauttasaari" },       // score 0.70
-  "00250": { mult: 1.02, label: "Töölö" },
+  "00330": { mult: 1.00, label: "Munkkiniemi" },           // score 0.75
+  "00200": { mult: 0.97, label: "Lauttasaari" },           // score 0.70
+  "00220": { mult: 1.02, label: "Jätkäsaari" },
+  "00230": { mult: 0.97, label: "Pasila" },
+  "00240": { mult: 0.97, label: "Länsi-Pasila" },
+  "00250": { mult: 1.02, label: "Taka-Töölö" },
+  "00180": { mult: 1.02, label: "Kamppi" },
   "00270": { mult: 0.98, label: "Pikku-Huopalahti" },
   "00280": { mult: 0.95, label: "Etelä-Haaga" },
   "02120": { mult: 0.97, label: "Laajalahti" },
   "02130": { mult: 0.97, label: "Kanta-Tapiola" },
-  "02140": { mult: 0.95, label: "Kivenlahti" },
+  "02140": { mult: 0.95, label: "Espoon Jokivarsi" },
   "02180": { mult: 0.95, label: "Matinkylä" },
   "02200": { mult: 0.95, label: "Espoo keskus" },
   "02230": { mult: 0.97, label: "Leppävaara" },
   "02360": { mult: 0.95, label: "Espoonlahti" },
   // ── Keskiluokka (score 0.55–0.70) ─────────────────────────────────────────
-  "00320": { mult: 0.84, label: "Munkkivuori" },       // score 0.60
-  "00300": { mult: 0.87, label: "Pikku-Huopalahti" },
-  "00350": { mult: 0.87, label: "Kannelmäki" },
-  "00360": { mult: 0.85, label: "Paloheinä" },
-  "00370": { mult: 0.85, label: "Pihlajamäki" },
+  "00300": { mult: 0.87, label: "Pohjois-Haaga" },
+  "00320": { mult: 0.84, label: "Kannelmäki" },            // score 0.60
+  "00350": { mult: 0.87, label: "Munkkivuori" },
+  "00360": { mult: 0.85, label: "Pajamäki" },
+  "00370": { mult: 0.85, label: "Pitäjänmäki" },
   "00400": { mult: 0.87, label: "Oulunkylä" },
   "00420": { mult: 0.85, label: "Maunula" },
   "00430": { mult: 0.83, label: "Malminkartano" },
   "00440": { mult: 0.84, label: "Lassila" },
   "00500": { mult: 0.87, label: "Sörnäinen" },
-  "00510": { mult: 0.87, label: "Alppiharju" },
-  "00520": { mult: 0.86, label: "Vanhakaupunki" },
-  "00530": { mult: 0.86, label: "Kallio" },
+  "00510": { mult: 0.87, label: "Alppila" },
+  "00520": { mult: 0.86, label: "Itä-Pasila" },
+  "00530": { mult: 0.86, label: "Kallio / Hakaniemi" },
   "00550": { mult: 0.86, label: "Vallila" },
   "00560": { mult: 0.88, label: "Toukola" },
   "00610": { mult: 0.84, label: "Käpylä" },

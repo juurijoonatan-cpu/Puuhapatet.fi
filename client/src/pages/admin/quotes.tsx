@@ -485,29 +485,6 @@ export default function AdminQuotesPage() {
           </div>
         </div>
 
-        {/* ── Asiakas ─────────────────────────────────────────────────── */}
-        <Card className="p-6 bg-card border-0 premium-shadow mb-4">
-          <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-4">Asiakas</h2>
-          {loadingCustomer ? (
-            <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {[
-                { label: "Nimi *",        val: customerName,    set: setCustomerName,    type: "text",  ph: "Etunimi Sukunimi" },
-                { label: "Sähköposti *",  val: customerEmail,   set: setCustomerEmail,   type: "email", ph: "email@esimerkki.fi" },
-                { label: "Puhelin",       val: customerPhone,   set: setCustomerPhone,   type: "tel",   ph: "+358 40 000 0000" },
-                { label: "Osoite",        val: customerAddress, set: setCustomerAddress, type: "text",  ph: "Kadunnimi 1, 02100 Espoo" },
-              ].map(f => (
-                <div key={f.label}>
-                  <p className="text-xs text-muted-foreground mb-1.5">{f.label}</p>
-                  <Input value={f.val} onChange={e => f.set(e.target.value)}
-                    type={f.type} placeholder={f.ph} className="text-sm" />
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-
         {/* ── Palvelut ────────────────────────────────────────────────── */}
         <Card className="p-6 bg-card border-0 premium-shadow mb-4">
           <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-4">Palvelut</h2>
@@ -843,6 +820,29 @@ export default function AdminQuotesPage() {
                 className="gap-2 w-full">
                 <Plus className="w-4 h-4" /> Lisää tarjoukseen
               </Button>
+            </div>
+          )}
+        </Card>
+
+        {/* ── Asiakas ─────────────────────────────────────────────────── */}
+        <Card className="p-6 bg-card border-0 premium-shadow mb-4">
+          <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-4">Asiakas</h2>
+          {loadingCustomer ? (
+            <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {[
+                { label: "Nimi *",        val: customerName,    set: setCustomerName,    type: "text",  ph: "Etunimi Sukunimi" },
+                { label: "Sähköposti *",  val: customerEmail,   set: setCustomerEmail,   type: "email", ph: "email@esimerkki.fi" },
+                { label: "Puhelin",       val: customerPhone,   set: setCustomerPhone,   type: "tel",   ph: "+358 40 000 0000" },
+                { label: "Osoite",        val: customerAddress, set: setCustomerAddress, type: "text",  ph: "Kadunnimi 1, 02100 Espoo" },
+              ].map(f => (
+                <div key={f.label}>
+                  <p className="text-xs text-muted-foreground mb-1.5">{f.label}</p>
+                  <Input value={f.val} onChange={e => f.set(e.target.value)}
+                    type={f.type} placeholder={f.ph} className="text-sm" />
+                </div>
+              ))}
             </div>
           )}
         </Card>

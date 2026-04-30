@@ -2,9 +2,9 @@
  * New Job Wizard - "Uusi Keikka"
  *
  * Steps:
- * 0. Customer info (customer fills on iPad)
+ * 0. Pricing — same model as laskuri.tsx
  * 1. Site assessment notes (staff fills)
- * 2. Pricing — same model as laskuri.tsx
+ * 2. Customer info (customer fills on iPad)
  * 3. Contract + signatures
  * 4. Done
  */
@@ -13,7 +13,7 @@ import { useState, useRef, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import {
   ArrowLeft, ArrowRight, User, ClipboardCheck, Package,
-  FileText, CheckCircle, Loader2, Percent, Check, UserCheck, Search,
+  FileText, CheckCircle, Loader2, Percent, Check, UserCheck, Search, Monitor,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -26,6 +26,7 @@ import { useToast } from "@/hooks/use-toast";
 import { api, generateJobId } from "@/lib/api";
 import { getAdminProfile } from "@/lib/admin-profile";
 import { cn } from "@/lib/utils";
+import { QuotePresentation } from "@/components/quote-presentation";
 
 type WizardStep = 0 | 1 | 2 | 3 | 4;
 
@@ -187,11 +188,11 @@ const EMPTY_FORM: JobFormData = {
 };
 
 const steps = [
-  { icon: User,          label: "Asiakas",     short: "Tiedot" },
-  { icon: ClipboardCheck,label: "Arviointi",   short: "Kohde" },
-  { icon: Package,       label: "Hinnoittelu", short: "Hinta" },
+  { icon: Package,       label: "Hinnoittelu", short: "Hinta"     },
+  { icon: ClipboardCheck,label: "Arviointi",   short: "Kohde"     },
+  { icon: User,          label: "Asiakas",     short: "Tiedot"    },
   { icon: FileText,      label: "Sopimus",     short: "Allekirj." },
-  { icon: CheckCircle,   label: "Valmis",      short: "Valmis" },
+  { icon: CheckCircle,   label: "Valmis",      short: "Valmis"    },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -228,6 +229,7 @@ export default function NewJobPage() {
   const [, navigate] = useLocation();
   const [currentStep, setCurrentStep] = useState<WizardStep>(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [presenting, setPresenting] = useState(false);
 
   const customerSigRef = useRef<HTMLCanvasElement>(null);
   const staffSigRef = useRef<HTMLCanvasElement>(null);
@@ -500,12 +502,6 @@ export default function NewJobPage() {
 
   const goNext = () => {
     if (currentStep === 0) {
-      if (!formData.customerName || !formData.customerPhone || !formData.customerAddress) {
-        toast({ variant: "destructive", title: "Täytä pakolliset kentät", description: "Nimi, puhelin ja osoite vaaditaan." });
-        return;
-      }
-    }
-    if (currentStep === 2) {
       if (!formData.serviceCategory) {
         toast({ variant: "destructive", title: "Valitse palvelutyyppi", description: "Valitse ensin palvelun tyyppi." });
         return;
@@ -516,6 +512,12 @@ export default function NewJobPage() {
       }
       if (formData.serviceCategory !== "ikkunapesu" && (!formData.manualPrice || parseFloat(formData.manualPrice) <= 0)) {
         toast({ variant: "destructive", title: "Syötä hinta", description: "Sovittu hinta vaaditaan." });
+        return;
+      }
+    }
+    if (currentStep === 2) {
+      if (!formData.customerName || !formData.customerPhone || !formData.customerAddress) {
+        toast({ variant: "destructive", title: "Täytä pakolliset kentät", description: "Nimi, puhelin ja osoite vaaditaan." });
         return;
       }
     }
@@ -598,220 +600,8 @@ export default function NewJobPage() {
           })}
         </div>
 
-        {/* ── Step 0: Customer info ── */}
+        {/* ── Step 0: Pricing ── */}
         {currentStep === 0 && (
-          <Card className="p-6 bg-card border-0 premium-shadow">
-            <h2 className="text-lg font-semibold text-foreground mb-2">Asiakkaan tiedot</h2>
-            <p className="text-sm text-muted-foreground mb-4">Anna iPad asiakkaalle täytettäväksi.</p>
-
-            {/* New/returning toggle */}
-            <div className="flex gap-2 mb-6">
-              <button
-                type="button"
-                onClick={() => { setIsReturning(false); setSelectedCustomerId(null); }}
-                className={cn(
-                  "flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border-2 text-sm font-medium transition-all",
-                  !isReturning
-                    ? "border-primary bg-primary/5 text-foreground"
-                    : "border-border text-muted-foreground hover:border-muted-foreground/40",
-                )}
-              >
-                <User className="w-4 h-4" />
-                Uusi asiakas
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsReturning(true)}
-                className={cn(
-                  "flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border-2 text-sm font-medium transition-all",
-                  isReturning
-                    ? "border-primary bg-primary/5 text-foreground"
-                    : "border-border text-muted-foreground hover:border-muted-foreground/40",
-                )}
-              >
-                <UserCheck className="w-4 h-4" />
-                Palaava asiakas
-              </button>
-            </div>
-
-            {/* Customer search for returning customers */}
-            {isReturning && (
-              <div className="mb-6">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    value={customerSearch}
-                    onChange={(e) => setCustomerSearch(e.target.value)}
-                    placeholder="Hae nimellä, puhelimella tai osoitteella…"
-                    className="pl-10 text-sm"
-                  />
-                </div>
-                {loadingCustomers && (
-                  <p className="text-xs text-muted-foreground mt-2">Ladataan…</p>
-                )}
-                {!loadingCustomers && customerSearch.length > 0 && (
-                  <div className="mt-2 max-h-48 overflow-y-auto rounded-xl border divide-y">
-                    {filteredCustomers.length === 0 && (
-                      <p className="p-3 text-sm text-muted-foreground">Ei tuloksia</p>
-                    )}
-                    {filteredCustomers.map(c => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => selectExistingCustomer(c)}
-                        className={cn(
-                          "w-full text-left p-3 hover:bg-muted/50 transition-colors text-sm",
-                          selectedCustomerId === c.id && "bg-primary/5",
-                        )}
-                      >
-                        <p className="font-medium text-foreground">{c.name}</p>
-                        <p className="text-xs text-muted-foreground">{c.phone} · {c.address}</p>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {selectedCustomerId && (
-                  <p className="text-xs text-green-600 dark:text-green-400 mt-2 flex items-center gap-1">
-                    <Check className="w-3 h-3" />
-                    Asiakas valittu — tiedot esitäytetty. Voit muokata alla.
-                  </p>
-                )}
-              </div>
-            )}
-
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="customerName">Nimi *</Label>
-                <Input
-                  id="customerName"
-                  value={formData.customerName}
-                  onChange={(e) => updateForm({ customerName: e.target.value })}
-                  placeholder="Koko nimi"
-                  className="mt-2"
-                  data-testid="input-customer-name"
-                />
-              </div>
-              <div>
-                <Label htmlFor="customerPhone">Puhelin *</Label>
-                <Input
-                  id="customerPhone"
-                  type="tel"
-                  value={formData.customerPhone}
-                  onChange={(e) => updateForm({ customerPhone: e.target.value })}
-                  placeholder="+358 40 123 4567"
-                  className="mt-2"
-                  data-testid="input-customer-phone"
-                />
-              </div>
-              <div>
-                <Label htmlFor="customerEmail">Sähköposti</Label>
-                <Input
-                  id="customerEmail"
-                  type="email"
-                  value={formData.customerEmail}
-                  onChange={(e) => updateForm({ customerEmail: e.target.value })}
-                  placeholder="email@esimerkki.fi"
-                  className="mt-2"
-                  data-testid="input-customer-email"
-                />
-              </div>
-              <div>
-                <Label htmlFor="customerAddress">Osoite *</Label>
-                <Input
-                  id="customerAddress"
-                  value={formData.customerAddress}
-                  onChange={(e) => updateForm({ customerAddress: e.target.value })}
-                  placeholder="Katuosoite"
-                  className="mt-2"
-                  data-testid="input-customer-address"
-                />
-              </div>
-              <div>
-                <Label htmlFor="customerNotes">Lisätiedot</Label>
-                <Textarea
-                  id="customerNotes"
-                  value={formData.customerNotes}
-                  onChange={(e) => updateForm({ customerNotes: e.target.value })}
-                  placeholder="Muita huomioita…"
-                  className="mt-2 min-h-20 resize-none"
-                  data-testid="input-customer-notes"
-                />
-              </div>
-
-              <div className="pt-4">
-                <Button
-                  className="w-full"
-                  onClick={goNext}
-                  disabled={!formData.customerName || !formData.customerPhone || !formData.customerAddress}
-                  data-testid="btn-next"
-                >
-                  Seuraava
-                  <ArrowRight className="w-4 h-4 ml-2" />
-                </Button>
-              </div>
-            </div>
-          </Card>
-        )}
-
-        {/* ── Step 1: Site assessment ── */}
-        {currentStep === 1 && (
-          <Card className="p-6 bg-card border-0 premium-shadow">
-            <h2 className="text-lg font-semibold text-foreground mb-2">Kohteen arviointi</h2>
-            <p className="text-sm text-muted-foreground mb-6">
-              Henkilökunnan huomiot kohteesta (kaikki valinnaisia).
-            </p>
-
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="accessConstraints">Kulkurajoitukset</Label>
-                <Input
-                  id="accessConstraints"
-                  value={formData.accessConstraints}
-                  onChange={(e) => updateForm({ accessConstraints: e.target.value })}
-                  placeholder="Esim. tikkaat tarvitaan, hankala pääsy…"
-                  className="mt-2"
-                  data-testid="input-access-constraints"
-                />
-              </div>
-              <div>
-                <Label htmlFor="weatherNotes">Sää / kausihuomiot</Label>
-                <Input
-                  id="weatherNotes"
-                  value={formData.weatherNotes}
-                  onChange={(e) => updateForm({ weatherNotes: e.target.value })}
-                  placeholder="Esim. pakkasraja, märkä pinta…"
-                  className="mt-2"
-                  data-testid="input-weather-notes"
-                />
-              </div>
-              <div>
-                <Label htmlFor="internalNotes">Sisäiset muistiinpanot</Label>
-                <Textarea
-                  id="internalNotes"
-                  value={formData.internalNotes}
-                  onChange={(e) => updateForm({ internalNotes: e.target.value })}
-                  placeholder="Tiimin sisäisiä huomioita…"
-                  className="mt-2 min-h-20 resize-none"
-                  data-testid="input-internal-notes"
-                />
-              </div>
-
-              <div className="flex gap-3 pt-4">
-                <Button variant="outline" onClick={goBack} data-testid="btn-back">
-                  <ArrowLeft className="w-4 h-4 mr-2" />
-                  Takaisin
-                </Button>
-                <Button className="flex-1" onClick={goNext} data-testid="btn-next">
-                  Seuraava
-                  <ArrowRight className="w-4 h-4 ml-2" />
-                </Button>
-              </div>
-            </div>
-          </Card>
-        )}
-
-        {/* ── Step 2: Pricing ── */}
-        {currentStep === 2 && (
           <Card className="p-6 bg-card border-0 premium-shadow">
             <h2 className="text-lg font-semibold text-foreground mb-2">Hinnoittelu</h2>
             <p className="text-sm text-muted-foreground mb-6">Valitse palvelutyyppi ja hinnoittele.</p>
@@ -1055,9 +845,18 @@ export default function NewJobPage() {
             </div>
 
             <div className="flex gap-3 pt-6">
-              <Button variant="outline" onClick={goBack} data-testid="btn-back">
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Takaisin
+              <Button
+                variant="outline"
+                className="gap-2 shrink-0"
+                onClick={() => setPresenting(true)}
+                disabled={
+                  !formData.serviceCategory ||
+                  (formData.serviceCategory === "ikkunapesu" && (!formData.houseType || formData.sqmIdx === null)) ||
+                  (formData.serviceCategory !== "ikkunapesu" && (!formData.manualPrice || parseFloat(formData.manualPrice) <= 0))
+                }
+              >
+                <Monitor className="w-4 h-4" />
+                Esitä
               </Button>
               <Button
                 className="flex-1"
@@ -1072,6 +871,222 @@ export default function NewJobPage() {
                 Seuraava
                 <ArrowRight className="w-4 h-4 ml-2" />
               </Button>
+            </div>
+          </Card>
+        )}
+
+        {/* ── Step 1: Site assessment ── */}
+        {currentStep === 1 && (
+          <Card className="p-6 bg-card border-0 premium-shadow">
+            <h2 className="text-lg font-semibold text-foreground mb-2">Kohteen arviointi</h2>
+            <p className="text-sm text-muted-foreground mb-6">
+              Henkilökunnan huomiot kohteesta (kaikki valinnaisia).
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="accessConstraints">Kulkurajoitukset</Label>
+                <Input
+                  id="accessConstraints"
+                  value={formData.accessConstraints}
+                  onChange={(e) => updateForm({ accessConstraints: e.target.value })}
+                  placeholder="Esim. tikkaat tarvitaan, hankala pääsy…"
+                  className="mt-2"
+                  data-testid="input-access-constraints"
+                />
+              </div>
+              <div>
+                <Label htmlFor="weatherNotes">Sää / kausihuomiot</Label>
+                <Input
+                  id="weatherNotes"
+                  value={formData.weatherNotes}
+                  onChange={(e) => updateForm({ weatherNotes: e.target.value })}
+                  placeholder="Esim. pakkasraja, märkä pinta…"
+                  className="mt-2"
+                  data-testid="input-weather-notes"
+                />
+              </div>
+              <div>
+                <Label htmlFor="internalNotes">Sisäiset muistiinpanot</Label>
+                <Textarea
+                  id="internalNotes"
+                  value={formData.internalNotes}
+                  onChange={(e) => updateForm({ internalNotes: e.target.value })}
+                  placeholder="Tiimin sisäisiä huomioita…"
+                  className="mt-2 min-h-20 resize-none"
+                  data-testid="input-internal-notes"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <Button variant="outline" onClick={goBack} data-testid="btn-back">
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  Takaisin
+                </Button>
+                <Button className="flex-1" onClick={goNext} data-testid="btn-next">
+                  Seuraava
+                  <ArrowRight className="w-4 h-4 ml-2" />
+                </Button>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {/* ── Step 2: Customer info ── */}
+        {currentStep === 2 && (
+          <Card className="p-6 bg-card border-0 premium-shadow">
+            <h2 className="text-lg font-semibold text-foreground mb-2">Asiakkaan tiedot</h2>
+            <p className="text-sm text-muted-foreground mb-4">Anna iPad asiakkaalle täytettäväksi.</p>
+
+            {/* New/returning toggle */}
+            <div className="flex gap-2 mb-6">
+              <button
+                type="button"
+                onClick={() => { setIsReturning(false); setSelectedCustomerId(null); }}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border-2 text-sm font-medium transition-all",
+                  !isReturning
+                    ? "border-primary bg-primary/5 text-foreground"
+                    : "border-border text-muted-foreground hover:border-muted-foreground/40",
+                )}
+              >
+                <User className="w-4 h-4" />
+                Uusi asiakas
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsReturning(true)}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border-2 text-sm font-medium transition-all",
+                  isReturning
+                    ? "border-primary bg-primary/5 text-foreground"
+                    : "border-border text-muted-foreground hover:border-muted-foreground/40",
+                )}
+              >
+                <UserCheck className="w-4 h-4" />
+                Palaava asiakas
+              </button>
+            </div>
+
+            {/* Customer search for returning customers */}
+            {isReturning && (
+              <div className="mb-6">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    value={customerSearch}
+                    onChange={(e) => setCustomerSearch(e.target.value)}
+                    placeholder="Hae nimellä, puhelimella tai osoitteella…"
+                    className="pl-10 text-sm"
+                  />
+                </div>
+                {loadingCustomers && (
+                  <p className="text-xs text-muted-foreground mt-2">Ladataan…</p>
+                )}
+                {!loadingCustomers && customerSearch.length > 0 && (
+                  <div className="mt-2 max-h-48 overflow-y-auto rounded-xl border divide-y">
+                    {filteredCustomers.length === 0 && (
+                      <p className="p-3 text-sm text-muted-foreground">Ei tuloksia</p>
+                    )}
+                    {filteredCustomers.map(c => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => selectExistingCustomer(c)}
+                        className={cn(
+                          "w-full text-left p-3 hover:bg-muted/50 transition-colors text-sm",
+                          selectedCustomerId === c.id && "bg-primary/5",
+                        )}
+                      >
+                        <p className="font-medium text-foreground">{c.name}</p>
+                        <p className="text-xs text-muted-foreground">{c.phone} · {c.address}</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {selectedCustomerId && (
+                  <p className="text-xs text-green-600 dark:text-green-400 mt-2 flex items-center gap-1">
+                    <Check className="w-3 h-3" />
+                    Asiakas valittu — tiedot esitäytetty. Voit muokata alla.
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="customerName">Nimi *</Label>
+                <Input
+                  id="customerName"
+                  value={formData.customerName}
+                  onChange={(e) => updateForm({ customerName: e.target.value })}
+                  placeholder="Koko nimi"
+                  className="mt-2"
+                  data-testid="input-customer-name"
+                />
+              </div>
+              <div>
+                <Label htmlFor="customerPhone">Puhelin *</Label>
+                <Input
+                  id="customerPhone"
+                  type="tel"
+                  value={formData.customerPhone}
+                  onChange={(e) => updateForm({ customerPhone: e.target.value })}
+                  placeholder="+358 40 123 4567"
+                  className="mt-2"
+                  data-testid="input-customer-phone"
+                />
+              </div>
+              <div>
+                <Label htmlFor="customerEmail">Sähköposti</Label>
+                <Input
+                  id="customerEmail"
+                  type="email"
+                  value={formData.customerEmail}
+                  onChange={(e) => updateForm({ customerEmail: e.target.value })}
+                  placeholder="email@esimerkki.fi"
+                  className="mt-2"
+                  data-testid="input-customer-email"
+                />
+              </div>
+              <div>
+                <Label htmlFor="customerAddress">Osoite *</Label>
+                <Input
+                  id="customerAddress"
+                  value={formData.customerAddress}
+                  onChange={(e) => updateForm({ customerAddress: e.target.value })}
+                  placeholder="Katuosoite"
+                  className="mt-2"
+                  data-testid="input-customer-address"
+                />
+              </div>
+              <div>
+                <Label htmlFor="customerNotes">Lisätiedot</Label>
+                <Textarea
+                  id="customerNotes"
+                  value={formData.customerNotes}
+                  onChange={(e) => updateForm({ customerNotes: e.target.value })}
+                  placeholder="Muita huomioita…"
+                  className="mt-2 min-h-20 resize-none"
+                  data-testid="input-customer-notes"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <Button variant="outline" onClick={goBack} data-testid="btn-back">
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  Takaisin
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={goNext}
+                  disabled={!formData.customerName || !formData.customerPhone || !formData.customerAddress}
+                  data-testid="btn-next"
+                >
+                  Seuraava
+                  <ArrowRight className="w-4 h-4 ml-2" />
+                </Button>
+              </div>
             </div>
           </Card>
         )}
@@ -1243,6 +1258,34 @@ export default function NewJobPage() {
         )}
 
       </div>
+
+      {/* ── Presentation mode ────────────────────────────────────────────── */}
+      {presenting && (() => {
+        const presPrice = isWindowCleaning
+          ? formData.finalPrice
+          : roundTo5(Math.round(parseFloat(formData.manualPrice || "0")));
+        const presItems = formData.serviceCategory ? [{
+          title: catLabel || formData.serviceCategory,
+          detail: isWindowCleaning
+            ? [houseLabel, sqmLabel, tierLabel].filter(Boolean).join(" · ")
+            : formData.serviceDescription,
+          price: presPrice,
+        }] : [];
+        return (
+          <QuotePresentation
+            customerName={formData.customerName || "Asiakas"}
+            customerAddress={formData.customerAddress}
+            serviceItems={presItems}
+            total={presPrice}
+            workerName={profile?.name ?? ""}
+            workerPhone={profile?.phone ?? ""}
+            onClose={() => setPresenting(false)}
+            onSend={() => setPresenting(false)}
+            sending={false}
+          />
+        );
+      })()}
+
     </div>
   );
 }

@@ -91,7 +91,7 @@ function ContactModal({ onClose }: { onClose: () => void }) {
     e.preventDefault();
     setStatus("sending");
     try {
-      const r = await fetch("/api/it-contact", {
+      const r = await fetch("https://puuhapatet-fi.onrender.com/api/it-contact", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),

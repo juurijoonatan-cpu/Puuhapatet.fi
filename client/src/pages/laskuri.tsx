@@ -354,25 +354,26 @@ export default function LaskuriPage() {
         : tab === "nurmikko"
         ? `Nurmikon leikkuu — ${lawnSizeIdx !== null ? LAWN_SIZES[lawnSizeIdx].label : ""}, ${lawnVisits}× kaudessa (${lawnPlan.desc}). Hinta: ${lawnPricePerVisit} €/kerta, yht. ${lawnTotal} €${lawnSavings > 0 ? `, säästät ${lawnSavings} €` : ""}.`
         : `Ikkunapesu — ${houseLabel} ${sqmLabel}, ${tierObj.label}. Lisät: ${addonsList}. Alue: ${region.label} (${region.mult}×). Postinumero: ${postalCode || "—"}`;
-      const res = await fetch("https://api.web3forms.com/submit", {
+      const fullMessage = [
+        `Palvelu: ${serviceDesc}`,
+        `Hinta-arvio: ${activeTotal} € (kotitalousväh. jälkeen ~${afterKotitalous} €)`,
+        form.message ? `Lisätiedot: ${form.message}` : "",
+      ].filter(Boolean).join("\n");
+      const res = await fetch("https://puuhapatet-fi.onrender.com/api/contact", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          access_key: "f70be445-1acf-4e5a-87f8-e27056edf67e",
-          botcheck: false,
-          subject: `Hinta-arvio: ${form.name}`,
-          from_name: "Puuhapatet.fi Laskuri",
-          Nimi: form.name, Puhelin: form.phone, Sähköposti: form.email || "—",
-          Alue: form.address,
-          Kiireellisyys: form.urgency === "this_week" ? "Tällä viikolla" : form.urgency === "flexible" ? "Ei kiireellinen" : "—",
-          Palvelu: serviceDesc,
-          "Hinta-arvio": `${activeTotal} € (kotitalousväh. jälkeen ~${afterKotitalous} €)`,
-          Lisätiedot: form.message || "—",
-          Alennuskoodi: form.coupon || "—",
+          name:    form.name,
+          phone:   form.phone,
+          email:   form.email || "",
+          address: form.address,
+          urgency: form.urgency,
+          coupon:  form.coupon || "",
+          message: fullMessage,
         }),
       });
       const json = await res.json();
-      if (!res.ok || !json.success) throw new Error();
+      if (!res.ok || !json.ok) throw new Error();
       setSent(true);
     } catch { setSendError("Jotain meni pieleen. Soita suoraan: 0400 389 999"); }
     finally { setSending(false); }

@@ -1780,36 +1780,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 </body>
 </html>`;
 
-      if (resend) {
-        await resend.emails.send({
-          from: FROM_EMAIL,
-          to: ["joonatan@puuhapatet.fi"],
-          replyTo: email || undefined,
-          subject: `Yhteydenotto: ${name} — ${urgencyLabel}`,
-          html,
-        });
-      } else {
-        // Fallback: Web3Forms
-        const w3f = await fetch("https://api.web3forms.com/submit", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            access_key:   "f70be445-1acf-4e5a-87f8-e27056edf67e",
-            botcheck:     false,
-            subject:      `Yhteydenotto: ${name} — ${urgencyLabel}`,
-            from_name:    "Puuhapatet.fi",
-            Nimi:         name,
-            Puhelin:      phone,
-            Sähköposti:   email || "—",
-            Alue:         address || "—",
-            Kiireellisyys: urgencyLabel,
-            Viesti:       message,
-            Alennuskoodi: coupon || "—",
-          }),
-        });
-        const w3fData = await w3f.json() as { success: boolean; message?: string };
-        if (!w3fData.success) throw new Error("Web3Forms: " + (w3fData.message || "virhe"));
+      if (!resend) {
+        return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä — aseta RESEND_API_KEY ympäristömuuttuja." });
       }
+      await resend.emails.send({
+        from: FROM_EMAIL,
+        to: ["joonatan@puuhapatet.fi"],
+        replyTo: email || undefined,
+        subject: `Yhteydenotto: ${name} — ${urgencyLabel}`,
+        html,
+      });
 
       res.json({ ok: true });
     } catch (e: any) {
@@ -1895,36 +1875,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 </body>
 </html>`;
 
-      if (resend) {
-        await resend.emails.send({
-          from: FROM_EMAIL,
-          to: ["joonatan@puuhapatet.fi"],
-          replyTo: email,
-          subject: `IT-yhteydenotto: ${name}${company ? ` (${company})` : ""} — ${serviceLabel}`,
-          html,
-        });
-      } else {
-        // Fallback: Web3Forms
-        const w3f = await fetch("https://api.web3forms.com/submit", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            access_key:      "f70be445-1acf-4e5a-87f8-e27056edf67e",
-            botcheck:        false,
-            subject:         `IT-yhteydenotto: ${name}${company ? ` (${company})` : ""} — ${serviceLabel}`,
-            from_name:       "Puuhapatet IT",
-            Nimi:            name,
-            Sähköposti:      email,
-            Puhelin:         phone || "—",
-            Yritys:          company || "—",
-            Palvelu:         serviceLabel,
-            "Nykyinen sivu": currentSite || "—",
-            Viesti:          message,
-          }),
-        });
-        const w3fData = await w3f.json() as { success: boolean; message?: string };
-        if (!w3fData.success) throw new Error("Web3Forms: " + (w3fData.message || "virhe"));
+      if (!resend) {
+        return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä — aseta RESEND_API_KEY ympäristömuuttuja." });
       }
+      await resend.emails.send({
+        from: FROM_EMAIL,
+        to: ["joonatan@puuhapatet.fi"],
+        replyTo: email,
+        subject: `IT-yhteydenotto: ${name}${company ? ` (${company})` : ""} — ${serviceLabel}`,
+        html,
+      });
 
       res.json({ ok: true });
     } catch (e: any) {

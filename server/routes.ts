@@ -1722,6 +1722,82 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Public booking contact form ─────────────────────────────────────────────
+  app.post("/api/contact", async (req, res) => {
+    if (!resend) {
+      return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä." });
+    }
+    try {
+      const { name, phone, email, address, urgency, message, coupon } = req.body;
+      if (!name || !phone || !message) {
+        return res.status(400).json({ error: "Nimi, puhelin ja viesti ovat pakollisia." });
+      }
+      const urgencyLabel = urgency === "this_week" ? "Tällä viikolla" : urgency === "flexible" ? "Ei kiireellinen" : "—";
+
+      const html = `<!DOCTYPE html>
+<html lang="fi">
+<head><meta charset="UTF-8" /><title>Uusi yhteydenotto</title></head>
+<body style="margin:0;padding:0;background:#f4f9ec;font-family:-apple-system,sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f9ec;padding:40px 20px">
+    <tr><td align="center">
+      <table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #dde9c4">
+        <tr>
+          <td style="background:#2d5016;padding:28px 36px">
+            <p style="margin:0;color:#b8e07a;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase">Puuhapatet.fi</p>
+            <h1 style="margin:6px 0 0;color:#ffffff;font-size:24px;font-weight:700;letter-spacing:-0.5px">Uusi yhteydenotto &#x1F4CB;</h1>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:28px 36px">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr><td style="padding-bottom:16px;border-bottom:1px solid #eee">
+                <p style="margin:0 0 3px;color:#888;font-size:11px;text-transform:uppercase;letter-spacing:0.5px">Asiakas</p>
+                <p style="margin:0;font-size:16px;font-weight:600;color:#1a2e0a">${name}</p>
+                <p style="margin:3px 0 0;font-size:14px"><a href="tel:${phone}" style="color:#2d5016;text-decoration:none">${phone}</a></p>
+                ${email ? `<p style="margin:3px 0 0;font-size:14px"><a href="mailto:${email}" style="color:#2d5016;text-decoration:none">${email}</a></p>` : ""}
+              </td></tr>
+              <tr><td style="padding:16px 0;border-bottom:1px solid #eee">
+                <p style="margin:0 0 3px;color:#888;font-size:11px;text-transform:uppercase;letter-spacing:0.5px">Alue / Osoite</p>
+                <p style="margin:0;font-size:15px;color:#1a2e0a">${address || "—"}</p>
+              </td></tr>
+              <tr><td style="padding:16px 0;border-bottom:1px solid #eee">
+                <p style="margin:0 0 3px;color:#888;font-size:11px;text-transform:uppercase;letter-spacing:0.5px">Kiireellisyys</p>
+                <p style="margin:0;font-size:15px;color:#1a2e0a">${urgencyLabel}</p>
+              </td></tr>
+              <tr><td style="padding:16px 0${coupon ? ";border-bottom:1px solid #eee" : ""}">
+                <p style="margin:0 0 8px;color:#888;font-size:11px;text-transform:uppercase;letter-spacing:0.5px">Viesti</p>
+                <p style="margin:0;font-size:15px;color:#333;line-height:1.6;white-space:pre-wrap">${message.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>
+              </td></tr>
+              ${coupon ? `<tr><td style="padding:16px 0"><p style="margin:0 0 3px;color:#888;font-size:11px;text-transform:uppercase;letter-spacing:0.5px">Alennuskoodi</p><p style="margin:0;font-size:15px;font-weight:600;color:#2d5016">${coupon}</p></td></tr>` : ""}
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#f4f9ec;padding:16px 36px;border-top:1px solid #dde9c4">
+            <p style="margin:0;color:#6b8f3a;font-size:12px">Puuhapatet.fi &middot; ${new Date().toLocaleString("fi-FI")}</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+      await resend.emails.send({
+        from: FROM_EMAIL,
+        to: ["joonatan@puuhapatet.fi"],
+        replyTo: email || undefined,
+        subject: `Yhteydenotto: ${name} — ${urgencyLabel}`,
+        html,
+      });
+
+      res.json({ ok: true });
+    } catch (e: any) {
+      console.error("Contact form error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── Puuhapatet IT — contact form ────────────────────────────────────────────
   app.post("/api/it-contact", async (req, res) => {
     if (!resend) {

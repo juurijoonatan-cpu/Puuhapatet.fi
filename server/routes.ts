@@ -1728,7 +1728,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä." });
     }
     try {
-      const { name, email, phone, company, service, message } = req.body;
+      const { name, email, phone, company, service, currentSite, message } = req.body;
       if (!name || !email || !message) {
         return res.status(400).json({ error: "Nimi, sähköposti ja viesti ovat pakollisia." });
       }
@@ -1777,6 +1777,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
                   <p style="margin:0;color:#ffffff;font-size:16px;font-weight:600">${name}${company ? ` — ${company}` : ""}</p>
                   <p style="margin:4px 0 0;color:#0099ff;font-size:14px"><a href="mailto:${email}" style="color:#0099ff;text-decoration:none">${email}</a></p>
                   ${phone ? `<p style="margin:4px 0 0;color:#999;font-size:14px">${phone}</p>` : ""}
+                  ${currentSite ? `<p style="margin:4px 0 0;color:#999;font-size:14px">Nykyinen sivu: <a href="${currentSite.startsWith('http') ? currentSite : 'https://'+currentSite}" style="color:#0099ff;text-decoration:none">${currentSite}</a></p>` : ""}
                 </td>
               </tr>
               <tr>

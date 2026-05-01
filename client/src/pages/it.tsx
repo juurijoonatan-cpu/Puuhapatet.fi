@@ -90,13 +90,27 @@ function ContactModal({ onClose }: { onClose: () => void }) {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setStatus("sending");
+    const serviceLabel = services.find(s => s.value === form.service)?.label ?? form.service;
     try {
-      const r = await fetch("/api/it-contact", {
+      const r = await fetch("https://api.web3forms.com/submit", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          access_key: "f70be445-1acf-4e5a-87f8-e27056edf67e",
+          botcheck:   false,
+          subject:    `IT-yhteydenotto: ${form.name}${form.company ? ` (${form.company})` : ""} — ${serviceLabel}`,
+          from_name:  "Puuhapatet IT",
+          Nimi:       form.name,
+          Sähköposti: form.email,
+          Puhelin:    form.phone || "—",
+          Yritys:     form.company || "—",
+          Palvelu:    serviceLabel,
+          "Nykyinen sivu": form.currentSite || "—",
+          Viesti:     form.message,
+        }),
       });
-      if (!r.ok) throw new Error();
+      const data = await r.json();
+      if (!data.success) throw new Error(data.message);
       setStatus("done");
     } catch {
       setStatus("error");

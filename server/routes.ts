@@ -1722,6 +1722,71 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Public booking contact form (booking.tsx + laskuri.tsx) ────────────────
+  app.post("/api/booking-contact", async (req, res) => {
+    if (!resend) {
+      return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä — aseta RESEND_API_KEY." });
+    }
+    try {
+      const { name, phone, email, address, message, urgency, coupon, subject, extra } = req.body;
+      if (!name || !phone) {
+        return res.status(400).json({ error: "Nimi ja puhelinnumero ovat pakollisia." });
+      }
+      const urgencyLabel = urgency === "this_week" ? "Tällä viikolla" : urgency === "flexible" ? "Ei kiireellinen" : "—";
+      const rows = [
+        ["Nimi",         name],
+        ["Puhelin",      phone],
+        ["Sähköposti",   email || "—"],
+        ["Alue",         address || "—"],
+        ["Kiireellisyys",urgencyLabel],
+        ...(extra ? Object.entries(extra) : []),
+        ["Alennuskoodi", coupon || "—"],
+        ["Viesti",       message || "—"],
+      ];
+      const html = `
+<!DOCTYPE html><html lang="fi"><head><meta charset="UTF-8"/></head>
+<body style="margin:0;padding:0;background:#0d0d0d;font-family:Inter,-apple-system,sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#0d0d0d;padding:32px 16px">
+<tr><td align="center">
+<table width="580" cellpadding="0" cellspacing="0" style="background:#151515;border-radius:14px;overflow:hidden;border:1px solid #222">
+  <tr><td style="background:linear-gradient(135deg,#4A5D4F,#2d5016);padding:28px 32px">
+    <p style="margin:0;color:rgba(255,255,255,0.6);font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase">Puuhapatet</p>
+    <h1 style="margin:6px 0 0;color:#fff;font-size:24px;font-weight:700;letter-spacing:-0.5px">${subject || `Uusi yhteydenotto: ${name}`}</h1>
+  </td></tr>
+  <tr><td style="padding:28px 32px">
+    <table width="100%" cellpadding="0" cellspacing="0">
+      ${rows.map(([k, v]) => `
+      <tr>
+        <td style="padding:10px 0;border-bottom:1px solid #222;vertical-align:top;width:36%">
+          <span style="color:#666;font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:0.5px">${k}</span>
+        </td>
+        <td style="padding:10px 0 10px 16px;border-bottom:1px solid #222">
+          <span style="color:#fff;font-size:14px">${String(v).replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br/>")}</span>
+        </td>
+      </tr>`).join("")}
+    </table>
+  </td></tr>
+  <tr><td style="background:#0d0d0d;padding:18px 32px;border-top:1px solid #1a1a1a">
+    <p style="margin:0;color:#444;font-size:11px">Puuhapatet · puuhapatet.fi · ${new Date().toLocaleString("fi-FI")}</p>
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
+
+      await resend.emails.send({
+        from: FROM_EMAIL,
+        to: ["joonatan@puuhapatet.fi"],
+        replyTo: email || undefined,
+        subject: subject || `Uusi yhteydenotto: ${name}`,
+        html,
+      });
+      res.json({ ok: true });
+    } catch (e: any) {
+      console.error("booking-contact error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── Puuhapatet IT — contact form ────────────────────────────────────────────
   app.post("/api/it-contact", async (req, res) => {
     if (!resend) {

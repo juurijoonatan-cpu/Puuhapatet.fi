@@ -1722,5 +1722,98 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Puuhapatet IT — contact form ────────────────────────────────────────────
+  app.post("/api/it-contact", async (req, res) => {
+    if (!resend) {
+      return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä." });
+    }
+    try {
+      const { name, email, phone, company, service, message } = req.body;
+      if (!name || !email || !message) {
+        return res.status(400).json({ error: "Nimi, sähköposti ja viesti ovat pakollisia." });
+      }
+      const serviceLabels: Record<string, string> = {
+        website: "Verkkosivuston luonti",
+        redesign: "Vanhan sivuston uudistus",
+        seo: "SEO & GEO-optimointi",
+        hosting: "Hosting & ylläpito",
+        erp: "ERP / CRM -ratkaisu",
+        other: "Muu",
+      };
+      const serviceLabel = serviceLabels[service] || service || "Ei määritelty";
+
+      const html = `
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Uusi IT-yhteydenotto</title>
+</head>
+<body style="margin:0;padding:0;background:#0a0a0a;font-family:Inter,-apple-system,sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;padding:40px 20px">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#111111;border-radius:16px;overflow:hidden;border:1px solid #222">
+        <!-- Header -->
+        <tr>
+          <td style="background:linear-gradient(135deg,#6a4cf5,#d44df0);padding:32px 40px">
+            <p style="margin:0;color:rgba(255,255,255,0.7);font-size:12px;font-weight:500;letter-spacing:1px;text-transform:uppercase">Puuhapatet IT</p>
+            <h1 style="margin:8px 0 0;color:#ffffff;font-size:28px;font-weight:700;letter-spacing:-1px;line-height:1.1">Uusi yhteydenotto 🚀</h1>
+          </td>
+        </tr>
+        <!-- Body -->
+        <tr>
+          <td style="padding:32px 40px">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="padding-bottom:20px;border-bottom:1px solid #222">
+                  <p style="margin:0 0 4px;color:#666;font-size:12px;text-transform:uppercase;letter-spacing:0.5px">Palvelu</p>
+                  <p style="margin:0;color:#ffffff;font-size:16px;font-weight:600">${serviceLabel}</p>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:20px 0;border-bottom:1px solid #222">
+                  <p style="margin:0 0 4px;color:#666;font-size:12px;text-transform:uppercase;letter-spacing:0.5px">Asiakas</p>
+                  <p style="margin:0;color:#ffffff;font-size:16px;font-weight:600">${name}${company ? ` — ${company}` : ""}</p>
+                  <p style="margin:4px 0 0;color:#0099ff;font-size:14px"><a href="mailto:${email}" style="color:#0099ff;text-decoration:none">${email}</a></p>
+                  ${phone ? `<p style="margin:4px 0 0;color:#999;font-size:14px">${phone}</p>` : ""}
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:20px 0">
+                  <p style="margin:0 0 12px;color:#666;font-size:12px;text-transform:uppercase;letter-spacing:0.5px">Viesti</p>
+                  <p style="margin:0;color:#cccccc;font-size:15px;line-height:1.6;white-space:pre-wrap">${message.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <!-- Footer -->
+        <tr>
+          <td style="background:#0d0d0d;padding:20px 40px;border-top:1px solid #1a1a1a">
+            <p style="margin:0;color:#444;font-size:12px">Puuhapatet IT · puuhapatet.fi/it · ${new Date().toLocaleString("fi-FI")}</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+      await resend.emails.send({
+        from: FROM_EMAIL,
+        to: ["joonatan@puuhapatet.fi"],
+        replyTo: email,
+        subject: `IT-yhteydenotto: ${name}${company ? ` (${company})` : ""} — ${serviceLabel}`,
+        html,
+      });
+
+      res.json({ ok: true });
+    } catch (e: any) {
+      console.error("IT contact error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   return httpServer;
 }

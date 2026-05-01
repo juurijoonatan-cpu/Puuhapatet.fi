@@ -359,7 +359,7 @@ export default function LaskuriPage() {
         `Hinta-arvio: ${activeTotal} € (kotitalousväh. jälkeen ~${afterKotitalous} €)`,
         form.message ? `Lisätiedot: ${form.message}` : "",
       ].filter(Boolean).join("\n");
-      const res = await fetch("/api/contact", {
+      const res = await fetch("https://puuhapatet-fi.onrender.com/api/contact", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

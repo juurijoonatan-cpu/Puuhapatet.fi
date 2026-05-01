@@ -1733,12 +1733,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ error: "Nimi, sähköposti ja viesti ovat pakollisia." });
       }
       const serviceLabels: Record<string, string> = {
-        website: "Verkkosivuston luonti",
-        redesign: "Vanhan sivuston uudistus",
-        seo: "SEO & GEO-optimointi",
-        hosting: "Hosting & ylläpito",
-        erp: "ERP / CRM -ratkaisu",
-        other: "Muu",
+        website:  "Uusi verkkosivusto",
+        cv:       "CV tai henkilökohtainen sivu",
+        redesign: "Olemassa olevan sivuston uudistus",
+        seo:      "Hakukonenäkyvyys",
+        hosting:  "Hosting ja ylläpito",
+        erp:      "Hallintaratkaisu tai CRM",
+        other:    "Jotain muuta",
       };
       const serviceLabel = serviceLabels[service] || service || "Ei määritelty";
 

@@ -118,7 +118,7 @@ export default function AdminLoginPage() {
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-semibold text-foreground mb-1">Puuhapatet</h1>
+          <h1 className="text-2xl font-semibold text-foreground mb-1">Puuhapatet.</h1>
           <p className="text-muted-foreground">Kuka kirjautuu?</p>
         </div>
 

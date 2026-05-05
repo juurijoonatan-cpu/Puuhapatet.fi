@@ -102,6 +102,10 @@ export interface NewJob {
   paymentMethod?: string | null;
   quoteToken?: string;
   quoteVideoUrl?: string;
+  isTaloyhtiio?: boolean;
+  taloyhtiioName?: string;
+  unitCount?: number;
+  propertyImageUrl?: string;
 }
 
 export interface StatsResponse {
@@ -293,6 +297,10 @@ export const api = {
     workerPhone?: string;
     workerEmail?: string;
     lang?: "fi" | "en";
+    isTaloyhtiio?: boolean;
+    taloyhtiioName?: string;
+    unitCount?: number;
+    propertyImageUrl?: string;
   }) => request<{ ok: boolean; id?: string }>("POST", "/api/send-quote", data),
 
   getQuote: (token: string) =>
@@ -305,13 +313,35 @@ export const api = {
       validUntil: string | null;
       quoteStatus: string;
       quoteVideoUrl: string | null;
+      isTaloyhtiio: boolean;
+      taloyhtiioApproved: boolean;
+      unitCount: number | null;
+      propertyImageUrl: string | null;
+      taloyhtiioName: string | null;
+      unitResponses: Array<{
+        unitId: string;
+        unitName: string;
+        status: "accepted" | "declined";
+        times: string[];
+        message: string;
+      }>;
     }>("GET", `/api/quote/${token}`),
 
   respondToQuote: (token: string, data: {
     status: "accepted" | "declined";
     suggestedTimes?: string[];
     customerMessage?: string;
+    unitResponse?: {
+      unitId: string;
+      unitName: string;
+      status: "accepted" | "declined";
+      times: string[];
+      message: string;
+    };
   }) => request<{ ok: boolean }>("POST", `/api/quote/${token}/respond`, data),
+
+  approveTaloyhtiio: (jobId: number, approved: boolean) =>
+    request<{ ok: boolean }>("PATCH", `/api/jobs/${jobId}/taloyhtiio-approve`, { approved }),
 
   getCustomerJobCount: (customerId: number) =>
     request<{ count: number }>("GET", `/api/customers/${customerId}/job-count`),

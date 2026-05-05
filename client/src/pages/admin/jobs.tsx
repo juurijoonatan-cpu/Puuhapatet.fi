@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Loader2, ClipboardList, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Check, CalendarClock, Save, Plus, Trash2, Receipt, Users, TrendingUp, Clock } from "lucide-react";
+import { Loader2, ClipboardList, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Check, CalendarClock, Save, Plus, Trash2, Receipt, Users, TrendingUp, Clock, Building2 } from "lucide-react";
 import { Link } from "wouter";
 
 import { Card } from "@/components/ui/card";
@@ -66,6 +66,11 @@ interface JobRow {
     quoteStatus: string | null;
     suggestedTimes: string | null;
     customerMessage: string | null;
+    isTaloyhtiio: boolean | null;
+    taloyhtiioApproved: boolean | null;
+    taloyhtiioName: string | null;
+    unitCount: number | null;
+    unitResponses: string | null;
   };
   customer: {
     id: number;
@@ -933,6 +938,69 @@ export default function AdminJobsPage() {
                   </button>
                 </div>
               </div>
+
+              {/* Taloyhtiö approval toggle */}
+              {job.isTaloyhtiio && (
+                <div className="mt-3 pt-3 border-t border-border/50">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Building2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide">
+                      Taloyhtiötarjous{job.taloyhtiioName ? ` — ${job.taloyhtiioName}` : ""}
+                      {job.unitCount ? ` · ${job.unitCount} huoneistoa` : ""}
+                    </p>
+                  </div>
+                  {job.unitResponses && (() => {
+                    try {
+                      const responses: Array<{ unitName: string; status: string; times: string[] }> = JSON.parse(job.unitResponses);
+                      if (responses.length > 0) return (
+                        <div className="mb-2 space-y-1">
+                          <p className="text-xs text-muted-foreground">Asuntojen vastaukset:</p>
+                          {responses.map((r, i) => (
+                            <div key={i} className="flex items-center gap-2 text-xs bg-background rounded px-2 py-1">
+                              <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", r.status === "accepted" ? "bg-green-500" : "bg-red-400")} />
+                              <span className="font-medium">{r.unitName}</span>
+                              <span className="text-muted-foreground">{r.status === "accepted" ? "Hyväksytty" : "Hylätty"}</span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    } catch { return null; }
+                  })()}
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const newVal = !job.taloyhtiioApproved;
+                      await api.approveTaloyhtiio(job.id, newVal);
+                      setSelected(prev => prev ? {
+                        ...prev,
+                        job: { ...prev.job, taloyhtiioApproved: newVal }
+                      } : null);
+                      setJobs(prev => prev.map(r => r.job.id === job.id
+                        ? { ...r, job: { ...r.job, taloyhtiioApproved: newVal } }
+                        : r
+                      ));
+                      toast({ title: newVal ? "Tarjous avattu asukkaille ✓" : "Tarjous suljettu asukkailta" });
+                    }}
+                    className={cn(
+                      "w-full flex items-center justify-between rounded-xl px-4 py-2.5 border text-sm transition-colors",
+                      job.taloyhtiioApproved
+                        ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300"
+                        : "border-border hover:bg-muted/30 text-muted-foreground"
+                    )}
+                  >
+                    <span>{job.taloyhtiioApproved ? "✓ Linkki aktiivinen asukkaille" : "Aktivoi linkki asukkaille"}</span>
+                    <div className={cn(
+                      "w-9 h-5 rounded-full transition-colors relative shrink-0",
+                      job.taloyhtiioApproved ? "bg-emerald-500" : "bg-muted"
+                    )}>
+                      <div className={cn(
+                        "absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform",
+                        job.taloyhtiioApproved ? "translate-x-4" : "translate-x-0.5"
+                      )} />
+                    </div>
+                  </button>
+                </div>
+              )}
             </Card>
           )}
 

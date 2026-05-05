@@ -80,6 +80,12 @@ app.use((req, res, next) => {
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS suggested_times  text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS customer_message text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS quote_video_url  text`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS is_taloyhtiio        boolean NOT NULL DEFAULT false`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS taloyhtiio_approved  boolean NOT NULL DEFAULT false`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS unit_count           integer`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS property_image_url   text`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS taloyhtiio_name      text`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS unit_responses       text`,
   ]) {
     try { await db.execute(stmt); } catch (e: any) { console.warn("Migration warning:", e.message); }
   }

@@ -1325,11 +1325,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         </tr>
       </table>` : "";
 
-      // ── Property image block ────────────────────────────────────────────
-      const propertyImageHtml = propertyImageUrl ? `
+      // ── Property image block (skip data URLs — not supported in email clients) ──
+      const emailImageUrl = propertyImageUrl && !(propertyImageUrl as string).startsWith("data:") ? propertyImageUrl : null;
+      const propertyImageHtml = emailImageUrl ? `
       <tr>
         <td style="padding:0">
-          <img src="${propertyImageUrl}" alt="${taloyhtiioName || customerName}" style="width:100%;max-height:240px;object-fit:cover;display:block" />
+          <img src="${emailImageUrl}" alt="${taloyhtiioName || customerName}" style="width:100%;max-height:240px;object-fit:cover;display:block" />
         </td>
       </tr>` : "";
 

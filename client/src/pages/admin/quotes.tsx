@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   ArrowLeft, Plus, Trash2, Send, Check, Loader2,
-  ChevronDown, ChevronUp, Home, Leaf, Wrench, X, Monitor, Building2,
+  ChevronDown, ChevronUp, Home, Leaf, Wrench, X, Monitor, Building2, ImagePlus,
 } from "lucide-react";
 import { QuotePresentation } from "@/components/quote-presentation";
 import { useLocation } from "wouter";
@@ -98,6 +98,24 @@ function generateQuoteId(): string {
   return `T-PP-${ts}-${rand}`;
 }
 
+function compressImage(file: File, maxWidth = 1200, quality = 0.78): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const ratio = Math.min(1, maxWidth / img.width);
+      const canvas = document.createElement("canvas");
+      canvas.width  = Math.round(img.width  * ratio);
+      canvas.height = Math.round(img.height * ratio);
+      canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface ServiceItem {
@@ -149,6 +167,8 @@ export default function AdminQuotesPage() {
   const [taloyhtiioName,  setTaloyhtiioName]  = useState("");
   const [unitCount,       setUnitCount]       = useState<number | "">(0);
   const [propertyImageUrl,setPropertyImageUrl]= useState("");
+  const [imageCompressing,setImageCompressing]= useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // BCC to other worker
   const profile     = getAdminProfile();
@@ -910,7 +930,7 @@ export default function AdminQuotesPage() {
                 <Building2 className="w-4 h-4 text-emerald-700 dark:text-emerald-400" />
                 <span>
                   <strong>Taloyhtiötarjous</strong>
-                  <span className="font-normal text-muted-foreground ml-1">— jaettavissa usealle asunnolle</span>
+                  <span className="font-normal text-muted-foreground ml-1 text-xs">jaettavissa kaikille asukkaille</span>
                 </span>
               </span>
               <div className={cn(
@@ -947,15 +967,71 @@ export default function AdminQuotesPage() {
                   />
                 </div>
               </div>
+
+              {/* Per-unit price preview */}
+              {total > 0 && unitCount && Number(unitCount) > 0 && (
+                <div className="rounded-lg bg-white border border-emerald-100 px-4 py-3 flex justify-between items-center">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Per asunto</p>
+                    <p className="text-base font-bold">{Math.ceil(total / Number(unitCount))} €</p>
+                    <p className="text-[11px] text-emerald-600">Kotival. ~{Math.round(total / Number(unitCount) * 0.65)} €</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-muted-foreground">Yhteensä</p>
+                    <p className="text-base font-bold">{total} €</p>
+                    <p className="text-[11px] text-muted-foreground">{unitCount} asuntoa</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Image upload */}
               <div>
-                <p className="text-xs text-muted-foreground mb-1.5">
-                  Kiinteistön kuva <span className="font-normal">(valinnainen — suora kuvalinkki)</span>
-                </p>
-                <Input value={propertyImageUrl} onChange={e => setPropertyImageUrl(e.target.value)}
-                  type="url" placeholder="https://..." className="text-sm" />
+                <p className="text-xs text-muted-foreground mb-1.5">Kiinteistön kuva (valinnainen)</p>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={async e => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setImageCompressing(true);
+                    try {
+                      const dataUrl = await compressImage(file);
+                      setPropertyImageUrl(dataUrl);
+                    } catch { /* ignore */ }
+                    setImageCompressing(false);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }}
+                />
+                {propertyImageUrl ? (
+                  <div className="relative rounded-xl overflow-hidden">
+                    <img src={propertyImageUrl} alt="Kiinteistö" className="w-full h-32 object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => setPropertyImageUrl("")}
+                      className="absolute top-2 right-2 bg-black/60 text-white rounded-full w-6 h-6 flex items-center justify-center"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={imageCompressing}
+                    className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-emerald-300 py-4 text-sm text-emerald-600 hover:bg-emerald-50 transition-colors"
+                  >
+                    {imageCompressing
+                      ? <><Loader2 className="w-4 h-4 animate-spin" /> Pakataan...</>
+                      : <><ImagePlus className="w-4 h-4" /> Lataa kuva laitteelta</>
+                    }
+                  </button>
+                )}
               </div>
+
               <p className="text-xs text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg px-3 py-2">
-                Lähetä ensin tarjous hallituksen jäsenelle tai isännöitsijälle. Hyväksy sen jälkeen tarjous <strong>keikkalistasta</strong>, jolloin linkki toimii kaikille asukkaille.
+                Lähetä tarjous ensin hallituksen jäsenelle. Avaa sen jälkeen linkki asukkaille <strong>keikkalistasta</strong>.
               </p>
             </div>
           )}

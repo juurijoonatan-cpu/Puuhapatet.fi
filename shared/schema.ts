@@ -55,6 +55,13 @@ export const jobs = pgTable("jobs", {
   suggestedTimes:    text("suggested_times"),    // JSON: string[] of ISO datetimes from customer
   customerMessage:   text("customer_message"),   // customer's freeform message from quote portal
   quoteVideoUrl:     text("quote_video_url"),    // optional YouTube/Vimeo/MP4 URL shown on portal
+  // Taloyhtiö (housing company) quote fields
+  isTaloyhtiio:      boolean("is_taloyhtiio").default(false).notNull(),
+  taloyhtiioApproved: boolean("taloyhtiio_approved").default(false).notNull(),
+  unitCount:         integer("unit_count"),       // number of apartments
+  propertyImageUrl:  text("property_image_url"), // image URL for the property
+  taloyhtiioName:    text("taloyhtiio_name"),    // housing company name
+  unitResponses:     text("unit_responses"),     // JSON: [{unitId,unitName,status,times,message}]
   createdAt:         timestamp("created_at").defaultNow().notNull(),
   updatedAt:         timestamp("updated_at").defaultNow().notNull(),
 });

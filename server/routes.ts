@@ -1251,6 +1251,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         to, bcc, quoteId, quoteToken, customerName, customerAddress,
         items, total, validDays, customMessage,
         workerName, workerPhone, workerEmail, lang,
+        isTaloyhtiio, taloyhtiioName, unitCount, propertyImageUrl,
       } = req.body;
 
       const bccArr = bcc
@@ -1262,6 +1263,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
 
       const isEn      = lang === "en";
+      const isTalo    = !!isTaloyhtiio;
       const firstName = (customerName as string).split(" ")[0];
       const today     = new Date().toLocaleDateString(isEn ? "en-GB" : "fi-FI");
       const vDays     = validDays || 14;
@@ -1270,72 +1272,114 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const kotitalous = Math.round(Number(total) * 0.65);
 
-      // ── Default intro — reads naturally, pushes conversion ──────────────
-      const defaultIntro = isEn
-        ? `Hi ${firstName}! Here's the quote we put together based on your property. Everything's included — no hidden extras. If you have questions or want to adjust anything, just give us a call.`
-        : `Hei ${firstName}! Tässä on kartoituksen perusteella tekemämme tarjous. Kaikki on hinnoiteltu avoimesti — ei piilokuluia. Jos jokin mietityttää tai haluatte muokata jotain, soittakaa rohkeasti.`;
+      // ── Intro text ──────────────────────────────────────────────────────
+      let defaultIntro: string;
+      if (isTalo) {
+        const taloName = taloyhtiioName || customerName;
+        const units = unitCount ? ` (${unitCount} huoneistoa)` : "";
+        defaultIntro = isEn
+          ? `Hi! Here's our tailored quote for ${taloName}${units}. Each apartment can confirm separately or together — the link can be shared to all residents. We handle the whole property in one visit.`
+          : `Hei! Tässä on tarjouksemme kohteelle ${taloName}${units}. Jokainen asunto voi vahvistaa erikseen tai yhdessä — linkki on jaettavissa kaikille asukkaille. Hoidamme koko kiinteistön yhdellä käynnillä.`;
+      } else {
+        defaultIntro = isEn
+          ? `Hi ${firstName}! Here's the quote we put together for your property. Everything's priced openly — no hidden extras. Give us a call if anything needs adjusting.`
+          : `Hei ${firstName}! Tässä on kartoituksen perusteella tekemämme tarjous. Kaikki on hinnoiteltu avoimesti — ei piilokuluia. Soita rohkeasti, jos jokin mietityttää.`;
+      }
 
       const introText = customMessage
         ? (customMessage as string).replace(/\n/g, "<br>")
         : defaultIntro;
 
-      // ── Service rows — title + optional detail on second line ────────────
+      // ── Service rows ────────────────────────────────────────────────────
       const serviceRowsHtml = (items as Array<{ title: string; detail: string; price: number }>)
         .map((item, idx) => `
-          <tr style="border-bottom:1px solid #f1f5f9;background:${idx % 2 === 1 ? "#f8fafc" : "#ffffff"}">
-            <td style="padding:14px 20px 14px 0;vertical-align:top">
-              <p style="margin:0;color:#0f172a;font-size:14px;font-weight:600">${item.title}</p>
-              ${item.detail ? `<p style="margin:3px 0 0;color:#64748b;font-size:12px">${item.detail}</p>` : ""}
+          <tr style="border-bottom:1px solid #ecfdf5;background:${idx % 2 === 1 ? "#f8fffe" : "#ffffff"}">
+            <td style="padding:13px 16px 13px 0;vertical-align:top">
+              <p style="margin:0;color:#1a2e1a;font-size:14px;font-weight:600">${item.title}</p>
+              ${item.detail ? `<p style="margin:3px 0 0;color:#4b7a4b;font-size:12px">${item.detail}</p>` : ""}
             </td>
-            <td style="padding:14px 0;text-align:right;vertical-align:top;white-space:nowrap">
-              <span style="color:#0f172a;font-size:15px;font-weight:700">${Number(item.price).toFixed(0)} €</span>
+            <td style="padding:13px 0;text-align:right;vertical-align:top;white-space:nowrap">
+              <span style="color:#1a2e1a;font-size:15px;font-weight:700">${Number(item.price).toFixed(0)} €</span>
             </td>
           </tr>
         `).join("");
+
+      // ── Taloyhtiö key-points block ─────────────────────────────────────
+      const taloKeyPointsHtml = isTalo ? `
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px">
+        <tr>
+          <td style="background:#f0fdf4;border-radius:12px;padding:18px 20px;border:1px solid #bbf7d0">
+            <p style="margin:0 0 12px;font-weight:700;color:#166534;font-size:10px;letter-spacing:1.5px;text-transform:uppercase">${isEn ? "KEY POINTS FOR THE BUILDING" : "TALOYHTIÖLLE TÄRKEÄÄ"}</p>
+            <table width="100%" cellpadding="0" cellspacing="0">
+              ${[
+                { fi: `Yksi käynti — koko kiinteistö kerralla${unitCount ? `, ${unitCount} huoneistoa` : ""}`, en: `One visit — entire property${unitCount ? `, ${unitCount} units` : ""}` },
+                { fi: "Jokainen asukas saa oman kotitalousvähennyksen — 35 % takaisin verotuksessa", en: "Each resident gets their own household tax deduction — 35% back" },
+                { fi: "Asukkaiden ei tarvitse olla paikalla — sovitaan isännöitsijän tai hallituksen kanssa", en: "Residents don't need to be home — coordinated with the building manager" },
+                { fi: "Tarjoushinta per asunto laskee yksikköhintaa — kannustaa mukaan ottamaan", en: "Per-unit price drops as more units join — great incentive" },
+              ].map(p => `
+              <tr>
+                <td style="padding:5px 0;font-size:13px;color:#1a3a1a;line-height:1.5">✓ ${isEn ? p.en : p.fi}</td>
+              </tr>`).join("")}
+            </table>
+          </td>
+        </tr>
+      </table>` : "";
+
+      // ── Property image block ────────────────────────────────────────────
+      const propertyImageHtml = propertyImageUrl ? `
+      <tr>
+        <td style="padding:0">
+          <img src="${propertyImageUrl}" alt="${taloyhtiioName || customerName}" style="width:100%;max-height:240px;object-fit:cover;display:block" />
+        </td>
+      </tr>` : "";
 
       const html = `
 <!DOCTYPE html>
 <html lang="${isEn ? "en" : "fi"}">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:#f1f5f9">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9"><tr><td align="center" style="padding:32px 16px">
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:#f0faf2">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0faf2"><tr><td align="center" style="padding:28px 16px">
 <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
 
-  <!-- HEADER -->
+  <!-- HEADER — forest green brand bar -->
   <tr>
-    <td style="background:#18181b;border-radius:16px 16px 0 0;padding:32px 36px 28px">
+    <td style="background:#2d5016;border-radius:16px 16px 0 0;padding:28px 32px 24px">
       <table width="100%" cellpadding="0" cellspacing="0">
         <tr>
           <td>
-            <p style="margin:0;color:#ffffff;font-size:24px;font-weight:800;letter-spacing:-0.4px">Puuhapatet.</p>
-            <p style="margin:4px 0 0;color:#52525b;font-size:12px">Ikkunapesu &middot; Pihapalvelut &middot; Nurmikko</p>
+            <p style="margin:0;color:#ffffff;font-size:26px;font-weight:900;letter-spacing:-0.5px">Puuhapatet.</p>
+            <p style="margin:5px 0 0;color:#a3c97a;font-size:12px;letter-spacing:0.3px">${isTalo ? (isEn ? "Professional building services" : "Ammattilainen kiinteistöpalvelut") : "Ikkunapesu · Pihapalvelut · Nurmikko"}</p>
           </td>
           <td style="text-align:right;vertical-align:top;padding-top:2px">
-            <span style="display:inline-block;background:#4a5d4f;color:#bbf7d0;font-size:10px;font-weight:700;letter-spacing:2px;padding:4px 12px;border-radius:20px;text-transform:uppercase">${isEn ? "QUOTE" : "TARJOUS"}</span>
+            <span style="display:inline-block;background:#a3c97a;color:#1a3a0a;font-size:10px;font-weight:800;letter-spacing:2px;padding:5px 14px;border-radius:20px;text-transform:uppercase">${isTalo ? (isEn ? "BUILDING QUOTE" : "TALOYHTIÖTARJOUS") : (isEn ? "QUOTE" : "TARJOUS")}</span>
           </td>
         </tr>
       </table>
-      <div style="margin-top:24px;padding-top:18px;border-top:1px solid #27272a">
-        <p style="font-family:'Courier New',Courier,monospace;color:#d4d4d8;font-size:15px;font-weight:700;margin:0 0 4px;letter-spacing:1.5px">${quoteId}</p>
-        <p style="color:#52525b;font-size:12px;margin:0">${today} &nbsp;&middot;&nbsp; ${isEn ? "Valid until" : "Voimassa"} <strong style="color:#a1a1aa">${validUntil}</strong></p>
+      <div style="margin-top:20px;padding-top:16px;border-top:1px solid #3d6620">
+        <p style="font-family:'Courier New',Courier,monospace;color:#c8e89a;font-size:14px;font-weight:700;margin:0 0 4px;letter-spacing:1.5px">${quoteId}</p>
+        <p style="color:#8ab865;font-size:12px;margin:0">${today} &nbsp;·&nbsp; ${isEn ? "Valid until" : "Voimassa"} <strong style="color:#c8e89a">${validUntil}</strong></p>
       </div>
     </td>
   </tr>
 
+  <!-- PROPERTY IMAGE (optional) -->
+  ${propertyImageHtml ? `<tr><td style="padding:0">${propertyImageHtml}</td></tr>` : ""}
+
   <!-- TO / FROM -->
   <tr>
-    <td style="background:#fafafa;border-left:1px solid #e4e4e7;border-right:1px solid #e4e4e7">
+    <td style="background:#ffffff;border-left:1px solid #d1f0d8;border-right:1px solid #d1f0d8">
       <table width="100%" cellpadding="0" cellspacing="0">
         <tr>
-          <td style="padding:18px 36px;border-right:1px solid #e4e4e7;width:50%;vertical-align:top">
-            <p style="margin:0 0 6px;color:#a1a1aa;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">${isEn ? "FOR" : "ASIAKKAALLE"}</p>
-            <p style="margin:0 0 2px;color:#18181b;font-size:14px;font-weight:700">${customerName}</p>
-            ${customerAddress ? `<p style="margin:0;color:#71717a;font-size:12px;line-height:1.5">${customerAddress}</p>` : ""}
+          <td style="padding:16px 28px;border-right:1px solid #e8f5e9;width:50%;vertical-align:top">
+            <p style="margin:0 0 5px;color:#6aab6a;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">${isEn ? "FOR" : "ASIAKKAALLE"}</p>
+            <p style="margin:0 0 2px;color:#1a2e1a;font-size:14px;font-weight:700">${isTalo && taloyhtiioName ? taloyhtiioName : customerName}</p>
+            ${isTalo && taloyhtiioName ? `<p style="margin:0;color:#5a8a5a;font-size:12px">${customerName}</p>` : ""}
+            ${customerAddress ? `<p style="margin:2px 0 0;color:#6a8a6a;font-size:12px;line-height:1.5">${customerAddress}</p>` : ""}
           </td>
-          <td style="padding:18px 36px;width:50%;text-align:right;vertical-align:top">
-            <p style="margin:0 0 6px;color:#a1a1aa;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">${isEn ? "FROM" : "LÄHETTÄJÄ"}</p>
-            <p style="margin:0 0 2px;color:#18181b;font-size:14px;font-weight:700">${workerName || "Puuhapatet"}</p>
-            ${workerPhone ? `<p style="margin:0;color:#71717a;font-size:12px">${workerPhone}</p>` : ""}
+          <td style="padding:16px 28px;width:50%;text-align:right;vertical-align:top">
+            <p style="margin:0 0 5px;color:#6aab6a;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">${isEn ? "FROM" : "LÄHETTÄJÄ"}</p>
+            <p style="margin:0 0 2px;color:#1a2e1a;font-size:14px;font-weight:700">${workerName || "Puuhapatet"}</p>
+            ${workerPhone ? `<p style="margin:0;color:#6a8a6a;font-size:12px">${workerPhone}</p>` : ""}
           </td>
         </tr>
       </table>
@@ -1344,93 +1388,84 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   <!-- BODY -->
   <tr>
-    <td style="background:#ffffff;border:1px solid #e4e4e7;border-top:none;padding:32px 36px">
+    <td style="background:#ffffff;border:1px solid #d1f0d8;border-top:none;padding:28px 32px">
 
       <!-- Intro -->
-      <p style="margin:0 0 28px;color:#3f3f46;font-size:15px;line-height:1.75">${introText}</p>
+      <p style="margin:0 0 24px;color:#2a3a2a;font-size:15px;line-height:1.8">${introText}</p>
 
-      <!-- Services -->
-      <p style="margin:0 0 10px;color:#a1a1aa;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">${isEn ? "SERVICES" : "PALVELUT"}</p>
-      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border-top:2px solid #18181b">
+      <!-- Services label -->
+      <p style="margin:0 0 8px;color:#6aab6a;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">${isEn ? "SERVICES" : "PALVELUT"}</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border-top:2px solid #2d5016">
         <tbody>${serviceRowsHtml}</tbody>
       </table>
 
       <!-- Total -->
-      <table width="100%" cellpadding="0" cellspacing="0" style="border-top:2px solid #18181b;margin-top:0">
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-top:2px solid #2d5016;margin-top:0">
         <tr>
-          <td style="padding:16px 0;color:#18181b;font-size:15px;font-weight:700">${isEn ? "Total" : "Yhteensä"}</td>
-          <td style="padding:16px 0;text-align:right;color:#18181b;font-size:28px;font-weight:900">${Number(total).toFixed(0)} €</td>
+          <td style="padding:14px 0;color:#1a2e1a;font-size:14px;font-weight:700">${isEn ? "Total" : "Yhteensä"}</td>
+          <td style="padding:14px 0;text-align:right;color:#2d5016;font-size:30px;font-weight:900">${Number(total).toFixed(0)} €</td>
         </tr>
       </table>
 
-      <!-- Kotitalousvähennys — the real price hero ─────────────────────── -->
+      <!-- Kotitalousvähennys -->
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px">
         <tr>
-          <td style="background:#f0fdf4;border-radius:12px;padding:18px 20px;border-left:4px solid #22c55e">
-            <p style="margin:0 0 6px;font-weight:700;color:#166534;font-size:10px;letter-spacing:1px;text-transform:uppercase">${isEn ? "HOUSEHOLD TAX DEDUCTION — YOUR ACTUAL COST" : "KOTITALOUSVÄHENNYS — TOSIASIALLINEN HINTASI"}</p>
-            <p style="margin:0 0 8px;color:#15803d;font-size:14px;line-height:1.65">
+          <td style="background:#f0fdf4;border-radius:10px;padding:16px 18px;border-left:4px solid #4ade80">
+            <p style="margin:0 0 5px;font-weight:700;color:#166534;font-size:10px;letter-spacing:1px;text-transform:uppercase">${isEn ? "HOUSEHOLD TAX DEDUCTION" : "KOTITALOUSVÄHENNYS"}</p>
+            <p style="margin:0 0 6px;color:#15803d;font-size:14px;line-height:1.65">
               ${isEn
-                ? `This service qualifies for the <strong>Finnish household tax deduction</strong>. You may reclaim approx. 35% of the labour portion from your taxes.`
-                : `Tämä palvelu on <strong>kotitalousvähennyskelpoinen</strong>. Työn osuudesta voit saada noin 35 % takaisin verotuksessa.`
-              }
-            </p>
-            <p style="margin:0;color:#16a34a;font-size:12px">
-              ${isEn
-                ? "After confirmation you will receive an invoice that serves as documentation for your tax return."
-                : "Tilauksen vahvistuksen jälkeen saat laskun, joka käy kotitalousvähennyksen dokumenttina verotukseen."}
+                ? `Qualifies for the <strong>Finnish household tax deduction</strong> — reclaim ~35% of the labour cost from your taxes. After deduction approx. <strong>${kotitalous} €</strong>.`
+                : `<strong>Kotitalousvähennyskelpoinen</strong> — noin 35 % työn osuudesta takaisin verotuksessa. Tosiasiallinen hinta n. <strong>${kotitalous} €</strong>.`}
             </p>
           </td>
         </tr>
       </table>
 
-      <!-- Miksi Puuhapatet ─────────────────────────────────────────────── -->
+      ${taloKeyPointsHtml}
+
+      <!-- Trust badges -->
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px">
         <tr>
-          <td style="background:#fafafa;border-radius:12px;padding:18px 20px;border:1px solid #e4e4e7">
-            <p style="margin:0 0 12px;font-weight:700;color:#18181b;font-size:10px;letter-spacing:1px;text-transform:uppercase">${isEn ? "WHY PUUHAPATET" : "MIKSI PUUHAPATET"}</p>
+          <td style="background:#f8fffe;border-radius:10px;padding:16px 18px;border:1px solid #d1f0d8">
             <table width="100%" cellpadding="0" cellspacing="0">
               ${[
-                { emoji: "✅", fi: "Kotitalousvähennyskelpoinen — jopa 40 % takaisin verotuksessa", en: "Tax-deductible household work — up to 40% back" },
-                { emoji: "⭐", fi: "Tyytyväisyystakuu — emme laskuta ennen kuin olet tyytyväinen", en: "Satisfaction guarantee — no invoice until you're happy" },
-                { emoji: "🔒", fi: "Vastuuvakuutettu työ — ei riskiä teille", en: "Fully insured work — zero risk for you" },
+                { emoji: "⭐", fi: "Tyytyväisyystakuu — ei laskua ennen kuin olet tyytyväinen", en: "Satisfaction guarantee — no invoice until you're happy" },
+                { emoji: "🔒", fi: "Vastuuvakuutettu työ", en: "Fully insured work" },
+                { emoji: "📋", fi: "Lasku toimii kotitalousvähennyksen dokumenttina", en: "Invoice serves as tax deduction documentation" },
               ].map(p => `
               <tr>
-                <td style="padding:5px 0;font-size:13px;color:#3f3f46;line-height:1.5">${p.emoji} ${isEn ? p.en : p.fi}</td>
+                <td style="padding:4px 0;font-size:13px;color:#2a3a2a;line-height:1.5">${p.emoji} ${isEn ? p.en : p.fi}</td>
               </tr>`).join("")}
             </table>
           </td>
         </tr>
       </table>
 
-      <!-- Validity ──────────────────────────────────────────────────────── -->
+      <!-- Validity note -->
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px">
         <tr>
-          <td style="background:#fffbeb;border-radius:12px;padding:14px 20px;border-left:4px solid #f59e0b">
+          <td style="background:#fffbeb;border-radius:10px;padding:12px 18px;border-left:4px solid #f59e0b">
             <p style="margin:0;color:#78350f;font-size:13px;line-height:1.6">
-              <strong>${isEn ? "Offer valid until" : "Tarjous voimassa"} ${validUntil}</strong>${isEn ? "." : " asti."}
-              ${isEn
-                ? " After this date prices may be revised — confirm early to lock in this price."
-                : " Tämän jälkeen hintoja saatetaan tarkistaa — vahvista ajoissa, niin hinta pysyy."}
+              <strong>${isEn ? "Valid until" : "Voimassa"} ${validUntil}</strong>${isEn ? "" : " asti"}${isEn ? " — confirm early to lock in the price." : " — vahvista ajoissa, niin hinta pysyy."}
             </p>
           </td>
         </tr>
       </table>
 
-      <!-- CTA ───────────────────────────────────────────────────────────── -->
-      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px">
+      <!-- CTA -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:26px">
         <tr>
-          <td style="text-align:center;padding:0 0 8px">
-            <p style="color:#52525b;font-size:14px;margin:0 0 16px;line-height:1.65">
-              ${isEn
-                ? "Ready to go? One call or click and we'll confirm the time."
-                : "Valmis? Yksi soitto tai klikkaus, ja vahvistetaan aika."}
+          <td style="text-align:center">
+            <p style="color:#4a6a4a;font-size:14px;margin:0 0 16px;line-height:1.65">
+              ${isTalo
+                ? (isEn ? "Share this link with all residents — each can confirm their apartment directly." : "Jaa tämä linkki kaikille asukkaille — jokainen voi vahvistaa oman asuntonsa suoraan.")
+                : (isEn ? "One click to confirm — we'll be in touch within the day." : "Yksi klikkaus riittää — olemme yhteydessä saman päivän aikana.")}
             </p>
             ${workerPhone
-              ? `<a href="tel:${workerPhone}" style="display:inline-block;background:#18181b;color:#ffffff;padding:13px 28px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;margin:4px">📞 ${isEn ? "Call us" : "Soita"} — ${workerPhone}</a>`
-              : ""
-            }
+              ? `<a href="tel:${workerPhone}" style="display:inline-block;background:#3d6620;color:#ffffff;padding:12px 26px;border-radius:10px;text-decoration:none;font-weight:700;font-size:14px;margin:4px">📞 ${isEn ? "Call us" : "Soita"} — ${workerPhone}</a>`
+              : ""}
             <br>
-            <a href="https://puuhapatet.fi/${quoteToken ? `tarjous/${quoteToken}` : "tilaus"}" style="display:inline-block;background:#2d5016;color:#ffffff;padding:13px 28px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;margin:8px 4px 4px">${isEn ? "View & accept quote →" : "Katso ja hyväksy tarjous →"}</a>
+            <a href="https://puuhapatet.fi/${quoteToken ? `tarjous/${quoteToken}` : "tilaus"}" style="display:inline-block;background:#2d5016;color:#ffffff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:800;font-size:15px;margin:8px 4px 4px;letter-spacing:0.3px">${isTalo ? (isEn ? "Open building quote →" : "Avaa taloyhtiötarjous →") : (isEn ? "View & accept quote →" : "Katso ja hyväksy tarjous →")}</a>
           </td>
         </tr>
       </table>
@@ -1440,18 +1475,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   <!-- FOOTER -->
   <tr>
-    <td style="background:#fafafa;border:1px solid #e4e4e7;border-top:none;border-radius:0 0 16px 16px;padding:18px 36px">
-      <table width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;color:#71717a">
+    <td style="background:#f0fdf4;border:1px solid #d1f0d8;border-top:none;border-radius:0 0 16px 16px;padding:16px 32px">
+      <table width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;color:#5a8a5a">
         <tr>
           <td style="vertical-align:top">
-            <strong style="color:#18181b">${workerName || "Puuhapatet"}</strong><br>
+            <strong style="color:#1a2e1a">${workerName || "Puuhapatet"}</strong><br>
             ${workerPhone ? `${workerPhone}<br>` : ""}
-            ${workerEmail ? `<a href="mailto:${workerEmail}" style="color:#71717a;text-decoration:none">${workerEmail}</a>` : ""}
+            ${workerEmail ? `<a href="mailto:${workerEmail}" style="color:#5a8a5a;text-decoration:none">${workerEmail}</a>` : ""}
           </td>
           <td style="text-align:right;vertical-align:top">
-            <strong style="color:#18181b">Puuhapatet</strong><br>
-            <a href="mailto:info@puuhapatet.fi" style="color:#71717a;text-decoration:none">info@puuhapatet.fi</a><br>
-            <a href="https://puuhapatet.fi" style="color:#71717a;text-decoration:none">puuhapatet.fi</a>
+            <strong style="color:#1a2e1a">Puuhapatet</strong><br>
+            <a href="mailto:info@puuhapatet.fi" style="color:#5a8a5a;text-decoration:none">info@puuhapatet.fi</a><br>
+            <a href="https://puuhapatet.fi" style="color:#5a8a5a;text-decoration:none">puuhapatet.fi</a>
           </td>
         </tr>
       </table>
@@ -1490,32 +1525,43 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const rows = await db
         .select({
-          id:            jobs.id,
-          description:   jobs.description,
-          agreedPrice:   jobs.agreedPrice,
-          scheduledAt:   jobs.scheduledAt,
-          quoteStatus:   jobs.quoteStatus,
-          quoteVideoUrl: jobs.quoteVideoUrl,
-          notes:         jobs.notes,
-          customerName:  customers.name,
-          customerAddress: customers.address,
+          id:                 jobs.id,
+          description:        jobs.description,
+          agreedPrice:        jobs.agreedPrice,
+          scheduledAt:        jobs.scheduledAt,
+          quoteStatus:        jobs.quoteStatus,
+          quoteVideoUrl:      jobs.quoteVideoUrl,
+          notes:              jobs.notes,
+          isTaloyhtiio:       jobs.isTaloyhtiio,
+          taloyhtiioApproved: jobs.taloyhtiioApproved,
+          unitCount:          jobs.unitCount,
+          propertyImageUrl:   jobs.propertyImageUrl,
+          taloyhtiioName:     jobs.taloyhtiioName,
+          unitResponses:      jobs.unitResponses,
+          customerName:       customers.name,
+          customerAddress:    customers.address,
         })
         .from(jobs)
         .innerJoin(customers, eq(jobs.customerId, customers.id))
         .where(eq(jobs.quoteToken, req.params.token));
       if (!rows.length) return res.status(404).json({ error: "Tarjousta ei löydy" });
       const row = rows[0];
-      // Derive quoteId from notes field (format: "Tarjous T-PP-xxx ...")
       const quoteIdMatch = row.notes?.match(/T-PP-[A-Z0-9-]+/);
       res.json({
-        quoteId:         quoteIdMatch ? quoteIdMatch[0] : req.params.token,
-        customerName:    row.customerName,
-        customerAddress: row.customerAddress,
-        description:     row.description,
-        agreedPriceCents: row.agreedPrice,
-        validUntil:      row.scheduledAt,
-        quoteStatus:     row.quoteStatus || "pending",
-        quoteVideoUrl:   row.quoteVideoUrl,
+        quoteId:            quoteIdMatch ? quoteIdMatch[0] : req.params.token,
+        customerName:       row.customerName,
+        customerAddress:    row.customerAddress,
+        description:        row.description,
+        agreedPriceCents:   row.agreedPrice,
+        validUntil:         row.scheduledAt,
+        quoteStatus:        row.quoteStatus || "pending",
+        quoteVideoUrl:      row.quoteVideoUrl,
+        isTaloyhtiio:       row.isTaloyhtiio || false,
+        taloyhtiioApproved: row.taloyhtiioApproved || false,
+        unitCount:          row.unitCount ?? null,
+        propertyImageUrl:   row.propertyImageUrl ?? null,
+        taloyhtiioName:     row.taloyhtiioName ?? null,
+        unitResponses:      row.unitResponses ? JSON.parse(row.unitResponses) : [],
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1524,16 +1570,37 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.post("/api/quote/:token/respond", async (req, res) => {
     try {
-      const { status, suggestedTimes, customerMessage } = req.body;
+      const { status, suggestedTimes, customerMessage, unitResponse } = req.body;
       if (!status || !["accepted", "declined"].includes(status)) {
         return res.status(400).json({ error: "Virheellinen status" });
       }
+
+      // Fetch current job to check for taloyhtiö and existing unit responses
+      const [current] = await db
+        .select({ unitResponses: jobs.unitResponses, isTaloyhtiio: jobs.isTaloyhtiio, description: jobs.description, agreedPrice: jobs.agreedPrice })
+        .from(jobs)
+        .where(eq(jobs.quoteToken, req.params.token));
+      if (!current) return res.status(404).json({ error: "Ei löydy" });
+
+      let newUnitResponses: string | null = null;
+      if (current.isTaloyhtiio && unitResponse) {
+        const existing: any[] = current.unitResponses ? JSON.parse(current.unitResponses) : [];
+        const idx = existing.findIndex((r: any) => r.unitId === unitResponse.unitId);
+        if (idx >= 0) {
+          existing[idx] = unitResponse;
+        } else {
+          existing.push(unitResponse);
+        }
+        newUnitResponses = JSON.stringify(existing);
+      }
+
       const [updated] = await db
         .update(jobs)
         .set({
           quoteStatus:     status,
           suggestedTimes:  suggestedTimes?.length ? JSON.stringify(suggestedTimes) : null,
           customerMessage: customerMessage || null,
+          ...(newUnitResponses !== null ? { unitResponses: newUnitResponses } : {}),
           updatedAt:       new Date(),
         })
         .where(eq(jobs.quoteToken, req.params.token))
@@ -1541,18 +1608,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!updated) return res.status(404).json({ error: "Ei löydy" });
 
       if (resend) {
-        const timesHtml = suggestedTimes?.length
-          ? `<p><strong>Ehdotetut ajat:</strong><br>${(suggestedTimes as string[]).filter(Boolean).map((t: string) => {
-            // datetime-local is "YYYY-MM-DDTHH:MM" with no timezone — format as literal
-            const [dp = "", tp = ""] = t.split("T");
-            const [y, mo, d] = dp.split("-");
-            const [hh, mm] = tp.split(":");
-            return `${d}.${mo}.${y} klo ${hh}:${mm}`;
-          }).join("<br>")}</p>`
-          : "";
-        const msgHtml = customerMessage
-          ? `<p><strong>Viesti:</strong><br>${(customerMessage as string).replace(/\n/g, "<br>")}</p>`
-          : "";
+        function fmtTime(t: string) {
+          const [dp = "", tp = ""] = t.split("T");
+          const [y, mo, d] = dp.split("-");
+          const [hh, mm] = tp.split(":");
+          return `${d}.${mo}.${y} klo ${hh}:${mm}`;
+        }
+        let timesHtml = "";
+        let unitHtml = "";
+        if (unitResponse) {
+          const unitTimes = (unitResponse.times as string[] || []).filter(Boolean).map(fmtTime).join("<br>");
+          unitHtml = `<p><strong>${unitResponse.unitName}:</strong> ${unitTimes || "Ei aikaehdotusta"}</p>`;
+          if (unitResponse.message) unitHtml += `<p><em>${unitResponse.message}</em></p>`;
+        } else if (suggestedTimes?.length) {
+          timesHtml = `<p><strong>Ehdotetut ajat:</strong><br>${(suggestedTimes as string[]).filter(Boolean).map(fmtTime).join("<br>")}</p>`;
+        }
+        const msgHtml = customerMessage ? `<p><strong>Viesti:</strong><br>${(customerMessage as string).replace(/\n/g, "<br>")}</p>` : "";
         await resend.emails.send({
           from: FROM_EMAIL,
           to: WORKER_NOTIFICATION_EMAILS,
@@ -1561,12 +1632,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             <h2 style="color:#2d5016">Tarjous ${status === "accepted" ? "hyväksytty ✓" : "hylätty"}</h2>
             <p><strong>Palvelu:</strong> ${updated.description}</p>
             <p><strong>Hinta:</strong> ${((updated.agreedPrice ?? 0) / 100).toFixed(0)} €</p>
-            ${timesHtml}${msgHtml}
+            ${unitHtml}${timesHtml}${msgHtml}
             <hr>
             <p style="color:#888;font-size:12px">Puuhapatet Admin</p>
           </div>`,
         });
       }
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Approve a taloyhtiö quote for resident sharing
+  app.patch("/api/jobs/:id/taloyhtiio-approve", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { approved } = req.body;
+      await db.update(jobs).set({ taloyhtiioApproved: !!approved, updatedAt: new Date() }).where(eq(jobs.id, id));
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

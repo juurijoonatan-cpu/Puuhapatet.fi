@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import {
   ArrowLeft, Plus, Trash2, Send, Check, Loader2,
-  ChevronDown, ChevronUp, Home, Leaf, Wrench, X, Monitor,
+  ChevronDown, ChevronUp, Home, Leaf, Wrench, X, Monitor, Building2,
 } from "lucide-react";
 import { QuotePresentation } from "@/components/quote-presentation";
 import { useLocation } from "wouter";
@@ -143,6 +143,12 @@ export default function AdminQuotesPage() {
   const [validDays,     setValidDays]     = useState(14);
   const [customMessage, setCustomMessage] = useState("");
   const [quoteVideoUrl, setQuoteVideoUrl] = useState("");
+
+  // Taloyhtiö mode
+  const [isTaloyhtiio,    setIsTaloyhtiio]    = useState(false);
+  const [taloyhtiioName,  setTaloyhtiioName]  = useState("");
+  const [unitCount,       setUnitCount]       = useState<number | "">(0);
+  const [propertyImageUrl,setPropertyImageUrl]= useState("");
 
   // BCC to other worker
   const profile     = getAdminProfile();
@@ -318,15 +324,19 @@ export default function AdminQuotesPage() {
       const description = serviceItems.map(i => i.title).join(" + ");
       const scheduledAt = new Date(Date.now() + validDays * 24 * 60 * 60 * 1000).toISOString();
       const jobRes = await api.createJob({
-        customerId:   custId,
+        customerId:      custId,
         description,
-        agreedPrice:  Math.round(total * 100),
-        status:       "lead",
+        agreedPrice:     Math.round(total * 100),
+        status:          "lead",
         scheduledAt,
-        assignedTo:   profile?.id || undefined,
-        notes:        `Tarjous ${quoteId} lähetetty ${new Date().toLocaleDateString("fi-FI")}`,
+        assignedTo:      profile?.id || undefined,
+        notes:           `Tarjous ${quoteId} lähetetty ${new Date().toLocaleDateString("fi-FI")}`,
         quoteToken,
-        quoteVideoUrl: quoteVideoUrl.trim() || undefined,
+        quoteVideoUrl:   quoteVideoUrl.trim() || undefined,
+        isTaloyhtiio:    isTaloyhtiio || undefined,
+        taloyhtiioName:  isTaloyhtiio ? (taloyhtiioName.trim() || undefined) : undefined,
+        unitCount:       isTaloyhtiio && unitCount ? Number(unitCount) : undefined,
+        propertyImageUrl: isTaloyhtiio ? (propertyImageUrl.trim() || undefined) : undefined,
       });
       if (jobRes.ok && jobRes.data) {
         setCreatedJobId((jobRes.data as { id: number }).id);
@@ -357,11 +367,15 @@ export default function AdminQuotesPage() {
       })),
       total,
       validDays,
-      customMessage: customMessage.trim() || undefined,
-      workerName:    profile?.name,
-      workerPhone:   profile?.phone,
-      workerEmail:   profile?.email,
+      customMessage:   customMessage.trim() || undefined,
+      workerName:      profile?.name,
+      workerPhone:     profile?.phone,
+      workerEmail:     profile?.email,
       lang,
+      isTaloyhtiio:    isTaloyhtiio || undefined,
+      taloyhtiioName:  isTaloyhtiio ? (taloyhtiioName.trim() || undefined) : undefined,
+      unitCount:       isTaloyhtiio && unitCount ? Number(unitCount) : undefined,
+      propertyImageUrl: isTaloyhtiio ? (propertyImageUrl.trim() || undefined) : undefined,
     });
 
     setSending(false);
@@ -881,6 +895,70 @@ export default function AdminQuotesPage() {
             <Input value={quoteVideoUrl} onChange={e => setQuoteVideoUrl(e.target.value)}
               type="url" placeholder="https://youtube.com/..." className="text-sm" />
           </div>
+
+          {/* Taloyhtiö toggle */}
+          <div className="mb-4">
+            <button
+              type="button"
+              onClick={() => setIsTaloyhtiio(v => !v)}
+              className={cn(
+                "w-full flex items-center justify-between rounded-xl px-4 py-3 border transition-colors text-sm",
+                isTaloyhtiio ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-900/20" : "border-border hover:bg-muted/30"
+              )}
+            >
+              <span className="flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-emerald-700 dark:text-emerald-400" />
+                <span>
+                  <strong>Taloyhtiötarjous</strong>
+                  <span className="font-normal text-muted-foreground ml-1">— jaettavissa usealle asunnolle</span>
+                </span>
+              </span>
+              <div className={cn(
+                "w-10 h-6 rounded-full transition-colors relative shrink-0",
+                isTaloyhtiio ? "bg-emerald-600" : "bg-muted"
+              )}>
+                <div className={cn(
+                  "absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform",
+                  isTaloyhtiio ? "translate-x-5" : "translate-x-1"
+                )} />
+              </div>
+            </button>
+          </div>
+
+          {/* Taloyhtiö fields */}
+          {isTaloyhtiio && (
+            <div className="border border-emerald-200 dark:border-emerald-800 rounded-xl p-4 space-y-3 mb-4 bg-emerald-50/50 dark:bg-emerald-900/10">
+              <p className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-widest">Taloyhtiön tiedot</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1.5">Taloyhtiön nimi</p>
+                  <Input value={taloyhtiioName} onChange={e => setTaloyhtiioName(e.target.value)}
+                    placeholder="As Oy Esimerkki" className="text-sm" />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1.5">Huoneistojen lukumäärä</p>
+                  <Input
+                    type="number"
+                    value={unitCount}
+                    onChange={e => setUnitCount(e.target.value === "" ? "" : Math.max(1, Number(e.target.value)))}
+                    placeholder="12"
+                    min={1}
+                    className="text-sm"
+                  />
+                </div>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">
+                  Kiinteistön kuva <span className="font-normal">(valinnainen — suora kuvalinkki)</span>
+                </p>
+                <Input value={propertyImageUrl} onChange={e => setPropertyImageUrl(e.target.value)}
+                  type="url" placeholder="https://..." className="text-sm" />
+              </div>
+              <p className="text-xs text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg px-3 py-2">
+                Lähetä ensin tarjous hallituksen jäsenelle tai isännöitsijälle. Hyväksy sen jälkeen tarjous <strong>keikkalistasta</strong>, jolloin linkki toimii kaikille asukkaille.
+              </p>
+            </div>
+          )}
 
           {/* BCC to other worker */}
           {otherWorker && (

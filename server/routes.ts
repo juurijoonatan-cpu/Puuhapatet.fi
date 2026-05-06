@@ -4,6 +4,7 @@ import { eq, desc, sql, ne, and } from "drizzle-orm";
 import { Resend } from "resend";
 import bwipjs from "bwip-js";
 import PDFDocument from "pdfkit";
+import rateLimit from "express-rate-limit";
 import { db } from "./db";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 
@@ -12,6 +13,12 @@ const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KE
 const FROM_EMAIL = process.env.FROM_EMAIL || "Puuhapatet <onboarding@resend.dev>";
 // Optional: protect the calendar feed with a token (set CALENDAR_TOKEN env var on Render)
 const CALENDAR_TOKEN = process.env.CALENDAR_TOKEN || null;
+// Notification email list — override via WORKER_EMAILS env var (comma-separated)
+const WORKER_NOTIFICATION_EMAILS: string[] = process.env.WORKER_EMAILS
+  ? process.env.WORKER_EMAILS.split(",").map(e => e.trim()).filter(Boolean)
+  : ["joonatan@puuhapatet.fi", "matias@puuhapatet.fi"];
+// Admin / contact-form recipient
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "joonatan@puuhapatet.fi";
 
 function escapeIcs(str: string): string {
   return str.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
@@ -192,6 +199,28 @@ function generateKotitalousReceiptPdf(params: {
 
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+
+  // ─── Rate limiters ────────────────────────────────────────────────────────────
+  const emailLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 15,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Liian monta pyyntöä. Yritä tunnin kuluttua." },
+  });
+  const contactLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 8,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Liian monta pyyntöä. Yritä tunnin kuluttua." },
+  });
+  app.use("/api/send-receipt",      emailLimiter);
+  app.use("/api/send-job-summary",  emailLimiter);
+  app.use("/api/send-progress-update", emailLimiter);
+  app.use("/api/send-quote",        emailLimiter);
+  app.use("/api/contact",           contactLimiter);
+  app.use("/api/it-contact",        contactLimiter);
 
   // ─── Health ──────────────────────────────────────────────────────────────────
   app.get("/api/health", (_req, res) => {
@@ -434,27 +463,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.get("/api/stats", async (_req, res) => {
     try {
-      // Counts: all non-cancelled jobs
+      // Counts in a single query
       const [counts] = await db.select({
         totalJobs: sql<number>`count(*) filter (where ${jobs.status} != 'cancelled')`,
         upcoming:  sql<number>`count(*) filter (where ${jobs.status} = 'scheduled')`,
       }).from(jobs);
 
-      // Financial figures: done jobs only (completed work)
-      const doneJobs = await db.select().from(jobs).where(eq(jobs.status, "done"));
-      const allExpenses = await db.select().from(expenses);
-
-      const expensesByJob: Record<number, number> = {};
-      for (const e of allExpenses) {
-        expensesByJob[e.jobId] = (expensesByJob[e.jobId] ?? 0) + e.amount;
-      }
+      // Financial figures: done jobs with their expenses summed in one LEFT JOIN query
+      const doneJobsWithExp = await db.select({
+        id:          jobs.id,
+        agreedPrice: jobs.agreedPrice,
+        waiveFee:    jobs.waiveFee,
+        jobExpenses: sql<number>`coalesce(sum(${expenses.amount}), 0)`,
+      }).from(jobs)
+        .leftJoin(expenses, eq(expenses.jobId, jobs.id))
+        .where(eq(jobs.status, "done"))
+        .groupBy(jobs.id, jobs.agreedPrice, jobs.waiveFee);
 
       let totalRevenue = 0, totalExpenses = 0, serviceFeeTotal = 0;
-      for (const job of doneJobs) {
-        const jobExp = expensesByJob[job.id] ?? 0;
+      for (const job of doneJobsWithExp) {
+        const jobExp = Number(job.jobExpenses);
         totalRevenue += job.agreedPrice;
         totalExpenses += jobExp;
-        // Service fee: 10% of net revenue (same formula as workers/stats)
         serviceFeeTotal += job.waiveFee ? 0 : Math.round(Math.max(0, job.agreedPrice - jobExp) * 0.10);
       }
       const netIncome = totalRevenue - totalExpenses - serviceFeeTotal;
@@ -491,25 +521,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Returns accumulated service-fee debt per worker (fees earned − payments made)
   app.get("/api/workers/stats", async (_req, res) => {
     try {
-      const doneJobs = await db.select().from(jobs).where(eq(jobs.status, "done"));
-      const allExpenses = await db.select().from(expenses);
-      const allPayments = await db.select().from(workerPayments);
+      // Done jobs with per-job expense totals in one query
+      const doneJobsWithExp = await db.select({
+        id:          jobs.id,
+        agreedPrice: jobs.agreedPrice,
+        waiveFee:    jobs.waiveFee,
+        assignedTo:  jobs.assignedTo,
+        jobExpenses: sql<number>`coalesce(sum(${expenses.amount}), 0)`,
+      }).from(jobs)
+        .leftJoin(expenses, eq(expenses.jobId, jobs.id))
+        .where(eq(jobs.status, "done"))
+        .groupBy(jobs.id, jobs.agreedPrice, jobs.waiveFee, jobs.assignedTo);
 
-      const expensesByJob: Record<number, number> = {};
-      for (const e of allExpenses) {
-        expensesByJob[e.jobId] = (expensesByJob[e.jobId] ?? 0) + e.amount;
-      }
+      // Payment totals aggregated per worker in one query
+      const paymentRows = await db.select({
+        workerId:  workerPayments.workerId,
+        totalPaid: sql<number>`sum(${workerPayments.amountPaid})`,
+      }).from(workerPayments).groupBy(workerPayments.workerId);
 
       const totalPaidByWorker: Record<string, number> = {};
-      for (const p of allPayments) {
-        totalPaidByWorker[p.workerId] = (totalPaidByWorker[p.workerId] ?? 0) + p.amountPaid;
+      for (const p of paymentRows) {
+        totalPaidByWorker[p.workerId] = Number(p.totalPaid);
       }
 
       const workerFeesTotal: Record<string, number> = {};
       const workerJobCount: Record<string, number> = {};
 
-      for (const job of doneJobs) {
-        const jobExpenses = expensesByJob[job.id] ?? 0;
+      for (const job of doneJobsWithExp) {
+        const jobExpenses = Number(job.jobExpenses);
         const netRevenue = Math.max(0, job.agreedPrice - jobExpenses);
         const serviceFee = job.waiveFee ? 0 : Math.round(netRevenue * 0.10);
         const workerIds = normalizeWorkerIds(job.assignedTo);
@@ -756,8 +795,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         <p style="margin:0 0 6px;font-weight:700;color:#065f46;font-size:13px">${isEn ? "HOUSEHOLD TAX DEDUCTION (KOTITALOUSVÄHENNYS)" : "MUISTA KOTITALOUSVÄHENNYS"}</p>
         <p style="margin:0;color:#047857;font-size:13px;line-height:1.6">
           ${isEn
-            ? `This service qualifies for the Finnish <strong>household tax deduction</strong>. You can reclaim 35% of the labour cost in your taxes — up to €2,250 per person per year. This invoice serves as documentation, no separate receipt needed.<br><br>More info: <a href="https://vero.fi/en/individuals/tax-cards-and-tax-returns/deductions/household-deduction/" style="color:#047857;font-weight:600">vero.fi (household deduction)</a>`
-            : `Tämä palvelu on <strong>kotitalousvähennyskelpoinen</strong>. Voit hakea verotuksessa 35 % työn osuudesta takaisin — enintään 2 250 € / henkilö / vuosi. Lasku toimii dokumenttina, ei erillistä kuittia tarvita.<br><br>Lisätietoa: <a href="https://vero.fi/kotitalousvahennys" style="color:#047857;font-weight:600">vero.fi/kotitalousvähennys</a>`
+            ? `This service is typically eligible for the Finnish <strong>household tax deduction</strong>. You may reclaim approximately 35% of the labour cost in your taxes — up to €2,250 per person per year. This invoice serves as documentation, no separate receipt needed. Confirm eligibility at vero.fi or with a tax adviser.<br><br>More info: <a href="https://vero.fi/en/individuals/tax-cards-and-tax-returns/deductions/household-deduction/" style="color:#047857;font-weight:600">vero.fi (household deduction)</a>`
+            : `Tämä palvelu on tyypillisesti <strong>kotitalousvähennyskelpoinen</strong>. Voit hakea verotuksessa noin 35 % työn osuudesta takaisin — enintään 2 250 € / henkilö / vuosi. Lasku toimii dokumenttina, ei erillistä kuittia tarvita. Tarkista soveltuvuus osoitteessa vero.fi tai veroneuvojalta.<br><br>Lisätietoa: <a href="https://vero.fi/kotitalousvahennys" style="color:#047857;font-weight:600">vero.fi/kotitalousvähennys</a>`
           }
         </p>
       </div>
@@ -1083,8 +1122,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           <p style="margin:0 0 4px;font-weight:600;color:#374151;font-size:12px">${isEn ? "HOUSEHOLD TAX DEDUCTION" : "KOTITALOUSVÄHENNYS"}</p>
           <p style="margin:0;color:#6b7280;font-size:12px;line-height:1.6">
             ${isEn
-              ? "This document qualifies as proof for the Finnish household tax deduction (~35% of the labour cost, up to €2,250/person/year). No separate receipt needed."
-              : "Tämä lasku käy kotitalousvähennyksen dokumenttina (~35 % työn osuudesta, enintään 2 250 € / henkilö / vuosi). Erillistä kuittia ei tarvita."}
+              ? "This document may serve as proof for the Finnish household tax deduction (~35% of the labour cost, up to €2,250/person/year). Confirm eligibility at vero.fi or with a tax adviser. No separate receipt needed."
+              : "Tämä lasku voi toimia kotitalousvähennyksen dokumenttina (~35 % työn osuudesta, enintään 2 250 € / henkilö / vuosi). Tarkista soveltuvuus osoitteessa vero.fi tai veroneuvojalta. Erillistä kuittia ei tarvita."}
           </p>
         </div>` : "";
 
@@ -1435,8 +1474,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const taloName = taloyhtiioName || customerName;
         const units = unitCount ? ` (${unitCount} huoneistoa)` : "";
         defaultIntro = isEn
-          ? `Hello. Here's our quote for ${taloName}${units}. We coordinate directly with the building management — residents don't need to be home. One professional visit, the whole property done to standard.`
-          : `Hei. Tässä on tarjouksemme kohteelle ${taloName}${units}. Hoidamme koko kiinteistön yhdellä käynnillä ja koordinoinnin suoraan taloyhtiön kanssa — asukkaiden ei tarvitse olla paikalla.`;
+          ? `Hello. Here's our quote for ${taloName}${units}. We coordinate directly with the building management and handle the entire property professionally — residents don't need to be home.`
+          : `Hei. Tässä on tarjouksemme kohteelle ${taloName}${units}. Hoidamme koko kiinteistön ammattimaisesti ja koordinoinnin suoraan taloyhtiön kanssa — asukkaiden ei tarvitse olla paikalla.`;
       } else {
         defaultIntro = isEn
           ? `Hello ${firstName}. Here's your quote. Pricing is straightforward — no extras, no surprises. Call us if anything needs adjusting.`
@@ -1469,10 +1508,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             <p style="margin:0 0 12px;font-weight:700;color:#166534;font-size:10px;letter-spacing:1.5px;text-transform:uppercase">${isEn ? "KEY POINTS FOR THE BUILDING" : "TALOYHTIÖLLE TÄRKEÄÄ"}</p>
             <table width="100%" cellpadding="0" cellspacing="0">
               ${[
-                { fi: `Yksi käynti — koko kiinteistö hoidetaan kerralla${unitCount ? `, ${unitCount} huoneistoa` : ""}`, en: `One visit — entire property done in one go${unitCount ? `, ${unitCount} units` : ""}` },
+                { fi: `Koko kiinteistö hoidetaan ammattimaisesti${unitCount ? ` — ${unitCount} huoneistoa` : ""}`, en: `Entire property handled professionally${unitCount ? ` — ${unitCount} units` : ""}` },
                 { fi: "Koordinointi hallituksen tai isännöitsijän kanssa — asukkaat eivät tarvitse olla paikalla", en: "Coordinated with building management — residents don't need to be home" },
                 { fi: "Selkeä dokumentointi ja lasku taloyhtiön kirjanpitoon", en: "Clear documentation and invoice for building records" },
-                { fi: "Ammattitaitoiset tekijät — työn laatu taattu", en: "Professional workers — quality guaranteed" },
+                { fi: "Ammattitaitoiset tekijät — työn laatu vastaa sovittua", en: "Professional workers — work quality as agreed" },
               ].map(p => `
               <tr>
                 <td style="padding:5px 0;font-size:13px;color:#1a3a1a;line-height:1.5">✓ ${isEn ? p.en : p.fi}</td>
@@ -1579,7 +1618,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       <!-- Kotitalousvähennys footnote (non-yritys, non-talo) -->
       ${!req.body.isYritys && !isTalo ? `
       <p style="margin:8px 0 0;color:#6a8a6a;font-size:11px;line-height:1.6">
-        ${isEn ? "* This service qualifies for the Finnish household tax deduction. More info: <a href='https://vero.fi/kotitalousvahennys' style='color:#4a7a4a'>vero.fi</a>" : "* Palvelu on kotitalousvähennyskelpoinen. Lisätietoa: <a href='https://vero.fi/kotitalousvahennys' style='color:#4a7a4a'>vero.fi/kotitalousvähennys</a>"}
+        ${isEn ? "* This service is typically eligible for the Finnish household tax deduction — confirm at <a href='https://vero.fi/en/individuals/tax-cards-and-tax-returns/deductions/household-deduction/' style='color:#4a7a4a'>vero.fi</a>" : "* Palvelu on tyypillisesti kotitalousvähennyskelpoinen — tarkista soveltuvuus: <a href='https://vero.fi/kotitalousvahennys' style='color:#4a7a4a'>vero.fi/kotitalousvähennys</a>"}
       </p>` : ""}
 
       ${taloKeyPointsHtml}
@@ -1590,8 +1629,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           <td style="background:#f8fffe;border-radius:10px;padding:16px 18px;border:1px solid #d1f0d8">
             <table width="100%" cellpadding="0" cellspacing="0">
               ${[
-                { emoji: "⭐", fi: "Tyytyväisyystakuu — työtulos on sovitun mukainen tai korjaamme sen", en: "Satisfaction guarantee — the result matches what was agreed" },
-                { emoji: "🔒", fi: "Vastuuvakuutettu — mahdolliset vahingot katettu", en: "Fully insured — any damage is covered" },
+                { emoji: "⭐", fi: "Tyytyväisyystakuu — mikäli tulos ei vastaa sovittua, korjaamme sen maksutta. Reklamaatiot: info@puuhapatet.fi", en: "Satisfaction guarantee — if the result doesn't match what was agreed, we'll redo it free of charge. Claims: info@puuhapatet.fi" },
+                { emoji: "🔒", fi: "Vastuuvakuutettu — toiminnassamme aiheutuneet vahingot katetaan vastuuvakuutuksemme puitteissa", en: "Liability insured — damages caused during our work are covered under our liability insurance policy" },
                 { emoji: "✓",  fi: "Selkeä hinnoittelu — ei piilokuluja", en: "Transparent pricing — no hidden costs" },
               ].map(p => `
               <tr>
@@ -1620,7 +1659,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             <p style="color:#4a6a4a;font-size:14px;margin:0 0 16px;line-height:1.65">
               ${isTalo
                 ? (isEn ? "Share this link with all residents — each can confirm their apartment directly." : "Jaa tämä linkki kaikille asukkaille — jokainen voi vahvistaa oman asuntonsa suoraan.")
-                : (isEn ? "One click to confirm — we'll be in touch within the day." : "Yksi klikkaus riittää — olemme yhteydessä saman päivän aikana.")}
+                : (isEn ? "One click to confirm — we'll be in touch shortly." : "Yksi klikkaus riittää — olemme yhteydessä pikaisesti.")}
             </p>
             ${workerPhone
               ? `<a href="tel:${workerPhone}" style="display:inline-block;background:#3d6620;color:#ffffff;padding:12px 26px;border-radius:10px;text-decoration:none;font-weight:700;font-size:14px;margin:4px">📞 ${isEn ? "Call us" : "Soita"} — ${workerPhone}</a>`
@@ -1682,8 +1721,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // ─── Public quote portal endpoints ──────────────────────────────────────────
-
-  const WORKER_NOTIFICATION_EMAILS = ["joonatan@puuhapatet.fi", "matias@puuhapatet.fi"];
 
   app.get("/api/quote/:token", async (req, res) => {
     try {
@@ -1898,8 +1935,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // Known workers (for email lookup — mirrors client admin-profile.ts)
   const WORKER_INFO: Record<string, { name: string; email: string | null }> = {
-    joonatan: { name: "Joonatan Juuri",   email: "joonatan@puuhapatet.fi" },
-    matias:   { name: "Matias Pitkänen",  email: "matias@puuhapatet.fi" },
+    joonatan: { name: process.env.WORKER_JOONATAN_NAME || "Joonatan Juuri",  email: process.env.WORKER_JOONATAN_EMAIL || "joonatan@puuhapatet.fi" },
+    matias:   { name: process.env.WORKER_MATIAS_NAME  || "Matias Pitkänen", email: process.env.WORKER_MATIAS_EMAIL  || "matias@puuhapatet.fi" },
     testi1:   { name: "Testi Ykkönen",    email: null },
     testi2:   { name: "Testi Kakkonen",   email: null },
   };
@@ -2063,7 +2100,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
       await resend.emails.send({
         from: FROM_EMAIL,
-        to: ["joonatan@puuhapatet.fi"],
+        to: [ADMIN_EMAIL],
         replyTo: email || undefined,
         subject: `Yhteydenotto: ${name} — ${urgencyLabel}`,
         html,
@@ -2158,7 +2195,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
       await resend.emails.send({
         from: FROM_EMAIL,
-        to: ["joonatan@puuhapatet.fi"],
+        to: [ADMIN_EMAIL],
         replyTo: email,
         subject: `IT-yhteydenotto: ${name}${company ? ` (${company})` : ""} — ${serviceLabel}`,
         html,

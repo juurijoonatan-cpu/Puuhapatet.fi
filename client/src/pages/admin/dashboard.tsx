@@ -132,18 +132,20 @@ export default function AdminDashboard() {
           bgColor: "bg-orange-100 dark:bg-orange-900/30",
         },
         {
-          title: "Valmistuneet",
-          value: myJobCount === null ? "…" : String(myJobCount),
+          title: "Bruttotulo",
+          value: myRevenue === null ? "…" : fmt(Math.max(0, myRevenue - (myInvestmentShare ?? 0))),
           icon: TrendingUp,
-          description: "Valmistuneet omat keikat",
+          description: myInvestmentShare
+            ? `Keikat ${myRevenue !== null ? fmt(myRevenue) : "…"} − investoinnit ${fmt(myInvestmentShare)} (ennen palvelumaksua)`
+            : `${myJobCount ?? "…"} valmistunutta keikkaa — ennen kuluja ja palvelumaksua`,
           color: "text-green-600 dark:text-green-400",
           bgColor: "bg-green-100 dark:bg-green-900/30",
         },
         {
-          title: "Oma palveluvelka",
+          title: "Palveluvelka",
           value: myDebt === null ? "…" : fmt(myDebt),
           icon: Banknote,
-          description: "10 % brändille maksamatta",
+          description: "10 % brändille — maksamatta",
           color: "text-purple-600 dark:text-purple-400",
           bgColor: "bg-purple-100 dark:bg-purple-900/30",
         },
@@ -176,6 +178,34 @@ export default function AdminDashboard() {
             );
           })}
         </div>
+
+        {/* STAFF: personal earnings breakdown note */}
+        {!isHost && myRevenue !== null && myRevenue > 0 && (
+          <Card className="p-4 bg-card border-0 premium-shadow mb-6">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+              Tilitys — erittely
+            </p>
+            <div className="space-y-1.5 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Bruttotulo (keikat)</span>
+                <span className="font-medium text-foreground">{fmt(Math.max(0, myRevenue - (myInvestmentShare ?? 0)))}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">− Palvelumaksu ~10 %</span>
+                <span className="text-purple-600 dark:text-purple-400">−{fmt(Math.round(Math.max(0, myRevenue - (myInvestmentShare ?? 0)) * 0.10))}</span>
+              </div>
+              <div className="flex justify-between border-t pt-1.5 mt-1">
+                <span className="text-muted-foreground">≈ Nettotulo</span>
+                <span className="font-bold text-green-600 dark:text-green-400">
+                  {fmt(Math.round(Math.max(0, myRevenue - (myInvestmentShare ?? 0)) * 0.90))}
+                </span>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground mt-3">
+              Arvio — tarkka netto riippuu kirjatuista kuluista. Katso täsmälliset luvut Verotulosteesta.
+            </p>
+          </Card>
+        )}
 
         {/* Revenue breakdown — HOST: team view, STAFF: personal earnings link */}
         {!loading && stats && isHost && (

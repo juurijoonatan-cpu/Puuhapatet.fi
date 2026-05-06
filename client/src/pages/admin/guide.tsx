@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, ChevronDown, ChevronUp, Phone, Mail, AlertTriangle, Star, ClipboardList, Euro, Users, Shield, Laptop, FileText } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, Phone, Mail, AlertTriangle, Star, ClipboardList, Euro, Users, Shield, Laptop, FileText, Award } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -431,6 +431,54 @@ const sections: Section[] = [
     ),
   },
   {
+    id: "brand",
+    icon: Award,
+    title: "Brändi & materiaalit",
+    color: "text-rose-600 dark:text-rose-400",
+    bg: "bg-rose-100 dark:bg-rose-900/30",
+    content: (
+      <div>
+        <H>Logo ja visuaalinen ilme</H>
+        <ul className="space-y-1.5 mb-3">
+          <Li>Puuhapatet-logo on pyöreä, vihreä tunnus — käytä vain virallisia versioita</Li>
+          <Li>Älä muuta värejä, venytä tai leikkaa logoa</Li>
+          <Li>Logo löytyy Joonatanilta tiedostona — pyydä tarvittaessa</Li>
+        </ul>
+
+        <H>Flaierit ja markkinointimateriaalit</H>
+        <ul className="space-y-1.5 mb-3">
+          <Li>Flaierit saat Joonatanilta — jätä niitä postilaatikkoihin keikkojen yhteydessä</Li>
+          <Li>Ehdota aina lähialueen taloja/asuntoja, kun olet jo paikalla</Li>
+          <Li>Flaieri sisältää QR-koodin → asiakas pääsee suoraan tarjouspyyntöön</Li>
+          <Li>Kysy Joonatanilta lisää materiaaleja kun varasto loppuu</Li>
+        </ul>
+
+        <H>Sosiaalinen media</H>
+        <ul className="space-y-1.5 mb-3">
+          <Li>Voit jakaa kuvia valmiista töistä — pyydä aina asiakkaan lupa ensin</Li>
+          <Li>Tägää @puuhapatet tai käytä #puuhapatet julkaisuissa</Li>
+          <Li>Ei negatiivisia kommentteja kilpailijoista julkisesti</Li>
+          <Li>Ennen/jälkeen -kuvat ovat parasta markkinointia — ota ne rutiinisti</Li>
+        </ul>
+
+        <H>Asiakasviestintä brändin nimissä</H>
+        <ul className="space-y-1.5 mb-3">
+          <Li>Esittele itsesi aina: <em>"Hei, olen [nimi] Puuhapatateilta"</em></Li>
+          <Li>Sähköpostiviestit lähetetään järjestelmän kautta — älä lähetä omalta osoitteelta</Li>
+          <Li>Asiakkaalle annettavat hinnat ovat aina järjestelmän mukaisia — ei suullisia omia hintoja</Li>
+        </ul>
+
+        <div className="bg-rose-50 dark:bg-rose-900/20 rounded-xl p-3 border border-rose-200 dark:border-rose-800">
+          <p className="text-xs font-bold text-rose-800 dark:text-rose-300 mb-1">Muista</p>
+          <p className="text-xs text-rose-700 dark:text-rose-400">
+            Jokainen kohtaaminen — puhelimessa, pihalla tai netissä — on Puuhapatet-brändin mainos.
+            Ammattimaisuus on tärkein kilpailuetumme.
+          </p>
+        </div>
+      </div>
+    ),
+  },
+  {
     id: "contact",
     icon: Phone,
     title: "Yhteystiedot — apua ongelmiin",
@@ -447,8 +495,8 @@ const sections: Section[] = [
             <div>
               <p className="font-semibold text-foreground text-sm">Joonatan Juuri</p>
               <p className="text-xs text-muted-foreground mb-1.5">Perustaja · päävastuuhenkilö</p>
-              <a href="tel:+358451234567" className="flex items-center gap-1.5 text-sm text-primary">
-                <Phone className="w-3.5 h-3.5" /> +358 45 123 4567
+              <a href="tel:+358400389999" className="flex items-center gap-1.5 text-sm text-primary">
+                <Phone className="w-3.5 h-3.5" /> +358 400 389 999
               </a>
             </div>
           </div>
@@ -459,8 +507,8 @@ const sections: Section[] = [
             <div>
               <p className="font-semibold text-foreground text-sm">Matias Pitkänen</p>
               <p className="text-xs text-muted-foreground mb-1.5">Perustaja · operatiivinen</p>
-              <a href="tel:+358457654321" className="flex items-center gap-1.5 text-sm text-primary">
-                <Phone className="w-3.5 h-3.5" /> +358 45 765 4321
+              <a href="tel:+358442350881" className="flex items-center gap-1.5 text-sm text-primary">
+                <Phone className="w-3.5 h-3.5" /> +358 44 235 0881
               </a>
             </div>
           </div>

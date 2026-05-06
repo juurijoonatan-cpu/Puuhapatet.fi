@@ -57,11 +57,15 @@ export const USERS: AdminProfile[] = [
     address: "Haapaniemenrinne 5A, 02940 Espoo",
   },
   {
-    id: "testi1",
-    name: "Testi Ykkönen",
+    id: "petrus",
+    name: "Petrus Aalto",
     role: "STAFF",
-    phone: "+358000000001",
-    isUnder18: false,
+    phone: "",          // päivitetään myöhemmin
+    email: "",          // päivitetään myöhemmin
+    yTunnus: "",        // lisätään myöhemmin
+    hasYTunnus: true,
+    isUnder18: true,    // alle 18v
+    startupBonus: 30000, // 300 €
   },
   {
     id: "testi2",

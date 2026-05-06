@@ -72,6 +72,9 @@ interface JobRow {
     unitCount: number | null;
     unitResponses: string | null;
     isYritys: boolean | null;
+    boardContactName: string | null;
+    boardContactEmail: string | null;
+    boardContactPhone: string | null;
   };
   customer: {
     id: number;
@@ -910,17 +913,54 @@ export default function AdminJobsPage() {
                   if (times.length > 0) return (
                     <div className="mb-3">
                       <p className="text-xs text-muted-foreground mb-1">Ehdotetut ajankohdat</p>
-                      <div className="space-y-1">
+                      <div className="space-y-1.5">
                         {times.map((t, i) => (
-                          <p key={i} className="text-sm text-foreground bg-background rounded-lg px-3 py-1.5">
-                            {formatSuggestedTime(t)}
-                          </p>
+                          <div key={i} className="flex items-center gap-2 bg-background rounded-lg px-3 py-1.5">
+                            <span className="text-sm text-foreground flex-1">{formatSuggestedTime(t)}</span>
+                            {job.scheduledAt === t ? (
+                              <span className="text-xs font-semibold text-emerald-600 shrink-0">✓ Valittu</span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const res = await api.updateJob(job.id, { scheduledAt: t });
+                                  if (res.ok) {
+                                    setSelected(prev => prev ? { ...prev, job: { ...prev.job, scheduledAt: t } } : null);
+                                    setJobs(prev => prev.map(r => r.job.id === job.id ? { ...r, job: { ...r.job, scheduledAt: t } } : r));
+                                    toast({ title: "Ajankohta asetettu ✓" });
+                                  }
+                                }}
+                                className="text-xs font-semibold text-primary hover:underline shrink-0"
+                              >
+                                Aseta ajaksi
+                              </button>
+                            )}
+                          </div>
                         ))}
                       </div>
                     </div>
                   );
                 } catch { return null; }
               })()}
+
+              {(job.boardContactName || job.boardContactEmail || job.boardContactPhone) && (
+                <div className="mb-3">
+                  <p className="text-xs text-muted-foreground mb-1">Laskutusyhteyshenkilö</p>
+                  <div className="bg-background rounded-lg px-3 py-2 space-y-0.5">
+                    {job.boardContactName && <p className="text-sm font-medium text-foreground">{job.boardContactName}</p>}
+                    {job.boardContactEmail && (
+                      <a href={`mailto:${job.boardContactEmail}`} className="block text-xs text-primary hover:underline">
+                        {job.boardContactEmail}
+                      </a>
+                    )}
+                    {job.boardContactPhone && (
+                      <a href={`tel:${job.boardContactPhone}`} className="block text-xs text-muted-foreground hover:text-foreground">
+                        {job.boardContactPhone}
+                      </a>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div className="mt-2 pt-2 border-t border-border/50">
                 <p className="text-xs text-muted-foreground mb-1">Tarjouslinkki (asiakkaalle)</p>

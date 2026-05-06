@@ -329,12 +329,20 @@ export const api = {
         message: string;
       }>;
       isYritys: boolean;
+      scheduledAt: string | null;
+      suggestedTimes: string[];
+      boardContactName: string | null;
+      boardContactEmail: string | null;
+      boardContactPhone: string | null;
     }>("GET", `/api/quote/${token}`),
 
   respondToQuote: (token: string, data: {
     status: "accepted" | "declined";
     suggestedTimes?: string[];
     customerMessage?: string;
+    boardContactName?: string;
+    boardContactEmail?: string;
+    boardContactPhone?: string;
     unitResponse?: {
       unitId: string;
       unitName: string;

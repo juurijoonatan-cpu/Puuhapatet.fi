@@ -92,7 +92,6 @@ function TaloyhtiioPortal({ token, quote }: { token: string; quote: QuoteData })
   // agreedPriceCents = per-unit price; total = per-unit × count
   const perUnit    = Math.round(quote.agreedPriceCents / 100);
   const totalEur   = perUnit * count;
-  const kotitalous = Math.round(perUnit * 0.65);
 
   const toggleUnit = (name: string) =>
     setSelectedUnits(prev =>
@@ -143,10 +142,7 @@ function TaloyhtiioPortal({ token, quote }: { token: string; quote: QuoteData })
           <div className="flex items-end justify-between">
             <div>
               <p className="text-5xl font-black text-zinc-900 leading-none">{perUnit}</p>
-              <p className="text-base font-bold text-zinc-400 mt-0.5">euroa</p>
-              <p className="text-sm font-semibold mt-2" style={{ color: "#16a34a" }}>
-                kotitalousvähennyksen jälkeen ~{kotitalous} €
-              </p>
+              <p className="text-base font-bold text-zinc-400 mt-0.5">euroa / asunto</p>
             </div>
             <div className="text-right pb-1">
               <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1">Yhteensä</p>
@@ -156,7 +152,7 @@ function TaloyhtiioPortal({ token, quote }: { token: string; quote: QuoteData })
           </div>
         </div>
         <div className="px-5 pb-4 flex flex-wrap gap-1.5 border-t border-zinc-50 pt-3">
-          {["✅ Kotitalousvähennys", "⭐ Tyytyväisyystakuu", "🔒 Vakuutettu"].map(b => (
+          {["⭐ Tyytyväisyystakuu", "🔒 Vastuuvakuutettu", "✓ Selkeä hinnoittelu"].map(b => (
             <span key={b} className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-zinc-100 text-zinc-500">{b}</span>
           ))}
         </div>
@@ -374,7 +370,6 @@ export default function QuotePage() {
   const services  = quote.description.split(" + ").filter(Boolean);
   const validDate = quote.validUntil ? new Date(quote.validUntil).toLocaleDateString("fi-FI") : null;
   const totalEur  = Math.round(quote.agreedPriceCents / 100);
-  const afterKota = Math.round(totalEur * 0.65);
 
   // ── Taloyhtiö state machine ───────────────────────────────────────────────────
   if (isTalo) {
@@ -493,7 +488,7 @@ export default function QuotePage() {
                 </div>
               </div>
               <div className="mx-5 pb-5 flex flex-wrap gap-1.5">
-                {["⭐ Tyytyväisyystakuu", "🔒 Vakuutettu työ"].map(b => (
+                {["⭐ Tyytyväisyystakuu", "🔒 Vastuuvakuutettu", "✓ Selkeä hinnoittelu"].map(b => (
                   <span key={b} className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-zinc-100 text-zinc-500">{b}</span>
                 ))}
               </div>
@@ -764,18 +759,8 @@ export default function QuotePage() {
                 <p className="text-sm font-bold text-zinc-800">Yhteensä</p>
                 <p className="text-3xl font-black text-zinc-900">{totalEur} €</p>
               </div>
-              {!isYritys && (
-                <div className="mx-5 pb-1">
-                  <p className="text-xs font-semibold" style={{ color: "#16a34a" }}>
-                    kotitalousvähennyksen jälkeen ~{afterKota} €
-                  </p>
-                </div>
-              )}
               <div className="mx-5 pb-5 pt-3 flex flex-wrap gap-1.5">
-                {(isYritys
-                  ? ["⭐ Tyytyväisyystakuu", "🔒 Vakuutettu työ"]
-                  : ["✅ Kotitalousvähennys", "⭐ Tyytyväisyystakuu", "🔒 Vakuutettu työ"]
-                ).map(b => (
+                {["⭐ Tyytyväisyystakuu", "🔒 Vastuuvakuutettu", "✓ Selkeä hinnoittelu"].map(b => (
                   <span key={b} className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-zinc-100 text-zinc-500">{b}</span>
                 ))}
               </div>

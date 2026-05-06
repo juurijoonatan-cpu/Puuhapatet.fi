@@ -1435,12 +1435,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const taloName = taloyhtiioName || customerName;
         const units = unitCount ? ` (${unitCount} huoneistoa)` : "";
         defaultIntro = isEn
-          ? `Hi! Here's our tailored quote for ${taloName}${units}. Each apartment can confirm separately or together — the link can be shared to all residents. We handle the whole property in one visit.`
-          : `Hei! Tässä on tarjouksemme kohteelle ${taloName}${units}. Jokainen asunto voi vahvistaa erikseen tai yhdessä — linkki on jaettavissa kaikille asukkaille. Hoidamme koko kiinteistön yhdellä käynnillä.`;
+          ? `Hello. Here's our quote for ${taloName}${units}. We coordinate directly with the building management — residents don't need to be home. One professional visit, the whole property done to standard.`
+          : `Hei. Tässä on tarjouksemme kohteelle ${taloName}${units}. Hoidamme koko kiinteistön yhdellä käynnillä ja koordinoinnin suoraan taloyhtiön kanssa — asukkaiden ei tarvitse olla paikalla.`;
       } else {
         defaultIntro = isEn
-          ? `Hi ${firstName}! Here's the quote we put together for your property. Everything's priced openly — no hidden extras. Give us a call if anything needs adjusting.`
-          : `Hei ${firstName}! Tässä on kartoituksen perusteella tekemämme tarjous. Kaikki on hinnoiteltu avoimesti — ei piilokuluia. Soita rohkeasti, jos jokin mietityttää.`;
+          ? `Hello ${firstName}. Here's your quote. Pricing is straightforward — no extras, no surprises. Call us if anything needs adjusting.`
+          : `Hei ${firstName}. Tässä on tarjouksemme. Hinnoittelu on selkeä — ei piilokuluia eikä yllätyksiä. Soita suoraan, jos jokin mietityttää.`;
       }
 
       const introText = customMessage
@@ -1469,10 +1469,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             <p style="margin:0 0 12px;font-weight:700;color:#166534;font-size:10px;letter-spacing:1.5px;text-transform:uppercase">${isEn ? "KEY POINTS FOR THE BUILDING" : "TALOYHTIÖLLE TÄRKEÄÄ"}</p>
             <table width="100%" cellpadding="0" cellspacing="0">
               ${[
-                { fi: `Yksi käynti — koko kiinteistö kerralla${unitCount ? `, ${unitCount} huoneistoa` : ""}`, en: `One visit — entire property${unitCount ? `, ${unitCount} units` : ""}` },
-                { fi: "Jokainen asukas saa oman kotitalousvähennyksen — 35 % takaisin verotuksessa", en: "Each resident gets their own household tax deduction — 35% back" },
-                { fi: "Asukkaiden ei tarvitse olla paikalla — sovitaan isännöitsijän tai hallituksen kanssa", en: "Residents don't need to be home — coordinated with the building manager" },
-                { fi: "Tarjoushinta per asunto laskee yksikköhintaa — kannustaa mukaan ottamaan", en: "Per-unit price drops as more units join — great incentive" },
+                { fi: `Yksi käynti — koko kiinteistö hoidetaan kerralla${unitCount ? `, ${unitCount} huoneistoa` : ""}`, en: `One visit — entire property done in one go${unitCount ? `, ${unitCount} units` : ""}` },
+                { fi: "Koordinointi hallituksen tai isännöitsijän kanssa — asukkaat eivät tarvitse olla paikalla", en: "Coordinated with building management — residents don't need to be home" },
+                { fi: "Selkeä dokumentointi ja lasku taloyhtiön kirjanpitoon", en: "Clear documentation and invoice for building records" },
+                { fi: "Ammattitaitoiset tekijät — työn laatu taattu", en: "Professional workers — quality guaranteed" },
               ].map(p => `
               <tr>
                 <td style="padding:5px 0;font-size:13px;color:#1a3a1a;line-height:1.5">✓ ${isEn ? p.en : p.fi}</td>
@@ -1506,10 +1506,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         <tr>
           <td>
             <p style="margin:0;color:#ffffff;font-size:26px;font-weight:900;letter-spacing:-0.5px">Puuhapatet.</p>
-            <p style="margin:5px 0 0;color:#a3c97a;font-size:12px;letter-spacing:0.3px">${isTalo ? (isEn ? "Professional building services" : "Ammattilainen kiinteistöpalvelut") : "Ikkunapesu · Pihapalvelut · Nurmikko"}</p>
+            <p style="margin:5px 0 0;color:#a3c97a;font-size:12px;letter-spacing:0.3px">${isEn ? "Professional property services" : "Ammattimainen kiinteistöpalvelu"}</p>
           </td>
           <td style="text-align:right;vertical-align:top;padding-top:2px">
-            <span style="display:inline-block;background:#a3c97a;color:#1a3a0a;font-size:10px;font-weight:800;letter-spacing:2px;padding:5px 14px;border-radius:20px;text-transform:uppercase">${isTalo ? (isEn ? "BUILDING QUOTE" : "TALOYHTIÖTARJOUS") : isYritys ? (isEn ? "BUSINESS QUOTE" : "YRITYSTÖARJOUS") : (isEn ? "QUOTE" : "TARJOUS")}</span>
+            <span style="display:inline-block;background:#a3c97a;color:#1a3a0a;font-size:10px;font-weight:800;letter-spacing:2px;padding:5px 14px;border-radius:20px;text-transform:uppercase">${isTalo ? (isEn ? "BUILDING QUOTE" : "TALOYHTIÖTARJOUS") : isYritys ? (isEn ? "BUSINESS QUOTE" : "YRITYSTARJOUS") : (isEn ? "QUOTE" : "TARJOUS")}</span>
           </td>
         </tr>
       </table>
@@ -1576,20 +1576,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         </tr>
       </table>`}
 
-      <!-- Kotitalousvähennys (only for non-yritys) -->
-      ${!req.body.isYritys ? `
-      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px">
-        <tr>
-          <td style="background:#f0fdf4;border-radius:10px;padding:16px 18px;border-left:4px solid #4ade80">
-            <p style="margin:0 0 5px;font-weight:700;color:#166534;font-size:10px;letter-spacing:1px;text-transform:uppercase">${isEn ? "HOUSEHOLD TAX DEDUCTION" : "KOTITALOUSVÄHENNYS"}</p>
-            <p style="margin:0 0 6px;color:#15803d;font-size:14px;line-height:1.65">
-              ${isEn
-                ? `Qualifies for the <strong>Finnish household tax deduction</strong> — reclaim ~35% of the labour cost from your taxes. After deduction approx. <strong>${kotitalous} €</strong>.`
-                : `<strong>Kotitalousvähennyskelpoinen</strong> — noin 35 % työn osuudesta takaisin verotuksessa. Tosiasiallinen hinta n. <strong>${kotitalous} €</strong>.`}
-            </p>
-          </td>
-        </tr>
-      </table>` : ""}
+      <!-- Kotitalousvähennys footnote (non-yritys, non-talo) -->
+      ${!req.body.isYritys && !isTalo ? `
+      <p style="margin:8px 0 0;color:#6a8a6a;font-size:11px;line-height:1.6">
+        ${isEn ? "* This service qualifies for the Finnish household tax deduction. More info: <a href='https://vero.fi/kotitalousvahennys' style='color:#4a7a4a'>vero.fi</a>" : "* Palvelu on kotitalousvähennyskelpoinen. Lisätietoa: <a href='https://vero.fi/kotitalousvahennys' style='color:#4a7a4a'>vero.fi/kotitalousvähennys</a>"}
+      </p>` : ""}
 
       ${taloKeyPointsHtml}
 
@@ -1599,9 +1590,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           <td style="background:#f8fffe;border-radius:10px;padding:16px 18px;border:1px solid #d1f0d8">
             <table width="100%" cellpadding="0" cellspacing="0">
               ${[
-                { emoji: "⭐", fi: "Tyytyväisyystakuu — ei laskua ennen kuin olet tyytyväinen", en: "Satisfaction guarantee — no invoice until you're happy" },
-                { emoji: "🔒", fi: "Vastuuvakuutettu työ", en: "Fully insured work" },
-                { emoji: "📋", fi: "Lasku toimii kotitalousvähennyksen dokumenttina", en: "Invoice serves as tax deduction documentation" },
+                { emoji: "⭐", fi: "Tyytyväisyystakuu — työtulos on sovitun mukainen tai korjaamme sen", en: "Satisfaction guarantee — the result matches what was agreed" },
+                { emoji: "🔒", fi: "Vastuuvakuutettu — mahdolliset vahingot katettu", en: "Fully insured — any damage is covered" },
+                { emoji: "✓",  fi: "Selkeä hinnoittelu — ei piilokuluja", en: "Transparent pricing — no hidden costs" },
               ].map(p => `
               <tr>
                 <td style="padding:4px 0;font-size:13px;color:#2a3a2a;line-height:1.5">${p.emoji} ${isEn ? p.en : p.fi}</td>
@@ -1616,7 +1607,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         <tr>
           <td style="background:#fffbeb;border-radius:10px;padding:12px 18px;border-left:4px solid #f59e0b">
             <p style="margin:0;color:#78350f;font-size:13px;line-height:1.6">
-              <strong>${isEn ? "Valid until" : "Voimassa"} ${validUntil}</strong>${isEn ? "" : " asti"}${isEn ? " — confirm early to lock in the price." : " — vahvista ajoissa, niin hinta pysyy."}
+              <strong>${isEn ? "Valid until" : "Voimassa"} ${validUntil}</strong>${isEn ? "" : " asti"}${isEn ? ". Confirm to reserve your slot." : ". Vahvista varmistaaksesi paikkasi."}
             </p>
           </td>
         </tr>

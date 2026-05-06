@@ -172,11 +172,14 @@ function TaloyhtiioPortal({ token, quote }: { token: string; quote: QuoteData })
             </div>
           </div>
         </div>
-        <div className="px-5 pb-4 flex flex-wrap gap-1.5 border-t border-zinc-50 pt-3">
+        <div className="px-5 pt-3 flex flex-wrap gap-1.5 border-t border-zinc-50">
           {["⭐ Tyytyväisyystakuu", "🔒 Vastuuvakuutettu", "✓ Selkeä hinnoittelu"].map(b => (
             <span key={b} className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-zinc-100 text-zinc-500">{b}</span>
           ))}
         </div>
+        <p className="px-5 pt-1.5 pb-4 text-[10px] text-zinc-300 leading-relaxed">
+          * Tyytyväisyystakuu: reklamaatiot info@puuhapatet.fi · Vastuuvakuutettu vakuutuksen ehtojen puitteissa
+        </p>
       </div>
 
       {/* Building info */}
@@ -423,7 +426,7 @@ export default function QuotePage() {
                 </button>
               </div>
               <p className="text-[11px] text-zinc-300 text-center leading-relaxed">
-                Portaali aktivoidaan yleensä saman päivän aikana.
+                Portaali aktivoidaan pikaisesti.
               </p>
             </div>
             <a href="https://wa.me/358400389999" className="block text-center mt-6 text-sm font-semibold" style={{ color: GREEN }}>
@@ -507,11 +510,14 @@ export default function QuotePage() {
                   <p className="text-sm font-bold text-zinc-400">Yhteensä {perUnit * count} €</p>
                 </div>
               </div>
-              <div className="mx-5 pb-5 flex flex-wrap gap-1.5">
+              <div className="mx-5 pb-4 flex flex-wrap gap-1.5">
                 {["⭐ Tyytyväisyystakuu", "🔒 Vastuuvakuutettu", "✓ Selkeä hinnoittelu"].map(b => (
                   <span key={b} className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-zinc-100 text-zinc-500">{b}</span>
                 ))}
               </div>
+              <p className="mx-5 pb-4 text-[10px] text-zinc-300 leading-relaxed">
+                * Tyytyväisyystakuu: reklamaatiot info@puuhapatet.fi · Vastuuvakuutettu vakuutuksen ehtojen puitteissa
+              </p>
             </div>
             {step === "view" && (
               <div className="space-y-2 pt-1">
@@ -835,11 +841,14 @@ export default function QuotePage() {
                 <p className="text-sm font-bold text-zinc-800">Yhteensä</p>
                 <p className="text-3xl font-black text-zinc-900">{totalEur} €</p>
               </div>
-              <div className="mx-5 pb-5 pt-3 flex flex-wrap gap-1.5">
+              <div className="mx-5 pt-3 flex flex-wrap gap-1.5">
                 {["⭐ Tyytyväisyystakuu", "🔒 Vastuuvakuutettu", "✓ Selkeä hinnoittelu"].map(b => (
                   <span key={b} className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-zinc-100 text-zinc-500">{b}</span>
                 ))}
               </div>
+              <p className="mx-5 mt-2 pb-4 text-[10px] text-zinc-300 leading-relaxed">
+                * Tyytyväisyystakuu: reklamaatiot info@puuhapatet.fi · Vastuuvakuutettu vakuutuksen ehtojen puitteissa
+              </p>
             </div>
 
             {/* CTA — view */}

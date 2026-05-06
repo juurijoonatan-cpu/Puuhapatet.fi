@@ -90,6 +90,7 @@ app.use((req, res, next) => {
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS board_contact_name   text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS board_contact_email  text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS board_contact_phone  text`,
+    sql`CREATE UNIQUE INDEX IF NOT EXISTS jobs_quote_token_unique ON jobs(quote_token) WHERE quote_token IS NOT NULL`,
   ]) {
     try { await db.execute(stmt); } catch (e: any) { console.warn("Migration warning:", e.message); }
   }

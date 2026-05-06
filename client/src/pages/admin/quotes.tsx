@@ -954,7 +954,7 @@ export default function AdminQuotesPage() {
               <span className="flex items-center gap-2">
                 <Monitor className="w-4 h-4 text-blue-700 dark:text-blue-400" />
                 <span>
-                  <strong>Yritystöarjous</strong>
+                  <strong>Yritystarjous</strong>
                   <span className="font-normal text-muted-foreground ml-1 text-xs">liiketila tai yritysasiakas</span>
                 </span>
               </span>

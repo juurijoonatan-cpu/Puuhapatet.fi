@@ -1732,7 +1732,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         unitCount:          row.unitCount ?? null,
         propertyImageUrl:   row.propertyImageUrl ?? null,
         taloyhtiioName:     row.taloyhtiioName ?? null,
-        unitResponses:      row.unitResponses ? JSON.parse(row.unitResponses) : [],
+        unitResponses:      (() => { try { return row.unitResponses ? JSON.parse(row.unitResponses) : []; } catch { return []; } })(),
         isYritys:           row.isYritys || false,
       });
     } catch (e: any) {
@@ -1755,26 +1755,36 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!current) return res.status(404).json({ error: "Ei löydy" });
 
       let newUnitResponses: string | null = null;
-      if (current.isTaloyhtiio && unitResponse) {
-        const existing: any[] = current.unitResponses ? JSON.parse(current.unitResponses) : [];
-        const idx = existing.findIndex((r: any) => r.unitId === unitResponse.unitId);
-        if (idx >= 0) {
-          existing[idx] = unitResponse;
-        } else {
-          existing.push(unitResponse);
-        }
+      const isUnitSubmission = !!(current.isTaloyhtiio && unitResponse);
+      if (isUnitSubmission) {
+        let existing: any[] = [];
+        try { existing = current.unitResponses ? JSON.parse(current.unitResponses) : []; } catch { existing = []; }
+        const sanitize = (s: unknown) => String(s ?? "").slice(0, 500);
+        const safe = {
+          unitId:   sanitize(unitResponse.unitId),
+          unitName: sanitize(unitResponse.unitName),
+          status:   ["accepted", "declined"].includes(unitResponse.status) ? unitResponse.status : "declined",
+          email:    unitResponse.email ? sanitize(unitResponse.email).slice(0, 200) : undefined,
+          times:    Array.isArray(unitResponse.times) ? unitResponse.times.slice(0, 3).map(sanitize) : [],
+          message:  sanitize(unitResponse.message),
+        };
+        const idx = existing.findIndex((r: any) => r.unitId === safe.unitId);
+        if (idx >= 0) existing[idx] = safe; else existing.push(safe);
         newUnitResponses = JSON.stringify(existing);
       }
 
+      const updatePayload: Record<string, unknown> = {
+        suggestedTimes:  suggestedTimes?.length ? JSON.stringify(suggestedTimes) : null,
+        customerMessage: customerMessage || null,
+        ...(newUnitResponses !== null ? { unitResponses: newUnitResponses } : {}),
+        updatedAt:       new Date(),
+      };
+      // Only update quoteStatus for board-rep responses, not per-unit resident submissions
+      if (!isUnitSubmission) updatePayload.quoteStatus = status;
+
       const [updated] = await db
         .update(jobs)
-        .set({
-          quoteStatus:     status,
-          suggestedTimes:  suggestedTimes?.length ? JSON.stringify(suggestedTimes) : null,
-          customerMessage: customerMessage || null,
-          ...(newUnitResponses !== null ? { unitResponses: newUnitResponses } : {}),
-          updatedAt:       new Date(),
-        })
+        .set(updatePayload as any)
         .where(eq(jobs.quoteToken, req.params.token))
         .returning();
       if (!updated) return res.status(404).json({ error: "Ei löydy" });
@@ -1789,9 +1799,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         let timesHtml = "";
         let unitHtml = "";
         if (unitResponse) {
+          const esc = (s: string) => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
           const unitTimes = (unitResponse.times as string[] || []).filter(Boolean).map(fmtTime).join("<br>");
-          unitHtml = `<p><strong>${unitResponse.unitName}:</strong> ${unitTimes || "Ei aikaehdotusta"}</p>`;
-          if (unitResponse.message) unitHtml += `<p><em>${unitResponse.message}</em></p>`;
+          unitHtml = `<p><strong>${esc(String(unitResponse.unitName || ""))}: </strong> ${unitTimes || "Ei aikaehdotusta"}</p>`;
+          if (unitResponse.message) unitHtml += `<p><em>${esc(String(unitResponse.message))}</em></p>`;
         } else if (suggestedTimes?.length) {
           timesHtml = `<p><strong>Ehdotetut ajat:</strong><br>${(suggestedTimes as string[]).filter(Boolean).map(fmtTime).join("<br>")}</p>`;
         }

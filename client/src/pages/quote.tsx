@@ -380,7 +380,7 @@ export default function QuotePage() {
   if (isTalo) {
     const count   = quote.unitCount ?? 2;
     const perUnit = Math.round(quote.agreedPriceCents / 100);
-    const shareUrl = window.location.href;
+    const shareUrl = typeof window !== "undefined" ? window.location.href : `https://puuhapatet.fi/tarjous/${token}`;
 
     // Shareable link screen (board rep just approved, or already accepted but not admin-activated yet)
     if (boardRepApproved || (quote.quoteStatus === "accepted" && !quote.taloyhtiioApproved)) {
@@ -571,6 +571,25 @@ export default function QuotePage() {
       );
     }
 
+    // taloyhtiioApproved — fall through to main return (renders TaloyhtiioPortal).
+    // Any other unexpected status (null coerced to "pending" by server, etc.) that is
+    // not yet approved shows the board rep approval screen as a safe fallback.
+    if (!quote.taloyhtiioApproved) {
+      return (
+        <div className="min-h-screen flex items-center justify-center p-6" style={{ background: GREEN_LIGHT, fontFamily: FONT }}>
+          <div className="text-center max-w-sm">
+            <Building2 className="w-8 h-8 mx-auto mb-4 opacity-30" style={{ color: GREEN }} />
+            <p className="text-sm font-bold text-zinc-800 mb-2">Taloyhtiötarjous</p>
+            <p className="text-zinc-400 text-sm leading-relaxed">
+              Tarjous odottaa vahvistusta. Ota yhteyttä, jos tarvitset apua.
+            </p>
+            <a href="https://wa.me/358400389999" className="inline-block mt-5 text-sm font-semibold" style={{ color: GREEN }}>
+              WhatsApp: +358 400 389 999
+            </a>
+          </div>
+        </div>
+      );
+    }
     // taloyhtiioApproved — fall through to main return (renders TaloyhtiioPortal)
   }
 

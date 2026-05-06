@@ -108,10 +108,12 @@ function compressImage(file: File, maxWidth = 1200, quality = 0.78): Promise<str
       const canvas = document.createElement("canvas");
       canvas.width  = Math.round(img.width  * ratio);
       canvas.height = Math.round(img.height * ratio);
-      canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { reject(new Error("Canvas ei tuettu")); return; }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       resolve(canvas.toDataURL("image/jpeg", quality));
     };
-    img.onerror = reject;
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Kuvan lataus epäonnistui")); };
     img.src = url;
   });
 }
@@ -165,7 +167,7 @@ export default function AdminQuotesPage() {
   // Taloyhtiö mode
   const [isTaloyhtiio,    setIsTaloyhtiio]    = useState(false);
   const [taloyhtiioName,  setTaloyhtiioName]  = useState("");
-  const [unitCount,       setUnitCount]       = useState<number | "">(0);
+  const [unitCount,       setUnitCount]       = useState<number | "">("");
   const [propertyImageUrl,setPropertyImageUrl]= useState("");
   const [imageCompressing,setImageCompressing]= useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -999,7 +1001,9 @@ export default function AdminQuotesPage() {
                     try {
                       const dataUrl = await compressImage(file);
                       setPropertyImageUrl(dataUrl);
-                    } catch { /* ignore */ }
+                    } catch {
+                      toast({ variant: "destructive", title: "Kuvan lataus epäonnistui", description: "Kokeile toista tiedostoa." });
+                    }
                     setImageCompressing(false);
                     if (fileInputRef.current) fileInputRef.current.value = "";
                   }}

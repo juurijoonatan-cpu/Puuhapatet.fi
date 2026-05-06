@@ -570,10 +570,18 @@ export default function AdminQuotesPage() {
               ))}
               {/* Running total */}
               <div className="flex justify-between items-center px-4 pt-2 border-t">
-                <span className="text-sm font-semibold">Yhteensä</span>
+                <span className="text-sm font-semibold">
+                  {isTaloyhtiio ? "Hinta per asunto" : "Yhteensä"}
+                </span>
                 <span className="text-base font-bold">{total} €</span>
               </div>
-              {total > 0 && (
+              {isTaloyhtiio && unitCount && Number(unitCount) > 0 && total > 0 && (
+                <div className="flex justify-between items-center px-4 pt-1">
+                  <span className="text-xs text-muted-foreground">Yhteensä ({unitCount} as.)</span>
+                  <span className="text-sm font-bold text-emerald-700">{total * Number(unitCount)} €</span>
+                </div>
+              )}
+              {total > 0 && !isTaloyhtiio && (
                 <p className="text-xs text-emerald-600 dark:text-emerald-400 px-4">
                   Kotitalousvähennyksen jälkeen ~{kotitalous} €
                 </p>

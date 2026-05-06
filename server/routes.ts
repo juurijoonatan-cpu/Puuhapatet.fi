@@ -1668,9 +1668,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 </body>
 </html>`;
 
+      const displayTotal = isTalo && unitCount
+        ? `${Number(total).toFixed(0)} €/as. × ${unitCount} = ${(Number(total) * Number(unitCount)).toFixed(0)} €`
+        : `${Number(total).toFixed(0)} €`;
       const subject = isEn
-        ? `Your quote from Puuhapatet — ${Number(total).toFixed(0)} €`
-        : `Tarjous ${quoteId} — ${Number(total).toFixed(0)} € (Puuhapatet)`;
+        ? `Your quote from Puuhapatet — ${isTalo && unitCount ? `${Number(total).toFixed(0)} €/unit × ${unitCount} = ${(Number(total) * Number(unitCount)).toFixed(0)} €` : `${Number(total).toFixed(0)} €`}`
+        : `Tarjous ${quoteId} — ${displayTotal} (Puuhapatet)`;
 
       const result = await resend.emails.send({
         from: FROM_EMAIL,

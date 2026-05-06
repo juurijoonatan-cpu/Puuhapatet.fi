@@ -3,6 +3,7 @@ import { type Server } from "http";
 import { eq, desc, sql, ne, and } from "drizzle-orm";
 import { Resend } from "resend";
 import bwipjs from "bwip-js";
+import PDFDocument from "pdfkit";
 import { db } from "./db";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 
@@ -62,6 +63,155 @@ async function generateFinnishBarcodeHtml(params: {
         <p style="margin:4px 0 0;font-size:11px;color:#92400e">${params.isEn ? "Scan barcode with your banking app to pay" : "Skannaa pankkiviivakoodi pankkisovelluksella"}</p>
       </div>`;
   } catch { return ""; }
+}
+
+// ─── Kotitalousvähennys PDF receipt ──────────────────────────────────────────
+
+function generateKotitalousReceiptPdf(params: {
+  customerName: string;
+  customerAddress?: string;
+  workerName?: string;
+  workerYTunnus?: string;
+  workerAddress?: string;
+  description: string;
+  completionDate: string;
+  paymentMethod?: string;
+  agreedPriceCents: number;
+  laborCents: number;
+  lang?: string;
+}): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 48, size: "A4" });
+    const chunks: Buffer[] = [];
+    doc.on("data", (c: Buffer) => chunks.push(c));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    const isEn = params.lang === "en";
+    const GREEN = "#2d5016";
+    const GRAY = "#64748b";
+    const LIGHT = "#f8fafc";
+    const fmtEur = (cents: number) =>
+      (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+
+    const deductionCents = Math.round(params.laborCents * 0.35);
+    const effectiveCents = params.agreedPriceCents - deductionCents;
+
+    const pageW = doc.page.width - 96; // usable width
+
+    // ── Header bar ───────────────────────────────────────────────────────────
+    doc.rect(48, 48, pageW, 56).fill(GREEN);
+    doc.fill("#fff").font("Helvetica-Bold").fontSize(16)
+      .text(isEn ? "HOUSEHOLD DEDUCTION RECEIPT" : "KOTITALOUSVÄHENNYSTOSITE", 64, 62, { width: pageW - 32 });
+    doc.fill("#b8e07a").font("Helvetica").fontSize(9)
+      .text("Puuhapatet  ·  puuhapatet.fi  ·  info@puuhapatet.fi", 64, 84, { width: pageW - 32 });
+
+    let y = 124;
+
+    // ── Parties ───────────────────────────────────────────────────────────────
+    const colW = (pageW - 16) / 2;
+
+    doc.fill(GRAY).font("Helvetica-Bold").fontSize(7)
+      .text(isEn ? "SERVICE PROVIDER" : "PALVELUN SUORITTAJA", 48, y, { width: colW });
+    doc.text(isEn ? "CUSTOMER" : "ASIAKAS", 48 + colW + 16, y, { width: colW });
+
+    y += 14;
+    doc.fill("#1e293b").font("Helvetica-Bold").fontSize(10);
+    doc.text(params.workerName || "Puuhapatet", 48, y, { width: colW });
+    doc.text(params.customerName, 48 + colW + 16, y, { width: colW });
+
+    y += 14;
+    doc.fill(GRAY).font("Helvetica").fontSize(9);
+    if (params.workerYTunnus) {
+      doc.text(`Y-tunnus: ${params.workerYTunnus}`, 48, y, { width: colW });
+      y += 12;
+    }
+    if (params.workerAddress) {
+      doc.text(params.workerAddress, 48, y, { width: colW });
+    }
+    const customerY = y - (params.workerYTunnus ? 26 : 14);
+    if (params.customerAddress) {
+      doc.text(params.customerAddress, 48 + colW + 16, customerY + 14, { width: colW });
+    }
+
+    y += 24;
+
+    // ── Divider ───────────────────────────────────────────────────────────────
+    doc.moveTo(48, y).lineTo(48 + pageW, y).strokeColor("#e2e8f0").lineWidth(1).stroke();
+    y += 16;
+
+    // ── Service details ───────────────────────────────────────────────────────
+    doc.fill(GRAY).font("Helvetica-Bold").fontSize(7)
+      .text(isEn ? "SERVICE DETAILS" : "PALVELUTIEDOT", 48, y);
+    y += 14;
+
+    const rows: [string, string][] = [
+      [isEn ? "Service" : "Palvelu", params.description],
+      [isEn ? "Date" : "Suorituspäivä", params.completionDate],
+    ];
+    if (params.paymentMethod) {
+      const pm = params.paymentMethod === "käteinen" ? (isEn ? "Cash" : "Käteinen")
+        : params.paymentMethod === "mobilepay" ? "MobilePay"
+        : params.paymentMethod === "kortti" ? (isEn ? "Card" : "Kortti")
+        : params.paymentMethod === "tilisiirto" ? (isEn ? "Bank transfer" : "Tilisiirto")
+        : params.paymentMethod;
+      rows.push([isEn ? "Payment" : "Maksutapa", pm]);
+    }
+
+    for (const [label, value] of rows) {
+      doc.fill(GRAY).font("Helvetica").fontSize(9).text(label, 48, y, { width: 140 });
+      doc.fill("#1e293b").font("Helvetica-Bold").fontSize(9).text(value, 48 + 140, y, { width: colW });
+      y += 14;
+    }
+
+    y += 8;
+    doc.moveTo(48, y).lineTo(48 + pageW, y).strokeColor("#e2e8f0").lineWidth(1).stroke();
+    y += 16;
+
+    // ── Kotitalousvähennys calculation ────────────────────────────────────────
+    doc.fill(GRAY).font("Helvetica-Bold").fontSize(7)
+      .text(isEn ? "HOUSEHOLD TAX DEDUCTION ESTIMATE" : "KOTITALOUSVÄHENNYS (ARVIO)", 48, y);
+    y += 14;
+
+    doc.rect(48, y, pageW, (params.laborCents < params.agreedPriceCents ? 5 : 4) * 18 + 24).fill(LIGHT);
+    y += 12;
+
+    const calcRows: [string, string, boolean][] = [
+      [isEn ? "Total service price" : "Palvelun kokonaishinta", fmtEur(params.agreedPriceCents), false],
+      [isEn ? "Labour portion (100%)" : "Työn osuus (100 %)", fmtEur(params.laborCents), false],
+      [isEn ? "Deduction 35% of labour" : "Kotitalousvähennys 35 % ty\xf6st\xe4", fmtEur(deductionCents), false],
+      [isEn ? "Effective price (estimate)" : "Tosiasiallinen hinta (arvio)", fmtEur(effectiveCents), true],
+    ];
+    if (params.laborCents < params.agreedPriceCents) {
+      calcRows.splice(2, 0, [
+        isEn ? "Materials (excluded from deduction)" : "Materiaalit (ei v\xe4hennyskelpoisia)",
+        fmtEur(params.agreedPriceCents - params.laborCents),
+        false,
+      ]);
+    }
+
+    for (const [label, value, bold] of calcRows) {
+      doc.fill(bold ? GREEN : GRAY).font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(9)
+        .text(label, 60, y, { width: pageW - 120 });
+      doc.fill(bold ? GREEN : "#1e293b").font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(9)
+        .text(value, 60 + (pageW - 120), y, { width: 100, align: "right" });
+      y += 18;
+    }
+
+    y += 12;
+    doc.moveTo(48, y).lineTo(48 + pageW, y).strokeColor("#e2e8f0").lineWidth(1).stroke();
+    y += 16;
+
+    // ── Legal note ────────────────────────────────────────────────────────────
+    doc.fill(GRAY).font("Helvetica").fontSize(8).text(
+      isEn
+        ? "Max. €2,250 per person per year. A minimum excess of €100/year applies. This document serves as proof for the Finnish household deduction (kotitalousvähennys) — no separate receipt required. More info: vero.fi/kotitalousvahennys"
+        : "Enint\xe4\xe4n 2 250 € / henkil\xf6 / vuosi. Omavastuu 100 €/vuosi. T\xe4m\xe4 tosite k\xe4y kotitalouv\xe4hennyksen dokumenttina — erillist\xe4 kuittia ei tarvita. Lis\xe4tietoa: vero.fi/kotitalousvahennys",
+      48, y, { width: pageW }
+    );
+
+    doc.end();
+  });
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
@@ -1092,12 +1242,40 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ? (isEn ? `Invoice — Puuhapatet, ${completionDate}` : `Lasku — Puuhapatet, ${completionDate}`)
         : (isEn ? `Job complete — Puuhapatet, ${completionDate}` : `Työ valmis — Puuhapatet, ${completionDate}`);
 
+      // ── Kotitalousvähennys PDF attachment ────────────────────────────────────
+      let pdfAttachment: { filename: string; content: Buffer } | null = null;
+      if (agreedPriceCents) {
+        try {
+          const senderWorker = workers[0];
+          const pdfBuffer = await generateKotitalousReceiptPdf({
+            customerName,
+            customerAddress,
+            workerName: senderWorker?.name,
+            workerYTunnus: senderWorker?.yTunnus,
+            workerAddress: senderName ? senderAddress : undefined,
+            description,
+            completionDate,
+            paymentMethod,
+            agreedPriceCents,
+            laborCents,
+            lang,
+          });
+          pdfAttachment = {
+            filename: isEn ? "household-deduction-receipt.pdf" : "kotitalousvahennystosite.pdf",
+            content: pdfBuffer,
+          };
+        } catch (pdfErr) {
+          console.warn("PDF generation failed, sending email without attachment:", pdfErr);
+        }
+      }
+
       const result = await resend.emails.send({
         from: FROM_EMAIL,
         to,
         ...(bcc && bcc.length > 0 ? { bcc } : {}),
         subject,
         html,
+        ...(pdfAttachment ? { attachments: [pdfAttachment] } : {}),
       });
 
       res.json({ ok: true, id: result.data?.id });
@@ -1609,12 +1787,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!updated) return res.status(404).json({ error: "Ei löydy" });
 
       if (resend) {
-        function fmtTime(t: string) {
+        const fmtTime = (t: string) => {
           const [dp = "", tp = ""] = t.split("T");
           const [y, mo, d] = dp.split("-");
           const [hh, mm] = tp.split(":");
           return `${d}.${mo}.${y} klo ${hh}:${mm}`;
-        }
+        };
         let timesHtml = "";
         let unitHtml = "";
         if (unitResponse) {

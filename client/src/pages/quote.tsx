@@ -33,10 +33,6 @@ const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-seri
 const GREEN = "#2d5016";
 const GREEN_LIGHT = "#f0faf2";
 
-function fmtEur(cents: number) {
-  return Math.round(cents / 100).toLocaleString("fi-FI") + " €";
-}
-
 function getYouTubeEmbedUrl(url: string) {
   const m = url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
   return m ? `https://www.youtube.com/embed/${m[1]}?autoplay=1&mute=1` : null;

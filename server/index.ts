@@ -86,6 +86,7 @@ app.use((req, res, next) => {
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS property_image_url   text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS taloyhtiio_name      text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS unit_responses       text`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS is_yritys            boolean NOT NULL DEFAULT false`,
   ]) {
     try { await db.execute(stmt); } catch (e: any) { console.warn("Migration warning:", e.message); }
   }

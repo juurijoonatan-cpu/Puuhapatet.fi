@@ -106,6 +106,7 @@ export interface NewJob {
   taloyhtiioName?: string;
   unitCount?: number;
   propertyImageUrl?: string;
+  isYritys?: boolean;
 }
 
 export interface StatsResponse {
@@ -301,6 +302,7 @@ export const api = {
     taloyhtiioName?: string;
     unitCount?: number;
     propertyImageUrl?: string;
+    isYritys?: boolean;
   }) => request<{ ok: boolean; id?: string }>("POST", "/api/send-quote", data),
 
   getQuote: (token: string) =>
@@ -322,9 +324,11 @@ export const api = {
         unitId: string;
         unitName: string;
         status: "accepted" | "declined";
+        email?: string;
         times: string[];
         message: string;
       }>;
+      isYritys: boolean;
     }>("GET", `/api/quote/${token}`),
 
   respondToQuote: (token: string, data: {
@@ -335,6 +339,7 @@ export const api = {
       unitId: string;
       unitName: string;
       status: "accepted" | "declined";
+      email?: string;
       times: string[];
       message: string;
     };

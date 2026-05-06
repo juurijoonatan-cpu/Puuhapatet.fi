@@ -71,6 +71,7 @@ interface JobRow {
     taloyhtiioName: string | null;
     unitCount: number | null;
     unitResponses: string | null;
+    isYritys: boolean | null;
   };
   customer: {
     id: number;
@@ -1341,8 +1342,16 @@ export default function AdminJobsPage() {
 
               <div className="space-y-2 mb-4 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Sovittu hinta</span>
-                  <span className="font-medium">{(job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}</span>
+                  <span className="text-muted-foreground">
+                    {job.isTaloyhtiio && job.unitCount
+                      ? `Hinta/as. × ${job.unitCount}`
+                      : "Sovittu hinta"}
+                  </span>
+                  <span className="font-medium">
+                    {job.isTaloyhtiio && job.unitCount
+                      ? `${(job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })} × ${job.unitCount} = ${((job.agreedPrice / 100) * job.unitCount).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}`
+                      : (job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}
+                  </span>
                 </div>
                 {expensesTotal > 0 && (
                   <div className="flex justify-between">
@@ -1982,6 +1991,16 @@ export default function AdminJobsPage() {
                             Tarjous lähetetty
                           </span>
                         )}
+                        {row.job.isTaloyhtiio && (
+                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold shrink-0">
+                            TALOYHTIÖ
+                          </span>
+                        )}
+                        {row.job.isYritys && (
+                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold shrink-0">
+                            YRITYS
+                          </span>
+                        )}
                       </div>
                       <p className="text-sm text-muted-foreground truncate">{row.job.description}</p>
                       <p className="text-xs text-muted-foreground mt-0.5">
@@ -1989,12 +2008,19 @@ export default function AdminJobsPage() {
                       </p>
                     </div>
                     <div className="flex items-center gap-3 ml-4 shrink-0">
-                      <p className="text-sm font-semibold text-foreground">
-                        {(row.job.agreedPrice / 100).toLocaleString("fi-FI", {
-                          style: "currency",
-                          currency: "EUR",
-                        })}
-                      </p>
+                      <div className="text-right">
+                        <p className="text-sm font-semibold text-foreground">
+                          {row.job.isTaloyhtiio && row.job.unitCount
+                            ? ((row.job.agreedPrice / 100) * row.job.unitCount).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })
+                            : (row.job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })
+                          }
+                        </p>
+                        {row.job.isTaloyhtiio && row.job.unitCount && (
+                          <p className="text-[10px] text-muted-foreground">
+                            {(row.job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}/as.
+                          </p>
+                        )}
+                      </div>
                       <ArrowRight className="w-4 h-4 text-muted-foreground" />
                     </div>
                   </div>

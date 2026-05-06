@@ -171,6 +171,8 @@ export default function AdminQuotesPage() {
   const [propertyImageUrl,setPropertyImageUrl]= useState("");
   const [imageCompressing,setImageCompressing]= useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Yritys mode
+  const [isYritys, setIsYritys] = useState(false);
 
   // BCC to other worker
   const profile     = getAdminProfile();
@@ -356,9 +358,10 @@ export default function AdminQuotesPage() {
         quoteToken,
         quoteVideoUrl:   quoteVideoUrl.trim() || undefined,
         isTaloyhtiio:    isTaloyhtiio || undefined,
-        taloyhtiioName:  isTaloyhtiio ? (taloyhtiioName.trim() || undefined) : undefined,
+        taloyhtiioName:  (isTaloyhtiio || isYritys) ? (taloyhtiioName.trim() || undefined) : undefined,
         unitCount:       isTaloyhtiio && unitCount ? Number(unitCount) : undefined,
-        propertyImageUrl: isTaloyhtiio ? (propertyImageUrl.trim() || undefined) : undefined,
+        propertyImageUrl: (isTaloyhtiio || isYritys) ? (propertyImageUrl.trim() || undefined) : undefined,
+        isYritys:        isYritys || undefined,
       });
       if (jobRes.ok && jobRes.data) {
         setCreatedJobId((jobRes.data as { id: number }).id);
@@ -395,9 +398,10 @@ export default function AdminQuotesPage() {
       workerEmail:     profile?.email,
       lang,
       isTaloyhtiio:    isTaloyhtiio || undefined,
-      taloyhtiioName:  isTaloyhtiio ? (taloyhtiioName.trim() || undefined) : undefined,
+      taloyhtiioName:  (isTaloyhtiio || isYritys) ? (taloyhtiioName.trim() || undefined) : undefined,
       unitCount:       isTaloyhtiio && unitCount ? Number(unitCount) : undefined,
-      propertyImageUrl: isTaloyhtiio ? (propertyImageUrl.trim() || undefined) : undefined,
+      propertyImageUrl: (isTaloyhtiio || isYritys) ? (propertyImageUrl.trim() || undefined) : undefined,
+      isYritys:        isYritys || undefined,
     });
 
     setSending(false);
@@ -918,11 +922,11 @@ export default function AdminQuotesPage() {
               type="url" placeholder="https://youtube.com/..." className="text-sm" />
           </div>
 
-          {/* Taloyhtiö toggle */}
-          <div className="mb-4">
+          {/* Quote type toggles */}
+          <div className="mb-4 space-y-2">
             <button
               type="button"
-              onClick={() => setIsTaloyhtiio(v => !v)}
+              onClick={() => { setIsTaloyhtiio(v => !v); setIsYritys(false); }}
               className={cn(
                 "w-full flex items-center justify-between rounded-xl px-4 py-3 border transition-colors text-sm",
                 isTaloyhtiio ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-900/20" : "border-border hover:bg-muted/30"
@@ -932,17 +936,30 @@ export default function AdminQuotesPage() {
                 <Building2 className="w-4 h-4 text-emerald-700 dark:text-emerald-400" />
                 <span>
                   <strong>Taloyhtiötarjous</strong>
-                  <span className="font-normal text-muted-foreground ml-1 text-xs">jaettavissa kaikille asukkaille</span>
+                  <span className="font-normal text-muted-foreground ml-1 text-xs">per asunto — jaettavissa kaikille</span>
                 </span>
               </span>
-              <div className={cn(
-                "w-10 h-6 rounded-full transition-colors relative shrink-0",
-                isTaloyhtiio ? "bg-emerald-600" : "bg-muted"
-              )}>
-                <div className={cn(
-                  "absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform",
-                  isTaloyhtiio ? "translate-x-5" : "translate-x-1"
-                )} />
+              <div className={cn("w-10 h-6 rounded-full transition-colors relative shrink-0", isTaloyhtiio ? "bg-emerald-600" : "bg-muted")}>
+                <div className={cn("absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform", isTaloyhtiio ? "translate-x-5" : "translate-x-1")} />
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => { setIsYritys(v => !v); setIsTaloyhtiio(false); }}
+              className={cn(
+                "w-full flex items-center justify-between rounded-xl px-4 py-3 border transition-colors text-sm",
+                isYritys ? "border-blue-600 bg-blue-50 dark:bg-blue-900/20" : "border-border hover:bg-muted/30"
+              )}
+            >
+              <span className="flex items-center gap-2">
+                <Monitor className="w-4 h-4 text-blue-700 dark:text-blue-400" />
+                <span>
+                  <strong>Yritystarjous</strong>
+                  <span className="font-normal text-muted-foreground ml-1 text-xs">liiketila tai yritysasiakas</span>
+                </span>
+              </span>
+              <div className={cn("w-10 h-6 rounded-full transition-colors relative shrink-0", isYritys ? "bg-blue-600" : "bg-muted")}>
+                <div className={cn("absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform", isYritys ? "translate-x-5" : "translate-x-1")} />
               </div>
             </button>
           </div>
@@ -970,19 +987,20 @@ export default function AdminQuotesPage() {
                 </div>
               </div>
 
-              {/* Per-unit price preview */}
-              {total > 0 && unitCount && Number(unitCount) > 0 && (
+              {/* Per-unit price preview — total = price per unit */}
+              {total > 0 && (
                 <div className="rounded-lg bg-white border border-emerald-100 px-4 py-3 flex justify-between items-center">
                   <div>
-                    <p className="text-xs text-muted-foreground">Per asunto</p>
-                    <p className="text-base font-bold">{Math.ceil(total / Number(unitCount))} €</p>
-                    <p className="text-[11px] text-emerald-600">Kotival. ~{Math.round(total / Number(unitCount) * 0.65)} €</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-muted-foreground">Yhteensä</p>
+                    <p className="text-xs text-muted-foreground">Hinta per asunto</p>
                     <p className="text-base font-bold">{total} €</p>
-                    <p className="text-[11px] text-muted-foreground">{unitCount} asuntoa</p>
+                    <p className="text-[11px] text-emerald-600">Kotival. ~{Math.round(total * 0.65)} €</p>
                   </div>
+                  {unitCount && Number(unitCount) > 0 && (
+                    <div className="text-right">
+                      <p className="text-xs text-muted-foreground">Yhteensä ({unitCount} as.)</p>
+                      <p className="text-base font-bold">{total * Number(unitCount)} €</p>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1035,8 +1053,55 @@ export default function AdminQuotesPage() {
               </div>
 
               <p className="text-xs text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg px-3 py-2">
-                Lähetä tarjous ensin hallituksen jäsenelle. Avaa sen jälkeen linkki asukkaille <strong>keikkalistasta</strong>.
+                Lähetä tarjous hallituksen jäsenelle. He hyväksyvät linkin portaalissa, minkä jälkeen aktivoit sen asukkaille <strong>keikkalistasta</strong>.
               </p>
+            </div>
+          )}
+
+          {/* Yritys fields */}
+          {isYritys && (
+            <div className="border border-blue-200 dark:border-blue-800 rounded-xl p-4 space-y-3 mb-4 bg-blue-50/50 dark:bg-blue-900/10">
+              <p className="text-xs font-bold text-blue-700 dark:text-blue-400 uppercase tracking-widest">Yrityksen tiedot</p>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">Yrityksen / kohteen nimi (valinnainen)</p>
+                <Input value={taloyhtiioName} onChange={e => setTaloyhtiioName(e.target.value)}
+                  placeholder="Esim. Ravintola Mäkinen" className="text-sm" />
+              </div>
+              {/* Image upload (reuse taloyhtiö ref) */}
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">Kohteen kuva (valinnainen)</p>
+                <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
+                  onChange={async e => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setImageCompressing(true);
+                    try {
+                      const dataUrl = await compressImage(file);
+                      setPropertyImageUrl(dataUrl);
+                    } catch {
+                      toast({ variant: "destructive", title: "Kuvan lataus epäonnistui" });
+                    }
+                    setImageCompressing(false);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }}
+                />
+                {propertyImageUrl ? (
+                  <div className="relative">
+                    <img src={propertyImageUrl} alt="Kohde" className="w-full rounded-xl object-cover max-h-40" />
+                    <button onClick={() => setPropertyImageUrl("")}
+                      className="absolute top-2 right-2 bg-black/60 text-white rounded-full p-1 hover:bg-black/80">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <button type="button" onClick={() => fileInputRef.current?.click()}
+                    disabled={imageCompressing}
+                    className="w-full flex items-center justify-center gap-2 border-2 border-dashed border-blue-200 rounded-xl py-4 text-sm text-muted-foreground hover:bg-blue-50 transition-colors">
+                    {imageCompressing ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImagePlus className="w-4 h-4" />}
+                    {imageCompressing ? "Pakataan…" : "Lisää kuva kohteesta"}
+                  </button>
+                )}
+              </div>
             </div>
           )}
 
@@ -1084,7 +1149,7 @@ export default function AdminQuotesPage() {
             disabled={sending || !customerEmail.trim() || serviceItems.length === 0}
           >
             {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
-            {sending ? "Lähetetään…" : `Lähetä tarjous${total > 0 ? ` · ${total} €` : ""}`}
+            {sending ? "Lähetetään…" : `Lähetä tarjous${total > 0 ? ` · ${isTaloyhtiio && unitCount ? `${total} €/as. × ${unitCount} = ${total * Number(unitCount)} €` : `${total} €`}` : ""}`}
           </Button>
         </div>
         {(!customerEmail.trim() || serviceItems.length === 0) && (

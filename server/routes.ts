@@ -65,7 +65,7 @@ async function generateFinnishBarcodeHtml(params: {
   } catch { return ""; }
 }
 
-// ─── Kotitalousvähennys PDF receipt ──────────────────────────────────────────
+// ─── Service receipt PDF ──────────────────────────────────────────────
 
 function generateKotitalousReceiptPdf(params: {
   customerName: string;
@@ -78,6 +78,8 @@ function generateKotitalousReceiptPdf(params: {
   paymentMethod?: string;
   agreedPriceCents: number;
   laborCents: number;
+  estimatedHours?: number;
+  expensesTotalCents?: number;
   lang?: string;
 }): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -94,23 +96,19 @@ function generateKotitalousReceiptPdf(params: {
     const fmtEur = (cents: number) =>
       (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
 
-    const deductionCents = Math.round(params.laborCents * 0.35);
-    const effectiveCents = params.agreedPriceCents - deductionCents;
+    const pageW = doc.page.width - 96;
 
-    const pageW = doc.page.width - 96; // usable width
-
-    // ── Header bar ───────────────────────────────────────────────────────────
+    // ── Header bar ────────────────────────────────────────────────────────────────
     doc.rect(48, 48, pageW, 56).fill(GREEN);
     doc.fill("#fff").font("Helvetica-Bold").fontSize(16)
-      .text(isEn ? "HOUSEHOLD DEDUCTION RECEIPT" : "KOTITALOUSVÄHENNYSTOSITE", 64, 62, { width: pageW - 32 });
+      .text(isEn ? "SERVICE RECEIPT" : "PALVELUTOSITE", 64, 62, { width: pageW - 32 });
     doc.fill("#b8e07a").font("Helvetica").fontSize(9)
       .text("Puuhapatet  ·  puuhapatet.fi  ·  info@puuhapatet.fi", 64, 84, { width: pageW - 32 });
 
     let y = 124;
-
-    // ── Parties ───────────────────────────────────────────────────────────────
     const colW = (pageW - 16) / 2;
 
+    // ── Parties ──────────────────────────────────────────────────────────────────────
     doc.fill(GRAY).font("Helvetica-Bold").fontSize(7)
       .text(isEn ? "SERVICE PROVIDER" : "PALVELUN SUORITTAJA", 48, y, { width: colW });
     doc.text(isEn ? "CUSTOMER" : "ASIAKAS", 48 + colW + 16, y, { width: colW });
@@ -126,39 +124,35 @@ function generateKotitalousReceiptPdf(params: {
       doc.text(`Y-tunnus: ${params.workerYTunnus}`, 48, y, { width: colW });
       y += 12;
     }
-    if (params.workerAddress) {
-      doc.text(params.workerAddress, 48, y, { width: colW });
-    }
-    const customerY = y - (params.workerYTunnus ? 26 : 14);
-    if (params.customerAddress) {
-      doc.text(params.customerAddress, 48 + colW + 16, customerY + 14, { width: colW });
-    }
-
+    if (params.workerAddress) doc.text(params.workerAddress, 48, y, { width: colW });
+    if (params.customerAddress) doc.text(params.customerAddress, 48 + colW + 16, y - (params.workerYTunnus ? 12 : 0), { width: colW });
     y += 24;
 
-    // ── Divider ───────────────────────────────────────────────────────────────
+    // ── Divider ────────────────────────────────────────────────────────────────────────
     doc.moveTo(48, y).lineTo(48 + pageW, y).strokeColor("#e2e8f0").lineWidth(1).stroke();
     y += 16;
 
-    // ── Service details ───────────────────────────────────────────────────────
+    // ── Service details ───────────────────────────────────────────────────────────────────────
     doc.fill(GRAY).font("Helvetica-Bold").fontSize(7)
       .text(isEn ? "SERVICE DETAILS" : "PALVELUTIEDOT", 48, y);
     y += 14;
 
-    const rows: [string, string][] = [
+    const detailRows: [string, string][] = [
       [isEn ? "Service" : "Palvelu", params.description],
-      [isEn ? "Date" : "Suorituspäivä", params.completionDate],
+      [isEn ? "Date" : "P\xe4iv\xe4m\xe4\xe4r\xe4", params.completionDate],
     ];
+    if (params.estimatedHours) {
+      detailRows.push([isEn ? "Duration" : "Kesto", `~${params.estimatedHours} h`]);
+    }
     if (params.paymentMethod) {
-      const pm = params.paymentMethod === "käteinen" ? (isEn ? "Cash" : "Käteinen")
+      const pm = params.paymentMethod === "k\xe4teinen" ? (isEn ? "Cash" : "K\xe4teinen")
         : params.paymentMethod === "mobilepay" ? "MobilePay"
         : params.paymentMethod === "kortti" ? (isEn ? "Card" : "Kortti")
         : params.paymentMethod === "tilisiirto" ? (isEn ? "Bank transfer" : "Tilisiirto")
         : params.paymentMethod;
-      rows.push([isEn ? "Payment" : "Maksutapa", pm]);
+      detailRows.push([isEn ? "Payment" : "Maksutapa", pm]);
     }
-
-    for (const [label, value] of rows) {
+    for (const [label, value] of detailRows) {
       doc.fill(GRAY).font("Helvetica").fontSize(9).text(label, 48, y, { width: 140 });
       doc.fill("#1e293b").font("Helvetica-Bold").fontSize(9).text(value, 48 + 140, y, { width: colW });
       y += 14;
@@ -168,51 +162,34 @@ function generateKotitalousReceiptPdf(params: {
     doc.moveTo(48, y).lineTo(48 + pageW, y).strokeColor("#e2e8f0").lineWidth(1).stroke();
     y += 16;
 
-    // ── Kotitalousvähennys calculation ────────────────────────────────────────
+    // ── Price breakdown ──────────────────────────────────────────────────────────────────────────
     doc.fill(GRAY).font("Helvetica-Bold").fontSize(7)
-      .text(isEn ? "HOUSEHOLD TAX DEDUCTION ESTIMATE" : "KOTITALOUSVÄHENNYS (ARVIO)", 48, y);
+      .text(isEn ? "PRICE BREAKDOWN" : "HINNAN ERITTELY", 48, y);
     y += 14;
 
-    doc.rect(48, y, pageW, (params.laborCents < params.agreedPriceCents ? 5 : 4) * 18 + 24).fill(LIGHT);
+    const hasExpenses = !!(params.expensesTotalCents && params.expensesTotalCents > 0);
+    doc.rect(48, y, pageW, (hasExpenses ? 3 : 2) * 18 + 24).fill(LIGHT);
     y += 12;
 
-    const calcRows: [string, string, boolean][] = [
-      [isEn ? "Total service price" : "Palvelun kokonaishinta", fmtEur(params.agreedPriceCents), false],
-      [isEn ? "Labour portion (100%)" : "Työn osuus (100 %)", fmtEur(params.laborCents), false],
-      [isEn ? "Deduction 35% of labour" : "Kotitalousvähennys 35 % ty\xf6st\xe4", fmtEur(deductionCents), false],
-      [isEn ? "Effective price (estimate)" : "Tosiasiallinen hinta (arvio)", fmtEur(effectiveCents), true],
-    ];
-    if (params.laborCents < params.agreedPriceCents) {
-      calcRows.splice(2, 0, [
-        isEn ? "Materials (excluded from deduction)" : "Materiaalit (ei v\xe4hennyskelpoisia)",
-        fmtEur(params.agreedPriceCents - params.laborCents),
-        false,
-      ]);
+    const priceRows: [string, string, boolean][] = [];
+    if (hasExpenses) {
+      priceRows.push([isEn ? "Labour" : "Ty\xf6", fmtEur(params.laborCents), false]);
+      priceRows.push([isEn ? "Materials" : "V\xe4linekulut", fmtEur(params.expensesTotalCents!), false]);
     }
+    priceRows.push([isEn ? "Total" : "Yhteens\xe4", fmtEur(params.agreedPriceCents), true]);
 
-    for (const [label, value, bold] of calcRows) {
-      doc.fill(bold ? GREEN : GRAY).font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(9)
+    for (const [label, value, bold] of priceRows) {
+      doc.fill(bold ? GREEN : GRAY).font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(bold ? 10 : 9)
         .text(label, 60, y, { width: pageW - 120 });
-      doc.fill(bold ? GREEN : "#1e293b").font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(9)
+      doc.fill(bold ? GREEN : "#1e293b").font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(bold ? 10 : 9)
         .text(value, 60 + (pageW - 120), y, { width: 100, align: "right" });
       y += 18;
     }
 
-    y += 12;
-    doc.moveTo(48, y).lineTo(48 + pageW, y).strokeColor("#e2e8f0").lineWidth(1).stroke();
-    y += 16;
-
-    // ── Legal note ────────────────────────────────────────────────────────────
-    doc.fill(GRAY).font("Helvetica").fontSize(8).text(
-      isEn
-        ? "Max. €2,250 per person per year. A minimum excess of €100/year applies. This document serves as proof for the Finnish household deduction (kotitalousvähennys) — no separate receipt required. More info: vero.fi/kotitalousvahennys"
-        : "Enint\xe4\xe4n 2 250 € / henkil\xf6 / vuosi. Omavastuu 100 €/vuosi. T\xe4m\xe4 tosite k\xe4y kotitalouv\xe4hennyksen dokumenttina — erillist\xe4 kuittia ei tarvita. Lis\xe4tietoa: vero.fi/kotitalousvahennys",
-      48, y, { width: pageW }
-    );
-
     doc.end();
   });
 }
+
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
 
@@ -1258,10 +1235,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             paymentMethod,
             agreedPriceCents,
             laborCents,
+            estimatedHours: estimatedHours ? Number(estimatedHours) : undefined,
+            expensesTotalCents: expensesTotalCents || undefined,
             lang,
           });
           pdfAttachment = {
-            filename: isEn ? "household-deduction-receipt.pdf" : "kotitalousvahennystosite.pdf",
+            filename: isEn ? "service-receipt.pdf" : "palvelutosite.pdf",
             content: pdfBuffer,
           };
         } catch (pdfErr) {
@@ -1429,7 +1408,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         to, bcc, quoteId, quoteToken, customerName, customerAddress,
         items, total, validDays, customMessage,
         workerName, workerPhone, workerEmail, lang,
-        isTaloyhtiio, taloyhtiioName, unitCount, propertyImageUrl,
+        isTaloyhtiio, taloyhtiioName, unitCount, propertyImageUrl, isYritys,
       } = req.body;
 
       const bccArr = bcc
@@ -1530,7 +1509,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             <p style="margin:5px 0 0;color:#a3c97a;font-size:12px;letter-spacing:0.3px">${isTalo ? (isEn ? "Professional building services" : "Ammattilainen kiinteistöpalvelut") : "Ikkunapesu · Pihapalvelut · Nurmikko"}</p>
           </td>
           <td style="text-align:right;vertical-align:top;padding-top:2px">
-            <span style="display:inline-block;background:#a3c97a;color:#1a3a0a;font-size:10px;font-weight:800;letter-spacing:2px;padding:5px 14px;border-radius:20px;text-transform:uppercase">${isTalo ? (isEn ? "BUILDING QUOTE" : "TALOYHTIÖTARJOUS") : (isEn ? "QUOTE" : "TARJOUS")}</span>
+            <span style="display:inline-block;background:#a3c97a;color:#1a3a0a;font-size:10px;font-weight:800;letter-spacing:2px;padding:5px 14px;border-radius:20px;text-transform:uppercase">${isTalo ? (isEn ? "BUILDING QUOTE" : "TALOYHTIÖTARJOUS") : isYritys ? (isEn ? "BUSINESS QUOTE" : "YRITYSTÖARJOUS") : (isEn ? "QUOTE" : "TARJOUS")}</span>
           </td>
         </tr>
       </table>
@@ -1578,15 +1557,27 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         <tbody>${serviceRowsHtml}</tbody>
       </table>
 
-      <!-- Total -->
+      <!-- Total / per-unit -->
+      ${isTalo && unitCount ? `
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-top:2px solid #2d5016;margin-top:0">
+        <tr>
+          <td style="padding:10px 0 2px;color:#6aab6a;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">${isEn ? "PER APARTMENT" : "PER ASUNTO"}</td>
+          <td style="padding:10px 0 2px;text-align:right;color:#2d5016;font-size:30px;font-weight:900">${Number(total).toFixed(0)} €</td>
+        </tr>
+        <tr>
+          <td style="padding:2px 0 12px;color:#6a8a6a;font-size:12px">${unitCount} ${isEn ? "apartments" : "asuntoa"}</td>
+          <td style="padding:2px 0 12px;text-align:right;color:#6a8a6a;font-size:14px;font-weight:700">${isEn ? "Total" : "Yhteensä"} ${(Number(total) * Number(unitCount)).toFixed(0)} €</td>
+        </tr>
+      </table>` : `
       <table width="100%" cellpadding="0" cellspacing="0" style="border-top:2px solid #2d5016;margin-top:0">
         <tr>
           <td style="padding:14px 0;color:#1a2e1a;font-size:14px;font-weight:700">${isEn ? "Total" : "Yhteensä"}</td>
           <td style="padding:14px 0;text-align:right;color:#2d5016;font-size:30px;font-weight:900">${Number(total).toFixed(0)} €</td>
         </tr>
-      </table>
+      </table>`}
 
-      <!-- Kotitalousvähennys -->
+      <!-- Kotitalousvähennys (only for non-yritys) -->
+      ${!req.body.isYritys ? `
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px">
         <tr>
           <td style="background:#f0fdf4;border-radius:10px;padding:16px 18px;border-left:4px solid #4ade80">
@@ -1598,7 +1589,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             </p>
           </td>
         </tr>
-      </table>
+      </table>` : ""}
 
       ${taloKeyPointsHtml}
 
@@ -1717,6 +1708,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           propertyImageUrl:   jobs.propertyImageUrl,
           taloyhtiioName:     jobs.taloyhtiioName,
           unitResponses:      jobs.unitResponses,
+          isYritys:           jobs.isYritys,
           customerName:       customers.name,
           customerAddress:    customers.address,
         })
@@ -1741,6 +1733,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         propertyImageUrl:   row.propertyImageUrl ?? null,
         taloyhtiioName:     row.taloyhtiioName ?? null,
         unitResponses:      row.unitResponses ? JSON.parse(row.unitResponses) : [],
+        isYritys:           row.isYritys || false,
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

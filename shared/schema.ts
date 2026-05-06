@@ -61,7 +61,9 @@ export const jobs = pgTable("jobs", {
   unitCount:         integer("unit_count"),       // number of apartments
   propertyImageUrl:  text("property_image_url"), // image URL for the property
   taloyhtiioName:    text("taloyhtiio_name"),    // housing company name
-  unitResponses:     text("unit_responses"),     // JSON: [{unitId,unitName,status,times,message}]
+  unitResponses:     text("unit_responses"),     // JSON: [{unitId,unitName,status,email,times,message}]
+  // Business (yritys) quote
+  isYritys:          boolean("is_yritys").default(false).notNull(),
   createdAt:         timestamp("created_at").defaultNow().notNull(),
   updatedAt:         timestamp("updated_at").defaultNow().notNull(),
 });

@@ -20,6 +20,8 @@ type QuoteData = {
   description: string;
   agreedPriceCents: number;
   validUntil: string | null;
+  scheduledAt: string | null;
+  suggestedTimes: string[];
   quoteStatus: string;
   quoteVideoUrl: string | null;
   isTaloyhtiio: boolean;
@@ -29,6 +31,9 @@ type QuoteData = {
   taloyhtiioName: string | null;
   unitResponses: UnitResponse[];
   isYritys: boolean;
+  boardContactName: string | null;
+  boardContactEmail: string | null;
+  boardContactPhone: string | null;
 };
 
 const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif";
@@ -74,13 +79,21 @@ function TimePicker({ times, onChange }: { times: string[]; onChange: (t: string
 
 // ── Taloyhtiö multi-unit portal ───────────────────────────────────────────────
 
+function fmtVisitTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString("fi-FI", {
+      weekday: "long", day: "numeric", month: "long", year: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
+  } catch { return iso; }
+}
+
 function TaloyhtiioPortal({ token, quote }: { token: string; quote: QuoteData }) {
-  const count    = quote.unitCount ?? 2;
+  const count     = quote.unitCount ?? 2;
   const unitNames = Array.from({ length: count }, (_, i) => `Asunto ${i + 1}`);
 
   const [selectedUnits, setSelectedUnits] = useState<string[]>([]);
   const [expandedUnit, setExpandedUnit]   = useState<string | null>(null);
-  const [unitTimes, setUnitTimes]         = useState<Record<string, string[]>>({});
   const [unitEmails, setUnitEmails]       = useState<Record<string, string>>({});
   const [unitMessages, setUnitMessages]   = useState<Record<string, string>>({});
   const [submitting, setSubmitting]       = useState(false);
@@ -89,9 +102,8 @@ function TaloyhtiioPortal({ token, quote }: { token: string; quote: QuoteData })
 
   const existingIds = new Set(quote.unitResponses.map(r => r.unitId));
 
-  // agreedPriceCents = per-unit price; total = per-unit × count
-  const perUnit    = Math.round(quote.agreedPriceCents / 100);
-  const totalEur   = perUnit * count;
+  const perUnit  = Math.round(quote.agreedPriceCents / 100);
+  const totalEur = perUnit * count;
 
   const toggleUnit = (name: string) =>
     setSelectedUnits(prev =>
@@ -101,14 +113,13 @@ function TaloyhtiioPortal({ token, quote }: { token: string; quote: QuoteData })
   const handleSubmitUnit = async (unitName: string) => {
     setSubmitting(true);
     setError("");
-    const times   = (unitTimes[unitName] ?? []).filter(Boolean);
     const email   = unitEmails[unitName]?.trim() || undefined;
-    const message = unitMessages[unitName] ?? "";
+    const message = unitMessages[unitName]?.trim() ?? "";
     const unitId  = unitName.replace(/\s+/g, "-").toLowerCase();
 
     const res = await api.respondToQuote(token, {
       status: "accepted",
-      unitResponse: { unitId, unitName, status: "accepted", email, times, message },
+      unitResponse: { unitId, unitName, status: "accepted", email, times: [], message },
     });
 
     if (res.ok) {
@@ -134,6 +145,16 @@ function TaloyhtiioPortal({ token, quote }: { token: string; quote: QuoteData })
 
   return (
     <div className="space-y-3">
+
+      {/* Scheduled visit time */}
+      <div className="bg-white rounded-2xl px-5 py-4" style={{ border: "1px solid #e0ede2" }}>
+        <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-2">Käyntiajankohta</p>
+        {quote.scheduledAt ? (
+          <p className="text-sm font-bold text-zinc-900">{fmtVisitTime(quote.scheduledAt)}</p>
+        ) : (
+          <p className="text-sm text-zinc-400">Vahvistetaan pian — saat tiedon hallituksen kautta.</p>
+        )}
+      </div>
 
       {/* Price block */}
       <div className="bg-white rounded-2xl overflow-hidden" style={{ border: "1px solid #e0ede2" }}>
@@ -168,8 +189,8 @@ function TaloyhtiioPortal({ token, quote }: { token: string; quote: QuoteData })
       {/* Unit selector */}
       <div className="bg-white rounded-2xl" style={{ border: "1px solid #e0ede2" }}>
         <div className="px-5 pt-4 pb-3">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1">Valitse asuntosi</p>
-          <p className="text-xs text-zinc-400">Voit vahvistaa useamman kerralla.</p>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1">Vahvista asuntosi</p>
+          <p className="text-xs text-zinc-400">Ilmoita osallistumisesi — asuntosi tulee olla käytettävissä sovittuna ajankohtana.</p>
         </div>
         <div className="px-5 pb-4 flex flex-wrap gap-2">
           {unitNames.map(name => {
@@ -195,7 +216,7 @@ function TaloyhtiioPortal({ token, quote }: { token: string; quote: QuoteData })
         </div>
       </div>
 
-      {/* Per-unit forms */}
+      {/* Per-unit confirmation forms */}
       {selectedUnits.map(unitName => {
         const isSubmitted = submitted.includes(unitName);
         const isExpanded  = expandedUnit === unitName;
@@ -229,20 +250,16 @@ function TaloyhtiioPortal({ token, quote }: { token: string; quote: QuoteData })
                       type="email"
                       value={unitEmails[unitName] ?? ""}
                       onChange={e => setUnitEmails(prev => ({ ...prev, [unitName]: e.target.value }))}
-                      placeholder="asunto@email.fi"
+                      placeholder="asukas@email.fi"
                       className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-800 focus:outline-none focus:ring-2 focus:border-transparent"
                     />
                   </div>
-                  <TimePicker
-                    times={unitTimes[unitName] ?? ["", "", ""]}
-                    onChange={t => setUnitTimes(prev => ({ ...prev, [unitName]: t }))}
-                  />
                   <div>
-                    <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-400 mb-1.5">Viesti (valinnainen)</p>
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-400 mb-1.5">Lisätiedot (valinnainen)</p>
                     <textarea
                       value={unitMessages[unitName] ?? ""}
                       onChange={e => setUnitMessages(prev => ({ ...prev, [unitName]: e.target.value }))}
-                      placeholder="Avain, sisäänkäynti, lisätiedot…"
+                      placeholder="Avainkoodi, sisäänkäynti, erityistiedot…"
                       rows={2}
                       className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-800 resize-none focus:outline-none"
                     />
@@ -251,22 +268,22 @@ function TaloyhtiioPortal({ token, quote }: { token: string; quote: QuoteData })
                 <div className="px-5 pb-5 space-y-2">
                   <button
                     onClick={() => handleSubmitUnit(unitName)}
-                    disabled={submitting || !unitTimes[unitName]?.[0]}
+                    disabled={submitting}
                     className={cn(
                       "w-full flex items-center justify-center gap-2 rounded-2xl py-4 text-sm font-bold text-white transition-opacity",
-                      submitting || !unitTimes[unitName]?.[0] ? "opacity-40" : "opacity-100"
+                      submitting ? "opacity-40" : "opacity-100"
                     )}
                     style={{ background: GREEN }}
                   >
                     {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                    Vahvista {unitName}
+                    Vahvista osallistuminen — {unitName}
                   </button>
                   <button
                     onClick={() => handleDeclineUnit(unitName)}
                     disabled={submitting}
                     className="w-full text-xs text-zinc-300 py-2 text-center hover:text-zinc-500 transition-colors"
                   >
-                    Ei kiitos tälle asunnolle
+                    Asunto ei osallistu
                   </button>
                 </div>
               </div>
@@ -285,7 +302,7 @@ function TaloyhtiioPortal({ token, quote }: { token: string; quote: QuoteData })
           <p className="text-sm font-bold text-zinc-900">
             {submitted.length === 1 ? "1 asunto vahvistettu" : `${submitted.length} asuntoa vahvistettu`}
           </p>
-          <p className="text-xs text-zinc-400 mt-1">Otamme yhteyttä ja vahvistamme ajankohdan.</p>
+          <p className="text-xs text-zinc-400 mt-1">Ilmoituksesi on vastaanotettu. Nähdään sovittuna aikana.</p>
         </div>
       )}
     </div>
@@ -307,6 +324,9 @@ export default function QuotePage() {
   const [times, setTimes]                 = useState(["", "", ""]);
   const [message, setMessage]             = useState("");
   const [submitting, setSubmitting]       = useState(false);
+  const [boardContactName, setBoardContactName]   = useState("");
+  const [boardContactEmail, setBoardContactEmail] = useState("");
+  const [boardContactPhone, setBoardContactPhone] = useState("");
 
   useEffect(() => {
     if (!token) return;
@@ -518,25 +538,81 @@ export default function QuotePage() {
               <div className="bg-white rounded-2xl overflow-hidden" style={{ border: "1px solid #e0ede2" }}>
                 <div className="px-5 pt-5 pb-4 border-b border-zinc-100">
                   <p className="text-sm font-bold text-zinc-900">Vahvista hyväksyntä</p>
-                  <p className="text-xs text-zinc-400 mt-1">Valinnainen viesti palveluntarjoajalle.</p>
+                  <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                    Ehdota kolme sopivaa käyntiaikaa — vahvistamme teille sopivimman.
+                    Täytä myös laskutustiedot, jotta voimme lähettää laskun suoraan teille.
+                  </p>
                 </div>
-                <div className="px-5 py-4">
-                  <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-400 mb-1.5">Viesti (valinnainen)</p>
-                  <textarea
-                    value={message}
-                    onChange={e => setMessage(e.target.value)}
-                    placeholder="Lisätietoja, pääsyoikeudet, aikatoiveet…"
-                    rows={3}
-                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-800 resize-none focus:outline-none"
-                  />
+                <div className="px-5 pt-5 pb-3 space-y-4">
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-400 mb-2">
+                      Aikatoiveet — ehdota 1–3 ajankohtaa
+                    </p>
+                    <div className="space-y-2">
+                      {times.map((t, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <span className="text-xs text-zinc-400 w-4 shrink-0">{i + 1}.</span>
+                          <input
+                            type="datetime-local"
+                            value={t}
+                            onChange={e => setTimes(prev => prev.map((v, j) => j === i ? e.target.value : v))}
+                            className="flex-1 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 focus:outline-none"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="border-t border-zinc-100 pt-4">
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-400 mb-2">
+                      Laskutustiedot
+                    </p>
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        value={boardContactName}
+                        onChange={e => setBoardContactName(e.target.value)}
+                        placeholder="Nimi (hallituksen puheenjohtaja tms.)"
+                        className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-800 focus:outline-none"
+                      />
+                      <input
+                        type="email"
+                        value={boardContactEmail}
+                        onChange={e => setBoardContactEmail(e.target.value)}
+                        placeholder="Sähköposti"
+                        className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-800 focus:outline-none"
+                      />
+                      <input
+                        type="tel"
+                        value={boardContactPhone}
+                        onChange={e => setBoardContactPhone(e.target.value)}
+                        placeholder="Puhelinnumero"
+                        className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-800 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-400 mb-1.5">Viesti (valinnainen)</p>
+                    <textarea
+                      value={message}
+                      onChange={e => setMessage(e.target.value)}
+                      placeholder="Lisätietoja, pääsyoikeudet, erityistoiveet…"
+                      rows={3}
+                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-800 resize-none focus:outline-none"
+                    />
+                  </div>
                 </div>
                 <div className="px-5 pb-5 space-y-2">
                   <button
                     onClick={async () => {
                       setSubmitting(true);
+                      const validTimes = times.filter(Boolean);
                       await api.respondToQuote(token, {
                         status: "accepted",
+                        suggestedTimes: validTimes.length ? validTimes : undefined,
                         customerMessage: message.trim() || undefined,
+                        boardContactName: boardContactName.trim() || undefined,
+                        boardContactEmail: boardContactEmail.trim() || undefined,
+                        boardContactPhone: boardContactPhone.trim() || undefined,
                       });
                       setBoardRepApproved(true);
                       setSubmitting(false);

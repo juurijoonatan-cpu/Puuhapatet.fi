@@ -1695,6 +1695,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           scheduledAt:        jobs.scheduledAt,
           quoteStatus:        jobs.quoteStatus,
           quoteVideoUrl:      jobs.quoteVideoUrl,
+          suggestedTimes:     jobs.suggestedTimes,
           notes:              jobs.notes,
           isTaloyhtiio:       jobs.isTaloyhtiio,
           taloyhtiioApproved: jobs.taloyhtiioApproved,
@@ -1703,6 +1704,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           taloyhtiioName:     jobs.taloyhtiioName,
           unitResponses:      jobs.unitResponses,
           isYritys:           jobs.isYritys,
+          boardContactName:   jobs.boardContactName,
+          boardContactEmail:  jobs.boardContactEmail,
+          boardContactPhone:  jobs.boardContactPhone,
           customerName:       customers.name,
           customerAddress:    customers.address,
         })
@@ -1712,6 +1716,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!rows.length) return res.status(404).json({ error: "Tarjousta ei löydy" });
       const row = rows[0];
       const quoteIdMatch = row.notes?.match(/T-PP-[A-Z0-9-]+/);
+      const parsedSuggestedTimes: string[] = (() => { try { return row.suggestedTimes ? JSON.parse(row.suggestedTimes) : []; } catch { return []; } })();
       res.json({
         quoteId:            quoteIdMatch ? quoteIdMatch[0] : req.params.token,
         customerName:       row.customerName,
@@ -1719,6 +1724,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         description:        row.description,
         agreedPriceCents:   row.agreedPrice,
         validUntil:         row.scheduledAt,
+        scheduledAt:        row.scheduledAt ? (row.scheduledAt instanceof Date ? row.scheduledAt.toISOString() : row.scheduledAt) : null,
+        suggestedTimes:     parsedSuggestedTimes,
         quoteStatus:        row.quoteStatus || "pending",
         quoteVideoUrl:      row.quoteVideoUrl,
         isTaloyhtiio:       row.isTaloyhtiio || false,
@@ -1728,6 +1735,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         taloyhtiioName:     row.taloyhtiioName ?? null,
         unitResponses:      (() => { try { return row.unitResponses ? JSON.parse(row.unitResponses) : []; } catch { return []; } })(),
         isYritys:           row.isYritys || false,
+        boardContactName:   row.boardContactName ?? null,
+        boardContactEmail:  row.boardContactEmail ?? null,
+        boardContactPhone:  row.boardContactPhone ?? null,
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1736,7 +1746,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.post("/api/quote/:token/respond", async (req, res) => {
     try {
-      const { status, suggestedTimes, customerMessage, unitResponse } = req.body;
+      const { status, suggestedTimes, customerMessage, unitResponse,
+              boardContactName, boardContactEmail, boardContactPhone } = req.body;
       if (!status || !["accepted", "declined"].includes(status)) {
         return res.status(400).json({ error: "Virheellinen status" });
       }
@@ -1774,7 +1785,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         updatedAt:       new Date(),
       };
       // Only update quoteStatus for board-rep responses, not per-unit resident submissions
-      if (!isUnitSubmission) updatePayload.quoteStatus = status;
+      if (!isUnitSubmission) {
+        updatePayload.quoteStatus = status;
+        // Save billing contact info provided by board rep
+        const sanitize = (s: unknown) => s ? String(s).slice(0, 200) : null;
+        if (boardContactName)  updatePayload.boardContactName  = sanitize(boardContactName);
+        if (boardContactEmail) updatePayload.boardContactEmail = sanitize(boardContactEmail);
+        if (boardContactPhone) updatePayload.boardContactPhone = sanitize(boardContactPhone);
+      }
 
       const [updated] = await db
         .update(jobs)

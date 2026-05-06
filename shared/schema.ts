@@ -62,6 +62,10 @@ export const jobs = pgTable("jobs", {
   propertyImageUrl:  text("property_image_url"), // image URL for the property
   taloyhtiioName:    text("taloyhtiio_name"),    // housing company name
   unitResponses:     text("unit_responses"),     // JSON: [{unitId,unitName,status,email,times,message}]
+  // Board rep billing contact (collected at approval time)
+  boardContactName:  text("board_contact_name"),
+  boardContactEmail: text("board_contact_email"),
+  boardContactPhone: text("board_contact_phone"),
   // Business (yritys) quote
   isYritys:          boolean("is_yritys").default(false).notNull(),
   createdAt:         timestamp("created_at").defaultNow().notNull(),

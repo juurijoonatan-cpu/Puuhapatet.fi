@@ -402,6 +402,22 @@ const sections: Section[] = [
             <Li>Y-tunnuksen hakemisen yhteydessä olet ilmoittautunut ennakonperintärekisteriin — verottaja voi periä ennakkoveroa</Li>
             <Li>Autokulut: elinkeinotoiminnan veroilmoituksessa on erillinen kohta, jos omistat ajokortin</Li>
           </ul>
+
+          <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-3 mb-3">
+            <p className="text-xs font-bold text-blue-800 dark:text-blue-300 mb-1.5">
+              Alle 18v + Y-tunnus — huoltaja hoitaa OmaVerossa
+            </p>
+            <ol className="text-xs text-blue-700 dark:text-blue-400 space-y-1 list-decimal list-inside">
+              <li>Huoltaja kirjautuu OmaVeroon omilla pankkitunnuksilla</li>
+              <li>Valitse <strong>Asioi toisen puolesta → Siirry Valtuudet-palveluun</strong></li>
+              <li>Valitse nuoren yrittäjän profiili</li>
+              <li>Täytä <strong>elinkeinotoiminnan veroilmoitus (lomake 5)</strong> nuoren Y-tunnuksella</li>
+            </ol>
+            <p className="text-xs text-blue-600 dark:text-blue-400 mt-1.5">
+              Paperilomakkeessa tarvitaan huoltajan allekirjoitus. OmaVerossa se ei ole pakollinen.
+            </p>
+          </div>
+
           <p className="text-xs text-muted-foreground">
             Lisätietoja: vero.fi/elinkeinotoiminnan-veroilmoitus tai suoraan verotoimistosta yritysverotuksen puolelta.
           </p>

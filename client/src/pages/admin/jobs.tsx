@@ -121,6 +121,12 @@ export default function AdminJobsPage() {
   // Service fee waiver (HOST only)
   const [waivingFee, setWaivingFee] = useState(false);
 
+  // Taloyhtiö resident notification
+  const [sendingResidentNotif, setSendingResidentNotif] = useState(false);
+
+  // Billing mode for taloyhtiö jobs: "board" = one invoice to board, "residents" = per unit
+  const [billingMode, setBillingMode] = useState<"board" | "residents">("board");
+
   // Worker invite
   const [sendingInvite, setSendingInvite] = useState(false);
   const [inviteNote, setInviteNote] = useState("");
@@ -264,15 +270,27 @@ export default function AdminJobsPage() {
     if (!selected) return;
     setSavingDate(true);
     const scheduledAt = value ? new Date(value).toISOString() : null;
-    const res = await api.updateJob(selected.job.id, { scheduledAt: scheduledAt ?? undefined });
+    // Auto-advance from "lead" to "scheduled" when a time is confirmed
+    const autoSchedule = !!(scheduledAt && selected.job.status === "lead");
+    const patch: Record<string, unknown> = scheduledAt
+      ? { scheduledAt }
+      : {};
+    if (!scheduledAt) patch.scheduledAt = null;
+    else patch.scheduledAt = scheduledAt;
+    if (autoSchedule) patch.status = "scheduled";
+    const res = await api.updateJob(selected.job.id, patch);
     if (res.ok) {
       const updated: JobRow = {
         ...selected,
-        job: { ...selected.job, scheduledAt },
+        job: {
+          ...selected.job,
+          scheduledAt,
+          ...(autoSchedule ? { status: "scheduled" as DbStatus } : {}),
+        },
       };
       setSelected(updated);
       setJobs((prev) => prev.map((r) => (r.job.id === selected.job.id ? updated : r)));
-      toast({ title: "Ajankohta tallennettu" });
+      toast({ title: autoSchedule ? "Ajankohta asetettu — status: Ajoitettu ✓" : "Ajankohta tallennettu" });
     } else {
       toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
     }
@@ -930,11 +948,15 @@ export default function AdminJobsPage() {
                               <button
                                 type="button"
                                 onClick={async () => {
-                                  const res = await api.updateJob(job.id, { scheduledAt: t });
+                                  const autoSchedule = job.status === "lead";
+                                  const patch: Record<string, unknown> = { scheduledAt: t };
+                                  if (autoSchedule) patch.status = "scheduled";
+                                  const res = await api.updateJob(job.id, patch);
                                   if (res.ok) {
-                                    setSelected(prev => prev ? { ...prev, job: { ...prev.job, scheduledAt: t } } : null);
-                                    setJobs(prev => prev.map(r => r.job.id === job.id ? { ...r, job: { ...r.job, scheduledAt: t } } : r));
-                                    toast({ title: "Ajankohta asetettu ✓" });
+                                    const updates = { scheduledAt: t, ...(autoSchedule ? { status: "scheduled" as DbStatus } : {}) };
+                                    setSelected(prev => prev ? { ...prev, job: { ...prev.job, ...updates } } : null);
+                                    setJobs(prev => prev.map(r => r.job.id === job.id ? { ...r, job: { ...r.job, ...updates } } : r));
+                                    toast({ title: autoSchedule ? "Ajoitettu ✓ — status päivitetty" : "Ajankohta asetettu ✓" });
                                   }
                                 }}
                                 className="text-xs font-semibold text-primary hover:underline shrink-0"
@@ -1047,6 +1069,39 @@ export default function AdminJobsPage() {
                       )} />
                     </div>
                   </button>
+
+                  {/* Notify accepted residents of confirmed time */}
+                  {job.scheduledAt && (() => {
+                    const accepted = (() => {
+                      try { return (JSON.parse(job.unitResponses ?? "[]") as any[]).filter(r => r.status === "accepted"); }
+                      catch { return []; }
+                    })();
+                    const hasEmails = accepted.some((r: any) => r.email);
+                    const hasBoardEmail = !!(job.boardContactEmail);
+                    if (!hasEmails && !hasBoardEmail) return null;
+                    return (
+                      <button
+                        type="button"
+                        disabled={sendingResidentNotif}
+                        onClick={async () => {
+                          setSendingResidentNotif(true);
+                          const res = await api.notifyResidents(job.id);
+                          if (res.ok) {
+                            toast({ title: "Ilmoitukset lähetetty ✓", description: "Asukkaat ja hallitushenkilö ilmoitettu ajasta." });
+                          } else {
+                            toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error });
+                          }
+                          setSendingResidentNotif(false);
+                        }}
+                        className="mt-2 w-full flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 border border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 text-sm font-medium hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors disabled:opacity-50"
+                      >
+                        {sendingResidentNotif
+                          ? <Loader2 className="w-4 h-4 animate-spin" />
+                          : <Mail className="w-4 h-4" />}
+                        Ilmoita asukkaille vahvistettu aika
+                      </button>
+                    );
+                  })()}
                 </div>
               )}
             </Card>
@@ -1721,70 +1776,172 @@ export default function AdminJobsPage() {
                   />
                 </div>
 
-                {/* Send button */}
+                {/* Send button(s) */}
                 <div className="space-y-2 pt-1">
-                  {customer?.email ? (
-                    <Button
-                      className="w-full gap-2"
-                      disabled={sendingSummary || !summaryPaymentMethod}
-                      onClick={async () => {
-                        if (!customer?.email || !summaryPaymentMethod) return;
-                        setSendingSummary(true);
-                        const priceEur = (job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" });
-                        // All assigned workers — parseWorkerIds handles both IDs and legacy full names
-                        const workerIds = parseWorkerIds(job.assignedTo);
-                        const allWorkersData = workerIds
-                          .map(id => USERS.find(u => u.id === id))
-                          .filter(Boolean)
-                          .map(u => ({ name: u!.name, phone: u!.phone, email: u!.email, yTunnus: u!.yTunnus }));
-                        const bccEmails = allWorkersData.map(w => w.email).filter((e): e is string => !!e);
-                        // Save payment method to job
-                        await api.updateJob((job as any).id, { paymentMethod: summaryPaymentMethod });
-                        // Convert ISO dates to fi-FI for display in email
-                        const displayEvents = summaryTimeline.map(e => ({
-                          label: e.label,
-                          date: e.date ? new Date(e.date + "T12:00:00").toLocaleDateString("fi-FI") : "",
-                        }));
-                        const senderUser = profile ? USERS.find(u => u.id === profile.id) : undefined;
-                        const res = await api.sendJobSummary({
-                          to: customer.email,
-                          bcc: bccEmails.length > 0 ? bccEmails : undefined,
-                          customerName: customer.name,
-                          customerAddress: customer.address,
-                          timelineEvents: displayEvents,
-                          photoDataUrl: summaryPhoto || undefined,
-                          description: job.description,
-                          price: priceEur,
-                          paymentMethod: summaryPaymentMethod,
-                          iban: summaryIban || undefined,
-                          bic: summaryBic || undefined,
-                          viitenumero: summaryViitenumero || undefined,
-                          dueDate: summaryDueDate || undefined,
-                          workerMessage: summaryMessage || undefined,
-                          jobNotes: summaryNotes || undefined,
-                          allWorkers: allWorkersData.length > 0 ? allWorkersData : undefined,
-                          senderName: senderUser?.name,
-                          senderAddress: senderUser?.address,
-                          agreedPriceCents: job.agreedPrice,
-                          expensesTotalCents: expensesTotal > 0 ? expensesTotal : undefined,
-                          estimatedHours: summaryHours ? Number(summaryHours) : undefined,
-                          lang: summaryLang,
-                        });
-                        if (res.ok) {
-                          toast({ title: summaryPaymentMethod === "tilisiirto" ? "Lasku lähetetty!" : "Yhteenveto lähetetty!", description: `Sähköposti lähetetty: ${customer.email}` });
-                          setShowSummaryPanel(false);
-                        } else {
-                          toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error || "Yritä uudelleen" });
-                        }
-                        setSendingSummary(false);
-                      }}
-                    >
-                      {sendingSummary ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
-                      {summaryPaymentMethod === "tilisiirto" ? "Lähetä lasku" : "Lähetä yhteenveto"}
-                    </Button>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">Lisää asiakkaalle sähköpostiosoite lähettääksesi yhteenvedon suoraan.</p>
-                  )}
+                  {(() => {
+                    const workerIds = parseWorkerIds(job.assignedTo);
+                    const allWorkersData = workerIds
+                      .map(id => USERS.find(u => u.id === id))
+                      .filter(Boolean)
+                      .map(u => ({ name: u!.name, phone: u!.phone, email: u!.email, yTunnus: u!.yTunnus }));
+                    const bccEmails = allWorkersData.map(w => w.email).filter((e): e is string => !!e);
+                    const senderUser = profile ? USERS.find(u => u.id === profile.id) : undefined;
+
+                    const buildSummaryPayload = (toEmail: string, recipientName: string, recipientAddress: string, unitPrice?: number, unitBreakdown?: { unitName: string; priceEur: string }[]) => {
+                      const priceEur = ((unitPrice ?? job.agreedPrice) / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" });
+                      const displayEvents = summaryTimeline.map(e => ({
+                        label: e.label,
+                        date: e.date ? new Date(e.date + "T12:00:00").toLocaleDateString("fi-FI") : "",
+                      }));
+                      return {
+                        to: toEmail,
+                        bcc: bccEmails.length > 0 ? bccEmails : undefined,
+                        customerName: recipientName,
+                        customerAddress: recipientAddress,
+                        timelineEvents: displayEvents,
+                        photoDataUrl: summaryPhoto || undefined,
+                        description: job.description,
+                        price: priceEur,
+                        paymentMethod: summaryPaymentMethod,
+                        iban: summaryIban || undefined,
+                        bic: summaryBic || undefined,
+                        viitenumero: summaryViitenumero || undefined,
+                        dueDate: summaryDueDate || undefined,
+                        workerMessage: summaryMessage || undefined,
+                        jobNotes: summaryNotes || undefined,
+                        allWorkers: allWorkersData.length > 0 ? allWorkersData : undefined,
+                        senderName: senderUser?.name,
+                        senderAddress: senderUser?.address,
+                        agreedPriceCents: unitPrice ?? job.agreedPrice,
+                        expensesTotalCents: expensesTotal > 0 && !unitPrice ? expensesTotal : undefined,
+                        estimatedHours: summaryHours ? Number(summaryHours) : undefined,
+                        lang: summaryLang,
+                        unitBreakdown,
+                      };
+                    };
+
+                    // ── Taloyhtiö billing: two modes ─────────────────────────────
+                    if (job.isTaloyhtiio && job.unitCount && job.unitCount > 1) {
+                      const unitPriceCents = Math.round(job.agreedPrice / job.unitCount);
+                      let accepted: any[] = [];
+                      try { accepted = JSON.parse(job.unitResponses ?? "[]").filter((r: any) => r.status === "accepted"); } catch {}
+                      const residentsWithEmail = accepted.filter((r: any) => r.email);
+                      const boardEmail = job.boardContactEmail;
+                      const boardName = job.boardContactName ?? customer?.name ?? "";
+                      const allUnits = Array.from({ length: job.unitCount }, (_, i) => `Asunto ${i + 1}`);
+                      const unitBreakdown = accepted.length > 0
+                        ? accepted.map((r: any) => ({ unitName: r.unitName, priceEur: (unitPriceCents / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" }) }))
+                        : allUnits.map(u => ({ unitName: u, priceEur: (unitPriceCents / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" }) }));
+
+                      return (
+                        <>
+                          {/* Mode selector */}
+                          <div className="flex gap-2 mb-2">
+                            {(["board", "residents"] as const).map(m => (
+                              <button
+                                key={m}
+                                type="button"
+                                onClick={() => setBillingMode(m)}
+                                className={cn(
+                                  "flex-1 py-1.5 rounded-xl text-xs font-semibold border-2 transition-all",
+                                  billingMode === m
+                                    ? "border-primary bg-primary/5 text-foreground"
+                                    : "border-border text-muted-foreground"
+                                )}
+                              >
+                                {m === "board" ? "Hallitukselle (yksi lasku)" : "Asukkaille (per asunto)"}
+                              </button>
+                            ))}
+                          </div>
+
+                          {billingMode === "board" ? (
+                            boardEmail ? (
+                              <Button
+                                className="w-full gap-2"
+                                disabled={sendingSummary || !summaryPaymentMethod}
+                                onClick={async () => {
+                                  setSendingSummary(true);
+                                  await api.updateJob(job.id, { paymentMethod: summaryPaymentMethod });
+                                  const res = await api.sendJobSummary(buildSummaryPayload(
+                                    boardEmail, boardName, customer?.address ?? "",
+                                    undefined, unitBreakdown
+                                  ));
+                                  setSendingSummary(false);
+                                  if (res.ok) {
+                                    toast({ title: "Lasku lähetetty hallitukselle ✓", description: boardEmail });
+                                    setShowSummaryPanel(false);
+                                  } else {
+                                    toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error });
+                                  }
+                                }}
+                              >
+                                {sendingSummary ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+                                Lähetä lasku hallitukselle ({boardEmail})
+                              </Button>
+                            ) : (
+                              <p className="text-xs text-muted-foreground bg-muted/30 rounded-lg px-3 py-2">
+                                Hallituksen yhteyshenkilöllä ei ole sähköpostia. Lisää se tarjouslomakkeen kautta tai muokkaa asiakasta.
+                              </p>
+                            )
+                          ) : (
+                            residentsWithEmail.length > 0 ? (
+                              <Button
+                                className="w-full gap-2"
+                                disabled={sendingSummary || !summaryPaymentMethod}
+                                onClick={async () => {
+                                  setSendingSummary(true);
+                                  await api.updateJob(job.id, { paymentMethod: summaryPaymentMethod });
+                                  let sent = 0;
+                                  for (const r of residentsWithEmail) {
+                                    const res = await api.sendJobSummary(buildSummaryPayload(
+                                      r.email, r.unitName, customer?.address ?? "", unitPriceCents
+                                    ));
+                                    if (res.ok) sent++;
+                                  }
+                                  setSendingSummary(false);
+                                  toast({ title: `Laskut lähetetty ${sent}/${residentsWithEmail.length} asukkaalle ✓` });
+                                  if (sent > 0) setShowSummaryPanel(false);
+                                }}
+                              >
+                                {sendingSummary ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+                                Lähetä lasku {residentsWithEmail.length} asukkaalle ({(unitPriceCents / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })} / asunto)
+                              </Button>
+                            ) : (
+                              <p className="text-xs text-muted-foreground bg-muted/30 rounded-lg px-3 py-2">
+                                Yhtään asukasta ei ole antanut sähköpostiosoitetta. Käytä hallitus-laskutusta.
+                              </p>
+                            )
+                          )}
+                        </>
+                      );
+                    }
+
+                    // ── Normal (non-taloyhtiö) billing ────────────────────────────
+                    return customer?.email ? (
+                      <Button
+                        className="w-full gap-2"
+                        disabled={sendingSummary || !summaryPaymentMethod}
+                        onClick={async () => {
+                          if (!customer?.email || !summaryPaymentMethod) return;
+                          setSendingSummary(true);
+                          await api.updateJob(job.id, { paymentMethod: summaryPaymentMethod });
+                          const res = await api.sendJobSummary(buildSummaryPayload(customer.email, customer.name, customer.address));
+                          setSendingSummary(false);
+                          if (res.ok) {
+                            toast({ title: summaryPaymentMethod === "tilisiirto" ? "Lasku lähetetty!" : "Yhteenveto lähetetty!", description: customer.email });
+                            setShowSummaryPanel(false);
+                          } else {
+                            toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error || "Yritä uudelleen" });
+                          }
+                        }}
+                      >
+                        {sendingSummary ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+                        {summaryPaymentMethod === "tilisiirto" ? "Lähetä lasku" : "Lähetä yhteenveto"}
+                      </Button>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">Lisää asiakkaalle sähköpostiosoite lähettääksesi yhteenvedon suoraan.</p>
+                    );
+                  })()}
                   <Button
                     variant="ghost"
                     size="sm"

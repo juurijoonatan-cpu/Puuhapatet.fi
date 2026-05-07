@@ -280,7 +280,11 @@ export const api = {
     expensesTotalCents?: number;
     estimatedHours?: number;
     lang?: "fi" | "en";
+    unitBreakdown?: { unitName: string; priceEur: string }[];
   }) => request<{ ok: boolean; id?: string }>("POST", "/api/send-job-summary", data),
+
+  notifyResidents: (jobId: number) =>
+    request<{ ok: boolean; sent: number }>("POST", `/api/jobs/${jobId}/notify-residents`, {}),
 
   sendQuote: (data: {
     to: string;

@@ -904,6 +904,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         agreedPriceCents, expensesTotalCents,
         estimatedHours,
         lang,
+        unitBreakdown,
       } = req.body;
 
       // dueDate arrives as ISO (YYYY-MM-DD); format for display
@@ -1039,6 +1040,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               <td style="padding:14px 24px;text-align:right;font-size:20px;font-weight:800;color:#111827">${price}</td>
             </tr>
           </table>
+
+          ${Array.isArray(unitBreakdown) && unitBreakdown.length > 0 ? `
+          <div style="padding:16px 24px;background:#f8fafc;border-top:1px solid #e5e7eb">
+            <p style="margin:0 0 10px;font-size:11px;font-weight:700;color:#6b7280;letter-spacing:0.8px;text-transform:uppercase">${isEn ? "Per Unit Breakdown" : "Asuntokohtainen erittely"}</p>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:13px">
+              ${(unitBreakdown as {unitName:string;priceEur:string}[]).map(u =>
+                `<tr style="border-bottom:1px solid #f1f5f9">
+                  <td style="padding:5px 0;color:#374151">${u.unitName}</td>
+                  <td style="padding:5px 0;text-align:right;font-weight:600;color:#111827">${u.priceEur}</td>
+                </tr>`
+              ).join("")}
+            </table>
+          </div>` : ""}
 
           ${hasExpenses ? `
           <div style="padding:8px 24px;background:#f0fdf4;border-top:1px solid #bbf7d0">
@@ -1883,6 +1897,63 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const { approved } = req.body;
       await db.update(jobs).set({ taloyhtiioApproved: !!approved, updatedAt: new Date() }).where(eq(jobs.id, id));
       res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Notify taloyhtiö residents of confirmed scheduled time ──────────────────
+
+  app.post("/api/jobs/:id/notify-residents", async (req, res) => {
+    if (!resend) return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä" });
+    try {
+      const id = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      if (!job.scheduledAt) return res.status(400).json({ error: "Ajankohta ei asetettu" });
+
+      const dateStr = new Date(job.scheduledAt).toLocaleDateString("fi-FI", {
+        weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit",
+      });
+      const unitPriceCents = job.unitCount && job.unitCount > 1
+        ? Math.round((job.agreedPrice ?? 0) / job.unitCount)
+        : job.agreedPrice ?? 0;
+      const unitPriceEur = (unitPriceCents / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" });
+
+      let accepted: Array<{ unitName: string; email?: string }> = [];
+      try { accepted = JSON.parse(job.unitResponses ?? "[]"); } catch {}
+      const residentsWithEmail = accepted.filter(r => r.email);
+
+      const emailList: { to: string; name: string }[] = [];
+      if (job.boardContactEmail) emailList.push({ to: job.boardContactEmail, name: job.boardContactName ?? "Hallituksen edustaja" });
+      for (const r of residentsWithEmail) {
+        if (r.email && !emailList.find(e => e.to === r.email))
+          emailList.push({ to: r.email, name: r.unitName });
+      }
+
+      if (emailList.length === 0) return res.status(400).json({ error: "Ei sähköpostiosoitteita" });
+
+      const html = (name: string) => `
+        <div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:24px">
+          <h2 style="color:#2d5016;margin:0 0 8px">Ikkunanpesu vahvistettu ✓</h2>
+          <p style="color:#555;margin:0 0 20px">Hei${name ? ` ${name}` : ""}! Palvelun ajankohta on nyt vahvistettu.</p>
+          <div style="background:#f0fdf4;border-radius:12px;padding:20px;margin-bottom:20px;border:1px solid #bbf7d0">
+            <p style="margin:0 0 6px"><strong>Palvelu:</strong> ${job.description ?? "Ikkunanpesu"}</p>
+            <p style="margin:0 0 6px"><strong>Ajankohta:</strong> ${dateStr}</p>
+            ${job.unitCount && job.unitCount > 1 ? `<p style="margin:0"><strong>Hinta per asunto:</strong> ${unitPriceEur}</p>` : ""}
+          </div>
+          <p style="color:#888;font-size:13px">Ole kotona sovittuna aikana tai jätä tarvittavat ohjeet etukäteen. Lisätietoja: info@puuhapatet.fi</p>
+          <p style="color:#888;font-size:12px;margin-top:16px">Puuhapatet — ikkunanpesu & kotitalouspalvelut</p>
+        </div>`;
+
+      let sent = 0;
+      for (const { to, name } of emailList) {
+        try {
+          await resend.emails.send({ from: FROM_EMAIL, to, subject: `Ajankohta vahvistettu — ${dateStr}`, html: html(name) });
+          sent++;
+        } catch { /* continue even if one fails */ }
+      }
+      res.json({ ok: true, sent });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

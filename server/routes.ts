@@ -387,6 +387,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (body.scheduledAt === null) {
         body.scheduledAt = null; // explicitly NULL — clears the field
       }
+      // When a job is marked done, strip heavy/temp fields to keep the DB lean
+      if (body.status === "done") {
+        body.propertyImageUrl = null;  // base64 image, biggest offender
+        body.quoteVideoUrl    = null;  // no longer needed
+        body.pendingWorkers   = null;  // invite state irrelevant after completion
+      }
       const [row] = await db
         .update(jobs)
         .set({ ...body, updatedAt: new Date() })

@@ -1937,7 +1937,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   const WORKER_INFO: Record<string, { name: string; email: string | null }> = {
     joonatan: { name: process.env.WORKER_JOONATAN_NAME || "Joonatan Juuri",  email: process.env.WORKER_JOONATAN_EMAIL || "joonatan@puuhapatet.fi" },
     matias:   { name: process.env.WORKER_MATIAS_NAME  || "Matias Pitkänen", email: process.env.WORKER_MATIAS_EMAIL  || "matias@puuhapatet.fi" },
-    testi1:   { name: "Testi Ykkönen",    email: null },
+    petrus:   { name: "Petrus Aalto",      email: process.env.WORKER_PETRUS_EMAIL || "petrus.aalto@icloud.com" },
     testi2:   { name: "Testi Kakkonen",   email: null },
   };
 

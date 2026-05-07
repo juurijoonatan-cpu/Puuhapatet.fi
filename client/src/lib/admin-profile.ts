@@ -61,8 +61,8 @@ export const USERS: AdminProfile[] = [
     name: "Petrus Aalto",
     role: "STAFF",
     phone: "",          // päivitetään myöhemmin
-    email: "",          // päivitetään myöhemmin
-    yTunnus: "",        // lisätään myöhemmin
+    email: "petrus.aalto@icloud.com",
+    yTunnus: "3620983-4",
     hasYTunnus: true,
     isUnder18: true,    // alle 18v
     startupBonus: 30000, // 300 €

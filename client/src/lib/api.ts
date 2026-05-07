@@ -352,6 +352,7 @@ export const api = {
       unitName: string;
       status: "accepted" | "declined";
       email?: string;
+      residentName?: string;
       times: string[];
       message: string;
     };

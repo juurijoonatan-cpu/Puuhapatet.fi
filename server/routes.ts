@@ -387,6 +387,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (body.scheduledAt === null) {
         body.scheduledAt = null; // explicitly NULL — clears the field
       }
+      // When a job is marked done, strip heavy/temp fields to keep the DB lean
+      if (body.status === "done") {
+        body.propertyImageUrl = null;  // base64 image, biggest offender
+        body.quoteVideoUrl    = null;  // no longer needed
+        body.pendingWorkers   = null;  // invite state irrelevant after completion
+      }
       const [row] = await db
         .update(jobs)
         .set({ ...body, updatedAt: new Date() })
@@ -1817,12 +1823,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         try { existing = current.unitResponses ? JSON.parse(current.unitResponses) : []; } catch { existing = []; }
         const sanitize = (s: unknown) => String(s ?? "").slice(0, 500);
         const safe = {
-          unitId:   sanitize(unitResponse.unitId),
-          unitName: sanitize(unitResponse.unitName),
-          status:   ["accepted", "declined"].includes(unitResponse.status) ? unitResponse.status : "declined",
-          email:    unitResponse.email ? sanitize(unitResponse.email).slice(0, 200) : undefined,
-          times:    Array.isArray(unitResponse.times) ? unitResponse.times.slice(0, 3).map(sanitize) : [],
-          message:  sanitize(unitResponse.message),
+          unitId:       sanitize(unitResponse.unitId),
+          unitName:     sanitize(unitResponse.unitName),
+          status:       ["accepted", "declined"].includes(unitResponse.status) ? unitResponse.status : "declined",
+          email:        unitResponse.email ? sanitize(unitResponse.email).slice(0, 200) : undefined,
+          residentName: unitResponse.residentName ? sanitize(unitResponse.residentName).slice(0, 200) : undefined,
+          times:        Array.isArray(unitResponse.times) ? unitResponse.times.slice(0, 3).map(sanitize) : [],
+          message:      sanitize(unitResponse.message),
         };
         const idx = existing.findIndex((r: any) => r.unitId === safe.unitId);
         if (idx >= 0) existing[idx] = safe; else existing.push(safe);

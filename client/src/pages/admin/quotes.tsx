@@ -468,19 +468,35 @@ export default function AdminQuotesPage() {
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tarjousportaali-linkki</p>
               </div>
               <div className="px-4 py-3">
-                <p className="text-xs font-mono break-all text-foreground mb-2">
+                <p className="text-xs font-mono break-all text-foreground mb-3">
                   puuhapatet.fi/tarjous/{quoteToken}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigator.clipboard.writeText(`https://puuhapatet.fi/tarjous/${quoteToken}`);
-                    toast({ title: "Linkki kopioitu!" });
-                  }}
-                  className="text-xs font-semibold text-primary hover:underline"
-                >
-                  Kopioi linkki
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(`https://puuhapatet.fi/tarjous/${quoteToken}`);
+                      toast({ title: "Linkki kopioitu!" });
+                    }}
+                    className="text-xs font-semibold text-primary hover:underline"
+                  >
+                    Kopioi linkki
+                  </button>
+                  <a
+                    href={`https://wa.me/?text=${encodeURIComponent(`Hei! Tässä tarjous ikkunanpesusta: https://puuhapatet.fi/tarjous/${quoteToken}`)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs font-semibold text-emerald-600 hover:underline"
+                  >
+                    Lähetä WhatsApp
+                  </a>
+                  <a
+                    href={`sms:?body=${encodeURIComponent(`Hei! Tässä tarjous ikkunanpesusta: https://puuhapatet.fi/tarjous/${quoteToken}`)}`}
+                    className="text-xs font-semibold text-blue-600 hover:underline"
+                  >
+                    Lähetä SMS
+                  </a>
+                </div>
               </div>
             </div>
 

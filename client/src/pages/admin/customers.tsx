@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Loader2, Users, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Search, Save, Trash2, FileText, UserPlus, X, Check } from "lucide-react";
+import { Loader2, Users, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Search, Save, Trash2, FileText, UserPlus, X, Check, Building2 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 
 import { Card } from "@/components/ui/card";
@@ -47,6 +47,9 @@ interface Customer {
   email: string | null;
   address: string;
   notes: string | null;
+  isYritys?: boolean;
+  companyName?: string | null;
+  yTunnus?: string | null;
   createdAt: string;
   jobs?: CustomerJob[];
 }
@@ -70,6 +73,9 @@ export default function AdminCustomersPage() {
   const [editEmail, setEditEmail] = useState("");
   const [editAddress, setEditAddress] = useState("");
   const [editNotes, setEditNotes] = useState("");
+  const [editIsYritys, setEditIsYritys] = useState(false);
+  const [editCompanyName, setEditCompanyName] = useState("");
+  const [editYTunnus, setEditYTunnus] = useState("");
   const [savingCustomer, setSavingCustomer] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -81,6 +87,9 @@ export default function AdminCustomersPage() {
   const [newEmail,   setNewEmail]       = useState("");
   const [newAddress, setNewAddress]     = useState("");
   const [newOwners, setNewOwners]       = useState<string[]>(profile?.id ? [profile.id] : []);
+  const [newIsYritys,    setNewIsYritys]    = useState(false);
+  const [newCompanyName, setNewCompanyName] = useState("");
+  const [newYTunnus,     setNewYTunnus]     = useState("");
   const [addingCustomer, setAddingCustomer] = useState(false);
 
   useEffect(() => {
@@ -124,6 +133,9 @@ export default function AdminCustomersPage() {
     setEditEmail(c.email ?? "");
     setEditAddress(c.address);
     setEditNotes(c.notes ?? "");
+    setEditIsYritys(c.isYritys ?? false);
+    setEditCompanyName(c.companyName ?? "");
+    setEditYTunnus(c.yTunnus ?? "");
     setDetailLoading(true);
     const res = await api.getCustomer(c.id);
     if (res.ok && res.data) {
@@ -134,6 +146,9 @@ export default function AdminCustomersPage() {
       setEditEmail(data.email ?? "");
       setEditAddress(data.address);
       setEditNotes(data.notes ?? "");
+      setEditIsYritys(data.isYritys ?? false);
+      setEditCompanyName(data.companyName ?? "");
+      setEditYTunnus(data.yTunnus ?? "");
     }
     setDetailLoading(false);
   };
@@ -142,20 +157,26 @@ export default function AdminCustomersPage() {
     if (!selected) return;
     setSavingCustomer(true);
     const res = await api.updateCustomer(selected.id, {
-      name: editName.trim() || selected.name,
-      phone: editPhone.trim() || selected.phone,
-      email: editEmail.trim() || undefined,
-      address: editAddress.trim() || selected.address,
-      notes: editNotes.trim() || undefined,
+      name:        editName.trim() || selected.name,
+      phone:       editPhone.trim() || selected.phone,
+      email:       editEmail.trim() || undefined,
+      address:     editAddress.trim() || selected.address,
+      notes:       editNotes.trim() || undefined,
+      isYritys:    editIsYritys,
+      companyName: editIsYritys ? (editCompanyName.trim() || undefined) : undefined,
+      yTunnus:     editIsYritys ? (editYTunnus.trim() || undefined) : undefined,
     });
     if (res.ok) {
       const updated: Customer = {
         ...selected,
-        name: editName.trim() || selected.name,
-        phone: editPhone.trim() || selected.phone,
-        email: editEmail.trim() || null,
-        address: editAddress.trim() || selected.address,
-        notes: editNotes.trim() || null,
+        name:        editName.trim() || selected.name,
+        phone:       editPhone.trim() || selected.phone,
+        email:       editEmail.trim() || null,
+        address:     editAddress.trim() || selected.address,
+        notes:       editNotes.trim() || null,
+        isYritys:    editIsYritys,
+        companyName: editIsYritys ? (editCompanyName.trim() || null) : null,
+        yTunnus:     editIsYritys ? (editYTunnus.trim() || null) : null,
       };
       setSelected(updated);
       setCustomers((prev) => prev.map((c) => (c.id === selected.id ? updated : c)));
@@ -171,7 +192,10 @@ export default function AdminCustomersPage() {
       editPhone !== selected.phone ||
       editEmail !== (selected.email ?? "") ||
       editAddress !== selected.address ||
-      editNotes !== (selected.notes ?? "")
+      editNotes !== (selected.notes ?? "") ||
+      editIsYritys !== (selected.isYritys ?? false) ||
+      editCompanyName !== (selected.companyName ?? "") ||
+      editYTunnus !== (selected.yTunnus ?? "")
     : false;
 
   const handleAddCustomer = async () => {
@@ -181,11 +205,14 @@ export default function AdminCustomersPage() {
     }
     setAddingCustomer(true);
     const res = await api.createCustomer({
-      name:    newName.trim(),
-      phone:   newPhone.trim(),
-      email:   newEmail.trim() || undefined,
-      address: newAddress.trim(),
-      ownedBy: newOwners.length > 0 ? newOwners.join(",") : undefined,
+      name:        newName.trim(),
+      phone:       newPhone.trim(),
+      email:       newEmail.trim() || undefined,
+      address:     newAddress.trim(),
+      ownedBy:     newOwners.length > 0 ? newOwners.join(",") : undefined,
+      isYritys:    newIsYritys || undefined,
+      companyName: newIsYritys ? (newCompanyName.trim() || undefined) : undefined,
+      yTunnus:     newIsYritys ? (newYTunnus.trim() || undefined) : undefined,
     });
     setAddingCustomer(false);
     if (res.ok && res.data) {
@@ -195,7 +222,9 @@ export default function AdminCustomersPage() {
       if (profile && newOwners.includes(profile.id)) {
         setMyCustomerIds(prev => new Set(Array.from(prev).concat(created.id)));
       }
-      setNewName(""); setNewPhone(""); setNewEmail(""); setNewAddress(""); setNewOwners(profile?.id ? [profile.id] : []);
+      setNewName(""); setNewPhone(""); setNewEmail(""); setNewAddress("");
+      setNewOwners(profile?.id ? [profile.id] : []);
+      setNewIsYritys(false); setNewCompanyName(""); setNewYTunnus("");
       setShowAddForm(false);
       toast({ title: "Asiakas lisätty!", description: newName.trim() });
     } else {
@@ -227,7 +256,13 @@ export default function AdminCustomersPage() {
               <ArrowLeft className="w-5 h-5" />
             </Button>
             <div>
-              <h1 className="text-2xl font-semibold text-foreground">{selected.name}</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-semibold text-foreground">{selected.isYritys && selected.companyName ? selected.companyName : selected.name}</h1>
+                {selected.isYritys && (
+                  <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">Yritys</span>
+                )}
+              </div>
+              {selected.isYritys && selected.companyName && <p className="text-muted-foreground text-sm">{selected.name}</p>}
               <p className="text-muted-foreground text-sm">{selected.address}</p>
             </div>
           </div>
@@ -237,65 +272,72 @@ export default function AdminCustomersPage() {
               Yhteystiedot
             </h2>
             <div className="space-y-4">
+              {/* Yritys toggle */}
+              <button
+                type="button"
+                onClick={() => setEditIsYritys(v => !v)}
+                className={cn(
+                  "w-full flex items-center justify-between rounded-xl px-4 py-3 border transition-colors text-sm",
+                  editIsYritys ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20" : "border-border hover:bg-muted/30"
+                )}
+              >
+                <span className="flex items-center gap-2">
+                  <Building2 className={cn("w-4 h-4", editIsYritys ? "text-blue-600" : "text-muted-foreground")} />
+                  <span className={editIsYritys ? "font-semibold text-blue-700 dark:text-blue-300" : "text-muted-foreground"}>Yritysasiakas</span>
+                </span>
+                <div className={cn("w-10 h-6 rounded-full transition-colors relative shrink-0", editIsYritys ? "bg-blue-600" : "bg-muted")}>
+                  <div className={cn("absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform", editIsYritys ? "translate-x-5" : "translate-x-1")} />
+                </div>
+              </button>
+
+              {/* Company fields */}
+              {editIsYritys && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-xl bg-blue-50/50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-800">
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1.5">Yrityksen nimi</p>
+                    <Input value={editCompanyName} onChange={e => setEditCompanyName(e.target.value)}
+                      placeholder="Yritys Oy" className="text-sm" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1.5">Y-tunnus</p>
+                    <Input value={editYTunnus} onChange={e => setEditYTunnus(e.target.value)}
+                      placeholder="1234567-8" className="text-sm" />
+                  </div>
+                </div>
+              )}
+
               <div>
-                <p className="text-xs text-muted-foreground mb-1.5">Nimi</p>
-                <Input
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  className="text-sm"
-                />
+                <p className="text-xs text-muted-foreground mb-1.5">{editIsYritys ? "Yhteyshenkilö" : "Nimi"}</p>
+                <Input value={editName} onChange={(e) => setEditName(e.target.value)} className="text-sm" />
               </div>
               <div>
                 <p className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1.5">
                   <Phone className="w-3.5 h-3.5" /> Puhelin
                 </p>
-                <Input
-                  value={editPhone}
-                  onChange={(e) => setEditPhone(e.target.value)}
-                  type="tel"
-                  className="text-sm"
-                />
+                <Input value={editPhone} onChange={(e) => setEditPhone(e.target.value)} type="tel" className="text-sm" />
               </div>
               <div>
                 <p className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1.5">
                   <Mail className="w-3.5 h-3.5" /> Sähköposti
                 </p>
-                <Input
-                  value={editEmail}
-                  onChange={(e) => setEditEmail(e.target.value)}
-                  type="email"
-                  placeholder="(ei pakollinen)"
-                  className="text-sm"
-                />
+                <Input value={editEmail} onChange={(e) => setEditEmail(e.target.value)}
+                  type="email" placeholder="(ei pakollinen)" className="text-sm" />
               </div>
               <div>
                 <p className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1.5">
                   <MapPin className="w-3.5 h-3.5" /> Osoite
                 </p>
-                <Input
-                  value={editAddress}
-                  onChange={(e) => setEditAddress(e.target.value)}
-                  className="text-sm"
-                />
+                <Input value={editAddress} onChange={(e) => setEditAddress(e.target.value)} className="text-sm" />
               </div>
               <div>
                 <p className="text-xs text-muted-foreground mb-1.5">Muistiinpanot</p>
-                <Textarea
-                  value={editNotes}
-                  onChange={(e) => setEditNotes(e.target.value)}
-                  placeholder="Sisäiset muistiinpanot…"
-                  rows={2}
-                  className="text-sm resize-none"
-                />
+                <Textarea value={editNotes} onChange={(e) => setEditNotes(e.target.value)}
+                  placeholder="Sisäiset muistiinpanot…" rows={2} className="text-sm resize-none" />
               </div>
 
               {hasCustomerChanges && (
                 <Button onClick={saveCustomer} disabled={savingCustomer} className="w-full">
-                  {savingCustomer ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                  ) : (
-                    <Save className="w-4 h-4 mr-2" />
-                  )}
+                  {savingCustomer ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
                   Tallenna muutokset
                 </Button>
               )}
@@ -463,11 +505,45 @@ export default function AdminCustomersPage() {
         {showAddForm && (
           <Card className="p-5 bg-card border-0 premium-shadow mb-5">
             <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-4">Uusi asiakas</h2>
+
+            {/* Yritys toggle */}
+            <button
+              type="button"
+              onClick={() => setNewIsYritys(v => !v)}
+              className={cn(
+                "w-full flex items-center justify-between rounded-xl px-4 py-3 border transition-colors text-sm mb-4",
+                newIsYritys ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20" : "border-border hover:bg-muted/30"
+              )}
+            >
+              <span className="flex items-center gap-2">
+                <Building2 className={cn("w-4 h-4", newIsYritys ? "text-blue-600" : "text-muted-foreground")} />
+                <span className={newIsYritys ? "font-semibold text-blue-700 dark:text-blue-300" : "text-muted-foreground"}>Yritysasiakas</span>
+              </span>
+              <div className={cn("w-10 h-6 rounded-full transition-colors relative shrink-0", newIsYritys ? "bg-blue-600" : "bg-muted")}>
+                <div className={cn("absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform", newIsYritys ? "translate-x-5" : "translate-x-1")} />
+              </div>
+            </button>
+
+            {newIsYritys && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4 p-3 rounded-xl bg-blue-50/50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-800">
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1.5">Yrityksen nimi</p>
+                  <Input value={newCompanyName} onChange={e => setNewCompanyName(e.target.value)}
+                    placeholder="Yritys Oy" className="text-sm" />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1.5">Y-tunnus</p>
+                  <Input value={newYTunnus} onChange={e => setNewYTunnus(e.target.value)}
+                    placeholder="1234567-8" className="text-sm" />
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
               <div>
-                <p className="text-xs text-muted-foreground mb-1.5">Nimi *</p>
+                <p className="text-xs text-muted-foreground mb-1.5">{newIsYritys ? "Yhteyshenkilö *" : "Nimi *"}</p>
                 <Input value={newName} onChange={e => setNewName(e.target.value)}
-                  placeholder="Etunimi Sukunimi" className="text-sm" />
+                  placeholder={newIsYritys ? "Etunimi Sukunimi" : "Etunimi Sukunimi"} className="text-sm" />
               </div>
               <div>
                 <p className="text-xs text-muted-foreground mb-1.5">Puhelin *</p>
@@ -560,7 +636,13 @@ export default function AdminCustomersPage() {
               >
                 <div className="flex items-center justify-between">
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium text-foreground">{c.name}</p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-medium text-foreground">{c.isYritys && c.companyName ? c.companyName : c.name}</p>
+                      {c.isYritys && (
+                        <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 shrink-0">Yritys</span>
+                      )}
+                    </div>
+                    {c.isYritys && c.companyName && <p className="text-xs text-muted-foreground">{c.name}</p>}
                     <p className="text-sm text-muted-foreground truncate">{c.address}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">{c.phone}</p>
                   </div>

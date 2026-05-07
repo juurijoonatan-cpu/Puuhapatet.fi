@@ -714,20 +714,27 @@ export default function AdminJobsPage() {
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
               Status
             </p>
+            {/* STAFF cannot change status of a completed job — prevents gaming service fee */}
+            {!isHost && job.status === "done" && (
+              <p className="text-xs text-muted-foreground mb-3 bg-muted/30 rounded-lg px-3 py-2">
+                Valmistuneen keikan statusta voi muuttaa vain HOST. Ota yhteyttä Joonataniin tai Matiakseen.
+              </p>
+            )}
             <div className="flex flex-wrap gap-2">
               {STATUS_FLOW.map((s) => {
                 const isCurrent = job.status === s.key;
+                const staffDoneLocked = !isHost && job.status === "done";
                 return (
                   <button
                     key={s.key}
-                    disabled={updating}
+                    disabled={updating || staffDoneLocked}
                     onClick={() => updateStatus(s.key)}
                     className={cn(
                       "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all border-2",
                       isCurrent
                         ? `${s.bg} ${s.color} border-current`
                         : "bg-muted/40 text-muted-foreground border-transparent hover:border-muted-foreground/30",
-                      updating && "opacity-50 cursor-not-allowed",
+                      (updating || staffDoneLocked) && "opacity-50 cursor-not-allowed",
                     )}
                   >
                     {isCurrent && <Check className="w-3.5 h-3.5" />}
@@ -1078,6 +1085,12 @@ export default function AdminJobsPage() {
             <div className="border-t border-border mb-5" />
 
             {/* Editable fields */}
+            {/* STAFF: price is read-only on done jobs to prevent manipulation */}
+            {!isHost && job.status === "done" && (
+              <p className="text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-lg px-3 py-2 mb-3">
+                Valmistuneen keikan hintaa ja tietoja voi muokata vain HOST.
+              </p>
+            )}
             <div className="space-y-4">
               <div>
                 <p className="text-xs text-muted-foreground mb-1.5">Sovittu hinta (€)</p>
@@ -1086,8 +1099,9 @@ export default function AdminJobsPage() {
                   min="0"
                   step="1"
                   value={editPrice}
-                  onChange={(e) => setEditPrice(e.target.value)}
-                  className="text-lg font-semibold text-primary"
+                  onChange={(e) => isHost || job.status !== "done" ? setEditPrice(e.target.value) : undefined}
+                  readOnly={!isHost && job.status === "done"}
+                  className={cn("text-lg font-semibold text-primary", !isHost && job.status === "done" && "opacity-60 cursor-not-allowed")}
                 />
               </div>
 
@@ -1095,9 +1109,10 @@ export default function AdminJobsPage() {
                 <p className="text-xs text-muted-foreground mb-1.5">Kuvaus</p>
                 <Textarea
                   value={editDescription}
-                  onChange={(e) => setEditDescription(e.target.value)}
+                  onChange={(e) => isHost || job.status !== "done" ? setEditDescription(e.target.value) : undefined}
+                  readOnly={!isHost && job.status === "done"}
                   rows={3}
-                  className="text-sm resize-none"
+                  className={cn("text-sm resize-none", !isHost && job.status === "done" && "opacity-60 cursor-not-allowed")}
                 />
               </div>
 
@@ -1105,14 +1120,15 @@ export default function AdminJobsPage() {
                 <p className="text-xs text-muted-foreground mb-1.5">Muistiinpanot</p>
                 <Textarea
                   value={editNotes}
-                  onChange={(e) => setEditNotes(e.target.value)}
+                  onChange={(e) => isHost || job.status !== "done" ? setEditNotes(e.target.value) : undefined}
+                  readOnly={!isHost && job.status === "done"}
                   placeholder="Sisäiset muistiinpanot…"
                   rows={2}
-                  className="text-sm resize-none"
+                  className={cn("text-sm resize-none", !isHost && job.status === "done" && "opacity-60 cursor-not-allowed")}
                 />
               </div>
 
-              {hasFieldChanges && (
+              {hasFieldChanges && (isHost || job.status !== "done") && (
                 <Button
                   onClick={saveFields}
                   disabled={savingFields}
@@ -1783,47 +1799,49 @@ export default function AdminJobsPage() {
           </Card>
 
           {/* Signatures */}
-          {/* Danger zone */}
-          <Card className="p-5 border border-destructive/20 bg-destructive/5 mb-4">
-            <p className="text-xs font-semibold text-destructive uppercase tracking-wide mb-3">Vaaravyöhyke</p>
-            {!confirmDelete ? (
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-2 border-destructive/40 text-destructive hover:bg-destructive hover:text-destructive-foreground"
-                onClick={() => setConfirmDelete(true)}
-              >
-                <Trash2 className="w-4 h-4" />
-                Poista keikka kokonaan
-              </Button>
-            ) : (
-              <div className="space-y-3">
-                <p className="text-sm text-destructive font-medium">
-                  Poistetaanko keikka #{job.id} ({customer?.name}) pysyvästi? Tätä ei voi perua.
-                </p>
-                <div className="flex gap-2">
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    disabled={deleting}
-                    onClick={handleDeleteJob}
-                    className="gap-2"
-                  >
-                    {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-                    Kyllä, poista pysyvästi
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={deleting}
-                    onClick={() => setConfirmDelete(false)}
-                  >
-                    Peruuta
-                  </Button>
+          {/* Danger zone — HOST only */}
+          {isHost && (
+            <Card className="p-5 border border-destructive/20 bg-destructive/5 mb-4">
+              <p className="text-xs font-semibold text-destructive uppercase tracking-wide mb-3">Vaaravyöhyke</p>
+              {!confirmDelete ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 border-destructive/40 text-destructive hover:bg-destructive hover:text-destructive-foreground"
+                  onClick={() => setConfirmDelete(true)}
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Poista keikka kokonaan
+                </Button>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-sm text-destructive font-medium">
+                    Poistetaanko keikka #{job.id} ({customer?.name}) pysyvästi? Tätä ei voi perua.
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      disabled={deleting}
+                      onClick={handleDeleteJob}
+                      className="gap-2"
+                    >
+                      {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                      Kyllä, poista pysyvästi
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={deleting}
+                      onClick={() => setConfirmDelete(false)}
+                    >
+                      Peruuta
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            )}
-          </Card>
+              )}
+            </Card>
+          )}
 
           {/* Signatures — always editable */}
           <Card className="p-5 bg-card border-0 premium-shadow mb-4">

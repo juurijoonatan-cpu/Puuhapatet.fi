@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useRoute } from "wouter";
-import { Check, X, Loader2, Building2, ChevronDown, ChevronUp, Copy } from "lucide-react";
+import { Check, X, Loader2, Building2, Copy } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -9,6 +9,7 @@ type UnitResponse = {
   unitName: string;
   status: "accepted" | "declined";
   email?: string;
+  residentName?: string;
   times: string[];
   message: string;
 };
@@ -89,57 +90,49 @@ function fmtVisitTime(iso: string): string {
 }
 
 function TaloyhtiioPortal({ token, quote }: { token: string; quote: QuoteData }) {
-  const count     = quote.unitCount ?? 2;
-  const unitNames = Array.from({ length: count }, (_, i) => `Asunto ${i + 1}`);
-
-  const [selectedUnits, setSelectedUnits] = useState<string[]>([]);
-  const [expandedUnit, setExpandedUnit]   = useState<string | null>(null);
-  const [unitEmails, setUnitEmails]       = useState<Record<string, string>>({});
-  const [unitMessages, setUnitMessages]   = useState<Record<string, string>>({});
-  const [submitting, setSubmitting]       = useState(false);
-  const [submitted, setSubmitted]         = useState<string[]>([]);
-  const [error, setError]                 = useState("");
-
-  const existingIds = new Set(quote.unitResponses.map(r => r.unitId));
-
+  const count    = quote.unitCount ?? 2;
   const perUnit  = Math.round(quote.agreedPriceCents / 100);
   const totalEur = perUnit * count;
 
-  const toggleUnit = (name: string) =>
-    setSelectedUnits(prev =>
-      prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]
-    );
+  const [aptId,         setAptId]         = useState("");
+  const [residentName,  setResidentName]  = useState("");
+  const [residentEmail, setResidentEmail] = useState("");
+  const [message,       setMessage]       = useState("");
+  const [submitting,    setSubmitting]    = useState(false);
+  const [submitted,     setSubmitted]     = useState<Array<{ unitName: string; status: "accepted" | "declined" }>>([]);
+  const [error,         setError]         = useState("");
 
-  const handleSubmitUnit = async (unitName: string) => {
+  const totalResponded = quote.unitResponses.length + submitted.length;
+
+  const handleSubmit = async (status: "accepted" | "declined") => {
+    if (status === "accepted" && !aptId.trim()) {
+      setError("Syötä asuntosi numero tai tunnus (esim. A14).");
+      return;
+    }
     setSubmitting(true);
     setError("");
-    const email   = unitEmails[unitName]?.trim() || undefined;
-    const message = unitMessages[unitName]?.trim() ?? "";
-    const unitId  = unitName.replace(/\s+/g, "-").toLowerCase();
+    const unitName = aptId.trim() || "Ei osallistu";
+    const unitId   = unitName.replace(/\s+/g, "-").toLowerCase() + "-" + Date.now().toString(36);
 
     const res = await api.respondToQuote(token, {
-      status: "accepted",
-      unitResponse: { unitId, unitName, status: "accepted", email, times: [], message },
+      status,
+      unitResponse: {
+        unitId,
+        unitName,
+        status,
+        email:        residentEmail.trim() || undefined,
+        residentName: residentName.trim() || undefined,
+        times:        [],
+        message:      message.trim(),
+      } as any,
     });
 
     if (res.ok) {
-      setSubmitted(prev => [...prev, unitName]);
-      setExpandedUnit(null);
+      setSubmitted(prev => [...prev, { unitName, status }]);
+      setAptId(""); setResidentName(""); setResidentEmail(""); setMessage("");
     } else {
       setError("Lähetys epäonnistui. Yritä uudelleen.");
     }
-    setSubmitting(false);
-  };
-
-  const handleDeclineUnit = async (unitName: string) => {
-    setSubmitting(true);
-    const unitId = unitName.replace(/\s+/g, "-").toLowerCase();
-    await api.respondToQuote(token, {
-      status: "declined",
-      unitResponse: { unitId, unitName, status: "declined", times: [], message: "" },
-    });
-    setSubmitted(prev => [...prev, unitName]);
-    setExpandedUnit(null);
     setSubmitting(false);
   };
 
@@ -189,125 +182,107 @@ function TaloyhtiioPortal({ token, quote }: { token: string; quote: QuoteData })
         {quote.customerAddress && <p className="text-xs text-zinc-400 mt-0.5">{quote.customerAddress}</p>}
       </div>
 
-      {/* Unit selector */}
-      <div className="bg-white rounded-2xl" style={{ border: "1px solid #e0ede2" }}>
-        <div className="px-5 pt-4 pb-3">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1">Vahvista asuntosi</p>
-          <p className="text-xs text-zinc-400">Ilmoita osallistumisesi — asuntosi tulee olla käytettävissä sovittuna ajankohtana.</p>
-        </div>
-        <div className="px-5 pb-4 flex flex-wrap gap-2">
-          {unitNames.map(name => {
-            const done = submitted.includes(name) || existingIds.has(name.replace(/\s+/g, "-").toLowerCase());
-            const sel  = selectedUnits.includes(name);
-            return (
-              <button
-                key={name}
-                disabled={done}
-                onClick={() => !done && toggleUnit(name)}
-                className={cn(
-                  "px-3 py-1.5 rounded-full text-xs font-bold border transition-colors",
-                  done  ? "border-emerald-200 bg-emerald-50 text-emerald-600 cursor-default"
-                  : sel ? "border-transparent text-white"
-                        : "border-zinc-200 text-zinc-500 hover:bg-zinc-50"
-                )}
-                style={sel && !done ? { background: GREEN, borderColor: GREEN } : undefined}
-              >
-                {done ? `✓ ${name}` : name}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Per-unit confirmation forms */}
-      {selectedUnits.map(unitName => {
-        const isSubmitted = submitted.includes(unitName);
-        const isExpanded  = expandedUnit === unitName;
-        return (
-          <div key={unitName} className="bg-white rounded-2xl overflow-hidden" style={{ border: "1px solid #e0ede2" }}>
-            <button
-              className="w-full flex items-center justify-between px-5 py-4"
-              onClick={() => !isSubmitted && setExpandedUnit(isExpanded ? null : unitName)}
-            >
-              <div className="flex items-center gap-2.5">
-                <div className={cn(
-                  "w-5 h-5 rounded-full flex items-center justify-center shrink-0",
-                  isSubmitted ? "bg-emerald-500" : "border-2 border-zinc-200"
-                )}>
-                  {isSubmitted && <Check className="w-3 h-3 text-white" />}
-                </div>
-                <p className="text-sm font-bold text-zinc-900">{unitName}</p>
-              </div>
-              {isSubmitted
-                ? <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full uppercase tracking-wide">Vahvistettu</span>
-                : isExpanded ? <ChevronUp className="w-4 h-4 text-zinc-300" /> : <ChevronDown className="w-4 h-4 text-zinc-300" />
-              }
-            </button>
-
-            {isExpanded && !isSubmitted && (
-              <div className="border-t border-zinc-100">
-                <div className="px-5 py-4 space-y-4">
-                  <div>
-                    <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-400 mb-1.5">Sähköposti (valinnainen — kuitti tähän osoitteeseen)</p>
-                    <input
-                      type="email"
-                      value={unitEmails[unitName] ?? ""}
-                      onChange={e => setUnitEmails(prev => ({ ...prev, [unitName]: e.target.value }))}
-                      placeholder="asukas@email.fi"
-                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-800 focus:outline-none focus:ring-2 focus:border-transparent"
-                    />
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-400 mb-1.5">Lisätiedot (valinnainen)</p>
-                    <textarea
-                      value={unitMessages[unitName] ?? ""}
-                      onChange={e => setUnitMessages(prev => ({ ...prev, [unitName]: e.target.value }))}
-                      placeholder="Avainkoodi, sisäänkäynti, erityistiedot…"
-                      rows={2}
-                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-800 resize-none focus:outline-none"
-                    />
-                  </div>
-                </div>
-                <div className="px-5 pb-5 space-y-2">
-                  <button
-                    onClick={() => handleSubmitUnit(unitName)}
-                    disabled={submitting}
-                    className={cn(
-                      "w-full flex items-center justify-center gap-2 rounded-2xl py-4 text-sm font-bold text-white transition-opacity",
-                      submitting ? "opacity-40" : "opacity-100"
-                    )}
-                    style={{ background: GREEN }}
-                  >
-                    {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                    Vahvista osallistuminen — {unitName}
-                  </button>
-                  <button
-                    onClick={() => handleDeclineUnit(unitName)}
-                    disabled={submitting}
-                    className="w-full text-xs text-zinc-300 py-2 text-center hover:text-zinc-500 transition-colors"
-                  >
-                    Asunto ei osallistu
-                  </button>
-                </div>
-              </div>
-            )}
+      {/* Response progress */}
+      {count > 1 && (
+        <div className="bg-white rounded-2xl px-5 py-4" style={{ border: "1px solid #e0ede2" }}>
+          <div className="flex justify-between items-center mb-2">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Osallistumisia</p>
+            <p className="text-xs font-bold text-zinc-500">{totalResponded} / {count}</p>
           </div>
-        );
-      })}
-
-      {error && <p className="text-xs text-red-500 text-center">{error}</p>}
-
-      {submitted.length > 0 && (
-        <div className="rounded-2xl px-5 py-6 text-center" style={{ background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
-          <div className="w-11 h-11 rounded-full bg-emerald-500 flex items-center justify-center mx-auto mb-3">
-            <Check className="w-5 h-5 text-white" />
+          <div className="w-full bg-zinc-100 rounded-full h-1.5">
+            <div className="bg-emerald-500 h-1.5 rounded-full transition-all" style={{ width: `${Math.min(100, (totalResponded / count) * 100)}%` }} />
           </div>
-          <p className="text-sm font-bold text-zinc-900">
-            {submitted.length === 1 ? "1 asunto vahvistettu" : `${submitted.length} asuntoa vahvistettu`}
-          </p>
-          <p className="text-xs text-zinc-400 mt-1">Ilmoituksesi on vastaanotettu. Nähdään sovittuna aikana.</p>
         </div>
       )}
+
+      {/* Previously submitted in this session */}
+      {submitted.map((s, i) => (
+        <div key={i} className="rounded-2xl px-5 py-4 flex items-center gap-3" style={{ background: s.status === "accepted" ? "#f0fdf4" : "#fafafa", border: `1px solid ${s.status === "accepted" ? "#bbf7d0" : "#e4e4e7"}` }}>
+          <div className={cn("w-8 h-8 rounded-full flex items-center justify-center shrink-0", s.status === "accepted" ? "bg-emerald-500" : "bg-zinc-200")}>
+            {s.status === "accepted" ? <Check className="w-4 h-4 text-white" /> : <X className="w-4 h-4 text-zinc-400" />}
+          </div>
+          <div>
+            <p className="text-sm font-bold text-zinc-900">{s.status === "accepted" ? `Asunto ${s.unitName} — osallistuu` : `Asunto ${s.unitName} — ei osallistu`}</p>
+            <p className="text-xs text-zinc-400 mt-0.5">Ilmoituksesi on vastaanotettu.</p>
+          </div>
+        </div>
+      ))}
+
+      {/* Participation form */}
+      <div className="bg-white rounded-2xl overflow-hidden" style={{ border: "1px solid #e0ede2" }}>
+        <div className="px-5 pt-5 pb-4 border-b border-zinc-100">
+          <p className="text-sm font-bold text-zinc-900">Vahvista asuntosi osallistuminen</p>
+          <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+            Täytä asuntosi tiedot — asunnon tulee olla käytettävissä sovittuna ajankohtana.
+          </p>
+        </div>
+        <div className="px-5 py-4 space-y-3">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-400 mb-1.5">
+              Asuntosi numero / tunnus <span className="text-red-400">*</span>
+            </p>
+            <input
+              type="text"
+              value={aptId}
+              onChange={e => { setAptId(e.target.value); setError(""); }}
+              placeholder="Esim. A14, B3 tai 7"
+              className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-800 focus:outline-none focus:ring-2 focus:border-transparent"
+            />
+          </div>
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-400 mb-1.5">Nimesi (valinnainen — näkyy laskulla)</p>
+            <input
+              type="text"
+              value={residentName}
+              onChange={e => setResidentName(e.target.value)}
+              placeholder="Etunimi Sukunimi"
+              className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-800 focus:outline-none focus:ring-2 focus:border-transparent"
+            />
+          </div>
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-400 mb-1.5">Sähköposti (valinnainen — lasku tähän osoitteeseen)</p>
+            <input
+              type="email"
+              value={residentEmail}
+              onChange={e => setResidentEmail(e.target.value)}
+              placeholder="sinä@email.fi"
+              className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-800 focus:outline-none focus:ring-2 focus:border-transparent"
+            />
+          </div>
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-400 mb-1.5">Lisätiedot (valinnainen)</p>
+            <textarea
+              value={message}
+              onChange={e => setMessage(e.target.value)}
+              placeholder="Avainkoodi, sisäänkäynti, erityistiedot…"
+              rows={2}
+              className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-800 resize-none focus:outline-none"
+            />
+          </div>
+          {error && <p className="text-xs text-red-500">{error}</p>}
+        </div>
+        <div className="px-5 pb-5 space-y-2">
+          <button
+            onClick={() => handleSubmit("accepted")}
+            disabled={submitting}
+            className={cn(
+              "w-full flex items-center justify-center gap-2 rounded-2xl py-4 text-sm font-bold text-white transition-opacity",
+              submitting ? "opacity-40" : "opacity-100"
+            )}
+            style={{ background: GREEN }}
+          >
+            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+            Vahvista osallistuminen
+          </button>
+          <button
+            onClick={() => handleSubmit("declined")}
+            disabled={submitting}
+            className="w-full text-xs text-zinc-300 py-2 text-center hover:text-zinc-500 transition-colors"
+          >
+            Asuntoni ei osallistu
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

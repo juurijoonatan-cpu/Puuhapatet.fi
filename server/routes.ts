@@ -1817,12 +1817,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         try { existing = current.unitResponses ? JSON.parse(current.unitResponses) : []; } catch { existing = []; }
         const sanitize = (s: unknown) => String(s ?? "").slice(0, 500);
         const safe = {
-          unitId:   sanitize(unitResponse.unitId),
-          unitName: sanitize(unitResponse.unitName),
-          status:   ["accepted", "declined"].includes(unitResponse.status) ? unitResponse.status : "declined",
-          email:    unitResponse.email ? sanitize(unitResponse.email).slice(0, 200) : undefined,
-          times:    Array.isArray(unitResponse.times) ? unitResponse.times.slice(0, 3).map(sanitize) : [],
-          message:  sanitize(unitResponse.message),
+          unitId:       sanitize(unitResponse.unitId),
+          unitName:     sanitize(unitResponse.unitName),
+          status:       ["accepted", "declined"].includes(unitResponse.status) ? unitResponse.status : "declined",
+          email:        unitResponse.email ? sanitize(unitResponse.email).slice(0, 200) : undefined,
+          residentName: unitResponse.residentName ? sanitize(unitResponse.residentName).slice(0, 200) : undefined,
+          times:        Array.isArray(unitResponse.times) ? unitResponse.times.slice(0, 3).map(sanitize) : [],
+          message:      sanitize(unitResponse.message),
         };
         const idx = existing.findIndex((r: any) => r.unitId === safe.unitId);
         if (idx >= 0) existing[idx] = safe; else existing.push(safe);

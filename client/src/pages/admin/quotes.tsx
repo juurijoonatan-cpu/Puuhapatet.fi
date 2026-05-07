@@ -232,11 +232,16 @@ export default function AdminQuotesPage() {
     setLoadingCustomer(true);
     api.getCustomer(Number(customerId)).then(res => {
       if (res.ok && res.data) {
-        const c = res.data as { name: string; email: string | null; phone: string; address: string };
+        const c = res.data as { name: string; email: string | null; phone: string; address: string; isYritys?: boolean; companyName?: string | null };
         setCustomerName(c.name ?? "");
         setCustomerEmail(c.email ?? "");
         setCustomerPhone(c.phone ?? "");
         setCustomerAddress(c.address ?? "");
+        if (c.isYritys) {
+          setIsYritys(true);
+          setTaloyhtiioName(c.companyName ?? "");
+          setConfigMode("muu"); // free-form pricing is the default for yritys
+        }
       }
       setLoadingCustomer(false);
     });
@@ -607,11 +612,15 @@ export default function AdminQuotesPage() {
 
           {/* Add service buttons */}
           <div className="flex flex-wrap gap-2 mb-4">
-            {[
+            {(isYritys ? [
+              { mode: "muu"      as ConfigMode, label: "Lisää palvelu / hinta", Icon: Wrench},
+              { mode: "ikkuna"   as ConfigMode, label: "Ikkunanpesu",           Icon: Home  },
+              { mode: "nurmikko" as ConfigMode, label: "Nurmikon leikkuu",      Icon: Leaf  },
+            ] : [
               { mode: "ikkuna"   as ConfigMode, label: "Ikkunanpesu",       Icon: Home  },
               { mode: "nurmikko" as ConfigMode, label: "Nurmikon leikkuu",  Icon: Leaf  },
               { mode: "muu"      as ConfigMode, label: "Muu palvelu",       Icon: Wrench},
-            ].map(({ mode, label, Icon }) => (
+            ]).map(({ mode, label, Icon }) => (
               <Button key={mode} variant={configMode === mode ? "default" : "outline"}
                 size="sm" className="gap-1.5" onClick={() => openConfig(mode)}
               >

@@ -16,14 +16,17 @@ export const jobStatusEnum = pgEnum("job_status", [
 // ─── Customers ────────────────────────────────────────────────────────────────
 
 export const customers = pgTable("customers", {
-  id:        serial("id").primaryKey(),
-  name:      text("name").notNull(),
-  phone:     text("phone").notNull(),
-  email:     text("email"),
-  address:   text("address").notNull(),
-  notes:     text("notes"),
-  ownedBy:   text("owned_by"),          // user ID of the "owner" when no jobs yet
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+  id:          serial("id").primaryKey(),
+  name:        text("name").notNull(),       // contact person (yhteyshenkilö)
+  phone:       text("phone").notNull(),
+  email:       text("email"),
+  address:     text("address").notNull(),
+  notes:       text("notes"),
+  ownedBy:     text("owned_by"),             // user ID of the "owner" when no jobs yet
+  isYritys:    boolean("is_yritys").default(false),
+  companyName: text("company_name"),         // yrityksen nimi
+  yTunnus:     text("y_tunnus"),             // Y-tunnus (FI business ID)
+  createdAt:   timestamp("created_at").defaultNow().notNull(),
 });
 
 export const customersRelations = relations(customers, ({ many }) => ({

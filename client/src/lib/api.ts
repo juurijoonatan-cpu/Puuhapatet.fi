@@ -85,6 +85,9 @@ export interface NewCustomer {
   address: string;
   notes?: string;
   ownedBy?: string;
+  isYritys?: boolean;
+  companyName?: string;
+  yTunnus?: string;
 }
 
 export interface NewJob {

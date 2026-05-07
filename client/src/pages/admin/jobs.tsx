@@ -1021,15 +1021,16 @@ export default function AdminJobsPage() {
                   </div>
                   {job.unitResponses && (() => {
                     try {
-                      const responses: Array<{ unitName: string; status: string; times: string[] }> = JSON.parse(job.unitResponses);
+                      const responses: Array<{ unitName: string; status: string; times: string[]; residentName?: string; email?: string }> = JSON.parse(job.unitResponses);
                       if (responses.length > 0) return (
                         <div className="mb-2 space-y-1">
                           <p className="text-xs text-muted-foreground">Asuntojen vastaukset:</p>
                           {responses.map((r, i) => (
                             <div key={i} className="flex items-center gap-2 text-xs bg-background rounded px-2 py-1">
                               <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", r.status === "accepted" ? "bg-green-500" : "bg-red-400")} />
-                              <span className="font-medium">{r.unitName}</span>
-                              <span className="text-muted-foreground">{r.status === "accepted" ? "Hyväksytty" : "Hylätty"}</span>
+                              <span className="font-medium">{r.unitName}{r.residentName ? ` — ${r.residentName}` : ""}</span>
+                              <span className="text-muted-foreground">{r.status === "accepted" ? "Osallistuu" : "Ei osallistu"}</span>
+                              {r.email && <span className="text-muted-foreground truncate max-w-[120px]">{r.email}</span>}
                             </div>
                           ))}
                         </div>
@@ -1894,7 +1895,7 @@ export default function AdminJobsPage() {
                                   let sent = 0;
                                   for (const r of residentsWithEmail) {
                                     const res = await api.sendJobSummary(buildSummaryPayload(
-                                      r.email, r.unitName, customer?.address ?? "", unitPriceCents
+                                      r.email, r.residentName || r.unitName, customer?.address ?? "", unitPriceCents
                                     ));
                                     if (res.ok) sent++;
                                   }

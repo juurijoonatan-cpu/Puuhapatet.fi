@@ -124,7 +124,7 @@ function TaloyhtiioPortal({ token, quote }: { token: string; quote: QuoteData })
         residentName: residentName.trim() || undefined,
         times:        [],
         message:      message.trim(),
-      } as any,
+      },
     });
 
     if (res.ok) {

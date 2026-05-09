@@ -121,6 +121,16 @@ export interface StatsResponse {
   upcoming: number;
 }
 
+export interface EmailLead {
+  id: number;
+  companyName: string;
+  email: string;
+  address: string | null;
+  customMessage: string | null;
+  status: "pending" | "sent" | "failed";
+  createdAt: string;
+}
+
 export interface WorkerStatsResponse {
   workerFees: Record<string, number>;     // current debt (cents) per worker ID
   workerJobCount: Record<string, number>; // done job count per worker ID
@@ -372,6 +382,25 @@ export const api = {
 
   setUserPasswordRemote: (userId: string, password: string) =>
     request<{ ok: boolean }>("POST", `/api/admin/user-password/${userId}`, { password }),
+
+  // ─── Email Leads ────────────────────────────────────────────────────────────
+
+  getEmailLeads: () =>
+    request<EmailLead[]>("GET", "/api/email-leads"),
+
+  bulkImportLeads: (leads: { companyName: string; email: string; address?: string; customMessage?: string }[]) =>
+    request<{ ok: boolean; count: number; leads: EmailLead[] }>("POST", "/api/email-leads/bulk", { leads }),
+
+  deleteEmailLead: (id: number) =>
+    request<{ ok: boolean }>("DELETE", `/api/email-leads/${id}`),
+
+  updateEmailLeadStatus: (id: number, status: "pending" | "sent" | "failed") =>
+    request<EmailLead>("PATCH", `/api/email-leads/${id}`, { status }),
+
+  sendBulkLeadEmails: (ids?: number[]) =>
+    request<{ ok: boolean; sent: number; failed: number; errors?: { id: number; email: string; error: string }[] }>(
+      "POST", "/api/email-leads/send-bulk", ids && ids.length > 0 ? { ids } : {}
+    ),
 
   // Legacy compat stubs
   getJob: (_jobId: string): Promise<ApiResponse<{ ok: boolean; job?: unknown }>> =>

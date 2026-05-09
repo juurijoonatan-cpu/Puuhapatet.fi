@@ -152,6 +152,28 @@ export const insertStartupBonusUsageSchema = createInsertSchema(startupBonusUsag
 export type StartupBonusUsage = typeof startupBonusUsages.$inferSelect;
 export type InsertStartupBonusUsage = z.infer<typeof insertStartupBonusUsageSchema>;
 
+// ─── Email Leads (sähköpostiliidien hallinta & bulk-lähetys) ─────────────────
+
+export const emailLeadStatusEnum = pgEnum("email_lead_status", [
+  "pending",
+  "sent",
+  "failed",
+]);
+
+export const emailLeads = pgTable("email_leads", {
+  id:            serial("id").primaryKey(),
+  companyName:   text("company_name").notNull(),
+  email:         text("email").notNull(),
+  address:       text("address"),
+  customMessage: text("custom_message"),
+  status:        emailLeadStatusEnum("status").default("pending").notNull(),
+  createdAt:     timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertEmailLeadSchema = createInsertSchema(emailLeads).omit({ id: true, createdAt: true });
+export type EmailLead = typeof emailLeads.$inferSelect;
+export type InsertEmailLead = z.infer<typeof insertEmailLeadSchema>;
+
 // ─── Users (admin accounts — seeded, ei itserekisteröitymistä) ───────────────
 
 export const users = pgTable("users", {

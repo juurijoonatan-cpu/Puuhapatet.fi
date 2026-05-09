@@ -61,6 +61,7 @@ import AdminQuotesPage from "@/pages/admin/quotes";
 import AdminGuidePage from "@/pages/admin/guide";
 import AdminTaxExportPage from "@/pages/admin/tax-export";
 import AdminInvestmentsPage from "@/pages/admin/investments";
+import AdminEmailLeadsPage from "@/pages/admin/email-leads";
 import QuotePage from "@/pages/quote";
 import ITPage from "@/pages/it";
 import NotFound from "@/pages/not-found";
@@ -191,6 +192,11 @@ function Router() {
       <Route path="/admin/investments">
         <ProtectedRoute>
           <AdminInvestmentsPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/admin/email-leads">
+        <ProtectedRoute>
+          <AdminEmailLeadsPage />
         </ProtectedRoute>
       </Route>
       <Route path="/admin">

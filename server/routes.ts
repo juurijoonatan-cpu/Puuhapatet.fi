@@ -6,7 +6,7 @@ import bwipjs from "bwip-js";
 import PDFDocument from "pdfkit";
 import rateLimit from "express-rate-limit";
 import { db } from "./db";
-import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
+import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, emailLeads, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema, insertEmailLeadSchema } from "@shared/schema";
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 // Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
@@ -2282,6 +2282,241 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json({ ok: true });
     } catch (e: any) {
       console.error("IT contact error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Email Leads: CRUD ────────────────────────────────────────────────────────
+
+  app.get("/api/email-leads", async (_req, res) => {
+    try {
+      const leads = await db.select().from(emailLeads).orderBy(desc(emailLeads.createdAt));
+      res.json(leads);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/email-leads/bulk", async (req, res) => {
+    try {
+      const { leads } = req.body as { leads: { companyName: string; email: string; address?: string; customMessage?: string }[] };
+      if (!Array.isArray(leads) || leads.length === 0) {
+        return res.status(400).json({ error: "leads-lista puuttuu tai on tyhjä" });
+      }
+      const inserted = await db.insert(emailLeads).values(
+        leads.map(l => ({
+          companyName: l.companyName,
+          email: l.email,
+          address: l.address ?? null,
+          customMessage: l.customMessage ?? null,
+          status: "pending" as const,
+        }))
+      ).returning();
+      res.json({ ok: true, count: inserted.length, leads: inserted });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/email-leads/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      await db.delete(emailLeads).where(eq(emailLeads.id, id));
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/email-leads/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const { status } = req.body as { status: "pending" | "sent" | "failed" };
+      const [updated] = await db.update(emailLeads).set({ status }).where(eq(emailLeads.id, id)).returning();
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Email Leads: Bulk Send ───────────────────────────────────────────────────
+
+  function buildLeadEmailHtml(lead: { companyName: string; address?: string | null; customMessage?: string | null }): string {
+    const customBlock = lead.customMessage
+      ? `<tr><td style="padding:0 0 28px"><p style="margin:0;color:#444444;font-size:15px;line-height:1.7;padding:18px 22px;background:#f7fdf7;border-left:4px solid #22c55e;border-radius:0 10px 10px 0">${lead.customMessage.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p></td></tr>`
+      : "";
+    const addressLine = lead.address
+      ? `<p style="margin:4px 0 0;color:#888;font-size:13px">${lead.address.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>`
+      : "";
+
+    return `<!DOCTYPE html>
+<html lang="fi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Puuhapatet — Kiinteistöpalvelut</title>
+</head>
+<body style="margin:0;padding:0;background:#f0f2f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f2f0;padding:32px 16px">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:20px;overflow:hidden;max-width:600px;width:100%;box-shadow:0 8px 48px rgba(0,0,0,0.10)">
+
+        <!-- Hero image -->
+        <tr>
+          <td style="padding:0;line-height:0">
+            <img src="https://puuhapatet.fi/hero-workers.jpg" alt="Puuhapatet tiimi" width="600" style="width:100%;max-height:300px;object-fit:cover;display:block;border-radius:20px 20px 0 0" />
+          </td>
+        </tr>
+
+        <!-- Green accent bar -->
+        <tr>
+          <td style="background:#111111;padding:14px 40px">
+            <p style="margin:0;color:#4ade80;font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase">Puuhapatet · Ammattitason kiinteistöpalvelut</p>
+          </td>
+        </tr>
+
+        <!-- Body -->
+        <tr>
+          <td style="padding:40px 40px 8px">
+            <table width="100%" cellpadding="0" cellspacing="0">
+
+              <!-- Greeting -->
+              <tr>
+                <td style="padding-bottom:24px">
+                  <h1 style="margin:0 0 8px;color:#111111;font-size:26px;font-weight:800;line-height:1.2">Hei, ${lead.companyName.replace(/</g, "&lt;").replace(/>/g, "&gt;")}!</h1>
+                  ${addressLine}
+                  <p style="margin:16px 0 0;color:#555555;font-size:15px;line-height:1.7">Olemme <strong>Puuhapatet</strong> — nuori ja luotettava kiinteistöpalveluyritys Helsingistä. Teemme laadukasta työtä ilman turhia monimutkaisuuksia.</p>
+                </td>
+              </tr>
+
+              <!-- Custom message -->
+              ${customBlock}
+
+              <!-- Value props -->
+              <tr>
+                <td style="padding-bottom:28px">
+                  <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #eeeeee;border-radius:12px;overflow:hidden">
+                    <tr>
+                      <td style="padding:14px 20px;border-bottom:1px solid #eeeeee">
+                        <span style="color:#22c55e;font-weight:800;font-size:16px;margin-right:10px">✓</span>
+                        <span style="color:#222222;font-size:15px;font-weight:500">Ikkunanpesu — kirkkaat ikkunat koko vuodeksi</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding:14px 20px;border-bottom:1px solid #eeeeee">
+                        <span style="color:#22c55e;font-weight:800;font-size:16px;margin-right:10px">✓</span>
+                        <span style="color:#222222;font-size:15px;font-weight:500">Piha- ja ulkoalueiden hoito — siisti ympäristö joka sesonki</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding:14px 20px">
+                        <span style="color:#22c55e;font-weight:800;font-size:16px;margin-right:10px">✓</span>
+                        <span style="color:#222222;font-size:15px;font-weight:500">Nopea tarjous, selkeä hinnoittelu — ei piilokuluja</span>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+
+              <!-- CTA -->
+              <tr>
+                <td align="center" style="padding-bottom:32px">
+                  <a href="https://puuhapatet.fi/laskuri"
+                     style="display:inline-block;background:#111111;color:#4ade80;font-size:16px;font-weight:800;text-decoration:none;padding:18px 48px;border-radius:14px;letter-spacing:0.3px;border:2px solid #22c55e">
+                    Laske hinta →
+                  </a>
+                  <p style="margin:12px 0 0;color:#999;font-size:13px">Ilmainen tarjous alle 24 tunnissa</p>
+                </td>
+              </tr>
+
+              <!-- Closing -->
+              <tr>
+                <td style="padding-bottom:32px;border-top:1px solid #f0f0f0;padding-top:24px">
+                  <p style="margin:0;color:#666;font-size:14px;line-height:1.7">Vastaa tähän sähköpostiin tai laske hinta laskurin kautta — kerromme mielellämme lisää!</p>
+                  <p style="margin:12px 0 0;color:#333;font-size:15px;font-weight:600">Joonatan &amp; Matias<br><span style="color:#888;font-weight:400;font-size:14px">Puuhapatet</span></p>
+                </td>
+              </tr>
+
+            </table>
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="background:#111111;padding:24px 40px">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td>
+                  <p style="margin:0 0 2px;color:#4ade80;font-size:16px;font-weight:800">Puuhapatet.</p>
+                  <p style="margin:0;color:#555;font-size:13px">info@puuhapatet.fi · puuhapatet.fi</p>
+                </td>
+                <td align="right" style="vertical-align:middle">
+                  <p style="margin:0;color:#444;font-size:12px">Helsinki, Suomi</p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Unsubscribe -->
+        <tr>
+          <td style="padding:14px 40px;background:#f7f7f7;border-radius:0 0 20px 20px">
+            <p style="margin:0;color:#aaa;font-size:11px;text-align:center;line-height:1.5">Sait tämän viestin, koska olemme kiinnostuneet yhteistyöstä. Jos et halua viestejä jatkossa, vastaa tähän sähköpostiin sanalla "lopeta".</p>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+  }
+
+  app.post("/api/email-leads/send-bulk", async (req, res) => {
+    try {
+      if (!resend) {
+        return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä — aseta RESEND_API_KEY." });
+      }
+
+      const { ids } = req.body as { ids?: number[] };
+
+      const allLeads = await db.select().from(emailLeads);
+      const targets = ids && ids.length > 0
+        ? allLeads.filter(l => ids.includes(l.id))
+        : allLeads.filter(l => l.status === "pending");
+
+      if (targets.length === 0) {
+        return res.json({ ok: true, sent: 0, failed: 0, message: "Ei lähetettäviä liidejä." });
+      }
+
+      let sent = 0;
+      let failed = 0;
+      const errors: { id: number; email: string; error: string }[] = [];
+
+      for (const lead of targets) {
+        try {
+          const html = buildLeadEmailHtml(lead);
+          await resend.emails.send({
+            from: FROM_EMAIL,
+            to: [lead.email],
+            replyTo: ADMIN_EMAIL,
+            subject: `Kiinteistöpalvelut ${lead.companyName} — Puuhapatet`,
+            html,
+          });
+          await db.update(emailLeads).set({ status: "sent" }).where(eq(emailLeads.id, lead.id));
+          sent++;
+          // Small delay to respect rate limits
+          await new Promise(r => setTimeout(r, 200));
+        } catch (e: any) {
+          failed++;
+          errors.push({ id: lead.id, email: lead.email, error: e.message });
+          await db.update(emailLeads).set({ status: "failed" }).where(eq(emailLeads.id, lead.id));
+        }
+      }
+
+      res.json({ ok: true, sent, failed, errors });
+    } catch (e: any) {
+      console.error("Bulk send error:", e);
       res.status(500).json({ error: e.message });
     }
   });

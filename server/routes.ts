@@ -1845,6 +1845,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Only update quoteStatus for board-rep responses, not per-unit resident submissions
       if (!isUnitSubmission) {
         updatePayload.quoteStatus = status;
+        // Auto-activate resident portal the moment the board rep approves — no separate admin step needed
+        if (status === "accepted" && current.isTaloyhtiio) {
+          updatePayload.taloyhtiioApproved = true;
+        }
         // Save billing contact info provided by board rep
         const sanitize = (s: unknown) => s ? String(s).slice(0, 200) : null;
         if (boardContactName)  updatePayload.boardContactName  = sanitize(boardContactName);

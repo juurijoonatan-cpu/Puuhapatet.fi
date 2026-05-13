@@ -226,6 +226,12 @@ export default function AdminQuotesPage() {
   const [sent,       setSent]       = useState(false);
   const [createdJobId, setCreatedJobId] = useState<number | null>(null);
 
+  // "Send to another person" (extra recipients on success screen)
+  const [extraName,    setExtraName]    = useState("");
+  const [extraEmail,   setExtraEmail]   = useState("");
+  const [extraSending, setExtraSending] = useState(false);
+  const [extraSent,    setExtraSent]    = useState<string[]>([]);
+
   // ── Load customer ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!customerId) return;
@@ -424,6 +430,65 @@ export default function AdminQuotesPage() {
     setSent(true);
   };
 
+  // ── Send to extra recipient (same quote, new job + token) ─────────────────
+  const handleSendExtra = async () => {
+    if (!extraEmail.trim()) return;
+    setExtraSending(true);
+    try {
+      const newToken = Math.random().toString(36).slice(2, 12);
+      const description = serviceItems.map(i => i.title).join(" + ");
+      const recipientName = extraName.trim() || "Asiakas";
+
+      const custRes = await api.createCustomer({
+        name:    recipientName,
+        phone:   "—",
+        email:   extraEmail.trim(),
+        address: customerAddress.trim() || "—",
+      });
+      if (custRes.ok && custRes.data) {
+        const newCustId = (custRes.data as { id: number }).id;
+        await api.createJob({
+          customerId:  newCustId,
+          description,
+          agreedPrice: Math.round(total * 100),
+          status:      "lead",
+          assignedTo:  profile?.id || undefined,
+          notes:       `Lisätarjous ${quoteId} → ${extraEmail.trim()}`,
+          quoteToken:  newToken,
+        });
+      }
+
+      const res = await api.sendQuote({
+        to:              extraEmail.trim(),
+        bcc:             profile?.email || undefined,
+        quoteId,
+        quoteToken:      newToken,
+        quoteVideoUrl:   quoteVideoUrl.trim() || undefined,
+        customerName:    recipientName,
+        customerAddress: customerAddress.trim() || undefined,
+        items:           serviceItems.map(i => ({ title: i.title, detail: i.detail, price: i.price })),
+        total,
+        validDays,
+        customMessage:   customMessage.trim() || undefined,
+        workerName:      profile?.name,
+        workerPhone:     profile?.phone,
+        workerEmail:     profile?.email,
+        lang,
+      });
+
+      if (res.ok) {
+        setExtraSent(prev => [...prev, extraEmail.trim()]);
+        setExtraEmail("");
+        setExtraName("");
+        toast({ title: "Lisätarjous lähetetty!", description: extraEmail.trim() });
+      } else {
+        toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error });
+      }
+    } finally {
+      setExtraSending(false);
+    }
+  };
+
   // ── Success ───────────────────────────────────────────────────────────────
 
   if (sent) {
@@ -502,6 +567,46 @@ export default function AdminQuotesPage() {
                     Lähetä SMS
                   </a>
                 </div>
+              </div>
+            </div>
+
+            {/* Lähetä sama tarjous myös */}
+            <div className="bg-card border border-border rounded-2xl overflow-hidden">
+              <div className="bg-muted/60 px-4 py-2.5 border-b border-border">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Lähetä sama tarjous myös</p>
+              </div>
+              <div className="px-4 py-3 space-y-2">
+                <p className="text-xs text-muted-foreground">Jokaiselle vastaanottajalle luodaan oma linkki ja oma keikka.</p>
+                <input
+                  type="text"
+                  placeholder="Nimi (valinnainen)"
+                  value={extraName}
+                  onChange={e => setExtraName(e.target.value)}
+                  className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    placeholder="Sähköposti *"
+                    value={extraEmail}
+                    onChange={e => setExtraEmail(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && handleSendExtra()}
+                    className="flex-1 text-sm border border-border rounded-lg px-3 py-2 bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
+                  <Button
+                    size="sm"
+                    disabled={!extraEmail.trim() || extraSending}
+                    onClick={handleSendExtra}
+                  >
+                    {extraSending ? "..." : "Lähetä"}
+                  </Button>
+                </div>
+                {extraSent.map(email => (
+                  <div key={email} className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
+                    <Check className="w-3 h-3 shrink-0" />
+                    {email}
+                  </div>
+                ))}
               </div>
             </div>
 
@@ -969,13 +1074,18 @@ export default function AdminQuotesPage() {
                 <Building2 className="w-4 h-4 text-emerald-700 dark:text-emerald-400" />
                 <span>
                   <strong>Taloyhtiötarjous</strong>
-                  <span className="font-normal text-muted-foreground ml-1 text-xs">per asunto — jaettavissa kaikille</span>
+                  <span className="font-normal text-muted-foreground ml-1 text-xs">hallitus tilaa, yksi lasku yhtiölle</span>
                 </span>
               </span>
               <div className={cn("w-10 h-6 rounded-full transition-colors relative shrink-0", isTaloyhtiio ? "bg-emerald-600" : "bg-muted")}>
                 <div className={cn("absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform", isTaloyhtiio ? "translate-x-5" : "translate-x-1")} />
               </div>
             </button>
+            {!isTaloyhtiio && (
+              <p className="text-xs text-muted-foreground px-1 -mt-1">
+                Jos asukkaat maksavat erikseen → lähetä normaalit tarjoukset + käytä &ldquo;Lähetä myös&rdquo; -toimintoa
+              </p>
+            )}
             <button
               type="button"
               onClick={() => { setIsYritys(v => !v); setIsTaloyhtiio(false); }}

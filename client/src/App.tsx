@@ -63,6 +63,7 @@ import AdminTaxExportPage from "@/pages/admin/tax-export";
 import AdminInvestmentsPage from "@/pages/admin/investments";
 import QuotePage from "@/pages/quote";
 import ITPage from "@/pages/it";
+import CVDemoPage from "@/pages/cv-demo";
 import NotFound from "@/pages/not-found";
 
 function ScrollToTop() {
@@ -132,6 +133,7 @@ function Router() {
       </Route>
       
       <Route path="/it" component={ITPage} />
+      <Route path="/cv" component={CVDemoPage} />
 
       <Route path="/tarjous/:token" component={QuotePage} />
 

@@ -1,4 +1,5 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState, useEffect } from "react";
+import { motion, useMotionValue, useMotionTemplate, useAnimationFrame } from "framer-motion";
 import { Link } from "wouter";
 import {
   MapPin, Mail, Linkedin, Phone, Briefcase, GraduationCap,
@@ -309,19 +310,100 @@ const WIDGET_CONTENT: Record<string, React.ReactNode> = {
   summary:    <WidgetSummary />,
 };
 
-// ─── Grid Background ──────────────────────────────────────────────────────────
+// ─── Animated Grid Background ────────────────────────────────────────────────
 
-function GridBackground() {
+function GridBackground({
+  containerRef,
+}: {
+  containerRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const mouseX = useMotionValue(-9999);
+  const mouseY = useMotionValue(-9999);
+  const basePatternRef   = useRef<SVGPatternElement>(null);
+  const revealPatternRef = useRef<SVGPatternElement>(null);
+  const offsetXRef = useRef(0);
+  const offsetYRef = useRef(0);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (rect) {
+        mouseX.set(e.clientX - rect.left);
+        mouseY.set(e.clientY - rect.top);
+      }
+    };
+    window.addEventListener("mousemove", handler);
+    return () => window.removeEventListener("mousemove", handler);
+  }, []);
+
+  useAnimationFrame(() => {
+    offsetXRef.current = (offsetXRef.current + 0.4) % 40;
+    offsetYRef.current = (offsetYRef.current + 0.4) % 40;
+    const x = offsetXRef.current.toFixed(2);
+    const y = offsetYRef.current.toFixed(2);
+    basePatternRef.current?.setAttribute("x", x);
+    basePatternRef.current?.setAttribute("y", y);
+    revealPatternRef.current?.setAttribute("x", x);
+    revealPatternRef.current?.setAttribute("y", y);
+  });
+
+  const maskImage = useMotionTemplate`radial-gradient(350px circle at ${mouseX}px ${mouseY}px, black, transparent)`;
+
   return (
-    <div
-      className="absolute inset-0 pointer-events-none"
-      aria-hidden
-      style={{
-        backgroundImage:
-          "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.055) 1px, transparent 0)",
-        backgroundSize: "28px 28px",
-      }}
-    />
+    <div className="absolute inset-0 pointer-events-none" aria-hidden>
+      {/* Dim base grid — always visible */}
+      <svg className="absolute inset-0 w-full h-full" style={{ opacity: 0.06 }}>
+        <defs>
+          <pattern
+            ref={basePatternRef}
+            id="cv-base-grid"
+            x="0" y="0"
+            width="40" height="40"
+            patternUnits="userSpaceOnUse"
+          >
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="white" strokeWidth="0.5" />
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#cv-base-grid)" />
+      </svg>
+
+      {/* Mouse-revealed bright grid */}
+      <motion.div
+        className="absolute inset-0"
+        style={{ maskImage, WebkitMaskImage: maskImage }}
+      >
+        <svg className="absolute inset-0 w-full h-full" style={{ opacity: 0.35 }}>
+          <defs>
+            <pattern
+              ref={revealPatternRef}
+              id="cv-reveal-grid"
+              x="0" y="0"
+              width="40" height="40"
+              patternUnits="userSpaceOnUse"
+            >
+              <path d="M 40 0 L 0 0 0 40" fill="none" stroke="white" strokeWidth="0.5" />
+            </pattern>
+          </defs>
+          <rect width="100%" height="100%" fill="url(#cv-reveal-grid)" />
+        </svg>
+      </motion.div>
+
+      {/* Ambient colour blobs */}
+      <div
+        className="absolute top-[-10%] right-[-5%] w-[42%] h-[42%] rounded-full"
+        style={{
+          background: "radial-gradient(circle, rgba(251,146,60,0.14), transparent 70%)",
+          filter: "blur(80px)",
+        }}
+      />
+      <div
+        className="absolute bottom-[-10%] left-[-5%] w-[42%] h-[42%] rounded-full"
+        style={{
+          background: "radial-gradient(circle, rgba(59,130,246,0.11), transparent 70%)",
+          filter: "blur(80px)",
+        }}
+      />
+    </div>
   );
 }
 
@@ -361,7 +443,7 @@ function DesktopCanvas() {
       className="relative w-full"
       style={{ height: "calc(100vh - 56px)" }}
     >
-      <GridBackground />
+      <GridBackground containerRef={containerRef} />
 
       {/* GlassFilter – rendered once for the page */}
       <GlassFilter />

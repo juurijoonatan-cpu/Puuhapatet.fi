@@ -201,14 +201,14 @@ function OrderForm() {
         <label className="mb-3 block text-[10px] font-mono uppercase tracking-widest text-zinc-500">
           Package
         </label>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-2">
           {PACKAGES.map(p => (
             <button
               key={p.value}
               type="button"
               onClick={() => setForm({ ...form, pkg: p.value })}
               className={cn(
-                "rounded-lg border px-3 py-3 text-left transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/30",
+                "rounded-lg border px-4 py-4 sm:px-3 sm:py-3 text-left transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/30 flex sm:flex-col justify-between sm:justify-start items-center sm:items-start gap-3 sm:gap-0",
                 form.pkg === p.value
                   ? "border-white/25 bg-white/8 text-white"
                   : "border-zinc-800 text-zinc-500 hover:border-zinc-600 hover:text-zinc-300"
@@ -255,7 +255,7 @@ export default function ITPage() {
               ← puuhapatet.fi
             </span>
           </Link>
-          <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">
+          <span className="hidden sm:inline text-[10px] font-mono uppercase tracking-widest text-zinc-500">
             CV Websites
           </span>
           <button
@@ -410,7 +410,7 @@ export default function ITPage() {
             </div>
 
             {/* Right: form */}
-            <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-6">
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4 sm:p-6">
               <OrderForm />
             </div>
           </div>

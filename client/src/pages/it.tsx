@@ -291,9 +291,16 @@ export default function ITPage() {
             <p className="mb-8 max-w-md text-lg leading-relaxed text-zinc-400">
               One link. Your own domain. Grows with your career — not a PDF that ends up in a trash folder.
             </p>
-            <LiquidButton onClick={scrollToOrder}>
-              Get started <ArrowRight size={14} />
-            </LiquidButton>
+            <div className="flex flex-wrap items-center gap-4">
+              <LiquidButton onClick={scrollToOrder}>
+                Get started <ArrowRight size={14} />
+              </LiquidButton>
+              <Link href="/cv">
+                <span className="cursor-pointer text-sm font-medium text-zinc-400 underline-offset-4 hover:text-white hover:underline transition-colors">
+                  See a live demo →
+                </span>
+              </Link>
+            </div>
           </div>
 
           {/* Browser mockup */}
@@ -377,6 +384,78 @@ export default function ITPage() {
               );
             })}
           </div>
+        </div>
+      </section>
+
+      {/* ── DEMO PREVIEW ── */}
+      <section className="border-t border-white/5 px-5 py-24">
+        <div className="mx-auto max-w-5xl">
+          <p className="mb-3 text-[10px] font-mono uppercase tracking-widest text-zinc-500">
+            Live example
+          </p>
+          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-6 mb-8">
+            <h2 className="text-4xl font-bold tracking-tight text-white sm:text-5xl">
+              See what yours<br />could look like
+            </h2>
+            <Link href="/cv">
+              <span className="inline-flex items-center gap-2 cursor-pointer rounded-full border border-white/15 bg-white/5 px-5 py-2.5 text-sm font-medium text-zinc-300 transition-all hover:bg-white/10 hover:text-white whitespace-nowrap">
+                Open full demo <ArrowRight size={13} />
+              </span>
+            </Link>
+          </div>
+
+          {/* Preview card — tappable link to /cv */}
+          <Link href="/cv">
+            <div className="group relative cursor-pointer overflow-hidden rounded-2xl border border-white/8 bg-zinc-950 transition-all duration-300 hover:border-white/20 hover:shadow-[0_0_60px_rgba(255,255,255,0.04)]">
+              {/* Fake browser chrome */}
+              <div className="flex items-center gap-1.5 border-b border-white/5 bg-zinc-900/60 px-4 py-3">
+                <div className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
+                <div className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
+                <div className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
+                <div className="mx-3 flex h-5 flex-1 items-center rounded-md bg-zinc-800/70 px-2">
+                  <span className="font-mono text-[10px] text-zinc-500">puuhapatet.fi/cv</span>
+                </div>
+              </div>
+              {/* Mock CV content preview */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-6">
+                {/* Left: photo + name */}
+                <div className="flex flex-col items-center gap-3 sm:border-r sm:border-white/5 sm:pr-4">
+                  <div className="h-20 w-20 rounded-full bg-zinc-800 border border-white/8 overflow-hidden">
+                    <img src="/cv-person.jpg" alt="" className="w-full h-full object-cover object-top"
+                      onError={e => { (e.currentTarget as HTMLImageElement).src = "/joonatan.jpg.jpeg"; }} />
+                  </div>
+                  <div className="text-center">
+                    <div className="h-3 w-28 rounded-sm bg-zinc-700 mb-1.5 mx-auto" />
+                    <div className="h-2 w-20 rounded-sm bg-zinc-800 mx-auto" />
+                  </div>
+                </div>
+                {/* Centre: career lines */}
+                <div className="space-y-2.5">
+                  <div className="h-2 w-16 rounded-sm bg-zinc-800" />
+                  <div className="h-2 w-full rounded-sm bg-zinc-700/60" />
+                  <div className="h-2 w-4/5 rounded-sm bg-zinc-800/60" />
+                  <div className="h-2 w-3/5 rounded-sm bg-zinc-800/60" />
+                  <div className="mt-4 h-2 w-14 rounded-sm bg-zinc-800" />
+                  <div className="h-2 w-full rounded-sm bg-zinc-700/50" />
+                  <div className="h-2 w-2/3 rounded-sm bg-zinc-800/50" />
+                </div>
+                {/* Right: skill pills */}
+                <div className="flex flex-wrap gap-1.5 content-start">
+                  {["Enterprise Arch", "Cloud AWS", "React / TS", "Strategy", "Leadership"].map(s => (
+                    <span key={s} className="rounded-full border border-white/8 px-2.5 py-1 text-[10px] text-zinc-600">
+                      {s}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              {/* Hover overlay CTA */}
+              <div className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-300 group-hover:opacity-100 bg-black/40 backdrop-blur-sm rounded-2xl">
+                <span className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-semibold text-black">
+                  Open demo <ArrowRight size={14} />
+                </span>
+              </div>
+            </div>
+          </Link>
         </div>
       </section>
 

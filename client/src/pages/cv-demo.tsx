@@ -78,17 +78,13 @@ function bezierPath(
   x1: number, y1: number,
   x2: number, y2: number,
 ): string {
-  const mx = (x1 + x2) / 2;
-  const my = (y1 + y2) / 2;
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  // Perpendicular offset for curvature
+  const dx   = x2 - x1;
+  const dy   = y2 - y1;
   const perp = 0.18;
   const cpx1 = x1 + dx * 0.35 - dy * perp;
   const cpy1 = y1 + dy * 0.35 + dx * perp;
   const cpx2 = x1 + dx * 0.65 - dy * perp * 0.5;
   const cpy2 = y1 + dy * 0.65 + dx * perp * 0.5;
-  void mx; void my;
   return `M ${x1} ${y1} C ${cpx1} ${cpy1}, ${cpx2} ${cpy2}, ${x2} ${y2}`;
 }
 
@@ -527,7 +523,7 @@ export default function CVDemoPage() {
               ← puuhapatet.fi
             </span>
           </Link>
-          <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">
+          <span className="hidden sm:inline text-[10px] font-mono uppercase tracking-widest text-zinc-500">
             CV Demo
           </span>
           <Link href="/it#order">

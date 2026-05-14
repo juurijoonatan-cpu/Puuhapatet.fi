@@ -2212,6 +2212,11 @@ export default function AdminJobsPage() {
                             TALOYHTIÖ
                           </span>
                         )}
+                        {row.job.taloyhtiioName && !row.job.isTaloyhtiio && (
+                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 font-medium border border-emerald-200 shrink-0">
+                            🏢 {row.job.taloyhtiioName}
+                          </span>
+                        )}
                         {row.job.isYritys && (
                           <span className="text-xs px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold shrink-0">
                             YRITYS

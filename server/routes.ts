@@ -1494,12 +1494,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const taloName = taloyhtiioName || customerName;
         const units = unitCount ? ` (${unitCount} huoneistoa)` : "";
         defaultIntro = isEn
-          ? `Hello. Here's our quote for ${taloName}${units}. We coordinate directly with the building management and handle the entire property professionally — residents don't need to be home.`
-          : `Hei. Tässä on tarjouksemme kohteelle ${taloName}${units}. Hoidamme koko kiinteistön ammattimaisesti ja koordinoinnin suoraan taloyhtiön kanssa — asukkaiden ei tarvitse olla paikalla.`;
+          ? `Hello. Here's our quote for ${taloName}${units}. Please review and approve via the link — you can also suggest a time that works for you.`
+          : `Hei. Tässä tarjous kohteelle ${taloName}${units}. Hyväksy ja ehdota sopivaa ajankohtaa linkin kautta.`;
       } else {
         defaultIntro = isEn
-          ? `Hello ${firstName}. Here's your quote. Pricing is straightforward — no extras, no surprises. Call us if anything needs adjusting.`
-          : `Hei ${firstName}. Tässä on tarjouksemme. Hinnoittelu on selkeä — ei piilokuluia eikä yllätyksiä. Soita suoraan, jos jokin mietityttää.`;
+          ? `Hello ${firstName}. Here's your quote. Please review and approve via the link — you can also suggest a time that works for you.`
+          : `Hei ${firstName}. Tässä tarjouksemme. Hyväksy ja ehdota sopivaa ajankohtaa linkin kautta.`;
       }
 
       const introText = customMessage

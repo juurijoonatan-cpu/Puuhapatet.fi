@@ -166,10 +166,12 @@ export default function AdminQuotesPage() {
 
   // Taloyhtiö mode
   const [isTaloyhtiio,    setIsTaloyhtiio]    = useState(false);
+  const [taloyhtiioMode,  setTaloyhtiioMode]  = useState<"yhtiö" | "per-asunto">("yhtiö");
   const [taloyhtiioName,  setTaloyhtiioName]  = useState("");
   const [unitCount,       setUnitCount]       = useState<number | "">("");
   const [propertyImageUrl,setPropertyImageUrl]= useState("");
   const [imageCompressing,setImageCompressing]= useState(false);
+  const [units, setUnits] = useState<{id: string; name: string; email: string}[]>([{ id: uid(), name: "", email: "" }]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Yritys mode
   const [isYritys, setIsYritys] = useState(false);
@@ -231,6 +233,9 @@ export default function AdminQuotesPage() {
   const [extraEmail,   setExtraEmail]   = useState("");
   const [extraSending, setExtraSending] = useState(false);
   const [extraSent,    setExtraSent]    = useState<string[]>([]);
+
+  // Per-asunto batch results (populated when taloyhtiioMode === "per-asunto")
+  const [perAsuintoResults, setPerAsuintoResults] = useState<{name: string; email: string; sent: boolean}[]>([]);
 
   // ── Load customer ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -331,17 +336,89 @@ export default function AdminQuotesPage() {
   // ── Send ──────────────────────────────────────────────────────────────────
 
   const handleSend = async () => {
-    if (!customerEmail.trim()) {
-      toast({ variant: "destructive", title: "Puuttuva sähköposti", description: "Syötä asiakkaan sähköpostiosoite." });
-      return;
-    }
     if (serviceItems.length === 0) {
       toast({ variant: "destructive", title: "Tarjous on tyhjä", description: "Lisää vähintään yksi palvelu." });
       return;
     }
+
+    // ── Per-asunto batch mode ────────────────────────────────────────────────
+    if (isTaloyhtiio && taloyhtiioMode === "per-asunto") {
+      const validUnits = units.filter(u => u.name.trim());
+      if (validUnits.length === 0) {
+        toast({ variant: "destructive", title: "Lisää vähintään yksi huoneisto", description: "Huoneistolla täytyy olla nimi." });
+        return;
+      }
+      setSending(true);
+      const description = serviceItems.map(i => i.title).join(" + ");
+      const buildingName = taloyhtiioName.trim();
+      const results: {name: string; email: string; sent: boolean}[] = [];
+
+      for (const unit of validUnits) {
+        const unitToken = Math.random().toString(36).slice(2, 12);
+        const unitName  = unit.name.trim();
+        const unitEmail = unit.email.trim();
+        const recipientName = unitEmail
+          ? `${unitName}${buildingName ? ` (${buildingName})` : ""}`
+          : unitName;
+
+        const custRes = await api.createCustomer({
+          name:    recipientName,
+          phone:   "—",
+          email:   unitEmail || undefined,
+          address: customerAddress.trim() || buildingName || "—",
+        });
+        if (custRes.ok && custRes.data) {
+          const newCustId = (custRes.data as { id: number }).id;
+          await api.createJob({
+            customerId:     newCustId,
+            description,
+            agreedPrice:    Math.round(total * 100),
+            status:         "lead",
+            assignedTo:     profile?.id || undefined,
+            notes:          `Per-asunto ${quoteId} — ${unitName}`,
+            quoteToken:     unitToken,
+            isTaloyhtiio:   false,
+            taloyhtiioName: buildingName || undefined,
+          });
+        }
+
+        let sent = false;
+        if (unitEmail) {
+          const res = await api.sendQuote({
+            to:              unitEmail,
+            bcc:             profile?.email || undefined,
+            quoteId,
+            quoteToken:      unitToken,
+            customerName:    recipientName,
+            customerAddress: customerAddress.trim() || buildingName || undefined,
+            items:           serviceItems.map(i => ({ title: i.title, detail: i.detail, price: i.price })),
+            total,
+            validDays,
+            customMessage:   customMessage.trim() || undefined,
+            workerName:      profile?.name,
+            workerPhone:     profile?.phone,
+            workerEmail:     profile?.email,
+            lang,
+          });
+          sent = res.ok;
+        }
+        results.push({ name: unitName, email: unitEmail, sent });
+      }
+
+      setPerAsuintoResults(results);
+      setSending(false);
+      setSent(true);
+      return;
+    }
+
+    // ── Normal / taloyhtiö (hallitus) mode ───────────────────────────────────
+    if (!customerEmail.trim()) {
+      toast({ variant: "destructive", title: "Puuttuva sähköposti", description: "Syötä asiakkaan sähköpostiosoite." });
+      return;
+    }
     setSending(true);
 
-    // ── 1. Save lead job first (independent of email) ──────────────────────
+    // ── 1. Save lead job first ─────────────────────────────────────────────
     let custId = customerId ? Number(customerId) : null;
     if (!custId) {
       const custRes = await api.createCustomer({
@@ -509,8 +586,14 @@ export default function AdminQuotesPage() {
             <div className="w-14 h-14 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center mb-3 ring-2 ring-white/40">
               <Check className="w-7 h-7 text-white" />
             </div>
-            <h2 className="text-2xl font-bold tracking-tight">Tarjous lähetetty!</h2>
-            <p className="text-white/80 text-sm mt-1">{customerEmail}</p>
+            <h2 className="text-2xl font-bold tracking-tight">
+              {perAsuintoResults.length > 0 ? "Tarjoukset lähetetty!" : "Tarjous lähetetty!"}
+            </h2>
+            <p className="text-white/80 text-sm mt-1">
+              {perAsuintoResults.length > 0
+                ? `${perAsuintoResults.filter(r => r.sent).length}/${perAsuintoResults.length} huoneistoa · ${taloyhtiioName || "Per asunto"}`
+                : customerEmail}
+            </p>
           </div>
         </div>
 
@@ -521,7 +604,29 @@ export default function AdminQuotesPage() {
               {quoteId}
             </p>
 
-            {createdJobId ? (
+            {/* Per-asunto results */}
+            {perAsuintoResults.length > 0 ? (
+              <div className="bg-card border border-border rounded-2xl overflow-hidden">
+                <div className="bg-muted/60 px-4 py-2.5 border-b border-border">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Lähetetyt huoneistot</p>
+                </div>
+                <div className="divide-y divide-border">
+                  {perAsuintoResults.map((r, i) => (
+                    <div key={i} className="px-4 py-2.5 flex items-center gap-2">
+                      {r.sent
+                        ? <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                        : <span className="w-3.5 h-3.5 shrink-0 text-muted-foreground text-center">–</span>
+                      }
+                      <span className="text-sm font-medium">{r.name}</span>
+                      {r.email
+                        ? <span className="text-xs text-muted-foreground truncate">{r.email}</span>
+                        : <span className="text-xs text-amber-600">Ei sähköpostia</span>
+                      }
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : createdJobId ? (
               <div className="flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl px-3 py-2">
                 <Check className="w-3.5 h-3.5 shrink-0" />
                 Liidi tallennettu keikkalistaan · vanhenee {new Date(Date.now() + validDays * 24 * 60 * 60 * 1000).toLocaleDateString("fi-FI")}
@@ -532,8 +637,8 @@ export default function AdminQuotesPage() {
               </div>
             )}
 
-            {/* Portal link */}
-            <div className="bg-card border border-border rounded-2xl overflow-hidden">
+            {/* Portal link — hidden for per-asunto (each unit has its own token) */}
+            {perAsuintoResults.length === 0 && <div className="bg-card border border-border rounded-2xl overflow-hidden">
               <div className="bg-muted/60 px-4 py-2.5 border-b border-border">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tarjousportaali-linkki</p>
               </div>
@@ -568,7 +673,7 @@ export default function AdminQuotesPage() {
                   </a>
                 </div>
               </div>
-            </div>
+            </div>}
 
             {/* Lähetä sama tarjous myös */}
             <div className="bg-card border border-border rounded-2xl overflow-hidden">
@@ -1111,93 +1216,165 @@ export default function AdminQuotesPage() {
           {isTaloyhtiio && (
             <div className="border border-emerald-200 dark:border-emerald-800 rounded-xl p-4 space-y-3 mb-4 bg-emerald-50/50 dark:bg-emerald-900/10">
               <p className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-widest">Taloyhtiön tiedot</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1.5">Taloyhtiön nimi</p>
-                  <Input value={taloyhtiioName} onChange={e => setTaloyhtiioName(e.target.value)}
-                    placeholder="As Oy Esimerkki" className="text-sm" />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1.5">Huoneistojen lukumäärä</p>
-                  <Input
-                    type="number"
-                    value={unitCount}
-                    onChange={e => setUnitCount(e.target.value === "" ? "" : Math.max(1, Number(e.target.value)))}
-                    placeholder="12"
-                    min={1}
-                    className="text-sm"
-                  />
-                </div>
+
+              {/* Billing mode sub-toggle */}
+              <div className="grid grid-cols-2 gap-2">
+                {(["yhtiö", "per-asunto"] as const).map(mode => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setTaloyhtiioMode(mode)}
+                    className={cn(
+                      "text-left rounded-lg border px-3 py-2 text-xs transition-colors",
+                      taloyhtiioMode === mode
+                        ? "border-emerald-600 bg-emerald-600 text-white"
+                        : "border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+                    )}
+                  >
+                    <p className="font-semibold">{mode === "yhtiö" ? "Hallitus tilaa" : "Per asunto"}</p>
+                    <p className={cn("mt-0.5", taloyhtiioMode === mode ? "text-emerald-100" : "text-emerald-500")}>
+                      {mode === "yhtiö" ? "Yksi lasku yhtiölle" : "Oma lasku per huoneisto"}
+                    </p>
+                  </button>
+                ))}
               </div>
 
-              {/* Per-unit price preview — total = price per unit */}
-              {total > 0 && (
-                <div className="rounded-lg bg-white border border-emerald-100 px-4 py-3 flex justify-between items-center">
+              {/* Taloyhtiö name (shared) */}
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">Taloyhtiön nimi</p>
+                <Input value={taloyhtiioName} onChange={e => setTaloyhtiioName(e.target.value)}
+                  placeholder="As Oy Esimerkki" className="text-sm" />
+              </div>
+
+              {/* ── Hallitus tilaa: unit count + image ── */}
+              {taloyhtiioMode === "yhtiö" && (
+                <>
                   <div>
-                    <p className="text-xs text-muted-foreground">Hinta per asunto</p>
-                    <p className="text-base font-bold">{total} €</p>
-                    <p className="text-[11px] text-emerald-600">Kotival. ~{Math.round(total * 0.65)} €</p>
+                    <p className="text-xs text-muted-foreground mb-1.5">Huoneistojen lukumäärä</p>
+                    <Input
+                      type="number"
+                      value={unitCount}
+                      onChange={e => setUnitCount(e.target.value === "" ? "" : Math.max(1, Number(e.target.value)))}
+                      placeholder="12"
+                      min={1}
+                      className="text-sm"
+                    />
                   </div>
-                  {unitCount && Number(unitCount) > 0 && (
-                    <div className="text-right">
-                      <p className="text-xs text-muted-foreground">Yhteensä ({unitCount} as.)</p>
-                      <p className="text-base font-bold">{total * Number(unitCount)} €</p>
+
+                  {total > 0 && (
+                    <div className="rounded-lg bg-white border border-emerald-100 px-4 py-3 flex justify-between items-center">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Hinta per asunto</p>
+                        <p className="text-base font-bold">{total} €</p>
+                        <p className="text-[11px] text-emerald-600">Kotival. ~{Math.round(total * 0.65)} €</p>
+                      </div>
+                      {unitCount && Number(unitCount) > 0 && (
+                        <div className="text-right">
+                          <p className="text-xs text-muted-foreground">Yhteensä ({unitCount} as.)</p>
+                          <p className="text-base font-bold">{total * Number(unitCount)} €</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1.5">Kiinteistön kuva (valinnainen)</p>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={async e => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        setImageCompressing(true);
+                        try {
+                          const dataUrl = await compressImage(file);
+                          setPropertyImageUrl(dataUrl);
+                        } catch {
+                          toast({ variant: "destructive", title: "Kuvan lataus epäonnistui", description: "Kokeile toista tiedostoa." });
+                        }
+                        setImageCompressing(false);
+                        if (fileInputRef.current) fileInputRef.current.value = "";
+                      }}
+                    />
+                    {propertyImageUrl ? (
+                      <div className="relative rounded-xl overflow-hidden">
+                        <img src={propertyImageUrl} alt="Kiinteistö" className="w-full h-32 object-cover" />
+                        <button
+                          type="button"
+                          onClick={() => setPropertyImageUrl("")}
+                          className="absolute top-2 right-2 bg-black/60 text-white rounded-full w-6 h-6 flex items-center justify-center"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={imageCompressing}
+                        className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-emerald-300 py-4 text-sm text-emerald-600 hover:bg-emerald-50 transition-colors"
+                      >
+                        {imageCompressing
+                          ? <><Loader2 className="w-4 h-4 animate-spin" /> Pakataan...</>
+                          : <><ImagePlus className="w-4 h-4" /> Lataa kuva laitteelta</>
+                        }
+                      </button>
+                    )}
+                  </div>
+
+                  <p className="text-xs text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg px-3 py-2">
+                    Lähetä tarjous hallituksen jäsenelle. He hyväksyvät linkin portaalissa — asukasportaali aktivoituu automaattisesti.
+                  </p>
+                </>
+              )}
+
+              {/* ── Per asunto: unit list ── */}
+              {taloyhtiioMode === "per-asunto" && (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">Jokainen huoneisto saa oman tarjouksen ja oman laskun.</p>
+                  <div className="space-y-2">
+                    {units.map((unit, idx) => (
+                      <div key={unit.id} className="flex gap-2 items-center">
+                        <Input
+                          placeholder={`Huoneisto (esim. A${idx + 1})`}
+                          value={unit.name}
+                          onChange={e => setUnits(prev => prev.map(u => u.id === unit.id ? { ...u, name: e.target.value } : u))}
+                          className="text-sm w-32 shrink-0"
+                        />
+                        <Input
+                          type="email"
+                          placeholder="Sähköposti (valinnainen)"
+                          value={unit.email}
+                          onChange={e => setUnits(prev => prev.map(u => u.id === unit.id ? { ...u, email: e.target.value } : u))}
+                          className="text-sm flex-1"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setUnits(prev => prev.filter(u => u.id !== unit.id))}
+                          disabled={units.length === 1}
+                          className="text-muted-foreground hover:text-destructive disabled:opacity-30 shrink-0"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setUnits(prev => [...prev, { id: uid(), name: "", email: "" }])}
+                    className="flex items-center gap-1.5 text-xs text-emerald-600 hover:text-emerald-700 font-medium"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Lisää huoneisto
+                  </button>
+                  {total > 0 && (
+                    <div className="rounded-lg bg-white border border-emerald-100 px-4 py-2 text-xs text-emerald-700">
+                      {total} € per huoneisto · {units.filter(u => u.email.trim()).length}/{units.length} sähköpostia
                     </div>
                   )}
                 </div>
               )}
-
-              {/* Image upload */}
-              <div>
-                <p className="text-xs text-muted-foreground mb-1.5">Kiinteistön kuva (valinnainen)</p>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={async e => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    setImageCompressing(true);
-                    try {
-                      const dataUrl = await compressImage(file);
-                      setPropertyImageUrl(dataUrl);
-                    } catch {
-                      toast({ variant: "destructive", title: "Kuvan lataus epäonnistui", description: "Kokeile toista tiedostoa." });
-                    }
-                    setImageCompressing(false);
-                    if (fileInputRef.current) fileInputRef.current.value = "";
-                  }}
-                />
-                {propertyImageUrl ? (
-                  <div className="relative rounded-xl overflow-hidden">
-                    <img src={propertyImageUrl} alt="Kiinteistö" className="w-full h-32 object-cover" />
-                    <button
-                      type="button"
-                      onClick={() => setPropertyImageUrl("")}
-                      className="absolute top-2 right-2 bg-black/60 text-white rounded-full w-6 h-6 flex items-center justify-center"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={imageCompressing}
-                    className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-emerald-300 py-4 text-sm text-emerald-600 hover:bg-emerald-50 transition-colors"
-                  >
-                    {imageCompressing
-                      ? <><Loader2 className="w-4 h-4 animate-spin" /> Pakataan...</>
-                      : <><ImagePlus className="w-4 h-4" /> Lataa kuva laitteelta</>
-                    }
-                  </button>
-                )}
-              </div>
-
-              <p className="text-xs text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg px-3 py-2">
-                Lähetä tarjous hallituksen jäsenelle. He hyväksyvät linkin portaalissa, minkä jälkeen aktivoit sen asukkaille <strong>keikkalistasta</strong>.
-              </p>
             </div>
           )}
 

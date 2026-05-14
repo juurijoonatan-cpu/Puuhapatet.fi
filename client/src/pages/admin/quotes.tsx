@@ -1466,15 +1466,28 @@ export default function AdminQuotesPage() {
           <Button
             className="flex-1 h-12 text-base font-semibold gap-2"
             onClick={handleSend}
-            disabled={sending || !customerEmail.trim() || serviceItems.length === 0}
+            disabled={
+              sending ||
+              serviceItems.length === 0 ||
+              (isTaloyhtiio && taloyhtiioMode === "per-asunto"
+                ? units.every(u => !u.name.trim())
+                : !customerEmail.trim())
+            }
           >
             {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
-            {sending ? "Lähetetään…" : `Lähetä tarjous${total > 0 ? ` · ${isTaloyhtiio && unitCount ? `${total} €/as. × ${unitCount} = ${total * Number(unitCount)} €` : `${total} €`}` : ""}`}
+            {sending ? "Lähetetään…" : `Lähetä tarjous${total > 0 ? ` · ${isTaloyhtiio && taloyhtiioMode === "yhtiö" && unitCount ? `${total} €/as. × ${unitCount} = ${total * Number(unitCount)} €` : `${total} €`}` : ""}`}
           </Button>
         </div>
-        {(!customerEmail.trim() || serviceItems.length === 0) && (
+        {(serviceItems.length === 0 ||
+          (isTaloyhtiio && taloyhtiioMode === "per-asunto"
+            ? units.every(u => !u.name.trim())
+            : !customerEmail.trim())) && (
           <p className="text-xs text-muted-foreground text-center mt-2">
-            {!customerEmail.trim() ? "Syötä asiakkaan sähköposti" : "Lisää vähintään yksi palvelu"}
+            {serviceItems.length === 0
+              ? "Lisää vähintään yksi palvelu"
+              : (isTaloyhtiio && taloyhtiioMode === "per-asunto")
+                ? "Lisää vähintään yksi huoneisto"
+                : "Syötä asiakkaan sähköposti"}
           </p>
         )}
 

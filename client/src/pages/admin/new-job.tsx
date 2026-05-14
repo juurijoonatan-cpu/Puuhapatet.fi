@@ -14,6 +14,7 @@ import { Link, useLocation } from "wouter";
 import {
   ArrowLeft, ArrowRight, User, ClipboardCheck, Package,
   FileText, CheckCircle, Loader2, Percent, Check, UserCheck, Search, Monitor,
+  Send,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -227,6 +228,7 @@ interface ExistingCustomer {
 export default function NewJobPage() {
   const { toast } = useToast();
   const [, navigate] = useLocation();
+  const [mode, setMode] = useState<"pick" | "irl">("pick");
   const [currentStep, setCurrentStep] = useState<WizardStep>(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [presenting, setPresenting] = useState(false);
@@ -552,17 +554,70 @@ export default function NewJobPage() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  // Mode picker — shown before the wizard
+  if (mode === "pick") {
+    return (
+      <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28">
+        <div className="container mx-auto px-4 max-w-2xl">
+          <div className="flex items-center gap-4 mb-8">
+            <Link href="/admin/dashboard">
+              <Button variant="ghost" size="icon" data-testid="back-to-dashboard">
+                <ArrowLeft className="w-5 h-5" />
+              </Button>
+            </Link>
+            <div>
+              <h1 className="text-2xl font-semibold text-foreground">Uusi keikka</h1>
+              <p className="text-sm text-muted-foreground">Valitse miten aloitetaan</p>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <button
+              type="button"
+              onClick={() => navigate("/admin/quotes")}
+              className="w-full flex items-center gap-4 rounded-2xl border-2 border-border hover:border-primary hover:bg-primary/5 px-5 py-5 text-left transition-all"
+            >
+              <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                <Send className="w-5 h-5 text-primary" />
+              </div>
+              <div>
+                <p className="font-semibold text-foreground">Lähetä tarjous</p>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  Yksityishenkilö, yritys tai taloyhtiö — asiakas hyväksyy linkin kautta
+                </p>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setMode("irl")}
+              className="w-full flex items-center gap-4 rounded-2xl border-2 border-border hover:border-primary hover:bg-primary/5 px-5 py-5 text-left transition-all"
+            >
+              <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center shrink-0">
+                <ClipboardCheck className="w-5 h-5 text-muted-foreground" />
+              </div>
+              <div>
+                <p className="font-semibold text-foreground">Paikanpäällä / IRL</p>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  Hinta sovittu suoraan — allekirjoitukset ja sopimus nyt
+                </p>
+              </div>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28">
       <div className="container mx-auto px-4 max-w-2xl">
 
         {/* Header */}
         <div className="flex items-center gap-4 mb-6">
-          <Link href="/admin/dashboard">
-            <Button variant="ghost" size="icon" data-testid="back-to-dashboard">
-              <ArrowLeft className="w-5 h-5" />
-            </Button>
-          </Link>
+          <Button variant="ghost" size="icon" onClick={() => setMode("pick")}>
+            <ArrowLeft className="w-5 h-5" />
+          </Button>
           <div>
             <h1 className="text-2xl font-semibold text-foreground">Uusi keikka</h1>
             <p className="text-sm text-muted-foreground">

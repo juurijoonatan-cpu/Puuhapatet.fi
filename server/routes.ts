@@ -240,7 +240,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         .select({ job: jobs, customer: customers })
         .from(jobs)
         .leftJoin(customers, eq(jobs.customerId, customers.id))
-        .where(and(ne(jobs.status, "cancelled"), ne(jobs.status, "done")));
+        .where(and(ne(jobs.status, "lead"), ne(jobs.status, "cancelled"), ne(jobs.status, "done")));
 
       const now = toIcsDate(new Date());
 

@@ -925,6 +925,67 @@ export default function AdminJobsPage() {
                 )}
               </div>
 
+              {/* Manual accept / decline buttons for admin */}
+              <div className="flex gap-2 mb-3">
+                <button
+                  type="button"
+                  disabled={updating}
+                  onClick={async () => {
+                    setUpdating(true);
+                    const patch: Record<string, unknown> = { quoteStatus: "accepted" };
+                    if (job.status === "lead") patch.status = "scheduled";
+                    if (job.isTaloyhtiio) patch.taloyhtiioApproved = true;
+                    const res = await api.updateJob(job.id, patch);
+                    if (res.ok) {
+                      const updates = {
+                        quoteStatus: "accepted" as const,
+                        ...(job.status === "lead" ? { status: "scheduled" as DbStatus } : {}),
+                        ...(job.isTaloyhtiio ? { taloyhtiioApproved: true } : {}),
+                      };
+                      setSelected(prev => prev ? { ...prev, job: { ...prev.job, ...updates } } : null);
+                      setJobs(prev => prev.map(r => r.job.id === job.id ? { ...r, job: { ...r.job, ...updates } } : r));
+                      toast({ title: job.isTaloyhtiio ? "Tarjous hyväksytty ✓ — asukasportaali aktivoitu" : "Tarjous hyväksytty ✓" });
+                    }
+                    setUpdating(false);
+                  }}
+                  className={cn(
+                    "flex-1 py-1.5 rounded-xl text-sm font-semibold transition-all",
+                    job.quoteStatus === "accepted"
+                      ? "bg-green-500 text-white"
+                      : "bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 dark:bg-green-900/20 dark:text-green-300 dark:border-green-800",
+                    updating && "opacity-50 cursor-not-allowed"
+                  )}
+                >
+                  Hyväksy
+                </button>
+                <button
+                  type="button"
+                  disabled={updating}
+                  onClick={async () => {
+                    setUpdating(true);
+                    const patch: Record<string, unknown> = { quoteStatus: "declined" };
+                    if (job.status === "lead") patch.status = "cancelled";
+                    const res = await api.updateJob(job.id, patch);
+                    if (res.ok) {
+                      const updates = { quoteStatus: "declined" as const, ...(job.status === "lead" ? { status: "cancelled" as DbStatus } : {}) };
+                      setSelected(prev => prev ? { ...prev, job: { ...prev.job, ...updates } } : null);
+                      setJobs(prev => prev.map(r => r.job.id === job.id ? { ...r, job: { ...r.job, ...updates } } : r));
+                      toast({ title: "Tarjous hylätty" });
+                    }
+                    setUpdating(false);
+                  }}
+                  className={cn(
+                    "flex-1 py-1.5 rounded-xl text-sm font-semibold transition-all",
+                    job.quoteStatus === "declined"
+                      ? "bg-red-500 text-white"
+                      : "bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800",
+                    updating && "opacity-50 cursor-not-allowed"
+                  )}
+                >
+                  Hylkää
+                </button>
+              </div>
+
               {job.customerMessage && (
                 <div className="mb-3">
                   <p className="text-xs text-muted-foreground mb-1">Asiakkaan viesti</p>

@@ -934,12 +934,17 @@ export default function AdminJobsPage() {
                     setUpdating(true);
                     const patch: Record<string, unknown> = { quoteStatus: "accepted" };
                     if (job.status === "lead") patch.status = "scheduled";
+                    if (job.isTaloyhtiio) patch.taloyhtiioApproved = true;
                     const res = await api.updateJob(job.id, patch);
                     if (res.ok) {
-                      const updates = { quoteStatus: "accepted" as const, ...(job.status === "lead" ? { status: "scheduled" as DbStatus } : {}) };
+                      const updates = {
+                        quoteStatus: "accepted" as const,
+                        ...(job.status === "lead" ? { status: "scheduled" as DbStatus } : {}),
+                        ...(job.isTaloyhtiio ? { taloyhtiioApproved: true } : {}),
+                      };
                       setSelected(prev => prev ? { ...prev, job: { ...prev.job, ...updates } } : null);
                       setJobs(prev => prev.map(r => r.job.id === job.id ? { ...r, job: { ...r.job, ...updates } } : r));
-                      toast({ title: "Tarjous hyväksytty ✓" });
+                      toast({ title: job.isTaloyhtiio ? "Tarjous hyväksytty ✓ — asukasportaali aktivoitu" : "Tarjous hyväksytty ✓" });
                     }
                     setUpdating(false);
                   }}

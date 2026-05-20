@@ -4,6 +4,8 @@ import { Link } from "wouter";
 import {
   MapPin, Mail, Linkedin, Phone, Briefcase, GraduationCap,
   Globe2, Cpu, Code2, Users, BarChart3, ChevronRight,
+  ArrowUpRight, Sparkle, Figma, Framer, Palette, PenTool,
+  Layers, Type, Aperture, Chrome, Camera, Brush, Box, Wand2,
 } from "lucide-react";
 import { GlassFilter } from "@/components/ui/liquid-glass-button";
 import { cn } from "@/lib/utils";
@@ -592,6 +594,188 @@ function MobileLayout() {
   );
 }
 
+// ─── Features section ────────────────────────────────────────────────────────
+
+const CAREER = [
+  { period: "2023–Now",  role: "Freelance Creative",  org: "Solo Studio" },
+  { period: "2020–2023", role: "Head of Brand Design", org: "Rove Studio" },
+  { period: "2017–2020", role: "Visual Stylist",        org: "Ember Works" },
+];
+
+const MARQUEE_ROW1 = [Figma, Framer, Palette, PenTool, Layers, Type, Aperture, Chrome];
+const MARQUEE_ROW2 = [Camera, Brush, Box, Wand2, Figma, Framer, Type, Layers];
+
+const VIDEO_BG   = "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260507_150203_44a5bd32-516a-47ce-a077-8acbf9aa8991.mp4";
+const VIDEO_STAT = "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260507_154543_d5b83fc1-9cea-44f3-b5e8-8f325935211a.mp4";
+const VIDEO_SW   = "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260507_153148_d7a3e1dd-e5d0-4ce6-8306-00d7522ecc44.mp4";
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2 text-white/70">
+      <Sparkle className="h-3 w-3 flex-shrink-0" strokeWidth={1.5} />
+      <span className="uppercase tracking-[0.22em] text-[11px]">{children}</span>
+      <Sparkle className="h-3 w-3 flex-shrink-0" strokeWidth={1.5} />
+    </div>
+  );
+}
+
+function VideoCard({
+  src, children, className,
+}: {
+  src: string;
+  children?: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("relative rounded-2xl bg-black overflow-hidden", className)}>
+      <video
+        src={src}
+        autoPlay
+        loop
+        muted
+        playsInline
+        className="absolute inset-0 w-full h-full object-cover"
+      />
+      <div className="relative z-10 h-full flex flex-col justify-between p-5 md:p-6">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function MarqueeRow({
+  icons, direction,
+}: {
+  icons: React.ComponentType<{ strokeWidth?: number; className?: string }>[];
+  direction: "left" | "right";
+}) {
+  const doubled = [...icons, ...icons];
+  return (
+    <div className="overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_8%,black_92%,transparent)]">
+      <div className={cn("flex gap-3", direction === "left" ? "animate-marquee-left" : "animate-marquee-right")}>
+        {doubled.map((Icon, i) => (
+          <div
+            key={i}
+            className="h-14 w-14 md:h-16 md:w-16 rounded-xl flex-shrink-0 flex items-center justify-center liquid-glass"
+          >
+            <Icon strokeWidth={1.5} className="h-5 w-5 text-white/70" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FeaturesSection() {
+  return (
+    <section
+      className="bg-[#0a0a0a] text-white font-sans antialiased px-4 sm:px-6 md:px-10 lg:px-14 py-6 sm:py-8 md:py-10 lg:h-screen flex flex-col gap-4 md:gap-5"
+    >
+      {/* Header row */}
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+        <div className="max-w-3xl">
+          <h2
+            className="text-[28px] sm:text-3xl md:text-4xl lg:text-[44px] font-normal tracking-tight text-white"
+            style={{ lineHeight: 1.15 }}
+          >
+            Hi, I'm Max Reed!
+          </h2>
+          <p className="mt-3 text-sm md:text-[15px] leading-[1.6] text-white/60 max-w-3xl">
+            A London-based independent creator shaping sharp visual systems, web-ready products,
+            and story-first campaigns. With a decade of craft behind me, I help ideas move with
+            focus and intention.
+          </p>
+        </div>
+        <div className="flex-shrink-0">
+          <button className="liquid-glass rounded-full px-5 sm:px-6 py-2.5 sm:py-3 text-sm font-medium text-white whitespace-nowrap">
+            Let's Team Up Today
+          </button>
+        </div>
+      </div>
+
+      {/* Bento grid */}
+      <div className="flex-1 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-5 min-h-0">
+
+        {/* Column 1 — Background video + timeline */}
+        <VideoCard src={VIDEO_BG} className="min-h-[360px] lg:min-h-0">
+          <SectionLabel>Background</SectionLabel>
+          <div className="grid gap-y-3" style={{ gridTemplateColumns: "auto auto 1fr auto" }}>
+            {CAREER.map(item => (
+              <>
+                <span key={item.period + "p"} className="text-[11px] font-mono text-white/50 pr-2">{item.period}</span>
+                <Sparkle className="h-3 w-3 text-white/60 self-center mx-1" strokeWidth={1.5} />
+                <span key={item.period + "r"} className="text-[12px] text-white/80 px-1">{item.role}</span>
+                <span key={item.period + "o"} className="text-[11px] text-white/40 pl-2 text-right">{item.org}</span>
+              </>
+            ))}
+          </div>
+        </VideoCard>
+
+        {/* Column 2 — Client voice + stat */}
+        <div className="grid grid-rows-[auto_1fr] gap-4 md:gap-5">
+          {/* Client voice */}
+          <div className="noise-overlay rounded-2xl bg-[#324444] p-5 md:p-6">
+            <SectionLabel>Client Voice</SectionLabel>
+            <blockquote className="mt-4 text-[13px] sm:text-[13.5px] leading-[1.6] text-white/85">
+              "Max reshaped our image with a degree of finesse and vision that surpassed what
+              we'd hoped for. The process felt graceful, and the outcomes speak for themselves."
+            </blockquote>
+            <p className="mt-3 text-[12px] text-white/50">
+              <strong className="text-white/80 font-medium">Elena Brooks</strong>, Creative Director — Halcyon
+            </p>
+          </div>
+
+          {/* 10M+ stat */}
+          <VideoCard src={VIDEO_STAT} className="min-h-[200px]">
+            <div />
+            <div className="text-center">
+              <p
+                className="text-5xl sm:text-6xl md:text-7xl lg:text-[88px] font-light tracking-tight"
+                style={{ textShadow: "0 2px 24px rgba(255,255,255,0.18)" }}
+              >
+                10M+
+              </p>
+              <p className="mt-2 text-sm text-white/85">Raised for startups</p>
+            </div>
+          </VideoCard>
+        </div>
+
+        {/* Column 3 — Daily software + reach */}
+        <div className="grid grid-rows-[1fr_auto] gap-4 md:gap-5">
+          {/* Daily software */}
+          <VideoCard src={VIDEO_SW}>
+            <SectionLabel>Daily Software</SectionLabel>
+            <div className="flex flex-col gap-3">
+              <MarqueeRow icons={MARQUEE_ROW1} direction="left" />
+              <MarqueeRow icons={MARQUEE_ROW2} direction="right" />
+            </div>
+          </VideoCard>
+
+          {/* Reach me */}
+          <div className="noise-overlay rounded-2xl bg-[#324444] p-5 md:p-6">
+            <div className="flex items-start justify-between">
+              <SectionLabel>Reach Me</SectionLabel>
+              <button className="liquid-glass h-9 w-9 rounded-full flex items-center justify-center flex-shrink-0">
+                <ArrowUpRight className="h-4 w-4 text-white/70" strokeWidth={1.5} />
+              </button>
+            </div>
+            <ul className="mt-4 space-y-1.5 text-[13px] text-white/70">
+              <li className="flex items-center gap-2">
+                <Mail className="h-3.5 w-3.5 text-white/40" strokeWidth={1.5} />
+                hi@maxreed.com
+              </li>
+              <li className="flex items-center gap-2">
+                <Phone className="h-3.5 w-3.5 text-white/40" strokeWidth={1.5} />
+                +44 207 81 63
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CVDemoPage() {
@@ -627,6 +811,9 @@ export default function CVDemoPage() {
         <GlassFilter />
         <MobileLayout />
       </div>
+
+      {/* ── Features section ── */}
+      <FeaturesSection />
 
       {/* ── CTA STRIP ── */}
       <div className="border-t border-white/5 px-5 py-10 text-center">

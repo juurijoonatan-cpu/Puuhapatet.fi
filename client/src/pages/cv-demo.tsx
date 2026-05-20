@@ -627,7 +627,8 @@ function VideoCard({
   className?: string;
 }) {
   return (
-    <div className={cn("relative rounded-2xl bg-black overflow-hidden", className)}>
+    <div className={cn("relative rounded-2xl overflow-hidden", className)}>
+      {/* Video background */}
       <video
         src={src}
         autoPlay
@@ -636,6 +637,20 @@ function VideoCard({
         playsInline
         className="absolute inset-0 w-full h-full object-cover"
       />
+      {/* Scrim so content reads clearly */}
+      <div className="absolute inset-0 bg-black/50" />
+      {/* Glass shadow shell — matches GlassCard */}
+      <div
+        className="absolute inset-0 rounded-2xl pointer-events-none"
+        style={{
+          boxShadow:
+            "0 0 6px rgba(0,0,0,0.03), 0 4px 20px rgba(0,0,0,0.35), " +
+            "inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -1px 0 rgba(0,0,0,0.3)",
+        }}
+      />
+      {/* Border highlight — matches GlassCard */}
+      <div className="absolute inset-0 rounded-2xl border border-white/8 pointer-events-none" />
+      {/* Content */}
       <div className="relative z-10 h-full flex flex-col justify-between p-5 md:p-6">
         {children}
       </div>
@@ -669,7 +684,7 @@ function MarqueeRow({
 function FeaturesSection() {
   return (
     <section
-      className="bg-[#0a0a0a] text-white font-sans antialiased px-4 sm:px-6 md:px-10 lg:px-14 py-6 sm:py-8 md:py-10 lg:h-screen flex flex-col gap-4 md:gap-5"
+      className="bg-[#070707] text-white font-sans antialiased px-4 sm:px-6 md:px-10 lg:px-14 py-6 sm:py-8 md:py-10 lg:h-screen flex flex-col gap-4 md:gap-5"
     >
       {/* Header row */}
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
@@ -714,16 +729,18 @@ function FeaturesSection() {
         {/* Column 2 — Client voice + stat */}
         <div className="grid grid-rows-[auto_1fr] gap-4 md:gap-5">
           {/* Client voice */}
-          <div className="noise-overlay rounded-2xl bg-[#324444] p-5 md:p-6">
-            <SectionLabel>Client Voice</SectionLabel>
-            <blockquote className="mt-4 text-[13px] sm:text-[13.5px] leading-[1.6] text-white/85">
-              "Max reshaped our image with a degree of finesse and vision that surpassed what
-              we'd hoped for. The process felt graceful, and the outcomes speak for themselves."
-            </blockquote>
-            <p className="mt-3 text-[12px] text-white/50">
-              <strong className="text-white/80 font-medium">Elena Brooks</strong>, Creative Director — Halcyon
-            </p>
-          </div>
+          <GlassCard>
+            <div className="p-5 md:p-6">
+              <SectionLabel>Client Voice</SectionLabel>
+              <blockquote className="mt-4 text-[13px] sm:text-[13.5px] leading-[1.6] text-white/85">
+                "Max reshaped our image with a degree of finesse and vision that surpassed what
+                we'd hoped for. The process felt graceful, and the outcomes speak for themselves."
+              </blockquote>
+              <p className="mt-3 text-[12px] text-white/50">
+                <strong className="text-white/80 font-medium">Elena Brooks</strong>, Creative Director — Halcyon
+              </p>
+            </div>
+          </GlassCard>
 
           {/* 10M+ stat */}
           <VideoCard src={VIDEO_STAT} className="min-h-[200px]">
@@ -752,24 +769,26 @@ function FeaturesSection() {
           </VideoCard>
 
           {/* Reach me */}
-          <div className="noise-overlay rounded-2xl bg-[#324444] p-5 md:p-6">
-            <div className="flex items-start justify-between">
-              <SectionLabel>Reach Me</SectionLabel>
-              <button className="liquid-glass h-9 w-9 rounded-full flex items-center justify-center flex-shrink-0">
-                <ArrowUpRight className="h-4 w-4 text-white/70" strokeWidth={1.5} />
-              </button>
+          <GlassCard>
+            <div className="p-5 md:p-6">
+              <div className="flex items-start justify-between">
+                <SectionLabel>Reach Me</SectionLabel>
+                <button className="liquid-glass h-9 w-9 rounded-full flex items-center justify-center flex-shrink-0">
+                  <ArrowUpRight className="h-4 w-4 text-white/70" strokeWidth={1.5} />
+                </button>
+              </div>
+              <ul className="mt-4 space-y-1.5 text-[13px] text-white/70">
+                <li className="flex items-center gap-2">
+                  <Mail className="h-3.5 w-3.5 text-white/40" strokeWidth={1.5} />
+                  hi@maxreed.com
+                </li>
+                <li className="flex items-center gap-2">
+                  <Phone className="h-3.5 w-3.5 text-white/40" strokeWidth={1.5} />
+                  +44 207 81 63
+                </li>
+              </ul>
             </div>
-            <ul className="mt-4 space-y-1.5 text-[13px] text-white/70">
-              <li className="flex items-center gap-2">
-                <Mail className="h-3.5 w-3.5 text-white/40" strokeWidth={1.5} />
-                hi@maxreed.com
-              </li>
-              <li className="flex items-center gap-2">
-                <Phone className="h-3.5 w-3.5 text-white/40" strokeWidth={1.5} />
-                +44 207 81 63
-              </li>
-            </ul>
-          </div>
+          </GlassCard>
         </div>
       </div>
     </section>

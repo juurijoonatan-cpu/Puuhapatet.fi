@@ -314,11 +314,7 @@ const WIDGET_CONTENT: Record<string, React.ReactNode> = {
 
 // ─── Animated Grid Background ────────────────────────────────────────────────
 
-function GridBackground({
-  containerRef,
-}: {
-  containerRef: React.RefObject<HTMLDivElement | null>;
-}) {
+function GridBackground() {
   const mouseX = useMotionValue(-9999);
   const mouseY = useMotionValue(-9999);
   const basePatternRef   = useRef<SVGPatternElement>(null);
@@ -328,11 +324,8 @@ function GridBackground({
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      const rect = containerRef.current?.getBoundingClientRect();
-      if (rect) {
-        mouseX.set(e.clientX - rect.left);
-        mouseY.set(e.clientY - rect.top);
-      }
+      mouseX.set(e.clientX);
+      mouseY.set(e.clientY);
     };
     window.addEventListener("mousemove", handler);
     return () => window.removeEventListener("mousemove", handler);
@@ -445,11 +438,6 @@ function DesktopCanvas() {
       className="relative w-full"
       style={{ height: "calc(100vh - 56px)" }}
     >
-      <GridBackground containerRef={containerRef} />
-
-      {/* GlassFilter – rendered once for the page */}
-      <GlassFilter />
-
       {/* SVG mind-map lines */}
       <svg
         className="absolute inset-0 pointer-events-none"
@@ -684,7 +672,7 @@ function MarqueeRow({
 function FeaturesSection() {
   return (
     <section
-      className="bg-[#070707] text-white font-sans antialiased px-4 sm:px-6 md:px-10 lg:px-14 py-6 sm:py-8 md:py-10 lg:h-screen flex flex-col gap-4 md:gap-5"
+      className="relative z-10 text-white font-sans antialiased px-4 sm:px-6 md:px-10 lg:px-14 py-6 sm:py-8 md:py-10 lg:h-screen flex flex-col gap-4 md:gap-5"
     >
       {/* Header row */}
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
@@ -800,6 +788,14 @@ function FeaturesSection() {
 export default function CVDemoPage() {
   return (
     <div className="min-h-screen bg-[#070707] text-white overflow-x-hidden">
+      {/* ── Full-page animated grid — fixed so it spans all sections ── */}
+      <div className="fixed inset-0 pointer-events-none z-0">
+        <GridBackground />
+      </div>
+
+      {/* GlassFilter once at page level */}
+      <GlassFilter />
+
       {/* ── NAV ── */}
       <nav className="fixed left-0 right-0 top-0 z-50 border-b border-white/5 bg-black/70 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-5">
@@ -821,21 +817,20 @@ export default function CVDemoPage() {
       </nav>
 
       {/* Desktop canvas */}
-      <div className="hidden lg:block pt-14">
+      <div className="hidden lg:block pt-14 relative z-10">
         <DesktopCanvas />
       </div>
 
       {/* Mobile stacked layout */}
-      <div className="lg:hidden">
-        <GlassFilter />
+      <div className="lg:hidden relative z-10">
         <MobileLayout />
       </div>
 
-      {/* ── Features section ── */}
+      {/* ── Features section — sits on the same grid, no bg ── */}
       <FeaturesSection />
 
       {/* ── CTA STRIP ── */}
-      <div className="border-t border-white/5 px-5 py-10 text-center">
+      <div className="relative z-10 px-5 py-10 text-center">
         <p className="text-xs font-mono uppercase tracking-widest text-zinc-600 mb-3">
           This is what your CV could look like
         </p>

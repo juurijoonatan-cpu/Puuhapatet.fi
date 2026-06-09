@@ -1865,6 +1865,30 @@ export default function AdminJobsPage() {
 
                     const buildSummaryPayload = (toEmail: string, recipientName: string, recipientAddress: string, unitPrice?: number, unitBreakdown?: { unitName: string; priceEur: string }[]) => {
                       const priceEur = ((unitPrice ?? job.agreedPrice) / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" });
+                      // Tilitystosite: usean tekijän keikoilla server lähettää kullekin
+                      // tekijälle oman erittelyn (vapaamuotoinen tosite verotusta varten).
+                      // Skipataan taloyhtiön per-asunto-lähetyksissä, ettei tosite duplikoidu.
+                      const settlement = !unitPrice && workerIds.length >= 2 ? {
+                        collectorName: senderUser?.name ?? profile?.name,
+                        workers: workerIds.map((wid) => {
+                          const u = USERS.find((x) => x.id === wid);
+                          const grossCents = Math.round(job.agreedPrice / workerIds.length);
+                          const expensesCents = Math.round(expensesTotal / workerIds.length);
+                          const baseCents = Math.max(0, grossCents - expensesCents);
+                          const rate = job.waiveFee ? 0 : feeRateForWorker(wid);
+                          const feeCents = Math.round(baseCents * rate);
+                          return {
+                            name: u?.name ?? wid,
+                            email: u?.email,
+                            yTunnus: u?.yTunnus,
+                            grossCents,
+                            expensesCents,
+                            feePct: Math.round(rate * 100),
+                            feeCents,
+                            netCents: baseCents - feeCents,
+                          };
+                        }),
+                      } : undefined;
                       const displayEvents = summaryTimeline.map(e => ({
                         label: e.label,
                         date: e.date ? new Date(e.date + "T12:00:00").toLocaleDateString("fi-FI") : "",
@@ -1893,6 +1917,7 @@ export default function AdminJobsPage() {
                         estimatedHours: summaryHours ? Number(summaryHours) : undefined,
                         lang: summaryLang,
                         unitBreakdown,
+                        settlement,
                       };
                     };
 
@@ -2004,7 +2029,10 @@ export default function AdminJobsPage() {
                           const res = await api.sendJobSummary(buildSummaryPayload(customer.email, customer.name, customer.address));
                           setSendingSummary(false);
                           if (res.ok) {
-                            toast({ title: summaryPaymentMethod === "tilisiirto" ? "Lasku lähetetty!" : "Yhteenveto lähetetty!", description: customer.email });
+                            const tositeNote = res.data?.settlementSent
+                              ? ` · Tilitystosite lähetetty ${res.data.settlementSent} tekijälle`
+                              : "";
+                            toast({ title: summaryPaymentMethod === "tilisiirto" ? "Lasku lähetetty!" : "Yhteenveto lähetetty!", description: customer.email + tositeNote });
                             setShowSummaryPanel(false);
                           } else {
                             toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error || "Yritä uudelleen" });

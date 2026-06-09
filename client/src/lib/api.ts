@@ -284,7 +284,21 @@ export const api = {
     estimatedHours?: number;
     lang?: "fi" | "en";
     unitBreakdown?: { unitName: string; priceEur: string }[];
-  }) => request<{ ok: boolean; id?: string }>("POST", "/api/send-job-summary", data),
+    // Tilitystosite: usean tekijän keikoilla kullekin tekijälle lähetettävä erittely
+    settlement?: {
+      collectorName?: string;
+      workers: {
+        name: string;
+        email?: string;
+        yTunnus?: string;
+        grossCents: number;
+        expensesCents: number;
+        feePct: number;
+        feeCents: number;
+        netCents: number;
+      }[];
+    };
+  }) => request<{ ok: boolean; id?: string; settlementSent?: number }>("POST", "/api/send-job-summary", data),
 
   notifyResidents: (jobId: number) =>
     request<{ ok: boolean; sent: number }>("POST", `/api/jobs/${jobId}/notify-residents`, {}),

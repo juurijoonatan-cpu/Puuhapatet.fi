@@ -189,6 +189,7 @@ const sections: Section[] = [
           <Li>Perustajilla (Joonatan & Matias) palvelumaksu on {HOST_SERVICE_FEE_PCT} %</Li>
           <Li>Jos kaksi tekijää, kulut ja palvelumaksu jaetaan tasan</Li>
           <Li>Loput ovat sinun ansioita</Li>
+          <Li>Yhteiskeikoilla järjestelmä lähettää kuitin lähetyksen yhteydessä jokaiselle tekijälle oman <strong>tilitystositteen</strong> sähköpostiin — säilytä se verotusta varten. Erittely näkyy myös Verotulosteessa</Li>
         </ul>
         <H>Esimerkki</H>
         <div className="bg-muted/30 rounded-xl p-3 text-sm mb-3">

@@ -525,6 +525,42 @@ export default function TaxExportPage() {
               </table>
             </div>
 
+            {/* Tilityserittely — usean tekijän keikat (dokumentoi tulonjaon verotusta varten) */}
+            {rows.some(r => r.numWorkers > 1) && (
+              <Card className="p-5 bg-card border-0 premium-shadow mt-6 print:shadow-none print:border print:border-gray-200">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                  Tilityserittely — usean tekijän keikat
+                </p>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Näillä keikoilla yksi tekijä on laskuttanut asiakasta kokonaissummalla ja tilittänyt
+                  muille tekijöille heidän osuutensa. Yllä olevassa taulukossa näkyvä oma osuutesi on
+                  sinun verotettava tulosi. Tosite tulonjaosta on lähetetty kullekin tekijälle
+                  sähköpostitse kuitin lähetyksen yhteydessä.
+                </p>
+                <div className="space-y-2">
+                  {rows.filter(r => r.numWorkers > 1).map(r => {
+                    const workerNames = parseWorkerIds(r.job.assignedTo)
+                      .map(id => USERS.find(u => u.id === id)?.name ?? id)
+                      .join(", ");
+                    return (
+                      <div key={r.job.id} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 text-xs border-b border-border/50 pb-2 last:border-0">
+                        <div>
+                          <span className="text-muted-foreground">{fmtDate(r.job.scheduledAt || r.job.createdAt)}</span>
+                          {" · "}
+                          <span className="font-medium text-foreground">{r.customer?.name ?? "—"}</span>
+                          <p className="text-muted-foreground">Tekijät: {workerNames}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-foreground">Kokonaishinta {fmt(r.job.agreedPrice)}</p>
+                          <p className="text-muted-foreground">Oma osuus 1/{r.numWorkers} = {fmt(r.myRevenue)}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+            )}
+
             {/* Print footer */}
             <div className="hidden print:block mt-8 text-xs text-gray-500 border-t pt-4">
               <div className="flex justify-between">

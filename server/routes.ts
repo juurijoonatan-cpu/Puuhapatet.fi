@@ -494,7 +494,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         totalRevenue += job.agreedPrice;
         totalExpenses += jobExp;
         // Role-aware service fee: each worker's share is charged at their own
-        // rate (founders 0 %, staff STAFF_SERVICE_FEE_RATE).
+        // rate (founders 10 %, staff 25 %).
         if (!job.waiveFee) {
           const net = Math.max(0, job.agreedPrice - jobExp);
           const workerIds = normalizeWorkerIds(job.assignedTo);
@@ -512,7 +512,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         totalJobs:       Number(counts.totalJobs),
         totalRevenue,    // senttiä — valmistuneista keikoista
         totalExpenses,   // senttiä
-        serviceFeeTotal, // senttiä — työntekijöiden palvelumaksut (perustajilta 0 %)
+        serviceFeeTotal, // senttiä — palvelumaksut (perustajat 10 %, työntekijät 25 %)
         netIncome,       // senttiä — verotettava nettotulo
         upcoming:        Number(counts.upcoming),
       });
@@ -573,7 +573,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         if (workerIds.length === 0) continue;
         const sharePerWorker = netRevenue / workerIds.length;
         for (const wid of workerIds) {
-          // Each worker's fee uses their own rate — founders pay nothing.
+          // Each worker's fee uses their own role's rate (10 % / 25 %).
           const fee = job.waiveFee ? 0 : Math.round(sharePerWorker * feeRateForWorker(wid));
           workerFeesTotal[wid] = (workerFeesTotal[wid] ?? 0) + fee;
           workerJobCount[wid] = (workerJobCount[wid] ?? 0) + 1;

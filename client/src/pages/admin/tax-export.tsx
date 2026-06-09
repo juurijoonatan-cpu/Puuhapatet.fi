@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { getAdminProfile, USERS } from "@/lib/admin-profile";
-import { isFounder, STAFF_SERVICE_FEE_RATE } from "@shared/team";
+import { feeRateForWorker, STAFF_SERVICE_FEE_RATE } from "@shared/team";
 import { cn } from "@/lib/utils";
 
 interface JobRow {
@@ -90,8 +90,8 @@ export default function TaxExportPage() {
     return new Date(d).getFullYear() === year;
   });
 
-  // Service-fee rate for the logged-in user (founders keep everything → 0 %).
-  const myFeeRate = profile && isFounder(profile.id) ? 0 : STAFF_SERVICE_FEE_RATE;
+  // Service-fee rate for the logged-in user (founders 10 %, workers 25 %).
+  const myFeeRate = profile ? feeRateForWorker(profile.id) : STAFF_SERVICE_FEE_RATE;
   const myFeePct = Math.round(myFeeRate * 100);
 
   // Build per-job rows with user's proportional share
@@ -271,7 +271,7 @@ export default function TaxExportPage() {
               {[
                 { label: "Bruttokorvaus",  value: fmt(totals.revenue),    note: "Asiakkailta laskutettu",   color: "text-blue-600" },
                 { label: "Kulut",          value: fmt(totals.expenses),   note: "Materiaalit ym.",           color: "text-orange-600" },
-                { label: "Palvelumaksu",   value: fmt(totals.serviceFee), note: myFeeRate === 0 ? "Perustaja — ei maksua" : `${myFeePct} % nettotuloista`, color: "text-purple-600" },
+                { label: "Palvelumaksu",   value: fmt(totals.serviceFee), note: `${myFeePct} % nettotuloista`, color: "text-purple-600" },
                 { label: "4H-tulos",       value: fmt(totals.net),        note: "Ilmoita OmaVeroon",         color: "text-green-600" },
               ].map((c, i) => (
                 <Card key={i} className="p-4 bg-card border-0 premium-shadow print:shadow-none print:border print:border-gray-200">

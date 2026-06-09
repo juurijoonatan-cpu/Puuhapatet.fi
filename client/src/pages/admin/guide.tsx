@@ -8,7 +8,7 @@ import { ArrowLeft, ChevronDown, ChevronUp, Phone, Mail, AlertTriangle, Star, Cl
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { STAFF_SERVICE_FEE_PCT, STAFF_SERVICE_FEE_RATE } from "@shared/team";
+import { STAFF_SERVICE_FEE_PCT, STAFF_SERVICE_FEE_RATE, HOST_SERVICE_FEE_PCT } from "@shared/team";
 
 interface Section {
   id: string;
@@ -186,7 +186,7 @@ const sections: Section[] = [
         <ul className="space-y-1.5 mb-3">
           <Li>Sovittu hinta − kulut = nettotulo</Li>
           <Li>Palvelumaksu on {STAFF_SERVICE_FEE_PCT} % nettotulosta per työntekijä</Li>
-          <Li>Palvelumaksu koskee vain työntekijöitä — perustajat (Joonatan & Matias) pitävät 100 %</Li>
+          <Li>Perustajilla (Joonatan & Matias) palvelumaksu on {HOST_SERVICE_FEE_PCT} %</Li>
           <Li>Jos kaksi tekijää, kulut ja palvelumaksu jaetaan tasan</Li>
           <Li>Loput ovat sinun ansioita</Li>
         </ul>

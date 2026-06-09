@@ -12,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
 import { USERS, getAdminProfile } from "@/lib/admin-profile";
 import { isMyJob, parseWorkerIds } from "@/lib/visibility";
-import { feeRateForWorker, isFounder, STAFF_SERVICE_FEE_RATE, STAFF_SERVICE_FEE_PCT } from "@shared/team";
+import { feeRateForWorker, STAFF_SERVICE_FEE_RATE, STAFF_SERVICE_FEE_PCT } from "@shared/team";
 import { cn } from "@/lib/utils";
 
 type DbStatus = "lead" | "scheduled" | "in_progress" | "done" | "cancelled";
@@ -635,19 +635,22 @@ export default function AdminJobsPage() {
       editNotes !== (selected.job.notes ?? "")
     : false;
 
-  // ── Service fee calculation (role-aware: founders 0 %, staff STAFF_SERVICE_FEE_RATE) ──
+  // ── Service fee calculation (role-aware: founders 10 %, staff 25 %) ──────
   const expensesTotal = expenses.reduce((s, e) => s + e.amount, 0);
   const numWorkers = selectedWorkers.length || 1;
   const netRevenue = (selected?.job.agreedPrice ?? 0) - expensesTotal;
   const feeWaived = selected?.job.waiveFee ?? false;
   const sharePerWorker = Math.max(0, netRevenue) / numWorkers;
   const expensesPerWorker = Math.round(expensesTotal / numWorkers);
-  // Fee for a specific worker: founders pay nothing, staff pay the staff rate.
+  // Fee for a specific worker at their own role's rate.
   const feeForWorker = (wid: string) => feeWaived ? 0 : Math.round(sharePerWorker * feeRateForWorker(wid));
   const netForWorker = (wid: string) => Math.round(sharePerWorker - feeForWorker(wid));
   const totalServiceFee = selectedWorkers.reduce((s, wid) => s + feeForWorker(wid), 0);
-  // Are all assigned workers founders? (→ no fee). Used for the summary label.
-  const allFounders = selectedWorkers.length > 0 && selectedWorkers.every(isFounder);
+  // Distinct fee percentages among assigned workers, e.g. "10" or "10 / 25".
+  const feePctLabel = (selectedWorkers.length > 0
+    ? Array.from(new Set(selectedWorkers.map((wid) => Math.round(feeRateForWorker(wid) * 100)))).sort((a, b) => a - b)
+    : [STAFF_SERVICE_FEE_PCT]
+  ).join(" / ");
   // Single-worker view (or unassigned preview → default to staff rate).
   const primaryWid = selectedWorkers[0];
   const primaryFeeRate = feeWaived ? 0 : (primaryWid ? feeRateForWorker(primaryWid) : STAFF_SERVICE_FEE_RATE);
@@ -1545,7 +1548,7 @@ export default function AdminJobsPage() {
                 )}
                 <div className="flex justify-between border-t pt-2">
                   <span className={cn("text-muted-foreground", feeWaived && "line-through opacity-50")}>
-                    {allFounders ? "Palvelumaksu — perustaja (0 %)" : `Palvelumaksu ${STAFF_SERVICE_FEE_PCT} %`}
+                    Palvelumaksu {feePctLabel} %
                   </span>
                   <span className={cn("font-medium text-purple-600 dark:text-purple-400", feeWaived && "line-through opacity-50")}>
                     −{(totalServiceFee / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}

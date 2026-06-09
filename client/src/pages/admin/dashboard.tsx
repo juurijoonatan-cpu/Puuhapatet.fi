@@ -19,7 +19,7 @@ import {
 import { getAdminProfile, USERS } from "@/lib/admin-profile";
 import { api, StatsResponse, WorkerStatsResponse } from "@/lib/api";
 import { isMyJob, parseWorkerIds } from "@/lib/visibility";
-import { STAFF_SERVICE_FEE_RATE, STAFF_SERVICE_FEE_PCT } from "@shared/team";
+import { STAFF_SERVICE_FEE_RATE, STAFF_SERVICE_FEE_PCT, HOST_SERVICE_FEE_PCT } from "@shared/team";
 
 export default function AdminDashboard() {
   const profile = getAdminProfile();
@@ -110,7 +110,7 @@ export default function AdminDashboard() {
           title: "Oma palveluvelka",
           value: myDebt === null ? "…" : fmt(myDebt),
           icon: Banknote,
-          description: "Perustajana ei palvelumaksua",
+          description: `${HOST_SERVICE_FEE_PCT} % brändille — maksamatta`,
           color: "text-purple-600 dark:text-purple-400",
           bgColor: "bg-purple-100 dark:bg-purple-900/30",
         },
@@ -297,7 +297,7 @@ export default function AdminDashboard() {
               })}
             </div>
             <p className="text-xs text-muted-foreground mt-4 pt-3 border-t border-border">
-              Laskettu valmistuneista keikoista: (hinta − kulut) × {STAFF_SERVICE_FEE_PCT} % per työntekijä — perustajilta 0 %
+              Laskettu valmistuneista keikoista: (hinta − kulut) × palvelumaksu-% per tekijä — perustajat {HOST_SERVICE_FEE_PCT} %, työntekijät {STAFF_SERVICE_FEE_PCT} %
             </p>
           </Card>
         )}

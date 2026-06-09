@@ -7,6 +7,7 @@ import PDFDocument from "pdfkit";
 import rateLimit from "express-rate-limit";
 import { db } from "./db";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
+import { feeRateForWorker } from "@shared/team";
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 // Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
@@ -480,18 +481,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         id:          jobs.id,
         agreedPrice: jobs.agreedPrice,
         waiveFee:    jobs.waiveFee,
+        assignedTo:  jobs.assignedTo,
         jobExpenses: sql<number>`coalesce(sum(${expenses.amount}), 0)`,
       }).from(jobs)
         .leftJoin(expenses, eq(expenses.jobId, jobs.id))
         .where(eq(jobs.status, "done"))
-        .groupBy(jobs.id, jobs.agreedPrice, jobs.waiveFee);
+        .groupBy(jobs.id, jobs.agreedPrice, jobs.waiveFee, jobs.assignedTo);
 
       let totalRevenue = 0, totalExpenses = 0, serviceFeeTotal = 0;
       for (const job of doneJobsWithExp) {
         const jobExp = Number(job.jobExpenses);
         totalRevenue += job.agreedPrice;
         totalExpenses += jobExp;
-        serviceFeeTotal += job.waiveFee ? 0 : Math.round(Math.max(0, job.agreedPrice - jobExp) * 0.10);
+        // Role-aware service fee: each worker's share is charged at their own
+        // rate (founders 10 %, staff 25 %).
+        if (!job.waiveFee) {
+          const net = Math.max(0, job.agreedPrice - jobExp);
+          const workerIds = normalizeWorkerIds(job.assignedTo);
+          if (workerIds.length > 0) {
+            const share = net / workerIds.length;
+            for (const wid of workerIds) {
+              serviceFeeTotal += Math.round(share * feeRateForWorker(wid));
+            }
+          }
+        }
       }
       const netIncome = totalRevenue - totalExpenses - serviceFeeTotal;
 
@@ -499,7 +512,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         totalJobs:       Number(counts.totalJobs),
         totalRevenue,    // senttiä — valmistuneista keikoista
         totalExpenses,   // senttiä
-        serviceFeeTotal, // senttiä — 10 % nettotuloista
+        serviceFeeTotal, // senttiä — palvelumaksut (perustajat 10 %, työntekijät 25 %)
         netIncome,       // senttiä — verotettava nettotulo
         upcoming:        Number(counts.upcoming),
       });
@@ -556,12 +569,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       for (const job of doneJobsWithExp) {
         const jobExpenses = Number(job.jobExpenses);
         const netRevenue = Math.max(0, job.agreedPrice - jobExpenses);
-        const serviceFee = job.waiveFee ? 0 : Math.round(netRevenue * 0.10);
         const workerIds = normalizeWorkerIds(job.assignedTo);
         if (workerIds.length === 0) continue;
-        const feePerWorker = Math.round(serviceFee / workerIds.length);
+        const sharePerWorker = netRevenue / workerIds.length;
         for (const wid of workerIds) {
-          workerFeesTotal[wid] = (workerFeesTotal[wid] ?? 0) + feePerWorker;
+          // Each worker's fee uses their own role's rate (10 % / 25 %).
+          const fee = job.waiveFee ? 0 : Math.round(sharePerWorker * feeRateForWorker(wid));
+          workerFeesTotal[wid] = (workerFeesTotal[wid] ?? 0) + fee;
           workerJobCount[wid] = (workerJobCount[wid] ?? 0) + 1;
         }
       }
@@ -911,6 +925,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         estimatedHours,
         lang,
         unitBreakdown,
+        settlement,
       } = req.body;
 
       // dueDate arrives as ISO (YYYY-MM-DD); format for display
@@ -1316,7 +1331,93 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ...(pdfAttachment ? { attachments: [pdfAttachment] } : {}),
       });
 
-      res.json({ ok: true, id: result.data?.id });
+      // ── Tilitystosite: usean tekijän keikoilla kullekin tekijälle oma erittely ──
+      // Vapaamuotoinen tosite kirjanpitoon/verotukseen: dokumentoi miten yhden
+      // tekijän laskuttama kokonaissumma on jaettu tekijöiden kesken.
+      let settlementSent = 0;
+      const settlementWorkers: {
+        name: string; email?: string; yTunnus?: string;
+        grossCents: number; expensesCents: number; feePct: number; feeCents: number; netCents: number;
+      }[] = Array.isArray(settlement?.workers) ? settlement.workers : [];
+
+      if (settlementWorkers.length >= 2) {
+        const collector: string = settlement.collectorName || settlementWorkers[0]?.name || "—";
+        const payLabel: Record<string, string> = {
+          "käteinen": "Käteinen", "mobilepay": "MobilePay", "tilisiirto": "Tilisiirto", "kortti": "Kortti",
+        };
+
+        const splitRows = settlementWorkers.map(w => `
+          <tr>
+            <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9">
+              <span style="font-weight:600;color:#1e293b">${w.name}</span>
+              ${w.yTunnus ? `<br><span style="font-size:11px;color:#94a3b8">Y-tunnus ${w.yTunnus}</span>` : ""}
+            </td>
+            <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;text-align:right;color:#475569">${fmtC(w.grossCents)}</td>
+            <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;text-align:right;color:#ea580c">−${fmtC(w.expensesCents)}</td>
+            <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;text-align:right;color:#9333ea">−${fmtC(w.feeCents)} (${w.feePct} %)</td>
+            <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:700;color:#16a34a">${fmtC(w.netCents)}</td>
+          </tr>`).join("");
+
+        const tositeHtml = (me: typeof settlementWorkers[number]) => `
+          <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:640px;margin:0 auto;padding:24px;color:#1e293b">
+            <div style="background:#1e293b;border-radius:16px 16px 0 0;padding:20px 24px">
+              <div style="color:#fff;font-size:20px;font-weight:800;letter-spacing:0.5px">TILITYSTOSITE</div>
+              <div style="color:#94a3b8;font-size:12px;margin-top:2px">Puuhapatet · ${todayDisplay}</div>
+            </div>
+            <div style="border:1px solid #e5e7eb;border-top:none;border-radius:0 0 16px 16px;padding:24px">
+              <p style="font-size:14px;margin:0 0 16px">Hei ${me.name.split(" ")[0]}! Tämä tosite erittelee yhteiskeikan tulonjaon — säilytä kirjanpitoa ja verotusta (OmaVero) varten.</p>
+
+              <table width="100%" cellpadding="0" cellspacing="0" style="font-size:13px;margin-bottom:16px">
+                <tr><td style="padding:4px 0;color:#64748b;width:160px">Työ</td><td style="padding:4px 0;font-weight:600">${description}</td></tr>
+                <tr><td style="padding:4px 0;color:#64748b">Asiakas</td><td style="padding:4px 0">${customerName}${customerAddress ? `, ${customerAddress}` : ""}</td></tr>
+                <tr><td style="padding:4px 0;color:#64748b">Valmistunut</td><td style="padding:4px 0">${completionDate}</td></tr>
+                <tr><td style="padding:4px 0;color:#64748b">Kokonaishinta</td><td style="padding:4px 0;font-weight:600">${agreedPriceCents ? fmtC(agreedPriceCents) : price}</td></tr>
+                <tr><td style="padding:4px 0;color:#64748b">Maksutapa</td><td style="padding:4px 0">${payLabel[paymentMethod] ?? paymentMethod}</td></tr>
+                <tr><td style="padding:4px 0;color:#64748b">Maksun vastaanotti</td><td style="padding:4px 0;font-weight:600">${collector}</td></tr>
+              </table>
+
+              <p style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;margin:0 0 8px">Tulonjako tekijöittäin</p>
+              <table width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;margin-bottom:16px">
+                <tr style="background:#f8fafc">
+                  <th style="padding:8px 12px;text-align:left;color:#64748b;font-weight:600">Tekijä</th>
+                  <th style="padding:8px 12px;text-align:right;color:#64748b;font-weight:600">Brutto-osuus</th>
+                  <th style="padding:8px 12px;text-align:right;color:#64748b;font-weight:600">Kulut</th>
+                  <th style="padding:8px 12px;text-align:right;color:#64748b;font-weight:600">Palvelumaksu</th>
+                  <th style="padding:8px 12px;text-align:right;color:#64748b;font-weight:600">Netto</th>
+                </tr>
+                ${splitRows}
+              </table>
+
+              <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:14px 16px;margin-bottom:16px">
+                <span style="font-size:13px;color:#166534">Sinun osuutesi (verotettava tulo tästä keikasta):</span>
+                <span style="font-size:18px;font-weight:800;color:#16a34a;float:right">${fmtC(me.netCents)}</span>
+              </div>
+
+              <p style="font-size:11px;color:#94a3b8;margin:0">
+                Vapaamuotoinen tosite. ${collector} on laskuttanut asiakasta kokonaissummalla ja tilittänyt muille
+                tekijöille heidän osuutensa. Kukin tekijä ilmoittaa oman netto-osuutensa omassa verotuksessaan.
+                Vuosiyhteenvedon saat sovelluksen Verotulosteesta.
+              </p>
+            </div>
+          </div>`;
+
+        for (const w of settlementWorkers) {
+          if (!w.email) continue;
+          try {
+            await resend.emails.send({
+              from: FROM_EMAIL,
+              to: w.email,
+              subject: `Tilitystosite — ${description}, ${completionDate}`,
+              html: tositeHtml(w),
+            });
+            settlementSent++;
+          } catch (err) {
+            console.warn("Tilitystosite send failed for", w.name, err);
+          }
+        }
+      }
+
+      res.json({ ok: true, id: result.data?.id, settlementSent });
     } catch (e: any) {
       console.error("Job summary email error:", e);
       res.status(500).json({ error: e.message || "Sähköpostin lähetys epäonnistui" });
@@ -2020,7 +2121,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     joonatan: { name: process.env.WORKER_JOONATAN_NAME || "Joonatan Juuri",  email: process.env.WORKER_JOONATAN_EMAIL || "joonatan@puuhapatet.fi" },
     matias:   { name: process.env.WORKER_MATIAS_NAME  || "Matias Pitkänen", email: process.env.WORKER_MATIAS_EMAIL  || "matias@puuhapatet.fi" },
     petrus:   { name: "Petrus Aalto",      email: process.env.WORKER_PETRUS_EMAIL || "petrus.aalto@icloud.com" },
-    testi2:   { name: "Testi Kakkonen",   email: null },
   };
 
   // POST /api/jobs/:id/invite — add a worker to pendingWorkers, send email invite

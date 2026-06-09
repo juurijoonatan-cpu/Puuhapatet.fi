@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { getAdminProfile, USERS } from "@/lib/admin-profile";
+import { feeRateForWorker, STAFF_SERVICE_FEE_RATE } from "@shared/team";
 import { cn } from "@/lib/utils";
 
 interface JobRow {
@@ -89,6 +90,10 @@ export default function TaxExportPage() {
     return new Date(d).getFullYear() === year;
   });
 
+  // Service-fee rate for the logged-in user (founders 10 %, workers 25 %).
+  const myFeeRate = profile ? feeRateForWorker(profile.id) : STAFF_SERVICE_FEE_RATE;
+  const myFeePct = Math.round(myFeeRate * 100);
+
   // Build per-job rows with user's proportional share
   const rows = yearJobs.map(r => {
     const workers = parseWorkerIds(r.job.assignedTo);
@@ -99,7 +104,7 @@ export default function TaxExportPage() {
     // expenses not tracked per-job here (would require per-job fetch); use 0 for now
     const expenses = 0;
     const netRevenue = Math.max(0, myRevenue - expenses);
-    const serviceFee = r.job.waiveFee ? 0 : Math.round(netRevenue * 0.10);
+    const serviceFee = r.job.waiveFee ? 0 : Math.round(netRevenue * myFeeRate);
     const net = netRevenue - serviceFee;
     return { ...r, myRevenue, expenses, netRevenue, serviceFee, net, numWorkers };
   });
@@ -266,7 +271,7 @@ export default function TaxExportPage() {
               {[
                 { label: "Bruttokorvaus",  value: fmt(totals.revenue),    note: "Asiakkailta laskutettu",   color: "text-blue-600" },
                 { label: "Kulut",          value: fmt(totals.expenses),   note: "Materiaalit ym.",           color: "text-orange-600" },
-                { label: "Palvelumaksu",   value: fmt(totals.serviceFee), note: "10 % nettotuloista",        color: "text-purple-600" },
+                { label: "Palvelumaksu",   value: fmt(totals.serviceFee), note: `${myFeePct} % nettotuloista`, color: "text-purple-600" },
                 { label: "4H-tulos",       value: fmt(totals.net),        note: "Ilmoita OmaVeroon",         color: "text-green-600" },
               ].map((c, i) => (
                 <Card key={i} className="p-4 bg-card border-0 premium-shadow print:shadow-none print:border print:border-gray-200">
@@ -519,6 +524,42 @@ export default function TaxExportPage() {
                 </tfoot>
               </table>
             </div>
+
+            {/* Tilityserittely — usean tekijän keikat (dokumentoi tulonjaon verotusta varten) */}
+            {rows.some(r => r.numWorkers > 1) && (
+              <Card className="p-5 bg-card border-0 premium-shadow mt-6 print:shadow-none print:border print:border-gray-200">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                  Tilityserittely — usean tekijän keikat
+                </p>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Näillä keikoilla yksi tekijä on laskuttanut asiakasta kokonaissummalla ja tilittänyt
+                  muille tekijöille heidän osuutensa. Yllä olevassa taulukossa näkyvä oma osuutesi on
+                  sinun verotettava tulosi. Tosite tulonjaosta on lähetetty kullekin tekijälle
+                  sähköpostitse kuitin lähetyksen yhteydessä.
+                </p>
+                <div className="space-y-2">
+                  {rows.filter(r => r.numWorkers > 1).map(r => {
+                    const workerNames = parseWorkerIds(r.job.assignedTo)
+                      .map(id => USERS.find(u => u.id === id)?.name ?? id)
+                      .join(", ");
+                    return (
+                      <div key={r.job.id} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 text-xs border-b border-border/50 pb-2 last:border-0">
+                        <div>
+                          <span className="text-muted-foreground">{fmtDate(r.job.scheduledAt || r.job.createdAt)}</span>
+                          {" · "}
+                          <span className="font-medium text-foreground">{r.customer?.name ?? "—"}</span>
+                          <p className="text-muted-foreground">Tekijät: {workerNames}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-foreground">Kokonaishinta {fmt(r.job.agreedPrice)}</p>
+                          <p className="text-muted-foreground">Oma osuus 1/{r.numWorkers} = {fmt(r.myRevenue)}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+            )}
 
             {/* Print footer */}
             <div className="hidden print:block mt-8 text-xs text-gray-500 border-t pt-4">

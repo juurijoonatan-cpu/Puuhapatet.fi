@@ -4,10 +4,11 @@
 
 import { useState } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, ChevronDown, ChevronUp, Phone, Mail, AlertTriangle, Star, ClipboardList, Euro, Users, Shield, Laptop, FileText, Award } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, Phone, Mail, AlertTriangle, Star, ClipboardList, Euro, Users, Shield, Laptop, FileText, Award, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { STAFF_SERVICE_FEE_PCT, STAFF_SERVICE_FEE_RATE } from "@shared/team";
 
 interface Section {
   id: string;
@@ -61,6 +62,18 @@ const Li = ({ children }: { children: React.ReactNode }) => (
     <span className="text-primary mt-0.5 shrink-0">•</span>
     <span>{children}</span>
   </li>
+);
+
+const LogoDownload = ({ href, label }: { href: string; label: string }) => (
+  <a
+    href={href}
+    download
+    className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium text-foreground hover:bg-muted/50 transition-colors"
+    data-testid={`download-${href.replace(/[^a-z0-9]/gi, "-")}`}
+  >
+    <Download className="w-4 h-4 text-primary shrink-0" />
+    <span className="truncate">{label}</span>
+  </a>
 );
 
 const sections: Section[] = [
@@ -172,17 +185,18 @@ const sections: Section[] = [
         <H>Miten tilitys toimii</H>
         <ul className="space-y-1.5 mb-3">
           <Li>Sovittu hinta − kulut = nettotulo</Li>
-          <Li>Palvelumaksu on 10 % nettotulosta per tekijä</Li>
+          <Li>Palvelumaksu on {STAFF_SERVICE_FEE_PCT} % nettotulosta per työntekijä</Li>
+          <Li>Palvelumaksu koskee vain työntekijöitä — perustajat (Joonatan & Matias) pitävät 100 %</Li>
           <Li>Jos kaksi tekijää, kulut ja palvelumaksu jaetaan tasan</Li>
-          <Li>Loput ovat sinun / tiimin ansioita</Li>
+          <Li>Loput ovat sinun ansioita</Li>
         </ul>
         <H>Esimerkki</H>
         <div className="bg-muted/30 rounded-xl p-3 text-sm mb-3">
           <p className="text-foreground">Keikka: 220 €</p>
           <p className="text-foreground">Kulut (pesuaine, km): −20 €</p>
           <p className="text-foreground">Nettotulo: 200 €</p>
-          <p className="text-foreground">Palvelumaksu (10 %): −20 €</p>
-          <p className="font-semibold text-green-600 dark:text-green-400 mt-1">Sinulle: 180 €</p>
+          <p className="text-foreground">Palvelumaksu ({STAFF_SERVICE_FEE_PCT} %): −{Math.round(200 * STAFF_SERVICE_FEE_RATE)} €</p>
+          <p className="font-semibold text-green-600 dark:text-green-400 mt-1">Sinulle: {200 - Math.round(200 * STAFF_SERVICE_FEE_RATE)} €</p>
         </div>
         <H>Maksutavat</H>
         <ul className="space-y-1.5 mb-3">
@@ -458,12 +472,32 @@ const sections: Section[] = [
         <ul className="space-y-1.5 mb-3">
           <Li>Puuhapatet-logo on pyöreä, vihreä tunnus — käytä vain virallisia versioita</Li>
           <Li>Älä muuta värejä, venytä tai leikkaa logoa</Li>
-          <Li>Logo löytyy Joonatanilta tiedostona — pyydä tarvittaessa</Li>
+          <Li><strong>SVG</strong> = paras painotöihin ja flaiereihin (skaalautuu rajatta) · <strong>PNG</strong> = some ja asiakirjat</Li>
         </ul>
+
+        <H>Lataa logo</H>
+        <div className="rounded-xl border border-border bg-muted/20 p-3 mb-3">
+          <div className="flex items-center justify-center rounded-lg bg-white py-5 mb-3">
+            <img src="/puuhapatet-logo.svg" alt="Puuhapatet-logo" className="h-10 w-auto" />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <LogoDownload href="/puuhapatet-logo.svg" label="Logo · SVG" />
+            <LogoDownload href="/puuhapatet-logo.png" label="Logo · PNG" />
+            <LogoDownload href="/puuhapatet-logo-mark.svg" label="Tunnus · SVG" />
+            <LogoDownload href="/puuhapatet-logo-mark.png" label="Tunnus · PNG" />
+            <LogoDownload href="/puuhapatet-logo-white.svg" label="Valkoinen · SVG" />
+            <LogoDownload href="/puuhapatet-logo-white.png" label="Valkoinen · PNG" />
+          </div>
+          <p className="text-xs text-muted-foreground mt-2.5">
+            Tunnus = pelkkä P.-merkki (some-profiilikuvaksi). Valkoinen versio on tarkoitettu tummalle
+            taustalle tai valokuvan päälle.
+          </p>
+        </div>
 
         <H>Flaierit ja markkinointimateriaalit</H>
         <ul className="space-y-1.5 mb-3">
-          <Li>Flaierit saat Joonatanilta — jätä niitä postilaatikkoihin keikkojen yhteydessä</Li>
+          <Li>Voit tehdä omia flaiereita ja julkaisuja yllä olevilla logotiedostoilla</Li>
+          <Li>Valmiita flaiereita saat myös Joonatanilta — jätä niitä postilaatikkoihin keikkojen yhteydessä</Li>
           <Li>Ehdota aina lähialueen taloja/asuntoja, kun olet jo paikalla</Li>
           <Li>Flaieri sisältää QR-koodin → asiakas pääsee suoraan tarjouspyyntöön</Li>
           <Li>Kysy Joonatanilta lisää materiaaleja kun varasto loppuu</Li>

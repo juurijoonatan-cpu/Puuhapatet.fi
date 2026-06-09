@@ -19,6 +19,7 @@ import {
 import { getAdminProfile, USERS } from "@/lib/admin-profile";
 import { api, StatsResponse, WorkerStatsResponse } from "@/lib/api";
 import { isMyJob, parseWorkerIds } from "@/lib/visibility";
+import { STAFF_SERVICE_FEE_RATE, STAFF_SERVICE_FEE_PCT } from "@shared/team";
 
 export default function AdminDashboard() {
   const profile = getAdminProfile();
@@ -109,7 +110,7 @@ export default function AdminDashboard() {
           title: "Oma palveluvelka",
           value: myDebt === null ? "…" : fmt(myDebt),
           icon: Banknote,
-          description: "10 % brändille maksamatta",
+          description: "Perustajana ei palvelumaksua",
           color: "text-purple-600 dark:text-purple-400",
           bgColor: "bg-purple-100 dark:bg-purple-900/30",
         },
@@ -145,7 +146,7 @@ export default function AdminDashboard() {
           title: "Palveluvelka",
           value: myDebt === null ? "…" : fmt(myDebt),
           icon: Banknote,
-          description: "10 % brändille — maksamatta",
+          description: `${STAFF_SERVICE_FEE_PCT} % brändille — maksamatta`,
           color: "text-purple-600 dark:text-purple-400",
           bgColor: "bg-purple-100 dark:bg-purple-900/30",
         },
@@ -191,13 +192,13 @@ export default function AdminDashboard() {
                 <span className="font-medium text-foreground">{fmt(Math.max(0, myRevenue - (myInvestmentShare ?? 0)))}</span>
               </div>
               <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">− Palvelumaksu ~10 %</span>
-                <span className="text-purple-600 dark:text-purple-400">−{fmt(Math.round(Math.max(0, myRevenue - (myInvestmentShare ?? 0)) * 0.10))}</span>
+                <span className="text-muted-foreground">− Palvelumaksu ~{STAFF_SERVICE_FEE_PCT} %</span>
+                <span className="text-purple-600 dark:text-purple-400">−{fmt(Math.round(Math.max(0, myRevenue - (myInvestmentShare ?? 0)) * STAFF_SERVICE_FEE_RATE))}</span>
               </div>
               <div className="flex justify-between border-t pt-1.5 mt-1">
                 <span className="text-muted-foreground">≈ Nettotulo</span>
                 <span className="font-bold text-green-600 dark:text-green-400">
-                  {fmt(Math.round(Math.max(0, myRevenue - (myInvestmentShare ?? 0)) * 0.90))}
+                  {fmt(Math.round(Math.max(0, myRevenue - (myInvestmentShare ?? 0)) * (1 - STAFF_SERVICE_FEE_RATE)))}
                 </span>
               </div>
             </div>
@@ -296,7 +297,7 @@ export default function AdminDashboard() {
               })}
             </div>
             <p className="text-xs text-muted-foreground mt-4 pt-3 border-t border-border">
-              Laskettu valmistuneista keikoista: (hinta − kulut) × 10 % per tekijä
+              Laskettu valmistuneista keikoista: (hinta − kulut) × {STAFF_SERVICE_FEE_PCT} % per työntekijä — perustajilta 0 %
             </p>
           </Card>
         )}

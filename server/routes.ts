@@ -7,6 +7,7 @@ import PDFDocument from "pdfkit";
 import rateLimit from "express-rate-limit";
 import { db } from "./db";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
+import { feeRateForWorker } from "@shared/team";
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 // Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
@@ -480,18 +481,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         id:          jobs.id,
         agreedPrice: jobs.agreedPrice,
         waiveFee:    jobs.waiveFee,
+        assignedTo:  jobs.assignedTo,
         jobExpenses: sql<number>`coalesce(sum(${expenses.amount}), 0)`,
       }).from(jobs)
         .leftJoin(expenses, eq(expenses.jobId, jobs.id))
         .where(eq(jobs.status, "done"))
-        .groupBy(jobs.id, jobs.agreedPrice, jobs.waiveFee);
+        .groupBy(jobs.id, jobs.agreedPrice, jobs.waiveFee, jobs.assignedTo);
 
       let totalRevenue = 0, totalExpenses = 0, serviceFeeTotal = 0;
       for (const job of doneJobsWithExp) {
         const jobExp = Number(job.jobExpenses);
         totalRevenue += job.agreedPrice;
         totalExpenses += jobExp;
-        serviceFeeTotal += job.waiveFee ? 0 : Math.round(Math.max(0, job.agreedPrice - jobExp) * 0.10);
+        // Role-aware service fee: each worker's share is charged at their own
+        // rate (founders 0 %, staff STAFF_SERVICE_FEE_RATE).
+        if (!job.waiveFee) {
+          const net = Math.max(0, job.agreedPrice - jobExp);
+          const workerIds = normalizeWorkerIds(job.assignedTo);
+          if (workerIds.length > 0) {
+            const share = net / workerIds.length;
+            for (const wid of workerIds) {
+              serviceFeeTotal += Math.round(share * feeRateForWorker(wid));
+            }
+          }
+        }
       }
       const netIncome = totalRevenue - totalExpenses - serviceFeeTotal;
 
@@ -499,7 +512,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         totalJobs:       Number(counts.totalJobs),
         totalRevenue,    // senttiä — valmistuneista keikoista
         totalExpenses,   // senttiä
-        serviceFeeTotal, // senttiä — 10 % nettotuloista
+        serviceFeeTotal, // senttiä — työntekijöiden palvelumaksut (perustajilta 0 %)
         netIncome,       // senttiä — verotettava nettotulo
         upcoming:        Number(counts.upcoming),
       });
@@ -556,12 +569,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       for (const job of doneJobsWithExp) {
         const jobExpenses = Number(job.jobExpenses);
         const netRevenue = Math.max(0, job.agreedPrice - jobExpenses);
-        const serviceFee = job.waiveFee ? 0 : Math.round(netRevenue * 0.10);
         const workerIds = normalizeWorkerIds(job.assignedTo);
         if (workerIds.length === 0) continue;
-        const feePerWorker = Math.round(serviceFee / workerIds.length);
+        const sharePerWorker = netRevenue / workerIds.length;
         for (const wid of workerIds) {
-          workerFeesTotal[wid] = (workerFeesTotal[wid] ?? 0) + feePerWorker;
+          // Each worker's fee uses their own rate — founders pay nothing.
+          const fee = job.waiveFee ? 0 : Math.round(sharePerWorker * feeRateForWorker(wid));
+          workerFeesTotal[wid] = (workerFeesTotal[wid] ?? 0) + fee;
           workerJobCount[wid] = (workerJobCount[wid] ?? 0) + 1;
         }
       }
@@ -2020,7 +2034,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     joonatan: { name: process.env.WORKER_JOONATAN_NAME || "Joonatan Juuri",  email: process.env.WORKER_JOONATAN_EMAIL || "joonatan@puuhapatet.fi" },
     matias:   { name: process.env.WORKER_MATIAS_NAME  || "Matias Pitkänen", email: process.env.WORKER_MATIAS_EMAIL  || "matias@puuhapatet.fi" },
     petrus:   { name: "Petrus Aalto",      email: process.env.WORKER_PETRUS_EMAIL || "petrus.aalto@icloud.com" },
-    testi2:   { name: "Testi Kakkonen",   email: null },
   };
 
   // POST /api/jobs/:id/invite — add a worker to pendingWorkers, send email invite

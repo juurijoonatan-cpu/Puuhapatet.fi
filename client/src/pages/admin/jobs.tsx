@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
 import { USERS, getAdminProfile } from "@/lib/admin-profile";
 import { isMyJob, parseWorkerIds } from "@/lib/visibility";
+import { feeRateForWorker, isFounder, STAFF_SERVICE_FEE_RATE, STAFF_SERVICE_FEE_PCT } from "@shared/team";
 import { cn } from "@/lib/utils";
 
 type DbStatus = "lead" | "scheduled" | "in_progress" | "done" | "cancelled";
@@ -634,15 +635,23 @@ export default function AdminJobsPage() {
       editNotes !== (selected.job.notes ?? "")
     : false;
 
-  // ── Service fee calculation ───────────────────────────────────────────────
+  // ── Service fee calculation (role-aware: founders 0 %, staff STAFF_SERVICE_FEE_RATE) ──
   const expensesTotal = expenses.reduce((s, e) => s + e.amount, 0);
   const numWorkers = selectedWorkers.length || 1;
   const netRevenue = (selected?.job.agreedPrice ?? 0) - expensesTotal;
   const feeWaived = selected?.job.waiveFee ?? false;
-  const totalServiceFee = feeWaived ? 0 : Math.round(Math.max(0, netRevenue) * 0.10);
-  const feePerWorker = Math.round(totalServiceFee / numWorkers);
-  const netPerWorker = Math.round(Math.max(0, netRevenue - totalServiceFee) / numWorkers);
+  const sharePerWorker = Math.max(0, netRevenue) / numWorkers;
   const expensesPerWorker = Math.round(expensesTotal / numWorkers);
+  // Fee for a specific worker: founders pay nothing, staff pay the staff rate.
+  const feeForWorker = (wid: string) => feeWaived ? 0 : Math.round(sharePerWorker * feeRateForWorker(wid));
+  const netForWorker = (wid: string) => Math.round(sharePerWorker - feeForWorker(wid));
+  const totalServiceFee = selectedWorkers.reduce((s, wid) => s + feeForWorker(wid), 0);
+  // Are all assigned workers founders? (→ no fee). Used for the summary label.
+  const allFounders = selectedWorkers.length > 0 && selectedWorkers.every(isFounder);
+  // Single-worker view (or unassigned preview → default to staff rate).
+  const primaryWid = selectedWorkers[0];
+  const primaryFeeRate = feeWaived ? 0 : (primaryWid ? feeRateForWorker(primaryWid) : STAFF_SERVICE_FEE_RATE);
+  const netPerWorker = Math.round(sharePerWorker * (1 - primaryFeeRate));
 
   // ── Summary / invoice helpers ─────────────────────────────────────────────
   const PAYMENT_METHODS = [
@@ -1536,10 +1545,10 @@ export default function AdminJobsPage() {
                 )}
                 <div className="flex justify-between border-t pt-2">
                   <span className={cn("text-muted-foreground", feeWaived && "line-through opacity-50")}>
-                    Palvelumaksu 10 %
+                    {allFounders ? "Palvelumaksu — perustaja (0 %)" : `Palvelumaksu ${STAFF_SERVICE_FEE_PCT} %`}
                   </span>
                   <span className={cn("font-medium text-purple-600 dark:text-purple-400", feeWaived && "line-through opacity-50")}>
-                    −{(Math.round(Math.max(0, netRevenue) * 0.10) / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}
+                    −{(totalServiceFee / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}
                   </span>
                 </div>
                 {getAdminProfile()?.role === "HOST" && (
@@ -1571,15 +1580,17 @@ export default function AdminJobsPage() {
                 <div className="space-y-2">
                   {selectedWorkers.map((wid) => {
                     const user = USERS.find(u => u.id === wid);
+                    const fee = feeForWorker(wid);
+                    const net = netForWorker(wid);
                     return (
                       <div key={wid} className="flex items-center justify-between p-2.5 rounded-xl bg-muted/30">
                         <div className="flex items-center gap-2">
                           {user?.photoUrl && <img src={user.photoUrl} alt={user.name} className="w-5 h-5 rounded-full object-cover" />}
                           <span className="text-sm font-medium">{user?.name.split(" ")[0] ?? wid}</span>
-                          <span className="text-xs text-muted-foreground">kulut −{(expensesPerWorker / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })} · maksu −{(feePerWorker / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}</span>
+                          <span className="text-xs text-muted-foreground">kulut −{(expensesPerWorker / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })} · maksu −{(fee / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}</span>
                         </div>
                         <span className="text-sm font-bold text-green-600 dark:text-green-400">
-                          {(netPerWorker / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}
+                          {(net / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}
                         </span>
                       </div>
                     );

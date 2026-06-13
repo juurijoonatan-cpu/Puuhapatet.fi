@@ -71,6 +71,9 @@ export const jobs = pgTable("jobs", {
   boardContactPhone: text("board_contact_phone"),
   // Business (yritys) quote
   isYritys:          boolean("is_yritys").default(false).notNull(),
+  // Custom gig (cap-pricing / kattomalli contract job)
+  isCustomGig:       boolean("is_custom_gig").default(false).notNull(),
+  gigData:           text("gig_data"),           // JSON: GigData (shared/gig.ts)
   createdAt:         timestamp("created_at").defaultNow().notNull(),
   updatedAt:         timestamp("updated_at").defaultNow().notNull(),
 });

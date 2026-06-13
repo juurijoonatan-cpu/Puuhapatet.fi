@@ -52,6 +52,9 @@ import LaskuriPage from "@/pages/laskuri";
 import AdminLoginPage from "@/pages/admin/login";
 import AdminDashboard from "@/pages/admin/dashboard";
 import AdminNewJobPage from "@/pages/admin/new-job";
+import AdminNewGigPage from "@/pages/admin/new-gig";
+import AdminGigTrackerPage from "@/pages/admin/gig-tracker";
+import GigLivePage from "@/pages/gig-live";
 import AdminCalendarPage from "@/pages/admin/calendar";
 import AdminJobsPage from "@/pages/admin/jobs";
 import AdminPackagesPage from "@/pages/admin/packages";
@@ -136,6 +139,7 @@ function Router() {
       <Route path="/cv" component={CVDemoPage} />
 
       <Route path="/tarjous/:token" component={QuotePage} />
+      <Route path="/seuranta/:token" component={GigLivePage} />
 
       <Route path="/admin/login" component={AdminLoginPage} />
       
@@ -148,6 +152,16 @@ function Router() {
       <Route path="/admin/new">
         <ProtectedRoute>
           <AdminNewJobPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/admin/new-gig">
+        <ProtectedRoute>
+          <AdminNewGigPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/admin/gig/:id">
+        <ProtectedRoute>
+          <AdminGigTrackerPage />
         </ProtectedRoute>
       </Route>
       <Route path="/admin/calendar">

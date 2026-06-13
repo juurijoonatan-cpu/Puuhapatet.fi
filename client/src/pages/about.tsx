@@ -36,7 +36,7 @@ const team = [
     roleKey: "about.worker.role" as const,
     school: "Porkkalan lukio",
     bioKey: "about.petrus.bio" as const,
-    photo: "/petrus.jpg.jpeg",
+    photo: "/petrus.jpg.jpeg?v=2",
     initials: "PA",
     linkedin: null,
     phone: "+358442372930",

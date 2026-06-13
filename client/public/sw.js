@@ -1,4 +1,4 @@
-const CACHE = "puuhapatet-v2";
+const CACHE = "puuhapatet-v3";
 
 self.addEventListener("install", (e) => {
   self.skipWaiting();

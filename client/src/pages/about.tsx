@@ -5,24 +5,42 @@ import { ArrowRight, MapPin, Mail, Phone } from "lucide-react";
 import { SiWhatsapp, SiInstagram, SiLinkedin } from "react-icons/si";
 import { useI18n } from "@/lib/i18n";
 
-const founders = [
+const team = [
   {
     name: "Matias Pitkänen",
     age: 18,
+    roleKey: "about.founder.role" as const,
+    school: "Otaniemen lukio",
     bioKey: "about.matias.bio" as const,
     photo: "/matias.jpg.jpeg",
     initials: "MP",
     linkedin: "https://www.linkedin.com/in/matias-pitk%C3%A4nen-b513273a6/",
     phone: "+358442350881",
+    email: "matias@puuhapatet.fi",
   },
   {
     name: "Joonatan Juuri",
     age: 17,
+    roleKey: "about.founder.role" as const,
+    school: "Otaniemen lukio",
     bioKey: "about.joonatan.bio" as const,
     photo: "/joonatan.jpg.jpeg",
     initials: "JJ",
     linkedin: "https://www.linkedin.com/in/joonatan-juuri-575857255",
     phone: "+358400389999",
+    email: "joonatan@puuhapatet.fi",
+  },
+  {
+    name: "Petrus Aalto",
+    age: 16,
+    roleKey: "about.worker.role" as const,
+    school: "Porkkalan lukio",
+    bioKey: "about.petrus.bio" as const,
+    photo: "/petrus.jpg.jpeg",
+    initials: "PA",
+    linkedin: null,
+    phone: "+358442372930",
+    email: "petrus.aalto@icloud.com",
   },
 ];
 
@@ -58,7 +76,7 @@ export default function AboutPage() {
           {t("about.team.title")}
         </h2>
         <div className="grid md:grid-cols-2 gap-6 mb-10">
-          {founders.map((f) => (
+          {team.map((f) => (
             <Card key={f.name} className="p-6 bg-card border-0 premium-shadow flex flex-col gap-5">
               {/* Photo + name row */}
               <div className="flex items-center gap-4">
@@ -76,26 +94,34 @@ export default function AboutPage() {
                 </div>
                 <div>
                   <h3 className="text-lg font-semibold text-foreground">{f.name}</h3>
-                  <p className="text-sm text-muted-foreground">{t("about.founder.role")} · {f.age} {t("about.age.suffix")} · Otaniemen lukio</p>
+                  <p className="text-sm text-muted-foreground">{t(f.roleKey)} · {f.age} {t("about.age.suffix")} · {f.school}</p>
                 </div>
               </div>
 
               {/* Bio */}
-              <p className="text-sm text-muted-foreground leading-relaxed">
+              <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
                 {t(f.bioKey)}
               </p>
 
               {/* Links */}
-              <div className="flex items-center gap-3 pt-2 border-t border-border">
-                <a
-                  href={f.linkedin}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="LinkedIn"
-                >
+              <div className="flex items-center flex-wrap gap-2 pt-2 mt-auto border-t border-border">
+                {f.linkedin && (
+                  <a
+                    href={f.linkedin}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label="LinkedIn"
+                  >
+                    <Button variant="ghost" size="sm" className="gap-2 px-3 text-muted-foreground hover:text-foreground">
+                      <SiLinkedin className="w-4 h-4" />
+                      LinkedIn
+                    </Button>
+                  </a>
+                )}
+                <a href={`mailto:${f.email}`} aria-label={`Sähköposti — ${f.email}`}>
                   <Button variant="ghost" size="sm" className="gap-2 px-3 text-muted-foreground hover:text-foreground">
-                    <SiLinkedin className="w-4 h-4" />
-                    LinkedIn
+                    <Mail className="w-4 h-4" />
+                    {f.email}
                   </Button>
                 </a>
                 <a href={`tel:${f.phone}`} aria-label="Puhelin">

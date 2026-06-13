@@ -2,7 +2,24 @@
  * API Client — Render.com Express backend
  */
 
-const API_BASE = "https://puuhapatet-fi.onrender.com";
+import type { GigData, GigTotals } from "@shared/gig";
+
+// Defaults to the Render backend in production; override with VITE_API_BASE
+// (e.g. "" for same-origin) when running the server locally.
+const API_BASE = import.meta.env.VITE_API_BASE ?? "https://puuhapatet-fi.onrender.com";
+
+export interface GigPublicView {
+  contractId: string | null;
+  companyName: string;
+  description: string;
+  currency: string;
+  vatNote: string | null;
+  customerNote: string | null;
+  sectors: Array<{ id: string; name: string; color: string; unitLabel: string; total: number; unitPriceCents: number; washed: number; skipped: number }>;
+  totals: GigTotals;
+  updatedAt: number;
+  invoicedCents: number;
+}
 
 interface ApiResponse<T> {
   ok: boolean;
@@ -110,6 +127,8 @@ export interface NewJob {
   unitCount?: number;
   propertyImageUrl?: string;
   isYritys?: boolean;
+  isCustomGig?: boolean;
+  gigData?: string;       // JSON string of GigData
 }
 
 export interface StatsResponse {
@@ -386,6 +405,32 @@ export const api = {
 
   setUserPasswordRemote: (userId: string, password: string) =>
     request<{ ok: boolean }>("POST", `/api/admin/user-password/${userId}`, { password }),
+
+  // ─── Custom gigs (cap-pricing) ──────────────────────────────────────────────
+  getGig: (token: string) =>
+    request<GigPublicView>("GET", `/api/gig/${token}`),
+
+  updateGig: (jobId: number, gigData: GigData) =>
+    request<{ ok: boolean; gigData: GigData; totals: GigTotals }>(
+      "PATCH", `/api/jobs/${jobId}/gig`, { gigData },
+    ),
+
+  sendGigInvoice: (jobId: number, data: {
+    to?: string;
+    bcc?: string;
+    iban?: string;
+    bic?: string;
+    viitenumero?: string;
+    dueDate?: string;
+    senderName?: string;
+    senderYTunnus?: string;
+    senderAddress?: string;
+    workerPhone?: string;
+    message?: string;
+    isFinal?: boolean;
+  }) => request<{ ok: boolean; id?: string; amountCents: number; gigData: GigData }>(
+    "POST", `/api/jobs/${jobId}/gig/invoice`, data,
+  ),
 
   // Legacy compat stubs
   getJob: (_jobId: string): Promise<ApiResponse<{ ok: boolean; job?: unknown }>> =>

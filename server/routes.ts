@@ -8,6 +8,7 @@ import rateLimit from "express-rate-limit";
 import { db } from "./db";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 import { feeRateForWorker } from "@shared/team";
+import { sanitizeGigData, computeTotals, type GigData } from "@shared/gig";
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 // Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
@@ -220,6 +221,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.use("/api/send-job-summary",  emailLimiter);
   app.use("/api/send-progress-update", emailLimiter);
   app.use("/api/send-quote",        emailLimiter);
+  app.use("/api/jobs/:id/gig/invoice", emailLimiter);
   app.use("/api/contact",           contactLimiter);
   app.use("/api/it-contact",        contactLimiter);
 
@@ -2387,6 +2389,185 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (e: any) {
       console.error("IT contact error:", e);
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Custom gig (cap-pricing) endpoints ──────────────────────────────────────
+
+  function parseGig(raw: string | null): GigData | null {
+    if (!raw) return null;
+    try { return sanitizeGigData(JSON.parse(raw)); } catch { return null; }
+  }
+
+  // Public, read-only live view for the customer (shareable link).
+  app.get("/api/gig/:token", async (req, res) => {
+    try {
+      const [row] = await db
+        .select({ job: jobs, customer: customers })
+        .from(jobs)
+        .innerJoin(customers, eq(jobs.customerId, customers.id))
+        .where(eq(jobs.quoteToken, req.params.token));
+      if (!row || !row.job.isCustomGig) return res.status(404).json({ error: "Seurantaa ei löydy" });
+      const gig = parseGig(row.job.gigData);
+      if (!gig) return res.status(404).json({ error: "Seurantaa ei löydy" });
+      const totals = computeTotals(gig);
+      // Only expose what the customer is meant to see — no internal billing notes.
+      res.json({
+        contractId: gig.contractId ?? null,
+        companyName: gig.company?.name ?? row.customer.name,
+        description: row.job.description,
+        currency: gig.currency,
+        vatNote: gig.vatNote ?? null,
+        customerNote: gig.customerNote ?? null,
+        sectors: gig.sectors.map((s) => ({
+          id: s.id, name: s.name, color: s.color, unitLabel: s.unitLabel,
+          total: s.total, unitPriceCents: s.unitPriceCents, washed: s.washed, skipped: s.skipped,
+        })),
+        totals,
+        updatedAt: gig.updatedAt,
+        invoicedCents: gig.invoicedCents,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Replace the gig's data (team tracker). Server validates & clamps.
+  app.patch("/api/jobs/:id/gig", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const gig = sanitizeGigData(req.body?.gigData ?? req.body);
+      const totals = computeTotals(gig);
+      // Keep agreedPrice in sync with the cap so dashboards/exports stay correct.
+      await db.update(jobs)
+        .set({ gigData: JSON.stringify(gig), agreedPrice: totals.capCents, isCustomGig: true, updatedAt: new Date() })
+        .where(eq(jobs.id, id));
+      res.json({ ok: true, gigData: gig, totals });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Send a partial / final invoice email for the uninvoiced accrual, then
+  // advance invoicedThrough / invoicedCents and log the payment.
+  app.post("/api/jobs/:id/gig/invoice", async (req, res) => {
+    if (!resend) {
+      return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä — aseta RESEND_API_KEY ympäristömuuttuja." });
+    }
+    try {
+      const id = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const gig = parseGig(job.gigData);
+      if (!gig) return res.status(400).json({ error: "Keikalla ei ole seurantadataa" });
+
+      const {
+        to, bcc, iban, bic, viitenumero, dueDate,
+        senderName, senderYTunnus, senderAddress, workerPhone,
+        message, isFinal,
+      } = req.body as Record<string, any>;
+
+      const recipient = to || gig.company?.email;
+      if (!recipient) return res.status(400).json({ error: "Vastaanottajan sähköposti puuttuu" });
+
+      const totalsBefore = computeTotals(gig);
+      const amountCents = totalsBefore.uninvoicedCents;
+      if (amountCents <= 0) return res.status(400).json({ error: "Ei laskutettavaa kertymää" });
+
+      // Bill only the units washed since the previous invoice, per sector, so the
+      // line items sum exactly to the amount due now.
+      const fmtEur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+      const lineRows = gig.sectors.map((s) => {
+        const delta = Math.max(0, s.washed - Math.min(s.washed, s.invoicedWashed || 0));
+        if (delta <= 0) return "";
+        const lineCents = delta * s.unitPriceCents;
+        const creditCents = s.skipped * s.unitPriceCents;
+        return `
+          <tr style="border-bottom:1px solid #E4E1D7">
+            <td style="padding:10px 0;color:#1A1A1A;font-size:14px">
+              ${s.name} — ${delta} ${s.unitLabel}a × ${fmtEur(s.unitPriceCents)}
+              ${s.skipped > 0 ? `<br><span style="color:#8C8A82;font-size:12px">Kuntovaraus yhteensä ${s.skipped} kpl · hyvitetty −${fmtEur(creditCents)}</span>` : ""}
+            </td>
+            <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:#1A1A1A;font-variant-numeric:tabular-nums">${fmtEur(lineCents)}</td>
+          </tr>`;
+      }).join("");
+
+      const dueDisplay = dueDate ? new Date(dueDate + "T12:00:00").toLocaleDateString("fi-FI") : null;
+      const barcodeHtml = iban
+        ? await generateFinnishBarcodeHtml({ iban, amountCents, viitenumero: viitenumero || String(id), dueDateISO: dueDate, isEn: false })
+        : "";
+
+      const invoiceNo = `${gig.contractId || "PT"}-${(gig.payments.length + 1).toString().padStart(2, "0")}`;
+      const accruedSoFar = totalsBefore.accruedCents;
+      const previouslyInvoiced = totalsBefore.invoicedCents;
+
+      const html = `
+<!DOCTYPE html><html lang="fi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#F6F4EE;font-family:'Poppins',ui-sans-serif,system-ui,-apple-system,sans-serif">
+  <div style="max-width:600px;margin:24px auto;background:#FFFFFF;border-radius:14px;overflow:hidden;border:1px solid #E4E1D7">
+    <div style="padding:28px 32px;border-bottom:1px solid #E4E1D7">
+      <p style="margin:0;color:#1A1A1A;font-size:20px;font-weight:700;letter-spacing:-0.3px">Puuhapatet</p>
+      <p style="margin:4px 0 0;color:#8C8A82;font-size:13px">${isFinal ? "Loppulasku" : "Osalasku"} · ${invoiceNo}${gig.contractId ? ` · sopimus ${gig.contractId}` : ""}</p>
+    </div>
+    <div style="padding:24px 32px">
+      <p style="margin:0 0 4px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Laskutettava</p>
+      <p style="margin:0 0 16px;color:#1A1A1A;font-size:15px;font-weight:600">${gig.company?.name || job.description}</p>
+      ${message ? `<p style="margin:0 0 20px;color:#1A1A1A;font-size:14px;line-height:1.7;white-space:pre-wrap">${String(message).replace(/</g, "&lt;")}</p>` : ""}
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border-top:2px solid #1A1A1A;margin-top:8px">
+        <tbody>${lineRows}</tbody>
+      </table>
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px">
+        <tr><td style="padding:8px 0;color:#8C8A82;font-size:13px">Kertymä yhteensä</td><td style="padding:8px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">${fmtEur(accruedSoFar)}</td></tr>
+        ${previouslyInvoiced > 0 ? `<tr><td style="padding:4px 0;color:#8C8A82;font-size:13px">Aiemmin laskutettu</td><td style="padding:4px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">−${fmtEur(previouslyInvoiced)}</td></tr>` : ""}
+        <tr><td style="padding:12px 0;border-top:2px solid #1A1A1A;color:#1A1A1A;font-size:16px;font-weight:700">Maksettavaa nyt</td><td style="padding:12px 0;border-top:2px solid #1A1A1A;text-align:right;color:#1A1A1A;font-size:22px;font-weight:800;font-variant-numeric:tabular-nums">${fmtEur(amountCents)}</td></tr>
+      </table>
+      <div style="background:#F6F4EE;border-radius:12px;padding:16px 20px;margin-top:20px">
+        <p style="margin:0 0 8px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Maksutiedot</p>
+        ${senderName ? `<p style="margin:0 0 2px;font-size:13px;color:#1A1A1A">Saaja: ${senderName}${senderYTunnus ? ` · Y-tunnus ${senderYTunnus}` : ""}</p>` : ""}
+        ${iban ? `<p style="margin:0 0 2px;font-size:13px;color:#1A1A1A">IBAN: ${iban}${bic ? ` · BIC ${bic}` : ""}</p>` : ""}
+        ${viitenumero ? `<p style="margin:0 0 2px;font-size:13px;color:#1A1A1A">Viite: ${viitenumero}</p>` : ""}
+        ${dueDisplay ? `<p style="margin:0;font-size:13px;color:#1A1A1A">Eräpäivä: ${dueDisplay}</p>` : ""}
+        ${gig.vatNote ? `<p style="margin:8px 0 0;font-size:12px;color:#8C8A82">${gig.vatNote}</p>` : ""}
+      </div>
+      ${barcodeHtml}
+      <p style="margin:20px 0 0;color:#8C8A82;font-size:12px;line-height:1.6">
+        Maksat vain tehdystä työstä — hinta ei voi ylittää sovittua kattoa. Seuraa edistymistä reaaliaikaisesti seurantalinkistä.
+      </p>
+    </div>
+    <div style="padding:16px 32px;border-top:1px solid #E4E1D7;background:#F6F4EE">
+      <p style="margin:0;color:#8C8A82;font-size:12px">Puuhapatet · info@puuhapatet.fi · puuhapatet.fi${workerPhone ? ` · ${workerPhone}` : ""}</p>
+    </div>
+  </div>
+</body></html>`;
+
+      const bccArr = bcc ? String(bcc).split(",").map((s) => s.trim()).filter(Boolean) : undefined;
+      const result = await resend.emails.send({
+        from: FROM_EMAIL,
+        to: recipient,
+        ...(bccArr?.length ? { bcc: bccArr } : {}),
+        subject: `${isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} — ${fmtEur(amountCents)} · Puuhapatet`,
+        html,
+      });
+
+      // Advance per-sector invoiced markers, then refresh the summary fields.
+      gig.sectors.forEach((s) => { s.invoicedWashed = s.washed; });
+      const totalsAfter = computeTotals(gig);
+      gig.invoicedThrough = totalsAfter.invoicedWashed;
+      gig.invoicedCents = totalsAfter.invoicedCents;
+      gig.payments.push({
+        t: Date.now(), countThrough: totalsAfter.invoicedWashed, amountCents,
+        to: recipient, note: isFinal ? "Loppulasku" : "Osalasku", emailId: result.data?.id,
+      });
+      gig.log.push({ t: Date.now(), text: `${isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} lähetetty: ${fmtEur(amountCents)} → ${recipient}` });
+      gig.updatedAt = Date.now();
+      await db.update(jobs).set({ gigData: JSON.stringify(gig), updatedAt: new Date() }).where(eq(jobs.id, id));
+
+      res.json({ ok: true, id: result.data?.id, amountCents, gigData: gig });
+    } catch (e: any) {
+      console.error("Gig invoice error:", e);
+      res.status(500).json({ error: e.message || "Laskun lähetys epäonnistui" });
     }
   });
 

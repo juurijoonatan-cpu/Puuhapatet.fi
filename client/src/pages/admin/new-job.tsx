@@ -14,7 +14,7 @@ import { Link, useLocation } from "wouter";
 import {
   ArrowLeft, ArrowRight, User, ClipboardCheck, Package,
   FileText, CheckCircle, Loader2, Percent, Check, UserCheck, Search, Monitor,
-  Send,
+  Send, Building2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -600,6 +600,22 @@ export default function NewJobPage() {
                 <p className="font-semibold text-foreground">Paikanpäällä / IRL</p>
                 <p className="text-sm text-muted-foreground mt-0.5">
                   Hinta sovittu suoraan — allekirjoitukset ja sopimus nyt
+                </p>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigate("/admin/new-gig")}
+              className="w-full flex items-center gap-4 rounded-2xl border-2 border-border hover:border-primary hover:bg-primary/5 px-5 py-5 text-left transition-all"
+            >
+              <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center shrink-0">
+                <Building2 className="w-5 h-5 text-muted-foreground" />
+              </div>
+              <div>
+                <p className="font-semibold text-foreground">Yritys- / sopimuskeikka</p>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  Kattomalli, liitä sopimus — live-seuranta ja osalaskutus
                 </p>
               </div>
             </button>

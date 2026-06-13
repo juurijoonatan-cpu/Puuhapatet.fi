@@ -87,6 +87,8 @@ app.use((req, res, next) => {
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS taloyhtiio_name      text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS unit_responses       text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS is_yritys            boolean NOT NULL DEFAULT false`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS is_custom_gig        boolean NOT NULL DEFAULT false`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS gig_data             text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS board_contact_name   text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS board_contact_email  text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS board_contact_phone  text`,

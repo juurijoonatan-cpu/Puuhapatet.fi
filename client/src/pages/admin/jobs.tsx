@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Loader2, ClipboardList, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Check, CalendarClock, Save, Plus, Trash2, Receipt, Users, TrendingUp, Clock, Building2 } from "lucide-react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -76,6 +76,8 @@ interface JobRow {
     boardContactName: string | null;
     boardContactEmail: string | null;
     boardContactPhone: string | null;
+    isCustomGig?: boolean | null;
+    gigData?: string | null;
   };
   customer: {
     id: number;
@@ -88,6 +90,7 @@ interface JobRow {
 
 export default function AdminJobsPage() {
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const profile = getAdminProfile();
   const isHost = profile?.role === "HOST";
   const [showAll, setShowAll] = useState(false);
@@ -2279,7 +2282,7 @@ export default function AdminJobsPage() {
                 <Card
                   key={row.job.id}
                   className="p-4 bg-card border-0 premium-shadow cursor-pointer hover:opacity-90 transition-opacity"
-                  onClick={() => setSelected(row)}
+                  onClick={() => row.job.isCustomGig ? navigate(`/admin/gig/${row.job.id}`) : setSelected(row)}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex-1 min-w-0">
@@ -2320,9 +2323,14 @@ export default function AdminJobsPage() {
                             🏢 {row.job.taloyhtiioName}
                           </span>
                         )}
-                        {row.job.isYritys && (
+                        {row.job.isYritys && !row.job.isCustomGig && (
                           <span className="text-xs px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold shrink-0">
                             YRITYS
+                          </span>
+                        )}
+                        {row.job.isCustomGig && (
+                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-semibold shrink-0">
+                            SOPIMUS · LIVE
                           </span>
                         )}
                       </div>

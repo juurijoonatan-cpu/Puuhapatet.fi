@@ -23,6 +23,7 @@ export interface GigSector {
   unitPriceCents: number;// price per completed unit, in cents
   washed: number;        // completed units
   skipped: number;       // skipped units (kuntovaraus) — credited off the bill
+  invoicedWashed: number;// washed units already billed (for per-sector invoice lines)
   priority: number;      // lower = done first (1, 2, …)
 }
 
@@ -95,6 +96,7 @@ export function newSector(index: number): GigSector {
     unitPriceCents: 0,
     washed: 0,
     skipped: 0,
+    invoicedWashed: 0,
     priority: index + 1,
   };
 }
@@ -110,6 +112,8 @@ export interface GigTotals {
   creditCents: number;        // hyvitykset (skipped × unit)
   estimatedFinalCents: number;// cap − credits
   remainingCents: number;     // estimated final − accrued (still to earn)
+  invoicedCents: number;      // already invoiced (Σ invoicedWashed × unit)
+  invoicedWashed: number;     // already-invoiced washed-unit count
   uninvoicedCents: number;    // accrued − already invoiced
   percentByCap: number;       // accrued / cap, 0..1
 }
@@ -117,18 +121,22 @@ export interface GigTotals {
 export function computeTotals(gig: GigData): GigTotals {
   let washedTotal = 0, skippedTotal = 0, unitTotal = 0;
   let accruedCents = 0, capCents = 0, creditCents = 0;
+  let invoicedCents = 0, invoicedWashed = 0;
   for (const s of gig.sectors) {
     const washed = clampNonNeg(s.washed);
     const skipped = clampNonNeg(s.skipped);
+    const inv = Math.min(washed, clampNonNeg(s.invoicedWashed));
     washedTotal += washed;
     skippedTotal += skipped;
     unitTotal += clampNonNeg(s.total);
     accruedCents += washed * s.unitPriceCents;
     capCents += clampNonNeg(s.total) * s.unitPriceCents;
     creditCents += skipped * s.unitPriceCents;
+    invoicedCents += inv * s.unitPriceCents;
+    invoicedWashed += inv;
   }
   const estimatedFinalCents = Math.max(0, capCents - creditCents);
-  const uninvoicedCents = Math.max(0, accruedCents - (gig.invoicedCents || 0));
+  const uninvoicedCents = Math.max(0, accruedCents - invoicedCents);
   return {
     washedTotal,
     skippedTotal,
@@ -138,6 +146,8 @@ export function computeTotals(gig: GigData): GigTotals {
     creditCents,
     estimatedFinalCents,
     remainingCents: Math.max(0, estimatedFinalCents - accruedCents),
+    invoicedCents,
+    invoicedWashed,
     uninvoicedCents,
     percentByCap: capCents > 0 ? Math.min(1, accruedCents / capCents) : 0,
   };
@@ -149,7 +159,7 @@ export function computeTotals(gig: GigData): GigTotals {
  */
 export function nextInvoiceThreshold(gig: GigData): number {
   const step = gig.invoiceInterval > 0 ? gig.invoiceInterval : 100;
-  const base = Math.max(gig.invoicedThrough || 0, 0);
+  const base = Math.max(computeTotals(gig).invoicedWashed, 0);
   return Math.floor(base / step) * step + step;
 }
 
@@ -178,7 +188,9 @@ export function clampSector(s: GigSector): GigSector {
     skipped -= trimSkip;
     washed -= Math.max(0, overflow - trimSkip);
   }
-  return { ...s, total, washed, skipped };
+  // Can't have invoiced more units than have been washed.
+  const invoicedWashed = Math.min(washed, clampNonNeg(s.invoicedWashed));
+  return { ...s, total, washed, skipped, invoicedWashed };
 }
 
 /** Sanitize an incoming gigData object (server-side validation). */
@@ -195,6 +207,7 @@ export function sanitizeGigData(input: any): GigData {
         unitPriceCents: clampNonNeg(Number(s?.unitPriceCents)),
         washed: clampNonNeg(Number(s?.washed)),
         skipped: clampNonNeg(Number(s?.skipped)),
+        invoicedWashed: clampNonNeg(Number(s?.invoicedWashed)),
         priority: clampNonNeg(Number(s?.priority)) || i + 1,
       }))
     : [];

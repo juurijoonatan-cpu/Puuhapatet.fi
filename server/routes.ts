@@ -2476,19 +2476,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const amountCents = totalsBefore.uninvoicedCents;
       if (amountCents <= 0) return res.status(400).json({ error: "Ei laskutettavaa kertymää" });
 
-      // Per-sector breakdown of units billed in *this* invoice = washed not yet invoiced,
-      // distributed proportionally is complex; instead bill the delta per sector.
-      // We track invoiced units only as a global count, so show the cumulative washed
-      // per sector and the new accrued delta as the invoice total.
+      // Bill only the units washed since the previous invoice, per sector, so the
+      // line items sum exactly to the amount due now.
       const fmtEur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
       const lineRows = gig.sectors.map((s) => {
-        const lineCents = s.washed * s.unitPriceCents;
+        const delta = Math.max(0, s.washed - Math.min(s.washed, s.invoicedWashed || 0));
+        if (delta <= 0) return "";
+        const lineCents = delta * s.unitPriceCents;
         const creditCents = s.skipped * s.unitPriceCents;
         return `
           <tr style="border-bottom:1px solid #E4E1D7">
             <td style="padding:10px 0;color:#1A1A1A;font-size:14px">
-              ${s.name} — ${s.washed} ${s.unitLabel}a × ${fmtEur(s.unitPriceCents)}
-              ${s.skipped > 0 ? `<br><span style="color:#8C8A82;font-size:12px">Kuntovaraus ${s.skipped} kpl · hyvitys −${fmtEur(creditCents)}</span>` : ""}
+              ${s.name} — ${delta} ${s.unitLabel}a × ${fmtEur(s.unitPriceCents)}
+              ${s.skipped > 0 ? `<br><span style="color:#8C8A82;font-size:12px">Kuntovaraus yhteensä ${s.skipped} kpl · hyvitetty −${fmtEur(creditCents)}</span>` : ""}
             </td>
             <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:#1A1A1A;font-variant-numeric:tabular-nums">${fmtEur(lineCents)}</td>
           </tr>`;
@@ -2501,7 +2501,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const invoiceNo = `${gig.contractId || "PT"}-${(gig.payments.length + 1).toString().padStart(2, "0")}`;
       const accruedSoFar = totalsBefore.accruedCents;
-      const previouslyInvoiced = gig.invoicedCents;
+      const previouslyInvoiced = totalsBefore.invoicedCents;
 
       const html = `
 <!DOCTYPE html><html lang="fi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -2551,11 +2551,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         html,
       });
 
-      // Advance invoiced markers and log it.
-      gig.invoicedThrough = totalsBefore.washedTotal;
-      gig.invoicedCents = accruedSoFar;
+      // Advance per-sector invoiced markers, then refresh the summary fields.
+      gig.sectors.forEach((s) => { s.invoicedWashed = s.washed; });
+      const totalsAfter = computeTotals(gig);
+      gig.invoicedThrough = totalsAfter.invoicedWashed;
+      gig.invoicedCents = totalsAfter.invoicedCents;
       gig.payments.push({
-        t: Date.now(), countThrough: totalsBefore.washedTotal, amountCents,
+        t: Date.now(), countThrough: totalsAfter.invoicedWashed, amountCents,
         to: recipient, note: isFinal ? "Loppulasku" : "Osalasku", emailId: result.data?.id,
       });
       gig.log.push({ t: Date.now(), text: `${isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} lähetetty: ${fmtEur(amountCents)} → ${recipient}` });

@@ -4,7 +4,9 @@
 
 import type { GigData, GigTotals } from "@shared/gig";
 
-const API_BASE = "https://puuhapatet-fi.onrender.com";
+// Defaults to the Render backend in production; override with VITE_API_BASE
+// (e.g. "" for same-origin) when running the server locally.
+const API_BASE = import.meta.env.VITE_API_BASE ?? "https://puuhapatet-fi.onrender.com";
 
 export interface GigPublicView {
   contractId: string | null;

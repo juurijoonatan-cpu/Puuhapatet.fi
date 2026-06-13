@@ -29,7 +29,6 @@ export default function GigLivePage() {
   const [status, setStatus] = useState<"loading" | "ok" | "error">("loading");
 
   useEffect(() => {
-    // Load Poppins for contract-faithful typography.
     const id = "poppins-font-link";
     if (!document.getElementById(id)) {
       const link = document.createElement("link");
@@ -55,12 +54,8 @@ export default function GigLivePage() {
     return () => { active = false; clearInterval(iv); };
   }, [token]);
 
-  if (status === "loading") {
-    return <Centered>Ladataan…</Centered>;
-  }
-  if (status === "error" || !data) {
-    return <Centered>Seurantaa ei löytynyt.</Centered>;
-  }
+  if (status === "loading") return <Centered>Ladataan…</Centered>;
+  if (status === "error" || !data) return <Centered>Seurantaa ei löytynyt.</Centered>;
 
   const t = data.totals;
   const pct = Math.round(t.percentByCap * 100);
@@ -69,51 +64,59 @@ export default function GigLivePage() {
   });
 
   return (
-    <div style={{ minHeight: "100vh", background: T.paper, fontFamily: FONT, color: T.ink, padding: "32px 16px" }}>
+    <div style={{ minHeight: "100vh", background: T.paper, fontFamily: FONT, color: T.ink, padding: "28px 16px 48px" }}>
+      <style>{`@keyframes ppPulse{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
       <div style={{ maxWidth: 640, margin: "0 auto" }}>
 
         {/* Header */}
-        <div style={{ marginBottom: 24 }}>
-          <p style={{ margin: 0, fontSize: 22, fontWeight: 800, letterSpacing: "-0.3px" }}>Puuhapatet</p>
-          <p style={{ margin: "4px 0 0", fontSize: 13, color: T.muted }}>
-            {data.contractId ? `${data.contractId} · ` : ""}{data.companyName} · {data.description}
-          </p>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 22 }}>
+          <div>
+            <p style={{ margin: 0, fontSize: 22, fontWeight: 800, letterSpacing: "-0.3px" }}>Puuhapatet</p>
+            <p style={{ margin: "4px 0 0", fontSize: 13, color: T.muted }}>
+              {data.contractId ? `${data.contractId} · ` : ""}{data.companyName}
+            </p>
+          </div>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: T.muted, letterSpacing: "0.08em", border: `1px solid ${T.hair}`, borderRadius: 999, padding: "5px 10px", background: T.card }}>
+            <span style={{ width: 7, height: 7, borderRadius: 999, background: "#3E7C59", animation: "ppPulse 1.8s ease-in-out infinite" }} />
+            LIVE
+          </span>
         </div>
 
-        {/* Accrual headline card */}
+        {/* Hero: radial gauge + headline figures */}
         <Panel>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
-            <div>
+          <p style={{ margin: "0 0 4px", fontSize: 13, color: T.muted }}>{data.description}</p>
+          <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap", marginTop: 8 }}>
+            <Gauge sectors={data.sectors} capCents={t.capCents} pct={pct} />
+            <div style={{ flex: "1 1 200px", minWidth: 180 }}>
               <p style={label}>Kertynyt summa</p>
-              <p style={{ margin: 0, fontSize: 44, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>{eur(t.accruedCents)}</p>
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <p style={label}>Hintakatto</p>
-              <p style={{ margin: 0, fontSize: 18, fontWeight: 600, color: T.muted, fontVariantNumeric: "tabular-nums" }}>{eur(t.capCents)}</p>
+              <p style={{ margin: "2px 0 0", fontSize: 40, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>{eur(t.accruedCents)}</p>
+              <p style={{ margin: "6px 0 0", fontSize: 14, color: T.muted }}>
+                Hintakatto <span style={{ fontWeight: 600, color: T.ink, fontVariantNumeric: "tabular-nums" }}>{eur(t.capCents)}</span>
+              </p>
+              <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+                <Chip label="Pesty" value={`${t.washedTotal} / ${t.unitTotal}`} />
+                {t.skippedTotal > 0 && <Chip label="Kuntovaraus" value={`${t.skippedTotal} kpl`} />}
+              </div>
             </div>
           </div>
 
-          {/* Segmented bar */}
-          <div style={{ height: 12, width: "100%", borderRadius: 999, background: T.paper, overflow: "hidden", display: "flex", marginTop: 16 }}>
+          {/* Segmented progress bar */}
+          <div style={{ height: 10, width: "100%", borderRadius: 999, background: T.paper, overflow: "hidden", display: "flex", marginTop: 20 }}>
             {data.sectors.map((s) => {
               const w = t.capCents > 0 ? (s.washed * s.unitPriceCents) / t.capCents * 100 : 0;
               return <div key={s.id} style={{ width: `${w}%`, background: s.color, height: "100%" }} />;
             })}
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 12, fontSize: 14 }}>
-            <span style={{ color: T.muted }}>{t.washedTotal} / {t.unitTotal} pesty</span>
-            <span style={{ fontWeight: 600 }}>{pct} %</span>
-          </div>
 
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: 16, paddingTop: 16, borderTop: `1px solid ${T.hair}` }}>
             <div>
               <p style={label}>Arvioitu loppusumma</p>
-              <p style={{ margin: 0, fontSize: 18, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{eur(t.estimatedFinalCents)}</p>
+              <p style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{eur(t.estimatedFinalCents)}</p>
             </div>
             {t.creditCents > 0 && (
               <div style={{ textAlign: "right" }}>
                 <p style={label}>Hyvitykset</p>
-                <p style={{ margin: 0, fontSize: 18, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>−{eur(t.creditCents)}</p>
+                <p style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>−{eur(t.creditCents)}</p>
               </div>
             )}
           </div>
@@ -139,7 +142,7 @@ export default function GigLivePage() {
               <div style={{ height: 8, width: "100%", borderRadius: 999, background: T.paper, overflow: "hidden", marginBottom: 12 }}>
                 <div style={{ height: "100%", borderRadius: 999, width: `${sp}%`, background: s.color }} />
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, alignItems: "center", flexWrap: "wrap", gap: 4 }}>
                 <span>Pesty <strong style={{ fontVariantNumeric: "tabular-nums" }}>{s.washed}</strong> / {s.total} ({sp} %)</span>
                 {s.skipped > 0 && (
                   <span style={{ color: T.muted, fontSize: 13 }}>Kuntovaraus {s.skipped} kpl · hyvitys −{eur(credit)}</span>
@@ -165,16 +168,57 @@ export default function GigLivePage() {
   );
 }
 
+/** Multi-segment radial gauge: each sector's accrued share draws its own arc. */
+function Gauge({ sectors, capCents, pct }: { sectors: GigPublicView["sectors"]; capCents: number; pct: number }) {
+  const size = 132, stroke = 13, r = (size - stroke) / 2;
+  const C = 2 * Math.PI * r;
+  let offset = 0;
+  const arcs = sectors.map((s) => {
+    const frac = capCents > 0 ? (s.washed * s.unitPriceCents) / capCents : 0;
+    const len = frac * C;
+    const arc = (
+      <circle
+        key={s.id}
+        cx={size / 2} cy={size / 2} r={r}
+        fill="none" stroke={s.color} strokeWidth={stroke}
+        strokeDasharray={`${len} ${C - len}`}
+        strokeDashoffset={-offset}
+        strokeLinecap="butt"
+      />
+    );
+    offset += len;
+    return arc;
+  });
+  return (
+    <div style={{ position: "relative", width: size, height: size, flex: "0 0 auto" }}>
+      <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={T.paper} strokeWidth={stroke} />
+        {arcs}
+      </svg>
+      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+        <span style={{ fontSize: 30, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{pct}%</span>
+        <span style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>katosta</span>
+      </div>
+    </div>
+  );
+}
+
+function Chip({ label, value }: { label: string; value: string }) {
+  return (
+    <span style={{ display: "inline-flex", flexDirection: "column", border: `1px solid ${T.hair}`, borderRadius: 10, padding: "6px 12px", background: T.paper }}>
+      <span style={{ fontSize: 10, color: T.muted, letterSpacing: "0.05em", textTransform: "uppercase" }}>{label}</span>
+      <span style={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{value}</span>
+    </span>
+  );
+}
+
 const label: React.CSSProperties = {
   margin: 0, fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: T.muted,
 };
 
 function Panel({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{
-      background: T.card, border: `1px solid ${T.hair}`, borderRadius: 14,
-      padding: 20, marginBottom: 16,
-    }}>
+    <div style={{ background: T.card, border: `1px solid ${T.hair}`, borderRadius: 14, padding: 20, marginBottom: 16 }}>
       {children}
     </div>
   );

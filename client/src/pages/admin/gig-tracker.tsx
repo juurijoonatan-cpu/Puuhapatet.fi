@@ -10,7 +10,7 @@ import { useEffect, useState } from "react";
 import { Link, useRoute } from "wouter";
 import {
   ArrowLeft, Plus, Minus, RotateCcw, Share2, Copy, Check, FileText,
-  Send, AlertCircle, ChevronDown, Receipt,
+  Send, AlertCircle, ChevronDown, Receipt, ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -125,7 +125,7 @@ export default function AdminGigTrackerPage() {
   const resetCounters = () => {
     if (!gig) return;
     const next = JSON.parse(JSON.stringify(gig)) as GigData;
-    next.sectors.forEach((s) => { s.washed = 0; s.skipped = 0; });
+    next.sectors.forEach((s) => { s.washed = 0; s.skipped = 0; s.invoicedWashed = 0; });
     next.invoicedThrough = 0;
     next.invoicedCents = 0;
     next.log.push({ t: Date.now(), text: "Laskurit nollattu", by: profile?.name });
@@ -242,11 +242,19 @@ export default function AdminGigTrackerPage() {
             <p className="text-sm font-medium text-foreground">Asiakkaan live-linkki</p>
           </div>
           <div className="flex items-center gap-2">
-            <Input readOnly value={shareUrl} className="text-xs" />
-            <Button variant="outline" size="icon" onClick={copyLink}>
+            <Input readOnly value={shareUrl} className="text-xs" onFocus={(e) => e.currentTarget.select()} />
+            <Button variant="outline" size="icon" onClick={copyLink} aria-label="Kopioi linkki">
               {copied ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
             </Button>
+            {shareUrl && (
+              <a href={shareUrl} target="_blank" rel="noreferrer">
+                <Button variant="outline" size="icon" aria-label="Avaa asiakkaan näkymä">
+                  <ExternalLink className="w-4 h-4" />
+                </Button>
+              </a>
+            )}
           </div>
+          <p className="text-xs text-muted-foreground mt-2">Jaa tämä linkki asiakkaalle — näkymä päivittyy itsestään.</p>
         </Card>
 
         {/* Sector counters */}
@@ -272,29 +280,35 @@ export default function AdminGigTrackerPage() {
                   <div className="h-full rounded-full" style={{ width: `${pct}%`, background: s.color }} />
                 </div>
 
-                {/* Washed control */}
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm text-foreground">Pesty <strong className="tabular-nums">{s.washed}</strong> / {s.total}</span>
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => adjust(s.id, "washed", -1)} disabled={s.washed <= 0}>
-                      <Minus className="w-4 h-4" />
-                    </Button>
-                    <Button size="icon" className="h-9 w-9" style={{ background: s.color }} onClick={() => adjust(s.id, "washed", 1)} disabled={full}>
-                      <Plus className="w-4 h-4 text-white" />
-                    </Button>
-                  </div>
+                {/* Washed control — large primary action for field use */}
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm text-foreground">Pesty <strong className="tabular-nums text-base">{s.washed}</strong> <span className="text-muted-foreground">/ {s.total}</span></span>
+                  <span className="text-xs text-muted-foreground tabular-nums">{Math.max(0, s.total - s.washed - s.skipped)} jäljellä</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="icon" className="h-12 w-12 shrink-0" onClick={() => adjust(s.id, "washed", -1)} disabled={s.washed <= 0} aria-label="Vähennä pesty">
+                    <Minus className="w-5 h-5" />
+                  </Button>
+                  <Button
+                    className="h-12 flex-1 text-white text-base font-semibold active:scale-[0.98] transition-transform"
+                    style={{ background: s.color }}
+                    onClick={() => adjust(s.id, "washed", 1)}
+                    disabled={full}
+                  >
+                    <Plus className="w-5 h-5 mr-1" /> {full ? "Sektori valmis" : "+1 pesty"}
+                  </Button>
                 </div>
                 {/* Kuntovaraus control */}
-                <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-border">
+                <div className="flex items-center justify-between gap-2 mt-3 pt-3 border-t border-border">
                   <span className="text-sm text-muted-foreground">
                     Kuntovaraus <strong className="tabular-nums">{s.skipped}</strong>
                     {credit > 0 && <span className="text-xs"> · hyvitys −{eur(credit)}</span>}
                   </span>
                   <div className="flex items-center gap-2">
-                    <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => adjust(s.id, "skipped", -1)} disabled={s.skipped <= 0}>
+                    <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => adjust(s.id, "skipped", -1)} disabled={s.skipped <= 0} aria-label="Vähennä kuntovaraus">
                       <Minus className="w-4 h-4" />
                     </Button>
-                    <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => adjust(s.id, "skipped", 1)} disabled={full}>
+                    <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => adjust(s.id, "skipped", 1)} disabled={full} aria-label="Lisää kuntovaraus">
                       <Plus className="w-4 h-4" />
                     </Button>
                   </div>
@@ -322,8 +336,8 @@ export default function AdminGigTrackerPage() {
             <span className="text-sm text-muted-foreground">Laskuttamatta</span>
             <span className="text-lg font-bold text-foreground tabular-nums">{eur(totals.uninvoicedCents)}</span>
           </div>
-          {gig.invoicedCents > 0 && (
-            <p className="text-xs text-muted-foreground mb-3">Jo laskutettu: {eur(gig.invoicedCents)} ({gig.payments.length} laskua)</p>
+          {totals.invoicedCents > 0 && (
+            <p className="text-xs text-muted-foreground mb-3">Jo laskutettu: {eur(totals.invoicedCents)} ({gig.payments.length} laskua)</p>
           )}
           <Button className="w-full" disabled={totals.uninvoicedCents <= 0} onClick={() => setInvoiceOpen(true)}>
             <Send className="w-4 h-4 mr-2" /> Lähetä lasku sähköpostilla

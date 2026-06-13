@@ -60,6 +60,7 @@ export const USERS: AdminProfile[] = [
     id: "petrus",
     name: "Petrus Aalto",
     role: "STAFF",
+    photoUrl: "/petrus.jpg.jpeg",
     phone: "+358442372930",
     email: "petrus.aalto@icloud.com",
     yTunnus: "3620983-4",

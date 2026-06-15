@@ -8,8 +8,8 @@ import rateLimit from "express-rate-limit";
 import { db } from "./db";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 import { feeRateForWorker } from "@shared/team";
-import { sanitizeGigData, computeTotals, type GigData } from "@shared/gig";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, type ProjectData } from "@shared/project";
+import { sanitizeGigData, computeTotals, emptyGigData, type GigData } from "@shared/gig";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, type ProjectData } from "@shared/project";
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 // Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
@@ -2605,13 +2605,29 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const project = sanitizeProjectData(req.body?.projectData ?? req.body);
+      const totals = computeProjectTotals(project);
+
+      // Auto-sync the gig's billing sectors from the toolkit (FR8 = source of
+      // truth) — but only once the project actually has windows, so a non-FR8
+      // gig's sectors are never clobbered. Keeps the customer view + invoicing
+      // consistent with the floor-plan map.
+      const extra: Record<string, unknown> = {};
+      if (totals.total > 0) {
+        const gig = sanitizeGigData(
+          syncGigSectorsFromProject(parseGig(job.gigData) ?? emptyGigData(), project),
+        );
+        extra.gigData = JSON.stringify(gig);
+        extra.agreedPrice = computeTotals(gig).capCents;
+        extra.isCustomGig = true;
+      }
+
       await db.update(jobs)
-        .set({ projectData: JSON.stringify(project), updatedAt: new Date() })
+        .set({ projectData: JSON.stringify(project), updatedAt: new Date(), ...extra })
         .where(eq(jobs.id, id));
       res.json({
         ok: true,
         project,
-        totals: computeProjectTotals(project),
+        totals,
         workerStats: computeWorkerStats(project),
       });
     } catch (e: any) {

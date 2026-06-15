@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# signed contracts (contain customer PII — never commit)
+/data/signed-contracts

@@ -5,6 +5,9 @@ import Navbar from "./Navbar";
 import Dashboard from "./Dashboard";
 import FloorView from "./FloorView";
 import HoursView from "./HoursView";
+import ContractGate from "./ContractGate";
+import { SIGNED_KEY, type SignedContract } from "@/lib/contract";
+import { downloadSignedContract } from "@/lib/signedFile";
 
 export type Tab = "dashboard" | "floor" | "hours";
 export type Status = "ei" | "kesken" | "pesty";
@@ -27,9 +30,15 @@ function persist(data: object) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
 }
 
+function loadSigned(): SignedContract | null {
+  try { return JSON.parse(localStorage.getItem(SIGNED_KEY) || "null"); }
+  catch { return null; }
+}
+
 export default function AppShell() {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [activeFloor, setActiveFloor] = useState("K");
+  const [signed, setSigned] = useState<SignedContract | null>(() => loadSigned());
   const [marks, setMarks] = useState<MarksData | null>(null);
   const [statuses, setStatuses] = useState<Record<string, Status>>(() => loadStorage().statuses || {});
   const [posOverrides, setPosOverrides] = useState<Record<string, { x: number; y: number }>>(() => loadStorage().posOverrides || {});
@@ -121,16 +130,31 @@ export default function AppShell() {
     setTab("floor");
   }, []);
 
+  const onSigned = useCallback((s: SignedContract) => {
+    try { localStorage.setItem(SIGNED_KEY, JSON.stringify(s)); } catch {}
+    downloadSignedContract(s); // tallennetaan myös tiedostona
+    setSigned(s);
+  }, []);
+
+  const onViewContract = useCallback(() => {
+    if (signed) downloadSignedContract(signed);
+  }, [signed]);
+
+  // Intro = allekirjoitus. Live-näkymä avautuu vasta hyväksynnän jälkeen.
+  if (!signed) {
+    return <ContractGate onSigned={onSigned} />;
+  }
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "#000000", color: "#fff", overflow: "hidden", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>
       <div className="anim-drift" style={{ position: "absolute", top: "-30%", left: "50%", transform: "translateX(-50%)", width: "1100px", height: "700px", background: "radial-gradient(ellipse at center, rgba(120,120,160,0.10), transparent 65%)", pointerEvents: "none" }} />
       <div style={{ position: "absolute", bottom: "-20%", right: "-5%", width: "700px", height: "600px", background: "radial-gradient(ellipse at center, rgba(80,90,120,0.08), transparent 65%)", pointerEvents: "none" }} />
 
-      <Navbar activeTab={tab} onTabChange={setTab} />
+      <Navbar activeTab={tab} onTabChange={setTab} signed={!!signed} onViewContract={onViewContract} />
 
       <main style={{ position: "relative", zIndex: 10, height: "calc(100% - 62px)" }}>
         {tab === "dashboard" && (
-          <Dashboard marks={marks} statuses={statuses} customMarks={customMarks} deleted={deleted} log={log} onGoToFloor={onGoToFloor} />
+          <Dashboard marks={marks} statuses={statuses} customMarks={customMarks} deleted={deleted} log={log} onGoToFloor={onGoToFloor} order={signed.order} />
         )}
         {tab === "floor" && (
           <FloorView

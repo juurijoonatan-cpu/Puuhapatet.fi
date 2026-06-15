@@ -54,6 +54,7 @@ import AdminDashboard from "@/pages/admin/dashboard";
 import AdminNewJobPage from "@/pages/admin/new-job";
 import AdminNewGigPage from "@/pages/admin/new-gig";
 import AdminGigTrackerPage from "@/pages/admin/gig-tracker";
+import AdminProjectPage from "@/pages/admin/project";
 import GigLivePage from "@/pages/gig-live";
 import AdminCalendarPage from "@/pages/admin/calendar";
 import AdminJobsPage from "@/pages/admin/jobs";
@@ -157,6 +158,11 @@ function Router() {
       <Route path="/admin/new-gig">
         <ProtectedRoute>
           <AdminNewGigPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/admin/gig/:id/projekti">
+        <ProtectedRoute>
+          <AdminProjectPage />
         </ProtectedRoute>
       </Route>
       <Route path="/admin/gig/:id">

@@ -74,6 +74,8 @@ export const jobs = pgTable("jobs", {
   // Custom gig (cap-pricing / kattomalli contract job)
   isCustomGig:       boolean("is_custom_gig").default(false).notNull(),
   gigData:           text("gig_data"),           // JSON: GigData (shared/gig.ts)
+  // Project / floor-plan window tool (FR8 projektinäkymä)
+  projectData:       text("project_data"),       // JSON: ProjectData (shared/project.ts)
   createdAt:         timestamp("created_at").defaultNow().notNull(),
   updatedAt:         timestamp("updated_at").defaultNow().notNull(),
 });

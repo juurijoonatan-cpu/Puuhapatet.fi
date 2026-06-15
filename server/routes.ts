@@ -9,6 +9,7 @@ import { db } from "./db";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 import { feeRateForWorker } from "@shared/team";
 import { sanitizeGigData, computeTotals, type GigData } from "@shared/gig";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, type ProjectData } from "@shared/project";
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 // Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
@@ -2568,6 +2569,53 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (e: any) {
       console.error("Gig invoice error:", e);
       res.status(500).json({ error: e.message || "Laskun lähetys epäonnistui" });
+    }
+  });
+
+  // ─── Project / floor-plan window tool (FR8 projektinäkymä) ────────────────────
+
+  function parseProject(raw: string | null): ProjectData | null {
+    if (!raw) return null;
+    try { return sanitizeProjectData(JSON.parse(raw)); } catch { return null; }
+  }
+
+  // Read the floor-plan project data for a job (null if not yet initialised).
+  app.get("/api/jobs/:id/project", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const project = parseProject(job.projectData ?? null);
+      if (!project) return res.json({ ok: true, project: null });
+      res.json({
+        ok: true,
+        project,
+        totals: computeProjectTotals(project),
+        workerStats: computeWorkerStats(project),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Replace the project data (mapping + statuses + hours). Server validates & clamps.
+  app.patch("/api/jobs/:id/project", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const project = sanitizeProjectData(req.body?.projectData ?? req.body);
+      await db.update(jobs)
+        .set({ projectData: JSON.stringify(project), updatedAt: new Date() })
+        .where(eq(jobs.id, id));
+      res.json({
+        ok: true,
+        project,
+        totals: computeProjectTotals(project),
+        workerStats: computeWorkerStats(project),
+      });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
     }
   });
 

@@ -371,7 +371,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
         onTouchStart={onSceneTouchStart}
         onTouchMove={onSceneTouchMove}
         onTouchEnd={onSceneTouchEnd}
-        style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", padding: isMobile ? "10px" : "26px", minHeight: 0, overflow: "hidden", touchAction: zoom > 1 && !editMode ? "none" : "auto" }}
+        style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", padding: isMobile ? "10px" : "26px", minHeight: 0, overflow: "hidden", touchAction: zoom > 1 && !editMode ? "none" : "auto", background: "radial-gradient(ellipse 72% 72% at 50% 47%, rgba(125,135,170,0.07), transparent 72%)" }}
       >
 
         {/* Edit banner */}

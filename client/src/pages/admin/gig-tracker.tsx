@@ -9,7 +9,7 @@
 import { useEffect, useState } from "react";
 import { Link, useRoute } from "wouter";
 import {
-  ArrowLeft, Plus, Minus, RotateCcw, Share2, Copy, Check, FileText,
+  ArrowLeft, Share2, Copy, Check, FileText,
   Send, AlertCircle, ChevronDown, Receipt, ExternalLink, LayoutDashboard, ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,11 +20,6 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
 import { getAdminProfile } from "@/lib/admin-profile";
@@ -50,7 +45,6 @@ export default function AdminGigTrackerPage() {
   const [gig, setGig] = useState<GigData | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showContract, setShowContract] = useState(false);
 
@@ -86,52 +80,6 @@ export default function AdminGigTrackerPage() {
       setLoading(false);
     });
   }, [jobId]);
-
-  // Persist a new gig state (optimistic — local first, then server).
-  const persist = async (next: GigData) => {
-    setGig(next);
-    setSaving(true);
-    const res = await api.updateGig(jobId, next);
-    setSaving(false);
-    if (res.ok && res.data) {
-      setGig(res.data.gigData);
-    } else {
-      toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
-    }
-  };
-
-  const adjust = (sectorId: string, field: "washed" | "skipped", delta: number) => {
-    if (!gig) return;
-    const next = JSON.parse(JSON.stringify(gig)) as GigData;
-    const s = next.sectors.find((x) => x.id === sectorId);
-    if (!s) return;
-    const newVal = (s[field] || 0) + delta;
-    if (newVal < 0) return;
-    if (delta > 0 && s.washed + s.skipped >= s.total) {
-      toast({ variant: "destructive", title: "Sektori täynnä", description: `${s.name}: kaikki ${s.total} yksikköä kirjattu.` });
-      return;
-    }
-    s[field] = newVal;
-    const label = field === "washed" ? "pesty" : "kuntovaraus";
-    next.log.push({
-      t: Date.now(),
-      text: `${s.name}: ${delta > 0 ? "+" : ""}${delta} ${label}`,
-      by: profile?.name,
-    });
-    next.updatedAt = Date.now();
-    persist(next);
-  };
-
-  const resetCounters = () => {
-    if (!gig) return;
-    const next = JSON.parse(JSON.stringify(gig)) as GigData;
-    next.sectors.forEach((s) => { s.washed = 0; s.skipped = 0; s.invoicedWashed = 0; });
-    next.invoicedThrough = 0;
-    next.invoicedCents = 0;
-    next.log.push({ t: Date.now(), text: "Laskurit nollattu", by: profile?.name });
-    next.updatedAt = Date.now();
-    persist(next);
-  };
 
   const shareUrl = token ? `${PUBLIC_BASE}/seuranta/${token}` : "";
   const copyLink = () => {
@@ -195,7 +143,6 @@ export default function AdminGigTrackerPage() {
             </h1>
             <p className="text-sm text-muted-foreground truncate">
               {gig.contractId ? `${gig.contractId} · ` : ""}{gig.company?.contact || ""}
-              {saving && <span className="ml-2 text-xs">tallennetaan…</span>}
             </p>
           </div>
         </div>
@@ -271,14 +218,25 @@ export default function AdminGigTrackerPage() {
           <p className="text-xs text-muted-foreground mt-2">Jaa tämä linkki asiakkaalle — näkymä päivittyy itsestään.</p>
         </Card>
 
-        {/* Sector counters */}
+        {/* Per-floor progress — read-only; window marking happens in the toolkit */}
+        <div className="flex items-center justify-between mb-2 px-1">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Edistyminen kerroksittain</p>
+          <span className="text-xs text-muted-foreground">Merkinnät projektinäkymässä</span>
+        </div>
         <div className="space-y-3 mb-4">
+          {gig.sectors.length === 0 && (
+            <Card className="p-4 bg-card border-0 premium-shadow">
+              <p className="text-sm text-muted-foreground">
+                Ei vielä ikkunatietoja. Avaa projektinäkymä ja merkitse ikkunat — edistyminen ja laskutus päivittyvät tänne automaattisesti.
+              </p>
+            </Card>
+          )}
           {gig.sectors.map((s) => {
             const accrued = s.washed * s.unitPriceCents;
             const cap = s.total * s.unitPriceCents;
             const credit = s.skipped * s.unitPriceCents;
             const pct = s.total > 0 ? Math.round((s.washed / s.total) * 100) : 0;
-            const full = s.washed + s.skipped >= s.total;
+            const remaining = Math.max(0, s.total - s.washed - s.skipped);
             return (
               <Card key={s.id} className="p-4 bg-card border-0 premium-shadow">
                 <div className="flex items-center justify-between mb-3">
@@ -293,40 +251,13 @@ export default function AdminGigTrackerPage() {
                 <div className="h-2 w-full rounded-full bg-muted overflow-hidden mb-3">
                   <div className="h-full rounded-full" style={{ width: `${pct}%`, background: s.color }} />
                 </div>
-
-                {/* Washed control — large primary action for field use */}
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm text-foreground">Pesty <strong className="tabular-nums text-base">{s.washed}</strong> <span className="text-muted-foreground">/ {s.total}</span></span>
-                  <span className="text-xs text-muted-foreground tabular-nums">{Math.max(0, s.total - s.washed - s.skipped)} jäljellä</span>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-foreground">Pesty <strong className="tabular-nums text-base">{s.washed}</strong> <span className="text-muted-foreground">/ {s.total}</span></span>
+                  <span className="text-xs text-muted-foreground tabular-nums">{pct} % · {remaining} jäljellä</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Button variant="outline" size="icon" className="h-12 w-12 shrink-0" onClick={() => adjust(s.id, "washed", -1)} disabled={s.washed <= 0} aria-label="Vähennä pesty">
-                    <Minus className="w-5 h-5" />
-                  </Button>
-                  <Button
-                    className="h-12 flex-1 text-white text-base font-semibold active:scale-[0.98] transition-transform"
-                    style={{ background: s.color }}
-                    onClick={() => adjust(s.id, "washed", 1)}
-                    disabled={full}
-                  >
-                    <Plus className="w-5 h-5 mr-1" /> {full ? "Sektori valmis" : "+1 pesty"}
-                  </Button>
-                </div>
-                {/* Kuntovaraus control */}
-                <div className="flex items-center justify-between gap-2 mt-3 pt-3 border-t border-border">
-                  <span className="text-sm text-muted-foreground">
-                    Kuntovaraus <strong className="tabular-nums">{s.skipped}</strong>
-                    {credit > 0 && <span className="text-xs"> · hyvitys −{eur(credit)}</span>}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => adjust(s.id, "skipped", -1)} disabled={s.skipped <= 0} aria-label="Vähennä kuntovaraus">
-                      <Minus className="w-4 h-4" />
-                    </Button>
-                    <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => adjust(s.id, "skipped", 1)} disabled={full} aria-label="Lisää kuntovaraus">
-                      <Plus className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
+                {s.skipped > 0 && (
+                  <p className="text-xs text-muted-foreground mt-2">Kuntovaraus {s.skipped} · hyvitys −{eur(credit)}</p>
+                )}
               </Card>
             );
           })}
@@ -389,26 +320,6 @@ export default function AdminGigTrackerPage() {
           </div>
         </Card>
 
-        {/* Reset */}
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button variant="ghost" className="w-full text-muted-foreground">
-              <RotateCcw className="w-4 h-4 mr-2" /> Nollaa laskurit
-            </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Nollaa laskurit?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Tämä nollaa kaikkien sektoreiden pesty- ja kuntovaraus­laskurit sekä laskutustilanteen. Sopimustietoja ei poisteta.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Peruuta</AlertDialogCancel>
-              <AlertDialogAction onClick={resetCounters}>Nollaa</AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
       </div>
 
       {/* Invoice dialog */}

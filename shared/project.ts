@@ -12,6 +12,8 @@
  * prototype used, so the dot positions and logic stay identical.
  */
 
+import type { GigData, GigSector } from "./gig";
+
 // ─── Data shapes ───────────────────────────────────────────────────────────────
 
 export type WindowStatus = "ei" | "kesken" | "pesty";
@@ -185,6 +187,53 @@ export function computeWorkerStats(data: ProjectData): WorkerStat[] {
       eurPerHour: hours > 0 ? revenueCents / 100 / hours : 0,
     };
   });
+}
+
+// ─── Gig billing sync (FR8 toolkit = source of truth) ──────────────────────────
+
+const GIG_FLOOR_PALETTE = ["#D9472B", "#DFA614", "#1F3B57", "#3E7C59", "#7A4FA3", "#C2557A"];
+
+function gigFloorName(f: string): string {
+  if (f === "K") return "Kellari";
+  return `${f}. kerros`;
+}
+
+/**
+ * Derive a gig's billing sectors from the floor-plan window project so the FR8
+ * toolkit is the single source of truth for progress and money. One sector per
+ * floor: `total` = live windows on the floor, `washed` = windows marked "pesty",
+ * unit price = the project's price per window. Per-floor `invoicedWashed` is
+ * preserved (matched by sector id) so the existing invoicing pipeline keeps
+ * working unchanged, and gig metadata (company, invoices, notes, log) is left
+ * untouched.
+ */
+export function syncGigSectorsFromProject(gig: GigData, project: ProjectData): GigData {
+  const floors = project.building.floors.length ? project.building.floors : DEFAULT_FLOORS;
+  const unitPriceCents = Math.round((project.pricePerWindow || DEFAULT_PRICE_PER_WINDOW) * 100);
+  const pts = allPoints(project);
+  const prevById = new Map(gig.sectors.map((s) => [s.id, s]));
+
+  const sectors: GigSector[] = floors.map((f, i) => {
+    const onFloor = pts.filter((p) => p.floor === f);
+    const total = onFloor.length;
+    const washed = onFloor.filter((p) => p.status === "pesty").length;
+    const id = `floor:${f}`;
+    const prevInvoiced = Math.max(0, prevById.get(id)?.invoicedWashed ?? 0);
+    return {
+      id,
+      name: gigFloorName(f),
+      color: GIG_FLOOR_PALETTE[i % GIG_FLOOR_PALETTE.length],
+      unitLabel: "ikkuna",
+      total,
+      unitPriceCents,
+      washed,
+      skipped: 0,
+      invoicedWashed: Math.min(washed, prevInvoiced),
+      priority: i + 1,
+    };
+  });
+
+  return { ...gig, sectors, updatedAt: Date.now() };
 }
 
 // ─── Sanitisation (server-side validation) ─────────────────────────────────────

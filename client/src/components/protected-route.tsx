@@ -17,9 +17,11 @@ import { PageLoadingSkeleton } from "./loading-skeleton";
 interface ProtectedRouteProps {
   children: React.ReactNode;
   requireProfile?: boolean;
+  /** Render as a full-screen tool view without the admin nav chrome. */
+  bare?: boolean;
 }
 
-export function ProtectedRoute({ children, requireProfile = true }: ProtectedRouteProps) {
+export function ProtectedRoute({ children, requireProfile = true, bare = false }: ProtectedRouteProps) {
   const [, navigate] = useLocation();
   const [authState, setAuthState] = useState<"checking" | "unauthenticated" | "ready">("checking");
 
@@ -59,6 +61,10 @@ export function ProtectedRoute({ children, requireProfile = true }: ProtectedRou
 
   if (authState === "unauthenticated") {
     return <PageLoadingSkeleton />;
+  }
+
+  if (bare) {
+    return <>{children}</>;
   }
 
   return (

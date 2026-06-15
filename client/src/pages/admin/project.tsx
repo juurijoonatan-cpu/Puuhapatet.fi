@@ -12,7 +12,7 @@ import { api } from "@/lib/api";
 import { getAdminProfile, USERS } from "@/lib/admin-profile";
 import {
   emptyProjectData, computeWorkerStats,
-  type ProjectData, type WindowStatus,
+  type ProjectData, type ProjMarksData, type WindowStatus,
 } from "@shared/project";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
 import Dashboard from "@/components/fr8/Dashboard";
@@ -20,6 +20,23 @@ import FloorView from "@/components/fr8/FloorView";
 import HoursView from "@/components/fr8/HoursView";
 
 const MARKS_URL = "/fr8/marks_data.json";
+
+/** True if at least one floor has seeded window marks. */
+function hasAnyMarks(marks: ProjMarksData | null | undefined): boolean {
+  if (!marks) return false;
+  return Object.values(marks).some((f) => Array.isArray(f?.marks) && f.marks.length > 0);
+}
+
+/** Load the bundled base marks (static asset, served from the same origin). */
+async function fetchBaseMarks(): Promise<ProjMarksData> {
+  try {
+    const r = await fetch(MARKS_URL);
+    const j = await r.json();
+    return j && typeof j === "object" ? (j as ProjMarksData) : {};
+  } catch {
+    return {};
+  }
+}
 
 function workerName(id: string): string {
   const u = USERS.find((x) => x.id === id);
@@ -47,17 +64,19 @@ export default function AdminProjectPage() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latest = useRef<ProjectData | null>(null);
 
-  // ── Load (and seed if necessary) ────────────────────────────────────────────
+  // ── Load (and seed / heal if necessary) ─────────────────────────────────────
   useEffect(() => {
     if (!jobId) { setError("Virheellinen keikka."); setLoading(false); return; }
     let cancelled = false;
     (async () => {
-      const [jobRes, projRes] = await Promise.all([
+      // Always load the bundled floor marks alongside the backend calls so the
+      // maps can be filled even if persistence is missing or stale.
+      const [jobRes, projRes, baseMarks] = await Promise.all([
         api.getJobById(jobId),
         api.getProject(jobId),
+        fetchBaseMarks(),
       ]);
       if (cancelled) return;
-      if (!projRes.ok) { setError(projRes.error || "Lataus epäonnistui"); setLoading(false); return; }
 
       // Workers assigned to the job → who appears in the hours view.
       const job = (jobRes.ok && jobRes.data) ? ((jobRes.data as any).job ?? jobRes.data) : null;
@@ -66,36 +85,53 @@ export default function AdminProjectPage() {
         .filter((id) => USERS.some((u) => u.id === id));
       const workers = assigned.length ? assigned : ["matias", "joonatan"];
 
-      if (projRes.data?.project) {
+      // Backend reachable and a project already exists.
+      if (projRes.ok && projRes.data?.project) {
         const p = projRes.data.project;
         // Make sure every assigned worker shows up in the hours view.
         const mergedWorkers = Array.from(new Set([...(p.workers || []), ...workers]));
-        setProject({ ...p, workers: mergedWorkers });
+        // Heal a project that was saved without its window marks (failed first
+        // seed, etc.) so the floor maps are never empty.
+        if (!hasAnyMarks(p.marks) && hasAnyMarks(baseMarks)) {
+          const healed: ProjectData = { ...p, marks: baseMarks, workers: mergedWorkers };
+          setProject(healed);
+          void api.updateProject(jobId, healed);
+        } else {
+          setProject({ ...p, workers: mergedWorkers });
+        }
         setLoading(false);
         return;
       }
 
-      // Seed: fetch base marks, build initial project, persist it.
-      let marks = {};
-      try {
-        const r = await fetch(MARKS_URL);
-        marks = await r.json();
-      } catch { marks = {}; }
-      if (cancelled) return;
-      const seeded: ProjectData = {
-        ...emptyProjectData(),
-        marks,
-        workers,
-      };
-      const saveRes = await api.updateProject(jobId, seeded);
-      if (cancelled) return;
-      if (saveRes.ok && saveRes.data) {
-        setProject({ ...saveRes.data.project, workers });
-      } else {
-        // Even if the save fails (e.g. column not migrated yet), show the tool.
-        setProject(seeded);
-        setError(saveRes.error || null);
+      // Backend reachable, no project yet → seed from base marks and persist.
+      if (projRes.ok) {
+        const seeded: ProjectData = { ...emptyProjectData(), marks: baseMarks, workers };
+        const saveRes = await api.updateProject(jobId, seeded);
+        if (cancelled) return;
+        if (saveRes.ok && saveRes.data) {
+          const saved = saveRes.data.project;
+          // If the server round-trip dropped the marks, keep the seeded copy so
+          // the maps still render with their windows.
+          setProject(hasAnyMarks(saved.marks) ? { ...saved, workers } : { ...seeded });
+        } else {
+          // Even if the save fails (e.g. column not migrated yet), show the tool
+          // so the maps are usable; just warn that changes won't persist yet.
+          setProject(seeded);
+          setError(saveRes.error
+            ? `Tallennus ei vielä käytössä (${saveRes.error}) — kartat näkyvät, mutta muutoksia ei tallenneta.`
+            : null);
+        }
+        setLoading(false);
+        return;
       }
+
+      // Backend unreachable (route missing, server asleep, network) → still show
+      // the tool from the bundled floor data so the maps are usable. Edits won't
+      // persist until the connection is back.
+      setProject({ ...emptyProjectData(), marks: baseMarks, workers });
+      setError(projRes.error
+        ? `Yhteys palvelimeen epäonnistui (${projRes.error}) — muutoksia ei tallenneta.`
+        : "Yhteys palvelimeen epäonnistui — muutoksia ei tallenneta.");
       setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -247,6 +283,20 @@ export default function AdminProjectPage() {
         saving={saving}
         onBack={backToGig}
       />
+      {error && (
+        <div
+          style={{
+            position: "fixed", top: 70, left: "50%", transform: "translateX(-50%)", zIndex: 60,
+            maxWidth: "min(92vw, 560px)", padding: "9px 16px", borderRadius: 11,
+            background: "rgba(80,60,20,0.85)", border: "1px solid rgba(255,200,90,0.35)",
+            color: "rgba(255,236,200,0.95)", fontSize: 12.5, textAlign: "center",
+            backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)",
+            boxShadow: "0 12px 34px rgba(0,0,0,0.45)",
+          }}
+        >
+          {error}
+        </div>
+      )}
       <main style={{ position: "relative", zIndex: 10, height: "calc(100% - 62px)" }}>
         {tab === "dashboard" && (
           <Dashboard project={project} workerStats={workerStats} workerName={workerName} onGoToFloor={onGoToFloor} />

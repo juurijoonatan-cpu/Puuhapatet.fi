@@ -44,6 +44,12 @@ export default function HoursView({ workers, hours, hourLog, stats, onAddHours }
   const combined = workers.reduce((sum, w) => sum + (hours[w.id] || 0), 0);
   const statFor = (id: string) => stats.find((s) => s.worker === id);
 
+  // Team throughput / hourly-rate optimisation across the assigned workers.
+  const teamWashed = workers.reduce((a, w) => a + (statFor(w.id)?.washed ?? 0), 0);
+  const teamRevenue = workers.reduce((a, w) => a + (statFor(w.id)?.revenueCents ?? 0), 0) / 100;
+  const teamEurPerHour = combined > 0 ? teamRevenue / combined : 0;
+  const teamWinPerHour = combined > 0 ? teamWashed / combined : 0;
+
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: m ? "18px 12px 36px" : "26px 30px 40px" }}>
       <div style={{ maxWidth: "980px", margin: "0 auto" }}>
@@ -54,20 +60,38 @@ export default function HoursView({ workers, hours, hourLog, stats, onAddHours }
           <h1 style={{ margin: 0, fontSize: m ? "22px" : "30px", fontWeight: 700, letterSpacing: "-0.01em" }}>Työaikakirjanpito & optimointi</h1>
         </div>
 
-        {/* Combined total */}
-        <div style={{ display: "flex", flexDirection: m ? "column" : "row", alignItems: m ? "stretch" : "center", justifyContent: "space-between", gap: m ? "16px" : "0", padding: m ? "20px" : "24px 28px", background: "linear-gradient(155deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))", border: "1px solid rgba(255,255,255,0.09)", borderRadius: "22px", backdropFilter: "blur(22px)", WebkitBackdropFilter: "blur(22px)", marginBottom: m ? "12px" : "16px" }}>
-          <div>
-            <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", letterSpacing: "0.14em", color: "rgba(255,255,255,0.45)", marginBottom: "7px" }}>YHTEENSÄ TEHTYJÄ TUNTEJA</div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: "8px" }}>
-              <span style={{ fontSize: m ? "38px" : "48px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{fmtH(combined)}</span>
-              <span style={{ fontSize: "18px", color: "rgba(255,255,255,0.45)", fontWeight: 500 }}>h</span>
+        {/* Combined total + team throughput */}
+        <div style={{ display: "flex", flexDirection: "column", gap: m ? "14px" : "18px", padding: m ? "18px" : "24px 28px", background: "linear-gradient(155deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))", border: "1px solid rgba(255,255,255,0.09)", borderRadius: "22px", backdropFilter: "blur(22px)", WebkitBackdropFilter: "blur(22px)", marginBottom: m ? "12px" : "16px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "16px" }}>
+            <div>
+              <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", letterSpacing: "0.14em", color: "rgba(255,255,255,0.45)", marginBottom: "7px" }}>YHTEENSÄ TEHTYJÄ TUNTEJA</div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: "8px" }}>
+                <span style={{ fontSize: m ? "38px" : "48px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{fmtH(combined)}</span>
+                <span style={{ fontSize: "18px", color: "rgba(255,255,255,0.45)", fontWeight: 500 }}>h</span>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: m ? "20px" : "28px" }}>
+              {workers.map((w) => (
+                <div key={w.id} style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: "12px", color: "rgba(255,255,255,0.45)", marginBottom: "3px" }}>{w.name}</div>
+                  <div style={{ fontSize: "22px", fontWeight: 600, fontFamily: "var(--font-jetbrains-mono, monospace)" }}>{fmtH(hours[w.id] || 0)} h</div>
+                </div>
+              ))}
             </div>
           </div>
-          <div style={{ display: "flex", gap: m ? "0" : "28px", justifyContent: m ? "space-between" : "flex-end", borderTop: m ? "1px solid rgba(255,255,255,0.08)" : "none", paddingTop: m ? "14px" : "0" }}>
-            {workers.map((w) => (
-              <div key={w.id} style={{ textAlign: m ? "left" : "right" }}>
-                <div style={{ fontSize: "12px", color: "rgba(255,255,255,0.45)", marginBottom: "3px" }}>{w.name}</div>
-                <div style={{ fontSize: "22px", fontWeight: 600, fontFamily: "var(--font-jetbrains-mono, monospace)" }}>{fmtH(hours[w.id] || 0)} h</div>
+
+          {/* Hourly-rate optimisation across the team */}
+          <div style={{ display: "grid", gridTemplateColumns: m ? "repeat(2, minmax(0,1fr))" : "repeat(4, minmax(0,1fr))", gap: "10px", paddingTop: m ? "14px" : "18px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+            {[
+              { label: "TIIMIN €/H", val: teamEurPerHour > 0 ? fmtEur(teamEurPerHour) : "—", sub: "tuotto / tunti" },
+              { label: "IKK / H", val: teamWinPerHour > 0 ? fmtH(teamWinPerHour) : "—", sub: "tahti" },
+              { label: "IKKUNAT", val: String(teamWashed), sub: "pesty" },
+              { label: "LIIKEVAIHTO", val: fmtEur(teamRevenue), sub: "kertynyt" },
+            ].map((c) => (
+              <div key={c.label} style={{ padding: "12px 14px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "13px" }}>
+                <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)", marginBottom: "6px" }}>{c.label}</div>
+                <div style={{ fontSize: "20px", fontWeight: 700, lineHeight: 1 }}>{c.val}</div>
+                <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.4)", marginTop: "3px" }}>{c.sub}</div>
               </div>
             ))}
           </div>
@@ -99,11 +123,11 @@ export default function HoursView({ workers, hours, hourLog, stats, onAddHours }
                     { label: "PESTY", val: String(st?.washed ?? 0), sub: "ikkunaa" },
                     { label: "IKK / H", val: st && st.windowsPerHour > 0 ? fmtH(st.windowsPerHour) : "—", sub: "tahti" },
                     { label: "€ / H", val: st && st.eurPerHour > 0 ? fmtEur(st.eurPerHour) : "—", sub: "tuotto" },
-                  ].map((m) => (
-                    <div key={m.label} style={{ padding: "11px 12px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "13px" }}>
-                      <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)", marginBottom: "5px" }}>{m.label}</div>
-                      <div style={{ fontSize: "18px", fontWeight: 700, lineHeight: 1 }}>{m.val}</div>
-                      <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.4)", marginTop: "2px" }}>{m.sub}</div>
+                  ].map((c) => (
+                    <div key={c.label} style={{ padding: "11px 12px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "13px" }}>
+                      <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)", marginBottom: "5px" }}>{c.label}</div>
+                      <div style={{ fontSize: "18px", fontWeight: 700, lineHeight: 1 }}>{c.val}</div>
+                      <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.4)", marginTop: "2px" }}>{c.sub}</div>
                     </div>
                   ))}
                 </div>

@@ -161,7 +161,7 @@ function Router() {
         </ProtectedRoute>
       </Route>
       <Route path="/admin/gig/:id/projekti">
-        <ProtectedRoute>
+        <ProtectedRoute bare>
           <AdminProjectPage />
         </ProtectedRoute>
       </Route>

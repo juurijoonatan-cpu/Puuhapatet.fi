@@ -206,9 +206,9 @@ export default function AdminProjectPage() {
 
   // ── Render ──────────────────────────────────────────────────────────────────
   const shell = (children: React.ReactNode) => (
-    <div className="fr8-root" style={{ position: "fixed", inset: 0, background: "#000000", color: "#fff", overflow: "hidden", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>
-      <div className="anim-drift" style={{ position: "absolute", top: "-30%", left: "50%", transform: "translateX(-50%)", width: "1100px", height: "700px", background: "radial-gradient(ellipse at center, rgba(120,120,160,0.10), transparent 65%)", pointerEvents: "none" }} />
-      <div style={{ position: "absolute", bottom: "-20%", right: "-5%", width: "700px", height: "600px", background: "radial-gradient(ellipse at center, rgba(80,90,120,0.08), transparent 65%)", pointerEvents: "none" }} />
+    <div className="fr8-root" style={{ position: "fixed", inset: 0, background: "#060607", color: "#fff", overflow: "hidden", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>
+      {/* Single, very subtle top glow — kept faint so the dashboard reads clean */}
+      <div style={{ position: "absolute", top: "-35%", left: "50%", transform: "translateX(-50%)", width: "1000px", height: "620px", background: "radial-gradient(ellipse at center, rgba(120,124,150,0.05), transparent 68%)", pointerEvents: "none" }} />
       {children}
     </div>
   );

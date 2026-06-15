@@ -5,6 +5,7 @@
  */
 import { useState } from "react";
 import type { ProjHourEntry, WorkerStat } from "@shared/project";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface Worker { id: string; name: string; initial: string; }
 
@@ -30,6 +31,7 @@ const card: React.CSSProperties = {
 
 export default function HoursView({ workers, hours, hourLog, stats, onAddHours }: Props) {
   const [inputs, setInputs] = useState<Record<string, string>>({});
+  const m = useIsMobile();
 
   function handleAdd(w: string) {
     const s = (inputs[w] || "").trim().replace(",", ".");
@@ -43,27 +45,27 @@ export default function HoursView({ workers, hours, hourLog, stats, onAddHours }
   const statFor = (id: string) => stats.find((s) => s.worker === id);
 
   return (
-    <div style={{ height: "100%", overflowY: "auto", padding: "26px 30px 40px" }}>
+    <div style={{ height: "100%", overflowY: "auto", padding: m ? "18px 12px 36px" : "26px 30px 40px" }}>
       <div style={{ maxWidth: "980px", margin: "0 auto" }}>
 
         {/* Header */}
-        <div style={{ marginBottom: "22px" }}>
+        <div style={{ marginBottom: m ? "14px" : "22px" }}>
           <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", letterSpacing: "0.18em", color: "rgba(255,255,255,0.4)", marginBottom: "7px" }}>TEHDYT TUNNIT</div>
-          <h1 style={{ margin: 0, fontSize: "30px", fontWeight: 700, letterSpacing: "-0.01em" }}>Työaikakirjanpito & optimointi</h1>
+          <h1 style={{ margin: 0, fontSize: m ? "22px" : "30px", fontWeight: 700, letterSpacing: "-0.01em" }}>Työaikakirjanpito & optimointi</h1>
         </div>
 
         {/* Combined total */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "24px 28px", background: "linear-gradient(155deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))", border: "1px solid rgba(255,255,255,0.09)", borderRadius: "22px", backdropFilter: "blur(22px)", WebkitBackdropFilter: "blur(22px)", marginBottom: "16px" }}>
+        <div style={{ display: "flex", flexDirection: m ? "column" : "row", alignItems: m ? "stretch" : "center", justifyContent: "space-between", gap: m ? "16px" : "0", padding: m ? "20px" : "24px 28px", background: "linear-gradient(155deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))", border: "1px solid rgba(255,255,255,0.09)", borderRadius: "22px", backdropFilter: "blur(22px)", WebkitBackdropFilter: "blur(22px)", marginBottom: m ? "12px" : "16px" }}>
           <div>
             <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", letterSpacing: "0.14em", color: "rgba(255,255,255,0.45)", marginBottom: "7px" }}>YHTEENSÄ TEHTYJÄ TUNTEJA</div>
             <div style={{ display: "flex", alignItems: "baseline", gap: "8px" }}>
-              <span style={{ fontSize: "48px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{fmtH(combined)}</span>
+              <span style={{ fontSize: m ? "38px" : "48px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{fmtH(combined)}</span>
               <span style={{ fontSize: "18px", color: "rgba(255,255,255,0.45)", fontWeight: 500 }}>h</span>
             </div>
           </div>
-          <div style={{ display: "flex", gap: "28px" }}>
+          <div style={{ display: "flex", gap: m ? "0" : "28px", justifyContent: m ? "space-between" : "flex-end", borderTop: m ? "1px solid rgba(255,255,255,0.08)" : "none", paddingTop: m ? "14px" : "0" }}>
             {workers.map((w) => (
-              <div key={w.id} style={{ textAlign: "right" }}>
+              <div key={w.id} style={{ textAlign: m ? "left" : "right" }}>
                 <div style={{ fontSize: "12px", color: "rgba(255,255,255,0.45)", marginBottom: "3px" }}>{w.name}</div>
                 <div style={{ fontSize: "22px", fontWeight: 600, fontFamily: "var(--font-jetbrains-mono, monospace)" }}>{fmtH(hours[w.id] || 0)} h</div>
               </div>
@@ -72,7 +74,7 @@ export default function HoursView({ workers, hours, hourLog, stats, onAddHours }
         </div>
 
         {/* Worker cards */}
-        <div style={{ display: "grid", gridTemplateColumns: workers.length > 1 ? "1fr 1fr" : "1fr", gap: "16px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : (workers.length > 1 ? "1fr 1fr" : "1fr"), gap: m ? "12px" : "16px" }}>
           {workers.map((w) => {
             const entries = hourLog.filter((e) => e.worker === w.id).slice(0, 4);
             const st = statFor(w.id);

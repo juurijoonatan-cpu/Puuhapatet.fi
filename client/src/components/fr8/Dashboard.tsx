@@ -3,6 +3,7 @@
  * Adds a per-worker "TEKIJÄT" strip (window counts + €/h optimisation).
  */
 import { allPoints, type ProjectData, type WindowStatus, type WorkerStat } from "@shared/project";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface Props {
   project: ProjectData;
@@ -42,6 +43,7 @@ const mono: React.CSSProperties = {
 };
 
 export default function Dashboard({ project, workerStats, workerName, onGoToFloor }: Props) {
+  const m = useIsMobile();
   const FLOORS = project.building.floors;
   const PRICE = project.pricePerWindow;
   const CIRC = 2 * Math.PI * 80;
@@ -84,23 +86,23 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
     .sort((a, b) => b.washed - a.washed);
 
   return (
-    <div style={{ height: "100%", overflowY: "auto", padding: "26px 30px 40px" }}>
+    <div style={{ height: "100%", overflowY: "auto", padding: m ? "16px 12px 36px" : "26px 30px 40px" }}>
       <div style={{ maxWidth: "1400px", margin: "0 auto" }}>
 
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginBottom: "20px" }}>
+        <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: "12px", marginBottom: m ? "14px" : "20px" }}>
           <div>
             <div style={{ ...mono, letterSpacing: "0.18em", marginBottom: "7px" }}>KOKONAISTILANNE</div>
-            <h1 style={{ margin: 0, fontSize: "30px", fontWeight: 700, letterSpacing: "-0.01em" }}>Projektin yleiskatsaus</h1>
+            <h1 style={{ margin: 0, fontSize: m ? "22px" : "30px", fontWeight: 700, letterSpacing: "-0.01em" }}>Projektin yleiskatsaus</h1>
           </div>
-          <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.4)", letterSpacing: "0.06em" }}>
+          <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: m ? "10px" : "11px", color: "rgba(255,255,255,0.4)", letterSpacing: "0.06em", textAlign: "right", flexShrink: 0 }}>
             {FLOORS.length} KERROSTA · {total > 0 ? total : "…"} IKKUNAA
           </div>
         </div>
 
         {/* Row 1: ring + revenue */}
-        <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr", gap: "16px", marginBottom: "16px" }}>
-          <div className="anim-fadeUp-0" style={{ ...card, borderRadius: "22px", display: "flex", gap: "26px", alignItems: "center", padding: "30px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1.35fr 1fr", gap: "14px", marginBottom: "14px" }}>
+          <div className="anim-fadeUp-0" style={{ ...card, borderRadius: "22px", display: "flex", flexDirection: m ? "column" : "row", gap: m ? "20px" : "26px", alignItems: m ? "flex-start" : "center", padding: m ? "22px" : "30px" }}>
             <div style={{ position: "relative", width: "184px", height: "184px", flexShrink: 0 }}>
               <svg width="184" height="184" viewBox="0 0 184 184" style={{ transform: "rotate(-90deg)" }}>
                 <circle cx="92" cy="92" r="80" fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="11" />
@@ -155,7 +157,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
         </div>
 
         {/* Row 2: P1 + P2 + mini cards */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px", marginBottom: "16px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: m ? "1fr 1fr" : "1fr 1fr 1fr", gap: m ? "10px" : "16px", marginBottom: "14px" }}>
           {[{ label: "Prioriteetti 1", rgb: "255,72,72", data: p1 }, { label: "Prioriteetti 2", rgb: "255,205,40", data: p2 }].map((g, gi) => (
             <div key={g.label} className={`anim-fadeUp-${gi + 2}`} style={{ ...card, padding: "22px" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "18px" }}>
@@ -178,13 +180,13 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             </div>
           ))}
 
-          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-            {[{ label: "TÄNÄÄN TEHTY", val: todayWindows, sub: `ikkunaa · ${euro(todayWindows * PRICE)}`, cls: "anim-fadeUp-4" }, { label: "ARVIO JÄLJELLÄ", val: remaining, sub: `ikkunaa · ${estStr}`, cls: "anim-fadeUp-5" }].map((m) => (
-              <div key={m.label} className={m.cls} style={{ ...card, flex: 1, padding: "18px 20px" }}>
-                <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.4)", marginBottom: "9px" }}>{m.label}</div>
-                <div style={{ display: "flex", alignItems: "baseline", gap: "8px" }}>
-                  <span style={{ fontSize: "25px", fontWeight: 700 }}>{m.val}</span>
-                  <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.45)" }}>{m.sub}</span>
+          <div style={{ display: "flex", flexDirection: m ? "row" : "column", gap: m ? "10px" : "12px", gridColumn: m ? "1 / -1" : undefined }}>
+            {[{ label: "TÄNÄÄN TEHTY", val: todayWindows, sub: `ikkunaa · ${euro(todayWindows * PRICE)}`, cls: "anim-fadeUp-4" }, { label: "ARVIO JÄLJELLÄ", val: remaining, sub: `ikkunaa · ${estStr}`, cls: "anim-fadeUp-5" }].map((mc) => (
+              <div key={mc.label} className={mc.cls} style={{ ...card, flex: 1, padding: "16px 18px" }}>
+                <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.4)", marginBottom: "9px" }}>{mc.label}</div>
+                <div style={{ display: "flex", alignItems: "baseline", gap: "8px", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: "25px", fontWeight: 700 }}>{mc.val}</span>
+                  <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.45)" }}>{mc.sub}</span>
                 </div>
               </div>
             ))}
@@ -193,9 +195,9 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
 
         {/* Workers strip — per-worker window counts & €/h optimisation */}
         {activeWorkers.length > 0 && (
-          <div className="anim-fadeUp-6" style={{ ...card, padding: "20px 24px", marginBottom: "16px" }}>
+          <div className="anim-fadeUp-6" style={{ ...card, padding: m ? "18px" : "20px 24px", marginBottom: "14px" }}>
             <div style={{ ...mono, marginBottom: "16px" }}>TEKIJÄT · IKKUNAT & TEHO</div>
-            <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(activeWorkers.length, 4)}, 1fr)`, gap: "12px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(activeWorkers.length, m ? 2 : 4)}, 1fr)`, gap: m ? "10px" : "12px" }}>
               {activeWorkers.map((s) => {
                 const share = washed > 0 ? (s.washed / washed) * 100 : 0;
                 return (
@@ -222,8 +224,8 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
         )}
 
         {/* Row 3: floor breakdown + activity */}
-        <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr", gap: "16px" }}>
-          <div className="anim-fadeUp-7" style={{ ...card, padding: "22px 24px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1.7fr 1fr", gap: m ? "14px" : "16px" }}>
+          <div className="anim-fadeUp-7" style={{ ...card, padding: m ? "18px" : "22px 24px" }}>
             <div style={{ ...mono, marginBottom: "16px" }}>KERROKSITTAIN</div>
             <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
               {FLOORS.map((f) => {
@@ -246,7 +248,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             </div>
           </div>
 
-          <div className="anim-fadeUp-8" style={{ ...card, padding: "22px 24px" }}>
+          <div className="anim-fadeUp-8" style={{ ...card, padding: m ? "18px" : "22px 24px" }}>
             <div style={{ ...mono, marginBottom: "16px" }}>VIIMEISIN TOIMINTA</div>
             {activity.length > 0 ? (
               <div style={{ display: "flex", flexDirection: "column", gap: "11px" }}>

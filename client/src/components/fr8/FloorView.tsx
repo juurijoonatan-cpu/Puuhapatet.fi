@@ -4,8 +4,9 @@
  * prototype; only persistence (handled by the parent) and the plan image base
  * path differ.
  */
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import type { ProjMarksData, WindowStatus, ProjCustomMark } from "@shared/project";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 const CIRC_S = 2 * Math.PI * 17; // mini ring
 
@@ -63,6 +64,13 @@ function filterBtnStyle(active: boolean): React.CSSProperties {
   return { padding: "7px 13px", borderRadius: "10px", border: "none", cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px", fontWeight: active ? 600 : 500, background: active ? "rgba(255,255,255,0.92)" : "transparent", color: active ? "#0a0a0c" : "rgba(255,255,255,0.55)", transition: "all .15s" };
 }
 
+const zoomBtnStyle: React.CSSProperties = {
+  width: "28px", height: "28px", display: "flex", alignItems: "center", justifyContent: "center",
+  borderRadius: "8px", border: "none", cursor: "pointer", background: "transparent",
+  color: "rgba(255,255,255,0.75)", fontSize: "16px", fontWeight: 600, lineHeight: 1,
+  fontFamily: "var(--font-onest, system-ui, sans-serif)",
+};
+
 const LEGEND = [
   { label: "P1 pesemättä", rgb: "255,140,178" }, { label: "P2 pesemättä", rgb: "240,226,150" },
   { label: "Kesken", rgb: "188,150,255" }, { label: "P1 pesty", rgb: "255,72,72" }, { label: "P2 pesty", rgb: "255,205,40" },
@@ -92,6 +100,58 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   const dragKeyRef = useRef<string | null>(null);
   const movedRef = useRef(false);
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
+  const isMobile = useIsMobile();
+
+  // Zoom & pan (so tiny dots are tappable on phones). The plan + orbs share one
+  // transformed wrapper, so the dot %-coordinate math (which reads the image's
+  // post-transform rect) stays correct at any zoom.
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const panRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+  const pinchRef = useRef<number | null>(null);
+  const pannedRef = useRef(false);
+  const clampZoom = (z: number) => Math.min(5, Math.max(1, z));
+  const zoomBy = (factor: number) => setZoom((z) => { const nz = clampZoom(z * factor); if (nz === 1) setPan({ x: 0, y: 0 }); return nz; });
+  const resetView = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
+
+  // Reset zoom/pan when switching floors.
+  useEffect(() => { resetView(); }, [floor]);
+
+  function touchDist(t: React.TouchList) {
+    const dx = t[0].clientX - t[1].clientX, dy = t[0].clientY - t[1].clientY;
+    return Math.hypot(dx, dy);
+  }
+  function onSceneWheel(e: React.WheelEvent) {
+    if (editMode) return;
+    e.preventDefault();
+    zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12);
+  }
+  function onSceneTouchStart(e: React.TouchEvent) {
+    if (editMode) return;
+    if (e.touches.length === 2) { pinchRef.current = touchDist(e.touches); panRef.current = null; }
+    else if (e.touches.length === 1 && zoom > 1) {
+      const p = e.touches[0];
+      panRef.current = { x: p.clientX, y: p.clientY, px: pan.x, py: pan.y };
+      pannedRef.current = false;
+    }
+  }
+  function onSceneTouchMove(e: React.TouchEvent) {
+    if (editMode) return;
+    if (e.touches.length === 2 && pinchRef.current != null) {
+      e.preventDefault();
+      const d = touchDist(e.touches);
+      zoomBy(d / pinchRef.current);
+      pinchRef.current = d;
+    } else if (panRef.current && e.touches.length === 1) {
+      e.preventDefault();
+      const p = e.touches[0];
+      setPan({ x: panRef.current.px + (p.clientX - panRef.current.x), y: panRef.current.py + (p.clientY - panRef.current.y) });
+      pannedRef.current = true;
+    }
+  }
+  function onSceneTouchEnd(e: React.TouchEvent) {
+    if (e.touches.length === 0) { pinchRef.current = null; panRef.current = null; }
+  }
 
   const points = getPoints(floor, marks, posOverrides, customMarks, deleted);
   const floorWashed = points.filter((p) => (statuses[p.key] || "ei") === "pesty").length;
@@ -142,6 +202,8 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
 
   function onOrbClick(pt: Point, e: React.MouseEvent) {
     e.stopPropagation();
+    // Ignore the click that ends a pan gesture (so panning never toggles a dot).
+    if (pannedRef.current) { pannedRef.current = false; return; }
     if (editMode && placeMode === "del") { onDeleteMark(pt.key); return; }
     if (!editMode) setActiveOrb(activeOrb === pt.key ? null : pt.key);
   }
@@ -206,7 +268,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
     <div style={{ position: "relative", height: "100%", width: "100%", display: "flex", flexDirection: "column" }}>
 
       {/* Sub-navbar */}
-      <div style={{ position: "relative", zIndex: 15, display: "flex", alignItems: "center", gap: "18px", flexWrap: "wrap", padding: "14px 26px", borderBottom: "1px solid rgba(255,255,255,0.07)", background: "rgba(8,8,10,0.5)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)" }}>
+      <div style={{ position: "relative", zIndex: 15, display: "flex", alignItems: "center", gap: isMobile ? "10px" : "18px", flexWrap: "wrap", padding: isMobile ? "10px 12px" : "14px 26px", borderBottom: "1px solid rgba(255,255,255,0.07)", background: "rgba(8,8,10,0.5)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)" }}>
 
         {/* Floor selector */}
         <div style={{ display: "flex", alignItems: "center", gap: "7px", padding: "5px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: "13px" }}>
@@ -248,16 +310,28 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
         </div>
 
         {/* Right: legend + controls */}
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "14px" }}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px", alignItems: "center" }}>
-            {LEGEND.map((l) => (
-              <div key={l.label} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                <span style={{ width: "9px", height: "9px", borderRadius: "50%", background: `rgb(${l.rgb})`, boxShadow: `0 0 7px rgba(${l.rgb},0.7)` }} />
-                <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.55)", whiteSpace: "nowrap" }}>{l.label}</span>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: isMobile ? "8px" : "14px" }}>
+          {!isMobile && (
+            <>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px", alignItems: "center" }}>
+                {LEGEND.map((l) => (
+                  <div key={l.label} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span style={{ width: "9px", height: "9px", borderRadius: "50%", background: `rgb(${l.rgb})`, boxShadow: `0 0 7px rgba(${l.rgb},0.7)` }} />
+                    <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.55)", whiteSpace: "nowrap" }}>{l.label}</span>
+                  </div>
+                ))}
               </div>
-            ))}
+              <div style={{ width: "1px", height: "26px", background: "rgba(255,255,255,0.1)" }} />
+            </>
+          )}
+
+          {/* Zoom controls */}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px", padding: "4px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: "11px" }}>
+            <button onClick={() => zoomBy(1 / 1.3)} title="Loitonna" style={zoomBtnStyle}>−</button>
+            <span style={{ minWidth: 34, textAlign: "center", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.6)" }}>{Math.round(zoom * 100)}%</span>
+            <button onClick={() => zoomBy(1.3)} title="Lähennä" style={zoomBtnStyle}>+</button>
+            <button onClick={resetView} title="Nollaa näkymä" style={{ ...zoomBtnStyle, fontSize: 13 }}>⟳</button>
           </div>
-          <div style={{ width: "1px", height: "26px", background: "rgba(255,255,255,0.1)" }} />
 
           {/* Edit button */}
           <button onClick={toggleEdit} style={{ display: "flex", alignItems: "center", gap: "7px", padding: "8px 13px", borderRadius: "11px", cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12.5px", fontWeight: 600, transition: "all .16s", border: `1px solid ${editMode ? "transparent" : "rgba(255,255,255,0.12)"}`, background: editMode ? "#fff" : "rgba(255,255,255,0.04)", color: editMode ? "#0a0a0c" : "rgba(255,255,255,0.7)" }}>
@@ -292,7 +366,13 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
       </div>
 
       {/* Floor plan */}
-      <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", padding: "26px", minHeight: 0 }}>
+      <div
+        onWheel={onSceneWheel}
+        onTouchStart={onSceneTouchStart}
+        onTouchMove={onSceneTouchMove}
+        onTouchEnd={onSceneTouchEnd}
+        style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", padding: isMobile ? "10px" : "26px", minHeight: 0, overflow: "hidden", touchAction: zoom > 1 && !editMode ? "none" : "auto" }}
+      >
 
         {/* Edit banner */}
         {editMode && (
@@ -305,9 +385,9 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
         )}
 
         {marks ? (
-          <div style={{ position: "relative", display: "inline-block", lineHeight: 0 }}>
+          <div style={{ position: "relative", display: "inline-block", lineHeight: 0, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "center center", transition: panRef.current || pinchRef.current ? "none" : "transform .18s ease", willChange: "transform" }}>
             <img ref={planRef} src={`${planBase}${floor}.png`} alt="pohjapiirros"
-              style={{ display: "block", maxWidth: "100%", maxHeight: "calc(100vh - 240px)", width: "auto", height: "auto", userSelect: "none" } as React.CSSProperties}
+              style={{ display: "block", maxWidth: "100%", maxHeight: isMobile ? "calc(100vh - 210px)" : "calc(100vh - 240px)", width: "auto", height: "auto", userSelect: "none" } as React.CSSProperties}
               draggable={false} />
 
             {/* Orbs layer */}

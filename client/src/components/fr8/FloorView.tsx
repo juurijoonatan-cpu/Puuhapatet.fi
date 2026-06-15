@@ -107,11 +107,28 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   // post-transform rect) stays correct at any zoom.
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const sceneRef = useRef<HTMLDivElement>(null);
   const panRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
   const pinchRef = useRef<number | null>(null);
   const pannedRef = useRef(false);
   const clampZoom = (z: number) => Math.min(5, Math.max(1, z));
-  const zoomBy = (factor: number) => setZoom((z) => { const nz = clampZoom(z * factor); if (nz === 1) setPan({ x: 0, y: 0 }); return nz; });
+
+  // Keep the plan from being dragged past its own edges, so the hard edge lines /
+  // background gaps never appear at the sides when zoomed. Pan is bounded to the
+  // overflow of the scaled image over the visible scene; when the image is not
+  // larger than the scene it stays locked to centre.
+  const clampPan = (p: { x: number; y: number }, z: number) => {
+    const scene = sceneRef.current, img = planRef.current;
+    if (!scene || !img) return p;
+    const maxX = Math.max(0, (img.offsetWidth * z - scene.clientWidth) / 2);
+    const maxY = Math.max(0, (img.offsetHeight * z - scene.clientHeight) / 2);
+    return { x: Math.max(-maxX, Math.min(maxX, p.x)), y: Math.max(-maxY, Math.min(maxY, p.y)) };
+  };
+  const zoomBy = (factor: number) => setZoom((z) => {
+    const nz = clampZoom(z * factor);
+    setPan((p) => (nz === 1 ? { x: 0, y: 0 } : clampPan(p, nz)));
+    return nz;
+  });
   const resetView = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
 
   // Reset zoom/pan when switching floors.
@@ -145,7 +162,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
     } else if (panRef.current && e.touches.length === 1) {
       e.preventDefault();
       const p = e.touches[0];
-      setPan({ x: panRef.current.px + (p.clientX - panRef.current.x), y: panRef.current.py + (p.clientY - panRef.current.y) });
+      setPan(clampPan({ x: panRef.current.px + (p.clientX - panRef.current.x), y: panRef.current.py + (p.clientY - panRef.current.y) }, zoom));
       pannedRef.current = true;
     }
   }
@@ -367,6 +384,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
 
       {/* Floor plan */}
       <div
+        ref={sceneRef}
         onWheel={onSceneWheel}
         onTouchStart={onSceneTouchStart}
         onTouchMove={onSceneTouchMove}

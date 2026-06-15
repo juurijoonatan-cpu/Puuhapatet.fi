@@ -64,6 +64,16 @@ export default function AdminProjectPage() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latest = useRef<ProjectData | null>(null);
 
+  // Lock browser page-zoom while the tool is open so pinch/scroll gestures zoom
+  // only the floor-plan map (which has its own in-app zoom) — not the whole
+  // page and its stats. The previous viewport is restored on unmount.
+  useEffect(() => {
+    const vp = document.querySelector('meta[name="viewport"]');
+    const prev = vp?.getAttribute("content") ?? null;
+    vp?.setAttribute("content", "width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no");
+    return () => { if (vp && prev != null) vp.setAttribute("content", prev); };
+  }, []);
+
   // ── Load (and seed / heal if necessary) ─────────────────────────────────────
   useEffect(() => {
     if (!jobId) { setError("Virheellinen keikka."); setLoading(false); return; }

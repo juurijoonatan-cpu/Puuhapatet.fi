@@ -3,6 +3,7 @@
  */
 
 import type { GigData, GigTotals } from "@shared/gig";
+import type { ProjectData, ProjTotals, WorkerStat } from "@shared/project";
 
 // Defaults to the Render backend in production; override with VITE_API_BASE
 // (e.g. "" for same-origin) when running the server locally.
@@ -431,6 +432,17 @@ export const api = {
   }) => request<{ ok: boolean; id?: string; amountCents: number; gigData: GigData }>(
     "POST", `/api/jobs/${jobId}/gig/invoice`, data,
   ),
+
+  // ─── Project / floor-plan window tool (FR8 projektinäkymä) ──────────────────
+  getProject: (jobId: number) =>
+    request<{ ok: boolean; project: ProjectData | null; totals?: ProjTotals; workerStats?: WorkerStat[] }>(
+      "GET", `/api/jobs/${jobId}/project`,
+    ),
+
+  updateProject: (jobId: number, projectData: ProjectData) =>
+    request<{ ok: boolean; project: ProjectData; totals: ProjTotals; workerStats: WorkerStat[] }>(
+      "PATCH", `/api/jobs/${jobId}/project`, { projectData },
+    ),
 
   // Legacy compat stubs
   getJob: (_jobId: string): Promise<ApiResponse<{ ok: boolean; job?: unknown }>> =>

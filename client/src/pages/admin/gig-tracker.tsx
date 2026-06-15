@@ -10,7 +10,7 @@ import { useEffect, useState } from "react";
 import { Link, useRoute } from "wouter";
 import {
   ArrowLeft, Plus, Minus, RotateCcw, Share2, Copy, Check, FileText,
-  Send, AlertCircle, ChevronDown, Receipt, ExternalLink,
+  Send, AlertCircle, ChevronDown, Receipt, ExternalLink, LayoutDashboard, ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -199,6 +199,20 @@ export default function AdminGigTrackerPage() {
             </p>
           </div>
         </div>
+
+        {/* Open project view — floor-plan mapping, dashboard & work hours */}
+        <Link href={`/admin/gig/${jobId}/projekti`}>
+          <button className="w-full mb-4 group flex items-center gap-4 rounded-2xl p-4 text-left transition-all active:scale-[0.99] bg-gradient-to-br from-zinc-900 to-zinc-800 dark:from-zinc-900 dark:to-black text-white premium-shadow hover:brightness-110">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/10">
+              <LayoutDashboard className="h-6 w-6" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold">Avaa projektinäkymä</p>
+              <p className="text-sm text-white/60 truncate">Pohjapiirros & ikkunakartta · kojelauta · työtunnit</p>
+            </div>
+            <ChevronRight className="h-5 w-5 shrink-0 text-white/50 transition-transform group-hover:translate-x-0.5" />
+          </button>
+        </Link>
 
         {/* Accrual headline */}
         <Card className="p-5 bg-card border-0 premium-shadow mb-4">

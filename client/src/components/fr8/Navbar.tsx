@@ -2,7 +2,8 @@
  * FR8 projektinäkymä — top navbar (ported from fr8-ikkunat prototype).
  * Adds a back button to return to the gig page and a current-worker chip.
  */
-import { ArrowLeft } from "lucide-react";
+import { useState, useEffect } from "react";
+import { ArrowLeft, Maximize2, Minimize2 } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 export type Fr8Tab = "dashboard" | "floor" | "hours";
@@ -41,6 +42,20 @@ function tabStyle(active: boolean): React.CSSProperties {
 
 export default function Navbar({ activeTab, onTabChange, buildingName, buildingAddress, currentWorkerName, saving, onBack }: NavbarProps) {
   const m = useIsMobile();
+  const [isFs, setIsFs] = useState(false);
+  const canFs = typeof document !== "undefined" && !!document.documentElement.requestFullscreen;
+
+  useEffect(() => {
+    const onChange = () => setIsFs(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  const toggleFs = () => {
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    else document.documentElement.requestFullscreen?.().catch(() => {});
+  };
+
   return (
     <nav
       style={{
@@ -104,7 +119,22 @@ export default function Navbar({ activeTab, onTabChange, buildingName, buildingA
       </div>
 
       {/* Project info + status */}
-      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "13px", flexShrink: 0 }}>
+      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: m ? "8px" : "13px", flexShrink: 0 }}>
+        {canFs && (
+          <button
+            onClick={toggleFs}
+            title={isFs ? "Poistu koko näytöstä" : "Koko näyttö"}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: "34px", height: "34px", borderRadius: "10px", cursor: "pointer",
+              border: `1px solid ${isFs ? "transparent" : "rgba(255,255,255,0.12)"}`,
+              background: isFs ? "#fff" : "rgba(255,255,255,0.04)",
+              color: isFs ? "#0a0a0c" : "rgba(255,255,255,0.7)", flexShrink: 0,
+            }}
+          >
+            {isFs ? <Minimize2 style={{ width: 15, height: 15 }} /> : <Maximize2 style={{ width: 15, height: 15 }} />}
+          </button>
+        )}
         {currentWorkerName && (
           <div
             style={{

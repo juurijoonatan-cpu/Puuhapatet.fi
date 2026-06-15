@@ -5,7 +5,8 @@ import { MarksData, Status, CustomMark } from "./AppShell";
 
 const FLOORS = ["K", "1", "2", "3", "4", "5"];
 const CIRC_S = 2 * Math.PI * 17; // mini ring
-const PRICE = 35;
+// Sopimuksen PT-2026-02 sektorikohtaiset hinnat (P1 = punaiset, P2 = keltaiset).
+const PRICES: Record<1 | 2, number> = { 1: 45, 2: 39 };
 
 interface Point { key: string; p: 1 | 2; x: number; y: number; }
 
@@ -92,6 +93,7 @@ export default function FloorView({ marks, statuses, posOverrides, customMarks, 
   const floorWashed = points.filter((p) => (statuses[p.key] || "ei") === "pesty").length;
   const floorTotal = points.length;
   const floorPct = floorTotal > 0 ? (floorWashed / floorTotal) * 100 : 0;
+  const floorRevenue = points.reduce((s, p) => ((statuses[p.key] || "ei") === "pesty" ? s + PRICES[p.p] : s), 0);
   const activePt = activeOrb ? points.find((p) => p.key === activeOrb) ?? null : null;
   const activeIdx = activePt ? points.indexOf(activePt) : -1;
 
@@ -230,7 +232,7 @@ export default function FloorView({ marks, statuses, posOverrides, customMarks, 
               <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.5)", fontWeight: 500 }}>pesty</span>
             </div>
             <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.45)" }}>
-              {Math.round(floorPct)} % · {euro(floorWashed * PRICE)}
+              {Math.round(floorPct)} % · {euro(floorRevenue)}
             </div>
           </div>
         </div>

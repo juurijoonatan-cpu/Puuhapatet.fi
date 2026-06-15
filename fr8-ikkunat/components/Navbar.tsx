@@ -5,6 +5,8 @@ import { Tab } from "./AppShell";
 interface NavbarProps {
   activeTab: Tab;
   onTabChange: (tab: Tab) => void;
+  signed?: boolean;
+  onViewContract?: () => void;
 }
 
 const TABS: { id: Tab; label: string }[] = [
@@ -29,7 +31,7 @@ function tabStyle(active: boolean): React.CSSProperties {
   };
 }
 
-export default function Navbar({ activeTab, onTabChange }: NavbarProps) {
+export default function Navbar({ activeTab, onTabChange, signed, onViewContract }: NavbarProps) {
   return (
     <nav
       style={{
@@ -114,6 +116,28 @@ export default function Navbar({ activeTab, onTabChange }: NavbarProps) {
           gap: "13px",
         }}
       >
+        {signed && (
+          <button
+            onClick={onViewContract}
+            title="Avaa allekirjoitettu sopimus"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "7px",
+              padding: "7px 12px",
+              borderRadius: "9px",
+              border: "1px solid rgba(95,224,138,0.4)",
+              background: "rgba(95,224,138,0.08)",
+              color: "#9ff0bd",
+              fontFamily: "var(--font-onest, system-ui, sans-serif)",
+              fontSize: "12px",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            <span style={{ fontSize: "13px" }}>✓</span> Sopimus
+          </button>
+        )}
         <div style={{ textAlign: "right", lineHeight: 1.25 }}>
           <div
             style={{

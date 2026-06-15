@@ -3,7 +3,9 @@
 import { MarksData, Status, CustomMark, LogEntry } from "./AppShell";
 
 const FLOORS = ["K", "1", "2", "3", "4", "5"];
-const PRICE = 35;
+// Sopimuksen PT-2026-02 mukainen sektorikohtainen hinnoittelu (kattomalli).
+const PRICES: Record<1 | 2, number> = { 1: 45, 2: 39 }; // € / pesty ikkuna
+const CAPS: Record<1 | 2, number> = { 1: 8910, 2: 4563 }; // sektorin hintakatto
 const CIRC = 2 * Math.PI * 80; // large ring circumference
 
 interface Props {
@@ -13,6 +15,7 @@ interface Props {
   deleted: Record<string, boolean>;
   log: LogEntry[];
   onGoToFloor: (floor: string) => void;
+  order?: "A" | "B";
 }
 
 function fmt(n: number) { return Math.round(n).toLocaleString("fi-FI"); }
@@ -60,7 +63,7 @@ const mono: React.CSSProperties = {
   color: "rgba(255,255,255,0.4)",
 };
 
-export default function Dashboard({ marks, statuses, customMarks, deleted, log, onGoToFloor }: Props) {
+export default function Dashboard({ marks, statuses, customMarks, deleted, log, onGoToFloor, order = "A" }: Props) {
   const all = allPoints(marks, statuses, customMarks, deleted);
   const total = all.length;
   const washed = all.filter((a) => a.status === "pesty").length;
@@ -74,14 +77,22 @@ export default function Dashboard({ marks, statuses, customMarks, deleted, log, 
     const w = arr.filter((a) => a.status === "pesty").length;
     const k = arr.filter((a) => a.status === "kesken").length;
     const pc = arr.length > 0 ? (w / arr.length) * 100 : 0;
-    return { total: arr.length, washed: w, kesken: k, pctStr: Math.round(pc) + " %", pct: pc, revStr: euro(w * PRICE) };
+    return { total: arr.length, washed: w, kesken: k, pctStr: Math.round(pc) + " %", pct: pc, revStr: euro(w * PRICES[p]) };
   };
   const p1 = grp(1), p2 = grp(2);
 
+  // Kertynyt summa kattomallilla: jokainen pesty ikkuna sektorinsa hinnalla.
+  const accrued = all.reduce((s, a) => (a.status === "pesty" ? s + PRICES[a.p] : s), 0);
+  // Tilatun laajuuden hintakatto (A = vain sektori 1, B = sektori 1 + 2).
+  const scopeCap = order === "B" ? CAPS[1] + CAPS[2] : CAPS[1];
+  const capPct = scopeCap > 0 ? (accrued / scopeCap) * 100 : 0;
+  const capPctStr = Math.round(capPct) + " %";
+
   const startToday = new Date(); startToday.setHours(0, 0, 0, 0);
-  const todaySet = new Set<string>();
-  log.forEach((l) => { if (l.status === "pesty" && l.ts >= startToday.getTime()) todaySet.add(l.key); });
+  const todaySet = new Map<string, 1 | 2>();
+  log.forEach((l) => { if (l.status === "pesty" && l.ts >= startToday.getTime()) todaySet.set(l.key, l.p); });
   const todayWindows = todaySet.size;
+  let todayAccrued = 0; todaySet.forEach((p) => { todayAccrued += PRICES[p]; });
   const remaining = total - washed;
   const estStr = remaining === 0 && total > 0 ? "valmis" : todayWindows > 0 ? "~" + Math.ceil(remaining / todayWindows) + " työpv" : "—";
 
@@ -146,19 +157,19 @@ export default function Dashboard({ marks, statuses, customMarks, deleted, log, 
           {/* Revenue card */}
           <div className="anim-fadeUp-1" style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", padding: "26px", background: "linear-gradient(155deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))", border: "1px solid rgba(255,255,255,0.09)", borderRadius: "22px", backdropFilter: "blur(22px)", WebkitBackdropFilter: "blur(22px)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={mono}>LIIKEVAIHTO</div>
-              <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10.5px", color: "rgba(255,255,255,0.4)" }}>{PRICE} € / IKKUNA</div>
+              <div style={mono}>KERTYNYT SUMMA</div>
+              <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10.5px", color: "rgba(255,255,255,0.4)" }}>P1 {PRICES[1]} € · P2 {PRICES[2]} €</div>
             </div>
             <div>
-              <div style={{ fontSize: "46px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{euro(washed * PRICE)}</div>
-              <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.45)", marginTop: "4px" }}>/ {euro(total * PRICE)} sopimusarvo</div>
+              <div style={{ fontSize: "46px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{euro(accrued)}</div>
+              <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.45)", marginTop: "4px" }}>/ {euro(scopeCap)} hintakatto · vaihtoehto {order}</div>
             </div>
             <div>
               <div style={{ height: "9px", borderRadius: "6px", background: "rgba(255,255,255,0.08)", overflow: "hidden", marginBottom: "9px" }}>
-                <div style={{ width: `${pct.toFixed(1)}%`, height: "100%", borderRadius: "6px", background: "linear-gradient(90deg,rgba(255,255,255,0.55),#fff)", boxShadow: "0 0 12px rgba(255,255,255,0.4)", transition: "width .6s" }} />
+                <div style={{ width: `${Math.min(100, capPct).toFixed(1)}%`, height: "100%", borderRadius: "6px", background: "linear-gradient(90deg,rgba(255,255,255,0.55),#fff)", boxShadow: "0 0 12px rgba(255,255,255,0.4)", transition: "width .6s" }} />
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10.5px", color: "rgba(255,255,255,0.45)" }}>
-                <span>{washed} × {PRICE} €</span><span>{pctStr} kerätty</span>
+                <span>{washed} pesty ikkunaa</span><span>{capPctStr} katosta</span>
               </div>
             </div>
           </div>
@@ -189,7 +200,7 @@ export default function Dashboard({ marks, statuses, customMarks, deleted, log, 
           ))}
 
           <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-            {[{ label: "TÄNÄÄN TEHTY", val: todayWindows, sub: `ikkunaa · ${euro(todayWindows * PRICE)}`, cls: "anim-fadeUp-4" }, { label: "ARVIO JÄLJELLÄ", val: remaining, sub: `ikkunaa · ${estStr}`, cls: "anim-fadeUp-5" }].map((m) => (
+            {[{ label: "TÄNÄÄN TEHTY", val: todayWindows, sub: `ikkunaa · ${euro(todayAccrued)}`, cls: "anim-fadeUp-4" }, { label: "ARVIO JÄLJELLÄ", val: remaining, sub: `ikkunaa · ${estStr}`, cls: "anim-fadeUp-5" }].map((m) => (
               <div key={m.label} className={m.cls} style={{ ...card, flex: 1, padding: "18px 20px" }}>
                 <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.4)", marginBottom: "9px" }}>{m.label}</div>
                 <div style={{ display: "flex", alignItems: "baseline", gap: "8px" }}>

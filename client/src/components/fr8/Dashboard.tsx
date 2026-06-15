@@ -102,7 +102,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
 
         {/* Row 1: ring + revenue */}
         <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1.35fr 1fr", gap: "14px", marginBottom: "14px" }}>
-          <div className="anim-fadeUp-0" style={{ ...card, borderRadius: "22px", display: "flex", flexDirection: m ? "column" : "row", gap: m ? "20px" : "26px", alignItems: m ? "flex-start" : "center", padding: m ? "22px" : "30px" }}>
+          <div className="anim-fadeUp-0" style={{ ...card, borderRadius: "22px", display: "flex", flexDirection: m ? "column" : "row", gap: m ? "20px" : "26px", alignItems: "center", padding: m ? "22px" : "30px" }}>
             <div style={{ position: "relative", width: "184px", height: "184px", flexShrink: 0 }}>
               <svg width="184" height="184" viewBox="0 0 184 184" style={{ transform: "rotate(-90deg)" }}>
                 <circle cx="92" cy="92" r="80" fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="11" />
@@ -115,7 +115,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                 <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.45)", marginTop: "3px" }}>VALMIS</div>
               </div>
             </div>
-            <div style={{ flex: 1 }}>
+            <div style={{ flex: 1, width: m ? "100%" : undefined, textAlign: m ? "center" : "left" }}>
               <div style={{ ...mono, marginBottom: "10px" }}>KOKONAISEDISTYMINEN</div>
               <div style={{ fontSize: "34px", fontWeight: 700, letterSpacing: "-0.01em", marginBottom: "2px" }}>
                 {washed} <span style={{ color: "rgba(255,255,255,0.35)", fontWeight: 500 }}>/ {total}</span>

@@ -90,7 +90,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
       <div style={{ maxWidth: "1400px", margin: "0 auto" }}>
 
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: "12px", marginBottom: m ? "14px" : "20px" }}>
+        <div style={{ display: "flex", flexDirection: m ? "column" : "row", alignItems: m ? "center" : "flex-end", justifyContent: "space-between", gap: m ? "6px" : "12px", textAlign: m ? "center" : "left", marginBottom: m ? "14px" : "20px" }}>
           <div>
             <div style={{ ...mono, letterSpacing: "0.18em", marginBottom: "7px" }}>KOKONAISTILANNE</div>
             <h1 style={{ margin: 0, fontSize: m ? "22px" : "30px", fontWeight: 700, letterSpacing: "-0.01em" }}>Projektin yleiskatsaus</h1>
@@ -124,7 +124,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
               <div style={{ display: "flex", gap: "10px" }}>
                 {([["kesken", "rgb(188,150,255)", "rgba(188,150,255,0.7)", kesken], ["Pesemättä", "rgba(255,255,255,0.4)", undefined, unwashed]] as [string, string, string|undefined, number][]).map(([label, bg, shadow, val]) => (
                   <div key={label} style={{ flex: 1, padding: "12px 14px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "13px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "7px", marginBottom: "5px" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: m ? "center" : "flex-start", gap: "7px", marginBottom: "5px" }}>
                       <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: bg, boxShadow: shadow ? `0 0 7px ${shadow}` : undefined, flexShrink: 0 }} />
                       <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)" }}>{label === "kesken" ? "Kesken" : label}</span>
                     </div>

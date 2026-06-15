@@ -7,3 +7,8 @@ vite.config.ts.*
 .env
 .env.local
 .env*.local
+
+# Next.js build artifacts
+.next/
+next-env.d.ts
+tsconfig.tsbuildinfo

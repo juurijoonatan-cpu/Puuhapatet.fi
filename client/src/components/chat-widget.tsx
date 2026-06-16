@@ -13,6 +13,7 @@ import { MessageCircle, X, Send, Loader2, User } from "lucide-react";
 import { useLocation } from "wouter";
 import { useI18n } from "@/lib/i18n";
 import { ChatMarkdown } from "@/components/chat-markdown";
+import { API_BASE } from "@/lib/api";
 
 interface Msg {
   role: "user" | "assistant" | "admin" | "system";
@@ -105,7 +106,7 @@ export function ChatWidget() {
     let active = true;
     const tick = async () => {
       try {
-        const res = await fetch(`/api/chat/${token}`);
+        const res = await fetch(`${API_BASE}/api/chat/${token}`);
         if (!res.ok || !active) return;
         const data = await res.json();
         if (Array.isArray(data.messages)) applyServerMessages(data.messages);
@@ -127,7 +128,7 @@ export function ChatWidget() {
     setMessages((m) => [...(m.length ? m : [greeting]), { role: "user", content: text }]);
     setSending(true);
     try {
-      const res = await fetch("/api/chat", {
+      const res = await fetch(`${API_BASE}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token, message: text, pageUrl: typeof window !== "undefined" ? window.location.href : undefined }),
@@ -153,7 +154,7 @@ export function ChatWidget() {
   async function submitContact() {
     if (!contact.name.trim() || !(contact.phone.trim() || contact.email.trim())) return;
     try {
-      await fetch(`/api/chat/${token}/request-human`, {
+      await fetch(`${API_BASE}/api/chat/${token}/request-human`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(contact),

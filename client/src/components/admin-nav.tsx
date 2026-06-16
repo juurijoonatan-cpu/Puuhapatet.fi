@@ -11,6 +11,7 @@ import { LayoutDashboard, Plus, Calendar, ClipboardList, Users, Settings, Messag
 import { useTheme } from "@/lib/theme";
 import { clearAdminSession } from "@/pages/admin/login";
 import { clearAdminProfile, getAdminProfile } from "@/lib/admin-profile";
+import { API_BASE } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -51,7 +52,7 @@ export function AdminNav() {
   const [unread, setUnread] = useState(0);
   useEffect(() => {
     let active = true;
-    const tick = () => fetch("/api/admin/chats-unread")
+    const tick = () => fetch(`${API_BASE}/api/admin/chats-unread`)
       .then(r => r.ok ? r.json() : { count: 0 })
       .then(d => { if (active) setUnread(d.count || 0); })
       .catch(() => {});

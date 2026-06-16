@@ -14,6 +14,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, X, Send, Loader2, Trash2, Copy, Check, AlertCircle } from "lucide-react";
 import { getAdminProfile } from "@/lib/admin-profile";
 import { ChatMarkdown } from "@/components/chat-markdown";
+import { API_BASE } from "@/lib/api";
 
 interface Msg { role: "user" | "assistant"; content: string; }
 
@@ -41,7 +42,7 @@ export function AdminAssistant() {
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    fetch("/api/ai-status").then(r => r.json()).then(d => setAiEnabled(!!d.enabled)).catch(() => setAiEnabled(null));
+    fetch(`${API_BASE}/api/ai-status`).then(r => r.json()).then(d => setAiEnabled(!!d.enabled)).catch(() => setAiEnabled(null));
   }, []);
 
   useEffect(() => {
@@ -67,7 +68,7 @@ export function AdminAssistant() {
     setMessages(next);
     setSending(true);
     try {
-      const res = await fetch("/api/admin/assistant", {
+      const res = await fetch(`${API_BASE}/api/admin/assistant`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

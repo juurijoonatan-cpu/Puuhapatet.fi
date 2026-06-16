@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/empty-state";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { getAdminProfile } from "@/lib/admin-profile";
+import { API_BASE } from "@/lib/api";
 
 interface Convo {
   id: number;
@@ -46,7 +47,7 @@ export default function AdminInboxPage() {
   const listQuery = useQuery({
     queryKey: ["/api/admin/chats"],
     queryFn: async (): Promise<Convo[]> => {
-      const res = await fetch("/api/admin/chats");
+      const res = await fetch(`${API_BASE}/api/admin/chats`);
       if (!res.ok) throw new Error("Latauksen virhe");
       return res.json();
     },
@@ -57,7 +58,7 @@ export default function AdminInboxPage() {
     queryKey: ["/api/admin/chats", activeId],
     enabled: activeId != null,
     queryFn: async (): Promise<Convo & { messages: Msg[] }> => {
-      const res = await fetch(`/api/admin/chats/${activeId}`);
+      const res = await fetch(`${API_BASE}/api/admin/chats/${activeId}`);
       if (!res.ok) throw new Error("Latauksen virhe");
       return res.json();
     },
@@ -74,7 +75,7 @@ export default function AdminInboxPage() {
     setReply("");
     setSending(true);
     try {
-      await fetch(`/api/admin/chats/${activeId}/reply`, {
+      await fetch(`${API_BASE}/api/admin/chats/${activeId}/reply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: text, authorName: profile?.name }),
@@ -88,7 +89,7 @@ export default function AdminInboxPage() {
 
   async function setStatus(status: string) {
     if (!activeId) return;
-    await fetch(`/api/admin/chats/${activeId}`, {
+    await fetch(`${API_BASE}/api/admin/chats/${activeId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status }),

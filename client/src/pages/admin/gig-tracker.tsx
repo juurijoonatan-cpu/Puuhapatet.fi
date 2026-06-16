@@ -58,6 +58,7 @@ export default function AdminGigTrackerPage() {
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [showContract, setShowContract] = useState(false);
+  const [showLog, setShowLog] = useState(false);
   const [approving, setApproving] = useState(false);
   const [sigOpen, setSigOpen] = useState(false);
   const [savingContract, setSavingContract] = useState(false);
@@ -511,21 +512,27 @@ export default function AdminGigTrackerPage() {
           )}
         </Card>
 
-        {/* Activity log */}
-        <Card className="p-4 bg-card border-0 premium-shadow mb-4">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Loki</p>
-          <div className="space-y-1.5 max-h-72 overflow-y-auto">
-            {[...gig.log].reverse().slice(0, 60).map((l, i) => (
-              <div key={i} className="flex items-center justify-between text-xs">
-                <span className="text-foreground">{l.text}{l.by ? ` · ${l.by.split(" ")[0]}` : ""}</span>
-                <span className="text-muted-foreground shrink-0 ml-2">
-                  {new Date(l.t).toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" })}
-                </span>
+        {/* Activity log — tucked away; collapsed by default */}
+        {gig.log.length > 0 && (
+          <Card className="p-4 bg-card border-0 premium-shadow mb-4">
+            <button className="flex items-center justify-between w-full" onClick={() => setShowLog((v) => !v)}>
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Loki · {gig.log.length}</span>
+              <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${showLog ? "rotate-180" : ""}`} />
+            </button>
+            {showLog && (
+              <div className="space-y-1.5 max-h-72 overflow-y-auto mt-3">
+                {[...gig.log].reverse().slice(0, 60).map((l, i) => (
+                  <div key={i} className="flex items-center justify-between text-xs">
+                    <span className="text-foreground">{l.text}{l.by ? ` · ${l.by.split(" ")[0]}` : ""}</span>
+                    <span className="text-muted-foreground shrink-0 ml-2">
+                      {new Date(l.t).toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                  </div>
+                ))}
               </div>
-            ))}
-            {gig.log.length === 0 && <p className="text-xs text-muted-foreground">Ei merkintöjä vielä.</p>}
-          </div>
-        </Card>
+            )}
+          </Card>
+        )}
 
       </div>
 

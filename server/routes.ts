@@ -7,7 +7,7 @@ import PDFDocument from "pdfkit";
 import rateLimit from "express-rate-limit";
 import { db } from "./db";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
-import { feeRateForWorker } from "@shared/team";
+import { feeRateForWorker, effectiveJobTotal } from "@shared/team";
 import { randomUUID } from "crypto";
 import {
   AI_ENABLED, chatComplete, publicSystemPrompt, adminSystemPrompt,
@@ -499,6 +499,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const doneJobsWithExp = await db.select({
         id:          jobs.id,
         agreedPrice: jobs.agreedPrice,
+        unitCount:   jobs.unitCount,
+        isTaloyhtiio: jobs.isTaloyhtiio,
         waiveFee:    jobs.waiveFee,
         assignedTo:  jobs.assignedTo,
         jobExpenses: sql<number>`coalesce(sum(${expenses.amount}), 0)`,
@@ -507,17 +509,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         // Completed jobs only — but a declined quote means the job never
         // happened, so exclude those even if a stale status lingers.
         .where(and(eq(jobs.status, "done"), sql`${jobs.quoteStatus} is distinct from 'declined'`))
-        .groupBy(jobs.id, jobs.agreedPrice, jobs.waiveFee, jobs.assignedTo);
+        .groupBy(jobs.id, jobs.agreedPrice, jobs.unitCount, jobs.isTaloyhtiio, jobs.waiveFee, jobs.assignedTo);
 
       let totalRevenue = 0, totalExpenses = 0, serviceFeeTotal = 0;
       for (const job of doneJobsWithExp) {
         const jobExp = Number(job.jobExpenses);
-        totalRevenue += job.agreedPrice;
+        const price = effectiveJobTotal(job); // taloyhtiö: per-apartment × unitCount
+        totalRevenue += price;
         totalExpenses += jobExp;
         // Role-aware service fee: each worker's share is charged at their own
         // rate (founders 10 %, staff 25 %).
         if (!job.waiveFee) {
-          const net = Math.max(0, job.agreedPrice - jobExp);
+          const net = Math.max(0, price - jobExp);
           const workerIds = normalizeWorkerIds(job.assignedTo);
           if (workerIds.length > 0) {
             const share = net / workerIds.length;
@@ -565,6 +568,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const doneJobsWithExp = await db.select({
         id:          jobs.id,
         agreedPrice: jobs.agreedPrice,
+        unitCount:   jobs.unitCount,
+        isTaloyhtiio: jobs.isTaloyhtiio,
         waiveFee:    jobs.waiveFee,
         assignedTo:  jobs.assignedTo,
         jobExpenses: sql<number>`coalesce(sum(${expenses.amount}), 0)`,
@@ -573,7 +578,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         // Completed jobs only — declined quotes never produced revenue, so a
         // declined job must not generate a service-fee debt.
         .where(and(eq(jobs.status, "done"), sql`${jobs.quoteStatus} is distinct from 'declined'`))
-        .groupBy(jobs.id, jobs.agreedPrice, jobs.waiveFee, jobs.assignedTo);
+        .groupBy(jobs.id, jobs.agreedPrice, jobs.unitCount, jobs.isTaloyhtiio, jobs.waiveFee, jobs.assignedTo);
 
       // Payment totals aggregated per worker in one query
       const paymentRows = await db.select({
@@ -591,7 +596,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       for (const job of doneJobsWithExp) {
         const jobExpenses = Number(job.jobExpenses);
-        const netRevenue = Math.max(0, job.agreedPrice - jobExpenses);
+        const price = effectiveJobTotal(job); // taloyhtiö: per-apartment × unitCount
+        const netRevenue = Math.max(0, price - jobExpenses);
         const workerIds = normalizeWorkerIds(job.assignedTo);
         if (workerIds.length === 0) continue;
         const sharePerWorker = netRevenue / workerIds.length;
@@ -613,7 +619,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Brand cash = total service fees paid by workers so far
       const brandCash = Object.values(totalPaidByWorker).reduce((s, v) => s + v, 0);
 
-      res.json({ workerFees, workerJobCount, brandCash });
+      // Brand earned = total service fees the brand has accrued from all
+      // completed gigs (the "money gained from the gigs"), regardless of how
+      // much has actually been settled yet. This is what the kassa shows.
+      const brandEarned = Object.values(workerFeesTotal).reduce((s, v) => s + v, 0);
+
+      res.json({ workerFees, workerJobCount, brandCash, brandEarned });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -2050,9 +2061,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const dateStr = new Date(job.scheduledAt).toLocaleDateString("fi-FI", {
         weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit",
       });
-      const unitPriceCents = job.unitCount && job.unitCount > 1
-        ? Math.round((job.agreedPrice ?? 0) / job.unitCount)
-        : job.agreedPrice ?? 0;
+      // For taloyhtiö gigs agreedPrice is already the per-apartment price.
+      const unitPriceCents = job.agreedPrice ?? 0;
       const unitPriceEur = (unitPriceCents / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" });
 
       let accepted: Array<{ unitName: string; email?: string }> = [];

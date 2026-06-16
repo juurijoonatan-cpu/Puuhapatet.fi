@@ -185,6 +185,7 @@ export interface WorkerStatsResponse {
   workerFees: Record<string, number>;     // current debt (cents) per worker ID
   workerJobCount: Record<string, number>; // done job count per worker ID
   brandCash: number;                      // total paid to brand so far (cents)
+  brandEarned: number;                    // total service fees earned from gigs (cents)
 }
 
 // ─── Static package list (no packages table yet) ──────────────────────────────

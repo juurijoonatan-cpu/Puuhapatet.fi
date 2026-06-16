@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { getAdminProfile, USERS } from "@/lib/admin-profile";
-import { feeRateForWorker, STAFF_SERVICE_FEE_RATE } from "@shared/team";
+import { feeRateForWorker, STAFF_SERVICE_FEE_RATE, effectiveJobTotal } from "@shared/team";
 import { cn } from "@/lib/utils";
 
 interface JobRow {
@@ -24,6 +24,8 @@ interface JobRow {
     createdAt: string;
     waiveFee?: boolean;
     quoteStatus?: string | null;
+    unitCount?: number | null;
+    isTaloyhtiio?: boolean | null;
   };
   customer: {
     id: number;
@@ -106,7 +108,8 @@ export default function TaxExportPage() {
     const numWorkers = Math.max(workers.length, 1);
     const share = 1 / numWorkers;
 
-    const myRevenue = Math.round(r.job.agreedPrice * share);
+    // taloyhtiö gigs bill per apartment × unitCount — use the full total.
+    const myRevenue = Math.round(effectiveJobTotal(r.job) * share);
     // expenses not tracked per-job here (would require per-job fetch); use 0 for now
     const expenses = 0;
     const netRevenue = Math.max(0, myRevenue - expenses);
@@ -557,7 +560,7 @@ export default function TaxExportPage() {
                           <p className="text-muted-foreground">Tekijät: {workerNames}</p>
                         </div>
                         <div className="text-right">
-                          <p className="text-foreground">Kokonaishinta {fmt(r.job.agreedPrice)}</p>
+                          <p className="text-foreground">Kokonaishinta {fmt(effectiveJobTotal(r.job))}</p>
                           <p className="text-muted-foreground">Oma osuus 1/{r.numWorkers} = {fmt(r.myRevenue)}</p>
                         </div>
                       </div>

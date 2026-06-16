@@ -481,10 +481,13 @@ export default function AdminSettingsPage() {
                   <h2 className="text-lg font-semibold text-foreground">Puuhapatet — brändin kassa</h2>
                 </div>
                 <p className="text-3xl font-bold text-green-600 dark:text-green-400 mb-1">
-                  {fmt(workerStats.brandCash)}
+                  {fmt(workerStats.brandEarned)}
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  Kertynyt palvelumaksuista — tekijöiden maksamat osuudet yhteensä
+                  Keikoilta kertynyt palvelumaksu — brändin osuus yhteensä
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Tästä maksettu: {fmt(workerStats.brandCash)}
                 </p>
               </Card>
             )}

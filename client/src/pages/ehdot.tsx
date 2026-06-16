@@ -55,7 +55,7 @@ export default function EhdotPage() {
             </p>
             <p className="text-muted-foreground text-sm mb-1">Hyväksytyt maksutavat: tilisiirto, MobilePay, käteinen.</p>
             <ul className="text-muted-foreground text-sm space-y-1 list-none pl-0">
-              <li>Maksuehto: <strong className="text-foreground">14 päivää</strong></li>
+              <li>Maksuehto: <strong className="text-foreground">sovitaan tilauksen yhteydessä</strong></li>
               <li>Viivästyskorko lain mukaan</li>
               <li>Maksumuistutus: <strong className="text-foreground">5 €</strong></li>
             </ul>

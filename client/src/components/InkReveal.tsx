@@ -21,6 +21,13 @@ interface InkRevealProps {
   gradientStops?: [number, number, number];
   /** Run a one-time reveal sweep on mount (good for touch / first impression). */
   autoReveal?: boolean;
+  /** When set, the whole ink layer dissolves to fully reveal the content this many
+   *  ms after mount (so the effect plays, then gets out of the way by itself). */
+  fadeOutAfter?: number;
+  /** Fade-out transition duration in ms (default 900). */
+  fadeOutDuration?: number;
+  /** Called once the fade-out finishes (content fully revealed). */
+  onRevealed?: () => void;
   className?: string;
   style?: React.CSSProperties;
 }
@@ -46,6 +53,9 @@ export default function InkReveal({
   gradientInnerRadius = 0.2,
   gradientStops = [0.95, 0.88, 0],
   autoReveal = true,
+  fadeOutAfter,
+  fadeOutDuration = 900,
+  onRevealed,
   className,
   style,
 }: InkRevealProps) {
@@ -187,6 +197,21 @@ export default function InkReveal({
     raf = requestAnimationFrame(sweep);
     return () => cancelAnimationFrame(raf);
   }, [autoReveal, stampAlong]);
+
+  // Dissolve the whole ink layer after a beat, then signal "revealed". Keeps the
+  // cool intro but ensures it always clears itself (no swipe required).
+  useEffect(() => {
+    if (fadeOutAfter == null) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const t1 = setTimeout(() => {
+      canvas.style.transition = `opacity ${fadeOutDuration}ms ease`;
+      canvas.style.opacity = "0";
+      canvas.style.pointerEvents = "none";
+    }, fadeOutAfter);
+    const t2 = setTimeout(() => onRevealed?.(), fadeOutAfter + fadeOutDuration);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [fadeOutAfter, fadeOutDuration, onRevealed]);
 
   const relMouse = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();

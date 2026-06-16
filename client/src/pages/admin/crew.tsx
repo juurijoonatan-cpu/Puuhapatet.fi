@@ -81,58 +81,7 @@ export default function AdminCrewPage() {
           <div className="space-y-3">
             {crew.map(({ member, stats, onboarded }) => (
               <div key={member.id} className="rounded-2xl border bg-card p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <input
-                        defaultValue={member.name}
-                        onBlur={(e) => e.target.value !== member.name && update(member.id, { name: e.target.value })}
-                        className="bg-transparent font-semibold text-base border-b border-transparent focus:border-border focus:outline-none"
-                      />
-                      {member.adminLinked && <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold text-blue-600">ADMIN</span>}
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${onboarded ? "bg-green-500/10 text-green-600" : "bg-amber-500/10 text-amber-600"}`}>
-                        {onboarded ? "Allekirjoittanut" : "Odottaa"}
-                      </span>
-                      {!member.active && <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[10px] font-semibold text-zinc-500">Pois käytöstä</span>}
-                    </div>
-                    {member.profile && (
-                      <p className="text-xs text-muted-foreground mt-1 truncate">
-                        {[member.profile.phone, member.profile.email, member.profile.yTunnus].filter(Boolean).join(" · ") || "—"}
-                      </p>
-                    )}
-                  </div>
-                  <button onClick={() => remove(member.id)} className="text-muted-foreground hover:text-red-500 p-1"><Trash2 className="h-4 w-4" /></button>
-                </div>
-
-                {/* Scoreboard */}
-                <div className="grid grid-cols-4 gap-2 mt-3 text-center">
-                  <Metric label="Ikkunat" value={String(stats.washed)} />
-                  <Metric label="Ansio" value={eur(stats.earnedCents)} />
-                  <Metric label="Tunnit" value={stats.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} />
-                  <Metric label="€/h" value={stats.hours > 0 ? eur(Math.round(stats.eurPerHour * 100)) : "—"} />
-                </div>
-
-                {/* Link + rate */}
-                <div className="flex items-center gap-2 mt-3 flex-wrap">
-                  <button onClick={() => copyLink(member.token)} className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium">
-                    {copied === member.token ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
-                    {copied === member.token ? "Kopioitu" : "Kopioi linkki"}
-                  </button>
-                  <button onClick={() => { if (confirm("Luo uusi linkki?\n\nTyöntekijän VANHA linkki lakkaa heti toimimasta. Kopioi ja lähetä uusi linkki hänelle uudestaan.")) update(member.id, { rotateToken: true }); }} className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium text-muted-foreground">
-                    <RotateCw className="h-3.5 w-3.5" /> Uusi linkki
-                  </button>
-                  <label className="inline-flex items-center gap-1 text-xs text-muted-foreground ml-auto">
-                    €/ikkuna
-                    <input
-                      type="number" defaultValue={member.perWindowCents / 100} min={0}
-                      onBlur={(e) => { const c = Math.round(parseFloat(e.target.value) * 100); if (c && c !== member.perWindowCents) update(member.id, { perWindowCents: c }); }}
-                      className="w-16 rounded-md border px-2 py-1 text-right bg-transparent"
-                    />
-                  </label>
-                  <button onClick={() => update(member.id, { active: !member.active })} className="text-xs underline text-muted-foreground">
-                    {member.active ? "Poista käytöstä" : "Ota käyttöön"}
-                  </button>
-                </div>
+                <WorkerCardHeader member={member} stats={stats} onboarded={onboarded} copied={copied} onCopy={copyLink} onUpdate={update} onRemove={remove} />
 
                 {/* Signed agreements + signatures (downloadable) */}
                 {member.agreements.length > 0 && (
@@ -239,6 +188,111 @@ function Metric({ label, value }: { label: string; value: string }) {
     <div className="rounded-xl bg-muted/40 py-2">
       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className="text-sm font-bold tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+/** Editable worker header: name + rate with explicit save, badges, scoreboard,
+ *  and private-link controls. Per-row local state keeps the edit/save clean. */
+function WorkerCardHeader({
+  member, stats, onboarded, copied, onCopy, onUpdate, onRemove,
+}: {
+  member: HostCrewRow["member"];
+  stats: HostCrewRow["stats"];
+  onboarded: boolean;
+  copied: string | null;
+  onCopy: (token: string) => void;
+  onUpdate: (id: string, data: Parameters<typeof api.updateCrewMember>[2]) => void;
+  onRemove: (id: string) => void;
+}) {
+  const [name, setName] = useState(member.name);
+  const [rate, setRate] = useState(String(member.perWindowCents / 100));
+  const nameDirty = name.trim() !== "" && name !== member.name;
+  const rateCents = Math.round(parseFloat(rate.replace(",", ".")) * 100);
+  const rateDirty = Number.isFinite(rateCents) && rateCents > 0 && rateCents !== member.perWindowCents;
+  const dirty = nameDirty || rateDirty;
+
+  const save = () => {
+    const data: Parameters<typeof api.updateCrewMember>[2] = {};
+    if (nameDirty) data.name = name.trim();
+    if (rateDirty) data.perWindowCents = rateCents;
+    if (Object.keys(data).length) onUpdate(member.id, data);
+  };
+
+  return (
+    <div>
+      {/* Name + delete */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <label className="text-[10px] uppercase tracking-wide text-muted-foreground">Nimi</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+            onBlur={save}
+            placeholder="Työntekijän nimi"
+            className="w-full bg-transparent font-semibold text-lg rounded-md border border-border/60 px-2.5 py-1.5 mt-0.5 focus:border-foreground focus:outline-none"
+          />
+        </div>
+        <button onClick={() => onRemove(member.id)} title="Poista työntekijä" className="text-muted-foreground hover:text-red-500 p-1 mt-5 shrink-0"><Trash2 className="h-4 w-4" /></button>
+      </div>
+
+      {/* Badges */}
+      <div className="flex items-center gap-1.5 flex-wrap mt-2">
+        {member.adminLinked && <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold text-blue-600">ADMIN</span>}
+        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${onboarded ? "bg-green-500/10 text-green-600" : "bg-amber-500/10 text-amber-600"}`}>
+          {onboarded ? "Allekirjoittanut" : "Odottaa allekirjoitusta"}
+        </span>
+        {!member.active && <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[10px] font-semibold text-zinc-500">Pois käytöstä</span>}
+      </div>
+      {member.profile && [member.profile.phone, member.profile.email, member.profile.yTunnus].filter(Boolean).length > 0 && (
+        <p className="text-xs text-muted-foreground mt-1.5 break-words">
+          {[member.profile.phone, member.profile.email, member.profile.yTunnus].filter(Boolean).join(" · ")}
+        </p>
+      )}
+
+      {/* Scoreboard */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 text-center">
+        <Metric label="Ikkunat" value={String(stats.washed)} />
+        <Metric label="Ansio" value={eur(stats.earnedCents)} />
+        <Metric label="Tunnit" value={stats.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} />
+        <Metric label="€/h" value={stats.hours > 0 ? eur(Math.round(stats.eurPerHour * 100)) : "—"} />
+      </div>
+
+      {/* Pay rate (host only) + save */}
+      <div className="flex items-end gap-3 mt-3 flex-wrap">
+        <label className="flex flex-col gap-0.5">
+          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Palkka € / ikkuna</span>
+          <input
+            type="number" inputMode="decimal" min={0} value={rate}
+            onChange={(e) => setRate(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+            onBlur={save}
+            className="w-24 rounded-md border px-2.5 py-1.5 text-right bg-transparent"
+          />
+        </label>
+        <button
+          onClick={save}
+          disabled={!dirty}
+          className={`rounded-lg px-3.5 py-2 text-sm font-semibold transition ${dirty ? "bg-foreground text-background" : "bg-muted text-muted-foreground"}`}
+        >
+          {dirty ? "Tallenna" : "Tallennettu"}
+        </button>
+        <button onClick={() => onUpdate(member.id, { active: !member.active })} className="text-xs underline text-muted-foreground ml-auto self-center">
+          {member.active ? "Poista käytöstä" : "Ota käyttöön"}
+        </button>
+      </div>
+
+      {/* Private link */}
+      <div className="flex items-center gap-2 mt-3 flex-wrap">
+        <button onClick={() => onCopy(member.token)} className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium">
+          {copied === member.token ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied === member.token ? "Kopioitu" : "Kopioi linkki"}
+        </button>
+        <button onClick={() => { if (confirm("Luo uusi linkki?\n\nTyöntekijän VANHA linkki lakkaa heti toimimasta. Kopioi ja lähetä uusi linkki hänelle uudestaan.")) onUpdate(member.id, { rotateToken: true }); }} className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium text-muted-foreground">
+          <RotateCw className="h-3.5 w-3.5" /> Uusi linkki
+        </button>
+      </div>
     </div>
   );
 }

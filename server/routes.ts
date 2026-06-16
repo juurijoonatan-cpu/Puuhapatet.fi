@@ -2655,18 +2655,35 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ═══════════════════════════════════════════════════════════════════════════
 
   const MAX_MSG_LEN = 4000;
-  const HISTORY_LIMIT = 20; // turns kept as model context
+  const HISTORY_LIMIT = 20;  // turns kept as model context
+  const DISPLAY_LIMIT = 100; // messages returned to the client for rendering
+
+  // Lets the admin UI show a clear "add your API key" hint when AI is off.
+  app.get("/api/ai-status", (_req, res) => res.json({ enabled: AI_ENABLED }));
 
   function escapeHtml(s: string): string {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
-  async function loadHistory(conversationId: number, limit = HISTORY_LIMIT) {
+  // Ordered oldest→newest. Order by id (monotonic) so same-second inserts are stable.
+  async function loadHistory(conversationId: number, limit = DISPLAY_LIMIT) {
     const rows = await db.select().from(chatMessages)
       .where(eq(chatMessages.conversationId, conversationId))
-      .orderBy(desc(chatMessages.createdAt))
+      .orderBy(desc(chatMessages.id))
       .limit(limit);
     return rows.reverse();
+  }
+
+  // Build model-ready turns from stored messages: drop system notes, keep the
+  // last HISTORY_LIMIT user/assistant/admin turns.
+  function toModelTurns(history: { role: string; content: string }[]): ChatTurn[] {
+    return history
+      .filter(m => m.role !== "system")
+      .slice(-HISTORY_LIMIT)
+      .map((m): ChatTurn => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: m.role === "admin" ? `(Puuhapattien tiimi vastasi): ${m.content}` : m.content,
+      }));
   }
 
   // ─── Public: visitor sends a message to the bot ────────────────────────────
@@ -2722,22 +2739,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const history = await loadHistory(convo.id);
       const turns: ChatTurn[] = [
         { role: "system", content: publicSystemPrompt() },
-        ...history.map((m): ChatTurn => ({
-          role: m.role === "assistant" ? "assistant" : "user",
-          content: m.role === "admin" ? `(Puuhapattien tiimi): ${m.content}` : m.content,
-        })),
+        ...toModelTurns(history),
       ];
       const reply = await chatComplete(turns, { temperature: 0.3, maxTokens: 600 });
       const finalReply = reply ?? PUBLIC_FALLBACK_FI;
 
       await db.insert(chatMessages).values({ conversationId: convo.id, role: "assistant", content: finalReply });
 
-      // No AI available → escalate so a human follows up
-      let status = convo.status;
+      // No AI available → escalate so a human follows up. If the visitor had
+      // earlier closed/reopened the chat, a successful bot reply keeps it "bot".
+      let status = convo.status === "closed" ? "bot" : convo.status;
       if (!reply) {
         status = "needs_human";
-        await db.update(chatConversations).set({ status }).where(eq(chatConversations.id, convo.id));
         notifyAdminOfChat(convo.id, name || convo.visitorName, email || convo.visitorEmail, phone || convo.visitorPhone, text).catch(() => {});
+      }
+      if (status !== convo.status) {
+        await db.update(chatConversations).set({ status }).where(eq(chatConversations.id, convo.id));
       }
 
       const messages = await loadHistory(convo.id);
@@ -2840,6 +2857,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Admin: unread conversation count (for the nav badge) ──────────────────
+  app.get("/api/admin/chats-unread", async (_req, res) => {
+    try {
+      const rows = await db.select({ id: chatConversations.id }).from(chatConversations)
+        .where(and(eq(chatConversations.source, "public"), eq(chatConversations.unread, true)));
+      res.json({ count: rows.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── Admin: read one conversation (marks it read) ──────────────────────────
   app.get("/api/admin/chats/:id", async (req, res) => {
     try {
@@ -2937,14 +2965,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const allCustomers = await db.select().from(customers);
     const customerById = new Map(allCustomers.map(c => [c.id, c]));
 
-    // STAFF: restrict to jobs assigned to them (by name or id) and customers they own.
+    // STAFF: restrict to jobs assigned to them. assignedTo / pendingWorkers are
+    // comma-separated IDs or legacy full names — match on exact tokens so we
+    // never leak another worker's jobs through a loose substring hit.
+    const idLc = userId.trim().toLowerCase();
+    const nameLc = userName.trim().toLowerCase();
+    const ownsJob = (field: string | null) =>
+      (field || "").split(",").map(s => s.trim().toLowerCase()).some(t => t && (t === idLc || t === nameLc));
     const visibleJobs = role === "HOST"
       ? allJobs
-      : allJobs.filter(j => {
-          const a = (j.assignedTo || "").toLowerCase();
-          const pending = (j.pendingWorkers || "").toLowerCase();
-          return a.includes(userId.toLowerCase()) || a.includes(userName.toLowerCase()) || pending.includes(userId.toLowerCase());
-        });
+      : allJobs.filter(j => ownsJob(j.assignedTo) || ownsJob(j.pendingWorkers));
 
     const lines: string[] = [];
     lines.push(`Käyttäjä: ${userName} (${role}). Tämän hetki: ${new Date().toLocaleString("fi-FI")}.`);

@@ -33,35 +33,52 @@ export async function chatComplete(
   opts: { temperature?: number; maxTokens?: number } = {},
 ): Promise<string | null> {
   if (!AI_ENABLED) return null;
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
-    const res = await fetch(`${AI_BASE_URL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.AI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: AI_MODEL,
-        messages,
-        temperature: opts.temperature ?? 0.3,
-        max_tokens: opts.maxTokens ?? 700,
-      }),
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-    if (!res.ok) {
-      console.error("AI completion failed:", res.status, await res.text().catch(() => ""));
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${process.env.AI_API_KEY}`,
+  };
+  // OpenRouter ranks/identifies apps via these; other providers ignore them.
+  if (AI_BASE_URL.includes("openrouter")) {
+    headers["HTTP-Referer"] = "https://puuhapatet.fi";
+    headers["X-Title"] = "Puuhapatet";
+  }
+  const body = JSON.stringify({
+    model: AI_MODEL,
+    messages,
+    temperature: opts.temperature ?? 0.3,
+    max_tokens: opts.maxTokens ?? 700,
+  });
+
+  // One retry on transient failure (network / 429 / 5xx) before giving up so
+  // callers fall back to a safe reply instead of guessing.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30_000);
+      const res = await fetch(`${AI_BASE_URL}/chat/completions`, {
+        method: "POST", headers, body, signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (!res.ok) {
+        const detail = await res.text().catch(() => "");
+        console.error("AI completion failed:", res.status, detail.slice(0, 300));
+        if ((res.status === 429 || res.status >= 500) && attempt === 0) {
+          await new Promise(r => setTimeout(r, 800));
+          continue;
+        }
+        return null;
+      }
+      const data: any = await res.json();
+      const text = data?.choices?.[0]?.message?.content;
+      return typeof text === "string" && text.trim() ? text.trim() : null;
+    } catch (e: any) {
+      console.error("AI completion error:", e?.message || e);
+      if (attempt === 0) { await new Promise(r => setTimeout(r, 800)); continue; }
       return null;
     }
-    const data: any = await res.json();
-    const text = data?.choices?.[0]?.message?.content;
-    return typeof text === "string" && text.trim() ? text.trim() : null;
-  } catch (e: any) {
-    console.error("AI completion error:", e?.message || e);
-    return null;
   }
+  return null;
 }
 
 // ─── Knowledge base (public, customer-safe facts only) ────────────────────────

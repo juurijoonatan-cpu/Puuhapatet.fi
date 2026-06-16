@@ -13,6 +13,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/empty-state";
+import { ChatMarkdown } from "@/components/chat-markdown";
 import { getAdminProfile } from "@/lib/admin-profile";
 
 interface Convo {
@@ -203,7 +204,7 @@ export default function AdminInboxPage() {
                         }`}>
                           {m.role === "assistant" && <span className="block text-[10px] font-semibold opacity-70 mb-0.5">Botti</span>}
                           {m.role === "admin" && m.authorName && <span className="block text-[10px] font-semibold opacity-70 mb-0.5">{m.authorName}</span>}
-                          {m.content}
+                          {m.role === "assistant" ? <ChatMarkdown content={m.content} /> : <span className="whitespace-pre-wrap">{m.content}</span>}
                         </div>
                       </div>
                     );

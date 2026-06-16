@@ -27,8 +27,9 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { api } from "@/lib/api";
+import { api, type HostCrewRow } from "@/lib/api";
 import { getAdminProfile } from "@/lib/admin-profile";
+import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import {
   emptyGigData, computeTotals, nextInvoiceThreshold, invoiceDue, eur, eur2,
   sanitizeGigData, gigStatus, signatureRequired, type GigData,
@@ -49,6 +50,10 @@ export default function AdminGigTrackerPage() {
   const jobId = Number(params?.id);
   const { toast } = useToast();
   const profile = getAdminProfile();
+  // Admin-linked workers (e.g. Petrus) get bounced to their own worker dashboard
+  // so they never see the gig total or customer price.
+  const { checking: crewChecking } = useCrewWorkerRedirect(jobId);
+  const [crew, setCrew] = useState<HostCrewRow[]>([]);
 
   // Which panel tool the full-screen tools overlay is showing (null = closed).
   const [toolsOpen, setToolsOpen] = useState<GigToolId | null>(null);
@@ -103,6 +108,12 @@ export default function AdminGigTrackerPage() {
       setLoading(false);
     });
   }, [jobId]);
+
+  // Crew preview for the host's own gig dashboard (skipped for redirected workers).
+  useEffect(() => {
+    if (!jobId || crewChecking) return;
+    api.getHostCrew(jobId).then((res) => { if (res.ok && res.data) setCrew(res.data.crew); }).catch(() => {});
+  }, [jobId, crewChecking]);
 
   const shareUrl = token ? `${PUBLIC_BASE}/seuranta/${token}` : "";
   const copyLink = () => {
@@ -193,7 +204,7 @@ export default function AdminGigTrackerPage() {
     }
   };
 
-  if (loading) {
+  if (loading || crewChecking) {
     return <div className="min-h-screen bg-background pt-24 text-center text-muted-foreground">Ladataan…</div>;
   }
   if (!gig) {
@@ -319,6 +330,36 @@ export default function AdminGigTrackerPage() {
             </div>
           </div>
         </Card>
+
+        {/* Team / crew preview — who's working and what they've produced */}
+        {crew.length > 0 && (() => {
+          const ranked = [...crew].sort((a, b) => b.stats.washed - a.stats.washed);
+          const totWashed = crew.reduce((n, c) => n + c.stats.washed, 0);
+          const totPaid = crew.reduce((n, c) => n + c.stats.earnedCents, 0);
+          return (
+            <Card className="p-4 bg-card border-0 premium-shadow mb-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Users className="h-4 w-4 text-muted-foreground" />
+                  <h3 className="font-semibold text-foreground">Tiimi</h3>
+                  <span className="text-xs text-muted-foreground">{crew.length} hlö · {totWashed} ikkunaa · palkat {eur(totPaid)}</span>
+                </div>
+                <button onClick={() => navigate(`/admin/gig/${jobId}/tiimi`)} className="text-xs font-medium text-primary hover:underline">Hallitse →</button>
+              </div>
+              <div className="space-y-1.5">
+                {ranked.slice(0, 5).map(({ member, stats }, i) => (
+                  <div key={member.id} className="flex items-center gap-3 text-sm">
+                    <span className="w-5 text-center text-xs text-muted-foreground">{i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : i + 1}</span>
+                    <span className="flex-1 truncate">{member.name}{!member.active && <span className="text-muted-foreground"> · pois</span>}</span>
+                    <span className="tabular-nums text-muted-foreground">{stats.washed} ikk.</span>
+                    <span className="tabular-nums font-medium w-16 text-right">{eur(stats.earnedCents)}</span>
+                    <span className="tabular-nums text-muted-foreground w-14 text-right">{stats.hours > 0 ? `${eur(Math.round(stats.eurPerHour * 100))}/h` : "—"}</span>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          );
+        })()}
 
         {/* Signing & approval status */}
         {(() => {

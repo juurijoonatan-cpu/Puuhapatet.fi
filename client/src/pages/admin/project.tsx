@@ -10,6 +10,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useRoute, useLocation } from "wouter";
 import { api } from "@/lib/api";
 import { getAdminProfile, USERS } from "@/lib/admin-profile";
+import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import {
   emptyProjectData, computeWorkerStats, isFr8Plans,
   type ProjectData, type ProjMarksData, type WindowStatus,
@@ -53,6 +54,7 @@ export default function AdminProjectPage() {
   const jobId = Number(params?.id);
   const profile = getAdminProfile();
   const currentWorker = profile?.id || "joonatan";
+  const { checking: crewChecking } = useCrewWorkerRedirect(jobId);
 
   const [tab, setTab] = useState<Fr8Tab>("dashboard");
   const [activeFloor, setActiveFloor] = useState("K");
@@ -263,7 +265,7 @@ export default function AdminProjectPage() {
     </div>
   );
 
-  if (loading) {
+  if (loading || crewChecking) {
     return shell(
       <div style={{ position: "relative", zIndex: 10, height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.45)", fontSize: "14px" }}>
         Ladataan projektinäkymää…

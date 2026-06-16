@@ -132,6 +132,48 @@ const ADDONS = [
 ] as const;
 type AddonKey = (typeof ADDONS)[number]["key"];
 
+const DIFF_GROUPS = [
+  {
+    label: "Korkeus / kerrosluku",
+    key: "height" as const,
+    options: [
+      { label: "Maantaso", value: 1 },
+      { label: "Tikastus", value: 1.20, tag: "×1.20" },
+      { label: "2. kerros", value: 1.40, tag: "×1.40" },
+      { label: "Erikois", value: 1.65, tag: "×1.65" },
+    ],
+  },
+  {
+    label: "Pääsy / saavutettavuus",
+    key: "access" as const,
+    options: [
+      { label: "Normaali", value: 1 },
+      { label: "Haastava", value: 1.10, tag: "×1.10" },
+      { label: "Vaikea", value: 1.25, tag: "×1.25" },
+    ],
+  },
+  {
+    label: "Ikkunatyyppi",
+    key: "windowType" as const,
+    options: [
+      { label: "Tavalliset", value: 1 },
+      { label: "Kippi-käännös", value: 1.10, tag: "×1.10" },
+      { label: "Erikoikoot", value: 1.25, tag: "×1.25" },
+    ],
+  },
+  {
+    label: "Likaisuus / rakennuslika",
+    key: "dirt" as const,
+    options: [
+      { label: "Normaali", value: 1 },
+      { label: "Tavallista enemmän", value: 1.15, tag: "×1.15" },
+      { label: "Rakennuslika", value: 1.40, tag: "×1.40" },
+    ],
+  },
+] as const;
+type DiffKey = (typeof DIFF_GROUPS)[number]["key"];
+type DiffMult = Record<DiffKey, number>;
+
 // Regional multipliers by postal-code prefix
 // Wealth score → price multiplier mapping.
 // Score 1.0 (Westend) = premium market → ×1.22
@@ -307,6 +349,7 @@ export default function LaskuriPage() {
     Object.fromEntries(ADDONS.map(a => [a.key, false])) as Record<AddonKey, boolean>
   );
   const [kvEligible, setKvEligible] = useState(true);
+  const [diffMult, setDiffMult] = useState<DiffMult>({ height: 1, access: 1, windowType: 1, dirt: 1 });
 
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(() => {
@@ -324,7 +367,8 @@ export default function LaskuriPage() {
   const region = regionMultiplier(postalCode);
   const sqmBase = sqmIdx !== null ? SQM_RANGES[houseType][sqmIdx].price : 0;
   const tierObj = SERVICE_TIERS.find(t => t.key === tier)!;
-  const sqmTiered = Math.round(sqmBase * tierObj.mult);
+  const combinedDiffMult = diffMult.height * diffMult.access * diffMult.windowType * diffMult.dirt;
+  const sqmTiered = Math.round(sqmBase * tierObj.mult * combinedDiffMult);
   const addonsTotal = ADDONS.reduce((s, a) => s + (addons[a.key] ? a.price : 0), 0);
   const sqmPreRegion = sqmTiered + addonsTotal;
   const sqmTotal = Math.round(sqmPreRegion * region.mult);
@@ -353,7 +397,7 @@ export default function LaskuriPage() {
         ? `Sisäfreesaus — ${CAR_SIZES.find(c => c.key === carSize)?.label} (${carPrice} €). Sisältää: ${CAR_INCLUDES.join(", ")}.`
         : tab === "nurmikko"
         ? `Nurmikon leikkuu — ${lawnSizeIdx !== null ? LAWN_SIZES[lawnSizeIdx].label : ""}, ${lawnVisits}× kaudessa (${lawnPlan.desc}). Hinta: ${lawnPricePerVisit} €/kerta, yht. ${lawnTotal} €${lawnSavings > 0 ? `, säästät ${lawnSavings} €` : ""}.`
-        : `Ikkunapesu — ${houseLabel} ${sqmLabel}, ${tierObj.label}. Lisät: ${addonsList}. Alue: ${region.label} (${region.mult}×). Postinumero: ${postalCode || "—"}`;
+        : `Ikkunapesu — ${houseLabel} ${sqmLabel}, ${tierObj.label}. Lisät: ${addonsList}. Vaikeuskerroin: ×${combinedDiffMult.toFixed(2)}. Alue: ${region.label} (${region.mult}×). Postinumero: ${postalCode || "—"}`;
       const fullMessage = [
         `Palvelu: ${serviceDesc}`,
         `Hinta-arvio: ${activeTotal} € (kotitalousväh. jälkeen ~${afterKotitalous} €)`,
@@ -592,7 +636,7 @@ export default function LaskuriPage() {
                           <p className="text-xs text-muted-foreground">{sub}</p>
                         </div>
                         {sqmIdx !== null && (() => {
-                          const full = Math.round(sqmBase * mult * region.mult);
+                          const full = Math.round(sqmBase * mult * combinedDiffMult * region.mult);
                           const kv = Math.round(full * (1 - KOTITALOUS_PCT));
                           const display = kvEligible ? kv : full;
                           return (
@@ -606,6 +650,42 @@ export default function LaskuriPage() {
                         })()}
                       </button>
                     ))}
+                  </div>
+                </div>
+
+                {/* Difficulty multipliers */}
+                <div>
+                  <p className="text-sm font-medium text-foreground mb-1">Vaikeustekijät</p>
+                  <p className="text-[10px] text-muted-foreground mb-3">Vaikuttaako jokin tekijä pesun hintaan? Valitse tarkentaaksesi arviota.</p>
+                  <div className="space-y-3">
+                    {DIFF_GROUPS.map(group => (
+                      <div key={group.key}>
+                        <p className="text-xs text-muted-foreground mb-1.5">{group.label}</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {group.options.map(opt => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              onClick={() => setDiffMult(prev => ({ ...prev, [group.key]: opt.value }))}
+                              className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                                diffMult[group.key] === opt.value
+                                  ? "border-primary bg-primary/10 text-primary"
+                                  : "border-border bg-card hover:bg-muted/50 text-foreground"
+                              }`}
+                            >
+                              {opt.label}{"tag" in opt && opt.tag ? <span className="ml-1 text-[10px] opacity-60">{opt.tag}</span> : null}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    {combinedDiffMult > 1 && (
+                      <div className="rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 px-3 py-2">
+                        <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">
+                          Vaikeuskerroin ×{combinedDiffMult.toFixed(2)} — hinta korotettu valitsemiesi tekijöiden mukaan
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -867,18 +947,18 @@ export default function LaskuriPage() {
                       <span className="text-muted-foreground">{tierObj.label}</span>
                       <span className="text-foreground font-medium">{sqmTiered} €</span>
                     </div>
+                    {combinedDiffMult > 1 && (
+                      <div className="flex justify-between text-xs text-amber-600 dark:text-amber-400">
+                        <span>Vaikeuskerroin</span>
+                        <span className="font-medium">×{combinedDiffMult.toFixed(2)}</span>
+                      </div>
+                    )}
                     {ADDONS.filter(a => addons[a.key]).map(a => (
                       <div key={a.key} className="flex justify-between text-xs">
                         <span className="text-muted-foreground truncate mr-2">{a.label}</span>
                         <span className="text-foreground font-medium">+{a.price} €</span>
                       </div>
                     ))}
-                    {false && (
-                      <div className="flex justify-between text-xs border-t border-border pt-1.5 mt-1.5">
-                        <span className="text-muted-foreground">Alue ({region.label})</span>
-                        <span className="text-foreground font-medium">{region.mult > 1 ? "+" : ""}{Math.round((region.mult - 1) * 100)} %</span>
-                      </div>
-                    )}
                   </div>
                 )}
 

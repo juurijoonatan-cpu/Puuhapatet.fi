@@ -189,6 +189,101 @@ export function computeWorkerStats(data: ProjectData): WorkerStat[] {
   });
 }
 
+// ─── Efficiency / pace analytics ───────────────────────────────────────────────
+
+export interface GigEfficiency {
+  total: number;
+  washed: number;
+  kesken: number;
+  remaining: number;          // total − washed
+  pct: number;                // 0..100 by window count
+  revenueCents: number;       // washed × price
+  contractCents: number;      // total × price
+  remainingCents: number;     // remaining × price (still to earn)
+  todayWashed: number;        // windows marked pesty today (from log)
+  weekWashed: number;         // …in the last 7 days
+  activeDays: number;         // distinct calendar days with a pesty event
+  loggedWashed: number;       // pesty events retained in the (capped) log — pace basis
+  perDay: number;             // average washed per active day
+  etaWorkingDays: number | null; // working days left at current pace (null if no pace)
+  bestDay: { ts: number; count: number } | null;
+  totalHours: number;
+  eurPerHour: number;         // revenue / total hours
+  windowsPerHour: number;     // washed / total hours
+}
+
+/** Local YYYY-MM-DD key for grouping log events by calendar day. */
+function dayKey(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+/**
+ * Derive pace / projection stats for a project so the gig-tools "Tehokkuus"
+ * view can show throughput and an ETA. Pace is based on the retained activity
+ * log (capped), so it is an estimate — the long-running totals (washed, revenue)
+ * come from the authoritative window set.
+ */
+export function computeEfficiency(data: ProjectData): GigEfficiency {
+  const totals = computeProjectTotals(data);
+  const price = data.pricePerWindow || DEFAULT_PRICE_PER_WINDOW;
+
+  // Group pesty events by calendar day from the activity log.
+  const startToday = new Date(); startToday.setHours(0, 0, 0, 0);
+  const weekAgo = Date.now() - 7 * 86400_000;
+  const byDay = new Map<string, { ts: number; count: number }>();
+  let todayWashed = 0, weekWashed = 0, loggedWashed = 0;
+  const seenKeysPerDay = new Map<string, Set<string>>();
+
+  for (const l of data.log) {
+    if (l.status !== "pesty") continue;
+    const k = dayKey(l.ts);
+    // Count each window once per day to avoid double-counting status flips.
+    let seen = seenKeysPerDay.get(k);
+    if (!seen) { seen = new Set(); seenKeysPerDay.set(k, seen); }
+    if (seen.has(l.key)) continue;
+    seen.add(l.key);
+    loggedWashed += 1;
+    const entry = byDay.get(k) || { ts: l.ts, count: 0 };
+    entry.count += 1;
+    entry.ts = Math.min(entry.ts, l.ts);
+    byDay.set(k, entry);
+    if (l.ts >= startToday.getTime()) todayWashed += 1;
+    if (l.ts >= weekAgo) weekWashed += 1;
+  }
+
+  const activeDays = byDay.size;
+  const perDay = activeDays > 0 ? loggedWashed / activeDays : 0;
+  const remaining = totals.total - totals.washed;
+  const etaWorkingDays = perDay > 0 && remaining > 0 ? Math.ceil(remaining / perDay) : (remaining === 0 ? 0 : null);
+
+  let bestDay: { ts: number; count: number } | null = null;
+  Array.from(byDay.values()).forEach((v) => { if (!bestDay || v.count > bestDay.count) bestDay = v; });
+
+  const totalHours = Object.values(data.hours || {}).reduce((a, h) => a + Math.max(0, h || 0), 0);
+
+  return {
+    total: totals.total,
+    washed: totals.washed,
+    kesken: totals.kesken,
+    remaining,
+    pct: totals.pct,
+    revenueCents: totals.revenueCents,
+    contractCents: totals.contractCents,
+    remainingCents: Math.round(remaining * price * 100),
+    todayWashed,
+    weekWashed,
+    activeDays,
+    loggedWashed,
+    perDay,
+    etaWorkingDays,
+    bestDay,
+    totalHours,
+    eurPerHour: totalHours > 0 ? totals.revenueCents / 100 / totalHours : 0,
+    windowsPerHour: totalHours > 0 ? totals.washed / totalHours : 0,
+  };
+}
+
 // ─── Gig billing sync (FR8 toolkit = source of truth) ──────────────────────────
 
 const GIG_FLOOR_PALETTE = ["#D9472B", "#DFA614", "#1F3B57", "#3E7C59", "#7A4FA3", "#C2557A"];

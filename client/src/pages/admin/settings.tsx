@@ -71,7 +71,16 @@ export default function AdminSettingsPage() {
   useEffect(() => { loadStats(); loadBonusUsages(); }, []);
 
   const fmt = (cents: number) =>
-    Math.round(cents / 100).toLocaleString("fi-FI") + " €";
+    Math.round((Number.isFinite(cents) ? cents : 0) / 100).toLocaleString("fi-FI") + " €";
+
+  // Total service fees earned from gigs. Prefer the server value, but if an
+  // older API build doesn't send it, reconstruct it from current debts +
+  // amount already paid so the kassa never shows "epäluku".
+  const brandEarned = workerStats
+    ? (Number.isFinite(workerStats.brandEarned)
+        ? workerStats.brandEarned
+        : Object.values(workerStats.workerFees).reduce((s, v) => s + (v || 0), 0) + (workerStats.brandCash || 0))
+    : 0;
 
   const handleMarkPaid = async (workerId: string) => {
     const owed = workerStats?.workerFees[workerId] ?? 0;
@@ -481,7 +490,7 @@ export default function AdminSettingsPage() {
                   <h2 className="text-lg font-semibold text-foreground">Puuhapatet — brändin kassa</h2>
                 </div>
                 <p className="text-3xl font-bold text-green-600 dark:text-green-400 mb-1">
-                  {fmt(workerStats.brandEarned)}
+                  {fmt(brandEarned)}
                 </p>
                 <p className="text-sm text-muted-foreground">
                   Keikoilta kertynyt palvelumaksu — brändin osuus yhteensä

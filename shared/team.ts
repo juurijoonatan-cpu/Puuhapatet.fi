@@ -58,3 +58,24 @@ export function feeRateForWorker(workerId: string): number {
 export function feePctForWorker(workerId: string): number {
   return Math.round(feeRateForWorker(workerId) * 100);
 }
+
+/**
+ * The full billed total of a job, in cents.
+ *
+ * For taloyhtiö (housing-company) gigs `agreedPrice` is the price *per
+ * apartment* ("Hinta per asunto"), and the real bill is that price times the
+ * number of apartments (`unitCount`). For every other job `agreedPrice` is
+ * already the full total. All revenue / service-fee / tax math must go through
+ * this helper so taloyhtiö gigs aren't undercounted by a factor of unitCount.
+ */
+export function effectiveJobTotal(job: {
+  agreedPrice: number;
+  unitCount?: number | null;
+  isTaloyhtiio?: boolean | null;
+}): number {
+  const price = job.agreedPrice ?? 0;
+  if (job.isTaloyhtiio && job.unitCount && job.unitCount > 1) {
+    return price * job.unitCount;
+  }
+  return price;
+}

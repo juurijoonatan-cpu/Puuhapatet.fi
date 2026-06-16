@@ -20,7 +20,7 @@ import { getAdminProfile, USERS } from "@/lib/admin-profile";
 import { DashboardBriefing } from "@/components/dashboard-briefing";
 import { api, StatsResponse, WorkerStatsResponse } from "@/lib/api";
 import { isMyJob, parseWorkerIds } from "@/lib/visibility";
-import { STAFF_SERVICE_FEE_RATE, STAFF_SERVICE_FEE_PCT, HOST_SERVICE_FEE_PCT, feeRateForWorker, feePctForWorker } from "@shared/team";
+import { STAFF_SERVICE_FEE_RATE, STAFF_SERVICE_FEE_PCT, HOST_SERVICE_FEE_PCT, feeRateForWorker, feePctForWorker, effectiveJobTotal } from "@shared/team";
 
 export default function AdminDashboard() {
   const profile = getAdminProfile();
@@ -46,7 +46,7 @@ export default function AdminDashboard() {
     if (profile) {
       api.getJobs().then((res) => {
         if (res.ok && res.data) {
-          const rows = res.data as { job: { assignedTo: string | null; status: string; agreedPrice: number; waiveFee?: boolean; quoteStatus?: string | null } }[];
+          const rows = res.data as { job: { assignedTo: string | null; status: string; agreedPrice: number; waiveFee?: boolean; quoteStatus?: string | null; unitCount?: number | null; isTaloyhtiio?: boolean | null } }[];
           const mine = rows.filter(r => isMyJob(r.job.assignedTo, profile.id));
           setMyJobTotal(mine.length);
           setMyJobUpcoming(mine.filter(r => r.job.status === "scheduled").length);
@@ -55,7 +55,8 @@ export default function AdminDashboard() {
             .filter(r => r.job.status === "done" && r.job.quoteStatus !== "declined")
             .reduce((sum, r) => {
               const workerCount = Math.max(1, parseWorkerIds(r.job.assignedTo).length);
-              return sum + Math.round((r.job.agreedPrice ?? 0) / workerCount);
+              // taloyhtiö gigs bill per apartment × unitCount — use the full total.
+              return sum + Math.round(effectiveJobTotal(r.job) / workerCount);
             }, 0);
           setMyRevenue(rev);
         }

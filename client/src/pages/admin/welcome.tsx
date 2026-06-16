@@ -119,7 +119,14 @@ export default function AdminWelcomePage() {
                 <p className="mt-1 text-sm text-muted-foreground">{doc.subtitle} · versio {doc.version}</p>
                 <p className="mt-4 text-[15px] leading-relaxed">{doc.intro}</p>
 
-                <div className="mt-6 space-y-5 rounded-2xl border border-border bg-card p-5 md:p-6">
+                {/* Key terms at a glance — the dense text in one breath */}
+                <div className="mt-5 grid grid-cols-3 gap-3">
+                  <Highlight label="Palvelumaksu" value={`${feePctForWorker(profile.id)} %`} />
+                  <Highlight label="Laskutus" value="Oma Y‑tunnus" />
+                  <Highlight label="Asiakkaat" value="Puuhapatetille" />
+                </div>
+
+                <div className="mt-5 space-y-5 rounded-2xl border border-border bg-card p-5 md:p-6">
                   {doc.sections.map((sec) => (
                     <div key={sec.no}>
                       <h3 className="text-[15px] font-semibold">
@@ -261,6 +268,15 @@ function WelcomeStep({ isReturning, isFounder, name, onNext }: { isReturning: bo
         </Button>
       </motion.div>
     </section>
+  );
+}
+
+function Highlight({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-border bg-card px-3 py-2.5 text-center">
+      <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-0.5 text-sm font-semibold leading-tight">{value}</p>
+    </div>
   );
 }
 

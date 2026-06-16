@@ -141,6 +141,7 @@ export default function GigContractSign({ token, view, onSigned }: Props) {
   const [place, setPlace] = useState("Helsinki");
   const [signatureDataUrl, setSignatureDataUrl] = useState("");
   const [agreed, setAgreed] = useState(false);
+  const [showContract, setShowContract] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -241,13 +242,22 @@ export default function GigContractSign({ token, view, onSigned }: Props) {
           </p>
         </Panel>
 
-        {/* Contract text */}
+        {/* Contract text — collapsed by default to keep the screen calm */}
         {view.contractText && (
           <Panel>
-            <p style={mono}>SOPIMUSTEKSTI</p>
-            <pre style={{ margin: "10px 0 0", whiteSpace: "pre-wrap", fontFamily: FONT, fontSize: 13.5, lineHeight: 1.7, color: T.ink, maxHeight: 360, overflowY: "auto" }}>
-              {view.contractText}
-            </pre>
+            <button
+              type="button"
+              onClick={() => setShowContract((v) => !v)}
+              style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", background: "none", border: "none", padding: 0, cursor: "pointer", color: T.ink, fontFamily: FONT }}
+            >
+              <span style={mono}>KOKO SOPIMUSTEKSTI</span>
+              <span style={{ fontSize: 13, color: T.muted }}>{showContract ? "Piilota ▲" : "Näytä ▼"}</span>
+            </button>
+            {showContract && (
+              <pre style={{ margin: "12px 0 0", whiteSpace: "pre-wrap", fontFamily: FONT, fontSize: 13.5, lineHeight: 1.7, color: T.ink, maxHeight: 360, overflowY: "auto" }}>
+                {view.contractText}
+              </pre>
+            )}
           </Panel>
         )}
 

@@ -10,8 +10,8 @@ import { customers, jobs, expenses, workerPayments, investments, startupBonusUsa
 import { feeRateForWorker } from "@shared/team";
 import { randomUUID } from "crypto";
 import {
-  AI_ENABLED, chatComplete, publicSystemPrompt, adminSystemPrompt,
-  PUBLIC_FALLBACK_FI, type ChatTurn,
+  AI_ENABLED, chatComplete, chatCompleteWithTools, publicSystemPrompt, adminSystemPrompt,
+  PUBLIC_FALLBACK_FI, type ChatTurn, type AiTool,
 } from "./ai";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
@@ -2938,7 +2938,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         { role: "system", content: publicSystemPrompt() },
         ...toModelTurns(history),
       ];
-      const reply = await chatComplete(turns, { temperature: 0.3, maxTokens: 600 });
+      const reply = await chatComplete(turns, { temperature: 0.3, maxTokens: 420 });
       const finalReply = reply ?? PUBLIC_FALLBACK_FI;
 
       await db.insert(chatMessages).values({ conversationId: convo.id, role: "assistant", content: finalReply });
@@ -3135,16 +3135,119 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const effectiveRole: "HOST" | "STAFF" = role === "HOST" ? "HOST" : "STAFF";
       const contextBlock = await buildAdminContext(String(userId || ""), userName || "tiimiläinen", effectiveRole);
 
-      const turns: ChatTurn[] = [
-        { role: "system", content: adminSystemPrompt({ userName: userName || "tiimiläinen", role: effectiveRole, contextBlock }) },
-        ...history.slice(-HISTORY_LIMIT).map((m): ChatTurn => ({
-          role: m.role === "assistant" ? "assistant" : "user",
-          content: String(m.content || ""),
-        })),
-        { role: "user", content: text },
-      ];
-      const reply = await chatComplete(turns, { temperature: 0.4, maxTokens: 900 });
-      res.json({ reply: reply ?? "En valitettavasti saanut yhteyttä tekoälypalveluun juuri nyt. Yritä hetken kuluttua uudelleen." });
+      const adminTools: AiTool[] = effectiveRole === "HOST" ? [
+        {
+          type: "function",
+          function: {
+            name: "update_job",
+            description: "Päivitä keikan status tai lisää muistiinpano. Käytä kun käyttäjä pyytää päivittämään keikan tilan tai lisäämään huomion.",
+            parameters: {
+              type: "object",
+              properties: {
+                job_id: { type: "number", description: "Keikan ID-numero" },
+                status: { type: "string", enum: ["lead", "scheduled", "in_progress", "done"], description: "Uusi tila (valinnainen)" },
+                notes: { type: "string", description: "Lisättävä muistiinpano keikalle (valinnainen)" },
+              },
+              required: ["job_id"],
+            },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "send_followup_email",
+            description: "Lähetä muistutusviesti tai yhteydenottopyyntö asiakkaalle. Käytä vain kun käyttäjä pyytää lähettämään viestin asiakkaalle.",
+            parameters: {
+              type: "object",
+              properties: {
+                job_id: { type: "number", description: "Keikan ID-numero" },
+                message: { type: "string", description: "Viesti asiakkaalle suomeksi (lyhyt, max 3 lausetta)" },
+              },
+              required: ["job_id", "message"],
+            },
+          },
+        },
+      ] : [];
+
+      const systemTurn: ChatTurn = { role: "system", content: adminSystemPrompt({ userName: userName || "tiimiläinen", role: effectiveRole, contextBlock }) };
+      const historyTurns: ChatTurn[] = history.slice(-HISTORY_LIMIT).map((m): ChatTurn => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: String(m.content || ""),
+      }));
+      const userTurn: ChatTurn = { role: "user", content: text };
+      let turns: any[] = [systemTurn, ...historyTurns, userTurn];
+
+      const toolResultNotes: string[] = [];
+      for (let round = 0; round < 3; round++) {
+        const result = await chatCompleteWithTools(turns, adminTools, { temperature: 0.4, maxTokens: 900 });
+
+        if (!result.toolCalls || result.toolCalls.length === 0) {
+          const reply = result.text ?? "En valitettavasti saanut yhteyttä tekoälypalveluun juuri nyt. Yritä hetken kuluttua uudelleen.";
+          const fullReply = toolResultNotes.length > 0 ? toolResultNotes.join("\n") + "\n\n" + reply : reply;
+          return res.json({ reply: fullReply });
+        }
+
+        turns.push({ role: "assistant", content: result.text ?? "", tool_calls: result.toolCalls });
+
+        for (const tc of result.toolCalls) {
+          let toolResult = "";
+          try {
+            const args = JSON.parse(tc.function.arguments);
+            if (tc.function.name === "update_job") {
+              const jobRow = (await db.select().from(jobs).where(eq(jobs.id, args.job_id)).limit(1))[0];
+              if (!jobRow) {
+                toolResult = `Virhe: keikkaa #${args.job_id} ei löydy.`;
+              } else {
+                const updates: any = { updatedAt: new Date() };
+                if (args.status) updates.status = args.status;
+                if (args.notes) updates.description = (jobRow.description || "") + `\n[${new Date().toLocaleDateString("fi-FI")}] ${args.notes}`;
+                await db.update(jobs).set(updates).where(eq(jobs.id, args.job_id));
+                const changes = [args.status ? `status → ${args.status}` : null, args.notes ? "muistiinpano lisätty" : null].filter(Boolean).join(", ");
+                toolResult = `Keikka #${args.job_id} päivitetty: ${changes}.`;
+                toolResultNotes.push(`✓ ${toolResult}`);
+              }
+            } else if (tc.function.name === "send_followup_email") {
+              if (!resend) {
+                toolResult = "Virhe: sähköpostipalvelu ei käytössä.";
+              } else {
+                const jobRow = (await db.select().from(jobs).where(eq(jobs.id, args.job_id)).limit(1))[0];
+                if (!jobRow) {
+                  toolResult = `Virhe: keikkaa #${args.job_id} ei löydy.`;
+                } else {
+                  const customer = jobRow.customerId
+                    ? (await db.select().from(customers).where(eq(customers.id, jobRow.customerId)).limit(1))[0]
+                    : null;
+                  if (!customer?.email) {
+                    toolResult = `Keikalla #${args.job_id} ei ole asiakkaan sähköpostia — ei voitu lähettää.`;
+                  } else {
+                    const html = `<div style="font-family:sans-serif;max-width:600px;margin:0 auto">
+                      <p>Hei ${customer.name?.split(" ")[0] ?? ""}!</p>
+                      <p>${args.message}</p>
+                      <p>Ystävällisin terveisin,<br><strong>Puuhapatet</strong><br>
+                      Joonatan +358 40 0389999 · Matias +358 44 2350881<br>
+                      <a href="https://puuhapatet.fi">puuhapatet.fi</a></p>
+                    </div>`;
+                    await resend.emails.send({
+                      from: FROM_EMAIL,
+                      to: customer.email,
+                      subject: "Terveisiä Puuhapatet — jatketaan suunnittelua?",
+                      html,
+                    });
+                    toolResult = `Viesti lähetetty asiakkaalle ${customer.name} (${customer.email}).`;
+                    toolResultNotes.push(`✓ ${toolResult}`);
+                  }
+                }
+              }
+            } else {
+              toolResult = `Tuntematon työkalu: ${tc.function.name}`;
+            }
+          } catch (e: any) {
+            toolResult = `Virhe työkalun suorituksessa: ${e.message}`;
+          }
+          turns.push({ role: "tool", tool_call_id: tc.id, content: toolResult });
+        }
+      }
+      res.json({ reply: toolResultNotes.join("\n") || "Toimenpiteet suoritettu." });
     } catch (e: any) {
       console.error("Admin assistant error:", e);
       res.status(500).json({ error: e.message });
@@ -3182,6 +3285,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     lines.push(`\nKeikat (${role === "HOST" ? "kaikki" : "omat"}): yhteensä ${visibleJobs.length} — ` +
       Object.entries(byStatus).map(([s, n]) => `${s}: ${n}`).join(", "));
 
+    // In-progress jobs (currently being worked on)
+    const inProgress = visibleJobs.filter(j => j.status === "in_progress").slice(0, 10);
+    if (inProgress.length) {
+      lines.push(`\nKäynnissä olevat keikat:`);
+      for (const j of inProgress) {
+        const c = customerById.get(j.customerId);
+        lines.push(`- #${j.id} ${c?.name ?? "?"} · ${c?.address ?? "?"} · tekijä: ${j.assignedTo || "ei osoitettu"} · ${eur(j.agreedPrice)}`);
+      }
+    }
+
     // Upcoming scheduled jobs
     const upcoming = visibleJobs
       .filter(j => j.scheduledAt && new Date(j.scheduledAt) >= new Date(Date.now() - 86400000))
@@ -3195,13 +3308,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
     }
 
-    // Open leads / pending quotes
-    const leads = visibleJobs.filter(j => j.status === "lead" || j.quoteStatus === "pending").slice(0, 15);
+    // Open leads — with clear quote status for each
+    const leads = visibleJobs.filter(j => j.status === "lead").slice(0, 20);
     if (leads.length) {
-      lines.push(`\nAvoimet liidit / odottavat tarjoukset:`);
+      lines.push(`\nAvoimet liidit:`);
       for (const j of leads) {
         const c = customerById.get(j.customerId);
-        lines.push(`- #${j.id} ${c?.name ?? "?"} · ${c?.phone ?? ""} ${c?.address ?? ""} · ${j.quoteStatus ?? j.status} · ${eur(j.agreedPrice)}`);
+        const quoteInfo = j.quoteToken
+          ? (j.quoteStatus === "accepted" ? "tarjous HYVÄKSYTTY"
+             : j.quoteStatus === "declined" ? "tarjous HYLÄTTY"
+             : "tarjous lähetetty, odottaa vastausta")
+          : "tarjousta ei vielä lähetetty";
+        lines.push(`- #${j.id} ${c?.name ?? "?"} · ${c?.phone ?? ""} · ${c?.address ?? ""} · ${quoteInfo} · ${eur(j.agreedPrice)}`);
+      }
+    }
+
+    // Pending quotes on non-lead jobs
+    const pendingQuotes = visibleJobs.filter(j => j.status !== "lead" && j.quoteStatus === "pending").slice(0, 10);
+    if (pendingQuotes.length) {
+      lines.push(`\nOdottavat tarjoukset (ei-liidi):`);
+      for (const j of pendingQuotes) {
+        const c = customerById.get(j.customerId);
+        lines.push(`- #${j.id} ${c?.name ?? "?"} · ${j.status} · tarjous odottaa vastausta · ${eur(j.agreedPrice)}`);
       }
     }
 

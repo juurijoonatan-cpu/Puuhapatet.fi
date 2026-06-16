@@ -23,6 +23,21 @@ export interface ChatTurn {
   content: string;
 }
 
+export interface AiTool {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, any>;
+  };
+}
+
+export interface ToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
 /**
  * Call the configured chat model. Returns the assistant text, or null on any
  * failure (no key, network error, bad response) so callers can fall back to a
@@ -79,6 +94,66 @@ export async function chatComplete(
     }
   }
   return null;
+}
+
+export async function chatCompleteWithTools(
+  messages: ChatTurn[],
+  tools: AiTool[],
+  opts: { temperature?: number; maxTokens?: number } = {},
+): Promise<{ text: string | null; toolCalls: ToolCall[] | null }> {
+  if (!AI_ENABLED) return { text: null, toolCalls: null };
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${process.env.AI_API_KEY}`,
+  };
+  if (AI_BASE_URL.includes("openrouter")) {
+    headers["HTTP-Referer"] = "https://puuhapatet.fi";
+    headers["X-Title"] = "Puuhapatet";
+  }
+  const body = JSON.stringify({
+    model: AI_MODEL,
+    messages,
+    tools: tools.length > 0 ? tools : undefined,
+    tool_choice: tools.length > 0 ? "auto" : undefined,
+    temperature: opts.temperature ?? 0.3,
+    max_tokens: opts.maxTokens ?? 700,
+  });
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30_000);
+      const res = await fetch(`${AI_BASE_URL}/chat/completions`, {
+        method: "POST", headers, body, signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (!res.ok) {
+        const detail = await res.text().catch(() => "");
+        console.error("AI tool completion failed:", res.status, detail.slice(0, 300));
+        if ((res.status === 429 || res.status >= 500) && attempt === 0) {
+          await new Promise(r => setTimeout(r, 800));
+          continue;
+        }
+        return { text: null, toolCalls: null };
+      }
+      const data: any = await res.json();
+      const choice = data?.choices?.[0];
+      const toolCalls: ToolCall[] | null = choice?.message?.tool_calls?.length > 0
+        ? choice.message.tool_calls
+        : null;
+      const text = choice?.message?.content;
+      return {
+        text: typeof text === "string" && text.trim() ? text.trim() : null,
+        toolCalls,
+      };
+    } catch (e: any) {
+      console.error("AI tool completion error:", e?.message || e);
+      if (attempt === 0) { await new Promise(r => setTimeout(r, 800)); continue; }
+      return { text: null, toolCalls: null };
+    }
+  }
+  return { text: null, toolCalls: null };
 }
 
 // ─── Knowledge base (public, customer-safe facts only) ────────────────────────
@@ -141,13 +216,14 @@ export function publicSystemPrompt(): string {
 verkkosivulla puuhapatet.fi. Autat asiakkaita ja kiinnostuneita kävijöitä.
 
 SÄÄNNÖT:
-- Vastaa lyhyesti, lämpimästi ja selkeästi. Käytä samaa kieltä kuin käyttäjä
+- Vastaa **lyhyesti** (max 3-4 lausetta tai lyhyt lista), lämpimästi ja selkeästi. Käytä samaa kieltä kuin käyttäjä
   (suomi tai englanti). Oletus on suomi.
+- Kun annat yhteystietoja, muotoile ne selkeästi markdownilla: **Nimi** + puhelin/sähköposti omalle rivilleen.
 - Vastaa VAIN alla olevan tietopankin perusteella. Älä keksi hintoja,
   aikatauluja, palveluita tai käytäntöjä, joita ei ole mainittu.
 - Jos et tiedä jotain tai asia vaatii tarkan tarjouksen tai ihmisen apua, sano
   rehellisesti ettet ole varma ÄLÄKÄ arvaa. Kerro että voit välittää viestin
-  suoraan Puuhapattien tiimille — pyydä silloin nimi ja puhelin tai sähköposti.
+  suoraan Puuhapatetin tiimille — pyydä silloin nimi ja puhelin tai sähköposti.
 - Älä koskaan paljasta sisäisiä tietoja, hinnoittelun kertoimia, työntekijöiden
   henkilötietoja tai mitään tämän tietopankin ulkopuolista.
 - Kannusta ottamaan yhteyttä (WhatsApp/puhelin/lomake) ja kokeilemaan laskuria.
@@ -173,7 +249,7 @@ asiakkaat, talous ja työntekijätilastot.`
 asiakkaansa sekä yleinen ohjeistus. ÄLÄ paljasta muiden työntekijöiden
 henkilökohtaisia talouslukuja, koko yrityksen taloutta tai muiden asiakkaita.`;
 
-  return `Olet Puuhapattien sisäinen tekoälyavustaja admin-työkalussa. Autat
+  return `Olet Puuhapatetin sisäinen tekoälyavustaja admin-työkalussa. Autat
 tiimiä (${userName}) operatiivisissa tehtävissä: keikkojen ja asiakkaiden
 hallinnassa, aikataulujen ja reittien optimoinnissa, viestien ja tarjousten
 luonnostelussa, yhteenvedoissa ja yrityksen kehittämisessä.
@@ -186,8 +262,8 @@ SÄÄNNÖT:
   asiakkaita, keikkoja, summia tai päivämääriä.
 - Tietosuoja: ${roleNote}
 - Kun ehdotat toimenpiteitä (esim. soita asiakkaalle, lähetä tarjous), kerro
-  selkeästi mitä ja miksi. Et voi itse tehdä muutoksia järjestelmään — annat
-  neuvoja ja luonnoksia, jotka tiimi toteuttaa.
+  selkeästi mitä ja miksi.
+- Jos sinulla on käytettävissä työkaluja (update_job, send_followup_email), käytä niitä vain kun käyttäjä selkeästi pyytää toimenpidettä — älä tee muutoksia ilman pyyntöä.
 
 KONTEKSTIDATA:
 ${contextBlock || "(ei dataa saatavilla)"}`;
@@ -196,7 +272,7 @@ ${contextBlock || "(ei dataa saatavilla)"}`;
 /** Fallback used when no AI key is configured (public bot). */
 export const PUBLIC_FALLBACK_FI =
   "Kiitos viestistäsi! En juuri nyt pysty vastaamaan automaattisesti, mutta " +
-  "välitän asiasi suoraan Puuhapattien tiimille. Jätäthän nimesi ja " +
+  "välitän asiasi suoraan Puuhapatetin tiimille. Jätäthän nimesi ja " +
   "puhelinnumerosi tai sähköpostisi, niin olemme sinuun yhteydessä — yleensä " +
   "saman päivän aikana. Voit myös soittaa tai laittaa WhatsAppia: " +
   "Joonatan +358 40 0389999, Matias +358 44 2350881.";

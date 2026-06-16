@@ -9,6 +9,7 @@ import { db } from "./db";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 import { feeRateForWorker } from "@shared/team";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
+import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, type ProjectData } from "@shared/project";
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
@@ -2100,6 +2101,51 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Member agreement (signed inside the admin, cross-device) ───────────────
+
+  app.get("/api/admin/member-agreement/:userId", async (req, res) => {
+    // Soft-fail (no 500) so the client can fall back to its local cache, e.g.
+    // before the member_agreement column has been migrated.
+    try {
+      const [row] = await db.select({ ma: users.memberAgreement }).from(users).where(eq(users.username, req.params.userId));
+      let signature = null;
+      try { signature = row?.ma ? JSON.parse(row.ma) : null; } catch { signature = null; }
+      res.json({ ok: true, signature });
+    } catch {
+      res.json({ ok: true, signature: null });
+    }
+  });
+
+  app.post("/api/admin/member-agreement/:userId", async (req, res) => {
+    const userId = req.params.userId;
+    const sig = sanitizeMemberSignature({ ...req.body, userId });
+    if (!sig) return res.status(400).json({ error: "Allekirjoitus tai vaaditut tiedot puuttuvat" });
+    sig.ip = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim()
+      || req.socket?.remoteAddress || sig.ip;
+    sig.userAgent = req.headers["user-agent"] ? String(req.headers["user-agent"]) : sig.userAgent;
+    try {
+      const json = JSON.stringify(sig);
+      const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.username, userId));
+      if (existing) {
+        await db.update(users).set({ memberAgreement: json }).where(eq(users.username, userId));
+      } else {
+        await db.insert(users).values({
+          name: sig.snapshot.name || userId,
+          username: userId,
+          passwordHash: "",
+          role: sig.snapshot.role === "HOST" ? "host" : "staff",
+          memberAgreement: json,
+        });
+      }
+      res.json({ ok: true, signature: sig, persisted: true });
+    } catch (e: any) {
+      // Don't lock members out if server persistence isn't available yet
+      // (e.g. column not migrated) — the client keeps a local copy.
+      console.error("member-agreement persist failed:", e?.message);
+      res.json({ ok: true, signature: sig, persisted: false });
     }
   });
 

@@ -4,6 +4,7 @@
 
 import type { GigData, GigTotals } from "@shared/gig";
 import type { ProjectData, ProjTotals, WorkerStat } from "@shared/project";
+import type { MemberAgreementSignature } from "@shared/member-agreement";
 
 // Defaults to the Render backend in production; override with VITE_API_BASE
 // (e.g. "" for same-origin) when running the server locally.
@@ -438,6 +439,15 @@ export const api = {
 
   setUserPasswordRemote: (userId: string, password: string) =>
     request<{ ok: boolean }>("POST", `/api/admin/user-password/${userId}`, { password }),
+
+  // ─── Member agreement (signed inside the admin) ─────────────────────────────
+  getMemberAgreement: (userId: string) =>
+    request<{ ok: boolean; signature: MemberAgreementSignature | null }>(
+      "GET", `/api/admin/member-agreement/${userId}`),
+
+  saveMemberAgreement: (userId: string, signature: Partial<MemberAgreementSignature>) =>
+    request<{ ok: boolean; signature: MemberAgreementSignature }>(
+      "POST", `/api/admin/member-agreement/${userId}`, signature),
 
   // ─── Custom gigs (cap-pricing) ──────────────────────────────────────────────
   getGig: (token: string) =>

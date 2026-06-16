@@ -11,13 +11,8 @@ import { Link, useRoute, useLocation } from "wouter";
 import {
   ArrowLeft, Share2, Copy, Check, FileText,
   Send, AlertCircle, ChevronDown, Receipt, ExternalLink, ChevronRight,
-  PenLine, ShieldCheck, Clock, Save, Download, Printer, Wrench, LayoutDashboard,
+  PenLine, ShieldCheck, Clock, Save, Download, Printer, LayoutDashboard,
 } from "lucide-react";
-import { GIG_TOOLS, type GigToolId } from "@/lib/gig-tools";
-import GigToolsOverlay from "@/components/gig-tools/GigToolsOverlay";
-import {
-  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
-} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -49,9 +44,6 @@ export default function AdminGigTrackerPage() {
   const jobId = Number(params?.id);
   const { toast } = useToast();
   const profile = getAdminProfile();
-
-  // Which panel tool the full-screen tools overlay is showing (null = closed).
-  const [toolsOpen, setToolsOpen] = useState<GigToolId | null>(null);
 
   const [gig, setGig] = useState<GigData | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -228,52 +220,19 @@ export default function AdminGigTrackerPage() {
         {/* Gig tools — the project dashboard is the one main button; the rest of
             the (generic, white-label) tools live in a small low-profile dropdown
             so the gig page stays clean. Each opens as its own full-screen view. */}
-        <div className="flex items-stretch gap-2 mb-6">
-          <button
-            onClick={() => navigate(`/admin/gig/${jobId}/projekti`)}
-            className="group flex flex-1 items-center gap-4 rounded-2xl p-4 text-left transition-all active:scale-[0.99] premium-shadow bg-gradient-to-br from-zinc-900 to-zinc-800 dark:from-zinc-900 dark:to-black text-white hover:brightness-110"
-          >
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/10">
-              <LayoutDashboard className="h-6 w-6" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="font-semibold">Avaa projektinäkymä</p>
-              <p className="text-sm text-white/60 truncate">Pohjapiirros &amp; ikkunakartta · kojelauta · työtunnit</p>
-            </div>
-            <ChevronRight className="h-5 w-5 shrink-0 text-white/50 transition-transform group-hover:translate-x-0.5" />
-          </button>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                aria-label="Lisää työkaluja"
-                className="flex shrink-0 flex-col items-center justify-center gap-1 rounded-2xl px-4 bg-card text-foreground hover:bg-accent transition-all active:scale-[0.99] premium-shadow"
-              >
-                <Wrench className="h-5 w-5" />
-                <span className="flex items-center gap-0.5 text-xs font-medium">Työkalut <ChevronDown className="h-3 w-3" /></span>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-64">
-              {GIG_TOOLS.filter((t) => t.kind === "panel").map((t) => {
-                const Icon = t.icon;
-                return (
-                  <DropdownMenuItem key={t.id} onClick={() => setToolsOpen(t.id)} className="gap-3 py-2.5 cursor-pointer">
-                    <span
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
-                      style={{ background: `rgba(${t.accent},0.12)`, color: `rgb(${t.accent})` }}
-                    >
-                      <Icon className="h-5 w-5" />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block font-medium leading-tight">{t.title}</span>
-                      <span className="block text-xs text-muted-foreground leading-tight truncate">{t.subtitle}</span>
-                    </span>
-                  </DropdownMenuItem>
-                );
-              })}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+        <button
+          onClick={() => navigate(`/admin/gig/${jobId}/projekti`)}
+          className="group flex w-full items-center gap-4 rounded-2xl p-4 text-left transition-all active:scale-[0.99] premium-shadow bg-gradient-to-br from-zinc-900 to-zinc-800 dark:from-zinc-900 dark:to-black text-white hover:brightness-110 mb-6"
+        >
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/10">
+            <LayoutDashboard className="h-6 w-6" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold">Avaa projektinäkymä</p>
+            <p className="text-sm text-white/60 truncate">Pohjapiirros &amp; ikkunakartta · kojelauta · työtunnit</p>
+          </div>
+          <ChevronRight className="h-5 w-5 shrink-0 text-white/50 transition-transform group-hover:translate-x-0.5" />
+        </button>
 
         {/* Accrual headline */}
         <Card className="p-5 bg-card border-0 premium-shadow mb-4">
@@ -581,16 +540,6 @@ export default function AdminGigTrackerPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* Full-screen gig tools overlay (panel tools) */}
-      {toolsOpen && (
-        <GigToolsOverlay
-          jobId={jobId}
-          title={gig.company?.name || "Sopimuskeikka"}
-          initialToolId={toolsOpen}
-          onClose={() => setToolsOpen(null)}
-        />
-      )}
 
       {/* Signature viewer */}
       <Dialog open={sigOpen} onOpenChange={setSigOpen}>

@@ -7,11 +7,13 @@
  */
 
 import { useEffect, useState } from "react";
-import { Link, useRoute } from "wouter";
+import { Link, useRoute, useLocation } from "wouter";
 import {
   ArrowLeft, Share2, Copy, Check, FileText,
-  Send, AlertCircle, ChevronDown, Receipt, ExternalLink, LayoutDashboard, ChevronRight,
+  Send, AlertCircle, ChevronDown, Receipt, ExternalLink, ChevronRight,
 } from "lucide-react";
+import { GIG_TOOLS, type GigToolId } from "@/lib/gig-tools";
+import GigToolsOverlay from "@/components/gig-tools/GigToolsOverlay";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -38,9 +40,13 @@ function isoPlusDays(days: number): string {
 
 export default function AdminGigTrackerPage() {
   const [, params] = useRoute("/admin/gig/:id");
+  const [, navigate] = useLocation();
   const jobId = Number(params?.id);
   const { toast } = useToast();
   const profile = getAdminProfile();
+
+  // Which panel tool the full-screen tools overlay is showing (null = closed).
+  const [toolsOpen, setToolsOpen] = useState<GigToolId | null>(null);
 
   const [gig, setGig] = useState<GigData | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -147,19 +153,49 @@ export default function AdminGigTrackerPage() {
           </div>
         </div>
 
-        {/* Open project view — floor-plan mapping, dashboard & work hours */}
-        <Link href={`/admin/gig/${jobId}/projekti`}>
-          <button className="w-full mb-4 group flex items-center gap-4 rounded-2xl p-4 text-left transition-all active:scale-[0.99] bg-gradient-to-br from-zinc-900 to-zinc-800 dark:from-zinc-900 dark:to-black text-white premium-shadow hover:brightness-110">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/10">
-              <LayoutDashboard className="h-6 w-6" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="font-semibold">Avaa projektinäkymä</p>
-              <p className="text-sm text-white/60 truncate">Pohjapiirros & ikkunakartta · kojelauta · työtunnit</p>
-            </div>
-            <ChevronRight className="h-5 w-5 shrink-0 text-white/50 transition-transform group-hover:translate-x-0.5" />
-          </button>
-        </Link>
+        {/* Gig tools — opens each tool as its own full-screen view so the admin
+            UI underneath is never disturbed. Route tools navigate; panel tools
+            open the overlay. */}
+        <div className="flex items-center justify-between mb-2 px-1">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Työkalut</p>
+          <span className="text-xs text-muted-foreground">{GIG_TOOLS.length} työkalua</span>
+        </div>
+        <div className="space-y-2.5 mb-6">
+          {GIG_TOOLS.map((t, i) => {
+            const Icon = t.icon;
+            const onOpen = () => {
+              if (t.kind === "route" && t.route) navigate(t.route(jobId));
+              else setToolsOpen(t.id);
+            };
+            const primary = i === 0;
+            return (
+              <button
+                key={t.id}
+                onClick={onOpen}
+                className={`w-full group flex items-center gap-4 rounded-2xl p-4 text-left transition-all active:scale-[0.99] premium-shadow ${
+                  primary
+                    ? "bg-gradient-to-br from-zinc-900 to-zinc-800 dark:from-zinc-900 dark:to-black text-white hover:brightness-110"
+                    : "bg-card text-foreground hover:bg-accent"
+                }`}
+              >
+                <div
+                  className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl"
+                  style={{
+                    background: primary ? "rgba(255,255,255,0.1)" : `rgba(${t.accent},0.12)`,
+                    color: primary ? "#fff" : `rgb(${t.accent})`,
+                  }}
+                >
+                  <Icon className="h-6 w-6" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold">{t.title}</p>
+                  <p className={`text-sm truncate ${primary ? "text-white/60" : "text-muted-foreground"}`}>{t.subtitle}</p>
+                </div>
+                <ChevronRight className={`h-5 w-5 shrink-0 transition-transform group-hover:translate-x-0.5 ${primary ? "text-white/50" : "text-muted-foreground"}`} />
+              </button>
+            );
+          })}
+        </div>
 
         {/* Accrual headline */}
         <Card className="p-5 bg-card border-0 premium-shadow mb-4">
@@ -374,6 +410,16 @@ export default function AdminGigTrackerPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Full-screen gig tools overlay (panel tools) */}
+      {toolsOpen && (
+        <GigToolsOverlay
+          jobId={jobId}
+          title={gig.company?.name || "Sopimuskeikka"}
+          initialToolId={toolsOpen}
+          onClose={() => setToolsOpen(null)}
+        />
+      )}
     </div>
   );
 }

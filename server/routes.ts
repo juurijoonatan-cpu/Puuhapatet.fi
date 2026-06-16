@@ -18,7 +18,7 @@ import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, emptyProjectData, type ProjectData } from "@shared/project";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
-  DEFAULT_WORKER_PER_WINDOW_CENTS, type CrewMember,
+  DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, type CrewMember,
 } from "@shared/crew";
 import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION } from "@shared/worker-agreements";
 
@@ -2885,16 +2885,46 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     createHash("sha256").update(`puuhapatet:crew:${String(pin)}`).digest("hex");
 
   // Find which custom-gig job a crew token belongs to (scans custom gigs).
+  // Tokens are minted globally unique (genUniqueCrewToken), so at most one gig
+  // can match — but we still guard against an accidental cross-gig collision so
+  // worker A in gig 1 can never be resolved to gig 2.
   async function findJobByCrewToken(token: string): Promise<{ job: typeof jobs.$inferSelect; project: ProjectData; member: CrewMember } | null> {
     if (!token) return null;
     const rows = await db.select().from(jobs).where(eq(jobs.isCustomGig, true));
+    const matches: { job: typeof jobs.$inferSelect; project: ProjectData; member: CrewMember }[] = [];
     for (const job of rows) {
       const project = parseProject(job.projectData ?? null);
       if (!project) continue;
       const member = findCrewByToken(project, token);
-      if (member) return { job, project, member };
+      if (member) matches.push({ job, project, member });
     }
-    return null;
+    if (matches.length > 1) {
+      // Ambiguous token across gigs — refuse rather than guess (should never
+      // happen once all tokens are globally unique).
+      console.warn(`crew token ${token.slice(0, 4)}… matched ${matches.length} gigs — refusing`);
+      return null;
+    }
+    return matches[0] ?? null;
+  }
+
+  // Mint a crew token that is unique across EVERY custom gig (sanitizeCrew only
+  // dedupes within one project), so two gigs can never collide on a token.
+  async function collectAllCrewTokens(): Promise<Set<string>> {
+    const rows = await db.select().from(jobs).where(eq(jobs.isCustomGig, true));
+    const tokens = new Set<string>();
+    for (const job of rows) {
+      const project = parseProject(job.projectData ?? null);
+      for (const m of project?.crew ?? []) if (m?.token) tokens.add(m.token);
+    }
+    return tokens;
+  }
+  async function genUniqueCrewToken(taken?: Set<string>): Promise<string> {
+    const used = taken ?? (await collectAllCrewTokens());
+    let t = newCrewToken();
+    let guard = 0;
+    while (used.has(t) && guard++ < 50) t = newCrewToken();
+    used.add(t);
+    return t;
   }
 
   async function saveProject(job: typeof jobs.$inferSelect, project: ProjectData): Promise<ProjectData> {
@@ -2986,6 +3016,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       // Merge into a fresh sanitized member so a bad client can't corrupt it.
       const incomingAgreements = Array.isArray(body.agreements) ? body.agreements : [];
+      if (incomingAgreements.some((a: any) => String(a?.signatureDataUrl ?? "").length > MAX_SIGNATURE_DATAURL_LEN)) {
+        return res.status(413).json({ error: "Allekirjoitus on liian suuri. Piirrä se uudelleen." });
+      }
       const stamped = incomingAgreements.map((a: any) => ({
         ...a,
         ip: (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket.remoteAddress,
@@ -3131,8 +3164,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.json({ ok: true, crew: project.crew, alreadySeeded: true });
       }
       const now = Date.now();
+      const taken = await collectAllCrewTokens();
+      const mkToken = () => { let t = newCrewToken(); while (taken.has(t)) t = newCrewToken(); taken.add(t); return t; };
       const mk = (id: string, name: string, opts: Partial<CrewMember> = {}): CrewMember => ({
-        id, token: newCrewToken(), name, role: "worker", perWindowCents: DEFAULT_WORKER_PER_WINDOW_CENTS,
+        id, token: mkToken(), name, role: "worker", perWindowCents: DEFAULT_WORKER_PER_WINDOW_CENTS,
         active: true, agreements: [], notes: [], createdAt: now, ...opts,
       });
       const roster: CrewMember[] = [
@@ -3159,7 +3194,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       while (existing.some((m) => m.id === id)) id = `${baseId}${++n}`;
       const member = sanitizeCrewMember({
         id,
-        token: newCrewToken(),
+        token: await genUniqueCrewToken(),
         name: req.body?.name || `Työntekijä ${existing.length + 1}`,
         role: req.body?.role === "host" ? "host" : "worker",
         adminLinked: !!req.body?.adminLinked,
@@ -3182,6 +3217,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const { job, project } = loaded;
       const mid = String(req.params.memberId);
+      // Mint a globally-unique replacement token up front if rotating.
+      const rotatedToken = req.body?.rotateToken ? await genUniqueCrewToken() : null;
       let updated: CrewMember | null = null;
       project.crew = (project.crew || []).map((m) => {
         if (m.id !== mid) return m;
@@ -3191,8 +3228,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           perWindowCents: req.body?.perWindowCents ?? m.perWindowCents,
           active: typeof req.body?.active === "boolean" ? req.body.active : m.active,
           role: req.body?.role ?? m.role,
-          // Host can rotate a leaked link.
-          token: req.body?.rotateToken ? newCrewToken() : m.token,
+          // Host can rotate a leaked link — the old link dies immediately.
+          token: rotatedToken ?? m.token,
         });
         return updated ?? m;
       });

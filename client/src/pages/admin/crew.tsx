@@ -9,16 +9,22 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRoute, useLocation } from "wouter";
 import { api, type HostCrewRow } from "@/lib/api";
-import { ChevronLeft, Copy, Check, RotateCw, Trash2, Plus, UserPlus } from "lucide-react";
+import type { ProjBuilding } from "@shared/project";
+import { WORKER_AGREEMENTS, PROFILE_QUESTIONS } from "@shared/worker-agreements";
+import { downloadWorkerContract, openWorkerContractForPrint, downloadSignatureImage } from "@/lib/worker-contract-doc";
+import { ChevronLeft, Copy, Check, RotateCw, Trash2, Plus, UserPlus, FileText, Printer, Download } from "lucide-react";
 
 const PUBLIC_BASE = "https://puuhapatet.fi";
 const eur = (c: number) => (c / 100).toLocaleString("fi-FI", { maximumFractionDigits: 0 }) + " €";
+const agreementTitle = (id: string) => WORKER_AGREEMENTS.find((a) => a.id === id)?.title ?? id;
+const profileLabel = (id: string) => PROFILE_QUESTIONS.find((q) => q.id === id)?.label ?? id;
 
 export default function AdminCrewPage() {
   const [, params] = useRoute("/admin/gig/:id/tiimi");
   const [, navigate] = useLocation();
   const jobId = Number(params?.id);
   const [crew, setCrew] = useState<HostCrewRow[]>([]);
+  const [building, setBuilding] = useState<ProjBuilding | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -26,7 +32,7 @@ export default function AdminCrewPage() {
 
   const load = useCallback(async () => {
     const res = await api.getHostCrew(jobId);
-    if (res.ok && res.data) { setCrew(res.data.crew); setErr(null); }
+    if (res.ok && res.data) { setCrew(res.data.crew); setBuilding(res.data.building); setErr(null); }
     else setErr(res.error || "Lataus epäonnistui");
     setLoading(false);
   }, [jobId]);
@@ -112,7 +118,7 @@ export default function AdminCrewPage() {
                     {copied === member.token ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
                     {copied === member.token ? "Kopioitu" : "Kopioi linkki"}
                   </button>
-                  <button onClick={() => { if (confirm("Vanhenneta vanha linkki ja luo uusi?")) update(member.id, { rotateToken: true }); }} className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium text-muted-foreground">
+                  <button onClick={() => { if (confirm("Luo uusi linkki?\n\nTyöntekijän VANHA linkki lakkaa heti toimimasta. Kopioi ja lähetä uusi linkki hänelle uudestaan.")) update(member.id, { rotateToken: true }); }} className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium text-muted-foreground">
                     <RotateCw className="h-3.5 w-3.5" /> Uusi linkki
                   </button>
                   <label className="inline-flex items-center gap-1 text-xs text-muted-foreground ml-auto">
@@ -127,6 +133,79 @@ export default function AdminCrewPage() {
                     {member.active ? "Poista käytöstä" : "Ota käyttöön"}
                   </button>
                 </div>
+
+                {/* Signed agreements + signatures (downloadable) */}
+                {member.agreements.length > 0 && (
+                  <details className="mt-3">
+                    <summary className="text-xs font-medium text-muted-foreground cursor-pointer">
+                      Allekirjoitetut sopimukset ({member.agreements.length})
+                    </summary>
+                    <div className="mt-2 space-y-2">
+                      {member.agreements.map((a, i) => (
+                        <div key={i} className="rounded-lg border bg-muted/30 p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium truncate">{agreementTitle(a.agreementId)}</p>
+                              <p className="text-[11px] text-muted-foreground">
+                                v{a.version} · {new Date(a.signedAt).toLocaleString("fi-FI", { day: "numeric", month: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                {a.signerName ? ` · ${a.signerName}` : ""}
+                              </p>
+                            </div>
+                            {a.signatureDataUrl && (
+                              <button
+                                onClick={() => downloadSignatureImage(a.signatureDataUrl, `Allekirjoitus_${member.name}_${a.agreementId}`)}
+                                title="Lataa allekirjoitus (PNG)"
+                                className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] text-muted-foreground shrink-0"
+                              >
+                                <Download className="h-3 w-3" /> PNG
+                              </button>
+                            )}
+                          </div>
+                          {a.signatureDataUrl && (
+                            <img
+                              src={a.signatureDataUrl}
+                              alt="allekirjoitus"
+                              className="mt-2 h-16 w-auto max-w-[220px] rounded-md border bg-white p-1 object-contain"
+                            />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+
+                {/* Profile questionnaire answers */}
+                {member.profile?.answers && Object.keys(member.profile.answers).length > 0 && (
+                  <details className="mt-3">
+                    <summary className="text-xs font-medium text-muted-foreground cursor-pointer">Profiili & vastaukset</summary>
+                    <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
+                      {Object.entries(member.profile.answers).map(([k, v]) => (
+                        <div key={k} className="text-xs">
+                          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{profileLabel(k)}</p>
+                          <p className="break-words">{v}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+
+                {/* Downloadable signed-agreement document (host's legal record) */}
+                {member.agreements.length > 0 && (
+                  <div className="flex items-center gap-2 mt-3">
+                    <button
+                      onClick={() => downloadWorkerContract({ member, buildingName: building?.name, buildingAddress: building?.address })}
+                      className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium"
+                    >
+                      <FileText className="h-3.5 w-3.5" /> Lataa sopimus
+                    </button>
+                    <button
+                      onClick={() => openWorkerContractForPrint({ member, buildingName: building?.name, buildingAddress: building?.address })}
+                      className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium text-muted-foreground"
+                    >
+                      <Printer className="h-3.5 w-3.5" /> Tulosta
+                    </button>
+                  </div>
+                )}
 
                 {/* Notes */}
                 {member.notes.length > 0 && (

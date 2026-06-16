@@ -152,17 +152,23 @@ function sanitizeProfile(input: any): CrewProfile | undefined {
   };
 }
 
+export const MAX_SIGNATURE_DATAURL_LEN = 300_000; // ~300 KB cap on a signature PNG
+
 function sanitizeAgreement(input: any): CrewAgreementSignature | null {
   if (!input || typeof input !== "object") return null;
   const dataUrl = String(input.signatureDataUrl ?? "");
   const agreementId = String(input.agreementId ?? "").slice(0, 40);
   if (!agreementId || !dataUrl.startsWith("data:image/")) return null;
+  // Reject (rather than truncate) an oversized signature — a truncated base64
+  // data URL would render as a broken image. The pad keeps exports well under
+  // the cap, so this only fires on abuse.
+  if (dataUrl.length > MAX_SIGNATURE_DATAURL_LEN) return null;
   return {
     agreementId,
     version: String(input.version ?? "").slice(0, 24) || "?",
     signedAt: Number(input.signedAt) || Date.now(),
     signerName: String(input.signerName ?? "").slice(0, 160),
-    signatureDataUrl: dataUrl.slice(0, 300_000),
+    signatureDataUrl: dataUrl,
     acceptedClauseIds: Array.isArray(input.acceptedClauseIds)
       ? input.acceptedClauseIds.slice(0, 24).map((x: any) => String(x).slice(0, 40))
       : undefined,

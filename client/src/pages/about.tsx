@@ -20,7 +20,7 @@ const team = [
   },
   {
     name: "Joonatan Juuri",
-    age: 17,
+    age: 18,
     roleKey: "about.founder.role" as const,
     school: "Otaniemen lukio",
     bioKey: "about.joonatan.bio" as const,

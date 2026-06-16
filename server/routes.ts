@@ -3200,7 +3200,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               } else {
                 const updates: any = { updatedAt: new Date() };
                 if (args.status) updates.status = args.status;
-                if (args.notes) updates.description = (jobRow.description || "") + `\n[${new Date().toLocaleDateString("fi-FI")}] ${args.notes}`;
+                if (args.notes) updates.notes = (jobRow.notes || "") + "\n[" + new Date().toLocaleDateString("fi-FI") + "] " + args.notes;
                 await db.update(jobs).set(updates).where(eq(jobs.id, args.job_id));
                 const changes = [args.status ? `status → ${args.status}` : null, args.notes ? "muistiinpano lisätty" : null].filter(Boolean).join(", ");
                 toolResult = `Keikka #${args.job_id} päivitetty: ${changes}.`;
@@ -3220,19 +3220,145 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
                   if (!customer?.email) {
                     toolResult = `Keikalla #${args.job_id} ei ole asiakkaan sähköpostia — ei voitu lähettää.`;
                   } else {
-                    const html = `<div style="font-family:sans-serif;max-width:600px;margin:0 auto">
-                      <p>Hei ${customer.name?.split(" ")[0] ?? ""}!</p>
-                      <p>${args.message}</p>
-                      <p>Ystävällisin terveisin,<br><strong>Puuhapatet</strong><br>
-                      Joonatan +358 40 0389999 · Matias +358 44 2350881<br>
-                      <a href="https://puuhapatet.fi">puuhapatet.fi</a></p>
-                    </div>`;
+                    const firstName = customer.name?.split(" ")[0] ?? customer.name ?? "Hei";
+                    const today = new Date().toLocaleDateString("fi-FI");
+                    const html = `<!DOCTYPE html>
+<html lang="fi">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:#f0faf2">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0faf2"><tr><td align="center" style="padding:28px 16px">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
+
+  <!-- HEADER -->
+  <tr>
+    <td style="background:#2d5016;border-radius:16px 16px 0 0;padding:28px 32px 24px">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td>
+            <p style="margin:0;color:#ffffff;font-size:26px;font-weight:900;letter-spacing:-0.5px">Puuhapatet.</p>
+            <p style="margin:5px 0 0;color:#a3c97a;font-size:12px;letter-spacing:0.3px">Ammattimainen kiinteistöpalvelu</p>
+          </td>
+          <td style="text-align:right;vertical-align:top;padding-top:2px">
+            <span style="display:inline-block;background:#a3c97a;color:#1a3a0a;font-size:10px;font-weight:800;letter-spacing:2px;padding:5px 14px;border-radius:20px;text-transform:uppercase">YHTEYDENOTTO</span>
+          </td>
+        </tr>
+      </table>
+      <div style="margin-top:20px;padding-top:16px;border-top:1px solid #3d6620">
+        <p style="color:#8ab865;font-size:12px;margin:0">${today}</p>
+      </div>
+    </td>
+  </tr>
+
+  <!-- TO / FROM -->
+  <tr>
+    <td style="background:#ffffff;border-left:1px solid #d1f0d8;border-right:1px solid #d1f0d8">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="padding:16px 28px;border-right:1px solid #e8f5e9;width:50%;vertical-align:top">
+            <p style="margin:0 0 5px;color:#6aab6a;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">ASIAKKAALLE</p>
+            <p style="margin:0 0 2px;color:#1a2e1a;font-size:14px;font-weight:700">${customer.name}</p>
+            ${customer.address ? `<p style="margin:2px 0 0;color:#6a8a6a;font-size:12px;line-height:1.5">${customer.address}</p>` : ""}
+          </td>
+          <td style="padding:16px 28px;width:50%;text-align:right;vertical-align:top">
+            <p style="margin:0 0 5px;color:#6aab6a;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">LÄHETTÄJÄ</p>
+            <p style="margin:0 0 2px;color:#1a2e1a;font-size:14px;font-weight:700">Puuhapatet</p>
+            <p style="margin:0;color:#6a8a6a;font-size:12px">Joonatan &amp; Matias</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- BODY -->
+  <tr>
+    <td style="background:#ffffff;border:1px solid #d1f0d8;border-top:none;padding:28px 32px">
+
+      <!-- Personal message -->
+      <p style="margin:0 0 24px;color:#2a3a2a;font-size:15px;line-height:1.8">${args.message.replace(/\n/g, "<br>")}</p>
+
+      <!-- Services overview -->
+      <p style="margin:0 0 12px;color:#6aab6a;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">PALVELUMME</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-top:2px solid #2d5016">
+        ${[
+          { icon: "🪟", title: "Ikkunanpesu", detail: "Sisä- ja ulkopinnat, parvekelasit, lasiterassit" },
+          { icon: "🌿", title: "Pihatyöt", detail: "Nurmikon leikkuu, kausipaketit edullisesti" },
+          { icon: "🚿", title: "Lisäpalvelut", detail: "Auton sisäpuhdistus, terassi, räystäskourut" },
+        ].map((s, i) => `
+        <tr style="border-bottom:1px solid #ecfdf5;background:${i % 2 === 1 ? "#f8fffe" : "#ffffff"}">
+          <td style="padding:13px 16px 13px 0;vertical-align:top">
+            <p style="margin:0;color:#1a2e1a;font-size:14px;font-weight:600">${s.icon} ${s.title}</p>
+            <p style="margin:3px 0 0;color:#4b7a4b;font-size:12px">${s.detail}</p>
+          </td>
+        </tr>`).join("")}
+      </table>
+
+      <!-- Trust badges -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:20px">
+        <tr>
+          <td style="background:#f8fffe;border-radius:10px;padding:16px 18px;border:1px solid #d1f0d8">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr><td style="padding:4px 0;font-size:13px;color:#2a3a2a;line-height:1.5">⭐ Tyytyväisyystakuu — tulos sovitun mukainen tai teemme uudelleen</td></tr>
+              <tr><td style="padding:4px 0;font-size:13px;color:#2a3a2a;line-height:1.5">🔒 Vastuuvakuutettu — turvallisuus edellä</td></tr>
+              <tr><td style="padding:4px 0;font-size:13px;color:#2a3a2a;line-height:1.5">✓ Selkeä hinnoittelu — hinta sovitaan etukäteen, ei yllätyksiä</td></tr>
+              <tr><td style="padding:4px 0;font-size:13px;color:#2a3a2a;line-height:1.5">💰 Kotitalousvähennyskelpoinen — säästät n. 35 % verotuksessa</td></tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+
+      <!-- CTA -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:26px">
+        <tr>
+          <td style="text-align:center">
+            <p style="color:#4a6a4a;font-size:14px;margin:0 0 16px;line-height:1.65">
+              Pyydä maksuton tarjous — vastaamme yleensä saman päivän aikana.
+            </p>
+            <a href="https://wa.me/358400389999" style="display:inline-block;background:#25D366;color:#ffffff;padding:12px 26px;border-radius:10px;text-decoration:none;font-weight:700;font-size:14px;margin:4px">💬 WhatsApp — Joonatan</a>
+            <br>
+            <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;background:#2d5016;color:#ffffff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:800;font-size:15px;margin:8px 4px 4px;letter-spacing:0.3px">Jätä yhteydenottopyyntö →</a>
+          </td>
+        </tr>
+      </table>
+
+    </td>
+  </tr>
+
+  <!-- FOOTER -->
+  <tr>
+    <td style="background:#f0fdf4;border:1px solid #d1f0d8;border-top:none;border-radius:0 0 16px 16px;padding:16px 32px">
+      <table width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;color:#5a8a5a">
+        <tr>
+          <td style="vertical-align:top">
+            <strong style="color:#1a2e1a">Puuhapatet</strong><br>
+            Joonatan Juuri +358 40 0389999<br>
+            Matias Pitkänen +358 44 2350881<br>
+            <a href="mailto:info@puuhapatet.fi" style="color:#5a8a5a;text-decoration:none">info@puuhapatet.fi</a>
+          </td>
+          <td style="text-align:right;vertical-align:top">
+            <a href="https://puuhapatet.fi" style="color:#2d5016;font-weight:700;text-decoration:none;font-size:13px">puuhapatet.fi</a><br>
+            <span style="color:#8ab865">Espoo &amp; Helsinki</span>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+</table>
+</td></tr></table>
+</body>
+</html>`;
                     await resend.emails.send({
                       from: FROM_EMAIL,
                       to: customer.email,
-                      subject: "Terveisiä Puuhapatet — jatketaan suunnittelua?",
+                      subject: `Terveisiä Puuhapatet — ${customer.name?.split(" ")[0] ?? "hei"}!`,
                       html,
                     });
+                    const outreachNote = `[${new Date().toLocaleDateString("fi-FI")} yhteydenotto lähetetty sähköpostilla: ${customer.email}]`;
+                    const existingNotes = jobRow.notes || "";
+                    await db.update(jobs).set({
+                      notes: existingNotes ? existingNotes + "\n" + outreachNote : outreachNote,
+                      updatedAt: new Date()
+                    }).where(eq(jobs.id, args.job_id));
                     toolResult = `Viesti lähetetty asiakkaalle ${customer.name} (${customer.email}).`;
                     toolResultNotes.push(`✓ ${toolResult}`);
                   }
@@ -3314,11 +3440,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       lines.push(`\nAvoimet liidit:`);
       for (const j of leads) {
         const c = customerById.get(j.customerId);
+        const outreachSent = (j.notes || "").includes("yhteydenotto lähetetty");
         const quoteInfo = j.quoteToken
           ? (j.quoteStatus === "accepted" ? "tarjous HYVÄKSYTTY"
              : j.quoteStatus === "declined" ? "tarjous HYLÄTTY"
              : "tarjous lähetetty, odottaa vastausta")
-          : "tarjousta ei vielä lähetetty";
+          : outreachSent ? "yhteydenotto lähetetty, ei vielä tarjousta"
+          : "ei yhteydenottoa eikä tarjousta";
         lines.push(`- #${j.id} ${c?.name ?? "?"} · ${c?.phone ?? ""} · ${c?.address ?? ""} · ${quoteInfo} · ${eur(j.agreedPrice)}`);
       }
     }

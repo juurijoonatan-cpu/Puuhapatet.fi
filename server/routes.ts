@@ -3162,6 +3162,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               properties: {
                 job_id: { type: "number", description: "Keikan ID-numero" },
                 message: { type: "string", description: "Viesti asiakkaalle suomeksi (lyhyt, max 3 lausetta)" },
+                style: { 
+                  type: "string", 
+                  enum: ["henkikohtainen", "pro", "lyhyt"],
+                  description: "Sähköpostin tyyli: 'henkikohtainen' = lyhyt persoonallinen (oletus), 'pro' = branded virallisempi, 'lyhyt' = pelkkä teksti ilman kuvia"
+                },
               },
               required: ["job_id", "message"],
             },
@@ -3220,158 +3225,156 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
                   if (!customer?.email) {
                     toolResult = `Keikalla #${args.job_id} ei ole asiakkaan sähköpostia — ei voitu lähettää.`;
                   } else {
-                    const firstName = customer.name?.split(" ")[0] ?? customer.name ?? "Hei";
-                    const today = new Date().toLocaleDateString("fi-FI");
-                    const html = `<!DOCTYPE html>
-<html lang="fi">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+                    // Duplicate protection: check if outreach sent in last 30 days
+                    const notes = jobRow.notes || "";
+                    const recentOutreach = notes.split("\n").some(line => {
+                      if (!line.includes("yhteydenotto lähetetty")) return false;
+                      const match = line.match(/\[(\d+)\.(\d+)\.(\d+)/);
+                      if (!match) return false;
+                      const [, d, m, y] = match;
+                      const sent = new Date(Number(y), Number(m) - 1, Number(d));
+                      return (Date.now() - sent.getTime()) < 30 * 24 * 60 * 60 * 1000;
+                    });
+                    if (recentOutreach) {
+                      toolResult = `⚠️ Asiakkaalle ${customer.name} on jo lähetetty yhteydenotto viimeisen 30 päivän aikana. Jos haluat lähettää uudelleen, sano niin erikseen.`;
+                    } else {
+                      const style = args.style || "henkikohtainen";
+                      const firstName = customer.name?.split(" ")[0] ?? customer.name ?? "";
+                      const today = new Date().toLocaleDateString("fi-FI");
+                      const msg = (args.message as string).replace(/\n/g, "<br>");
+                      const msgPlain = args.message as string;
+
+                      let html = "";
+
+                      if (style === "lyhyt") {
+                        // Plain text style — no images, minimal HTML
+                        html = `<!DOCTYPE html>
+<html lang="fi"><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff"><tr><td align="center" style="padding:40px 16px">
+<table width="540" cellpadding="0" cellspacing="0" style="max-width:540px;width:100%">
+  <tr><td style="padding-bottom:32px">
+    <p style="margin:0;color:#111;font-size:15px;line-height:1.8">${msg}</p>
+  </td></tr>
+  <tr><td style="border-top:1px solid #eeeeee;padding-top:20px">
+    <p style="margin:0;color:#333;font-size:14px;line-height:1.7">
+      Terveisin,<br>
+      <strong>Joonatan Juuri</strong> &amp; Matias Pitkänen<br>
+      <span style="color:#666">Puuhapatet</span><br>
+      <a href="tel:+358400389999" style="color:#2d5016;text-decoration:none">+358 40 0389999</a> · 
+      <a href="https://wa.me/358400389999" style="color:#25D366;text-decoration:none">WhatsApp</a><br>
+      <a href="https://puuhapatet.fi" style="color:#2d5016;text-decoration:none;font-size:12px">puuhapatet.fi</a>
+    </p>
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
+
+                      } else if (style === "pro") {
+                        // Branded professional with green header + photo
+                        html = `<!DOCTYPE html>
+<html lang="fi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:#f0faf2">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0faf2"><tr><td align="center" style="padding:28px 16px">
 <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
+  <tr><td style="background:#2d5016;border-radius:16px 16px 0 0;padding:24px 32px">
+    <table width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td><p style="margin:0;color:#fff;font-size:24px;font-weight:900;letter-spacing:-0.5px">Puuhapatet.</p>
+          <p style="margin:4px 0 0;color:#a3c97a;font-size:11px">Ammattimainen kiinteistöpalvelu · Espoo &amp; Helsinki</p></td>
+      <td style="text-align:right"><span style="background:#a3c97a;color:#1a3a0a;font-size:10px;font-weight:800;letter-spacing:2px;padding:4px 12px;border-radius:20px;text-transform:uppercase">YHTEYDENOTTO</span></td>
+    </tr></table>
+  </td></tr>
+  <tr><td style="padding:0;line-height:0"><img src="https://puuhapatet.fi/hero-workers.jpg" alt="Puuhapatet työssä" style="width:100%;max-height:220px;object-fit:cover;display:block"/></td></tr>
+  <tr><td style="background:#fff;border:1px solid #d1f0d8;border-top:none;padding:28px 32px">
+    <p style="margin:0 0 20px;color:#2a3a2a;font-size:15px;line-height:1.8">${msg}</p>
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #e8f5e9;margin-top:20px;padding-top:20px">
+      <tr>
+        <td style="padding-top:20px;text-align:center">
+          <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;background:#111;color:#4ade80;font-size:15px;font-weight:800;text-decoration:none;padding:16px 40px;border-radius:12px;border:2px solid #22c55e">Jätä yhteydenottopyyntö →</a>
+          <br>
+          <a href="https://wa.me/358400389999" style="display:inline-block;background:#25D366;color:#fff;padding:10px 22px;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px;margin:10px 4px 0">💬 WhatsApp</a>
+          <p style="margin:8px 0 0;color:#999;font-size:12px">Ilmainen tarjous alle 24 tunnissa</p>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+  <tr><td style="background:#111;border-radius:0 0 16px 16px;padding:18px 32px">
+    <table width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td><p style="margin:0 0 2px;color:#4ade80;font-size:15px;font-weight:800">Puuhapatet.</p>
+          <p style="margin:0;color:#666;font-size:12px">Joonatan +358 40 0389999 · Matias +358 44 2350881</p></td>
+      <td style="text-align:right"><a href="https://puuhapatet.fi" style="color:#4ade80;font-weight:700;text-decoration:none;font-size:13px">puuhapatet.fi</a></td>
+    </tr></table>
+  </td></tr>
+</table></td></tr></table>
+</body></html>`;
 
-  <!-- HEADER -->
-  <tr>
-    <td style="background:#2d5016;border-radius:16px 16px 0 0;padding:28px 32px 24px">
-      <table width="100%" cellpadding="0" cellspacing="0">
-        <tr>
-          <td>
-            <p style="margin:0;color:#ffffff;font-size:26px;font-weight:900;letter-spacing:-0.5px">Puuhapatet.</p>
-            <p style="margin:5px 0 0;color:#a3c97a;font-size:12px;letter-spacing:0.3px">Ammattimainen kiinteistöpalvelu</p>
-          </td>
-          <td style="text-align:right;vertical-align:top;padding-top:2px">
-            <span style="display:inline-block;background:#a3c97a;color:#1a3a0a;font-size:10px;font-weight:800;letter-spacing:2px;padding:5px 14px;border-radius:20px;text-transform:uppercase">YHTEYDENOTTO</span>
-          </td>
-        </tr>
-      </table>
-      <div style="margin-top:20px;padding-top:16px;border-top:1px solid #3d6620">
-        <p style="color:#8ab865;font-size:12px;margin:0">${today}</p>
-      </div>
-    </td>
-  </tr>
-
-  <!-- WORK PHOTO -->
-  <tr>
-    <td style="padding:0;line-height:0">
-      <img src="https://puuhapatet.fi/hero-workers.jpg" alt="Puuhapatet työssä" style="width:100%;max-height:260px;object-fit:cover;object-position:center top;display:block" />
-    </td>
-  </tr>
-
-  <!-- TO / FROM -->
-  <tr>
-    <td style="background:#ffffff;border-left:1px solid #d1f0d8;border-right:1px solid #d1f0d8">
-      <table width="100%" cellpadding="0" cellspacing="0">
-        <tr>
-          <td style="padding:16px 28px;border-right:1px solid #e8f5e9;width:50%;vertical-align:top">
-            <p style="margin:0 0 5px;color:#6aab6a;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">ASIAKKAALLE</p>
-            <p style="margin:0 0 2px;color:#1a2e1a;font-size:14px;font-weight:700">${customer.name}</p>
-            ${customer.address ? `<p style="margin:2px 0 0;color:#6a8a6a;font-size:12px;line-height:1.5">${customer.address}</p>` : ""}
-          </td>
-          <td style="padding:16px 28px;width:50%;text-align:right;vertical-align:top">
-            <p style="margin:0 0 5px;color:#6aab6a;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">LÄHETTÄJÄ</p>
-            <p style="margin:0 0 2px;color:#1a2e1a;font-size:14px;font-weight:700">Puuhapatet</p>
-            <p style="margin:0;color:#6a8a6a;font-size:12px">Joonatan &amp; Matias</p>
-          </td>
-        </tr>
-      </table>
-    </td>
-  </tr>
-
-  <!-- BODY -->
-  <tr>
-    <td style="background:#ffffff;border:1px solid #d1f0d8;border-top:none;padding:28px 32px">
-
-      <!-- Personal message -->
-      <p style="margin:0 0 24px;color:#2a3a2a;font-size:15px;line-height:1.8">${args.message.replace(/\n/g, "<br>")}</p>
-
-      <!-- Services overview -->
-      <p style="margin:0 0 12px;color:#6aab6a;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">PALVELUMME</p>
-      <table width="100%" cellpadding="0" cellspacing="0" style="border-top:2px solid #2d5016">
-        ${[
-          { icon: "🪟", title: "Ikkunanpesu", detail: "Sisä- ja ulkopinnat, parvekelasit, lasiterassit" },
-          { icon: "🌿", title: "Pihatyöt", detail: "Nurmikon leikkuu, kausipaketit edullisesti" },
-          { icon: "🚿", title: "Lisäpalvelut", detail: "Auton sisäpuhdistus, terassi, räystäskourut" },
-        ].map((s, i) => `
-        <tr style="border-bottom:1px solid #ecfdf5;background:${i % 2 === 1 ? "#f8fffe" : "#ffffff"}">
-          <td style="padding:13px 16px 13px 0;vertical-align:top">
-            <p style="margin:0;color:#1a2e1a;font-size:14px;font-weight:600">${s.icon} ${s.title}</p>
-            <p style="margin:3px 0 0;color:#4b7a4b;font-size:12px">${s.detail}</p>
-          </td>
-        </tr>`).join("")}
-      </table>
-
-      <!-- Trust badges -->
-      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:20px">
-        <tr>
-          <td style="background:#f8fffe;border-radius:10px;padding:16px 18px;border:1px solid #d1f0d8">
-            <table width="100%" cellpadding="0" cellspacing="0">
-              <tr><td style="padding:4px 0;font-size:13px;color:#2a3a2a;line-height:1.5">⭐ Tyytyväisyystakuu — tulos sovitun mukainen tai teemme uudelleen</td></tr>
-              <tr><td style="padding:4px 0;font-size:13px;color:#2a3a2a;line-height:1.5">🔒 Vastuuvakuutettu — turvallisuus edellä</td></tr>
-              <tr><td style="padding:4px 0;font-size:13px;color:#2a3a2a;line-height:1.5">✓ Selkeä hinnoittelu — hinta sovitaan etukäteen, ei yllätyksiä</td></tr>
-              <tr><td style="padding:4px 0;font-size:13px;color:#2a3a2a;line-height:1.5">💰 Kotitalousvähennyskelpoinen — säästät n. 35 % verotuksessa</td></tr>
-            </table>
-          </td>
-        </tr>
-      </table>
-
-      <!-- CTA -->
-      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:26px">
-        <tr>
-          <td style="text-align:center">
-            <p style="color:#4a6a4a;font-size:14px;margin:0 0 20px;line-height:1.65">
-              Pyydä maksuton tarjous — vastaamme yleensä saman päivän aikana.
-            </p>
-            <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;background:#111111;color:#4ade80;font-size:16px;font-weight:800;text-decoration:none;padding:18px 48px;border-radius:14px;letter-spacing:0.3px;border:2px solid #22c55e">Jätä yhteydenottopyyntö →</a>
-            <br>
-            <a href="https://wa.me/358400389999" style="display:inline-block;background:#25D366;color:#ffffff;padding:11px 24px;border-radius:10px;text-decoration:none;font-weight:700;font-size:14px;margin:12px 4px 0">💬 WhatsApp — Joonatan</a>
-            <p style="margin:10px 0 0;color:#999999;font-size:12px">Ilmainen tarjous alle 24 tunnissa</p>
-          </td>
-        </tr>
-      </table>
-
-    </td>
-  </tr>
-
-  <!-- FOOTER -->
-  <tr>
-    <td style="background:#111111;border-radius:0 0 16px 16px;padding:20px 32px">
-      <table width="100%" cellpadding="0" cellspacing="0">
-        <tr>
-          <td style="vertical-align:top">
-            <p style="margin:0 0 2px;color:#4ade80;font-size:16px;font-weight:800">Puuhapatet.</p>
-            <p style="margin:0;color:#666666;font-size:12px">Joonatan +358 40 0389999 · Matias +358 44 2350881</p>
-            <a href="mailto:info@puuhapatet.fi" style="color:#666666;text-decoration:none;font-size:12px">info@puuhapatet.fi</a>
-          </td>
-          <td style="text-align:right;vertical-align:top">
-            <a href="https://puuhapatet.fi" style="color:#4ade80;font-weight:700;text-decoration:none;font-size:13px">puuhapatet.fi</a><br>
-            <span style="color:#444444;font-size:12px">Espoo &amp; Helsinki</span>
-          </td>
-        </tr>
-      </table>
-    </td>
-  </tr>
-
+                      } else {
+                        // henkikohtainen (default) — simple, warm, personal feel
+                        html = `<!DOCTYPE html>
+<html lang="fi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f8faf8"><tr><td align="center" style="padding:32px 16px">
+<table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,0.07)">
+  <tr><td style="background:#2d5016;padding:20px 28px">
+    <p style="margin:0;color:#fff;font-size:18px;font-weight:800;letter-spacing:-0.3px">Puuhapatet.</p>
+  </td></tr>
+  <tr><td style="padding:28px 28px 8px">
+    <p style="margin:0 0 18px;color:#1a1a1a;font-size:22px;font-weight:700;line-height:1.3">Hei ${firstName}! 👋</p>
+    <p style="margin:0;color:#333;font-size:15px;line-height:1.8">${msg}</p>
+  </td></tr>
+  <tr><td style="padding:20px 28px">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0faf2;border-radius:10px;padding:16px">
+      <tr><td style="padding:0">
+        <p style="margin:0 0 10px;color:#2d5016;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px">Ota yhteyttä</p>
+        <p style="margin:0 0 6px;font-size:14px;color:#333">
+          💬 <a href="https://wa.me/358400389999" style="color:#2d5016;font-weight:600;text-decoration:none">WhatsApp — Joonatan</a>
+          <span style="color:#999;font-size:12px"> (+358 40 0389999)</span>
+        </p>
+        <p style="margin:0;font-size:14px;color:#333">
+          🌐 <a href="https://puuhapatet.fi/tilaus" style="color:#2d5016;font-weight:600;text-decoration:none">puuhapatet.fi/tilaus</a>
+          <span style="color:#999;font-size:12px"> — jätä yhteystiedot, soitamme takaisin</span>
+        </p>
+      </td></tr>
+    </table>
+  </td></tr>
+  <tr><td style="padding:0 28px 24px">
+    <p style="margin:0;color:#555;font-size:14px;line-height:1.7">
+      Terveisin,<br>
+      <strong style="color:#1a1a1a">Joonatan &amp; Matias</strong><br>
+      <span style="color:#2d5016;font-size:13px">Puuhapatet</span>
+    </p>
+  </td></tr>
+  <tr><td style="background:#f8f8f8;padding:12px 28px;border-top:1px solid #eee">
+    <p style="margin:0;color:#aaa;font-size:11px">
+      <a href="https://puuhapatet.fi" style="color:#aaa;text-decoration:none">puuhapatet.fi</a> · info@puuhapatet.fi · Espoo &amp; Helsinki
+    </p>
+  </td></tr>
 </table>
 </td></tr></table>
-</body>
-</html>`;
-                    await resend.emails.send({
-                      from: FROM_EMAIL,
-                      to: customer.email,
-                      subject: `Terveisiä Puuhapatet — ${customer.name?.split(" ")[0] ?? "hei"}!`,
-                      html,
-                    });
-                    const outreachNote = `[${new Date().toLocaleDateString("fi-FI")} yhteydenotto lähetetty sähköpostilla: ${customer.email}]`;
-                    const existingNotes = jobRow.notes || "";
-                    await db.update(jobs).set({
-                      notes: existingNotes ? existingNotes + "\n" + outreachNote : outreachNote,
-                      updatedAt: new Date()
-                    }).where(eq(jobs.id, args.job_id));
-                    toolResult = `Viesti lähetetty asiakkaalle ${customer.name} (${customer.email}).`;
-                    toolResultNotes.push(`✓ ${toolResult}`);
+</body></html>`;
+                      }
+
+                      await resend.emails.send({
+                        from: FROM_EMAIL,
+                        to: customer.email,
+                        subject: `Hei ${firstName} — terveisiä Puuhapatet!`,
+                        html,
+                      });
+
+                      // Mark outreach in job notes
+                      const outreachNote = `[${today} yhteydenotto lähetetty sähköpostilla: ${customer.email} (tyyli: ${style})]`;
+                      await db.update(jobs).set({
+                        notes: notes ? notes + "\n" + outreachNote : outreachNote,
+                        updatedAt: new Date()
+                      }).where(eq(jobs.id, args.job_id));
+
+                      toolResult = `Viesti lähetetty (${style}) asiakkaalle ${customer.name} <${customer.email}>.`;
+                      toolResultNotes.push(`✓ ${toolResult}`);
+                    }
                   }
                 }
               }
-            } else {
+                        } else {
               toolResult = `Tuntematon työkalu: ${tc.function.name}`;
             }
           } catch (e: any) {
@@ -3447,12 +3450,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       lines.push(`\nAvoimet liidit:`);
       for (const j of leads) {
         const c = customerById.get(j.customerId);
-        const outreachSent = (j.notes || "").includes("yhteydenotto lähetetty");
+        const notes = j.notes || "";
+        const outreachLine = notes.split("\n").find(l => l.includes("yhteydenotto lähetetty"));
+        const outreachSent = !!outreachLine;
         const quoteInfo = j.quoteToken
           ? (j.quoteStatus === "accepted" ? "tarjous HYVÄKSYTTY"
              : j.quoteStatus === "declined" ? "tarjous HYLÄTTY"
              : "tarjous lähetetty, odottaa vastausta")
-          : outreachSent ? "yhteydenotto lähetetty, ei vielä tarjousta"
+          : outreachSent ? `yhteydenotto lähetetty (${outreachLine?.match(/\(tyyli: (\w+)\)/)?.[1] ?? "?"})`
           : "ei yhteydenottoa eikä tarjousta";
         lines.push(`- #${j.id} ${c?.name ?? "?"} · ${c?.phone ?? ""} · ${c?.address ?? ""} · ${quoteInfo} · ${eur(j.agreedPrice)}`);
       }

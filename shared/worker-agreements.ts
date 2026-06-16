@@ -16,7 +16,7 @@
  * engagement. Bump WORKER_AGREEMENT_VERSION to force everyone to re-sign.
  */
 
-export const WORKER_AGREEMENT_VERSION = "2026-06";
+export const WORKER_AGREEMENT_VERSION = "2026-07";
 
 export interface AgreementClause {
   id: string;
@@ -168,36 +168,57 @@ const TIETOTURVA: WorkerAgreement = {
 
 const JATKO: WorkerAgreement = {
   id: "jatko",
-  title: "Yhteistyön jatko",
-  tagline: "Kevyt sitoumus jatkaa Puuhapatetin kautta",
+  title: "Kilpailukielto & asiakassuoja",
+  tagline: "Asiakkaat kuuluvat Brändille · kilpailukielto · houkuttelukielto · sopimussakko",
   intro:
-    "Tämä on kevyt, hyvässä hengessä tehty sitoumus. Toivomme, että tämän keikan " +
-    "jälkeen jatkat tekijänä Puuhapatetin kautta — ja samalla varmistamme, ettei " +
-    "Brändin kautta syntyneitä asiakkaita viedä ohi sovitun mallin.",
+    "Tämä on sitova sopimusosa, joka suojaa Puuhapatet-brändiä. Brändi tuo asiakkaat, " +
+    "kohteet, hinnoittelumallin, työkalut ja maineen — Alihankkija pääsee näihin käsiksi " +
+    "vain yhteistyön kautta. Siksi sitoudut alla oleviin ehtoihin sekä yhteistyön aikana " +
+    "että määräajan sen jälkeen. Ehdot ovat tarkoituksella selkeät ja velvoittavat.",
   sections: [
     {
       no: "01",
-      title: "Toive jatkosta",
+      title: "Asiakkaat ja kohteet kuuluvat Brändille",
       body: [
-        "Tarkoituksena on, että tämä keikka on alku pidemmälle yhteistyölle: saat lisää keikkoja ja voit myöhemmin liittyä osaksi Brändiä laajemmin.",
-        "Sitoumus ei estä sinua opiskelemasta tai tekemästä muuta työtä.",
+        "Kaikki Brändin kautta syntyneet tai Brändin osoittamat asiakkaat, kohteet, yhteystiedot ja liidit kuuluvat yksinomaan Puuhapatetille — myös ne, jotka kohtaan keikalla.",
+        "En ota näihin asiakkaisiin yhteyttä omaan lukuuni, en sovi heidän kanssaan töistä Brändin ohi enkä laskuta heitä suoraan, en yhteistyön aikana enkä 24 kuukauteen sen päättymisestä.",
+        "Ohjaan kaikki uudet tilaukset ja jatkotyöpyynnöt Brändille — en hoida niitä itse Brändin ohi.",
       ],
     },
     {
       no: "02",
-      title: "Asiakkaat kuuluvat Brändille",
+      title: "Kilpailukielto",
       body: [
-        "Brändin kautta syntyneet asiakkaat ja kohteet kuuluvat Puuhapatetille.",
-        "En tarjoa, myy enkä tee vastaavaa palvelua näille asiakkaille ohi Brändin yhteistyön aikana enkä 12 kuukauteen sen päättymisestä. Kyse on vain siitä, etten vie Brändin kautta syntyneitä asiakkaita itselleni tai kilpailijalle.",
-        "En houkuttele Brändin muita tekijöitä tai asiakkaita pois Brändiltä.",
+        "En tarjoa enkä tuota Brändin kanssa kilpailevaa ikkunanpesu- tai vastaavaa palvelua Brändin asiakkaille tai kohteille omaan lukuuni tai kilpailijan lukuun yhteistyön aikana enkä 12 kuukauteen sen päättymisestä.",
+        "En perusta enkä toimi kilpailevassa toiminnassa, joka kohdistuu Brändin asiakaskuntaan tai markkina-alueeseen edellä mainittuna aikana.",
+        "Kielto ei estä minua tekemästä alan työtä muille kuin Brändin asiakkaille tai Brändin kautta syntyneissä kohteissa, eikä estä opiskelua tai muuta työtä yleisesti.",
+      ],
+    },
+    {
+      no: "03",
+      title: "Houkuttelukielto ja luottamukselliset tiedot",
+      body: [
+        "En houkuttele enkä värvää Brändin muita tekijöitä, asiakkaita tai yhteistyökumppaneita pois Brändiltä yhteistyön aikana enkä 12 kuukauteen sen päättymisestä.",
+        "Brändin asiakaslistat, hinnoittelu, sopimusmallit ja muu liiketoimintatieto ovat liikesalaisuuksia. En käytä niitä Brändin ulkopuolella enkä luovuta niitä kenellekään.",
+      ],
+    },
+    {
+      no: "04",
+      title: "Sopimussakko ja seuraukset",
+      body: [
+        "Jos rikon tämän sopimusosan ehtoja, Brändillä on oikeus sopimussakkoon, jonka määrä on 2 000 € kutakin rikkomusta kohden, sekä jatkuvan rikkomuksen osalta 500 € jokaiselta alkavalta viikolta.",
+        "Sopimussakon lisäksi Brändillä on oikeus vaatia korvausta sakon ylittävästä todellisesta vahingosta sekä vaatia rikkomuksen lopettamista.",
+        "Ehdot jäävät voimaan yhteistyön päättymisestä riippumatta sen syystä.",
       ],
     },
   ],
   clauses: [
-    { id: "jatko", text: "Ymmärrän toiveen jatkaa yhteistyötä Puuhapatetin kautta." },
-    { id: "asiakkaat", text: "En vie Brändin kautta syntyneitä asiakkaita itselleni tai kilpailijalle (12 kk)." },
+    { id: "asiakkaat", text: "Ymmärrän, että Brändin kautta syntyneet asiakkaat ja kohteet kuuluvat Puuhapatetille, enkä vie tai hoida heitä Brändin ohi (24 kk)." },
+    { id: "kilpailu", text: "Sitoudun kilpailukieltoon Brändin asiakkaisiin ja kohteisiin nähden (12 kk yhteistyön jälkeen)." },
+    { id: "houkuttelu", text: "Sitoudun houkuttelukieltoon enkä käytä Brändin liikesalaisuuksia (12 kk)." },
+    { id: "sakko", text: "Hyväksyn, että ehtojen rikkomisesta voi seurata sopimussakko ja vahingonkorvaus." },
   ],
-  accept: "Hyväksyn yhteistyön jatkoa koskevan kevyen sitoumuksen.",
+  accept: "Olen lukenut kilpailukielto- ja asiakassuojaehdot ja hyväksyn ne sitovasti. Allekirjoitukseni sitoo minua näihin ehtoihin.",
 };
 
 export const WORKER_AGREEMENTS: WorkerAgreement[] = [ALIHANKINTA, TIETOTURVA, JATKO];

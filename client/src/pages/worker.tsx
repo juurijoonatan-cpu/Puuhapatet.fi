@@ -289,7 +289,7 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
   const noop = useCallback(() => {}, []);
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#060607", color: "#fff", display: "flex", flexDirection: "column", fontFamily: FONT, overflow: "hidden" }}>
+    <div className="fr8-root" style={{ position: "fixed", inset: 0, background: "#060607", color: "#fff", display: "flex", flexDirection: "column", fontFamily: FONT, overflow: "hidden" }}>
       {/* Header */}
       <div style={{ flexShrink: 0, padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
         <div>

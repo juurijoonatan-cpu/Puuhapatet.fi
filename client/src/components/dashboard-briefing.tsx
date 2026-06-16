@@ -10,6 +10,7 @@ import { Sparkles, Loader2, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { getAdminProfile } from "@/lib/admin-profile";
 import { ChatMarkdown } from "@/components/chat-markdown";
+import { API_BASE } from "@/lib/api";
 
 const PROMPT =
   "Anna lyhyt päivän tilannekatsaus: tärkeimmät tämän viikon keikat, avoimet " +
@@ -23,13 +24,13 @@ export function DashboardBriefing() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    fetch("/api/ai-status").then(r => r.json()).then(d => setAiEnabled(!!d.enabled)).catch(() => setAiEnabled(null));
+    fetch(`${API_BASE}/api/ai-status`).then(r => r.json()).then(d => setAiEnabled(!!d.enabled)).catch(() => setAiEnabled(null));
   }, []);
 
   async function generate() {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/assistant", {
+      const res = await fetch(`${API_BASE}/api/admin/assistant`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: PROMPT, userId: profile?.id, userName: profile?.name, role: profile?.role }),

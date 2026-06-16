@@ -645,6 +645,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // Reset the whole payment history. Clears every recorded service-fee
+  // payment so the kassa "maksettu" goes back to 0 and each worker's
+  // palveluvelka shows the full amount earned from gigs again.
+  app.delete("/api/workers/payments", async (_req, res) => {
+    try {
+      await db.delete(workerPayments);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── Investments ──────────────────────────────────────────────────────────────
 
   app.get("/api/investments", async (_req, res) => {

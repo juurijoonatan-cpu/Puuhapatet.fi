@@ -96,6 +96,24 @@ export default function AdminSettingsPage() {
     setMarkingPaid(null);
   };
 
+  const [resettingPayments, setResettingPayments] = useState(false);
+  const handleResetPayments = async () => {
+    if (!window.confirm(
+      "Nollataanko koko maksuhistoria?\n\nKaikki kirjatut palvelumaksut poistetaan. " +
+      "Tämän jälkeen jokaisen tekijän palveluvelka näyttää keikoista kertyneen summan kokonaan " +
+      "ja kassan \"Tästä maksettu\" palaa nollaan. Tätä ei voi perua."
+    )) return;
+    setResettingPayments(true);
+    const res = await api.resetWorkerPayments();
+    if (res.ok) {
+      toast({ title: "Maksuhistoria nollattu", description: "Velat ja kassa laskettu uudelleen keikoista" });
+      loadStats();
+    } else {
+      toast({ variant: "destructive", title: "Virhe", description: res.error });
+    }
+    setResettingPayments(false);
+  };
+
   const handleChangePassword = async () => {
     if (!profile) return;
     if (!currentPwd || !newPwd || !confirmPwd) {
@@ -498,6 +516,17 @@ export default function AdminSettingsPage() {
                 <p className="text-xs text-muted-foreground mt-1">
                   Tästä maksettu: {fmt(workerStats.brandCash)}
                 </p>
+                {workerStats.brandCash > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={resettingPayments}
+                    onClick={handleResetPayments}
+                    className="mt-4 text-xs text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-900 dark:hover:bg-red-950/30"
+                  >
+                    {resettingPayments ? "Nollataan…" : "Nollaa maksuhistoria"}
+                  </Button>
+                )}
               </Card>
             )}
 

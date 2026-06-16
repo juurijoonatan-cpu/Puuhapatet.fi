@@ -211,6 +211,9 @@ export const api = {
   markWorkerPaid: (workerId: string, amount: number) =>
     request<{ id: number }>("POST", `/api/workers/${workerId}/mark-paid`, { amount }),
 
+  resetWorkerPayments: () =>
+    request<{ ok: boolean }>("DELETE", "/api/workers/payments"),
+
   // packages() returns static list — no packages table in DB yet
   packages: (): Promise<ApiResponse<{ ok: boolean; packages: ApiPackage[] }>> =>
     Promise.resolve({ ok: true, data: { ok: true, packages: [] } }),

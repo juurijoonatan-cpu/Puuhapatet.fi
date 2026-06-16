@@ -34,6 +34,8 @@ export interface WorkerView {
   stats: CrewMemberStats;
   agreementVersion: string;
   requiredAgreementIds: string[];
+  /** Team standings (workers only) — name + windows + windows/hour, no €/rates. */
+  leaderboard: { id: string; name: string; washed: number; windowsPerHour: number; hours: number; isMe: boolean }[];
 }
 
 export interface CrewOnboardPayload {

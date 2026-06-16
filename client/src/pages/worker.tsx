@@ -116,6 +116,7 @@ function Onboarding({ token, view, onDone }: { token: string; view: WorkerView; 
   const [sigs, setSigs] = useState<Record<string, { dataUrl: string; clauses: Record<string, boolean> }>>({});
   const [pin, setPin] = useState("");
   const [err, setErr] = useState("");
+  const [introReady, setIntroReady] = useState(false);
 
   const setAnswer = (id: string, v: string) => setAnswers((a) => ({ ...a, [id]: v }));
 
@@ -149,12 +150,18 @@ function Onboarding({ token, view, onDone }: { token: string; view: WorkerView; 
             Tervetuloa tiimiin{view.worker.name ? `, ${view.worker.name.split(" ")[0]}` : ""}
           </h1>
           <p style={{ color: "rgba(255,255,255,0.7)", maxWidth: 440, fontSize: 15, lineHeight: 1.6 }}>
-            Pyyhkäise sormella tai hiirellä paljastaaksesi. Ennen kuin pääset omalle työpöydällesi,
-            täytä lyhyt profiili ja allekirjoita sopimukset. Tienaat <strong style={{ color: "#fff" }}>{euro(view.worker.perWindowCents)}</strong> jokaisesta pesemästäsi ikkunasta.
+            Ennen kuin pääset omalle työpöydällesi, täytä lyhyt profiili ja allekirjoita sopimukset.
+            Tienaat <strong style={{ color: "#fff" }}>{euro(view.worker.perWindowCents)}</strong> jokaisesta pesemästäsi ikkunasta.
           </p>
-          <button onClick={() => setStep("profile")} style={{ ...primaryBtn, marginTop: 28, position: "relative", zIndex: 3 }}>Aloita →</button>
+          <button
+            onClick={() => setStep("profile")}
+            style={{ ...primaryBtn, marginTop: 28, position: "relative", zIndex: 3, opacity: introReady ? 1 : 0, transform: introReady ? "translateY(0)" : "translateY(8px)", transition: "opacity .5s ease, transform .5s ease", pointerEvents: introReady ? "auto" : "none" }}
+          >
+            Aloita →
+          </button>
         </div>
-        <InkReveal maskColor={[10, 10, 12]} brushSize={150} />
+        {/* Cool ink reveal that plays itself and then dissolves — no swipe needed. */}
+        <InkReveal maskColor={[10, 10, 12]} brushSize={150} fadeOutAfter={1300} fadeOutDuration={1000} onRevealed={() => setIntroReady(true)} />
       </div>
     );
   }
@@ -358,10 +365,54 @@ function EarningsTab({ view }: { view: WorkerView }) {
         <Stat label="Ikkunaa / tunti" value={s.hours > 0 ? s.windowsPerHour.toLocaleString("fi-FI", { maximumFractionDigits: 1 }) : "—"} />
         <Stat label="Ikkunoita kohteessa" value={String(potentialWindows)} />
       </div>
+      <Leaderboard view={view} />
       <p style={{ marginTop: 20, fontSize: 12.5, color: "rgba(255,255,255,0.45)", lineHeight: 1.6 }}>
         Ansiosi päivittyy heti, kun merkitset ikkunan pestyksi kartalle. Laskutat kertyneen summan
         Puuhapatetilta oman Y-tunnuksesi kautta.
       </p>
+    </div>
+  );
+}
+
+/** Minimal, fun team standings (workers only — never shown to the customer). */
+function Leaderboard({ view }: { view: WorkerView }) {
+  const board = view.leaderboard ?? [];
+  if (board.length < 2) return null; // no fun in a leaderboard of one
+  const maxWashed = Math.max(1, ...board.map((b) => b.washed));
+  // Efficiency leader: best windows/hour among those who have logged hours.
+  const eligible = board.filter((b) => b.hours > 0);
+  const effLeaderId = eligible.length
+    ? eligible.reduce((a, b) => (b.windowsPerHour > a.windowsPerHour ? b : a)).id
+    : null;
+  const firstName = (n: string) => n.split(" ")[0] || n;
+  return (
+    <div style={{ marginTop: 26 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 12 }}>
+        <p style={{ margin: 0, fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.5)" }}>Tiimin kärki</p>
+        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>pestyt ikkunat</span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {board.slice(0, 8).map((b, i) => {
+          const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
+          const pct = (b.washed / maxWashed) * 100;
+          return (
+            <div key={b.id} style={{ position: "relative", display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 12, overflow: "hidden", background: b.isMe ? "rgba(124,224,166,0.12)" : "rgba(255,255,255,0.05)", border: `1px solid ${b.isMe ? "rgba(124,224,166,0.35)" : "rgba(255,255,255,0.08)"}` }}>
+              <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${pct}%`, background: b.isMe ? "rgba(124,224,166,0.10)" : "rgba(255,255,255,0.04)" }} />
+              <span style={{ position: "relative", width: 22, textAlign: "center", fontSize: i < 3 ? 16 : 12, fontWeight: 700, color: "rgba(255,255,255,0.6)" }}>{medal}</span>
+              <span style={{ position: "relative", flex: 1, fontSize: 14, fontWeight: b.isMe ? 700 : 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {b.isMe ? "Sinä" : firstName(b.name)}
+                {b.id === effLeaderId && <span title="Tehokkain (ikkunaa/tunti)" style={{ marginLeft: 6, fontSize: 12 }}>⚡</span>}
+              </span>
+              <span style={{ position: "relative", fontSize: 15, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{b.washed}</span>
+            </div>
+          );
+        })}
+      </div>
+      {board[0] && board[0].washed > 0 && (
+        <p style={{ marginTop: 10, fontSize: 12, color: "rgba(255,255,255,0.5)", textAlign: "center" }}>
+          {board[0].isMe ? "Sinä johdat — hieno suoritus! 🏆" : `${firstName(board[0].name)} johtaa. Kurot kiinni! 💪`}
+        </p>
+      )}
     </div>
   );
 }

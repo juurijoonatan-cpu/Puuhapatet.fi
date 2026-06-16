@@ -226,7 +226,7 @@ export default function GigContractSign({ token, view, onSigned }: Props) {
                   {s.name} <span style={{ color: T.muted }}>· {s.total} {s.unitLabel}a</span>
                 </span>
                 <span style={{ fontSize: 13, color: T.muted, fontVariantNumeric: "tabular-nums" }}>
-                  {eur(s.unitPriceCents)} / {s.unitLabel} · <strong style={{ color: T.ink }}>{eur(s.total * s.unitPriceCents)}</strong>
+                  <strong style={{ color: T.ink }}>{eur(s.total * s.unitPriceCents)}</strong>
                 </span>
               </div>
             ))}

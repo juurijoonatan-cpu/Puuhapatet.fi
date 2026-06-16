@@ -285,6 +285,11 @@ export default function AdminProjectPage() {
   const hoursWorkers = (project.workers.length ? project.workers : ["matias", "joonatan"]).map((id) => ({
     id, name: workerName(id), initial: workerInitial(id),
   }));
+  // id → display name for the "who washed this window" label (admin USERS +
+  // this gig's crew roster, falling back to the raw id).
+  const workerNames: Record<string, string> = {};
+  for (const u of USERS) workerNames[u.id] = u.name;
+  for (const m of project.crew ?? []) workerNames[m.id] = m.name;
 
   return shell(
     <>
@@ -332,6 +337,8 @@ export default function AdminProjectPage() {
             onMoveMark={onMoveMark}
             onMoveMarkCommit={onMoveMark}
             onResetFloor={onResetFloor}
+            washedBy={project.washedBy}
+            workerNames={workerNames}
           />
         )}
         {tab === "hours" && (

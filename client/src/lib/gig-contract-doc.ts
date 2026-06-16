@@ -49,11 +49,11 @@ function fiDate(ts: number) {
 
 export function buildGigContractHtml(input: GigContractDocInput): string {
   const sig = input.signature;
+  // Customer-facing: show the sector total only — never the per-unit price.
   const priceRows = input.sectors
     .map(
       (s) =>
         `<tr><td>${esc(s.name)} <span class="muted">· ${s.total} ${esc(s.unitLabel)}a</span></td>
-         <td class="right">${eur(s.unitPriceCents)} / ${esc(s.unitLabel)}</td>
          <td class="right"><b>${eur(s.total * s.unitPriceCents)}</b></td></tr>`,
     )
     .join("");

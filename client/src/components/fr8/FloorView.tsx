@@ -36,6 +36,11 @@ interface Props {
   /** When false, hide the structural edit controls (move/add/delete) — workers
    *  can still set window status, but cannot restructure the map. Default true. */
   canEdit?: boolean;
+  /** key → worker id who washed it (manager view). Enables the "who cleaned this"
+   *  label in the status popover. Workers/customers don't pass this. */
+  washedBy?: Record<string, string>;
+  /** worker id → display name, for the washedBy label. */
+  workerNames?: Record<string, string>;
 }
 
 function colorRgb(p: 1 | 2, status: WindowStatus) {
@@ -96,7 +101,7 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true }: Props) {
+export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, washedBy, workerNames }: Props) {
   const [floor, setFloor] = useState(initialFloor);
   const [filter, setFilter] = useState<"all" | "unwashed" | "progress" | "done">("all");
   const [editMode, setEditMode] = useState(false);
@@ -455,6 +460,12 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                       <span style={{ fontSize: "12px", fontWeight: 600 }}>Ikkuna {activeIdx + 1}</span>
                       <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9.5px", color: "rgba(255,255,255,0.4)", marginLeft: "auto" }}>PRIORITEETTI {activePt.p}</span>
                     </div>
+                    {washedBy && (statuses[activeOrb] || "ei") === "pesty" && washedBy[activeOrb] && (
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px", padding: "0 4px 8px", marginBottom: "5px", fontSize: "11.5px", color: "rgba(255,255,255,0.7)" }}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(124,224,166,0.9)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+                        Pesi <strong style={{ color: "#fff", fontWeight: 600 }}>{workerNames?.[washedBy[activeOrb]] ?? washedBy[activeOrb]}</strong>
+                      </div>
+                    )}
                     {(["ei", "kesken", "pesty"] as WindowStatus[]).map((s) => {
                       const cur = statuses[activeOrb] || "ei";
                       const isActive = cur === s;

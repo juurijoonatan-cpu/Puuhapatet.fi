@@ -2950,7 +2950,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Build the worker-facing view: floor map + their own progress, NO gig price.
   function workerView(project: ProjectData, member: CrewMember) {
     const stats = crewMemberStats(project, member);
+    // Team leaderboard (workers only). Exposes name + windows + windows/hour — NO
+    // pay rate, tokens or euros — so it's safe to show every worker the standings.
+    const leaderboard = (project.crew || [])
+      .filter((m) => m.active && m.role === "worker")
+      .map((m) => {
+        const s = crewMemberStats(project, m);
+        return { id: m.id, name: m.name, washed: s.washed, windowsPerHour: s.windowsPerHour, hours: s.hours, isMe: m.id === member.id };
+      })
+      .sort((a, b) => b.washed - a.washed || b.windowsPerHour - a.windowsPerHour);
     return {
+      leaderboard,
       worker: {
         id: member.id,
         name: member.name,

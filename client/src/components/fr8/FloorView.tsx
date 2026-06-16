@@ -407,7 +407,17 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
           </div>
         )}
 
-        {marks ? (
+        {!planBase ? (
+          <div style={{ maxWidth: "420px", textAlign: "center", padding: "30px", display: "flex", flexDirection: "column", alignItems: "center", gap: "12px" }}>
+            <div style={{ width: "52px", height: "52px", borderRadius: "15px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 20 3 17V4l6 3 6-3 6 3v13l-6-3-6 3Z" /><path d="M9 7v13M15 4v13" /></svg>
+            </div>
+            <div style={{ fontSize: "16px", fontWeight: 600 }}>Ei pohjakuvaa tälle keikalle</div>
+            <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.5)", lineHeight: 1.6 }}>
+              Lisää rakennuksen kerrokset ja pohjakuvan polku — tai tuo omat ikkunamerkinnät — <strong style={{ color: "rgba(255,255,255,0.7)" }}>Pohjakartat &amp; asetukset</strong> -työkalussa. Sen jälkeen kartta näkyy tässä.
+            </div>
+          </div>
+        ) : marks ? (
           <div style={{ position: "relative", display: "inline-block", lineHeight: 0, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "center center", transition: panRef.current || pinchRef.current ? "none" : "transform .18s ease", willChange: "transform" }}>
             <img ref={planRef} src={`${planBase}${floor}.png`} alt="pohjapiirros"
               style={{ display: "block", maxWidth: "100%", maxHeight: isMobile ? "calc(100vh - 210px)" : "calc(100vh - 240px)", width: "auto", height: "auto", userSelect: "none", WebkitClipPath: PLAN_CROP, clipPath: PLAN_CROP } as React.CSSProperties}

@@ -70,14 +70,21 @@ export const DEFAULT_FLOORS = ["K", "1", "2", "3", "4", "5"];
 export const DEFAULT_PRICE_PER_WINDOW = 35;
 export const PLAN_BASE = "/fr8/plans/bp-";
 
+/** True for the original FR8 gig, whose floor plans ship bundled with the app. */
+export function isFr8Plans(planBase: string | undefined | null): boolean {
+  return !!planBase && planBase.includes("/fr8/");
+}
+
 export function emptyProjectData(): ProjectData {
   return {
     version: 1,
     building: {
-      name: "FR8 — VANHA TKK",
-      address: "Bulevardi 31",
+      // Neutral by default — the FR8 gig keeps its own saved building info, and
+      // any new gig is a blank, editable slate (no FR8 name/branding/plans).
+      name: undefined,
+      address: undefined,
       floors: [...DEFAULT_FLOORS],
-      planBase: PLAN_BASE,
+      planBase: "",
     },
     pricePerWindow: DEFAULT_PRICE_PER_WINDOW,
     marks: {},
@@ -456,7 +463,8 @@ export function sanitizeProjectData(input: any): ProjectData {
       name: input?.building?.name ? String(input.building.name).slice(0, 120) : base.building.name,
       address: input?.building?.address ? String(input.building.address).slice(0, 200) : base.building.address,
       floors,
-      planBase: input?.building?.planBase ? String(input.building.planBase).slice(0, 200) : PLAN_BASE,
+      // Empty unless the client provides one — keeps new gigs free of the FR8 plans.
+      planBase: input?.building?.planBase ? String(input.building.planBase).slice(0, 200) : base.building.planBase,
     },
     pricePerWindow: clampNonNeg(Number(input.pricePerWindow)) || DEFAULT_PRICE_PER_WINDOW,
     marks,

@@ -87,22 +87,6 @@ export default function Navbar({ activeTab, onTabChange, buildingName, buildingA
         <ArrowLeft style={{ width: 14, height: 14 }} /> {m ? "" : "Keikka"}
       </button>
 
-      {/* Logo — hidden on mobile to save room */}
-      {!m && (
-        <div style={{ display: "flex", alignItems: "center", gap: "11px", paddingRight: "2px" }}>
-          <div
-            style={{
-              width: "30px", height: "30px", borderRadius: "9px",
-              background: "linear-gradient(140deg, #fff, #c9c9d2)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}
-          >
-            <div style={{ width: "11px", height: "11px", borderRadius: "3px", background: "#0a0a0c" }} />
-          </div>
-          <span style={{ fontWeight: 700, fontSize: "15px", letterSpacing: "0.02em" }}>FR8</span>
-        </div>
-      )}
-
       {/* Tab switcher — scrolls horizontally on mobile if needed */}
       <div
         style={{
@@ -151,10 +135,10 @@ export default function Navbar({ activeTab, onTabChange, buildingName, buildingA
         {!m && (
           <div style={{ textAlign: "right", lineHeight: 1.25 }}>
             <div style={{ fontWeight: 700, fontSize: "13.5px", letterSpacing: "0.03em" }}>
-              {buildingName || "FR8 — VANHA TKK"}
+              {buildingName || "Projektinäkymä"}
             </div>
             <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.08em", color: "rgba(255,255,255,0.4)" }}>
-              {(buildingAddress || "BULEVARDI 31").toUpperCase()} · {saving ? "TALLENNETAAN…" : "IKKUNANPESU"}
+              {buildingAddress ? `${buildingAddress.toUpperCase()} · ` : ""}{saving ? "TALLENNETAAN…" : "IKKUNANPESU"}
             </div>
           </div>
         )}

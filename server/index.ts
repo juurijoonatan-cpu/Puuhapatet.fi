@@ -93,6 +93,7 @@ app.use((req, res, next) => {
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS board_contact_name   text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS board_contact_email  text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS board_contact_phone  text`,
+    sql`ALTER TABLE users     ADD COLUMN IF NOT EXISTS member_agreement     text`,
     sql`CREATE UNIQUE INDEX IF NOT EXISTS jobs_quote_token_unique ON jobs(quote_token) WHERE quote_token IS NOT NULL`,
     // Chat / AI assistant tables
     sql`CREATE TABLE IF NOT EXISTS chat_conversations (

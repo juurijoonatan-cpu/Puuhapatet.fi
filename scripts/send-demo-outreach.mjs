@@ -122,12 +122,13 @@ const html = `<!DOCTYPE html>
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:26px">
         <tr>
           <td style="text-align:center">
-            <p style="color:#4a6a4a;font-size:14px;margin:0 0 16px;line-height:1.65">
+            <p style="color:#4a6a4a;font-size:14px;margin:0 0 20px;line-height:1.65">
               Pyydä maksuton tarjous — vastaamme yleensä saman päivän aikana.
             </p>
-            <a href="https://wa.me/358400389999" style="display:inline-block;background:#25D366;color:#ffffff;padding:12px 26px;border-radius:10px;text-decoration:none;font-weight:700;font-size:14px;margin:4px">💬 WhatsApp — Joonatan</a>
+            <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;background:#111111;color:#4ade80;font-size:16px;font-weight:800;text-decoration:none;padding:18px 48px;border-radius:14px;letter-spacing:0.3px;border:2px solid #22c55e">Jätä yhteydenottopyyntö →</a>
             <br>
-            <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;background:#2d5016;color:#ffffff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:800;font-size:15px;margin:8px 4px 4px;letter-spacing:0.3px">Jätä yhteydenottopyyntö →</a>
+            <a href="https://wa.me/358400389999" style="display:inline-block;background:#25D366;color:#ffffff;padding:11px 24px;border-radius:10px;text-decoration:none;font-weight:700;font-size:14px;margin:12px 4px 0">💬 WhatsApp — Joonatan</a>
+            <p style="margin:10px 0 0;color:#999999;font-size:12px">Ilmainen tarjous alle 24 tunnissa</p>
           </td>
         </tr>
       </table>
@@ -137,18 +138,17 @@ const html = `<!DOCTYPE html>
 
   <!-- FOOTER -->
   <tr>
-    <td style="background:#f0fdf4;border:1px solid #d1f0d8;border-top:none;border-radius:0 0 16px 16px;padding:16px 32px">
-      <table width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;color:#5a8a5a">
+    <td style="background:#111111;border-radius:0 0 16px 16px;padding:20px 32px">
+      <table width="100%" cellpadding="0" cellspacing="0">
         <tr>
           <td style="vertical-align:top">
-            <strong style="color:#1a2e1a">Puuhapatet</strong><br>
-            Joonatan Juuri +358 40 0389999<br>
-            Matias Pitkänen +358 44 2350881<br>
-            <a href="mailto:info@puuhapatet.fi" style="color:#5a8a5a;text-decoration:none">info@puuhapatet.fi</a>
+            <p style="margin:0 0 2px;color:#4ade80;font-size:16px;font-weight:800">Puuhapatet.</p>
+            <p style="margin:0;color:#666666;font-size:12px">Joonatan +358 40 0389999 · Matias +358 44 2350881</p>
+            <a href="mailto:info@puuhapatet.fi" style="color:#666666;text-decoration:none;font-size:12px">info@puuhapatet.fi</a>
           </td>
           <td style="text-align:right;vertical-align:top">
-            <a href="https://puuhapatet.fi" style="color:#2d5016;font-weight:700;text-decoration:none;font-size:13px">puuhapatet.fi</a><br>
-            <span style="color:#8ab865">Espoo &amp; Helsinki</span>
+            <a href="https://puuhapatet.fi" style="color:#4ade80;font-weight:700;text-decoration:none;font-size:13px">puuhapatet.fi</a><br>
+            <span style="color:#444444;font-size:12px">Espoo &amp; Helsinki</span>
           </td>
         </tr>
       </table>

@@ -52,6 +52,39 @@ export interface GigCompany {
   billing?: string;      // freeform billing details / invoicing address
 }
 
+/**
+ * Customer's electronic acceptance of the contract. Captured on the public
+ * live link before the tracking view opens — the "intro is the signing".
+ */
+export interface GigSignature {
+  signedAt: number;            // epoch ms
+  signerName: string;          // nimenselvennys (who signed)
+  signerTitle?: string;        // asema / rooli (optional)
+  place?: string;              // paikka
+  option?: string;             // chosen order option, e.g. "A" / "B" / free text
+  acceptedSectorIds?: string[];// which sectors were ordered (defaults to all)
+  customer: {                  // pre-questionnaire (tilaajan tiedot)
+    legalName: string;
+    businessId?: string;
+    billingAddress?: string;
+    eInvoice?: string;         // verkkolaskuosoite / sähköposti
+    contactPerson?: string;    // yhteyshenkilö ja puhelin
+  };
+  signatureDataUrl: string;    // drawn signature, PNG data URL
+  ip?: string;                 // filled server-side
+  userAgent?: string;          // filled server-side
+}
+
+/** Admin's approval of a signed gig — the "approved" marking. */
+export interface GigApproval {
+  approvedAt: number;          // epoch ms
+  by?: string;                 // admin name
+  note?: string;
+}
+
+/** High-level lifecycle of a gig, derived from signature + approval. */
+export type GigStatus = "draft" | "signed" | "approved";
+
 export interface GigData {
   version: 1;
   contractId?: string;        // e.g. "PT-2026-02"
@@ -66,7 +99,25 @@ export interface GigData {
   invoicedCents: number;      // cumulative amount already invoiced, in cents
   payments: GigPayment[];
   log: GigLogEntry[];
+  requireSignature?: boolean; // gate the customer live view until signed
+  signature?: GigSignature | null; // customer's electronic signature
+  approval?: GigApproval | null;   // admin approval of the signed gig
   updatedAt: number;          // epoch ms
+}
+
+/** Derive the gig's lifecycle status from its signature + approval. */
+export function gigStatus(gig: Pick<GigData, "signature" | "approval">): GigStatus {
+  if (gig.approval?.approvedAt) return "approved";
+  if (gig.signature?.signedAt) return "signed";
+  return "draft";
+}
+
+/**
+ * Whether the customer live view should be gated behind signing. Defaults to
+ * "gate it when there is a contract to sign" unless explicitly overridden.
+ */
+export function signatureRequired(gig: Pick<GigData, "requireSignature" | "contractText">): boolean {
+  return gig.requireSignature ?? !!(gig.contractText && gig.contractText.trim());
 }
 
 // ─── Defaults ────────────────────────────────────────────────────────────────
@@ -229,6 +280,47 @@ export function sanitizeGigData(input: any): GigData {
       }))
     : [];
   const str = (v: any, max: number) => (v == null ? undefined : String(v).slice(0, max));
+
+  let signature: GigSignature | null = null;
+  if (input.signature && typeof input.signature === "object") {
+    const sg = input.signature;
+    const cust = sg.customer && typeof sg.customer === "object" ? sg.customer : {};
+    const legalName = String(cust.legalName ?? "").slice(0, 160).trim();
+    const dataUrl = String(sg.signatureDataUrl ?? "");
+    // Only keep a signature that actually carries the two essentials.
+    if (legalName && dataUrl.startsWith("data:image/")) {
+      signature = {
+        signedAt: Number(sg.signedAt) || Date.now(),
+        signerName: String(sg.signerName ?? "").slice(0, 160),
+        signerTitle: str(sg.signerTitle, 120),
+        place: str(sg.place, 120),
+        option: str(sg.option, 80),
+        acceptedSectorIds: Array.isArray(sg.acceptedSectorIds)
+          ? sg.acceptedSectorIds.slice(0, 24).map((x: any) => String(x).slice(0, 16))
+          : undefined,
+        customer: {
+          legalName,
+          businessId: str(cust.businessId, 40),
+          billingAddress: str(cust.billingAddress, 300),
+          eInvoice: str(cust.eInvoice, 200),
+          contactPerson: str(cust.contactPerson, 160),
+        },
+        signatureDataUrl: dataUrl.slice(0, 300_000), // cap stored PNG size
+        ip: str(sg.ip, 64),
+        userAgent: str(sg.userAgent, 400),
+      };
+    }
+  }
+
+  let approval: GigApproval | null = null;
+  if (input.approval && typeof input.approval === "object" && Number(input.approval.approvedAt)) {
+    approval = {
+      approvedAt: Number(input.approval.approvedAt) || Date.now(),
+      by: str(input.approval.by, 120),
+      note: str(input.approval.note, 400),
+    };
+  }
+
   const company: GigCompany | undefined = input.company && typeof input.company === "object" ? {
     name: str(input.company.name, 120),
     contact: str(input.company.contact, 120),
@@ -252,6 +344,9 @@ export function sanitizeGigData(input: any): GigData {
     invoicedCents: clampNonNeg(Number(input.invoicedCents)),
     payments,
     log,
+    requireSignature: typeof input.requireSignature === "boolean" ? input.requireSignature : undefined,
+    signature,
+    approval,
     updatedAt: Date.now(),
   };
 }

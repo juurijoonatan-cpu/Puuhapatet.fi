@@ -20,7 +20,7 @@ import { getAdminProfile, USERS } from "@/lib/admin-profile";
 import { DashboardBriefing } from "@/components/dashboard-briefing";
 import { api, StatsResponse, WorkerStatsResponse } from "@/lib/api";
 import { isMyJob, parseWorkerIds } from "@/lib/visibility";
-import { STAFF_SERVICE_FEE_RATE, STAFF_SERVICE_FEE_PCT, HOST_SERVICE_FEE_PCT } from "@shared/team";
+import { STAFF_SERVICE_FEE_RATE, STAFF_SERVICE_FEE_PCT, HOST_SERVICE_FEE_PCT, feeRateForWorker, feePctForWorker } from "@shared/team";
 
 export default function AdminDashboard() {
   const profile = getAdminProfile();
@@ -195,13 +195,13 @@ export default function AdminDashboard() {
                 <span className="font-medium text-foreground">{fmt(Math.max(0, myRevenue - (myInvestmentShare ?? 0)))}</span>
               </div>
               <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">− Palvelumaksu ~{STAFF_SERVICE_FEE_PCT} %</span>
-                <span className="text-purple-600 dark:text-purple-400">−{fmt(Math.round(Math.max(0, myRevenue - (myInvestmentShare ?? 0)) * STAFF_SERVICE_FEE_RATE))}</span>
+                <span className="text-muted-foreground">− Palvelumaksu ~{profile ? feePctForWorker(profile.id) : STAFF_SERVICE_FEE_PCT} %</span>
+                <span className="text-purple-600 dark:text-purple-400">−{fmt(Math.round(Math.max(0, myRevenue - (myInvestmentShare ?? 0)) * (profile ? feeRateForWorker(profile.id) : STAFF_SERVICE_FEE_RATE)))}</span>
               </div>
               <div className="flex justify-between border-t pt-1.5 mt-1">
                 <span className="text-muted-foreground">≈ Nettotulo</span>
                 <span className="font-bold text-green-600 dark:text-green-400">
-                  {fmt(Math.round(Math.max(0, myRevenue - (myInvestmentShare ?? 0)) * (1 - STAFF_SERVICE_FEE_RATE)))}
+                  {fmt(Math.round(Math.max(0, myRevenue - (myInvestmentShare ?? 0)) * (1 - (profile ? feeRateForWorker(profile.id) : STAFF_SERVICE_FEE_RATE))))}
                 </span>
               </div>
             </div>

@@ -10,10 +10,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { AnimatePresence, motion } from "framer-motion";
-import { Sparkles, ArrowRight, ArrowLeft, ShieldCheck, FileText, Check, PenLine } from "lucide-react";
+import { ArrowRight, ArrowLeft, ShieldCheck, FileText, Check, PenLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import SignaturePad from "@/components/SignaturePad";
+import InkReveal from "@/components/InkReveal";
 import { api } from "@/lib/api";
 import { getAdminProfile } from "@/lib/admin-profile";
 import { agreementForProfile, cacheSignature, getCachedSignature } from "@/lib/member-agreement";
@@ -238,13 +239,22 @@ export default function AdminWelcomePage() {
 function WelcomeStep({ isReturning, isFounder, name, onNext }: { isReturning: boolean; isFounder: boolean; name: string; onNext: () => void }) {
   return (
     <section className="text-center">
+      {/* Ink-reveal brand hero — wipe the ink to reveal Puuhapatet */}
       <motion.div
-        initial={{ scale: 0.6, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ type: "spring", stiffness: 200, damping: 16 }}
-        className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-xl"
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+        className="relative mx-auto mb-7 h-44 w-full max-w-md overflow-hidden rounded-3xl shadow-xl md:h-52"
       >
-        <Sparkles className="h-9 w-9" />
+        {/* Behind the ink: gradient + wordmark */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-emerald-500 via-teal-600 to-teal-800 text-white">
+          <span className="text-3xl font-extrabold tracking-tight md:text-4xl">Puuhapatet</span>
+          <span className="mt-1 text-xs font-medium uppercase tracking-[0.3em] text-white/80">Puhdasta jälkeä</span>
+        </div>
+        <InkReveal maskColor={[9, 11, 13]} brushSize={130} />
+        <span className="pointer-events-none absolute bottom-3 left-0 right-0 z-[2] text-center text-[11px] font-medium uppercase tracking-[0.2em] text-white/70">
+          Pyyhkäise paljastaaksesi
+        </span>
       </motion.div>
 
       <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.15 }} className="text-sm font-medium uppercase tracking-[0.18em] text-muted-foreground">

@@ -4,6 +4,7 @@
  */
 import { allPoints, type ProjectData, type WindowStatus, type WorkerStat } from "@shared/project";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useState } from "react";
 
 interface Props {
   project: ProjectData;
@@ -44,6 +45,7 @@ const mono: React.CSSProperties = {
 
 export default function Dashboard({ project, workerStats, workerName, onGoToFloor }: Props) {
   const m = useIsMobile();
+  const [showLog, setShowLog] = useState(false);
   const FLOORS = project.building.floors;
   const PRICE = project.pricePerWindow;
   const CIRC = 2 * Math.PI * 80;
@@ -223,8 +225,8 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
           </div>
         )}
 
-        {/* Row 3: floor breakdown + activity */}
-        <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1.7fr 1fr", gap: m ? "14px" : "16px" }}>
+        {/* Row 3: floor breakdown (activity log is tucked away below) */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: m ? "14px" : "16px" }}>
           <div className="anim-fadeUp-7" style={{ ...card, padding: m ? "18px" : "22px 24px" }}>
             <div style={{ ...mono, marginBottom: "16px" }}>KERROKSITTAIN</div>
             <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
@@ -248,27 +250,31 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             </div>
           </div>
 
-          <div className="anim-fadeUp-8" style={{ ...card, padding: m ? "18px" : "22px 24px" }}>
-            <div style={{ ...mono, marginBottom: "16px" }}>VIIMEISIN TOIMINTA</div>
-            {activity.length > 0 ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: "11px" }}>
-                {activity.map((a, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "center", gap: "11px" }}>
-                    <span style={{ width: "10px", height: "10px", borderRadius: "50%", flexShrink: 0, background: a.color, boxShadow: `0 0 8px ${a.glow}` }} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: "13px", fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.title}</div>
-                      <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)" }}>{a.sub}</div>
+          {activity.length > 0 && (
+            <div className="anim-fadeUp-8" style={{ ...card, padding: m ? "14px 18px" : "16px 24px" }}>
+              <button
+                onClick={() => setShowLog((v) => !v)}
+                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", background: "none", border: "none", padding: 0, cursor: "pointer", color: "#fff" }}
+              >
+                <span style={mono}>VIIMEISIN TOIMINTA</span>
+                <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.4)" }}>{showLog ? "Piilota ▲" : "Näytä ▾"}</span>
+              </button>
+              {showLog && (
+                <div style={{ display: "flex", flexDirection: "column", gap: "11px", marginTop: "16px" }}>
+                  {activity.map((a, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: "11px" }}>
+                      <span style={{ width: "10px", height: "10px", borderRadius: "50%", flexShrink: 0, background: a.color, boxShadow: `0 0 8px ${a.glow}` }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: "13px", fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.title}</div>
+                        <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)" }}>{a.sub}</div>
+                      </div>
+                      <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10.5px", color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>{a.time}</span>
                     </div>
-                    <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10.5px", color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>{a.time}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.35)", padding: "8px 0" }}>
-                Ei vielä kirjattua toimintaa. Avaa kerrosnäkymä ja merkitse ikkunat pestyiksi.
-              </div>
-            )}
-          </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

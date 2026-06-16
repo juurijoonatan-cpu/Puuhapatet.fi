@@ -10,8 +10,8 @@ import { customers, jobs, expenses, workerPayments, investments, startupBonusUsa
 import { feeRateForWorker, effectiveJobTotal } from "@shared/team";
 import { randomUUID } from "crypto";
 import {
-  AI_ENABLED, chatComplete, publicSystemPrompt, adminSystemPrompt,
-  PUBLIC_FALLBACK_FI, type ChatTurn,
+  AI_ENABLED, chatComplete, chatCompleteWithTools, publicSystemPrompt, adminSystemPrompt,
+  PUBLIC_FALLBACK_FI, type ChatTurn, type AiTool,
 } from "./ai";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
@@ -2948,7 +2948,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         { role: "system", content: publicSystemPrompt() },
         ...toModelTurns(history),
       ];
-      const reply = await chatComplete(turns, { temperature: 0.3, maxTokens: 600 });
+      const reply = await chatComplete(turns, { temperature: 0.3, maxTokens: 420 });
       const finalReply = reply ?? PUBLIC_FALLBACK_FI;
 
       await db.insert(chatMessages).values({ conversationId: convo.id, role: "assistant", content: finalReply });
@@ -3145,16 +3145,252 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const effectiveRole: "HOST" | "STAFF" = role === "HOST" ? "HOST" : "STAFF";
       const contextBlock = await buildAdminContext(String(userId || ""), userName || "tiimiläinen", effectiveRole);
 
-      const turns: ChatTurn[] = [
-        { role: "system", content: adminSystemPrompt({ userName: userName || "tiimiläinen", role: effectiveRole, contextBlock }) },
-        ...history.slice(-HISTORY_LIMIT).map((m): ChatTurn => ({
-          role: m.role === "assistant" ? "assistant" : "user",
-          content: String(m.content || ""),
-        })),
-        { role: "user", content: text },
-      ];
-      const reply = await chatComplete(turns, { temperature: 0.4, maxTokens: 900 });
-      res.json({ reply: reply ?? "En valitettavasti saanut yhteyttä tekoälypalveluun juuri nyt. Yritä hetken kuluttua uudelleen." });
+      const adminTools: AiTool[] = effectiveRole === "HOST" ? [
+        {
+          type: "function",
+          function: {
+            name: "update_job",
+            description: "Päivitä keikan status tai lisää muistiinpano. Käytä kun käyttäjä pyytää päivittämään keikan tilan tai lisäämään huomion.",
+            parameters: {
+              type: "object",
+              properties: {
+                job_id: { type: "number", description: "Keikan ID-numero" },
+                status: { type: "string", enum: ["lead", "scheduled", "in_progress", "done"], description: "Uusi tila (valinnainen)" },
+                notes: { type: "string", description: "Lisättävä muistiinpano keikalle (valinnainen)" },
+              },
+              required: ["job_id"],
+            },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "send_followup_email",
+            description: "Lähetä muistutusviesti tai yhteydenottopyyntö asiakkaalle. Käytä vain kun käyttäjä pyytää lähettämään viestin asiakkaalle.",
+            parameters: {
+              type: "object",
+              properties: {
+                job_id: { type: "number", description: "Keikan ID-numero" },
+                message: { type: "string", description: "Viesti asiakkaalle suomeksi (lyhyt, max 3 lausetta)" },
+              },
+              required: ["job_id", "message"],
+            },
+          },
+        },
+      ] : [];
+
+      const systemTurn: ChatTurn = { role: "system", content: adminSystemPrompt({ userName: userName || "tiimiläinen", role: effectiveRole, contextBlock }) };
+      const historyTurns: ChatTurn[] = history.slice(-HISTORY_LIMIT).map((m): ChatTurn => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: String(m.content || ""),
+      }));
+      const userTurn: ChatTurn = { role: "user", content: text };
+      let turns: any[] = [systemTurn, ...historyTurns, userTurn];
+
+      const toolResultNotes: string[] = [];
+      for (let round = 0; round < 3; round++) {
+        const result = await chatCompleteWithTools(turns, adminTools, { temperature: 0.4, maxTokens: 900 });
+
+        if (!result.toolCalls || result.toolCalls.length === 0) {
+          const reply = result.text ?? "En valitettavasti saanut yhteyttä tekoälypalveluun juuri nyt. Yritä hetken kuluttua uudelleen.";
+          const fullReply = toolResultNotes.length > 0 ? toolResultNotes.join("\n") + "\n\n" + reply : reply;
+          return res.json({ reply: fullReply });
+        }
+
+        turns.push({ role: "assistant", content: result.text ?? "", tool_calls: result.toolCalls });
+
+        for (const tc of result.toolCalls) {
+          let toolResult = "";
+          try {
+            const args = JSON.parse(tc.function.arguments);
+            if (tc.function.name === "update_job") {
+              const jobRow = (await db.select().from(jobs).where(eq(jobs.id, args.job_id)).limit(1))[0];
+              if (!jobRow) {
+                toolResult = `Virhe: keikkaa #${args.job_id} ei löydy.`;
+              } else {
+                const updates: any = { updatedAt: new Date() };
+                if (args.status) updates.status = args.status;
+                if (args.notes) updates.notes = (jobRow.notes || "") + "\n[" + new Date().toLocaleDateString("fi-FI") + "] " + args.notes;
+                await db.update(jobs).set(updates).where(eq(jobs.id, args.job_id));
+                const changes = [args.status ? `status → ${args.status}` : null, args.notes ? "muistiinpano lisätty" : null].filter(Boolean).join(", ");
+                toolResult = `Keikka #${args.job_id} päivitetty: ${changes}.`;
+                toolResultNotes.push(`✓ ${toolResult}`);
+              }
+            } else if (tc.function.name === "send_followup_email") {
+              if (!resend) {
+                toolResult = "Virhe: sähköpostipalvelu ei käytössä.";
+              } else {
+                const jobRow = (await db.select().from(jobs).where(eq(jobs.id, args.job_id)).limit(1))[0];
+                if (!jobRow) {
+                  toolResult = `Virhe: keikkaa #${args.job_id} ei löydy.`;
+                } else {
+                  const customer = jobRow.customerId
+                    ? (await db.select().from(customers).where(eq(customers.id, jobRow.customerId)).limit(1))[0]
+                    : null;
+                  if (!customer?.email) {
+                    toolResult = `Keikalla #${args.job_id} ei ole asiakkaan sähköpostia — ei voitu lähettää.`;
+                  } else {
+                    const firstName = customer.name?.split(" ")[0] ?? customer.name ?? "Hei";
+                    const today = new Date().toLocaleDateString("fi-FI");
+                    const html = `<!DOCTYPE html>
+<html lang="fi">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:#f0faf2">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0faf2"><tr><td align="center" style="padding:28px 16px">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
+
+  <!-- HEADER -->
+  <tr>
+    <td style="background:#2d5016;border-radius:16px 16px 0 0;padding:28px 32px 24px">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td>
+            <p style="margin:0;color:#ffffff;font-size:26px;font-weight:900;letter-spacing:-0.5px">Puuhapatet.</p>
+            <p style="margin:5px 0 0;color:#a3c97a;font-size:12px;letter-spacing:0.3px">Ammattimainen kiinteistöpalvelu</p>
+          </td>
+          <td style="text-align:right;vertical-align:top;padding-top:2px">
+            <span style="display:inline-block;background:#a3c97a;color:#1a3a0a;font-size:10px;font-weight:800;letter-spacing:2px;padding:5px 14px;border-radius:20px;text-transform:uppercase">YHTEYDENOTTO</span>
+          </td>
+        </tr>
+      </table>
+      <div style="margin-top:20px;padding-top:16px;border-top:1px solid #3d6620">
+        <p style="color:#8ab865;font-size:12px;margin:0">${today}</p>
+      </div>
+    </td>
+  </tr>
+
+  <!-- WORK PHOTO -->
+  <tr>
+    <td style="padding:0;line-height:0">
+      <img src="https://puuhapatet.fi/hero-workers.jpg" alt="Puuhapatet työssä" style="width:100%;max-height:260px;object-fit:cover;object-position:center top;display:block" />
+    </td>
+  </tr>
+
+  <!-- TO / FROM -->
+  <tr>
+    <td style="background:#ffffff;border-left:1px solid #d1f0d8;border-right:1px solid #d1f0d8">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="padding:16px 28px;border-right:1px solid #e8f5e9;width:50%;vertical-align:top">
+            <p style="margin:0 0 5px;color:#6aab6a;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">ASIAKKAALLE</p>
+            <p style="margin:0 0 2px;color:#1a2e1a;font-size:14px;font-weight:700">${customer.name}</p>
+            ${customer.address ? `<p style="margin:2px 0 0;color:#6a8a6a;font-size:12px;line-height:1.5">${customer.address}</p>` : ""}
+          </td>
+          <td style="padding:16px 28px;width:50%;text-align:right;vertical-align:top">
+            <p style="margin:0 0 5px;color:#6aab6a;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">LÄHETTÄJÄ</p>
+            <p style="margin:0 0 2px;color:#1a2e1a;font-size:14px;font-weight:700">Puuhapatet</p>
+            <p style="margin:0;color:#6a8a6a;font-size:12px">Joonatan &amp; Matias</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- BODY -->
+  <tr>
+    <td style="background:#ffffff;border:1px solid #d1f0d8;border-top:none;padding:28px 32px">
+
+      <!-- Personal message -->
+      <p style="margin:0 0 24px;color:#2a3a2a;font-size:15px;line-height:1.8">${args.message.replace(/\n/g, "<br>")}</p>
+
+      <!-- Services overview -->
+      <p style="margin:0 0 12px;color:#6aab6a;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">PALVELUMME</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-top:2px solid #2d5016">
+        ${[
+          { icon: "🪟", title: "Ikkunanpesu", detail: "Sisä- ja ulkopinnat, parvekelasit, lasiterassit" },
+          { icon: "🌿", title: "Pihatyöt", detail: "Nurmikon leikkuu, kausipaketit edullisesti" },
+          { icon: "🚿", title: "Lisäpalvelut", detail: "Auton sisäpuhdistus, terassi, räystäskourut" },
+        ].map((s, i) => `
+        <tr style="border-bottom:1px solid #ecfdf5;background:${i % 2 === 1 ? "#f8fffe" : "#ffffff"}">
+          <td style="padding:13px 16px 13px 0;vertical-align:top">
+            <p style="margin:0;color:#1a2e1a;font-size:14px;font-weight:600">${s.icon} ${s.title}</p>
+            <p style="margin:3px 0 0;color:#4b7a4b;font-size:12px">${s.detail}</p>
+          </td>
+        </tr>`).join("")}
+      </table>
+
+      <!-- Trust badges -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:20px">
+        <tr>
+          <td style="background:#f8fffe;border-radius:10px;padding:16px 18px;border:1px solid #d1f0d8">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr><td style="padding:4px 0;font-size:13px;color:#2a3a2a;line-height:1.5">⭐ Tyytyväisyystakuu — tulos sovitun mukainen tai teemme uudelleen</td></tr>
+              <tr><td style="padding:4px 0;font-size:13px;color:#2a3a2a;line-height:1.5">🔒 Vastuuvakuutettu — turvallisuus edellä</td></tr>
+              <tr><td style="padding:4px 0;font-size:13px;color:#2a3a2a;line-height:1.5">✓ Selkeä hinnoittelu — hinta sovitaan etukäteen, ei yllätyksiä</td></tr>
+              <tr><td style="padding:4px 0;font-size:13px;color:#2a3a2a;line-height:1.5">💰 Kotitalousvähennyskelpoinen — säästät n. 35 % verotuksessa</td></tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+
+      <!-- CTA -->
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:26px">
+        <tr>
+          <td style="text-align:center">
+            <p style="color:#4a6a4a;font-size:14px;margin:0 0 20px;line-height:1.65">
+              Pyydä maksuton tarjous — vastaamme yleensä saman päivän aikana.
+            </p>
+            <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;background:#111111;color:#4ade80;font-size:16px;font-weight:800;text-decoration:none;padding:18px 48px;border-radius:14px;letter-spacing:0.3px;border:2px solid #22c55e">Jätä yhteydenottopyyntö →</a>
+            <br>
+            <a href="https://wa.me/358400389999" style="display:inline-block;background:#25D366;color:#ffffff;padding:11px 24px;border-radius:10px;text-decoration:none;font-weight:700;font-size:14px;margin:12px 4px 0">💬 WhatsApp — Joonatan</a>
+            <p style="margin:10px 0 0;color:#999999;font-size:12px">Ilmainen tarjous alle 24 tunnissa</p>
+          </td>
+        </tr>
+      </table>
+
+    </td>
+  </tr>
+
+  <!-- FOOTER -->
+  <tr>
+    <td style="background:#111111;border-radius:0 0 16px 16px;padding:20px 32px">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="vertical-align:top">
+            <p style="margin:0 0 2px;color:#4ade80;font-size:16px;font-weight:800">Puuhapatet.</p>
+            <p style="margin:0;color:#666666;font-size:12px">Joonatan +358 40 0389999 · Matias +358 44 2350881</p>
+            <a href="mailto:info@puuhapatet.fi" style="color:#666666;text-decoration:none;font-size:12px">info@puuhapatet.fi</a>
+          </td>
+          <td style="text-align:right;vertical-align:top">
+            <a href="https://puuhapatet.fi" style="color:#4ade80;font-weight:700;text-decoration:none;font-size:13px">puuhapatet.fi</a><br>
+            <span style="color:#444444;font-size:12px">Espoo &amp; Helsinki</span>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+</table>
+</td></tr></table>
+</body>
+</html>`;
+                    await resend.emails.send({
+                      from: FROM_EMAIL,
+                      to: customer.email,
+                      subject: `Terveisiä Puuhapatet — ${customer.name?.split(" ")[0] ?? "hei"}!`,
+                      html,
+                    });
+                    const outreachNote = `[${new Date().toLocaleDateString("fi-FI")} yhteydenotto lähetetty sähköpostilla: ${customer.email}]`;
+                    const existingNotes = jobRow.notes || "";
+                    await db.update(jobs).set({
+                      notes: existingNotes ? existingNotes + "\n" + outreachNote : outreachNote,
+                      updatedAt: new Date()
+                    }).where(eq(jobs.id, args.job_id));
+                    toolResult = `Viesti lähetetty asiakkaalle ${customer.name} (${customer.email}).`;
+                    toolResultNotes.push(`✓ ${toolResult}`);
+                  }
+                }
+              }
+            } else {
+              toolResult = `Tuntematon työkalu: ${tc.function.name}`;
+            }
+          } catch (e: any) {
+            toolResult = `Virhe työkalun suorituksessa: ${e.message}`;
+          }
+          turns.push({ role: "tool", tool_call_id: tc.id, content: toolResult });
+        }
+      }
+      res.json({ reply: toolResultNotes.join("\n") || "Toimenpiteet suoritettu." });
     } catch (e: any) {
       console.error("Admin assistant error:", e);
       res.status(500).json({ error: e.message });
@@ -3192,6 +3428,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     lines.push(`\nKeikat (${role === "HOST" ? "kaikki" : "omat"}): yhteensä ${visibleJobs.length} — ` +
       Object.entries(byStatus).map(([s, n]) => `${s}: ${n}`).join(", "));
 
+    // In-progress jobs (currently being worked on)
+    const inProgress = visibleJobs.filter(j => j.status === "in_progress").slice(0, 10);
+    if (inProgress.length) {
+      lines.push(`\nKäynnissä olevat keikat:`);
+      for (const j of inProgress) {
+        const c = customerById.get(j.customerId);
+        lines.push(`- #${j.id} ${c?.name ?? "?"} · ${c?.address ?? "?"} · tekijä: ${j.assignedTo || "ei osoitettu"} · ${eur(j.agreedPrice)}`);
+      }
+    }
+
     // Upcoming scheduled jobs
     const upcoming = visibleJobs
       .filter(j => j.scheduledAt && new Date(j.scheduledAt) >= new Date(Date.now() - 86400000))
@@ -3205,13 +3451,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
     }
 
-    // Open leads / pending quotes
-    const leads = visibleJobs.filter(j => j.status === "lead" || j.quoteStatus === "pending").slice(0, 15);
+    // Open leads — with clear quote status for each
+    const leads = visibleJobs.filter(j => j.status === "lead").slice(0, 20);
     if (leads.length) {
-      lines.push(`\nAvoimet liidit / odottavat tarjoukset:`);
+      lines.push(`\nAvoimet liidit:`);
       for (const j of leads) {
         const c = customerById.get(j.customerId);
-        lines.push(`- #${j.id} ${c?.name ?? "?"} · ${c?.phone ?? ""} ${c?.address ?? ""} · ${j.quoteStatus ?? j.status} · ${eur(j.agreedPrice)}`);
+        const outreachSent = (j.notes || "").includes("yhteydenotto lähetetty");
+        const quoteInfo = j.quoteToken
+          ? (j.quoteStatus === "accepted" ? "tarjous HYVÄKSYTTY"
+             : j.quoteStatus === "declined" ? "tarjous HYLÄTTY"
+             : "tarjous lähetetty, odottaa vastausta")
+          : outreachSent ? "yhteydenotto lähetetty, ei vielä tarjousta"
+          : "ei yhteydenottoa eikä tarjousta";
+        lines.push(`- #${j.id} ${c?.name ?? "?"} · ${c?.phone ?? ""} · ${c?.address ?? ""} · ${quoteInfo} · ${eur(j.agreedPrice)}`);
+      }
+    }
+
+    // Pending quotes on non-lead jobs
+    const pendingQuotes = visibleJobs.filter(j => j.status !== "lead" && j.quoteStatus === "pending").slice(0, 10);
+    if (pendingQuotes.length) {
+      lines.push(`\nOdottavat tarjoukset (ei-liidi):`);
+      for (const j of pendingQuotes) {
+        const c = customerById.get(j.customerId);
+        lines.push(`- #${j.id} ${c?.name ?? "?"} · ${j.status} · tarjous odottaa vastausta · ${eur(j.agreedPrice)}`);
       }
     }
 

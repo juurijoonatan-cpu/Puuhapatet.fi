@@ -11,7 +11,7 @@ import { useRoute, useLocation } from "wouter";
 import { api } from "@/lib/api";
 import { getAdminProfile, USERS } from "@/lib/admin-profile";
 import {
-  emptyProjectData, computeWorkerStats,
+  emptyProjectData, computeWorkerStats, isFr8Plans,
   type ProjectData, type ProjMarksData, type WindowStatus,
 } from "@shared/project";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
@@ -57,6 +57,7 @@ export default function AdminProjectPage() {
   const [tab, setTab] = useState<Fr8Tab>("dashboard");
   const [activeFloor, setActiveFloor] = useState("K");
   const [project, setProject] = useState<ProjectData | null>(null);
+  const [gigName, setGigName] = useState("");   // gig/company name for a neutral header
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -95,14 +96,20 @@ export default function AdminProjectPage() {
         .filter((id) => USERS.some((u) => u.id === id));
       const workers = assigned.length ? assigned : ["matias", "joonatan"];
 
+      // Gig/company name → neutral header for white-label gigs (no FR8 branding).
+      try {
+        const gd = job?.gigData ? JSON.parse(job.gigData) : null;
+        if (gd?.company?.name) setGigName(String(gd.company.name));
+      } catch { /* ignore */ }
+
       // Backend reachable and a project already exists.
       if (projRes.ok && projRes.data?.project) {
         const p = projRes.data.project;
         // Make sure every assigned worker shows up in the hours view.
         const mergedWorkers = Array.from(new Set([...(p.workers || []), ...workers]));
-        // Heal a project that was saved without its window marks (failed first
-        // seed, etc.) so the floor maps are never empty.
-        if (!hasAnyMarks(p.marks) && hasAnyMarks(baseMarks)) {
+        // Heal the original FR8 gig if it was ever saved without its bundled
+        // marks. Other gigs are left untouched so they never inherit FR8 plans.
+        if (isFr8Plans(p.building.planBase) && !hasAnyMarks(p.marks) && hasAnyMarks(baseMarks)) {
           const healed: ProjectData = { ...p, marks: baseMarks, workers: mergedWorkers };
           setProject(healed);
           void api.updateProject(jobId, healed);
@@ -113,22 +120,20 @@ export default function AdminProjectPage() {
         return;
       }
 
-      // Backend reachable, no project yet → seed from base marks and persist.
+      // Backend reachable, no project yet → create a blank, editable project.
+      // (No FR8 marks/plans — the crew sets up floors & maps per gig.)
       if (projRes.ok) {
-        const seeded: ProjectData = { ...emptyProjectData(), marks: baseMarks, workers };
+        const seeded: ProjectData = { ...emptyProjectData(), workers };
         const saveRes = await api.updateProject(jobId, seeded);
         if (cancelled) return;
         if (saveRes.ok && saveRes.data) {
-          const saved = saveRes.data.project;
-          // If the server round-trip dropped the marks, keep the seeded copy so
-          // the maps still render with their windows.
-          setProject(hasAnyMarks(saved.marks) ? { ...saved, workers } : { ...seeded });
+          setProject({ ...saveRes.data.project, workers });
         } else {
           // Even if the save fails (e.g. column not migrated yet), show the tool
-          // so the maps are usable; just warn that changes won't persist yet.
+          // so it is usable; just warn that changes won't persist yet.
           setProject(seeded);
           setError(saveRes.error
-            ? `Tallennus ei vielä käytössä (${saveRes.error}) — kartat näkyvät, mutta muutoksia ei tallenneta.`
+            ? `Tallennus ei vielä käytössä (${saveRes.error}) — näkymä toimii, mutta muutoksia ei tallenneta.`
             : null);
         }
         setLoading(false);
@@ -136,9 +141,8 @@ export default function AdminProjectPage() {
       }
 
       // Backend unreachable (route missing, server asleep, network) → still show
-      // the tool from the bundled floor data so the maps are usable. Edits won't
-      // persist until the connection is back.
-      setProject({ ...emptyProjectData(), marks: baseMarks, workers });
+      // the tool so it is usable. Edits won't persist until the connection is back.
+      setProject({ ...emptyProjectData(), workers });
       setError(projRes.error
         ? `Yhteys palvelimeen epäonnistui (${projRes.error}) — muutoksia ei tallenneta.`
         : "Yhteys palvelimeen epäonnistui — muutoksia ei tallenneta.");
@@ -287,7 +291,7 @@ export default function AdminProjectPage() {
       <Navbar
         activeTab={tab}
         onTabChange={setTab}
-        buildingName={project.building.name}
+        buildingName={project.building.name || gigName || undefined}
         buildingAddress={project.building.address}
         currentWorkerName={workerName(currentWorker)}
         saving={saving}
@@ -314,7 +318,7 @@ export default function AdminProjectPage() {
         {tab === "floor" && (
           <FloorView
             floors={project.building.floors}
-            planBase={project.building.planBase || "/fr8/plans/bp-"}
+            planBase={project.building.planBase || ""}
             pricePerWindow={project.pricePerWindow}
             marks={project.marks}
             statuses={project.statuses}

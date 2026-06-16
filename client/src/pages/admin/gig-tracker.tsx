@@ -11,10 +11,13 @@ import { Link, useRoute, useLocation } from "wouter";
 import {
   ArrowLeft, Share2, Copy, Check, FileText,
   Send, AlertCircle, ChevronDown, Receipt, ExternalLink, ChevronRight,
-  PenLine, ShieldCheck, Clock, Save, Download, Printer,
+  PenLine, ShieldCheck, Clock, Save, Download, Printer, Wrench, LayoutDashboard,
 } from "lucide-react";
 import { GIG_TOOLS, type GigToolId } from "@/lib/gig-tools";
 import GigToolsOverlay from "@/components/gig-tools/GigToolsOverlay";
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -222,48 +225,54 @@ export default function AdminGigTrackerPage() {
           </div>
         </div>
 
-        {/* Gig tools — opens each tool as its own full-screen view so the admin
-            UI underneath is never disturbed. Route tools navigate; panel tools
-            open the overlay. */}
-        <div className="flex items-center justify-between mb-2 px-1">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Työkalut</p>
-          <span className="text-xs text-muted-foreground">{GIG_TOOLS.length} työkalua</span>
-        </div>
-        <div className="space-y-2.5 mb-6">
-          {GIG_TOOLS.map((t, i) => {
-            const Icon = t.icon;
-            const onOpen = () => {
-              if (t.kind === "route" && t.route) navigate(t.route(jobId));
-              else setToolsOpen(t.id);
-            };
-            const primary = i === 0;
-            return (
+        {/* Gig tools — the project dashboard is the one main button; the rest of
+            the (generic, white-label) tools live in a small low-profile dropdown
+            so the gig page stays clean. Each opens as its own full-screen view. */}
+        <div className="flex items-stretch gap-2 mb-6">
+          <button
+            onClick={() => navigate(`/admin/gig/${jobId}/projekti`)}
+            className="group flex flex-1 items-center gap-4 rounded-2xl p-4 text-left transition-all active:scale-[0.99] premium-shadow bg-gradient-to-br from-zinc-900 to-zinc-800 dark:from-zinc-900 dark:to-black text-white hover:brightness-110"
+          >
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/10">
+              <LayoutDashboard className="h-6 w-6" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold">Avaa projektinäkymä</p>
+              <p className="text-sm text-white/60 truncate">Pohjapiirros &amp; ikkunakartta · kojelauta · työtunnit</p>
+            </div>
+            <ChevronRight className="h-5 w-5 shrink-0 text-white/50 transition-transform group-hover:translate-x-0.5" />
+          </button>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
               <button
-                key={t.id}
-                onClick={onOpen}
-                className={`w-full group flex items-center gap-4 rounded-2xl p-4 text-left transition-all active:scale-[0.99] premium-shadow ${
-                  primary
-                    ? "bg-gradient-to-br from-zinc-900 to-zinc-800 dark:from-zinc-900 dark:to-black text-white hover:brightness-110"
-                    : "bg-card text-foreground hover:bg-accent"
-                }`}
+                aria-label="Lisää työkaluja"
+                className="flex shrink-0 flex-col items-center justify-center gap-1 rounded-2xl px-4 bg-card text-foreground hover:bg-accent transition-all active:scale-[0.99] premium-shadow"
               >
-                <div
-                  className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl"
-                  style={{
-                    background: primary ? "rgba(255,255,255,0.1)" : `rgba(${t.accent},0.12)`,
-                    color: primary ? "#fff" : `rgb(${t.accent})`,
-                  }}
-                >
-                  <Icon className="h-6 w-6" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold">{t.title}</p>
-                  <p className={`text-sm truncate ${primary ? "text-white/60" : "text-muted-foreground"}`}>{t.subtitle}</p>
-                </div>
-                <ChevronRight className={`h-5 w-5 shrink-0 transition-transform group-hover:translate-x-0.5 ${primary ? "text-white/50" : "text-muted-foreground"}`} />
+                <Wrench className="h-5 w-5" />
+                <span className="flex items-center gap-0.5 text-xs font-medium">Työkalut <ChevronDown className="h-3 w-3" /></span>
               </button>
-            );
-          })}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64">
+              {GIG_TOOLS.filter((t) => t.kind === "panel").map((t) => {
+                const Icon = t.icon;
+                return (
+                  <DropdownMenuItem key={t.id} onClick={() => setToolsOpen(t.id)} className="gap-3 py-2.5 cursor-pointer">
+                    <span
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
+                      style={{ background: `rgba(${t.accent},0.12)`, color: `rgb(${t.accent})` }}
+                    >
+                      <Icon className="h-5 w-5" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block font-medium leading-tight">{t.title}</span>
+                      <span className="block text-xs text-muted-foreground leading-tight truncate">{t.subtitle}</span>
+                    </span>
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         {/* Accrual headline */}

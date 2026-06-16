@@ -17,6 +17,7 @@ import {
   Users,
 } from "lucide-react";
 import { getAdminProfile, USERS } from "@/lib/admin-profile";
+import { DashboardBriefing } from "@/components/dashboard-briefing";
 import { api, StatsResponse, WorkerStatsResponse } from "@/lib/api";
 import { isMyJob, parseWorkerIds } from "@/lib/visibility";
 import { STAFF_SERVICE_FEE_RATE, STAFF_SERVICE_FEE_PCT, HOST_SERVICE_FEE_PCT, feeRateForWorker, feePctForWorker } from "@shared/team";
@@ -179,6 +180,8 @@ export default function AdminDashboard() {
             );
           })}
         </div>
+
+        <DashboardBriefing />
 
         {/* STAFF: personal earnings breakdown note */}
         {!isHost && myRevenue !== null && myRevenue > 0 && (

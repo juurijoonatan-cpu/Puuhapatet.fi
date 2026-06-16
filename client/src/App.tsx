@@ -7,6 +7,7 @@ import { ThemeProvider } from "@/lib/theme";
 import { I18nProvider } from "@/lib/i18n";
 import { LiquidGlassNav } from "@/components/liquid-glass-nav";
 import { ProtectedRoute } from "@/components/protected-route";
+import { ChatWidget } from "@/components/chat-widget";
 import { useEffect, Component } from "react";
 import type { ReactNode, ErrorInfo } from "react";
 
@@ -66,6 +67,7 @@ import AdminQuotesPage from "@/pages/admin/quotes";
 import AdminGuidePage from "@/pages/admin/guide";
 import AdminTaxExportPage from "@/pages/admin/tax-export";
 import AdminInvestmentsPage from "@/pages/admin/investments";
+import AdminInboxPage from "@/pages/admin/inbox";
 import QuotePage from "@/pages/quote";
 import ITPage from "@/pages/it";
 import CVDemoPage from "@/pages/cv-demo";
@@ -84,6 +86,7 @@ function PublicLayout({ children }: { children: React.ReactNode }) {
     <>
       <LiquidGlassNav />
       {children}
+      <ChatWidget />
     </>
   );
 }
@@ -219,6 +222,11 @@ function Router() {
       <Route path="/admin/investments">
         <ProtectedRoute>
           <AdminInvestmentsPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/admin/inbox">
+        <ProtectedRoute>
+          <AdminInboxPage />
         </ProtectedRoute>
       </Route>
       <Route path="/admin">

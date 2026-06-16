@@ -172,3 +172,48 @@ export const users = pgTable("users", {
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
+
+// ─── Chat / AI assistant ──────────────────────────────────────────────────────
+// One row per conversation. Two sources:
+//   "public" — website visitor talking to the customer-facing bot / live admin
+//   "admin"  — internal staff using the in-admin assistant
+export const chatConversations = pgTable("chat_conversations", {
+  id:            serial("id").primaryKey(),
+  sessionToken:  text("session_token").notNull(),                  // anonymous visitor token, or admin user id
+  source:        text("source").notNull().default("public"),       // "public" | "admin"
+  status:        text("status").notNull().default("bot"),          // public: bot|needs_human|human|closed
+  visitorName:   text("visitor_name"),
+  visitorEmail:  text("visitor_email"),
+  visitorPhone:  text("visitor_phone"),
+  userId:        text("user_id"),                                  // admin user id (source = admin)
+  userRole:      text("user_role"),                                // HOST | STAFF (source = admin)
+  unread:        boolean("unread").notNull().default(false),       // admin has an unseen visitor message
+  pageUrl:       text("page_url"),                                 // where the visitor opened the chat
+  createdAt:     timestamp("created_at").defaultNow().notNull(),
+  updatedAt:     timestamp("updated_at").defaultNow().notNull(),
+  lastMessageAt: timestamp("last_message_at").defaultNow().notNull(),
+});
+
+export const chatMessages = pgTable("chat_messages", {
+  id:             serial("id").primaryKey(),
+  conversationId: integer("conversation_id").references(() => chatConversations.id).notNull(),
+  role:           text("role").notNull(),     // "user" | "assistant" | "admin" | "system"
+  content:        text("content").notNull(),
+  authorName:     text("author_name"),         // admin display name when role = "admin"
+  createdAt:      timestamp("created_at").defaultNow().notNull(),
+});
+
+export const chatConversationsRelations = relations(chatConversations, ({ many }) => ({
+  messages: many(chatMessages),
+}));
+
+export const chatMessagesRelations = relations(chatMessages, ({ one }) => ({
+  conversation: one(chatConversations, { fields: [chatMessages.conversationId], references: [chatConversations.id] }),
+}));
+
+export const insertChatConversationSchema = createInsertSchema(chatConversations).omit({ id: true, createdAt: true, updatedAt: true, lastMessageAt: true });
+export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ id: true, createdAt: true });
+export type ChatConversation = typeof chatConversations.$inferSelect;
+export type ChatMessage = typeof chatMessages.$inferSelect;
+export type InsertChatConversation = z.infer<typeof insertChatConversationSchema>;
+export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;

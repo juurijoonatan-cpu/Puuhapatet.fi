@@ -46,12 +46,13 @@ export default function AdminDashboard() {
     if (profile) {
       api.getJobs().then((res) => {
         if (res.ok && res.data) {
-          const rows = res.data as { job: { assignedTo: string | null; status: string; agreedPrice: number; waiveFee?: boolean } }[];
+          const rows = res.data as { job: { assignedTo: string | null; status: string; agreedPrice: number; waiveFee?: boolean; quoteStatus?: string | null } }[];
           const mine = rows.filter(r => isMyJob(r.job.assignedTo, profile.id));
           setMyJobTotal(mine.length);
           setMyJobUpcoming(mine.filter(r => r.job.status === "scheduled").length);
           const rev = mine
-            .filter(r => r.job.status === "done")
+            // A declined quote earned nothing — keep it out of personal income.
+            .filter(r => r.job.status === "done" && r.job.quoteStatus !== "declined")
             .reduce((sum, r) => {
               const workerCount = Math.max(1, parseWorkerIds(r.job.assignedTo).length);
               return sum + Math.round((r.job.agreedPrice ?? 0) / workerCount);

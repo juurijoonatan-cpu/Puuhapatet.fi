@@ -23,6 +23,7 @@ interface JobRow {
     scheduledAt: string | null;
     createdAt: string;
     waiveFee?: boolean;
+    quoteStatus?: string | null;
   };
   customer: {
     id: number;
@@ -66,7 +67,12 @@ export default function TaxExportPage() {
   useEffect(() => {
     api.getJobs().then((res) => {
       if (res.ok && res.data) {
-        setJobs((res.data as JobRow[]).filter(r => r.job.status === "done"));
+        // Completed jobs only, and never a declined/cancelled quote — a
+        // declined offer produced no income, so it must stay out of the
+        // tax figures even if a stale "done" status lingers on the row.
+        setJobs((res.data as JobRow[]).filter(
+          r => r.job.status === "done" && r.job.quoteStatus !== "declined"
+        ));
       }
       setLoading(false);
     });

@@ -4,6 +4,7 @@
 
 import type { GigData, GigTotals } from "@shared/gig";
 import type { ProjectData, ProjTotals, WorkerStat } from "@shared/project";
+import type { MemberAgreementSignature } from "@shared/member-agreement";
 
 // Defaults to the Render backend in production; override with VITE_API_BASE
 // (e.g. "" for same-origin) when running the server locally.
@@ -20,6 +21,45 @@ export interface GigPublicView {
   totals: GigTotals;
   updatedAt: number;
   invoicedCents: number;
+  // Contract & signing gate
+  contractText: string | null;
+  requireSignature: boolean;
+  status: "draft" | "signed" | "approved";
+  signed: boolean;
+  signedAt: number | null;
+  signerName: string | null;
+  approved: boolean;
+  approvedAt: number | null;
+  signature: {
+    signerName: string;
+    place: string | null;
+    signedAt: number;
+    customer: { legalName: string; businessId?: string; billingAddress?: string; eInvoice?: string; contactPerson?: string };
+    signatureDataUrl: string;
+  } | null;
+  company: {
+    name: string | null;
+    businessId: string | null;
+    email: string | null;
+    contact: string | null;
+    address: string | null;
+  } | null;
+}
+
+export interface GigSignPayload {
+  signerName: string;
+  signerTitle?: string;
+  place?: string;
+  option?: string;
+  acceptedSectorIds?: string[];
+  signatureDataUrl: string;
+  customer: {
+    legalName: string;
+    businessId?: string;
+    billingAddress?: string;
+    eInvoice?: string;
+    contactPerson?: string;
+  };
 }
 
 interface ApiResponse<T> {
@@ -407,9 +447,26 @@ export const api = {
   setUserPasswordRemote: (userId: string, password: string) =>
     request<{ ok: boolean }>("POST", `/api/admin/user-password/${userId}`, { password }),
 
+  // ─── Member agreement (signed inside the admin) ─────────────────────────────
+  getMemberAgreement: (userId: string) =>
+    request<{ ok: boolean; signature: MemberAgreementSignature | null }>(
+      "GET", `/api/admin/member-agreement/${userId}`),
+
+  saveMemberAgreement: (userId: string, signature: Partial<MemberAgreementSignature>) =>
+    request<{ ok: boolean; signature: MemberAgreementSignature }>(
+      "POST", `/api/admin/member-agreement/${userId}`, signature),
+
   // ─── Custom gigs (cap-pricing) ──────────────────────────────────────────────
   getGig: (token: string) =>
     request<GigPublicView>("GET", `/api/gig/${token}`),
+
+  signGig: (token: string, payload: GigSignPayload) =>
+    request<{ ok: boolean; signedAt: number }>("POST", `/api/gig/${token}/sign`, payload),
+
+  approveGig: (jobId: number, data: { approved?: boolean; by?: string; note?: string }) =>
+    request<{ ok: boolean; gigData: GigData; status: "draft" | "signed" | "approved" }>(
+      "POST", `/api/jobs/${jobId}/gig/approve`, data,
+    ),
 
   updateGig: (jobId: number, gigData: GigData) =>
     request<{ ok: boolean; gigData: GigData; totals: GigTotals }>(

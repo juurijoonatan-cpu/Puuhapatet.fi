@@ -93,7 +93,35 @@ app.use((req, res, next) => {
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS board_contact_name   text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS board_contact_email  text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS board_contact_phone  text`,
+    sql`ALTER TABLE users     ADD COLUMN IF NOT EXISTS member_agreement     text`,
     sql`CREATE UNIQUE INDEX IF NOT EXISTS jobs_quote_token_unique ON jobs(quote_token) WHERE quote_token IS NOT NULL`,
+    // Chat / AI assistant tables
+    sql`CREATE TABLE IF NOT EXISTS chat_conversations (
+      id              serial PRIMARY KEY,
+      session_token   text NOT NULL,
+      source          text NOT NULL DEFAULT 'public',
+      status          text NOT NULL DEFAULT 'bot',
+      visitor_name    text,
+      visitor_email   text,
+      visitor_phone   text,
+      user_id         text,
+      user_role       text,
+      unread          boolean NOT NULL DEFAULT false,
+      page_url        text,
+      created_at      timestamp NOT NULL DEFAULT now(),
+      updated_at      timestamp NOT NULL DEFAULT now(),
+      last_message_at timestamp NOT NULL DEFAULT now()
+    )`,
+    sql`CREATE TABLE IF NOT EXISTS chat_messages (
+      id              serial PRIMARY KEY,
+      conversation_id integer NOT NULL REFERENCES chat_conversations(id),
+      role            text NOT NULL,
+      content         text NOT NULL,
+      author_name     text,
+      created_at      timestamp NOT NULL DEFAULT now()
+    )`,
+    sql`CREATE INDEX IF NOT EXISTS chat_conversations_session_idx ON chat_conversations(session_token)`,
+    sql`CREATE INDEX IF NOT EXISTS chat_messages_conversation_idx ON chat_messages(conversation_id)`,
   ]) {
     try { await db.execute(stmt); } catch (e: any) { console.warn("Migration warning:", e.message); }
   }

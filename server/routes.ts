@@ -6,9 +6,15 @@ import bwipjs from "bwip-js";
 import PDFDocument from "pdfkit";
 import rateLimit from "express-rate-limit";
 import { db } from "./db";
-import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
+import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 import { feeRateForWorker } from "@shared/team";
-import { sanitizeGigData, computeTotals, emptyGigData, type GigData } from "@shared/gig";
+import { randomUUID } from "crypto";
+import {
+  AI_ENABLED, chatComplete, publicSystemPrompt, adminSystemPrompt,
+  PUBLIC_FALLBACK_FI, type ChatTurn,
+} from "./ai";
+import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
+import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, type ProjectData } from "@shared/project";
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
@@ -225,6 +231,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.use("/api/jobs/:id/gig/invoice", emailLimiter);
   app.use("/api/contact",           contactLimiter);
   app.use("/api/it-contact",        contactLimiter);
+  // Chat: allow a real back-and-forth but stop abuse (per IP)
+  const chatLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Liian monta viestiä. Hetki ja yritä uudelleen." },
+  });
+  app.use("/api/chat",            chatLimiter);
+  app.use("/api/admin/assistant", chatLimiter);
 
   // ─── Health ──────────────────────────────────────────────────────────────────
   app.get("/api/health", (_req, res) => {
@@ -2103,6 +2119,51 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Member agreement (signed inside the admin, cross-device) ───────────────
+
+  app.get("/api/admin/member-agreement/:userId", async (req, res) => {
+    // Soft-fail (no 500) so the client can fall back to its local cache, e.g.
+    // before the member_agreement column has been migrated.
+    try {
+      const [row] = await db.select({ ma: users.memberAgreement }).from(users).where(eq(users.username, req.params.userId));
+      let signature = null;
+      try { signature = row?.ma ? JSON.parse(row.ma) : null; } catch { signature = null; }
+      res.json({ ok: true, signature });
+    } catch {
+      res.json({ ok: true, signature: null });
+    }
+  });
+
+  app.post("/api/admin/member-agreement/:userId", async (req, res) => {
+    const userId = req.params.userId;
+    const sig = sanitizeMemberSignature({ ...req.body, userId });
+    if (!sig) return res.status(400).json({ error: "Allekirjoitus tai vaaditut tiedot puuttuvat" });
+    sig.ip = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim()
+      || req.socket?.remoteAddress || sig.ip;
+    sig.userAgent = req.headers["user-agent"] ? String(req.headers["user-agent"]) : sig.userAgent;
+    try {
+      const json = JSON.stringify(sig);
+      const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.username, userId));
+      if (existing) {
+        await db.update(users).set({ memberAgreement: json }).where(eq(users.username, userId));
+      } else {
+        await db.insert(users).values({
+          name: sig.snapshot.name || userId,
+          username: userId,
+          passwordHash: "",
+          role: sig.snapshot.role === "HOST" ? "host" : "staff",
+          memberAgreement: json,
+        });
+      }
+      res.json({ ok: true, signature: sig, persisted: true });
+    } catch (e: any) {
+      // Don't lock members out if server persistence isn't available yet
+      // (e.g. column not migrated) — the client keeps a local copy.
+      console.error("member-agreement persist failed:", e?.message);
+      res.json({ ok: true, signature: sig, persisted: false });
+    }
+  });
+
   // ─── Customer job count (for returning customer check) ──────────────────────
 
   app.get("/api/customers/:id/job-count", async (req, res) => {
@@ -2427,9 +2488,156 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         totals,
         updatedAt: gig.updatedAt,
         invoicedCents: gig.invoicedCents,
+        // Contract & signing gate — the live view opens only after the customer signs.
+        contractText: gig.contractText ?? null,
+        requireSignature: signatureRequired(gig),
+        status: gigStatus(gig),
+        signed: !!gig.signature?.signedAt,
+        signedAt: gig.signature?.signedAt ?? null,
+        signerName: gig.signature?.signerName ?? null,
+        approved: !!gig.approval?.approvedAt,
+        approvedAt: gig.approval?.approvedAt ?? null,
+        // Signed details for the customer's own downloadable copy (no ip/ua).
+        signature: gig.signature ? {
+          signerName: gig.signature.signerName,
+          place: gig.signature.place ?? null,
+          signedAt: gig.signature.signedAt,
+          customer: gig.signature.customer,
+          signatureDataUrl: gig.signature.signatureDataUrl,
+        } : null,
+        // Prefill the pre-questionnaire with what we already know about the customer.
+        company: {
+          name: gig.company?.name ?? row.customer.name ?? null,
+          businessId: gig.company?.businessId ?? null,
+          email: gig.company?.email ?? row.customer.email ?? null,
+          contact: gig.company?.contact ?? null,
+          address: gig.company?.address ?? gig.company?.billing ?? null,
+        },
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Public: the customer signs the contract from the live link. The intro is
+  // the signing — only after this does the live tracking view open.
+  app.post("/api/gig/:token/sign", async (req, res) => {
+    try {
+      const [row] = await db
+        .select({ job: jobs, customer: customers })
+        .from(jobs)
+        .innerJoin(customers, eq(jobs.customerId, customers.id))
+        .where(eq(jobs.quoteToken, req.params.token));
+      if (!row || !row.job.isCustomGig) return res.status(404).json({ error: "Seurantaa ei löydy" });
+      const gig = parseGig(row.job.gigData);
+      if (!gig) return res.status(404).json({ error: "Seurantaa ei löydy" });
+      if (gig.signature?.signedAt) {
+        return res.status(409).json({ error: "Sopimus on jo allekirjoitettu", signedAt: gig.signature.signedAt });
+      }
+
+      const b = (req.body ?? {}) as Record<string, any>;
+      const cust = (b.customer ?? {}) as Record<string, any>;
+      const legalName = String(cust.legalName ?? "").trim();
+      const signerName = String(b.signerName ?? "").trim();
+      const signatureDataUrl = String(b.signatureDataUrl ?? "");
+      if (!legalName) return res.status(400).json({ error: "Tilaajan virallinen nimi puuttuu" });
+      if (!signerName) return res.status(400).json({ error: "Allekirjoittajan nimi puuttuu" });
+      if (!signatureDataUrl.startsWith("data:image/")) return res.status(400).json({ error: "Allekirjoitus puuttuu" });
+
+      const ip = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim()
+        || req.socket?.remoteAddress || undefined;
+
+      gig.signature = {
+        signedAt: Date.now(),
+        signerName,
+        signerTitle: b.signerTitle ? String(b.signerTitle) : undefined,
+        place: b.place ? String(b.place) : undefined,
+        option: b.option ? String(b.option) : undefined,
+        acceptedSectorIds: Array.isArray(b.acceptedSectorIds) ? b.acceptedSectorIds.map(String) : undefined,
+        customer: {
+          legalName,
+          businessId: cust.businessId ? String(cust.businessId) : undefined,
+          billingAddress: cust.billingAddress ? String(cust.billingAddress) : undefined,
+          eInvoice: cust.eInvoice ? String(cust.eInvoice) : undefined,
+          contactPerson: cust.contactPerson ? String(cust.contactPerson) : undefined,
+        },
+        signatureDataUrl,
+        ip,
+        userAgent: req.headers["user-agent"] ? String(req.headers["user-agent"]) : undefined,
+      };
+      // Fill any missing company fields from the signed details so invoicing benefits.
+      gig.company = {
+        ...gig.company,
+        name: gig.company?.name || legalName,
+        businessId: gig.company?.businessId || gig.signature.customer.businessId,
+        email: gig.company?.email || gig.signature.customer.eInvoice,
+        contact: gig.company?.contact || gig.signature.customer.contactPerson,
+        billing: gig.company?.billing || gig.signature.customer.billingAddress,
+      };
+      gig.log.push({ t: Date.now(), text: `Sopimus allekirjoitettu sähköisesti: ${signerName} (${legalName})` });
+      gig.updatedAt = Date.now();
+
+      const clean = sanitizeGigData(gig);
+      await db.update(jobs).set({ gigData: JSON.stringify(clean), updatedAt: new Date() }).where(eq(jobs.id, row.job.id));
+
+      // Best-effort notifications — never block the signing response on email.
+      if (resend) {
+        const cid = clean.contractId || "sopimus";
+        const teamTo = Array.from(new Set([ADMIN_EMAIL, ...WORKER_NOTIFICATION_EMAILS])).filter(Boolean);
+        const liveUrl = `https://puuhapatet.fi/seuranta/${req.params.token}`;
+        const wrap = (inner: string) => `<div style="font-family:'Poppins',system-ui,sans-serif;max-width:560px;margin:0 auto;background:#fff;border:1px solid #E4E1D7;border-radius:14px;overflow:hidden">
+          <div style="padding:22px 26px;border-bottom:1px solid #E4E1D7"><p style="margin:0;font-size:18px;font-weight:700">Puuhapatet</p></div>
+          <div style="padding:22px 26px;color:#1A1A1A;font-size:14px;line-height:1.7">${inner}</div></div>`;
+        Promise.allSettled([
+          teamTo.length ? resend.emails.send({
+            from: FROM_EMAIL, to: teamTo,
+            subject: `✍️ Sopimus allekirjoitettu: ${legalName} (${cid})`,
+            html: wrap(`<p><b>${legalName}</b> allekirjoitti sopimuksen <b>${cid}</b>.</p>
+              <p style="color:#8C8A82">Allekirjoittaja: ${signerName}${gig.signature?.place ? " · " + gig.signature.place : ""}<br>Aika: ${new Date().toLocaleString("fi-FI")}</p>
+              <p><a href="https://puuhapatet.fi/admin/gig/${row.job.id}" style="color:#1F3B57">Avaa keikka adminissa →</a></p>`),
+          }) : Promise.resolve(),
+          (gig.company?.email) ? resend.emails.send({
+            from: FROM_EMAIL, to: gig.company.email,
+            subject: `Vahvistus: sopimus ${cid} allekirjoitettu — Puuhapatet`,
+            html: wrap(`<p>Kiitos! Sopimus <b>${cid}</b> on allekirjoitettu ja vastaanotettu.</p>
+              <p>Voit seurata työn etenemistä ja kertyvää summaa reaaliaikaisesti:</p>
+              <p><a href="${liveUrl}" style="color:#1F3B57">${liveUrl}</a></p>
+              <p style="color:#8C8A82">Maksat vain tehdystä työstä — hinta ei voi ylittää sovittua kattoa.</p>`),
+          }) : Promise.resolve(),
+        ]).catch(() => {});
+      }
+
+      res.json({ ok: true, signedAt: clean.signature?.signedAt ?? Date.now() });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Admin: mark a signed gig approved (or revoke approval). The "approved" marking.
+  app.post("/api/jobs/:id/gig/approve", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const gig = parseGig(job.gigData);
+      if (!gig) return res.status(400).json({ error: "Keikalla ei ole seurantadataa" });
+
+      const approved = req.body?.approved !== false; // default: approve
+      const by = req.body?.by ? String(req.body.by) : undefined;
+      const note = req.body?.note ? String(req.body.note) : undefined;
+      if (approved) {
+        gig.approval = { approvedAt: Date.now(), by, note };
+        gig.log.push({ t: Date.now(), text: `Keikka hyväksytty${by ? ` · ${by}` : ""}`, by });
+      } else {
+        gig.approval = null;
+        gig.log.push({ t: Date.now(), text: `Hyväksyntä peruttu${by ? ` · ${by}` : ""}`, by });
+      }
+      gig.updatedAt = Date.now();
+      const clean = sanitizeGigData(gig);
+      await db.update(jobs).set({ gigData: JSON.stringify(clean), updatedAt: new Date() }).where(eq(jobs.id, id));
+      res.json({ ok: true, gigData: clean, status: gigStatus(clean) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
     }
   });
 
@@ -2634,6 +2842,377 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.status(400).json({ error: e.message });
     }
   });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // AI ASSISTANT — public chat bot, live admin handoff, and in-admin assistant
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const MAX_MSG_LEN = 4000;
+  const HISTORY_LIMIT = 20;  // turns kept as model context
+  const DISPLAY_LIMIT = 100; // messages returned to the client for rendering
+
+  // Lets the admin UI show a clear "add your API key" hint when AI is off.
+  app.get("/api/ai-status", (_req, res) => res.json({ enabled: AI_ENABLED }));
+
+  function escapeHtml(s: string): string {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  // Ordered oldest→newest. Order by id (monotonic) so same-second inserts are stable.
+  async function loadHistory(conversationId: number, limit = DISPLAY_LIMIT) {
+    const rows = await db.select().from(chatMessages)
+      .where(eq(chatMessages.conversationId, conversationId))
+      .orderBy(desc(chatMessages.id))
+      .limit(limit);
+    return rows.reverse();
+  }
+
+  // Build model-ready turns from stored messages: drop system notes, keep the
+  // last HISTORY_LIMIT user/assistant/admin turns.
+  function toModelTurns(history: { role: string; content: string }[]): ChatTurn[] {
+    return history
+      .filter(m => m.role !== "system")
+      .slice(-HISTORY_LIMIT)
+      .map((m): ChatTurn => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: m.role === "admin" ? `(Puuhapattien tiimi vastasi): ${m.content}` : m.content,
+      }));
+  }
+
+  // ─── Public: visitor sends a message to the bot ────────────────────────────
+  // Body: { token?, message, name?, email?, phone?, pageUrl? }
+  // Returns: { token, reply, status, messages }
+  app.post("/api/chat", async (req, res) => {
+    try {
+      const { message, name, email, phone, pageUrl } = req.body ?? {};
+      let { token } = req.body ?? {};
+      const text = String(message ?? "").trim();
+      if (!text) return res.status(400).json({ error: "Viesti puuttuu." });
+      if (text.length > MAX_MSG_LEN) return res.status(400).json({ error: "Viesti on liian pitkä." });
+
+      // Find or create the conversation for this visitor token
+      let convo = token
+        ? (await db.select().from(chatConversations).where(eq(chatConversations.sessionToken, String(token))).limit(1))[0]
+        : undefined;
+
+      if (!convo) {
+        token = randomUUID();
+        convo = (await db.insert(chatConversations).values({
+          sessionToken: token,
+          source: "public",
+          status: "bot",
+          visitorName: name || null,
+          visitorEmail: email || null,
+          visitorPhone: phone || null,
+          pageUrl: pageUrl || null,
+          unread: true,
+        }).returning())[0];
+      } else if (name || email || phone) {
+        // Visitor shared contact details mid-conversation — keep them
+        await db.update(chatConversations).set({
+          visitorName: name || convo.visitorName,
+          visitorEmail: email || convo.visitorEmail,
+          visitorPhone: phone || convo.visitorPhone,
+        }).where(eq(chatConversations.id, convo.id));
+      }
+
+      // Store the visitor's message + flag unread for admin
+      await db.insert(chatMessages).values({ conversationId: convo.id, role: "user", content: text });
+      await db.update(chatConversations)
+        .set({ unread: true, updatedAt: new Date(), lastMessageAt: new Date() })
+        .where(eq(chatConversations.id, convo.id));
+
+      // If a human has taken over, the bot stays silent — admin replies live.
+      if (convo.status === "human" || convo.status === "needs_human") {
+        const messages = await loadHistory(convo.id);
+        return res.json({ token, reply: null, status: convo.status, messages });
+      }
+
+      // Ask the model, grounded in the public knowledge base only
+      const history = await loadHistory(convo.id);
+      const turns: ChatTurn[] = [
+        { role: "system", content: publicSystemPrompt() },
+        ...toModelTurns(history),
+      ];
+      const reply = await chatComplete(turns, { temperature: 0.3, maxTokens: 600 });
+      const finalReply = reply ?? PUBLIC_FALLBACK_FI;
+
+      await db.insert(chatMessages).values({ conversationId: convo.id, role: "assistant", content: finalReply });
+
+      // No AI available → escalate so a human follows up. If the visitor had
+      // earlier closed/reopened the chat, a successful bot reply keeps it "bot".
+      let status = convo.status === "closed" ? "bot" : convo.status;
+      if (!reply) {
+        status = "needs_human";
+        notifyAdminOfChat(convo.id, name || convo.visitorName, email || convo.visitorEmail, phone || convo.visitorPhone, text).catch(() => {});
+      }
+      if (status !== convo.status) {
+        await db.update(chatConversations).set({ status }).where(eq(chatConversations.id, convo.id));
+      }
+
+      const messages = await loadHistory(convo.id);
+      res.json({ token, reply: finalReply, status, messages });
+    } catch (e: any) {
+      console.error("Chat error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Public: visitor requests a human ──────────────────────────────────────
+  app.post("/api/chat/:token/request-human", async (req, res) => {
+    try {
+      const { name, email, phone } = req.body ?? {};
+      const convo = (await db.select().from(chatConversations)
+        .where(eq(chatConversations.sessionToken, req.params.token)).limit(1))[0];
+      if (!convo) return res.status(404).json({ error: "Keskustelua ei löytynyt." });
+
+      await db.update(chatConversations).set({
+        status: "needs_human",
+        unread: true,
+        visitorName: name || convo.visitorName,
+        visitorEmail: email || convo.visitorEmail,
+        visitorPhone: phone || convo.visitorPhone,
+        updatedAt: new Date(),
+      }).where(eq(chatConversations.id, convo.id));
+
+      await db.insert(chatMessages).values({
+        conversationId: convo.id, role: "system",
+        content: "Kävijä pyysi yhteyttä Puuhapattien tiimiin.",
+      });
+      notifyAdminOfChat(convo.id, name || convo.visitorName, email || convo.visitorEmail, phone || convo.visitorPhone, "(kävijä pyysi henkilökohtaista yhteyttä)").catch(() => {});
+      res.json({ ok: true, status: "needs_human" });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Public: visitor polls for new messages (admin live replies) ───────────
+  app.get("/api/chat/:token", async (req, res) => {
+    try {
+      const convo = (await db.select().from(chatConversations)
+        .where(eq(chatConversations.sessionToken, req.params.token)).limit(1))[0];
+      if (!convo) return res.status(404).json({ error: "Keskustelua ei löytynyt." });
+      const messages = await loadHistory(convo.id, 100);
+      res.json({ status: convo.status, messages });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Email the team when a website chat needs a human.
+  async function notifyAdminOfChat(
+    conversationId: number,
+    name?: string | null, email?: string | null, phone?: string | null, lastMsg?: string,
+  ) {
+    if (!resend) return;
+    const contact = [
+      name ? `Nimi: ${name}` : null,
+      phone ? `Puhelin: ${phone}` : null,
+      email ? `Sähköposti: ${email}` : null,
+    ].filter(Boolean).join(" · ") || "Ei yhteystietoja vielä";
+    const html = `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto">
+      <div style="background:#2d5016;padding:24px 28px;border-radius:12px 12px 0 0">
+        <p style="margin:0;color:#b8e07a;font-size:11px;letter-spacing:1px;text-transform:uppercase">Puuhapatet.fi</p>
+        <h1 style="margin:6px 0 0;color:#fff;font-size:20px">Verkkochat tarvitsee sinua 💬</h1>
+      </div>
+      <div style="background:#fff;padding:24px 28px;border:1px solid #dde9c4;border-top:0;border-radius:0 0 12px 12px">
+        <p style="margin:0 0 8px;color:#1a2e0a"><strong>${escapeHtml(contact)}</strong></p>
+        <p style="margin:0 0 16px;color:#333;white-space:pre-wrap">${escapeHtml(lastMsg || "")}</p>
+        <a href="https://puuhapatet.fi/admin/inbox" style="display:inline-block;background:#2d5016;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-size:14px">Avaa viestit adminissa</a>
+        <p style="margin:16px 0 0;color:#6b8f3a;font-size:12px">Keskustelu #${conversationId} · ${new Date().toLocaleString("fi-FI")}</p>
+      </div>
+    </div>`;
+    try {
+      await resend.emails.send({
+        from: FROM_EMAIL,
+        to: WORKER_NOTIFICATION_EMAILS,
+        replyTo: email || undefined,
+        subject: `Verkkochat: ${name || "kävijä"} odottaa vastausta`,
+        html,
+      });
+    } catch (e) { console.error("Chat notify failed:", e); }
+  }
+
+  // ─── Admin: list website conversations (inbox) ─────────────────────────────
+  app.get("/api/admin/chats", async (req, res) => {
+    try {
+      const status = req.query.status ? String(req.query.status) : null;
+      const where = status
+        ? and(eq(chatConversations.source, "public"), eq(chatConversations.status, status))
+        : eq(chatConversations.source, "public");
+      const rows = await db.select().from(chatConversations)
+        .where(where)
+        .orderBy(desc(chatConversations.lastMessageAt))
+        .limit(100);
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Admin: unread conversation count (for the nav badge) ──────────────────
+  app.get("/api/admin/chats-unread", async (_req, res) => {
+    try {
+      const rows = await db.select({ id: chatConversations.id }).from(chatConversations)
+        .where(and(eq(chatConversations.source, "public"), eq(chatConversations.unread, true)));
+      res.json({ count: rows.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Admin: read one conversation (marks it read) ──────────────────────────
+  app.get("/api/admin/chats/:id", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const convo = (await db.select().from(chatConversations).where(eq(chatConversations.id, id)).limit(1))[0];
+      if (!convo) return res.status(404).json({ error: "Ei löytynyt." });
+      await db.update(chatConversations).set({ unread: false }).where(eq(chatConversations.id, id));
+      const messages = await loadHistory(id, 200);
+      res.json({ ...convo, unread: false, messages });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Admin: reply live to a website visitor ────────────────────────────────
+  app.post("/api/admin/chats/:id/reply", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { content, authorName } = req.body ?? {};
+      const text = String(content ?? "").trim();
+      if (!text) return res.status(400).json({ error: "Viesti puuttuu." });
+      const convo = (await db.select().from(chatConversations).where(eq(chatConversations.id, id)).limit(1))[0];
+      if (!convo) return res.status(404).json({ error: "Ei löytynyt." });
+
+      await db.insert(chatMessages).values({
+        conversationId: id, role: "admin", content: text, authorName: authorName || null,
+      });
+      // Admin replied → conversation is now human-handled
+      await db.update(chatConversations)
+        .set({ status: "human", unread: false, updatedAt: new Date(), lastMessageAt: new Date() })
+        .where(eq(chatConversations.id, id));
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Admin: update conversation status (close / hand back to bot) ──────────
+  app.patch("/api/admin/chats/:id", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { status } = req.body ?? {};
+      if (!["bot", "needs_human", "human", "closed"].includes(String(status))) {
+        return res.status(400).json({ error: "Virheellinen tila." });
+      }
+      await db.update(chatConversations)
+        .set({ status: String(status), updatedAt: new Date() })
+        .where(eq(chatConversations.id, id));
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Admin: in-tool assistant (role-scoped operational help) ───────────────
+  // Body: { message, userId, userName, role, history? }
+  app.post("/api/admin/assistant", async (req, res) => {
+    try {
+      const { message, userId, userName, role } = req.body ?? {};
+      const history: ChatTurn[] = Array.isArray(req.body?.history) ? req.body.history : [];
+      const text = String(message ?? "").trim();
+      if (!text) return res.status(400).json({ error: "Viesti puuttuu." });
+      if (text.length > MAX_MSG_LEN) return res.status(400).json({ error: "Viesti on liian pitkä." });
+      if (!AI_ENABLED) {
+        return res.json({ reply: "Tekoälyavustaja ei ole vielä käytössä — aseta AI_API_KEY ympäristömuuttuja ottaaksesi sen käyttöön." });
+      }
+
+      const effectiveRole: "HOST" | "STAFF" = role === "HOST" ? "HOST" : "STAFF";
+      const contextBlock = await buildAdminContext(String(userId || ""), userName || "tiimiläinen", effectiveRole);
+
+      const turns: ChatTurn[] = [
+        { role: "system", content: adminSystemPrompt({ userName: userName || "tiimiläinen", role: effectiveRole, contextBlock }) },
+        ...history.slice(-HISTORY_LIMIT).map((m): ChatTurn => ({
+          role: m.role === "assistant" ? "assistant" : "user",
+          content: String(m.content || ""),
+        })),
+        { role: "user", content: text },
+      ];
+      const reply = await chatComplete(turns, { temperature: 0.4, maxTokens: 900 });
+      res.json({ reply: reply ?? "En valitettavasti saanut yhteyttä tekoälypalveluun juuri nyt. Yritä hetken kuluttua uudelleen." });
+    } catch (e: any) {
+      console.error("Admin assistant error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Assemble role-scoped operational data for the admin assistant.
+  // HOST sees everything; STAFF sees only their own jobs/customers + general stats.
+  async function buildAdminContext(userId: string, userName: string, role: "HOST" | "STAFF"): Promise<string> {
+    const eur = (cents: number | null | undefined) =>
+      ((cents ?? 0) / 100).toLocaleString("fi-FI", { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + " €";
+    const fmtDate = (d: Date | null | undefined) => d ? new Date(d).toLocaleDateString("fi-FI") : "—";
+
+    const allJobs = await db.select().from(jobs).orderBy(desc(jobs.updatedAt)).limit(200);
+    const allCustomers = await db.select().from(customers);
+    const customerById = new Map(allCustomers.map(c => [c.id, c]));
+
+    // STAFF: restrict to jobs assigned to them. assignedTo / pendingWorkers are
+    // comma-separated IDs or legacy full names — match on exact tokens so we
+    // never leak another worker's jobs through a loose substring hit.
+    const idLc = userId.trim().toLowerCase();
+    const nameLc = userName.trim().toLowerCase();
+    const ownsJob = (field: string | null) =>
+      (field || "").split(",").map(s => s.trim().toLowerCase()).some(t => t && (t === idLc || t === nameLc));
+    const visibleJobs = role === "HOST"
+      ? allJobs
+      : allJobs.filter(j => ownsJob(j.assignedTo) || ownsJob(j.pendingWorkers));
+
+    const lines: string[] = [];
+    lines.push(`Käyttäjä: ${userName} (${role}). Tämän hetki: ${new Date().toLocaleString("fi-FI")}.`);
+
+    // Aggregate counts
+    const byStatus: Record<string, number> = {};
+    for (const j of visibleJobs) byStatus[j.status] = (byStatus[j.status] || 0) + 1;
+    lines.push(`\nKeikat (${role === "HOST" ? "kaikki" : "omat"}): yhteensä ${visibleJobs.length} — ` +
+      Object.entries(byStatus).map(([s, n]) => `${s}: ${n}`).join(", "));
+
+    // Upcoming scheduled jobs
+    const upcoming = visibleJobs
+      .filter(j => j.scheduledAt && new Date(j.scheduledAt) >= new Date(Date.now() - 86400000))
+      .sort((a, b) => new Date(a.scheduledAt!).getTime() - new Date(b.scheduledAt!).getTime())
+      .slice(0, 15);
+    if (upcoming.length) {
+      lines.push(`\nTulevat / ajoitetut keikat:`);
+      for (const j of upcoming) {
+        const c = customerById.get(j.customerId);
+        lines.push(`- #${j.id} ${fmtDate(j.scheduledAt)} · ${c?.name ?? "?"} · ${c?.address ?? "?"} · ${j.status} · ${eur(j.agreedPrice)} · ${j.description.slice(0, 60)}`);
+      }
+    }
+
+    // Open leads / pending quotes
+    const leads = visibleJobs.filter(j => j.status === "lead" || j.quoteStatus === "pending").slice(0, 15);
+    if (leads.length) {
+      lines.push(`\nAvoimet liidit / odottavat tarjoukset:`);
+      for (const j of leads) {
+        const c = customerById.get(j.customerId);
+        lines.push(`- #${j.id} ${c?.name ?? "?"} · ${c?.phone ?? ""} ${c?.address ?? ""} · ${j.quoteStatus ?? j.status} · ${eur(j.agreedPrice)}`);
+      }
+    }
+
+    // HOST-only: financial overview
+    if (role === "HOST") {
+      const done = allJobs.filter(j => j.status === "done");
+      const revenue = done.reduce((s, j) => s + (j.agreedPrice || 0), 0);
+      lines.push(`\nTalous (vain perustajat): valmiita keikkoja ${done.length}, liikevaihto valmiista ${eur(revenue)}.`);
+      lines.push(`Asiakkaita yhteensä: ${allCustomers.length}.`);
+    } else {
+      lines.push(`\nAsiakkaita näkyvissä: ${new Set(visibleJobs.map(j => j.customerId)).size}.`);
+    }
+
+    return lines.join("\n");
+  }
 
   return httpServer;
 }

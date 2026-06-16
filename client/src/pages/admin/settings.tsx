@@ -508,13 +508,13 @@ export default function AdminSettingsPage() {
                   <h2 className="text-lg font-semibold text-foreground">Puuhapatet — brändin kassa</h2>
                 </div>
                 <p className="text-3xl font-bold text-green-600 dark:text-green-400 mb-1">
-                  {fmt(brandEarned)}
+                  {fmt(workerStats.brandCash)}
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  Keikoilta kertynyt palvelumaksu — brändin osuus yhteensä
+                  Kassaan maksetut palvelumaksut
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Tästä maksettu: {fmt(workerStats.brandCash)}
+                  Keikoista kertynyt yhteensä: {fmt(brandEarned)} · maksamatta {fmt(Math.max(0, brandEarned - workerStats.brandCash))}
                 </p>
                 {workerStats.brandCash > 0 && (
                   <Button

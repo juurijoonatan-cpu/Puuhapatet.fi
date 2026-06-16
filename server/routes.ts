@@ -504,7 +504,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         jobExpenses: sql<number>`coalesce(sum(${expenses.amount}), 0)`,
       }).from(jobs)
         .leftJoin(expenses, eq(expenses.jobId, jobs.id))
-        .where(eq(jobs.status, "done"))
+        // Completed jobs only — but a declined quote means the job never
+        // happened, so exclude those even if a stale status lingers.
+        .where(and(eq(jobs.status, "done"), sql`${jobs.quoteStatus} is distinct from 'declined'`))
         .groupBy(jobs.id, jobs.agreedPrice, jobs.waiveFee, jobs.assignedTo);
 
       let totalRevenue = 0, totalExpenses = 0, serviceFeeTotal = 0;
@@ -568,7 +570,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         jobExpenses: sql<number>`coalesce(sum(${expenses.amount}), 0)`,
       }).from(jobs)
         .leftJoin(expenses, eq(expenses.jobId, jobs.id))
-        .where(eq(jobs.status, "done"))
+        // Completed jobs only — declined quotes never produced revenue, so a
+        // declined job must not generate a service-fee debt.
+        .where(and(eq(jobs.status, "done"), sql`${jobs.quoteStatus} is distinct from 'declined'`))
         .groupBy(jobs.id, jobs.agreedPrice, jobs.waiveFee, jobs.assignedTo);
 
       // Payment totals aggregated per worker in one query

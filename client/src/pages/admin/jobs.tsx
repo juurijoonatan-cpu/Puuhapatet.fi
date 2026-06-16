@@ -978,11 +978,13 @@ export default function AdminJobsPage() {
                   disabled={updating}
                   onClick={async () => {
                     setUpdating(true);
-                    const patch: Record<string, unknown> = { quoteStatus: "declined" };
-                    if (job.status === "lead") patch.status = "cancelled";
+                    // Declining the offer means the job is off — cancel it
+                    // regardless of how far it had progressed, so it stops
+                    // counting toward revenue, tax and service fees.
+                    const patch: Record<string, unknown> = { quoteStatus: "declined", status: "cancelled" };
                     const res = await api.updateJob(job.id, patch);
                     if (res.ok) {
-                      const updates = { quoteStatus: "declined" as const, ...(job.status === "lead" ? { status: "cancelled" as DbStatus } : {}) };
+                      const updates = { quoteStatus: "declined" as const, status: "cancelled" as DbStatus };
                       setSelected(prev => prev ? { ...prev, job: { ...prev.job, ...updates } } : null);
                       setJobs(prev => prev.map(r => r.job.id === job.id ? { ...r, job: { ...r.job, ...updates } } : r));
                       toast({ title: "Tarjous hylätty" });

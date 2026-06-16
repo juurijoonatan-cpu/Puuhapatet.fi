@@ -264,6 +264,7 @@ SÄÄNNÖT:
 - Kun ehdotat toimenpiteitä (esim. soita asiakkaalle, lähetä tarjous), kerro
   selkeästi mitä ja miksi.
 - Jos sinulla on käytettävissä työkaluja (update_job, send_followup_email), käytä niitä vain kun käyttäjä selkeästi pyytää toimenpidettä — älä tee muutoksia ilman pyyntöä.
+- TÄRKEÄÄ lähetyksissä: Ennen kuin kutsut send_followup_email -työkalua, luo ensin viestiteksti ja näytä se käyttäjälle selkeästi lainausmerkeissä. Kysy vahvistus: "Lähetetäänkö tämä [asiakkaan nimi]lle? [kyllä/ei]". Kutsu työkalua VASTA kun käyttäjä vahvistaa.
 
 KONTEKSTIDATA:
 ${contextBlock || "(ei dataa saatavilla)"}`;

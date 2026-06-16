@@ -3,44 +3,53 @@
  *
  * - Answers from the Puuhapatet knowledge base via a free AI model (server side).
  * - Never guesses: if it can't help it offers to pass the message to the team.
- * - Live handoff: once the team replies in the admin inbox, those messages
- *   appear here (polled even while the panel is closed, with an unread dot).
+ * - Memory lives ONLY in the browser session (sessionStorage): it survives
+ *   navigation between pages but is wiped when the visitor closes the tab, so
+ *   every new visitor always starts on a clean slate. Nothing is stored
+ *   server-side unless the visitor explicitly leaves a contact request.
+ * - We are not live in the chat: a handoff just leaves a note for the team,
+ *   who follow up by phone/email (usually the same day).
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, X, Send, Loader2, User } from "lucide-react";
+import { MessageCircle, X, Send, Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useI18n } from "@/lib/i18n";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { API_BASE } from "@/lib/api";
 
 interface Msg {
-  role: "user" | "assistant" | "admin" | "system";
+  role: "user" | "assistant" | "system";
   content: string;
-  authorName?: string | null;
 }
 
-const TOKEN_KEY = "puuhapatet_chat_token";
+// Session-scoped: cleared automatically when the tab/browser is closed.
+const SESSION_KEY = "puuhapatet_chat_session";
+
+function loadSession(): Msg[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 export function ChatWidget() {
   const [location] = useLocation();
   const { lang } = useI18n();
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<Msg[]>([]);
+  const [messages, setMessages] = useState<Msg[]>(() => loadSession());
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [status, setStatus] = useState<string>("bot");
-  const [unseen, setUnseen] = useState(false);
   const [showContact, setShowContact] = useState(false);
   const [contact, setContact] = useState({ name: "", phone: "", email: "" });
-  const [hasContact, setHasContact] = useState(false);
-  const [token, setToken] = useState<string | null>(() =>
-    typeof window !== "undefined" ? localStorage.getItem(TOKEN_KEY) : null,
-  );
+  const [requested, setRequested] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
-  const lastCountRef = useRef(0);
 
   const tr = useMemo(() => {
     const en = lang === "en";
@@ -49,18 +58,17 @@ export function ChatWidget() {
         ? "Hi! 👋 I'm the Puuhapatet assistant. Ask me about our services, price estimates and areas — or I can pass your message straight to the team. How can I help?"
         : "Moi! 👋 Olen Puuhapattien avustaja. Voin kertoa palveluista, hinta-arvioista ja alueista — tai välittää viestisi suoraan tiimille. Miten voin auttaa?",
       assistant: en ? "Assistant" : "Avustaja",
-      teamReplying: en ? "The team is replying" : "Tiimi vastaa",
-      waiting: en ? "Waiting for the team…" : "Odotetaan tiimiä…",
       placeholder: en ? "Type a message…" : "Kirjoita viesti…",
-      talkToTeam: en ? "I'd like to talk to the team →" : "Haluan jutella tiimin kanssa →",
+      talkToTeam: en ? "Ask the team to contact me →" : "Pyydä tiimiä ottamaan yhteyttä →",
       openAria: en ? "Open chat" : "Avaa chat",
       closeAria: en ? "Close chat" : "Sulje chat",
       sendAria: en ? "Send" : "Lähetä",
-      teamLabel: en ? "Puuhapatet team" : "Puuhapattien tiimi",
       connErr: en
         ? "Connection dropped for a moment. You can also call: Joonatan +358 40 0389999."
         : "Yhteys katkesi hetkeksi. Voit myös soittaa: Joonatan +358 40 0389999.",
-      contactTitle: en ? "Leave your details and we'll be in touch" : "Jätä yhteystietosi, niin olemme yhteydessä",
+      contactTitle: en
+        ? "We're not live in the chat right now, but leave your details and the team will be in touch."
+        : "Emme päivystä chatissa juuri nyt, mutta jätä yhteystietosi niin tiimi on yhteydessä.",
       name: en ? "Name" : "Nimi",
       phone: en ? "Phone" : "Puhelin",
       emailOpt: en ? "Email (optional)" : "Sähköposti (valinnainen)",
@@ -90,34 +98,15 @@ export function ChatWidget() {
     if (open) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [displayMessages.length, open, sending]);
 
-  function applyServerMessages(list: any[]) {
-    const mapped: Msg[] = list.map((m) => ({ role: m.role, content: m.content, authorName: m.authorName }));
-    setMessages([greeting, ...mapped]);
-    // Mark unseen if a new admin/assistant message arrived while panel closed.
-    const incoming = mapped.filter(m => m.role === "admin").length;
-    if (!open && incoming > lastCountRef.current) setUnseen(true);
-    lastCountRef.current = incoming;
-  }
-
-  // Poll for live admin replies whenever a human is involved (even when closed).
+  // Mirror the conversation into the browser session so it survives navigation
+  // between pages, but is wiped automatically when the visitor closes the tab.
   useEffect(() => {
-    if (!token) return;
-    if (status !== "needs_human" && status !== "human") return;
-    let active = true;
-    const tick = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/api/chat/${token}`);
-        if (!res.ok || !active) return;
-        const data = await res.json();
-        if (Array.isArray(data.messages)) applyServerMessages(data.messages);
-        if (data.status) setStatus(data.status);
-      } catch { /* ignore */ }
-    };
-    const iv = setInterval(tick, 5000);
-    return () => { active = false; clearInterval(iv); };
-  }, [token, status, open]);
-
-  useEffect(() => { if (open) setUnseen(false); }, [open]);
+    if (typeof window === "undefined") return;
+    try {
+      if (messages.length) sessionStorage.setItem(SESSION_KEY, JSON.stringify(messages));
+      else sessionStorage.removeItem(SESSION_KEY);
+    } catch { /* ignore quota / privacy-mode errors */ }
+  }, [messages]);
 
   if (hidden) return null;
 
@@ -125,25 +114,24 @@ export function ChatWidget() {
     const text = (textArg ?? input).trim();
     if (!text || sending) return;
     setInput("");
+    // History sent to the server is whatever the browser remembers this session.
+    const prior = messages.length ? messages : [];
     setMessages((m) => [...(m.length ? m : [greeting]), { role: "user", content: text }]);
     setSending(true);
     try {
       const res = await fetch(`${API_BASE}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, message: text, pageUrl: typeof window !== "undefined" ? window.location.href : undefined }),
+        body: JSON.stringify({
+          message: text,
+          history: prior.filter((m) => m.role === "user" || m.role === "assistant"),
+          pageUrl: typeof window !== "undefined" ? window.location.href : undefined,
+        }),
       });
       const data = await res.json();
-      if (data.token && data.token !== token) {
-        setToken(data.token);
-        localStorage.setItem(TOKEN_KEY, data.token);
-      }
-      if (data.status) {
-        setStatus(data.status);
-        if (data.status === "needs_human" && !hasContact) setShowContact(true);
-      }
-      if (Array.isArray(data.messages)) applyServerMessages(data.messages);
-      else if (data.reply) setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
+      if (data.reply) setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
+      // Bot couldn't fully help or visitor asked for a person → offer handoff.
+      if (data.offerHandoff && !requested) setShowContact(true);
     } catch {
       setMessages((m) => [...m, { role: "assistant", content: tr.connErr }]);
     } finally {
@@ -153,22 +141,27 @@ export function ChatWidget() {
 
   async function submitContact() {
     if (!contact.name.trim() || !(contact.phone.trim() || contact.email.trim())) return;
+    // The visitor's most recent question, for the team's context.
+    const lastQuestion = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
     try {
-      await fetch(`${API_BASE}/api/chat/${token}/request-human`, {
+      await fetch(`${API_BASE}/api/chat/handoff`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(contact),
+        body: JSON.stringify({
+          ...contact,
+          question: lastQuestion,
+          transcript: messages.filter((m) => m.role === "user" || m.role === "assistant"),
+          pageUrl: typeof window !== "undefined" ? window.location.href : undefined,
+        }),
       });
     } catch { /* ignore */ }
-    setHasContact(true);
+    setRequested(true);
     setShowContact(false);
-    setStatus("needs_human");
     setMessages((m) => [...m, { role: "system", content: tr.requested }]);
   }
 
   function requestHuman() {
     setShowContact(true);
-    if (status === "bot") setStatus("needs_human");
   }
 
   return (
@@ -186,7 +179,6 @@ export function ChatWidget() {
             data-testid="chat-launcher"
           >
             <MessageCircle className="w-7 h-7" />
-            {unseen && <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-red-500 border-2 border-background" />}
           </motion.button>
         )}
       </AnimatePresence>
@@ -210,7 +202,7 @@ export function ChatWidget() {
                   <p className="font-semibold leading-tight">Puuhapatet</p>
                   <p className="text-xs opacity-80 leading-tight flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 inline-block" />
-                    {status === "human" ? tr.teamReplying : status === "needs_human" ? tr.waiting : tr.assistant}
+                    {tr.assistant}
                   </p>
                 </div>
               </div>
@@ -235,14 +227,8 @@ export function ChatWidget() {
                   >
                     <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
                       mine ? "bg-primary text-primary-foreground rounded-br-sm"
-                           : m.role === "admin" ? "bg-emerald-100 text-emerald-950 dark:bg-emerald-900/40 dark:text-emerald-100 rounded-bl-sm"
                            : "bg-muted text-foreground rounded-bl-sm"
                     }`}>
-                      {m.role === "admin" && (
-                        <span className="flex items-center gap-1 text-[10px] font-semibold opacity-70 mb-0.5">
-                          <User className="w-3 h-3" />{m.authorName || tr.teamLabel}
-                        </span>
-                      )}
                       {mine ? m.content : <ChatMarkdown content={m.content} />}
                     </div>
                   </motion.div>
@@ -303,7 +289,7 @@ export function ChatWidget() {
               )}
             </AnimatePresence>
 
-            {!showContact && status !== "human" && (
+            {!showContact && !requested && (
               <div className="px-3 pt-1">
                 <button onClick={requestHuman} className="text-xs text-primary hover:underline" data-testid="chat-request-human">
                   {tr.talkToTeam}

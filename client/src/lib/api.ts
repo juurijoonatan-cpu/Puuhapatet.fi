@@ -30,6 +30,13 @@ export interface GigPublicView {
   signerName: string | null;
   approved: boolean;
   approvedAt: number | null;
+  signature: {
+    signerName: string;
+    place: string | null;
+    signedAt: number;
+    customer: { legalName: string; businessId?: string; billingAddress?: string; eInvoice?: string; contactPerson?: string };
+    signatureDataUrl: string;
+  } | null;
   company: {
     name: string | null;
     businessId: string | null;

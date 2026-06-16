@@ -11,6 +11,7 @@ import { useRoute } from "wouter";
 import { api, type GigPublicView } from "@/lib/api";
 import { eur } from "@shared/gig";
 import GigContractSign from "@/components/GigContractSign";
+import { downloadGigContract } from "@/lib/gig-contract-doc";
 
 const T = {
   ink: "#1A1A1A",
@@ -176,6 +177,32 @@ export default function GigLivePage() {
             {data.customerNote || "Maksat vain pestyistä ikkunoista. Hinta ei voi koskaan ylittää sovittua kattoa, ja jokainen pesemättä jäävä ikkuna jää kokonaan pois laskulta."}
           </p>
           {data.vatNote && <p style={{ margin: "10px 0 0", fontSize: 12, color: T.muted }}>{data.vatNote}</p>}
+          {data.signature && (
+            <button
+              type="button"
+              onClick={() => downloadGigContract({
+                contractId: data.contractId,
+                companyName: data.companyName,
+                description: data.description,
+                vatNote: data.vatNote,
+                customerNote: data.customerNote,
+                contractText: data.contractText,
+                sectors: data.sectors,
+                capCents: data.totals.capCents,
+                signature: {
+                  signerName: data.signature!.signerName,
+                  place: data.signature!.place ?? undefined,
+                  signedAt: data.signature!.signedAt,
+                  customer: data.signature!.customer,
+                  signatureDataUrl: data.signature!.signatureDataUrl,
+                },
+                approvedAt: data.approvedAt,
+              })}
+              style={{ marginTop: 14, width: "100%", padding: "11px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, color: T.ink, fontFamily: FONT, fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}
+            >
+              Lataa allekirjoitettu sopimus
+            </button>
+          )}
         </Panel>
 
         <p style={{ textAlign: "center", fontSize: 12, color: T.muted, marginTop: 8 }}>

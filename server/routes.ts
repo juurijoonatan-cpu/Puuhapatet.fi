@@ -2482,6 +2482,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         signerName: gig.signature?.signerName ?? null,
         approved: !!gig.approval?.approvedAt,
         approvedAt: gig.approval?.approvedAt ?? null,
+        // Signed details for the customer's own downloadable copy (no ip/ua).
+        signature: gig.signature ? {
+          signerName: gig.signature.signerName,
+          place: gig.signature.place ?? null,
+          signedAt: gig.signature.signedAt,
+          customer: gig.signature.customer,
+          signatureDataUrl: gig.signature.signatureDataUrl,
+        } : null,
         // Prefill the pre-questionnaire with what we already know about the customer.
         company: {
           name: gig.company?.name ?? row.customer.name ?? null,
@@ -2556,6 +2564,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const clean = sanitizeGigData(gig);
       await db.update(jobs).set({ gigData: JSON.stringify(clean), updatedAt: new Date() }).where(eq(jobs.id, row.job.id));
+
+      // Best-effort notifications — never block the signing response on email.
+      if (resend) {
+        const cid = clean.contractId || "sopimus";
+        const teamTo = Array.from(new Set([ADMIN_EMAIL, ...WORKER_NOTIFICATION_EMAILS])).filter(Boolean);
+        const liveUrl = `https://puuhapatet.fi/seuranta/${req.params.token}`;
+        const wrap = (inner: string) => `<div style="font-family:'Poppins',system-ui,sans-serif;max-width:560px;margin:0 auto;background:#fff;border:1px solid #E4E1D7;border-radius:14px;overflow:hidden">
+          <div style="padding:22px 26px;border-bottom:1px solid #E4E1D7"><p style="margin:0;font-size:18px;font-weight:700">Puuhapatet</p></div>
+          <div style="padding:22px 26px;color:#1A1A1A;font-size:14px;line-height:1.7">${inner}</div></div>`;
+        Promise.allSettled([
+          teamTo.length ? resend.emails.send({
+            from: FROM_EMAIL, to: teamTo,
+            subject: `✍️ Sopimus allekirjoitettu: ${legalName} (${cid})`,
+            html: wrap(`<p><b>${legalName}</b> allekirjoitti sopimuksen <b>${cid}</b>.</p>
+              <p style="color:#8C8A82">Allekirjoittaja: ${signerName}${gig.signature?.place ? " · " + gig.signature.place : ""}<br>Aika: ${new Date().toLocaleString("fi-FI")}</p>
+              <p><a href="https://puuhapatet.fi/admin/gig/${row.job.id}" style="color:#1F3B57">Avaa keikka adminissa →</a></p>`),
+          }) : Promise.resolve(),
+          (gig.company?.email) ? resend.emails.send({
+            from: FROM_EMAIL, to: gig.company.email,
+            subject: `Vahvistus: sopimus ${cid} allekirjoitettu — Puuhapatet`,
+            html: wrap(`<p>Kiitos! Sopimus <b>${cid}</b> on allekirjoitettu ja vastaanotettu.</p>
+              <p>Voit seurata työn etenemistä ja kertyvää summaa reaaliaikaisesti:</p>
+              <p><a href="${liveUrl}" style="color:#1F3B57">${liveUrl}</a></p>
+              <p style="color:#8C8A82">Maksat vain tehdystä työstä — hinta ei voi ylittää sovittua kattoa.</p>`),
+          }) : Promise.resolve(),
+        ]).catch(() => {});
+      }
+
       res.json({ ok: true, signedAt: clean.signature?.signedAt ?? Date.now() });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

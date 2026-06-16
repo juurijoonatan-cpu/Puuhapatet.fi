@@ -13,6 +13,7 @@
  */
 
 import type { GigData, GigSector } from "./gig";
+import { sanitizeCrew, type CrewMember } from "./crew";
 
 // ─── Data shapes ───────────────────────────────────────────────────────────────
 
@@ -61,6 +62,7 @@ export interface ProjectData {
   hours: Record<string, number>;                   // worker id → total hours
   hourLog: ProjHourEntry[];                         // newest-first
   workers: string[];                                // worker ids shown in hours view
+  crew?: CrewMember[];                              // hard-coded gig workers w/ private links (shared/crew.ts)
   updatedAt: number;                                // epoch ms
 }
 
@@ -97,6 +99,7 @@ export function emptyProjectData(): ProjectData {
     hours: {},
     hourLog: [],
     workers: ["matias", "joonatan"],
+    crew: [],
     updatedAt: Date.now(),
   };
 }
@@ -477,6 +480,7 @@ export function sanitizeProjectData(input: any): ProjectData {
     hours,
     hourLog,
     workers,
+    crew: sanitizeCrew(input.crew),
     updatedAt: Date.now(),
   };
 }

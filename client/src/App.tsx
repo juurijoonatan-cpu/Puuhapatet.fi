@@ -58,6 +58,8 @@ import AdminWelcomePage from "@/pages/admin/welcome";
 import AdminGigTrackerPage from "@/pages/admin/gig-tracker";
 import AdminProjectPage from "@/pages/admin/project";
 import GigLivePage from "@/pages/gig-live";
+import WorkerPage from "@/pages/worker";
+import AdminCrewPage from "@/pages/admin/crew";
 import AdminCalendarPage from "@/pages/admin/calendar";
 import AdminJobsPage from "@/pages/admin/jobs";
 import AdminPackagesPage from "@/pages/admin/packages";
@@ -145,6 +147,7 @@ function Router() {
 
       <Route path="/tarjous/:token" component={QuotePage} />
       <Route path="/seuranta/:token" component={GigLivePage} />
+      <Route path="/tyo/:token" component={WorkerPage} />
 
       <Route path="/admin/login" component={AdminLoginPage} />
 
@@ -172,6 +175,11 @@ function Router() {
       <Route path="/admin/gig/:id/projekti">
         <ProtectedRoute bare>
           <AdminProjectPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/admin/gig/:id/tiimi">
+        <ProtectedRoute>
+          <AdminCrewPage />
         </ProtectedRoute>
       </Route>
       <Route path="/admin/gig/:id">

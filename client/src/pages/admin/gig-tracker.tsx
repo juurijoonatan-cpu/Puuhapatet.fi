@@ -11,7 +11,7 @@ import { Link, useRoute, useLocation } from "wouter";
 import {
   ArrowLeft, Share2, Copy, Check, FileText,
   Send, AlertCircle, ChevronDown, Receipt, ExternalLink, ChevronRight,
-  PenLine, ShieldCheck, Clock, Save, Download, Printer, Wrench, LayoutDashboard,
+  PenLine, ShieldCheck, Clock, Save, Download, Printer, Wrench, LayoutDashboard, Users,
 } from "lucide-react";
 import { GIG_TOOLS, type GigToolId } from "@/lib/gig-tools";
 import GigToolsOverlay from "@/components/gig-tools/GigToolsOverlay";
@@ -242,6 +242,15 @@ export default function AdminGigTrackerPage() {
               <p className="text-sm text-white/60 truncate">Pohjapiirros &amp; ikkunakartta · kojelauta · työtunnit</p>
             </div>
             <ChevronRight className="h-5 w-5 shrink-0 text-white/50 transition-transform group-hover:translate-x-0.5" />
+          </button>
+
+          <button
+            onClick={() => navigate(`/admin/gig/${jobId}/tiimi`)}
+            aria-label="Tiimi ja työntekijät"
+            className="flex shrink-0 flex-col items-center justify-center gap-1 rounded-2xl px-4 bg-card text-foreground hover:bg-accent transition-all active:scale-[0.99] premium-shadow"
+          >
+            <Users className="h-5 w-5" />
+            <span className="text-xs font-medium">Tiimi</span>
           </button>
 
           <DropdownMenu>

@@ -8,14 +8,19 @@ import rateLimit from "express-rate-limit";
 import { db } from "./db";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 import { feeRateForWorker, effectiveJobTotal } from "@shared/team";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import {
   AI_ENABLED, chatComplete, chatCompleteWithTools, publicSystemPrompt, adminSystemPrompt,
   PUBLIC_FALLBACK_FI, type ChatTurn, type AiTool,
 } from "./ai";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, type ProjectData } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, emptyProjectData, type ProjectData } from "@shared/project";
+import {
+  sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
+  DEFAULT_WORKER_PER_WINDOW_CENTS, type CrewMember,
+} from "@shared/crew";
+import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION } from "@shared/worker-agreements";
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 // Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
@@ -2864,6 +2869,351 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         totals,
         workerStats: computeWorkerStats(project),
       });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // ─── Gig crew — hard-coded workers w/ private links + worker dashboard ────────
+  //
+  // The crew roster lives inside the gig's projectData. A worker authenticates
+  // by their private token (the secret in their link); hosts manage the roster
+  // through the admin job endpoints. Workers never see the gig price/cap — only
+  // their own per-window pay rate × the windows they marked.
+
+  const pinHash = (pin: string) =>
+    createHash("sha256").update(`puuhapatet:crew:${String(pin)}`).digest("hex");
+
+  // Find which custom-gig job a crew token belongs to (scans custom gigs).
+  async function findJobByCrewToken(token: string): Promise<{ job: typeof jobs.$inferSelect; project: ProjectData; member: CrewMember } | null> {
+    if (!token) return null;
+    const rows = await db.select().from(jobs).where(eq(jobs.isCustomGig, true));
+    for (const job of rows) {
+      const project = parseProject(job.projectData ?? null);
+      if (!project) continue;
+      const member = findCrewByToken(project, token);
+      if (member) return { job, project, member };
+    }
+    return null;
+  }
+
+  async function saveProject(job: typeof jobs.$inferSelect, project: ProjectData): Promise<ProjectData> {
+    const clean = sanitizeProjectData(project);
+    const totals = computeProjectTotals(clean);
+    // Keep the customer's billing view (gig sectors) in sync with the map, just
+    // like the admin project save does — so worker marks flow to /seuranta too.
+    const extra: Record<string, unknown> = {};
+    if (totals.total > 0) {
+      const gig = sanitizeGigData(
+        syncGigSectorsFromProject(parseGig(job.gigData) ?? emptyGigData(), clean),
+      );
+      extra.gigData = JSON.stringify(gig);
+      extra.agreedPrice = computeTotals(gig).capCents;
+      extra.isCustomGig = true;
+    }
+    await db.update(jobs)
+      .set({ projectData: JSON.stringify(clean), updatedAt: new Date(), ...extra })
+      .where(eq(jobs.id, job.id));
+    return clean;
+  }
+
+  // Build the worker-facing view: floor map + their own progress, NO gig price.
+  function workerView(project: ProjectData, member: CrewMember) {
+    const stats = crewMemberStats(project, member);
+    return {
+      worker: {
+        id: member.id,
+        name: member.name,
+        role: member.role,
+        perWindowCents: member.perWindowCents,
+        adminLinked: !!member.adminLinked,
+        hasPin: !!member.pinHash,
+        onboarded: isOnboarded(member, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION),
+        profile: member.profile ?? null,
+        signedAgreementIds: member.agreements
+          .filter((a) => a.version === WORKER_AGREEMENT_VERSION)
+          .map((a) => a.agreementId),
+        notes: member.notes,
+      },
+      building: project.building,
+      pricePerWindow: member.perWindowCents / 100, // worker's OWN rate, not the gig price
+      marks: project.marks,
+      statuses: project.statuses,
+      washedBy: project.washedBy,
+      customMarks: project.customMarks,
+      posOverrides: project.posOverrides,
+      deleted: project.deleted,
+      hours: stats.hours,
+      stats,
+      agreementVersion: WORKER_AGREEMENT_VERSION,
+      requiredAgreementIds: REQUIRED_AGREEMENT_IDS,
+    };
+  }
+
+  // GET the worker's dashboard payload by their private token.
+  app.get("/api/crew/:token", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      res.json({ ok: true, view: workerView(found.project, found.member) });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Verify a worker's PIN (no-op success if they have not set one yet).
+  app.post("/api/crew/:token/auth", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { member } = found;
+      if (!member.pinHash) return res.json({ ok: true, needsPin: false });
+      const ok = !!req.body?.pin && pinHash(String(req.body.pin)) === member.pinHash;
+      if (!ok) return res.status(401).json({ ok: false, error: "Väärä PIN" });
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Complete onboarding: save profile, append agreement signatures, set PIN.
+  app.post("/api/crew/:token/onboard", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const body = req.body ?? {};
+
+      // Merge into a fresh sanitized member so a bad client can't corrupt it.
+      const incomingAgreements = Array.isArray(body.agreements) ? body.agreements : [];
+      const stamped = incomingAgreements.map((a: any) => ({
+        ...a,
+        ip: (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket.remoteAddress,
+        userAgent: req.headers["user-agent"],
+      }));
+      // Keep prior signatures for agreement ids not re-signed now.
+      const reSignedIds = new Set(stamped.map((a: any) => String(a.agreementId)));
+      const keptAgreements = member.agreements.filter((a) => !reSignedIds.has(a.agreementId));
+
+      const merged = sanitizeCrewMember({
+        ...member,
+        profile: body.profile ?? member.profile,
+        agreements: [...keptAgreements, ...stamped],
+        pinHash: body.pin ? pinHash(String(body.pin)) : member.pinHash,
+      });
+      if (!merged) return res.status(400).json({ error: "Virheelliset tiedot" });
+      const onboarded = isOnboarded(
+        { ...merged, onboardedAt: Date.now() } as CrewMember,
+        REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION,
+      );
+      merged.onboardedAt = onboarded ? Date.now() : member.onboardedAt;
+
+      project.crew = (project.crew || []).map((m) => (m.id === member.id ? merged : m));
+      const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
+      res.json({ ok: true, view: workerView(saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Worker marks a window (status change, attributed to themselves only).
+  app.post("/api/crew/:token/window", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      if (!isOnboarded(member, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION)) {
+        return res.status(403).json({ error: "Allekirjoita sopimukset ensin" });
+      }
+      const key = String(req.body?.key ?? "").slice(0, 64);
+      const status = req.body?.status === "pesty" || req.body?.status === "kesken" ? req.body.status : "ei";
+      if (!key) return res.status(400).json({ error: "key puuttuu" });
+
+      if (status === "ei") {
+        // Only clear a window the worker owns (or that nobody owns).
+        if (!project.washedBy[key] || project.washedBy[key] === member.id) {
+          delete project.statuses[key];
+          delete project.washedBy[key];
+        }
+      } else {
+        project.statuses[key] = status;
+        if (status === "pesty") project.washedBy[key] = member.id;
+        else delete project.washedBy[key];
+      }
+      const floor = key.split("#")[0];
+      const p: 1 | 2 = req.body?.p === 2 ? 2 : 1;
+      project.log = [{ floor, key, p, status, ts: Date.now(), by: member.id }, ...(project.log || [])].slice(0, 200);
+
+      const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
+      res.json({ ok: true, view: workerView(saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Worker logs hours (timer stop or manual entry).
+  app.post("/api/crew/:token/hours", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const delta = Math.round((Number(req.body?.delta) || 0) * 100) / 100;
+      if (!delta) return res.status(400).json({ error: "delta puuttuu" });
+      project.hours[member.id] = Math.max(0, +(((project.hours[member.id] || 0) + delta).toFixed(2)));
+      project.hourLog = [{ worker: member.id, delta, ts: Date.now(), by: member.id }, ...(project.hourLog || [])].slice(0, 200);
+      const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
+      res.json({ ok: true, view: workerView(saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Worker adds a note.
+  app.post("/api/crew/:token/note", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const text = String(req.body?.text ?? "").trim().slice(0, 2000);
+      if (!text) return res.status(400).json({ error: "Tyhjä muistiinpano" });
+      project.crew = (project.crew || []).map((m) =>
+        m.id === member.id ? { ...m, notes: [{ t: Date.now(), text }, ...(m.notes || [])].slice(0, 200) } : m,
+      );
+      const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
+      res.json({ ok: true, view: workerView(saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // The agreement documents + profile questionnaire (for the worker onboarding UI).
+  app.get("/api/crew-agreements", (_req, res) => {
+    res.json({ ok: true, version: WORKER_AGREEMENT_VERSION, agreements: WORKER_AGREEMENTS, requiredAgreementIds: REQUIRED_AGREEMENT_IDS });
+  });
+
+  // ── Host (admin) crew management ────────────────────────────────────────────
+
+  async function loadJobProject(id: number) {
+    const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+    if (!job) return null;
+    const project = parseProject(job.projectData ?? null) ?? { ...emptyProjectData() };
+    return { job, project };
+  }
+
+  // Host overview: roster + per-worker stats (windows done, €, hours, €/h).
+  app.get("/api/jobs/:id/crew", async (req, res) => {
+    try {
+      const loaded = await loadJobProject(Number(req.params.id));
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const { project } = loaded;
+      const crew = (project.crew || []).map((m) => ({
+        member: m,
+        stats: crewMemberStats(project, m),
+        onboarded: isOnboarded(m, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION),
+      }));
+      res.json({ ok: true, crew, building: project.building, version: WORKER_AGREEMENT_VERSION });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Seed the default roster (Petrus + 5 placeholders) if the crew is empty.
+  app.post("/api/jobs/:id/crew/seed", async (req, res) => {
+    try {
+      const loaded = await loadJobProject(Number(req.params.id));
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const { job, project } = loaded;
+      if ((project.crew || []).length > 0) {
+        return res.json({ ok: true, crew: project.crew, alreadySeeded: true });
+      }
+      const now = Date.now();
+      const mk = (id: string, name: string, opts: Partial<CrewMember> = {}): CrewMember => ({
+        id, token: newCrewToken(), name, role: "worker", perWindowCents: DEFAULT_WORKER_PER_WINDOW_CENTS,
+        active: true, agreements: [], notes: [], createdAt: now, ...opts,
+      });
+      const roster: CrewMember[] = [
+        mk("petrus", "Petrus Aalto", { adminLinked: true }),
+        ...[1, 2, 3, 4, 5].map((n) => mk(`tyontekija${n}`, `Työntekijä ${n}`)),
+      ];
+      project.crew = roster;
+      const saved = await saveProject(job, project);
+      res.json({ ok: true, crew: saved.crew });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Add a single worker (host).
+  app.post("/api/jobs/:id/crew", async (req, res) => {
+    try {
+      const loaded = await loadJobProject(Number(req.params.id));
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const { job, project } = loaded;
+      const existing = project.crew || [];
+      const baseId = String(req.body?.id ?? `tyontekija${existing.length + 1}`).slice(0, 40).replace(/[^a-z0-9]/gi, "").toLowerCase() || `w${Date.now().toString(36)}`;
+      let id = baseId, n = 1;
+      while (existing.some((m) => m.id === id)) id = `${baseId}${++n}`;
+      const member = sanitizeCrewMember({
+        id,
+        token: newCrewToken(),
+        name: req.body?.name || `Työntekijä ${existing.length + 1}`,
+        role: req.body?.role === "host" ? "host" : "worker",
+        adminLinked: !!req.body?.adminLinked,
+        perWindowCents: req.body?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS,
+        active: true, agreements: [], notes: [], createdAt: Date.now(),
+      });
+      if (!member) return res.status(400).json({ error: "Virheelliset tiedot" });
+      project.crew = [...existing, member];
+      const saved = await saveProject(job, project);
+      res.json({ ok: true, member, crew: saved.crew });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Update a worker's editable fields (host): name, rate, active, role.
+  app.patch("/api/jobs/:id/crew/:memberId", async (req, res) => {
+    try {
+      const loaded = await loadJobProject(Number(req.params.id));
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const { job, project } = loaded;
+      const mid = String(req.params.memberId);
+      let updated: CrewMember | null = null;
+      project.crew = (project.crew || []).map((m) => {
+        if (m.id !== mid) return m;
+        updated = sanitizeCrewMember({
+          ...m,
+          name: req.body?.name ?? m.name,
+          perWindowCents: req.body?.perWindowCents ?? m.perWindowCents,
+          active: typeof req.body?.active === "boolean" ? req.body.active : m.active,
+          role: req.body?.role ?? m.role,
+          // Host can rotate a leaked link.
+          token: req.body?.rotateToken ? newCrewToken() : m.token,
+        });
+        return updated ?? m;
+      });
+      if (!updated) return res.status(404).json({ error: "Työntekijää ei löydy" });
+      const saved = await saveProject(job, project);
+      res.json({ ok: true, member: updated, crew: saved.crew });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Remove a worker (host).
+  app.delete("/api/jobs/:id/crew/:memberId", async (req, res) => {
+    try {
+      const loaded = await loadJobProject(Number(req.params.id));
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const { job, project } = loaded;
+      const mid = String(req.params.memberId);
+      project.crew = (project.crew || []).filter((m) => m.id !== mid);
+      const saved = await saveProject(job, project);
+      res.json({ ok: true, crew: saved.crew });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }

@@ -3,8 +3,50 @@
  */
 
 import type { GigData, GigTotals } from "@shared/gig";
-import type { ProjectData, ProjTotals, WorkerStat } from "@shared/project";
+import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding } from "@shared/project";
 import type { MemberAgreementSignature } from "@shared/member-agreement";
+import type { CrewMember, CrewMemberStats, CrewProfile, CrewAgreementSignature } from "@shared/crew";
+import type { WorkerAgreement } from "@shared/worker-agreements";
+
+// Worker dashboard payload — the gig price/cap is intentionally absent.
+export interface WorkerView {
+  worker: {
+    id: string;
+    name: string;
+    role: "worker" | "host";
+    perWindowCents: number;
+    adminLinked: boolean;
+    hasPin: boolean;
+    onboarded: boolean;
+    profile: CrewProfile | null;
+    signedAgreementIds: string[];
+    notes: { t: number; text: string }[];
+  };
+  building: ProjBuilding;
+  pricePerWindow: number;          // the worker's OWN rate (not the gig price)
+  marks: ProjMarksData;
+  statuses: Record<string, WindowStatus>;
+  washedBy: Record<string, string>;
+  customMarks: Record<string, ProjCustomMark[]>;
+  posOverrides: Record<string, { x: number; y: number }>;
+  deleted: Record<string, boolean>;
+  hours: number;
+  stats: CrewMemberStats;
+  agreementVersion: string;
+  requiredAgreementIds: string[];
+}
+
+export interface CrewOnboardPayload {
+  profile?: CrewProfile;
+  agreements?: Partial<CrewAgreementSignature>[];
+  pin?: string;
+}
+
+export interface HostCrewRow {
+  member: CrewMember;
+  stats: CrewMemberStats;
+  onboarded: boolean;
+}
 
 // Defaults to the Render backend in production; override with VITE_API_BASE
 // (e.g. "" for same-origin) when running the server locally.
@@ -504,6 +546,50 @@ export const api = {
     request<{ ok: boolean; project: ProjectData; totals: ProjTotals; workerStats: WorkerStat[] }>(
       "PATCH", `/api/jobs/${jobId}/project`, { projectData },
     ),
+
+  // ─── Gig crew — worker dashboard (private link) ─────────────────────────────
+  getCrewView: (token: string) =>
+    request<{ ok: boolean; view: WorkerView }>("GET", `/api/crew/${token}`),
+
+  crewAuth: (token: string, pin: string) =>
+    request<{ ok: boolean; needsPin?: boolean }>("POST", `/api/crew/${token}/auth`, { pin }),
+
+  crewOnboard: (token: string, payload: CrewOnboardPayload) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/onboard`, payload),
+
+  crewMarkWindow: (token: string, key: string, status: WindowStatus, p?: 1 | 2) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/window`, { key, status, p }),
+
+  crewAddHours: (token: string, delta: number) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/hours`, { delta }),
+
+  crewAddNote: (token: string, text: string) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/note`, { text }),
+
+  getCrewAgreements: () =>
+    request<{ ok: boolean; version: string; agreements: WorkerAgreement[]; requiredAgreementIds: string[] }>(
+      "GET", `/api/crew-agreements`),
+
+  // ─── Host crew management ───────────────────────────────────────────────────
+  getHostCrew: (jobId: number) =>
+    request<{ ok: boolean; crew: HostCrewRow[]; building: ProjBuilding; version: string }>(
+      "GET", `/api/jobs/${jobId}/crew`),
+
+  seedCrew: (jobId: number) =>
+    request<{ ok: boolean; crew: CrewMember[]; alreadySeeded?: boolean }>(
+      "POST", `/api/jobs/${jobId}/crew/seed`),
+
+  addCrewMember: (jobId: number, data: { name?: string; role?: "worker" | "host"; perWindowCents?: number; adminLinked?: boolean }) =>
+    request<{ ok: boolean; member: CrewMember; crew: CrewMember[] }>(
+      "POST", `/api/jobs/${jobId}/crew`, data),
+
+  updateCrewMember: (jobId: number, memberId: string, data: { name?: string; perWindowCents?: number; active?: boolean; role?: "worker" | "host"; rotateToken?: boolean }) =>
+    request<{ ok: boolean; member: CrewMember; crew: CrewMember[] }>(
+      "PATCH", `/api/jobs/${jobId}/crew/${memberId}`, data),
+
+  removeCrewMember: (jobId: number, memberId: string) =>
+    request<{ ok: boolean; crew: CrewMember[] }>(
+      "DELETE", `/api/jobs/${jobId}/crew/${memberId}`),
 
   // Legacy compat stubs
   getJob: (_jobId: string): Promise<ApiResponse<{ ok: boolean; job?: unknown }>> =>

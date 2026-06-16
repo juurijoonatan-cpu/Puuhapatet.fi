@@ -3249,6 +3249,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     </td>
   </tr>
 
+  <!-- WORK PHOTO -->
+  <tr>
+    <td style="padding:0;line-height:0">
+      <img src="https://puuhapatet.fi/hero-workers.jpg" alt="Puuhapatet työssä" style="width:100%;max-height:260px;object-fit:cover;object-position:center top;display:block" />
+    </td>
+  </tr>
+
   <!-- TO / FROM -->
   <tr>
     <td style="background:#ffffff;border-left:1px solid #d1f0d8;border-right:1px solid #d1f0d8">

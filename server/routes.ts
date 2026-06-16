@@ -8,7 +8,7 @@ import rateLimit from "express-rate-limit";
 import { db } from "./db";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 import { feeRateForWorker } from "@shared/team";
-import { sanitizeGigData, computeTotals, emptyGigData, type GigData } from "@shared/gig";
+import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, type ProjectData } from "@shared/project";
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
@@ -2427,9 +2427,120 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         totals,
         updatedAt: gig.updatedAt,
         invoicedCents: gig.invoicedCents,
+        // Contract & signing gate — the live view opens only after the customer signs.
+        contractText: gig.contractText ?? null,
+        requireSignature: signatureRequired(gig),
+        status: gigStatus(gig),
+        signed: !!gig.signature?.signedAt,
+        signedAt: gig.signature?.signedAt ?? null,
+        signerName: gig.signature?.signerName ?? null,
+        approved: !!gig.approval?.approvedAt,
+        approvedAt: gig.approval?.approvedAt ?? null,
+        // Prefill the pre-questionnaire with what we already know about the customer.
+        company: {
+          name: gig.company?.name ?? row.customer.name ?? null,
+          businessId: gig.company?.businessId ?? null,
+          email: gig.company?.email ?? row.customer.email ?? null,
+          contact: gig.company?.contact ?? null,
+          address: gig.company?.address ?? gig.company?.billing ?? null,
+        },
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Public: the customer signs the contract from the live link. The intro is
+  // the signing — only after this does the live tracking view open.
+  app.post("/api/gig/:token/sign", async (req, res) => {
+    try {
+      const [row] = await db
+        .select({ job: jobs, customer: customers })
+        .from(jobs)
+        .innerJoin(customers, eq(jobs.customerId, customers.id))
+        .where(eq(jobs.quoteToken, req.params.token));
+      if (!row || !row.job.isCustomGig) return res.status(404).json({ error: "Seurantaa ei löydy" });
+      const gig = parseGig(row.job.gigData);
+      if (!gig) return res.status(404).json({ error: "Seurantaa ei löydy" });
+      if (gig.signature?.signedAt) {
+        return res.status(409).json({ error: "Sopimus on jo allekirjoitettu", signedAt: gig.signature.signedAt });
+      }
+
+      const b = (req.body ?? {}) as Record<string, any>;
+      const cust = (b.customer ?? {}) as Record<string, any>;
+      const legalName = String(cust.legalName ?? "").trim();
+      const signerName = String(b.signerName ?? "").trim();
+      const signatureDataUrl = String(b.signatureDataUrl ?? "");
+      if (!legalName) return res.status(400).json({ error: "Tilaajan virallinen nimi puuttuu" });
+      if (!signerName) return res.status(400).json({ error: "Allekirjoittajan nimi puuttuu" });
+      if (!signatureDataUrl.startsWith("data:image/")) return res.status(400).json({ error: "Allekirjoitus puuttuu" });
+
+      const ip = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim()
+        || req.socket?.remoteAddress || undefined;
+
+      gig.signature = {
+        signedAt: Date.now(),
+        signerName,
+        signerTitle: b.signerTitle ? String(b.signerTitle) : undefined,
+        place: b.place ? String(b.place) : undefined,
+        option: b.option ? String(b.option) : undefined,
+        acceptedSectorIds: Array.isArray(b.acceptedSectorIds) ? b.acceptedSectorIds.map(String) : undefined,
+        customer: {
+          legalName,
+          businessId: cust.businessId ? String(cust.businessId) : undefined,
+          billingAddress: cust.billingAddress ? String(cust.billingAddress) : undefined,
+          eInvoice: cust.eInvoice ? String(cust.eInvoice) : undefined,
+          contactPerson: cust.contactPerson ? String(cust.contactPerson) : undefined,
+        },
+        signatureDataUrl,
+        ip,
+        userAgent: req.headers["user-agent"] ? String(req.headers["user-agent"]) : undefined,
+      };
+      // Fill any missing company fields from the signed details so invoicing benefits.
+      gig.company = {
+        ...gig.company,
+        name: gig.company?.name || legalName,
+        businessId: gig.company?.businessId || gig.signature.customer.businessId,
+        email: gig.company?.email || gig.signature.customer.eInvoice,
+        contact: gig.company?.contact || gig.signature.customer.contactPerson,
+        billing: gig.company?.billing || gig.signature.customer.billingAddress,
+      };
+      gig.log.push({ t: Date.now(), text: `Sopimus allekirjoitettu sähköisesti: ${signerName} (${legalName})` });
+      gig.updatedAt = Date.now();
+
+      const clean = sanitizeGigData(gig);
+      await db.update(jobs).set({ gigData: JSON.stringify(clean), updatedAt: new Date() }).where(eq(jobs.id, row.job.id));
+      res.json({ ok: true, signedAt: clean.signature?.signedAt ?? Date.now() });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Admin: mark a signed gig approved (or revoke approval). The "approved" marking.
+  app.post("/api/jobs/:id/gig/approve", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const gig = parseGig(job.gigData);
+      if (!gig) return res.status(400).json({ error: "Keikalla ei ole seurantadataa" });
+
+      const approved = req.body?.approved !== false; // default: approve
+      const by = req.body?.by ? String(req.body.by) : undefined;
+      const note = req.body?.note ? String(req.body.note) : undefined;
+      if (approved) {
+        gig.approval = { approvedAt: Date.now(), by, note };
+        gig.log.push({ t: Date.now(), text: `Keikka hyväksytty${by ? ` · ${by}` : ""}`, by });
+      } else {
+        gig.approval = null;
+        gig.log.push({ t: Date.now(), text: `Hyväksyntä peruttu${by ? ` · ${by}` : ""}`, by });
+      }
+      gig.updatedAt = Date.now();
+      const clean = sanitizeGigData(gig);
+      await db.update(jobs).set({ gigData: JSON.stringify(clean), updatedAt: new Date() }).where(eq(jobs.id, id));
+      res.json({ ok: true, gigData: clean, status: gigStatus(clean) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
     }
   });
 

@@ -11,6 +11,7 @@ import { Link, useRoute } from "wouter";
 import {
   ArrowLeft, Share2, Copy, Check, FileText,
   Send, AlertCircle, ChevronDown, Receipt, ExternalLink, LayoutDashboard, ChevronRight,
+  PenLine, ShieldCheck, Clock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -25,7 +26,7 @@ import { api } from "@/lib/api";
 import { getAdminProfile } from "@/lib/admin-profile";
 import {
   emptyGigData, computeTotals, nextInvoiceThreshold, invoiceDue, eur, eur2,
-  sanitizeGigData, type GigData,
+  sanitizeGigData, gigStatus, type GigData,
 } from "@shared/gig";
 
 const PUBLIC_BASE = "https://puuhapatet.fi";
@@ -47,6 +48,8 @@ export default function AdminGigTrackerPage() {
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [showContract, setShowContract] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [sigOpen, setSigOpen] = useState(false);
 
   // Invoice dialog state
   const [invoiceOpen, setInvoiceOpen] = useState(false);
@@ -87,6 +90,18 @@ export default function AdminGigTrackerPage() {
     navigator.clipboard?.writeText(shareUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
+  };
+
+  const approve = async (approved: boolean) => {
+    setApproving(true);
+    const res = await api.approveGig(jobId, { approved, by: profile?.name });
+    setApproving(false);
+    if (res.ok && res.data) {
+      setGig(res.data.gigData);
+      toast({ title: approved ? "Keikka hyväksytty" : "Hyväksyntä peruttu" });
+    } else {
+      toast({ variant: "destructive", title: "Toiminto epäonnistui", description: res.error });
+    }
   };
 
   const sendInvoice = async () => {
@@ -195,6 +210,74 @@ export default function AdminGigTrackerPage() {
             </div>
           </div>
         </Card>
+
+        {/* Signing & approval status */}
+        {(() => {
+          const status = gigStatus(gig);
+          const sig = gig.signature;
+          const appr = gig.approval;
+          return (
+            <Card className="p-4 bg-card border-0 premium-shadow mb-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <PenLine className="w-4 h-4 text-muted-foreground" />
+                  <p className="text-sm font-medium text-foreground">Sopimus & hyväksyntä</p>
+                </div>
+                <span
+                  className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-full px-2.5 py-1 ${
+                    status === "approved"
+                      ? "bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300"
+                      : status === "signed"
+                        ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
+                        : "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  {status === "approved" ? <ShieldCheck className="w-3.5 h-3.5" /> : status === "signed" ? <Check className="w-3.5 h-3.5" /> : <Clock className="w-3.5 h-3.5" />}
+                  {status === "approved" ? "Hyväksytty" : status === "signed" ? "Allekirjoitettu" : "Odottaa allekirjoitusta"}
+                </span>
+              </div>
+
+              {sig ? (
+                <div className="text-sm space-y-1.5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-foreground font-medium truncate">{sig.customer.legalName}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        Allekirjoitti {sig.signerName}
+                        {sig.place ? ` · ${sig.place}` : ""} · {new Date(sig.signedAt).toLocaleString("fi-FI")}
+                      </p>
+                      {sig.customer.businessId && <p className="text-xs text-muted-foreground">Y-tunnus {sig.customer.businessId}</p>}
+                      {sig.customer.eInvoice && <p className="text-xs text-muted-foreground truncate">Lasku: {sig.customer.eInvoice}</p>}
+                    </div>
+                    <Button variant="outline" size="sm" onClick={() => setSigOpen(true)} className="shrink-0">
+                      <FileText className="w-3.5 h-3.5 mr-1.5" /> Näytä
+                    </Button>
+                  </div>
+
+                  {appr ? (
+                    <div className="flex items-center justify-between gap-2 pt-2 mt-1 border-t border-border">
+                      <p className="text-xs text-sky-700 dark:text-sky-300">
+                        Hyväksytty {new Date(appr.approvedAt).toLocaleDateString("fi-FI")}{appr.by ? ` · ${appr.by}` : ""}
+                      </p>
+                      <Button variant="ghost" size="sm" disabled={approving} onClick={() => approve(false)} className="text-muted-foreground">
+                        Peru hyväksyntä
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button className="w-full mt-2" disabled={approving} onClick={() => approve(true)}>
+                      <ShieldCheck className="w-4 h-4 mr-2" /> {approving ? "Hyväksytään…" : "Hyväksy keikka"}
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Asiakas ei ole vielä allekirjoittanut. Jaa live-linkki — asiakas lukee ja allekirjoittaa sopimuksen,
+                  jonka jälkeen seurantanäkymä avautuu hänelle.
+                </p>
+              )}
+            </Card>
+          );
+        })()}
 
         {/* Share link */}
         <Card className="p-4 bg-card border-0 premium-shadow mb-4">
@@ -374,6 +457,44 @@ export default function AdminGigTrackerPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Signature viewer */}
+      <Dialog open={sigOpen} onOpenChange={setSigOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Allekirjoitettu sopimus</DialogTitle>
+          </DialogHeader>
+          {gig.signature && (
+            <div className="space-y-3 text-sm">
+              <div className="rounded-xl border border-border bg-white p-3">
+                <img src={gig.signature.signatureDataUrl} alt="Allekirjoitus" className="max-h-32 mx-auto" />
+              </div>
+              <div className="space-y-1">
+                <Row k="Tilaaja" v={gig.signature.customer.legalName} />
+                <Row k="Allekirjoittaja" v={gig.signature.signerName} />
+                {gig.signature.customer.businessId && <Row k="Y-tunnus" v={gig.signature.customer.businessId} />}
+                {gig.signature.customer.contactPerson && <Row k="Yhteyshenkilö" v={gig.signature.customer.contactPerson} />}
+                {gig.signature.customer.billingAddress && <Row k="Laskutusosoite" v={gig.signature.customer.billingAddress} />}
+                {gig.signature.customer.eInvoice && <Row k="Verkkolasku / sähköposti" v={gig.signature.customer.eInvoice} />}
+                <Row k="Paikka ja aika" v={`${gig.signature.place ? gig.signature.place + " · " : ""}${new Date(gig.signature.signedAt).toLocaleString("fi-FI")}`} />
+                {gig.signature.ip && <Row k="IP" v={gig.signature.ip} />}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSigOpen(false)}>Sulje</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function Row({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex justify-between gap-3">
+      <span className="text-muted-foreground shrink-0">{k}</span>
+      <span className="text-foreground text-right break-words">{v}</span>
     </div>
   );
 }

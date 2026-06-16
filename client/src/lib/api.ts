@@ -20,6 +20,38 @@ export interface GigPublicView {
   totals: GigTotals;
   updatedAt: number;
   invoicedCents: number;
+  // Contract & signing gate
+  contractText: string | null;
+  requireSignature: boolean;
+  status: "draft" | "signed" | "approved";
+  signed: boolean;
+  signedAt: number | null;
+  signerName: string | null;
+  approved: boolean;
+  approvedAt: number | null;
+  company: {
+    name: string | null;
+    businessId: string | null;
+    email: string | null;
+    contact: string | null;
+    address: string | null;
+  } | null;
+}
+
+export interface GigSignPayload {
+  signerName: string;
+  signerTitle?: string;
+  place?: string;
+  option?: string;
+  acceptedSectorIds?: string[];
+  signatureDataUrl: string;
+  customer: {
+    legalName: string;
+    businessId?: string;
+    billingAddress?: string;
+    eInvoice?: string;
+    contactPerson?: string;
+  };
 }
 
 interface ApiResponse<T> {
@@ -410,6 +442,14 @@ export const api = {
   // ─── Custom gigs (cap-pricing) ──────────────────────────────────────────────
   getGig: (token: string) =>
     request<GigPublicView>("GET", `/api/gig/${token}`),
+
+  signGig: (token: string, payload: GigSignPayload) =>
+    request<{ ok: boolean; signedAt: number }>("POST", `/api/gig/${token}/sign`, payload),
+
+  approveGig: (jobId: number, data: { approved?: boolean; by?: string; note?: string }) =>
+    request<{ ok: boolean; gigData: GigData; status: "draft" | "signed" | "approved" }>(
+      "POST", `/api/jobs/${jobId}/gig/approve`, data,
+    ),
 
   updateGig: (jobId: number, gigData: GigData) =>
     request<{ ok: boolean; gigData: GigData; totals: GigTotals }>(

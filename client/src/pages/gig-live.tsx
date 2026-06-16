@@ -6,10 +6,11 @@
  * so it always reads like the contract. Auto-refreshes every ~30 s.
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRoute } from "wouter";
 import { api, type GigPublicView } from "@/lib/api";
 import { eur } from "@shared/gig";
+import GigContractSign from "@/components/GigContractSign";
 
 const T = {
   ink: "#1A1A1A",
@@ -40,6 +41,11 @@ export default function GigLivePage() {
     document.title = "Puuhapatet — Edistyminen";
   }, []);
 
+  const reload = useCallback(async () => {
+    const res = await api.getGig(token);
+    if (res.ok && res.data) { setData(res.data); setStatus("ok"); }
+  }, [token]);
+
   useEffect(() => {
     if (!token) return;
     let active = true;
@@ -56,6 +62,11 @@ export default function GigLivePage() {
 
   if (status === "loading") return <Centered>Ladataan…</Centered>;
   if (status === "error" || !data) return <Centered>Seurantaa ei löytynyt.</Centered>;
+
+  // The intro is the signing: gate the live view until the contract is signed.
+  if (data.requireSignature && !data.signed) {
+    return <GigContractSign token={token} view={data} onSigned={reload} />;
+  }
 
   const t = data.totals;
   const pct = Math.round(t.percentByCap * 100);
@@ -76,10 +87,17 @@ export default function GigLivePage() {
               {data.contractId ? `${data.contractId} · ` : ""}{data.companyName}
             </p>
           </div>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: T.muted, letterSpacing: "0.08em", border: `1px solid ${T.hair}`, borderRadius: 999, padding: "5px 10px", background: T.card }}>
-            <span style={{ width: 7, height: 7, borderRadius: 999, background: "#3E7C59", animation: "ppPulse 1.8s ease-in-out infinite" }} />
-            LIVE
-          </span>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: T.muted, letterSpacing: "0.08em", border: `1px solid ${T.hair}`, borderRadius: 999, padding: "5px 10px", background: T.card }}>
+              <span style={{ width: 7, height: 7, borderRadius: 999, background: "#3E7C59", animation: "ppPulse 1.8s ease-in-out infinite" }} />
+              LIVE
+            </span>
+            {data.approved
+              ? <StatusBadge color="#1F3B57" label={`Hyväksytty${data.approvedAt ? " " + fmtDate(data.approvedAt) : ""}`} />
+              : data.signed
+                ? <StatusBadge color="#3E7C59" label={`Allekirjoitettu${data.signedAt ? " " + fmtDate(data.signedAt) : ""}`} />
+                : null}
+          </div>
         </div>
 
         {/* Hero: radial gauge + headline figures */}
@@ -200,6 +218,20 @@ function Gauge({ sectors, capCents, pct }: { sectors: GigPublicView["sectors"]; 
         <span style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>katosta</span>
       </div>
     </div>
+  );
+}
+
+function fmtDate(ts: number) {
+  return new Date(ts).toLocaleDateString("fi-FI", { day: "numeric", month: "numeric", year: "numeric" });
+}
+
+/** Signed / approved marking shown in the header. */
+function StatusBadge({ color, label }: { color: string; label: string }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color, letterSpacing: "0.04em", border: `1px solid ${color}33`, borderRadius: 999, padding: "5px 10px", background: `${color}12`, whiteSpace: "nowrap" }}>
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+      {label}
+    </span>
   );
 }
 

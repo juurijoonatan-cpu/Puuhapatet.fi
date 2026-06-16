@@ -6,7 +6,7 @@
  */
 
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Plus, Calendar, ClipboardList, Users, Settings, Sun, Moon, LogOut } from "lucide-react";
+import { LayoutDashboard, Plus, Calendar, ClipboardList, Users, Settings, MessageCircle, Sun, Moon, LogOut } from "lucide-react";
 import { useTheme } from "@/lib/theme";
 import { clearAdminSession } from "@/pages/admin/login";
 import { clearAdminProfile, getAdminProfile } from "@/lib/admin-profile";
@@ -34,6 +34,7 @@ const adminNavItems: NavItem[] = [
   { icon: Calendar,        label: "Kalenteri", href: "/admin/calendar" },
   { icon: ClipboardList,   label: "Keikat",    href: "/admin/jobs" },
   { icon: Users,           label: "Asiakkaat", href: "/admin/customers" },
+  { icon: MessageCircle,   label: "Viestit",   href: "/admin/inbox" },
   { icon: Settings,        label: "Asetukset", href: "/admin/settings" },
 ];
 

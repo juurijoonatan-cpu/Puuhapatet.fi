@@ -12,6 +12,7 @@ import { useLocation } from "wouter";
 import { isAdminAuthenticated } from "@/pages/admin/login";
 import { getAdminProfile, isProfileComplete } from "@/lib/admin-profile";
 import { AdminNav } from "./admin-nav";
+import { AdminAssistant } from "./admin-assistant";
 import { PageLoadingSkeleton } from "./loading-skeleton";
 
 interface ProtectedRouteProps {
@@ -71,6 +72,7 @@ export function ProtectedRoute({ children, requireProfile = true, bare = false }
     <>
       <AdminNav />
       {children}
+      <AdminAssistant />
     </>
   );
 }

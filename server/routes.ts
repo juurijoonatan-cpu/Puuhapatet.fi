@@ -6,8 +6,13 @@ import bwipjs from "bwip-js";
 import PDFDocument from "pdfkit";
 import rateLimit from "express-rate-limit";
 import { db } from "./db";
-import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
+import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 import { feeRateForWorker } from "@shared/team";
+import { randomUUID } from "crypto";
+import {
+  AI_ENABLED, chatComplete, publicSystemPrompt, adminSystemPrompt,
+  PUBLIC_FALLBACK_FI, type ChatTurn,
+} from "./ai";
 import { sanitizeGigData, computeTotals, emptyGigData, type GigData } from "@shared/gig";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, type ProjectData } from "@shared/project";
 
@@ -225,6 +230,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.use("/api/jobs/:id/gig/invoice", emailLimiter);
   app.use("/api/contact",           contactLimiter);
   app.use("/api/it-contact",        contactLimiter);
+  // Chat: allow a real back-and-forth but stop abuse (per IP)
+  const chatLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Liian monta viestiä. Hetki ja yritä uudelleen." },
+  });
+  app.use("/api/chat",            chatLimiter);
+  app.use("/api/admin/assistant", chatLimiter);
 
   // ─── Health ──────────────────────────────────────────────────────────────────
   app.get("/api/health", (_req, res) => {
@@ -2634,6 +2649,347 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.status(400).json({ error: e.message });
     }
   });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // AI ASSISTANT — public chat bot, live admin handoff, and in-admin assistant
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const MAX_MSG_LEN = 4000;
+  const HISTORY_LIMIT = 20; // turns kept as model context
+
+  function escapeHtml(s: string): string {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  async function loadHistory(conversationId: number, limit = HISTORY_LIMIT) {
+    const rows = await db.select().from(chatMessages)
+      .where(eq(chatMessages.conversationId, conversationId))
+      .orderBy(desc(chatMessages.createdAt))
+      .limit(limit);
+    return rows.reverse();
+  }
+
+  // ─── Public: visitor sends a message to the bot ────────────────────────────
+  // Body: { token?, message, name?, email?, phone?, pageUrl? }
+  // Returns: { token, reply, status, messages }
+  app.post("/api/chat", async (req, res) => {
+    try {
+      const { message, name, email, phone, pageUrl } = req.body ?? {};
+      let { token } = req.body ?? {};
+      const text = String(message ?? "").trim();
+      if (!text) return res.status(400).json({ error: "Viesti puuttuu." });
+      if (text.length > MAX_MSG_LEN) return res.status(400).json({ error: "Viesti on liian pitkä." });
+
+      // Find or create the conversation for this visitor token
+      let convo = token
+        ? (await db.select().from(chatConversations).where(eq(chatConversations.sessionToken, String(token))).limit(1))[0]
+        : undefined;
+
+      if (!convo) {
+        token = randomUUID();
+        convo = (await db.insert(chatConversations).values({
+          sessionToken: token,
+          source: "public",
+          status: "bot",
+          visitorName: name || null,
+          visitorEmail: email || null,
+          visitorPhone: phone || null,
+          pageUrl: pageUrl || null,
+          unread: true,
+        }).returning())[0];
+      } else if (name || email || phone) {
+        // Visitor shared contact details mid-conversation — keep them
+        await db.update(chatConversations).set({
+          visitorName: name || convo.visitorName,
+          visitorEmail: email || convo.visitorEmail,
+          visitorPhone: phone || convo.visitorPhone,
+        }).where(eq(chatConversations.id, convo.id));
+      }
+
+      // Store the visitor's message + flag unread for admin
+      await db.insert(chatMessages).values({ conversationId: convo.id, role: "user", content: text });
+      await db.update(chatConversations)
+        .set({ unread: true, updatedAt: new Date(), lastMessageAt: new Date() })
+        .where(eq(chatConversations.id, convo.id));
+
+      // If a human has taken over, the bot stays silent — admin replies live.
+      if (convo.status === "human" || convo.status === "needs_human") {
+        const messages = await loadHistory(convo.id);
+        return res.json({ token, reply: null, status: convo.status, messages });
+      }
+
+      // Ask the model, grounded in the public knowledge base only
+      const history = await loadHistory(convo.id);
+      const turns: ChatTurn[] = [
+        { role: "system", content: publicSystemPrompt() },
+        ...history.map((m): ChatTurn => ({
+          role: m.role === "assistant" ? "assistant" : "user",
+          content: m.role === "admin" ? `(Puuhapattien tiimi): ${m.content}` : m.content,
+        })),
+      ];
+      const reply = await chatComplete(turns, { temperature: 0.3, maxTokens: 600 });
+      const finalReply = reply ?? PUBLIC_FALLBACK_FI;
+
+      await db.insert(chatMessages).values({ conversationId: convo.id, role: "assistant", content: finalReply });
+
+      // No AI available → escalate so a human follows up
+      let status = convo.status;
+      if (!reply) {
+        status = "needs_human";
+        await db.update(chatConversations).set({ status }).where(eq(chatConversations.id, convo.id));
+        notifyAdminOfChat(convo.id, name || convo.visitorName, email || convo.visitorEmail, phone || convo.visitorPhone, text).catch(() => {});
+      }
+
+      const messages = await loadHistory(convo.id);
+      res.json({ token, reply: finalReply, status, messages });
+    } catch (e: any) {
+      console.error("Chat error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Public: visitor requests a human ──────────────────────────────────────
+  app.post("/api/chat/:token/request-human", async (req, res) => {
+    try {
+      const { name, email, phone } = req.body ?? {};
+      const convo = (await db.select().from(chatConversations)
+        .where(eq(chatConversations.sessionToken, req.params.token)).limit(1))[0];
+      if (!convo) return res.status(404).json({ error: "Keskustelua ei löytynyt." });
+
+      await db.update(chatConversations).set({
+        status: "needs_human",
+        unread: true,
+        visitorName: name || convo.visitorName,
+        visitorEmail: email || convo.visitorEmail,
+        visitorPhone: phone || convo.visitorPhone,
+        updatedAt: new Date(),
+      }).where(eq(chatConversations.id, convo.id));
+
+      await db.insert(chatMessages).values({
+        conversationId: convo.id, role: "system",
+        content: "Kävijä pyysi yhteyttä Puuhapattien tiimiin.",
+      });
+      notifyAdminOfChat(convo.id, name || convo.visitorName, email || convo.visitorEmail, phone || convo.visitorPhone, "(kävijä pyysi henkilökohtaista yhteyttä)").catch(() => {});
+      res.json({ ok: true, status: "needs_human" });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Public: visitor polls for new messages (admin live replies) ───────────
+  app.get("/api/chat/:token", async (req, res) => {
+    try {
+      const convo = (await db.select().from(chatConversations)
+        .where(eq(chatConversations.sessionToken, req.params.token)).limit(1))[0];
+      if (!convo) return res.status(404).json({ error: "Keskustelua ei löytynyt." });
+      const messages = await loadHistory(convo.id, 100);
+      res.json({ status: convo.status, messages });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Email the team when a website chat needs a human.
+  async function notifyAdminOfChat(
+    conversationId: number,
+    name?: string | null, email?: string | null, phone?: string | null, lastMsg?: string,
+  ) {
+    if (!resend) return;
+    const contact = [
+      name ? `Nimi: ${name}` : null,
+      phone ? `Puhelin: ${phone}` : null,
+      email ? `Sähköposti: ${email}` : null,
+    ].filter(Boolean).join(" · ") || "Ei yhteystietoja vielä";
+    const html = `<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto">
+      <div style="background:#2d5016;padding:24px 28px;border-radius:12px 12px 0 0">
+        <p style="margin:0;color:#b8e07a;font-size:11px;letter-spacing:1px;text-transform:uppercase">Puuhapatet.fi</p>
+        <h1 style="margin:6px 0 0;color:#fff;font-size:20px">Verkkochat tarvitsee sinua 💬</h1>
+      </div>
+      <div style="background:#fff;padding:24px 28px;border:1px solid #dde9c4;border-top:0;border-radius:0 0 12px 12px">
+        <p style="margin:0 0 8px;color:#1a2e0a"><strong>${escapeHtml(contact)}</strong></p>
+        <p style="margin:0 0 16px;color:#333;white-space:pre-wrap">${escapeHtml(lastMsg || "")}</p>
+        <a href="https://puuhapatet.fi/admin/inbox" style="display:inline-block;background:#2d5016;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-size:14px">Avaa viestit adminissa</a>
+        <p style="margin:16px 0 0;color:#6b8f3a;font-size:12px">Keskustelu #${conversationId} · ${new Date().toLocaleString("fi-FI")}</p>
+      </div>
+    </div>`;
+    try {
+      await resend.emails.send({
+        from: FROM_EMAIL,
+        to: WORKER_NOTIFICATION_EMAILS,
+        replyTo: email || undefined,
+        subject: `Verkkochat: ${name || "kävijä"} odottaa vastausta`,
+        html,
+      });
+    } catch (e) { console.error("Chat notify failed:", e); }
+  }
+
+  // ─── Admin: list website conversations (inbox) ─────────────────────────────
+  app.get("/api/admin/chats", async (req, res) => {
+    try {
+      const status = req.query.status ? String(req.query.status) : null;
+      const where = status
+        ? and(eq(chatConversations.source, "public"), eq(chatConversations.status, status))
+        : eq(chatConversations.source, "public");
+      const rows = await db.select().from(chatConversations)
+        .where(where)
+        .orderBy(desc(chatConversations.lastMessageAt))
+        .limit(100);
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Admin: read one conversation (marks it read) ──────────────────────────
+  app.get("/api/admin/chats/:id", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const convo = (await db.select().from(chatConversations).where(eq(chatConversations.id, id)).limit(1))[0];
+      if (!convo) return res.status(404).json({ error: "Ei löytynyt." });
+      await db.update(chatConversations).set({ unread: false }).where(eq(chatConversations.id, id));
+      const messages = await loadHistory(id, 200);
+      res.json({ ...convo, unread: false, messages });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Admin: reply live to a website visitor ────────────────────────────────
+  app.post("/api/admin/chats/:id/reply", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { content, authorName } = req.body ?? {};
+      const text = String(content ?? "").trim();
+      if (!text) return res.status(400).json({ error: "Viesti puuttuu." });
+      const convo = (await db.select().from(chatConversations).where(eq(chatConversations.id, id)).limit(1))[0];
+      if (!convo) return res.status(404).json({ error: "Ei löytynyt." });
+
+      await db.insert(chatMessages).values({
+        conversationId: id, role: "admin", content: text, authorName: authorName || null,
+      });
+      // Admin replied → conversation is now human-handled
+      await db.update(chatConversations)
+        .set({ status: "human", unread: false, updatedAt: new Date(), lastMessageAt: new Date() })
+        .where(eq(chatConversations.id, id));
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Admin: update conversation status (close / hand back to bot) ──────────
+  app.patch("/api/admin/chats/:id", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { status } = req.body ?? {};
+      if (!["bot", "needs_human", "human", "closed"].includes(String(status))) {
+        return res.status(400).json({ error: "Virheellinen tila." });
+      }
+      await db.update(chatConversations)
+        .set({ status: String(status), updatedAt: new Date() })
+        .where(eq(chatConversations.id, id));
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Admin: in-tool assistant (role-scoped operational help) ───────────────
+  // Body: { message, userId, userName, role, history? }
+  app.post("/api/admin/assistant", async (req, res) => {
+    try {
+      const { message, userId, userName, role } = req.body ?? {};
+      const history: ChatTurn[] = Array.isArray(req.body?.history) ? req.body.history : [];
+      const text = String(message ?? "").trim();
+      if (!text) return res.status(400).json({ error: "Viesti puuttuu." });
+      if (text.length > MAX_MSG_LEN) return res.status(400).json({ error: "Viesti on liian pitkä." });
+      if (!AI_ENABLED) {
+        return res.json({ reply: "Tekoälyavustaja ei ole vielä käytössä — aseta AI_API_KEY ympäristömuuttuja ottaaksesi sen käyttöön." });
+      }
+
+      const effectiveRole: "HOST" | "STAFF" = role === "HOST" ? "HOST" : "STAFF";
+      const contextBlock = await buildAdminContext(String(userId || ""), userName || "tiimiläinen", effectiveRole);
+
+      const turns: ChatTurn[] = [
+        { role: "system", content: adminSystemPrompt({ userName: userName || "tiimiläinen", role: effectiveRole, contextBlock }) },
+        ...history.slice(-HISTORY_LIMIT).map((m): ChatTurn => ({
+          role: m.role === "assistant" ? "assistant" : "user",
+          content: String(m.content || ""),
+        })),
+        { role: "user", content: text },
+      ];
+      const reply = await chatComplete(turns, { temperature: 0.4, maxTokens: 900 });
+      res.json({ reply: reply ?? "En valitettavasti saanut yhteyttä tekoälypalveluun juuri nyt. Yritä hetken kuluttua uudelleen." });
+    } catch (e: any) {
+      console.error("Admin assistant error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Assemble role-scoped operational data for the admin assistant.
+  // HOST sees everything; STAFF sees only their own jobs/customers + general stats.
+  async function buildAdminContext(userId: string, userName: string, role: "HOST" | "STAFF"): Promise<string> {
+    const eur = (cents: number | null | undefined) =>
+      ((cents ?? 0) / 100).toLocaleString("fi-FI", { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + " €";
+    const fmtDate = (d: Date | null | undefined) => d ? new Date(d).toLocaleDateString("fi-FI") : "—";
+
+    const allJobs = await db.select().from(jobs).orderBy(desc(jobs.updatedAt)).limit(200);
+    const allCustomers = await db.select().from(customers);
+    const customerById = new Map(allCustomers.map(c => [c.id, c]));
+
+    // STAFF: restrict to jobs assigned to them (by name or id) and customers they own.
+    const visibleJobs = role === "HOST"
+      ? allJobs
+      : allJobs.filter(j => {
+          const a = (j.assignedTo || "").toLowerCase();
+          const pending = (j.pendingWorkers || "").toLowerCase();
+          return a.includes(userId.toLowerCase()) || a.includes(userName.toLowerCase()) || pending.includes(userId.toLowerCase());
+        });
+
+    const lines: string[] = [];
+    lines.push(`Käyttäjä: ${userName} (${role}). Tämän hetki: ${new Date().toLocaleString("fi-FI")}.`);
+
+    // Aggregate counts
+    const byStatus: Record<string, number> = {};
+    for (const j of visibleJobs) byStatus[j.status] = (byStatus[j.status] || 0) + 1;
+    lines.push(`\nKeikat (${role === "HOST" ? "kaikki" : "omat"}): yhteensä ${visibleJobs.length} — ` +
+      Object.entries(byStatus).map(([s, n]) => `${s}: ${n}`).join(", "));
+
+    // Upcoming scheduled jobs
+    const upcoming = visibleJobs
+      .filter(j => j.scheduledAt && new Date(j.scheduledAt) >= new Date(Date.now() - 86400000))
+      .sort((a, b) => new Date(a.scheduledAt!).getTime() - new Date(b.scheduledAt!).getTime())
+      .slice(0, 15);
+    if (upcoming.length) {
+      lines.push(`\nTulevat / ajoitetut keikat:`);
+      for (const j of upcoming) {
+        const c = customerById.get(j.customerId);
+        lines.push(`- #${j.id} ${fmtDate(j.scheduledAt)} · ${c?.name ?? "?"} · ${c?.address ?? "?"} · ${j.status} · ${eur(j.agreedPrice)} · ${j.description.slice(0, 60)}`);
+      }
+    }
+
+    // Open leads / pending quotes
+    const leads = visibleJobs.filter(j => j.status === "lead" || j.quoteStatus === "pending").slice(0, 15);
+    if (leads.length) {
+      lines.push(`\nAvoimet liidit / odottavat tarjoukset:`);
+      for (const j of leads) {
+        const c = customerById.get(j.customerId);
+        lines.push(`- #${j.id} ${c?.name ?? "?"} · ${c?.phone ?? ""} ${c?.address ?? ""} · ${j.quoteStatus ?? j.status} · ${eur(j.agreedPrice)}`);
+      }
+    }
+
+    // HOST-only: financial overview
+    if (role === "HOST") {
+      const done = allJobs.filter(j => j.status === "done");
+      const revenue = done.reduce((s, j) => s + (j.agreedPrice || 0), 0);
+      lines.push(`\nTalous (vain perustajat): valmiita keikkoja ${done.length}, liikevaihto valmiista ${eur(revenue)}.`);
+      lines.push(`Asiakkaita yhteensä: ${allCustomers.length}.`);
+    } else {
+      lines.push(`\nAsiakkaita näkyvissä: ${new Set(visibleJobs.map(j => j.customerId)).size}.`);
+    }
+
+    return lines.join("\n");
+  }
 
   return httpServer;
 }

@@ -3290,134 +3290,106 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     return rows.reverse();
   }
 
-  // Build model-ready turns from stored messages: drop system notes, keep the
-  // last HISTORY_LIMIT user/assistant/admin turns.
-  function toModelTurns(history: { role: string; content: string }[]): ChatTurn[] {
-    return history
-      .filter(m => m.role !== "system")
-      .slice(-HISTORY_LIMIT)
-      .map((m): ChatTurn => ({
-        role: m.role === "assistant" ? "assistant" : "user",
-        content: m.role === "admin" ? `(Puuhapattien tiimi vastasi): ${m.content}` : m.content,
-      }));
+  // Detect when a visitor wants a real person, so the bot can offer a handoff.
+  function wantsHuman(text: string): boolean {
+    return /\b(ihmis|oikea(n|lle)? henkil|asiakaspalvelu|soit(a|taa|takaa)|yhteyden?otto|ota yhteyt|jutella tiimi|puhua jonku|real person|human|talk to (a|someone|the team)|call me|contact me)\b/i.test(text);
   }
 
   // ─── Public: visitor sends a message to the bot ────────────────────────────
-  // Body: { token?, message, name?, email?, phone?, pageUrl? }
-  // Returns: { token, reply, status, messages }
+  // Stateless by design. Conversation memory lives ONLY in the visitor's
+  // browser session (sent up as `history` each turn) and clears when they
+  // leave — we never persist casual chats. The ONLY thing that reaches the
+  // team is an explicit handoff (see /api/chat/handoff), kept as a lead note.
+  //
+  // Body: { message, history?: [{role, content}], pageUrl? }
+  // Returns: { reply, offerHandoff }
   app.post("/api/chat", async (req, res) => {
     try {
-      const { message, name, email, phone, pageUrl } = req.body ?? {};
-      let { token } = req.body ?? {};
+      const { message } = req.body ?? {};
+      const clientHistory: { role?: string; content?: string }[] = Array.isArray(req.body?.history) ? req.body.history : [];
       const text = String(message ?? "").trim();
       if (!text) return res.status(400).json({ error: "Viesti puuttuu." });
       if (text.length > MAX_MSG_LEN) return res.status(400).json({ error: "Viesti on liian pitkä." });
 
-      // Find or create the conversation for this visitor token
-      let convo = token
-        ? (await db.select().from(chatConversations).where(eq(chatConversations.sessionToken, String(token))).limit(1))[0]
-        : undefined;
+      // Build model context from the browser-held history (user/assistant only).
+      const historyTurns: ChatTurn[] = clientHistory
+        .filter(m => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+        .slice(-HISTORY_LIMIT)
+        .map((m): ChatTurn => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content).slice(0, MAX_MSG_LEN) }));
 
-      if (!convo) {
-        token = randomUUID();
-        convo = (await db.insert(chatConversations).values({
-          sessionToken: token,
-          source: "public",
-          status: "bot",
-          visitorName: name || null,
-          visitorEmail: email || null,
-          visitorPhone: phone || null,
-          pageUrl: pageUrl || null,
-          unread: true,
-        }).returning())[0];
-      } else if (name || email || phone) {
-        // Visitor shared contact details mid-conversation — keep them
-        await db.update(chatConversations).set({
-          visitorName: name || convo.visitorName,
-          visitorEmail: email || convo.visitorEmail,
-          visitorPhone: phone || convo.visitorPhone,
-        }).where(eq(chatConversations.id, convo.id));
-      }
-
-      // Store the visitor's message + flag unread for admin
-      await db.insert(chatMessages).values({ conversationId: convo.id, role: "user", content: text });
-      await db.update(chatConversations)
-        .set({ unread: true, updatedAt: new Date(), lastMessageAt: new Date() })
-        .where(eq(chatConversations.id, convo.id));
-
-      // If a human has taken over, the bot stays silent — admin replies live.
-      if (convo.status === "human" || convo.status === "needs_human") {
-        const messages = await loadHistory(convo.id);
-        return res.json({ token, reply: null, status: convo.status, messages });
-      }
-
-      // Ask the model, grounded in the public knowledge base only
-      const history = await loadHistory(convo.id);
       const turns: ChatTurn[] = [
         { role: "system", content: publicSystemPrompt() },
-        ...toModelTurns(history),
+        ...historyTurns,
+        { role: "user", content: text },
       ];
       const reply = await chatComplete(turns, { temperature: 0.3, maxTokens: 420 });
-      const finalReply = reply ?? PUBLIC_FALLBACK_FI;
 
-      await db.insert(chatMessages).values({ conversationId: convo.id, role: "assistant", content: finalReply });
-
-      // No AI available → escalate so a human follows up. If the visitor had
-      // earlier closed/reopened the chat, a successful bot reply keeps it "bot".
-      let status = convo.status === "closed" ? "bot" : convo.status;
+      // No AI → safe canned reply, and always offer to leave a note for the team.
       if (!reply) {
-        status = "needs_human";
-        notifyAdminOfChat(convo.id, name || convo.visitorName, email || convo.visitorEmail, phone || convo.visitorPhone, text).catch(() => {});
+        return res.json({ reply: PUBLIC_FALLBACK_FI, offerHandoff: true });
       }
-      if (status !== convo.status) {
-        await db.update(chatConversations).set({ status }).where(eq(chatConversations.id, convo.id));
-      }
-
-      const messages = await loadHistory(convo.id);
-      res.json({ token, reply: finalReply, status, messages });
+      // Otherwise offer a handoff only when the visitor seems to want a person.
+      res.json({ reply, offerHandoff: wantsHuman(text) });
     } catch (e: any) {
       console.error("Chat error:", e);
       res.status(500).json({ error: e.message });
     }
   });
 
-  // ─── Public: visitor requests a human ──────────────────────────────────────
-  app.post("/api/chat/:token/request-human", async (req, res) => {
+  // ─── Public: visitor leaves a note / contact request for the team ──────────
+  // This is the ONLY public-chat action that is persisted. It creates a single
+  // lead record (a note for the hosts to see as a stat) and emails the team.
+  // We are not live, so the visitor is told the team will follow up.
+  //
+  // Body: { name?, email?, phone?, question?, transcript?: [{role, content}], pageUrl? }
+  app.post("/api/chat/handoff", async (req, res) => {
     try {
-      const { name, email, phone } = req.body ?? {};
-      const convo = (await db.select().from(chatConversations)
-        .where(eq(chatConversations.sessionToken, req.params.token)).limit(1))[0];
-      if (!convo) return res.status(404).json({ error: "Keskustelua ei löytynyt." });
+      const { name, email, phone, question, pageUrl } = req.body ?? {};
+      const transcript: { role?: string; content?: string }[] = Array.isArray(req.body?.transcript) ? req.body.transcript : [];
+      const visitorName = name ? String(name).slice(0, 200) : null;
+      const visitorEmail = email ? String(email).slice(0, 200) : null;
+      const visitorPhone = phone ? String(phone).slice(0, 100) : null;
+      const q = String(question ?? "").trim().slice(0, MAX_MSG_LEN);
 
-      await db.update(chatConversations).set({
+      // Need at least a way to reach them.
+      if (!visitorPhone && !visitorEmail) {
+        return res.status(400).json({ error: "Anna puhelinnumero tai sähköposti." });
+      }
+
+      const convo = (await db.insert(chatConversations).values({
+        sessionToken: randomUUID(),
+        source: "public",
         status: "needs_human",
+        visitorName,
+        visitorEmail,
+        visitorPhone,
+        pageUrl: pageUrl ? String(pageUrl).slice(0, 500) : null,
         unread: true,
-        visitorName: name || convo.visitorName,
-        visitorEmail: email || convo.visitorEmail,
-        visitorPhone: phone || convo.visitorPhone,
-        updatedAt: new Date(),
-      }).where(eq(chatConversations.id, convo.id));
+      }).returning())[0];
 
+      // Snapshot the browser-held conversation so hosts have context, then the
+      // visitor's explicit question/request as the headline message.
+      const snapshot = transcript
+        .filter(m => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+        .slice(-HISTORY_LIMIT)
+        .map(m => ({
+          conversationId: convo.id,
+          role: m.role === "assistant" ? "assistant" : "user",
+          content: String(m.content).slice(0, MAX_MSG_LEN),
+        }));
+      if (snapshot.length) await db.insert(chatMessages).values(snapshot);
       await db.insert(chatMessages).values({
-        conversationId: convo.id, role: "system",
-        content: "Kävijä pyysi yhteyttä Puuhapattien tiimiin.",
+        conversationId: convo.id,
+        role: "system",
+        content: q
+          ? `Kävijä pyysi yhteyttä tiimiin. Kysymys: ${q}`
+          : "Kävijä pyysi yhteyttä Puuhapattien tiimiin.",
       });
-      notifyAdminOfChat(convo.id, name || convo.visitorName, email || convo.visitorEmail, phone || convo.visitorPhone, "(kävijä pyysi henkilökohtaista yhteyttä)").catch(() => {});
-      res.json({ ok: true, status: "needs_human" });
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
-  });
 
-  // ─── Public: visitor polls for new messages (admin live replies) ───────────
-  app.get("/api/chat/:token", async (req, res) => {
-    try {
-      const convo = (await db.select().from(chatConversations)
-        .where(eq(chatConversations.sessionToken, req.params.token)).limit(1))[0];
-      if (!convo) return res.status(404).json({ error: "Keskustelua ei löytynyt." });
-      const messages = await loadHistory(convo.id, 100);
-      res.json({ status: convo.status, messages });
+      notifyAdminOfChat(convo.id, visitorName, visitorEmail, visitorPhone, q || "(kävijä pyysi henkilökohtaista yhteyttä)").catch(() => {});
+      res.json({ ok: true });
     } catch (e: any) {
+      console.error("Chat handoff error:", e);
       res.status(500).json({ error: e.message });
     }
   });

@@ -11,6 +11,9 @@ interface Props {
   color?: string;
   className?: string;
   placeholder?: string;
+  /** Cap the exported PNG width (px) so the data URL stays small (well under the
+   *  300 KB server cap). The on-screen canvas is unaffected. Default 520. */
+  maxExportWidth?: number;
 }
 
 export default function SignaturePad({
@@ -19,6 +22,7 @@ export default function SignaturePad({
   color = "#1A1A1A",
   className,
   placeholder = "Piirrä allekirjoitus tähän",
+  maxExportWidth = 520,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
@@ -64,12 +68,25 @@ export default function SignaturePad({
     last.current = p;
     if (empty) setEmpty(false);
   };
+  // Export a downscaled PNG so the data URL stays small (a hi-DPI canvas can
+  // otherwise produce a multi-hundred-KB image and trip the server cap).
+  const exportDataUrl = (c: HTMLCanvasElement): string => {
+    if (c.width <= maxExportWidth) return c.toDataURL("image/png");
+    const scale = maxExportWidth / c.width;
+    const off = document.createElement("canvas");
+    off.width = maxExportWidth;
+    off.height = Math.round(c.height * scale);
+    const g = off.getContext("2d");
+    if (!g) return c.toDataURL("image/png");
+    g.drawImage(c, 0, 0, off.width, off.height);
+    return off.toDataURL("image/png");
+  };
   const end = () => {
     if (!drawing.current) return;
     drawing.current = false;
     last.current = null;
     const c = canvasRef.current;
-    if (c) onChange(c.toDataURL("image/png"));
+    if (c) onChange(exportDataUrl(c));
   };
   const clear = useCallback(() => {
     const c = canvasRef.current;

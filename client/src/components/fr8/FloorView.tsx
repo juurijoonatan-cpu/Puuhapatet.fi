@@ -33,6 +33,9 @@ interface Props {
   onMoveMark: (key: string, x: number, y: number) => void;
   onMoveMarkCommit: (key: string, x: number, y: number) => void;
   onResetFloor: (floor: string) => void;
+  /** When false, hide the structural edit controls (move/add/delete) — workers
+   *  can still set window status, but cannot restructure the map. Default true. */
+  canEdit?: boolean;
 }
 
 function colorRgb(p: 1 | 2, status: WindowStatus) {
@@ -93,7 +96,7 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor }: Props) {
+export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true }: Props) {
   const [floor, setFloor] = useState(initialFloor);
   const [filter, setFilter] = useState<"all" | "unwashed" | "progress" | "done">("all");
   const [editMode, setEditMode] = useState(false);
@@ -356,6 +359,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
           </div>
 
           {/* Edit button */}
+          {canEdit && <>
           <button onClick={toggleEdit} style={{ display: "flex", alignItems: "center", gap: "7px", padding: "8px 13px", borderRadius: "11px", cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12.5px", fontWeight: 600, transition: "all .16s", border: `1px solid ${editMode ? "transparent" : "rgba(255,255,255,0.12)"}`, background: editMode ? "#fff" : "rgba(255,255,255,0.04)", color: editMode ? "#0a0a0c" : "rgba(255,255,255,0.7)" }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={editMode ? "#0a0a0c" : "rgba(255,255,255,0.55)"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
             {editMode ? "Valmis" : "Siirrä pisteitä"}
@@ -384,6 +388,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
               </>
             )}
           </div>
+          </>}
         </div>
       </div>
 

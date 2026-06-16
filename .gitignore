@@ -12,3 +12,6 @@ vite.config.ts.*
 .next/
 next-env.d.ts
 tsconfig.tsbuildinfo
+
+# Claude Code local config
+.claude/worktrees/

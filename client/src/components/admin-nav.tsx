@@ -2,16 +2,14 @@
  * Admin Navigation
  * 
  * Liquid glass bottom nav for mobile, header nav for desktop.
- * Items: Dashboard, Uusi (New Job), Kalenteri, Keikat, Asetukset
+ * Items: Dashboard, Uusi (New Job), Kalenteri, Keikat, Asiakkaat, Asetukset
  */
 
-import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Plus, Calendar, ClipboardList, Users, Settings, MessageCircle, Sun, Moon, LogOut } from "lucide-react";
+import { LayoutDashboard, Plus, Calendar, ClipboardList, Users, Settings, Sun, Moon, LogOut } from "lucide-react";
 import { useTheme } from "@/lib/theme";
 import { clearAdminSession } from "@/pages/admin/login";
 import { clearAdminProfile, getAdminProfile } from "@/lib/admin-profile";
-import { API_BASE } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -26,7 +24,6 @@ const mobileNavItems: NavItem[] = [
   { icon: Plus,            label: "Uusi",      href: "/admin/new" },
   { icon: Calendar,        label: "Kalenteri", href: "/admin/calendar" },
   { icon: ClipboardList,   label: "Keikat",    href: "/admin/jobs" },
-  { icon: MessageCircle,   label: "Viestit",   href: "/admin/inbox" },
   { icon: Settings,        label: "Asetukset", href: "/admin/settings" },
 ];
 
@@ -37,7 +34,6 @@ const adminNavItems: NavItem[] = [
   { icon: Calendar,        label: "Kalenteri", href: "/admin/calendar" },
   { icon: ClipboardList,   label: "Keikat",    href: "/admin/jobs" },
   { icon: Users,           label: "Asiakkaat", href: "/admin/customers" },
-  { icon: MessageCircle,   label: "Viestit",   href: "/admin/inbox" },
   { icon: Settings,        label: "Asetukset", href: "/admin/settings" },
 ];
 
@@ -47,19 +43,6 @@ export function AdminNav() {
 
   const currentPath = location || "";
   const profile = typeof window !== "undefined" ? getAdminProfile() : null;
-
-  // Poll unread website-chat count for the Viestit badge.
-  const [unread, setUnread] = useState(0);
-  useEffect(() => {
-    let active = true;
-    const tick = () => fetch(`${API_BASE}/api/admin/chats-unread`)
-      .then(r => r.ok ? r.json() : { count: 0 })
-      .then(d => { if (active) setUnread(d.count || 0); })
-      .catch(() => {});
-    tick();
-    const iv = setInterval(tick, 20000);
-    return () => { active = false; clearInterval(iv); };
-  }, [currentPath]);
 
   const handleLogout = () => {
     clearAdminSession();
@@ -95,7 +78,6 @@ export function AdminNav() {
             const active = isActive(item.href);
             const Icon = item.icon;
 
-            const showBadge = item.href === "/admin/inbox" && unread > 0;
             return (
               <Link key={item.href} href={item.href}>
                 <button
@@ -105,16 +87,11 @@ export function AdminNav() {
                       ? "text-primary scale-105"
                       : "text-muted-foreground"
                   )}
-                  aria-label={showBadge ? `${item.label} (${unread} uutta)` : item.label}
+                  aria-label={item.label}
                   aria-current={active ? "page" : undefined}
                   data-testid={`admin-nav-${item.label.toLowerCase()}`}
                 >
                   <Icon className="w-6 h-6" strokeWidth={active ? 2.5 : 2} />
-                  {showBadge && (
-                    <span className="absolute top-1.5 right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
-                      {unread > 9 ? "9+" : unread}
-                    </span>
-                  )}
                 </button>
               </Link>
             );
@@ -134,8 +111,7 @@ export function AdminNav() {
             {adminNavItems.map((item) => {
               const active = isActive(item.href);
               const Icon = item.icon;
-              
-              const showBadge = item.href === "/admin/inbox" && unread > 0;
+
               return (
                 <Link key={item.href} href={item.href}>
                   <button
@@ -149,11 +125,6 @@ export function AdminNav() {
                   >
                     <Icon className="w-4 h-4" />
                     <span className="text-sm font-medium">{item.label}</span>
-                    {showBadge && (
-                      <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
-                        {unread > 9 ? "9+" : unread}
-                      </span>
-                    )}
                   </button>
                 </Link>
               );

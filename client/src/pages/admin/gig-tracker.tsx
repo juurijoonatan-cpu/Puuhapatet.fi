@@ -24,7 +24,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { api, type HostCrewRow } from "@/lib/api";
+import { api } from "@/lib/api";
 import { getAdminProfile } from "@/lib/admin-profile";
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import {
@@ -50,7 +50,6 @@ export default function AdminGigTrackerPage() {
   // Admin-linked workers (e.g. Petrus) get bounced to their own worker dashboard
   // so they never see the gig total or customer price.
   const { checking: crewChecking } = useCrewWorkerRedirect(jobId);
-  const [crew, setCrew] = useState<HostCrewRow[]>([]);
 
   // Which panel tool the full-screen tools overlay is showing (null = closed).
   const [toolsOpen, setToolsOpen] = useState<GigToolId | null>(null);
@@ -106,12 +105,6 @@ export default function AdminGigTrackerPage() {
       setLoading(false);
     });
   }, [jobId]);
-
-  // Crew preview for the host's own gig dashboard (skipped for redirected workers).
-  useEffect(() => {
-    if (!jobId || crewChecking) return;
-    api.getHostCrew(jobId).then((res) => { if (res.ok && res.data) setCrew(res.data.crew); }).catch(() => {});
-  }, [jobId, crewChecking]);
 
   const shareUrl = token ? `${PUBLIC_BASE}/seuranta/${token}` : "";
   const copyLink = () => {
@@ -330,71 +323,6 @@ export default function AdminGigTrackerPage() {
           </button>
         </div>
 
-        {/* Accrual headline */}
-        <Card className="p-5 bg-card border-0 premium-shadow mb-4">
-          <div className="flex items-end justify-between mb-3">
-            <div>
-              <p className="text-xs text-muted-foreground uppercase tracking-wide">Kertynyt summa</p>
-              <p className="text-4xl font-bold text-foreground tabular-nums leading-tight">{eur(totals.accruedCents)}</p>
-            </div>
-            <div className="text-right">
-              <p className="text-xs text-muted-foreground uppercase tracking-wide">Hintakatto</p>
-              <p className="text-lg font-semibold text-muted-foreground tabular-nums">{eur(totals.capCents)}</p>
-            </div>
-          </div>
-          {/* Segmented bar */}
-          <div className="h-3 w-full rounded-full bg-muted overflow-hidden flex">
-            {gig.sectors.map((s) => {
-              const pct = totals.capCents > 0 ? (s.washed * s.unitPriceCents) / totals.capCents * 100 : 0;
-              return <div key={s.id} style={{ width: `${pct}%`, background: s.color }} className="h-full" />;
-            })}
-          </div>
-          <div className="flex items-center justify-between mt-3 text-sm">
-            <span className="text-muted-foreground">{totals.washedTotal} / {totals.unitTotal} pesty</span>
-            <span className="text-foreground font-medium">{Math.round(totals.percentByCap * 100)} %</span>
-          </div>
-          <div className="grid grid-cols-2 gap-3 mt-4 pt-4 border-t border-border">
-            <div>
-              <p className="text-xs text-muted-foreground">Arvioitu loppusumma</p>
-              <p className="text-base font-semibold text-foreground tabular-nums">{eur(totals.estimatedFinalCents)}</p>
-            </div>
-            <div className="text-right">
-              <p className="text-xs text-muted-foreground">Hyvitykset (kuntovaraus)</p>
-              <p className="text-base font-semibold text-foreground tabular-nums">−{eur(totals.creditCents)}</p>
-            </div>
-          </div>
-        </Card>
-
-        {/* Team / crew preview — who's working and what they've produced */}
-        {crew.length > 0 && (() => {
-          const ranked = [...crew].sort((a, b) => b.stats.washed - a.stats.washed);
-          const totWashed = crew.reduce((n, c) => n + c.stats.washed, 0);
-          const totPaid = crew.reduce((n, c) => n + c.stats.earnedCents, 0);
-          return (
-            <Card className="p-4 bg-card border-0 premium-shadow mb-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <Users className="h-4 w-4 text-muted-foreground" />
-                  <h3 className="font-semibold text-foreground">Tiimi</h3>
-                  <span className="text-xs text-muted-foreground">{crew.length} hlö · {totWashed} ikkunaa · palkat {eur(totPaid)}</span>
-                </div>
-                <button onClick={() => navigate(`/admin/gig/${jobId}/tiimi`)} className="text-xs font-medium text-primary hover:underline">Hallitse →</button>
-              </div>
-              <div className="space-y-1.5">
-                {ranked.slice(0, 5).map(({ member, stats }, i) => (
-                  <div key={member.id} className="flex items-center gap-3 text-sm">
-                    <span className="w-5 text-center text-xs text-muted-foreground">{i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : i + 1}</span>
-                    <span className="flex-1 truncate">{member.name}{!member.active && <span className="text-muted-foreground"> · pois</span>}</span>
-                    <span className="tabular-nums text-muted-foreground">{stats.washed} ikk.</span>
-                    <span className="tabular-nums font-medium w-16 text-right">{eur(stats.earnedCents)}</span>
-                    <span className="tabular-nums text-muted-foreground w-14 text-right">{stats.hours > 0 ? `${eur(Math.round(stats.eurPerHour * 100))}/h` : "—"}</span>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          );
-        })()}
-
         {/* Signing & approval status */}
         {(() => {
           const status = gigStatus(gig);
@@ -484,51 +412,6 @@ export default function AdminGigTrackerPage() {
           </div>
           <p className="text-xs text-muted-foreground mt-2">Jaa tämä linkki asiakkaalle — näkymä päivittyy itsestään.</p>
         </Card>
-
-        {/* Per-floor progress — read-only; window marking happens in the toolkit */}
-        <div className="flex items-center justify-between mb-2 px-1">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Edistyminen kerroksittain</p>
-          <span className="text-xs text-muted-foreground">Merkinnät projektinäkymässä</span>
-        </div>
-        <div className="space-y-3 mb-4">
-          {gig.sectors.length === 0 && (
-            <Card className="p-4 bg-card border-0 premium-shadow">
-              <p className="text-sm text-muted-foreground">
-                Ei vielä ikkunatietoja. Avaa projektinäkymä ja merkitse ikkunat — edistyminen ja laskutus päivittyvät tänne automaattisesti.
-              </p>
-            </Card>
-          )}
-          {gig.sectors.map((s) => {
-            const accrued = s.washed * s.unitPriceCents;
-            const cap = s.total * s.unitPriceCents;
-            const credit = s.skipped * s.unitPriceCents;
-            const pct = s.total > 0 ? Math.round((s.washed / s.total) * 100) : 0;
-            const remaining = Math.max(0, s.total - s.washed - s.skipped);
-            return (
-              <Card key={s.id} className="p-4 bg-card border-0 premium-shadow">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="w-3 h-3 rounded-full shrink-0" style={{ background: s.color }} />
-                    <p className="font-medium text-foreground truncate">{s.name}</p>
-                  </div>
-                  <p className="text-sm text-muted-foreground tabular-nums">
-                    {eur(accrued)} <span className="opacity-60">/ {eur(cap)}</span>
-                  </p>
-                </div>
-                <div className="h-2 w-full rounded-full bg-muted overflow-hidden mb-3">
-                  <div className="h-full rounded-full" style={{ width: `${pct}%`, background: s.color }} />
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-foreground">Pesty <strong className="tabular-nums text-base">{s.washed}</strong> <span className="text-muted-foreground">/ {s.total}</span></span>
-                  <span className="text-xs text-muted-foreground tabular-nums">{pct} % · {remaining} jäljellä</span>
-                </div>
-                {s.skipped > 0 && (
-                  <p className="text-xs text-muted-foreground mt-2">Kuntovaraus {s.skipped} · hyvitys −{eur(credit)}</p>
-                )}
-              </Card>
-            );
-          })}
-        </div>
 
         {/* Invoicing */}
         <Card className="p-5 bg-card border-0 premium-shadow mb-4">

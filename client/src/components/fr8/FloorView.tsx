@@ -27,7 +27,7 @@ interface Props {
   customMarks: Record<string, ProjCustomMark[]>;
   deleted: Record<string, boolean>;
   initialFloor: string;
-  onStatusChange: (key: string, status: WindowStatus) => void;
+  onStatusChange: (key: string, status: WindowStatus, washedById?: string) => void;
   onAddCustomMark: (floor: string, x: number, y: number, p: 1 | 2) => void;
   onDeleteMark: (key: string) => void;
   onMoveMark: (key: string, x: number, y: number) => void;
@@ -41,6 +41,10 @@ interface Props {
   washedBy?: Record<string, string>;
   /** worker id → display name, for the washedBy label. */
   workerNames?: Record<string, string>;
+  /** This gig's pickable crew (id + name) for the washed-by picker. Manager view only. */
+  workers?: { id: string; name: string }[];
+  /** Logged-in user's worker id — default washer when marking a window washed. */
+  currentWorkerId?: string;
 }
 
 function colorRgb(p: 1 | 2, status: WindowStatus) {
@@ -101,7 +105,7 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, washedBy, workerNames }: Props) {
+export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, washedBy, workerNames, workers, currentWorkerId }: Props) {
   const [floor, setFloor] = useState(initialFloor);
   const [filter, setFilter] = useState<"all" | "unwashed" | "progress" | "done">("all");
   const [editMode, setEditMode] = useState(false);
@@ -470,9 +474,21 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                       const cur = statuses[activeOrb] || "ei";
                       const isActive = cur === s;
                       const rgb = colorRgb(activePt.p, s);
+                      // For "pesty" with a pickable crew, keep the popover open and reveal
+                      // the washer picker below instead of closing immediately.
+                      const hasPicker = s === "pesty" && !!workers && workers.length > 0;
                       return (
                         <button key={s} className="status-opt-btn"
-                          onClick={() => { onStatusChange(activeOrb, s); setActiveOrb(null); }}
+                          onClick={() => {
+                            if (hasPicker) {
+                              // Default washer = already-attributed worker, else logged-in user.
+                              const washer = washedBy?.[activeOrb] ?? currentWorkerId;
+                              onStatusChange(activeOrb, s, washer);
+                              return; // keep popover open to allow picking
+                            }
+                            onStatusChange(activeOrb, s);
+                            setActiveOrb(null);
+                          }}
                           style={{ border: `1px solid ${isActive ? "rgba(255,255,255,0.16)" : "transparent"}`, background: isActive ? "rgba(255,255,255,0.08)" : "transparent", fontWeight: isActive ? 600 : 500 }}>
                           <span style={{ width: "9px", height: "9px", borderRadius: "50%", background: `rgb(${rgb})`, boxShadow: `0 0 6px rgba(${rgb},0.7)`, flexShrink: 0 }} />
                           <span style={{ flex: 1, textAlign: "left" }}>{s === "ei" ? "Ei pesty" : s === "kesken" ? "Kesken" : "Pesty"}</span>
@@ -480,6 +496,25 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                         </button>
                       );
                     })}
+
+                    {/* Washer picker — visible once the window is washed and a crew is available. */}
+                    {workers && workers.length > 0 && (statuses[activeOrb] || "ei") === "pesty" && (
+                      <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                        <div style={{ fontSize: "9.5px", letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.38)", padding: "0 4px 6px" }}>Kuka pesi?</div>
+                        {workers.map((w) => {
+                          const picked = (washedBy?.[activeOrb] ?? currentWorkerId) === w.id;
+                          return (
+                            <button key={w.id} className="status-opt-btn"
+                              onClick={() => { onStatusChange(activeOrb, "pesty", w.id); }}
+                              style={{ border: `1px solid ${picked ? "rgba(255,255,255,0.16)" : "transparent"}`, background: picked ? "rgba(255,255,255,0.08)" : "transparent", fontWeight: picked ? 600 : 500 }}>
+                              <span style={{ width: "18px", height: "18px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "9px", fontWeight: 700, background: "rgba(124,224,166,0.16)", color: "rgba(124,224,166,0.95)", flexShrink: 0 }}>{w.name.charAt(0).toUpperCase()}</span>
+                              <span style={{ flex: 1, textAlign: "left" }}>{w.name}</span>
+                              {picked && <span style={{ fontSize: "11px" }}>✓</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </>
               )}

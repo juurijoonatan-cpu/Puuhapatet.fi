@@ -195,17 +195,20 @@ export default function AdminProjectPage() {
     return draft.marks?.[f]?.marks[parseInt(idx, 10)]?.p ?? 1;
   }, []);
 
-  const onStatusChange = useCallback((key: string, status: WindowStatus) => {
+  const onStatusChange = useCallback((key: string, status: WindowStatus, washedById?: string) => {
+    // The washer defaults to the logged-in user but can be overridden (and changed
+    // later) via the picker in FloorView's status popover.
+    const washer = washedById ?? currentWorker;
     mutate((d) => {
       if (status === "ei") { delete d.statuses[key]; delete d.washedBy[key]; }
       else {
         d.statuses[key] = status;
-        if (status === "pesty") d.washedBy[key] = currentWorker;
+        if (status === "pesty") d.washedBy[key] = washer;
         else delete d.washedBy[key];
       }
       const p = getPriority(d, key);
       const floor = key.split("#")[0];
-      d.log = [{ floor, key, p, status, ts: Date.now(), by: currentWorker }, ...d.log].slice(0, 60);
+      d.log = [{ floor, key, p, status, ts: Date.now(), by: washer }, ...d.log].slice(0, 60);
     });
   }, [mutate, getPriority, currentWorker]);
 
@@ -292,6 +295,15 @@ export default function AdminProjectPage() {
   const workerNames: Record<string, string> = {};
   for (const u of USERS) workerNames[u.id] = u.name;
   for (const m of project.crew ?? []) workerNames[m.id] = m.name;
+  // This gig's pickable crew for the "who washed this window" picker: the gig's
+  // assigned workers + ad-hoc crew, de-duped, with display names.
+  const gigWorkers: { id: string; name: string }[] = [];
+  const seenWorker = new Set<string>();
+  for (const id of [...(project.workers ?? []), ...((project.crew ?? []).map((m) => m.id))]) {
+    if (seenWorker.has(id)) continue;
+    seenWorker.add(id);
+    gigWorkers.push({ id, name: workerNames[id] ?? workerName(id) });
+  }
 
   return shell(
     <>
@@ -341,6 +353,8 @@ export default function AdminProjectPage() {
             onResetFloor={onResetFloor}
             washedBy={project.washedBy}
             workerNames={workerNames}
+            workers={gigWorkers}
+            currentWorkerId={currentWorker}
           />
         )}
         {tab === "hours" && (

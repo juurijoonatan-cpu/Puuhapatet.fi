@@ -11,13 +11,10 @@ import { Link, useRoute, useLocation } from "wouter";
 import {
   ArrowLeft, Share2, Copy, Check, FileText,
   Send, AlertCircle, ChevronDown, Receipt, ExternalLink, ChevronRight,
-  PenLine, ShieldCheck, Clock, Save, Download, Printer, Wrench, LayoutDashboard, Users,
+  PenLine, ShieldCheck, Clock, Save, Download, Printer, LayoutDashboard, Users,
 } from "lucide-react";
-import { GIG_TOOLS, type GigToolId } from "@/lib/gig-tools";
+import { type GigToolId } from "@/lib/gig-tools";
 import GigToolsOverlay from "@/components/gig-tools/GigToolsOverlay";
-import {
-  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
-} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -237,20 +234,19 @@ export default function AdminGigTrackerPage() {
           </div>
         </div>
 
-        {/* Gig tools — the project dashboard is the one main button; the rest of
-            the (generic, white-label) tools live in a small low-profile dropdown
-            so the gig page stays clean. Each opens as its own full-screen view. */}
-        <div className="flex items-stretch gap-2 mb-6">
+        {/* Gig tools — the project dashboard is the one main button, plus a
+            compact "Tiimi" button. Layout scales down cleanly on mobile. */}
+        <div className="flex items-stretch gap-2 sm:gap-3 mb-6">
           <button
             onClick={() => navigate(`/admin/gig/${jobId}/projekti`)}
-            className="group flex flex-1 items-center gap-4 rounded-2xl p-4 text-left transition-all active:scale-[0.99] premium-shadow bg-gradient-to-br from-zinc-900 to-zinc-800 dark:from-zinc-900 dark:to-black text-white hover:brightness-110"
+            className="group flex flex-1 min-w-0 items-center gap-3 sm:gap-4 rounded-2xl p-3.5 sm:p-4 text-left transition-all active:scale-[0.99] premium-shadow bg-gradient-to-br from-zinc-900 to-zinc-800 dark:from-zinc-900 dark:to-black text-white hover:brightness-110"
           >
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/10">
-              <LayoutDashboard className="h-6 w-6" />
+            <div className="flex h-11 w-11 sm:h-12 sm:w-12 shrink-0 items-center justify-center rounded-xl bg-white/10">
+              <LayoutDashboard className="h-5 w-5 sm:h-6 sm:w-6" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="font-semibold">Avaa projektinäkymä</p>
-              <p className="text-sm text-white/60 truncate">Pohjapiirros &amp; ikkunakartta · kojelauta · työtunnit</p>
+              <p className="font-semibold leading-tight text-[15px] sm:text-base">Avaa projektinäkymä</p>
+              <p className="text-xs sm:text-sm text-white/60 truncate">Pohjapiirros &amp; ikkunakartta · kojelauta · työtunnit</p>
             </div>
             <ChevronRight className="h-5 w-5 shrink-0 text-white/50 transition-transform group-hover:translate-x-0.5" />
           </button>
@@ -258,42 +254,11 @@ export default function AdminGigTrackerPage() {
           <button
             onClick={() => navigate(`/admin/gig/${jobId}/tiimi`)}
             aria-label="Tiimi ja työntekijät"
-            className="flex shrink-0 flex-col items-center justify-center gap-1 rounded-2xl px-4 bg-card text-foreground hover:bg-accent transition-all active:scale-[0.99] premium-shadow"
+            className="flex shrink-0 flex-col items-center justify-center gap-1 rounded-2xl w-16 sm:w-auto sm:px-5 bg-card text-foreground hover:bg-accent transition-all active:scale-[0.99] premium-shadow"
           >
             <Users className="h-5 w-5" />
-            <span className="text-xs font-medium">Tiimi</span>
+            <span className="text-[11px] sm:text-xs font-medium">Tiimi</span>
           </button>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                aria-label="Lisää työkaluja"
-                className="flex shrink-0 flex-col items-center justify-center gap-1 rounded-2xl px-4 bg-card text-foreground hover:bg-accent transition-all active:scale-[0.99] premium-shadow"
-              >
-                <Wrench className="h-5 w-5" />
-                <span className="flex items-center gap-0.5 text-xs font-medium">Työkalut <ChevronDown className="h-3 w-3" /></span>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-64">
-              {GIG_TOOLS.filter((t) => t.kind === "panel").map((t) => {
-                const Icon = t.icon;
-                return (
-                  <DropdownMenuItem key={t.id} onClick={() => setToolsOpen(t.id)} className="gap-3 py-2.5 cursor-pointer">
-                    <span
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
-                      style={{ background: `rgba(${t.accent},0.12)`, color: `rgb(${t.accent})` }}
-                    >
-                      <Icon className="h-5 w-5" />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block font-medium leading-tight">{t.title}</span>
-                      <span className="block text-xs text-muted-foreground leading-tight truncate">{t.subtitle}</span>
-                    </span>
-                  </DropdownMenuItem>
-                );
-              })}
-            </DropdownMenuContent>
-          </DropdownMenu>
         </div>
 
         {/* Accrual headline */}

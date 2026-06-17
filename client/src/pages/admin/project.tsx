@@ -297,10 +297,17 @@ export default function AdminProjectPage() {
   for (const m of project.crew ?? []) workerNames[m.id] = m.name;
   // This gig's pickable crew for the "who washed this window" picker: the gig's
   // assigned workers + ad-hoc crew, de-duped, with display names.
+  // Mask admin-linked crew (e.g. Petrus Aalto) — they're hidden from this gig,
+  // so they must not appear as a "kuka pesi" option either. Hosts (Joonatan/
+  // Matias) stay pickable because they're the ones logging windows.
+  const maskedWorkerIds = new Set<string>(["petrus"]);
+  for (const m of project.crew ?? []) {
+    if (m.adminLinked && m.role !== "host") maskedWorkerIds.add(m.id);
+  }
   const gigWorkers: { id: string; name: string }[] = [];
   const seenWorker = new Set<string>();
   for (const id of [...(project.workers ?? []), ...((project.crew ?? []).map((m) => m.id))]) {
-    if (seenWorker.has(id)) continue;
+    if (seenWorker.has(id) || maskedWorkerIds.has(id)) continue;
     seenWorker.add(id);
     gigWorkers.push({ id, name: workerNames[id] ?? workerName(id) });
   }

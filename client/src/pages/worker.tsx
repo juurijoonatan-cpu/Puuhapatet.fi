@@ -102,7 +102,7 @@ function PinGate({ token, onUnlock }: { token: string; onUnlock: () => void }) {
 
 // ─── Onboarding (intro + profile + agreements) ─────────────────────────────────
 
-type Step = "intro" | "profile" | { agreementIndex: number } | "pin" | "submitting";
+type Step = "intro" | "profile" | { agreementIndex: number } | "sign" | "pin" | "submitting";
 
 function Onboarding({ token, view, onDone }: { token: string; view: WorkerView; onDone: (v: WorkerView) => void }) {
   const required = WORKER_AGREEMENTS.filter((a) => view.requiredAgreementIds.includes(a.id));
@@ -113,7 +113,11 @@ function Onboarding({ token, view, onDone }: { token: string; view: WorkerView; 
     email: view.worker.profile?.email ?? "",
     ...(view.worker.profile?.answers ?? {}),
   }));
-  const [sigs, setSigs] = useState<Record<string, { dataUrl: string; clauses: Record<string, boolean> }>>({});
+  // Per-agreement clause acceptance (each contract is read + accepted), but the
+  // worker draws their signature ONCE at the end — that single signature then
+  // applies to every agreement.
+  const [accepts, setAccepts] = useState<Record<string, Record<string, boolean>>>({});
+  const [signature, setSignature] = useState("");
   const [pin, setPin] = useState("");
   const [err, setErr] = useState("");
   const [introReady, setIntroReady] = useState(false);
@@ -122,13 +126,14 @@ function Onboarding({ token, view, onDone }: { token: string; view: WorkerView; 
 
   const submit = async () => {
     setStep("submitting");
+    const signedAt = Date.now();
     const agreements = required.map((a) => ({
       agreementId: a.id,
       version: WORKER_AGREEMENT_VERSION,
-      signedAt: Date.now(),
+      signedAt,
       signerName: answers.fullName || view.worker.name,
-      signatureDataUrl: sigs[a.id]?.dataUrl ?? "",
-      acceptedClauseIds: a.clauses.filter((c) => sigs[a.id]?.clauses[c.id]).map((c) => c.id),
+      signatureDataUrl: signature, // one signature applies to all agreements
+      acceptedClauseIds: a.clauses.filter((c) => accepts[a.id]?.[c.id]).map((c) => c.id),
     }));
     const profile = {
       fullName: answers.fullName, phone: answers.phone, email: answers.email,
@@ -196,13 +201,13 @@ function Onboarding({ token, view, onDone }: { token: string; view: WorkerView; 
     );
   }
 
-  // ── Agreements ──
+  // ── Agreements (read + accept; signing happens once at the end) ──
   if (typeof step === "object") {
     const idx = step.agreementIndex;
     const ag = required[idx];
-    const cur = sigs[ag.id] ?? { dataUrl: "", clauses: {} };
-    const allClauses = ag.clauses.every((c) => cur.clauses[c.id]);
-    const canContinue = allClauses && !!cur.dataUrl;
+    const cur = accepts[ag.id] ?? {};
+    const allClauses = ag.clauses.every((c) => cur[c.id]);
+    const canContinue = allClauses;
     const isLast = idx === required.length - 1;
     return (
       <Paper>
@@ -212,21 +217,71 @@ function Onboarding({ token, view, onDone }: { token: string; view: WorkerView; 
           <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${T.hair}` }}>
             {ag.clauses.map((c) => (
               <label key={c.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", marginBottom: 10, cursor: "pointer", fontSize: 13.5, lineHeight: 1.5 }}>
-                <input type="checkbox" checked={!!cur.clauses[c.id]} onChange={(e) => setSigs((s) => ({ ...s, [ag.id]: { ...cur, clauses: { ...cur.clauses, [c.id]: e.target.checked } } }))} style={{ marginTop: 3, width: 18, height: 18, flexShrink: 0 }} />
+                <input type="checkbox" checked={!!cur[c.id]} onChange={(e) => setAccepts((s) => ({ ...s, [ag.id]: { ...cur, [c.id]: e.target.checked } }))} style={{ marginTop: 3, width: 18, height: 18, flexShrink: 0 }} />
                 <span>{c.text}</span>
               </label>
             ))}
           </div>
-          <p style={{ fontSize: 13.5, fontWeight: 600, marginTop: 14, marginBottom: 8 }}>{ag.accept}</p>
-          <SignaturePad onChange={(d) => setSigs((s) => ({ ...s, [ag.id]: { ...cur, dataUrl: d || "" } }))} />
+          <p style={{ fontSize: 13.5, fontWeight: 600, marginTop: 14, marginBottom: 4 }}>{ag.accept}</p>
+          <p style={{ fontSize: 12.5, color: T.muted, marginTop: 0, marginBottom: 8 }}>
+            Allekirjoitat kaikki sopimukset kerralla viimeisellä sivulla — sama allekirjoitus pätee jokaiseen.
+          </p>
           <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
             <button onClick={() => setStep(idx === 0 ? "profile" : { agreementIndex: idx - 1 })} style={secondaryBtn}>← Takaisin</button>
             <button
               disabled={!canContinue}
-              onClick={() => setStep(isLast ? "pin" : { agreementIndex: idx + 1 })}
+              onClick={() => setStep(isLast ? "sign" : { agreementIndex: idx + 1 })}
               style={{ ...primaryBtn, flex: 1, opacity: canContinue ? 1 : 0.5, cursor: canContinue ? "pointer" : "not-allowed" }}
             >
-              {isLast ? "Viimeistele →" : "Seuraava sopimus →"}
+              {isLast ? "Allekirjoita sopimukset →" : "Seuraava sopimus →"}
+            </button>
+          </div>
+        </Wrap>
+      </Paper>
+    );
+  }
+
+  // ── Single signature for all agreements ──
+  if (step === "sign") {
+    const allAccepted = required.every((a) => a.clauses.every((c) => accepts[a.id]?.[c.id]));
+    const canSign = allAccepted && !!signature;
+    return (
+      <Paper>
+        <Wrap>
+          <StepHeader
+            title="Allekirjoita sopimukset"
+            sub="Olet lukenut ja hyväksynyt kaikki sopimukset. Yksi allekirjoitus vahvistaa ne kaikki."
+            n="Allekirjoitus"
+          />
+          <div style={{ marginBottom: 16 }}>
+            {required.map((a, i) => {
+              const ok = a.clauses.every((c) => accepts[a.id]?.[c.id]);
+              return (
+                <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: i < required.length - 1 ? `1px solid ${T.hair}` : "none" }}>
+                  <span style={{ width: 22, height: 22, borderRadius: 999, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: ok ? T.green : T.hair, color: "#fff", fontSize: 13, fontWeight: 700 }}>{ok ? "✓" : "!"}</span>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>{a.title}</p>
+                    <p style={{ margin: 0, fontSize: 12, color: T.muted }}>{ok ? "Luettu ja hyväksytty" : "Hyväksy ehdot ensin"}</p>
+                  </div>
+                  {!ok && (
+                    <button onClick={() => setStep({ agreementIndex: required.findIndex((r) => r.id === a.id) })} style={{ ...secondaryBtn, marginLeft: "auto", padding: "6px 12px", fontSize: 12 }}>Avaa</button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <p style={{ fontSize: 13.5, fontWeight: 600, marginTop: 6, marginBottom: 8 }}>
+            Allekirjoituksellani hyväksyn kaikki yllä olevat sopimukset sitovasti.
+          </p>
+          <SignaturePad onChange={(d) => setSignature(d || "")} />
+          <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+            <button onClick={() => setStep({ agreementIndex: required.length - 1 })} style={secondaryBtn}>← Takaisin</button>
+            <button
+              disabled={!canSign}
+              onClick={() => setStep("pin")}
+              style={{ ...primaryBtn, flex: 1, opacity: canSign ? 1 : 0.5, cursor: canSign ? "pointer" : "not-allowed" }}
+            >
+              Viimeistele →
             </button>
           </div>
         </Wrap>

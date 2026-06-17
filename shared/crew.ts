@@ -48,6 +48,41 @@ export interface CrewNote {
   text: string;
 }
 
+/**
+ * A payout from Puuhapatet → the worker (alihankkija) for work done.
+ *
+ * This is the OPPOSITE direction from the customer invoicing in gig-tracker:
+ * here Puuhapatet pays the subcontractor, who then issues their own invoice
+ * (their Y-tunnus) back to Puuhapatet. The bank transfer itself is MANUAL —
+ * the system only tracks state + generates the worker's invoice document.
+ *
+ * Flow / status:
+ *  - "ilmoitettu"  : Puuhapatet created a payout notification for the worker.
+ *  - "hyvaksytty"  : the worker confirmed the amount + their billing details.
+ *  - "maksettu"    : Puuhapatet paid it manually in the bank -> worker invoice
+ *                    auto-generated (PDF) and emailed to the team.
+ */
+export type CrewPayoutStatus = "ilmoitettu" | "hyvaksytty" | "maksettu";
+
+export interface CrewPayout {
+  id: string;                   // stable id
+  amountCents: number;          // gross amount paid to the worker
+  windows: number;              // windows this payout covers (informational)
+  note?: string;                // free-text (e.g. "FR8 - 1. era")
+  status: CrewPayoutStatus;
+  createdAt: number;            // when the notification was created
+  approvedAt?: number;          // when the worker confirmed
+  paidAt?: number;              // when marked paid (bank transfer done)
+  invoiceNo?: string;           // the worker's invoice number once paid
+  // Billing snapshot captured at approval (worker's own details for their invoice).
+  billing?: {
+    name?: string;
+    yTunnus?: string;
+    iban?: string;
+    address?: string;
+  };
+}
+
 export interface CrewMember {
   id: string;                   // stable worker id (matches washedBy / hours)
   token: string;                // secret link token (the worker's private URL)
@@ -61,6 +96,7 @@ export interface CrewMember {
   agreements: CrewAgreementSignature[];
   onboardedAt?: number;         // when profile + agreements were completed
   notes: CrewNote[];
+  payouts?: CrewPayout[];       // Puuhapatet -> worker payments (newest-first)
   createdAt: number;
 }
 
@@ -177,6 +213,38 @@ function sanitizeAgreement(input: any): CrewAgreementSignature | null {
   };
 }
 
+function sanitizePayout(input: any): CrewPayout | null {
+  if (!input || typeof input !== "object") return null;
+  const id = String(input.id ?? "").slice(0, 40).trim();
+  const amountCents = Math.floor(Number(input.amountCents));
+  if (!id || !Number.isFinite(amountCents) || amountCents <= 0) return null;
+  const status: CrewPayoutStatus =
+    input.status === "maksettu" ? "maksettu" : input.status === "hyvaksytty" ? "hyvaksytty" : "ilmoitettu";
+  const b = input.billing && typeof input.billing === "object" ? input.billing : null;
+  return {
+    id,
+    amountCents: Math.min(amountCents, 1_000_000_00),
+    windows: Math.max(0, Math.floor(Number(input.windows) || 0)),
+    note: str(input.note, 200),
+    status,
+    createdAt: Number(input.createdAt) || Date.now(),
+    approvedAt: input.approvedAt ? Number(input.approvedAt) || undefined : undefined,
+    paidAt: input.paidAt ? Number(input.paidAt) || undefined : undefined,
+    invoiceNo: str(input.invoiceNo, 40),
+    billing: b ? {
+      name: str(b.name, 160),
+      yTunnus: str(b.yTunnus, 40),
+      iban: str(b.iban, 40),
+      address: str(b.address, 240),
+    } : undefined,
+  };
+}
+
+/** Total of all paid-out payouts (cents) for a worker. */
+export function totalPaidPayoutCents(member: CrewMember): number {
+  return (member.payouts || []).filter((p) => p.status === "maksettu").reduce((s, p) => s + p.amountCents, 0);
+}
+
 export function sanitizeCrewMember(input: any): CrewMember | null {
   if (!input || typeof input !== "object") return null;
   const id = String(input.id ?? "").slice(0, 40).trim();
@@ -203,6 +271,10 @@ export function sanitizeCrewMember(input: any): CrewMember | null {
     agreements,
     onboardedAt: input.onboardedAt ? Number(input.onboardedAt) || undefined : undefined,
     notes,
+    payouts: (Array.isArray(input.payouts) ? input.payouts : [])
+      .slice(0, 100)
+      .map(sanitizePayout)
+      .filter((p: CrewPayout | null): p is CrewPayout => !!p),
     createdAt: Number(input.createdAt) || Date.now(),
   };
 }

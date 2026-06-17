@@ -21,7 +21,9 @@ export interface WorkerView {
     profile: CrewProfile | null;
     signedAgreementIds: string[];
     notes: { t: number; text: string }[];
+    billing: { name: string | null; yTunnus: string | null; iban: string | null; address: string | null };
   };
+  payouts: import("@shared/crew").CrewPayout[];
   building: ProjBuilding;
   pricePerWindow: number;          // the worker's OWN rate (not the gig price)
   marks: ProjMarksData;
@@ -65,6 +67,15 @@ export interface GigPublicView {
   totals: GigTotals;
   updatedAt: number;
   invoicedCents: number;
+  // Read-only floor-plan map (white, customer view). Null if no plan.
+  map: {
+    building: { name: string | null; address: string | null; floors: string[]; planBase: string };
+    marks: ProjMarksData;
+    statuses: Record<string, WindowStatus>;
+    customMarks: Record<string, ProjCustomMark[]>;
+    posOverrides: Record<string, { x: number; y: number }>;
+    deleted: Record<string, boolean>;
+  } | null;
   // Contract & signing gate
   contractText: string | null;
   requireSignature: boolean;
@@ -568,6 +579,10 @@ export const api = {
   crewAddNote: (token: string, text: string) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/note`, { text }),
 
+  // Worker approves a payout (locks in their billing snapshot for the invoice).
+  crewApprovePayout: (token: string, payoutId: string, billing: { name?: string; yTunnus?: string; iban?: string; address?: string }) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/payout/${payoutId}/approve`, { billing }),
+
   getCrewAgreements: () =>
     request<{ ok: boolean; version: string; agreements: WorkerAgreement[]; requiredAgreementIds: string[] }>(
       "GET", `/api/crew-agreements`),
@@ -592,6 +607,16 @@ export const api = {
   removeCrewMember: (jobId: number, memberId: string) =>
     request<{ ok: boolean; crew: CrewMember[] }>(
       "DELETE", `/api/jobs/${jobId}/crew/${memberId}`),
+
+  // Host: create a payout notification for a worker (Puuhapatet → alihankkija).
+  createPayout: (jobId: number, memberId: string, data: { amountCents: number; windows?: number; note?: string }) =>
+    request<{ ok: boolean; member: CrewMember }>(
+      "POST", `/api/jobs/${jobId}/crew/${memberId}/payout`, data),
+
+  // Host: mark a payout paid (after manual bank transfer) → auto-invoice + email.
+  markPayoutPaid: (jobId: number, memberId: string, payoutId: string) =>
+    request<{ ok: boolean; member: CrewMember; emailId?: string }>(
+      "POST", `/api/jobs/${jobId}/crew/${memberId}/payout/${payoutId}/paid`),
 
   // Legacy compat stubs
   getJob: (_jobId: string): Promise<ApiResponse<{ ok: boolean; job?: unknown }>> =>

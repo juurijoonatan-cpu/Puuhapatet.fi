@@ -323,7 +323,7 @@ function AgreementBody({ ag }: { ag: WorkerAgreement }) {
 
 // ─── Dashboard ──────────────────────────────────────────────────────────────
 
-type Tab = "map" | "earnings" | "hours" | "notes";
+type Tab = "map" | "earnings" | "hours" | "payouts" | "notes";
 
 function Dashboard({ token, view, setView, reload }: { token: string; view: WorkerView; setView: (v: WorkerView) => void; reload: () => void }) {
   const [tab, setTab] = useState<Tab>("map");
@@ -381,16 +381,23 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
         )}
         {tab === "earnings" && <EarningsTab view={view} />}
         {tab === "hours" && <HoursTab token={token} view={view} setView={setView} />}
+        {tab === "payouts" && <PayoutsTab token={token} view={view} setView={setView} />}
         {tab === "notes" && <NotesTab token={token} view={view} setView={setView} />}
       </div>
 
       {/* Bottom nav */}
       <div style={{ flexShrink: 0, display: "flex", borderTop: "1px solid rgba(255,255,255,0.08)", background: "rgba(8,8,10,0.95)" }}>
-        {([["map", "Kartta"], ["earnings", "Ansiot"], ["hours", "Tunnit"], ["notes", "Muistiinpanot"]] as [Tab, string][]).map(([id, label]) => (
-          <button key={id} onClick={() => { setTab(id); if (id !== "map") reload(); }} style={{ flex: 1, padding: "12px 4px 16px", background: "none", border: "none", color: tab === id ? "#fff" : "rgba(255,255,255,0.45)", fontSize: 12, fontWeight: tab === id ? 700 : 500, fontFamily: FONT, cursor: "pointer" }}>
-            {label}
-          </button>
-        ))}
+        {([["map", "Kartta"], ["earnings", "Ansiot"], ["hours", "Tunnit"], ["payouts", "Maksut"], ["notes", "Muistiinpanot"]] as [Tab, string][]).map(([id, label]) => {
+          const pending = id === "payouts" ? (view.payouts || []).filter((p) => p.status === "ilmoitettu").length : 0;
+          return (
+            <button key={id} onClick={() => { setTab(id); if (id !== "map") reload(); }} style={{ position: "relative", flex: 1, padding: "12px 4px 16px", background: "none", border: "none", color: tab === id ? "#fff" : "rgba(255,255,255,0.45)", fontSize: 11.5, fontWeight: tab === id ? 700 : 500, fontFamily: FONT, cursor: "pointer" }}>
+              {label}
+              {pending > 0 && (
+                <span style={{ position: "absolute", top: 6, left: "calc(50% + 16px)", minWidth: 16, height: 16, padding: "0 4px", borderRadius: 999, background: "#E03B3B", color: "#fff", fontSize: 10, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{pending}</span>
+              )}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -468,6 +475,108 @@ function Leaderboard({ view }: { view: WorkerView }) {
           {board[0].isMe ? "Sinä johdat — hieno suoritus! 🏆" : `${firstName(board[0].name)} johtaa. Kurot kiinni! 💪`}
         </p>
       )}
+    </div>
+  );
+}
+
+/** Payouts (Puuhapatet → you). Approve the amount + confirm billing details;
+ *  Puuhapatet then pays manually and your invoice is generated automatically. */
+function PayoutsTab({ token, view, setView }: { token: string; view: WorkerView; setView: (v: WorkerView) => void }) {
+  const payouts = view.payouts || [];
+  const b = view.worker.billing;
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [form, setForm] = useState({ name: b.name || "", yTunnus: b.yTunnus || "", iban: b.iban || "", address: b.address || "" });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const approve = async (id: string) => {
+    setErr("");
+    if (!form.name.trim()) return setErr("Täytä laskuttajan nimi.");
+    if (!form.iban.trim()) return setErr("Täytä IBAN, jolle maksu maksetaan.");
+    setBusy(true);
+    const res = await api.crewApprovePayout(token, id, {
+      name: form.name.trim(), yTunnus: form.yTunnus.trim() || undefined,
+      iban: form.iban.trim(), address: form.address.trim() || undefined,
+    });
+    setBusy(false);
+    if (res.ok && res.data?.view) { setView(res.data.view); setOpenId(null); }
+    else setErr(res.error || "Hyväksyntä epäonnistui.");
+  };
+
+  const STATUS: Record<string, { label: string; color: string; bg: string }> = {
+    ilmoitettu: { label: "Odottaa hyväksyntää", color: "#E0A800", bg: "rgba(224,168,0,0.14)" },
+    hyvaksytty: { label: "Hyväksytty · maksetaan", color: "#7CE0A6", bg: "rgba(124,224,166,0.14)" },
+    maksettu: { label: "Maksettu", color: "#7CE0A6", bg: "rgba(124,224,166,0.18)" },
+  };
+
+  return (
+    <div style={{ height: "100%", overflowY: "auto", padding: 20 }}>
+      <p style={{ margin: "0 0 4px", fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.5)" }}>Maksut sinulle</p>
+      <p style={{ margin: "0 0 18px", fontSize: 13, color: "rgba(255,255,255,0.55)", lineHeight: 1.6 }}>
+        Puuhapatet maksaa työstäsi. Hyväksy summa ja vahvista laskutustietosi — maksu tehdään tilillesi,
+        ja sinun laskusi Puuhapatetille luodaan automaattisesti.
+      </p>
+
+      {payouts.length === 0 && (
+        <div style={{ padding: 18, borderRadius: 12, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.6)", fontSize: 13.5, textAlign: "center" }}>
+          Ei vielä maksuja. Näet täällä maksuilmoitukset, kun ne luodaan.
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {payouts.map((p) => {
+          const st = STATUS[p.status] || STATUS.ilmoitettu;
+          const open = openId === p.id;
+          return (
+            <div key={p.id} style={{ padding: 16, borderRadius: 14, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                <div>
+                  <p style={{ margin: 0, fontSize: 24, fontWeight: 800, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(p.amountCents)}</p>
+                  <p style={{ margin: "2px 0 0", fontSize: 12.5, color: "rgba(255,255,255,0.55)" }}>
+                    {p.note || "Ikkunanpesutyö"}{p.windows ? ` · ${p.windows} ikkunaa` : ""}
+                  </p>
+                </div>
+                <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 600, color: st.color, background: st.bg, borderRadius: 999, padding: "5px 10px", whiteSpace: "nowrap" }}>{st.label}</span>
+              </div>
+
+              {p.status === "maksettu" && p.invoiceNo && (
+                <p style={{ margin: "12px 0 0", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
+                  Laskusi {p.invoiceNo} luotu{p.paidAt ? ` · ${new Date(p.paidAt).toLocaleDateString("fi-FI")}` : ""}.
+                </p>
+              )}
+
+              {p.status === "ilmoitettu" && !open && (
+                <button onClick={() => { setOpenId(p.id); setErr(""); }} style={{ ...primaryBtn, background: T.green, marginTop: 14 }}>
+                  Hyväksy ja vahvista tiedot
+                </button>
+              )}
+
+              {p.status === "ilmoitettu" && open && (
+                <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                  <p style={{ margin: "0 0 10px", fontSize: 12, color: "rgba(255,255,255,0.55)" }}>Laskutustietosi (näkyvät laskullasi Puuhapatetille):</p>
+                  {([["name", "Nimi / toiminimi *"], ["yTunnus", "Y-tunnus"], ["iban", "IBAN *"], ["address", "Osoite"]] as [keyof typeof form, string][]).map(([k, lbl]) => (
+                    <div key={k} style={{ marginBottom: 10 }}>
+                      <label style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>{lbl}</label>
+                      <input
+                        value={form[k]}
+                        onChange={(e) => setForm((f) => ({ ...f, [k]: e.target.value }))}
+                        style={{ ...inputStyle, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff" }}
+                      />
+                    </div>
+                  ))}
+                  {err && <p style={{ margin: "0 0 8px", fontSize: 12.5, color: "#FF9A9A" }}>{err}</p>}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => approve(p.id)} disabled={busy} style={{ ...primaryBtn, background: T.green, flex: 1, opacity: busy ? 0.6 : 1 }}>
+                      {busy ? "Hyväksytään…" : "Hyväksy maksu"}
+                    </button>
+                    <button onClick={() => setOpenId(null)} style={{ ...secondaryBtn, flex: "0 0 auto" }}>Peruuta</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

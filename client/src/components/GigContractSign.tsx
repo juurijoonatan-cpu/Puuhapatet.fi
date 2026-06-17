@@ -22,6 +22,9 @@ const T = {
 };
 const FONT = "'Poppins', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif";
 
+// The physical signed contract, served from the client's public folder.
+const CONTRACT_PDF_URL = "/contracts/PT-2026-02.pdf";
+
 interface Props {
   token: string;
   view: GigPublicView;
@@ -210,6 +213,39 @@ export default function GigContractSign({ token, view, onSigned }: Props) {
             {view.description ? <> — {view.description}</> : null}. Lue sopimus, täytä tilaajan tiedot ja
             allekirjoita alla. Hyväksynnän jälkeen pääset suoraan reaaliaikaiseen seurantapaneeliin, jossa
             näet työn etenemisen ja kertyvän summan suhteessa hintakattoon.
+          </p>
+        </Panel>
+
+        {/* Physical contract PDF — embedded scrollable viewer + download. */}
+        <Panel>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+            <div>
+              <p style={mono}>SOPIMUSASIAKIRJA</p>
+              <p style={{ margin: "4px 0 0", fontSize: 13, color: T.muted }}>
+                {view.contractId ? `${view.contractId} · ` : ""}Ikkunanpesusopimus (8 sivua)
+              </p>
+            </div>
+            <a
+              href={CONTRACT_PDF_URL}
+              download="Puuhapatet-sopimus.pdf"
+              style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 14px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, color: T.ink, fontFamily: FONT, fontSize: 13, fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap" }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={T.navy} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
+              Lataa PDF
+            </a>
+          </div>
+          <object
+            data={`${CONTRACT_PDF_URL}#view=FitH`}
+            type="application/pdf"
+            style={{ width: "100%", height: 520, borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, display: "block" }}
+          >
+            <div style={{ padding: 24, textAlign: "center", fontSize: 13.5, color: T.muted }}>
+              Selaimesi ei näytä PDF:ää suoraan.{" "}
+              <a href={CONTRACT_PDF_URL} target="_blank" rel="noreferrer" style={{ color: T.navy, fontWeight: 600 }}>Avaa sopimus tästä</a>.
+            </div>
+          </object>
+          <p style={{ margin: "10px 0 0", fontSize: 12, color: T.muted, lineHeight: 1.6 }}>
+            Lue sopimus huolellisesti. Allekirjoittamalla alla vahvistat hyväksyväsi tämän asiakirjan ehdot.
           </p>
         </Panel>
 

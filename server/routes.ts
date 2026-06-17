@@ -211,6 +211,104 @@ function generateKotitalousReceiptPdf(params: {
   });
 }
 
+// ─── Worker (alihankkija) invoice PDF ─────────────────────────────────────────
+// The legally-formatted invoice the subcontractor issues TO Puuhapatet (their
+// Y-tunnus → Puuhapatet). Generated automatically once Puuhapatet marks the
+// payout paid. Note the direction is the opposite of the customer invoice.
+function generateWorkerInvoicePdf(params: {
+  invoiceNo: string;
+  workerName: string;
+  workerYTunnus?: string;
+  workerAddress?: string;
+  workerIban?: string;
+  windows: number;
+  amountCents: number;
+  note?: string;
+  invoiceDate: string;
+  paidDate?: string;
+}): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 48, size: "A4" });
+    const chunks: Buffer[] = [];
+    doc.on("data", (c: Buffer) => chunks.push(c));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    const INK = "#1A1A1A";
+    const GRAY = "#64748b";
+    const NAVY = "#1F3B57";
+    const fmtEur = (cents: number) =>
+      (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+    const pageW = doc.page.width - 96;
+
+    // Header
+    doc.rect(48, 48, pageW, 56).fill(NAVY);
+    doc.fill("#fff").font("Helvetica-Bold").fontSize(16).text("LASKU", 64, 62, { width: pageW - 32 });
+    doc.fill("#cdd9e6").font("Helvetica").fontSize(9)
+      .text(`Laskunumero ${params.invoiceNo}  ·  ${params.invoiceDate}`, 64, 84, { width: pageW - 32 });
+
+    let y = 124;
+    const colW = (pageW - 16) / 2;
+
+    // Parties: worker (seller) → Puuhapatet (buyer)
+    doc.fill(GRAY).font("Helvetica-Bold").fontSize(7).text("LASKUTTAJA (MYYJÄ)", 48, y, { width: colW });
+    doc.text("LASKUN SAAJA (OSTAJA)", 48 + colW + 16, y, { width: colW });
+    y += 14;
+    doc.fill(INK).font("Helvetica-Bold").fontSize(10);
+    doc.text(params.workerName || "Alihankkija", 48, y, { width: colW });
+    doc.text("Puuhapatet", 48 + colW + 16, y, { width: colW });
+    y += 14;
+    doc.fill(GRAY).font("Helvetica").fontSize(9);
+    const leftStartY = y;
+    if (params.workerYTunnus) { doc.text(`Y-tunnus: ${params.workerYTunnus}`, 48, y, { width: colW }); y += 12; }
+    if (params.workerAddress) { doc.text(params.workerAddress, 48, y, { width: colW }); y += 12; }
+    if (params.workerIban) { doc.text(`IBAN: ${params.workerIban}`, 48, y, { width: colW }); y += 12; }
+    doc.text("Y-tunnus: —", 48 + colW + 16, leftStartY, { width: colW });
+    doc.text("info@puuhapatet.fi · puuhapatet.fi", 48 + colW + 16, leftStartY + 12, { width: colW });
+
+    y = Math.max(y, leftStartY + 36) + 18;
+
+    // Line item
+    doc.rect(48, y, pageW, 26).fill("#F1F5F9");
+    doc.fill(GRAY).font("Helvetica-Bold").fontSize(8);
+    doc.text("KUVAUS", 60, y + 9, { width: pageW - 140 });
+    doc.text("YHTEENSÄ", 48 + pageW - 100, y + 9, { width: 88, align: "right" });
+    y += 26;
+
+    const desc = params.note || `Ikkunanpesutyö${params.windows ? ` — ${params.windows} ikkunaa` : ""}`;
+    doc.fill(INK).font("Helvetica").fontSize(10).text(desc, 60, y + 8, { width: pageW - 140 });
+    doc.font("Helvetica-Bold").text(fmtEur(params.amountCents), 48 + pageW - 100, y + 8, { width: 88, align: "right" });
+    y += 34;
+    doc.moveTo(48, y).lineTo(48 + pageW, y).strokeColor("#E2E8F0").stroke();
+    y += 12;
+
+    // Total
+    doc.fill(GRAY).font("Helvetica").fontSize(9).text("Veroton summa", 48 + pageW - 220, y, { width: 120, align: "right" });
+    doc.fill(INK).font("Helvetica").fontSize(9).text(fmtEur(params.amountCents), 48 + pageW - 100, y, { width: 88, align: "right" });
+    y += 16;
+    doc.fill(NAVY).font("Helvetica-Bold").fontSize(13).text("Maksettavaa", 48 + pageW - 220, y, { width: 120, align: "right" });
+    doc.text(fmtEur(params.amountCents), 48 + pageW - 100, y, { width: 88, align: "right" });
+    y += 30;
+
+    // VAT note (alv-rekisteröitymätön pienyrittäjä, oletus)
+    doc.fill(GRAY).font("Helvetica").fontSize(8).text(
+      "Arvonlisäveroa ei lisätä (AVL 3 §, vähäinen toiminta). Lasku alihankintatyöstä Puuhapatetille.",
+      48, y, { width: pageW },
+    );
+    y += 24;
+    if (params.workerIban) {
+      doc.fill(INK).font("Helvetica-Bold").fontSize(9).text("Maksutiedot", 48, y); y += 14;
+      doc.fill(GRAY).font("Helvetica").fontSize(9).text(`Tilinumero (IBAN): ${params.workerIban}`, 48, y); y += 12;
+      doc.text(`Viite: ${params.invoiceNo}`, 48, y); y += 12;
+    }
+    if (params.paidDate) {
+      doc.fill("#3E7C59").font("Helvetica-Bold").fontSize(9).text(`Maksettu ${params.paidDate}.`, 48, y);
+    }
+
+    doc.end();
+  });
+}
+
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
 
@@ -2504,6 +2602,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const gig = parseGig(row.job.gigData);
       if (!gig) return res.status(404).json({ error: "Seurantaa ei löydy" });
       const totals = computeTotals(gig);
+      // Read-only floor-plan map data for the customer view (white, no controls).
+      // Lives in projectData; we expose only the dot positions + statuses so the
+      // customer can watch washed windows update live. No worker ids, no rates.
+      const proj = parseProject(row.job.projectData ?? null);
+      const map = proj && proj.building?.planBase ? {
+        building: { name: proj.building.name ?? null, address: proj.building.address ?? null, floors: proj.building.floors, planBase: proj.building.planBase },
+        marks: proj.marks,
+        statuses: proj.statuses,
+        customMarks: proj.customMarks,
+        posOverrides: proj.posOverrides,
+        deleted: proj.deleted,
+      } : null;
       // Only expose what the customer is meant to see — no internal billing notes.
       res.json({
         contractId: gig.contractId ?? null,
@@ -2519,6 +2629,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         totals,
         updatedAt: gig.updatedAt,
         invoicedCents: gig.invoicedCents,
+        // Read-only floor-plan map (null if the gig has no plan).
+        map,
         // Contract & signing gate — the live view opens only after the customer signs.
         contractText: gig.contractText ?? null,
         requireSignature: signatureRequired(gig),
@@ -2953,7 +3065,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     // Team leaderboard (workers only). Exposes name + windows + windows/hour — NO
     // pay rate, tokens or euros — so it's safe to show every worker the standings.
     const leaderboard = (project.crew || [])
-      .filter((m) => m.active && m.role === "worker")
+      .filter((m) => m.active && m.role === "worker" && !m.adminLinked)
       .map((m) => {
         const s = crewMemberStats(project, m);
         return { id: m.id, name: m.name, washed: s.washed, windowsPerHour: s.windowsPerHour, hours: s.hours, isMe: m.id === member.id };
@@ -2974,7 +3086,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           .filter((a) => a.version === WORKER_AGREEMENT_VERSION)
           .map((a) => a.agreementId),
         notes: member.notes,
+        // The worker's own billing details (their Y-tunnus + IBAN), used to
+        // prefill the payout-approval form and their auto-generated invoice.
+        billing: {
+          name: member.profile?.fullName ?? member.name,
+          yTunnus: member.profile?.yTunnus ?? null,
+          iban: member.profile?.iban ?? null,
+          address: member.profile?.city ?? null,
+        },
       },
+      // Puuhapatet -> worker payouts (newest-first). The worker sees and approves
+      // these; the gig price/cap stays hidden as always.
+      payouts: (member.payouts || []).slice().sort((a, b) => b.createdAt - a.createdAt),
       building: project.building,
       pricePerWindow: member.perWindowCents / 100, // worker's OWN rate, not the gig price
       marks: project.marks,
@@ -3133,6 +3256,39 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // Worker approves a payout notification: confirms the amount and locks in
+  // their billing snapshot (name / Y-tunnus / IBAN) for their own invoice. The
+  // actual bank transfer is done manually by Puuhapatet afterwards.
+  app.post("/api/crew/:token/payout/:payoutId/approve", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const pid = String(req.params.payoutId);
+      const list = member.payouts || [];
+      const payout = list.find((p) => p.id === pid);
+      if (!payout) return res.status(404).json({ error: "Maksua ei löytynyt" });
+      if (payout.status !== "ilmoitettu") {
+        return res.status(409).json({ error: "Maksu on jo hyväksytty" });
+      }
+      const b = (req.body?.billing ?? {}) as Record<string, any>;
+      payout.status = "hyvaksytty";
+      payout.approvedAt = Date.now();
+      payout.billing = {
+        name: String(b.name ?? member.profile?.fullName ?? member.name).slice(0, 160) || undefined,
+        yTunnus: String(b.yTunnus ?? member.profile?.yTunnus ?? "").slice(0, 40) || undefined,
+        iban: String(b.iban ?? member.profile?.iban ?? "").slice(0, 40) || undefined,
+        address: String(b.address ?? "").slice(0, 240) || undefined,
+      };
+      project.crew = (project.crew || []).map((m) => (m.id === member.id ? { ...m, payouts: list } : m));
+      const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
+      res.json({ ok: true, view: workerView(saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
   // The agreement documents + profile questionnaire (for the worker onboarding UI).
   app.get("/api/crew-agreements", (_req, res) => {
     res.json({ ok: true, version: WORKER_AGREEMENT_VERSION, agreements: WORKER_AGREEMENTS, requiredAgreementIds: REQUIRED_AGREEMENT_IDS });
@@ -3153,11 +3309,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const loaded = await loadJobProject(Number(req.params.id));
       if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const { project } = loaded;
-      const crew = (project.crew || []).map((m) => ({
-        member: m,
-        stats: crewMemberStats(project, m),
-        onboarded: isOnboarded(m, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION),
-      }));
+      // Mask admin-linked workers (e.g. Petrus Aalto) from this gig's roster
+      // entirely — they are not part of FR8 in the coming weeks. The redirect
+      // guard still protects their personal /tyo link if it's ever opened.
+      const crew = (project.crew || [])
+        .filter((m) => !m.adminLinked)
+        .map((m) => ({
+          member: m,
+          stats: crewMemberStats(project, m),
+          onboarded: isOnboarded(m, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION),
+        }));
       res.json({ ok: true, crew, building: project.building, version: WORKER_AGREEMENT_VERSION });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -3181,7 +3342,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         active: true, agreements: [], notes: [], createdAt: now, ...opts,
       });
       const roster: CrewMember[] = [
+        // Hosts (Joonatan + Matias) — see admin views, not part of the worker roster UI.
+        mk("joonatan", "Joonatan Juuri", { role: "host", adminLinked: true }),
+        mk("matias", "Matias Pitkänen", { role: "host", adminLinked: true }),
+        // Petrus is kept in data but masked from this gig (adminLinked → filtered out).
         mk("petrus", "Petrus Aalto", { adminLinked: true }),
+        // 5 placeholder subcontractor slots — names + links filled in later.
         ...[1, 2, 3, 4, 5].map((n) => mk(`tyontekija${n}`, `Työntekijä ${n}`)),
       ];
       project.crew = roster;
@@ -3261,6 +3427,131 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       project.crew = (project.crew || []).filter((m) => m.id !== mid);
       const saved = await saveProject(job, project);
       res.json({ ok: true, crew: saved.crew });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // ── Worker payouts (Puuhapatet → alihankkija) ───────────────────────────────
+  // Host-only. Creating a payout sends the worker a "first payment" notification
+  // they approve from their /tyo link. Marking it paid (after the manual bank
+  // transfer) auto-generates the worker's invoice (their Y-tunnus → Puuhapatet)
+  // and emails it to the team.
+
+  // Create a payout notification for a worker.
+  app.post("/api/jobs/:id/crew/:memberId/payout", async (req, res) => {
+    try {
+      const loaded = await loadJobProject(Number(req.params.id));
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const { job, project } = loaded;
+      const mid = String(req.params.memberId);
+      const member = (project.crew || []).find((m) => m.id === mid);
+      if (!member) return res.status(404).json({ error: "Työntekijää ei löydy" });
+      const amountCents = Math.floor(Number(req.body?.amountCents));
+      if (!Number.isFinite(amountCents) || amountCents <= 0) {
+        return res.status(400).json({ error: "Virheellinen summa" });
+      }
+      const payout = {
+        id: `po_${randomUUID().slice(0, 12)}`,
+        amountCents: Math.min(amountCents, 1_000_000_00),
+        windows: Math.max(0, Math.floor(Number(req.body?.windows) || 0)),
+        note: req.body?.note ? String(req.body.note).slice(0, 200) : undefined,
+        status: "ilmoitettu" as const,
+        createdAt: Date.now(),
+      };
+      const payouts = [payout, ...(member.payouts || [])];
+      project.crew = (project.crew || []).map((m) => (m.id === mid ? { ...m, payouts } : m));
+      const saved = await saveProject(job, project);
+      res.json({ ok: true, member: (saved.crew || []).find((m) => m.id === mid) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Mark a payout as paid (after manual bank transfer): generate the worker's
+  // invoice PDF and email it to the team. Idempotent-ish: only acts when not
+  // already paid.
+  app.post("/api/jobs/:id/crew/:memberId/payout/:payoutId/paid", async (req, res) => {
+    try {
+      const loaded = await loadJobProject(Number(req.params.id));
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const { job, project } = loaded;
+      const mid = String(req.params.memberId);
+      const pid = String(req.params.payoutId);
+      const member = (project.crew || []).find((m) => m.id === mid);
+      if (!member) return res.status(404).json({ error: "Työntekijää ei löydy" });
+      const payouts = member.payouts || [];
+      const payout = payouts.find((p) => p.id === pid);
+      if (!payout) return res.status(404).json({ error: "Maksua ei löytynyt" });
+      if (payout.status === "maksettu") {
+        return res.status(409).json({ error: "Maksu on jo merkitty maksetuksi" });
+      }
+
+      const billing = payout.billing || {};
+      const workerName = billing.name || member.profile?.fullName || member.name;
+      const workerYTunnus = billing.yTunnus || member.profile?.yTunnus || undefined;
+      const workerIban = billing.iban || member.profile?.iban || undefined;
+      const workerAddress = billing.address || member.profile?.city || undefined;
+      const paidCount = payouts.filter((p) => p.status === "maksettu").length;
+      const invoiceNo = `${member.id.toUpperCase().slice(0, 6)}-${String(paidCount + 1).padStart(2, "0")}`;
+      const now = Date.now();
+      const invoiceDate = new Date(now).toLocaleDateString("fi-FI");
+
+      payout.status = "maksettu";
+      payout.paidAt = now;
+      payout.invoiceNo = invoiceNo;
+      payout.billing = { name: workerName, yTunnus: workerYTunnus, iban: workerIban, address: workerAddress };
+
+      project.crew = (project.crew || []).map((m) => (m.id === mid ? { ...m, payouts } : m));
+      const saved = await saveProject(job, project);
+
+      // Generate the worker's invoice PDF and email it to the team (best-effort).
+      const fmtEur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+      let emailId: string | undefined;
+      try {
+        const pdf = await generateWorkerInvoicePdf({
+          invoiceNo, workerName, workerYTunnus, workerAddress, workerIban,
+          windows: payout.windows, amountCents: payout.amountCents,
+          note: payout.note, invoiceDate, paidDate: invoiceDate,
+        });
+        if (resend) {
+          const html = `
+<!DOCTYPE html><html lang="fi"><body style="margin:0;background:#F6F4EE;font-family:'Poppins',ui-sans-serif,system-ui,sans-serif">
+  <div style="max-width:600px;margin:24px auto;background:#fff;border:1px solid #E4E1D7;border-radius:14px;overflow:hidden">
+    <div style="padding:24px 32px;border-bottom:1px solid #E4E1D7">
+      <p style="margin:0;font-size:20px;font-weight:700;color:#1A1A1A">Puuhapatet</p>
+      <p style="margin:4px 0 0;font-size:13px;color:#8C8A82">Alihankkijan lasku · ${invoiceNo}</p>
+    </div>
+    <div style="padding:24px 32px">
+      <p style="margin:0 0 16px;font-size:14px;color:#1A1A1A;line-height:1.7">
+        <strong>${workerName}</strong> on hyväksynyt ja maksu on merkitty maksetuksi.
+        Liitteenä alihankkijan lasku Puuhapatetille.
+      </p>
+      <table width="100%" style="border-collapse:collapse;border-top:2px solid #1A1A1A">
+        <tr><td style="padding:10px 0;font-size:14px;color:#1A1A1A">${payout.note || "Ikkunanpesutyö"}${payout.windows ? ` · ${payout.windows} ikkunaa` : ""}</td>
+        <td style="padding:10px 0;text-align:right;font-size:16px;font-weight:800;color:#1A1A1A">${fmtEur(payout.amountCents)}</td></tr>
+      </table>
+      <div style="background:#F6F4EE;border-radius:12px;padding:16px 20px;margin-top:16px;font-size:13px;color:#1A1A1A">
+        <p style="margin:0 0 4px">Laskuttaja: ${workerName}${workerYTunnus ? ` · Y-tunnus ${workerYTunnus}` : ""}</p>
+        ${workerIban ? `<p style="margin:0">IBAN: ${workerIban}</p>` : ""}
+      </div>
+    </div>
+  </div>
+</body></html>`;
+          const result = await resend.emails.send({
+            from: FROM_EMAIL,
+            to: WORKER_NOTIFICATION_EMAILS,
+            subject: `Alihankkijan lasku ${invoiceNo} — ${workerName} · ${fmtEur(payout.amountCents)}`,
+            html,
+            attachments: [{ filename: `lasku-${invoiceNo}.pdf`, content: pdf.toString("base64") }],
+          });
+          emailId = result.data?.id;
+        }
+      } catch (e) {
+        console.error("Worker invoice email error:", e);
+      }
+
+      res.json({ ok: true, member: (saved.crew || []).find((m) => m.id === mid), emailId });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }

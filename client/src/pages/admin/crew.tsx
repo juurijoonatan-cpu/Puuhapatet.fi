@@ -13,7 +13,8 @@ import type { ProjBuilding } from "@shared/project";
 import { WORKER_AGREEMENTS, PROFILE_QUESTIONS } from "@shared/worker-agreements";
 import { downloadWorkerContract, openWorkerContractForPrint, downloadSignatureImage } from "@/lib/worker-contract-doc";
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
-import { ChevronLeft, Copy, Check, RotateCw, Trash2, Plus, UserPlus, FileText, Printer, Download } from "lucide-react";
+import { ChevronLeft, Copy, Check, RotateCw, Trash2, Plus, UserPlus, FileText, Printer, Download, Wallet } from "lucide-react";
+import type { CrewPayout } from "@shared/crew";
 
 const PUBLIC_BASE = "https://puuhapatet.fi";
 const eur = (c: number) => (c / 100).toLocaleString("fi-FI", { maximumFractionDigits: 0 }) + " €";
@@ -45,6 +46,12 @@ export default function AdminCrewPage() {
   const addWorker = async () => { setBusy(true); await api.addCrewMember(jobId, {}); await load(); setBusy(false); };
   const update = async (id: string, data: Parameters<typeof api.updateCrewMember>[2]) => { await api.updateCrewMember(jobId, id, data); await load(); };
   const remove = async (id: string) => { if (confirm("Poistetaanko työntekijä?")) { await api.removeCrewMember(jobId, id); await load(); } };
+  const createPayout = async (id: string, data: { amountCents: number; windows?: number; note?: string }) => {
+    const res = await api.createPayout(jobId, id, data); await load(); return res.ok;
+  };
+  const markPaid = async (id: string, payoutId: string) => {
+    const res = await api.markPayoutPaid(jobId, id, payoutId); await load(); return res;
+  };
 
   const copyLink = (token: string) => {
     const url = `${PUBLIC_BASE}/tyo/${token}`;
@@ -172,6 +179,15 @@ export default function AdminCrewPage() {
                     </div>
                   </details>
                 )}
+
+                {/* Payouts (Puuhapatet → worker) */}
+                <PayoutPanel
+                  member={member}
+                  suggestedCents={stats.earnedCents}
+                  suggestedWindows={stats.washed}
+                  onCreate={createPayout}
+                  onMarkPaid={markPaid}
+                />
               </div>
             ))}
 
@@ -182,6 +198,119 @@ export default function AdminCrewPage() {
         )}
       </div>
     </div>
+  );
+}
+
+/** Payout management for one worker (Puuhapatet → alihankkija). Create a payout
+ *  notification; once the worker approves, mark it paid → invoice auto-generated. */
+function PayoutPanel({
+  member, suggestedCents, suggestedWindows, onCreate, onMarkPaid,
+}: {
+  member: HostCrewRow["member"];
+  suggestedCents: number;
+  suggestedWindows: number;
+  onCreate: (id: string, data: { amountCents: number; windows?: number; note?: string }) => Promise<boolean>;
+  onMarkPaid: (id: string, payoutId: string) => Promise<{ ok: boolean; data?: { emailId?: string }; error?: string }>;
+}) {
+  const payouts: CrewPayout[] = member.payouts || [];
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState(suggestedCents > 0 ? String(suggestedCents / 100) : "");
+  const [windows, setWindows] = useState(suggestedWindows ? String(suggestedWindows) : "");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const eur2 = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+  const STATUS: Record<string, { label: string; cls: string }> = {
+    ilmoitettu: { label: "Odottaa työntekijän hyväksyntää", cls: "bg-amber-500/10 text-amber-600" },
+    hyvaksytty: { label: "Hyväksytty · maksa pankissa", cls: "bg-blue-500/10 text-blue-600" },
+    maksettu: { label: "Maksettu · lasku luotu", cls: "bg-green-500/10 text-green-600" },
+  };
+
+  const create = async () => {
+    setMsg(null);
+    const cents = Math.round(parseFloat(amount.replace(",", ".")) * 100);
+    if (!Number.isFinite(cents) || cents <= 0) { setMsg("Anna summa euroina."); return; }
+    setBusy(true);
+    const ok = await onCreate(member.id, { amountCents: cents, windows: Number(windows) || undefined, note: note.trim() || undefined });
+    setBusy(false);
+    if (ok) { setOpen(false); setNote(""); } else setMsg("Maksun luonti epäonnistui.");
+  };
+
+  const pay = async (p: CrewPayout) => {
+    if (!confirm(`Merkitäänkö ${eur2(p.amountCents)} maksetuksi?\n\nVarmista että pankkisiirto on tehty. Tämä luo työntekijän laskun ja lähettää sen tiimille.`)) return;
+    setBusy(true);
+    const res = await onMarkPaid(member.id, p.id);
+    setBusy(false);
+    setMsg(res.ok ? (res.data?.emailId ? "Merkitty maksetuksi · lasku lähetetty tiimille." : "Merkitty maksetuksi · lasku luotu (sähköposti ei käytössä).") : (res.error || "Epäonnistui."));
+  };
+
+  return (
+    <details className="mt-3">
+      <summary className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground cursor-pointer">
+        <Wallet className="h-3.5 w-3.5" /> Maksut työntekijälle ({payouts.length})
+      </summary>
+      <div className="mt-2 space-y-2">
+        {payouts.map((p) => {
+          const st = STATUS[p.status] || STATUS.ilmoitettu;
+          return (
+            <div key={p.id} className="rounded-lg border bg-muted/30 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-bold tabular-nums">{eur2(p.amountCents)}</p>
+                  <p className="text-[11px] text-muted-foreground truncate">{p.note || "Ikkunanpesutyö"}{p.windows ? ` · ${p.windows} ikkunaa` : ""} · {new Date(p.createdAt).toLocaleDateString("fi-FI")}</p>
+                </div>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${st.cls}`}>{st.label}</span>
+              </div>
+              {p.status === "hyvaksytty" && p.billing && (
+                <p className="mt-1.5 text-[11px] text-muted-foreground break-words">
+                  Maksa: {[p.billing.name, p.billing.iban, p.billing.yTunnus && `Y ${p.billing.yTunnus}`].filter(Boolean).join(" · ")}
+                </p>
+              )}
+              {p.status === "maksettu" && p.invoiceNo && (
+                <p className="mt-1.5 text-[11px] text-muted-foreground">Lasku {p.invoiceNo}{p.paidAt ? ` · ${new Date(p.paidAt).toLocaleDateString("fi-FI")}` : ""}</p>
+              )}
+              {p.status === "hyvaksytty" && (
+                <button onClick={() => pay(p)} disabled={busy} className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
+                  <Check className="h-3.5 w-3.5" /> Merkitse maksetuksi
+                </button>
+              )}
+            </div>
+          );
+        })}
+
+        {msg && <p className="text-[11px] text-muted-foreground">{msg}</p>}
+
+        {open ? (
+          <div className="rounded-lg border bg-card p-3 space-y-2">
+            <div className="flex gap-2">
+              <label className="flex-1 text-[11px] text-muted-foreground">
+                Summa (€)
+                <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm text-foreground" />
+              </label>
+              <label className="w-24 text-[11px] text-muted-foreground">
+                Ikkunat
+                <input value={windows} onChange={(e) => setWindows(e.target.value)} inputMode="numeric" className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm text-foreground" />
+              </label>
+            </div>
+            <label className="block text-[11px] text-muted-foreground">
+              Kuvaus
+              <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="esim. FR8 — 1. erä" className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm text-foreground" />
+            </label>
+            <div className="flex gap-2">
+              <button onClick={create} disabled={busy} className="flex-1 rounded-lg bg-foreground py-2 text-xs font-semibold text-background disabled:opacity-50">
+                {busy ? "Luodaan…" : "Lähetä maksuilmoitus"}
+              </button>
+              <button onClick={() => setOpen(false)} className="rounded-lg border px-3 py-2 text-xs text-muted-foreground">Peruuta</button>
+            </div>
+          </div>
+        ) : (
+          <button onClick={() => { setOpen(true); setMsg(null); }} className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-dashed py-2 text-xs font-medium text-muted-foreground">
+            <Plus className="h-3.5 w-3.5" /> Luo maksu työntekijälle
+          </button>
+        )}
+      </div>
+    </details>
   );
 }
 

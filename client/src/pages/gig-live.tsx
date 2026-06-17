@@ -11,6 +11,7 @@ import { useRoute } from "wouter";
 import { api, type GigPublicView } from "@/lib/api";
 import { eur } from "@shared/gig";
 import GigContractSign from "@/components/GigContractSign";
+import CustomerFloorMap from "@/components/CustomerFloorMap";
 import { downloadGigContract } from "@/lib/gig-contract-doc";
 
 const T = {
@@ -170,6 +171,17 @@ export default function GigLivePage() {
             </Panel>
           );
         })}
+
+        {/* Read-only floor-plan map — customer watches washed windows live. */}
+        {data.map && (
+          <Panel>
+            <p style={{ margin: "0 0 4px", ...label }}>Pohjapiirros</p>
+            <p style={{ margin: "0 0 16px", fontSize: 13, color: T.muted }}>
+              Näet reaaliaikaisesti mitkä ikkunat on pesty. Kartta päivittyy työn edetessä.
+            </p>
+            <CustomerFloorMap map={data.map} />
+          </Panel>
+        )}
 
         {/* Reassurance note */}
         <Panel>

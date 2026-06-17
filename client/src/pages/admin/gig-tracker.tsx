@@ -64,6 +64,7 @@ export default function AdminGigTrackerPage() {
   const [approving, setApproving] = useState(false);
   const [sigOpen, setSigOpen] = useState(false);
   const [savingContract, setSavingContract] = useState(false);
+  const [savingPrices, setSavingPrices] = useState(false);
   const [draft, setDraft] = useState({ contractId: "", contractText: "", customerNote: "", vatNote: "", requireSignature: true });
 
   // Invoice dialog state
@@ -136,6 +137,29 @@ export default function AdminGigTrackerPage() {
     if (res.ok && res.data) {
       setGig(res.data.gigData);
       toast({ title: "Sopimus tallennettu" });
+    } else {
+      toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
+    }
+  };
+
+  // Save just the sector prices/totals (the two price pieces). Writes to the
+  // shared gigData so the project view + accrual stay in sync both ways.
+  const savePrices = async (sectors: { id: string; unitPriceCents: number; total: number }[]) => {
+    if (!gig) return;
+    setSavingPrices(true);
+    const byId = new Map(sectors.map((s) => [s.id, s]));
+    const updated: GigData = {
+      ...gig,
+      sectors: gig.sectors.map((s) => {
+        const next = byId.get(s.id);
+        return next ? { ...s, unitPriceCents: next.unitPriceCents, total: next.total } : s;
+      }),
+    };
+    const res = await api.updateGig(jobId, updated);
+    setSavingPrices(false);
+    if (res.ok && res.data) {
+      setGig(res.data.gigData);
+      toast({ title: "Hinnat tallennettu" });
     } else {
       toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
     }
@@ -233,6 +257,51 @@ export default function AdminGigTrackerPage() {
             </p>
           </div>
         </div>
+
+        {/* Customer contact details — shown BEFORE the project dashboard button.
+            Sourced from the shared gigData.company. */}
+        {(() => {
+          const c = gig.company;
+          const rows: { label: string; value: string }[] = [
+            { label: "Yritys", value: c?.name ?? "" },
+            { label: "Yhteyshenkilö", value: c?.contact ?? "" },
+            { label: "Puhelin", value: c?.phone ?? "" },
+            { label: "Sähköposti", value: c?.email ?? "" },
+            { label: "Osoite", value: c?.address ?? "" },
+          ].filter((r) => r.value.trim());
+          if (!rows.length) return null;
+          return (
+            <Card className="p-4 bg-card border-0 premium-shadow mb-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Users className="w-4 h-4 text-muted-foreground" />
+                <p className="text-sm font-medium text-foreground">Yhteystiedot</p>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
+                {rows.map((r) => {
+                  const isPhone = r.label === "Puhelin";
+                  const isEmail = r.label === "Sähköposti";
+                  const href = isPhone ? `tel:${r.value.replace(/\s+/g, "")}` : isEmail ? `mailto:${r.value}` : null;
+                  return (
+                    <div key={r.label} className="min-w-0">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{r.label}</p>
+                      {href ? (
+                        <a href={href} className="text-sm font-medium text-foreground hover:underline break-words">{r.value}</a>
+                      ) : (
+                        <p className="text-sm font-medium text-foreground break-words">{r.value}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+          );
+        })()}
+
+        {/* Quick price editor — only Joonatan & Matias use the admin gig view, so
+            the two price pieces (Sektori 1 fixed unit/total + Sektori 2 cap) can
+            be tweaked fast right before signing the deal. Saves to the shared
+            gigData, so the project view and accrual stay in sync both ways. */}
+        <PriceEditor gig={gig} onSave={savePrices} saving={savingPrices} />
 
         {/* Gig tools — the project dashboard is the one main button, plus a
             compact "Tiimi" button. Layout scales down cleanly on mobile. */}
@@ -658,5 +727,120 @@ function Row({ k, v }: { k: string; v: string }) {
       <span className="text-muted-foreground shrink-0">{k}</span>
       <span className="text-foreground text-right break-words">{v}</span>
     </div>
+  );
+}
+
+/**
+ * Quick price editor — edit each sector's unit price (€/ikkuna) and its cap
+ * count (total). Local draft until "Tallenna hinnat" writes to the shared
+ * gigData. Designed for fast last-minute tweaks before signing a deal.
+ */
+function PriceEditor({
+  gig, onSave, saving,
+}: {
+  gig: GigData;
+  onSave: (sectors: { id: string; unitPriceCents: number; total: number }[]) => void;
+  saving: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  // Draft strings keyed by sector id. Unit price held in euros (2 dp), total as int.
+  const [draft, setDraft] = useState<Record<string, { unit: string; total: string }>>({});
+
+  // Seed/refresh the draft whenever the gig prices change underneath us.
+  useEffect(() => {
+    const next: Record<string, { unit: string; total: string }> = {};
+    for (const s of gig.sectors) {
+      next[s.id] = { unit: (s.unitPriceCents / 100).toString(), total: String(s.total) };
+    }
+    setDraft(next);
+  }, [gig.sectors]);
+
+  if (gig.sectors.length === 0) return null;
+
+  const parseUnitCents = (v: string) => {
+    const n = parseFloat((v || "").replace(",", "."));
+    return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : 0;
+  };
+  const parseTotal = (v: string) => {
+    const n = parseInt((v || "").replace(/\D/g, ""), 10);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  };
+
+  const grandCap = gig.sectors.reduce((sum, s) => {
+    const d = draft[s.id];
+    return sum + parseUnitCents(d?.unit ?? "") * parseTotal(d?.total ?? "");
+  }, 0);
+
+  const dirty = gig.sectors.some((s) => {
+    const d = draft[s.id];
+    return d && (parseUnitCents(d.unit) !== s.unitPriceCents || parseTotal(d.total) !== s.total);
+  });
+
+  const save = () => {
+    onSave(gig.sectors.map((s) => {
+      const d = draft[s.id];
+      return { id: s.id, unitPriceCents: parseUnitCents(d?.unit ?? ""), total: parseTotal(d?.total ?? "") };
+    }));
+  };
+
+  return (
+    <Card className="p-4 bg-card border-0 premium-shadow mb-4">
+      <button className="flex items-center justify-between w-full" onClick={() => setOpen((v) => !v)}>
+        <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <Receipt className="w-4 h-4 text-muted-foreground" /> Hinnat &amp; katto
+        </span>
+        <span className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground tabular-nums">Katto {eur(grandCap)}</span>
+          <ChevronDown className={`w-4 h-4 transition-transform ${open ? "rotate-180" : ""}`} />
+        </span>
+      </button>
+      {open && (
+        <div className="mt-4 space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Säädä yksikköhintaa ja kattomäärää nopeasti. Tallennus päivittyy myös projektinäkymään.
+          </p>
+          {gig.sectors.map((s) => {
+            const d = draft[s.id] ?? { unit: "", total: "" };
+            const cap = parseUnitCents(d.unit) * parseTotal(d.total);
+            return (
+              <div key={s.id} className="rounded-xl border border-border p-3">
+                <div className="flex items-center gap-2 mb-2 min-w-0">
+                  <span className="w-3 h-3 rounded-full shrink-0" style={{ background: s.color }} />
+                  <p className="font-medium text-foreground truncate text-sm">{s.name}</p>
+                  <span className="ml-auto text-xs text-muted-foreground tabular-nums">= {eur(cap)}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs">€ / {s.unitLabel}</Label>
+                    <Input
+                      inputMode="decimal"
+                      value={d.unit}
+                      onChange={(e) => setDraft((p) => ({ ...p, [s.id]: { ...d, unit: e.target.value } }))}
+                      placeholder="esim. 34"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Katto ({s.unitLabel})</Label>
+                    <Input
+                      inputMode="numeric"
+                      value={d.total}
+                      onChange={(e) => setDraft((p) => ({ ...p, [s.id]: { ...d, total: e.target.value } }))}
+                      placeholder="esim. 117"
+                    />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          <div className="flex items-center justify-between pt-1">
+            <span className="text-sm text-muted-foreground">Kokonaiskatto</span>
+            <span className="text-lg font-bold text-foreground tabular-nums">{eur(grandCap)}</span>
+          </div>
+          <Button className="w-full" disabled={saving || !dirty} onClick={save}>
+            <Save className="w-4 h-4 mr-2" /> {saving ? "Tallennetaan…" : "Tallenna hinnat"}
+          </Button>
+        </div>
+      )}
+    </Card>
   );
 }

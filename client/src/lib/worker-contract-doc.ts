@@ -87,6 +87,27 @@ function agreementBlock(ag: WorkerAgreement, member: CrewMember): string {
   </section>`;
 }
 
+// The brand side of every worker contract is signed by the two Puuhapatet
+// founders (brand representatives). Hardcoded — they are always the signatories.
+const BRAND_SIGNATORIES = [
+  { name: "Joonatan Juuri", title: "Puuhapatet — perustaja / brändin edustaja" },
+  { name: "Matias Pitkänen", title: "Puuhapatet — perustaja / brändin edustaja" },
+];
+
+function brandSignatureBlock(): string {
+  const cols = BRAND_SIGNATORIES.map((s) => `
+    <div class="bsign-col">
+      <div class="bsign-line"></div>
+      <div class="bsign-name">${esc(s.name)}</div>
+      <div class="bsign-title">${esc(s.title)}</div>
+    </div>`).join("");
+  return `<section class="brandsign">
+    <h2 style="border-top:none">Brändin allekirjoitukset</h2>
+    <div class="muted small">Puuhapatetin puolesta tämän sopimuksen vahvistavat brändin edustajat:</div>
+    <div class="bsign-grid">${cols}</div>
+  </section>`;
+}
+
 export function buildWorkerContractHtml(input: WorkerDocInput): string {
   const m = input.member;
   const agreements = WORKER_AGREEMENTS.map((ag) => agreementBlock(ag, m)).join("");
@@ -118,6 +139,12 @@ export function buildWorkerContractHtml(input: WorkerDocInput): string {
   .badge.ok{background:#eafaef;color:#1c5f33;border:1px solid #b6e6c6}
   .badge.wait{background:#fdf3e3;color:#8a5a12;border:1px solid #f0d9a8}
   .disclaimer{background:#fff7ed;border:1px solid #f0d9a8;border-radius:10px;padding:12px 14px;font-size:12.5px;color:#7c5310;margin:18px 0}
+  .brandsign{border-top:2px solid #1A1A1A;margin-top:26px;padding-top:16px}
+  .bsign-grid{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-top:28px}
+  .bsign-line{border-bottom:1.5px solid #1A1A1A;height:34px}
+  .bsign-name{font-weight:600;font-size:14px;margin-top:6px}
+  .bsign-title{font-size:12px;color:#8C8A82}
+  @media(max-width:520px){.bsign-grid{grid-template-columns:1fr}}
   @media print{body{padding:0}.clauses,.disclaimer{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 </style></head><body>
   <div class="muted small">PUUHAPATET · ALIHANKKIJASOPIMUS${m.adminLinked ? " · ADMIN" : ""}</div>
@@ -128,6 +155,8 @@ export function buildWorkerContractHtml(input: WorkerDocInput): string {
   ${profileBlock(m)}
 
   ${agreements}
+
+  ${brandSignatureBlock()}
 
   <div class="disclaimer">
     Huom: Tämä sopimuspohja on laadittu Puuhapatetille mallina, mutta sitä <b>ei ole vielä

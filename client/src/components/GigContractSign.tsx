@@ -10,7 +10,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type GigPublicView, type GigSignPayload } from "@/lib/api";
-import { eur } from "@shared/gig";
 
 const T = {
   ink: "#1A1A1A",
@@ -157,7 +156,6 @@ export default function GigContractSign({ token, view, onSigned }: Props) {
     document.title = "Puuhapatet — Sopimuksen hyväksyntä";
   }, []);
 
-  const totalCap = view.totals.capCents;
   const set = (k: keyof typeof customer) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setCustomer((v) => ({ ...v, [k]: e.target.value }));
 
@@ -212,33 +210,6 @@ export default function GigContractSign({ token, view, onSigned }: Props) {
             {view.description ? <> — {view.description}</> : null}. Lue sopimus, täytä tilaajan tiedot ja
             allekirjoita alla. Hyväksynnän jälkeen pääset suoraan reaaliaikaiseen seurantapaneeliin, jossa
             näet työn etenemisen ja kertyvän summan suhteessa hintakattoon.
-          </p>
-        </Panel>
-
-        {/* Pricing summary */}
-        <Panel>
-          <p style={mono}>HINNOITTELU · HINTAKATTO</p>
-          <div style={{ marginTop: 10 }}>
-            {view.sectors.map((s) => (
-              <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: `1px solid ${T.hair}` }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
-                  <span style={{ width: 10, height: 10, borderRadius: 999, background: s.color }} />
-                  {s.name} <span style={{ color: T.muted }}>· {s.total} {s.unitLabel}a</span>
-                </span>
-                <span style={{ fontSize: 13, color: T.muted, fontVariantNumeric: "tabular-nums" }}>
-                  <strong style={{ color: T.ink }}>{eur(s.total * s.unitPriceCents)}</strong>
-                </span>
-              </div>
-            ))}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", paddingTop: 12 }}>
-              <span style={{ fontWeight: 600 }}>Hintakatto yhteensä</span>
-              <span style={{ fontSize: 22, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{eur(totalCap)}</span>
-            </div>
-          </div>
-          <p style={{ margin: "12px 0 0", fontSize: 12.5, color: T.muted, lineHeight: 1.6 }}>
-            Maksat vain pestyistä {view.sectors[0]?.unitLabel ?? "ikkun"}oista. Hinta ei voi koskaan ylittää
-            kattoa, ja jokainen pesemättä jäävä jää kokonaan pois laskulta.
-            {view.vatNote ? ` ${view.vatNote}` : ""}
           </p>
         </Panel>
 

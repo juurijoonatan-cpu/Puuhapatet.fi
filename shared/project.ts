@@ -2,8 +2,8 @@
  * Project / floor-plan window-washing tool — shared by client and server.
  *
  * This is the persistent model behind the FR8 "projektinäkymä" (the floor-plan
- * mapping, dashboard and work-hours tool that used to live as a localStorage-only
- * Next.js prototype in `fr8-ikkunat/`). It is stored as JSON in `jobs.projectData`
+ * mapping, dashboard and work-hours tool that started life as a localStorage-only
+ * Next.js prototype). It is stored as JSON in `jobs.projectData`
  * so nothing gets lost, and it adds worker attribution on top of the original
  * prototype so we can show per-worker window counts and €/h optimisation.
  *

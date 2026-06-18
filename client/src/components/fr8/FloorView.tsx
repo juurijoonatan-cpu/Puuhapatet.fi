@@ -1,5 +1,5 @@
 /**
- * FR8 projektinäkymä — per-floor window map (ported from fr8-ikkunat prototype).
+ * FR8 projektinäkymä — per-floor window map.
  * The dot positions, drag/add/delete and status logic are kept identical to the
  * prototype; only persistence (handled by the parent) and the plan image base
  * path differ.

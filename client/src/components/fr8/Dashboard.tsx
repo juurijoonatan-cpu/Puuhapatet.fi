@@ -1,5 +1,5 @@
 /**
- * FR8 projektinäkymä — overview dashboard (ported from fr8-ikkunat prototype).
+ * FR8 projektinäkymä — overview dashboard.
  * Adds a per-worker "TEKIJÄT" strip (window counts + €/h optimisation).
  */
 import { allPoints, type ProjectData, type WindowStatus, type WorkerStat } from "@shared/project";

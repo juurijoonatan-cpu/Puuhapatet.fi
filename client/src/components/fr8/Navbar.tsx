@@ -1,5 +1,5 @@
 /**
- * FR8 projektinäkymä — top navbar (ported from fr8-ikkunat prototype).
+ * FR8 projektinäkymä — top navbar.
  * Adds a back button to return to the gig page and a current-worker chip.
  */
 import { useState, useEffect } from "react";

@@ -1,5 +1,5 @@
 /**
- * FR8 projektinäkymä — work hours (ported from fr8-ikkunat prototype).
+ * FR8 projektinäkymä — work hours.
  * Generalised to a dynamic worker list and enriched with per-worker
  * window-throughput optimisation (windows/h and €/h).
  */

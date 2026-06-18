@@ -439,7 +439,7 @@
 }
 
 /* ─── FR8 projektinäkymä (floor-plan window tool) ───────────────────────────── */
-/* Ported from the fr8-ikkunat prototype. Fonts fall back gracefully if the
+/* Ported from the original Next.js prototype. Fonts fall back gracefully if the
    Google Fonts (Onest / JetBrains Mono) link is unavailable. */
 .fr8-root {
   --font-onest: "Onest", system-ui, -apple-system, sans-serif;

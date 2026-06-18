@@ -95,6 +95,33 @@ export function clearAdminProfile(): void {
   localStorage.removeItem(PROFILE_KEY);
 }
 
+// ─── Preferred default washer ─────────────────────────────────────────────────
+//
+// When marking a window washed in the projektinäkymä, the entry is attributed to
+// a "default washer". By default that's the logged-in admin, but each admin can
+// pick a preferred default per gig (e.g. attribute everything to Matias today) —
+// the per-window picker still lets them override a single window. Stored locally
+// per job so it follows the admin's own dashboard, not the customer/worker.
+
+const WASHER_KEY_PREFIX = "puuhapatet_default_washer";
+
+export function getPreferredWasher(jobId: number): string | null {
+  try {
+    return localStorage.getItem(`${WASHER_KEY_PREFIX}_${jobId}`) || null;
+  } catch {
+    return null;
+  }
+}
+
+export function setPreferredWasher(jobId: number, workerId: string): void {
+  try {
+    if (workerId) localStorage.setItem(`${WASHER_KEY_PREFIX}_${jobId}`, workerId);
+    else localStorage.removeItem(`${WASHER_KEY_PREFIX}_${jobId}`);
+  } catch {
+    /* ignore quota / privacy-mode errors */
+  }
+}
+
 export function isProfileComplete(profile: AdminProfile | null): boolean {
   return !!(profile?.id && profile?.name && profile?.role);
 }

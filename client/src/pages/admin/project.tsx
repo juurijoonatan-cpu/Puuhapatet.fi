@@ -9,7 +9,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useRoute, useLocation } from "wouter";
 import { api } from "@/lib/api";
-import { getAdminProfile, USERS } from "@/lib/admin-profile";
+import { getAdminProfile, USERS, getPreferredWasher, setPreferredWasher } from "@/lib/admin-profile";
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import {
   emptyProjectData, computeWorkerStats, isFr8Plans,
@@ -48,6 +48,32 @@ function workerInitial(id: string): string {
   return (workerName(id)[0] || "?").toUpperCase();
 }
 
+/**
+ * Build the display-name map + this gig's pickable crew (for the "who washed"
+ * and "default washer" pickers). Admin-linked crew (e.g. Petrus) are masked —
+ * they're hidden from this gig, so they must not appear as a pickable worker.
+ */
+function computeWorkerMaps(project: ProjectData): {
+  workerNames: Record<string, string>;
+  gigWorkers: { id: string; name: string }[];
+} {
+  const workerNames: Record<string, string> = {};
+  for (const u of USERS) workerNames[u.id] = u.name;
+  for (const m of project.crew ?? []) workerNames[m.id] = m.name;
+  const maskedWorkerIds = new Set<string>(["petrus"]);
+  for (const m of project.crew ?? []) {
+    if (m.adminLinked && m.role !== "host") maskedWorkerIds.add(m.id);
+  }
+  const gigWorkers: { id: string; name: string }[] = [];
+  const seen = new Set<string>();
+  for (const id of [...(project.workers ?? []), ...((project.crew ?? []).map((m) => m.id))]) {
+    if (seen.has(id) || maskedWorkerIds.has(id)) continue;
+    seen.add(id);
+    gigWorkers.push({ id, name: workerNames[id] ?? workerName(id) });
+  }
+  return { workerNames, gigWorkers };
+}
+
 export default function AdminProjectPage() {
   const [, params] = useRoute("/admin/gig/:id/projekti");
   const [, navigate] = useLocation();
@@ -58,6 +84,11 @@ export default function AdminProjectPage() {
 
   const [tab, setTab] = useState<Fr8Tab>("dashboard");
   const [activeFloor, setActiveFloor] = useState("K");
+  // Who new "pesty" markings are attributed to by default. Defaults to the
+  // logged-in admin, but each admin can pick a preferred default washer per gig
+  // (persisted locally) — the per-window picker still overrides a single window.
+  const [defaultWasher, setDefaultWasher] = useState<string>(currentWorker);
+  const washerInit = useRef(false);
   const [project, setProject] = useState<ProjectData | null>(null);
   const [gigName, setGigName] = useState("");   // gig/company name for a neutral header
   const [loading, setLoading] = useState(true);
@@ -196,9 +227,10 @@ export default function AdminProjectPage() {
   }, []);
 
   const onStatusChange = useCallback((key: string, status: WindowStatus, washedById?: string) => {
-    // The washer defaults to the logged-in user but can be overridden (and changed
+    // The washer defaults to the admin's preferred default washer (falling back
+    // to the logged-in user), but can be overridden per window (and changed
     // later) via the picker in FloorView's status popover.
-    const washer = washedById ?? currentWorker;
+    const washer = washedById ?? defaultWasher ?? currentWorker;
     mutate((d) => {
       if (status === "ei") { delete d.statuses[key]; delete d.washedBy[key]; }
       else {
@@ -210,7 +242,7 @@ export default function AdminProjectPage() {
       const floor = key.split("#")[0];
       d.log = [{ floor, key, p, status, ts: Date.now(), by: washer }, ...d.log].slice(0, 60);
     });
-  }, [mutate, getPriority, currentWorker]);
+  }, [mutate, getPriority, currentWorker, defaultWasher]);
 
   const onAddCustomMark = useCallback((floor: string, x: number, y: number, p: 1 | 2) => {
     mutate((d) => {
@@ -257,6 +289,22 @@ export default function AdminProjectPage() {
     setTab("floor");
   }, []);
 
+  const changeDefaultWasher = useCallback((id: string) => {
+    setDefaultWasher(id);
+    setPreferredWasher(jobId, id);
+  }, [jobId]);
+
+  // Seed the default washer once the project (and its crew) is known: use the
+  // admin's saved preference for this gig if it points at a valid worker, else
+  // fall back to the logged-in admin.
+  useEffect(() => {
+    if (washerInit.current || !project) return;
+    washerInit.current = true;
+    const { gigWorkers } = computeWorkerMaps(project);
+    const pref = getPreferredWasher(jobId);
+    setDefaultWasher(pref && gigWorkers.some((w) => w.id === pref) ? pref : currentWorker);
+  }, [project, jobId, currentWorker]);
+
   const backToGig = useCallback(() => navigate(`/admin/gig/${jobId}`), [navigate, jobId]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -290,27 +338,12 @@ export default function AdminProjectPage() {
   const hoursWorkers = (project.workers.length ? project.workers : ["matias", "joonatan"]).map((id) => ({
     id, name: workerName(id), initial: workerInitial(id),
   }));
-  // id → display name for the "who washed this window" label (admin USERS +
-  // this gig's crew roster, falling back to the raw id).
-  const workerNames: Record<string, string> = {};
-  for (const u of USERS) workerNames[u.id] = u.name;
-  for (const m of project.crew ?? []) workerNames[m.id] = m.name;
-  // This gig's pickable crew for the "who washed this window" picker: the gig's
-  // assigned workers + ad-hoc crew, de-duped, with display names.
-  // Mask admin-linked crew (e.g. Petrus Aalto) — they're hidden from this gig,
-  // so they must not appear as a "kuka pesi" option either. Hosts (Joonatan/
-  // Matias) stay pickable because they're the ones logging windows.
-  const maskedWorkerIds = new Set<string>(["petrus"]);
-  for (const m of project.crew ?? []) {
-    if (m.adminLinked && m.role !== "host") maskedWorkerIds.add(m.id);
-  }
-  const gigWorkers: { id: string; name: string }[] = [];
-  const seenWorker = new Set<string>();
-  for (const id of [...(project.workers ?? []), ...((project.crew ?? []).map((m) => m.id))]) {
-    if (seenWorker.has(id) || maskedWorkerIds.has(id)) continue;
-    seenWorker.add(id);
-    gigWorkers.push({ id, name: workerNames[id] ?? workerName(id) });
-  }
+  // Display-name map + this gig's pickable crew (used by both the "who washed"
+  // and "default washer" pickers).
+  const { workerNames, gigWorkers } = computeWorkerMaps(project);
+  // The default washer the picker shows is the saved preference if it's still a
+  // valid worker, else the logged-in admin.
+  const effectiveWasher = gigWorkers.some((w) => w.id === defaultWasher) ? defaultWasher : currentWorker;
 
   return shell(
     <>
@@ -319,9 +352,12 @@ export default function AdminProjectPage() {
         onTabChange={setTab}
         buildingName={project.building.name || gigName || undefined}
         buildingAddress={project.building.address}
-        currentWorkerName={workerName(currentWorker)}
+        currentWorkerName={workerName(effectiveWasher)}
         saving={saving}
         onBack={backToGig}
+        workers={gigWorkers}
+        defaultWasherId={effectiveWasher}
+        onChangeDefaultWasher={changeDefaultWasher}
       />
       {error && (
         <div
@@ -361,7 +397,7 @@ export default function AdminProjectPage() {
             washedBy={project.washedBy}
             workerNames={workerNames}
             workers={gigWorkers}
-            currentWorkerId={currentWorker}
+            currentWorkerId={effectiveWasher}
           />
         )}
         {tab === "hours" && (

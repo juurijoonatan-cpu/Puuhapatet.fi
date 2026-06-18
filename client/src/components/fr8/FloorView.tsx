@@ -56,6 +56,17 @@ function colorRgb(p: 1 | 2, status: WindowStatus) {
 function fmt(n: number) { return Math.round(n).toLocaleString("fi-FI"); }
 function euro(n: number) { return fmt(n) + " €"; }
 
+/** Count live (non-deleted) windows across every floor — the billable window
+ *  count that drives the contract cap (count × price/window). */
+function countAllLive(floors: string[], marks: ProjMarksData | null, customMarks: Record<string, ProjCustomMark[]>, deleted: Record<string, boolean>): number {
+  let n = 0;
+  for (const f of floors) {
+    (marks?.[f]?.marks || []).forEach((_, idx) => { if (!deleted[`${f}#${idx}`]) n += 1; });
+    (customMarks[f] || []).forEach((cm) => { if (!deleted[cm.key]) n += 1; });
+  }
+  return n;
+}
+
 function getPoints(floor: string, marks: ProjMarksData | null, posOverrides: Record<string, { x: number; y: number }>, customMarks: Record<string, ProjCustomMark[]>, deleted: Record<string, boolean>): Point[] {
   const out: Point[] = [];
   if (!marks) return out;
@@ -191,6 +202,9 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   const floorWashed = points.filter((p) => (statuses[p.key] || "ei") === "pesty").length;
   const floorTotal = points.length;
   const floorPct = floorTotal > 0 ? (floorWashed / floorTotal) * 100 : 0;
+  // Whole-contract billable window count (every floor) → drives the price cap.
+  const totalLive = countAllLive(floors, marks, customMarks, deleted);
+  const totalCap = totalLive * pricePerWindow;
   const activePt = activeOrb ? points.find((p) => p.key === activeOrb) ?? null : null;
   const activeIdx = activePt ? points.indexOf(activePt) : -1;
 
@@ -383,7 +397,10 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
               <>
                 <div onClick={() => setAddMenuOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 44 }} />
                 <div data-fr8-pop="menu" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 46, width: "212px", padding: "7px", background: "rgba(16,16,20,0.92)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: "14px", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 20px 50px rgba(0,0,0,0.7)" }}>
-                  <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.4)", padding: "5px 8px 7px" }}>LISÄÄ PISTE</div>
+                  <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, padding: "5px 8px 7px" }}>
+                    <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.4)" }}>LISÄÄ PISTE</span>
+                    {pricePerWindow > 0 && <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9.5px", color: "rgba(95,224,138,0.85)" }}>+1 = {euro(pricePerWindow)}</span>}
+                  </div>
                   {ADD_ITEMS.map((it) => (
                     <button key={String(it.id)} className="add-menu-btn" onClick={() => chooseAdd(it.id)} style={{ border: `1px solid ${placeMode === it.id ? "rgba(255,255,255,0.18)" : "transparent"}`, background: placeMode === it.id ? "rgba(255,255,255,0.09)" : "transparent" }}>
                       <span style={{ width: "17px", height: "17px", borderRadius: "50%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "10px", fontWeight: 700, color: "#ff6b6b", background: it.dotBg, border: it.id === "del" ? "1px solid rgba(255,90,90,0.5)" : "1px solid rgba(255,255,255,0.5)" }}>{it.glyph}</span>
@@ -413,8 +430,16 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
 
         {/* Edit banner */}
         {editMode && (
-          <div style={{ position: "absolute", top: "14px", left: "50%", transform: "translateX(-50%)", zIndex: 20, display: "flex", alignItems: "center", gap: "14px", padding: "9px 9px 9px 16px", background: "rgba(16,16,20,0.82)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: "13px", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", boxShadow: "0 12px 34px rgba(0,0,0,0.5)", whiteSpace: "nowrap" }}>
+          <div style={{ position: "absolute", top: "14px", left: "50%", transform: "translateX(-50%)", zIndex: 20, display: "flex", alignItems: "center", gap: "12px", padding: "9px 9px 9px 16px", background: "rgba(16,16,20,0.82)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: "13px", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", boxShadow: "0 12px 34px rgba(0,0,0,0.5)", whiteSpace: "nowrap" }}>
             <span style={{ fontSize: "12.5px", color: "rgba(255,255,255,0.8)" }}>{editBanner}</span>
+            {/* Live price impact — each dot is worth one window, so adding/removing
+                dots moves the contract cap in real time. */}
+            {pricePerWindow > 0 && (
+              <span title="Koko sopimuksen ikkunamäärä × hinta/ikkuna — muuttuu kun lisäät tai poistat pisteitä" style={{ display: "flex", alignItems: "center", gap: "7px", padding: "5px 11px", borderRadius: "9px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11.5px", color: "rgba(255,255,255,0.85)" }}>
+                <span style={{ color: "rgba(255,255,255,0.5)" }}>KATTO</span>
+                <strong style={{ fontWeight: 700 }}>{totalLive} ikkunaa · {euro(totalCap)}</strong>
+              </span>
+            )}
             <button onClick={() => onResetFloor(floor)} style={{ padding: "6px 12px", borderRadius: "9px", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.7)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
               Palauta tämä kerros
             </button>

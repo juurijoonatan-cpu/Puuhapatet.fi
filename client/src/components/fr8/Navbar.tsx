@@ -3,7 +3,7 @@
  * Adds a back button to return to the gig page and a current-worker chip.
  */
 import { useState, useEffect } from "react";
-import { ArrowLeft, Maximize2, Minimize2 } from "lucide-react";
+import { ArrowLeft, Maximize2, Minimize2, ChevronDown, Check } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 export type Fr8Tab = "dashboard" | "floor" | "hours";
@@ -16,6 +16,12 @@ interface NavbarProps {
   currentWorkerName?: string;
   saving?: boolean;
   onBack: () => void;
+  /** Pickable crew for the "default washer" selector (manager view only). When
+   *  given together with onChangeDefaultWasher, the worker chip becomes a
+   *  dropdown that sets who new window markings are attributed to by default. */
+  workers?: { id: string; name: string }[];
+  defaultWasherId?: string;
+  onChangeDefaultWasher?: (id: string) => void;
 }
 
 const TABS: { id: Fr8Tab; label: string; short: string }[] = [
@@ -40,10 +46,13 @@ function tabStyle(active: boolean): React.CSSProperties {
   };
 }
 
-export default function Navbar({ activeTab, onTabChange, buildingName, buildingAddress, currentWorkerName, saving, onBack }: NavbarProps) {
+export default function Navbar({ activeTab, onTabChange, buildingName, buildingAddress, currentWorkerName, saving, onBack, workers, defaultWasherId, onChangeDefaultWasher }: NavbarProps) {
   const m = useIsMobile();
   const [isFs, setIsFs] = useState(false);
+  const [washerOpen, setWasherOpen] = useState(false);
   const canFs = typeof document !== "undefined" && !!document.documentElement.requestFullscreen;
+  // The chip becomes a "default washer" picker when a crew + change handler are given.
+  const canPickWasher = !!onChangeDefaultWasher && !!workers && workers.length > 0;
 
   useEffect(() => {
     const onChange = () => setIsFs(!!document.fullscreenElement);
@@ -120,16 +129,48 @@ export default function Navbar({ activeTab, onTabChange, buildingName, buildingA
           </button>
         )}
         {currentWorkerName && (
-          <div
-            style={{
-              display: "flex", alignItems: "center", gap: "7px", padding: m ? "6px 9px" : "5px 11px",
-              borderRadius: "10px", background: "rgba(255,255,255,0.05)",
-              border: "1px solid rgba(255,255,255,0.08)",
-            }}
-            title="Kirjaukset merkitään tälle tekijälle"
-          >
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: saving ? "#ffce28" : "#5fe08a", boxShadow: `0 0 8px ${saving ? "rgba(255,206,40,0.8)" : "rgba(95,224,138,0.8)"}` }} />
-            {!m && <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.7)" }}>{currentWorkerName}</span>}
+          <div style={{ position: "relative", flexShrink: 0 }}>
+            <button
+              type="button"
+              onClick={() => canPickWasher && setWasherOpen((v) => !v)}
+              title={canPickWasher
+                ? "Oletustekijä — uudet ikkunamerkinnät kirjataan tälle. Vaihda tästä; voit silti vaihtaa yksittäisen ikkunan tekijän kartalla."
+                : "Kirjaukset merkitään tälle tekijälle"}
+              style={{
+                display: "flex", alignItems: "center", gap: "7px", padding: m ? "6px 9px" : "5px 11px",
+                borderRadius: "10px", background: washerOpen ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                cursor: canPickWasher ? "pointer" : "default",
+                fontFamily: "var(--font-onest, system-ui, sans-serif)",
+              }}
+            >
+              <span style={{ width: 7, height: 7, borderRadius: "50%", background: saving ? "#ffce28" : "#5fe08a", boxShadow: `0 0 8px ${saving ? "rgba(255,206,40,0.8)" : "rgba(95,224,138,0.8)"}` }} />
+              {!m && <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.7)" }}>{currentWorkerName}</span>}
+              {canPickWasher && <ChevronDown style={{ width: 13, height: 13, color: "rgba(255,255,255,0.45)" }} />}
+            </button>
+            {canPickWasher && washerOpen && (
+              <>
+                <div onClick={() => setWasherOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 44 }} />
+                <div style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 46, width: "208px", padding: "7px", background: "rgba(16,16,20,0.94)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: "13px", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 20px 50px rgba(0,0,0,0.7)" }}>
+                  <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.4)", padding: "5px 8px 7px" }}>OLETUSTEKIJÄ</div>
+                  {workers!.map((w) => {
+                    const active = w.id === defaultWasherId;
+                    return (
+                      <button
+                        key={w.id}
+                        type="button"
+                        onClick={() => { onChangeDefaultWasher!(w.id); setWasherOpen(false); }}
+                        style={{ display: "flex", alignItems: "center", gap: "9px", width: "100%", padding: "9px 10px", borderRadius: "9px", cursor: "pointer", textAlign: "left", border: `1px solid ${active ? "rgba(255,255,255,0.16)" : "transparent"}`, background: active ? "rgba(255,255,255,0.09)" : "transparent", color: "#fff", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "13px", fontWeight: active ? 600 : 500 }}
+                      >
+                        <span style={{ width: "20px", height: "20px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "10px", fontWeight: 700, background: "rgba(95,224,138,0.16)", color: "rgba(95,224,138,0.95)", flexShrink: 0 }}>{w.name.charAt(0).toUpperCase()}</span>
+                        <span style={{ flex: 1 }}>{w.name}</span>
+                        {active && <Check style={{ width: 14, height: 14, color: "rgba(95,224,138,0.95)" }} />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </div>
         )}
         {!m && (

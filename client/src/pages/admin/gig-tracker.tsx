@@ -31,6 +31,7 @@ import {
   emptyGigData, computeTotals, nextInvoiceThreshold, invoiceDue, eur, eur2,
   sanitizeGigData, gigStatus, signatureRequired, type GigData,
 } from "@shared/gig";
+import { computeProjectTotals, type ProjectData } from "@shared/project";
 import { downloadGigContract, openGigContractForPrint } from "@/lib/gig-contract-doc";
 
 const PUBLIC_BASE = "https://puuhapatet.fi";
@@ -55,6 +56,9 @@ export default function AdminGigTrackerPage() {
   const [toolsOpen, setToolsOpen] = useState<GigToolId | null>(null);
 
   const [gig, setGig] = useState<GigData | null>(null);
+  // Floor-plan project (if any) — its single price/window + dot count drive a
+  // floor-plan gig's whole price, so the price editor edits the project here.
+  const [project, setProject] = useState<ProjectData | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -76,7 +80,7 @@ export default function AdminGigTrackerPage() {
 
   useEffect(() => {
     if (!jobId) return;
-    api.getJobById(jobId).then((res) => {
+    Promise.all([api.getJobById(jobId), api.getProject(jobId)]).then(([res, projRes]) => {
       if (res.ok && res.data) {
         const data = res.data as any;
         const job = data.job ?? data;
@@ -102,6 +106,7 @@ export default function AdminGigTrackerPage() {
       } else {
         toast({ variant: "destructive", title: "Virhe", description: res.error || "Keikkaa ei löytynyt" });
       }
+      if (projRes.ok && projRes.data?.project) setProject(projRes.data.project);
       setLoading(false);
     });
   }, [jobId]);
@@ -156,6 +161,33 @@ export default function AdminGigTrackerPage() {
     } else {
       toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
     }
+  };
+
+  // Floor-plan gigs price every window at one rate (project.pricePerWindow) and
+  // cap at (live window count × rate). Save the rate on the PROJECT so the
+  // server's sync re-derives the gig sectors and it survives — editing it on the
+  // gig directly would be overwritten on the next map/status change.
+  const savePricePerWindow = async (euros: number) => {
+    if (!project) return;
+    setSavingPrices(true);
+    const rate = Math.max(0, Math.round(euros * 100) / 100);
+    const nextProject: ProjectData = { ...project, pricePerWindow: rate, updatedAt: Date.now() };
+    const res = await api.updateProject(jobId, nextProject);
+    if (res.ok && res.data) {
+      setProject(res.data.project);
+      // Server re-synced the gig sectors from the project; refresh the gig so the
+      // cap / accrued shown here (and the customer view) match to the cent.
+      const jr = await api.getJobById(jobId);
+      if (jr.ok && jr.data) {
+        const data = jr.data as any;
+        const job = data.job ?? data;
+        try { setGig(sanitizeGigData(JSON.parse(job.gigData))); } catch { /* keep current */ }
+      }
+      toast({ title: "Hinta tallennettu", description: "Näkyy heti projektinäkymässä ja asiakkaan linkissä." });
+    } else {
+      toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
+    }
+    setSavingPrices(false);
   };
 
   const docInput = () => {
@@ -290,11 +322,26 @@ export default function AdminGigTrackerPage() {
           );
         })()}
 
-        {/* Quick price editor — only Joonatan & Matias use the admin gig view, so
-            the two price pieces (Sektori 1 fixed unit/total + Sektori 2 cap) can
-            be tweaked fast right before signing the deal. Saves to the shared
-            gigData, so the project view and accrual stay in sync both ways. */}
-        <PriceEditor gig={gig} onSave={savePrices} saving={savingPrices} />
+        {/* Quick price editor — tweak the deal fast right before signing. For a
+            floor-plan gig it edits the single €/window + total cap (saved on the
+            project, so adding/removing windows on the map stays the source of
+            truth); for a manual gig it edits per-sector unit price + cap. */}
+        {(() => {
+          const projTotals = project ? computeProjectTotals(project) : null;
+          const floorMode = !!(project && projTotals && projTotals.total > 0);
+          return (
+            <PriceEditor
+              gig={gig}
+              floorMode={floorMode}
+              windowCount={projTotals?.total ?? 0}
+              pricePerWindow={project?.pricePerWindow ?? 0}
+              onSavePerWindow={savePricePerWindow}
+              onSave={savePrices}
+              saving={savingPrices}
+              onOpenMap={() => navigate(`/admin/gig/${jobId}/projekti`)}
+            />
+          );
+        })()}
 
         {/* Gig tools — the project dashboard is the one main button, plus a
             compact "Tiimi" button. Layout scales down cleanly on mobile. */}
@@ -614,11 +661,129 @@ function Row({ k, v }: { k: string; v: string }) {
 }
 
 /**
- * Quick price editor — edit each sector's unit price (€/ikkuna) and its cap
- * count (total). Local draft until "Tallenna hinnat" writes to the shared
- * gigData. Designed for fast last-minute tweaks before signing a deal.
+ * Quick price editor. Two modes:
+ *  - Floor-plan gig (floorMode): one €/window rate + a total cap that
+ *    back-computes the rate, plus a jump to the map to add/remove windows.
+ *    Saved on the project so the dot map stays the single source of truth.
+ *  - Manual gig: per-sector unit price + cap count, saved straight to the gig.
  */
-function PriceEditor({
+function PriceEditor(props: {
+  gig: GigData;
+  floorMode: boolean;
+  windowCount: number;
+  pricePerWindow: number; // euros
+  onSavePerWindow: (euros: number) => void;
+  onSave: (sectors: { id: string; unitPriceCents: number; total: number }[]) => void;
+  saving: boolean;
+  onOpenMap: () => void;
+}) {
+  if (props.floorMode) return <FloorPriceEditor {...props} />;
+  return <SectorPriceEditor gig={props.gig} onSave={props.onSave} saving={props.saving} />;
+}
+
+/**
+ * Floor-plan price editor — the whole job is priced at one €/window rate, and
+ * the cap is (live window count × rate). The admin can set either the rate or
+ * the total price (which back-computes the rate), and add/remove windows on the
+ * map to move the cap. Reducing windows or the rate is exactly how a deal gets
+ * trimmed during negotiation.
+ */
+function FloorPriceEditor({
+  windowCount, pricePerWindow, onSavePerWindow, saving, onOpenMap,
+}: {
+  windowCount: number;
+  pricePerWindow: number;
+  onSavePerWindow: (euros: number) => void;
+  saving: boolean;
+  onOpenMap: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [unitStr, setUnitStr] = useState(String(pricePerWindow));
+  const [totalStr, setTotalStr] = useState(String(Math.round(pricePerWindow * windowCount)));
+
+  // Re-seed when the saved price / window count changes underneath us.
+  useEffect(() => {
+    setUnitStr(String(pricePerWindow));
+    setTotalStr(String(Math.round(pricePerWindow * windowCount)));
+  }, [pricePerWindow, windowCount]);
+
+  const parseEur = (v: string) => {
+    const n = parseFloat((v || "").replace(",", ".").replace(/[^\d.]/g, ""));
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  };
+  const unit = parseEur(unitStr);
+  const onUnit = (v: string) => {
+    setUnitStr(v);
+    setTotalStr(String(Math.round(parseEur(v) * windowCount)));
+  };
+  const onTotal = (v: string) => {
+    setTotalStr(v);
+    const t = parseEur(v);
+    setUnitStr(windowCount > 0 ? String(Math.round((t / windowCount) * 100) / 100) : "0");
+  };
+  const capCents = Math.round(unit * windowCount * 100);
+  const dirty = Math.round(unit * 100) !== Math.round(pricePerWindow * 100);
+
+  return (
+    <Card className="p-4 bg-card border-0 premium-shadow mb-4">
+      <button className="flex items-center justify-between w-full" onClick={() => setOpen((v) => !v)}>
+        <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <Receipt className="w-4 h-4 text-muted-foreground" /> Hinta &amp; katto
+        </span>
+        <span className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground tabular-nums">Katto {eur(capCents)}</span>
+          <ChevronDown className={`w-4 h-4 transition-transform ${open ? "rotate-180" : ""}`} />
+        </span>
+      </button>
+      {open && (
+        <div className="mt-4 space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Koko keikka hinnoitellaan yhdellä ikkunahinnalla. Aseta joko hinta per ikkuna tai
+            kokonaishinta — toinen lasketaan automaattisesti. Ikkunoiden määrää muutat lisäämällä
+            tai poistamalla pisteitä kartalla.
+          </p>
+
+          {/* Window count → drives the cap. Editable on the map. */}
+          <div className="flex items-center justify-between rounded-xl border border-border p-3">
+            <div className="min-w-0">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Ikkunoita (katto)</p>
+              <p className="text-lg font-bold text-foreground tabular-nums">{windowCount} kpl</p>
+            </div>
+            <Button variant="outline" size="sm" onClick={onOpenMap} className="shrink-0">
+              <LayoutDashboard className="w-3.5 h-3.5 mr-1.5" /> Lisää / poista kartalla
+            </Button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs">€ / ikkuna</Label>
+              <Input inputMode="decimal" value={unitStr} onChange={(e) => onUnit(e.target.value)} placeholder="esim. 35" />
+            </div>
+            <div>
+              <Label className="text-xs">Kokonaishinta (katto)</Label>
+              <Input inputMode="decimal" value={totalStr} onChange={(e) => onTotal(e.target.value)} placeholder="esim. 4095" />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between pt-1">
+            <span className="text-sm text-muted-foreground">{windowCount} × {eur(Math.round(unit * 100))}</span>
+            <span className="text-lg font-bold text-foreground tabular-nums">{eur(capCents)}</span>
+          </div>
+          <Button className="w-full" disabled={saving || !dirty} onClick={() => onSavePerWindow(unit)}>
+            <Save className="w-4 h-4 mr-2" /> {saving ? "Tallennetaan…" : "Tallenna hinta"}
+          </Button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * Manual per-sector price editor — edit each sector's unit price (€/ikkuna) and
+ * its cap count (total). Local draft until "Tallenna hinnat" writes to the
+ * gigData. Used by gigs without a floor-plan map.
+ */
+function SectorPriceEditor({
   gig, onSave, saving,
 }: {
   gig: GigData;

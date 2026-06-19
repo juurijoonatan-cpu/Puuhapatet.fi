@@ -2613,6 +2613,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         customMarks: proj.customMarks,
         posOverrides: proj.posOverrides,
         deleted: proj.deleted,
+        // Navigation markers + the live "work happening here now" highlight so the
+        // customer can see ladders/entrances/hazards and where work is in progress.
+        notes: proj.notes ?? {},
+        activeZone: proj.activeZone ?? null,
       } : null;
       // Only expose what the customer is meant to see — no internal billing notes.
       res.json({

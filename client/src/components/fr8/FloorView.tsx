@@ -5,7 +5,7 @@
  * path differ.
  */
 import { useState, useRef, useEffect } from "react";
-import type { ProjMarksData, WindowStatus, ProjCustomMark, ProjMapNote, ProjNoteKind, FixedDeal } from "@shared/project";
+import type { ProjMarksData, WindowStatus, ProjCustomMark, ProjMapNote, ProjNoteKind, ProjActiveZone, FixedDeal } from "@shared/project";
 import { NOTE_KINDS } from "@shared/project";
 import { useIsMobile } from "@/hooks/use-mobile";
 
@@ -51,6 +51,10 @@ interface Props {
   onAddNote?: (floor: string, x: number, y: number, kind: ProjNoteKind) => string | void;
   onUpdateNote?: (floor: string, key: string, text: string) => void;
   onDeleteNote?: (floor: string, key: string) => void;
+  /** The single "work happening here now" highlight (shown to the customer too). */
+  activeZone?: ProjActiveZone | null;
+  onSetActiveZone?: (floor: string, x: number, y: number) => void;
+  onClearActiveZone?: () => void;
   /** When set, the price is a locked, signed deal (no editing, billable priority
    *  + agreed cap drive the figures). FR8 = €37.50/red window, €6300 cap. */
   deal?: FixedDeal | null;
@@ -151,11 +155,11 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, washedBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, deal }: Props) {
+export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, washedBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, activeZone, onSetActiveZone, onClearActiveZone, deal }: Props) {
   const [floor, setFloor] = useState(initialFloor);
   const [filter, setFilter] = useState<"all" | "unwashed" | "progress" | "done">("all");
   const [editMode, setEditMode] = useState(false);
-  const [placeMode, setPlaceMode] = useState<1 | 2 | "del" | "note" | null>(null);
+  const [placeMode, setPlaceMode] = useState<1 | 2 | "del" | "note" | "zone" | null>(null);
   const [noteKind, setNoteKind] = useState<ProjNoteKind>("ladder");
   const [dragging, setDragging] = useState<string | null>(null);
   const [activeOrb, setActiveOrb] = useState<string | null>(null);
@@ -166,6 +170,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const planRef = useRef<HTMLImageElement>(null);
   const notesCanEdit = !!onAddNote;
+  const zoneCanEdit = !!onSetActiveZone;
   const dragKeyRef = useRef<string | null>(null);
   const movedRef = useRef(false);
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -377,6 +382,12 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
       }
       return;
     }
+    if (placeMode === "zone") {
+      // One "work happening here now" highlight — placing it relocates the marker.
+      onSetActiveZone?.(floor, +x.toFixed(2), +y.toFixed(2));
+      setPlaceMode(null);
+      return;
+    }
     if (placeMode !== 1 && placeMode !== 2) return;
     onAddCustomMark(floor, +x.toFixed(2), +y.toFixed(2), placeMode as 1 | 2);
   }
@@ -399,10 +410,17 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
     setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null);
   }
 
+  function chooseZone() {
+    setEditMode(true);
+    setPlaceMode("zone");
+    setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null);
+  }
+
   const editBanner = placeMode === 1 ? "Lisää punaisia pisteitä — klikkaa pohjapiirrosta haluttuun kohtaan."
     : placeMode === 2 ? "Lisää keltaisia pisteitä — klikkaa pohjapiirrosta haluttuun kohtaan."
     : placeMode === "del" ? "Poistotila — klikkaa pisteitä tai merkintöjä jotka haluat poistaa."
     : placeMode === "note" ? `Lisää merkintä (${NOTE_KINDS[noteKind].label}) — klikkaa pohjapiirrosta. Voit kirjoittaa muistiinpanon heti.`
+    : placeMode === "zone" ? "Merkitse työn alla -alue — klikkaa kohtaa, jossa juuri nyt työskennellään. Asiakas näkee tämän."
     : "Muokkaustila — raahaa pisteet oikeille kohdille. Tallentuu automaattisesti.";
 
   return (
@@ -449,6 +467,16 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
             <button key={fi.id} onClick={() => { setFilter(fi.id); setActiveOrb(null); }} style={filterBtnStyle(filter === fi.id)}>{fi.label}</button>
           ))}
         </div>
+
+        {/* Active work zone chip — jump to the floor where work is happening now. */}
+        {activeZone && (
+          <button onClick={() => { setFloor(activeZone.floor); setActiveOrb(null); }}
+            title="Siirry kerrokseen, jossa työ on käynnissä"
+            style={{ display: "flex", alignItems: "center", gap: "7px", padding: "6px 11px", borderRadius: "11px", border: "1px solid rgba(95,224,138,0.35)", background: "rgba(95,224,138,0.1)", color: "#9ff0bd", cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px", fontWeight: 600 }}>
+            <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#5fe08a", boxShadow: "0 0 8px rgba(95,224,138,0.9)", animation: "fr8-zonePulse 1.8s ease-in-out infinite" }} />
+            Työn alla: krs {activeZone.floor}
+          </button>
+        )}
 
         {/* Right: legend + controls */}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: isMobile ? "8px" : "14px" }}>
@@ -519,6 +547,28 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                       ))}
                     </>
                   )}
+
+                  {/* Active work zone — one coloured "work happening here now" marker. */}
+                  {zoneCanEdit && (
+                    <>
+                      <div style={{ height: "1px", background: "rgba(255,255,255,0.08)", margin: "6px 4px" }} />
+                      <button className="add-menu-btn" onClick={chooseZone} style={{ border: `1px solid ${placeMode === "zone" ? "rgba(95,224,138,0.4)" : "transparent"}`, background: placeMode === "zone" ? "rgba(95,224,138,0.12)" : "transparent" }}>
+                        <span style={{ width: "17px", height: "17px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px" }}>🎯</span>
+                        <span style={{ flex: 1 }}>
+                          <span style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#fff" }}>Työn alla nyt</span>
+                          <span style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.45)" }}>Näkyy asiakkaalle reaaliajassa</span>
+                        </span>
+                      </button>
+                      {activeZone && (
+                        <button className="add-menu-btn" onClick={() => { onClearActiveZone?.(); setAddMenuOpen(false); }} style={{ border: "1px solid transparent" }}>
+                          <span style={{ width: "17px", height: "17px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", color: "#ff9b9b" }}>✕</span>
+                          <span style={{ flex: 1 }}>
+                            <span style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "rgba(255,255,255,0.8)" }}>Poista työalue-merkintä</span>
+                          </span>
+                        </button>
+                      )}
+                    </>
+                  )}
                 </div>
               </>
             )}
@@ -577,7 +627,14 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
               draggable={false} />
 
             {/* Orbs layer */}
-            <div onClick={onPlanClick} style={{ position: "absolute", inset: 0, cursor: (placeMode === 1 || placeMode === 2 || placeMode === "note") ? "crosshair" : "default" }}>
+            <div onClick={onPlanClick} style={{ position: "absolute", inset: 0, cursor: (placeMode === 1 || placeMode === 2 || placeMode === "note" || placeMode === "zone") ? "crosshair" : "default" }}>
+              {/* Active work zone — pulsing coloured highlight of current work. */}
+              {activeZone && activeZone.floor === floor && (
+                <span aria-label="Työn alla nyt" title={activeZone.label ? `Työn alla: ${activeZone.label}` : "Työn alla nyt"}
+                  style={{ position: "absolute", left: `${activeZone.x}%`, top: `${activeZone.y}%`, transform: "translate(-50%,-50%)", width: "30px", height: "30px", borderRadius: "50%", background: "rgba(95,224,138,0.18)", border: "2px solid #5fe08a", boxShadow: "0 0 0 6px rgba(95,224,138,0.12)", animation: "fr8-zonePulse 1.8s ease-in-out infinite", pointerEvents: "none", zIndex: 5, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px" }}>
+                  🎯
+                </span>
+              )}
               {points.map((pt) => {
                 const status = statuses[pt.key] || "ei";
                 const isDragging = dragging === pt.key;

@@ -310,6 +310,15 @@ export default function AdminProjectPage() {
     });
   }, [mutate]);
 
+  // ── Active work zone ("work happening here now", visible to the customer) ────
+  const onSetActiveZone = useCallback((floor: string, x: number, y: number) => {
+    mutate((d) => { d.activeZone = { floor, x, y, ts: Date.now() }; });
+  }, [mutate]);
+
+  const onClearActiveZone = useCallback(() => {
+    mutate((d) => { d.activeZone = null; });
+  }, [mutate]);
+
   const onAddHours = useCallback((worker: string, delta: number) => {
     mutate((d) => {
       d.hours[worker] = Math.max(0, +(((d.hours[worker] || 0) + delta).toFixed(2)));
@@ -439,6 +448,9 @@ export default function AdminProjectPage() {
             onAddNote={onAddNote}
             onUpdateNote={onUpdateNote}
             onDeleteNote={onDeleteNote}
+            activeZone={project.activeZone}
+            onSetActiveZone={onSetActiveZone}
+            onClearActiveZone={onClearActiveZone}
             deal={deal}
           />
         )}

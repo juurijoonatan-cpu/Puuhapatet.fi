@@ -57,6 +57,19 @@ export function toNoteKind(v: any): ProjNoteKind {
   return (v === "ladder" || v === "entrance" || v === "water" || v === "wc" || v === "warning" || v === "info") ? v : "info";
 }
 
+/**
+ * The single "work happening here now" highlight: a coloured, pulsing marker the
+ * crew drops on the floor plan so anyone (incl. the customer's live view) can see
+ * where work is currently being done. Only one per project — moving it relocates.
+ */
+export interface ProjActiveZone {
+  floor: string;
+  x: number;             // 0..100 (% of plan width)
+  y: number;             // 0..100 (% of plan height)
+  label?: string;        // optional short label, e.g. "Sali 3"
+  ts: number;            // epoch ms (when set/moved)
+}
+
 export interface ProjLogEntry {
   floor: string;
   key: string;
@@ -89,6 +102,7 @@ export interface ProjectData {
   washedBy: Record<string, string>;                // key → worker id who last washed it
   customMarks: Record<string, ProjCustomMark[]>;   // floor → manually added marks
   notes?: Record<string, ProjMapNote[]>;           // floor → navigation markers / notes
+  activeZone?: ProjActiveZone | null;              // where work is happening right now
   posOverrides: Record<string, { x: number; y: number }>; // key → moved position
   deleted: Record<string, boolean>;                // key → true if seeded mark removed
   log: ProjLogEntry[];                             // newest-first
@@ -120,6 +134,7 @@ export function isFr8Plans(planBase: string | undefined | null): boolean {
 export const FR8_PRICE_PER_WINDOW = 37.5;        // € per washed red window
 export const FR8_CONTRACT_CAP_CENTS = 630_000;   // €6300 agreed total (hard cap)
 export const FR8_BILLABLE_PRIORITY: 1 | 2 = 1;   // only red windows are in the deal
+export const FR8_DEAL_RED_WINDOWS = 168;         // agreed scope: 168 × 37,50 € = 6300 €
 
 export interface FixedDeal {
   pricePerWindow: number;     // € per billable window
@@ -178,6 +193,7 @@ export function emptyProjectData(): ProjectData {
     washedBy: {},
     customMarks: {},
     notes: {},
+    activeZone: null,
     posOverrides: {},
     deleted: {},
     log: [],
@@ -398,6 +414,31 @@ function gigFloorName(f: string): string {
  * untouched.
  */
 export function syncGigSectorsFromProject(gig: GigData, project: ProjectData): GigData {
+  // A signed fixed-price deal (FR8) overrides the per-floor model with a single
+  // "deal" sector so the customer view, the signed contract doc and invoicing all
+  // show exactly the agreed terms: 168 red windows × 37,50 € = 6300 € cap.
+  const deal = fixedDealFor(project);
+  if (deal) {
+    const red = allPoints(project).filter((p) => p.p === deal.billablePriority);
+    const total = FR8_DEAL_RED_WINDOWS;
+    const washed = Math.min(red.filter((p) => p.status === "pesty").length, total);
+    const id = "deal:red";
+    const prevInvoiced = Math.max(0, gig.sectors.find((s) => s.id === id)?.invoicedWashed ?? 0);
+    const sector: GigSector = {
+      id,
+      name: "Punaiset ikkunat (sektori 1)",
+      color: "#D9472B",
+      unitLabel: "ikkuna",
+      total,
+      unitPriceCents: Math.round(deal.pricePerWindow * 100),
+      washed,
+      skipped: 0,
+      invoicedWashed: Math.min(washed, prevInvoiced),
+      priority: 1,
+    };
+    return { ...gig, sectors: [sector], updatedAt: Date.now() };
+  }
+
   const floors = project.building.floors.length ? project.building.floors : DEFAULT_FLOORS;
   const unitPriceCents = Math.round((project.pricePerWindow || DEFAULT_PRICE_PER_WINDOW) * 100);
   const pts = allPoints(project);
@@ -497,6 +538,17 @@ export function sanitizeProjectData(input: any): ProjectData {
     }
   }
 
+  let activeZone: ProjActiveZone | null = null;
+  if (input.activeZone && typeof input.activeZone === "object" && input.activeZone.floor != null) {
+    activeZone = {
+      floor: String(input.activeZone.floor).slice(0, 8),
+      x: clampPct(Number(input.activeZone.x)),
+      y: clampPct(Number(input.activeZone.y)),
+      label: input.activeZone.label ? String(input.activeZone.label).slice(0, 80) : undefined,
+      ts: Number(input.activeZone.ts) || Date.now(),
+    };
+  }
+
   const statuses: Record<string, WindowStatus> = {};
   if (input.statuses && typeof input.statuses === "object") {
     for (const k of Object.keys(input.statuses).slice(0, 20000)) {
@@ -576,6 +628,7 @@ export function sanitizeProjectData(input: any): ProjectData {
     washedBy,
     customMarks,
     notes,
+    activeZone,
     posOverrides,
     deleted,
     log,

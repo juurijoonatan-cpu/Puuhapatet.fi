@@ -10,6 +10,7 @@
 
 import { useMemo, useState } from "react";
 import type { GigPublicView } from "@/lib/api";
+import { NOTE_KINDS } from "@shared/project";
 
 const T = {
   ink: "#1A1A1A",
@@ -57,15 +58,34 @@ const LEGEND: { label: string; color: string }[] = [
 
 export default function CustomerFloorMap({ map }: { map: MapData }) {
   const floors = map.building.floors.length ? map.building.floors : ["1"];
-  const [floor, setFloor] = useState(floors[0]);
+  const activeZone = map.activeZone ?? null;
+  // Open on the floor where work is happening now, if any.
+  const [floor, setFloor] = useState(() =>
+    activeZone && floors.includes(activeZone.floor) ? activeZone.floor : floors[0]);
 
   const points = useMemo(() => getPoints(floor, map), [floor, map]);
+  const floorNotes = map.notes?.[floor] ?? [];
   const washed = points.filter((p) => map.statuses[p.key] === "pesty").length;
   const total = points.length;
   const pct = total > 0 ? Math.round((washed / total) * 100) : 0;
 
   return (
     <div style={{ fontFamily: FONT, color: T.ink }}>
+      <style>{`@keyframes cfmZone{0%,100%{box-shadow:0 0 0 4px rgba(62,124,89,0.16)}50%{box-shadow:0 0 0 9px rgba(62,124,89,0.04)}}`}</style>
+
+      {/* "Work happening here now" banner */}
+      {activeZone && (
+        <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 12, padding: "9px 13px", borderRadius: 11, background: "#EAF6EE", border: "1px solid #BFE3CC", color: "#1F5B36", fontSize: 13 }}>
+          <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#3E7C59", animation: "ppPulse 1.8s ease-in-out infinite", flexShrink: 0 }} />
+          <span>Työn alla juuri nyt{activeZone.label ? `: ${activeZone.label}` : ""} — <strong>kerros {activeZone.floor}</strong></span>
+          {floor !== activeZone.floor && (
+            <button onClick={() => setFloor(activeZone.floor)} style={{ marginLeft: "auto", border: "none", background: "transparent", color: "#1F5B36", fontWeight: 700, fontSize: 12.5, cursor: "pointer", textDecoration: "underline", fontFamily: FONT }}>
+              Näytä
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Floor selector + progress */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: 4, background: T.paper, border: `1px solid ${T.hair}`, borderRadius: 11 }}>
@@ -122,6 +142,36 @@ export default function CustomerFloorMap({ map }: { map: MapData }) {
                 />
               );
             })}
+
+            {/* Navigation markers / notes (ladders, entrances, hazards, …) */}
+            {floorNotes.map((n) => (
+              <span
+                key={n.key}
+                title={`${NOTE_KINDS[n.kind].label}${n.text ? " — " + n.text : ""}`}
+                style={{
+                  position: "absolute", left: `${n.x}%`, top: `${n.y}%`, transform: "translate(-50%,-50%)",
+                  width: 22, height: 22, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 12, background: "#FFFFFF", border: `1.5px solid ${n.kind === "warning" ? "#E0A800" : T.hair}`,
+                  boxShadow: "0 1px 4px rgba(0,0,0,0.18)",
+                }}
+              >
+                {NOTE_KINDS[n.kind].glyph}
+              </span>
+            ))}
+
+            {/* Active work zone — pulsing highlight of where work is happening now */}
+            {activeZone && activeZone.floor === floor && (
+              <span
+                title={activeZone.label ? `Työn alla: ${activeZone.label}` : "Työn alla nyt"}
+                style={{
+                  position: "absolute", left: `${activeZone.x}%`, top: `${activeZone.y}%`, transform: "translate(-50%,-50%)",
+                  width: 26, height: 26, borderRadius: "50%", background: "rgba(62,124,89,0.16)", border: "2px solid #3E7C59",
+                  display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, animation: "cfmZone 1.8s ease-in-out infinite",
+                }}
+              >
+                🎯
+              </span>
+            )}
           </div>
         </div>
       </div>

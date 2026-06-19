@@ -2,21 +2,37 @@
  * Worker (alihankkija) onboarding — agreements + profile questionnaire.
  *
  * These are the documents a gig worker signs BEFORE the worker dashboard opens
- * ("the intro is the signing"). The model is a hybrid:
- *   1. Alihankkijasopimus — the binding subcontractor agreement (independent
- *      contractor, own Y-tunnus, own insurance & liability, €/window pay model).
- *   2. Tietosuoja & turvallisuus — data-protection + safety acknowledgement.
- *   3. Yhteistyön jatko — a light "we'd love you to continue with us" commitment
- *      + customer non-circumvention (kept soft on purpose).
+ * ("the intro is the signing"). The set is designed to do two things at once:
+ *   • PROTECT THE BRAND firmly — independent-contractor status, own taxes &
+ *     insurance, own liability, customer/site non-circumvention, non-compete,
+ *     non-solicitation and a contractual penalty, so an alihankkija can never
+ *     take the work, the client or the brand for themselves; and
+ *   • MOTIVATE PEOPLE TO STAY — a clear, fair, performance-based growth path so
+ *     good workers want to keep going with Puuhapatet long-term.
  *
- * ⚠️  LEGAL REVIEW REQUIRED. This text is a carefully-written Finnish template
- * modelled on the existing Puuhapatet member-agreement / FR8 contract, but it
- * has NOT been reviewed by a lawyer. Have a Finnish lawyer review the
- * alihankkija + non-circumvention clauses before relying on them in a real
- * engagement. Bump WORKER_AGREEMENT_VERSION to force everyone to re-sign.
+ * The model:
+ *   1. Alihankkijasopimus — the binding subcontractor agreement (independent
+ *      contractor, own Y-tunnus, own taxes/insurance/liability, per-window pay).
+ *   2. Tietosuoja & turvallisuus — data-protection + key & safety acknowledgement.
+ *   3. Asiakassuoja & kilpailukielto — customers/sites belong to the brand,
+ *      non-compete, non-solicitation, trade secrets, contractual penalty.
+ *   4. Tiimi, jatkuvuus & kasvu — the positive, mutual "you're part of the brand"
+ *      commitment: more & better work for good performance, fair treatment.
+ *
+ * The per-window pay RATE is intentionally NOT written into the text — it is set
+ * per worker (shared/crew.ts `perWindowCents`) and shown live on the worker's
+ * dashboard and on the signed contract document, so the agreement never states a
+ * number that could conflict with an individually-agreed rate.
+ *
+ * ⚠️  LEGAL REVIEW REQUIRED. This is a carefully-written Finnish template, but it
+ * has NOT been reviewed by a lawyer. In Finland a post-term non-compete on an
+ * independent contractor must be reasonable in scope and duration to be
+ * enforceable, and a contractual penalty can be adjusted by a court. Have a
+ * Finnish lawyer review the alihankkija + non-compete + penalty clauses before
+ * relying on them. Bump WORKER_AGREEMENT_VERSION to force everyone to re-sign.
  */
 
-export const WORKER_AGREEMENT_VERSION = "2026-07";
+export const WORKER_AGREEMENT_VERSION = "2026-08";
 
 export interface AgreementClause {
   id: string;
@@ -30,7 +46,7 @@ export interface AgreementSection {
 }
 
 export interface WorkerAgreement {
-  id: string;        // "alihankinta" | "tietoturva" | "jatko"
+  id: string;        // "alihankinta" | "tietoturva" | "asiakassuoja" | "tiimi"
   title: string;
   tagline: string;   // one-line summary shown on the card
   intro: string;
@@ -46,66 +62,84 @@ export interface WorkerAgreement {
 const ALIHANKINTA: WorkerAgreement = {
   id: "alihankinta",
   title: "Alihankkijasopimus",
-  tagline: "Itsenäinen alihankkija · oma Y-tunnus & vakuutus · 20 € / pesty ikkuna",
+  tagline: "Itsenäinen alihankkija · oma Y-tunnus, verot & vakuutukset · urakkaperusteinen korvaus",
   intro:
-    "Tämä sopimus solmitaan Puuhapatet-brändin (jäljempänä “Brändi”, jota edustavat " +
-    "isännät Joonatan Juuri ja Matias Pitkänen) ja allekirjoittavan tekijän (jäljempänä " +
-    "“Alihankkija”) välillä. Alihankkija tekee työn itsenäisenä yrittäjänä omaan lukuunsa " +
-    "ja laskuttaa työstään Brändiä alla kuvatun mallin mukaisesti. Kyseessä ei ole " +
-    "työsuhde eikä virkasuhde.",
+    "Tämä sopimus solmitaan Puuhapatet-brändin (jäljempänä “Brändi”, jota edustavat sen perustajat " +
+    "Joonatan Juuri ja Matias Pitkänen) ja allekirjoittavan tekijän (jäljempänä “Alihankkija”) välillä. " +
+    "Alihankkija tekee työn itsenäisenä yrittäjänä omaan lukuunsa ja laskuttaa työstään Brändiä alla " +
+    "kuvatun mallin mukaisesti. Kyseessä EI ole työsuhde, virkasuhde eikä toimeksiantosuhde, joka " +
+    "synnyttäisi työnantajavelvoitteita. Brändi tuo asiakkaat, kohteet, työkalut ja maineen; Alihankkija " +
+    "tuo oman työpanoksensa ja vastaa omasta yritystoiminnastaan.",
   sections: [
     {
       no: "01",
       title: "Asema ja itsenäisyys",
       body: [
-        "Toimin itsenäisenä alihankkijana (kevytyrittäjä tai oma toiminimi/yritys) enkä työsuhteessa Brändiin.",
-        "Vastaan itse omasta verotuksestani, ennakkoperinnästä, mahdollisesta YEL-vakuutuksesta sekä lakisääteisistä maksuistani.",
-        "Minulla on tai hankin oman toimintani edellyttämän Y-tunnuksen ja laskutuskanavan ennen työn aloittamista.",
-        "Päätän itse työni tekotavasta ja työvälineistä sovittujen laatu- ja turvallisuusvaatimusten rajoissa.",
+        "Toimin itsenäisenä alihankkijana (kevytyrittäjä, toiminimi tai yhtiö) enkä työsuhteessa Brändiin. Minulle ei synny työsuhteen oikeuksia, kuten palkkaa, lomakorvausta, sairausajan palkkaa, työterveyttä tai irtisanomissuojaa.",
+        "Hankin ja minulla on oman toimintani edellyttämä Y-tunnus ja laskutuskanava ennen ensimmäistä laskua. Voin hankkia Y-tunnuksen myös laskutuspalvelun kautta.",
+        "Päätän itse työni tekotavasta, työvälineistä ja työjärjestyksestä sovittujen laatu-, aikataulu- ja turvallisuusvaatimusten rajoissa.",
+        "Voin lähtökohtaisesti tehdä työtä myös muille toimeksiantajille, kunhan se ei ole ristiriidassa tämän sopimuksen kilpailukielto- ja asiakassuojaehtojen kanssa (ks. erillinen sopimusosa).",
       ],
     },
     {
       no: "02",
-      title: "Korvaus ja laskutus",
+      title: "Verot, vakuutukset ja omat maksut — omalla vastuulla",
       body: [
-        "Korvaus on 20 € jokaisesta hyväksytysti pestystä ikkunasta (urakkaperusteinen suoriteveloitus).",
-        "Korvaus perustuu reaaliaikaiseen seurantaan: jokainen kartalle “pesty”-tilaan merkitty ikkuna kerryttää korvaustani.",
-        "Vain todellisuudessa ja huolellisesti pestyt ikkunat kerryttävät korvausta. Huonokuntoiset, ohitetut tai virheellisesti merkityt ikkunat eivät kerrytä korvausta, ja Brändillä on oikeus oikaista virheelliset merkinnät.",
-        "Laskutan korvaukseni Brändiltä sovituin väliajoin oman Y-tunnukseni kautta. En peri maksuja suoraan asiakkaalta enkä laskuta Brändin asiakkaita omaan lukuuni.",
-        "Hinnat ovat arvonlisäverottomia, ellei toisin sovita. Vastaan itse oman toimintani mahdollisesta arvonlisäverovelvollisuudesta.",
+        "Vastaan itse KAIKISTA omaan yritystoimintaani liittyvistä veroista ja maksuista: tuloverosta, ennakkoverosta/ennakonpidätyksestä, mahdollisesta arvonlisäverosta sekä YEL-eläkevakuutuksesta. Brändi ei pidätä veroja eikä tilitä niitä puolestani.",
+        "Huolehdin itse riittävästä vakuutusturvasta toimintani edellyttämässä laajuudessa, vähintään toiminnan vastuuvakuutuksesta ja tarkoituksenmukaisesta tapaturmavakuutuksesta. Vakuutusturvani ei saa olla puutteellinen työn aikana.",
+        "Ymmärrän, että teen työn omalla riskilläni: en saa palkkaa ajalta jolloin en tee työtä, enkä sairausajan tai loman korvausta. Korvaukseni perustuu yksinomaan tekemääni ja hyväksyttyyn työhön.",
+        "Vastaan itse omasta kirjanpidostani ja viranomaisilmoituksistani. Brändi voi pyytää todistuksen Y-tunnuksesta, ennakkoperintärekisteristä tai vakuutuksesta.",
       ],
     },
     {
       no: "03",
-      title: "Vastuu, vakuutus ja vahingot",
+      title: "Korvaus ja laskutus",
       body: [
-        "Vastaan oman työni laadusta ja huolellisuudesta.",
-        "Vastaan itse omasta vakuutusturvastani (mm. tapaturma- ja vastuuvakuutus) siltä osin kuin oma toimintani sitä edellyttää, ja huolehdin, ettei vakuutusturvani ole puutteellinen työn aikana.",
-        "Ilmoitan vahingoista ja vaaratilanteista välittömästi isännille. Tuottamuksella aiheuttamistani vahingoista vastaan oman toimintani ja vakuutusteni mukaisesti.",
-        "Ennen työtä valokuvadokumentoidut vauriot sekä huonokuntoisista rakenteista huolellisesta työstä huolimatta aiheutuvat seuraukset eivät ole vastuullani.",
-        "Käytän työvälineitä, avaimia ja kulkuoikeuksia huolellisesti ja palautan kaiken minulle uskotun omaisuuden pyydettäessä.",
+        "Korvaus on urakkaperusteinen ikkunakohtainen suoriteveloitus: jokainen hyväksytysti ja huolellisesti pesty ikkuna kerryttää korvaustani sovitulla ikkunakohtaisella hinnalla. Henkilökohtainen hintani näkyy aina työpöydälläni ja maksuissani.",
+        "Vain todellisuudessa ja huolellisesti pestyt ikkunat kerryttävät korvausta. Huonokuntoiset, ohitetut tai virheellisesti “pestyksi” merkityt ikkunat eivät kerrytä korvausta, ja Brändillä on oikeus oikaista virheelliset merkinnät.",
+        "Laskutan korvaukseni Brändiltä sovituin väliajoin oman Y-tunnukseni kautta. En peri maksuja suoraan asiakkaalta enkä laskuta Brändin asiakkaita omaan lukuuni.",
+        "Korvaukset ovat arvonlisäverottomia, ellei toisin sovita. Vastaan itse oman toimintani mahdollisesta arvonlisäverovelvollisuudesta ja sen ilmoittamisesta laskullani.",
+        "Maksut Brändiltä minulle hoidetaan seurannan kautta: hyväksyn maksuilmoituksen omilla laskutustiedoillani, minkä jälkeen suoritus maksetaan ja siitä muodostuu laskuni.",
       ],
     },
     {
       no: "04",
-      title: "Laatu, turvallisuus ja työmaa",
+      title: "Vastuu, vakuutus ja vahingot",
       body: [
-        "Teen työn sovitun laatutason mukaisesti ja noudatan työmaan sääntöjä sekä turvallisuusohjeita.",
-        "Turvallisuus on aina etusijalla. En ota tarpeettomia riskejä korkealla työskennellessäni enkä työskentele päihteiden vaikutuksen alaisena.",
-        "Aloitan ajanseurannan työmaalle saapuessani ja merkitsen tekemäni ikkunat rehellisesti karttaan.",
-        "Minulla on oikeus jättää huonokuntoinen tai vaarallinen ikkuna pesemättä (kuntovaraus) ilman seuraamuksia.",
+        "Vastaan oman työni laadusta ja huolellisuudesta sekä tuottamuksella aiheuttamistani vahingoista oman toimintani ja vakuutusteni mukaisesti.",
+        "Ilmoitan vahingoista, rikkoutumisista ja vaaratilanteista välittömästi Brändin edustajille.",
+        "Ennen työtä valokuvadokumentoidut vauriot sekä huonokuntoisista tai hauraista rakenteista huolellisesta työstä huolimatta aiheutuvat seuraukset (esim. hilseilevän maalin irtoaminen) eivät ole vastuullani.",
+        "Käytän työvälineitä, avaimia ja kulkuoikeuksia huolellisesti ja palautan kaiken minulle uskotun omaisuuden pyydettäessä ja viimeistään yhteistyön päättyessä.",
       ],
     },
     {
       no: "05",
-      title: "Luottamuksellisuus",
+      title: "Laatu, turvallisuus ja työmaa",
       body: [
-        "Käsittelen asiakas- ja kohdetietoja luottamuksellisesti enkä luovuta niitä ulkopuolisille.",
-        "Luottamuksellisuus jatkuu myös yhteistyön päätyttyä.",
+        "Teen työn sovitun laatutason mukaisesti ja noudatan työmaan sääntöjä sekä turvallisuusohjeita. Edustan työmaalla Brändiä asiallisesti ja siististi.",
+        "Turvallisuus on aina etusijalla. En ota tarpeettomia riskejä korkealla työskennellessäni enkä työskentele päihteiden vaikutuksen alaisena.",
+        "Aloitan ajanseurannan työmaalle saapuessani ja merkitsen tekemäni ikkunat rehellisesti ja reaaliaikaisesti karttaan.",
+        "Minulla on oikeus ja velvollisuus jättää huonokuntoinen tai vaarallinen ikkuna pesemättä (kuntovaraus) ilman seuraamuksia ja ilmoittaa siitä.",
       ],
     },
     {
       no: "06",
+      title: "Luottamuksellisuus",
+      body: [
+        "Käsittelen asiakas- ja kohdetietoja luottamuksellisesti enkä luovuta niitä ulkopuolisille. Luottamuksellisuus jatkuu myös yhteistyön päätyttyä.",
+      ],
+    },
+    {
+      no: "07",
+      title: "Sopimuksen kesto ja päättyminen",
+      body: [
+        "Sopimus on voimassa toistaiseksi. Yhteistyö jatkuu niin kauan kuin se on molemmille osapuolille toimiva — käytännössä työtä on tarjolla ja teen sen sovitulla laadulla ja luotettavuudella.",
+        "Kumpi tahansa osapuoli voi päättää yhteistyön ilmoittamalla siitä toiselle. Kesken sovitun työmaan pyrimme saattamaan aloitetun kokonaisuuden hallitusti loppuun.",
+        "Yhteistyön päättyminen ei vaikuta jo kertyneeseen korvaukseeni tehdystä työstä. Asiakassuoja-, kilpailukielto-, luottamuksellisuus- ja vastuuehdot jäävät voimaan päättymisestä riippumatta.",
+      ],
+    },
+    {
+      no: "08",
       title: "Sovellettava laki ja erimielisyydet",
       body: [
         "Sopimukseen sovelletaan Suomen lakia.",
@@ -114,9 +148,10 @@ const ALIHANKINTA: WorkerAgreement = {
     },
   ],
   clauses: [
-    { id: "itsenainen", text: "Ymmärrän toimivani itsenäisenä alihankkijana, en työsuhteessa, ja vastaavani omista veroistani ja maksuistani." },
-    { id: "vakuutus", text: "Vastaan itse omasta vakuutusturvastani ja vastuustani työn aikana." },
-    { id: "korvaus", text: "Hyväksyn korvausmallin 20 € / pesty ikkuna ja laskutan korvaukseni oman Y-tunnukseni kautta." },
+    { id: "itsenainen", text: "Ymmärrän toimivani itsenäisenä alihankkijana, en työsuhteessa, eikä minulle synny työsuhteen oikeuksia (palkka, loma, sairausajan korvaus, irtisanomissuoja)." },
+    { id: "verot", text: "Vastaan itse veroistani, ennakkoperinnästä, mahdollisesta YEL:stä ja arvonlisäverosta. Brändi ei pidätä veroja puolestani." },
+    { id: "vakuutus", text: "Vastaan itse omasta vakuutusturvastani ja vastuustani työn aikana ja teen työn omalla riskilläni." },
+    { id: "korvaus", text: "Hyväksyn urakkaperusteisen, ikkunakohtaisen korvausmallin ja laskutan korvaukseni oman Y-tunnukseni kautta — en laskuta asiakasta suoraan." },
   ],
   accept:
     "Olen lukenut alihankkijasopimuksen ja hyväksyn sen sisällön. Allekirjoitukseni sitoo minua sopimukseen.",
@@ -129,23 +164,24 @@ const TIETOTURVA: WorkerAgreement = {
   title: "Tietosuoja & turvallisuus",
   tagline: "Asiakastietojen suoja, avainturva ja työturvallisuus",
   intro:
-    "Vahvistan noudattavani Puuhapatetin tietosuoja- ja turvallisuuskäytäntöjä koko " +
-    "yhteistyön ajan.",
+    "Vahvistan noudattavani Puuhapatetin tietosuoja- ja turvallisuuskäytäntöjä koko yhteistyön ajan. " +
+    "Asiakkaiden koteihin ja toimitiloihin pääsy on luottamustehtävä, jota kohtelen sen mukaisesti.",
   sections: [
     {
       no: "01",
       title: "Asiakastiedot ja tietosuoja",
       body: [
         "Käytän asiakas- ja kohdetietoja vain työn tekemiseen enkä kopioi niitä Brändin järjestelmien ulkopuolelle.",
-        "En jaa kuvia, osoitteita tai muita kohdetietoja somessa tai ulkopuolisille ilman lupaa.",
+        "En jaa kuvia, osoitteita, asiakkaiden nimiä tai muita kohdetietoja somessa tai ulkopuolisille ilman Brändin lupaa.",
+        "En käytä asiakas- tai kohdetietoja omiin tarkoituksiini enkä yhteydenpitoon asiakkaiden kanssa Brändin ohi.",
       ],
     },
     {
       no: "02",
       title: "Avaimet ja kulkuoikeudet",
       body: [
-        "Säilytän avaimia ja kulkulupia huolellisesti enkä luovuta niitä ulkopuolisille.",
-        "Ilmoitan heti, jos avain katoaa tai kulkuoikeuksissa on ongelma.",
+        "Säilytän avaimia ja kulkulupia huolellisesti ja ilman kohteen tunnistetietoja, enkä luovuta niitä ulkopuolisille.",
+        "Ilmoitan heti, jos avain katoaa tai kulkuoikeuksissa on ongelma, ja palautan avaimet kuittausta vastaan pyydettäessä.",
       ],
     },
     {
@@ -158,31 +194,32 @@ const TIETOTURVA: WorkerAgreement = {
     },
   ],
   clauses: [
-    { id: "tietosuoja", text: "Sitoudun käsittelemään asiakas- ja kohdetietoja luottamuksellisesti." },
-    { id: "turvallisuus", text: "Sitoudun noudattamaan turvallisia työtapoja ja huolelliseen avaintenkäsittelyyn." },
+    { id: "tietosuoja", text: "Sitoudun käsittelemään asiakas- ja kohdetietoja luottamuksellisesti enkä jaa niitä ulkopuolisille." },
+    { id: "turvallisuus", text: "Sitoudun turvallisiin työtapoihin ja huolelliseen avainten- ja kulkulupien käsittelyyn." },
   ],
   accept: "Hyväksyn tietosuoja- ja turvallisuuskäytännöt.",
 };
 
-// ─── 3. Yhteistyön jatko (kevyt sitoumus) ──────────────────────────────────────
+// ─── 3. Asiakassuoja & kilpailukielto ──────────────────────────────────────────
 
-const JATKO: WorkerAgreement = {
-  id: "jatko",
-  title: "Kilpailukielto & asiakassuoja",
-  tagline: "Asiakkaat kuuluvat Brändille · kilpailukielto · houkuttelukielto · sopimussakko",
+const ASIAKASSUOJA: WorkerAgreement = {
+  id: "asiakassuoja",
+  title: "Asiakassuoja & kilpailukielto",
+  tagline: "Asiakkaat & kohteet kuuluvat Brändille · kilpailukielto · houkuttelukielto · sopimussakko",
   intro:
-    "Tämä on sitova sopimusosa, joka suojaa Puuhapatet-brändiä. Brändi tuo asiakkaat, " +
-    "kohteet, hinnoittelumallin, työkalut ja maineen — Alihankkija pääsee näihin käsiksi " +
-    "vain yhteistyön kautta. Siksi sitoudut alla oleviin ehtoihin sekä yhteistyön aikana " +
-    "että määräajan sen jälkeen. Ehdot ovat tarkoituksella selkeät ja velvoittavat.",
+    "Tämä on sitova sopimusosa, joka suojaa Puuhapatet-brändiä. Brändi tuo asiakkaat, kohteet, " +
+    "hinnoittelumallin, työkalut ja maineen — Alihankkija pääsee näihin käsiksi vain yhteistyön kautta. " +
+    "Siksi sitoudut alla oleviin ehtoihin sekä yhteistyön aikana että määräajan sen jälkeen. Ehdot ovat " +
+    "tarkoituksella selkeät ja velvoittavat: et voi ottaa Brändin työtä, asiakasta tai kohdetta itsellesi " +
+    "etkä ryhtyä niissä omaksi toimijaksi Brändin ohi.",
   sections: [
     {
       no: "01",
       title: "Asiakkaat ja kohteet kuuluvat Brändille",
       body: [
-        "Kaikki Brändin kautta syntyneet tai Brändin osoittamat asiakkaat, kohteet, yhteystiedot ja liidit kuuluvat yksinomaan Puuhapatetille — myös ne, jotka kohtaan keikalla.",
-        "En ota näihin asiakkaisiin yhteyttä omaan lukuuni, en sovi heidän kanssaan töistä Brändin ohi enkä laskuta heitä suoraan, en yhteistyön aikana enkä 24 kuukauteen sen päättymisestä.",
-        "Ohjaan kaikki uudet tilaukset ja jatkotyöpyynnöt Brändille — en hoida niitä itse Brändin ohi.",
+        "Kaikki Brändin kautta syntyneet tai Brändin osoittamat asiakkaat, tilaajat, loppuasiakkaat, kohteet, yhteystiedot ja liidit kuuluvat yksinomaan Puuhapatetille — myös ne, jotka kohtaan keikalla tai joiden tiloissa työskentelen.",
+        "En ota näihin asiakkaisiin tai kohteisiin yhteyttä omaan lukuuni, en sovi heidän kanssaan töistä Brändin ohi, en laskuta heitä suoraan enkä ryhdy heidän omaksi toimittajakseen tai työntekijäkseen — en yhteistyön aikana enkä 24 kuukauteen sen päättymisestä.",
+        "En jatka saman kohteen tai asiakkaan työtä omaan lukuuni tai kilpailijan lukuun yhteistyön ohi tai sen jälkeen edellä mainittuna aikana. Ohjaan kaikki uudet tilaukset ja jatkotyöpyynnöt Brändille.",
       ],
     },
     {
@@ -190,16 +227,17 @@ const JATKO: WorkerAgreement = {
       title: "Kilpailukielto",
       body: [
         "En tarjoa enkä tuota Brändin kanssa kilpailevaa ikkunanpesu- tai vastaavaa palvelua Brändin asiakkaille tai kohteille omaan lukuuni tai kilpailijan lukuun yhteistyön aikana enkä 12 kuukauteen sen päättymisestä.",
-        "En perusta enkä toimi kilpailevassa toiminnassa, joka kohdistuu Brändin asiakaskuntaan tai markkina-alueeseen edellä mainittuna aikana.",
-        "Kielto ei estä minua tekemästä alan työtä muille kuin Brändin asiakkaille tai Brändin kautta syntyneissä kohteissa, eikä estä opiskelua tai muuta työtä yleisesti.",
+        "En perusta enkä toimi kilpailevassa toiminnassa, joka kohdistuu Brändin asiakaskuntaan tai Brändin osoittamiin kohteisiin edellä mainittuna aikana.",
+        "Kielto ei estä minua tekemästä alan työtä yleisesti muille kuin Brändin asiakkaille tai Brändin kautta syntyneissä kohteissa, eikä estä opiskelua tai muuta työtä.",
       ],
     },
     {
       no: "03",
-      title: "Houkuttelukielto ja luottamukselliset tiedot",
+      title: "Houkuttelukielto, brändi ja liikesalaisuudet",
       body: [
         "En houkuttele enkä värvää Brändin muita tekijöitä, asiakkaita tai yhteistyökumppaneita pois Brändiltä yhteistyön aikana enkä 12 kuukauteen sen päättymisestä.",
-        "Brändin asiakaslistat, hinnoittelu, sopimusmallit ja muu liiketoimintatieto ovat liikesalaisuuksia. En käytä niitä Brändin ulkopuolella enkä luovuta niitä kenellekään.",
+        "En esiinny Puuhapatetina enkä käytä Brändin nimeä, tunnuksia, työkaluja tai mainetta yhteistyön päätyttyä.",
+        "Brändin asiakaslistat, hinnoittelu, sopimusmallit, työkalut ja muu liiketoimintatieto ovat liikesalaisuuksia. En käytä niitä Brändin ulkopuolella enkä luovuta niitä kenellekään.",
       ],
     },
     {
@@ -213,15 +251,72 @@ const JATKO: WorkerAgreement = {
     },
   ],
   clauses: [
-    { id: "asiakkaat", text: "Ymmärrän, että Brändin kautta syntyneet asiakkaat ja kohteet kuuluvat Puuhapatetille, enkä vie tai hoida heitä Brändin ohi (24 kk)." },
+    { id: "asiakkaat", text: "Ymmärrän, että Brändin kautta syntyneet asiakkaat ja kohteet kuuluvat Puuhapatetille, enkä vie, jatka tai hoida heitä Brändin ohi enkä ryhdy heidän omaksi toimittajakseen (24 kk)." },
     { id: "kilpailu", text: "Sitoudun kilpailukieltoon Brändin asiakkaisiin ja kohteisiin nähden (12 kk yhteistyön jälkeen)." },
-    { id: "houkuttelu", text: "Sitoudun houkuttelukieltoon enkä käytä Brändin liikesalaisuuksia (12 kk)." },
-    { id: "sakko", text: "Hyväksyn, että ehtojen rikkomisesta voi seurata sopimussakko ja vahingonkorvaus." },
+    { id: "houkuttelu", text: "Sitoudun houkuttelukieltoon, en esiinny Brändinä jälkikäteen enkä käytä Brändin liikesalaisuuksia (12 kk)." },
+    { id: "sakko", text: "Hyväksyn, että ehtojen rikkomisesta voi seurata 2 000 €:n sopimussakko rikkomusta kohden sekä vahingonkorvaus." },
   ],
-  accept: "Olen lukenut kilpailukielto- ja asiakassuojaehdot ja hyväksyn ne sitovasti. Allekirjoitukseni sitoo minua näihin ehtoihin.",
+  accept: "Olen lukenut asiakassuoja- ja kilpailukieltoehdot ja hyväksyn ne sitovasti. Allekirjoitukseni sitoo minua näihin ehtoihin.",
 };
 
-export const WORKER_AGREEMENTS: WorkerAgreement[] = [ALIHANKINTA, TIETOTURVA, JATKO];
+// ─── 4. Tiimi, jatkuvuus & kasvu (positiivinen, molemminpuolinen) ───────────────
+
+const TIIMI: WorkerAgreement = {
+  id: "tiimi",
+  title: "Tiimi, jatkuvuus & kasvu",
+  tagline: "Olet osa Brändiä · hyvästä työstä lisää töitä ja parempi korvaus · reilusti molempiin suuntiin",
+  intro:
+    "Edelliset osat suojaavat Brändiä — tämä osa kertoo, mitä sinä saat. Haluamme pitkäaikaisia tekijöitä, " +
+    "emme kertakäyttöisiä. Kun teet hyvää ja luotettavaa työtä, haluamme että jatkat kanssamme ja kasvat " +
+    "Brändin mukana. Yhteistyö on reilua molempiin suuntiin: me tuomme työn, työkalut ja maksamme " +
+    "ajallaan; sinä tuot laadun ja luotettavuuden.",
+  sections: [
+    {
+      no: "01",
+      title: "Olet osa Puuhapatet-brändiä",
+      body: [
+        "Et ole nimetön alihankkija vaan osa tiimiä. Edustat Brändiä työmaalla, ja Brändi seisoo sinun takanasi: hyvä työsi näkyy, ja saat siitä tunnustusta ja suosituksia.",
+        "Saat käyttöösi samat työkalut kuin koko tiimi: reaaliaikaisen seurannan, läpinäkyvän ansionäkymän ja selkeät ohjeet.",
+      ],
+    },
+    {
+      no: "02",
+      title: "Hyvästä työstä palkitaan — jatkuvuus on ansaittua",
+      body: [
+        "Jatko perustuu tekoihin: kun teet työn laadukkaasti, luotettavasti ja sovitusti, saat lisää töitä, etusijan tulevissa keikoissa ja mahdollisuuden korkeampaan ikkunakohtaiseen korvaukseen.",
+        "Jos työn laatu, luotettavuus tai turvallisuus eivät täytä sovittua, yhteistyö voi vähentyä tai päättyä. Tämä on reilua molemmille: hyvä työ palkitaan, eikä kenenkään tarvitse kantaa heikkoa jälkeä.",
+        "Korvauksen ja vastuun kasvu sovitaan aina avoimesti ja etukäteen — ei yllätyksiä kumpaankaan suuntaan.",
+      ],
+    },
+    {
+      no: "03",
+      title: "Mitä saat meiltä",
+      body: [
+        "Läpinäkyvä, ikkunakohtainen korvaus, jonka näet kertyvän reaaliajassa omalta työpöydältäsi.",
+        "Maksut hoidetaan sovitusti ja ajallaan, omilla laskutustiedoillasi — ei kikkailua.",
+        "Joustava työ: teet sovitut keikat oman aikataulusi ja jaksamisesi mukaan turvallisuus edellä.",
+        "Suosittelu ja referenssi hyvästä työstä, kun sitä tarvitset, sekä tuki ja opastus työn tekemiseen.",
+      ],
+    },
+    {
+      no: "04",
+      title: "Mitä odotamme sinulta",
+      body: [
+        "Laadukasta ja huolellista jälkeä, rehellistä merkintää tehdystä työstä ja sovitun aikataulun kunnioittamista.",
+        "Avointa viestintää: kerrot ajoissa, jos jokin ei onnistu, viivästyy tai kohteessa on ongelma.",
+        "Brändin hyvää edustamista asiakkaan tiloissa — siisti, ystävällinen ja luotettava ote.",
+      ],
+    },
+  ],
+  clauses: [
+    { id: "osa", text: "Haluan olla osa Puuhapatet-tiimiä ja edustaa Brändiä hyvin asiakkaan tiloissa." },
+    { id: "jatko", text: "Ymmärrän, että yhteistyön jatko ja korvauksen kasvu perustuvat hyvään, luotettavaan työhön — ja että ne sovitaan avoimesti." },
+    { id: "viestinta", text: "Sitoudun laadukkaaseen jälkeen, rehelliseen merkintään ja avoimeen viestintään." },
+  ],
+  accept: "Haluan jatkaa Puuhapatetin kanssa pitkäjänteisesti ja sitoudun yllä oleviin yhteisiin pelisääntöihin.",
+};
+
+export const WORKER_AGREEMENTS: WorkerAgreement[] = [ALIHANKINTA, TIETOTURVA, ASIAKASSUOJA, TIIMI];
 
 export function agreementById(id: string): WorkerAgreement | undefined {
   return WORKER_AGREEMENTS.find((a) => a.id === id);
@@ -252,7 +347,7 @@ export const PROFILE_QUESTIONS: ProfileQuestion[] = [
   { id: "transport", label: "Miten pääset työmaalle? (oma auto / julkiset)", type: "text" },
   { id: "heights", label: "Oletko valmis työskentelemään korkeilla paikoilla / tikkailla?", type: "text", placeholder: "Kyllä / Ei / Riippuu" },
   { id: "availability", label: "Milloin olet käytettävissä?", type: "textarea", placeholder: "Päivät ja kellonajat…" },
-  { id: "motivation", label: "Miksi haluat liittyä — ja haluatko jatkaa jatkossa?", type: "textarea", placeholder: "Vapaa sana…" },
+  { id: "motivation", label: "Miksi haluat liittyä — ja haluatko jatkaa pitkäjänteisesti?", type: "textarea", placeholder: "Vapaa sana…" },
 ];
 
 export const PROFILE_REQUIRED_IDS = PROFILE_QUESTIONS.filter((q) => q.required).map((q) => q.id);

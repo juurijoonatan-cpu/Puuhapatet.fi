@@ -517,7 +517,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
             {addMenuOpen && (
               <>
                 <div onClick={() => setAddMenuOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 44 }} />
-                <div data-fr8-pop="menu" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 46, width: "212px", padding: "7px", background: "rgba(16,16,20,0.92)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: "14px", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 20px 50px rgba(0,0,0,0.7)" }}>
+                <div data-fr8-pop="menu" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 46, width: "212px", maxHeight: "min(70vh, 460px)", overflowY: "auto", padding: "7px", background: "rgba(16,16,20,0.92)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: "14px", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 20px 50px rgba(0,0,0,0.7)" }}>
                   <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, padding: "5px 8px 7px" }}>
                     <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.4)" }}>LISÄÄ PISTE</span>
                     {pricePerWindow > 0 && <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9.5px", color: "rgba(95,224,138,0.85)" }}>{deal ? "punainen = " : "+1 = "}{euroUnit(pricePerWindow)}</span>}

@@ -25,6 +25,38 @@ export type ProjMarksData = Record<string, ProjFloorData>;
 
 export interface ProjCustomMark { key: string; p: 1 | 2; x: number; y: number; }
 
+/**
+ * A non-window map marker: important rooms / navigation aids the crew place on a
+ * floor plan so the building is easier to move around (ladder location, entrance,
+ * water point, a hazard, or a free-text note). Kept separate from window marks so
+ * they never affect window counts, pricing or progress.
+ */
+export type ProjNoteKind = "ladder" | "entrance" | "water" | "wc" | "warning" | "info";
+
+export interface ProjMapNote {
+  key: string;           // unique id, "<floor>#n<rand>"
+  x: number;             // 0..100 (% of plan width)
+  y: number;             // 0..100 (% of plan height)
+  kind: ProjNoteKind;
+  text?: string;         // optional free-text note
+  ts: number;            // epoch ms
+  by?: string;           // worker id who placed it
+}
+
+/** Display metadata for each note kind (label + emoji glyph). */
+export const NOTE_KINDS: Record<ProjNoteKind, { label: string; glyph: string }> = {
+  ladder:   { label: "Tikkaat",       glyph: "🪜" },
+  entrance: { label: "Sisäänkäynti",  glyph: "🚪" },
+  water:    { label: "Vesipiste",     glyph: "🚰" },
+  wc:       { label: "WC",            glyph: "🚻" },
+  warning:  { label: "Varoitus",      glyph: "⚠️" },
+  info:     { label: "Huomio",        glyph: "📍" },
+};
+
+export function toNoteKind(v: any): ProjNoteKind {
+  return (v === "ladder" || v === "entrance" || v === "water" || v === "wc" || v === "warning" || v === "info") ? v : "info";
+}
+
 export interface ProjLogEntry {
   floor: string;
   key: string;
@@ -56,6 +88,7 @@ export interface ProjectData {
   statuses: Record<string, WindowStatus>;          // key → status (non-"ei" only)
   washedBy: Record<string, string>;                // key → worker id who last washed it
   customMarks: Record<string, ProjCustomMark[]>;   // floor → manually added marks
+  notes?: Record<string, ProjMapNote[]>;           // floor → navigation markers / notes
   posOverrides: Record<string, { x: number; y: number }>; // key → moved position
   deleted: Record<string, boolean>;                // key → true if seeded mark removed
   log: ProjLogEntry[];                             // newest-first
@@ -77,6 +110,57 @@ export function isFr8Plans(planBase: string | undefined | null): boolean {
   return !!planBase && planBase.includes("/fr8/");
 }
 
+// ─── Fixed, signed deals ───────────────────────────────────────────────────────
+//
+// The FR8 (Bulevardi 31) gig is a signed, fixed-price agreement and must NOT be
+// editable in the panel: €37.50 per washed RED (priority 1) window, with a total
+// agreed cap of €6300 (≈168 windows). Yellow (priority 2) windows stay on the map
+// for future work but are NOT part of this deal, so they never accrue money here.
+
+export const FR8_PRICE_PER_WINDOW = 37.5;        // € per washed red window
+export const FR8_CONTRACT_CAP_CENTS = 630_000;   // €6300 agreed total (hard cap)
+export const FR8_BILLABLE_PRIORITY: 1 | 2 = 1;   // only red windows are in the deal
+
+export interface FixedDeal {
+  pricePerWindow: number;     // € per billable window
+  capCents: number;           // agreed total (the bill can never exceed this)
+  billablePriority: 1 | 2;    // which window priority the deal covers
+}
+
+/** The locked deal for a gig, or null when the gig uses an editable price. */
+export function fixedDealFor(data: ProjectData): FixedDeal | null {
+  if (!isFr8Plans(data.building.planBase)) return null;
+  return {
+    pricePerWindow: FR8_PRICE_PER_WINDOW,
+    capCents: FR8_CONTRACT_CAP_CENTS,
+    billablePriority: FR8_BILLABLE_PRIORITY,
+  };
+}
+
+export interface DealBilling {
+  billableTotal: number;   // billable (e.g. red) windows on the whole job
+  billableWashed: number;  // billable windows marked "pesty"
+  accruedCents: number;    // billableWashed × price, capped at capCents
+  capCents: number;        // agreed total
+  pct: number;             // accrued / cap, 0..100
+}
+
+/** Compute accrued money for a fixed deal: billable windows only, capped. */
+export function computeDealBilling(data: ProjectData, deal: FixedDeal): DealBilling {
+  const pts = allPoints(data).filter((p) => p.p === deal.billablePriority);
+  const billableTotal = pts.length;
+  const billableWashed = pts.filter((p) => p.status === "pesty").length;
+  const raw = Math.round(billableWashed * deal.pricePerWindow * 100);
+  const accruedCents = Math.min(raw, deal.capCents);
+  return {
+    billableTotal,
+    billableWashed,
+    accruedCents,
+    capCents: deal.capCents,
+    pct: deal.capCents > 0 ? (accruedCents / deal.capCents) * 100 : 0,
+  };
+}
+
 export function emptyProjectData(): ProjectData {
   return {
     version: 1,
@@ -93,6 +177,7 @@ export function emptyProjectData(): ProjectData {
     statuses: {},
     washedBy: {},
     customMarks: {},
+    notes: {},
     posOverrides: {},
     deleted: {},
     log: [],
@@ -396,6 +481,22 @@ export function sanitizeProjectData(input: any): ProjectData {
     }
   }
 
+  const notes: Record<string, ProjMapNote[]> = {};
+  if (input.notes && typeof input.notes === "object") {
+    for (const f of Object.keys(input.notes).slice(0, 40)) {
+      const arr = Array.isArray(input.notes[f]) ? input.notes[f] : [];
+      notes[String(f).slice(0, 8)] = arr.slice(0, 500).map((n: any) => ({
+        key: cleanKey(n?.key),
+        x: clampPct(Number(n?.x)),
+        y: clampPct(Number(n?.y)),
+        kind: toNoteKind(n?.kind),
+        text: n?.text ? String(n.text).slice(0, 400) : undefined,
+        ts: Number(n?.ts) || Date.now(),
+        by: n?.by ? String(n.by).slice(0, 40) : undefined,
+      })).filter((n: ProjMapNote) => n.key);
+    }
+  }
+
   const statuses: Record<string, WindowStatus> = {};
   if (input.statuses && typeof input.statuses === "object") {
     for (const k of Object.keys(input.statuses).slice(0, 20000)) {
@@ -474,6 +575,7 @@ export function sanitizeProjectData(input: any): ProjectData {
     statuses,
     washedBy,
     customMarks,
+    notes,
     posOverrides,
     deleted,
     log,

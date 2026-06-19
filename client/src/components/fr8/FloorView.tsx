@@ -5,7 +5,8 @@
  * path differ.
  */
 import { useState, useRef, useEffect } from "react";
-import type { ProjMarksData, WindowStatus, ProjCustomMark } from "@shared/project";
+import type { ProjMarksData, WindowStatus, ProjCustomMark, ProjMapNote, ProjNoteKind, FixedDeal } from "@shared/project";
+import { NOTE_KINDS } from "@shared/project";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 const CIRC_S = 2 * Math.PI * 17; // mini ring
@@ -45,6 +46,36 @@ interface Props {
   workers?: { id: string; name: string }[];
   /** Logged-in user's worker id — default washer when marking a window washed. */
   currentWorkerId?: string;
+  /** Navigation markers / notes per floor (ladders, entrances, hazards, …). */
+  notes?: Record<string, ProjMapNote[]>;
+  onAddNote?: (floor: string, x: number, y: number, kind: ProjNoteKind) => string | void;
+  onUpdateNote?: (floor: string, key: string, text: string) => void;
+  onDeleteNote?: (floor: string, key: string) => void;
+  /** When set, the price is a locked, signed deal (no editing, billable priority
+   *  + agreed cap drive the figures). FR8 = €37.50/red window, €6300 cap. */
+  deal?: FixedDeal | null;
+}
+
+/** A minimal on-screen anchor (viewport coords) for positioning a fixed popover. */
+interface Anchor { left: number; top: number; width: number; bottom: number; }
+function rectToAnchor(r: DOMRect): Anchor { return { left: r.left, top: r.top, width: r.width, bottom: r.bottom }; }
+function pointAnchor(x: number, y: number): Anchor { return { left: x - 8, top: y - 8, width: 16, bottom: y + 8 }; }
+
+/** Position a fixed popover near an on-screen anchor rect, flipping above/below
+ *  and clamping to the viewport so its buttons are always fully visible/tappable. */
+function fixedPopoverStyle(anchor: Anchor | null, width: number, height: number): React.CSSProperties {
+  if (typeof window === "undefined" || !anchor) {
+    return { position: "fixed", left: "50%", bottom: "16px", transform: "translateX(-50%)", zIndex: 1200 };
+  }
+  const margin = 10;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let left = anchor.left + anchor.width / 2 - width / 2;
+  left = Math.max(margin, Math.min(vw - width - margin, left));
+  // Prefer above the anchor; flip below if there isn't room.
+  let top = anchor.top - height - 12;
+  if (top < margin) top = Math.min(vh - height - margin, anchor.bottom + 12);
+  top = Math.max(margin, top);
+  return { position: "fixed", left: `${left}px`, top: `${top}px`, zIndex: 1200 };
 }
 
 function colorRgb(p: 1 | 2, status: WindowStatus) {
@@ -55,14 +86,18 @@ function colorRgb(p: 1 | 2, status: WindowStatus) {
 
 function fmt(n: number) { return Math.round(n).toLocaleString("fi-FI"); }
 function euro(n: number) { return fmt(n) + " €"; }
+/** Per-window price — keeps cents (e.g. "37,50 €") so 37.5 never rounds to 38. */
+function euroUnit(n: number) {
+  return n.toLocaleString("fi-FI", { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 }) + " €";
+}
 
 /** Count live (non-deleted) windows across every floor — the billable window
  *  count that drives the contract cap (count × price/window). */
-function countAllLive(floors: string[], marks: ProjMarksData | null, customMarks: Record<string, ProjCustomMark[]>, deleted: Record<string, boolean>): number {
+function countAllLive(floors: string[], marks: ProjMarksData | null, customMarks: Record<string, ProjCustomMark[]>, deleted: Record<string, boolean>, onlyPriority?: 1 | 2): number {
   let n = 0;
   for (const f of floors) {
-    (marks?.[f]?.marks || []).forEach((_, idx) => { if (!deleted[`${f}#${idx}`]) n += 1; });
-    (customMarks[f] || []).forEach((cm) => { if (!deleted[cm.key]) n += 1; });
+    (marks?.[f]?.marks || []).forEach((mk, idx) => { if (!deleted[`${f}#${idx}`] && (!onlyPriority || mk.p === onlyPriority)) n += 1; });
+    (customMarks[f] || []).forEach((cm) => { if (!deleted[cm.key] && (!onlyPriority || cm.p === onlyPriority)) n += 1; });
   }
   return n;
 }
@@ -116,15 +151,21 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, washedBy, workerNames, workers, currentWorkerId }: Props) {
+export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, washedBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, deal }: Props) {
   const [floor, setFloor] = useState(initialFloor);
   const [filter, setFilter] = useState<"all" | "unwashed" | "progress" | "done">("all");
   const [editMode, setEditMode] = useState(false);
-  const [placeMode, setPlaceMode] = useState<1 | 2 | "del" | null>(null);
+  const [placeMode, setPlaceMode] = useState<1 | 2 | "del" | "note" | null>(null);
+  const [noteKind, setNoteKind] = useState<ProjNoteKind>("ladder");
   const [dragging, setDragging] = useState<string | null>(null);
   const [activeOrb, setActiveOrb] = useState<string | null>(null);
+  const [orbAnchor, setOrbAnchor] = useState<Anchor | null>(null);
+  const [activeNote, setActiveNote] = useState<string | null>(null);
+  const [noteAnchor, setNoteAnchor] = useState<Anchor | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const planRef = useRef<HTMLImageElement>(null);
+  const notesCanEdit = !!onAddNote;
   const dragKeyRef = useRef<string | null>(null);
   const movedRef = useRef(false);
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -199,14 +240,19 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   }
 
   const points = getPoints(floor, marks, posOverrides, customMarks, deleted);
-  const floorWashed = points.filter((p) => (statuses[p.key] || "ei") === "pesty").length;
-  const floorTotal = points.length;
+  // Floor revenue: with a signed deal only the billable priority (red) counts.
+  const floorBillable = deal ? points.filter((p) => p.p === deal.billablePriority) : points;
+  const floorWashed = floorBillable.filter((p) => (statuses[p.key] || "ei") === "pesty").length;
+  const floorTotal = floorBillable.length;
   const floorPct = floorTotal > 0 ? (floorWashed / floorTotal) * 100 : 0;
   // Whole-contract billable window count (every floor) → drives the price cap.
-  const totalLive = countAllLive(floors, marks, customMarks, deleted);
-  const totalCap = totalLive * pricePerWindow;
+  const totalLive = countAllLive(floors, marks, customMarks, deleted, deal?.billablePriority);
+  // A signed deal has a fixed agreed cap; an open gig's cap is count × price.
+  const capEur = deal ? deal.capCents / 100 : totalLive * pricePerWindow;
   const activePt = activeOrb ? points.find((p) => p.key === activeOrb) ?? null : null;
   const activeIdx = activePt ? points.indexOf(activePt) : -1;
+  const floorNotes = notes?.[floor] || [];
+  const activeNoteObj = activeNote ? floorNotes.find((n) => n.key === activeNote) ?? null : null;
 
   function matchFilter(status: WindowStatus) {
     if (filter === "all") return true;
@@ -253,7 +299,35 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
     // Ignore the click that ends a pan gesture (so panning never toggles a dot).
     if (pannedRef.current) { pannedRef.current = false; return; }
     if (editMode && placeMode === "del") { onDeleteMark(pt.key); return; }
-    if (!editMode) setActiveOrb(activeOrb === pt.key ? null : pt.key);
+    if (!editMode) {
+      const next = activeOrb === pt.key ? null : pt.key;
+      // Capture the dot's on-screen position so the status popover renders as a
+      // fixed overlay (never clipped by the zoom/pan scene) and stays tappable.
+      setOrbAnchor(next ? rectToAnchor((e.currentTarget as HTMLElement).getBoundingClientRect()) : null);
+      setActiveNote(null);
+      setActiveOrb(next);
+    }
+  }
+
+  function openNote(note: ProjMapNote, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (pannedRef.current) { pannedRef.current = false; return; }
+    if (editMode && placeMode === "del") { onDeleteNote?.(floor, note.key); return; }
+    const next = activeNote === note.key ? null : note.key;
+    setNoteAnchor(next ? rectToAnchor((e.currentTarget as HTMLElement).getBoundingClientRect()) : null);
+    setNoteDraft(next ? (note.text || "") : "");
+    setActiveOrb(null);
+    setActiveNote(next);
+  }
+
+  function saveActiveNote() {
+    if (activeNote) onUpdateNote?.(floor, activeNote, noteDraft.trim());
+    setActiveNote(null); setNoteAnchor(null);
+  }
+
+  function deleteActiveNote() {
+    if (activeNote) onDeleteNote?.(floor, activeNote);
+    setActiveNote(null); setNoteAnchor(null);
   }
 
   function onOrbPointerDown(pt: Point, e: React.PointerEvent) {
@@ -287,29 +361,48 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   }
 
   function onPlanClick(e: React.MouseEvent) {
-    if (placeMode !== 1 && placeMode !== 2) return;
     const img = planRef.current; if (!img) return;
     const r = img.getBoundingClientRect();
     const x = (e.clientX - r.left) / r.width * 100;
     const y = (e.clientY - r.top) / r.height * 100;
     if (x < 0 || x > 100 || y < 0 || y > 100) return;
+    if (placeMode === "note") {
+      const key = onAddNote?.(floor, +x.toFixed(2), +y.toFixed(2), noteKind);
+      // Open the new note's editor immediately so the crew can type a label.
+      if (typeof key === "string") {
+        setActiveOrb(null);
+        setNoteDraft("");
+        setNoteAnchor(pointAnchor(e.clientX, e.clientY));
+        setActiveNote(key);
+      }
+      return;
+    }
+    if (placeMode !== 1 && placeMode !== 2) return;
     onAddCustomMark(floor, +x.toFixed(2), +y.toFixed(2), placeMode as 1 | 2);
   }
 
   function toggleEdit() {
     setEditMode((e) => !e);
-    setPlaceMode(null); setAddMenuOpen(false); setActiveOrb(null); setDragging(null);
+    setPlaceMode(null); setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null); setDragging(null);
   }
 
   function chooseAdd(mode: 1 | 2 | "del") {
     setEditMode(true);
     setPlaceMode(placeMode === mode ? null : mode);
-    setAddMenuOpen(false); setActiveOrb(null);
+    setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null);
+  }
+
+  function chooseNoteKind(kind: ProjNoteKind) {
+    setEditMode(true);
+    setNoteKind(kind);
+    setPlaceMode("note");
+    setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null);
   }
 
   const editBanner = placeMode === 1 ? "Lisää punaisia pisteitä — klikkaa pohjapiirrosta haluttuun kohtaan."
     : placeMode === 2 ? "Lisää keltaisia pisteitä — klikkaa pohjapiirrosta haluttuun kohtaan."
-    : placeMode === "del" ? "Poistotila — klikkaa pisteitä jotka haluat poistaa."
+    : placeMode === "del" ? "Poistotila — klikkaa pisteitä tai merkintöjä jotka haluat poistaa."
+    : placeMode === "note" ? `Lisää merkintä (${NOTE_KINDS[noteKind].label}) — klikkaa pohjapiirrosta. Voit kirjoittaa muistiinpanon heti.`
     : "Muokkaustila — raahaa pisteet oikeille kohdille. Tallentuu automaattisesti.";
 
   return (
@@ -399,17 +492,33 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                 <div data-fr8-pop="menu" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 46, width: "212px", padding: "7px", background: "rgba(16,16,20,0.92)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: "14px", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 20px 50px rgba(0,0,0,0.7)" }}>
                   <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, padding: "5px 8px 7px" }}>
                     <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.4)" }}>LISÄÄ PISTE</span>
-                    {pricePerWindow > 0 && <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9.5px", color: "rgba(95,224,138,0.85)" }}>+1 = {euro(pricePerWindow)}</span>}
+                    {pricePerWindow > 0 && <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9.5px", color: "rgba(95,224,138,0.85)" }}>{deal ? "punainen = " : "+1 = "}{euroUnit(pricePerWindow)}</span>}
                   </div>
                   {ADD_ITEMS.map((it) => (
                     <button key={String(it.id)} className="add-menu-btn" onClick={() => chooseAdd(it.id)} style={{ border: `1px solid ${placeMode === it.id ? "rgba(255,255,255,0.18)" : "transparent"}`, background: placeMode === it.id ? "rgba(255,255,255,0.09)" : "transparent" }}>
                       <span style={{ width: "17px", height: "17px", borderRadius: "50%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "10px", fontWeight: 700, color: "#ff6b6b", background: it.dotBg, border: it.id === "del" ? "1px solid rgba(255,90,90,0.5)" : "1px solid rgba(255,255,255,0.5)" }}>{it.glyph}</span>
                       <span style={{ flex: 1 }}>
                         <span style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#fff" }}>{it.label}</span>
-                        <span style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.45)" }}>{it.desc}</span>
+                        <span style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.45)" }}>{it.id === 2 && deal ? "Keltainen · ei kuulu sopimukseen" : it.desc}</span>
                       </span>
                     </button>
                   ))}
+
+                  {/* Navigation markers / notes — ladders, entrances, hazards, free notes. */}
+                  {notesCanEdit && (
+                    <>
+                      <div style={{ height: "1px", background: "rgba(255,255,255,0.08)", margin: "6px 4px" }} />
+                      <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.4)", padding: "2px 8px 7px" }}>MERKINNÄT &amp; HUOMIOT</div>
+                      {(Object.keys(NOTE_KINDS) as ProjNoteKind[]).map((k) => (
+                        <button key={k} className="add-menu-btn" onClick={() => chooseNoteKind(k)} style={{ border: `1px solid ${placeMode === "note" && noteKind === k ? "rgba(255,255,255,0.18)" : "transparent"}`, background: placeMode === "note" && noteKind === k ? "rgba(255,255,255,0.09)" : "transparent" }}>
+                          <span style={{ width: "17px", height: "17px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px" }}>{NOTE_KINDS[k].glyph}</span>
+                          <span style={{ flex: 1 }}>
+                            <span style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#fff" }}>{NOTE_KINDS[k].label}</span>
+                          </span>
+                        </button>
+                      ))}
+                    </>
+                  )}
                 </div>
               </>
             )}
@@ -435,9 +544,14 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
             {/* Live price impact — each dot is worth one window, so adding/removing
                 dots moves the contract cap in real time. */}
             {pricePerWindow > 0 && (
-              <span title="Koko sopimuksen ikkunamäärä × hinta/ikkuna — muuttuu kun lisäät tai poistat pisteitä" style={{ display: "flex", alignItems: "center", gap: "7px", padding: "5px 11px", borderRadius: "9px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11.5px", color: "rgba(255,255,255,0.85)" }}>
-                <span style={{ color: "rgba(255,255,255,0.5)" }}>KATTO</span>
-                <strong style={{ fontWeight: 700 }}>{totalLive} ikkunaa · {euro(totalCap)}</strong>
+              <span
+                title={deal
+                  ? "Allekirjoitettu sopimus: punaiset ikkunat × 37,50 €, kiinteä kokonaiskatto. Keltaiset eivät kuulu tähän sopimukseen."
+                  : "Koko sopimuksen ikkunamäärä × hinta/ikkuna — muuttuu kun lisäät tai poistat pisteitä"}
+                style={{ display: "flex", alignItems: "center", gap: "7px", padding: "5px 11px", borderRadius: "9px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11.5px", color: "rgba(255,255,255,0.85)" }}
+              >
+                <span style={{ color: "rgba(255,255,255,0.5)" }}>{deal ? "SOPIMUS" : "KATTO"}</span>
+                <strong style={{ fontWeight: 700 }}>{totalLive} {deal ? "punaista" : "ikkunaa"} · {euro(capEur)}</strong>
               </span>
             )}
             <button onClick={() => onResetFloor(floor)} style={{ padding: "6px 12px", borderRadius: "9px", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.7)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
@@ -463,7 +577,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
               draggable={false} />
 
             {/* Orbs layer */}
-            <div onClick={onPlanClick} style={{ position: "absolute", inset: 0, cursor: (placeMode === 1 || placeMode === 2) ? "crosshair" : "default" }}>
+            <div onClick={onPlanClick} style={{ position: "absolute", inset: 0, cursor: (placeMode === 1 || placeMode === 2 || placeMode === "note") ? "crosshair" : "default" }}>
               {points.map((pt) => {
                 const status = statuses[pt.key] || "ei";
                 const isDragging = dragging === pt.key;
@@ -479,76 +593,129 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                 );
               })}
 
-              {/* Status popover */}
-              {activeOrb && !editMode && activePt && (
-                <>
-                  <div onClick={() => setActiveOrb(null)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
-                  <div data-fr8-pop="in" style={{ position: "absolute", left: `${activePt.x}%`, top: `${activePt.y}%`, transform: "translate(-50%,calc(-100% - 14px))", zIndex: 50, width: "188px", padding: "11px", background: "rgba(16,16,20,0.86)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: "15px", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 20px 50px rgba(0,0,0,0.7)" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "2px 4px 9px", borderBottom: "1px solid rgba(255,255,255,0.08)", marginBottom: "7px" }}>
-                      <span style={{ width: "9px", height: "9px", borderRadius: "50%", background: `rgb(${colorRgb(activePt.p, statuses[activeOrb] || "ei")})`, boxShadow: `0 0 7px rgba(${colorRgb(activePt.p, statuses[activeOrb] || "ei")},0.7)` }} />
-                      <span style={{ fontSize: "12px", fontWeight: 600 }}>Ikkuna {activeIdx + 1}</span>
-                      <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9.5px", color: "rgba(255,255,255,0.4)", marginLeft: "auto" }}>PRIORITEETTI {activePt.p}</span>
-                    </div>
-                    {washedBy && (statuses[activeOrb] || "ei") === "pesty" && washedBy[activeOrb] && (
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px", padding: "0 4px 8px", marginBottom: "5px", fontSize: "11.5px", color: "rgba(255,255,255,0.7)" }}>
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(124,224,166,0.9)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
-                        Pesi <strong style={{ color: "#fff", fontWeight: 600 }}>{workerNames?.[washedBy[activeOrb]] ?? washedBy[activeOrb]}</strong>
-                      </div>
-                    )}
-                    {(["ei", "kesken", "pesty"] as WindowStatus[]).map((s) => {
-                      const cur = statuses[activeOrb] || "ei";
-                      const isActive = cur === s;
-                      const rgb = colorRgb(activePt.p, s);
-                      // For "pesty" with a pickable crew, keep the popover open and reveal
-                      // the washer picker below instead of closing immediately.
-                      const hasPicker = s === "pesty" && !!workers && workers.length > 0;
-                      return (
-                        <button key={s} className="status-opt-btn"
-                          onClick={() => {
-                            if (hasPicker) {
-                              // Default washer = already-attributed worker, else logged-in user.
-                              const washer = washedBy?.[activeOrb] ?? currentWorkerId;
-                              onStatusChange(activeOrb, s, washer);
-                              return; // keep popover open to allow picking
-                            }
-                            onStatusChange(activeOrb, s);
-                            setActiveOrb(null);
-                          }}
-                          style={{ border: `1px solid ${isActive ? "rgba(255,255,255,0.16)" : "transparent"}`, background: isActive ? "rgba(255,255,255,0.08)" : "transparent", fontWeight: isActive ? 600 : 500 }}>
-                          <span style={{ width: "9px", height: "9px", borderRadius: "50%", background: `rgb(${rgb})`, boxShadow: `0 0 6px rgba(${rgb},0.7)`, flexShrink: 0 }} />
-                          <span style={{ flex: 1, textAlign: "left" }}>{s === "ei" ? "Ei pesty" : s === "kesken" ? "Kesken" : "Pesty"}</span>
-                          {isActive && <span style={{ fontSize: "11px" }}>✓</span>}
-                        </button>
-                      );
-                    })}
-
-                    {/* Washer picker — visible once the window is washed and a crew is available. */}
-                    {workers && workers.length > 0 && (statuses[activeOrb] || "ei") === "pesty" && (
-                      <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-                        <div style={{ fontSize: "9.5px", letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.38)", padding: "0 4px 6px" }}>Kuka pesi?</div>
-                        {workers.map((w) => {
-                          const picked = (washedBy?.[activeOrb] ?? currentWorkerId) === w.id;
-                          return (
-                            <button key={w.id} className="status-opt-btn"
-                              onClick={() => { onStatusChange(activeOrb, "pesty", w.id); }}
-                              style={{ border: `1px solid ${picked ? "rgba(255,255,255,0.16)" : "transparent"}`, background: picked ? "rgba(255,255,255,0.08)" : "transparent", fontWeight: picked ? 600 : 500 }}>
-                              <span style={{ width: "18px", height: "18px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "9px", fontWeight: 700, background: "rgba(124,224,166,0.16)", color: "rgba(124,224,166,0.95)", flexShrink: 0 }}>{w.name.charAt(0).toUpperCase()}</span>
-                              <span style={{ flex: 1, textAlign: "left" }}>{w.name}</span>
-                              {picked && <span style={{ fontSize: "11px" }}>✓</span>}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </>
-              )}
+              {/* Navigation markers / notes layer */}
+              {floorNotes.map((n) => (
+                <button key={n.key}
+                  onClick={(e) => openNote(n, e)}
+                  title={`${NOTE_KINDS[n.kind].label}${n.text ? " — " + n.text : ""}`}
+                  style={{
+                    position: "absolute", left: `${n.x}%`, top: `${n.y}%`, transform: "translate(-50%,-50%)",
+                    width: "24px", height: "24px", borderRadius: "8px", padding: 0,
+                    display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px",
+                    background: activeNote === n.key ? "rgba(255,255,255,0.95)" : "rgba(20,20,26,0.86)",
+                    border: `1.5px solid ${n.kind === "warning" ? "rgba(255,176,72,0.9)" : "rgba(255,255,255,0.65)"}`,
+                    boxShadow: "0 2px 10px rgba(0,0,0,0.55)",
+                    cursor: editMode && placeMode === "del" ? "pointer" : "pointer",
+                    zIndex: 7, touchAction: "none",
+                  }}
+                >
+                  {NOTE_KINDS[n.kind].glyph}
+                </button>
+              ))}
             </div>
           </div>
         ) : (
           <div style={{ color: "rgba(255,255,255,0.3)", fontSize: "14px" }}>Ladataan pohjapiirros…</div>
         )}
       </div>
+
+      {/* Status popover — rendered as a fixed overlay (outside the zoom/pan scene)
+          so its buttons are NEVER clipped and stay tappable at any zoom or edge. */}
+      {activeOrb && !editMode && activePt && (
+        <>
+          <div onClick={() => { setActiveOrb(null); setOrbAnchor(null); }} style={{ position: "fixed", inset: 0, zIndex: 1100 }} />
+          <div data-fr8-pop="menu" style={{ ...fixedPopoverStyle(orbAnchor, 200, 230), width: "200px", padding: "11px", background: "rgba(16,16,20,0.92)", border: "1px solid rgba(255,255,255,0.16)", borderRadius: "15px", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 20px 50px rgba(0,0,0,0.7)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "2px 4px 9px", borderBottom: "1px solid rgba(255,255,255,0.08)", marginBottom: "7px" }}>
+              <span style={{ width: "9px", height: "9px", borderRadius: "50%", background: `rgb(${colorRgb(activePt.p, statuses[activeOrb] || "ei")})`, boxShadow: `0 0 7px rgba(${colorRgb(activePt.p, statuses[activeOrb] || "ei")},0.7)` }} />
+              <span style={{ fontSize: "12px", fontWeight: 600 }}>Ikkuna {activeIdx + 1}</span>
+              <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9.5px", color: "rgba(255,255,255,0.4)", marginLeft: "auto" }}>{deal && activePt.p === 2 ? "EI SOPIMUKSESSA" : `PRIORITEETTI ${activePt.p}`}</span>
+            </div>
+            {washedBy && (statuses[activeOrb] || "ei") === "pesty" && washedBy[activeOrb] && (
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", padding: "0 4px 8px", marginBottom: "5px", fontSize: "11.5px", color: "rgba(255,255,255,0.7)" }}>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(124,224,166,0.9)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+                Pesi <strong style={{ color: "#fff", fontWeight: 600 }}>{workerNames?.[washedBy[activeOrb]] ?? washedBy[activeOrb]}</strong>
+              </div>
+            )}
+            {(["ei", "kesken", "pesty"] as WindowStatus[]).map((s) => {
+              const cur = statuses[activeOrb] || "ei";
+              const isActive = cur === s;
+              const rgb = colorRgb(activePt.p, s);
+              // For "pesty" with a pickable crew, keep the popover open and reveal
+              // the washer picker below instead of closing immediately.
+              const hasPicker = s === "pesty" && !!workers && workers.length > 0;
+              return (
+                <button key={s} className="status-opt-btn"
+                  onClick={() => {
+                    if (hasPicker) {
+                      const washer = washedBy?.[activeOrb] ?? currentWorkerId;
+                      onStatusChange(activeOrb, s, washer);
+                      return; // keep popover open to allow picking
+                    }
+                    onStatusChange(activeOrb, s);
+                    setActiveOrb(null); setOrbAnchor(null);
+                  }}
+                  style={{ border: `1px solid ${isActive ? "rgba(255,255,255,0.16)" : "transparent"}`, background: isActive ? "rgba(255,255,255,0.08)" : "transparent", fontWeight: isActive ? 600 : 500 }}>
+                  <span style={{ width: "9px", height: "9px", borderRadius: "50%", background: `rgb(${rgb})`, boxShadow: `0 0 6px rgba(${rgb},0.7)`, flexShrink: 0 }} />
+                  <span style={{ flex: 1, textAlign: "left" }}>{s === "ei" ? "Ei pesty" : s === "kesken" ? "Kesken" : "Pesty"}</span>
+                  {isActive && <span style={{ fontSize: "11px" }}>✓</span>}
+                </button>
+              );
+            })}
+
+            {/* Washer picker — visible once the window is washed and a crew is available. */}
+            {workers && workers.length > 0 && (statuses[activeOrb] || "ei") === "pesty" && (
+              <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                <div style={{ fontSize: "9.5px", letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.38)", padding: "0 4px 6px" }}>Kuka pesi?</div>
+                {workers.map((w) => {
+                  const picked = (washedBy?.[activeOrb] ?? currentWorkerId) === w.id;
+                  return (
+                    <button key={w.id} className="status-opt-btn"
+                      onClick={() => { onStatusChange(activeOrb, "pesty", w.id); }}
+                      style={{ border: `1px solid ${picked ? "rgba(255,255,255,0.16)" : "transparent"}`, background: picked ? "rgba(255,255,255,0.08)" : "transparent", fontWeight: picked ? 600 : 500 }}>
+                      <span style={{ width: "18px", height: "18px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "9px", fontWeight: 700, background: "rgba(124,224,166,0.16)", color: "rgba(124,224,166,0.95)", flexShrink: 0 }}>{w.name.charAt(0).toUpperCase()}</span>
+                      <span style={{ flex: 1, textAlign: "left" }}>{w.name}</span>
+                      {picked && <span style={{ fontSize: "11px" }}>✓</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Note popover — view / edit the marker's label, or delete it. Also fixed. */}
+      {activeNote && activeNoteObj && (
+        <>
+          <div onClick={() => { saveActiveNote(); }} style={{ position: "fixed", inset: 0, zIndex: 1100 }} />
+          <div data-fr8-pop="menu" style={{ ...fixedPopoverStyle(noteAnchor, 232, 180), width: "232px", padding: "12px", background: "rgba(16,16,20,0.94)", border: "1px solid rgba(255,255,255,0.16)", borderRadius: "15px", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 20px 50px rgba(0,0,0,0.7)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "0 2px 9px", borderBottom: "1px solid rgba(255,255,255,0.08)", marginBottom: "9px" }}>
+              <span style={{ fontSize: "16px" }}>{NOTE_KINDS[activeNoteObj.kind].glyph}</span>
+              <span style={{ fontSize: "13px", fontWeight: 600 }}>{NOTE_KINDS[activeNoteObj.kind].label}</span>
+            </div>
+            {notesCanEdit ? (
+              <>
+                <textarea
+                  value={noteDraft}
+                  onChange={(e) => setNoteDraft(e.target.value)}
+                  placeholder="Kirjoita muistiinpano (esim. ”Tikkaat tässä, 3 m”)"
+                  autoFocus
+                  rows={3}
+                  style={{ width: "100%", resize: "none", padding: "9px 11px", borderRadius: "11px", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(0,0,0,0.35)", color: "#fff", fontSize: "13px", outline: "none", fontFamily: "var(--font-onest, system-ui, sans-serif)", boxSizing: "border-box" }}
+                />
+                <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
+                  <button onClick={deleteActiveNote} style={{ padding: "9px 12px", borderRadius: "10px", border: "1px solid rgba(255,90,90,0.4)", background: "rgba(255,90,90,0.1)", color: "#ff9b9b", fontSize: "12.5px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>Poista</button>
+                  <button onClick={saveActiveNote} style={{ flex: 1, padding: "9px 12px", borderRadius: "10px", border: "none", background: "#fff", color: "#0a0a0c", fontSize: "12.5px", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>Valmis</button>
+                </div>
+              </>
+            ) : (
+              <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.8)", lineHeight: 1.5, minHeight: "20px" }}>
+                {activeNoteObj.text || <span style={{ color: "rgba(255,255,255,0.4)" }}>Ei muistiinpanoa.</span>}
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

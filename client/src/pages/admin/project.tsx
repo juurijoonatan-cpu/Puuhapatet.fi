@@ -12,8 +12,8 @@ import { api } from "@/lib/api";
 import { getAdminProfile, USERS, getPreferredWasher, setPreferredWasher } from "@/lib/admin-profile";
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import {
-  emptyProjectData, computeWorkerStats, isFr8Plans,
-  type ProjectData, type ProjMarksData, type WindowStatus,
+  emptyProjectData, computeWorkerStats, isFr8Plans, fixedDealFor,
+  type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind,
 } from "@shared/project";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
 import Dashboard from "@/components/fr8/Dashboard";
@@ -142,8 +142,17 @@ export default function AdminProjectPage() {
         const mergedWorkers = Array.from(new Set([...(p.workers || []), ...workers]));
         // Heal the original FR8 gig if it was ever saved without its bundled
         // marks. Other gigs are left untouched so they never inherit FR8 plans.
-        if (isFr8Plans(p.building.planBase) && !hasAnyMarks(p.marks) && hasAnyMarks(baseMarks)) {
-          const healed: ProjectData = { ...p, marks: baseMarks, workers: mergedWorkers };
+        const needMarks = isFr8Plans(p.building.planBase) && !hasAnyMarks(p.marks) && hasAnyMarks(baseMarks);
+        // Pin the FR8 signed price so every consumer (tools, billing) agrees.
+        const fr8Deal = fixedDealFor(p);
+        const needPrice = !!fr8Deal && p.pricePerWindow !== fr8Deal.pricePerWindow;
+        if (needMarks || needPrice) {
+          const healed: ProjectData = {
+            ...p,
+            marks: needMarks ? baseMarks : p.marks,
+            pricePerWindow: needPrice ? fr8Deal!.pricePerWindow : p.pricePerWindow,
+            workers: mergedWorkers,
+          };
           setProject(healed);
           void api.updateProject(jobId, healed);
         } else {
@@ -277,6 +286,30 @@ export default function AdminProjectPage() {
     });
   }, [mutate]);
 
+  // ── Navigation markers / notes ──────────────────────────────────────────────
+  const onAddNote = useCallback((floor: string, x: number, y: number, kind: ProjNoteKind): string => {
+    const key = `${floor}#n${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`;
+    mutate((d) => {
+      if (!d.notes) d.notes = {};
+      d.notes[floor] = [...(d.notes[floor] || []), { key, x, y, kind, text: "", ts: Date.now(), by: currentWorker }];
+    });
+    return key;
+  }, [mutate, currentWorker]);
+
+  const onUpdateNote = useCallback((floor: string, key: string, text: string) => {
+    mutate((d) => {
+      if (!d.notes?.[floor]) return;
+      d.notes[floor] = d.notes[floor].map((n) => (n.key === key ? { ...n, text } : n));
+    });
+  }, [mutate]);
+
+  const onDeleteNote = useCallback((floor: string, key: string) => {
+    mutate((d) => {
+      if (!d.notes?.[floor]) return;
+      d.notes[floor] = d.notes[floor].filter((n) => n.key !== key);
+    });
+  }, [mutate]);
+
   const onAddHours = useCallback((worker: string, delta: number) => {
     mutate((d) => {
       d.hours[worker] = Math.max(0, +(((d.hours[worker] || 0) + delta).toFixed(2)));
@@ -334,6 +367,10 @@ export default function AdminProjectPage() {
     );
   }
 
+  // The FR8 gig is a signed, fixed-price deal (€37.50/red window, €6300 cap) —
+  // the price is locked and only red windows accrue money.
+  const deal = fixedDealFor(project);
+  const effectivePrice = deal ? deal.pricePerWindow : project.pricePerWindow;
   const workerStats = computeWorkerStats(project);
   const hoursWorkers = (project.workers.length ? project.workers : ["matias", "joonatan"]).map((id) => ({
     id, name: workerName(id), initial: workerInitial(id),
@@ -375,13 +412,13 @@ export default function AdminProjectPage() {
       )}
       <main style={{ position: "relative", zIndex: 10, height: "calc(100% - 62px)" }}>
         {tab === "dashboard" && (
-          <Dashboard project={project} workerStats={workerStats} workerName={workerName} onGoToFloor={onGoToFloor} />
+          <Dashboard project={project} workerStats={workerStats} workerName={workerName} onGoToFloor={onGoToFloor} deal={deal} />
         )}
         {tab === "floor" && (
           <FloorView
             floors={project.building.floors}
             planBase={project.building.planBase || ""}
-            pricePerWindow={project.pricePerWindow}
+            pricePerWindow={effectivePrice}
             marks={project.marks}
             statuses={project.statuses}
             posOverrides={project.posOverrides}
@@ -398,6 +435,11 @@ export default function AdminProjectPage() {
             workerNames={workerNames}
             workers={gigWorkers}
             currentWorkerId={effectiveWasher}
+            notes={project.notes}
+            onAddNote={onAddNote}
+            onUpdateNote={onUpdateNote}
+            onDeleteNote={onDeleteNote}
+            deal={deal}
           />
         )}
         {tab === "hours" && (

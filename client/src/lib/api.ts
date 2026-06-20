@@ -33,6 +33,12 @@ export interface WorkerView {
   marks: ProjMarksData;
   statuses: Record<string, WindowStatus>;
   washedBy: Record<string, string>;
+  /** crew id → display name, for the "who washed / who noted this" labels. */
+  workerNames: Record<string, string>;
+  /** Host info notes (ladders, hazards, storage, …) + worker-added notes. */
+  notes: Record<string, import("@shared/project").ProjMapNote[]>;
+  /** The single "work happening here now" highlight (read-only for workers). */
+  activeZone: import("@shared/project").ProjActiveZone | null;
   customMarks: Record<string, ProjCustomMark[]>;
   posOverrides: Record<string, { x: number; y: number }>;
   deleted: Record<string, boolean>;
@@ -703,6 +709,16 @@ export const api = {
 
   crewAddNote: (token: string, text: string) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/note`, { text }),
+
+  // Worker map notes (simple shared markers on the floor plan).
+  crewAddMapNote: (token: string, floor: string, x: number, y: number, kind: string, text?: string) =>
+    request<{ ok: boolean; key: string; view: WorkerView }>("POST", `/api/crew/${token}/map-note`, { floor, x, y, kind, text }),
+
+  crewUpdateMapNote: (token: string, floor: string, key: string, text: string) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/map-note/update`, { floor, key, text }),
+
+  crewDeleteMapNote: (token: string, floor: string, key: string) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/map-note/delete`, { floor, key }),
 
   // Worker approves a payout (locks in their billing snapshot for the invoice).
   crewApprovePayout: (token: string, payoutId: string, billing: { name?: string; yTunnus?: string; iban?: string; address?: string }) =>

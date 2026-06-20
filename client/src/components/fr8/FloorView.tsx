@@ -37,6 +37,9 @@ interface Props {
   /** When false, hide the structural edit controls (move/add/delete) — workers
    *  can still set window status, but cannot restructure the map. Default true. */
   canEdit?: boolean;
+  /** Allow adding/editing map notes (huomio, tikkaat, …) WITHOUT full edit rights.
+   *  Lets workers leave simple markers while still not moving/deleting windows. */
+  canAddNotes?: boolean;
   /** key → worker id who washed it (manager view). Enables the "who cleaned this"
    *  label in the status popover. Workers/customers don't pass this. */
   washedBy?: Record<string, string>;
@@ -155,7 +158,7 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, washedBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, activeZone, onSetActiveZone, onClearActiveZone, deal }: Props) {
+export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, washedBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, activeZone, onSetActiveZone, onClearActiveZone, deal }: Props) {
   const [floor, setFloor] = useState(initialFloor);
   const [filter, setFilter] = useState<"all" | "unwashed" | "progress" | "done">("all");
   const [editMode, setEditMode] = useState(false);
@@ -338,7 +341,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   }
 
   function onOrbPointerDown(pt: Point, e: React.PointerEvent) {
-    if (!editMode || placeMode) return;
+    if (!canEdit || !editMode || placeMode) return;
     e.preventDefault(); e.stopPropagation();
     dragKeyRef.current = pt.key;
     movedRef.current = false; lastPosRef.current = null;
@@ -504,12 +507,14 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
             <button onClick={resetView} title="Nollaa näkymä" style={{ ...zoomBtnStyle, fontSize: 13 }}>⟳</button>
           </div>
 
-          {/* Edit button */}
-          {canEdit && <>
+          {/* Edit / add controls — full editing for hosts (canEdit), notes-only for workers (canAddNotes) */}
+          {(canEdit || canAddNotes) && <>
+          {canEdit && (
           <button onClick={toggleEdit} style={{ display: "flex", alignItems: "center", gap: "7px", padding: "8px 13px", borderRadius: "11px", cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12.5px", fontWeight: 600, transition: "all .16s", border: `1px solid ${editMode ? "transparent" : "rgba(255,255,255,0.12)"}`, background: editMode ? "#fff" : "rgba(255,255,255,0.04)", color: editMode ? "#0a0a0c" : "rgba(255,255,255,0.7)" }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={editMode ? "#0a0a0c" : "rgba(255,255,255,0.55)"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
             {editMode ? "Valmis" : "Siirrä pisteitä"}
           </button>
+          )}
 
           {/* Add button + menu */}
           <div style={{ position: "relative" }}>
@@ -520,6 +525,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
               <>
                 <div onClick={() => setAddMenuOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 44 }} />
                 <div data-fr8-pop="menu" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 46, width: "212px", maxHeight: "min(70vh, 460px)", overflowY: "auto", padding: "7px", background: "rgba(16,16,20,0.92)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: "14px", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 20px 50px rgba(0,0,0,0.7)" }}>
+                  {canEdit && <>
                   <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, padding: "5px 8px 7px" }}>
                     <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.4)" }}>LISÄÄ PISTE</span>
                     {pricePerWindow > 0 && <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9.5px", color: "rgba(95,224,138,0.85)" }}>{deal ? "punainen = " : "+1 = "}{euroUnit(pricePerWindow)}</span>}
@@ -533,12 +539,13 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                       </span>
                     </button>
                   ))}
+                  </>}
 
                   {/* Navigation markers / notes — ladders, entrances, hazards, free notes. */}
                   {notesCanEdit && (
                     <>
-                      <div style={{ height: "1px", background: "rgba(255,255,255,0.08)", margin: "6px 4px" }} />
-                      <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.4)", padding: "2px 8px 7px" }}>MERKINNÄT &amp; HUOMIOT</div>
+                      {canEdit && <div style={{ height: "1px", background: "rgba(255,255,255,0.08)", margin: "6px 4px" }} />}
+                      <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.4)", padding: "2px 8px 7px" }}>{canEdit ? "MERKINNÄT & HUOMIOT" : "LISÄÄ MERKINTÄ"}</div>
                       {(Object.keys(NOTE_KINDS) as ProjNoteKind[]).map((k) => (
                         <button key={k} className="add-menu-btn" onClick={() => chooseNoteKind(k)} style={{ border: `1px solid ${placeMode === "note" && noteKind === k ? "rgba(255,255,255,0.18)" : "transparent"}`, background: placeMode === "note" && noteKind === k ? "rgba(255,255,255,0.09)" : "transparent" }}>
                           <span style={{ width: "17px", height: "17px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px" }}>{NOTE_KINDS[k].glyph}</span>
@@ -716,10 +723,10 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
               );
             })}
 
-            {/* Washer attribution — compact by default; names are hidden behind
-                "Vaihda" so the popover stays clean unless you want to change who washed. */}
-            {workers && workers.length > 0 && (statuses[activeOrb] || "ei") === "pesty" && (
-              showWasherPicker ? (
+            {/* Washer attribution — shows WHO washed this window. Hosts can change
+                it via "Vaihda"; workers see it read-only. */}
+            {(statuses[activeOrb] || "ei") === "pesty" && (washedBy?.[activeOrb] || (canEdit && workers && workers.length > 0)) && (
+              showWasherPicker && canEdit && workers && workers.length > 0 ? (
                 <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
                   <div style={{ fontSize: "9.5px", letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.38)", padding: "0 4px 6px" }}>Kuka pesi?</div>
                   {workers.map((w) => {
@@ -741,7 +748,9 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                   <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     Pesi <strong style={{ color: "#fff", fontWeight: 600 }}>{workerNames?.[washedBy?.[activeOrb] ?? currentWorkerId ?? ""] ?? (washedBy?.[activeOrb] ?? currentWorkerId)}</strong>
                   </span>
-                  <button onClick={() => setShowWasherPicker(true)} style={{ marginLeft: "auto", flexShrink: 0, background: "transparent", border: "none", color: "rgba(124,224,166,0.95)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", padding: "2px 4px" }}>Vaihda</button>
+                  {canEdit && workers && workers.length > 0 && (
+                    <button onClick={() => setShowWasherPicker(true)} style={{ marginLeft: "auto", flexShrink: 0, background: "transparent", border: "none", color: "rgba(124,224,166,0.95)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", padding: "2px 4px" }}>Vaihda</button>
+                  )}
                 </div>
               )
             )}

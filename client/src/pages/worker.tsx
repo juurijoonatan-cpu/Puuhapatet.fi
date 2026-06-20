@@ -524,6 +524,22 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
     if (res.ok && res.data?.view) setView(res.data.view);
   }, [token, setView]);
 
+  // Worker map notes — add a "huomio" / "tikkaat" marker, edit or delete own.
+  const addNote = useCallback((floor: string, x: number, y: number, kind: string): void => {
+    (async () => {
+      const res = await api.crewAddMapNote(token, floor, x, y, kind);
+      if (res.ok && res.data?.view) setView(res.data.view);
+    })();
+  }, [token, setView]);
+  const updateNote = useCallback(async (floor: string, key: string, text: string) => {
+    const res = await api.crewUpdateMapNote(token, floor, key, text);
+    if (res.ok && res.data?.view) setView(res.data.view);
+  }, [token, setView]);
+  const deleteNote = useCallback(async (floor: string, key: string) => {
+    const res = await api.crewDeleteMapNote(token, floor, key);
+    if (res.ok && res.data?.view) setView(res.data.view);
+  }, [token, setView]);
+
   const noop = useCallback(() => {}, []);
 
   return (
@@ -560,6 +576,15 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
             onMoveMarkCommit={noop}
             onResetFloor={noop}
             canEdit={false}
+            canAddNotes
+            washedBy={view.washedBy}
+            workerNames={view.workerNames}
+            currentWorkerId={view.worker.id}
+            notes={view.notes}
+            onAddNote={addNote}
+            onUpdateNote={updateNote}
+            onDeleteNote={deleteNote}
+            activeZone={view.activeZone}
           />
         )}
         {tab === "earnings" && <EarningsTab view={view} />}
@@ -669,6 +694,36 @@ function InstallHint() {
         </p>
       </div>
       <button onClick={dismiss} aria-label="Sulje" style={{ flexShrink: 0, background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 16, cursor: "pointer", fontFamily: FONT, lineHeight: 1 }}>✕</button>
+    </div>
+  );
+}
+
+/** Building access info — door code + who to call if there's a problem. */
+const HELP_NUMBERS = ["+358 400 389 999", "+358 44 235 0881"];
+const DOOR_CODE = "284284";
+function AccessCard() {
+  return (
+    <div style={{ padding: 16, borderRadius: 16, background: "linear-gradient(155deg, rgba(124,180,255,0.12), rgba(255,255,255,0.03))", border: "1px solid rgba(124,180,255,0.25)", marginBottom: 18 }}>
+      <p style={{ margin: "0 0 10px", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "#9cc4ff" }}>Pääsy rakennukseen</p>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <span style={{ fontSize: 26 }}>🔑</span>
+        <div>
+          <p style={{ margin: 0, fontSize: 12, color: "rgba(255,255,255,0.55)" }}>Ovikoodi</p>
+          <p style={{ margin: "1px 0 0", fontSize: 28, fontWeight: 800, letterSpacing: "0.12em", fontVariantNumeric: "tabular-nums", color: "#fff" }}>{DOOR_CODE}</p>
+        </div>
+      </div>
+      <p style={{ margin: "14px 0 8px", fontSize: 12.5, color: "rgba(255,255,255,0.6)", lineHeight: 1.5 }}>
+        Jos ovi ei aukea tai tulee muita ongelmia, soita:
+      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {HELP_NUMBERS.map((n) => (
+          <a key={n} href={`tel:${n.replace(/\s/g, "")}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 13px", borderRadius: 11, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "#fff", textDecoration: "none", fontSize: 15, fontWeight: 600 }}>
+            <span style={{ fontSize: 16 }}>📞</span>
+            <span style={{ flex: 1 }}>{n}</span>
+            <span style={{ fontSize: 12, color: "#9cc4ff", fontWeight: 600 }}>Soita</span>
+          </a>
+        ))}
+      </div>
     </div>
   );
 }
@@ -855,6 +910,7 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
 
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: 20 }}>
+      <AccessCard />
       <div style={{ textAlign: "center", padding: "20px 0" }}>
         <p style={{ fontSize: 40, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: running ? "#7CE0A6" : "#fff" }}>{mmss(elapsed)}</p>
         <button onClick={() => (running ? stop() : setRunning(Date.now()))} style={{ ...primaryBtn, width: "auto", padding: "12px 32px", background: running ? "#D9472B" : T.green, marginTop: 8 }}>

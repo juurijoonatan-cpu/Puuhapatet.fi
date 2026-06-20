@@ -151,9 +151,24 @@ export function crewMemberStats(project: ProjectData, member: CrewMember): CrewM
 /** Has this worker finished onboarding (profile + every required agreement)? */
 export function isOnboarded(member: CrewMember, requiredAgreementIds: string[], version: string): boolean {
   if (!member.onboardedAt) return false;
+  return hasSignedAllAgreements(member, requiredAgreementIds, version);
+}
+
+/**
+ * Has this worker signed every required agreement at the current version?
+ * Independent of onboarding — used for the "soft start, sign later" gate: a
+ * worker can be in the app (onboardedAt set, name only) while this is still
+ * false, which is what surfaces the "read & sign" banner once signing is gated.
+ */
+export function hasSignedAllAgreements(member: CrewMember, requiredAgreementIds: string[], version: string): boolean {
   return requiredAgreementIds.every((id) =>
     member.agreements.some((a) => a.agreementId === id && a.version === version),
   );
+}
+
+/** True when the worker has at least entered the app (typed their name). */
+export function hasEnteredApp(member: CrewMember): boolean {
+  return !!member.onboardedAt;
 }
 
 // ─── Sanitisation (server-side validation) ─────────────────────────────────────

@@ -34,6 +34,22 @@
 
 export const WORKER_AGREEMENT_VERSION = "2026-08";
 
+/**
+ * Two-phase rollout switch for the FR8 gig.
+ *
+ *   false → SOFT START (now): a worker opens their link, sees the intro, types
+ *           only their NAME, and goes straight to their dashboard. No profile
+ *           questionnaire and no agreement signing yet — work can begin.
+ *
+ *   true  → GATED (later, once the contracts are finalised): set this to true and
+ *           bump WORKER_AGREEMENT_VERSION. Anyone already in the dashboard then
+ *           sees a sticky header telling them to read the extra info and sign the
+ *           agreements before they can keep marking windows; new workers go
+ *           through the full flow. Already-onboarded workers are NOT thrown out —
+ *           they stay on their dashboard behind the banner.
+ */
+export const WORKER_AGREEMENTS_GATED = false;
+
 export interface AgreementClause {
   id: string;
   text: string;

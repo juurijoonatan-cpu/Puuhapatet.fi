@@ -5,12 +5,19 @@ name: Keep backend warm
 # next request. Pinging the health endpoint every 10 minutes keeps it awake so
 # "Lähetä viesti" responds instantly for real visitors.
 #
+# Cost note: Render's free tier bills by instance-HOURS (~750/month free), not
+# by request. Keeping the service awake 24/7 would burn nearly the whole budget
+# for no benefit overnight, so we only ping during active hours (04:00-19:59
+# UTC ~= 07:00-22:59 Finnish summer time). That is ~480 instance-hours/month,
+# well under the free cap, and the warm-up-on-page-load still covers the rare
+# off-hours visitor.
+#
 # Note: scheduled workflows only run from the default branch, so this takes
 # effect once merged to main.
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/10 4-19 * * *"
   workflow_dispatch:
 
 jobs:

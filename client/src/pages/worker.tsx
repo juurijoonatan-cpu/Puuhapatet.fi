@@ -73,7 +73,7 @@ export default function WorkerPage() {
 
   if (status === "loading") return <Centered>Ladataan…</Centered>;
   if (status === "error" || !view) return <Centered>Linkkiä ei löytynyt tai se on vanhentunut.</Centered>;
-  if (status === "locked") return <PinGate token={token} onUnlock={() => { sessionStorage.setItem(`pp_crew_${token}`, "1"); setStatus("ok"); }} />;
+  if (status === "locked") return <PinGate token={token} view={view} onUnlock={() => { sessionStorage.setItem(`pp_crew_${token}`, "1"); setStatus("ok"); }} />;
   if (!view.worker.onboarded) {
     // Soft start (now): one-tap intro. Gated (later): the full sign flow.
     return view.agreementsGated
@@ -170,30 +170,50 @@ function introFor(name: string) {
   return first ? WORKER_INTROS[first] : undefined;
 }
 
+/** Returns the right "add to home screen" instructions for the device. */
+function installSteps(): { os: "ios" | "android" | "muu"; steps: string[] } {
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+  if (/iPhone|iPad|iPod/i.test(ua)) {
+    return { os: "ios", steps: ["Paina selaimen alapalkin Jaa-kuvaketta (neliö ja nuoli ⬆️).", "Valitse “Lisää Koti-valikkoon”.", "Vahvista “Lisää”. Kuvake ilmestyy kotinäytölle."] };
+  }
+  if (/Android/i.test(ua)) {
+    return { os: "android", steps: ["Avaa selaimen valikko (kolme pistettä ⋮ oikeassa yläkulmassa).", "Valitse “Lisää aloitusnäyttöön” / “Asenna sovellus”.", "Vahvista. Kuvake ilmestyy kotinäytölle."] };
+  }
+  return { os: "muu", steps: ["Avaa selaimen valikko.", "Valitse “Lisää aloitusnäyttöön” tai “Asenna sovellus”."] };
+}
+
 /**
- * Phase-A onboarding: the worker opens their link, sees a warm one-screen intro
- * and taps once to enter. Workers are pre-named in the admin, so we ask nothing —
- * no name, no profile, no agreements yet — the dashboard opens straight away so
- * work can start. Some workers get a personalised intro (photo + animation) via
- * WORKER_INTROS. Once signing is gated (WORKER_AGREEMENTS_GATED), the dashboard
- * shows the full sign flow instead (see Dashboard).
+ * Phase-A onboarding for a worker opening their private link:
+ *   1. Welcome (personalised photo + animation for some workers).
+ *   2. Set a personal password — used to unlock the dashboard next time.
+ *   3. "Add to home screen" tip, so the icon opens straight to this dashboard.
+ * After this the dashboard opens directly (password-gated). Once signing is gated
+ * (WORKER_AGREEMENTS_GATED) the full sign flow runs instead (see Dashboard).
  */
 function QuickStart({ token, view, onDone }: { token: string; view: WorkerView; onDone: (v: WorkerView) => void }) {
+  const [step, setStep] = useState<"welcome" | "password" | "install">("welcome");
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [photoOk, setPhotoOk] = useState(true);
+  const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [savedView, setSavedView] = useState<WorkerView | null>(null);
   const personal = introFor(view.worker.name);
   const firstName = view.worker.name ? view.worker.name.split(" ")[0] : "";
 
-  const start = async () => {
+  const savePassword = async () => {
+    const p = pw.trim();
+    if (p.length < 4) { setErr("Salasanan on oltava vähintään 4 merkkiä."); return; }
+    if (p !== pw2.trim()) { setErr("Salasanat eivät täsmää."); return; }
     setBusy(true); setErr("");
-    // No fields to collect — this just records entry, keeping the name the host set.
-    const res = await api.crewOnboard(token, { agreements: [] });
+    const res = await api.crewOnboard(token, { agreements: [], pin: p });
     setBusy(false);
-    if (res.ok && res.data?.view) onDone(res.data.view);
-    else setErr(res.error || "Avaaminen epäonnistui. Yritä uudelleen.");
+    if (res.ok && res.data?.view) { setSavedView(res.data.view); setStep("install"); }
+    else setErr(res.error || "Tallennus epäonnistui. Yritä uudelleen.");
   };
+
+  const finish = () => onDone(savedView ?? view);
 
   // Staggered reveal: each element fades/rises once the ink reveal finishes.
   const rise = (i: number): React.CSSProperties => ({
@@ -201,78 +221,118 @@ function QuickStart({ token, view, onDone }: { token: string; view: WorkerView; 
     transform: ready ? "translateY(0)" : "translateY(12px)",
     transition: `opacity .6s ease ${i * 0.12}s, transform .6s cubic-bezier(.2,.8,.2,1) ${i * 0.12}s`,
   });
+  const card: React.CSSProperties = { width: "100%", maxWidth: 360, marginTop: 22, textAlign: "left" };
+  const pwInput: React.CSSProperties = { ...inputStyle, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", fontSize: 16 };
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "radial-gradient(120% 120% at 50% 0%, #14223a 0%, #0a0a0c 60%)", fontFamily: FONT, overflow: "hidden" }}>
+    <div style={{ position: "fixed", inset: 0, background: "radial-gradient(120% 120% at 50% 0%, #14223a 0%, #0a0a0c 60%)", fontFamily: FONT, overflow: "auto" }}>
       <style>{`
         @keyframes pp-pop { 0%{opacity:0;transform:scale(.6)} 60%{opacity:1;transform:scale(1.06)} 100%{opacity:1;transform:scale(1)} }
         @keyframes pp-float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-7px)} }
         @keyframes pp-ring { to { transform: rotate(360deg) } }
       `}</style>
-      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 24, zIndex: 3 }}>
-        <p style={{ ...rise(0), color: "rgba(255,255,255,0.5)", fontSize: 13, letterSpacing: "0.18em", textTransform: "uppercase" }}>Puuhapatet</p>
+      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "32px 24px", zIndex: 3 }}>
 
-        {/* Personalised photo (e.g. Jani) — pops in, then gently floats. */}
-        {personal && photoOk && (
-          <div style={{ position: "relative", width: 132, height: 132, margin: "18px 0 6px", animation: ready ? "pp-float 5s ease-in-out infinite 1s" : "none" }}>
-            <div style={{ position: "absolute", inset: -7, borderRadius: "50%", background: "conic-gradient(from 0deg, #7CE0A6, #4aa6ff, #b98bff, #7CE0A6)", filter: "blur(2px)", animation: ready ? "pp-ring 6s linear infinite" : "none", opacity: ready ? 0.9 : 0 }} />
-            <img
-              src={personal.photo}
-              alt={firstName}
-              onError={() => setPhotoOk(false)}
-              style={{ position: "relative", width: 132, height: 132, borderRadius: "50%", objectFit: "cover", border: "3px solid rgba(10,10,12,1)", boxShadow: "0 10px 40px rgba(0,0,0,0.55)", animation: ready ? "pp-pop .8s cubic-bezier(.2,.9,.3,1.2) both" : "none", opacity: ready ? 1 : 0 }}
-            />
+        {step === "welcome" && (<>
+          <p style={{ ...rise(0), color: "rgba(255,255,255,0.5)", fontSize: 13, letterSpacing: "0.18em", textTransform: "uppercase" }}>Puuhapatet</p>
+          {personal && photoOk && (
+            <div style={{ position: "relative", width: 132, height: 132, margin: "18px 0 6px", animation: ready ? "pp-float 5s ease-in-out infinite 1s" : "none" }}>
+              <div style={{ position: "absolute", inset: -7, borderRadius: "50%", background: "conic-gradient(from 0deg, #7CE0A6, #4aa6ff, #b98bff, #7CE0A6)", filter: "blur(2px)", animation: ready ? "pp-ring 6s linear infinite" : "none", opacity: ready ? 0.9 : 0 }} />
+              <img src={personal.photo} alt={firstName} onError={() => setPhotoOk(false)}
+                style={{ position: "relative", width: 132, height: 132, borderRadius: "50%", objectFit: "cover", border: "3px solid rgba(10,10,12,1)", boxShadow: "0 10px 40px rgba(0,0,0,0.55)", animation: ready ? "pp-pop .8s cubic-bezier(.2,.9,.3,1.2) both" : "none", opacity: ready ? 1 : 0 }} />
+            </div>
+          )}
+          <h1 style={{ ...rise(1), color: "#fff", fontSize: "clamp(28px, 7vw, 46px)", fontWeight: 800, margin: "10px 0", lineHeight: 1.1 }}>
+            {personal ? personal.greeting : `Tervetuloa tiimiin${firstName ? `, ${firstName}` : ""}`}
+          </h1>
+          <p style={{ ...rise(2), color: "rgba(255,255,255,0.72)", maxWidth: 460, fontSize: 15.5, lineHeight: 1.65 }}>
+            {personal ? personal.line : "Hienoa saada sinut mukaan. Tämä on ensimmäinen yhteinen keikkamme — pääset omalle työpöydällesi, jossa näet työsi ja edistymisesi reaaliajassa."}
+          </p>
+          <p style={{ ...rise(3), color: "rgba(255,255,255,0.42)", maxWidth: 440, fontSize: 12.5, lineHeight: 1.6, marginTop: 12 }}>
+            Seuraavaksi asetat oman salasanan ja lisäät työpöydän puhelimen kotinäytölle.
+          </p>
+          <div style={{ ...rise(4), width: "100%", maxWidth: 320, marginTop: 24, pointerEvents: ready ? "auto" : "none" }}>
+            <button onClick={() => setStep("password")} style={{ ...primaryBtn, background: T.green }}>Aloita →</button>
           </div>
-        )}
+        </>)}
 
-        <h1 style={{ ...rise(1), color: "#fff", fontSize: "clamp(28px, 7vw, 46px)", fontWeight: 800, margin: "10px 0", lineHeight: 1.1 }}>
-          {personal ? personal.greeting : `Tervetuloa tiimiin${firstName ? `, ${firstName}` : ""}`}
-        </h1>
-        <p style={{ ...rise(2), color: "rgba(255,255,255,0.72)", maxWidth: 460, fontSize: 15.5, lineHeight: 1.65 }}>
-          {personal
-            ? personal.line
-            : "Hienoa saada sinut mukaan. Tämä on ensimmäinen yhteinen keikkamme — pääset suoraan omalle työpöydällesi, jossa näet työsi ja edistymisesi reaaliajassa."}
-        </p>
-        <p style={{ ...rise(3), color: "rgba(255,255,255,0.42)", maxWidth: 440, fontSize: 12.5, lineHeight: 1.6, marginTop: 12 }}>
-          Sopimukset viimeistellään pian — saat ilmoituksen työpöydällesi, kun ne pitää lukea ja allekirjoittaa.
-        </p>
-        <div style={{ ...rise(4), width: "100%", maxWidth: 320, marginTop: 24, pointerEvents: ready ? "auto" : "none" }}>
-          {err && <p style={{ color: "#FF9A9A", fontSize: 13, marginBottom: 8 }}>{err}</p>}
-          <button onClick={start} disabled={busy} style={{ ...primaryBtn, background: T.green, opacity: busy ? 0.6 : 1 }}>
-            {busy ? "Avataan…" : "Avaa työpöytä →"}
-          </button>
-        </div>
+        {step === "password" && (<>
+          <h1 style={{ color: "#fff", fontSize: "clamp(24px, 6vw, 34px)", fontWeight: 800, margin: "0 0 8px" }}>Aseta salasanasi</h1>
+          <p style={{ color: "rgba(255,255,255,0.65)", maxWidth: 380, fontSize: 14, lineHeight: 1.6 }}>
+            Valitse oma salasana, jolla avaat työpöytäsi jatkossa. <b style={{ color: "#fff" }}>Älä unohda sitä</b> — sillä pääset takaisin sisään.
+          </p>
+          <div style={card}>
+            <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Salasana (väh. 4 merkkiä)" autoComplete="new-password" style={pwInput} />
+            <input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="Salasana uudelleen" autoComplete="new-password" onKeyDown={(e) => e.key === "Enter" && savePassword()} style={{ ...pwInput, marginTop: 10 }} />
+            {err && <p style={{ color: "#FF9A9A", fontSize: 13, marginTop: 8 }}>{err}</p>}
+            <button onClick={savePassword} disabled={busy} style={{ ...primaryBtn, background: T.green, marginTop: 14, opacity: busy ? 0.6 : 1 }}>
+              {busy ? "Tallennetaan…" : "Tallenna salasana →"}
+            </button>
+          </div>
+        </>)}
+
+        {step === "install" && (() => {
+          const ins = installSteps();
+          return (<>
+            <span style={{ fontSize: 40 }}>📲</span>
+            <h1 style={{ color: "#fff", fontSize: "clamp(24px, 6vw, 34px)", fontWeight: 800, margin: "10px 0 8px" }}>Lisää työpöytä kotinäyttöön</h1>
+            <p style={{ color: "rgba(255,255,255,0.65)", maxWidth: 400, fontSize: 14, lineHeight: 1.6 }}>
+              Näin saat Puuhapatet-työpöydän omaksi kuvakkeeksi puhelimeen — se avautuu aina suoraan tähän näkymään.
+            </p>
+            <div style={{ ...card, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 14, padding: 16, marginTop: 18 }}>
+              <p style={{ margin: "0 0 10px", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(255,255,255,0.5)" }}>
+                {ins.os === "ios" ? "iPhone / iPad" : ins.os === "android" ? "Android" : "Ohjeet"}
+              </p>
+              {ins.steps.map((s, i) => (
+                <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", marginBottom: 10 }}>
+                  <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 999, background: "rgba(124,224,166,0.18)", border: "1px solid rgba(124,224,166,0.4)", color: "#7CE0A6", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
+                  <span style={{ fontSize: 13.5, lineHeight: 1.5, color: "rgba(255,255,255,0.85)" }}>{s}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ width: "100%", maxWidth: 360, marginTop: 18 }}>
+              <button onClick={finish} style={{ ...primaryBtn, background: T.green }}>Avaa työpöytä →</button>
+              <button onClick={finish} style={{ ...primaryBtn, background: "transparent", border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.7)", marginTop: 10 }}>Teen tämän myöhemmin</button>
+            </div>
+          </>);
+        })()}
       </div>
-      <InkReveal maskColor={[10, 10, 12]} brushSize={150} fadeOutAfter={1300} fadeOutDuration={1000} onRevealed={() => setReady(true)} />
+      {step === "welcome" && <InkReveal maskColor={[10, 10, 12]} brushSize={150} fadeOutAfter={1300} fadeOutDuration={1000} onRevealed={() => setReady(true)} />}
     </div>
   );
 }
 
 // ─── PIN gate ───────────────────────────────────────────────────────────────
 
-function PinGate({ token, onUnlock }: { token: string; onUnlock: () => void }) {
+function PinGate({ token, view, onUnlock }: { token: string; view: WorkerView; onUnlock: () => void }) {
   const [pin, setPin] = useState("");
   const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const firstName = view.worker.name ? view.worker.name.split(" ")[0] : "";
   const submit = async () => {
+    if (!pin) return;
+    setBusy(true); setErr("");
     const res = await api.crewAuth(token, pin);
+    setBusy(false);
     if (res.ok && res.data?.ok) onUnlock();
-    else setErr("Väärä PIN");
+    else setErr("Väärä salasana.");
   };
   return (
-    <Paper>
-      <div style={{ maxWidth: 360, margin: "0 auto", textAlign: "center", paddingTop: 60 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800 }}>Puuhapatet</h1>
-        <p style={{ color: T.muted, marginBottom: 24 }}>Syötä PIN-koodisi.</p>
+    <div style={{ position: "fixed", inset: 0, background: "radial-gradient(120% 120% at 50% 0%, #14223a 0%, #0a0a0c 60%)", fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <div style={{ width: "100%", maxWidth: 340, textAlign: "center" }}>
+        <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 13, letterSpacing: "0.18em", textTransform: "uppercase" }}>Puuhapatet</p>
+        <h1 style={{ color: "#fff", fontSize: 26, fontWeight: 800, margin: "8px 0 4px" }}>Tervetuloa takaisin{firstName ? `, ${firstName}` : ""}</h1>
+        <p style={{ color: "rgba(255,255,255,0.6)", marginBottom: 22, fontSize: 14 }}>Syötä salasanasi avataksesi työpöydän.</p>
         <input
-          value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
-          inputMode="numeric" type="password" placeholder="••••"
-          style={{ ...inputStyle, textAlign: "center", letterSpacing: 8, fontSize: 24 }}
+          value={pin} onChange={(e) => setPin(e.target.value)}
+          type="password" placeholder="Salasana" autoFocus autoComplete="current-password"
+          style={{ ...inputStyle, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", textAlign: "center", fontSize: 16 }}
           onKeyDown={(e) => e.key === "Enter" && submit()}
         />
-        {err && <p style={{ color: "#D9472B", fontSize: 13, marginTop: 8 }}>{err}</p>}
-        <button onClick={submit} style={{ ...primaryBtn, marginTop: 16 }}>Avaa</button>
+        {err && <p style={{ color: "#FF9A9A", fontSize: 13, marginTop: 8 }}>{err}</p>}
+        <button onClick={submit} disabled={busy} style={{ ...primaryBtn, background: T.green, marginTop: 16, opacity: busy ? 0.6 : 1 }}>{busy ? "Avataan…" : "Avaa työpöytä →"}</button>
       </div>
-    </Paper>
+    </div>
   );
 }
 

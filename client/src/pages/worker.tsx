@@ -185,32 +185,28 @@ function installSteps(): { os: "ios" | "android" | "muu"; steps: string[] } {
 /**
  * Phase-A onboarding for a worker opening their private link:
  *   1. Welcome (personalised photo + animation for some workers).
- *   2. Set a personal password — used to unlock the dashboard next time.
- *   3. "Add to home screen" tip, so the icon opens straight to this dashboard.
- * After this the dashboard opens directly (password-gated). Once signing is gated
- * (WORKER_AGREEMENTS_GATED) the full sign flow runs instead (see Dashboard).
+ *   2. "Add to home screen" tip, so the icon opens straight to this dashboard.
+ * No password — the private link itself is the key. After this the dashboard
+ * opens directly. Once signing is gated (WORKER_AGREEMENTS_GATED) the full sign
+ * flow runs instead (see Dashboard).
  */
 function QuickStart({ token, view, onDone }: { token: string; view: WorkerView; onDone: (v: WorkerView) => void }) {
-  const [step, setStep] = useState<"welcome" | "password" | "install">("welcome");
+  const [step, setStep] = useState<"welcome" | "install">("welcome");
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [photoOk, setPhotoOk] = useState(true);
-  const [pw, setPw] = useState("");
-  const [pw2, setPw2] = useState("");
   const [savedView, setSavedView] = useState<WorkerView | null>(null);
   const personal = introFor(view.worker.name);
   const firstName = view.worker.name ? view.worker.name.split(" ")[0] : "";
 
-  const savePassword = async () => {
-    const p = pw.trim();
-    if (p.length < 4) { setErr("Salasanan on oltava vähintään 4 merkkiä."); return; }
-    if (p !== pw2.trim()) { setErr("Salasanat eivät täsmää."); return; }
+  const enter = async () => {
     setBusy(true); setErr("");
-    const res = await api.crewOnboard(token, { agreements: [], pin: p });
+    // No fields — record entry, keeping the name the host set; link is the key.
+    const res = await api.crewOnboard(token, { agreements: [] });
     setBusy(false);
     if (res.ok && res.data?.view) { setSavedView(res.data.view); setStep("install"); }
-    else setErr(res.error || "Tallennus epäonnistui. Yritä uudelleen.");
+    else setErr(res.error || "Avaaminen epäonnistui. Yritä uudelleen.");
   };
 
   const finish = () => onDone(savedView ?? view);
@@ -222,7 +218,6 @@ function QuickStart({ token, view, onDone }: { token: string; view: WorkerView; 
     transition: `opacity .6s ease ${i * 0.12}s, transform .6s cubic-bezier(.2,.8,.2,1) ${i * 0.12}s`,
   });
   const card: React.CSSProperties = { width: "100%", maxWidth: 360, marginTop: 22, textAlign: "left" };
-  const pwInput: React.CSSProperties = { ...inputStyle, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", fontSize: 16 };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "radial-gradient(120% 120% at 50% 0%, #14223a 0%, #0a0a0c 60%)", fontFamily: FONT, overflow: "auto" }}>
@@ -249,25 +244,11 @@ function QuickStart({ token, view, onDone }: { token: string; view: WorkerView; 
             {personal ? personal.line : "Hienoa saada sinut mukaan. Tämä on ensimmäinen yhteinen keikkamme — pääset omalle työpöydällesi, jossa näet työsi ja edistymisesi reaaliajassa."}
           </p>
           <p style={{ ...rise(3), color: "rgba(255,255,255,0.42)", maxWidth: 440, fontSize: 12.5, lineHeight: 1.6, marginTop: 12 }}>
-            Seuraavaksi asetat oman salasanan ja lisäät työpöydän puhelimen kotinäytölle.
+            Näytän seuraavaksi, miten lisäät työpöydän puhelimen kotinäytölle — sitten pääset suoraan töihin.
           </p>
           <div style={{ ...rise(4), width: "100%", maxWidth: 320, marginTop: 24, pointerEvents: ready ? "auto" : "none" }}>
-            <button onClick={() => setStep("password")} style={{ ...primaryBtn, background: T.green }}>Aloita →</button>
-          </div>
-        </>)}
-
-        {step === "password" && (<>
-          <h1 style={{ color: "#fff", fontSize: "clamp(24px, 6vw, 34px)", fontWeight: 800, margin: "0 0 8px" }}>Aseta salasanasi</h1>
-          <p style={{ color: "rgba(255,255,255,0.65)", maxWidth: 380, fontSize: 14, lineHeight: 1.6 }}>
-            Valitse oma salasana, jolla avaat työpöytäsi jatkossa. <b style={{ color: "#fff" }}>Älä unohda sitä</b> — sillä pääset takaisin sisään.
-          </p>
-          <div style={card}>
-            <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Salasana (väh. 4 merkkiä)" autoComplete="new-password" style={pwInput} />
-            <input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="Salasana uudelleen" autoComplete="new-password" onKeyDown={(e) => e.key === "Enter" && savePassword()} style={{ ...pwInput, marginTop: 10 }} />
-            {err && <p style={{ color: "#FF9A9A", fontSize: 13, marginTop: 8 }}>{err}</p>}
-            <button onClick={savePassword} disabled={busy} style={{ ...primaryBtn, background: T.green, marginTop: 14, opacity: busy ? 0.6 : 1 }}>
-              {busy ? "Tallennetaan…" : "Tallenna salasana →"}
-            </button>
+            {err && <p style={{ color: "#FF9A9A", fontSize: 13, marginBottom: 8 }}>{err}</p>}
+            <button onClick={enter} disabled={busy} style={{ ...primaryBtn, background: T.green, opacity: busy ? 0.6 : 1 }}>{busy ? "Avataan…" : "Aloita →"}</button>
           </div>
         </>)}
 

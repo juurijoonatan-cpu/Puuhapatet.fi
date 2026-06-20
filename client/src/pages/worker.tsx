@@ -506,6 +506,31 @@ function AgreementBody({ ag }: { ag: WorkerAgreement }) {
 
 type Tab = "map" | "earnings" | "hours" | "payouts" | "notes";
 
+const NAV_ITEMS: [Tab, string][] = [
+  ["map", "Kartta"],
+  ["earnings", "Ansiot"],
+  ["hours", "Tunnit"],
+  ["payouts", "Maksut"],
+  ["notes", "Info"],
+];
+
+/** Stroke icons for the bottom nav (inline so the dark worker theme stays self-contained). */
+function NavIcon({ name, color }: { name: Tab; color: string }) {
+  const p = { width: 22, height: 22, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 1.9, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+  switch (name) {
+    case "map":
+      return <svg {...p}><path d="M9 20 3 17V4l6 3 6-3 6 3v13l-6-3-6 3Z" /><path d="M9 7v13M15 4v13" /></svg>;
+    case "earnings":
+      return <svg {...p}><circle cx="12" cy="12" r="8.5" /><path d="M14.5 9.3a3.6 3.6 0 1 0 0 5.4" /><path d="M7.5 11h5M7.5 13h4.5" /></svg>;
+    case "hours":
+      return <svg {...p}><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 1.8" /></svg>;
+    case "payouts":
+      return <svg {...p}><rect x="3" y="6" width="18" height="12.5" rx="2.5" /><path d="M3 10.5h18" /><path d="M16 14.5h2" /></svg>;
+    case "notes":
+      return <svg {...p}><circle cx="12" cy="12" r="8.5" /><path d="M12 11v5" /><path d="M12 8h.01" /></svg>;
+  }
+}
+
 function Dashboard({ token, view, setView, reload }: { token: string; view: WorkerView; setView: (v: WorkerView) => void; reload: () => void }) {
   const [tab, setTab] = useState<Tab>("map");
 
@@ -593,16 +618,26 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
         {tab === "notes" && <NotesTab token={token} view={view} setView={setView} />}
       </div>
 
-      {/* Bottom nav */}
-      <div style={{ flexShrink: 0, display: "flex", borderTop: "1px solid rgba(255,255,255,0.08)", background: "rgba(8,8,10,0.95)", paddingBottom: "env(safe-area-inset-bottom)" }}>
-        {([["map", "Kartta"], ["earnings", "Ansiot"], ["hours", "Tunnit"], ["payouts", "Maksut"], ["notes", "Muistiinpanot"]] as [Tab, string][]).map(([id, label]) => {
+      {/* Bottom nav — icons, active pill, mobile-friendly */}
+      <div style={{ flexShrink: 0, display: "flex", justifyContent: "space-around", alignItems: "stretch", gap: 2, borderTop: "1px solid rgba(255,255,255,0.08)", background: "rgba(8,8,10,0.96)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", padding: "8px 6px calc(8px + env(safe-area-inset-bottom))" }}>
+        {NAV_ITEMS.map(([id, label]) => {
+          const active = tab === id;
           const pending = id === "payouts" ? (view.payouts || []).filter((p) => p.status === "ilmoitettu").length : 0;
           return (
-            <button key={id} onClick={() => { setTab(id); if (id !== "map") reload(); }} style={{ position: "relative", flex: 1, padding: "12px 4px 16px", background: "none", border: "none", color: tab === id ? "#fff" : "rgba(255,255,255,0.45)", fontSize: 11.5, fontWeight: tab === id ? 700 : 500, fontFamily: FONT, cursor: "pointer" }}>
-              {label}
-              {pending > 0 && (
-                <span style={{ position: "absolute", top: 6, left: "calc(50% + 16px)", minWidth: 16, height: 16, padding: "0 4px", borderRadius: 999, background: "#E03B3B", color: "#fff", fontSize: 10, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{pending}</span>
-              )}
+            <button
+              key={id}
+              onClick={() => { setTab(id); if (id !== "map") reload(); }}
+              aria-label={label}
+              aria-current={active ? "page" : undefined}
+              style={{ position: "relative", flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "8px 2px", background: "none", border: "none", cursor: "pointer", fontFamily: FONT, color: active ? "#fff" : "rgba(255,255,255,0.5)", transition: "color .2s" }}
+            >
+              <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 46, height: 30, borderRadius: 999, background: active ? "rgba(124,224,166,0.16)" : "transparent", transition: "background .2s" }}>
+                <NavIcon name={id} color={active ? "#7CE0A6" : "rgba(255,255,255,0.55)"} />
+                {pending > 0 && (
+                  <span style={{ position: "absolute", top: 4, left: "calc(50% + 8px)", minWidth: 15, height: 15, padding: "0 4px", borderRadius: 999, background: "#E03B3B", color: "#fff", fontSize: 9.5, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "1.5px solid #08080a" }}>{pending}</span>
+                )}
+              </span>
+              <span style={{ fontSize: 10.5, fontWeight: active ? 700 : 500, letterSpacing: "0.01em", whiteSpace: "nowrap" }}>{label}</span>
             </button>
           );
         })}
@@ -694,6 +729,27 @@ function InstallHint() {
         </p>
       </div>
       <button onClick={dismiss} aria-label="Sulje" style={{ flexShrink: 0, background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 16, cursor: "pointer", fontFamily: FONT, lineHeight: 1 }}>✕</button>
+    </div>
+  );
+}
+
+/** Important work rules for this gig — which windows to wash, which to leave. */
+function InfoNotice() {
+  return (
+    <div style={{ padding: 16, borderRadius: 16, background: "linear-gradient(155deg, rgba(255,180,90,0.12), rgba(255,255,255,0.03))", border: "1px solid rgba(255,180,90,0.28)", marginBottom: 14 }}>
+      <p style={{ margin: "0 0 12px", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "#FFC56B" }}>⚠️ Tärkeää — lue ennen aloitusta</p>
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-start", marginBottom: 12 }}>
+        <span style={{ flexShrink: 0, marginTop: 3, width: 14, height: 14, borderRadius: "50%", background: "rgb(255,140,178)", boxShadow: "0 0 8px rgba(255,140,178,0.7)" }} />
+        <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: "rgba(255,255,255,0.85)" }}>
+          <b>Pinkit pisteet (Prioriteetti 1) pestään ensin.</b> Aloita aina näistä — ne ovat sopimuksen mukaiset ikkunat.
+        </p>
+      </div>
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+        <span style={{ flexShrink: 0, marginTop: 3, width: 14, height: 14, borderRadius: "50%", background: "rgb(240,226,150)", boxShadow: "0 0 8px rgba(240,226,150,0.7)" }} />
+        <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: "rgba(255,255,255,0.85)" }}>
+          <b>Keltaisiin ikkunoihin ei kosketa — niitä ei pestä.</b> Niistä ei ole vielä tehty sopimusta, joten jätä ne rauhaan.
+        </p>
+      </div>
     </div>
   );
 }
@@ -910,7 +966,6 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
 
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: 20 }}>
-      <AccessCard />
       <div style={{ textAlign: "center", padding: "20px 0" }}>
         <p style={{ fontSize: 40, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: running ? "#7CE0A6" : "#fff" }}>{mmss(elapsed)}</p>
         <button onClick={() => (running ? stop() : setRunning(Date.now()))} style={{ ...primaryBtn, width: "auto", padding: "12px 32px", background: running ? "#D9472B" : T.green, marginTop: 8 }}>
@@ -940,6 +995,9 @@ function NotesTab({ token, view, setView }: { token: string; view: WorkerView; s
   };
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: 20 }}>
+      <InfoNotice />
+      <AccessCard />
+      <p style={{ margin: "4px 0 10px", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)" }}>Omat muistiinpanot</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} placeholder="Kirjoita muistiinpano (esim. rikkinäinen ikkuna, puuttuva avain)…" style={{ ...inputStyle, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff", resize: "vertical" }} />
         <button onClick={add} style={{ ...primaryBtn, background: T.green }}>Lisää muistiinpano</button>

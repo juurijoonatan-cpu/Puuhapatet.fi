@@ -46,8 +46,15 @@ export default function WorkerPage() {
       link.href = "https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap";
       document.head.appendChild(link);
     }
-    document.title = "Puuhapatet — Työntekijä";
+    document.title = "Puuhapatet — Työpöytä";
   }, []);
+
+  // Make this page installable to the phone home screen AS THE WORKER'S OWN
+  // DASHBOARD — not the Puuhapatet admin. The site-wide manifest's start_url is
+  // /admin/dashboard, so without this an "Add to Home Screen" would open the
+  // admin. Here we swap in a per-worker manifest scoped to /tyo/ that launches
+  // straight back to this private link, and restore the original on unmount.
+  useWorkerInstall(token);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -70,6 +77,70 @@ export default function WorkerPage() {
   if (!view.worker.onboarded) return <Onboarding token={token} view={view} onDone={(v) => setView(v)} />;
 
   return <Dashboard token={token} view={view} setView={setView} reload={load} />;
+}
+
+// ─── Install as a phone app (PWA), scoped to the worker dashboard ─────────────
+
+/**
+ * While the worker page is open, point the document's manifest + theme at a
+ * dashboard-only install. start_url launches straight back to this private link
+ * and scope is "/tyo/", so a home-screen icon opens the worker's own dashboard
+ * (standalone, dark) instead of the Puuhapatet admin. On iOS, "Add to Home
+ * Screen" captures the current tokened URL anyway; this fixes Android/Chrome
+ * (which honour start_url) and gives both a dark, app-like launch.
+ */
+function useWorkerInstall(token: string) {
+  useEffect(() => {
+    if (!token || typeof document === "undefined") return;
+    const head = document.head;
+
+    // Snapshot what we override so we can restore it when leaving the page.
+    const linkEl = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
+    const prevManifestHref = linkEl?.getAttribute("href") ?? null;
+    const themeEl = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    const prevTheme = themeEl?.getAttribute("content") ?? null;
+    const titleEl = document.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-title"]');
+    const prevAppleTitle = titleEl?.getAttribute("content") ?? null;
+
+    const manifest = {
+      name: "Puuhapatet — Työpöytä",
+      short_name: "Työpöytä",
+      description: "Oma työpöytäsi: kartta, ansiot, tunnit ja maksut.",
+      start_url: `/tyo/${token}`,
+      scope: "/tyo/",
+      display: "standalone",
+      background_color: "#060607",
+      theme_color: "#060607",
+      orientation: "portrait-primary",
+      lang: "fi",
+      icons: [
+        { src: "/favicon.png", sizes: "192x192", type: "image/png", purpose: "any maskable" },
+        { src: "/favicon.png", sizes: "512x512", type: "image/png", purpose: "any maskable" },
+      ],
+    };
+    const blob = new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" });
+    const blobUrl = URL.createObjectURL(blob);
+
+    let createdLink = false;
+    let link = linkEl;
+    if (!link) {
+      link = document.createElement("link");
+      link.rel = "manifest";
+      head.appendChild(link);
+      createdLink = true;
+    }
+    link.setAttribute("href", blobUrl);
+    if (themeEl) themeEl.setAttribute("content", "#060607");
+    if (titleEl) titleEl.setAttribute("content", "Työpöytä");
+
+    return () => {
+      URL.revokeObjectURL(blobUrl);
+      if (createdLink) link?.remove();
+      else if (link && prevManifestHref != null) link.setAttribute("href", prevManifestHref);
+      if (themeEl && prevTheme != null) themeEl.setAttribute("content", prevTheme);
+      if (titleEl && prevAppleTitle != null) titleEl.setAttribute("content", prevAppleTitle);
+    };
+  }, [token]);
 }
 
 // ─── PIN gate ───────────────────────────────────────────────────────────────
@@ -328,11 +399,13 @@ type Tab = "map" | "earnings" | "hours" | "payouts" | "notes";
 function Dashboard({ token, view, setView, reload }: { token: string; view: WorkerView; setView: (v: WorkerView) => void; reload: () => void }) {
   const [tab, setTab] = useState<Tab>("map");
 
-  // Lock page zoom so pinch zooms only the map (like the admin tool).
+  // Lock page zoom so pinch zooms only the map (like the admin tool), and let the
+  // dark UI extend under the notch / home indicator (viewport-fit=cover) — the
+  // header and bottom nav below add safe-area padding so nothing is clipped.
   useEffect(() => {
     const vp = document.querySelector('meta[name="viewport"]');
     const prev = vp?.getAttribute("content") ?? null;
-    vp?.setAttribute("content", "width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no");
+    vp?.setAttribute("content", "width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover");
     return () => { if (vp && prev != null) vp.setAttribute("content", prev); };
   }, []);
 
@@ -346,7 +419,7 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
   return (
     <div className="fr8-root" style={{ position: "fixed", inset: 0, background: "#060607", color: "#fff", display: "flex", flexDirection: "column", fontFamily: FONT, overflow: "hidden" }}>
       {/* Header */}
-      <div style={{ flexShrink: 0, padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+      <div style={{ flexShrink: 0, padding: "calc(12px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 12px max(16px, env(safe-area-inset-left))", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
         <div>
           <p style={{ margin: 0, fontWeight: 700, fontSize: 15 }}>{view.worker.name || "Työntekijä"}</p>
           <p style={{ margin: 0, fontSize: 11.5, color: "rgba(255,255,255,0.5)" }}>{view.building.name || "Puuhapatet"}{view.building.address ? ` · ${view.building.address}` : ""}</p>
@@ -386,7 +459,7 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
       </div>
 
       {/* Bottom nav */}
-      <div style={{ flexShrink: 0, display: "flex", borderTop: "1px solid rgba(255,255,255,0.08)", background: "rgba(8,8,10,0.95)" }}>
+      <div style={{ flexShrink: 0, display: "flex", borderTop: "1px solid rgba(255,255,255,0.08)", background: "rgba(8,8,10,0.95)", paddingBottom: "env(safe-area-inset-bottom)" }}>
         {([["map", "Kartta"], ["earnings", "Ansiot"], ["hours", "Tunnit"], ["payouts", "Maksut"], ["notes", "Muistiinpanot"]] as [Tab, string][]).map(([id, label]) => {
           const pending = id === "payouts" ? (view.payouts || []).filter((p) => p.status === "ilmoitettu").length : 0;
           return (
@@ -428,10 +501,64 @@ function EarningsTab({ view }: { view: WorkerView }) {
         <Stat label="Ikkunoita kohteessa" value={String(potentialWindows)} />
       </div>
       <Leaderboard view={view} />
+      <PathCard />
+      <InstallHint />
       <p style={{ marginTop: 20, fontSize: 12.5, color: "rgba(255,255,255,0.45)", lineHeight: 1.6 }}>
         Ansiosi päivittyy heti, kun merkitset ikkunan pestyksi kartalle. Laskutat kertyneen summan
         Puuhapatetilta oman Y-tunnuksesi kautta.
       </p>
+    </div>
+  );
+}
+
+/** The "first gig → subcontractor → into the brand" path. Shown to FR8 workers
+ *  so they know this is the start of something, not a one-off. */
+function PathCard() {
+  const steps: { n: string; title: string; body: string }[] = [
+    { n: "1", title: "Tämä on ensimmäinen keikka", body: "FR8 on ensimmäinen yhteinen keikkamme. Tee laadukasta ja luotettavaa jälkeä — sillä on merkitystä siihen, mitä seuraavaksi." },
+    { n: "2", title: "Hyvästä jäljestä jatkoon", body: "Jos työ näyttää hyvältä, voit jatkaa alihankkijana suoraan Puuhapatet-brändin alla — lisää keikkoja, etusija ja mahdollisuus parempaan korvaukseen." },
+    { n: "3", title: "Mukaan järjestelmiin", body: "Silloin pääset kunnolla mukaan Puuhapatet-adminiin ja muihin järjestelmiin — et enää yhden keikan näkymään vaan koko tiimin työkaluihin." },
+  ];
+  return (
+    <div style={{ marginTop: 26, padding: 18, borderRadius: 16, background: "linear-gradient(155deg, rgba(124,224,166,0.10), rgba(255,255,255,0.03))", border: "1px solid rgba(124,224,166,0.22)" }}>
+      <p style={{ margin: "0 0 4px", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7CE0A6" }}>Polku jatkoon</p>
+      <p style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 700, color: "#fff" }}>Mihin tämä johtaa</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {steps.map((s) => (
+          <div key={s.n} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+            <span style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 999, background: "rgba(124,224,166,0.18)", border: "1px solid rgba(124,224,166,0.4)", color: "#7CE0A6", fontSize: 12.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{s.n}</span>
+            <div style={{ minWidth: 0 }}>
+              <p style={{ margin: 0, fontSize: 13.5, fontWeight: 600, color: "#fff" }}>{s.title}</p>
+              <p style={{ margin: "2px 0 0", fontSize: 12.5, lineHeight: 1.55, color: "rgba(255,255,255,0.6)" }}>{s.body}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Gentle nudge to install the dashboard to the phone home screen. The actual
+ *  install is OS-driven (Add to Home Screen); thanks to the per-worker manifest
+ *  the icon opens straight back to this dashboard, not the admin. */
+function InstallHint() {
+  const isStandalone = typeof window !== "undefined" &&
+    (window.matchMedia?.("(display-mode: standalone)").matches || (navigator as any).standalone === true);
+  const [dismissed, setDismissed] = useState(() => {
+    try { return localStorage.getItem("pp_tyo_install_hint") === "1"; } catch { return false; }
+  });
+  if (isStandalone || dismissed) return null;
+  const dismiss = () => { try { localStorage.setItem("pp_tyo_install_hint", "1"); } catch {} setDismissed(true); };
+  return (
+    <div style={{ marginTop: 14, padding: "12px 14px", borderRadius: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", display: "flex", gap: 10, alignItems: "flex-start" }}>
+      <span style={{ fontSize: 18, lineHeight: 1.2 }}>📲</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: "#fff" }}>Lisää työpöytä puhelimeen</p>
+        <p style={{ margin: "2px 0 0", fontSize: 12, lineHeight: 1.5, color: "rgba(255,255,255,0.55)" }}>
+          Avaa selaimen valikko → <b>Lisää aloitusnäyttöön</b>. Kuvake avaa juuri tämän työpöydän — ei muuta.
+        </p>
+      </div>
+      <button onClick={dismiss} aria-label="Sulje" style={{ flexShrink: 0, background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 16, cursor: "pointer", fontFamily: FONT, lineHeight: 1 }}>✕</button>
     </div>
   );
 }

@@ -54,6 +54,7 @@ const LEGEND: { label: string; color: string }[] = [
   { label: "Pesemättä", color: "#F4A6C0" },
   { label: "Kesken", color: "#7C5CD6" },
   { label: "Pesty", color: "#E03B3B" },
+  { label: "Ei tässä sopimuksessa", color: "#D9C97E" },
 ];
 
 export default function CustomerFloorMap({ map }: { map: MapData }) {
@@ -108,13 +109,16 @@ export default function CustomerFloorMap({ map }: { map: MapData }) {
         </div>
       </div>
 
-      {/* Plan + dots */}
-      <div style={{ position: "relative", borderRadius: 12, border: `1px solid ${T.hair}`, background: T.paper, padding: 12, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+      {/* Plan + dots — white background, black walls. The plan PNG is a light
+          line drawing on a transparent background (built to read on the dark
+          worker view), so on this light view we invert it to draw the walls in
+          black on white for clear contrast. */}
+      <div style={{ position: "relative", borderRadius: 12, border: `1px solid ${T.hair}`, background: "#FFFFFF", padding: 12, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
         <div style={{ position: "relative", display: "inline-block", lineHeight: 0, maxWidth: "100%" }}>
           <img
             src={`${map.building.planBase}${floor}.png`}
             alt={`Pohjapiirros, kerros ${floor}`}
-            style={{ display: "block", maxWidth: "100%", maxHeight: 560, width: "auto", height: "auto", userSelect: "none", clipPath: "inset(2%)", WebkitClipPath: "inset(2%)" } as React.CSSProperties}
+            style={{ display: "block", maxWidth: "100%", maxHeight: 560, width: "auto", height: "auto", userSelect: "none", clipPath: "inset(2%)", WebkitClipPath: "inset(2%)", filter: "invert(1)" } as React.CSSProperties}
             draggable={false}
           />
           <div style={{ position: "absolute", inset: 0 }}>

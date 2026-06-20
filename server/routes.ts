@@ -2481,6 +2481,59 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         html,
       });
 
+      // Best-effort confirmation to the customer so the sender gets certainty
+      // the request went through. Never let this fail the request — the admin
+      // notification above is what actually matters for catching the lead.
+      if (email) {
+        const confirmHtml = `<!DOCTYPE html>
+<html lang="fi">
+<head><meta charset="UTF-8" /><title>Kiitos yhteydenotosta</title></head>
+<body style="margin:0;padding:0;background:#f4f9ec;font-family:-apple-system,sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f9ec;padding:40px 20px">
+    <tr><td align="center">
+      <table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #dde9c4">
+        <tr>
+          <td style="background:#2d5016;padding:28px 36px">
+            <p style="margin:0;color:#b8e07a;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase">Puuhapatet.fi</p>
+            <h1 style="margin:6px 0 0;color:#ffffff;font-size:24px;font-weight:700;letter-spacing:-0.5px">Kiitos yhteydenotosta! &#x1F44B;</h1>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:28px 36px">
+            <p style="margin:0 0 16px;font-size:16px;color:#1a2e0a">Hei ${name},</p>
+            <p style="margin:0 0 16px;font-size:15px;color:#333;line-height:1.6">Kiitos viestistäsi! Olemme vastaanottaneet yhteydenottosi ja palaamme asiaan pian — tyypillisesti saman päivän aikana.</p>
+            <table width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 4px;background:#f4f9ec;border-radius:12px">
+              <tr><td style="padding:16px 20px">
+                <p style="margin:0 0 6px;color:#888;font-size:11px;text-transform:uppercase;letter-spacing:0.5px">Viestisi</p>
+                <p style="margin:0;font-size:14px;color:#333;line-height:1.6;white-space:pre-wrap">${message.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>
+              </td></tr>
+            </table>
+            <p style="margin:18px 0 0;font-size:14px;color:#555;line-height:1.6">Jos asiasi on kiireellinen, soita meille suoraan: <a href="tel:+358400389999" style="color:#2d5016;text-decoration:none;font-weight:600">0400 389 999</a>.</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#f4f9ec;padding:16px 36px;border-top:1px solid #dde9c4">
+            <p style="margin:0;color:#6b8f3a;font-size:12px">Puuhapatet.fi &middot; ${new Date().toLocaleString("fi-FI")}</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+        try {
+          await resend.emails.send({
+            from: FROM_EMAIL,
+            to: [email],
+            replyTo: ADMIN_EMAIL,
+            subject: "Kiitos yhteydenotostasi — Puuhapatet.fi",
+            html: confirmHtml,
+          });
+        } catch (confirmErr) {
+          console.error("Contact confirmation email failed (non-fatal):", confirmErr);
+        }
+      }
+
       res.json({ ok: true });
     } catch (e: any) {
       console.error("Contact form error:", e);

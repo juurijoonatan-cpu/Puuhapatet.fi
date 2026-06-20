@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Link } from "wouter";
 import {
   FileText, Paintbrush, Layers, Globe, TrendingUp,
@@ -7,6 +7,7 @@ import {
 import { LiquidButton } from "@/components/ui/liquid-glass-button";
 import { RadialOrbitalTimeline } from "@/components/ui/radial-orbital-timeline";
 import { cn } from "@/lib/utils";
+import { postJson, warmBackend } from "@/lib/api";
 
 // ─── Local layout helpers ────────────────────────────────────────────────────
 
@@ -113,6 +114,11 @@ function OrderForm() {
   const [form, setForm] = useState({ name: "", email: "", linkedinUrl: "", pkg: "starter" });
   const [phase, setPhase] = useState<Phase>("idle");
 
+  // Wake the free-tier backend on mount to avoid a cold-start delay on submit.
+  useEffect(() => {
+    warmBackend();
+  }, []);
+
   const inp = cn(
     "w-full rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-3 text-sm text-white",
     "placeholder:text-zinc-600 transition-all",
@@ -122,23 +128,13 @@ function OrderForm() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setPhase("sending");
-    try {
-      const r = await fetch("https://puuhapatet-fi.onrender.com/api/it-contact", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name:    form.name,
-          email:   form.email,
-          service: "cv",
-          message: `Package: ${form.pkg}\nLinkedIn/CV: ${form.linkedinUrl}`,
-        }),
-      });
-      const data = await r.json();
-      if (!r.ok || !data.ok) throw new Error(data.error ?? "Error");
-      setPhase("done");
-    } catch {
-      setPhase("error");
-    }
+    const res = await postJson("/api/it-contact", {
+      name:    form.name,
+      email:   form.email,
+      service: "cv",
+      message: `Package: ${form.pkg}\nLinkedIn/CV: ${form.linkedinUrl}`,
+    });
+    setPhase(res.ok ? "done" : "error");
   };
 
   if (phase === "done") {

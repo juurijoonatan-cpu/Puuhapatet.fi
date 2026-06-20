@@ -75,10 +75,16 @@ export default function WorkerPage() {
   if (status === "error" || !view) return <Centered>Linkkiä ei löytynyt tai se on vanhentunut.</Centered>;
   if (status === "locked") return <PinGate token={token} onUnlock={() => { sessionStorage.setItem(`pp_crew_${token}`, "1"); setStatus("ok"); }} />;
   if (!view.worker.onboarded) {
-    // Soft start (now): intro + name only. Gated (later): the full sign flow.
+    // Soft start (now): one-tap intro. Gated (later): the full sign flow.
     return view.agreementsGated
       ? <Onboarding token={token} view={view} onDone={(v) => setView(v)} />
       : <QuickStart token={token} view={view} onDone={(v) => setView(v)} />;
+  }
+
+  // Hard gate: once signing is required, an already-entered worker must read +
+  // sign before the dashboard is reachable at all (whole view locked).
+  if (view.worker.needsToSign) {
+    return <Onboarding token={token} view={view} resign onDone={(v) => setView(v)} />;
   }
 
   return <Dashboard token={token} view={view} setView={setView} reload={load} />;
@@ -458,8 +464,6 @@ type Tab = "map" | "earnings" | "hours" | "payouts" | "notes";
 
 function Dashboard({ token, view, setView, reload }: { token: string; view: WorkerView; setView: (v: WorkerView) => void; reload: () => void }) {
   const [tab, setTab] = useState<Tab>("map");
-  const needsToSign = view.worker.needsToSign;
-  const [signing, setSigning] = useState(false);
 
   // Lock page zoom so pinch zooms only the map (like the admin tool), and let the
   // dark UI extend under the notch / home indicator (viewport-fit=cover) — the
@@ -472,12 +476,9 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
   }, []);
 
   const markWindow = useCallback(async (key: string, st: WindowStatus) => {
-    // Once signing is required, marking is blocked server-side — send the worker
-    // to the sign flow instead of letting the tap silently fail.
-    if (needsToSign) { setSigning(true); return; }
     const res = await api.crewMarkWindow(token, key, st);
     if (res.ok && res.data?.view) setView(res.data.view);
-  }, [token, setView, needsToSign]);
+  }, [token, setView]);
 
   const noop = useCallback(() => {}, []);
 
@@ -494,21 +495,6 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
           <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>{view.stats.washed} ikkunaa · {euro(view.worker.perWindowCents)}/kpl</p>
         </div>
       </div>
-
-      {/* Read & sign banner (shown once contracts are finalised + gated) */}
-      {needsToSign && (
-        <button
-          onClick={() => setSigning(true)}
-          style={{ flexShrink: 0, width: "100%", textAlign: "left", display: "flex", gap: 12, alignItems: "center", padding: "12px 16px", background: "rgba(224,168,0,0.14)", borderTop: "none", borderLeft: "none", borderRight: "none", borderBottom: "1px solid rgba(224,168,0,0.3)", color: "#fff", cursor: "pointer", fontFamily: FONT }}
-        >
-          <span style={{ fontSize: 18, flexShrink: 0 }}>📝</span>
-          <span style={{ flex: 1, minWidth: 0 }}>
-            <span style={{ display: "block", fontSize: 13.5, fontWeight: 700 }}>Lue lisätiedot ja allekirjoita sopimukset</span>
-            <span style={{ display: "block", fontSize: 12, color: "rgba(255,255,255,0.7)" }}>Sopimukset on viimeistelty. Allekirjoita, niin voit jatkaa ikkunoiden merkitsemistä.</span>
-          </span>
-          <span style={{ flexShrink: 0, fontSize: 12.5, fontWeight: 700, color: "#FFD66B" }}>Avaa →</span>
-        </button>
-      )}
 
       {/* Content */}
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
@@ -552,16 +538,6 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
           );
         })}
       </div>
-
-      {/* Sign overlay — the full read + sign flow over the dashboard. */}
-      {signing && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 60, background: T.paper, overflowY: "auto" }}>
-          <div style={{ position: "sticky", top: 0, display: "flex", justifyContent: "flex-end", padding: "calc(8px + env(safe-area-inset-top)) 12px 4px", background: T.paper }}>
-            <button onClick={() => setSigning(false)} aria-label="Sulje" style={{ background: "none", border: `1px solid ${T.hair}`, borderRadius: 999, width: 34, height: 34, fontSize: 16, cursor: "pointer", color: T.muted, fontFamily: FONT }}>✕</button>
-          </div>
-          <Onboarding token={token} view={view} resign onDone={(v) => { setView(v); setSigning(false); reload(); }} />
-        </div>
-      )}
     </div>
   );
 }

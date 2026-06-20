@@ -13,8 +13,6 @@ import {
   Send, AlertCircle, ChevronDown, Receipt, ExternalLink, ChevronRight,
   PenLine, ShieldCheck, Clock, Save, Download, Printer, LayoutDashboard, Users,
 } from "lucide-react";
-import { type GigToolId } from "@/lib/gig-tools";
-import GigToolsOverlay from "@/components/gig-tools/GigToolsOverlay";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -52,8 +50,6 @@ export default function AdminGigTrackerPage() {
   // so they never see the gig total or customer price.
   const { checking: crewChecking } = useCrewWorkerRedirect(jobId);
 
-  // Which panel tool the full-screen tools overlay is showing (null = closed).
-  const [toolsOpen, setToolsOpen] = useState<GigToolId | null>(null);
 
   const [gig, setGig] = useState<GigData | null>(null);
   // Floor-plan project (if any) — its single price/window + dot count drive a
@@ -623,16 +619,6 @@ export default function AdminGigTrackerPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* Full-screen gig tools overlay (panel tools) */}
-      {toolsOpen && (
-        <GigToolsOverlay
-          jobId={jobId}
-          title={gig.company?.name || "Sopimuskeikka"}
-          initialToolId={toolsOpen}
-          onClose={() => setToolsOpen(null)}
-        />
-      )}
 
       {/* Signature viewer */}
       <Dialog open={sigOpen} onOpenChange={setSigOpen}>

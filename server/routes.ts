@@ -15,7 +15,7 @@ import {
 } from "./ai";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, emptyProjectData, type ProjectData } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, emptyProjectData, toNoteKind, type ProjectData } from "@shared/project";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, type CrewMember,
@@ -123,7 +123,8 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   { method: "GET",  re: /^\/api\/gig\/[^/]+$/ },
   { method: "POST", re: /^\/api\/gig\/[^/]+\/sign$/ },
   { method: "GET",  re: /^\/api\/crew\/[^/]+$/ },
-  { method: "POST", re: /^\/api\/crew\/[^/]+\/(auth|onboard|window|hours|note)$/ },
+  { method: "POST", re: /^\/api\/crew\/[^/]+\/(auth|onboard|window|hours|note|map-note)$/ },
+  { method: "POST", re: /^\/api\/crew\/[^/]+\/map-note\/(update|delete)$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/payout\/[^/]+\/approve$/ },
 ];
 
@@ -3298,6 +3299,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     // Until signing is gated, the dashboard opens on name alone. Once gated, an
     // already-entered worker who hasn't signed the current set must do so.
     const needsToSign = WORKER_AGREEMENTS_GATED && !signedAll;
+    // id → display name for every crew member, so the worker map can show WHO
+    // washed each window ("Pesi Jani") and who left a note.
+    const workerNames: Record<string, string> = {};
+    for (const m of project.crew || []) workerNames[m.id] = m.name;
     // Team leaderboard (workers only). Exposes name + windows + windows/hour — NO
     // pay rate, tokens or euros — so it's safe to show every worker the standings.
     const leaderboard = (project.crew || [])
@@ -3341,8 +3346,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       building: project.building,
       pricePerWindow: member.perWindowCents / 100, // worker's OWN rate, not the gig price
       marks: project.marks,
+      // Workers see the full live map: which windows are washed and (on tap) WHO
+      // washed them, plus the host's info notes (ladders, hazards, storage, …) and
+      // the "työn alla" zone as a read-only info layer. They can mark their own
+      // work and add simple notes; they cannot move/delete windows.
       statuses: project.statuses,
       washedBy: project.washedBy,
+      workerNames,
+      notes: project.notes ?? {},
+      activeZone: project.activeZone ?? null,
       customMarks: project.customMarks,
       posOverrides: project.posOverrides,
       deleted: project.deleted,
@@ -3495,6 +3507,75 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       project.crew = (project.crew || []).map((m) =>
         m.id === member.id ? { ...m, notes: [{ t: Date.now(), text }, ...(m.notes || [])].slice(0, 200) } : m,
       );
+      const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
+      res.json({ ok: true, view: workerView(saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Worker map notes — simple shared markers on the floor plan: a "huomio" on a
+  // specific spot (broken latch etc.) or info for others (where the ladder is).
+  // Stored in project.notes like the host's; attributed to the worker (by).
+  const FLOOR_RE = /^[\w-]{1,8}$/;
+  app.post("/api/crew/:token/map-note", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const floor = String(req.body?.floor ?? "");
+      const x = Number(req.body?.x), y = Number(req.body?.y);
+      if (!FLOOR_RE.test(floor) || !Number.isFinite(x) || !Number.isFinite(y)) {
+        return res.status(400).json({ error: "Virheelliset tiedot" });
+      }
+      const kind = toNoteKind(req.body?.kind);
+      const text = String(req.body?.text ?? "").slice(0, 2000);
+      const key = `${floor}#n${Math.random().toString(36).slice(2, 9)}`;
+      const note = { key, x: Math.max(0, Math.min(100, +x.toFixed(2))), y: Math.max(0, Math.min(100, +y.toFixed(2))), kind, text: text || undefined, ts: Date.now(), by: member.id };
+      const notes = project.notes ?? (project.notes = {});
+      notes[floor] = [...(notes[floor] || []), note].slice(0, 500);
+      const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
+      res.json({ ok: true, key, view: workerView(saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/crew/:token/map-note/update", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const floor = String(req.body?.floor ?? "");
+      const key = String(req.body?.key ?? "");
+      const text = String(req.body?.text ?? "").slice(0, 2000);
+      const list = project.notes?.[floor];
+      if (!list) return res.status(404).json({ error: "Merkintää ei löytynyt" });
+      const note = list.find((n) => n.key === key);
+      // Workers may edit only their own notes; the host's stay read-only to them.
+      if (!note || (note.by && note.by !== member.id)) return res.status(403).json({ error: "Et voi muokata tätä merkintää" });
+      note.text = text || undefined;
+      const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
+      res.json({ ok: true, view: workerView(saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/crew/:token/map-note/delete", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const floor = String(req.body?.floor ?? "");
+      const key = String(req.body?.key ?? "");
+      const list = project.notes?.[floor];
+      const note = list?.find((n) => n.key === key);
+      if (!note || (note.by && note.by !== member.id)) return res.status(403).json({ error: "Et voi poistaa tätä merkintää" });
+      project.notes![floor] = list!.filter((n) => n.key !== key);
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
       res.json({ ok: true, view: workerView(saved, savedMember) });

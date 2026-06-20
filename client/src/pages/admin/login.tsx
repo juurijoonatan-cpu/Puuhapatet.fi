@@ -1,69 +1,45 @@
 /**
  * Admin Login
  *
- * Pick your profile → enter shared password → logged in.
- * Client-side gate only — not a security boundary.
+ * Pick your profile → enter password → server verifies and issues a signed
+ * token. Real security boundary: the API rejects every request without a valid
+ * token, so hiding the screen is no longer the only thing protecting data.
  */
 
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { USERS, setAdminProfile, type AdminProfile } from "@/lib/admin-profile";
-import { api } from "@/lib/api";
+import { api, getAdminToken, setAdminToken, clearAdminToken } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD || "admin123";
-const SESSION_KEY = "puuhapatet_admin_session";
-const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
-const CUSTOM_PASSWORDS_KEY = "puuhapatet_custom_passwords";
 const LAST_USER_KEY = "puuhapatet_last_user";
 
-/** Returns the effective password for a user (custom or default) */
-export function getEffectivePassword(userId: string): string {
+// Reads the (unverified) expiry from our token payload — purely for the UX-level
+// "am I still logged in?" check. The server is the real authority on validity.
+function tokenExpiry(token: string): number {
   try {
-    const stored = localStorage.getItem(CUSTOM_PASSWORDS_KEY);
-    if (stored) {
-      const passwords = JSON.parse(stored) as Record<string, string>;
-      if (passwords[userId]) return passwords[userId];
-    }
-  } catch {}
-  return ADMIN_PASSWORD;
-}
-
-/** Saves a new custom password for a user */
-export function setUserPassword(userId: string, newPassword: string): void {
-  try {
-    const stored = localStorage.getItem(CUSTOM_PASSWORDS_KEY);
-    const passwords = stored ? (JSON.parse(stored) as Record<string, string>) : {};
-    passwords[userId] = newPassword;
-    localStorage.setItem(CUSTOM_PASSWORDS_KEY, JSON.stringify(passwords));
-  } catch {}
-}
-
-export function isAdminAuthenticated(): boolean {
-  try {
-    const session = localStorage.getItem(SESSION_KEY);
-    if (!session) return false;
-    const { expiry } = JSON.parse(session);
-    return Date.now() < expiry;
+    const body = token.split(".")[0];
+    const b64 = body.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(body.length / 4) * 4, "=");
+    const payload = JSON.parse(atob(b64));
+    return typeof payload.exp === "number" ? payload.exp : 0;
   } catch {
-    return false;
+    return 0;
   }
 }
 
-export function setAdminSession(): void {
-  localStorage.setItem(
-    SESSION_KEY,
-    JSON.stringify({ authenticated: true, expiry: Date.now() + SESSION_DURATION_MS }),
-  );
+export function isAdminAuthenticated(): boolean {
+  const token = getAdminToken();
+  if (!token) return false;
+  return tokenExpiry(token) > Date.now();
 }
 
 export function clearAdminSession(): void {
-  localStorage.removeItem(SESSION_KEY);
+  clearAdminToken();
 }
 
 export default function AdminLoginPage() {
@@ -90,12 +66,13 @@ export default function AdminLoginPage() {
     if (!selected) return;
     setIsLoading(true);
 
-    // Fetch password from backend (cross-device), fall back to localStorage/default
-    const pwRes = await api.getUserPassword(selected.id);
-    const effectivePwd = (pwRes.ok && pwRes.data?.password) ? pwRes.data.password : getEffectivePassword(selected.id);
+    // Server verifies the password and issues a signed token. Your existing
+    // password keeps working — if you changed it earlier, that new one is what
+    // you type, and it's migrated to secure storage automatically on this login.
+    const res = await api.adminLogin(selected.id, password);
 
-    if (password === effectivePwd) {
-      setAdminSession();
+    if (res.ok && res.data?.token) {
+      setAdminToken(res.data.token);
       setAdminProfile(selected);
       try { localStorage.setItem(LAST_USER_KEY, selected.id); } catch {}
       toast({
@@ -106,8 +83,8 @@ export default function AdminLoginPage() {
     } else {
       toast({
         variant: "destructive",
-        title: "Virheellinen salasana",
-        description: "Yritä uudelleen.",
+        title: "Kirjautuminen epäonnistui",
+        description: res.error || "Tarkista salasana ja yritä uudelleen.",
       });
     }
 
@@ -117,9 +94,27 @@ export default function AdminLoginPage() {
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
+        <div className="text-center mb-6">
           <h1 className="text-2xl font-semibold text-foreground mb-1">Puuhapatet.</h1>
           <p className="text-muted-foreground">Kuka kirjautuu?</p>
+        </div>
+
+        {/* Intro: explain the security upgrade so the team isn't surprised */}
+        <div className="mb-6 rounded-2xl border border-primary/20 bg-primary/5 p-4">
+          <div className="flex items-start gap-3">
+            <ShieldCheck className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+            <div className="text-sm leading-relaxed text-foreground/80">
+              <p className="font-medium text-foreground mb-1">Kirjautuminen päivitetty turvallisemmaksi</p>
+              <p>
+                Asiakastiedot on nyt suojattu palvelimella. <strong>Kirjaudu samalla salasanalla kuin ennen</strong> —
+                jos olet jo vaihtanut oman salasanasi, käytä sitä uutta. Järjestelmä siirtää salasanasi
+                suojattuun muotoon automaattisesti, joten mitään ei tarvitse tehdä erikseen.
+              </p>
+              <p className="mt-1 text-muted-foreground">
+                Jos kirjautuminen ei onnistu, ole yhteydessä Joonataniin.
+              </p>
+            </div>
+          </div>
         </div>
 
         {/* User selector */}

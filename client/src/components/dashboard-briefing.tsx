@@ -10,7 +10,7 @@ import { Sparkles, Loader2, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { getAdminProfile } from "@/lib/admin-profile";
 import { ChatMarkdown } from "@/components/chat-markdown";
-import { API_BASE } from "@/lib/api";
+import { API_BASE, withAuth } from "@/lib/api";
 
 const PROMPT =
   "Anna lyhyt päivän tilannekatsaus: tärkeimmät tämän viikon keikat, avoimet " +
@@ -32,7 +32,7 @@ export function DashboardBriefing() {
     try {
       const res = await fetch(`${API_BASE}/api/admin/assistant`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: withAuth({ "Content-Type": "application/json" }),
         body: JSON.stringify({ message: PROMPT, userId: profile?.id, userName: profile?.name, role: profile?.role }),
       });
       const data = await res.json();

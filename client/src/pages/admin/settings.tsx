@@ -9,7 +9,7 @@ import { ArrowLeft, LogOut, User, Sun, Moon, Banknote, CheckCircle, BookOpen, Fi
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { clearAdminSession, getEffectivePassword, setUserPassword } from "./login";
+import { clearAdminSession } from "./login";
 import { useToast } from "@/hooks/use-toast";
 import { useTheme } from "@/lib/theme";
 import { getAdminProfile, clearAdminProfile, USERS } from "@/lib/admin-profile";
@@ -120,13 +120,6 @@ export default function AdminSettingsPage() {
       toast({ variant: "destructive", title: "Täytä kaikki kentät" });
       return;
     }
-    // Check current password: backend first, then localStorage/default
-    const pwRes = await api.getUserPassword(profile.id);
-    const activePwd = (pwRes.ok && pwRes.data?.password) ? pwRes.data.password : getEffectivePassword(profile.id);
-    if (currentPwd !== activePwd) {
-      toast({ variant: "destructive", title: "Nykyinen salasana on väärin" });
-      return;
-    }
     if (newPwd.length < 4) {
       toast({ variant: "destructive", title: "Uusi salasana on liian lyhyt (min 4 merkkiä)" });
       return;
@@ -136,15 +129,14 @@ export default function AdminSettingsPage() {
       return;
     }
     setSavingPwd(true);
-    // Save to backend (cross-device) and localStorage (offline fallback)
-    const saveRes = await api.setUserPasswordRemote(profile.id, newPwd);
-    setUserPassword(profile.id, newPwd);
-    setCurrentPwd(""); setNewPwd(""); setConfirmPwd("");
+    // Server verifies the current password and stores the new one hashed.
+    const saveRes = await api.setUserPasswordRemote(profile.id, newPwd, currentPwd);
     setSavingPwd(false);
     if (saveRes.ok) {
+      setCurrentPwd(""); setNewPwd(""); setConfirmPwd("");
       toast({ title: "Salasana vaihdettu", description: "Toimii nyt kaikilla laitteilla." });
     } else {
-      toast({ title: "Salasana vaihdettu", description: "Tallennettu tälle laitteelle (verkkovirhe)." });
+      toast({ variant: "destructive", title: "Salasanan vaihto epäonnistui", description: saveRes.error || "Tarkista nykyinen salasana." });
     }
   };
 

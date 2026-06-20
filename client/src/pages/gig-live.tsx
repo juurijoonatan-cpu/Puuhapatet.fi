@@ -111,7 +111,10 @@ export default function GigLivePage() {
               <p style={label}>Kertynyt summa</p>
               <p style={{ margin: "2px 0 0", fontSize: 40, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>{eur(t.accruedCents)}</p>
               <p style={{ margin: "6px 0 0", fontSize: 14, color: T.muted }}>
-                Hintakatto <span style={{ fontWeight: 600, color: T.ink, fontVariantNumeric: "tabular-nums" }}>{eur(t.capCents)}</span>
+                Sovittu kokonaishinta <span style={{ fontWeight: 600, color: T.ink, fontVariantNumeric: "tabular-nums" }}>{eur(t.capCents)}</span>
+              </p>
+              <p style={{ margin: "4px 0 0", fontSize: 11.5, color: T.muted, lineHeight: 1.5 }}>
+                Tälle sopimukselle on sovittu kiinteä kokonaishinta. Työ tehdään sopimuksen mukaisten ehtojen mukaisesti.
               </p>
               <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
                 <Chip label="Pesty" value={`${t.washedTotal} / ${t.unitTotal}`} />
@@ -180,13 +183,35 @@ export default function GigLivePage() {
               Näet reaaliaikaisesti mitkä ikkunat on pesty. Kartta päivittyy työn edetessä.
             </p>
             <CustomerFloorMap map={data.map} />
+            <p style={{ margin: "14px 0 0", fontSize: 12, color: T.muted, lineHeight: 1.6 }}>
+              Keltaisella merkityt ikkunat eivät kuulu tähän sopimukseen — niiden tilanne
+              katsotaan seuraavassa sopimuksessa.
+            </p>
           </Panel>
         )}
+
+        {/* Two-way info / contact note — keep it simple: WhatsApp for anything urgent. */}
+        <Panel>
+          <p style={{ margin: "0 0 4px", ...label }}>Tiedotus</p>
+          <p style={{ margin: "0 0 12px", fontSize: 14, lineHeight: 1.7 }}>
+            Jos rakennuksessa on jotain työhön vaikuttavaa (esim. kulku, hälytykset, telineet
+            tai ajankohtaiset huomiot), laita meille viestiä — vastaamme nopeasti. Ilmoitamme
+            myös itse tästä näkymästä, jos jotain huomioitavaa tulee.
+          </p>
+          <a
+            href="https://wa.me/358400389999"
+            target="_blank"
+            rel="noreferrer"
+            style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 16px", borderRadius: 10, border: "none", background: "#25D366", color: "#fff", fontFamily: FONT, fontSize: 14, fontWeight: 700, textDecoration: "none" }}
+          >
+            💬 Laita WhatsApp-viesti
+          </a>
+        </Panel>
 
         {/* Reassurance note */}
         <Panel>
           <p style={{ margin: 0, fontSize: 14, lineHeight: 1.7 }}>
-            {data.customerNote || "Maksat vain pestyistä ikkunoista. Hinta ei voi koskaan ylittää sovittua kattoa, ja jokainen pesemättä jäävä ikkuna jää kokonaan pois laskulta."}
+            {data.customerNote || "Tälle sopimukselle on sovittu kiinteä kokonaishinta, ja työ tehdään sopimuksen mukaisten ehtojen mukaisesti. Voit seurata edistymistä reaaliaikaisesti tästä näkymästä."}
           </p>
           {data.vatNote && <p style={{ margin: "10px 0 0", fontSize: 12, color: T.muted }}>{data.vatNote}</p>}
           {data.signature && (
@@ -254,7 +279,7 @@ function Gauge({ sectors, capCents, pct }: { sectors: GigPublicView["sectors"]; 
       </svg>
       <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
         <span style={{ fontSize: 30, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{pct}%</span>
-        <span style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>katosta</span>
+        <span style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>sovitusta</span>
       </div>
     </div>
   );

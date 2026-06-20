@@ -212,7 +212,7 @@ export default function GigContractSign({ token, view, onSigned }: Props) {
             Tervetuloa. Tämä on <strong>{view.companyName}</strong>n ja Puuhapatetin välinen sopimus
             {view.description ? <> — {view.description}</> : null}. Lue sopimus, täytä tilaajan tiedot ja
             allekirjoita alla. Hyväksynnän jälkeen pääset suoraan reaaliaikaiseen seurantapaneeliin, jossa
-            näet työn etenemisen ja kertyvän summan suhteessa hintakattoon.
+            näet työn etenemisen ja kertyvän summan suhteessa sovittuun kokonaishintaan.
           </p>
         </Panel>
 
@@ -314,12 +314,21 @@ export default function GigContractSign({ token, view, onSigned }: Props) {
             Aika: {new Date().toLocaleDateString("fi-FI")} · Palveluntarjoaja: Puuhapatet
           </div>
 
+          {/* What the signature means — separate places for tilaajan tiedot and
+              allekirjoitus, but a single, legally binding signing made at once. */}
+          <div style={{ marginTop: 14, padding: "12px 14px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, fontSize: 12.5, color: T.muted, lineHeight: 1.6 }}>
+            Tässä asiakirjassa on omat paikkansa tilaajan tiedoille ja allekirjoitukselle.
+            Allekirjoituksesi tallentuu kertaluonteisesti aikaleimalla varustettuna, ja yhdessä
+            yllä olevan sopimusasiakirjan kanssa se muodostaa yhden kerralla tehdyn, juridisesti
+            pätevän allekirjoituksen — samalla tavalla kuin fyysisesti allekirjoitettu sopimus.
+          </div>
+
           <label style={{ display: "flex", gap: 11, alignItems: "flex-start", fontSize: 13.5, color: T.ink, cursor: "pointer", marginTop: 16, lineHeight: 1.5 }}>
             <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} style={{ marginTop: 2, width: 16, height: 16, accentColor: T.green, flexShrink: 0 }} />
             <span>
-              Hyväksyn tämän tarjouksen ja sopimuksen{view.contractId ? ` (${view.contractId})` : ""} sisällön.
-              Hyväksyntä muodostaa osapuolia sitovan sopimuksen ja valtuuttaa Puuhapatetin tekemään työn
-              tämän asiakirjan mukaisesti.
+              Hyväksyn tämän tarjouksen ja sopimuksen{view.contractId ? ` (${view.contractId})` : ""} sisällön ja
+              vahvistan tilaajan tiedot oikeiksi. Hyväksyntä vastaa fyysistä allekirjoitusta, muodostaa
+              osapuolia sitovan sopimuksen ja valtuuttaa Puuhapatetin tekemään työn tämän asiakirjan mukaisesti.
             </span>
           </label>
         </Panel>

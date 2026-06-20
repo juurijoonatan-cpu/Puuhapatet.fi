@@ -209,10 +209,13 @@ export default function GigContractSign({ token, view, onSigned }: Props) {
 
         <Panel style={{ animationDelay: ".04s" }}>
           <p style={{ margin: 0, fontSize: 14, lineHeight: 1.7 }}>
-            Tervetuloa. Tämä on <strong>{view.companyName}</strong>n ja Puuhapatetin välinen sopimus
-            {view.description ? <> — {view.description}</> : null}. Lue sopimus, täytä tilaajan tiedot ja
-            allekirjoita alla. Hyväksynnän jälkeen pääset suoraan reaaliaikaiseen seurantapaneeliin, jossa
-            näet työn etenemisen ja kertyvän summan suhteessa sovittuun kokonaishintaan.
+            Tervetuloa.{" "}
+            {view.companyName
+              ? <>Tämä on <strong>{view.companyName}</strong>:n ja Puuhapatetin välinen ikkunanpesusopimus.</>
+              : <>Tämä on Puuhapatetin ikkunanpesusopimus.</>}{" "}
+            Lue sopimus, täytä tilaajan tiedot ja allekirjoita alla. Hyväksynnän jälkeen pääset suoraan
+            reaaliaikaiseen seurantapaneeliin, jossa näet työn etenemisen ja kertyvän summan suhteessa
+            sovittuun kokonaishintaan.
           </p>
         </Panel>
 

@@ -56,6 +56,44 @@ export interface HostCrewRow {
 // (e.g. "" for same-origin) when running the server locally.
 const API_BASE = import.meta.env.VITE_API_BASE ?? "https://puuhapatet-fi.onrender.com";
 
+// ─── Admin auth token ──────────────────────────────────────────────────────────
+// The server issues an HMAC-signed bearer token at login; we keep it in
+// localStorage and attach it to every API call. Public customer/worker pages
+// simply have no token, so the header is omitted and those routes stay open.
+const ADMIN_TOKEN_KEY = "puuhapatet_admin_token";
+
+export function getAdminToken(): string | null {
+  try { return localStorage.getItem(ADMIN_TOKEN_KEY); } catch { return null; }
+}
+export function setAdminToken(token: string): void {
+  try { localStorage.setItem(ADMIN_TOKEN_KEY, token); } catch { /* private mode */ }
+}
+export function clearAdminToken(): void {
+  try { localStorage.removeItem(ADMIN_TOKEN_KEY); } catch { /* private mode */ }
+}
+
+function authHeaders(): Record<string, string> {
+  const t = getAdminToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
+/**
+ * Merge the admin auth header into a headers object — for the few components
+ * that call protected endpoints with a raw `fetch` instead of the `api` helper.
+ */
+export function withAuth(headers: Record<string, string> = {}): Record<string, string> {
+  return { ...headers, ...authHeaders() };
+}
+
+// On 401 from a protected endpoint the token is missing/expired → drop it and
+// bounce to the login screen. Public pages never reach this path.
+function handleUnauthorized(): void {
+  clearAdminToken();
+  if (typeof window !== "undefined" && !window.location.pathname.startsWith("/admin/login")) {
+    window.location.href = "/admin/login";
+  }
+}
+
 export interface GigPublicView {
   contractId: string | null;
   companyName: string;
@@ -137,11 +175,15 @@ async function request<T>(
   try {
     const res = await fetch(`${API_BASE}${path}`, {
       method,
-      headers: body ? { "Content-Type": "application/json" } : {},
+      headers: { ...(body ? { "Content-Type": "application/json" } : {}), ...authHeaders() },
       body: body ? JSON.stringify(body) : undefined,
       mode: "cors",
       signal: controller.signal,
     });
+    if (res.status === 401) {
+      handleUnauthorized();
+      return { ok: false, error: "Kirjautuminen vaaditaan" };
+    }
     if (!res.ok) {
       try {
         const errData = await res.json();
@@ -197,12 +239,16 @@ export async function postJson<T = any>(
     try {
       const res = await fetch(`${API_BASE}${path}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify(body),
         mode: "cors",
         signal: controller.signal,
       });
       clearTimeout(timer);
+      if (res.status === 401) {
+        handleUnauthorized();
+        return { ok: false, error: "Kirjautuminen vaaditaan" };
+      }
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) {
         return { ok: false, error: json.error || `HTTP ${res.status}` };
@@ -572,11 +618,12 @@ export const api = {
   getCustomerJobCount: (customerId: number) =>
     request<{ count: number }>("GET", `/api/customers/${customerId}/job-count`),
 
-  getUserPassword: (userId: string) =>
-    request<{ password: string | null }>("GET", `/api/admin/user-password/${userId}`),
+  // Server-side login — verifies credentials and returns an HMAC-signed token.
+  adminLogin: (userId: string, password: string) =>
+    request<{ ok: boolean; token: string; role: string }>("POST", "/api/admin/login", { userId, password }),
 
-  setUserPasswordRemote: (userId: string, password: string) =>
-    request<{ ok: boolean }>("POST", `/api/admin/user-password/${userId}`, { password }),
+  setUserPasswordRemote: (userId: string, password: string, currentPassword: string) =>
+    request<{ ok: boolean }>("POST", `/api/admin/user-password/${userId}`, { password, currentPassword }),
 
   // ─── Member agreement (signed inside the admin) ─────────────────────────────
   getMemberAgreement: (userId: string) =>

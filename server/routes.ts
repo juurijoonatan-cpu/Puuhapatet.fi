@@ -8,7 +8,7 @@ import rateLimit from "express-rate-limit";
 import { db } from "./db";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 import { feeRateForWorker, effectiveJobTotal } from "@shared/team";
-import { randomUUID, createHash } from "crypto";
+import { randomUUID, createHash, createHmac, timingSafeEqual, scryptSync, randomBytes } from "crypto";
 import {
   AI_ENABLED, chatComplete, chatCompleteWithTools, publicSystemPrompt, adminSystemPrompt,
   PUBLIC_FALLBACK_FI, type ChatTurn, type AiTool,
@@ -33,6 +33,103 @@ const WORKER_NOTIFICATION_EMAILS: string[] = process.env.WORKER_EMAILS
   : ["joonatan@puuhapatet.fi", "matias@puuhapatet.fi"];
 // Admin / contact-form recipient
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "joonatan@puuhapatet.fi";
+
+// ─── Admin authentication ─────────────────────────────────────────────────────
+// Server-side auth for the admin/data API. Uses an HMAC-signed bearer token and
+// scrypt-hashed passwords — both from Node's built-in `crypto`, so there are NO
+// new dependencies and NO paid services. The token is stateless (no DB lookup
+// per request), so it scales across instances.
+//
+// AUTH_SECRET MUST be set in the deployment environment. Without it the admin
+// API refuses to log anyone in (fail closed) rather than trusting everyone.
+const AUTH_SECRET = process.env.AUTH_SECRET || "";
+// First-time password for an account that has never set one. Lets the team log
+// in once after the upgrade; the password is hashed on first successful login.
+const ADMIN_DEFAULT_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || "";
+const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+function b64url(buf: Buffer): string {
+  return buf.toString("base64url");
+}
+
+// scrypt password hashing — format: "scrypt$<saltHex>$<hashHex>"
+function hashPassword(password: string): string {
+  const salt = randomBytes(16);
+  const hash = scryptSync(password, salt, 64);
+  return `scrypt$${salt.toString("hex")}$${hash.toString("hex")}`;
+}
+
+function isHashed(stored: string | null | undefined): boolean {
+  return !!stored && stored.startsWith("scrypt$");
+}
+
+// Verifies a password against either a scrypt hash or — for the one-time upgrade
+// path — a legacy plaintext value. Constant-time where it matters.
+function verifyPassword(password: string, stored: string | null | undefined): boolean {
+  if (!stored) return false;
+  if (isHashed(stored)) {
+    const [, saltHex, hashHex] = stored.split("$");
+    if (!saltHex || !hashHex) return false;
+    const expected = Buffer.from(hashHex, "hex");
+    const actual = scryptSync(password, Buffer.from(saltHex, "hex"), 64);
+    return expected.length === actual.length && timingSafeEqual(expected, actual);
+  }
+  // Legacy plaintext (pre-upgrade). Equal-length guard avoids a throw in timingSafe.
+  const a = Buffer.from(password);
+  const b = Buffer.from(stored);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+interface AdminTokenPayload { sub: string; role: string; exp: number }
+
+function signToken(payload: AdminTokenPayload): string {
+  const body = b64url(Buffer.from(JSON.stringify(payload)));
+  const sig = b64url(createHmac("sha256", AUTH_SECRET).update(body).digest());
+  return `${body}.${sig}`;
+}
+
+function verifyToken(token: string): AdminTokenPayload | null {
+  if (!AUTH_SECRET || !token) return null;
+  const [body, sig] = token.split(".");
+  if (!body || !sig) return null;
+  const expected = b64url(createHmac("sha256", AUTH_SECRET).update(body).digest());
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(body, "base64url").toString()) as AdminTokenPayload;
+    if (!payload.exp || Date.now() > payload.exp) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+// Public API routes that must NOT require admin auth: customer links (quote/gig),
+// worker links (crew tokens carry their own auth), public forms, chat, health.
+// Everything else under /api is admin-only (default-deny).
+const PUBLIC_API: { method: string; re: RegExp }[] = [
+  { method: "GET",  re: /^\/api\/health$/ },
+  { method: "GET",  re: /^\/api\/ai-status$/ },
+  { method: "POST", re: /^\/api\/contact$/ },
+  { method: "POST", re: /^\/api\/it-contact$/ },
+  { method: "POST", re: /^\/api\/chat$/ },
+  { method: "POST", re: /^\/api\/chat\/handoff$/ },
+  { method: "POST", re: /^\/api\/admin\/login$/ },
+  { method: "GET",  re: /^\/api\/calendar\.ics$/ },
+  { method: "GET",  re: /^\/api\/crew-agreements$/ },
+  { method: "GET",  re: /^\/api\/quote\/[^/]+$/ },
+  { method: "POST", re: /^\/api\/quote\/[^/]+\/respond$/ },
+  { method: "GET",  re: /^\/api\/gig\/[^/]+$/ },
+  { method: "POST", re: /^\/api\/gig\/[^/]+\/sign$/ },
+  { method: "GET",  re: /^\/api\/crew\/[^/]+$/ },
+  { method: "POST", re: /^\/api\/crew\/[^/]+\/(auth|onboard|window|hours|note)$/ },
+  { method: "POST", re: /^\/api\/crew\/[^/]+\/payout\/[^/]+\/approve$/ },
+];
+
+function isPublicApi(method: string, path: string): boolean {
+  return PUBLIC_API.some(r => r.method === method && r.re.test(path));
+}
 
 function escapeIcs(str: string): string {
   return str.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
@@ -344,6 +441,73 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
   app.use("/api/chat",            chatLimiter);
   app.use("/api/admin/assistant", chatLimiter);
+
+  // Brute-force protection for the login endpoint.
+  const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Liian monta kirjautumisyritystä. Yritä hetken kuluttua." },
+  });
+  app.use("/api/admin/login", loginLimiter);
+
+  // ─── Admin auth gate (default-deny) ────────────────────────────────────────────
+  // Runs before every route below. Public API routes pass through; everything
+  // else under /api requires a valid admin bearer token. Non-/api requests
+  // (static assets, the SPA) are untouched.
+  app.use((req, res, next) => {
+    if (!req.path.startsWith("/api/")) return next();
+    if (isPublicApi(req.method, req.path)) return next();
+    const auth = req.headers.authorization || "";
+    const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+    const payload = verifyToken(token);
+    if (!payload) return res.status(401).json({ error: "Kirjautuminen vaaditaan" });
+    (req as any).admin = payload;
+    next();
+  });
+
+  // ─── Admin login ───────────────────────────────────────────────────────────────
+  app.post("/api/admin/login", async (req, res) => {
+    try {
+      if (!AUTH_SECRET) {
+        return res.status(503).json({ error: "Palvelinta ei ole vielä konfiguroitu (AUTH_SECRET puuttuu)." });
+      }
+      const { userId, password } = req.body ?? {};
+      if (!userId || !password) {
+        return res.status(400).json({ error: "Käyttäjä ja salasana vaaditaan." });
+      }
+      const [row] = await db.select().from(users).where(eq(users.username, String(userId)));
+      const stored = row?.passwordHash || "";
+
+      let ok = false;
+      if (stored) {
+        ok = verifyPassword(String(password), stored);
+      } else if (ADMIN_DEFAULT_PASSWORD) {
+        // Account has no password yet → accept the one-time default.
+        ok = String(password) === ADMIN_DEFAULT_PASSWORD;
+      }
+      if (!ok) return res.status(401).json({ error: "Virheellinen salasana." });
+
+      // Lazy upgrade: migrate legacy plaintext (or a freshly defaulted account)
+      // to a scrypt hash so it's stored safely from now on. Nobody is locked out.
+      if (!isHashed(stored)) {
+        const newHash = hashPassword(String(password));
+        if (row) {
+          await db.update(users).set({ passwordHash: newHash }).where(eq(users.username, String(userId)));
+        } else {
+          await db.insert(users).values({ name: String(userId), username: String(userId), passwordHash: newHash, role: "staff" });
+        }
+      }
+
+      const role = row?.role || "staff";
+      const token = signToken({ sub: String(userId), role, exp: Date.now() + TOKEN_TTL_MS });
+      res.json({ ok: true, token, role });
+    } catch (e: any) {
+      console.error("Login error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
 
   // ─── Health ──────────────────────────────────────────────────────────────────
   app.get("/api/health", (_req, res) => {
@@ -2219,28 +2383,37 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  // ─── Admin user passwords (cross-device persistent) ─────────────────────────
-  // Note: client-side gate only, not a real security boundary.
-
-  app.get("/api/admin/user-password/:userId", async (req, res) => {
-    try {
-      const [row] = await db.select({ pw: users.passwordHash }).from(users).where(eq(users.username, req.params.userId));
-      res.json({ password: row?.pw ?? null }); // null = caller should use default
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
-  });
+  // ─── Admin user passwords (cross-device, hashed) ────────────────────────────
+  // Admin-only (behind the auth gate). The old GET endpoint that returned the
+  // stored password has been removed — login now happens server-side, so the
+  // client never needs to read a password back.
 
   app.post("/api/admin/user-password/:userId", async (req, res) => {
     try {
       const userId = req.params.userId;
-      const { password } = req.body;
-      if (!password || password.length < 4) return res.status(400).json({ error: "Liian lyhyt salasana" });
-      const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.username, userId));
+      const { password, currentPassword } = req.body ?? {};
+      if (!password || String(password).length < 4) {
+        return res.status(400).json({ error: "Liian lyhyt salasana (väh. 4 merkkiä)." });
+      }
+      // A logged-in admin may only change their OWN password here.
+      const caller = (req as any).admin as AdminTokenPayload | undefined;
+      if (caller && caller.sub !== userId) {
+        return res.status(403).json({ error: "Voit vaihtaa vain oman salasanasi." });
+      }
+      const [existing] = await db.select().from(users).where(eq(users.username, userId));
+      // Verify the current password (legacy plaintext, scrypt, or the one-time default).
+      const stored = existing?.passwordHash || "";
+      const currentOk = stored
+        ? verifyPassword(String(currentPassword || ""), stored)
+        : (!ADMIN_DEFAULT_PASSWORD || String(currentPassword || "") === ADMIN_DEFAULT_PASSWORD);
+      if (!currentOk) {
+        return res.status(401).json({ error: "Nykyinen salasana on väärin." });
+      }
+      const newHash = hashPassword(String(password));
       if (existing) {
-        await db.update(users).set({ passwordHash: password }).where(eq(users.username, userId));
+        await db.update(users).set({ passwordHash: newHash }).where(eq(users.username, userId));
       } else {
-        await db.insert(users).values({ name: userId, username: userId, passwordHash: password, role: "staff" });
+        await db.insert(users).values({ name: userId, username: userId, passwordHash: newHash, role: "staff" });
       }
       res.json({ ok: true });
     } catch (e: any) {

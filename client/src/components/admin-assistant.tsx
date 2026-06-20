@@ -14,7 +14,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, X, Send, Loader2, Trash2, Copy, Check, AlertCircle } from "lucide-react";
 import { getAdminProfile } from "@/lib/admin-profile";
 import { ChatMarkdown } from "@/components/chat-markdown";
-import { API_BASE } from "@/lib/api";
+import { API_BASE, withAuth } from "@/lib/api";
 
 interface Msg { role: "user" | "assistant"; content: string; }
 
@@ -70,7 +70,7 @@ export function AdminAssistant() {
     try {
       const res = await fetch(`${API_BASE}/api/admin/assistant`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: withAuth({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           message: content,
           userId: profile?.id,

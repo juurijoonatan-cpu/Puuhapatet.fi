@@ -6,18 +6,23 @@ name: Keep backend warm
 # "Lähetä viesti" responds instantly for real visitors.
 #
 # Cost note: Render's free tier bills by instance-HOURS (~750/month free), not
-# by request. Keeping the service awake 24/7 would burn nearly the whole budget
-# for no benefit overnight, so we only ping during active hours (04:00-19:59
-# UTC ~= 07:00-22:59 Finnish summer time). That is ~480 instance-hours/month,
-# well under the free cap, and the warm-up-on-page-load still covers the rare
-# off-hours visitor.
+# by request. The service is awake for the whole active window regardless of how
+# often we ping, so ping frequency does NOT change Render hours. We only keep it
+# warm during active hours (04:00-19:59 UTC ~= 07:00-22:59 Finnish time): that is
+# ~490 instance-hours/month, comfortably under the free cap, and the
+# warm-up-on-page-load still covers the rare off-hours visitor.
+#
+# The 5-minute interval is deliberate: GitHub's scheduled crons are best-effort
+# and can be delayed several minutes under load. Against Render's 15-min sleep
+# timer, a 5-min cadence keeps a ~3x safety margin so the service never naps mid
+# window. This repo is public, so Actions minutes are free and unlimited.
 #
 # Note: scheduled workflows only run from the default branch, so this takes
 # effect once merged to main.
 
 on:
   schedule:
-    - cron: "*/10 4-19 * * *"
+    - cron: "*/5 4-19 * * *"
   workflow_dispatch:
 
 jobs:

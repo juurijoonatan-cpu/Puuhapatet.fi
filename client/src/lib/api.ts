@@ -18,6 +18,10 @@ export interface WorkerView {
     adminLinked: boolean;
     hasPin: boolean;
     onboarded: boolean;
+    /** Signing is gated AND this worker hasn't signed the current set → show banner. */
+    needsToSign: boolean;
+    /** Has signed every required agreement at the current version. */
+    signedAll: boolean;
     profile: CrewProfile | null;
     signedAgreementIds: string[];
     notes: { t: number; text: string }[];
@@ -36,6 +40,8 @@ export interface WorkerView {
   stats: CrewMemberStats;
   agreementVersion: string;
   requiredAgreementIds: string[];
+  /** Whether agreement signing is currently enforced (soft start when false). */
+  agreementsGated: boolean;
   /** Team standings (workers only) — name + windows + windows/hour, no €/rates. */
   leaderboard: { id: string; name: string; washed: number; windowsPerHour: number; hours: number; isMe: boolean }[];
 }

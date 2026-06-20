@@ -18,9 +18,9 @@ import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, emptyProjectData, type ProjectData } from "@shared/project";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
-  DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, type CrewMember,
+  hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, type CrewMember,
 } from "@shared/crew";
-import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION } from "@shared/worker-agreements";
+import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED } from "@shared/worker-agreements";
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 // Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
@@ -3292,6 +3292,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Build the worker-facing view: floor map + their own progress, NO gig price.
   function workerView(project: ProjectData, member: CrewMember) {
     const stats = crewMemberStats(project, member);
+    // Soft-start model: "in the app" (typed name) is decoupled from "has signed".
+    const signedAll = hasSignedAllAgreements(member, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION);
+    const enteredApp = !!member.onboardedAt;
+    // Until signing is gated, the dashboard opens on name alone. Once gated, an
+    // already-entered worker who hasn't signed the current set must do so.
+    const needsToSign = WORKER_AGREEMENTS_GATED && !signedAll;
     // Team leaderboard (workers only). Exposes name + windows + windows/hour — NO
     // pay rate, tokens or euros — so it's safe to show every worker the standings.
     const leaderboard = (project.crew || [])
@@ -3310,7 +3316,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         perWindowCents: member.perWindowCents,
         adminLinked: !!member.adminLinked,
         hasPin: !!member.pinHash,
-        onboarded: isOnboarded(member, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION),
+        // "onboarded" = is in the app (has a name). Signing is tracked separately
+        // via needsToSign so a soft-started worker isn't bounced to onboarding.
+        onboarded: enteredApp,
+        needsToSign,
+        signedAll,
         profile: member.profile ?? null,
         signedAgreementIds: member.agreements
           .filter((a) => a.version === WORKER_AGREEMENT_VERSION)
@@ -3340,6 +3350,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       stats,
       agreementVersion: WORKER_AGREEMENT_VERSION,
       requiredAgreementIds: REQUIRED_AGREEMENT_IDS,
+      // Whether signing is currently enforced. Drives the client flow: soft start
+      // (intro + name only) when false; full sign flow / banner when true.
+      agreementsGated: WORKER_AGREEMENTS_GATED,
     };
   }
 
@@ -3398,11 +3411,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         pinHash: body.pin ? pinHash(String(body.pin)) : member.pinHash,
       });
       if (!merged) return res.status(400).json({ error: "Virheelliset tiedot" });
-      const onboarded = isOnboarded(
-        { ...merged, onboardedAt: Date.now() } as CrewMember,
-        REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION,
-      );
-      merged.onboardedAt = onboarded ? Date.now() : member.onboardedAt;
+      // Require at least a name to enter the app (soft start). Agreements may be
+      // empty now and signed later via the dashboard banner.
+      const name = (merged.profile?.fullName || merged.name || "").trim();
+      if (!name) return res.status(400).json({ error: "Kirjoita nimesi." });
+      // Stamp entry on the first onboard call; later sign-ups keep the timestamp.
+      merged.onboardedAt = member.onboardedAt || Date.now();
 
       project.crew = (project.crew || []).map((m) => (m.id === member.id ? merged : m));
       const saved = await saveProject(job, project);
@@ -3419,8 +3433,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const found = await findJobByCrewToken(String(req.params.token));
       if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
       const { job, project, member } = found;
-      if (!isOnboarded(member, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION)) {
-        return res.status(403).json({ error: "Allekirjoita sopimukset ensin" });
+      // Soft start: marking is open. Once signing is gated, block marking until
+      // the worker has signed the current agreement set (the dashboard banner
+      // drives them there).
+      if (WORKER_AGREEMENTS_GATED && !hasSignedAllAgreements(member, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION)) {
+        return res.status(403).json({ error: "Lue lisätiedot ja allekirjoita sopimukset ensin" });
       }
       const key = String(req.body?.key ?? "").slice(0, 64);
       const status = req.body?.status === "pesty" || req.body?.status === "kesken" ? req.body.status : "ei";

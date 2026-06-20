@@ -164,6 +164,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   const [dragging, setDragging] = useState<string | null>(null);
   const [activeOrb, setActiveOrb] = useState<string | null>(null);
   const [orbAnchor, setOrbAnchor] = useState<Anchor | null>(null);
+  const [showWasherPicker, setShowWasherPicker] = useState(false);
   const [activeNote, setActiveNote] = useState<string | null>(null);
   const [noteAnchor, setNoteAnchor] = useState<Anchor | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
@@ -310,6 +311,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
       // fixed overlay (never clipped by the zoom/pan scene) and stays tappable.
       setOrbAnchor(next ? rectToAnchor((e.currentTarget as HTMLElement).getBoundingClientRect()) : null);
       setActiveNote(null);
+      setShowWasherPicker(false); // names stay hidden until "Vaihda" is tapped
       setActiveOrb(next);
     }
   }
@@ -687,26 +689,21 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
               <span style={{ fontSize: "12px", fontWeight: 600 }}>Ikkuna {activeIdx + 1}</span>
               <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9.5px", color: "rgba(255,255,255,0.4)", marginLeft: "auto" }}>{deal && activePt.p === 2 ? "EI SOPIMUKSESSA" : `PRIORITEETTI ${activePt.p}`}</span>
             </div>
-            {washedBy && (statuses[activeOrb] || "ei") === "pesty" && washedBy[activeOrb] && (
-              <div style={{ display: "flex", alignItems: "center", gap: "6px", padding: "0 4px 8px", marginBottom: "5px", fontSize: "11.5px", color: "rgba(255,255,255,0.7)" }}>
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(124,224,166,0.9)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
-                Pesi <strong style={{ color: "#fff", fontWeight: 600 }}>{workerNames?.[washedBy[activeOrb]] ?? washedBy[activeOrb]}</strong>
-              </div>
-            )}
             {(["ei", "kesken", "pesty"] as WindowStatus[]).map((s) => {
               const cur = statuses[activeOrb] || "ei";
               const isActive = cur === s;
               const rgb = colorRgb(activePt.p, s);
-              // For "pesty" with a pickable crew, keep the popover open and reveal
-              // the washer picker below instead of closing immediately.
-              const hasPicker = s === "pesty" && !!workers && workers.length > 0;
+              const hasCrew = s === "pesty" && !!workers && workers.length > 0;
               return (
                 <button key={s} className="status-opt-btn"
                   onClick={() => {
-                    if (hasPicker) {
-                      const washer = washedBy?.[activeOrb] ?? currentWorkerId;
-                      onStatusChange(activeOrb, s, washer);
-                      return; // keep popover open to allow picking
+                    if (hasCrew) {
+                      // Mark washed and attribute to the default worker. Names stay
+                      // hidden — change them only via "Vaihda" below. Keep open so
+                      // the attribution row is visible.
+                      onStatusChange(activeOrb, "pesty", washedBy?.[activeOrb] ?? currentWorkerId);
+                      setShowWasherPicker(false);
+                      return;
                     }
                     onStatusChange(activeOrb, s);
                     setActiveOrb(null); setOrbAnchor(null);
@@ -719,23 +716,34 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
               );
             })}
 
-            {/* Washer picker — visible once the window is washed and a crew is available. */}
+            {/* Washer attribution — compact by default; names are hidden behind
+                "Vaihda" so the popover stays clean unless you want to change who washed. */}
             {workers && workers.length > 0 && (statuses[activeOrb] || "ei") === "pesty" && (
-              <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-                <div style={{ fontSize: "9.5px", letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.38)", padding: "0 4px 6px" }}>Kuka pesi?</div>
-                {workers.map((w) => {
-                  const picked = (washedBy?.[activeOrb] ?? currentWorkerId) === w.id;
-                  return (
-                    <button key={w.id} className="status-opt-btn"
-                      onClick={() => { onStatusChange(activeOrb, "pesty", w.id); }}
-                      style={{ border: `1px solid ${picked ? "rgba(255,255,255,0.16)" : "transparent"}`, background: picked ? "rgba(255,255,255,0.08)" : "transparent", fontWeight: picked ? 600 : 500 }}>
-                      <span style={{ width: "18px", height: "18px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "9px", fontWeight: 700, background: "rgba(124,224,166,0.16)", color: "rgba(124,224,166,0.95)", flexShrink: 0 }}>{w.name.charAt(0).toUpperCase()}</span>
-                      <span style={{ flex: 1, textAlign: "left" }}>{w.name}</span>
-                      {picked && <span style={{ fontSize: "11px" }}>✓</span>}
-                    </button>
-                  );
-                })}
-              </div>
+              showWasherPicker ? (
+                <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                  <div style={{ fontSize: "9.5px", letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.38)", padding: "0 4px 6px" }}>Kuka pesi?</div>
+                  {workers.map((w) => {
+                    const picked = (washedBy?.[activeOrb] ?? currentWorkerId) === w.id;
+                    return (
+                      <button key={w.id} className="status-opt-btn"
+                        onClick={() => { onStatusChange(activeOrb, "pesty", w.id); setShowWasherPicker(false); }}
+                        style={{ border: `1px solid ${picked ? "rgba(255,255,255,0.16)" : "transparent"}`, background: picked ? "rgba(255,255,255,0.08)" : "transparent", fontWeight: picked ? 600 : 500 }}>
+                        <span style={{ width: "18px", height: "18px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "9px", fontWeight: 700, background: "rgba(124,224,166,0.16)", color: "rgba(124,224,166,0.95)", flexShrink: 0 }}>{w.name.charAt(0).toUpperCase()}</span>
+                        <span style={{ flex: 1, textAlign: "left" }}>{w.name}</span>
+                        {picked && <span style={{ fontSize: "11px" }}>✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)", fontSize: "11.5px", color: "rgba(255,255,255,0.7)" }}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(124,224,166,0.9)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+                  <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    Pesi <strong style={{ color: "#fff", fontWeight: 600 }}>{workerNames?.[washedBy?.[activeOrb] ?? currentWorkerId ?? ""] ?? (washedBy?.[activeOrb] ?? currentWorkerId)}</strong>
+                  </span>
+                  <button onClick={() => setShowWasherPicker(true)} style={{ marginLeft: "auto", flexShrink: 0, background: "transparent", border: "none", color: "rgba(124,224,166,0.95)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", padding: "2px 4px" }}>Vaihda</button>
+                </div>
+              )
             )}
 
             {/* Delete this window — managers only. Removes the dot from the map

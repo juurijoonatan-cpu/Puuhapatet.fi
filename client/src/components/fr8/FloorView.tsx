@@ -737,6 +737,24 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                 })}
               </div>
             )}
+
+            {/* Delete this window — managers only. Removes the dot from the map
+                (seeded dots are hidden, custom dots are removed entirely). */}
+            {canEdit && (
+              <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                <button className="status-opt-btn"
+                  onClick={() => {
+                    if (typeof window === "undefined" || window.confirm("Poistetaanko tämä ikkuna kartalta?")) {
+                      onDeleteMark(activeOrb);
+                      setActiveOrb(null); setOrbAnchor(null);
+                    }
+                  }}
+                  style={{ color: "#ff9b9b" }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ff9b9b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+                  <span style={{ flex: 1, textAlign: "left" }}>Poista ikkuna kartalta</span>
+                </button>
+              </div>
+            )}
           </div>
         </>
       )}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2, Send, User, CheckCircle2 } from "lucide-react";
@@ -17,6 +17,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { useI18n } from "@/lib/i18n";
+import { postJson, warmBackend } from "@/lib/api";
 
 const schema = z.object({
   name:      z.string().min(2,  "Nimi on pakollinen"),
@@ -44,31 +45,30 @@ export default function BookingPage() {
     defaultValues: { name: "", phone: "", email: "", address: "", message: "", urgency: undefined },
   });
 
+  // Wake the (free-tier) backend on mount so it's awake by the time the
+  // visitor presses send — avoids the cold-start delay on the actual submit.
+  useEffect(() => {
+    warmBackend();
+  }, []);
+
   const onSubmit = async (data: FormData) => {
     setLoading(true);
     setError("");
-    try {
-      const res = await fetch("https://puuhapatet-fi.onrender.com/api/contact", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name:    data.name,
-          phone:   data.phone,
-          email:   data.email || undefined,
-          address: data.address,
-          urgency: data.urgency,
-          message: data.message,
-          coupon:  coupon || undefined,
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok || !json.ok) throw new Error(json.error || "Lähetys epäonnistui");
+    const res = await postJson("/api/contact", {
+      name:    data.name,
+      phone:   data.phone,
+      email:   data.email || undefined,
+      address: data.address,
+      urgency: data.urgency,
+      message: data.message,
+      coupon:  coupon || undefined,
+    });
+    if (res.ok) {
       setSent(true);
-    } catch {
+    } else {
       setError("Jotain meni pieleen. Soita suoraan: 0400 389 999");
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   };
 
   if (sent) {

@@ -130,12 +130,17 @@ async function request<T>(
   path: string,
   body?: unknown,
 ): Promise<ApiResponse<T>> {
+  // Abort timeout so a sleeping/cold backend can't hang the UI indefinitely.
+  // No retry here — these calls can be non-idempotent (e.g. createJob).
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 70000);
   try {
     const res = await fetch(`${API_BASE}${path}`, {
       method,
       headers: body ? { "Content-Type": "application/json" } : {},
       body: body ? JSON.stringify(body) : undefined,
       mode: "cors",
+      signal: controller.signal,
     });
     if (!res.ok) {
       try {
@@ -148,8 +153,73 @@ async function request<T>(
     const data = await res.json();
     return { ok: true, data };
   } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      return { ok: false, error: "Yhteys aikakatkaistiin" };
+    }
     return { ok: false, error: e instanceof Error ? e.message : "Network error" };
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+/**
+ * Wake the Render backend ahead of time. The free tier spins down after ~15 min
+ * of inactivity, and the first request then pays a ~50s cold-start penalty.
+ * Call this when a page with a contact form mounts so the server is already
+ * awake by the time the visitor presses send. Fire-and-forget; failures ignored.
+ */
+export function warmBackend(): void {
+  try {
+    fetch(`${API_BASE}/api/health`, { method: "GET", mode: "cors" }).catch(() => {});
+  } catch {
+    /* no-op */
+  }
+}
+
+/**
+ * POST JSON with an abort timeout and one cold-start retry.
+ *
+ * Without a timeout the browser fetch can hang for minutes while Render wakes
+ * up, leaving the submit button spinning with no feedback. The timeout is set
+ * generously (longer than a worst-case cold start) so a slow-but-working
+ * request is never aborted mid-flight — that keeps the single retry reserved
+ * for genuine connection failures, avoiding duplicate submissions.
+ */
+export async function postJson<T = any>(
+  path: string,
+  body: unknown,
+  { timeoutMs = 70000, retries = 1 }: { timeoutMs?: number; retries?: number } = {},
+): Promise<ApiResponse<T>> {
+  let lastError = "Network error";
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${API_BASE}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        mode: "cors",
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) {
+        return { ok: false, error: json.error || `HTTP ${res.status}` };
+      }
+      return { ok: true, data: json };
+    } catch (e) {
+      clearTimeout(timer);
+      lastError =
+        e instanceof DOMException && e.name === "AbortError"
+          ? "Yhteys aikakatkaistiin"
+          : e instanceof Error
+            ? e.message
+            : "Network error";
+      // Retry once — a cold start or a dropped connection usually recovers.
+    }
+  }
+  return { ok: false, error: lastError };
 }
 
 export function generateJobId(): string {

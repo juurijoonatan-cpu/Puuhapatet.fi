@@ -1,0 +1,37 @@
+name: Keep backend warm
+
+# The contact forms post to the Render free-tier backend, which spins down
+# after ~15 min of inactivity and then pays a ~50s cold-start penalty on the
+# next request. Pinging the health endpoint every 10 minutes keeps it awake so
+# "Lähetä viesti" responds instantly for real visitors.
+#
+# Cost note: Render's free tier bills by instance-HOURS (~750/month free), not
+# by request. The service is awake for the whole active window regardless of how
+# often we ping, so ping frequency does NOT change Render hours. We only keep it
+# warm during active hours (04:00-19:59 UTC ~= 07:00-22:59 Finnish time): that is
+# ~490 instance-hours/month, comfortably under the free cap, and the
+# warm-up-on-page-load still covers the rare off-hours visitor.
+#
+# The 5-minute interval is deliberate: GitHub's scheduled crons are best-effort
+# and can be delayed several minutes under load. Against Render's 15-min sleep
+# timer, a 5-min cadence keeps a ~3x safety margin so the service never naps mid
+# window. This repo is public, so Actions minutes are free and unlimited.
+#
+# Note: scheduled workflows only run from the default branch, so this takes
+# effect once merged to main.
+
+on:
+  schedule:
+    - cron: "*/5 4-19 * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render health endpoint
+        run: |
+          curl -fsS --max-time 90 --retry 3 --retry-delay 10 \
+            https://puuhapatet-fi.onrender.com/api/health \
+            && echo "Backend is awake" \
+            || echo "Ping failed — will retry on the next scheduled run"

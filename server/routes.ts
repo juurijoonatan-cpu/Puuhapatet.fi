@@ -15,7 +15,7 @@ import {
 } from "./ai";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, emptyProjectData, type ProjectData } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, emptyProjectData, type ProjectData, type WindowStatus } from "@shared/project";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, type CrewMember,
@@ -3298,6 +3298,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     // Until signing is gated, the dashboard opens on name alone. Once gated, an
     // already-entered worker who hasn't signed the current set must do so.
     const needsToSign = WORKER_AGREEMENTS_GATED && !signedAll;
+    // Build the worker's own clean map layer (their washed windows only).
+    const myStatuses: Record<string, WindowStatus> = {};
+    const myWashedBy: Record<string, string> = {};
+    for (const [key, who] of Object.entries(project.washedBy || {})) {
+      if (who === member.id && project.statuses?.[key] === "pesty") {
+        myStatuses[key] = "pesty";
+        myWashedBy[key] = who;
+      }
+    }
     // Team leaderboard (workers only). Exposes name + windows + windows/hour — NO
     // pay rate, tokens or euros — so it's safe to show every worker the standings.
     const leaderboard = (project.crew || [])
@@ -3341,8 +3350,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       building: project.building,
       pricePerWindow: member.perWindowCents / 100, // worker's OWN rate, not the gig price
       marks: project.marks,
-      statuses: project.statuses,
-      washedBy: project.washedBy,
+      // Clean personal map: the worker only sees the windows THEY washed. Admin's
+      // pins/notes, the "työn alla" zone and everyone else's washed / in-progress
+      // (kesken) markings are never sent — the rest of the building shows as plain
+      // unwashed windows to do. Earnings/leaderboard still come from attribution.
+      statuses: myStatuses,
+      washedBy: myWashedBy,
       customMarks: project.customMarks,
       posOverrides: project.posOverrides,
       deleted: project.deleted,

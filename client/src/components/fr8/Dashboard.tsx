@@ -2,7 +2,7 @@
  * FR8 projektinäkymä — overview dashboard (ported from fr8-ikkunat prototype).
  * Adds a per-worker "TEKIJÄT" strip (window counts + €/h optimisation).
  */
-import { allPoints, type ProjectData, type WindowStatus, type WorkerStat } from "@shared/project";
+import { allPoints, computeDealBilling, type ProjectData, type WindowStatus, type WorkerStat, type FixedDeal } from "@shared/project";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useState } from "react";
 
@@ -11,10 +11,16 @@ interface Props {
   workerStats: WorkerStat[];
   workerName: (id: string) => string;
   onGoToFloor: (floor: string) => void;
+  /** When set, a signed fixed-price deal drives the money figures (FR8). */
+  deal?: FixedDeal | null;
 }
 
 function fmt(n: number) { return Math.round(n).toLocaleString("fi-FI"); }
 function euro(n: number) { return fmt(n) + " €"; }
+/** Per-window price — keeps cents (e.g. "37,50 €") so 37.5 never rounds to 38. */
+function euroUnit(n: number) {
+  return n.toLocaleString("fi-FI", { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 }) + " €";
+}
 function ago(ts: number) {
   const s = (Date.now() - ts) / 1000;
   if (s < 60) return "juuri nyt";
@@ -43,12 +49,17 @@ const mono: React.CSSProperties = {
   color: "rgba(255,255,255,0.4)",
 };
 
-export default function Dashboard({ project, workerStats, workerName, onGoToFloor }: Props) {
+export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal }: Props) {
   const m = useIsMobile();
   const [showLog, setShowLog] = useState(false);
   const FLOORS = project.building.floors;
-  const PRICE = project.pricePerWindow;
+  const PRICE = deal ? deal.pricePerWindow : project.pricePerWindow;
   const CIRC = 2 * Math.PI * 80;
+  // Money model: a signed deal accrues only on the billable priority (red) and
+  // is capped at the agreed total; an open gig bills every washed window.
+  const billing = deal ? computeDealBilling(project, deal) : null;
+  const accruedEur = billing ? billing.accruedCents / 100 : 0;
+  const capEur = billing ? billing.capCents / 100 : 0;
   const all = allPoints(project);
   const log = project.log;
 
@@ -70,7 +81,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
 
   const startToday = new Date(); startToday.setHours(0, 0, 0, 0);
   const todaySet = new Set<string>();
-  log.forEach((l) => { if (l.status === "pesty" && l.ts >= startToday.getTime()) todaySet.add(l.key); });
+  log.forEach((l) => { if (l.status === "pesty" && l.ts >= startToday.getTime() && (!deal || l.p === deal.billablePriority)) todaySet.add(l.key); });
   const todayWindows = todaySet.size;
   const remaining = total - washed;
   const estStr = remaining === 0 && total > 0 ? "valmis" : todayWindows > 0 ? "~" + Math.ceil(remaining / todayWindows) + " työpv" : "—";
@@ -140,19 +151,25 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
           {/* Revenue card */}
           <div className="anim-fadeUp-1" style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", padding: "26px", background: "linear-gradient(155deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))", border: "1px solid rgba(255,255,255,0.09)", borderRadius: "22px", backdropFilter: "blur(22px)", WebkitBackdropFilter: "blur(22px)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={mono}>LIIKEVAIHTO</div>
-              <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10.5px", color: "rgba(255,255,255,0.4)" }}>{PRICE} € / IKKUNA</div>
+              <div style={mono}>{deal ? "KERTYNYT SUMMA" : "LIIKEVAIHTO"}</div>
+              <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10.5px", color: "rgba(255,255,255,0.4)" }}>
+                {euroUnit(PRICE)} / {deal ? "PUNAINEN" : "IKKUNA"}
+              </div>
             </div>
             <div>
-              <div style={{ fontSize: "46px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{euro(washed * PRICE)}</div>
-              <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.45)", marginTop: "4px" }}>/ {euro(total * PRICE)} sopimusarvo</div>
+              <div style={{ fontSize: "46px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{euro(deal ? accruedEur : washed * PRICE)}</div>
+              <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.45)", marginTop: "4px" }}>
+                / {euro(deal ? capEur : total * PRICE)} {deal ? "sopimuskatto" : "sopimusarvo"}
+                {deal && <span style={{ display: "inline-flex", alignItems: "center", gap: 4, marginLeft: 8, padding: "1px 7px", borderRadius: 7, background: "rgba(95,224,138,0.12)", border: "1px solid rgba(95,224,138,0.3)", color: "#9ff0bd", fontSize: "10px", fontWeight: 600 }}>🔒 sovittu hinta</span>}
+              </div>
             </div>
             <div>
               <div style={{ height: "9px", borderRadius: "6px", background: "rgba(255,255,255,0.08)", overflow: "hidden", marginBottom: "9px" }}>
-                <div style={{ width: `${pct.toFixed(1)}%`, height: "100%", borderRadius: "6px", background: "linear-gradient(90deg,rgba(255,255,255,0.55),#fff)", boxShadow: "0 0 12px rgba(255,255,255,0.4)", transition: "width .6s" }} />
+                <div style={{ width: `${(deal ? billing!.pct : pct).toFixed(1)}%`, height: "100%", borderRadius: "6px", background: "linear-gradient(90deg,rgba(255,255,255,0.55),#fff)", boxShadow: "0 0 12px rgba(255,255,255,0.4)", transition: "width .6s" }} />
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10.5px", color: "rgba(255,255,255,0.45)" }}>
-                <span>{washed} × {PRICE} €</span><span>{pctStr} kerätty</span>
+                <span>{deal ? billing!.billableWashed : washed} × {euroUnit(PRICE)}</span>
+                <span>{Math.round(deal ? billing!.pct : pct)} % {deal ? "katosta" : "kerätty"}</span>
               </div>
             </div>
           </div>
@@ -160,12 +177,18 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
 
         {/* Row 2: P1 + P2 + mini cards */}
         <div style={{ display: "grid", gridTemplateColumns: m ? "1fr 1fr" : "1fr 1fr 1fr", gap: m ? "10px" : "16px", marginBottom: "14px" }}>
-          {[{ label: "Prioriteetti 1", rgb: "255,72,72", data: p1 }, { label: "Prioriteetti 2", rgb: "255,205,40", data: p2 }].map((g, gi) => (
-            <div key={g.label} className={`anim-fadeUp-${gi + 2}`} style={{ ...card, padding: "22px" }}>
+          {[{ label: "Prioriteetti 1", rgb: "255,72,72", data: p1, p: 1 }, { label: "Prioriteetti 2", rgb: "255,205,40", data: p2, p: 2 }].map((g, gi) => {
+            // With a signed deal, only the billable priority (red) earns money;
+            // the other priority is mapped for future work, not billed now.
+            const outOfDeal = !!deal && g.p !== deal.billablePriority;
+            return (
+            <div key={g.label} className={`anim-fadeUp-${gi + 2}`} style={{ ...card, padding: "22px", opacity: outOfDeal ? 0.72 : 1 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "18px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "9px" }}>
                   <span style={{ width: "11px", height: "11px", borderRadius: "50%", background: `rgb(${g.rgb})`, boxShadow: `0 0 10px rgba(${g.rgb},0.8)` }} />
                   <span style={{ fontSize: "14px", fontWeight: 600 }}>{g.label}</span>
+                  {outOfDeal && <span style={{ fontSize: "9.5px", fontWeight: 600, color: "rgba(255,255,255,0.5)", padding: "1px 6px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.14)" }}>ei sopimuksessa</span>}
+                  {!!deal && !outOfDeal && <span style={{ fontSize: "9.5px", fontWeight: 600, color: "#9ff0bd", padding: "1px 6px", borderRadius: 6, border: "1px solid rgba(95,224,138,0.3)", background: "rgba(95,224,138,0.1)" }}>sopimus</span>}
                 </div>
                 <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.4)" }}>{g.data.pctStr}</span>
               </div>
@@ -177,10 +200,11 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "rgba(255,255,255,0.5)" }}>
                 <span>Kesken <b style={{ color: "#fff", fontWeight: 600 }}>{g.data.kesken}</b></span>
-                <span>{g.data.revStr}</span>
+                <span>{outOfDeal ? "— ei laskuteta" : g.data.revStr}</span>
               </div>
             </div>
-          ))}
+            );
+          })}
 
           <div style={{ display: "flex", flexDirection: m ? "row" : "column", gap: m ? "10px" : "12px", gridColumn: m ? "1 / -1" : undefined }}>
             {[{ label: "TÄNÄÄN TEHTY", val: todayWindows, sub: `ikkunaa · ${euro(todayWindows * PRICE)}`, cls: "anim-fadeUp-4" }, { label: "ARVIO JÄLJELLÄ", val: remaining, sub: `ikkunaa · ${estStr}`, cls: "anim-fadeUp-5" }].map((mc) => (

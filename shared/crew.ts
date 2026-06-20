@@ -33,7 +33,7 @@ export interface CrewProfile {
 }
 
 export interface CrewAgreementSignature {
-  agreementId: string;          // "alihankinta" | "tietoturva" | "jatko"
+  agreementId: string;          // "alihankinta" | "tietoturva" | "asiakassuoja" | "tiimi"
   version: string;
   signedAt: number;             // epoch ms
   signerName: string;

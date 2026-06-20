@@ -31,7 +31,7 @@ import {
   emptyGigData, computeTotals, nextInvoiceThreshold, invoiceDue, eur, eur2,
   sanitizeGigData, gigStatus, signatureRequired, type GigData,
 } from "@shared/gig";
-import { computeProjectTotals, type ProjectData } from "@shared/project";
+import { computeProjectTotals, fixedDealFor, eurFromCents, type ProjectData } from "@shared/project";
 import { downloadGigContract, openGigContractForPrint } from "@/lib/gig-contract-doc";
 
 const PUBLIC_BASE = "https://puuhapatet.fi";
@@ -329,6 +329,27 @@ export default function AdminGigTrackerPage() {
         {(() => {
           const projTotals = project ? computeProjectTotals(project) : null;
           const floorMode = !!(project && projTotals && projTotals.total > 0);
+          const deal = project ? fixedDealFor(project) : null;
+          // A signed, fixed-price deal (FR8) is locked — show it read-only.
+          if (deal) {
+            return (
+              <Card className="p-4 bg-card border-0 premium-shadow mb-4">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    <Receipt className="w-4 h-4 text-muted-foreground" /> Hinta &amp; katto
+                  </span>
+                  <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                    🔒 Sovittu sopimuksessa
+                  </span>
+                </div>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Allekirjoitettu kiinteä hinta. {eurFromCents(Math.round(deal.pricePerWindow * 100))} per punainen ikkuna,
+                  kokonaiskatto {eurFromCents(deal.capCents)}. Keltaiset ikkunat eivät kuulu tähän sopimukseen.
+                  Hintaa ei voi muokata.
+                </p>
+              </Card>
+            );
+          }
           return (
             <PriceEditor
               gig={gig}

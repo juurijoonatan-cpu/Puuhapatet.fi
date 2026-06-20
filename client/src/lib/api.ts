@@ -75,6 +75,8 @@ export interface GigPublicView {
     customMarks: Record<string, ProjCustomMark[]>;
     posOverrides: Record<string, { x: number; y: number }>;
     deleted: Record<string, boolean>;
+    notes?: Record<string, import("@shared/project").ProjMapNote[]>;
+    activeZone?: import("@shared/project").ProjActiveZone | null;
   } | null;
   // Contract & signing gate
   contractText: string | null;

@@ -6,7 +6,7 @@
  * projected final revenue and a €/h leaderboard. Complements the projektinäkymä
  * dashboard (which shows current state) by focusing on rate and projection.
  */
-import { computeEfficiency, computeWorkerStats, type ProjectData } from "@shared/project";
+import { computeEfficiency, computeWorkerStats, fixedDealFor, computeDealBilling, type ProjectData } from "@shared/project";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 interface Props {
@@ -47,6 +47,14 @@ const mono: React.CSSProperties = {
 export default function EfficiencyTool({ project, workerName }: Props) {
   const m = useIsMobile();
   const e = computeEfficiency(project);
+  // A signed fixed-price deal (FR8) caps the contract value and bills only the
+  // billable priority (red); otherwise the value is the open gig's contract.
+  const deal = fixedDealFor(project);
+  const billing = deal ? computeDealBilling(project, deal) : null;
+  const accruedCents = billing ? billing.accruedCents : e.revenueCents;
+  const contractCents = billing ? billing.capCents : e.contractCents;
+  const remainingValueCents = billing ? Math.max(0, billing.capCents - billing.accruedCents) : e.remainingCents;
+  const moneyPct = billing ? billing.pct : e.pct;
   const stats = computeWorkerStats(project)
     .filter((s) => s.washed > 0 || s.hours > 0)
     .sort((a, b) => b.eurPerHour - a.eurPerHour || b.washed - a.washed);
@@ -69,7 +77,7 @@ export default function EfficiencyTool({ project, workerName }: Props) {
   const throughput = [
     { label: "TÄNÄÄN", val: e.todayWashed, sub: `ikkunaa · ${euro(e.todayWashed * project.pricePerWindow * 100)}` },
     { label: "7 PÄIVÄÄ", val: e.weekWashed, sub: `ikkunaa · ${euro(e.weekWashed * project.pricePerWindow * 100)}` },
-    { label: "JÄLJELLÄ", val: e.remaining, sub: `ikkunaa · ${euro(e.remainingCents)}` },
+    { label: "JÄLJELLÄ", val: e.remaining, sub: `ikkunaa · ${euro(remainingValueCents)}` },
     { label: "PARAS PÄIVÄ", val: e.bestDay?.count ?? 0, sub: e.bestDay ? new Date(e.bestDay.ts).toLocaleDateString("fi-FI", { day: "numeric", month: "numeric" }) : "—" },
   ];
 
@@ -97,16 +105,16 @@ export default function EfficiencyTool({ project, workerName }: Props) {
         <div className="anim-fadeUp-1" style={{ ...card, padding: m ? "20px" : "24px 28px", marginBottom: m ? "12px" : "16px" }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: "12px", flexWrap: "wrap", gap: "8px" }}>
             <div style={{ fontSize: m ? "30px" : "38px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>
-              {euro(e.revenueCents)} <span style={{ fontSize: "15px", fontWeight: 500, color: "rgba(255,255,255,0.4)" }}>/ {euro(e.contractCents)}</span>
+              {euro(accruedCents)} <span style={{ fontSize: "15px", fontWeight: 500, color: "rgba(255,255,255,0.4)" }}>/ {euro(contractCents)}</span>
             </div>
-            <div style={mono}>SOPIMUSARVO · {project.pricePerWindow} € / IKKUNA</div>
+            <div style={mono}>{deal ? `SOPIMUSKATTO · ${deal.pricePerWindow.toLocaleString("fi-FI", { minimumFractionDigits: 2 })} € / PUNAINEN` : `SOPIMUSARVO · ${project.pricePerWindow} € / IKKUNA`}</div>
           </div>
           <div style={{ height: "10px", borderRadius: "6px", background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
-            <div style={{ width: `${e.pct.toFixed(1)}%`, height: "100%", borderRadius: "6px", background: "linear-gradient(90deg,rgba(95,224,138,0.65),#5fe08a)", boxShadow: "0 0 12px rgba(95,224,138,0.5)", transition: "width .6s" }} />
+            <div style={{ width: `${moneyPct.toFixed(1)}%`, height: "100%", borderRadius: "6px", background: "linear-gradient(90deg,rgba(95,224,138,0.65),#5fe08a)", boxShadow: "0 0 12px rgba(95,224,138,0.5)", transition: "width .6s" }} />
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: "9px", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10.5px", color: "rgba(255,255,255,0.45)" }}>
             <span>{e.washed} pesty · {e.kesken} kesken</span>
-            <span>{euro(e.remainingCents)} kerättävää</span>
+            <span>{euro(remainingValueCents)} kerättävää</span>
           </div>
         </div>
 

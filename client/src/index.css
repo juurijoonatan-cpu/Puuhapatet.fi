@@ -467,6 +467,10 @@
   from { opacity: 0; transform: translateY(-6px) scale(0.97); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
+@keyframes fr8-zonePulse {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(95,224,138,0.12), 0 0 10px rgba(95,224,138,0.5); }
+  50%       { box-shadow: 0 0 0 10px rgba(95,224,138,0.04), 0 0 18px rgba(95,224,138,0.8); }
+}
 
 .fr8-root .anim-fadeUp-0 { animation: fr8-fadeUp 0.5s ease both; }
 .fr8-root .anim-fadeUp-1 { animation: fr8-fadeUp 0.5s ease 0.05s both; }

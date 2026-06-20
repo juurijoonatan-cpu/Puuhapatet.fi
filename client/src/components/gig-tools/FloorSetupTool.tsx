@@ -10,6 +10,7 @@
 import { useMemo, useState } from "react";
 import { Plus, Trash2, Save, Upload, RotateCcw, Check, AlertCircle } from "lucide-react";
 import {
+  fixedDealFor,
   type ProjectData, type ProjMarksData, type ProjMark,
 } from "@shared/project";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -89,6 +90,8 @@ export default function FloorSetupTool({ project, saving, onSave }: Props) {
   const [marksText, setMarksText] = useState("");
   const [notice, setNotice] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [justSaved, setJustSaved] = useState(false);
+  // A signed, fixed-price deal (FR8) locks the price field.
+  const priceLocked = !!fixedDealFor(draft);
 
   // Compare against the persisted project (ignoring the timestamp) to know if
   // there is anything to save.
@@ -185,8 +188,14 @@ export default function FloorSetupTool({ project, saving, onSave }: Props) {
             </div>
             <div>
               <label style={labelStyle}>HINTA / IKKUNA (€)</label>
-              <input style={inputStyle} type="number" min={0} step={1} value={draft.pricePerWindow}
+              <input style={{ ...inputStyle, opacity: priceLocked ? 0.6 : 1, cursor: priceLocked ? "not-allowed" : "auto" }} type="number" min={0} step={1}
+                value={priceLocked ? 37.5 : draft.pricePerWindow} disabled={priceLocked} readOnly={priceLocked}
                 onChange={(ev) => patch((d) => { d.pricePerWindow = Math.max(0, Number(ev.target.value) || 0); })} />
+              {priceLocked && (
+                <p style={{ fontSize: "10.5px", color: "rgba(95,224,138,0.8)", marginTop: "6px", lineHeight: 1.5 }}>
+                  🔒 Sovittu sopimuksessa: 37,50 € / punainen ikkuna, katto 6300 €. Ei muokattavissa.
+                </p>
+              )}
             </div>
             <div>
               <label style={labelStyle}>POHJAKUVAN POLKU (planBase)</label>

@@ -87,6 +87,23 @@ best-effort (ei kaada vastausta jos sähköposti epäonnistuu / ei API-avainta).
   `workerView` (mitä työntekijälle lähetetään), `/api/admin/my-dashboard`.
 - `client/src/pages/worker.tsx` — työntekijän työpöytä (intro, sopimukset, kartta,
   ansiot, tunnit/sessio, info). ÄLÄ riko introa/sopimuksia ilman erillistä pyyntöä.
+
+## Koko ruudun sovellus (PWA-asennus)
+
+Työntekijä, joka avaa `/tyo/:token` selaimessa, näkee selaimen palkit (ylä/ala) —
+iOS:ssa ne saa pois VAIN lisäämällä sovelluksen kotinäyttöön. Logiikka:
+- `useWorkerInstall(token)` vaihtaa sivulle per-työntekijä-manifestin
+  (`display: standalone`, `scope:/tyo/`, tumma teema) → kotinäytön kuvake avaa
+  juuri tämän työpöydän, ei adminia.
+- `index.html`: `viewport-fit=cover` + `apple-mobile-web-app-capable=yes` +
+  `apple-mobile-web-app-status-bar-style=black-translucent` → iOS:ssa asennettu
+  sovellus täyttää koko ruudun (turva-alueet hoidetaan `env(safe-area-inset-*)`
+  -paddingilla headerissa/navissa). `Dashboard` lukitsee myös zoomin.
+- `usePwaInstall()` tunnistaa: onko jo standalone, alusta (iOS/Android/desktop),
+  ja sovelluksen sisäinen selain (IG/FB ym. — ei voi asentaa, ohjataan avaamaan
+  Safari/Chrome). Android/Chrome: natiivi `beforeinstallprompt` → "Asenna nyt".
+- `InstallBanner` (headerin alla) + `InstallModal` (alustakohtaiset ohjeet)
+  näkyvät vain kun EI olla standalone-tilassa; asennuksen jälkeen katoavat.
 - `client/src/pages/admin/project.tsx` — johtajien FR8-näkymä (ansiolaskenta, nimet).
 - `client/src/components/fr8/Dashboard.tsx` — johtajien yleiskatsaus + TEKIJÄT.
 - `client/src/components/fr8/FloorView.tsx` — kartta (jaettu; `hideMoney`, `canAddNotes`).

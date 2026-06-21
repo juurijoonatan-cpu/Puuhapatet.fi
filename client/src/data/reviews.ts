@@ -7,9 +7,21 @@ export interface Review {
 }
 
 export const GOOGLE_RATING = 5.0;
-export const GOOGLE_REVIEW_COUNT = 3;
+export const GOOGLE_REVIEW_COUNT = 5;
 
 export const reviews: Review[] = [
+  {
+    author_name: "Aini Jaari",
+    rating: 5,
+    date: "2026-05-31",
+    text: "Huippuhyvää ja siistiä jälkeä! Tehokkaita kavereita. Suosittelen lämpimästi!",
+  },
+  {
+    author_name: "Elisa Stenvall",
+    rating: 5,
+    date: "2026-05-22",
+    text: "Ikkunanpesu sujui sovitun mukaisesti ja jälki oli ensiluokkaista.",
+  },
   {
     author_name: "Ilari Sell",
     rating: 5,

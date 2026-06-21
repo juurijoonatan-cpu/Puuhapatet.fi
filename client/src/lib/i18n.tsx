@@ -70,7 +70,13 @@ const translations: Record<Language, Record<string, string>> = {
 
     "featured.title": "Ajankohtaiset palvelut",
     "featured.cta": "Katso kaikki palvelut",
-    
+
+    "gallery.title": "Työtä, josta näkee laadun",
+    "gallery.subtitle": "Oikeaa työtä, oikeat välineet — kentältä",
+    "gallery.1.caption": "Tarkka jälki lasipinnoilla",
+    "gallery.2.caption": "Ammattitiimi kentällä",
+    "gallery.3.caption": "Ammattilaisten välineet",
+
     "service.basic.title": "Ikkunanpesu",
     "service.basic.popular": "Suosittu",
     "service.basic.desc": "Käytämme ammattilaisten välineitä ja hyväksi havaittuja pesuaineita. Ikkunat, parvekelasit ja lasiterassit pestyinä — kirkkaina ja raidattomina.",
@@ -264,6 +270,12 @@ const translations: Record<Language, Record<string, string>> = {
 
     "featured.title": "Current Services",
     "featured.cta": "See all services",
+
+    "gallery.title": "Work that shows its quality",
+    "gallery.subtitle": "Real work, the right tools — from the field",
+    "gallery.1.caption": "Precise finish on glass",
+    "gallery.2.caption": "Professional team on site",
+    "gallery.3.caption": "Professional-grade tools",
     
     "service.basic.title": "Window Cleaning",
     "service.basic.popular": "Popular",

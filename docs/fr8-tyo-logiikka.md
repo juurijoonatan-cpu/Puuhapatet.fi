@@ -40,6 +40,17 @@ sama €). Tallennetaan `member.manualEarningsCents`; "↺" palauttaa lasketun. 
 johtajien dashboardissa, EI vaikuta työntekijän omaan näkymään. Editointi sallittu vain
 `role === "host"` -jäsenille. (Jatko: hienojakoisempi per-päivä, jos keikka on monipäiväinen.)
 
+### Tekoälyapurin päivän tuottoraportti (TOTEUTETTU)
+Puuhapatet-adminin tekoälyapuri (`/api/admin/assistant`) saa perustajille
+(`role === "HOST"`) kontekstiin **päivän tuottoraportin** kiinteähintaisilta
+keikoilta (FR8). `buildAdminContext` (server/routes.ts) laskee jokaiselle
+`fixedDealFor`-keikalle tänään pestyt ikkunat per tekijä (keikan lokista,
+billable-prioriteetti, deduplikoitu avaimittain) ja muuntaa ne ansioiksi samalla
+mallilla kuin johtajien dashboard: perustaja = omat × 37,50 € + tuotto-osuus,
+työntekijä = omat × oma rate. Kun perustaja kysyy "päivän tuotto" / "paljonko
+tienattiin tänään", apuri vastaa tästä. Näkyy VAIN perustajille, ei
+työntekijöille (HOST-only konteksti).
+
 ## Rahan yksityisyys (TÄRKEÄ)
 
 Työntekijä EI saa nähdä keikan kokonaishintoja, kattoa, liikevaihtoa eikä muiden

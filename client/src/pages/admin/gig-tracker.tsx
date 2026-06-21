@@ -232,6 +232,7 @@ export default function AdminGigTrackerPage() {
       senderName: profile?.name,
       senderYTunnus: profile?.yTunnus,
       senderAddress: profile?.address,
+      billerId: profile?.id, // which leader billed the customer (buyer for alihankkija invoices)
       workerPhone: profile?.phone,
       message: invForm.message || undefined,
       isFinal: invForm.isFinal,

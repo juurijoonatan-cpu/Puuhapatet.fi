@@ -24,6 +24,10 @@ import {
 import InkReveal from "@/components/InkReveal";
 import SignaturePad from "@/components/SignaturePad";
 import FloorView from "@/components/fr8/FloorView";
+import {
+  computeTax, readVatStatus, readInPrepaymentRegister, fmtPct, fmtEurCents,
+  VAT_STATUS_KEY, PREPAYMENT_REGISTER_KEY, type VatStatus,
+} from "@shared/tax";
 
 const T = { ink: "#1A1A1A", paper: "#F6F4EE", card: "#FFFFFF", hair: "#E4E1D7", muted: "#8C8A82", green: "#3E7C59", navy: "#1F3B57" };
 const FONT = "'Poppins', ui-sans-serif, system-ui, -apple-system, sans-serif";
@@ -906,6 +910,9 @@ function Leaderboard({ view }: { view: WorkerView }) {
 function PayoutsTab({ token, view, setView }: { token: string; view: WorkerView; setView: (v: WorkerView) => void }) {
   const payouts = view.payouts || [];
   const b = view.worker.billing;
+  const answers = view.worker.profile?.answers;
+  const vatStatus = readVatStatus(answers);
+  const inRegister = readInPrepaymentRegister(answers);
   const [openId, setOpenId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: b.name || "", yTunnus: b.yTunnus || "", iban: b.iban || "", address: b.address || "" });
   const [busy, setBusy] = useState(false);
@@ -949,17 +956,47 @@ function PayoutsTab({ token, view, setView }: { token: string; view: WorkerView;
         {payouts.map((p) => {
           const st = STATUS[p.status] || STATUS.ilmoitettu;
           const open = openId === p.id;
+          // Paid payouts carry a tax snapshot; for pending ones preview from the
+          // worker's current declared status so they see what they'll receive.
+          const tx = p.tax ?? computeTax({ laborCents: p.amountCents, vatStatus, inPrepaymentRegister: inRegister });
+          const showBreakdown = tx.vatRegistered || tx.withheld;
           return (
             <div key={p.id} style={{ padding: 16, borderRadius: 14, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                 <div>
-                  <p style={{ margin: 0, fontSize: 24, fontWeight: 800, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(p.amountCents)}</p>
+                  <p style={{ margin: 0, fontSize: 24, fontWeight: 800, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(tx.payableCents)}</p>
                   <p style={{ margin: "2px 0 0", fontSize: 12.5, color: "rgba(255,255,255,0.55)" }}>
                     {p.note || "Ikkunanpesutyö"}{p.windows ? ` · ${p.windows} ikkunaa` : ""}
                   </p>
+                  {p.buyer?.name && (
+                    <p style={{ margin: "2px 0 0", fontSize: 11.5, color: "rgba(255,255,255,0.4)" }}>Laskutat: {p.buyer.name}{p.buyer.yTunnus ? ` · ${p.buyer.yTunnus}` : ""}</p>
+                  )}
                 </div>
                 <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 600, color: st.color, background: st.bg, borderRadius: 999, padding: "5px 10px", whiteSpace: "nowrap" }}>{st.label}</span>
               </div>
+
+              {showBreakdown && (
+                <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 10, background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,0.06)", fontSize: 12.5 }}>
+                  {([
+                    ["Työkorvaus (veroton)", fmtEurCents(tx.laborCents), "rgba(255,255,255,0.7)"],
+                    ...(tx.vatRegistered ? [[`ALV ${fmtPct(tx.vatRate)}`, "+ " + fmtEurCents(tx.vatCents), "rgba(255,255,255,0.7)"]] : []),
+                    ...(tx.withheld ? [[`Ennakonpidätys ${fmtPct(tx.withholdingRate)}`, "− " + fmtEurCents(tx.withholdingCents), "#E0A800"]] : []),
+                  ] as [string, string, string][]).map(([lbl, val, col]) => (
+                    <div key={lbl} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: col }}>
+                      <span>{lbl}</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{val}</span>
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "7px 0 0", marginTop: 4, borderTop: "1px solid rgba(255,255,255,0.1)", fontWeight: 700, color: "#7CE0A6" }}>
+                    <span>Maksetaan tilillesi</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtEurCents(tx.payableCents)}</span>
+                  </div>
+                  {tx.withheld && (
+                    <p style={{ margin: "8px 0 0", fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
+                      Pidätetty vero tilitetään Verolle ja luetaan hyväksesi verotuksessasi. Rekisteröitymällä
+                      ennakkoperintärekisteriin (ytj.fi) saat koko summan ja hoidat verot itse.
+                    </p>
+                  )}
+                </div>
+              )}
 
               {p.status === "maksettu" && p.invoiceNo && (
                 <p style={{ margin: "12px 0 0", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
@@ -1204,6 +1241,66 @@ function InsuranceCard({ token, view, setView }: { token: string; view: WorkerVi
   );
 }
 
+/** Tax status the worker self-declares — drives VAT on their invoice and whether
+ *  Puuhapatet must withhold ennakonpidätys (not in the prepayment register). */
+function TaxStatusCard({ token, view, setView }: { token: string; view: WorkerView; setView: (v: WorkerView) => void }) {
+  const answers = view.worker.profile?.answers;
+  const vat = readVatStatus(answers);
+  const inRegister = readInPrepaymentRegister(answers);
+  const declaredRegister = answers?.[PREPAYMENT_REGISTER_KEY] === "kylla" || answers?.[PREPAYMENT_REGISTER_KEY] === "ei";
+  const [busy, setBusy] = useState(false);
+
+  const save = async (key: string, val: string) => {
+    if (busy) return;
+    setBusy(true);
+    const profile = view.worker.profile ?? {};
+    const merged = { ...profile, answers: { ...(profile.answers ?? {}), [key]: val } };
+    const res = await api.crewOnboard(token, { profile: merged, agreements: [] });
+    setBusy(false);
+    if (res.ok && res.data?.view) setView(res.data.view);
+  };
+
+  const opt = (active: boolean): React.CSSProperties => ({
+    flex: 1, padding: "10px", borderRadius: 10, cursor: busy ? "default" : "pointer", fontFamily: FONT,
+    fontSize: 13, fontWeight: 600, lineHeight: 1.3,
+    border: `1.5px solid ${active ? "#7CE0A6" : "rgba(255,255,255,0.18)"}`,
+    background: active ? "rgba(124,224,166,0.14)" : "transparent",
+    color: active ? "#7CE0A6" : "rgba(255,255,255,0.7)", opacity: busy ? 0.6 : 1,
+  });
+
+  return (
+    <div style={{ padding: 16, borderRadius: 16, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", marginBottom: 14 }}>
+      <p style={{ margin: "0 0 4px", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)" }}>Verotiedot</p>
+      <p style={{ margin: "0 0 12px", fontSize: 12.5, color: "rgba(255,255,255,0.6)", lineHeight: 1.5 }}>
+        Nämä määräävät, miten laskusi muodostuu. Vaikuttavat ALV:hen ja ennakonpidätykseen.
+      </p>
+
+      {/* ALV-status */}
+      <p style={{ margin: "0 0 6px", fontSize: 12.5, fontWeight: 600, color: "rgba(255,255,255,0.85)" }}>Arvonlisävero (ALV)</p>
+      <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+        <button onClick={() => save(VAT_STATUS_KEY, "vahainen_toiminta")} disabled={busy} style={opt(vat === "vahainen_toiminta")}>Ei ALV:tä<br/><span style={{ fontWeight: 400, fontSize: 11, opacity: 0.85 }}>vähäinen toiminta</span></button>
+        <button onClick={() => save(VAT_STATUS_KEY, "alv_rekisterissa")} disabled={busy} style={opt(vat === "alv_rekisterissa")}>ALV-rekisterissä<br/><span style={{ fontWeight: 400, fontSize: 11, opacity: 0.85 }}>lisää 25,5 %</span></button>
+      </div>
+      <p style={{ margin: "0 0 14px", fontSize: 11.5, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
+        Jos liikevaihtosi on alle ~15 000 € / 12 kk, voit toimia ilman ALV:tä (AVL 3 §). Tarkista vero.fi.
+      </p>
+
+      {/* Ennakkoperintärekisteri */}
+      <p style={{ margin: "0 0 6px", fontSize: 12.5, fontWeight: 600, color: "rgba(255,255,255,0.85)" }}>Ennakkoperintärekisteri</p>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={() => save(PREPAYMENT_REGISTER_KEY, "kylla")} disabled={busy} style={opt(inRegister)}>Kyllä, olen</button>
+        <button onClick={() => save(PREPAYMENT_REGISTER_KEY, "ei")} disabled={busy} style={opt(declaredRegister && !inRegister)}>En / en tiedä</button>
+      </div>
+      {!inRegister && (
+        <p style={{ margin: "10px 0 0", fontSize: 11.5, color: "#E0A800", lineHeight: 1.55 }}>
+          ⚠️ Jos et ole ennakkoperintärekisterissä, Puuhapatetin on pidätettävä verosi maksusta (oletus 60 %).
+          Rekisteröidy maksutta osoitteessa <b>ytj.fi</b> — silloin saat koko summan ja hoidat verot itse.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function NotesTab({ token, view, setView }: { token: string; view: WorkerView; setView: (v: WorkerView) => void }) {
   const [text, setText] = useState("");
   const add = async () => {
@@ -1216,6 +1313,7 @@ function NotesTab({ token, view, setView }: { token: string; view: WorkerView; s
     <div style={{ height: "100%", overflowY: "auto", padding: 20 }}>
       <InfoNotice />
       <InsuranceCard token={token} view={view} setView={setView} />
+      <TaxStatusCard token={token} view={view} setView={setView} />
       <AccessCard />
       <p style={{ margin: "4px 0 10px", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)" }}>Omat muistiinpanot</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>

@@ -11,19 +11,28 @@
 
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, X, Send, Loader2, Trash2, Copy, Check, AlertCircle } from "lucide-react";
+import { Sparkles, X, Send, Loader2, Trash2, Copy, Check, AlertCircle, Mail, AlertTriangle } from "lucide-react";
 import { getAdminProfile } from "@/lib/admin-profile";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { API_BASE, withAuth } from "@/lib/api";
 
-interface Msg { role: "user" | "assistant"; content: string; }
+interface EmailDraft {
+  jobId: number;
+  customerName: string;
+  email: string;
+  style: "henkikohtainen" | "pro" | "lyhyt";
+  message: string;
+  warning?: string;
+}
+type DraftState = "pending" | "sending" | "sent" | "error";
+interface Msg { role: "user" | "assistant"; content: string; drafts?: EmailDraft[]; draftStates?: DraftState[]; }
 
 const STORE_KEY = "puuhapatet_assistant_thread";
 
 const SUGGESTIONS = [
   "Mitkä keikat ovat tällä viikolla?",
   "Tee yhteenveto avoimista liideistä",
-  "Ehdota tehokas reitti tämän viikon keikoille",
+  "Ehdota uusia prospekteja Espoosta",
   "Luonnostele viesti asiakkaalle tarjouksen perään",
 ];
 
@@ -80,13 +89,46 @@ export function AdminAssistant() {
         }),
       });
       const data = await res.json();
-      setMessages([...next, { role: "assistant", content: data.reply || data.error || "Ei vastausta." }]);
+      const drafts: EmailDraft[] | undefined = Array.isArray(data.drafts) && data.drafts.length ? data.drafts : undefined;
+      setMessages([...next, {
+        role: "assistant",
+        content: data.reply || data.error || "Ei vastausta.",
+        drafts,
+        draftStates: drafts ? drafts.map(() => "pending" as DraftState) : undefined,
+      }]);
     } catch {
       setMessages([...next, { role: "assistant", content: "Yhteysvirhe. Yritä hetken kuluttua uudelleen." }]);
     } finally {
       setSending(false);
     }
   }
+
+  async function sendDraft(msgIndex: number, draftIndex: number) {
+    const msg = messages[msgIndex];
+    const draft = msg?.drafts?.[draftIndex];
+    if (!draft) return;
+    if (msg.draftStates?.[draftIndex] === "sending" || msg.draftStates?.[draftIndex] === "sent") return;
+    const setState = (s: DraftState) => setMessages(prev => prev.map((m, i) => {
+      if (i !== msgIndex || !m.draftStates) return m;
+      const ds = [...m.draftStates]; ds[draftIndex] = s;
+      return { ...m, draftStates: ds };
+    }));
+    setState("sending");
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/assistant/send-email`, {
+        method: "POST",
+        headers: withAuth({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ jobId: draft.jobId, message: draft.message, style: draft.style, role: profile?.role }),
+      });
+      const data = await res.json();
+      setState(res.ok && data.ok ? "sent" : "error");
+    } catch {
+      setState("error");
+    }
+  }
+
+  const styleLabel = (s: EmailDraft["style"]) =>
+    s === "pro" ? "Virallinen" : s === "lyhyt" ? "Lyhyt" : "Henkilökohtainen";
 
   function clearThread() {
     setMessages([]);
@@ -107,7 +149,8 @@ export function AdminAssistant() {
             exit={{ scale: 0, opacity: 0 }}
             whileTap={{ scale: 0.92 }}
             onClick={() => setOpen(true)}
-            className="fixed bottom-24 right-4 md:bottom-6 md:right-6 z-[55] w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center"
+            style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 5.75rem)" }}
+            className="fixed right-4 md:!bottom-6 md:right-6 z-[55] w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/25 flex items-center justify-center ring-4 ring-background/80"
             aria-label="Avaa avustaja"
             data-testid="admin-assistant-launcher"
           >
@@ -123,8 +166,8 @@ export function AdminAssistant() {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: 20 }}
             transition={{ type: "spring", stiffness: 380, damping: 30 }}
-            style={{ transformOrigin: "bottom right" }}
-            className="fixed bottom-24 right-4 md:bottom-6 md:right-6 z-[55] w-[calc(100vw-2rem)] max-w-[400px] h-[72vh] max-h-[620px] flex flex-col rounded-2xl overflow-hidden bg-card border border-border shadow-2xl"
+            style={{ transformOrigin: "bottom right", bottom: "calc(env(safe-area-inset-bottom, 0px) + 5.75rem)" }}
+            className="fixed right-4 md:!bottom-6 md:right-6 z-[58] w-[calc(100vw-2rem)] max-w-[400px] h-[calc(100dvh-9rem)] max-h-[620px] flex flex-col rounded-2xl overflow-hidden bg-card border border-border shadow-2xl"
           >
             <div className="flex items-center justify-between px-4 py-3 bg-primary text-primary-foreground">
               <div className="flex items-center gap-2">
@@ -181,19 +224,67 @@ export function AdminAssistant() {
                     transition={{ duration: 0.18 }}
                     className={`flex ${mine ? "justify-end" : "justify-start"} group`}
                   >
-                    <div className={`relative max-w-[88%] rounded-2xl px-3 py-2 text-sm ${
-                      mine ? "bg-primary text-primary-foreground rounded-br-sm" : "bg-muted text-foreground rounded-bl-sm"
-                    }`}>
-                      {mine ? <span className="whitespace-pre-wrap">{m.content}</span> : <ChatMarkdown content={m.content} />}
-                      {!mine && (
-                        <button
-                          onClick={() => copy(m.content, i)}
-                          className="absolute -bottom-2 -right-2 w-6 h-6 rounded-full bg-card border border-border flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                          aria-label="Kopioi"
-                        >
-                          {copied === i ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
-                        </button>
-                      )}
+                    <div className={`max-w-[88%] flex flex-col gap-2 ${mine ? "items-end" : "items-start"}`}>
+                      <div className={`relative rounded-2xl px-3 py-2 text-sm ${
+                        mine ? "bg-primary text-primary-foreground rounded-br-sm" : "bg-muted text-foreground rounded-bl-sm"
+                      }`}>
+                        {mine ? <span className="whitespace-pre-wrap">{m.content}</span> : <ChatMarkdown content={m.content} />}
+                        {!mine && (
+                          <button
+                            onClick={() => copy(m.content, i)}
+                            className="absolute -bottom-2 -right-2 w-6 h-6 rounded-full bg-card border border-border flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                            aria-label="Kopioi"
+                          >
+                            {copied === i ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
+                          </button>
+                        )}
+                      </div>
+                      {!mine && m.drafts?.map((draft, di) => {
+                        const state = m.draftStates?.[di] ?? "pending";
+                        return (
+                          <div key={di} className="w-full rounded-xl border border-border bg-card overflow-hidden">
+                            <div className="flex items-center justify-between gap-2 px-3 py-2 bg-muted/50 border-b border-border">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <Mail className="w-3.5 h-3.5 text-primary shrink-0" />
+                                <span className="text-xs font-medium truncate">{draft.customerName}</span>
+                              </div>
+                              <span className="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">{styleLabel(draft.style)}</span>
+                            </div>
+                            <p className="px-3 py-2 text-[13px] leading-relaxed text-foreground/90 whitespace-pre-wrap">{draft.message}</p>
+                            <p className="px-3 pb-1.5 text-[11px] text-muted-foreground truncate">→ {draft.email}</p>
+                            {draft.warning && (
+                              <div className="flex items-start gap-1.5 px-3 pb-2 text-[11px] text-amber-600 dark:text-amber-400">
+                                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />
+                                <span>{draft.warning}</span>
+                              </div>
+                            )}
+                            <div className="px-3 pb-3 pt-1">
+                              {state === "sent" ? (
+                                <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                                  <Check className="w-4 h-4" /> Lähetetty
+                                </div>
+                              ) : state === "error" ? (
+                                <button
+                                  onClick={() => sendDraft(i, di)}
+                                  className="w-full text-xs font-medium px-3 py-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
+                                >
+                                  Lähetys epäonnistui — yritä uudelleen
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => sendDraft(i, di)}
+                                  disabled={state === "sending"}
+                                  className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity disabled:opacity-50"
+                                >
+                                  {state === "sending"
+                                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Lähetetään…</>
+                                    : <><Send className="w-3.5 h-3.5" /> Hyväksy ja lähetä</>}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </motion.div>
                 );

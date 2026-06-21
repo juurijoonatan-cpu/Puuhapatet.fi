@@ -13,6 +13,8 @@ interface Props {
   onGoToFloor: (floor: string) => void;
   /** When set, a signed fixed-price deal drives the money figures (FR8). */
   deal?: FixedDeal | null;
+  /** Manually set/clear a person's earnings (founders' agreed split). */
+  onSetEarnings?: (id: string, cents: number | null) => void;
 }
 
 function fmt(n: number) { return Math.round(n).toLocaleString("fi-FI"); }
@@ -49,9 +51,13 @@ const mono: React.CSSProperties = {
   color: "rgba(255,255,255,0.4)",
 };
 
-export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal }: Props) {
+export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings }: Props) {
   const m = useIsMobile();
   const [showLog, setShowLog] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editVal, setEditVal] = useState("");
+  const [openSessions, setOpenSessions] = useState<string | null>(null);
+  const crewMemberOf = (id: string) => (project.crew || []).find((c) => c.id === id);
   // Live clock for "shift running" indicators (ticks once a minute).
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
@@ -236,6 +242,10 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                 const share = washed > 0 ? (s.washed / washed) * 100 : 0;
                 const rate = s.washed > 0 ? s.revenueCents / s.washed / 100 : 0; // €/ikkuna (personal pay)
                 const shiftStart = shiftStartFor(s.worker);
+                const cm = crewMemberOf(s.worker);
+                const canEditPay = !!onSetEarnings && cm?.role === "host"; // founders adjust own split
+                const overridden = cm?.manualEarningsCents != null;
+                const editing = editId === s.worker;
                 return (
                   <div key={s.worker} style={{ padding: "16px 18px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "15px" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px", gap: 8 }}>
@@ -255,9 +265,50 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                       <div style={{ width: `${share.toFixed(1)}%`, height: "100%", borderRadius: "5px", background: "linear-gradient(90deg,rgba(255,255,255,0.5),#fff)", transition: "width .6s" }} />
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>
-                      <span><b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(s.revenueCents / 100)}</b> · {euroUnit(rate)}/ikkuna</span>
+                      <span>
+                        <b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(s.revenueCents / 100)}</b>
+                        {overridden ? <span style={{ marginLeft: 6, color: "#9ff0bd", fontSize: 10.5 }}>muokattu</span> : ` · ${euroUnit(rate)}/ikkuna`}
+                      </span>
                       <span>{s.hours > 0 ? `${euro(s.eurPerHour)}/h · ${s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} h` : "0 h"}</span>
                     </div>
+                    {canEditPay && !editing && (
+                      <button onClick={() => { setEditId(s.worker); setEditVal(overridden ? String(Math.round((cm!.manualEarningsCents! / 100))) : String(Math.round(s.revenueCents / 100))); }}
+                        style={{ marginTop: 10, width: "100%", padding: "7px", borderRadius: 9, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.7)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>
+                        Muokkaa ansiota
+                      </button>
+                    )}
+                    {canEditPay && editing && (
+                      <div style={{ marginTop: 10, display: "flex", gap: 6, alignItems: "center" }}>
+                        <input value={editVal} onChange={(e) => setEditVal(e.target.value)} inputMode="decimal" autoFocus
+                          style={{ width: 64, padding: "7px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.06)", color: "#fff", fontSize: "13px", textAlign: "right", fontFamily: "var(--font-onest, system-ui, sans-serif)" }} />
+                        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>€</span>
+                        <button onClick={() => { const v = parseFloat(editVal.replace(",", ".")); onSetEarnings!(s.worker, Number.isFinite(v) ? Math.round(v * 100) : null); setEditId(null); }}
+                          style={{ flex: 1, padding: "7px", borderRadius: 8, border: "none", background: "#fff", color: "#0a0a0c", fontSize: "12px", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>Tallenna</button>
+                        {overridden && (
+                          <button onClick={() => { onSetEarnings!(s.worker, null); setEditId(null); }} title="Palauta laskettu"
+                            style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.14)", background: "transparent", color: "rgba(255,255,255,0.6)", fontSize: "12px", cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>↺</button>
+                        )}
+                      </div>
+                    )}
+                    {/* Per-worker session / day log (managers only) */}
+                    {(cm?.sessions?.length ?? 0) > 0 && (
+                      <>
+                        <button onClick={() => setOpenSessions(openSessions === s.worker ? null : s.worker)}
+                          style={{ marginTop: 10, width: "100%", padding: "6px", borderRadius: 8, border: "none", background: "transparent", color: "rgba(255,255,255,0.45)", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-jetbrains-mono, monospace)", letterSpacing: "0.06em" }}>
+                          PÄIVÄKIRJA ({cm!.sessions!.length}) {openSessions === s.worker ? "▲" : "▾"}
+                        </button>
+                        {openSessions === s.worker && (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+                            {[...cm!.sessions!].reverse().slice(0, 10).map(( se, i) => (
+                              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11.5px", color: "rgba(255,255,255,0.6)", padding: "5px 8px", background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>
+                                <span>{new Date(se.end).toLocaleDateString("fi-FI", { day: "numeric", month: "numeric" })} · {se.windows} ikk · {fmtDur(se.minutes * 60000)}</span>
+                                <span style={{ fontWeight: 700, color: "rgba(255,255,255,0.8)" }}>{euro(se.earnedCents / 100)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 );
               })}

@@ -424,9 +424,20 @@ export default function AdminProjectPage() {
   const resolveInitial = (id: string): string => (resolveName(id)[0] || "?").toUpperCase();
 
   const workerStats = computeWorkerStats(project).map((s) => {
-    const cents = Math.round(s.washed * rateForWorker(s.worker));
+    const mem = crew.find((c) => c.id === s.worker);
+    // Manual override (founders' agreed split) wins over the computed pay.
+    const cents = mem?.manualEarningsCents != null ? mem.manualEarningsCents : Math.round(s.washed * rateForWorker(s.worker));
     return { ...s, revenueCents: cents, eurPerHour: s.hours > 0 ? cents / 100 / s.hours : 0 };
   });
+  // Founders can manually set their own day/session earnings (e.g. split 50/50).
+  const setWorkerEarnings = (id: string, cents: number | null) => {
+    setProject((cur) => {
+      if (!cur) return cur;
+      const next = { ...cur, crew: (cur.crew || []).map((mm) => mm.id === id ? { ...mm, manualEarningsCents: cents == null ? undefined : cents } : mm) };
+      void api.updateProject(jobId, next);
+      return next;
+    });
+  };
   const hoursWorkers = (project.workers.length ? project.workers : ["matias", "joonatan"]).map((id) => ({
     id, name: resolveName(id), initial: resolveInitial(id),
   }));
@@ -467,7 +478,7 @@ export default function AdminProjectPage() {
       )}
       <main style={{ position: "relative", zIndex: 10, height: "calc(100% - 62px)" }}>
         {tab === "dashboard" && (
-          <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} />
+          <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} onSetEarnings={setWorkerEarnings} />
         )}
         {tab === "floor" && (
           <FloorView

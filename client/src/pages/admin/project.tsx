@@ -50,19 +50,6 @@ function workerInitial(id: string): string {
   return (workerName(id)[0] || "?").toUpperCase();
 }
 
-/** Most common value in a list (the gig's "standard" subcontractor rate). */
-function modeOf(nums: number[], fallback: number): number {
-  if (!nums.length) return fallback;
-  const counts = new Map<number, number>();
-  let best = nums[0], bestN = 0;
-  for (const n of nums) {
-    const c = (counts.get(n) ?? 0) + 1;
-    counts.set(n, c);
-    if (c > bestN) { bestN = c; best = n; }
-  }
-  return best;
-}
-
 /**
  * Build the display-name map + this gig's pickable crew (for the "who washed"
  * and "default washer" pickers). Admin-linked crew (e.g. Petrus) are masked —
@@ -396,25 +383,32 @@ export default function AdminProjectPage() {
   const deal = fixedDealFor(project);
   const effectivePrice = deal ? deal.pricePerWindow : project.pricePerWindow;
 
-  // Per-person PAY (not the gig price). Each worker earns their own €/window from
-  // the crew. Founders split the per-window MARGIN — i.e. (gig total per window −
-  // the subcontractor rate) / number of founders — computed from the REAL deal
-  // price (37,50 €, not the rounded 38 €). Example FR8: (37,50 − 20) / 2 = 8,75 €.
-  // The big revenue/priority cards stay on the gig deal; only the per-worker
-  // TEKIJÄT figures use personal pay, and names come from the crew.
+  // ── Ansiomalli ──────────────────────────────────────────────────────────────
+  // • Työntekijä: pestyt × oma €/ikkuna (esim. Jani 20 €).
+  // • Perustaja (Joonatan/Matias): 37,50 € jokaisesta ITSE pesemästään ikkunasta
+  //   + tuotto-osuus työntekijöiden ikkunoista: jokaisesta työntekijän pesemästä
+  //   ikkunasta (37,50 − työntekijän rate) jaetaan perustajien kesken (FR8:
+  //   (37,50 − 20) / 2 = 8,75 € / perustaja / työntekijän ikkuna).
+  // Manuaalinen ohitus (manualEarningsCents) voittaa aina. Nimet crew:stä.
   const crew = project.crew ?? [];
   const isFounder = (id: string, role?: string) => role === "host" || FOUNDER_IDS.includes(id);
   const dealTotalCents = Math.round(effectivePrice * 100);
-  const subWorkerCents = modeOf(
-    crew.filter((c) => !isFounder(c.id, c.role)).map((c) => c.perWindowCents),
-    DEFAULT_WORKER_PER_WINDOW_CENTS,
-  );
   const founderCount = Math.max(1, crew.filter((c) => isFounder(c.id, c.role)).length || FOUNDER_IDS.length);
-  const founderPerWindowCents = Math.max(0, Math.round((dealTotalCents - subWorkerCents) / founderCount));
-  const rateForWorker = (id: string): number => {
-    const m = crew.find((c) => c.id === id);
-    if (isFounder(id, m?.role)) return founderPerWindowCents;
-    return m?.perWindowCents ?? dealTotalCents;
+  const baseStats = computeWorkerStats(project);
+  // Profit pool = Σ over worker-washed windows of (deal total − that worker's rate).
+  let profitPoolCents = 0;
+  for (const st of baseStats) {
+    const mm = crew.find((c) => c.id === st.worker);
+    if (!isFounder(st.worker, mm?.role)) {
+      profitPoolCents += st.washed * Math.max(0, dealTotalCents - (mm?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS));
+    }
+  }
+  const founderProfitEachCents = Math.round(profitPoolCents / founderCount);
+  const earningsFor = (st: { worker: string; washed: number }): number => {
+    const mm = crew.find((c) => c.id === st.worker);
+    if (mm?.manualEarningsCents != null) return mm.manualEarningsCents;
+    if (isFounder(st.worker, mm?.role)) return st.washed * dealTotalCents + founderProfitEachCents;
+    return st.washed * (mm?.perWindowCents ?? dealTotalCents);
   };
   const resolveName = (id: string): string => {
     const m = crew.find((c) => c.id === id);
@@ -423,10 +417,13 @@ export default function AdminProjectPage() {
   };
   const resolveInitial = (id: string): string => (resolveName(id)[0] || "?").toUpperCase();
 
-  const workerStats = computeWorkerStats(project).map((s) => {
-    const mem = crew.find((c) => c.id === s.worker);
-    // Manual override (founders' agreed split) wins over the computed pay.
-    const cents = mem?.manualEarningsCents != null ? mem.manualEarningsCents : Math.round(s.washed * rateForWorker(s.worker));
+  // Founders appear even with 0 own windows — they still earn the profit share.
+  const statIds = new Set(baseStats.map((s) => s.worker));
+  for (const f of crew.filter((c) => isFounder(c.id, c.role))) {
+    if (!statIds.has(f.id)) baseStats.push({ worker: f.id, washed: 0, revenueCents: 0, hours: Math.max(0, project.hours?.[f.id] || 0), windowsPerHour: 0, eurPerHour: 0 });
+  }
+  const workerStats = baseStats.map((s) => {
+    const cents = earningsFor(s);
     return { ...s, revenueCents: cents, eurPerHour: s.hours > 0 ? cents / 100 / s.hours : 0 };
   });
   // Founders can manually set their own day/session earnings (e.g. split 50/50).
@@ -438,9 +435,13 @@ export default function AdminProjectPage() {
       return next;
     });
   };
-  const hoursWorkers = (project.workers.length ? project.workers : ["matias", "joonatan"]).map((id) => ({
-    id, name: resolveName(id), initial: resolveInitial(id),
-  }));
+  // Tunnit-näkymä: perustajat + keikan aktiiviset työntekijät (esim. Jani), ei
+  // pelkät johtajat — jotta jokaisen tekijän tunnit näkyvät johtajille.
+  const hoursIds = Array.from(new Set([
+    ...(project.workers.length ? project.workers : ["matias", "joonatan"]),
+    ...crew.filter((c) => c.active && c.role === "worker" && !c.adminLinked).map((c) => c.id),
+  ]));
+  const hoursWorkers = hoursIds.map((id) => ({ id, name: resolveName(id), initial: resolveInitial(id) }));
   // Display-name map + this gig's pickable crew (used by both the "who washed"
   // and "default washer" pickers).
   const { workerNames, gigWorkers } = computeWorkerMaps(project);

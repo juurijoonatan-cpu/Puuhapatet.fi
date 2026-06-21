@@ -20,10 +20,16 @@ työtä ilman, että konteksti katoaa. Päivitä tätä kun logiikka muuttuu.
 - **Työntekijän ansio** = pestyt ikkunat × hänen oma €/ikkuna (crew-jäsenen
   `perWindowCents`, esim. Jani 20 €). Asetetaan adminin Työntekijät-näkymästä
   ("Palkka €/ikkuna").
-- **Perustajien ansio (per ikkuna, kullekin)** = `(kokonaishinta − vakiotyöntekijän
-  rate) / perustajien lkm`. FR8: `(37,50 − 20) / 2 = 8,75 €`. Laskenta:
-  `client/src/pages/admin/project.tsx` → `rateForWorker` (käyttää keikan yleisintä
-  ei-perustaja-rate'a `modeOf`-funktiolla ja jakaa erotuksen perustajien kesken).
+- **Perustajien ansio** (`client/src/pages/admin/project.tsx` → `earningsFor`):
+  - **37,50 € jokaisesta ITSE pesemästään ikkunasta** (koko ikkunan hinta, ei
+    alihankkijaa jakamassa).
+  - **+ tuotto-osuus työntekijöiden ikkunoista**: jokaisesta työntekijän pesemästä
+    ikkunasta `(37,50 € − työntekijän rate)` jaetaan perustajien kesken. FR8:
+    `(37,50 − 20) / 2 = 8,75 € / perustaja / työntekijän ikkuna`.
+  - Summa: `omat × 37,50 € + (tuotto-pooli / perustajien lkm)`. Tämä täsmää keikan
+    kokonaisliikevaihtoon (jokainen ikkuna = 37,50 €, joko perustajalle kokonaan tai
+    työntekijä + perustajien marginaali).
+  - Perustajat näkyvät TEKIJÄT-listalla vaikka eivät olisi itse pesseet (tuotto-osuus).
 - **Iso liikevaihto-/prioriteettikortti** johtajien dashboardissa = keikan deal
   (37,50 × punaiset, katto) — tämä on yrityksen luku, EI per-henkilö.
 

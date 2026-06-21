@@ -113,8 +113,8 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
     .sort((a, b) => b.washed - a.washed);
 
   return (
-    <div style={{ height: "100%", overflowY: "auto", WebkitOverflowScrolling: "touch", padding: m ? "16px 12px calc(96px + env(safe-area-inset-bottom))" : "26px 30px 40px" }}>
-      <div style={{ maxWidth: "1400px", margin: "0 auto" }}>
+    <div style={{ height: "100%", overflowY: "auto", overflowX: "hidden", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch", boxSizing: "border-box", padding: m ? "16px 12px calc(96px + env(safe-area-inset-bottom))" : "26px 30px 40px" }}>
+      <div style={{ maxWidth: "1400px", margin: "0 auto", width: "100%", boxSizing: "border-box" }}>
 
         {/* Header */}
         <div style={{ display: "flex", flexDirection: m ? "column" : "row", alignItems: m ? "center" : "flex-end", justifyContent: "space-between", gap: m ? "6px" : "12px", textAlign: m ? "center" : "left", marginBottom: m ? "14px" : "20px" }}>
@@ -164,9 +164,9 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
 
           {/* Revenue card */}
           <div className="anim-fadeUp-1" style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", padding: "26px", background: "linear-gradient(155deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))", border: "1px solid rgba(255,255,255,0.09)", borderRadius: "22px", backdropFilter: "blur(22px)", WebkitBackdropFilter: "blur(22px)" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={mono}>{deal ? "KERTYNYT SUMMA" : "LIIKEVAIHTO"}</div>
-              <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10.5px", color: "rgba(255,255,255,0.4)" }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "10px", flexWrap: "wrap" }}>
+              <div style={{ ...mono, minWidth: 0 }}>{deal ? "KERTYNYT SUMMA" : "LIIKEVAIHTO"}</div>
+              <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10.5px", color: "rgba(255,255,255,0.4)", flexShrink: 0, whiteSpace: "nowrap" }}>
                 {euroUnit(PRICE)} / {deal ? "PUNAINEN" : "IKKUNA"}
               </div>
             </div>
@@ -197,14 +197,16 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             const outOfDeal = !!deal && g.p !== deal.billablePriority;
             return (
             <div key={g.label} className={`anim-fadeUp-${gi + 2}`} style={{ ...card, padding: "22px", opacity: outOfDeal ? 0.72 : 1 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "18px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "9px" }}>
-                  <span style={{ width: "11px", height: "11px", borderRadius: "50%", background: `rgb(${g.rgb})`, boxShadow: `0 0 10px rgba(${g.rgb},0.8)` }} />
-                  <span style={{ fontSize: "14px", fontWeight: 600 }}>{g.label}</span>
-                  {outOfDeal && <span style={{ fontSize: "9.5px", fontWeight: 600, color: "rgba(255,255,255,0.5)", padding: "1px 6px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.14)" }}>ei sopimuksessa</span>}
-                  {!!deal && !outOfDeal && <span style={{ fontSize: "9.5px", fontWeight: 600, color: "#9ff0bd", padding: "1px 6px", borderRadius: 6, border: "1px solid rgba(95,224,138,0.3)", background: "rgba(95,224,138,0.1)" }}>sopimus</span>}
+              <div style={{ marginBottom: "16px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "9px", minWidth: 0 }}>
+                    <span style={{ width: "11px", height: "11px", borderRadius: "50%", flexShrink: 0, background: `rgb(${g.rgb})`, boxShadow: `0 0 10px rgba(${g.rgb},0.8)` }} />
+                    <span style={{ fontSize: "14px", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{g.label}</span>
+                  </div>
+                  <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>{g.data.pctStr}</span>
                 </div>
-                <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.4)" }}>{g.data.pctStr}</span>
+                {outOfDeal && <span style={{ display: "inline-block", marginTop: 7, fontSize: "9.5px", fontWeight: 600, color: "rgba(255,255,255,0.5)", padding: "2px 7px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.14)" }}>ei sopimuksessa</span>}
+                {!!deal && !outOfDeal && <span style={{ display: "inline-block", marginTop: 7, fontSize: "9.5px", fontWeight: 600, color: "#9ff0bd", padding: "2px 7px", borderRadius: 6, border: "1px solid rgba(95,224,138,0.3)", background: "rgba(95,224,138,0.1)" }}>sopimus</span>}
               </div>
               <div style={{ fontSize: "28px", fontWeight: 700, marginBottom: "3px" }}>
                 {g.data.washed} <span style={{ color: "rgba(255,255,255,0.32)", fontWeight: 500, fontSize: "22px" }}>/ {g.data.total}</span>
@@ -267,7 +269,9 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>
                       <span>
                         <b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(s.revenueCents / 100)}</b>
-                        {overridden ? <span style={{ marginLeft: 6, color: "#9ff0bd", fontSize: 10.5 }}>muokattu</span> : ` · ${euroUnit(rate)}/ikkuna`}
+                        {overridden
+                          ? <span style={{ marginLeft: 6, color: "#9ff0bd", fontSize: 10.5 }}>muokattu</span>
+                          : cm?.role === "host" ? " · sis. tuotto-osuus" : ` · ${euroUnit(rate)}/ikkuna`}
                       </span>
                       <span>{s.hours > 0 ? `${euro(s.eurPerHour)}/h · ${s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} h` : "0 h"}</span>
                     </div>

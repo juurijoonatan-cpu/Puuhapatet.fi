@@ -77,7 +77,7 @@ export const USERS: AdminProfile[] = [
     // vaihtamaan se ja ohjataan suoraan /tyo-työpöydälle. Linkitys: crew-jäsenen
     // linkedUserId = "jani" (aseta työntekijät-näkymästä).
     id: "jani",
-    name: "Jani",
+    name: "Jani Ihalainen",
     role: "STAFF",
     photoUrl: "/fr8/jani.jpg",
     dashboardOnly: true,

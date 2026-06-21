@@ -32,23 +32,21 @@
  * relying on them. Bump WORKER_AGREEMENT_VERSION to force everyone to re-sign.
  */
 
-export const WORKER_AGREEMENT_VERSION = "2026-08";
+export const WORKER_AGREEMENT_VERSION = "2026-06";
 
 /**
- * Two-phase rollout switch for the FR8 gig.
+ * Rollout switch for the FR8 alihankkija contract.
  *
- *   false → SOFT START (now): a worker opens their link, sees the intro, types
- *           only their NAME, and goes straight to their dashboard. No profile
- *           questionnaire and no agreement signing yet — work can begin.
+ *   false → SOFT START: a worker opens their link and goes straight to the
+ *           dashboard. No questionnaire and no signing yet.
  *
- *   true  → GATED (later, once the contracts are finalised): set this to true and
- *           bump WORKER_AGREEMENT_VERSION. Anyone already in the dashboard then
- *           sees a sticky header telling them to read the extra info and sign the
- *           agreements before they can keep marking windows; new workers go
- *           through the full flow. Already-onboarded workers are NOT thrown out —
- *           they stay on their dashboard behind the banner.
+ *   true  → GATED (now — the official Alihankkijasopimus v2026-06 is finalised):
+ *           before the dashboard opens the worker fills their profile, confirms
+ *           insurance status + accepts the risk, reads & accepts every agreement,
+ *           and signs once. Already-entered workers must complete this before they
+ *           can keep marking windows (server also blocks marking until signed).
  */
-export const WORKER_AGREEMENTS_GATED = false;
+export const WORKER_AGREEMENTS_GATED = true;
 
 export interface AgreementClause {
   id: string;
@@ -123,6 +121,7 @@ const ALIHANKINTA: WorkerAgreement = {
       title: "Vastuu, vakuutus ja vahingot",
       body: [
         "Vastaan oman työni laadusta ja huolellisuudesta sekä tuottamuksella aiheuttamistani vahingoista oman toimintani ja vakuutusteni mukaisesti.",
+        "Jos rikon tai vahingoitan jotain, olen vastuussa siitä: huolehdin ja maksan vahingosta aiheutuvat korvaukset, vaikka vakuutusta ei olisi voimassa.",
         "Ilmoitan vahingoista, rikkoutumisista ja vaaratilanteista välittömästi Brändin edustajille.",
         "Ennen työtä valokuvadokumentoidut vauriot sekä huonokuntoisista tai hauraista rakenteista huolellisesta työstä huolimatta aiheutuvat seuraukset (esim. hilseilevän maalin irtoaminen) eivät ole vastuullani.",
         "Käytän työvälineitä, avaimia ja kulkuoikeuksia huolellisesti ja palautan kaiken minulle uskotun omaisuuden pyydettäessä ja viimeistään yhteistyön päättyessä.",
@@ -166,7 +165,7 @@ const ALIHANKINTA: WorkerAgreement = {
   clauses: [
     { id: "itsenainen", text: "Ymmärrän toimivani itsenäisenä alihankkijana, en työsuhteessa, eikä minulle synny työsuhteen oikeuksia (palkka, loma, sairausajan korvaus, irtisanomissuoja)." },
     { id: "verot", text: "Vastaan itse veroistani, ennakkoperinnästä, mahdollisesta YEL:stä ja arvonlisäverosta. Brändi ei pidätä veroja puolestani." },
-    { id: "vakuutus", text: "Vastaan itse omasta vakuutusturvastani ja vastuustani työn aikana ja teen työn omalla riskilläni." },
+    { id: "vakuutus", text: "Vastaan itse vakuutusturvastani ja teen työn omalla riskilläni. Ymmärrän, että vastaan aiheuttamistani vahingoista myös silloin, kun vakuutusta ei ole voimassa." },
     { id: "korvaus", text: "Hyväksyn urakkaperusteisen, ikkunakohtaisen korvausmallin ja laskutan korvaukseni oman Y-tunnukseni kautta — en laskuta asiakasta suoraan." },
   ],
   accept:
@@ -356,7 +355,7 @@ export const PROFILE_QUESTIONS: ProfileQuestion[] = [
   { id: "fullName", label: "Koko nimi", type: "text", required: true, placeholder: "Etunimi Sukunimi" },
   { id: "phone", label: "Puhelinnumero", type: "tel", required: true, placeholder: "+358 40 …" },
   { id: "email", label: "Sähköposti", type: "email", required: true, placeholder: "nimi@esimerkki.fi" },
-  { id: "city", label: "Kotikaupunki", type: "text", placeholder: "Esim. Espoo" },
+  { id: "address", label: "Osoite", type: "text", placeholder: "Katuosoite, postinumero ja kaupunki" },
   { id: "yTunnus", label: "Y-tunnus (jos on)", type: "text", placeholder: "1234567-8", help: "Tarvitaan laskutukseen. Voit hankkia sen myös ennen ensimmäistä laskua." },
   { id: "iban", label: "Tilinumero (IBAN)", type: "text", placeholder: "FI…", help: "Korvausten maksua varten." },
   { id: "experience", label: "Aiempi kokemus ikkunanpesusta tai siivouksesta", type: "textarea", placeholder: "Kerro lyhyesti…" },
@@ -367,3 +366,18 @@ export const PROFILE_QUESTIONS: ProfileQuestion[] = [
 ];
 
 export const PROFILE_REQUIRED_IDS = PROFILE_QUESTIONS.filter((q) => q.required).map((q) => q.id);
+
+// ─── Insurance status + risk acknowledgement (asked during onboarding) ──────────
+// The worker states whether their insurances are in force (they may start without
+// and update later), and must explicitly accept that they carry the risk either
+// way. Stored in the profile answers under these keys.
+
+export const INSURANCE_ANSWER_KEY = "insuranceValid"; // "kylla" | "ei"
+export const RISK_ACK_KEY = "riskAck";                 // "1" once accepted
+
+export const INSURANCE_QUESTION =
+  "Onko sinulla voimassa olevat vakuutukset? (toiminnan vastuuvakuutus ja tapaturmavakuutus)";
+export const INSURANCE_LATER_NOTE =
+  "Voit aloittaa ilman ja päivittää tiedon myöhemmin työpöydältä, kun hankit vakuutukset.";
+export const RISK_ACK_TEXT =
+  "Ymmärrän, että teen työn omalla riskilläni ja vastaan aiheuttamistani vahingoista myös silloin, kun vakuutusta ei ole voimassa.";

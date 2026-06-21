@@ -18,6 +18,7 @@ import { api, type WorkerView } from "@/lib/api";
 import type { WindowStatus } from "@shared/project";
 import {
   WORKER_AGREEMENTS, PROFILE_QUESTIONS, PROFILE_REQUIRED_IDS, WORKER_AGREEMENT_VERSION,
+  INSURANCE_QUESTION, INSURANCE_LATER_NOTE, RISK_ACK_TEXT, INSURANCE_ANSWER_KEY, RISK_ACK_KEY,
   type WorkerAgreement,
 } from "@shared/worker-agreements";
 import InkReveal from "@/components/InkReveal";
@@ -393,6 +394,9 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
   // ── Profile ──
   if (step === "profile") {
     const missing = PROFILE_REQUIRED_IDS.filter((id) => !(answers[id] || "").trim());
+    const insurance = answers[INSURANCE_ANSWER_KEY] || "";
+    const riskOk = answers[RISK_ACK_KEY] === "1";
+    const canContinue = missing.length === 0 && !!insurance && riskOk;
     return (
       <Paper>
         <Wrap>
@@ -408,10 +412,38 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
               {q.help && <span style={{ fontSize: 11.5, color: T.muted }}>{q.help}</span>}
             </label>
           ))}
+
+          {/* Insurance status (can update later) + risk acknowledgement */}
+          <div style={{ marginTop: 6, marginBottom: 14, padding: 14, borderRadius: 12, background: T.paper, border: `1px solid ${T.hair}` }}>
+            <p style={{ ...fieldLabel, marginBottom: 8 }}>{INSURANCE_QUESTION} *</p>
+            <div style={{ display: "flex", gap: 8 }}>
+              {([["kylla", "Kyllä"], ["ei", "Ei vielä"]] as [string, string][]).map(([val, label]) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => setAnswer(INSURANCE_ANSWER_KEY, val)}
+                  style={{
+                    flex: 1, padding: "11px", borderRadius: 10, cursor: "pointer", fontFamily: FONT, fontSize: 14, fontWeight: 600,
+                    border: `1.5px solid ${insurance === val ? T.green : T.hair}`,
+                    background: insurance === val ? "rgba(62,124,89,0.10)" : "#fff",
+                    color: insurance === val ? T.green : T.ink,
+                  }}
+                >
+                  {insurance === val ? "✓ " : ""}{label}
+                </button>
+              ))}
+            </div>
+            <p style={{ fontSize: 11.5, color: T.muted, margin: "8px 0 0", lineHeight: 1.5 }}>{INSURANCE_LATER_NOTE}</p>
+            <label style={{ display: "flex", gap: 10, alignItems: "flex-start", marginTop: 12, cursor: "pointer", fontSize: 13, lineHeight: 1.5 }}>
+              <input type="checkbox" checked={riskOk} onChange={(e) => setAnswer(RISK_ACK_KEY, e.target.checked ? "1" : "")} style={{ marginTop: 3, width: 18, height: 18, flexShrink: 0 }} />
+              <span>{RISK_ACK_TEXT}</span>
+            </label>
+          </div>
+
           <button
-            disabled={missing.length > 0}
+            disabled={!canContinue}
             onClick={() => setStep({ agreementIndex: 0 })}
-            style={{ ...primaryBtn, opacity: missing.length ? 0.5 : 1, cursor: missing.length ? "not-allowed" : "pointer" }}
+            style={{ ...primaryBtn, opacity: canContinue ? 1 : 0.5, cursor: canContinue ? "pointer" : "not-allowed" }}
           >
             Jatka sopimuksiin →
           </button>
@@ -609,7 +641,7 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
   const noop = useCallback(() => {}, []);
 
   return (
-    <div className="fr8-root" style={{ position: "fixed", inset: 0, background: "#060607", color: "#fff", display: "flex", flexDirection: "column", fontFamily: FONT, overflow: "hidden" }}>
+    <div className="fr8-root" style={{ position: "fixed", inset: 0, background: "#060607", color: "#fff", display: "flex", flexDirection: "column", fontFamily: FONT, overflow: "hidden", overscrollBehavior: "none", WebkitTapHighlightColor: "transparent", WebkitUserSelect: "none", userSelect: "none" }}>
       {/* Header */}
       <div style={{ flexShrink: 0, padding: "calc(12px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 12px max(16px, env(safe-area-inset-left))", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
         <div>
@@ -1026,6 +1058,45 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
   );
 }
 
+/** Update insurance status later, once the worker has obtained the policies. */
+function InsuranceCard({ token, view, setView }: { token: string; view: WorkerView; setView: (v: WorkerView) => void }) {
+  const profile = view.worker.profile;
+  const current = (profile?.answers?.[INSURANCE_ANSWER_KEY] as string) || "";
+  const [busy, setBusy] = useState(false);
+  const valid = current === "kylla";
+
+  const setStatus = async (val: string) => {
+    if (busy || val === current) return;
+    setBusy(true);
+    const merged = { ...(profile ?? {}), answers: { ...(profile?.answers ?? {}), [INSURANCE_ANSWER_KEY]: val } };
+    const res = await api.crewOnboard(token, { profile: merged, agreements: [] });
+    setBusy(false);
+    if (res.ok && res.data?.view) setView(res.data.view);
+  };
+
+  return (
+    <div style={{ padding: 16, borderRadius: 16, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", marginBottom: 14 }}>
+      <p style={{ margin: "0 0 4px", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)" }}>Vakuutukset</p>
+      <p style={{ margin: "0 0 12px", fontSize: 12.5, color: "rgba(255,255,255,0.6)", lineHeight: 1.5 }}>
+        {valid
+          ? "Olet ilmoittanut vakuutukset voimassa oleviksi."
+          : "Vakuutuksia ei ole vielä merkitty voimassa oleviksi. Voit päivittää tiedon tästä, kun hankit ne."}
+      </p>
+      <div style={{ display: "flex", gap: 8 }}>
+        {([["kylla", "Voimassa"], ["ei", "Ei vielä"]] as [string, string][]).map(([val, label]) => (
+          <button key={val} onClick={() => setStatus(val)} disabled={busy}
+            style={{ flex: 1, padding: "10px", borderRadius: 10, cursor: "pointer", fontFamily: FONT, fontSize: 13.5, fontWeight: 600,
+              border: `1.5px solid ${current === val ? "#7CE0A6" : "rgba(255,255,255,0.18)"}`,
+              background: current === val ? "rgba(124,224,166,0.14)" : "transparent",
+              color: current === val ? "#7CE0A6" : "rgba(255,255,255,0.7)", opacity: busy ? 0.6 : 1 }}>
+            {current === val ? "✓ " : ""}{label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function NotesTab({ token, view, setView }: { token: string; view: WorkerView; setView: (v: WorkerView) => void }) {
   const [text, setText] = useState("");
   const add = async () => {
@@ -1037,6 +1108,7 @@ function NotesTab({ token, view, setView }: { token: string; view: WorkerView; s
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: 20 }}>
       <InfoNotice />
+      <InsuranceCard token={token} view={view} setView={setView} />
       <AccessCard />
       <p style={{ margin: "4px 0 10px", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)" }}>Omat muistiinpanot</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>

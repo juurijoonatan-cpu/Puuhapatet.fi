@@ -44,7 +44,15 @@ function profileBlock(member: CrewMember): string {
     const v = (answers[q.id] ?? (p as any)[q.id]) as string | undefined;
     push(q.label, v);
   }
-  // Any extra answers not covered by the prebaked questionnaire.
+  // Insurance status + risk acknowledgement (captured at onboarding) — readable.
+  seen.add("insuranceValid"); seen.add("riskAck");
+  if (answers.insuranceValid) {
+    push("Vakuutukset voimassa", answers.insuranceValid === "kylla" ? "Kyllä" : "Ei vielä (päivittää myöhemmin)");
+  }
+  if (answers.riskAck === "1") {
+    push("Riskin hyväksyntä", "Hyväksynyt: tekee työn omalla riskillään, vastaa vahingoista myös ilman vakuutusta");
+  }
+  // Any extra answers not covered above.
   for (const [k, v] of Object.entries(answers)) {
     if (!seen.has(k)) push(k, v);
   }

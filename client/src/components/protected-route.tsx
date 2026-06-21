@@ -12,6 +12,7 @@ import { useLocation } from "wouter";
 import { isAdminAuthenticated } from "@/pages/admin/login";
 import { getAdminProfile, isProfileComplete } from "@/lib/admin-profile";
 import { hasSignedCurrent, refreshSignatureState } from "@/lib/member-agreement";
+import { api } from "@/lib/api";
 import { AdminNav } from "./admin-nav";
 import { AdminAssistant } from "./admin-assistant";
 import { PageLoadingSkeleton } from "./loading-skeleton";
@@ -46,6 +47,17 @@ export function ProtectedRoute({ children, requireProfile = true, bare = false, 
       }
 
       const profile = getAdminProfile();
+
+      // Dashboard-only worker (e.g. Jani): never sees the admin. Bounce straight
+      // to their own gig dashboard, whatever admin route they landed on.
+      if (profile?.dashboardOnly) {
+        const r = await api.getMyDashboard();
+        if (cancelled) return;
+        setAuthState("unauthenticated"); // keep the skeleton; never render admin
+        navigate(r.ok && r.data?.token ? `/tyo/${r.data.token}` : "/admin/login", { replace: true });
+        return;
+      }
+
       if (requireProfile) {
         if (!isProfileComplete(profile)) {
           setAuthState("unauthenticated");

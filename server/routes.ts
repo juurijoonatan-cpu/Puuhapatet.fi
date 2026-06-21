@@ -46,6 +46,9 @@ const AUTH_SECRET = process.env.AUTH_SECRET || "";
 // First-time password for an account that has never set one. Lets the team log
 // in once after the upgrade; the password is hashed on first successful login.
 const ADMIN_DEFAULT_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || "";
+// Per-user starter passwords for brand-new accounts (worker logins). Accepted
+// only until the user sets their own; then it's hashed and this is ignored.
+const INITIAL_PASSWORDS: Record<string, string> = { jani: "Jani123" };
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 function b64url(buf: Buffer): string {
@@ -482,11 +485,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const stored = row?.passwordHash || "";
 
       let ok = false;
+      let usedStarter = false;
       if (stored) {
         ok = verifyPassword(String(password), stored);
-      } else if (ADMIN_DEFAULT_PASSWORD) {
-        // Account has no password yet → accept the one-time default.
-        ok = String(password) === ADMIN_DEFAULT_PASSWORD;
+      } else {
+        // Account has no password yet → accept a per-user starter password (e.g.
+        // Jani logs in once with "Jani123") or the shared one-time default.
+        const starter = INITIAL_PASSWORDS[String(userId).toLowerCase()];
+        if (starter && String(password) === starter) { ok = true; usedStarter = true; }
+        else if (ADMIN_DEFAULT_PASSWORD && String(password) === ADMIN_DEFAULT_PASSWORD) { ok = true; usedStarter = true; }
       }
       if (!ok) return res.status(401).json({ error: "Virheellinen salasana." });
 
@@ -503,7 +510,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const role = row?.role || "staff";
       const token = signToken({ sub: String(userId), role, exp: Date.now() + TOKEN_TTL_MS });
-      res.json({ ok: true, token, role });
+      // Tell the client to prompt for a new password when a starter was used.
+      res.json({ ok: true, token, role, mustChangePassword: usedStarter });
     } catch (e: any) {
       console.error("Login error:", e);
       res.status(500).json({ error: e.message });
@@ -3250,6 +3258,37 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     return matches[0] ?? null;
   }
 
+  // Resolve the logged-in admin user → their personal worker dashboard token.
+  // For "dashboard-only" users (e.g. Jani): after admin login the client calls
+  // this and redirects to /tyo/<token>. Auto-matches a crew member with NO setup
+  // needed, in priority order:
+  //   1. linkedUserId === userId   (explicit link, if ever set)
+  //   2. crew id   === userId      (joonatan/matias/petrus convention)
+  //   3. first name === userId     (e.g. user "jani" → crew member "Jani")
+  // Authed route → only the user themselves can resolve their own link.
+  app.get("/api/admin/my-dashboard", async (req, res) => {
+    try {
+      const sub = ((req as any).admin?.sub ?? "").toLowerCase();
+      if (!sub) return res.status(401).json({ error: "Kirjautuminen vaaditaan" });
+      const firstName = (m: CrewMember) => (m.name || "").trim().split(/\s+/)[0]?.toLowerCase() || "";
+      const rows = await db.select().from(jobs).where(eq(jobs.isCustomGig, true));
+      let fallback: string | null = null; // a name match, used only if no stronger match
+      for (const job of rows) {
+        const project = parseProject(job.projectData ?? null);
+        for (const m of project?.crew ?? []) {
+          if (!m.active) continue;
+          if ((m.linkedUserId && m.linkedUserId.toLowerCase() === sub) || m.id.toLowerCase() === sub) {
+            return res.json({ ok: true, token: m.token }); // strong match → done
+          }
+          if (!fallback && firstName(m) === sub) fallback = m.token;
+        }
+      }
+      res.json({ ok: true, token: fallback });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Mint a crew token that is unique across EVERY custom gig (sanitizeCrew only
   // dedupes within one project), so two gigs can never collide on a token.
   async function collectAllCrewTokens(): Promise<Set<string>> {
@@ -3337,7 +3376,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           name: member.profile?.fullName ?? member.name,
           yTunnus: member.profile?.yTunnus ?? null,
           iban: member.profile?.iban ?? null,
-          address: member.profile?.city ?? null,
+          address: member.profile?.answers?.address ?? member.profile?.city ?? null,
         },
       },
       // Puuhapatet -> worker payouts (newest-first). The worker sees and approves
@@ -3732,6 +3771,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           perWindowCents: req.body?.perWindowCents ?? m.perWindowCents,
           active: typeof req.body?.active === "boolean" ? req.body.active : m.active,
           role: req.body?.role ?? m.role,
+          // Link / unlink an admin login user to this dashboard ("" clears it).
+          linkedUserId: req.body?.linkedUserId === undefined ? m.linkedUserId : (req.body.linkedUserId || undefined),
           // Host can rotate a leaked link — the old link dies immediately.
           token: rotatedToken ?? m.token,
         });

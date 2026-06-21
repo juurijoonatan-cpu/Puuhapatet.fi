@@ -1060,9 +1060,15 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
 
   const addManual = async () => {
     const h = parseFloat(manual.replace(",", "."));
-    if (!Number.isFinite(h) || h === 0) return;
-    const res = await api.crewAddHours(token, Math.round(h * 100) / 100);
-    if (res.ok && res.data?.view) { setView(res.data.view); setManual(""); }
+    if (!Number.isFinite(h) || h <= 0 || busy) return;
+    setBusy(true);
+    const res = await api.crewManualShift(token, Math.round(h * 100) / 100);
+    setBusy(false);
+    if (res.ok && res.data?.view) {
+      setView(res.data.view);
+      setManual("");
+      setRecap(res.data.view.worker.sessions[0] ?? null); // show the logged day
+    }
   };
 
   const mmss = (ms: number) => {
@@ -1097,9 +1103,14 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
         </p>
       </div>
 
-      <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 6 }}>
-        <input value={manual} onChange={(e) => setManual(e.target.value)} placeholder="Lisää tunteja käsin (esim. 2,5)" inputMode="decimal" style={{ ...inputStyle, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff" }} />
-        <button onClick={addManual} style={{ ...secondaryBtn, color: "#fff", border: "1px solid rgba(255,255,255,0.2)", whiteSpace: "nowrap" }}>Lisää</button>
+      <div style={{ marginTop: 6 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <input value={manual} onChange={(e) => setManual(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addManual()} placeholder="Kirjaa työpäivä käsin (esim. 2,5 h)" inputMode="decimal" style={{ ...inputStyle, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff" }} />
+          <button onClick={addManual} disabled={busy} style={{ ...secondaryBtn, color: "#fff", border: "1px solid rgba(255,255,255,0.2)", whiteSpace: "nowrap", opacity: busy ? 0.6 : 1 }}>Kirjaa</button>
+        </div>
+        <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
+          Unohtuiko vuoron aloitus? Kirjaa tehdyt tunnit käsin — päivä tallentuu päiväkirjaan.
+        </p>
       </div>
 
       <div style={{ marginTop: 20, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -1116,9 +1127,11 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
               <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", borderRadius: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
                 <div>
                   <p style={{ margin: 0, fontSize: 13.5, fontWeight: 600 }}>{dayMonth(s.end)}</p>
-                  <p style={{ margin: "2px 0 0", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{s.windows} ikkunaa · {fmtDuration(s.minutes)}</p>
+                  <p style={{ margin: "2px 0 0", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{s.manual ? `Käsin kirjattu · ${fmtDuration(s.minutes)}` : `${s.windows} ikkunaa · ${fmtDuration(s.minutes)}`}</p>
                 </div>
-                <span style={{ fontSize: 15, fontWeight: 700, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(s.earnedCents)}</span>
+                {s.manual
+                  ? <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.55)", fontVariantNumeric: "tabular-nums" }}>{fmtDuration(s.minutes)}</span>
+                  : <span style={{ fontSize: 15, fontWeight: 700, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(s.earnedCents)}</span>}
               </div>
             ))}
           </div>
@@ -1129,15 +1142,21 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
       {recap && (
         <div onClick={() => setRecap(null)} style={{ position: "fixed", inset: 0, zIndex: 70, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 340, background: "#0f1216", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 18, padding: 24, textAlign: "center" }}>
-            <div style={{ fontSize: 40 }}>🎉</div>
-            <h2 style={{ margin: "8px 0 2px", fontSize: 22, fontWeight: 800, color: "#fff" }}>Hyvää työtä!</h2>
-            <p style={{ margin: "0 0 18px", fontSize: 13.5, color: "rgba(255,255,255,0.6)" }}>Päivän yhteenveto</p>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
-              <Stat label="Ikkunaa" value={String(recap.windows)} />
-              <Stat label="Ansio" value={euro(recap.earnedCents)} />
-              <Stat label="Kesto" value={fmtDuration(recap.minutes)} />
-              <Stat label="€ / tunti" value={recap.minutes > 0 ? euro(Math.round((recap.earnedCents / (recap.minutes / 60)))) : "—"} />
-            </div>
+            <div style={{ fontSize: 40 }}>{recap.manual ? "📝" : "🎉"}</div>
+            <h2 style={{ margin: "8px 0 2px", fontSize: 22, fontWeight: 800, color: "#fff" }}>{recap.manual ? "Päivä kirjattu" : "Hyvää työtä!"}</h2>
+            <p style={{ margin: "0 0 18px", fontSize: 13.5, color: "rgba(255,255,255,0.6)" }}>{recap.manual ? "Käsin kirjattu työpäivä" : "Päivän yhteenveto"}</p>
+            {recap.manual ? (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, marginBottom: 16 }}>
+                <Stat label="Kesto" value={fmtDuration(recap.minutes)} />
+              </div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+                <Stat label="Ikkunaa" value={String(recap.windows)} />
+                <Stat label="Ansio" value={euro(recap.earnedCents)} />
+                <Stat label="Kesto" value={fmtDuration(recap.minutes)} />
+                <Stat label="€ / tunti" value={recap.minutes > 0 ? euro(Math.round((recap.earnedCents / (recap.minutes / 60)))) : "—"} />
+              </div>
+            )}
             <button onClick={() => setRecap(null)} style={{ ...primaryBtn, background: T.green }}>Valmis</button>
           </div>
         </div>

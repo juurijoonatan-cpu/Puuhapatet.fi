@@ -717,6 +717,10 @@ export const api = {
   crewAddHours: (token: string, delta: number) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/hours`, { delta }),
 
+  // Log a whole work day by hand — adds the hours and a diary session.
+  crewManualShift: (token: string, hours: number) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/manual-session`, { hours }),
+
   // Start/end the work-hour timer. On end, pass worked minutes (breaks deducted)
   // so the session log records the right duration.
   crewShift: (token: string, start: boolean, minutes?: number) =>

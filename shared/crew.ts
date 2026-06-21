@@ -55,6 +55,7 @@ export interface CrewSession {
   minutes: number;      // worked minutes (breaks deducted)
   windows: number;      // windows washed during the session
   earnedCents: number;  // windows × the worker's own per-window rate
+  manual?: boolean;     // true if logged by hand (no live timer) — windows/earnings unknown
 }
 
 /**
@@ -325,6 +326,7 @@ export function sanitizeCrewMember(input: any): CrewMember | null {
         minutes: Math.max(0, Math.round(Number(s?.minutes) || 0)),
         windows: Math.max(0, Math.floor(Number(s?.windows) || 0)),
         earnedCents: Math.max(0, Math.floor(Number(s?.earnedCents) || 0)),
+        ...(s?.manual ? { manual: true } : {}),
       }))
       .filter((s: CrewSession) => s.start > 0 && s.end > 0),
     notes,

@@ -61,34 +61,37 @@ export default function HoursView({ workers, hours, hourLog, stats, onAddHours }
         </div>
 
         {/* Combined total + team throughput */}
-        <div style={{ display: "flex", flexDirection: "column", gap: m ? "14px" : "18px", padding: m ? "18px" : "24px 28px", background: "linear-gradient(155deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))", border: "1px solid rgba(255,255,255,0.09)", borderRadius: "22px", backdropFilter: "blur(22px)", WebkitBackdropFilter: "blur(22px)", marginBottom: m ? "12px" : "16px" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "16px" }}>
-            <div>
-              <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", letterSpacing: "0.14em", color: "rgba(255,255,255,0.45)", marginBottom: "7px" }}>YHTEENSÄ TEHTYJÄ TUNTEJA</div>
-              <div style={{ display: "flex", alignItems: "baseline", gap: "8px" }}>
-                <span style={{ fontSize: m ? "38px" : "48px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{fmtH(combined)}</span>
-                <span style={{ fontSize: "18px", color: "rgba(255,255,255,0.45)", fontWeight: 500 }}>h</span>
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: m ? "20px" : "28px" }}>
-              {workers.map((w) => (
-                <div key={w.id} style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: "12px", color: "rgba(255,255,255,0.45)", marginBottom: "3px" }}>{w.name}</div>
-                  <div style={{ fontSize: "22px", fontWeight: 600, fontFamily: "var(--font-jetbrains-mono, monospace)" }}>{fmtH(hours[w.id] || 0)} h</div>
-                </div>
-              ))}
+        <div style={{ display: "flex", flexDirection: "column", gap: m ? "16px" : "20px", padding: m ? "18px" : "24px 28px", background: "linear-gradient(155deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))", border: "1px solid rgba(255,255,255,0.09)", borderRadius: "22px", backdropFilter: "blur(22px)", WebkitBackdropFilter: "blur(22px)", marginBottom: m ? "12px" : "16px" }}>
+          <div>
+            <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", letterSpacing: "0.14em", color: "rgba(255,255,255,0.45)", marginBottom: "7px" }}>YHTEENSÄ TEHTYJÄ TUNTEJA</div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: "8px" }}>
+              <span style={{ fontSize: m ? "40px" : "48px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{fmtH(combined)}</span>
+              <span style={{ fontSize: "18px", color: "rgba(255,255,255,0.45)", fontWeight: 500 }}>h</span>
             </div>
           </div>
 
-          {/* Hourly-rate optimisation across the team */}
-          <div style={{ display: "grid", gridTemplateColumns: m ? "repeat(2, minmax(0,1fr))" : "repeat(4, minmax(0,1fr))", gap: "10px", paddingTop: m ? "14px" : "18px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+          {/* Per-worker hours — a calm wrapping grid instead of a cramped row */}
+          <div style={{ display: "grid", gridTemplateColumns: m ? "repeat(3, minmax(0,1fr))" : "repeat(auto-fill, minmax(120px, 1fr))", gap: m ? "8px" : "10px" }}>
+            {workers.map((w) => (
+              <div key={w.id} style={{ padding: m ? "10px 12px" : "12px 14px", background: "rgba(255,255,255,0.03)", borderRadius: "13px" }}>
+                <div style={{ fontSize: "12px", color: "rgba(255,255,255,0.5)", marginBottom: "4px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{w.name}</div>
+                <div style={{ display: "flex", alignItems: "baseline", gap: "4px" }}>
+                  <span style={{ fontSize: m ? "19px" : "22px", fontWeight: 600, fontFamily: "var(--font-jetbrains-mono, monospace)" }}>{fmtH(hours[w.id] || 0)}</span>
+                  <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.4)" }}>h</span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Hourly-rate optimisation across the team — borderless cells for a clean fit */}
+          <div style={{ display: "grid", gridTemplateColumns: m ? "repeat(2, minmax(0,1fr))" : "repeat(4, minmax(0,1fr))", gap: "10px", paddingTop: m ? "16px" : "18px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
             {[
               { label: "TIIMIN €/H", val: teamEurPerHour > 0 ? fmtEur(teamEurPerHour) : "—", sub: "tuotto / tunti" },
               { label: "IKK / H", val: teamWinPerHour > 0 ? fmtH(teamWinPerHour) : "—", sub: "tahti" },
               { label: "IKKUNAT", val: String(teamWashed), sub: "pesty" },
               { label: "LIIKEVAIHTO", val: fmtEur(teamRevenue), sub: "kertynyt" },
             ].map((c) => (
-              <div key={c.label} style={{ padding: "12px 14px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "13px" }}>
+              <div key={c.label} style={{ padding: "12px 14px", background: "rgba(255,255,255,0.03)", borderRadius: "13px" }}>
                 <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)", marginBottom: "6px" }}>{c.label}</div>
                 <div style={{ fontSize: "20px", fontWeight: 700, lineHeight: 1 }}>{c.val}</div>
                 <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.4)", marginTop: "3px" }}>{c.sub}</div>
@@ -124,7 +127,7 @@ export default function HoursView({ workers, hours, hourLog, stats, onAddHours }
                     { label: "IKK / H", val: st && st.windowsPerHour > 0 ? fmtH(st.windowsPerHour) : "—", sub: "tahti" },
                     { label: "€ / H", val: st && st.eurPerHour > 0 ? fmtEur(st.eurPerHour) : "—", sub: "tuotto" },
                   ].map((c) => (
-                    <div key={c.label} style={{ padding: "11px 12px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "13px" }}>
+                    <div key={c.label} style={{ padding: "11px 12px", background: "rgba(255,255,255,0.03)", borderRadius: "13px" }}>
                       <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)", marginBottom: "5px" }}>{c.label}</div>
                       <div style={{ fontSize: "18px", fontWeight: 700, lineHeight: 1 }}>{c.val}</div>
                       <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.4)", marginTop: "2px" }}>{c.sub}</div>

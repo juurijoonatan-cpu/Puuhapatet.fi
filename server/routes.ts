@@ -3621,6 +3621,32 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // Worker logs a whole work day by hand (forgot the timer). Records the hours in
+  // the ledger AND appends a session so the day shows up in the diary. Windows /
+  // earnings are left at 0 (washed windows are tracked on the map separately).
+  app.post("/api/crew/:token/manual-session", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const hours = Math.round((Number(req.body?.hours) || 0) * 100) / 100;
+      if (!(hours > 0)) return res.status(400).json({ error: "tunnit puuttuu" });
+      const minutes = Math.round(hours * 60);
+      const end = Date.now();
+      const session = { start: end - minutes * 60000, end, minutes, windows: 0, earnedCents: 0, manual: true };
+      project.hours[member.id] = Math.max(0, +(((project.hours[member.id] || 0) + hours).toFixed(2)));
+      project.hourLog = [{ worker: member.id, delta: hours, ts: end, by: member.id }, ...(project.hourLog || [])].slice(0, 200);
+      project.crew = (project.crew || []).map((m) =>
+        m.id !== member.id ? m : { ...m, sessions: [...(m.sessions || []), session].slice(-200) },
+      );
+      const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
+      res.json({ ok: true, view: workerView(saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
   // Worker adds a note.
   app.post("/api/crew/:token/note", async (req, res) => {
     try {

@@ -107,12 +107,12 @@ export default function LandingPage() {
         <div className="container mx-auto px-4 md:px-6">
           <div className="mb-20">
             <div className="grid grid-cols-1 md:grid-cols-[5fr_6fr] gap-6 md:items-stretch">
-              {/* Left: image, rounded all corners */}
-              <div className="rounded-2xl overflow-hidden premium-shadow">
+              {/* Left: image fills full column height */}
+              <div className="rounded-2xl overflow-hidden premium-shadow h-full min-h-[280px]">
                 <img
                   src="/work-hero.jpg"
                   alt="Ikkunanpesu"
-                  className="w-full block rounded-2xl"
+                  className="w-full h-full object-cover object-center"
                 />
               </div>
               {/* Right: all 3 trust cards stacked, same height as image */}
@@ -141,6 +141,58 @@ export default function LandingPage() {
             </div>
           </div>
           
+          {/* Work gallery — real photos from the field */}
+          <div className="mb-20">
+            <div className="text-center mb-8">
+              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium mb-3">
+                <Sparkles className="w-4 h-4" />
+                <span>{t("gallery.subtitle")}</span>
+              </div>
+              <h2 className="text-2xl md:text-3xl font-semibold text-foreground">
+                {t("gallery.title")}
+              </h2>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-[6fr_5fr] gap-4 md:gap-5">
+              {/* Left: tall hero photo */}
+              <div className="group relative rounded-2xl overflow-hidden premium-shadow aspect-[3/2] md:aspect-auto md:min-h-[360px]">
+                <img
+                  src="/work-glass.jpg"
+                  alt={t("gallery.1.caption")}
+                  className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/0 to-transparent" />
+                <span className="absolute bottom-4 left-5 text-white font-medium text-sm md:text-base drop-shadow">
+                  {t("gallery.1.caption")}
+                </span>
+              </div>
+              {/* Right: two stacked photos — hidden on mobile */}
+              <div className="hidden md:grid grid-rows-2 gap-4 md:gap-5">
+                <div className="group relative rounded-2xl overflow-hidden premium-shadow">
+                  <img
+                    src="/work-team-back.jpg"
+                    alt={t("gallery.2.caption")}
+                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/0 to-transparent" />
+                  <span className="absolute bottom-4 left-5 text-white font-medium text-sm md:text-base drop-shadow">
+                    {t("gallery.2.caption")}
+                  </span>
+                </div>
+                <div className="group relative rounded-2xl overflow-hidden premium-shadow">
+                  <img
+                    src="/work-tools.jpg"
+                    alt={t("gallery.3.caption")}
+                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/0 to-transparent" />
+                  <span className="absolute bottom-4 left-5 text-white font-medium text-sm md:text-base drop-shadow">
+                    {t("gallery.3.caption")}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div>
             <h2 className="text-xl font-semibold text-foreground mb-4 text-center">
               {t("featured.title")}

@@ -1,8 +1,9 @@
+import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AnimatedCounter } from "@/components/animated-counter";
 import { useI18n } from "@/lib/i18n";
-import { Star, MapPin, Sparkle, ExternalLink, Quote } from "lucide-react";
+import { Star, Sparkle, ExternalLink } from "lucide-react";
 import { reviews, GOOGLE_RATING, GOOGLE_REVIEW_COUNT } from "@/data/reviews";
 
 const GOOGLE_REVIEW_URL = "https://g.page/r/CQo_lx1fQ57lEAE/review";
@@ -49,8 +50,46 @@ function StarRating({ rating, size = "sm" }: { rating: number; size?: "sm" | "md
   );
 }
 
+function ReviewCard({ review }: { review: (typeof reviews)[number] }) {
+  return (
+    <Card
+      className="p-6 bg-card border-0 premium-shadow flex flex-col h-full"
+      data-testid="review-card"
+    >
+      <div className="flex items-start justify-between mb-4">
+        <div className="flex items-center gap-3">
+          {review.profile_photo_url ? (
+            <img
+              src={review.profile_photo_url}
+              alt={review.author_name}
+              className="w-10 h-10 rounded-full object-cover"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-sm">
+              {review.author_name.charAt(0)}
+            </div>
+          )}
+          <div>
+            <p className="font-medium text-foreground text-sm leading-tight">{review.author_name}</p>
+            <p className="text-xs text-muted-foreground">{relativeTime(review.date)}</p>
+          </div>
+        </div>
+        <GoogleLogo className="w-5 h-5 flex-shrink-0" />
+      </div>
+      <StarRating rating={review.rating} />
+      {review.text && (
+        <p className="text-foreground mt-3 leading-relaxed text-sm flex-1">
+          "{review.text}"
+        </p>
+      )}
+    </Card>
+  );
+}
+
 export function ReviewsSection() {
   const { t } = useI18n();
+  const [paused, setPaused] = useState(false);
 
   return (
     <section className="py-16 md:py-24 bg-muted/30">
@@ -90,43 +129,24 @@ export function ReviewsSection() {
           </Card>
         </div>
 
-        {/* Reviews grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-          {reviews.slice(0, 3).map((review, index) => (
-            <Card
-              key={index}
-              className="p-6 bg-card border-0 premium-shadow flex flex-col"
-              data-testid={`review-card-${index}`}
-            >
-              <div className="flex items-start justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  {review.profile_photo_url ? (
-                    <img
-                      src={review.profile_photo_url}
-                      alt={review.author_name}
-                      className="w-10 h-10 rounded-full object-cover"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-sm">
-                      {review.author_name.charAt(0)}
-                    </div>
-                  )}
-                  <div>
-                    <p className="font-medium text-foreground text-sm leading-tight">{review.author_name}</p>
-                    <p className="text-xs text-muted-foreground">{relativeTime(review.date)}</p>
-                  </div>
-                </div>
-                <GoogleLogo className="w-5 h-5 flex-shrink-0" />
+        {/* Reviews — continuous smooth marquee, pause on hover/touch */}
+        <div
+          className="overflow-hidden mb-12 -mx-4 md:-mx-6"
+          onMouseEnter={() => setPaused(true)}
+          onMouseLeave={() => setPaused(false)}
+          onTouchStart={() => setPaused(true)}
+          onTouchEnd={() => setPaused(false)}
+        >
+          <div
+            className="flex gap-4 w-max animate-marquee-left"
+            style={{ animationPlayState: paused ? "paused" : "running" }}
+          >
+            {[...reviews, ...reviews].map((review, index) => (
+              <div key={index} className="w-[300px] md:w-[340px] flex-shrink-0">
+                <ReviewCard review={review} />
               </div>
-              <StarRating rating={review.rating} />
-              {review.text && (
-                <p className="text-foreground mt-3 leading-relaxed text-sm flex-1">
-                  "{review.text}"
-                </p>
-              )}
-            </Card>
-          ))}
+            ))}
+          </div>
         </div>
 
         {/* Google CTA */}

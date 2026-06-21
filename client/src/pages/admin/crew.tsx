@@ -15,9 +15,13 @@ import { downloadWorkerContract, openWorkerContractForPrint, downloadSignatureIm
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import { ChevronLeft, Copy, Check, RotateCw, Trash2, Plus, UserPlus, FileText, Printer, Download, Wallet } from "lucide-react";
 import type { CrewPayout } from "@shared/crew";
+import { computeTax, readVatStatus, readInPrepaymentRegister, fmtPct, fmtEurCents } from "@shared/tax";
+import { BRAND_BILLERS, DEFAULT_BILLER_ID } from "@shared/billers";
+import { traineeForUserId, traineeForName } from "@shared/trainees";
+import { getAdminProfile } from "@/lib/admin-profile";
 
 const PUBLIC_BASE = "https://puuhapatet.fi";
-const eur = (c: number) => (c / 100).toLocaleString("fi-FI", { maximumFractionDigits: 0 }) + " €";
+const eur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
 const agreementTitle = (id: string) => WORKER_AGREEMENTS.find((a) => a.id === id)?.title ?? id;
 const profileLabel = (id: string) => PROFILE_QUESTIONS.find((q) => q.id === id)?.label ?? id;
 
@@ -46,7 +50,7 @@ export default function AdminCrewPage() {
   const addWorker = async () => { setBusy(true); await api.addCrewMember(jobId, {}); await load(); setBusy(false); };
   const update = async (id: string, data: Parameters<typeof api.updateCrewMember>[2]) => { await api.updateCrewMember(jobId, id, data); await load(); };
   const remove = async (id: string) => { if (confirm("Poistetaanko työntekijä?")) { await api.removeCrewMember(jobId, id); await load(); } };
-  const createPayout = async (id: string, data: { amountCents: number; windows?: number; note?: string }) => {
+  const createPayout = async (id: string, data: { amountCents: number; windows?: number; note?: string; billerId?: string }) => {
     const res = await api.createPayout(jobId, id, data); await load(); return res.ok;
   };
   const markPaid = async (id: string, payoutId: string) => {
@@ -180,14 +184,22 @@ export default function AdminCrewPage() {
                   </details>
                 )}
 
-                {/* Payouts (Puuhapatet → worker) */}
-                <PayoutPanel
-                  member={member}
-                  suggestedCents={stats.earnedCents}
-                  suggestedWindows={stats.washed}
-                  onCreate={createPayout}
-                  onMarkPaid={markPaid}
-                />
+                {/* Payouts (Puuhapatet → worker). Suggest only the UNPAID remainder
+                    — what this worker has done since the last payout — so each payout
+                    covers just the current billed period, never the cumulative total. */}
+                {(() => {
+                  const claimedCents = (member.payouts || []).reduce((s, p) => s + p.amountCents, 0);
+                  const claimedWindows = (member.payouts || []).reduce((s, p) => s + (p.windows || 0), 0);
+                  return (
+                    <PayoutPanel
+                      member={member}
+                      suggestedCents={Math.max(0, stats.earnedCents - claimedCents)}
+                      suggestedWindows={Math.max(0, stats.washed - claimedWindows)}
+                      onCreate={createPayout}
+                      onMarkPaid={markPaid}
+                    />
+                  );
+                })()}
               </div>
             ))}
 
@@ -209,7 +221,7 @@ function PayoutPanel({
   member: HostCrewRow["member"];
   suggestedCents: number;
   suggestedWindows: number;
-  onCreate: (id: string, data: { amountCents: number; windows?: number; note?: string }) => Promise<boolean>;
+  onCreate: (id: string, data: { amountCents: number; windows?: number; note?: string; billerId?: string }) => Promise<boolean>;
   onMarkPaid: (id: string, payoutId: string) => Promise<{ ok: boolean; data?: { emailId?: string }; error?: string }>;
 }) {
   const payouts: CrewPayout[] = member.payouts || [];
@@ -217,6 +229,12 @@ function PayoutPanel({
   const [amount, setAmount] = useState(suggestedCents > 0 ? String(suggestedCents / 100) : "");
   const [windows, setWindows] = useState(suggestedWindows ? String(suggestedWindows) : "");
   const [note, setNote] = useState("");
+  // Buyer = the leader who billed the customer for this money. Default to the
+  // logged-in leader if they're one of the billers, else the first leader.
+  const myId = getAdminProfile()?.id;
+  const [billerId, setBillerId] = useState(
+    BRAND_BILLERS.some((b) => b.id === myId) ? myId! : DEFAULT_BILLER_ID,
+  );
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -232,20 +250,36 @@ function PayoutPanel({
     const cents = Math.round(parseFloat(amount.replace(",", ".")) * 100);
     if (!Number.isFinite(cents) || cents <= 0) { setMsg("Anna summa euroina."); return; }
     setBusy(true);
-    const ok = await onCreate(member.id, { amountCents: cents, windows: Number(windows) || undefined, note: note.trim() || undefined });
+    const ok = await onCreate(member.id, { amountCents: cents, windows: Number(windows) || undefined, note: note.trim() || undefined, billerId });
     setBusy(false);
     if (ok) { setOpen(false); setNote(""); } else setMsg("Maksun luonti epäonnistui.");
   };
 
   const pay = async (p: CrewPayout) => {
-    if (!confirm(`Merkitäänkö ${eur2(p.amountCents)} maksetuksi?\n\nVarmista että pankkisiirto on tehty. Tämä luo työntekijän laskun ja lähettää sen tiimille.`)) return;
+    const tx = p.tax ?? computeTax({
+      laborCents: p.amountCents,
+      vatStatus: readVatStatus(member.profile?.answers),
+      inPrepaymentRegister: readInPrepaymentRegister(member.profile?.answers),
+    });
+    const extra = tx.withheld
+      ? `\n\nHuom: työntekijä ei ole ennakkoperintärekisterissä → tilille ${eur2(tx.payableCents)}, ennakonpidätys ${fmtPct(tx.withholdingRate)} (${eur2(tx.withholdingCents)}) tilitettävä Verolle.`
+      : "";
+    if (!confirm(`Merkitäänkö maksetuksi? Tilille maksetaan ${eur2(tx.payableCents)}.\n\nVarmista että pankkisiirto on tehty. Tämä luo työntekijän laskun ja lähettää sen tiimille.${extra}`)) return;
     setBusy(true);
     const res = await onMarkPaid(member.id, p.id);
     setBusy(false);
     setMsg(res.ok ? (res.data?.emailId ? "Merkitty maksetuksi · lasku lähetetty tiimille." : "Merkitty maksetuksi · lasku luotu (sähköposti ei käytössä).") : (res.error || "Epäonnistui."));
   };
 
+  const trainee = traineeForUserId(member.linkedUserId) || traineeForUserId(member.id) || traineeForName(member.name);
+
   return (
+    <>
+      {trainee && (
+        <p className="mt-3 rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2 text-[11px] text-muted-foreground">
+          <b className="text-foreground">Harjoittelija</b> — {trainee.responsibleLeaderName} vastaa. Ei omaa Y-tunnusta eikä alihankkijalaskutusta; ansiot jaetaan tiimin kesken.
+        </p>
+      )}
     <details className="mt-3">
       <summary className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground cursor-pointer">
         <Wallet className="h-3.5 w-3.5" /> Maksut työntekijälle ({payouts.length})
@@ -253,18 +287,34 @@ function PayoutPanel({
       <div className="mt-2 space-y-2">
         {payouts.map((p) => {
           const st = STATUS[p.status] || STATUS.ilmoitettu;
+          // Net to transfer = työkorvaus + ALV − ennakonpidätys. Use the snapshot
+          // once paid; otherwise compute from the worker's declared tax status.
+          const tx = p.tax ?? computeTax({
+            laborCents: p.amountCents,
+            vatStatus: readVatStatus(member.profile?.answers),
+            inPrepaymentRegister: readInPrepaymentRegister(member.profile?.answers),
+          });
+          const taxAdjusted = tx.vatRegistered || tx.withheld;
           return (
             <div key={p.id} className="rounded-lg border bg-muted/30 p-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="text-sm font-bold tabular-nums">{eur2(p.amountCents)}</p>
+                  <p className="text-sm font-bold tabular-nums">{eur2(tx.payableCents)}{taxAdjusted && <span className="ml-1 text-[10px] font-normal text-muted-foreground">tilille</span>}</p>
                   <p className="text-[11px] text-muted-foreground truncate">{p.note || "Ikkunanpesutyö"}{p.windows ? ` · ${p.windows} ikkunaa` : ""} · {new Date(p.createdAt).toLocaleDateString("fi-FI")}</p>
                 </div>
                 <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${st.cls}`}>{st.label}</span>
               </div>
+              {p.buyer && (
+                <p className="mt-1 text-[11px] text-muted-foreground">Laskutetaan: {p.buyer.name}{p.buyer.yTunnus ? ` · ${p.buyer.yTunnus}` : ""}</p>
+              )}
+              {taxAdjusted && (
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                  {fmtEurCents(tx.laborCents)} veroton{tx.vatRegistered ? ` + ALV ${fmtPct(tx.vatRate)} ${fmtEurCents(tx.vatCents)}` : ""}{tx.withheld ? ` − ennakonpidätys ${fmtPct(tx.withholdingRate)} ${fmtEurCents(tx.withholdingCents)}` : ""}
+                </p>
+              )}
               {p.status === "hyvaksytty" && p.billing && (
                 <p className="mt-1.5 text-[11px] text-muted-foreground break-words">
-                  Maksa: {[p.billing.name, p.billing.iban, p.billing.yTunnus && `Y ${p.billing.yTunnus}`].filter(Boolean).join(" · ")}
+                  Maksa {eur2(tx.payableCents)}: {[p.billing.name, p.billing.iban, p.billing.yTunnus && `Y ${p.billing.yTunnus}`].filter(Boolean).join(" · ")}
                 </p>
               )}
               {p.status === "maksettu" && p.invoiceNo && (
@@ -283,6 +333,11 @@ function PayoutPanel({
 
         {open ? (
           <div className="rounded-lg border bg-card p-3 space-y-2">
+            {suggestedCents > 0 && (
+              <p className="text-[11px] text-muted-foreground">
+                Maksamatta tältä jaksolta: <span className="font-semibold text-foreground">{eur2(suggestedCents)}</span>{suggestedWindows ? ` · ${suggestedWindows} ikkunaa` : ""} (tehty työ − jo luodut maksut)
+              </p>
+            )}
             <div className="flex gap-2">
               <label className="flex-1 text-[11px] text-muted-foreground">
                 Summa (€)
@@ -296,6 +351,14 @@ function PayoutPanel({
             <label className="block text-[11px] text-muted-foreground">
               Kuvaus
               <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="esim. FR8 — 1. erä" className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm text-foreground" />
+            </label>
+            <label className="block text-[11px] text-muted-foreground">
+              Laskutettava (ostaja) — kuka laskutti asiakkaan tästä erästä
+              <select value={billerId} onChange={(e) => setBillerId(e.target.value)} className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm text-foreground">
+                {BRAND_BILLERS.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}{b.yTunnus ? ` · ${b.yTunnus}` : ""}</option>
+                ))}
+              </select>
             </label>
             <div className="flex gap-2">
               <button onClick={create} disabled={busy} className="flex-1 rounded-lg bg-foreground py-2 text-xs font-semibold text-background disabled:opacity-50">
@@ -311,6 +374,7 @@ function PayoutPanel({
         )}
       </div>
     </details>
+    </>
   );
 }
 

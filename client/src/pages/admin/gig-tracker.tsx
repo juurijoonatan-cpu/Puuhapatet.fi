@@ -11,7 +11,7 @@ import { Link, useRoute, useLocation } from "wouter";
 import {
   ArrowLeft, Share2, Copy, Check, FileText,
   Send, AlertCircle, ChevronDown, Receipt, ExternalLink, ChevronRight,
-  PenLine, ShieldCheck, Clock, Save, Download, Printer, LayoutDashboard, Users,
+  PenLine, ShieldCheck, Clock, Save, Download, Printer, LayoutDashboard, Users, Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -27,7 +27,7 @@ import { getAdminProfile } from "@/lib/admin-profile";
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import {
   emptyGigData, computeTotals, nextInvoiceThreshold, invoiceDue, eur, eur2,
-  sanitizeGigData, gigStatus, signatureRequired, type GigData,
+  sanitizeGigData, gigStatus, signatureRequired, type GigData, type GigCompany,
 } from "@shared/gig";
 import { computeProjectTotals, fixedDealFor, eurFromCents, type ProjectData } from "@shared/project";
 import { downloadGigContract, openGigContractForPrint } from "@/lib/gig-contract-doc";
@@ -55,6 +55,11 @@ export default function AdminGigTrackerPage() {
   // Floor-plan project (if any) — its single price/window + dot count drive a
   // floor-plan gig's whole price, so the price editor edits the project here.
   const [project, setProject] = useState<ProjectData | null>(null);
+  const [editingCompany, setEditingCompany] = useState(false);
+  const [companyDraft, setCompanyDraft] = useState<GigCompany>({});
+  const [savingCompany, setSavingCompany] = useState(false);
+  const [jobDescription, setJobDescription] = useState("");
+  const [savingDescription, setSavingDescription] = useState(false);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -85,6 +90,8 @@ export default function AdminGigTrackerPage() {
         try { parsed = job.gigData ? sanitizeGigData(JSON.parse(job.gigData)) : emptyGigData(); }
         catch { parsed = emptyGigData(); }
         setGig(parsed);
+        setCompanyDraft(parsed.company ?? {});
+        setJobDescription(job.description ?? "");
         setDraft({
           contractId: parsed.contractId ?? "",
           contractText: parsed.contractText ?? "",
@@ -133,6 +140,31 @@ export default function AdminGigTrackerPage() {
       toast({ title: "Sopimus tallennettu" });
     } else {
       toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
+    }
+  };
+
+  const saveCompany = async () => {
+    if (!gig) return;
+    setSavingCompany(true);
+    const res = await api.updateGig(jobId, { ...gig, company: companyDraft });
+    setSavingCompany(false);
+    if (res.ok && res.data) {
+      setGig(res.data.gigData);
+      setEditingCompany(false);
+      toast({ title: "Yhteystiedot tallennettu" });
+    } else {
+      toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
+    }
+  };
+
+  const saveDescription = async () => {
+    setSavingDescription(true);
+    const res = await api.updateJob(jobId, { description: jobDescription.trim() || undefined });
+    setSavingDescription(false);
+    if (res.ok) {
+      toast({ title: "Kuvaus tallennettu" });
+    } else {
+      toast({ variant: "destructive", title: "Tallennus epäonnistui", description: (res as any).error });
     }
   };
 
@@ -200,6 +232,7 @@ export default function AdminGigTrackerPage() {
       capCents: t.capCents,
       signature: g.signature ? {
         signerName: g.signature.signerName,
+        signerTitle: g.signature.signerTitle,
         place: g.signature.place,
         signedAt: g.signature.signedAt,
         customer: g.signature.customer,
@@ -232,6 +265,7 @@ export default function AdminGigTrackerPage() {
       senderName: profile?.name,
       senderYTunnus: profile?.yTunnus,
       senderAddress: profile?.address,
+      billerId: profile?.id, // which leader billed the customer (buyer for alihankkija invoices)
       workerPhone: profile?.phone,
       message: invForm.message || undefined,
       isFinal: invForm.isFinal,
@@ -279,24 +313,62 @@ export default function AdminGigTrackerPage() {
           </div>
         </div>
 
-        {/* Customer contact details — shown BEFORE the project dashboard button.
-            Sourced from the shared gigData.company. */}
-        {(() => {
-          const c = gig.company;
-          const rows: { label: string; value: string }[] = [
-            { label: "Yritys", value: c?.name ?? "" },
-            { label: "Yhteyshenkilö", value: c?.contact ?? "" },
-            { label: "Puhelin", value: c?.phone ?? "" },
-            { label: "Sähköposti", value: c?.email ?? "" },
-            { label: "Osoite", value: c?.address ?? "" },
-          ].filter((r) => r.value.trim());
-          if (!rows.length) return null;
-          return (
-            <Card className="p-4 bg-card border-0 premium-shadow mb-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Users className="w-4 h-4 text-muted-foreground" />
-                <p className="text-sm font-medium text-foreground">Yhteystiedot</p>
+        {/* Customer contact details — editable, sourced from gigData.company. */}
+        <Card className="p-4 bg-card border-0 premium-shadow mb-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 text-muted-foreground" />
+              <p className="text-sm font-medium text-foreground">Yhteystiedot</p>
+            </div>
+            {!editingCompany && (
+              <Button variant="ghost" size="sm" onClick={() => { setCompanyDraft(gig.company ?? {}); setEditingCompany(true); }} className="text-xs gap-1.5 h-7 px-2">
+                <PenLine className="w-3.5 h-3.5" /> Muokkaa
+              </Button>
+            )}
+          </div>
+          {editingCompany ? (
+            <div className="space-y-3">
+              <div>
+                <Label className="text-xs">Yritys</Label>
+                <Input value={companyDraft.name ?? ""} onChange={e => setCompanyDraft(d => ({ ...d, name: e.target.value }))} placeholder="Yrityksen nimi" className="text-sm" />
               </div>
+              <div>
+                <Label className="text-xs">Yhteyshenkilö</Label>
+                <Input value={companyDraft.contact ?? ""} onChange={e => setCompanyDraft(d => ({ ...d, contact: e.target.value }))} className="text-sm" />
+              </div>
+              <div>
+                <Label className="text-xs">Puhelin</Label>
+                <Input type="tel" value={companyDraft.phone ?? ""} onChange={e => setCompanyDraft(d => ({ ...d, phone: e.target.value }))} className="text-sm" />
+              </div>
+              <div>
+                <Label className="text-xs">Sähköposti</Label>
+                <Input value={companyDraft.email ?? ""} onChange={e => setCompanyDraft(d => ({ ...d, email: e.target.value }))} placeholder="lasku@yritys.fi" className="text-sm" />
+              </div>
+              <div>
+                <Label className="text-xs">Osoite</Label>
+                <Input value={companyDraft.address ?? ""} onChange={e => setCompanyDraft(d => ({ ...d, address: e.target.value }))} className="text-sm" />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button onClick={saveCompany} disabled={savingCompany} className="flex-1">
+                  {savingCompany ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
+                  Tallenna
+                </Button>
+                <Button variant="outline" onClick={() => setEditingCompany(false)} disabled={savingCompany}>
+                  Peruuta
+                </Button>
+              </div>
+            </div>
+          ) : (() => {
+            const c = gig.company;
+            const rows: { label: string; value: string }[] = [
+              { label: "Yritys", value: c?.name ?? "" },
+              { label: "Yhteyshenkilö", value: c?.contact ?? "" },
+              { label: "Puhelin", value: c?.phone ?? "" },
+              { label: "Sähköposti", value: c?.email ?? "" },
+              { label: "Osoite", value: c?.address ?? "" },
+            ].filter((r) => r.value.trim());
+            if (!rows.length) return <p className="text-sm text-muted-foreground">Ei yhteystietoja. Paina Muokkaa lisätäksesi.</p>;
+            return (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
                 {rows.map((r) => {
                   const isPhone = r.label === "Puhelin";
@@ -314,9 +386,9 @@ export default function AdminGigTrackerPage() {
                   );
                 })}
               </div>
-            </Card>
-          );
-        })()}
+            );
+          })()}
+        </Card>
 
         {/* Quick price editor — tweak the deal fast right before signing. For a
             floor-plan gig it edits the single €/window + total cap (saved on the
@@ -513,6 +585,15 @@ export default function AdminGigTrackerPage() {
           </button>
           {showContract && (
             <div className="mt-4 space-y-3">
+              <div>
+                <Label className="text-xs">Kuvaus (näkyy keikkalistassa)</Label>
+                <div className="flex gap-2">
+                  <Input value={jobDescription} onChange={(e) => setJobDescription(e.target.value)} placeholder="Esim. FR8 - Ikkunoiden pesu" className="text-sm" />
+                  <Button size="sm" disabled={savingDescription} onClick={saveDescription} className="shrink-0">
+                    {savingDescription ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  </Button>
+                </div>
+              </div>
               <label className="flex items-center justify-between gap-3 rounded-xl border border-border p-3">
                 <span className="text-sm">
                   Vaadi sähköinen allekirjoitus

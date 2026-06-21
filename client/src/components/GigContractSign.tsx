@@ -130,16 +130,38 @@ const inputCss: React.CSSProperties = {
   background: T.paper, color: T.ink, fontSize: 14, fontFamily: FONT, outline: "none",
 };
 
+// FR8 (sopimus PT-2026-02) tilaaja — esitäyttö, jos keikalle ei ole vielä
+// tallennettu yritystä. Tilaaja (sopimusosapuoli) on yhtiö, jonka puolesta
+// yhteyshenkilö allekirjoittaa. Julkista yritystietoa.
+const FR8_TILAAJA = {
+  name: "FAFO Capital Oy",
+  businessId: "3547969-9",
+  contact: "Niilo Rajamäki",
+  address: "Aleksanterinkatu 23",
+  email: "niilo@fr8.so",
+};
+/** Pull a clean person name out of a "Nimi, +358…" contact string. */
+function cleanSignerName(s?: string | null): string {
+  return (s || "").replace(/[·,;|].*$/, "").replace(/\+?\d[\d\s-]{4,}/g, "").trim();
+}
+
 export default function GigContractSign({ token, view, onSigned }: Props) {
   const c = view.company;
+  // Prefer the gig's saved company; fall back to the known FR8 tilaaja so the
+  // link is ready to send even before the company is saved on the gig.
+  const base = (c && (c.name || c.businessId)) ? c : (view.contractId === "PT-2026-02" ? FR8_TILAAJA : c);
   const [customer, setCustomer] = useState({
-    legalName: c?.name ?? "",
-    businessId: c?.businessId ?? "",
-    billingAddress: c?.address ?? "",
-    eInvoice: c?.email ?? "",
-    contactPerson: c?.contact ?? "",
+    legalName: base?.name ?? "",
+    businessId: base?.businessId ?? "",
+    billingAddress: base?.address ?? "",
+    eInvoice: base?.email ?? "",
+    contactPerson: base?.contact ?? "",
   });
-  const [signerName, setSignerName] = useState("");
+  // The signer is the company's authorised representative (the orderer on the
+  // physical paper). Prefill from the contact person; the contract party stays
+  // the company (legalName).
+  const [signerName, setSignerName] = useState(cleanSignerName(base?.contact));
+  const [signerTitle, setSignerTitle] = useState(base?.contact ? "Tilaajan edustaja" : "");
   const [place, setPlace] = useState("Helsinki");
   const [signatureDataUrl, setSignatureDataUrl] = useState("");
   const [agreed, setAgreed] = useState(false);
@@ -171,6 +193,7 @@ export default function GigContractSign({ token, view, onSigned }: Props) {
 
     const payload: GigSignPayload = {
       signerName: signerName.trim(),
+      signerTitle: signerTitle.trim() || undefined,
       place: place.trim() || undefined,
       signatureDataUrl,
       acceptedSectorIds: view.sectors.map((s) => s.id),
@@ -301,10 +324,20 @@ export default function GigContractSign({ token, view, onSigned }: Props) {
         {/* Signature */}
         <Panel>
           <p style={mono}>ALLEKIRJOITUS</p>
+          {customer.legalName && (
+            <p style={{ margin: "10px 0 0", fontSize: 13, color: T.ink, lineHeight: 1.6 }}>
+              Sopimus tehdään tilaajan <strong>{customer.legalName}</strong>{customer.businessId ? ` (Y-tunnus ${customer.businessId})` : ""} ja Puuhapatetin välillä.
+              Allekirjoitat sen tilaajan puolesta sen valtuutettuna edustajana.
+            </p>
+          )}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, margin: "12px 0 14px" }}>
             <div>
-              <label style={labelCss}>Nimenselvennys *</label>
+              <label style={labelCss}>Nimenselvennys (allekirjoittaja) *</label>
               <input style={inputCss} value={signerName} onChange={(e) => setSignerName(e.target.value)} placeholder="Allekirjoittajan nimi" />
+            </div>
+            <div>
+              <label style={labelCss}>Asema tilaajassa</label>
+              <input style={inputCss} value={signerTitle} onChange={(e) => setSignerTitle(e.target.value)} placeholder="Esim. edustaja, toimitusjohtaja" />
             </div>
             <div>
               <label style={labelCss}>Paikka</label>
@@ -329,9 +362,10 @@ export default function GigContractSign({ token, view, onSigned }: Props) {
           <label style={{ display: "flex", gap: 11, alignItems: "flex-start", fontSize: 13.5, color: T.ink, cursor: "pointer", marginTop: 16, lineHeight: 1.5 }}>
             <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} style={{ marginTop: 2, width: 16, height: 16, accentColor: T.green, flexShrink: 0 }} />
             <span>
-              Hyväksyn tämän tarjouksen ja sopimuksen{view.contractId ? ` (${view.contractId})` : ""} sisällön ja
-              vahvistan tilaajan tiedot oikeiksi. Hyväksyntä vastaa fyysistä allekirjoitusta, muodostaa
-              osapuolia sitovan sopimuksen ja valtuuttaa Puuhapatetin tekemään työn tämän asiakirjan mukaisesti.
+              Vahvistan tilaajan tiedot oikeiksi ja hyväksyn tämän tarjouksen ja sopimuksen{view.contractId ? ` (${view.contractId})` : ""} sisällön.
+              Allekirjoitan {customer.legalName ? <>tilaajan <strong>{customer.legalName}</strong> puolesta</> : "tilaajan puolesta"} sen
+              valtuutettuna edustajana. Hyväksyntä vastaa fyysistä allekirjoitusta, muodostaa tilaajan ja Puuhapatetin
+              välisen sitovan sopimuksen ja valtuuttaa Puuhapatetin tekemään työn tämän asiakirjan mukaisesti.
             </span>
           </label>
         </Panel>

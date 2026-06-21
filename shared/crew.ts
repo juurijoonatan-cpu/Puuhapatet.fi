@@ -16,6 +16,8 @@
 
 import type { ProjectData } from "./project";
 import { allPoints } from "./project";
+import type { TaxBreakdown } from "./tax";
+import type { BuyerSnapshot } from "./billers";
 
 export const DEFAULT_WORKER_PER_WINDOW_CENTS = 2000; // 20,00 €
 
@@ -55,6 +57,7 @@ export interface CrewSession {
   minutes: number;      // worked minutes (breaks deducted)
   windows: number;      // windows washed during the session
   earnedCents: number;  // windows × the worker's own per-window rate
+  manual?: boolean;     // true if logged by hand (no live timer) — windows/earnings unknown
 }
 
 /**
@@ -90,6 +93,16 @@ export interface CrewPayout {
     iban?: string;
     address?: string;
   };
+  /** Tax breakdown snapshot (ALV + ennakonpidätys) captured when paid, so the
+   *  invoice + history reflect the worker's tax status at the time of payment.
+   *  `amountCents` is the työkorvaus (ex-VAT, = windows × rate); this expands it
+   *  into VAT, withholding and the net actually transferred. */
+  tax?: TaxBreakdown;
+  /** Who the worker invoices for this payout — the leader (biller) who billed the
+   *  customer for this money (their Y-tunnus → the invoice's BUYER). The brand has
+   *  no company yet, so this is one of the two leaders; future-proofed for a
+   *  company. Captured at creation, finalised at payment. */
+  buyer?: BuyerSnapshot;
 }
 
 export interface CrewMember {
@@ -262,6 +275,8 @@ function sanitizePayout(input: any): CrewPayout | null {
   const status: CrewPayoutStatus =
     input.status === "maksettu" ? "maksettu" : input.status === "hyvaksytty" ? "hyvaksytty" : "ilmoitettu";
   const b = input.billing && typeof input.billing === "object" ? input.billing : null;
+  const t = input.tax && typeof input.tax === "object" ? input.tax : null;
+  const by = input.buyer && typeof input.buyer === "object" ? input.buyer : null;
   return {
     id,
     amountCents: Math.min(amountCents, 1_000_000_00),
@@ -277,6 +292,25 @@ function sanitizePayout(input: any): CrewPayout | null {
       yTunnus: str(b.yTunnus, 40),
       iban: str(b.iban, 40),
       address: str(b.address, 240),
+    } : undefined,
+    tax: t ? {
+      laborCents: Math.max(0, Math.floor(Number(t.laborCents) || 0)),
+      vatRegistered: !!t.vatRegistered,
+      vatRate: Math.max(0, Number(t.vatRate) || 0),
+      vatCents: Math.max(0, Math.floor(Number(t.vatCents) || 0)),
+      invoiceTotalCents: Math.max(0, Math.floor(Number(t.invoiceTotalCents) || 0)),
+      withheld: !!t.withheld,
+      withholdingRate: Math.max(0, Number(t.withholdingRate) || 0),
+      withholdingCents: Math.max(0, Math.floor(Number(t.withholdingCents) || 0)),
+      payableCents: Math.floor(Number(t.payableCents) || 0),
+      notes: Array.isArray(t.notes) ? t.notes.map((n: any) => String(n).slice(0, 400)).slice(0, 8) : [],
+    } : undefined,
+    buyer: by ? {
+      billerId: str(by.billerId, 40),
+      name: str(by.name, 160) || "Puuhapatet",
+      yTunnus: str(by.yTunnus, 40),
+      address: str(by.address, 240),
+      email: str(by.email, 200),
     } : undefined,
   };
 }
@@ -325,6 +359,7 @@ export function sanitizeCrewMember(input: any): CrewMember | null {
         minutes: Math.max(0, Math.round(Number(s?.minutes) || 0)),
         windows: Math.max(0, Math.floor(Number(s?.windows) || 0)),
         earnedCents: Math.max(0, Math.floor(Number(s?.earnedCents) || 0)),
+        ...(s?.manual ? { manual: true } : {}),
       }))
       .filter((s: CrewSession) => s.start > 0 && s.end > 0),
     notes,

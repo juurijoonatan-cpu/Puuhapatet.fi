@@ -20,6 +20,28 @@ export default function ServicesPage() {
           </p>
         </div>
 
+        {/* Premium tool render video */}
+        <div className="relative rounded-2xl overflow-hidden premium-shadow mb-10">
+          <video
+            autoPlay
+            muted
+            loop
+            playsInline
+            className="w-full h-full object-cover aspect-video"
+          >
+            <source src="/render-tools.mp4" type="video/mp4" />
+          </video>
+          <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/0 to-transparent pointer-events-none" />
+          <div className="absolute bottom-4 left-5 md:bottom-6 md:left-7">
+            <p className="text-white font-semibold text-base md:text-lg drop-shadow">
+              {t("service.basic.title")}
+            </p>
+            <p className="text-white/80 text-xs md:text-sm drop-shadow">
+              {t("services.video.caption")}
+            </p>
+          </div>
+        </div>
+
         <div className="rounded-2xl bg-primary/5 border border-primary/10 p-5 md:p-6 mb-10 flex gap-4 items-start">
           <ShieldCheck className="w-6 h-6 text-primary flex-shrink-0 mt-0.5" />
           <p className="text-sm text-muted-foreground leading-relaxed">

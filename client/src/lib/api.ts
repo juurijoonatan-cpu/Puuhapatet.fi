@@ -22,6 +22,9 @@ export interface WorkerView {
     needsToSign: boolean;
     /** Has signed every required agreement at the current version. */
     signedAll: boolean;
+    /** Set when this worker is a trainee (harjoittelija) under a leader's
+     *  responsibility — no own Y-tunnus, no self-invoicing. null otherwise. */
+    trainee: { responsibleLeaderName: string } | null;
     /** Epoch ms when the work-hour timer was started (null if not running). */
     activeShiftAt: number | null;
     /** Washed count when the current shift started (for the live session counter). */
@@ -50,6 +53,9 @@ export interface WorkerView {
   deleted: Record<string, boolean>;
   hours: number;
   stats: CrewMemberStats;
+  /** Gig-wide window counts (team) for the shared paydate-progress stat. No euros. */
+  windowsTotal: number;
+  windowsWashed: number;
   agreementVersion: string;
   requiredAgreementIds: string[];
   /** Whether agreement signing is currently enforced (soft start when false). */
@@ -683,6 +689,7 @@ export const api = {
     senderName?: string;
     senderYTunnus?: string;
     senderAddress?: string;
+    billerId?: string;
     workerPhone?: string;
     message?: string;
     isFinal?: boolean;
@@ -716,6 +723,10 @@ export const api = {
 
   crewAddHours: (token: string, delta: number) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/hours`, { delta }),
+
+  // Log a whole work day by hand — adds the hours and a diary session.
+  crewManualShift: (token: string, hours: number) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/manual-session`, { hours }),
 
   // Start/end the work-hour timer. On end, pass worked minutes (breaks deducted)
   // so the session log records the right duration.
@@ -765,14 +776,16 @@ export const api = {
       "DELETE", `/api/jobs/${jobId}/crew/${memberId}`),
 
   // Host: create a payout notification for a worker (Puuhapatet → alihankkija).
-  createPayout: (jobId: number, memberId: string, data: { amountCents: number; windows?: number; note?: string }) =>
+  // billerId = which leader (their Y-tunnus) is the BUYER the worker invoices.
+  createPayout: (jobId: number, memberId: string, data: { amountCents: number; windows?: number; note?: string; billerId?: string }) =>
     request<{ ok: boolean; member: CrewMember }>(
       "POST", `/api/jobs/${jobId}/crew/${memberId}/payout`, data),
 
   // Host: mark a payout paid (after manual bank transfer) → auto-invoice + email.
-  markPayoutPaid: (jobId: number, memberId: string, payoutId: string) =>
+  // Optional billerId overrides the buyer captured at creation.
+  markPayoutPaid: (jobId: number, memberId: string, payoutId: string, billerId?: string) =>
     request<{ ok: boolean; member: CrewMember; emailId?: string }>(
-      "POST", `/api/jobs/${jobId}/crew/${memberId}/payout/${payoutId}/paid`),
+      "POST", `/api/jobs/${jobId}/crew/${memberId}/payout/${payoutId}/paid`, billerId ? { billerId } : undefined),
 
   // Legacy compat stubs
   getJob: (_jobId: string): Promise<ApiResponse<{ ok: boolean; job?: unknown }>> =>

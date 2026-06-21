@@ -15,16 +15,165 @@ import {
 } from "./ai";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, type ProjectData } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, type ProjectData } from "@shared/project";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, type CrewMember,
 } from "@shared/crew";
 import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED } from "@shared/worker-agreements";
+import {
+  computeTax, readVatStatus, readInPrepaymentRegister, WITHHOLDING_COMPANY,
+  WITHHOLDING_NATURAL_PERSON, fmtPct, type TaxBreakdown,
+} from "@shared/tax";
+import {
+  BRAND_BILLERS, DEFAULT_BILLER_ID, resolveBrandBiller, billerToBuyer,
+  type Biller, type BuyerSnapshot,
+} from "@shared/billers";
+import { computePayProgress } from "@shared/payprogress";
+import { traineeForUserId, traineeForName, type TraineeInfo } from "@shared/trainees";
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 // Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
 const FROM_EMAIL = process.env.FROM_EMAIL || "Puuhapatet <onboarding@resend.dev>";
+
+// ─── Asiakkaan yhteydenotto-sähköpostin runko (3 tyyliä) ────────────────────
+// Jaettu admin-AI:n luonnos-esikatselun ja varsinaisen lähetyksen kesken, jotta
+// asiakas näkee saman viestin kuin AI luonnosteli (puoliautonominen flow).
+type OutreachStyle = "henkikohtainen" | "pro" | "lyhyt";
+function buildOutreachEmailHtml(style: OutreachStyle, messageText: string, firstName: string): string {
+  const msg = messageText.replace(/\n/g, "<br>");
+  if (style === "lyhyt") {
+    return `<!DOCTYPE html>
+<html lang="fi"><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff"><tr><td align="center" style="padding:40px 16px">
+<table width="540" cellpadding="0" cellspacing="0" style="max-width:540px;width:100%">
+  <tr><td style="padding-bottom:32px">
+    <p style="margin:0;color:#111;font-size:15px;line-height:1.8">${msg}</p>
+  </td></tr>
+  <tr><td style="border-top:1px solid #eeeeee;padding-top:20px">
+    <p style="margin:0;color:#333;font-size:14px;line-height:1.7">
+      Terveisin,<br>
+      <strong>Joonatan Juuri</strong> &amp; Matias Pitkänen<br>
+      <span style="color:#666">Puuhapatet</span><br>
+      <a href="tel:+358400389999" style="color:#2d5016;text-decoration:none">+358 40 0389999</a> · 
+      <a href="https://wa.me/358400389999" style="color:#25D366;text-decoration:none">WhatsApp</a><br>
+      <a href="https://puuhapatet.fi" style="color:#2d5016;text-decoration:none;font-size:12px">puuhapatet.fi</a>
+    </p>
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
+  }
+  if (style === "pro") {
+    return `<!DOCTYPE html>
+<html lang="fi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:#f0faf2">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0faf2"><tr><td align="center" style="padding:28px 16px">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
+  <tr><td style="background:#2d5016;border-radius:16px 16px 0 0;padding:24px 32px">
+    <table width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td><p style="margin:0;color:#fff;font-size:24px;font-weight:900;letter-spacing:-0.5px">Puuhapatet.</p>
+          <p style="margin:4px 0 0;color:#a3c97a;font-size:11px">Ammattimainen kiinteistöpalvelu · Espoo &amp; Helsinki</p></td>
+      <td style="text-align:right"><span style="background:#a3c97a;color:#1a3a0a;font-size:10px;font-weight:800;letter-spacing:2px;padding:4px 12px;border-radius:20px;text-transform:uppercase">YHTEYDENOTTO</span></td>
+    </tr></table>
+  </td></tr>
+  <tr><td style="padding:0;line-height:0"><img src="https://puuhapatet.fi/hero-workers.jpg" alt="Puuhapatet työssä" style="width:100%;max-height:220px;object-fit:cover;display:block"/></td></tr>
+  <tr><td style="background:#fff;border:1px solid #d1f0d8;border-top:none;padding:28px 32px">
+    <p style="margin:0 0 20px;color:#2a3a2a;font-size:15px;line-height:1.8">${msg}</p>
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #e8f5e9;margin-top:20px;padding-top:20px">
+      <tr>
+        <td style="padding-top:20px;text-align:center">
+          <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;background:#111;color:#4ade80;font-size:15px;font-weight:800;text-decoration:none;padding:16px 40px;border-radius:12px;border:2px solid #22c55e">Jätä yhteydenottopyyntö →</a>
+          <br>
+          <a href="https://wa.me/358400389999" style="display:inline-block;background:#25D366;color:#fff;padding:10px 22px;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px;margin:10px 4px 0">💬 WhatsApp</a>
+          <p style="margin:8px 0 0;color:#999;font-size:12px">Ilmainen tarjous alle 24 tunnissa</p>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+  <tr><td style="background:#111;border-radius:0 0 16px 16px;padding:18px 32px">
+    <table width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td><p style="margin:0 0 2px;color:#4ade80;font-size:15px;font-weight:800">Puuhapatet.</p>
+          <p style="margin:0;color:#666;font-size:12px">Joonatan +358 40 0389999 · Matias +358 44 2350881</p></td>
+      <td style="text-align:right"><a href="https://puuhapatet.fi" style="color:#4ade80;font-weight:700;text-decoration:none;font-size:13px">puuhapatet.fi</a></td>
+    </tr></table>
+  </td></tr>
+</table></td></tr></table>
+</body></html>`;
+  }
+  // henkikohtainen (default)
+  return `<!DOCTYPE html>
+<html lang="fi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f8faf8"><tr><td align="center" style="padding:32px 16px">
+<table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,0.07)">
+  <tr><td style="background:#2d5016;padding:20px 28px">
+    <p style="margin:0;color:#fff;font-size:18px;font-weight:800;letter-spacing:-0.3px">Puuhapatet.</p>
+  </td></tr>
+  <tr><td style="padding:28px 28px 8px">
+    <p style="margin:0 0 18px;color:#1a1a1a;font-size:22px;font-weight:700;line-height:1.3">Hei ${firstName}! 👋</p>
+    <p style="margin:0;color:#333;font-size:15px;line-height:1.8">${msg}</p>
+  </td></tr>
+  <tr><td style="padding:20px 28px">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0faf2;border-radius:10px;padding:16px">
+      <tr><td style="padding:0">
+        <p style="margin:0 0 10px;color:#2d5016;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px">Ota yhteyttä</p>
+        <p style="margin:0 0 6px;font-size:14px;color:#333">
+          💬 <a href="https://wa.me/358400389999" style="color:#2d5016;font-weight:600;text-decoration:none">WhatsApp — Joonatan</a>
+          <span style="color:#999;font-size:12px"> (+358 40 0389999)</span>
+        </p>
+        <p style="margin:0;font-size:14px;color:#333">
+          🌐 <a href="https://puuhapatet.fi/tilaus" style="color:#2d5016;font-weight:600;text-decoration:none">puuhapatet.fi/tilaus</a>
+          <span style="color:#999;font-size:12px"> — jätä yhteystiedot, soitamme takaisin</span>
+        </p>
+      </td></tr>
+    </table>
+  </td></tr>
+  <tr><td style="padding:0 28px 24px">
+    <p style="margin:0;color:#555;font-size:14px;line-height:1.7">
+      Terveisin,<br>
+      <strong style="color:#1a1a1a">Joonatan &amp; Matias</strong><br>
+      <span style="color:#2d5016;font-size:13px">Puuhapatet</span>
+    </p>
+  </td></tr>
+  <tr><td style="background:#f8f8f8;padding:12px 28px;border-top:1px solid #eee">
+    <p style="margin:0;color:#aaa;font-size:11px">
+      <a href="https://puuhapatet.fi" style="color:#aaa;text-decoration:none">puuhapatet.fi</a> · info@puuhapatet.fi · Espoo &amp; Helsinki
+    </p>
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
+}
+
+// Brändi ei ole vielä yhtiö → laskun OSTAJA on yksi johtajista (oma Y-tunnus).
+// Kun yhtiöityy, aseta COMPANY_* → "company"-laskuttaja valittavaksi ostajaksi.
+function companyBiller(): Biller | null {
+  const name = process.env.COMPANY_NAME;
+  const yTunnus = process.env.COMPANY_Y_TUNNUS;
+  if (!name && !yTunnus) return null;
+  return {
+    id: "company", kind: "company",
+    name: name || "Puuhapatet",
+    yTunnus: yTunnus || undefined,
+    address: process.env.COMPANY_ADDRESS || undefined,
+    email: process.env.COMPANY_EMAIL || undefined,
+  };
+}
+function allBillers(): Biller[] {
+  const c = companyBiller();
+  return c ? [c, ...BRAND_BILLERS] : BRAND_BILLERS;
+}
+/** Resolve a payout's BUYER from a biller id (leader today, company later).
+ *  Defaults to the company if configured, else the first leader. */
+function resolveBuyer(billerId?: string | null): BuyerSnapshot {
+  const found = allBillers().find((b) => b.id === billerId)
+    ?? companyBiller()
+    ?? resolveBrandBiller(DEFAULT_BILLER_ID)
+    ?? BRAND_BILLERS[0];
+  return billerToBuyer(found);
+}
 // Optional: protect the calendar feed with a token (set CALENDAR_TOKEN env var on Render)
 const CALENDAR_TOKEN = process.env.CALENDAR_TOKEN || null;
 
@@ -88,7 +237,7 @@ const AUTH_SECRET = process.env.AUTH_SECRET || "";
 const ADMIN_DEFAULT_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || "";
 // Per-user starter passwords for brand-new accounts (worker logins). Accepted
 // only until the user sets their own; then it's hashed and this is ignored.
-const INITIAL_PASSWORDS: Record<string, string> = { jani: "Jani123" };
+const INITIAL_PASSWORDS: Record<string, string> = { jani: "Jani123", milja: "milja456" };
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 function b64url(buf: Buffer): string {
@@ -367,6 +516,10 @@ function generateWorkerInvoicePdf(params: {
   note?: string;
   invoiceDate: string;
   paidDate?: string;
+  /** Vero-erittely (ALV + ennakonpidätys). amountCents = työkorvaus ilman ALV:tä. */
+  tax: TaxBreakdown;
+  /** Laskun OSTAJA — johtaja (oma Y-tunnus) joka laskutti asiakkaan, tai yhtiö. */
+  buyer: BuyerSnapshot;
 }): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 48, size: "A4" });
@@ -391,52 +544,79 @@ function generateWorkerInvoicePdf(params: {
     let y = 124;
     const colW = (pageW - 16) / 2;
 
-    // Parties: worker (seller) → Puuhapatet (buyer)
+    // Parties: worker (seller) → the leader/company who billed the customer (buyer)
+    const buyer = params.buyer;
     doc.fill(GRAY).font("Helvetica-Bold").fontSize(7).text("LASKUTTAJA (MYYJÄ)", 48, y, { width: colW });
     doc.text("LASKUN SAAJA (OSTAJA)", 48 + colW + 16, y, { width: colW });
     y += 14;
     doc.fill(INK).font("Helvetica-Bold").fontSize(10);
     doc.text(params.workerName || "Alihankkija", 48, y, { width: colW });
-    doc.text("Puuhapatet", 48 + colW + 16, y, { width: colW });
+    doc.text(buyer.name || "Puuhapatet", 48 + colW + 16, y, { width: colW });
     y += 14;
     doc.fill(GRAY).font("Helvetica").fontSize(9);
     const leftStartY = y;
     if (params.workerYTunnus) { doc.text(`Y-tunnus: ${params.workerYTunnus}`, 48, y, { width: colW }); y += 12; }
     if (params.workerAddress) { doc.text(params.workerAddress, 48, y, { width: colW }); y += 12; }
     if (params.workerIban) { doc.text(`IBAN: ${params.workerIban}`, 48, y, { width: colW }); y += 12; }
-    doc.text("Y-tunnus: —", 48 + colW + 16, leftStartY, { width: colW });
-    doc.text("info@puuhapatet.fi · puuhapatet.fi", 48 + colW + 16, leftStartY + 12, { width: colW });
+    // Buyer details (right column).
+    let ry = leftStartY;
+    doc.text(`Y-tunnus: ${buyer.yTunnus || "—"}`, 48 + colW + 16, ry, { width: colW }); ry += 12;
+    if (buyer.address) { doc.text(buyer.address, 48 + colW + 16, ry, { width: colW }); ry += 12; }
+    doc.text(buyer.email || "info@puuhapatet.fi", 48 + colW + 16, ry, { width: colW }); ry += 12;
+    doc.text("Puuhapatet (brändi)", 48 + colW + 16, ry, { width: colW }); ry += 12;
 
-    y = Math.max(y, leftStartY + 36) + 18;
+    y = Math.max(y, ry) + 6;
+    // Supply date (AVL 209 b § edellyttää toimituspäivän).
+    doc.fill(GRAY).font("Helvetica").fontSize(9).text(`Toimituspäivä: ${params.paidDate || params.invoiceDate}`, 48, y);
+    y += 18;
 
-    // Line item
+    const tax = params.tax;
+    // Line item — veroton työkorvaus.
     doc.rect(48, y, pageW, 26).fill("#F1F5F9");
     doc.fill(GRAY).font("Helvetica-Bold").fontSize(8);
     doc.text("KUVAUS", 60, y + 9, { width: pageW - 140 });
-    doc.text("YHTEENSÄ", 48 + pageW - 100, y + 9, { width: 88, align: "right" });
+    doc.text("VEROTON", 48 + pageW - 100, y + 9, { width: 88, align: "right" });
     y += 26;
 
     const desc = params.note || `Ikkunanpesutyö${params.windows ? ` — ${params.windows} ikkunaa` : ""}`;
     doc.fill(INK).font("Helvetica").fontSize(10).text(desc, 60, y + 8, { width: pageW - 140 });
-    doc.font("Helvetica-Bold").text(fmtEur(params.amountCents), 48 + pageW - 100, y + 8, { width: 88, align: "right" });
+    doc.font("Helvetica-Bold").text(fmtEur(tax.laborCents), 48 + pageW - 100, y + 8, { width: 88, align: "right" });
     y += 34;
     doc.moveTo(48, y).lineTo(48 + pageW, y).strokeColor("#E2E8F0").stroke();
     y += 12;
 
-    // Total
-    doc.fill(GRAY).font("Helvetica").fontSize(9).text("Veroton summa", 48 + pageW - 220, y, { width: 120, align: "right" });
-    doc.fill(INK).font("Helvetica").fontSize(9).text(fmtEur(params.amountCents), 48 + pageW - 100, y, { width: 88, align: "right" });
-    y += 16;
-    doc.fill(NAVY).font("Helvetica-Bold").fontSize(13).text("Maksettavaa", 48 + pageW - 220, y, { width: 120, align: "right" });
-    doc.text(fmtEur(params.amountCents), 48 + pageW - 100, y, { width: 88, align: "right" });
+    // Subtotals — veroton, ALV, loppusumma; sitten ennakonpidätys ja maksettava.
+    const sumRow = (label: string, value: string, opts?: { bold?: boolean; color?: string; size?: number }) => {
+      const size = opts?.size ?? 9;
+      doc.fill(opts?.color ?? GRAY).font(opts?.bold ? "Helvetica-Bold" : "Helvetica").fontSize(size)
+        .text(label, 48 + pageW - 240, y, { width: 140, align: "right" });
+      doc.fill(opts?.color ?? INK).font(opts?.bold ? "Helvetica-Bold" : "Helvetica").fontSize(size)
+        .text(value, 48 + pageW - 100, y, { width: 88, align: "right" });
+      y += size + 7;
+    };
+    sumRow("Veroton (työkorvaus)", fmtEur(tax.laborCents));
+    if (tax.vatRegistered) {
+      sumRow(`ALV ${fmtPct(tax.vatRate)}`, fmtEur(tax.vatCents));
+      sumRow("Laskun loppusumma", fmtEur(tax.invoiceTotalCents), { bold: true });
+    }
+    if (tax.withheld) {
+      y += 2;
+      sumRow(`Ennakonpidätys ${fmtPct(tax.withholdingRate)}`, "−" + fmtEur(tax.withholdingCents));
+    }
+    y += 4;
+    doc.fill(NAVY).font("Helvetica-Bold").fontSize(13)
+      .text(tax.withheld ? "Maksetaan tilille" : "Maksettavaa", 48 + pageW - 240, y, { width: 140, align: "right" });
+    doc.text(fmtEur(tax.payableCents), 48 + pageW - 100, y, { width: 88, align: "right" });
     y += 30;
 
-    // VAT note (alv-rekisteröitymätön pienyrittäjä, oletus)
-    doc.fill(GRAY).font("Helvetica").fontSize(8).text(
-      "Arvonlisäveroa ei lisätä (AVL 3 §, vähäinen toiminta). Lasku alihankintatyöstä Puuhapatetille.",
-      48, y, { width: pageW },
-    );
-    y += 24;
+    // Vero-perustelut (ALV-status + ennakkoperintä) selkokielellä.
+    doc.fill(GRAY).font("Helvetica").fontSize(8);
+    for (const note of tax.notes) {
+      doc.text(note, 48, y, { width: pageW });
+      y += doc.heightOfString(note, { width: pageW }) + 4;
+    }
+    doc.text("Lasku alihankintatyöstä Puuhapatetille.", 48, y, { width: pageW });
+    y += 20;
     if (params.workerIban) {
       doc.fill(INK).font("Helvetica-Bold").fontSize(9).text("Maksutiedot", 48, y); y += 14;
       doc.fill(GRAY).font("Helvetica").fontSize(9).text(`Tilinumero (IBAN): ${params.workerIban}`, 48, y); y += 12;
@@ -2996,7 +3176,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         contact: gig.company?.contact || gig.signature.customer.contactPerson,
         billing: gig.company?.billing || gig.signature.customer.billingAddress,
       };
-      gig.log.push({ t: Date.now(), text: `Sopimus allekirjoitettu sähköisesti: ${signerName} (${legalName})` });
+      gig.log.push({ t: Date.now(), text: `Sopimus allekirjoitettu sähköisesti: ${signerName}${gig.signature.signerTitle ? `, ${gig.signature.signerTitle}` : ""} — tilaajan ${legalName} puolesta` });
       gig.updatedAt = Date.now();
 
       const clean = sanitizeGigData(gig);
@@ -3015,7 +3195,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             from: FROM_EMAIL, to: teamTo,
             subject: `✍️ Sopimus allekirjoitettu: ${legalName} (${cid})`,
             html: wrap(`<p><b>${legalName}</b> allekirjoitti sopimuksen <b>${cid}</b>.</p>
-              <p style="color:#8C8A82">Allekirjoittaja: ${signerName}${gig.signature?.place ? " · " + gig.signature.place : ""}<br>Aika: ${new Date().toLocaleString("fi-FI")}</p>
+              <p style="color:#8C8A82">Allekirjoittaja: ${signerName}${gig.signature?.signerTitle ? " · " + gig.signature.signerTitle : ""} (tilaajan ${legalName} puolesta)${gig.signature?.place ? " · " + gig.signature.place : ""}<br>Aika: ${new Date().toLocaleString("fi-FI")}</p>
               <p><a href="https://puuhapatet.fi/admin/gig/${row.job.id}" style="color:#1F3B57">Avaa keikka adminissa →</a></p>`),
           }) : Promise.resolve(),
           (gig.company?.email) ? resend.emails.send({
@@ -3190,6 +3370,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       gig.payments.push({
         t: Date.now(), countThrough: totalsAfter.invoicedWashed, amountCents,
         to: recipient, note: isFinal ? "Loppulasku" : "Osalasku", emailId: result.data?.id,
+        // Record WHICH leader billed the customer — their Y-tunnus becomes the buyer
+        // on the alihankkija invoices funded by this instalment.
+        biller: (senderName || senderYTunnus || req.body?.billerId) ? {
+          id: req.body?.billerId ? String(req.body.billerId).slice(0, 40) : undefined,
+          name: senderName ? String(senderName).slice(0, 160) : undefined,
+          yTunnus: senderYTunnus ? String(senderYTunnus).slice(0, 40) : undefined,
+        } : undefined,
       });
       gig.log.push({ t: Date.now(), text: `${isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} lähetetty: ${fmtEur(amountCents)} → ${recipient}` });
       gig.updatedAt = Date.now();
@@ -3372,12 +3559,31 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Build the worker-facing view: floor map + their own progress, NO gig price.
   function workerView(project: ProjectData, member: CrewMember) {
     const stats = crewMemberStats(project, member);
+    const projectTotals = computeProjectTotals(project);
+    // Paydate-progress counts: for a fixed deal (FR8) use the BILLABLE scope (the
+    // agreed red-window count, e.g. 168), so the milestone matches what's billed —
+    // independent of the live dot count. Otherwise use all mapped windows.
+    const payDeal = fixedDealFor(project);
+    let windowsTotal = projectTotals.total;
+    let windowsWashed = projectTotals.washed;
+    if (payDeal) {
+      const db = computeDealBilling(project, payDeal);
+      const agreedScope = payDeal.pricePerWindow > 0 ? Math.round(payDeal.capCents / 100 / payDeal.pricePerWindow) : 0;
+      windowsTotal = Math.max(agreedScope, db.billableTotal);
+      windowsWashed = db.billableWashed;
+    }
+    // Trainee (harjoittelija, e.g. Milja under Matias): NOT an alihankkija — no
+    // own Y-tunnus, no self-invoicing, and not bound by the subcontractor signing
+    // gate. Matched by the linked login id / crew id, or first name as fallback.
+    const trainee: TraineeInfo | undefined =
+      traineeForUserId(member.linkedUserId) || traineeForUserId(member.id) || traineeForName(member.name);
     // Soft-start model: "in the app" (typed name) is decoupled from "has signed".
     const signedAll = hasSignedAllAgreements(member, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION);
     const enteredApp = !!member.onboardedAt;
     // Until signing is gated, the dashboard opens on name alone. Once gated, an
-    // already-entered worker who hasn't signed the current set must do so.
-    const needsToSign = WORKER_AGREEMENTS_GATED && !signedAll;
+    // already-entered worker who hasn't signed the current set must do so — but a
+    // trainee is never forced into the independent-contractor agreement.
+    const needsToSign = !trainee && WORKER_AGREEMENTS_GATED && !signedAll;
     // id → display name for every crew member, so the worker map can show WHO
     // washed each window ("Pesi Jani") and who left a note.
     const workerNames: Record<string, string> = {};
@@ -3405,6 +3611,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         onboarded: enteredApp,
         needsToSign,
         signedAll,
+        // Trainee: drives the dashboard to hide the alihankkija/tax cards and show
+        // a "under <leader>'s responsibility" note instead. null for normal workers.
+        trainee: trainee ? { responsibleLeaderName: trainee.responsibleLeaderName } : null,
         activeShiftAt: member.activeShiftAt ?? null,
         shiftStartWashed: member.shiftStartWashed ?? null,
         sessions: (member.sessions || []).slice(-30).reverse(), // newest-first
@@ -3442,11 +3651,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       deleted: project.deleted,
       hours: stats.hours,
       stats,
+      // Gig-wide window counts (team) for the shared "paydate progress" stat — NO
+      // euros, so the worker still never sees the gig total/price/cap.
+      windowsTotal,
+      windowsWashed,
       agreementVersion: WORKER_AGREEMENT_VERSION,
-      requiredAgreementIds: REQUIRED_AGREEMENT_IDS,
+      // A trainee signs no subcontractor agreements; everyone else the full set.
+      requiredAgreementIds: trainee ? [] : REQUIRED_AGREEMENT_IDS,
       // Whether signing is currently enforced. Drives the client flow: soft start
-      // (intro + name only) when false; full sign flow / banner when true.
-      agreementsGated: WORKER_AGREEMENTS_GATED,
+      // (intro + name only) when false; full sign flow / banner when true. Trainees
+      // are never gated (they're not independent contractors).
+      agreementsGated: trainee ? false : WORKER_AGREEMENTS_GATED,
     };
   }
 
@@ -3613,6 +3828,32 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!delta) return res.status(400).json({ error: "delta puuttuu" });
       project.hours[member.id] = Math.max(0, +(((project.hours[member.id] || 0) + delta).toFixed(2)));
       project.hourLog = [{ worker: member.id, delta, ts: Date.now(), by: member.id }, ...(project.hourLog || [])].slice(0, 200);
+      const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
+      res.json({ ok: true, view: workerView(saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Worker logs a whole work day by hand (forgot the timer). Records the hours in
+  // the ledger AND appends a session so the day shows up in the diary. Windows /
+  // earnings are left at 0 (washed windows are tracked on the map separately).
+  app.post("/api/crew/:token/manual-session", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const hours = Math.round((Number(req.body?.hours) || 0) * 100) / 100;
+      if (!(hours > 0)) return res.status(400).json({ error: "tunnit puuttuu" });
+      const minutes = Math.round(hours * 60);
+      const end = Date.now();
+      const session = { start: end - minutes * 60000, end, minutes, windows: 0, earnedCents: 0, manual: true };
+      project.hours[member.id] = Math.max(0, +(((project.hours[member.id] || 0) + hours).toFixed(2)));
+      project.hourLog = [{ worker: member.id, delta: hours, ts: end, by: member.id }, ...(project.hourLog || [])].slice(0, 200);
+      project.crew = (project.crew || []).map((m) =>
+        m.id !== member.id ? m : { ...m, sessions: [...(m.sessions || []), session].slice(-200) },
+      );
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
       res.json({ ok: true, view: workerView(saved, savedMember) });
@@ -3910,6 +4151,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!Number.isFinite(amountCents) || amountCents <= 0) {
         return res.status(400).json({ error: "Virheellinen summa" });
       }
+      // Buyer = the leader (their Y-tunnus) who billed the customer for this money;
+      // the worker invoices them. Defaults to the first leader / company if unset.
+      const buyer = resolveBuyer(req.body?.billerId ? String(req.body.billerId) : null);
       const payout = {
         id: `po_${randomUUID().slice(0, 12)}`,
         amountCents: Math.min(amountCents, 1_000_000_00),
@@ -3917,6 +4161,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         note: req.body?.note ? String(req.body.note).slice(0, 200) : undefined,
         status: "ilmoitettu" as const,
         createdAt: Date.now(),
+        buyer,
       };
       const payouts = [payout, ...(member.payouts || [])];
       project.crew = (project.crew || []).map((m) => (m.id === mid ? { ...m, payouts } : m));
@@ -3956,10 +4201,32 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const now = Date.now();
       const invoiceDate = new Date(now).toLocaleDateString("fi-FI");
 
+      // Vero-erittely: ALV laskuttajan ALV-aseman mukaan + ennakonpidätys, jos
+      // laskuttaja ei ole ennakkoperintärekisterissä. amountCents on työkorvaus
+      // ilman ALV:tä (pestyt ikkunat × hinta). Admin voi antaa withholdingRate-
+      // ohituksen (esim. 0.13 oikeushenkilölle tai verokortin %).
+      const answers = member.profile?.answers;
+      const overrideRate = Number(req.body?.withholdingRate);
+      const tax = computeTax({
+        laborCents: payout.amountCents,
+        vatStatus: readVatStatus(answers),
+        inPrepaymentRegister: readInPrepaymentRegister(answers),
+        withholdingRate: Number.isFinite(overrideRate) && overrideRate >= 0 && overrideRate <= 1
+          ? overrideRate : undefined,
+      });
+
+      // Buyer = the leader who billed the customer. Use the one chosen at creation;
+      // allow an override at payment time (req.body.billerId), else keep/resolve.
+      const buyer = req.body?.billerId
+        ? resolveBuyer(String(req.body.billerId))
+        : (payout.buyer ?? resolveBuyer(null));
+
       payout.status = "maksettu";
       payout.paidAt = now;
       payout.invoiceNo = invoiceNo;
       payout.billing = { name: workerName, yTunnus: workerYTunnus, iban: workerIban, address: workerAddress };
+      payout.tax = tax;
+      payout.buyer = buyer;
 
       project.crew = (project.crew || []).map((m) => (m.id === mid ? { ...m, payouts } : m));
       const saved = await saveProject(job, project);
@@ -3971,7 +4238,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const pdf = await generateWorkerInvoicePdf({
           invoiceNo, workerName, workerYTunnus, workerAddress, workerIban,
           windows: payout.windows, amountCents: payout.amountCents,
-          note: payout.note, invoiceDate, paidDate: invoiceDate,
+          note: payout.note, invoiceDate, paidDate: invoiceDate, tax, buyer,
         });
         if (resend) {
           const html = `
@@ -3983,28 +4250,72 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     </div>
     <div style="padding:24px 32px">
       <p style="margin:0 0 16px;font-size:14px;color:#1A1A1A;line-height:1.7">
-        <strong>${workerName}</strong> on hyväksynyt ja maksu on merkitty maksetuksi.
-        Liitteenä alihankkijan lasku Puuhapatetille.
+        Lasku <strong>${workerName}</strong> → <strong>${buyer.name}</strong>${buyer.yTunnus ? ` (Y-tunnus ${buyer.yTunnus})` : ""}.
+        Maksu on merkitty maksetuksi. Liitteenä alihankkijan lasku (tosite).
       </p>
       <table width="100%" style="border-collapse:collapse;border-top:2px solid #1A1A1A">
-        <tr><td style="padding:10px 0;font-size:14px;color:#1A1A1A">${payout.note || "Ikkunanpesutyö"}${payout.windows ? ` · ${payout.windows} ikkunaa` : ""}</td>
-        <td style="padding:10px 0;text-align:right;font-size:16px;font-weight:800;color:#1A1A1A">${fmtEur(payout.amountCents)}</td></tr>
+        <tr><td style="padding:10px 0;font-size:13px;color:#1A1A1A">${payout.note || "Ikkunanpesutyö"}${payout.windows ? ` · ${payout.windows} ikkunaa` : ""} (veroton)</td>
+        <td style="padding:10px 0;text-align:right;font-size:14px;color:#1A1A1A">${fmtEur(tax.laborCents)}</td></tr>
+        ${tax.vatRegistered ? `<tr><td style="padding:4px 0;font-size:13px;color:#8C8A82">ALV ${fmtPct(tax.vatRate)}</td><td style="padding:4px 0;text-align:right;font-size:13px;color:#8C8A82">${fmtEur(tax.vatCents)}</td></tr>` : ""}
+        ${tax.withheld ? `<tr><td style="padding:4px 0;font-size:13px;color:#8C8A82">Ennakonpidätys ${fmtPct(tax.withholdingRate)}</td><td style="padding:4px 0;text-align:right;font-size:13px;color:#8C8A82">−${fmtEur(tax.withholdingCents)}</td></tr>` : ""}
+        <tr><td style="padding:10px 0;border-top:1px solid #E4E1D7;font-size:14px;font-weight:800;color:#1A1A1A">${tax.withheld ? "Maksetaan tilille" : "Maksettavaa"}</td>
+        <td style="padding:10px 0;border-top:1px solid #E4E1D7;text-align:right;font-size:16px;font-weight:800;color:#1A1A1A">${fmtEur(tax.payableCents)}</td></tr>
       </table>
       <div style="background:#F6F4EE;border-radius:12px;padding:16px 20px;margin-top:16px;font-size:13px;color:#1A1A1A">
-        <p style="margin:0 0 4px">Laskuttaja: ${workerName}${workerYTunnus ? ` · Y-tunnus ${workerYTunnus}` : ""}</p>
-        ${workerIban ? `<p style="margin:0">IBAN: ${workerIban}</p>` : ""}
+        <p style="margin:0 0 4px">Myyjä: ${workerName}${workerYTunnus ? ` · Y-tunnus ${workerYTunnus}` : ""}</p>
+        ${workerIban ? `<p style="margin:0 0 4px">IBAN: ${workerIban}</p>` : ""}
+        <p style="margin:0">Ostaja: ${buyer.name}${buyer.yTunnus ? ` · Y-tunnus ${buyer.yTunnus}` : ""}</p>
+        ${tax.withheld ? `<p style="margin:8px 0 0;color:#8a5a12">Huom: myyjä ei ole ennakkoperintärekisterissä → ennakonpidätys ${fmtPct(tax.withholdingRate)} (${fmtEur(tax.withholdingCents)}) tilitettävä Verolle.</p>` : ""}
       </div>
     </div>
   </div>
 </body></html>`;
+          // 1) Team copy (record-keeping).
           const result = await resend.emails.send({
             from: FROM_EMAIL,
             to: WORKER_NOTIFICATION_EMAILS,
-            subject: `Alihankkijan lasku ${invoiceNo} — ${workerName} · ${fmtEur(payout.amountCents)}`,
+            subject: `Alihankkijan lasku ${invoiceNo} — ${workerName} → ${buyer.name} · ${fmtEur(tax.payableCents)}`,
             html,
             attachments: [{ filename: `lasku-${invoiceNo}.pdf`, content: pdf.toString("base64") }],
           });
           emailId = result.data?.id;
+
+          // 2) The worker's OWN copy — their tosite/proof of the invoice they issued.
+          const workerEmail = member.profile?.email;
+          if (workerEmail) {
+            const workerHtml = `
+<!DOCTYPE html><html lang="fi"><body style="margin:0;background:#F6F4EE;font-family:'Poppins',ui-sans-serif,system-ui,sans-serif">
+  <div style="max-width:600px;margin:24px auto;background:#fff;border:1px solid #E4E1D7;border-radius:14px;overflow:hidden">
+    <div style="padding:24px 32px;border-bottom:1px solid #E4E1D7">
+      <p style="margin:0;font-size:20px;font-weight:700;color:#1A1A1A">Puuhapatet</p>
+      <p style="margin:4px 0 0;font-size:13px;color:#8C8A82">Sinun laskusi · ${invoiceNo}</p>
+    </div>
+    <div style="padding:24px 32px;font-size:14px;color:#1A1A1A;line-height:1.7">
+      <p style="margin:0 0 14px">Hei${(workerName || "").split(" ")[0] ? ` ${workerName.split(" ")[0]}` : ""}! Tässä on lasku, jonka teit työstäsi.
+        Säilytä se tositteena kirjanpitoasi varten — sama PDF on liitteenä.</p>
+      <div style="background:#F6F4EE;border-radius:12px;padding:16px 20px;font-size:13px">
+        <p style="margin:0 0 4px"><strong>Lasku ${invoiceNo}</strong> · ${invoiceDate}</p>
+        <p style="margin:0 0 4px">Saaja (ostaja): ${buyer.name}${buyer.yTunnus ? ` · Y-tunnus ${buyer.yTunnus}` : ""}</p>
+        <p style="margin:0 0 4px">Veroton: ${fmtEur(tax.laborCents)}${tax.vatRegistered ? ` · ALV ${fmtPct(tax.vatRate)} ${fmtEur(tax.vatCents)}` : ""}</p>
+        ${tax.withheld ? `<p style="margin:0 0 4px;color:#8a5a12">Ennakonpidätys ${fmtPct(tax.withholdingRate)}: −${fmtEur(tax.withholdingCents)} (tilitetään Verolle, luetaan hyväksesi verotuksessa)</p>` : ""}
+        <p style="margin:8px 0 0;font-size:15px;font-weight:800">Tilillesi maksettu: ${fmtEur(tax.payableCents)}</p>
+      </div>
+      ${tax.withheld ? `<p style="margin:14px 0 0;font-size:12.5px;color:#8C8A82">Vinkki: kun rekisteröidyt ennakkoperintärekisteriin (ytj.fi), saat jatkossa koko summan tilille ja hoidat verot itse.</p>` : ""}
+    </div>
+  </div>
+</body></html>`;
+            try {
+              await resend.emails.send({
+                from: FROM_EMAIL,
+                to: workerEmail,
+                subject: `Sinun laskusi ${invoiceNo} — ${fmtEur(tax.payableCents)} · Puuhapatet`,
+                html: workerHtml,
+                attachments: [{ filename: `lasku-${invoiceNo}.pdf`, content: pdf.toString("base64") }],
+              });
+            } catch (e) {
+              console.error("Worker self-copy invoice email error:", e);
+            }
+          }
         }
       } catch (e) {
         console.error("Worker invoice email error:", e);
@@ -4296,13 +4607,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         {
           type: "function",
           function: {
-            name: "send_followup_email",
-            description: "Lähetä muistutusviesti tai yhteydenottopyyntö asiakkaalle. Käytä vain kun käyttäjä pyytää lähettämään viestin asiakkaalle.",
+            name: "draft_followup_email",
+            description: "Luonnostele yhteydenotto- tai muistutusviesti asiakkaalle. EI lähetä viestiä — palauttaa luonnoksen, jonka käyttäjä näkee ja hyväksyy itse napilla. Käytä aina kun halutaan lähestyä asiakasta sähköpostilla.",
             parameters: {
               type: "object",
               properties: {
                 job_id: { type: "number", description: "Keikan ID-numero" },
-                message: { type: "string", description: "Viesti asiakkaalle suomeksi (lyhyt, max 3 lausetta)" },
+                message: { type: "string", description: "Viesti asiakkaalle suomeksi. Laadukas, kohtelias, ei liioittelua. Kerro konkreettisesti taustasta: teemme ammattimaista ikkunanpesua Espoossa ja Helsingissä, referenssinä mm. iso FR8-kohde (vanha TKK / Otaniemi). 3–6 lausetta." },
                 style: { 
                   type: "string", 
                   enum: ["henkikohtainen", "pro", "lyhyt"],
@@ -4310,6 +4621,41 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
                 },
               },
               required: ["job_id", "message"],
+            },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "propose_prospects",
+            description: "Ehdota uusia potentiaalisia asiakaskohteita (prospekteja), joihin kannattaisi olla yhteydessä — esim. Espoon rakennukset, taloyhtiöt tai yritykset. Tämä EI luo liidiä eikä lähetä mitään, vaan listaa perustellut ehdotukset käyttäjälle harkittavaksi.",
+            parameters: {
+              type: "object",
+              properties: {
+                area: { type: "string", description: "Kohdealue, esim. 'Tapiola', 'Otaniemi', 'Etelä-Espoo'" },
+                building_type: { type: "string", description: "Kohdetyyppi, esim. 'taloyhtiö', 'toimistorakennus', 'liiketila', 'omakotitalo'" },
+                count: { type: "number", description: "Montako ehdotusta (oletus 3, max 6)" },
+              },
+              required: ["area"],
+            },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "create_lead_from_prospect",
+            description: "Luo uusi liidi (asiakas + keikka tilassa 'lead') hyväksytystä prospektiehdotuksesta. Käytä VAIN kun käyttäjä on selkeästi hyväksynyt jonkin ehdotuksen ja pyytää lisäämään sen liidiksi. Ei lähetä viestiä asiakkaalle.",
+            parameters: {
+              type: "object",
+              properties: {
+                name: { type: "string", description: "Yhteyshenkilön tai kohteen nimi (esim. 'As Oy Tapiolanranta')" },
+                address: { type: "string", description: "Osoite tai sijainti, vapaamuotoinen" },
+                phone: { type: "string", description: "Puhelin jos tiedossa, muuten tyhjä" },
+                email: { type: "string", description: "Sähköposti jos tiedossa, muuten tyhjä" },
+                description: { type: "string", description: "Lyhyt kuvaus keikasta / mihin oltaisiin yhteydessä" },
+                notes: { type: "string", description: "Peruste prospektille (miksi tämä kohde, mistä idea)" },
+              },
+              required: ["name", "description"],
             },
           },
         },
@@ -4324,13 +4670,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       let turns: any[] = [systemTurn, ...historyTurns, userTurn];
 
       const toolResultNotes: string[] = [];
+      // Puoliautonomia: AI ei lähetä sähköposteja itse. draft_followup_email
+      // kerää luonnokset tänne, frontend näyttää ne ja käyttäjä hyväksyy napilla.
+      const emailDrafts: Array<{
+        jobId: number; customerName: string; email: string;
+        style: OutreachStyle; message: string; warning?: string;
+      }> = [];
       for (let round = 0; round < 3; round++) {
         const result = await chatCompleteWithTools(turns, adminTools, { temperature: 0.4, maxTokens: 900 });
 
         if (!result.toolCalls || result.toolCalls.length === 0) {
           const reply = result.text ?? "En valitettavasti saanut yhteyttä tekoälypalveluun juuri nyt. Yritä hetken kuluttua uudelleen.";
           const fullReply = toolResultNotes.length > 0 ? toolResultNotes.join("\n") + "\n\n" + reply : reply;
-          return res.json({ reply: fullReply });
+          return res.json({ reply: fullReply, drafts: emailDrafts.length ? emailDrafts : undefined });
         }
 
         turns.push({ role: "assistant", content: result.text ?? "", tool_calls: result.toolCalls });
@@ -4352,170 +4704,75 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
                 toolResult = `Keikka #${args.job_id} päivitetty: ${changes}.`;
                 toolResultNotes.push(`✓ ${toolResult}`);
               }
-            } else if (tc.function.name === "send_followup_email") {
-              if (!resend) {
-                toolResult = "Virhe: sähköpostipalvelu ei käytössä.";
+            } else if (tc.function.name === "draft_followup_email") {
+              // Puoliautonominen: ei lähetä — luo luonnos jonka käyttäjä hyväksyy.
+              const jobRow = (await db.select().from(jobs).where(eq(jobs.id, args.job_id)).limit(1))[0];
+              if (!jobRow) {
+                toolResult = `Virhe: keikkaa #${args.job_id} ei löydy.`;
               } else {
-                const jobRow = (await db.select().from(jobs).where(eq(jobs.id, args.job_id)).limit(1))[0];
-                if (!jobRow) {
-                  toolResult = `Virhe: keikkaa #${args.job_id} ei löydy.`;
+                const customer = jobRow.customerId
+                  ? (await db.select().from(customers).where(eq(customers.id, jobRow.customerId)).limit(1))[0]
+                  : null;
+                if (!customer?.email) {
+                  toolResult = `Keikalla #${args.job_id} ei ole asiakkaan sähköpostia — ei voi luonnostella lähetettävää viestiä.`;
                 } else {
-                  const customer = jobRow.customerId
-                    ? (await db.select().from(customers).where(eq(customers.id, jobRow.customerId)).limit(1))[0]
-                    : null;
-                  if (!customer?.email) {
-                    toolResult = `Keikalla #${args.job_id} ei ole asiakkaan sähköpostia — ei voitu lähettää.`;
-                  } else {
-                    // Duplicate protection: check if outreach sent in last 30 days
-                    const notes = jobRow.notes || "";
-                    const recentOutreach = notes.split("\n").some(line => {
-                      if (!line.includes("yhteydenotto lähetetty")) return false;
-                      const match = line.match(/\[(\d+)\.(\d+)\.(\d+)/);
-                      if (!match) return false;
-                      const [, d, m, y] = match;
-                      const sent = new Date(Number(y), Number(m) - 1, Number(d));
-                      return (Date.now() - sent.getTime()) < 30 * 24 * 60 * 60 * 1000;
-                    });
-                    if (recentOutreach) {
-                      toolResult = `⚠️ Asiakkaalle ${customer.name} on jo lähetetty yhteydenotto viimeisen 30 päivän aikana. Jos haluat lähettää uudelleen, sano niin erikseen.`;
-                    } else {
-                      const style = args.style || "henkikohtainen";
-                      const firstName = customer.name?.split(" ")[0] ?? customer.name ?? "";
-                      const today = new Date().toLocaleDateString("fi-FI");
-                      const msg = (args.message as string).replace(/\n/g, "<br>");
-                      const msgPlain = args.message as string;
-
-                      let html = "";
-
-                      if (style === "lyhyt") {
-                        // Plain text style — no images, minimal HTML
-                        html = `<!DOCTYPE html>
-<html lang="fi"><head><meta charset="UTF-8"></head>
-<body style="margin:0;padding:0;background:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff"><tr><td align="center" style="padding:40px 16px">
-<table width="540" cellpadding="0" cellspacing="0" style="max-width:540px;width:100%">
-  <tr><td style="padding-bottom:32px">
-    <p style="margin:0;color:#111;font-size:15px;line-height:1.8">${msg}</p>
-  </td></tr>
-  <tr><td style="border-top:1px solid #eeeeee;padding-top:20px">
-    <p style="margin:0;color:#333;font-size:14px;line-height:1.7">
-      Terveisin,<br>
-      <strong>Joonatan Juuri</strong> &amp; Matias Pitkänen<br>
-      <span style="color:#666">Puuhapatet</span><br>
-      <a href="tel:+358400389999" style="color:#2d5016;text-decoration:none">+358 40 0389999</a> · 
-      <a href="https://wa.me/358400389999" style="color:#25D366;text-decoration:none">WhatsApp</a><br>
-      <a href="https://puuhapatet.fi" style="color:#2d5016;text-decoration:none;font-size:12px">puuhapatet.fi</a>
-    </p>
-  </td></tr>
-</table>
-</td></tr></table>
-</body></html>`;
-
-                      } else if (style === "pro") {
-                        // Branded professional with green header + photo
-                        html = `<!DOCTYPE html>
-<html lang="fi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:#f0faf2">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0faf2"><tr><td align="center" style="padding:28px 16px">
-<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
-  <tr><td style="background:#2d5016;border-radius:16px 16px 0 0;padding:24px 32px">
-    <table width="100%" cellpadding="0" cellspacing="0"><tr>
-      <td><p style="margin:0;color:#fff;font-size:24px;font-weight:900;letter-spacing:-0.5px">Puuhapatet.</p>
-          <p style="margin:4px 0 0;color:#a3c97a;font-size:11px">Ammattimainen kiinteistöpalvelu · Espoo &amp; Helsinki</p></td>
-      <td style="text-align:right"><span style="background:#a3c97a;color:#1a3a0a;font-size:10px;font-weight:800;letter-spacing:2px;padding:4px 12px;border-radius:20px;text-transform:uppercase">YHTEYDENOTTO</span></td>
-    </tr></table>
-  </td></tr>
-  <tr><td style="padding:0;line-height:0"><img src="https://puuhapatet.fi/hero-workers.jpg" alt="Puuhapatet työssä" style="width:100%;max-height:220px;object-fit:cover;display:block"/></td></tr>
-  <tr><td style="background:#fff;border:1px solid #d1f0d8;border-top:none;padding:28px 32px">
-    <p style="margin:0 0 20px;color:#2a3a2a;font-size:15px;line-height:1.8">${msg}</p>
-    <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #e8f5e9;margin-top:20px;padding-top:20px">
-      <tr>
-        <td style="padding-top:20px;text-align:center">
-          <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;background:#111;color:#4ade80;font-size:15px;font-weight:800;text-decoration:none;padding:16px 40px;border-radius:12px;border:2px solid #22c55e">Jätä yhteydenottopyyntö →</a>
-          <br>
-          <a href="https://wa.me/358400389999" style="display:inline-block;background:#25D366;color:#fff;padding:10px 22px;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px;margin:10px 4px 0">💬 WhatsApp</a>
-          <p style="margin:8px 0 0;color:#999;font-size:12px">Ilmainen tarjous alle 24 tunnissa</p>
-        </td>
-      </tr>
-    </table>
-  </td></tr>
-  <tr><td style="background:#111;border-radius:0 0 16px 16px;padding:18px 32px">
-    <table width="100%" cellpadding="0" cellspacing="0"><tr>
-      <td><p style="margin:0 0 2px;color:#4ade80;font-size:15px;font-weight:800">Puuhapatet.</p>
-          <p style="margin:0;color:#666;font-size:12px">Joonatan +358 40 0389999 · Matias +358 44 2350881</p></td>
-      <td style="text-align:right"><a href="https://puuhapatet.fi" style="color:#4ade80;font-weight:700;text-decoration:none;font-size:13px">puuhapatet.fi</a></td>
-    </tr></table>
-  </td></tr>
-</table></td></tr></table>
-</body></html>`;
-
-                      } else {
-                        // henkikohtainen (default) — simple, warm, personal feel
-                        html = `<!DOCTYPE html>
-<html lang="fi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f8faf8"><tr><td align="center" style="padding:32px 16px">
-<table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,0.07)">
-  <tr><td style="background:#2d5016;padding:20px 28px">
-    <p style="margin:0;color:#fff;font-size:18px;font-weight:800;letter-spacing:-0.3px">Puuhapatet.</p>
-  </td></tr>
-  <tr><td style="padding:28px 28px 8px">
-    <p style="margin:0 0 18px;color:#1a1a1a;font-size:22px;font-weight:700;line-height:1.3">Hei ${firstName}! 👋</p>
-    <p style="margin:0;color:#333;font-size:15px;line-height:1.8">${msg}</p>
-  </td></tr>
-  <tr><td style="padding:20px 28px">
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0faf2;border-radius:10px;padding:16px">
-      <tr><td style="padding:0">
-        <p style="margin:0 0 10px;color:#2d5016;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px">Ota yhteyttä</p>
-        <p style="margin:0 0 6px;font-size:14px;color:#333">
-          💬 <a href="https://wa.me/358400389999" style="color:#2d5016;font-weight:600;text-decoration:none">WhatsApp — Joonatan</a>
-          <span style="color:#999;font-size:12px"> (+358 40 0389999)</span>
-        </p>
-        <p style="margin:0;font-size:14px;color:#333">
-          🌐 <a href="https://puuhapatet.fi/tilaus" style="color:#2d5016;font-weight:600;text-decoration:none">puuhapatet.fi/tilaus</a>
-          <span style="color:#999;font-size:12px"> — jätä yhteystiedot, soitamme takaisin</span>
-        </p>
-      </td></tr>
-    </table>
-  </td></tr>
-  <tr><td style="padding:0 28px 24px">
-    <p style="margin:0;color:#555;font-size:14px;line-height:1.7">
-      Terveisin,<br>
-      <strong style="color:#1a1a1a">Joonatan &amp; Matias</strong><br>
-      <span style="color:#2d5016;font-size:13px">Puuhapatet</span>
-    </p>
-  </td></tr>
-  <tr><td style="background:#f8f8f8;padding:12px 28px;border-top:1px solid #eee">
-    <p style="margin:0;color:#aaa;font-size:11px">
-      <a href="https://puuhapatet.fi" style="color:#aaa;text-decoration:none">puuhapatet.fi</a> · info@puuhapatet.fi · Espoo &amp; Helsinki
-    </p>
-  </td></tr>
-</table>
-</td></tr></table>
-</body></html>`;
-                      }
-
-                      await resend.emails.send({
-                        from: FROM_EMAIL,
-                        to: customer.email,
-                        subject: `Hei ${firstName} — terveisiä Puuhapatet!`,
-                        html,
-                      });
-
-                      // Mark outreach in job notes
-                      const outreachNote = `[${today} yhteydenotto lähetetty sähköpostilla: ${customer.email} (tyyli: ${style})]`;
-                      await db.update(jobs).set({
-                        notes: notes ? notes + "\n" + outreachNote : outreachNote,
-                        updatedAt: new Date()
-                      }).where(eq(jobs.id, args.job_id));
-
-                      toolResult = `Viesti lähetetty (${style}) asiakkaalle ${customer.name} <${customer.email}>.`;
-                      toolResultNotes.push(`✓ ${toolResult}`);
-                    }
-                  }
+                  const style: OutreachStyle = (["henkikohtainen", "pro", "lyhyt"].includes(args.style) ? args.style : "henkikohtainen");
+                  // Duplikaattisuoja: varoita jos yhteydenotto on lähetetty 30 pv sisällä
+                  const notes = jobRow.notes || "";
+                  const recentOutreach = notes.split("\n").some(line => {
+                    if (!line.includes("yhteydenotto lähetetty")) return false;
+                    const match = line.match(/\[(\d+)\.(\d+)\.(\d+)/);
+                    if (!match) return false;
+                    const [, d, m, y] = match;
+                    const sent = new Date(Number(y), Number(m) - 1, Number(d));
+                    return (Date.now() - sent.getTime()) < 30 * 24 * 60 * 60 * 1000;
+                  });
+                  const warning = recentOutreach
+                    ? `Huom: tälle asiakkaalle on jo lähetetty yhteydenotto viimeisen 30 päivän aikana.`
+                    : undefined;
+                  emailDrafts.push({
+                    jobId: args.job_id,
+                    customerName: customer.name,
+                    email: customer.email,
+                    style,
+                    message: String(args.message || ""),
+                    warning,
+                  });
+                  toolResult = `Luonnos valmis asiakkaalle ${customer.name} <${customer.email}> (tyyli: ${style}). Viestiä EI ole vielä lähetetty — käyttäjä näkee luonnoksen ja hyväksyy sen itse.${warning ? " " + warning : ""}`;
+                  toolResultNotes.push(`📝 Luonnostelin viestin asiakkaalle ${customer.name}. Tarkista alta ja lähetä napilla.`);
                 }
               }
-                        } else {
+            } else if (tc.function.name === "propose_prospects") {
+              // Pelkkä ehdotuslista — ei luo mitään dataa. AI tuottaa perustellut
+              // kohteet vastaustekstinään; tämä työkalu vain ohjeistaa muodon.
+              const n = Math.min(Math.max(Number(args.count) || 3, 1), 6);
+              toolResult = `Tee ${n} konkreettista prospektiehdotusta alueelle "${args.area}"${args.building_type ? ` (tyyppi: ${args.building_type})` : ""}. ` +
+                `Anna jokaiselle: kohteen tyyppi/nimi- idea, sijainti, ja lyhyt PERUSTE miksi tämä sopisi Puuhapatetille (esim. ikkunapinta-ala, alueen profiili, lähellä FR8/Otaniemeä). ` +
+                `ÄLÄ keksi oikeiden ihmisten nimiä tai yhteystietoja. Muotoile selkeänä numeroituna listana. ` +
+                `Lopuksi kerro, että käyttäjä voi pyytää lisäämään minkä tahansa ehdotuksen liidiksi.`;
+            } else if (tc.function.name === "create_lead_from_prospect") {
+              try {
+                const [newCustomer] = await db.insert(customers).values({
+                  name: String(args.name).slice(0, 200),
+                  phone: String(args.phone || "").slice(0, 60),
+                  email: args.email ? String(args.email).slice(0, 200) : null,
+                  address: String(args.address || "—").slice(0, 300),
+                  notes: args.notes ? `[Prospekti — AI-ehdotus ${new Date().toLocaleDateString("fi-FI")}] ${args.notes}` : null,
+                  ownedBy: String(userId || ""),
+                }).returning();
+                const [newJob] = await db.insert(jobs).values({
+                  customerId: newCustomer.id,
+                  description: String(args.description).slice(0, 500),
+                  agreedPrice: 0,
+                  status: "lead",
+                  notes: `[${new Date().toLocaleDateString("fi-FI")}] Liidi luotu AI:n prospektiehdotuksesta.${args.notes ? " Peruste: " + args.notes : ""}`,
+                }).returning();
+                toolResult = `Liidi luotu: ${newCustomer.name} (keikka #${newJob.id}, tila: lead). Se näkyy nyt avoimissa liideissä.`;
+                toolResultNotes.push(`✓ Lisäsin liidin: ${newCustomer.name} (#${newJob.id}).`);
+              } catch (e: any) {
+                toolResult = `Virhe liidin luonnissa: ${e.message}`;
+              }
+            } else {
               toolResult = `Tuntematon työkalu: ${tc.function.name}`;
             }
           } catch (e: any) {
@@ -4524,9 +4781,54 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           turns.push({ role: "tool", tool_call_id: tc.id, content: toolResult });
         }
       }
-      res.json({ reply: toolResultNotes.join("\n") || "Toimenpiteet suoritettu." });
+      res.json({ reply: toolResultNotes.join("\n") || "Toimenpiteet suoritettu.", drafts: emailDrafts.length ? emailDrafts : undefined });
     } catch (e: any) {
       console.error("Admin assistant error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Admin: lähetä AI:n luonnostelema yhteydenotto-sähköposti (hyväksyntä) ──
+  // Puoliautonominen flow: AI luonnostelee, käyttäjä hyväksyy → tämä lähettää.
+  // Body: { jobId, message, style, role }
+  app.post("/api/admin/assistant/send-email", async (req, res) => {
+    try {
+      const { jobId, message, style, role } = req.body ?? {};
+      if (role !== "HOST") return res.status(403).json({ error: "Vain perustaja voi lähettää viestejä." });
+      if (!resend) return res.status(400).json({ error: "Sähköpostipalvelu ei käytössä." });
+      const jid = Number(jobId);
+      const msg = String(message ?? "").trim();
+      if (!jid || !msg) return res.status(400).json({ error: "Keikka tai viesti puuttuu." });
+      const st: OutreachStyle = (["henkikohtainen", "pro", "lyhyt"].includes(style) ? style : "henkikohtainen");
+
+      const jobRow = (await db.select().from(jobs).where(eq(jobs.id, jid)).limit(1))[0];
+      if (!jobRow) return res.status(404).json({ error: `Keikkaa #${jid} ei löydy.` });
+      const customer = jobRow.customerId
+        ? (await db.select().from(customers).where(eq(customers.id, jobRow.customerId)).limit(1))[0]
+        : null;
+      if (!customer?.email) return res.status(400).json({ error: "Asiakkaalla ei ole sähköpostiosoitetta." });
+
+      const firstName = customer.name?.split(" ")[0] ?? customer.name ?? "";
+      const today = new Date().toLocaleDateString("fi-FI");
+      const html = buildOutreachEmailHtml(st, msg, firstName);
+
+      await resend.emails.send({
+        from: FROM_EMAIL,
+        to: customer.email,
+        subject: `Hei ${firstName} — terveisiä Puuhapatet!`,
+        html,
+      });
+
+      const notes = jobRow.notes || "";
+      const outreachNote = `[${today} yhteydenotto lähetetty sähköpostilla: ${customer.email} (tyyli: ${st})]`;
+      await db.update(jobs).set({
+        notes: notes ? notes + "\n" + outreachNote : outreachNote,
+        updatedAt: new Date(),
+      }).where(eq(jobs.id, jid));
+
+      res.json({ ok: true, sentTo: customer.email, customerName: customer.name });
+    } catch (e: any) {
+      console.error("Assistant send-email error:", e);
       res.status(500).json({ error: e.message });
     }
   });
@@ -4611,6 +4913,38 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       for (const j of pendingQuotes) {
         const c = customerById.get(j.customerId);
         lines.push(`- #${j.id} ${c?.name ?? "?"} · ${j.status} · tarjous odottaa vastausta · ${eur(j.agreedPrice)}`);
+      }
+    }
+
+    // Big window gigs (floor-plan projects) — progress + paydate status + the
+    // customer contact, so the daily report can give a short status to relay
+    // (e.g. to the FR8 customer contact).
+    const bigGigs = visibleJobs.filter(j => (j as any).projectData);
+    if (bigGigs.length) {
+      lines.push(`\nIsot keikat (edistyminen — voit kertoa asiakkaalle lyhyen tilanteen):`);
+      for (const j of bigGigs.slice(0, 5)) {
+        const proj = parseProject((j as any).projectData ?? null);
+        if (!proj) continue;
+        const tot = computeProjectTotals(proj);
+        const deal = fixedDealFor(proj);
+        let total = tot.total, washed = tot.washed;
+        if (deal && deal.pricePerWindow > 0) {
+          const dealBill = computeDealBilling(proj, deal);
+          total = Math.max(Math.round(deal.capCents / 100 / deal.pricePerWindow), dealBill.billableTotal);
+          washed = dealBill.billableWashed;
+        }
+        const pct = total > 0 ? Math.round((washed / total) * 100) : 0;
+        const pp = computePayProgress(total, washed);
+        const gig = (j as any).gigData ? parseGig((j as any).gigData) : null;
+        const contact = gig?.company?.contact || gig?.signature?.customer?.contactPerson || customerById.get(j.customerId)?.name;
+        const gigName = gig?.company?.name || proj.building?.name || j.description;
+        let invLine = "";
+        if (gig && role === "HOST") {
+          const gt = computeTotals(gig);
+          invLine = ` Laskutettu ${eur(gt.invoicedCents)}, laskuttamatta ${eur(gt.uninvoicedCents)}.`;
+        }
+        const dealLine = deal && deal.capCents > 0 ? ` Sopimuksen kokonaisarvo ${eur(deal.capCents)} (kiinteä kattohinta).` : "";
+        lines.push(`- #${j.id} ${gigName}: ${washed}/${total} ikkunaa pesty (${pct} %).${dealLine} Maksuerä ${pp.currentPeriod}/${pp.periods}, ${pp.done ? "kaikki erät katettu" : `${pp.toNext} ikkunaa seuraavaan maksuerään`}.${invLine}${contact ? ` Asiakkaan yhteyshenkilö: ${contact}.` : ""}`);
       }
     }
 

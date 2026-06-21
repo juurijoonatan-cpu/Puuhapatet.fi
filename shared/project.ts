@@ -643,5 +643,5 @@ export function sanitizeProjectData(input: any): ProjectData {
 // ─── Formatting helpers ──────────────────────────────────────────────────────
 
 export function eurFromCents(cents: number): string {
-  return (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + " €";
+  return (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
 }

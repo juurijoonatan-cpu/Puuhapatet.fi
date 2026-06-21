@@ -15,6 +15,7 @@ export interface DocSector {
 
 export interface DocSignature {
   signerName: string;
+  signerTitle?: string;
   place?: string;
   signedAt: number;
   customer: {
@@ -63,14 +64,15 @@ export function buildGigContractHtml(input: GigContractDocInput): string {
         <h2>Allekirjoitus</h2>
         ${input.approvedAt ? `<div class="banner">Hyväksytty ${esc(fiDate(input.approvedAt))}.</div>` : ""}
         <div class="grid">
-          <div><b>Tilaaja</b>${esc(sig.customer.legalName)}</div>
-          <div><b>Allekirjoittaja</b>${esc(sig.signerName)}</div>
+          <div><b>Tilaaja (sopimusosapuoli)</b>${esc(sig.customer.legalName)}</div>
+          <div><b>Allekirjoittaja</b>${esc(sig.signerName)}${sig.signerTitle ? ` · ${esc(sig.signerTitle)}` : ""}</div>
           ${sig.customer.businessId ? `<div><b>Y-tunnus</b>${esc(sig.customer.businessId)}</div>` : ""}
           ${sig.customer.contactPerson ? `<div><b>Yhteyshenkilö</b>${esc(sig.customer.contactPerson)}</div>` : ""}
           ${sig.customer.billingAddress ? `<div class="full"><b>Laskutusosoite</b>${esc(sig.customer.billingAddress)}</div>` : ""}
           ${sig.customer.eInvoice ? `<div class="full"><b>Verkkolasku / sähköposti</b>${esc(sig.customer.eInvoice)}</div>` : ""}
           <div class="full"><b>Paikka ja aika</b>${esc(sig.place ? sig.place + " · " : "")}${esc(fiDate(sig.signedAt))}</div>
         </div>
+        <p class="muted small">Sopimus on tehty tilaajan <b>${esc(sig.customer.legalName)}</b>${sig.customer.businessId ? ` (Y-tunnus ${esc(sig.customer.businessId)})` : ""} ja Puuhapatetin välillä. Yllä mainittu allekirjoittaja on allekirjoittanut sen sähköisesti tilaajan puolesta tämän valtuutettuna edustajana ja sitoo siten tilaajan sopimukseen.</p>
         ${sig.signatureDataUrl ? `<div class="sigbox"><img src="${sig.signatureDataUrl}" alt="allekirjoitus"></div>` : ""}
         <p class="muted small">Sähköisesti allekirjoitettu Puuhapatetin seurantalinkissä.</p>
       </div>`

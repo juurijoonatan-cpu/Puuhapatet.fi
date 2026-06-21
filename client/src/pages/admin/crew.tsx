@@ -183,14 +183,22 @@ export default function AdminCrewPage() {
                   </details>
                 )}
 
-                {/* Payouts (Puuhapatet → worker) */}
-                <PayoutPanel
-                  member={member}
-                  suggestedCents={stats.earnedCents}
-                  suggestedWindows={stats.washed}
-                  onCreate={createPayout}
-                  onMarkPaid={markPaid}
-                />
+                {/* Payouts (Puuhapatet → worker). Suggest only the UNPAID remainder
+                    — what this worker has done since the last payout — so each payout
+                    covers just the current billed period, never the cumulative total. */}
+                {(() => {
+                  const claimedCents = (member.payouts || []).reduce((s, p) => s + p.amountCents, 0);
+                  const claimedWindows = (member.payouts || []).reduce((s, p) => s + (p.windows || 0), 0);
+                  return (
+                    <PayoutPanel
+                      member={member}
+                      suggestedCents={Math.max(0, stats.earnedCents - claimedCents)}
+                      suggestedWindows={Math.max(0, stats.washed - claimedWindows)}
+                      onCreate={createPayout}
+                      onMarkPaid={markPaid}
+                    />
+                  );
+                })()}
               </div>
             ))}
 
@@ -316,6 +324,11 @@ function PayoutPanel({
 
         {open ? (
           <div className="rounded-lg border bg-card p-3 space-y-2">
+            {suggestedCents > 0 && (
+              <p className="text-[11px] text-muted-foreground">
+                Maksamatta tältä jaksolta: <span className="font-semibold text-foreground">{eur2(suggestedCents)}</span>{suggestedWindows ? ` · ${suggestedWindows} ikkunaa` : ""} (tehty työ − jo luodut maksut)
+              </p>
+            )}
             <div className="flex gap-2">
               <label className="flex-1 text-[11px] text-muted-foreground">
                 Summa (€)

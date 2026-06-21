@@ -27,6 +27,46 @@ const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KE
 const FROM_EMAIL = process.env.FROM_EMAIL || "Puuhapatet <onboarding@resend.dev>";
 // Optional: protect the calendar feed with a token (set CALENDAR_TOKEN env var on Render)
 const CALENDAR_TOKEN = process.env.CALENDAR_TOKEN || null;
+
+/** Clean, simple end-of-day summary email to the worker (best-effort). */
+async function sendSessionSummaryEmail(
+  member: CrewMember,
+  s: { start: number; end: number; minutes: number; windows: number; earnedCents: number },
+  buildingName?: string,
+): Promise<void> {
+  if (!resend) return;
+  const to = member.profile?.email;
+  if (!to) return;
+  const eur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + " €";
+  const dur = s.minutes >= 60 ? `${Math.floor(s.minutes / 60)} t ${s.minutes % 60} min` : `${s.minutes} min`;
+  const perH = s.minutes > 0 ? eur(Math.round(s.earnedCents / (s.minutes / 60))) : "—";
+  const first = (member.profile?.fullName || member.name || "").split(/\s+/)[0] || "";
+  const day = new Date(s.end).toLocaleDateString("fi-FI", { day: "numeric", month: "numeric", year: "numeric" });
+  const row = (label: string, value: string) =>
+    `<tr><td style="padding:10px 0;color:#8C8A82;font-size:13px">${label}</td><td style="padding:10px 0;text-align:right;font-weight:700;font-size:16px;color:#1A1A1A">${value}</td></tr>`;
+  const html = `<!doctype html><html><body style="margin:0;background:#F6F4EE;font-family:'Poppins',-apple-system,Segoe UI,system-ui,sans-serif">
+  <div style="max-width:460px;margin:0 auto;padding:28px 20px">
+    <div style="background:#fff;border:1px solid #E4E1D7;border-radius:18px;padding:26px">
+      <div style="font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#8C8A82">Puuhapatet</div>
+      <h1 style="font-size:22px;margin:8px 0 2px;color:#1A1A1A">Hyvää työtä${first ? `, ${first}` : ""}! 🎉</h1>
+      <p style="margin:0 0 18px;color:#8C8A82;font-size:14px">Päivän yhteenveto · ${day}${buildingName ? ` · ${buildingName}` : ""}</p>
+      <table style="width:100%;border-collapse:collapse">
+        ${row("Pestyt ikkunat", String(s.windows))}
+        ${row("Ansio", eur(s.earnedCents))}
+        ${row("Työaika", dur)}
+        ${row("€ / tunti", perH)}
+      </table>
+      <p style="margin:20px 0 0;color:#8C8A82;font-size:12.5px;line-height:1.6">Ansio kertyy tekemistäsi ikkunoista ja maksetaan oman Y-tunnuksesi kautta. Kiitos päivästä!</p>
+    </div>
+    <p style="text-align:center;color:#b8b5ab;font-size:11px;margin-top:14px">Puuhapatet · puuhapatet.fi</p>
+  </div></body></html>`;
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: `Päivän yhteenveto — ${s.windows} ikkunaa · ${eur(s.earnedCents)}`,
+    html,
+  });
+}
 // Notification email list — override via WORKER_EMAILS env var (comma-separated)
 const WORKER_NOTIFICATION_EMAILS: string[] = process.env.WORKER_EMAILS
   ? process.env.WORKER_EMAILS.split(",").map(e => e.trim()).filter(Boolean)
@@ -3534,6 +3574,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const { job, project, member } = found;
       const start = req.body?.start === true;
       const nowWashed = crewMemberStats(project, member).washed;
+      let endedSession: { start: number; end: number; minutes: number; windows: number; earnedCents: number } | null = null;
       project.crew = (project.crew || []).map((m) => {
         if (m.id !== member.id) return m;
         if (start) {
@@ -3544,12 +3585,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const baseline = m.shiftStartWashed ?? nowWashed;
         const windows = Math.max(0, nowWashed - baseline);
         const minutes = Math.max(0, Math.round(Number(req.body?.minutes) || (Date.now() - startedAt) / 60000));
-        const session = { start: startedAt, end: Date.now(), minutes, windows, earnedCents: windows * m.perWindowCents };
-        const sessions = [...(m.sessions || []), session].slice(-200);
+        endedSession = { start: startedAt, end: Date.now(), minutes, windows, earnedCents: windows * m.perWindowCents };
+        const sessions = [...(m.sessions || []), endedSession].slice(-200);
         return { ...m, activeShiftAt: undefined, shiftStartWashed: undefined, sessions };
       });
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
+      // Email the worker a clean day summary (best-effort; never blocks the response).
+      if (!start && endedSession && resend && savedMember.profile?.email) {
+        sendSessionSummaryEmail(savedMember, endedSession, project.building?.name).catch(
+          (e) => console.warn("session summary email failed:", e?.message),
+        );
+      }
       res.json({ ok: true, view: workerView(saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -3812,6 +3859,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           role: req.body?.role ?? m.role,
           // Link / unlink an admin login user to this dashboard ("" clears it).
           linkedUserId: req.body?.linkedUserId === undefined ? m.linkedUserId : (req.body.linkedUserId || undefined),
+          // Manual earnings override (managers' dashboard); null/"" clears it.
+          manualEarningsCents: req.body?.manualEarningsCents === undefined
+            ? m.manualEarningsCents
+            : (req.body.manualEarningsCents == null || req.body.manualEarningsCents === "" ? undefined : Number(req.body.manualEarningsCents)),
           // Host can rotate a leaked link — the old link dies immediately.
           token: rotatedToken ?? m.token,
         });

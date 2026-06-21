@@ -27,13 +27,12 @@ työtä ilman, että konteksti katoaa. Päivitä tätä kun logiikka muuttuu.
 - **Iso liikevaihto-/prioriteettikortti** johtajien dashboardissa = keikan deal
   (37,50 × punaiset, katto) — tämä on yrityksen luku, EI per-henkilö.
 
-### TODO (seuraavat PR:t)
-- **Johtajien manuaalinen muokkaus**: johtajien pitää voida käsin säätää omia
-  ikkunakohtaisia / päiväkohtaisia ansioitaan (esim. "tehdään päivä yhdessä, jaetaan
-  50/50" tai "yksi ikkuna yhdessä"). Suunniteltu malli: crew-jäsenelle valinnainen
-  `manualEarningsCents` (per sessio tai per päivä) joka ohittaa lasketun summan,
-  + perustajien rate editoitavaksi adminissa (nyt piilotettu, koska `adminLinked`
-  suodattaa heidät Työntekijät-listalta). Pidä simppelinä ja selkeänä.
+### Johtajien manuaalinen muokkaus (TOTEUTETTU)
+Johtajat voivat asettaa oman ansionsa käsin TEKIJÄT-kortista ("Muokkaa ansiota") —
+ohittaa lasketun summan (esim. "tehdään päivä yhdessä, jaetaan 50/50": aseta molemmille
+sama €). Tallennetaan `member.manualEarningsCents`; "↺" palauttaa lasketun. Näkyy vain
+johtajien dashboardissa, EI vaikuta työntekijän omaan näkymään. Editointi sallittu vain
+`role === "host"` -jäsenille. (Jatko: hienojakoisempi per-päivä, jos keikka on monipäiväinen.)
 
 ## Rahan yksityisyys (TÄRKEÄ)
 
@@ -61,11 +60,12 @@ Worker-työpöydän Tunnit-välilehti (`HoursTab`):
 - **Johtajat** näkevät reaaliaikaisen "Vuoro käynnissä · X t Y min" -merkin
   TEKIJÄT-kortissa (`activeShiftAt`).
 
+### Sähköposti (TOTEUTETTU)
+"Päätä päivä" lähettää työntekijän `profile.email`-osoitteeseen selkeän yhteenvedon
+(ikkunat, ansio, työaika, €/h) — `sendSessionSummaryEmail` (server/routes.ts), Resend,
+best-effort (ei kaada vastausta jos sähköposti epäonnistuu / ei API-avainta).
+
 ### TODO (seuraavat PR:t)
-- **Sähköposti**: kun työntekijä päättää päivän, lähetä hänen profiilin sähköpostiin
-  selkeä, kaunis (ei monimutkainen) yhteenveto päivästä. Infra: Resend (`server` käyttää
-  jo `resend`-kirjastoa, `FROM_EMAIL`). Tee oma endpoint + HTML-template (vrt.
-  `client/src/lib/worker-contract-doc.ts` tyylinä). Lähetä `member.profile.email`-osoitteeseen.
 - **Johtajien sessio-loki näkyviin**: managerien dashboardiin per-tekijä sessio-/
   päivähistoria (`member.sessions` on jo tallessa).
 - **Tauon kesto reopen-tilanteessa**: tauko on tällä hetkellä client-tilassa; jos

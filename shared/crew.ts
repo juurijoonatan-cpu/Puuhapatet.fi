@@ -103,6 +103,11 @@ export interface CrewMember {
    *  still being reachable via an admin login. */
   linkedUserId?: string;
   perWindowCents: number;       // worker pay per pesty window, in cents
+  /** Optional manual override of this person's TOTAL earnings for the gig/day,
+   *  shown on the managers' dashboard instead of (washed × rate). Used by the
+   *  founders to agree a split (e.g. "tehdään päivä yhdessä, jaetaan 50/50").
+   *  Does NOT affect a worker's own dashboard payout view. */
+  manualEarningsCents?: number;
   active: boolean;
   pinHash?: string;             // optional 4-digit PIN, sha-256 hex (server-set)
   profile?: CrewProfile;
@@ -302,6 +307,9 @@ export function sanitizeCrewMember(input: any): CrewMember | null {
     adminLinked: !!input.adminLinked,
     linkedUserId: input.linkedUserId ? String(input.linkedUserId).slice(0, 40).replace(/[^a-z0-9]/gi, "").toLowerCase() || undefined : undefined,
     perWindowCents: clampCents(input.perWindowCents),
+    manualEarningsCents: input.manualEarningsCents != null && Number.isFinite(Number(input.manualEarningsCents))
+      ? Math.max(0, Math.min(10_000_000, Math.round(Number(input.manualEarningsCents))))
+      : undefined,
     active: input.active !== false,
     pinHash: typeof input.pinHash === "string" && /^[a-f0-9]{64}$/.test(input.pinHash) ? input.pinHash : undefined,
     profile: sanitizeProfile(input.profile),

@@ -126,7 +126,7 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   { method: "GET",  re: /^\/api\/gig\/[^/]+$/ },
   { method: "POST", re: /^\/api\/gig\/[^/]+\/sign$/ },
   { method: "GET",  re: /^\/api\/crew\/[^/]+$/ },
-  { method: "POST", re: /^\/api\/crew\/[^/]+\/(auth|onboard|window|hours|note|map-note)$/ },
+  { method: "POST", re: /^\/api\/crew\/[^/]+\/(auth|onboard|window|hours|note|map-note|shift)$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/map-note\/(update|delete)$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/payout\/[^/]+\/approve$/ },
 ];
@@ -3365,6 +3365,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         onboarded: enteredApp,
         needsToSign,
         signedAll,
+        activeShiftAt: member.activeShiftAt ?? null,
         profile: member.profile ?? null,
         signedAgreementIds: member.agreements
           .filter((a) => a.version === WORKER_AGREEMENT_VERSION)
@@ -3509,6 +3510,25 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const p: 1 | 2 = req.body?.p === 2 ? 2 : 1;
       project.log = [{ floor, key, p, status, ts: Date.now(), by: member.id }, ...(project.log || [])].slice(0, 200);
 
+      const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
+      res.json({ ok: true, view: workerView(saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Worker starts/stops their work-hour timer → managers see a live "shift on"
+  // indicator. Pure state flag; the actual hours are still logged via /hours.
+  app.post("/api/crew/:token/shift", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const start = req.body?.start === true;
+      project.crew = (project.crew || []).map((m) =>
+        m.id === member.id ? { ...m, activeShiftAt: start ? Date.now() : undefined } : m,
+      );
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
       res.json({ ok: true, view: workerView(saved, savedMember) });

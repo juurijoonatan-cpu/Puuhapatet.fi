@@ -1003,22 +1003,31 @@ function PayoutsTab({ token, view, setView }: { token: string; view: WorkerView;
 }
 
 function HoursTab({ token, view, setView }: { token: string; view: WorkerView; setView: (v: WorkerView) => void }) {
-  const [running, setRunning] = useState<number | null>(null);
-  const [elapsed, setElapsed] = useState(0);
+  // Resume a running shift from the server (so it survives reload / reopen).
+  const [running, setRunning] = useState<number | null>(view.worker.activeShiftAt ?? null);
+  const [elapsed, setElapsed] = useState(view.worker.activeShiftAt ? Date.now() - view.worker.activeShiftAt : 0);
   const [manual, setManual] = useState("");
   const tick = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (running) {
+      setElapsed(Date.now() - running);
       tick.current = setInterval(() => setElapsed(Date.now() - running), 1000);
       return () => { if (tick.current) clearInterval(tick.current); };
     }
   }, [running]);
 
+  const start = async () => {
+    setRunning(Date.now());
+    const res = await api.crewShift(token, true); // tell managers the shift is on
+    if (res.ok && res.data?.view) setView(res.data.view);
+  };
+
   const stop = async () => {
     if (!running) return;
     const hours = Math.round(((Date.now() - running) / 3600000) * 100) / 100;
     setRunning(null); setElapsed(0);
+    await api.crewShift(token, false);
     if (hours > 0) {
       const res = await api.crewAddHours(token, hours);
       if (res.ok && res.data?.view) setView(res.data.view);
@@ -1041,7 +1050,7 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
     <div style={{ height: "100%", overflowY: "auto", padding: 20 }}>
       <div style={{ textAlign: "center", padding: "20px 0" }}>
         <p style={{ fontSize: 40, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: running ? "#7CE0A6" : "#fff" }}>{mmss(elapsed)}</p>
-        <button onClick={() => (running ? stop() : setRunning(Date.now()))} style={{ ...primaryBtn, width: "auto", padding: "12px 32px", background: running ? "#D9472B" : T.green, marginTop: 8 }}>
+        <button onClick={() => (running ? stop() : start())} style={{ ...primaryBtn, width: "auto", padding: "12px 32px", background: running ? "#D9472B" : T.green, marginTop: 8 }}>
           {running ? "Lopeta vuoro" : "Aloita vuoro"}
         </button>
         <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, marginTop: 10 }}>Aloita ajanseuranta, kun saavut työmaalle.</p>

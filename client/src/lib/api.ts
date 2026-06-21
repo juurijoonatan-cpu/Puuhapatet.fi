@@ -22,6 +22,8 @@ export interface WorkerView {
     needsToSign: boolean;
     /** Has signed every required agreement at the current version. */
     signedAll: boolean;
+    /** Epoch ms when the work-hour timer was started (null if not running). */
+    activeShiftAt: number | null;
     profile: CrewProfile | null;
     signedAgreementIds: string[];
     notes: { t: number; text: string }[];
@@ -710,6 +712,10 @@ export const api = {
 
   crewAddHours: (token: string, delta: number) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/hours`, { delta }),
+
+  // Start/stop the work-hour timer (managers see a live "shift on" indicator).
+  crewShift: (token: string, start: boolean) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/shift`, { start }),
 
   crewAddNote: (token: string, text: string) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/note`, { text }),

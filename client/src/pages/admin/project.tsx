@@ -16,6 +16,7 @@ import {
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind,
 } from "@shared/project";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
+import { FOUNDER_IDS } from "@shared/team";
 import Dashboard from "@/components/fr8/Dashboard";
 import FloorView from "@/components/fr8/FloorView";
 import HoursView from "@/components/fr8/HoursView";
@@ -47,6 +48,9 @@ function workerName(id: string): string {
 function workerInitial(id: string): string {
   return (workerName(id)[0] || "?").toUpperCase();
 }
+
+/** Founders split the per-window margin (17,50 € / 2) → 8,75 € each per window. */
+const FOUNDER_PER_WINDOW_CENTS = 875;
 
 /**
  * Build the display-name map + this gig's pickable crew (for the "who washed"
@@ -380,9 +384,31 @@ export default function AdminProjectPage() {
   // the price is locked and only red windows accrue money.
   const deal = fixedDealFor(project);
   const effectivePrice = deal ? deal.pricePerWindow : project.pricePerWindow;
-  const workerStats = computeWorkerStats(project);
+
+  // Per-person PAY (not the gig price): each worker earns their own €/window from
+  // the crew (e.g. Jani 20 €); founders split the per-window margin → 8,75 € each.
+  // The big revenue/priority cards stay on the gig deal — only the per-worker
+  // TEKIJÄT figures use personal pay, and names come from the crew (so a renamed
+  // worker shows as "Jani", not "Tyontekija1").
+  const crew = project.crew ?? [];
+  const rateForWorker = (id: string): number => {
+    const m = crew.find((c) => c.id === id);
+    if (m && (m.role === "host" || FOUNDER_IDS.includes(id))) return FOUNDER_PER_WINDOW_CENTS;
+    return m?.perWindowCents ?? Math.round(effectivePrice * 100);
+  };
+  const resolveName = (id: string): string => {
+    const m = crew.find((c) => c.id === id);
+    if (m?.name?.trim()) return m.name.trim().split(/\s+/)[0];
+    return workerName(id);
+  };
+  const resolveInitial = (id: string): string => (resolveName(id)[0] || "?").toUpperCase();
+
+  const workerStats = computeWorkerStats(project).map((s) => {
+    const cents = Math.round(s.washed * rateForWorker(s.worker));
+    return { ...s, revenueCents: cents, eurPerHour: s.hours > 0 ? cents / 100 / s.hours : 0 };
+  });
   const hoursWorkers = (project.workers.length ? project.workers : ["matias", "joonatan"]).map((id) => ({
-    id, name: workerName(id), initial: workerInitial(id),
+    id, name: resolveName(id), initial: resolveInitial(id),
   }));
   // Display-name map + this gig's pickable crew (used by both the "who washed"
   // and "default washer" pickers).
@@ -398,7 +424,7 @@ export default function AdminProjectPage() {
         onTabChange={setTab}
         buildingName={project.building.name || gigName || undefined}
         buildingAddress={project.building.address}
-        currentWorkerName={workerName(effectiveWasher)}
+        currentWorkerName={resolveName(effectiveWasher)}
         saving={saving}
         onBack={backToGig}
         workers={gigWorkers}
@@ -421,7 +447,7 @@ export default function AdminProjectPage() {
       )}
       <main style={{ position: "relative", zIndex: 10, height: "calc(100% - 62px)" }}>
         {tab === "dashboard" && (
-          <Dashboard project={project} workerStats={workerStats} workerName={workerName} onGoToFloor={onGoToFloor} deal={deal} />
+          <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} />
         )}
         {tab === "floor" && (
           <FloorView

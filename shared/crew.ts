@@ -99,6 +99,9 @@ export interface CrewMember {
   profile?: CrewProfile;
   agreements: CrewAgreementSignature[];
   onboardedAt?: number;         // when profile + agreements were completed
+  /** Epoch ms when the worker started their work-hour timer; cleared on stop.
+   *  Lets the managers' dashboard show a live "shift running" indicator. */
+  activeShiftAt?: number;
   notes: CrewNote[];
   payouts?: CrewPayout[];       // Puuhapatet -> worker payments (newest-first)
   createdAt: number;
@@ -290,6 +293,7 @@ export function sanitizeCrewMember(input: any): CrewMember | null {
     profile: sanitizeProfile(input.profile),
     agreements,
     onboardedAt: input.onboardedAt ? Number(input.onboardedAt) || undefined : undefined,
+    activeShiftAt: input.activeShiftAt ? Number(input.activeShiftAt) || undefined : undefined,
     notes,
     payouts: (Array.isArray(input.payouts) ? input.payouts : [])
       .slice(0, 100)

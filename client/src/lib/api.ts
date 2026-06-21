@@ -683,6 +683,7 @@ export const api = {
     senderName?: string;
     senderYTunnus?: string;
     senderAddress?: string;
+    billerId?: string;
     workerPhone?: string;
     message?: string;
     isFinal?: boolean;
@@ -769,14 +770,16 @@ export const api = {
       "DELETE", `/api/jobs/${jobId}/crew/${memberId}`),
 
   // Host: create a payout notification for a worker (Puuhapatet → alihankkija).
-  createPayout: (jobId: number, memberId: string, data: { amountCents: number; windows?: number; note?: string }) =>
+  // billerId = which leader (their Y-tunnus) is the BUYER the worker invoices.
+  createPayout: (jobId: number, memberId: string, data: { amountCents: number; windows?: number; note?: string; billerId?: string }) =>
     request<{ ok: boolean; member: CrewMember }>(
       "POST", `/api/jobs/${jobId}/crew/${memberId}/payout`, data),
 
   // Host: mark a payout paid (after manual bank transfer) → auto-invoice + email.
-  markPayoutPaid: (jobId: number, memberId: string, payoutId: string) =>
+  // Optional billerId overrides the buyer captured at creation.
+  markPayoutPaid: (jobId: number, memberId: string, payoutId: string, billerId?: string) =>
     request<{ ok: boolean; member: CrewMember; emailId?: string }>(
-      "POST", `/api/jobs/${jobId}/crew/${memberId}/payout/${payoutId}/paid`),
+      "POST", `/api/jobs/${jobId}/crew/${memberId}/payout/${payoutId}/paid`, billerId ? { billerId } : undefined),
 
   // Legacy compat stubs
   getJob: (_jobId: string): Promise<ApiResponse<{ ok: boolean; job?: unknown }>> =>

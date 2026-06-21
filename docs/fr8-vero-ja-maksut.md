@@ -8,6 +8,30 @@ Tämä dokumentti kuvaa, miten Puuhapatet maksaa itsenäiselle alihankkijalle
 > kirjanpitäjällä / verotoimistolla** ennen suuria volyymejä. Logiikka on koodattu
 > yhteen paikkaan: [`shared/tax.ts`](../shared/tax.ts).
 
+## Kuka laskuttaa kenet — brändi, ei (vielä) yhtiö
+
+Puuhapatet **ei ole vielä juridinen yhtiö**, vaan brändi, jota pyörittää **kaksi
+johtajaa, joilla on omat Y-tunnukset** (Joonatan 3598782-9, Matias 3609912-9).
+
+- **Asiakas → johtaja:** iso keikka laskutetaan asiakkaalta **useassa erässä,
+  jaettuna kahden johtajan kesken**, jotta kummankaan liikevaihto ei ylitä rajoja
+  (mm. ALV:n vähäisen toiminnan 15 000 €). Kukin asiakaslasku tallentaa, **kuka
+  johtaja** sen lähetti (`GigPayment.biller`).
+- **Alihankkija → johtaja:** alihankkija (esim. Jani) laskuttaa **sitä johtajaa,
+  joka laskutti asiakkaan tästä erästä**. Eli alihankkijan laskun **OSTAJA** =
+  kyseinen johtaja (nimi + Y-tunnus + osoite), ei abstrakti "Puuhapatet".
+
+Tekninen toteutus: laskuttajat ovat [`shared/billers.ts`](../shared/billers.ts)
+(`BRAND_BILLERS`). Maksua luotaessa admin valitsee ostajan (oletus: kirjautunut
+johtaja). Valinta tallentuu `CrewPayout.buyer`-tilannekuvaan ja päätyy laskun
+ostajatietoihin. Lasku lähetetään automaattisesti **sekä tiimille että
+alihankkijalle itselleen** (hänen tositteensa).
+
+**Yhtiöityminen myöhemmin:** aseta `COMPANY_NAME` + `COMPANY_Y_TUNNUS` (+
+`COMPANY_ADDRESS`, `COMPANY_EMAIL`) → yhtiö tulee valittavaksi ostajaksi ilman
+muutoksia laskulogiikkaan. Ostaja on aina `Biller`-objekti (johtaja tänään, yhtiö
+huomenna).
+
 ## Lähtökohta: työkorvaus, ei palkka
 
 Alihankkija toimii itsenäisenä yrittäjänä (kevytyrittäjä, toiminimi tai yhtiö) ja
@@ -76,7 +100,11 @@ tilille maksetaan koko 220 €.
 
 | Env-muuttuja | Tarkoitus |
 |---|---|
-| `COMPANY_Y_TUNNUS` | Puuhapatetin Y-tunnus laskun ostaja-tietoihin. |
+| `COMPANY_NAME` | Yhtiön nimi (kun brändi yhtiöityy) → valittava ostaja. |
+| `COMPANY_Y_TUNNUS` | Yhtiön Y-tunnus laskun ostaja-tietoihin. |
+| `COMPANY_ADDRESS`, `COMPANY_EMAIL` | Yhtiön osoite/sähköposti laskulle. |
+
+Ennen yhtiöitymistä ostaja on aina toinen johtajista (`shared/billers.ts`).
 
 ## Vakiot (`shared/tax.ts`)
 

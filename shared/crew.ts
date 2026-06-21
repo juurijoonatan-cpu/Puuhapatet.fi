@@ -17,6 +17,7 @@
 import type { ProjectData } from "./project";
 import { allPoints } from "./project";
 import type { TaxBreakdown } from "./tax";
+import type { BuyerSnapshot } from "./billers";
 
 export const DEFAULT_WORKER_PER_WINDOW_CENTS = 2000; // 20,00 €
 
@@ -97,6 +98,11 @@ export interface CrewPayout {
    *  `amountCents` is the työkorvaus (ex-VAT, = windows × rate); this expands it
    *  into VAT, withholding and the net actually transferred. */
   tax?: TaxBreakdown;
+  /** Who the worker invoices for this payout — the leader (biller) who billed the
+   *  customer for this money (their Y-tunnus → the invoice's BUYER). The brand has
+   *  no company yet, so this is one of the two leaders; future-proofed for a
+   *  company. Captured at creation, finalised at payment. */
+  buyer?: BuyerSnapshot;
 }
 
 export interface CrewMember {
@@ -270,6 +276,7 @@ function sanitizePayout(input: any): CrewPayout | null {
     input.status === "maksettu" ? "maksettu" : input.status === "hyvaksytty" ? "hyvaksytty" : "ilmoitettu";
   const b = input.billing && typeof input.billing === "object" ? input.billing : null;
   const t = input.tax && typeof input.tax === "object" ? input.tax : null;
+  const by = input.buyer && typeof input.buyer === "object" ? input.buyer : null;
   return {
     id,
     amountCents: Math.min(amountCents, 1_000_000_00),
@@ -297,6 +304,13 @@ function sanitizePayout(input: any): CrewPayout | null {
       withholdingCents: Math.max(0, Math.floor(Number(t.withholdingCents) || 0)),
       payableCents: Math.floor(Number(t.payableCents) || 0),
       notes: Array.isArray(t.notes) ? t.notes.map((n: any) => String(n).slice(0, 400)).slice(0, 8) : [],
+    } : undefined,
+    buyer: by ? {
+      billerId: str(by.billerId, 40),
+      name: str(by.name, 160) || "Puuhapatet",
+      yTunnus: str(by.yTunnus, 40),
+      address: str(by.address, 240),
+      email: str(by.email, 200),
     } : undefined,
   };
 }

@@ -40,6 +40,9 @@ export interface GigPayment {
   to?: string;           // recipient email
   note?: string;
   emailId?: string;      // Resend message id
+  /** Which leader (biller) billed the customer for this instalment. Their Y-tunnus
+   *  becomes the BUYER on the alihankkija invoices funded by this money. */
+  biller?: { id?: string; name?: string; yTunnus?: string };
 }
 
 export interface GigCompany {
@@ -277,6 +280,11 @@ export function sanitizeGigData(input: any): GigData {
         to: p?.to ? String(p.to).slice(0, 200) : undefined,
         note: p?.note ? String(p.note).slice(0, 200) : undefined,
         emailId: p?.emailId ? String(p.emailId).slice(0, 120) : undefined,
+        biller: p?.biller && typeof p.biller === "object" ? {
+          id: p.biller.id ? String(p.biller.id).slice(0, 40) : undefined,
+          name: p.biller.name ? String(p.biller.name).slice(0, 160) : undefined,
+          yTunnus: p.biller.yTunnus ? String(p.biller.yTunnus).slice(0, 40) : undefined,
+        } : undefined,
       }))
     : [];
   const str = (v: any, max: number) => (v == null ? undefined : String(v).slice(0, max));

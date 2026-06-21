@@ -3260,23 +3260,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // Resolve the logged-in admin user → their personal worker dashboard token.
   // For "dashboard-only" users (e.g. Jani): after admin login the client calls
-  // this and redirects to /tyo/<token>. Matches a crew member by linkedUserId
-  // (preferred — keeps their own crew id + attribution) or by id === userId
-  // (the joonatan/matias/petrus convention). Authed route → only the user
-  // themselves can resolve their own link.
+  // this and redirects to /tyo/<token>. Auto-matches a crew member with NO setup
+  // needed, in priority order:
+  //   1. linkedUserId === userId   (explicit link, if ever set)
+  //   2. crew id   === userId      (joonatan/matias/petrus convention)
+  //   3. first name === userId     (e.g. user "jani" → crew member "Jani")
+  // Authed route → only the user themselves can resolve their own link.
   app.get("/api/admin/my-dashboard", async (req, res) => {
     try {
       const sub = ((req as any).admin?.sub ?? "").toLowerCase();
       if (!sub) return res.status(401).json({ error: "Kirjautuminen vaaditaan" });
+      const firstName = (m: CrewMember) => (m.name || "").trim().split(/\s+/)[0]?.toLowerCase() || "";
       const rows = await db.select().from(jobs).where(eq(jobs.isCustomGig, true));
+      let fallback: string | null = null; // a name match, used only if no stronger match
       for (const job of rows) {
         const project = parseProject(job.projectData ?? null);
-        const member = (project?.crew ?? []).find(
-          (m) => m.active && ((m.linkedUserId && m.linkedUserId.toLowerCase() === sub) || m.id.toLowerCase() === sub),
-        );
-        if (member) return res.json({ ok: true, token: member.token });
+        for (const m of project?.crew ?? []) {
+          if (!m.active) continue;
+          if ((m.linkedUserId && m.linkedUserId.toLowerCase() === sub) || m.id.toLowerCase() === sub) {
+            return res.json({ ok: true, token: m.token }); // strong match → done
+          }
+          if (!fallback && firstName(m) === sub) fallback = m.token;
+        }
       }
-      res.json({ ok: true, token: null });
+      res.json({ ok: true, token: fallback });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

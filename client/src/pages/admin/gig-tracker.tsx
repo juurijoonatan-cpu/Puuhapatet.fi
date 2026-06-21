@@ -58,6 +58,8 @@ export default function AdminGigTrackerPage() {
   const [editingCompany, setEditingCompany] = useState(false);
   const [companyDraft, setCompanyDraft] = useState<GigCompany>({});
   const [savingCompany, setSavingCompany] = useState(false);
+  const [jobDescription, setJobDescription] = useState("");
+  const [savingDescription, setSavingDescription] = useState(false);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -89,6 +91,7 @@ export default function AdminGigTrackerPage() {
         catch { parsed = emptyGigData(); }
         setGig(parsed);
         setCompanyDraft(parsed.company ?? {});
+        setJobDescription(job.description ?? "");
         setDraft({
           contractId: parsed.contractId ?? "",
           contractText: parsed.contractText ?? "",
@@ -151,6 +154,17 @@ export default function AdminGigTrackerPage() {
       toast({ title: "Yhteystiedot tallennettu" });
     } else {
       toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
+    }
+  };
+
+  const saveDescription = async () => {
+    setSavingDescription(true);
+    const res = await api.updateJob(jobId, { description: jobDescription.trim() || undefined });
+    setSavingDescription(false);
+    if (res.ok) {
+      toast({ title: "Kuvaus tallennettu" });
+    } else {
+      toast({ variant: "destructive", title: "Tallennus epäonnistui", description: (res as any).error });
     }
   };
 
@@ -570,6 +584,15 @@ export default function AdminGigTrackerPage() {
           </button>
           {showContract && (
             <div className="mt-4 space-y-3">
+              <div>
+                <Label className="text-xs">Kuvaus (näkyy keikkalistassa)</Label>
+                <div className="flex gap-2">
+                  <Input value={jobDescription} onChange={(e) => setJobDescription(e.target.value)} placeholder="Esim. FR8 - Ikkunoiden pesu" className="text-sm" />
+                  <Button size="sm" disabled={savingDescription} onClick={saveDescription} className="shrink-0">
+                    {savingDescription ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  </Button>
+                </div>
+              </div>
               <label className="flex items-center justify-between gap-3 rounded-xl border border-border p-3">
                 <span className="text-sm">
                   Vaadi sähköinen allekirjoitus

@@ -47,6 +47,7 @@ const translations: Record<Language, Record<string, string>> = {
     "services.title": "Palvelut",
     "services.subtitle": "Mitä tarjoamme?",
     "services.promise": "Jokainen työmme tehdään vastuuvakuutuksen alaisena. Meille tärkeintä on se, että asiakas on oikeasti tyytyväinen — ei se, kuinka nopeasti saamme työn alta pois. Jos homma ottaa kauemmin kuin arvioitu, teemme sen silti kunnolla loppuun. Siitä ei tule lisälaskua. Hinta sovitaan aina etukäteen — ei yllätyksiä.",
+    "services.video.caption": "Ammattilaisten välineet, viimeistelty jälki",
 
     "service.gardening.title": "Piha & puutarhapalvelut",
     "service.gardening.desc": "Pidetään pihasi kunnossa nurmikoista puihin!",
@@ -70,7 +71,13 @@ const translations: Record<Language, Record<string, string>> = {
 
     "featured.title": "Ajankohtaiset palvelut",
     "featured.cta": "Katso kaikki palvelut",
-    
+
+    "gallery.title": "Työtä, josta näkee laadun",
+    "gallery.subtitle": "Oikeaa työtä, oikeat välineet — kentältä",
+    "gallery.1.caption": "Tarkka jälki lasipinnoilla",
+    "gallery.2.caption": "Ammattitiimi kentällä",
+    "gallery.3.caption": "Ammattilaisten välineet",
+
     "service.basic.title": "Ikkunanpesu",
     "service.basic.popular": "Suosittu",
     "service.basic.desc": "Käytämme ammattilaisten välineitä ja hyväksi havaittuja pesuaineita. Ikkunat, parvekelasit ja lasiterassit pestyinä — kirkkaina ja raidattomina.",
@@ -241,6 +248,7 @@ const translations: Record<Language, Record<string, string>> = {
     "services.title": "Services",
     "services.subtitle": "What we offer",
     "services.promise": "Every job we do is covered by liability insurance and fully compliant with Finnish law. What matters most to us is that the customer is genuinely happy — not how quickly we can move on. If a job takes longer than expected, we finish it properly regardless. No extra charge. Price is always agreed in advance — no surprises.",
+    "services.video.caption": "Professional tools, a flawless finish",
 
     "service.gardening.title": "Yard & Garden Services",
     "service.gardening.desc": "Keeping your yard in shape — from lawns to trees!",
@@ -264,6 +272,12 @@ const translations: Record<Language, Record<string, string>> = {
 
     "featured.title": "Current Services",
     "featured.cta": "See all services",
+
+    "gallery.title": "Work that shows its quality",
+    "gallery.subtitle": "Real work, the right tools — from the field",
+    "gallery.1.caption": "Precise finish on glass",
+    "gallery.2.caption": "Professional team on site",
+    "gallery.3.caption": "Professional-grade tools",
     
     "service.basic.title": "Window Cleaning",
     "service.basic.popular": "Popular",

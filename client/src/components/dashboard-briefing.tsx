@@ -15,7 +15,10 @@ import { API_BASE, withAuth } from "@/lib/api";
 const PROMPT =
   "Anna lyhyt päivän tilannekatsaus: tärkeimmät tämän viikon keikat, avoimet " +
   "liidit/tarjoukset jotka kaipaavat toimenpiteitä, ja 1–3 konkreettista " +
-  "ehdotusta mihin kannattaa keskittyä tänään. Pidä tiiviinä ja käytä lyhyttä listaa.";
+  "ehdotusta mihin kannattaa keskittyä tänään. Lisää loppuun lyhyt kohta " +
+  "\"Iso keikka\": kerro isojen keikkojen (esim. FR8) edistyminen — montako " +
+  "ikkunaa pesty, maksuerän tilanne ja paljonko seuraavaan maksuun — muotoiltuna " +
+  "niin että sen voi suoraan kertoa asiakkaan yhteyshenkilölle. Pidä tiiviinä ja käytä lyhyttä listaa.";
 
 export function DashboardBriefing() {
   const profile = typeof window !== "undefined" ? getAdminProfile() : null;

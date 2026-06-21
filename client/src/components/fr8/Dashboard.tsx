@@ -3,6 +3,7 @@
  * Adds a per-worker "TEKIJÄT" strip (window counts + €/h optimisation).
  */
 import { allPoints, computeDealBilling, type ProjectData, type WindowStatus, type WorkerStat, type FixedDeal } from "@shared/project";
+import { computePayProgress } from "@shared/payprogress";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useState, useEffect } from "react";
 
@@ -100,6 +101,11 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   const remaining = total - washed;
   const estStr = remaining === 0 && total > 0 ? "valmis" : todayWindows > 0 ? "~" + Math.ceil(remaining / todayWindows) + " työpv" : "—";
 
+  // Paydate progress — for a fixed deal use the billable (red) scope, e.g. 168.
+  const payTotal = deal && deal.pricePerWindow > 0 ? Math.round(deal.capCents / 100 / deal.pricePerWindow) : total;
+  const payWashed = deal ? (billing?.billableWashed ?? 0) : washed;
+  const payP = computePayProgress(payTotal, payWashed);
+
   const activity = log.slice(0, 5).map((l) => {
     const rgb = colorRgb(l.p, l.status);
     const num = l.key.includes("#c") ? " (lisätty)" : " " + (parseInt(l.key.split("#")[1], 10) + 1);
@@ -188,6 +194,28 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             </div>
           </div>
         </div>
+
+        {/* Paydate progress — how far toward the next payment instalment */}
+        {payP.total > 0 && (
+          <div className="anim-fadeUp-1" style={{ ...card, padding: m ? "16px 18px" : "18px 24px", marginBottom: "14px" }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: "10px", gap: 10, flexWrap: "wrap" }}>
+              <span style={mono}>MAKSUERÄ {payP.currentPeriod}/{payP.periods} · {payP.perPeriod} IKKUNAA / ERÄ</span>
+              <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.5)" }}>{payP.washed}/{payP.total} ikkunaa</span>
+            </div>
+            <div style={{ position: "relative", height: "10px", borderRadius: "999px", background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+              {/* instalment ticks */}
+              {Array.from({ length: payP.periods - 1 }).map((_, i) => (
+                <span key={i} style={{ position: "absolute", top: 0, bottom: 0, left: `${((i + 1) / payP.periods) * 100}%`, width: "2px", background: "rgba(0,0,0,0.45)" }} />
+              ))}
+              <div style={{ position: "absolute", inset: 0, width: `${Math.round((payP.washed / payP.total) * 100)}%`, background: "linear-gradient(90deg,#5fe08a,#7CE0A6)", borderRadius: "999px", transition: "width .6s ease" }} />
+            </div>
+            <div style={{ marginTop: "9px", fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>
+              {payP.done
+                ? "Koko keikka pesty — kaikki maksuerät katettu 🎉"
+                : <>Vielä <b style={{ color: "#fff", fontWeight: 600 }}>{payP.toNext} ikkunaa</b> seuraavaan maksuun · {payP.inPeriod}/{payP.perPeriod} tässä erässä</>}
+            </div>
+          </div>
+        )}
 
         {/* Row 2: P1 + P2 + mini cards */}
         <div style={{ display: "grid", gridTemplateColumns: m ? "1fr 1fr" : "1fr 1fr 1fr", gap: m ? "10px" : "16px", marginBottom: "14px" }}>

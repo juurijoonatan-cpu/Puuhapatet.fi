@@ -28,6 +28,7 @@ import {
   computeTax, readVatStatus, readInPrepaymentRegister, fmtPct, fmtEurCents,
   VAT_STATUS_KEY, PREPAYMENT_REGISTER_KEY, type VatStatus,
 } from "@shared/tax";
+import { computePayProgress } from "@shared/payprogress";
 
 const T = { ink: "#1A1A1A", paper: "#F6F4EE", card: "#FFFFFF", hair: "#E4E1D7", muted: "#8C8A82", green: "#3E7C59", navy: "#1F3B57" };
 const FONT = "'Poppins', ui-sans-serif, system-ui, -apple-system, sans-serif";
@@ -748,6 +749,7 @@ function EarningsTab({ view }: { view: WorkerView }) {
         <Stat label="Ikkunaa / tunti" value={s.hours > 0 ? s.windowsPerHour.toLocaleString("fi-FI", { maximumFractionDigits: 1 }) : "—"} />
         <Stat label="Ikkunoita kohteessa" value={String(potentialWindows)} />
       </div>
+      <PaydateProgress total={view.windowsTotal} washed={view.windowsWashed} />
       <Leaderboard view={view} />
       <PathCard />
       <InstallHint />
@@ -858,6 +860,30 @@ function AccessCard() {
           </a>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** Shared "paydate progress" — how far the team is toward the next payment
+ *  milestone (the gig is billed/paid in PAY_PERIODS instalments). Window counts
+ *  only, never euros — the worker never sees the gig total/price/cap. */
+function PaydateProgress({ total, washed }: { total: number; washed: number }) {
+  const p = computePayProgress(total, washed);
+  if (p.total <= 0) return null;
+  return (
+    <div style={{ marginTop: 26, padding: 16, borderRadius: 16, background: "linear-gradient(155deg, rgba(124,224,166,0.10), rgba(255,255,255,0.03))", border: "1px solid rgba(124,224,166,0.22)" }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10 }}>
+        <p style={{ margin: 0, fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7CE0A6" }}>Maksuerä {p.currentPeriod}/{p.periods}</p>
+        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", fontVariantNumeric: "tabular-nums" }}>{p.washed}/{p.total} ikkunaa</span>
+      </div>
+      <div style={{ position: "relative", height: 12, borderRadius: 999, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+        <div style={{ position: "absolute", inset: 0, width: `${Math.round(p.pct * 100)}%`, background: "linear-gradient(90deg,#5fe08a,#7CE0A6)", borderRadius: 999, transition: "width .5s ease" }} />
+      </div>
+      <p style={{ margin: "10px 0 0", fontSize: 12.5, color: "rgba(255,255,255,0.65)", lineHeight: 1.5 }}>
+        {p.done
+          ? "Koko keikka pesty — huikeaa työtä! 🎉"
+          : <>Vielä <b style={{ color: "#fff" }}>{p.toNext} ikkunaa</b> seuraavaan maksuun · {p.inPeriod}/{p.perPeriod} tässä erässä</>}
+      </p>
     </div>
   );
 }

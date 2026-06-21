@@ -7,7 +7,7 @@ import PDFDocument from "pdfkit";
 import rateLimit from "express-rate-limit";
 import { db } from "./db";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
-import { feeRateForWorker, effectiveJobTotal } from "@shared/team";
+import { feeRateForWorker, effectiveJobTotal, FOUNDER_IDS } from "@shared/team";
 import { randomUUID, createHash, createHmac, timingSafeEqual, scryptSync, randomBytes } from "crypto";
 import {
   AI_ENABLED, chatComplete, chatCompleteWithTools, publicSystemPrompt, adminSystemPrompt,
@@ -4954,6 +4954,65 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const revenue = done.reduce((s, j) => s + (j.agreedPrice || 0), 0);
       lines.push(`\nTalous (vain perustajat): valmiita keikkoja ${done.length}, liikevaihto valmiista ${eur(revenue)}.`);
       lines.push(`Asiakkaita yhteensä: ${allCustomers.length}.`);
+
+      // Päivän tuotto per tekijä kiinteähintaisilta keikoilta (FR8). Sama ansiomalli
+      // kuin johtajien FR8-dashboardissa: perustaja saa 37,50 € jokaisesta itse
+      // pesemästään ikkunasta + tuotto-osuuden työntekijöiden ikkunoista
+      // ((37,50 − työntekijän rate) jaettuna perustajien kesken). Työntekijä saa
+      // omat ikkunansa × oma rate. Tämä on perustajien sisäinen luku — ei näy
+      // työntekijöille.
+      const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+      const todayMs = startOfToday.getTime();
+      const isFounderMember = (id: string, mRole?: string) => mRole === "host" || FOUNDER_IDS.includes(id);
+      for (const j of allJobs) {
+        const project = parseProject(j.projectData ?? null);
+        if (!project) continue;
+        const deal = fixedDealFor(project);
+        if (!deal) continue; // vain allekirjoitetut kiinteähintaiset keikat (FR8)
+        const crew = project.crew ?? [];
+        const dealCents = Math.round(deal.pricePerWindow * 100);
+        const rateOf = (id: string, mRole?: string) =>
+          isFounderMember(id, mRole) ? dealCents : (crew.find(c => c.id === id)?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS);
+        const founderCount = Math.max(1, crew.filter(c => isFounderMember(c.id, c.role)).length || FOUNDER_IDS.length);
+
+        // Windows turned "pesty" today (billable priority only), deduped per key.
+        const seenToday = new Set<string>();
+        const todayBy = new Map<string, number>();
+        for (const l of project.log) {
+          if (l.status !== "pesty" || l.p !== deal.billablePriority || l.ts < todayMs) continue;
+          if (seenToday.has(l.key)) continue;
+          seenToday.add(l.key);
+          const w = project.washedBy[l.key] || l.by;
+          if (!w) continue;
+          todayBy.set(w, (todayBy.get(w) || 0) + 1);
+        }
+        const totalToday = Array.from(todayBy.values()).reduce((a, n) => a + n, 0);
+        if (totalToday === 0) continue;
+
+        // Today's profit pool from worker-washed windows, split between founders.
+        let poolCents = 0;
+        for (const [w, n] of Array.from(todayBy)) {
+          const mRole = crew.find(c => c.id === w)?.role;
+          if (!isFounderMember(w, mRole)) poolCents += n * Math.max(0, dealCents - rateOf(w, mRole));
+        }
+        const founderEachCents = Math.round(poolCents / founderCount);
+
+        const resolveName = (id: string) => crew.find(c => c.id === id)?.name?.trim().split(/\s+/)[0] || id;
+        const bname = project.building.name || `keikka #${j.id}`;
+        lines.push(`\nPäivän tuotto — ${bname} (${new Date().toLocaleDateString("fi-FI")}): ${totalToday} ikkunaa pesty tänään.`);
+        // Ensure founders show even with 0 own windows (they still get the share).
+        const ids = new Set<string>([...Array.from(todayBy.keys()), ...crew.filter(c => isFounderMember(c.id, c.role)).map(c => c.id)]);
+        for (const id of Array.from(ids)) {
+          const mRole = crew.find(c => c.id === id)?.role;
+          const own = todayBy.get(id) || 0;
+          if (isFounderMember(id, mRole)) {
+            const cents = own * dealCents + founderEachCents;
+            lines.push(`- ${resolveName(id)} (perustaja): ${own} omaa ikkunaa → ${eur(cents)} (sis. tuotto-osuus ${eur(founderEachCents)})`);
+          } else {
+            lines.push(`- ${resolveName(id)}: ${own} ikkunaa → ${eur(own * rateOf(id, mRole))} (palkkio ${eur(rateOf(id, mRole))}/ikkuna)`);
+          }
+        }
+      }
     } else {
       lines.push(`\nAsiakkaita näkyvissä: ${new Set(visibleJobs.map(j => j.customerId)).size}.`);
     }

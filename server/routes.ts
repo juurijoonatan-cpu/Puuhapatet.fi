@@ -3064,7 +3064,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         contact: gig.company?.contact || gig.signature.customer.contactPerson,
         billing: gig.company?.billing || gig.signature.customer.billingAddress,
       };
-      gig.log.push({ t: Date.now(), text: `Sopimus allekirjoitettu sähköisesti: ${signerName} (${legalName})` });
+      gig.log.push({ t: Date.now(), text: `Sopimus allekirjoitettu sähköisesti: ${signerName}${gig.signature.signerTitle ? `, ${gig.signature.signerTitle}` : ""} — tilaajan ${legalName} puolesta` });
       gig.updatedAt = Date.now();
 
       const clean = sanitizeGigData(gig);
@@ -3083,7 +3083,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             from: FROM_EMAIL, to: teamTo,
             subject: `✍️ Sopimus allekirjoitettu: ${legalName} (${cid})`,
             html: wrap(`<p><b>${legalName}</b> allekirjoitti sopimuksen <b>${cid}</b>.</p>
-              <p style="color:#8C8A82">Allekirjoittaja: ${signerName}${gig.signature?.place ? " · " + gig.signature.place : ""}<br>Aika: ${new Date().toLocaleString("fi-FI")}</p>
+              <p style="color:#8C8A82">Allekirjoittaja: ${signerName}${gig.signature?.signerTitle ? " · " + gig.signature.signerTitle : ""} (tilaajan ${legalName} puolesta)${gig.signature?.place ? " · " + gig.signature.place : ""}<br>Aika: ${new Date().toLocaleString("fi-FI")}</p>
               <p><a href="https://puuhapatet.fi/admin/gig/${row.job.id}" style="color:#1F3B57">Avaa keikka adminissa →</a></p>`),
           }) : Promise.resolve(),
           (gig.company?.email) ? resend.emails.send({

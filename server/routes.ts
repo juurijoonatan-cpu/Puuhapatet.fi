@@ -35,6 +35,117 @@ const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KE
 // Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
 const FROM_EMAIL = process.env.FROM_EMAIL || "Puuhapatet <onboarding@resend.dev>";
 
+// ─── Asiakkaan yhteydenotto-sähköpostin runko (3 tyyliä) ────────────────────
+// Jaettu admin-AI:n luonnos-esikatselun ja varsinaisen lähetyksen kesken, jotta
+// asiakas näkee saman viestin kuin AI luonnosteli (puoliautonominen flow).
+type OutreachStyle = "henkikohtainen" | "pro" | "lyhyt";
+function buildOutreachEmailHtml(style: OutreachStyle, messageText: string, firstName: string): string {
+  const msg = messageText.replace(/\n/g, "<br>");
+  if (style === "lyhyt") {
+    return `<!DOCTYPE html>
+<html lang="fi"><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff"><tr><td align="center" style="padding:40px 16px">
+<table width="540" cellpadding="0" cellspacing="0" style="max-width:540px;width:100%">
+  <tr><td style="padding-bottom:32px">
+    <p style="margin:0;color:#111;font-size:15px;line-height:1.8">${msg}</p>
+  </td></tr>
+  <tr><td style="border-top:1px solid #eeeeee;padding-top:20px">
+    <p style="margin:0;color:#333;font-size:14px;line-height:1.7">
+      Terveisin,<br>
+      <strong>Joonatan Juuri</strong> &amp; Matias Pitkänen<br>
+      <span style="color:#666">Puuhapatet</span><br>
+      <a href="tel:+358400389999" style="color:#2d5016;text-decoration:none">+358 40 0389999</a> · 
+      <a href="https://wa.me/358400389999" style="color:#25D366;text-decoration:none">WhatsApp</a><br>
+      <a href="https://puuhapatet.fi" style="color:#2d5016;text-decoration:none;font-size:12px">puuhapatet.fi</a>
+    </p>
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
+  }
+  if (style === "pro") {
+    return `<!DOCTYPE html>
+<html lang="fi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:#f0faf2">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0faf2"><tr><td align="center" style="padding:28px 16px">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
+  <tr><td style="background:#2d5016;border-radius:16px 16px 0 0;padding:24px 32px">
+    <table width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td><p style="margin:0;color:#fff;font-size:24px;font-weight:900;letter-spacing:-0.5px">Puuhapatet.</p>
+          <p style="margin:4px 0 0;color:#a3c97a;font-size:11px">Ammattimainen kiinteistöpalvelu · Espoo &amp; Helsinki</p></td>
+      <td style="text-align:right"><span style="background:#a3c97a;color:#1a3a0a;font-size:10px;font-weight:800;letter-spacing:2px;padding:4px 12px;border-radius:20px;text-transform:uppercase">YHTEYDENOTTO</span></td>
+    </tr></table>
+  </td></tr>
+  <tr><td style="padding:0;line-height:0"><img src="https://puuhapatet.fi/hero-workers.jpg" alt="Puuhapatet työssä" style="width:100%;max-height:220px;object-fit:cover;display:block"/></td></tr>
+  <tr><td style="background:#fff;border:1px solid #d1f0d8;border-top:none;padding:28px 32px">
+    <p style="margin:0 0 20px;color:#2a3a2a;font-size:15px;line-height:1.8">${msg}</p>
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #e8f5e9;margin-top:20px;padding-top:20px">
+      <tr>
+        <td style="padding-top:20px;text-align:center">
+          <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;background:#111;color:#4ade80;font-size:15px;font-weight:800;text-decoration:none;padding:16px 40px;border-radius:12px;border:2px solid #22c55e">Jätä yhteydenottopyyntö →</a>
+          <br>
+          <a href="https://wa.me/358400389999" style="display:inline-block;background:#25D366;color:#fff;padding:10px 22px;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px;margin:10px 4px 0">💬 WhatsApp</a>
+          <p style="margin:8px 0 0;color:#999;font-size:12px">Ilmainen tarjous alle 24 tunnissa</p>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+  <tr><td style="background:#111;border-radius:0 0 16px 16px;padding:18px 32px">
+    <table width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td><p style="margin:0 0 2px;color:#4ade80;font-size:15px;font-weight:800">Puuhapatet.</p>
+          <p style="margin:0;color:#666;font-size:12px">Joonatan +358 40 0389999 · Matias +358 44 2350881</p></td>
+      <td style="text-align:right"><a href="https://puuhapatet.fi" style="color:#4ade80;font-weight:700;text-decoration:none;font-size:13px">puuhapatet.fi</a></td>
+    </tr></table>
+  </td></tr>
+</table></td></tr></table>
+</body></html>`;
+  }
+  // henkikohtainen (default)
+  return `<!DOCTYPE html>
+<html lang="fi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f8faf8"><tr><td align="center" style="padding:32px 16px">
+<table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,0.07)">
+  <tr><td style="background:#2d5016;padding:20px 28px">
+    <p style="margin:0;color:#fff;font-size:18px;font-weight:800;letter-spacing:-0.3px">Puuhapatet.</p>
+  </td></tr>
+  <tr><td style="padding:28px 28px 8px">
+    <p style="margin:0 0 18px;color:#1a1a1a;font-size:22px;font-weight:700;line-height:1.3">Hei ${firstName}! 👋</p>
+    <p style="margin:0;color:#333;font-size:15px;line-height:1.8">${msg}</p>
+  </td></tr>
+  <tr><td style="padding:20px 28px">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0faf2;border-radius:10px;padding:16px">
+      <tr><td style="padding:0">
+        <p style="margin:0 0 10px;color:#2d5016;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px">Ota yhteyttä</p>
+        <p style="margin:0 0 6px;font-size:14px;color:#333">
+          💬 <a href="https://wa.me/358400389999" style="color:#2d5016;font-weight:600;text-decoration:none">WhatsApp — Joonatan</a>
+          <span style="color:#999;font-size:12px"> (+358 40 0389999)</span>
+        </p>
+        <p style="margin:0;font-size:14px;color:#333">
+          🌐 <a href="https://puuhapatet.fi/tilaus" style="color:#2d5016;font-weight:600;text-decoration:none">puuhapatet.fi/tilaus</a>
+          <span style="color:#999;font-size:12px"> — jätä yhteystiedot, soitamme takaisin</span>
+        </p>
+      </td></tr>
+    </table>
+  </td></tr>
+  <tr><td style="padding:0 28px 24px">
+    <p style="margin:0;color:#555;font-size:14px;line-height:1.7">
+      Terveisin,<br>
+      <strong style="color:#1a1a1a">Joonatan &amp; Matias</strong><br>
+      <span style="color:#2d5016;font-size:13px">Puuhapatet</span>
+    </p>
+  </td></tr>
+  <tr><td style="background:#f8f8f8;padding:12px 28px;border-top:1px solid #eee">
+    <p style="margin:0;color:#aaa;font-size:11px">
+      <a href="https://puuhapatet.fi" style="color:#aaa;text-decoration:none">puuhapatet.fi</a> · info@puuhapatet.fi · Espoo &amp; Helsinki
+    </p>
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
+}
+
 // Brändi ei ole vielä yhtiö → laskun OSTAJA on yksi johtajista (oma Y-tunnus).
 // Kun yhtiöityy, aseta COMPANY_* → "company"-laskuttaja valittavaksi ostajaksi.
 function companyBiller(): Biller | null {
@@ -4484,13 +4595,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         {
           type: "function",
           function: {
-            name: "send_followup_email",
-            description: "Lähetä muistutusviesti tai yhteydenottopyyntö asiakkaalle. Käytä vain kun käyttäjä pyytää lähettämään viestin asiakkaalle.",
+            name: "draft_followup_email",
+            description: "Luonnostele yhteydenotto- tai muistutusviesti asiakkaalle. EI lähetä viestiä — palauttaa luonnoksen, jonka käyttäjä näkee ja hyväksyy itse napilla. Käytä aina kun halutaan lähestyä asiakasta sähköpostilla.",
             parameters: {
               type: "object",
               properties: {
                 job_id: { type: "number", description: "Keikan ID-numero" },
-                message: { type: "string", description: "Viesti asiakkaalle suomeksi (lyhyt, max 3 lausetta)" },
+                message: { type: "string", description: "Viesti asiakkaalle suomeksi. Laadukas, kohtelias, ei liioittelua. Kerro konkreettisesti taustasta: teemme ammattimaista ikkunanpesua Espoossa ja Helsingissä, referenssinä mm. iso FR8-kohde (vanha TKK / Otaniemi). 3–6 lausetta." },
                 style: { 
                   type: "string", 
                   enum: ["henkikohtainen", "pro", "lyhyt"],
@@ -4498,6 +4609,41 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
                 },
               },
               required: ["job_id", "message"],
+            },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "propose_prospects",
+            description: "Ehdota uusia potentiaalisia asiakaskohteita (prospekteja), joihin kannattaisi olla yhteydessä — esim. Espoon rakennukset, taloyhtiöt tai yritykset. Tämä EI luo liidiä eikä lähetä mitään, vaan listaa perustellut ehdotukset käyttäjälle harkittavaksi.",
+            parameters: {
+              type: "object",
+              properties: {
+                area: { type: "string", description: "Kohdealue, esim. 'Tapiola', 'Otaniemi', 'Etelä-Espoo'" },
+                building_type: { type: "string", description: "Kohdetyyppi, esim. 'taloyhtiö', 'toimistorakennus', 'liiketila', 'omakotitalo'" },
+                count: { type: "number", description: "Montako ehdotusta (oletus 3, max 6)" },
+              },
+              required: ["area"],
+            },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "create_lead_from_prospect",
+            description: "Luo uusi liidi (asiakas + keikka tilassa 'lead') hyväksytystä prospektiehdotuksesta. Käytä VAIN kun käyttäjä on selkeästi hyväksynyt jonkin ehdotuksen ja pyytää lisäämään sen liidiksi. Ei lähetä viestiä asiakkaalle.",
+            parameters: {
+              type: "object",
+              properties: {
+                name: { type: "string", description: "Yhteyshenkilön tai kohteen nimi (esim. 'As Oy Tapiolanranta')" },
+                address: { type: "string", description: "Osoite tai sijainti, vapaamuotoinen" },
+                phone: { type: "string", description: "Puhelin jos tiedossa, muuten tyhjä" },
+                email: { type: "string", description: "Sähköposti jos tiedossa, muuten tyhjä" },
+                description: { type: "string", description: "Lyhyt kuvaus keikasta / mihin oltaisiin yhteydessä" },
+                notes: { type: "string", description: "Peruste prospektille (miksi tämä kohde, mistä idea)" },
+              },
+              required: ["name", "description"],
             },
           },
         },
@@ -4512,13 +4658,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       let turns: any[] = [systemTurn, ...historyTurns, userTurn];
 
       const toolResultNotes: string[] = [];
+      // Puoliautonomia: AI ei lähetä sähköposteja itse. draft_followup_email
+      // kerää luonnokset tänne, frontend näyttää ne ja käyttäjä hyväksyy napilla.
+      const emailDrafts: Array<{
+        jobId: number; customerName: string; email: string;
+        style: OutreachStyle; message: string; warning?: string;
+      }> = [];
       for (let round = 0; round < 3; round++) {
         const result = await chatCompleteWithTools(turns, adminTools, { temperature: 0.4, maxTokens: 900 });
 
         if (!result.toolCalls || result.toolCalls.length === 0) {
           const reply = result.text ?? "En valitettavasti saanut yhteyttä tekoälypalveluun juuri nyt. Yritä hetken kuluttua uudelleen.";
           const fullReply = toolResultNotes.length > 0 ? toolResultNotes.join("\n") + "\n\n" + reply : reply;
-          return res.json({ reply: fullReply });
+          return res.json({ reply: fullReply, drafts: emailDrafts.length ? emailDrafts : undefined });
         }
 
         turns.push({ role: "assistant", content: result.text ?? "", tool_calls: result.toolCalls });
@@ -4540,170 +4692,75 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
                 toolResult = `Keikka #${args.job_id} päivitetty: ${changes}.`;
                 toolResultNotes.push(`✓ ${toolResult}`);
               }
-            } else if (tc.function.name === "send_followup_email") {
-              if (!resend) {
-                toolResult = "Virhe: sähköpostipalvelu ei käytössä.";
+            } else if (tc.function.name === "draft_followup_email") {
+              // Puoliautonominen: ei lähetä — luo luonnos jonka käyttäjä hyväksyy.
+              const jobRow = (await db.select().from(jobs).where(eq(jobs.id, args.job_id)).limit(1))[0];
+              if (!jobRow) {
+                toolResult = `Virhe: keikkaa #${args.job_id} ei löydy.`;
               } else {
-                const jobRow = (await db.select().from(jobs).where(eq(jobs.id, args.job_id)).limit(1))[0];
-                if (!jobRow) {
-                  toolResult = `Virhe: keikkaa #${args.job_id} ei löydy.`;
+                const customer = jobRow.customerId
+                  ? (await db.select().from(customers).where(eq(customers.id, jobRow.customerId)).limit(1))[0]
+                  : null;
+                if (!customer?.email) {
+                  toolResult = `Keikalla #${args.job_id} ei ole asiakkaan sähköpostia — ei voi luonnostella lähetettävää viestiä.`;
                 } else {
-                  const customer = jobRow.customerId
-                    ? (await db.select().from(customers).where(eq(customers.id, jobRow.customerId)).limit(1))[0]
-                    : null;
-                  if (!customer?.email) {
-                    toolResult = `Keikalla #${args.job_id} ei ole asiakkaan sähköpostia — ei voitu lähettää.`;
-                  } else {
-                    // Duplicate protection: check if outreach sent in last 30 days
-                    const notes = jobRow.notes || "";
-                    const recentOutreach = notes.split("\n").some(line => {
-                      if (!line.includes("yhteydenotto lähetetty")) return false;
-                      const match = line.match(/\[(\d+)\.(\d+)\.(\d+)/);
-                      if (!match) return false;
-                      const [, d, m, y] = match;
-                      const sent = new Date(Number(y), Number(m) - 1, Number(d));
-                      return (Date.now() - sent.getTime()) < 30 * 24 * 60 * 60 * 1000;
-                    });
-                    if (recentOutreach) {
-                      toolResult = `⚠️ Asiakkaalle ${customer.name} on jo lähetetty yhteydenotto viimeisen 30 päivän aikana. Jos haluat lähettää uudelleen, sano niin erikseen.`;
-                    } else {
-                      const style = args.style || "henkikohtainen";
-                      const firstName = customer.name?.split(" ")[0] ?? customer.name ?? "";
-                      const today = new Date().toLocaleDateString("fi-FI");
-                      const msg = (args.message as string).replace(/\n/g, "<br>");
-                      const msgPlain = args.message as string;
-
-                      let html = "";
-
-                      if (style === "lyhyt") {
-                        // Plain text style — no images, minimal HTML
-                        html = `<!DOCTYPE html>
-<html lang="fi"><head><meta charset="UTF-8"></head>
-<body style="margin:0;padding:0;background:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff"><tr><td align="center" style="padding:40px 16px">
-<table width="540" cellpadding="0" cellspacing="0" style="max-width:540px;width:100%">
-  <tr><td style="padding-bottom:32px">
-    <p style="margin:0;color:#111;font-size:15px;line-height:1.8">${msg}</p>
-  </td></tr>
-  <tr><td style="border-top:1px solid #eeeeee;padding-top:20px">
-    <p style="margin:0;color:#333;font-size:14px;line-height:1.7">
-      Terveisin,<br>
-      <strong>Joonatan Juuri</strong> &amp; Matias Pitkänen<br>
-      <span style="color:#666">Puuhapatet</span><br>
-      <a href="tel:+358400389999" style="color:#2d5016;text-decoration:none">+358 40 0389999</a> · 
-      <a href="https://wa.me/358400389999" style="color:#25D366;text-decoration:none">WhatsApp</a><br>
-      <a href="https://puuhapatet.fi" style="color:#2d5016;text-decoration:none;font-size:12px">puuhapatet.fi</a>
-    </p>
-  </td></tr>
-</table>
-</td></tr></table>
-</body></html>`;
-
-                      } else if (style === "pro") {
-                        // Branded professional with green header + photo
-                        html = `<!DOCTYPE html>
-<html lang="fi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:#f0faf2">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0faf2"><tr><td align="center" style="padding:28px 16px">
-<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
-  <tr><td style="background:#2d5016;border-radius:16px 16px 0 0;padding:24px 32px">
-    <table width="100%" cellpadding="0" cellspacing="0"><tr>
-      <td><p style="margin:0;color:#fff;font-size:24px;font-weight:900;letter-spacing:-0.5px">Puuhapatet.</p>
-          <p style="margin:4px 0 0;color:#a3c97a;font-size:11px">Ammattimainen kiinteistöpalvelu · Espoo &amp; Helsinki</p></td>
-      <td style="text-align:right"><span style="background:#a3c97a;color:#1a3a0a;font-size:10px;font-weight:800;letter-spacing:2px;padding:4px 12px;border-radius:20px;text-transform:uppercase">YHTEYDENOTTO</span></td>
-    </tr></table>
-  </td></tr>
-  <tr><td style="padding:0;line-height:0"><img src="https://puuhapatet.fi/hero-workers.jpg" alt="Puuhapatet työssä" style="width:100%;max-height:220px;object-fit:cover;display:block"/></td></tr>
-  <tr><td style="background:#fff;border:1px solid #d1f0d8;border-top:none;padding:28px 32px">
-    <p style="margin:0 0 20px;color:#2a3a2a;font-size:15px;line-height:1.8">${msg}</p>
-    <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #e8f5e9;margin-top:20px;padding-top:20px">
-      <tr>
-        <td style="padding-top:20px;text-align:center">
-          <a href="https://puuhapatet.fi/tilaus" style="display:inline-block;background:#111;color:#4ade80;font-size:15px;font-weight:800;text-decoration:none;padding:16px 40px;border-radius:12px;border:2px solid #22c55e">Jätä yhteydenottopyyntö →</a>
-          <br>
-          <a href="https://wa.me/358400389999" style="display:inline-block;background:#25D366;color:#fff;padding:10px 22px;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px;margin:10px 4px 0">💬 WhatsApp</a>
-          <p style="margin:8px 0 0;color:#999;font-size:12px">Ilmainen tarjous alle 24 tunnissa</p>
-        </td>
-      </tr>
-    </table>
-  </td></tr>
-  <tr><td style="background:#111;border-radius:0 0 16px 16px;padding:18px 32px">
-    <table width="100%" cellpadding="0" cellspacing="0"><tr>
-      <td><p style="margin:0 0 2px;color:#4ade80;font-size:15px;font-weight:800">Puuhapatet.</p>
-          <p style="margin:0;color:#666;font-size:12px">Joonatan +358 40 0389999 · Matias +358 44 2350881</p></td>
-      <td style="text-align:right"><a href="https://puuhapatet.fi" style="color:#4ade80;font-weight:700;text-decoration:none;font-size:13px">puuhapatet.fi</a></td>
-    </tr></table>
-  </td></tr>
-</table></td></tr></table>
-</body></html>`;
-
-                      } else {
-                        // henkikohtainen (default) — simple, warm, personal feel
-                        html = `<!DOCTYPE html>
-<html lang="fi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f8faf8"><tr><td align="center" style="padding:32px 16px">
-<table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,0.07)">
-  <tr><td style="background:#2d5016;padding:20px 28px">
-    <p style="margin:0;color:#fff;font-size:18px;font-weight:800;letter-spacing:-0.3px">Puuhapatet.</p>
-  </td></tr>
-  <tr><td style="padding:28px 28px 8px">
-    <p style="margin:0 0 18px;color:#1a1a1a;font-size:22px;font-weight:700;line-height:1.3">Hei ${firstName}! 👋</p>
-    <p style="margin:0;color:#333;font-size:15px;line-height:1.8">${msg}</p>
-  </td></tr>
-  <tr><td style="padding:20px 28px">
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0faf2;border-radius:10px;padding:16px">
-      <tr><td style="padding:0">
-        <p style="margin:0 0 10px;color:#2d5016;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px">Ota yhteyttä</p>
-        <p style="margin:0 0 6px;font-size:14px;color:#333">
-          💬 <a href="https://wa.me/358400389999" style="color:#2d5016;font-weight:600;text-decoration:none">WhatsApp — Joonatan</a>
-          <span style="color:#999;font-size:12px"> (+358 40 0389999)</span>
-        </p>
-        <p style="margin:0;font-size:14px;color:#333">
-          🌐 <a href="https://puuhapatet.fi/tilaus" style="color:#2d5016;font-weight:600;text-decoration:none">puuhapatet.fi/tilaus</a>
-          <span style="color:#999;font-size:12px"> — jätä yhteystiedot, soitamme takaisin</span>
-        </p>
-      </td></tr>
-    </table>
-  </td></tr>
-  <tr><td style="padding:0 28px 24px">
-    <p style="margin:0;color:#555;font-size:14px;line-height:1.7">
-      Terveisin,<br>
-      <strong style="color:#1a1a1a">Joonatan &amp; Matias</strong><br>
-      <span style="color:#2d5016;font-size:13px">Puuhapatet</span>
-    </p>
-  </td></tr>
-  <tr><td style="background:#f8f8f8;padding:12px 28px;border-top:1px solid #eee">
-    <p style="margin:0;color:#aaa;font-size:11px">
-      <a href="https://puuhapatet.fi" style="color:#aaa;text-decoration:none">puuhapatet.fi</a> · info@puuhapatet.fi · Espoo &amp; Helsinki
-    </p>
-  </td></tr>
-</table>
-</td></tr></table>
-</body></html>`;
-                      }
-
-                      await resend.emails.send({
-                        from: FROM_EMAIL,
-                        to: customer.email,
-                        subject: `Hei ${firstName} — terveisiä Puuhapatet!`,
-                        html,
-                      });
-
-                      // Mark outreach in job notes
-                      const outreachNote = `[${today} yhteydenotto lähetetty sähköpostilla: ${customer.email} (tyyli: ${style})]`;
-                      await db.update(jobs).set({
-                        notes: notes ? notes + "\n" + outreachNote : outreachNote,
-                        updatedAt: new Date()
-                      }).where(eq(jobs.id, args.job_id));
-
-                      toolResult = `Viesti lähetetty (${style}) asiakkaalle ${customer.name} <${customer.email}>.`;
-                      toolResultNotes.push(`✓ ${toolResult}`);
-                    }
-                  }
+                  const style: OutreachStyle = (["henkikohtainen", "pro", "lyhyt"].includes(args.style) ? args.style : "henkikohtainen");
+                  // Duplikaattisuoja: varoita jos yhteydenotto on lähetetty 30 pv sisällä
+                  const notes = jobRow.notes || "";
+                  const recentOutreach = notes.split("\n").some(line => {
+                    if (!line.includes("yhteydenotto lähetetty")) return false;
+                    const match = line.match(/\[(\d+)\.(\d+)\.(\d+)/);
+                    if (!match) return false;
+                    const [, d, m, y] = match;
+                    const sent = new Date(Number(y), Number(m) - 1, Number(d));
+                    return (Date.now() - sent.getTime()) < 30 * 24 * 60 * 60 * 1000;
+                  });
+                  const warning = recentOutreach
+                    ? `Huom: tälle asiakkaalle on jo lähetetty yhteydenotto viimeisen 30 päivän aikana.`
+                    : undefined;
+                  emailDrafts.push({
+                    jobId: args.job_id,
+                    customerName: customer.name,
+                    email: customer.email,
+                    style,
+                    message: String(args.message || ""),
+                    warning,
+                  });
+                  toolResult = `Luonnos valmis asiakkaalle ${customer.name} <${customer.email}> (tyyli: ${style}). Viestiä EI ole vielä lähetetty — käyttäjä näkee luonnoksen ja hyväksyy sen itse.${warning ? " " + warning : ""}`;
+                  toolResultNotes.push(`📝 Luonnostelin viestin asiakkaalle ${customer.name}. Tarkista alta ja lähetä napilla.`);
                 }
               }
-                        } else {
+            } else if (tc.function.name === "propose_prospects") {
+              // Pelkkä ehdotuslista — ei luo mitään dataa. AI tuottaa perustellut
+              // kohteet vastaustekstinään; tämä työkalu vain ohjeistaa muodon.
+              const n = Math.min(Math.max(Number(args.count) || 3, 1), 6);
+              toolResult = `Tee ${n} konkreettista prospektiehdotusta alueelle "${args.area}"${args.building_type ? ` (tyyppi: ${args.building_type})` : ""}. ` +
+                `Anna jokaiselle: kohteen tyyppi/nimi- idea, sijainti, ja lyhyt PERUSTE miksi tämä sopisi Puuhapatetille (esim. ikkunapinta-ala, alueen profiili, lähellä FR8/Otaniemeä). ` +
+                `ÄLÄ keksi oikeiden ihmisten nimiä tai yhteystietoja. Muotoile selkeänä numeroituna listana. ` +
+                `Lopuksi kerro, että käyttäjä voi pyytää lisäämään minkä tahansa ehdotuksen liidiksi.`;
+            } else if (tc.function.name === "create_lead_from_prospect") {
+              try {
+                const [newCustomer] = await db.insert(customers).values({
+                  name: String(args.name).slice(0, 200),
+                  phone: String(args.phone || "").slice(0, 60),
+                  email: args.email ? String(args.email).slice(0, 200) : null,
+                  address: String(args.address || "—").slice(0, 300),
+                  notes: args.notes ? `[Prospekti — AI-ehdotus ${new Date().toLocaleDateString("fi-FI")}] ${args.notes}` : null,
+                  ownedBy: String(userId || ""),
+                }).returning();
+                const [newJob] = await db.insert(jobs).values({
+                  customerId: newCustomer.id,
+                  description: String(args.description).slice(0, 500),
+                  agreedPrice: 0,
+                  status: "lead",
+                  notes: `[${new Date().toLocaleDateString("fi-FI")}] Liidi luotu AI:n prospektiehdotuksesta.${args.notes ? " Peruste: " + args.notes : ""}`,
+                }).returning();
+                toolResult = `Liidi luotu: ${newCustomer.name} (keikka #${newJob.id}, tila: lead). Se näkyy nyt avoimissa liideissä.`;
+                toolResultNotes.push(`✓ Lisäsin liidin: ${newCustomer.name} (#${newJob.id}).`);
+              } catch (e: any) {
+                toolResult = `Virhe liidin luonnissa: ${e.message}`;
+              }
+            } else {
               toolResult = `Tuntematon työkalu: ${tc.function.name}`;
             }
           } catch (e: any) {
@@ -4712,9 +4769,54 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           turns.push({ role: "tool", tool_call_id: tc.id, content: toolResult });
         }
       }
-      res.json({ reply: toolResultNotes.join("\n") || "Toimenpiteet suoritettu." });
+      res.json({ reply: toolResultNotes.join("\n") || "Toimenpiteet suoritettu.", drafts: emailDrafts.length ? emailDrafts : undefined });
     } catch (e: any) {
       console.error("Admin assistant error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Admin: lähetä AI:n luonnostelema yhteydenotto-sähköposti (hyväksyntä) ──
+  // Puoliautonominen flow: AI luonnostelee, käyttäjä hyväksyy → tämä lähettää.
+  // Body: { jobId, message, style, role }
+  app.post("/api/admin/assistant/send-email", async (req, res) => {
+    try {
+      const { jobId, message, style, role } = req.body ?? {};
+      if (role !== "HOST") return res.status(403).json({ error: "Vain perustaja voi lähettää viestejä." });
+      if (!resend) return res.status(400).json({ error: "Sähköpostipalvelu ei käytössä." });
+      const jid = Number(jobId);
+      const msg = String(message ?? "").trim();
+      if (!jid || !msg) return res.status(400).json({ error: "Keikka tai viesti puuttuu." });
+      const st: OutreachStyle = (["henkikohtainen", "pro", "lyhyt"].includes(style) ? style : "henkikohtainen");
+
+      const jobRow = (await db.select().from(jobs).where(eq(jobs.id, jid)).limit(1))[0];
+      if (!jobRow) return res.status(404).json({ error: `Keikkaa #${jid} ei löydy.` });
+      const customer = jobRow.customerId
+        ? (await db.select().from(customers).where(eq(customers.id, jobRow.customerId)).limit(1))[0]
+        : null;
+      if (!customer?.email) return res.status(400).json({ error: "Asiakkaalla ei ole sähköpostiosoitetta." });
+
+      const firstName = customer.name?.split(" ")[0] ?? customer.name ?? "";
+      const today = new Date().toLocaleDateString("fi-FI");
+      const html = buildOutreachEmailHtml(st, msg, firstName);
+
+      await resend.emails.send({
+        from: FROM_EMAIL,
+        to: customer.email,
+        subject: `Hei ${firstName} — terveisiä Puuhapatet!`,
+        html,
+      });
+
+      const notes = jobRow.notes || "";
+      const outreachNote = `[${today} yhteydenotto lähetetty sähköpostilla: ${customer.email} (tyyli: ${st})]`;
+      await db.update(jobs).set({
+        notes: notes ? notes + "\n" + outreachNote : outreachNote,
+        updatedAt: new Date(),
+      }).where(eq(jobs.id, jid));
+
+      res.json({ ok: true, sentTo: customer.email, customerName: customer.name });
+    } catch (e: any) {
+      console.error("Assistant send-email error:", e);
       res.status(500).json({ error: e.message });
     }
   });
@@ -4829,7 +4931,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           const gt = computeTotals(gig);
           invLine = ` Laskutettu ${eur(gt.invoicedCents)}, laskuttamatta ${eur(gt.uninvoicedCents)}.`;
         }
-        lines.push(`- #${j.id} ${gigName}: ${washed}/${total} ikkunaa pesty (${pct} %). Maksuerä ${pp.currentPeriod}/${pp.periods}, ${pp.done ? "kaikki erät katettu" : `${pp.toNext} ikkunaa seuraavaan maksuerään`}.${invLine}${contact ? ` Asiakkaan yhteyshenkilö: ${contact}.` : ""}`);
+        const dealLine = deal && deal.capCents > 0 ? ` Sopimuksen kokonaisarvo ${eur(deal.capCents)} (kiinteä kattohinta).` : "";
+        lines.push(`- #${j.id} ${gigName}: ${washed}/${total} ikkunaa pesty (${pct} %).${dealLine} Maksuerä ${pp.currentPeriod}/${pp.periods}, ${pp.done ? "kaikki erät katettu" : `${pp.toNext} ikkunaa seuraavaan maksuerään`}.${invLine}${contact ? ` Asiakkaan yhteyshenkilö: ${contact}.` : ""}`);
       }
     }
 

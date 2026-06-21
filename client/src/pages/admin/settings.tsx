@@ -71,7 +71,7 @@ export default function AdminSettingsPage() {
   useEffect(() => { loadStats(); loadBonusUsages(); }, []);
 
   const fmt = (cents: number) =>
-    Math.round((Number.isFinite(cents) ? cents : 0) / 100).toLocaleString("fi-FI") + " €";
+    ((Number.isFinite(cents) ? cents : 0) / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
 
   // Total service fees earned from gigs. Prefer the server value, but if an
   // older API build doesn't send it, reconstruct it from current debts +

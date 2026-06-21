@@ -362,7 +362,7 @@ export function sanitizeGigData(input: any): GigData {
 // ─── Formatting helpers ──────────────────────────────────────────────────────
 
 export function eur(cents: number): string {
-  return (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + " €";
+  return (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
 }
 
 export function eur2(cents: number): string {

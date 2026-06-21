@@ -19,7 +19,7 @@ interface Props {
 }
 
 function fmt(n: number) { return Math.round(n).toLocaleString("fi-FI"); }
-function euro(n: number) { return fmt(n) + " €"; }
+function euro(n: number) { return n.toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €"; }
 /** Per-window price — keeps cents (e.g. "37,50 €") so 37.5 never rounds to 38. */
 function euroUnit(n: number) {
   return n.toLocaleString("fi-FI", { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 }) + " €";

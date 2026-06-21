@@ -20,7 +20,7 @@ import { BRAND_BILLERS, DEFAULT_BILLER_ID } from "@shared/billers";
 import { getAdminProfile } from "@/lib/admin-profile";
 
 const PUBLIC_BASE = "https://puuhapatet.fi";
-const eur = (c: number) => (c / 100).toLocaleString("fi-FI", { maximumFractionDigits: 0 }) + " €";
+const eur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
 const agreementTitle = (id: string) => WORKER_AGREEMENTS.find((a) => a.id === id)?.title ?? id;
 const profileLabel = (id: string) => PROFILE_QUESTIONS.find((q) => q.id === id)?.label ?? id;
 

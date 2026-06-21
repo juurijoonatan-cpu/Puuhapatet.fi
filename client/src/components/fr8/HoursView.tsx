@@ -18,7 +18,7 @@ interface Props {
 }
 
 function fmtH(n: number) { return (Math.round(n * 100) / 100).toLocaleString("fi-FI"); }
-function fmtEur(n: number) { return (Math.round(n * 100) / 100).toLocaleString("fi-FI", { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + " €"; }
+function fmtEur(n: number) { return (Math.round(n * 100) / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €"; }
 function timeStr(ts: number) { return new Date(ts).toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" }); }
 
 const card: React.CSSProperties = {

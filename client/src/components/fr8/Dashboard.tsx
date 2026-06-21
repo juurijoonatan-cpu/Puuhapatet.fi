@@ -56,6 +56,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   const [showLog, setShowLog] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
+  const [openSessions, setOpenSessions] = useState<string | null>(null);
   const crewMemberOf = (id: string) => (project.crew || []).find((c) => c.id === id);
   // Live clock for "shift running" indicators (ticks once a minute).
   const [now, setNow] = useState(Date.now());
@@ -288,6 +289,25 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                             style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.14)", background: "transparent", color: "rgba(255,255,255,0.6)", fontSize: "12px", cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>↺</button>
                         )}
                       </div>
+                    )}
+                    {/* Per-worker session / day log (managers only) */}
+                    {(cm?.sessions?.length ?? 0) > 0 && (
+                      <>
+                        <button onClick={() => setOpenSessions(openSessions === s.worker ? null : s.worker)}
+                          style={{ marginTop: 10, width: "100%", padding: "6px", borderRadius: 8, border: "none", background: "transparent", color: "rgba(255,255,255,0.45)", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-jetbrains-mono, monospace)", letterSpacing: "0.06em" }}>
+                          PÄIVÄKIRJA ({cm!.sessions!.length}) {openSessions === s.worker ? "▲" : "▾"}
+                        </button>
+                        {openSessions === s.worker && (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+                            {[...cm!.sessions!].reverse().slice(0, 10).map(( se, i) => (
+                              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11.5px", color: "rgba(255,255,255,0.6)", padding: "5px 8px", background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>
+                                <span>{new Date(se.end).toLocaleDateString("fi-FI", { day: "numeric", month: "numeric" })} · {se.windows} ikk · {fmtDur(se.minutes * 60000)}</span>
+                                <span style={{ fontWeight: 700, color: "rgba(255,255,255,0.8)" }}>{euro(se.earnedCents / 100)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 );

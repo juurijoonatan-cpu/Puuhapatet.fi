@@ -50,6 +50,9 @@ export interface WorkerView {
   deleted: Record<string, boolean>;
   hours: number;
   stats: CrewMemberStats;
+  /** Gig-wide window counts (team) for the shared paydate-progress stat. No euros. */
+  windowsTotal: number;
+  windowsWashed: number;
   agreementVersion: string;
   requiredAgreementIds: string[];
   /** Whether agreement signing is currently enforced (soft start when false). */

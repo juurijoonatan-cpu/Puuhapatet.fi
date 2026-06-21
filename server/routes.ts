@@ -15,7 +15,7 @@ import {
 } from "./ai";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, emptyProjectData, toNoteKind, type ProjectData } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, type ProjectData } from "@shared/project";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, type CrewMember,
@@ -29,6 +29,7 @@ import {
   BRAND_BILLERS, DEFAULT_BILLER_ID, resolveBrandBiller, billerToBuyer,
   type Biller, type BuyerSnapshot,
 } from "@shared/billers";
+import { computePayProgress } from "@shared/payprogress";
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 // Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
@@ -3446,6 +3447,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Build the worker-facing view: floor map + their own progress, NO gig price.
   function workerView(project: ProjectData, member: CrewMember) {
     const stats = crewMemberStats(project, member);
+    const projectTotals = computeProjectTotals(project);
+    // Paydate-progress counts: for a fixed deal (FR8) use the BILLABLE scope (the
+    // agreed red-window count, e.g. 168), so the milestone matches what's billed —
+    // independent of the live dot count. Otherwise use all mapped windows.
+    const payDeal = fixedDealFor(project);
+    let windowsTotal = projectTotals.total;
+    let windowsWashed = projectTotals.washed;
+    if (payDeal) {
+      const db = computeDealBilling(project, payDeal);
+      const agreedScope = payDeal.pricePerWindow > 0 ? Math.round(payDeal.capCents / 100 / payDeal.pricePerWindow) : 0;
+      windowsTotal = Math.max(agreedScope, db.billableTotal);
+      windowsWashed = db.billableWashed;
+    }
     // Soft-start model: "in the app" (typed name) is decoupled from "has signed".
     const signedAll = hasSignedAllAgreements(member, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION);
     const enteredApp = !!member.onboardedAt;
@@ -3516,6 +3530,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       deleted: project.deleted,
       hours: stats.hours,
       stats,
+      // Gig-wide window counts (team) for the shared "paydate progress" stat — NO
+      // euros, so the worker still never sees the gig total/price/cap.
+      windowsTotal,
+      windowsWashed,
       agreementVersion: WORKER_AGREEMENT_VERSION,
       requiredAgreementIds: REQUIRED_AGREEMENT_IDS,
       // Whether signing is currently enforced. Drives the client flow: soft start
@@ -4781,6 +4799,37 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       for (const j of pendingQuotes) {
         const c = customerById.get(j.customerId);
         lines.push(`- #${j.id} ${c?.name ?? "?"} · ${j.status} · tarjous odottaa vastausta · ${eur(j.agreedPrice)}`);
+      }
+    }
+
+    // Big window gigs (floor-plan projects) — progress + paydate status + the
+    // customer contact, so the daily report can give a short status to relay
+    // (e.g. to the FR8 customer contact).
+    const bigGigs = visibleJobs.filter(j => (j as any).projectData);
+    if (bigGigs.length) {
+      lines.push(`\nIsot keikat (edistyminen — voit kertoa asiakkaalle lyhyen tilanteen):`);
+      for (const j of bigGigs.slice(0, 5)) {
+        const proj = parseProject((j as any).projectData ?? null);
+        if (!proj) continue;
+        const tot = computeProjectTotals(proj);
+        const deal = fixedDealFor(proj);
+        let total = tot.total, washed = tot.washed;
+        if (deal && deal.pricePerWindow > 0) {
+          const dealBill = computeDealBilling(proj, deal);
+          total = Math.max(Math.round(deal.capCents / 100 / deal.pricePerWindow), dealBill.billableTotal);
+          washed = dealBill.billableWashed;
+        }
+        const pct = total > 0 ? Math.round((washed / total) * 100) : 0;
+        const pp = computePayProgress(total, washed);
+        const gig = (j as any).gigData ? parseGig((j as any).gigData) : null;
+        const contact = gig?.company?.contact || gig?.signature?.customer?.contactPerson || customerById.get(j.customerId)?.name;
+        const gigName = gig?.company?.name || proj.building?.name || j.description;
+        let invLine = "";
+        if (gig && role === "HOST") {
+          const gt = computeTotals(gig);
+          invLine = ` Laskutettu ${eur(gt.invoicedCents)}, laskuttamatta ${eur(gt.uninvoicedCents)}.`;
+        }
+        lines.push(`- #${j.id} ${gigName}: ${washed}/${total} ikkunaa pesty (${pct} %). Maksuerä ${pp.currentPeriod}/${pp.periods}, ${pp.done ? "kaikki erät katettu" : `${pp.toNext} ikkunaa seuraavaan maksuerään`}.${invLine}${contact ? ` Asiakkaan yhteyshenkilö: ${contact}.` : ""}`);
       }
     }
 

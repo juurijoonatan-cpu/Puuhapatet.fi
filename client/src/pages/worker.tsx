@@ -675,6 +675,7 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
             onResetFloor={noop}
             canEdit={false}
             canAddNotes
+            hideMoney
             washedBy={view.washedBy}
             workerNames={view.workerNames}
             currentWorkerId={view.worker.id}
@@ -1002,26 +1003,58 @@ function PayoutsTab({ token, view, setView }: { token: string; view: WorkerView;
   );
 }
 
+function fmtDuration(min: number) {
+  const h = Math.floor(min / 60), mm = Math.round(min % 60);
+  return h > 0 ? `${h} t ${mm} min` : `${mm} min`;
+}
+
 function HoursTab({ token, view, setView }: { token: string; view: WorkerView; setView: (v: WorkerView) => void }) {
-  const [running, setRunning] = useState<number | null>(null);
-  const [elapsed, setElapsed] = useState(0);
+  // Resume a running shift from the server (so it survives reload / reopen).
+  const [running, setRunning] = useState<number | null>(view.worker.activeShiftAt ?? null);
+  const [breakMs, setBreakMs] = useState(0);          // accumulated break time this shift
+  const [onBreak, setOnBreak] = useState<number | null>(null); // break start ms, if paused
+  const [tickNow, setTickNow] = useState(Date.now());
   const [manual, setManual] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [recap, setRecap] = useState<WorkerView["worker"]["sessions"][number] | null>(null);
   const tick = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (running) {
-      tick.current = setInterval(() => setElapsed(Date.now() - running), 1000);
+      tick.current = setInterval(() => setTickNow(Date.now()), 1000);
       return () => { if (tick.current) clearInterval(tick.current); };
     }
   }, [running]);
 
-  const stop = async () => {
-    if (!running) return;
-    const hours = Math.round(((Date.now() - running) / 3600000) * 100) / 100;
-    setRunning(null); setElapsed(0);
-    if (hours > 0) {
-      const res = await api.crewAddHours(token, hours);
-      if (res.ok && res.data?.view) setView(res.data.view);
+  // Worked time = elapsed − breaks (pauses while on break).
+  const workedMs = running ? Math.max(0, tickNow - running - breakMs - (onBreak ? tickNow - onBreak : 0)) : 0;
+  // Windows washed during this session (live).
+  const sessionWindows = running ? Math.max(0, view.stats.washed - (view.worker.shiftStartWashed ?? view.stats.washed)) : 0;
+  const sessionEarnedCents = sessionWindows * view.worker.perWindowCents;
+
+  const start = async () => {
+    setRunning(Date.now()); setBreakMs(0); setOnBreak(null); setTickNow(Date.now());
+    const res = await api.crewShift(token, true);
+    if (res.ok && res.data?.view) setView(res.data.view);
+  };
+
+  const toggleBreak = () => {
+    if (onBreak) { setBreakMs((b) => b + (Date.now() - onBreak)); setOnBreak(null); }
+    else setOnBreak(Date.now());
+  };
+
+  const endDay = async () => {
+    if (!running || busy) return;
+    setBusy(true);
+    const totalBreak = breakMs + (onBreak ? Date.now() - onBreak : 0);
+    const minutes = Math.max(0, Math.round((Date.now() - running - totalBreak) / 60000));
+    const hours = Math.round((minutes / 60) * 100) / 100;
+    if (hours > 0) await api.crewAddHours(token, hours);            // hours ledger
+    const res = await api.crewShift(token, false, minutes);          // record session
+    setBusy(false); setRunning(null); setOnBreak(null); setBreakMs(0);
+    if (res.ok && res.data?.view) {
+      setView(res.data.view);
+      setRecap(res.data.view.worker.sessions[0] ?? null);           // newest-first → recap
     }
   };
 
@@ -1036,24 +1069,79 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
     const s = Math.floor(ms / 1000);
     return `${String(Math.floor(s / 3600)).padStart(2, "0")}:${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
   };
+  const dayMonth = (ts: number) => new Date(ts).toLocaleDateString("fi-FI", { day: "numeric", month: "numeric" });
 
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: 20 }}>
-      <div style={{ textAlign: "center", padding: "20px 0" }}>
-        <p style={{ fontSize: 40, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: running ? "#7CE0A6" : "#fff" }}>{mmss(elapsed)}</p>
-        <button onClick={() => (running ? stop() : setRunning(Date.now()))} style={{ ...primaryBtn, width: "auto", padding: "12px 32px", background: running ? "#D9472B" : T.green, marginTop: 8 }}>
-          {running ? "Lopeta vuoro" : "Aloita vuoro"}
-        </button>
-        <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, marginTop: 10 }}>Aloita ajanseuranta, kun saavut työmaalle.</p>
+      <div style={{ textAlign: "center", padding: "16px 0 6px" }}>
+        <p style={{ margin: 0, fontSize: 40, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: onBreak ? "#E0A800" : running ? "#7CE0A6" : "#fff" }}>{mmss(workedMs)}</p>
+        {running && (
+          <p style={{ margin: "4px 0 0", fontSize: 13, color: "rgba(255,255,255,0.6)" }}>
+            {onBreak ? "Tauolla" : "Vuoro käynnissä"} · {sessionWindows} ikkunaa · {euro(sessionEarnedCents)}
+          </p>
+        )}
+        {!running ? (
+          <button onClick={start} style={{ ...primaryBtn, width: "auto", padding: "13px 36px", background: T.green, marginTop: 12 }}>Aloita vuoro</button>
+        ) : (
+          <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 14, flexWrap: "wrap" }}>
+            <button onClick={toggleBreak} style={{ ...secondaryBtn, color: "#fff", border: "1px solid rgba(255,255,255,0.25)", background: onBreak ? "rgba(224,168,0,0.15)" : "transparent" }}>
+              {onBreak ? "Jatka työtä" : "Tauko"}
+            </button>
+            <button onClick={endDay} disabled={busy} style={{ ...primaryBtn, width: "auto", padding: "13px 28px", background: "#D9472B", opacity: busy ? 0.6 : 1 }}>
+              {busy ? "Päätetään…" : "Päätä päivä"}
+            </button>
+          </div>
+        )}
+        <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, marginTop: 12, lineHeight: 1.5 }}>
+          Aloita kun saavut työmaalle. Pidä tauko ruokatauon ajaksi — tauot eivät kerrytä tunteja. "Päätä päivä" kokoaa yhteenvedon.
+        </p>
       </div>
-      <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10 }}>
+
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 6 }}>
         <input value={manual} onChange={(e) => setManual(e.target.value)} placeholder="Lisää tunteja käsin (esim. 2,5)" inputMode="decimal" style={{ ...inputStyle, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff" }} />
         <button onClick={addManual} style={{ ...secondaryBtn, color: "#fff", border: "1px solid rgba(255,255,255,0.2)", whiteSpace: "nowrap" }}>Lisää</button>
       </div>
-      <div style={{ marginTop: 24, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+
+      <div style={{ marginTop: 20, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Stat label="Tunteja yhteensä" value={view.stats.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} />
         <Stat label="€ / tunti" value={view.stats.hours > 0 ? euro(Math.round(view.stats.eurPerHour * 100)) : "—"} />
       </div>
+
+      {/* Session log */}
+      {view.worker.sessions.length > 0 && (
+        <div style={{ marginTop: 26 }}>
+          <p style={{ margin: "0 0 10px", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)" }}>Päiväkirja</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {view.worker.sessions.map((s, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", borderRadius: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                <div>
+                  <p style={{ margin: 0, fontSize: 13.5, fontWeight: 600 }}>{dayMonth(s.end)}</p>
+                  <p style={{ margin: "2px 0 0", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{s.windows} ikkunaa · {fmtDuration(s.minutes)}</p>
+                </div>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(s.earnedCents)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* End-of-day recap */}
+      {recap && (
+        <div onClick={() => setRecap(null)} style={{ position: "fixed", inset: 0, zIndex: 70, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 340, background: "#0f1216", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 18, padding: 24, textAlign: "center" }}>
+            <div style={{ fontSize: 40 }}>🎉</div>
+            <h2 style={{ margin: "8px 0 2px", fontSize: 22, fontWeight: 800, color: "#fff" }}>Hyvää työtä!</h2>
+            <p style={{ margin: "0 0 18px", fontSize: 13.5, color: "rgba(255,255,255,0.6)" }}>Päivän yhteenveto</p>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+              <Stat label="Ikkunaa" value={String(recap.windows)} />
+              <Stat label="Ansio" value={euro(recap.earnedCents)} />
+              <Stat label="Kesto" value={fmtDuration(recap.minutes)} />
+              <Stat label="€ / tunti" value={recap.minutes > 0 ? euro(Math.round((recap.earnedCents / (recap.minutes / 60)))) : "—"} />
+            </div>
+            <button onClick={() => setRecap(null)} style={{ ...primaryBtn, background: T.green }}>Valmis</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

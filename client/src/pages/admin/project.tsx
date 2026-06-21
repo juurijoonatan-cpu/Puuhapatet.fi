@@ -16,6 +16,8 @@ import {
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind,
 } from "@shared/project";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
+import { FOUNDER_IDS } from "@shared/team";
+import { DEFAULT_WORKER_PER_WINDOW_CENTS } from "@shared/crew";
 import Dashboard from "@/components/fr8/Dashboard";
 import FloorView from "@/components/fr8/FloorView";
 import HoursView from "@/components/fr8/HoursView";
@@ -46,6 +48,19 @@ function workerName(id: string): string {
 }
 function workerInitial(id: string): string {
   return (workerName(id)[0] || "?").toUpperCase();
+}
+
+/** Most common value in a list (the gig's "standard" subcontractor rate). */
+function modeOf(nums: number[], fallback: number): number {
+  if (!nums.length) return fallback;
+  const counts = new Map<number, number>();
+  let best = nums[0], bestN = 0;
+  for (const n of nums) {
+    const c = (counts.get(n) ?? 0) + 1;
+    counts.set(n, c);
+    if (c > bestN) { bestN = c; best = n; }
+  }
+  return best;
 }
 
 /**
@@ -380,9 +395,40 @@ export default function AdminProjectPage() {
   // the price is locked and only red windows accrue money.
   const deal = fixedDealFor(project);
   const effectivePrice = deal ? deal.pricePerWindow : project.pricePerWindow;
-  const workerStats = computeWorkerStats(project);
+
+  // Per-person PAY (not the gig price). Each worker earns their own €/window from
+  // the crew. Founders split the per-window MARGIN — i.e. (gig total per window −
+  // the subcontractor rate) / number of founders — computed from the REAL deal
+  // price (37,50 €, not the rounded 38 €). Example FR8: (37,50 − 20) / 2 = 8,75 €.
+  // The big revenue/priority cards stay on the gig deal; only the per-worker
+  // TEKIJÄT figures use personal pay, and names come from the crew.
+  const crew = project.crew ?? [];
+  const isFounder = (id: string, role?: string) => role === "host" || FOUNDER_IDS.includes(id);
+  const dealTotalCents = Math.round(effectivePrice * 100);
+  const subWorkerCents = modeOf(
+    crew.filter((c) => !isFounder(c.id, c.role)).map((c) => c.perWindowCents),
+    DEFAULT_WORKER_PER_WINDOW_CENTS,
+  );
+  const founderCount = Math.max(1, crew.filter((c) => isFounder(c.id, c.role)).length || FOUNDER_IDS.length);
+  const founderPerWindowCents = Math.max(0, Math.round((dealTotalCents - subWorkerCents) / founderCount));
+  const rateForWorker = (id: string): number => {
+    const m = crew.find((c) => c.id === id);
+    if (isFounder(id, m?.role)) return founderPerWindowCents;
+    return m?.perWindowCents ?? dealTotalCents;
+  };
+  const resolveName = (id: string): string => {
+    const m = crew.find((c) => c.id === id);
+    if (m?.name?.trim()) return m.name.trim().split(/\s+/)[0];
+    return workerName(id);
+  };
+  const resolveInitial = (id: string): string => (resolveName(id)[0] || "?").toUpperCase();
+
+  const workerStats = computeWorkerStats(project).map((s) => {
+    const cents = Math.round(s.washed * rateForWorker(s.worker));
+    return { ...s, revenueCents: cents, eurPerHour: s.hours > 0 ? cents / 100 / s.hours : 0 };
+  });
   const hoursWorkers = (project.workers.length ? project.workers : ["matias", "joonatan"]).map((id) => ({
-    id, name: workerName(id), initial: workerInitial(id),
+    id, name: resolveName(id), initial: resolveInitial(id),
   }));
   // Display-name map + this gig's pickable crew (used by both the "who washed"
   // and "default washer" pickers).
@@ -398,7 +444,7 @@ export default function AdminProjectPage() {
         onTabChange={setTab}
         buildingName={project.building.name || gigName || undefined}
         buildingAddress={project.building.address}
-        currentWorkerName={workerName(effectiveWasher)}
+        currentWorkerName={resolveName(effectiveWasher)}
         saving={saving}
         onBack={backToGig}
         workers={gigWorkers}
@@ -421,7 +467,7 @@ export default function AdminProjectPage() {
       )}
       <main style={{ position: "relative", zIndex: 10, height: "calc(100% - 62px)" }}>
         {tab === "dashboard" && (
-          <Dashboard project={project} workerStats={workerStats} workerName={workerName} onGoToFloor={onGoToFloor} deal={deal} />
+          <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} />
         )}
         {tab === "floor" && (
           <FloorView

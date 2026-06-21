@@ -126,7 +126,7 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   { method: "GET",  re: /^\/api\/gig\/[^/]+$/ },
   { method: "POST", re: /^\/api\/gig\/[^/]+\/sign$/ },
   { method: "GET",  re: /^\/api\/crew\/[^/]+$/ },
-  { method: "POST", re: /^\/api\/crew\/[^/]+\/(auth|onboard|window|hours|note|map-note)$/ },
+  { method: "POST", re: /^\/api\/crew\/[^/]+\/(auth|onboard|window|hours|note|map-note|shift)$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/map-note\/(update|delete)$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/payout\/[^/]+\/approve$/ },
 ];
@@ -3365,6 +3365,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         onboarded: enteredApp,
         needsToSign,
         signedAll,
+        activeShiftAt: member.activeShiftAt ?? null,
+        shiftStartWashed: member.shiftStartWashed ?? null,
+        sessions: (member.sessions || []).slice(-30).reverse(), // newest-first
         profile: member.profile ?? null,
         signedAgreementIds: member.agreements
           .filter((a) => a.version === WORKER_AGREEMENT_VERSION)
@@ -3509,6 +3512,42 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const p: 1 | 2 = req.body?.p === 2 ? 2 : 1;
       project.log = [{ floor, key, p, status, ts: Date.now(), by: member.id }, ...(project.log || [])].slice(0, 200);
 
+      const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
+      res.json({ ok: true, view: workerView(saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Worker starts / ends their work-hour timer.
+  //  • start: stamp activeShiftAt + the current washed count (session baseline) so
+  //    managers see a live "shift on" indicator.
+  //  • end: compute the session summary (windows since start × the worker's own
+  //    rate, worked minutes from the client incl. break deduction), append it to
+  //    the session log, and clear the running state. Hours are logged separately
+  //    via /hours. Returns the view; the client shows the last session as a recap.
+  app.post("/api/crew/:token/shift", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const start = req.body?.start === true;
+      const nowWashed = crewMemberStats(project, member).washed;
+      project.crew = (project.crew || []).map((m) => {
+        if (m.id !== member.id) return m;
+        if (start) {
+          return { ...m, activeShiftAt: Date.now(), shiftStartWashed: nowWashed };
+        }
+        // End the shift → record the session.
+        const startedAt = m.activeShiftAt || Date.now();
+        const baseline = m.shiftStartWashed ?? nowWashed;
+        const windows = Math.max(0, nowWashed - baseline);
+        const minutes = Math.max(0, Math.round(Number(req.body?.minutes) || (Date.now() - startedAt) / 60000));
+        const session = { start: startedAt, end: Date.now(), minutes, windows, earnedCents: windows * m.perWindowCents };
+        const sessions = [...(m.sessions || []), session].slice(-200);
+        return { ...m, activeShiftAt: undefined, shiftStartWashed: undefined, sessions };
+      });
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
       res.json({ ok: true, view: workerView(saved, savedMember) });

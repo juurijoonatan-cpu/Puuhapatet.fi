@@ -4,7 +4,7 @@
  */
 import { allPoints, computeDealBilling, type ProjectData, type WindowStatus, type WorkerStat, type FixedDeal } from "@shared/project";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 interface Props {
   project: ProjectData;
@@ -52,6 +52,14 @@ const mono: React.CSSProperties = {
 export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal }: Props) {
   const m = useIsMobile();
   const [showLog, setShowLog] = useState(false);
+  // Live clock for "shift running" indicators (ticks once a minute).
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
+  const shiftStartFor = (id: string) => (project.crew || []).find((c) => c.id === id)?.activeShiftAt;
+  const fmtDur = (ms: number) => {
+    const min = Math.max(0, Math.floor(ms / 60000)), h = Math.floor(min / 60), mm = min % 60;
+    return h > 0 ? `${h} t ${mm} min` : `${mm} min`;
+  };
   const FLOORS = project.building.floors;
   const PRICE = deal ? deal.pricePerWindow : project.pricePerWindow;
   const CIRC = 2 * Math.PI * 80;
@@ -99,7 +107,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
     .sort((a, b) => b.washed - a.washed);
 
   return (
-    <div style={{ height: "100%", overflowY: "auto", padding: m ? "16px 12px 36px" : "26px 30px 40px" }}>
+    <div style={{ height: "100%", overflowY: "auto", WebkitOverflowScrolling: "touch", padding: m ? "16px 12px calc(96px + env(safe-area-inset-bottom))" : "26px 30px 40px" }}>
       <div style={{ maxWidth: "1400px", margin: "0 auto" }}>
 
         {/* Header */}
@@ -226,21 +234,29 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(activeWorkers.length, m ? 2 : 4)}, 1fr)`, gap: m ? "10px" : "12px" }}>
               {activeWorkers.map((s) => {
                 const share = washed > 0 ? (s.washed / washed) * 100 : 0;
+                const rate = s.washed > 0 ? s.revenueCents / s.washed / 100 : 0; // €/ikkuna (personal pay)
+                const shiftStart = shiftStartFor(s.worker);
                 return (
                   <div key={s.worker} style={{ padding: "16px 18px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "15px" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" }}>
-                      <span style={{ fontSize: "15px", fontWeight: 600 }}>{workerName(s.worker)}</span>
-                      <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.45)" }}>{Math.round(share)} %</span>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px", gap: 8 }}>
+                      <span style={{ fontSize: "15px", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{workerName(s.worker)}</span>
+                      <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.45)", flexShrink: 0 }}>{Math.round(share)} %</span>
                     </div>
                     <div style={{ fontSize: "26px", fontWeight: 700, lineHeight: 1 }}>
                       {s.washed} <span style={{ fontSize: "13px", fontWeight: 500, color: "rgba(255,255,255,0.4)" }}>ikkunaa</span>
                     </div>
+                    {shiftStart && (
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 10, padding: "3px 9px", borderRadius: 999, background: "rgba(95,224,138,0.12)", border: "1px solid rgba(95,224,138,0.3)" }}>
+                        <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#5fe08a", boxShadow: "0 0 8px rgba(95,224,138,0.9)", animation: "fr8-zonePulse 1.8s ease-in-out infinite" }} />
+                        <span style={{ fontSize: "11px", fontWeight: 600, color: "#9ff0bd" }}>Vuoro käynnissä · {fmtDur(now - shiftStart)}</span>
+                      </div>
+                    )}
                     <div style={{ height: "6px", borderRadius: "5px", background: "rgba(255,255,255,0.08)", overflow: "hidden", margin: "12px 0" }}>
                       <div style={{ width: `${share.toFixed(1)}%`, height: "100%", borderRadius: "5px", background: "linear-gradient(90deg,rgba(255,255,255,0.5),#fff)", transition: "width .6s" }} />
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>
-                      <span>{euro(s.revenueCents / 100)}</span>
-                      <span>{s.hours > 0 ? `${euro(s.eurPerHour)}/h` : `${s.hours} h`}</span>
+                      <span><b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(s.revenueCents / 100)}</b> · {euroUnit(rate)}/ikkuna</span>
+                      <span>{s.hours > 0 ? `${euro(s.eurPerHour)}/h · ${s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} h` : "0 h"}</span>
                     </div>
                   </div>
                 );

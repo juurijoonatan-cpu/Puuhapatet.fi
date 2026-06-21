@@ -40,6 +40,8 @@ interface Props {
   /** Allow adding/editing map notes (huomio, tikkaat, …) WITHOUT full edit rights.
    *  Lets workers leave simple markers while still not moving/deleting windows. */
   canAddNotes?: boolean;
+  /** Hide all € figures on the map (worker view — they never see gig pricing). */
+  hideMoney?: boolean;
   /** key → worker id who washed it (manager view). Enables the "who cleaned this"
    *  label in the status popover. Workers/customers don't pass this. */
   washedBy?: Record<string, string>;
@@ -158,7 +160,7 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, washedBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, activeZone, onSetActiveZone, onClearActiveZone, deal }: Props) {
+export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, activeZone, onSetActiveZone, onClearActiveZone, deal }: Props) {
   const [floor, setFloor] = useState(initialFloor);
   const [filter, setFilter] = useState<"all" | "unwashed" | "progress" | "done">("all");
   const [editMode, setEditMode] = useState(false);
@@ -461,7 +463,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
               <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.5)", fontWeight: 500 }}>pesty</span>
             </div>
             <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.45)" }}>
-              {Math.round(floorPct)} % · {euro(floorWashed * pricePerWindow)}
+              {Math.round(floorPct)} %{hideMoney ? "" : ` · ${euro(floorWashed * pricePerWindow)}`}
             </div>
           </div>
         </div>

@@ -48,6 +48,15 @@ export interface CrewNote {
   text: string;
 }
 
+/** A completed work session (one "Aloita vuoro" → "Päätä päivä"). */
+export interface CrewSession {
+  start: number;        // epoch ms
+  end: number;          // epoch ms
+  minutes: number;      // worked minutes (breaks deducted)
+  windows: number;      // windows washed during the session
+  earnedCents: number;  // windows × the worker's own per-window rate
+}
+
 /**
  * A payout from Puuhapatet → the worker (alihankkija) for work done.
  *
@@ -99,6 +108,14 @@ export interface CrewMember {
   profile?: CrewProfile;
   agreements: CrewAgreementSignature[];
   onboardedAt?: number;         // when profile + agreements were completed
+  /** Epoch ms when the worker started their work-hour timer; cleared on stop.
+   *  Lets the managers' dashboard show a live "shift running" indicator. */
+  activeShiftAt?: number;
+  /** Washed-window count captured when the current shift started (for the
+   *  end-of-day session summary: windows this session = now − this). */
+  shiftStartWashed?: number;
+  /** Completed work sessions (newest-last), for the per-session/day log. */
+  sessions?: CrewSession[];
   notes: CrewNote[];
   payouts?: CrewPayout[];       // Puuhapatet -> worker payments (newest-first)
   createdAt: number;
@@ -290,6 +307,18 @@ export function sanitizeCrewMember(input: any): CrewMember | null {
     profile: sanitizeProfile(input.profile),
     agreements,
     onboardedAt: input.onboardedAt ? Number(input.onboardedAt) || undefined : undefined,
+    activeShiftAt: input.activeShiftAt ? Number(input.activeShiftAt) || undefined : undefined,
+    shiftStartWashed: input.shiftStartWashed != null ? Math.max(0, Math.floor(Number(input.shiftStartWashed)) || 0) : undefined,
+    sessions: (Array.isArray(input.sessions) ? input.sessions : [])
+      .slice(-200)
+      .map((s: any) => ({
+        start: Number(s?.start) || 0,
+        end: Number(s?.end) || 0,
+        minutes: Math.max(0, Math.round(Number(s?.minutes) || 0)),
+        windows: Math.max(0, Math.floor(Number(s?.windows) || 0)),
+        earnedCents: Math.max(0, Math.floor(Number(s?.earnedCents) || 0)),
+      }))
+      .filter((s: CrewSession) => s.start > 0 && s.end > 0),
     notes,
     payouts: (Array.isArray(input.payouts) ? input.payouts : [])
       .slice(0, 100)

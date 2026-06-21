@@ -22,6 +22,9 @@ export interface WorkerView {
     needsToSign: boolean;
     /** Has signed every required agreement at the current version. */
     signedAll: boolean;
+    /** Set when this worker is a trainee (harjoittelija) under a leader's
+     *  responsibility — no own Y-tunnus, no self-invoicing. null otherwise. */
+    trainee: { responsibleLeaderName: string } | null;
     /** Epoch ms when the work-hour timer was started (null if not running). */
     activeShiftAt: number | null;
     /** Washed count when the current shift started (for the live session counter). */

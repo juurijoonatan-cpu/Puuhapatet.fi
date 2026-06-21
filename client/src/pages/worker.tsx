@@ -964,13 +964,21 @@ function PayoutsTab({ token, view, setView }: { token: string; view: WorkerView;
     maksettu: { label: "Maksettu", color: "#7CE0A6", bg: "rgba(124,224,166,0.18)" },
   };
 
+  const trainee = view.worker.trainee;
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: 20 }}>
       <p style={{ margin: "0 0 4px", fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.5)" }}>Maksut sinulle</p>
-      <p style={{ margin: "0 0 18px", fontSize: 13, color: "rgba(255,255,255,0.55)", lineHeight: 1.6 }}>
-        Puuhapatet maksaa työstäsi. Hyväksy summa ja vahvista laskutustietosi — maksu tehdään tilillesi,
-        ja sinun laskusi Puuhapatetille luodaan automaattisesti.
-      </p>
+      {trainee ? (
+        <p style={{ margin: "0 0 18px", fontSize: 13, color: "rgba(255,255,255,0.55)", lineHeight: 1.6 }}>
+          Olet harjoittelija — {trainee.responsibleLeaderName} hoitaa korvauksesi tiimin kautta.
+          Et laskuta itse etkä tarvitse omaa Y-tunnusta. Näet täällä tehdyn työsi.
+        </p>
+      ) : (
+        <p style={{ margin: "0 0 18px", fontSize: 13, color: "rgba(255,255,255,0.55)", lineHeight: 1.6 }}>
+          Puuhapatet maksaa työstäsi. Hyväksy summa ja vahvista laskutustietosi — maksu tehdään tilillesi,
+          ja sinun laskusi Puuhapatetille luodaan automaattisesti.
+        </p>
+      )}
 
       {payouts.length === 0 && (
         <div style={{ padding: 18, borderRadius: 12, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.6)", fontSize: 13.5, textAlign: "center" }}>
@@ -1327,6 +1335,30 @@ function TaxStatusCard({ token, view, setView }: { token: string; view: WorkerVi
   );
 }
 
+/** Trainee status — shown instead of the alihankkija tax/insurance cards.
+ *  A trainee works under a leader's responsibility: no own Y-tunnus, no
+ *  self-invoicing, earnings handled by the team. */
+function TraineeCard({ leader }: { leader: string }) {
+  return (
+    <div style={{ padding: 16, borderRadius: 16, background: "linear-gradient(155deg, rgba(124,180,255,0.12), rgba(255,255,255,0.03))", border: "1px solid rgba(124,180,255,0.25)", marginBottom: 14 }}>
+      <p style={{ margin: "0 0 4px", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "#9cc4ff" }}>Harjoittelija</p>
+      <p style={{ margin: "0 0 10px", fontSize: 14, fontWeight: 700, color: "#fff" }}>Olet harjoittelija — {leader} vastaa sinusta</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {[
+          `Teet keikkaa ${leader}n vastuulla. Et toimi itsenäisenä alihankkijana.`,
+          "Et tarvitse omaa Y-tunnusta etkä laskuta itse — korvauksesi hoidetaan tiimin kautta.",
+          "Keskity hyvään ja turvalliseen työhön. Kysy aina, jos jokin on epäselvää.",
+        ].map((t, i) => (
+          <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+            <span style={{ flexShrink: 0, marginTop: 6, width: 6, height: 6, borderRadius: "50%", background: "#9cc4ff" }} />
+            <span style={{ fontSize: 13, lineHeight: 1.55, color: "rgba(255,255,255,0.8)" }}>{t}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function NotesTab({ token, view, setView }: { token: string; view: WorkerView; setView: (v: WorkerView) => void }) {
   const [text, setText] = useState("");
   const add = async () => {
@@ -1335,11 +1367,20 @@ function NotesTab({ token, view, setView }: { token: string; view: WorkerView; s
     const res = await api.crewAddNote(token, t);
     if (res.ok && res.data?.view) { setView(res.data.view); setText(""); }
   };
+  const trainee = view.worker.trainee;
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: 20 }}>
       <InfoNotice />
-      <InsuranceCard token={token} view={view} setView={setView} />
-      <TaxStatusCard token={token} view={view} setView={setView} />
+      {/* Trainees work under a leader's responsibility — they see a simple status
+          note instead of the alihankkija tax/insurance self-liability cards. */}
+      {trainee ? (
+        <TraineeCard leader={trainee.responsibleLeaderName} />
+      ) : (
+        <>
+          <InsuranceCard token={token} view={view} setView={setView} />
+          <TaxStatusCard token={token} view={view} setView={setView} />
+        </>
+      )}
       <AccessCard />
       <p style={{ margin: "4px 0 10px", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)" }}>Omat muistiinpanot</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>

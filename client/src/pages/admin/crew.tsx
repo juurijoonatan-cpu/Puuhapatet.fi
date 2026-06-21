@@ -17,6 +17,7 @@ import { ChevronLeft, Copy, Check, RotateCw, Trash2, Plus, UserPlus, FileText, P
 import type { CrewPayout } from "@shared/crew";
 import { computeTax, readVatStatus, readInPrepaymentRegister, fmtPct, fmtEurCents } from "@shared/tax";
 import { BRAND_BILLERS, DEFAULT_BILLER_ID } from "@shared/billers";
+import { traineeForUserId, traineeForName } from "@shared/trainees";
 import { getAdminProfile } from "@/lib/admin-profile";
 
 const PUBLIC_BASE = "https://puuhapatet.fi";
@@ -270,8 +271,15 @@ function PayoutPanel({
     setMsg(res.ok ? (res.data?.emailId ? "Merkitty maksetuksi · lasku lähetetty tiimille." : "Merkitty maksetuksi · lasku luotu (sähköposti ei käytössä).") : (res.error || "Epäonnistui."));
   };
 
+  const trainee = traineeForUserId(member.linkedUserId) || traineeForUserId(member.id) || traineeForName(member.name);
+
   return (
     <details className="mt-3">
+      {trainee && (
+        <p className="mb-2 rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2 text-[11px] text-muted-foreground">
+          <b className="text-foreground">Harjoittelija</b> — {trainee.responsibleLeaderName} vastaa. Ei omaa Y-tunnusta eikä alihankkijalaskutusta; ansiot jaetaan tiimin kesken.
+        </p>
+      )}
       <summary className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground cursor-pointer">
         <Wallet className="h-3.5 w-3.5" /> Maksut työntekijälle ({payouts.length})
       </summary>

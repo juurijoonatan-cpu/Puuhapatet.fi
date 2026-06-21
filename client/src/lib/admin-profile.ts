@@ -24,6 +24,11 @@ export interface AdminProfile {
   /** Worker who logs in only to their own gig dashboard — never sees the admin.
    *  After login they're routed straight to /tyo/<token> (see login + guard). */
   dashboardOnly?: boolean;
+  /** Trainee (harjoittelija): works under a leader's responsibility, no own
+   *  Y-tunnus, doesn't invoice — earnings are pooled & split like staff. */
+  isTrainee?: boolean;
+  /** Admin-profile id of the leader responsible for this trainee (e.g. "matias"). */
+  traineeOf?: string;
 }
 
 // ─── Hard-coded team members ─────────────────────────────────────────────────
@@ -81,6 +86,20 @@ export const USERS: AdminProfile[] = [
     role: "STAFF",
     photoUrl: "/fr8/jani.jpg",
     dashboardOnly: true,
+  },
+  {
+    // Harjoittelija — kirjautuu vain omaan keikkadashboardiinsa (kuten Jani), mutta
+    // EI alihankkija: ei omaa Y-tunnusta, ei itselaskutusta. Matias Pitkänen vastaa
+    // hänestä keikalla; ansiot jaetaan tiimin kesken. Aloitussalasana "milja456"
+    // (server INITIAL_PASSWORDS). Crew-linkitys: linkedUserId = "milja" tai
+    // etunimimatch (Milja → milja) hoituu automaattisesti.
+    id: "milja",
+    name: "Milja Niminen",
+    role: "STAFF",
+    dashboardOnly: true,
+    isTrainee: true,
+    traineeOf: "matias",
+    hasYTunnus: false,
   },
 ];
 

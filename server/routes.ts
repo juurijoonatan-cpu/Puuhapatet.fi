@@ -30,6 +30,7 @@ import {
   type Biller, type BuyerSnapshot,
 } from "@shared/billers";
 import { computePayProgress } from "@shared/payprogress";
+import { traineeForUserId, traineeForName, type TraineeInfo } from "@shared/trainees";
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 // Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
@@ -125,7 +126,7 @@ const AUTH_SECRET = process.env.AUTH_SECRET || "";
 const ADMIN_DEFAULT_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || "";
 // Per-user starter passwords for brand-new accounts (worker logins). Accepted
 // only until the user sets their own; then it's hashed and this is ignored.
-const INITIAL_PASSWORDS: Record<string, string> = { jani: "Jani123" };
+const INITIAL_PASSWORDS: Record<string, string> = { jani: "Jani123", milja: "milja456" };
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 function b64url(buf: Buffer): string {
@@ -3460,12 +3461,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       windowsTotal = Math.max(agreedScope, db.billableTotal);
       windowsWashed = db.billableWashed;
     }
+    // Trainee (harjoittelija, e.g. Milja under Matias): NOT an alihankkija — no
+    // own Y-tunnus, no self-invoicing, and not bound by the subcontractor signing
+    // gate. Matched by the linked login id / crew id, or first name as fallback.
+    const trainee: TraineeInfo | undefined =
+      traineeForUserId(member.linkedUserId) || traineeForUserId(member.id) || traineeForName(member.name);
     // Soft-start model: "in the app" (typed name) is decoupled from "has signed".
     const signedAll = hasSignedAllAgreements(member, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION);
     const enteredApp = !!member.onboardedAt;
     // Until signing is gated, the dashboard opens on name alone. Once gated, an
-    // already-entered worker who hasn't signed the current set must do so.
-    const needsToSign = WORKER_AGREEMENTS_GATED && !signedAll;
+    // already-entered worker who hasn't signed the current set must do so — but a
+    // trainee is never forced into the independent-contractor agreement.
+    const needsToSign = !trainee && WORKER_AGREEMENTS_GATED && !signedAll;
     // id → display name for every crew member, so the worker map can show WHO
     // washed each window ("Pesi Jani") and who left a note.
     const workerNames: Record<string, string> = {};
@@ -3493,6 +3500,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         onboarded: enteredApp,
         needsToSign,
         signedAll,
+        // Trainee: drives the dashboard to hide the alihankkija/tax cards and show
+        // a "under <leader>'s responsibility" note instead. null for normal workers.
+        trainee: trainee ? { responsibleLeaderName: trainee.responsibleLeaderName } : null,
         activeShiftAt: member.activeShiftAt ?? null,
         shiftStartWashed: member.shiftStartWashed ?? null,
         sessions: (member.sessions || []).slice(-30).reverse(), // newest-first
@@ -3535,10 +3545,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       windowsTotal,
       windowsWashed,
       agreementVersion: WORKER_AGREEMENT_VERSION,
-      requiredAgreementIds: REQUIRED_AGREEMENT_IDS,
+      // A trainee signs no subcontractor agreements; everyone else the full set.
+      requiredAgreementIds: trainee ? [] : REQUIRED_AGREEMENT_IDS,
       // Whether signing is currently enforced. Drives the client flow: soft start
-      // (intro + name only) when false; full sign flow / banner when true.
-      agreementsGated: WORKER_AGREEMENTS_GATED,
+      // (intro + name only) when false; full sign flow / banner when true. Trainees
+      // are never gated (they're not independent contractors).
+      agreementsGated: trainee ? false : WORKER_AGREEMENTS_GATED,
     };
   }
 

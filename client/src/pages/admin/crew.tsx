@@ -274,12 +274,13 @@ function PayoutPanel({
   const trainee = traineeForUserId(member.linkedUserId) || traineeForUserId(member.id) || traineeForName(member.name);
 
   return (
-    <details className="mt-3">
+    <>
       {trainee && (
-        <p className="mb-2 rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2 text-[11px] text-muted-foreground">
+        <p className="mt-3 rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2 text-[11px] text-muted-foreground">
           <b className="text-foreground">Harjoittelija</b> — {trainee.responsibleLeaderName} vastaa. Ei omaa Y-tunnusta eikä alihankkijalaskutusta; ansiot jaetaan tiimin kesken.
         </p>
       )}
+    <details className="mt-3">
       <summary className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground cursor-pointer">
         <Wallet className="h-3.5 w-3.5" /> Maksut työntekijälle ({payouts.length})
       </summary>
@@ -373,6 +374,7 @@ function PayoutPanel({
         )}
       </div>
     </details>
+    </>
   );
 }
 

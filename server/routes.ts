@@ -3376,7 +3376,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           name: member.profile?.fullName ?? member.name,
           yTunnus: member.profile?.yTunnus ?? null,
           iban: member.profile?.iban ?? null,
-          address: member.profile?.city ?? null,
+          address: member.profile?.answers?.address ?? member.profile?.city ?? null,
         },
       },
       // Puuhapatet -> worker payouts (newest-first). The worker sees and approves

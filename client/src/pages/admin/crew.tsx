@@ -13,7 +13,6 @@ import type { ProjBuilding } from "@shared/project";
 import { WORKER_AGREEMENTS, PROFILE_QUESTIONS } from "@shared/worker-agreements";
 import { downloadWorkerContract, openWorkerContractForPrint, downloadSignatureImage } from "@/lib/worker-contract-doc";
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
-import { USERS } from "@/lib/admin-profile";
 import { ChevronLeft, Copy, Check, RotateCw, Trash2, Plus, UserPlus, FileText, Printer, Download, Wallet } from "lucide-react";
 import type { CrewPayout } from "@shared/crew";
 
@@ -419,22 +418,6 @@ function WorkerCardHeader({
           {member.active ? "Poista käytöstä" : "Ota käyttöön"}
         </button>
       </div>
-
-      {/* Link to an admin login user → that user logs in and is routed straight
-          to THIS dashboard (e.g. Jani). Keeps the worker's own crew id + stats. */}
-      <label className="mt-3 flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs text-muted-foreground">
-        <span className="shrink-0">Kirjautuva käyttäjä</span>
-        <select
-          value={member.linkedUserId ?? ""}
-          onChange={(e) => onUpdate(member.id, { linkedUserId: e.target.value })}
-          className="ml-auto bg-transparent font-medium text-foreground focus:outline-none"
-        >
-          <option value="">— ei linkitystä —</option>
-          {USERS.map((u) => (
-            <option key={u.id} value={u.id}>{u.name}</option>
-          ))}
-        </select>
-      </label>
     </div>
   );
 }

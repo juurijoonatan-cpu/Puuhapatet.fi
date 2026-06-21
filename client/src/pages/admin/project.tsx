@@ -17,6 +17,7 @@ import {
 } from "@shared/project";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
 import { FOUNDER_IDS } from "@shared/team";
+import { DEFAULT_WORKER_PER_WINDOW_CENTS } from "@shared/crew";
 import Dashboard from "@/components/fr8/Dashboard";
 import FloorView from "@/components/fr8/FloorView";
 import HoursView from "@/components/fr8/HoursView";
@@ -49,8 +50,18 @@ function workerInitial(id: string): string {
   return (workerName(id)[0] || "?").toUpperCase();
 }
 
-/** Founders split the per-window margin (17,50 € / 2) → 8,75 € each per window. */
-const FOUNDER_PER_WINDOW_CENTS = 875;
+/** Most common value in a list (the gig's "standard" subcontractor rate). */
+function modeOf(nums: number[], fallback: number): number {
+  if (!nums.length) return fallback;
+  const counts = new Map<number, number>();
+  let best = nums[0], bestN = 0;
+  for (const n of nums) {
+    const c = (counts.get(n) ?? 0) + 1;
+    counts.set(n, c);
+    if (c > bestN) { bestN = c; best = n; }
+  }
+  return best;
+}
 
 /**
  * Build the display-name map + this gig's pickable crew (for the "who washed"
@@ -385,16 +396,25 @@ export default function AdminProjectPage() {
   const deal = fixedDealFor(project);
   const effectivePrice = deal ? deal.pricePerWindow : project.pricePerWindow;
 
-  // Per-person PAY (not the gig price): each worker earns their own €/window from
-  // the crew (e.g. Jani 20 €); founders split the per-window margin → 8,75 € each.
-  // The big revenue/priority cards stay on the gig deal — only the per-worker
-  // TEKIJÄT figures use personal pay, and names come from the crew (so a renamed
-  // worker shows as "Jani", not "Tyontekija1").
+  // Per-person PAY (not the gig price). Each worker earns their own €/window from
+  // the crew. Founders split the per-window MARGIN — i.e. (gig total per window −
+  // the subcontractor rate) / number of founders — computed from the REAL deal
+  // price (37,50 €, not the rounded 38 €). Example FR8: (37,50 − 20) / 2 = 8,75 €.
+  // The big revenue/priority cards stay on the gig deal; only the per-worker
+  // TEKIJÄT figures use personal pay, and names come from the crew.
   const crew = project.crew ?? [];
+  const isFounder = (id: string, role?: string) => role === "host" || FOUNDER_IDS.includes(id);
+  const dealTotalCents = Math.round(effectivePrice * 100);
+  const subWorkerCents = modeOf(
+    crew.filter((c) => !isFounder(c.id, c.role)).map((c) => c.perWindowCents),
+    DEFAULT_WORKER_PER_WINDOW_CENTS,
+  );
+  const founderCount = Math.max(1, crew.filter((c) => isFounder(c.id, c.role)).length || FOUNDER_IDS.length);
+  const founderPerWindowCents = Math.max(0, Math.round((dealTotalCents - subWorkerCents) / founderCount));
   const rateForWorker = (id: string): number => {
     const m = crew.find((c) => c.id === id);
-    if (m && (m.role === "host" || FOUNDER_IDS.includes(id))) return FOUNDER_PER_WINDOW_CENTS;
-    return m?.perWindowCents ?? Math.round(effectivePrice * 100);
+    if (isFounder(id, m?.role)) return founderPerWindowCents;
+    return m?.perWindowCents ?? dealTotalCents;
   };
   const resolveName = (id: string): string => {
     const m = crew.find((c) => c.id === id);

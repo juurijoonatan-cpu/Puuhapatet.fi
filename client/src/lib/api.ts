@@ -24,6 +24,10 @@ export interface WorkerView {
     signedAll: boolean;
     /** Epoch ms when the work-hour timer was started (null if not running). */
     activeShiftAt: number | null;
+    /** Washed count when the current shift started (for the live session counter). */
+    shiftStartWashed: number | null;
+    /** Completed work sessions, newest-first. */
+    sessions: import("@shared/crew").CrewSession[];
     profile: CrewProfile | null;
     signedAgreementIds: string[];
     notes: { t: number; text: string }[];
@@ -713,9 +717,10 @@ export const api = {
   crewAddHours: (token: string, delta: number) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/hours`, { delta }),
 
-  // Start/stop the work-hour timer (managers see a live "shift on" indicator).
-  crewShift: (token: string, start: boolean) =>
-    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/shift`, { start }),
+  // Start/end the work-hour timer. On end, pass worked minutes (breaks deducted)
+  // so the session log records the right duration.
+  crewShift: (token: string, start: boolean, minutes?: number) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/shift`, { start, minutes }),
 
   crewAddNote: (token: string, text: string) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/note`, { text }),

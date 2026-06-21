@@ -751,11 +751,12 @@ function EarningsTab({ view }: { view: WorkerView }) {
       </div>
       <PaydateProgress total={view.windowsTotal} washed={view.windowsWashed} />
       <Leaderboard view={view} />
-      <PathCard />
+      {!view.worker.trainee && <PathCard />}
       <InstallHint />
       <p style={{ marginTop: 20, fontSize: 12.5, color: "rgba(255,255,255,0.45)", lineHeight: 1.6 }}>
-        Ansiosi päivittyy heti, kun merkitset ikkunan pestyksi kartalle. Laskutat kertyneen summan
-        Puuhapatetilta oman Y-tunnuksesi kautta.
+        {view.worker.trainee
+          ? `Ansiosi päivittyy heti, kun merkitset ikkunan pestyksi kartalle. ${view.worker.trainee.responsibleLeaderName} hoitaa korvauksesi tiimin kautta — et laskuta itse.`
+          : "Ansiosi päivittyy heti, kun merkitset ikkunan pestyksi kartalle. Laskutat kertyneen summan Puuhapatetilta oman Y-tunnuksesi kautta."}
       </p>
     </div>
   );

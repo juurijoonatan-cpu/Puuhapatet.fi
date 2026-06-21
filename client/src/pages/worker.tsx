@@ -160,6 +160,137 @@ function useWorkerInstall(token: string) {
   }, [token]);
 }
 
+// ─── PWA install detection ────────────────────────────────────────────────────
+
+type InstallPlatform = "ios" | "android" | "desktop";
+interface PwaInstall {
+  standalone: boolean;        // already launched as an installed app → fullscreen, no chrome
+  platform: InstallPlatform;
+  inAppBrowser: boolean;      // opened inside an app's webview (IG/FB/etc.) — can't install here
+  canPrompt: boolean;         // Android/Chrome native install prompt is available
+  promptInstall: () => void;  // trigger the native prompt (Android/Chrome)
+}
+
+/**
+ * Detect how the worker is viewing the dashboard so we can guide them to a
+ * proper full-screen install. On iOS the only way to lose Safari's chrome (the
+ * tool buttons + bands in the screenshot) is "Lisää Koti-valikkoon"; in-app
+ * browsers (Instagram/Facebook/…) can't install at all and must be reopened in
+ * Safari/Chrome. Android/Chrome exposes a one-tap native prompt.
+ */
+function usePwaInstall(): PwaInstall {
+  const detect = (): Omit<PwaInstall, "canPrompt" | "promptInstall"> => {
+    if (typeof window === "undefined") return { standalone: true, platform: "desktop", inAppBrowser: false };
+    const ua = navigator.userAgent || "";
+    const standalone = window.matchMedia?.("(display-mode: standalone)").matches
+      || window.matchMedia?.("(display-mode: fullscreen)").matches
+      || (navigator as any).standalone === true;
+    const isIOS = /iphone|ipad|ipod/i.test(ua)
+      || (navigator.platform === "MacIntel" && (navigator as any).maxTouchPoints > 1);
+    const isAndroid = /android/i.test(ua);
+    const inAppBrowser = /FBAN|FBAV|Instagram|Line\/|Messenger|MicroMessenger|Snapchat|Pinterest|Twitter|TikTok|GSA\//i.test(ua);
+    return { standalone: !!standalone, platform: isIOS ? "ios" : isAndroid ? "android" : "desktop", inAppBrowser };
+  };
+
+  const [state, setState] = useState(detect);
+  const deferredRef = useRef<any>(null);
+  const [canPrompt, setCanPrompt] = useState(false);
+
+  useEffect(() => {
+    const onBeforeInstall = (e: Event) => { e.preventDefault(); deferredRef.current = e; setCanPrompt(true); };
+    const onInstalled = () => { deferredRef.current = null; setCanPrompt(false); setState(detect()); };
+    const mq = window.matchMedia?.("(display-mode: standalone)");
+    const onChange = () => setState(detect());
+    window.addEventListener("beforeinstallprompt", onBeforeInstall);
+    window.addEventListener("appinstalled", onInstalled);
+    mq?.addEventListener?.("change", onChange);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+      window.removeEventListener("appinstalled", onInstalled);
+      mq?.removeEventListener?.("change", onChange);
+    };
+  }, []);
+
+  const promptInstall = useCallback(() => {
+    const d = deferredRef.current;
+    if (!d) return;
+    d.prompt();
+    d.userChoice?.finally?.(() => { deferredRef.current = null; setCanPrompt(false); });
+  }, []);
+
+  return { ...state, canPrompt, promptInstall };
+}
+
+/** Sticky bar under the header that drives workers to a full-screen install.
+ *  Only shown when NOT already running as an installed app. */
+function InstallBanner({ pwa, onOpen }: { pwa: PwaInstall; onOpen: () => void }) {
+  const [hidden, setHidden] = useState(() => {
+    try { return sessionStorage.getItem("pp_tyo_install_bar") === "1"; } catch { return false; }
+  });
+  if (pwa.standalone || hidden) return null;
+  const hide = () => { try { sessionStorage.setItem("pp_tyo_install_bar", "1"); } catch {} setHidden(true); };
+  const label = pwa.inAppBrowser ? "Avaa oikeassa selaimessa" : "Asenna koko ruudun sovellus";
+  return (
+    <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, padding: "9px max(14px, env(safe-area-inset-right)) 9px max(14px, env(safe-area-inset-left))", background: "linear-gradient(90deg, rgba(124,224,166,0.16), rgba(124,224,166,0.06))", borderBottom: "1px solid rgba(124,224,166,0.25)" }}>
+      <span style={{ fontSize: 17, lineHeight: 1 }}>📲</span>
+      <button onClick={onOpen} style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: FONT }}>
+        <span style={{ display: "block", fontSize: 12.5, fontWeight: 700, color: "#fff" }}>{label}</span>
+        <span style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.6)" }}>Pois selaimen palkit — näytä ohjeet</span>
+      </button>
+      <button onClick={onOpen} style={{ flexShrink: 0, padding: "7px 12px", borderRadius: 999, background: "#7CE0A6", color: "#06210f", border: "none", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>Näytä</button>
+      <button onClick={hide} aria-label="Myöhemmin" style={{ flexShrink: 0, background: "none", border: "none", color: "rgba(255,255,255,0.45)", fontSize: 16, cursor: "pointer", fontFamily: FONT, lineHeight: 1 }}>✕</button>
+    </div>
+  );
+}
+
+/** Step-by-step install guide, tailored to how the worker is viewing the page. */
+function InstallModal({ pwa, onClose }: { pwa: PwaInstall; onClose: () => void }) {
+  const steps: { icon: string; text: React.ReactNode }[] = pwa.inAppBrowser
+    ? [
+        { icon: "①", text: <>Avaa tämä sivu <b>Safarissa</b> (iPhone) tai <b>Chromessa</b> (Android) — ei sovelluksen sisäisessä selaimessa.</> },
+        { icon: "②", text: <>Paina oikean yläkulman <b>•••</b>-valikkoa → <b>Avaa selaimessa</b>.</> },
+        { icon: "③", text: <>Tee sitten alla olevat vaiheet aloitusnäyttöön lisäämiseksi.</> },
+      ]
+    : pwa.platform === "ios"
+    ? [
+        { icon: "①", text: <>Paina alapalkin <b>Jaa-painiketta</b> <span style={{ fontSize: 15 }}>􀈂</span> (neliö, jossa nuoli ylös).</> },
+        { icon: "②", text: <>Valitse <b>Lisää Koti-valikkoon</b>.</> },
+        { icon: "③", text: <>Paina <b>Lisää</b>. Työpöytä avautuu nyt omana sovelluksenaan — koko ruudulla, ilman selaimen palkkeja.</> },
+      ]
+    : [
+        { icon: "①", text: <>Paina oikean yläkulman <b>⋮</b>-valikkoa.</> },
+        { icon: "②", text: <>Valitse <b>Asenna sovellus</b> tai <b>Lisää aloitusnäyttöön</b>.</> },
+        { icon: "③", text: <>Vahvista. Kuvake avaa työpöydän koko ruudulla, ilman selainpalkkeja.</> },
+      ];
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 90, background: "rgba(0,0,0,0.66)", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: "0", backdropFilter: "blur(2px)" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: "#101216", borderRadius: "20px 20px 0 0", border: "1px solid rgba(255,255,255,0.1)", borderBottom: "none", padding: "22px 20px calc(24px + env(safe-area-inset-bottom))", boxShadow: "0 -20px 60px rgba(0,0,0,0.5)" }}>
+        <div style={{ width: 40, height: 4, borderRadius: 999, background: "rgba(255,255,255,0.18)", margin: "0 auto 16px" }} />
+        <p style={{ margin: "0 0 4px", fontSize: 18, fontWeight: 800, color: "#fff" }}>Asenna työpöytä puhelimeen</p>
+        <p style={{ margin: "0 0 18px", fontSize: 13, lineHeight: 1.5, color: "rgba(255,255,255,0.6)" }}>
+          Selaimen ylä- ja alapalkit katoavat, ja työpöytä täyttää koko ruudun. Kuvake avaa juuri tämän näkymän — ei mitään muuta.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {steps.map((s, i) => (
+            <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+              <span style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 999, background: "rgba(124,224,166,0.16)", border: "1px solid rgba(124,224,166,0.4)", color: "#7CE0A6", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
+              <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: "rgba(255,255,255,0.85)" }}>{s.text}</p>
+            </div>
+          ))}
+        </div>
+        {pwa.canPrompt && (
+          <button onClick={() => { pwa.promptInstall(); onClose(); }} style={{ width: "100%", marginTop: 18, padding: "13px", borderRadius: 13, background: "#7CE0A6", color: "#06210f", border: "none", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+            Asenna nyt
+          </button>
+        )}
+        <button onClick={onClose} style={{ width: "100%", marginTop: 10, padding: "12px", borderRadius: 13, background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.7)", border: "1px solid rgba(255,255,255,0.12)", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: FONT }}>
+          Jatka tästä selaimessa
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Quick start (soft launch) — intro + name only, then straight in ──────────
 
 /** Per-worker personal touches for the welcome intro. Keep the photo files in
@@ -611,6 +742,8 @@ function NavIcon({ name, color }: { name: Tab; color: string }) {
 
 function Dashboard({ token, view, setView, reload }: { token: string; view: WorkerView; setView: (v: WorkerView) => void; reload: () => void }) {
   const [tab, setTab] = useState<Tab>("map");
+  const pwa = usePwaInstall();
+  const [showInstall, setShowInstall] = useState(false);
 
   // Lock page zoom so pinch zooms only the map (like the admin tool), and let the
   // dark UI extend under the notch / home indicator (viewport-fit=cover) — the
@@ -658,6 +791,9 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
           <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>{view.stats.washed} ikkunaa · {euro(view.worker.perWindowCents)}/kpl</p>
         </div>
       </div>
+
+      {/* Install nudge — only when not yet running as an installed app */}
+      <InstallBanner pwa={pwa} onOpen={() => setShowInstall(true)} />
 
       {/* Content */}
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
@@ -721,6 +857,8 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
           );
         })}
       </div>
+
+      {showInstall && <InstallModal pwa={pwa} onClose={() => setShowInstall(false)} />}
     </div>
   );
 }
@@ -793,24 +931,22 @@ function PathCard() {
  *  install is OS-driven (Add to Home Screen); thanks to the per-worker manifest
  *  the icon opens straight back to this dashboard, not the admin. */
 function InstallHint() {
-  const isStandalone = typeof window !== "undefined" &&
-    (window.matchMedia?.("(display-mode: standalone)").matches || (navigator as any).standalone === true);
-  const [dismissed, setDismissed] = useState(() => {
-    try { return localStorage.getItem("pp_tyo_install_hint") === "1"; } catch { return false; }
-  });
-  if (isStandalone || dismissed) return null;
-  const dismiss = () => { try { localStorage.setItem("pp_tyo_install_hint", "1"); } catch {} setDismissed(true); };
+  const pwa = usePwaInstall();
+  const [open, setOpen] = useState(false);
+  if (pwa.standalone) return null;
   return (
-    <div style={{ marginTop: 14, padding: "12px 14px", borderRadius: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", display: "flex", gap: 10, alignItems: "flex-start" }}>
-      <span style={{ fontSize: 18, lineHeight: 1.2 }}>📲</span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: "#fff" }}>Lisää työpöytä puhelimeen</p>
-        <p style={{ margin: "2px 0 0", fontSize: 12, lineHeight: 1.5, color: "rgba(255,255,255,0.55)" }}>
-          Avaa selaimen valikko → <b>Lisää aloitusnäyttöön</b>. Kuvake avaa juuri tämän työpöydän — ei muuta.
-        </p>
-      </div>
-      <button onClick={dismiss} aria-label="Sulje" style={{ flexShrink: 0, background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 16, cursor: "pointer", fontFamily: FONT, lineHeight: 1 }}>✕</button>
-    </div>
+    <>
+      <button onClick={() => setOpen(true)} style={{ width: "100%", marginTop: 14, padding: "12px 14px", borderRadius: 12, background: "rgba(124,224,166,0.08)", border: "1px solid rgba(124,224,166,0.22)", display: "flex", gap: 10, alignItems: "center", cursor: "pointer", fontFamily: FONT, textAlign: "left" }}>
+        <span style={{ fontSize: 18, lineHeight: 1.2 }}>📲</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#fff" }}>Asenna koko ruudun sovellus</p>
+          <p style={{ margin: "2px 0 0", fontSize: 12, lineHeight: 1.5, color: "rgba(255,255,255,0.55)" }}>
+            Pois selaimen palkit — työpöytä täyttää ruudun. Näytä ohjeet →
+          </p>
+        </div>
+      </button>
+      {open && <InstallModal pwa={pwa} onClose={() => setOpen(false)} />}
+    </>
   );
 }
 

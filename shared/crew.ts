@@ -89,6 +89,10 @@ export interface CrewMember {
   name: string;                 // display name (placeholder, editable by hosts)
   role: CrewRole;               // "worker" | "host"
   adminLinked?: boolean;        // true = also a Puuhapatet admin user (e.g. Petrus)
+  /** Admin user id (admin-profile) who logs in and is routed to THIS dashboard.
+   *  Lets a worker keep their own crew id (and washed-window attribution) while
+   *  still being reachable via an admin login. */
+  linkedUserId?: string;
   perWindowCents: number;       // worker pay per pesty window, in cents
   active: boolean;
   pinHash?: string;             // optional 4-digit PIN, sha-256 hex (server-set)
@@ -279,6 +283,7 @@ export function sanitizeCrewMember(input: any): CrewMember | null {
     name: String(input.name ?? id).slice(0, 80),
     role: input.role === "host" ? "host" : "worker",
     adminLinked: !!input.adminLinked,
+    linkedUserId: input.linkedUserId ? String(input.linkedUserId).slice(0, 40).replace(/[^a-z0-9]/gi, "").toLowerCase() || undefined : undefined,
     perWindowCents: clampCents(input.perWindowCents),
     active: input.active !== false,
     pinHash: typeof input.pinHash === "string" && /^[a-f0-9]{64}$/.test(input.pinHash) ? input.pinHash : undefined,

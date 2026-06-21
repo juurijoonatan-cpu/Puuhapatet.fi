@@ -21,6 +21,9 @@ export interface AdminProfile {
   iban?: string;          // Tilinumero tilisiirto-laskuille
   bic?: string;           // BIC/SWIFT-koodi
   address?: string;       // Postiosoite (laskuille)
+  /** Worker who logs in only to their own gig dashboard — never sees the admin.
+   *  After login they're routed straight to /tyo/<token> (see login + guard). */
+  dashboardOnly?: boolean;
 }
 
 // ─── Hard-coded team members ─────────────────────────────────────────────────
@@ -67,6 +70,17 @@ export const USERS: AdminProfile[] = [
     hasYTunnus: true,
     isUnder18: true,    // alle 18v
     startupBonus: 30000, // 300 €
+  },
+  {
+    // FR8-tekijä — kirjautuu vain omaan keikkadashboardiinsa (ei admin-näkymää).
+    // Aloitussalasana "Jani123" (server INITIAL_PASSWORDS); kirjautuessa pyydetään
+    // vaihtamaan se ja ohjataan suoraan /tyo-työpöydälle. Linkitys: crew-jäsenen
+    // linkedUserId = "jani" (aseta työntekijät-näkymästä).
+    id: "jani",
+    name: "Jani",
+    role: "STAFF",
+    photoUrl: "/fr8/jani.jpg",
+    dashboardOnly: true,
   },
 ];
 

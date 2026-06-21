@@ -632,7 +632,11 @@ export const api = {
 
   // Server-side login — verifies credentials and returns an HMAC-signed token.
   adminLogin: (userId: string, password: string) =>
-    request<{ ok: boolean; token: string; role: string }>("POST", "/api/admin/login", { userId, password }),
+    request<{ ok: boolean; token: string; role: string; mustChangePassword?: boolean }>("POST", "/api/admin/login", { userId, password }),
+
+  // Resolve the logged-in user's personal worker dashboard link (dashboard-only users).
+  getMyDashboard: () =>
+    request<{ ok: boolean; token: string | null }>("GET", "/api/admin/my-dashboard"),
 
   setUserPasswordRemote: (userId: string, password: string, currentPassword: string) =>
     request<{ ok: boolean }>("POST", `/api/admin/user-password/${userId}`, { password, currentPassword }),
@@ -741,7 +745,7 @@ export const api = {
     request<{ ok: boolean; member: CrewMember; crew: CrewMember[] }>(
       "POST", `/api/jobs/${jobId}/crew`, data),
 
-  updateCrewMember: (jobId: number, memberId: string, data: { name?: string; perWindowCents?: number; active?: boolean; role?: "worker" | "host"; rotateToken?: boolean }) =>
+  updateCrewMember: (jobId: number, memberId: string, data: { name?: string; perWindowCents?: number; active?: boolean; role?: "worker" | "host"; rotateToken?: boolean; linkedUserId?: string }) =>
     request<{ ok: boolean; member: CrewMember; crew: CrewMember[] }>(
       "PATCH", `/api/jobs/${jobId}/crew/${memberId}`, data),
 

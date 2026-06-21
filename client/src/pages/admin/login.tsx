@@ -50,6 +50,33 @@ export default function AdminLoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  // Forced password change for a worker who logged in with a starter password.
+  const [mode, setMode] = useState<"login" | "setpw">("login");
+  const [starterPw, setStarterPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [newPw2, setNewPw2] = useState("");
+
+  // Resolve a dashboard-only user's personal worker link and go there.
+  const goToDashboard = async () => {
+    const r = await api.getMyDashboard();
+    if (r.ok && r.data?.token) {
+      navigate(`/tyo/${r.data.token}`);
+    } else {
+      toast({ variant: "destructive", title: "Työpöytää ei löytynyt", description: "Pyydä Joonatania linkittämään tilisi keikkaan." });
+      setIsLoading(false);
+    }
+  };
+
+  const submitNewPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selected) return;
+    if (newPw.length < 4) { toast({ variant: "destructive", title: "Liian lyhyt", description: "Salasanan on oltava vähintään 4 merkkiä." }); return; }
+    if (newPw !== newPw2) { toast({ variant: "destructive", title: "Salasanat eivät täsmää" }); return; }
+    setIsLoading(true);
+    const r = await api.setUserPasswordRemote(selected.id, newPw, starterPw);
+    if (r.ok) { toast({ title: "Salasana tallennettu" }); await goToDashboard(); }
+    else { toast({ variant: "destructive", title: "Salasanan vaihto epäonnistui", description: r.error || "" }); setIsLoading(false); }
+  };
 
   useEffect(() => {
     try {
@@ -75,6 +102,20 @@ export default function AdminLoginPage() {
       setAdminToken(res.data.token);
       setAdminProfile(selected);
       try { localStorage.setItem(LAST_USER_KEY, selected.id); } catch {}
+
+      // Dashboard-only worker (e.g. Jani): never enters the admin. If they used a
+      // starter password, force a change first; then go straight to their dashboard.
+      if (selected.dashboardOnly) {
+        if (res.data.mustChangePassword) {
+          setStarterPw(password);
+          setMode("setpw");
+          setIsLoading(false);
+          return;
+        }
+        await goToDashboard();
+        return;
+      }
+
       toast({
         title: `Hei, ${selected.name.split(" ")[0]}!`,
         description: "Tervetuloa hallintapaneeliin.",
@@ -96,9 +137,26 @@ export default function AdminLoginPage() {
       <div className="w-full max-w-sm">
         <div className="text-center mb-6">
           <h1 className="text-2xl font-semibold text-foreground mb-1">Puuhapatet.</h1>
-          <p className="text-muted-foreground">Kuka kirjautuu?</p>
+          <p className="text-muted-foreground">{mode === "setpw" ? "Aseta oma salasanasi" : "Kuka kirjautuu?"}</p>
         </div>
 
+        {/* Set-your-own-password step (worker who logged in with a starter password) */}
+        {mode === "setpw" && selected && (
+          <Card className="p-5 bg-card border-0 premium-shadow">
+            <p className="text-sm text-muted-foreground mb-3 text-center">
+              Hei <strong>{selected.name.split(" ")[0]}</strong> — valitse oma salasana, jolla kirjaudut jatkossa. <strong>Älä unohda sitä.</strong>
+            </p>
+            <form onSubmit={submitNewPassword} className="space-y-3">
+              <Input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="Uusi salasana (väh. 4 merkkiä)" autoComplete="new-password" autoFocus />
+              <Input type="password" value={newPw2} onChange={(e) => setNewPw2(e.target.value)} placeholder="Uusi salasana uudelleen" autoComplete="new-password" />
+              <Button type="submit" className="w-full" disabled={isLoading || !newPw || !newPw2}>
+                {isLoading ? "Tallennetaan…" : "Tallenna ja jatka →"}
+              </Button>
+            </form>
+          </Card>
+        )}
+
+        {mode === "login" && (<>
         {/* Intro: explain the security upgrade so the team isn't surprised */}
         <div className="mb-6 rounded-2xl border border-primary/20 bg-primary/5 p-4">
           <div className="flex items-start gap-3">
@@ -187,6 +245,7 @@ export default function AdminLoginPage() {
             </form>
           </Card>
         )}
+        </>)}
       </div>
     </div>
   );

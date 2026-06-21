@@ -21,10 +21,16 @@ import {
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, type CrewMember,
 } from "@shared/crew";
 import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED } from "@shared/worker-agreements";
+import {
+  computeTax, readVatStatus, readInPrepaymentRegister, WITHHOLDING_COMPANY,
+  WITHHOLDING_NATURAL_PERSON, fmtPct, type TaxBreakdown,
+} from "@shared/tax";
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 // Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
 const FROM_EMAIL = process.env.FROM_EMAIL || "Puuhapatet <onboarding@resend.dev>";
+// Puuhapatetin oma Y-tunnus laskun ostaja-tietoihin (aseta COMPANY_Y_TUNNUS).
+const COMPANY_Y_TUNNUS = process.env.COMPANY_Y_TUNNUS || null;
 // Optional: protect the calendar feed with a token (set CALENDAR_TOKEN env var on Render)
 const CALENDAR_TOKEN = process.env.CALENDAR_TOKEN || null;
 
@@ -367,6 +373,8 @@ function generateWorkerInvoicePdf(params: {
   note?: string;
   invoiceDate: string;
   paidDate?: string;
+  /** Vero-erittely (ALV + ennakonpidätys). amountCents = työkorvaus ilman ALV:tä. */
+  tax: TaxBreakdown;
 }): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 48, size: "A4" });
@@ -404,39 +412,61 @@ function generateWorkerInvoicePdf(params: {
     if (params.workerYTunnus) { doc.text(`Y-tunnus: ${params.workerYTunnus}`, 48, y, { width: colW }); y += 12; }
     if (params.workerAddress) { doc.text(params.workerAddress, 48, y, { width: colW }); y += 12; }
     if (params.workerIban) { doc.text(`IBAN: ${params.workerIban}`, 48, y, { width: colW }); y += 12; }
-    doc.text("Y-tunnus: —", 48 + colW + 16, leftStartY, { width: colW });
+    doc.text(`Y-tunnus: ${COMPANY_Y_TUNNUS || "—"}`, 48 + colW + 16, leftStartY, { width: colW });
     doc.text("info@puuhapatet.fi · puuhapatet.fi", 48 + colW + 16, leftStartY + 12, { width: colW });
 
-    y = Math.max(y, leftStartY + 36) + 18;
+    y = Math.max(y, leftStartY + 36) + 6;
+    // Supply date (AVL 209 b § edellyttää toimituspäivän).
+    doc.fill(GRAY).font("Helvetica").fontSize(9).text(`Toimituspäivä: ${params.paidDate || params.invoiceDate}`, 48, y);
+    y += 18;
 
-    // Line item
+    const tax = params.tax;
+    // Line item — veroton työkorvaus.
     doc.rect(48, y, pageW, 26).fill("#F1F5F9");
     doc.fill(GRAY).font("Helvetica-Bold").fontSize(8);
     doc.text("KUVAUS", 60, y + 9, { width: pageW - 140 });
-    doc.text("YHTEENSÄ", 48 + pageW - 100, y + 9, { width: 88, align: "right" });
+    doc.text("VEROTON", 48 + pageW - 100, y + 9, { width: 88, align: "right" });
     y += 26;
 
     const desc = params.note || `Ikkunanpesutyö${params.windows ? ` — ${params.windows} ikkunaa` : ""}`;
     doc.fill(INK).font("Helvetica").fontSize(10).text(desc, 60, y + 8, { width: pageW - 140 });
-    doc.font("Helvetica-Bold").text(fmtEur(params.amountCents), 48 + pageW - 100, y + 8, { width: 88, align: "right" });
+    doc.font("Helvetica-Bold").text(fmtEur(tax.laborCents), 48 + pageW - 100, y + 8, { width: 88, align: "right" });
     y += 34;
     doc.moveTo(48, y).lineTo(48 + pageW, y).strokeColor("#E2E8F0").stroke();
     y += 12;
 
-    // Total
-    doc.fill(GRAY).font("Helvetica").fontSize(9).text("Veroton summa", 48 + pageW - 220, y, { width: 120, align: "right" });
-    doc.fill(INK).font("Helvetica").fontSize(9).text(fmtEur(params.amountCents), 48 + pageW - 100, y, { width: 88, align: "right" });
-    y += 16;
-    doc.fill(NAVY).font("Helvetica-Bold").fontSize(13).text("Maksettavaa", 48 + pageW - 220, y, { width: 120, align: "right" });
-    doc.text(fmtEur(params.amountCents), 48 + pageW - 100, y, { width: 88, align: "right" });
+    // Subtotals — veroton, ALV, loppusumma; sitten ennakonpidätys ja maksettava.
+    const sumRow = (label: string, value: string, opts?: { bold?: boolean; color?: string; size?: number }) => {
+      const size = opts?.size ?? 9;
+      doc.fill(opts?.color ?? GRAY).font(opts?.bold ? "Helvetica-Bold" : "Helvetica").fontSize(size)
+        .text(label, 48 + pageW - 240, y, { width: 140, align: "right" });
+      doc.fill(opts?.color ?? INK).font(opts?.bold ? "Helvetica-Bold" : "Helvetica").fontSize(size)
+        .text(value, 48 + pageW - 100, y, { width: 88, align: "right" });
+      y += size + 7;
+    };
+    sumRow("Veroton (työkorvaus)", fmtEur(tax.laborCents));
+    if (tax.vatRegistered) {
+      sumRow(`ALV ${fmtPct(tax.vatRate)}`, fmtEur(tax.vatCents));
+      sumRow("Laskun loppusumma", fmtEur(tax.invoiceTotalCents), { bold: true });
+    }
+    if (tax.withheld) {
+      y += 2;
+      sumRow(`Ennakonpidätys ${fmtPct(tax.withholdingRate)}`, "−" + fmtEur(tax.withholdingCents));
+    }
+    y += 4;
+    doc.fill(NAVY).font("Helvetica-Bold").fontSize(13)
+      .text(tax.withheld ? "Maksetaan tilille" : "Maksettavaa", 48 + pageW - 240, y, { width: 140, align: "right" });
+    doc.text(fmtEur(tax.payableCents), 48 + pageW - 100, y, { width: 88, align: "right" });
     y += 30;
 
-    // VAT note (alv-rekisteröitymätön pienyrittäjä, oletus)
-    doc.fill(GRAY).font("Helvetica").fontSize(8).text(
-      "Arvonlisäveroa ei lisätä (AVL 3 §, vähäinen toiminta). Lasku alihankintatyöstä Puuhapatetille.",
-      48, y, { width: pageW },
-    );
-    y += 24;
+    // Vero-perustelut (ALV-status + ennakkoperintä) selkokielellä.
+    doc.fill(GRAY).font("Helvetica").fontSize(8);
+    for (const note of tax.notes) {
+      doc.text(note, 48, y, { width: pageW });
+      y += doc.heightOfString(note, { width: pageW }) + 4;
+    }
+    doc.text("Lasku alihankintatyöstä Puuhapatetille.", 48, y, { width: pageW });
+    y += 20;
     if (params.workerIban) {
       doc.fill(INK).font("Helvetica-Bold").fontSize(9).text("Maksutiedot", 48, y); y += 14;
       doc.fill(GRAY).font("Helvetica").fontSize(9).text(`Tilinumero (IBAN): ${params.workerIban}`, 48, y); y += 12;
@@ -3982,10 +4012,25 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const now = Date.now();
       const invoiceDate = new Date(now).toLocaleDateString("fi-FI");
 
+      // Vero-erittely: ALV laskuttajan ALV-aseman mukaan + ennakonpidätys, jos
+      // laskuttaja ei ole ennakkoperintärekisterissä. amountCents on työkorvaus
+      // ilman ALV:tä (pestyt ikkunat × hinta). Admin voi antaa withholdingRate-
+      // ohituksen (esim. 0.13 oikeushenkilölle tai verokortin %).
+      const answers = member.profile?.answers;
+      const overrideRate = Number(req.body?.withholdingRate);
+      const tax = computeTax({
+        laborCents: payout.amountCents,
+        vatStatus: readVatStatus(answers),
+        inPrepaymentRegister: readInPrepaymentRegister(answers),
+        withholdingRate: Number.isFinite(overrideRate) && overrideRate >= 0 && overrideRate <= 1
+          ? overrideRate : undefined,
+      });
+
       payout.status = "maksettu";
       payout.paidAt = now;
       payout.invoiceNo = invoiceNo;
       payout.billing = { name: workerName, yTunnus: workerYTunnus, iban: workerIban, address: workerAddress };
+      payout.tax = tax;
 
       project.crew = (project.crew || []).map((m) => (m.id === mid ? { ...m, payouts } : m));
       const saved = await saveProject(job, project);
@@ -3997,7 +4042,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const pdf = await generateWorkerInvoicePdf({
           invoiceNo, workerName, workerYTunnus, workerAddress, workerIban,
           windows: payout.windows, amountCents: payout.amountCents,
-          note: payout.note, invoiceDate, paidDate: invoiceDate,
+          note: payout.note, invoiceDate, paidDate: invoiceDate, tax,
         });
         if (resend) {
           const html = `
@@ -4013,12 +4058,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         Liitteenä alihankkijan lasku Puuhapatetille.
       </p>
       <table width="100%" style="border-collapse:collapse;border-top:2px solid #1A1A1A">
-        <tr><td style="padding:10px 0;font-size:14px;color:#1A1A1A">${payout.note || "Ikkunanpesutyö"}${payout.windows ? ` · ${payout.windows} ikkunaa` : ""}</td>
-        <td style="padding:10px 0;text-align:right;font-size:16px;font-weight:800;color:#1A1A1A">${fmtEur(payout.amountCents)}</td></tr>
+        <tr><td style="padding:10px 0;font-size:13px;color:#1A1A1A">${payout.note || "Ikkunanpesutyö"}${payout.windows ? ` · ${payout.windows} ikkunaa` : ""} (veroton)</td>
+        <td style="padding:10px 0;text-align:right;font-size:14px;color:#1A1A1A">${fmtEur(tax.laborCents)}</td></tr>
+        ${tax.vatRegistered ? `<tr><td style="padding:4px 0;font-size:13px;color:#8C8A82">ALV ${fmtPct(tax.vatRate)}</td><td style="padding:4px 0;text-align:right;font-size:13px;color:#8C8A82">${fmtEur(tax.vatCents)}</td></tr>` : ""}
+        ${tax.withheld ? `<tr><td style="padding:4px 0;font-size:13px;color:#8C8A82">Ennakonpidätys ${fmtPct(tax.withholdingRate)}</td><td style="padding:4px 0;text-align:right;font-size:13px;color:#8C8A82">−${fmtEur(tax.withholdingCents)}</td></tr>` : ""}
+        <tr><td style="padding:10px 0;border-top:1px solid #E4E1D7;font-size:14px;font-weight:800;color:#1A1A1A">${tax.withheld ? "Maksetaan tilille" : "Maksettavaa"}</td>
+        <td style="padding:10px 0;border-top:1px solid #E4E1D7;text-align:right;font-size:16px;font-weight:800;color:#1A1A1A">${fmtEur(tax.payableCents)}</td></tr>
       </table>
       <div style="background:#F6F4EE;border-radius:12px;padding:16px 20px;margin-top:16px;font-size:13px;color:#1A1A1A">
         <p style="margin:0 0 4px">Laskuttaja: ${workerName}${workerYTunnus ? ` · Y-tunnus ${workerYTunnus}` : ""}</p>
-        ${workerIban ? `<p style="margin:0">IBAN: ${workerIban}</p>` : ""}
+        ${workerIban ? `<p style="margin:0 0 4px">IBAN: ${workerIban}</p>` : ""}
+        ${tax.withheld ? `<p style="margin:8px 0 0;color:#8a5a12">Huom: laskuttaja ei ole ennakkoperintärekisterissä → ennakonpidätys ${fmtPct(tax.withholdingRate)} (${fmtEur(tax.withholdingCents)}) tilitettävä Verolle.</p>` : ""}
       </div>
     </div>
   </div>

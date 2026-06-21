@@ -15,6 +15,7 @@ import { downloadWorkerContract, openWorkerContractForPrint, downloadSignatureIm
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import { ChevronLeft, Copy, Check, RotateCw, Trash2, Plus, UserPlus, FileText, Printer, Download, Wallet } from "lucide-react";
 import type { CrewPayout } from "@shared/crew";
+import { computeTax, readVatStatus, readInPrepaymentRegister, fmtPct, fmtEurCents } from "@shared/tax";
 
 const PUBLIC_BASE = "https://puuhapatet.fi";
 const eur = (c: number) => (c / 100).toLocaleString("fi-FI", { maximumFractionDigits: 0 }) + " €";
@@ -238,7 +239,15 @@ function PayoutPanel({
   };
 
   const pay = async (p: CrewPayout) => {
-    if (!confirm(`Merkitäänkö ${eur2(p.amountCents)} maksetuksi?\n\nVarmista että pankkisiirto on tehty. Tämä luo työntekijän laskun ja lähettää sen tiimille.`)) return;
+    const tx = p.tax ?? computeTax({
+      laborCents: p.amountCents,
+      vatStatus: readVatStatus(member.profile?.answers),
+      inPrepaymentRegister: readInPrepaymentRegister(member.profile?.answers),
+    });
+    const extra = tx.withheld
+      ? `\n\nHuom: työntekijä ei ole ennakkoperintärekisterissä → tilille ${eur2(tx.payableCents)}, ennakonpidätys ${fmtPct(tx.withholdingRate)} (${eur2(tx.withholdingCents)}) tilitettävä Verolle.`
+      : "";
+    if (!confirm(`Merkitäänkö maksetuksi? Tilille maksetaan ${eur2(tx.payableCents)}.\n\nVarmista että pankkisiirto on tehty. Tämä luo työntekijän laskun ja lähettää sen tiimille.${extra}`)) return;
     setBusy(true);
     const res = await onMarkPaid(member.id, p.id);
     setBusy(false);
@@ -253,18 +262,31 @@ function PayoutPanel({
       <div className="mt-2 space-y-2">
         {payouts.map((p) => {
           const st = STATUS[p.status] || STATUS.ilmoitettu;
+          // Net to transfer = työkorvaus + ALV − ennakonpidätys. Use the snapshot
+          // once paid; otherwise compute from the worker's declared tax status.
+          const tx = p.tax ?? computeTax({
+            laborCents: p.amountCents,
+            vatStatus: readVatStatus(member.profile?.answers),
+            inPrepaymentRegister: readInPrepaymentRegister(member.profile?.answers),
+          });
+          const taxAdjusted = tx.vatRegistered || tx.withheld;
           return (
             <div key={p.id} className="rounded-lg border bg-muted/30 p-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="text-sm font-bold tabular-nums">{eur2(p.amountCents)}</p>
+                  <p className="text-sm font-bold tabular-nums">{eur2(tx.payableCents)}{taxAdjusted && <span className="ml-1 text-[10px] font-normal text-muted-foreground">tilille</span>}</p>
                   <p className="text-[11px] text-muted-foreground truncate">{p.note || "Ikkunanpesutyö"}{p.windows ? ` · ${p.windows} ikkunaa` : ""} · {new Date(p.createdAt).toLocaleDateString("fi-FI")}</p>
                 </div>
                 <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${st.cls}`}>{st.label}</span>
               </div>
+              {taxAdjusted && (
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                  {fmtEurCents(tx.laborCents)} veroton{tx.vatRegistered ? ` + ALV ${fmtPct(tx.vatRate)} ${fmtEurCents(tx.vatCents)}` : ""}{tx.withheld ? ` − ennakonpidätys ${fmtPct(tx.withholdingRate)} ${fmtEurCents(tx.withholdingCents)}` : ""}
+                </p>
+              )}
               {p.status === "hyvaksytty" && p.billing && (
                 <p className="mt-1.5 text-[11px] text-muted-foreground break-words">
-                  Maksa: {[p.billing.name, p.billing.iban, p.billing.yTunnus && `Y ${p.billing.yTunnus}`].filter(Boolean).join(" · ")}
+                  Maksa {eur2(tx.payableCents)}: {[p.billing.name, p.billing.iban, p.billing.yTunnus && `Y ${p.billing.yTunnus}`].filter(Boolean).join(" · ")}
                 </p>
               )}
               {p.status === "maksettu" && p.invoiceNo && (

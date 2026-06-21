@@ -16,6 +16,7 @@
 
 import type { ProjectData } from "./project";
 import { allPoints } from "./project";
+import type { TaxBreakdown } from "./tax";
 
 export const DEFAULT_WORKER_PER_WINDOW_CENTS = 2000; // 20,00 €
 
@@ -91,6 +92,11 @@ export interface CrewPayout {
     iban?: string;
     address?: string;
   };
+  /** Tax breakdown snapshot (ALV + ennakonpidätys) captured when paid, so the
+   *  invoice + history reflect the worker's tax status at the time of payment.
+   *  `amountCents` is the työkorvaus (ex-VAT, = windows × rate); this expands it
+   *  into VAT, withholding and the net actually transferred. */
+  tax?: TaxBreakdown;
 }
 
 export interface CrewMember {
@@ -263,6 +269,7 @@ function sanitizePayout(input: any): CrewPayout | null {
   const status: CrewPayoutStatus =
     input.status === "maksettu" ? "maksettu" : input.status === "hyvaksytty" ? "hyvaksytty" : "ilmoitettu";
   const b = input.billing && typeof input.billing === "object" ? input.billing : null;
+  const t = input.tax && typeof input.tax === "object" ? input.tax : null;
   return {
     id,
     amountCents: Math.min(amountCents, 1_000_000_00),
@@ -278,6 +285,18 @@ function sanitizePayout(input: any): CrewPayout | null {
       yTunnus: str(b.yTunnus, 40),
       iban: str(b.iban, 40),
       address: str(b.address, 240),
+    } : undefined,
+    tax: t ? {
+      laborCents: Math.max(0, Math.floor(Number(t.laborCents) || 0)),
+      vatRegistered: !!t.vatRegistered,
+      vatRate: Math.max(0, Number(t.vatRate) || 0),
+      vatCents: Math.max(0, Math.floor(Number(t.vatCents) || 0)),
+      invoiceTotalCents: Math.max(0, Math.floor(Number(t.invoiceTotalCents) || 0)),
+      withheld: !!t.withheld,
+      withholdingRate: Math.max(0, Number(t.withholdingRate) || 0),
+      withholdingCents: Math.max(0, Math.floor(Number(t.withholdingCents) || 0)),
+      payableCents: Math.floor(Number(t.payableCents) || 0),
+      notes: Array.isArray(t.notes) ? t.notes.map((n: any) => String(n).slice(0, 400)).slice(0, 8) : [],
     } : undefined,
   };
 }

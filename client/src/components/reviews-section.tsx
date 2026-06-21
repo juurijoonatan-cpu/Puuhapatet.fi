@@ -1,15 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  Carousel,
-  CarouselContent,
-  CarouselItem,
-  type CarouselApi,
-} from "@/components/ui/carousel";
 import { AnimatedCounter } from "@/components/animated-counter";
 import { useI18n } from "@/lib/i18n";
-import { Star, MapPin, Sparkle, ExternalLink, Quote } from "lucide-react";
+import { Star, Sparkle, ExternalLink } from "lucide-react";
 import { reviews, GOOGLE_RATING, GOOGLE_REVIEW_COUNT } from "@/data/reviews";
 
 const GOOGLE_REVIEW_URL = "https://g.page/r/CQo_lx1fQ57lEAE/review";
@@ -95,21 +89,7 @@ function ReviewCard({ review }: { review: (typeof reviews)[number] }) {
 
 export function ReviewsSection() {
   const { t } = useI18n();
-  const [api, setApi] = useState<CarouselApi>();
   const [paused, setPaused] = useState(false);
-
-  // Auto-rotate the carousel; pause on hover/touch.
-  useEffect(() => {
-    if (!api || paused) return;
-    const id = setInterval(() => {
-      if (api.canScrollNext()) {
-        api.scrollNext();
-      } else {
-        api.scrollTo(0);
-      }
-    }, 4000);
-    return () => clearInterval(id);
-  }, [api, paused]);
 
   return (
     <section className="py-16 md:py-24 bg-muted/30">
@@ -149,30 +129,24 @@ export function ReviewsSection() {
           </Card>
         </div>
 
-        {/* Reviews carousel — auto-rotating, pause on hover/touch */}
+        {/* Reviews — continuous smooth marquee, pause on hover/touch */}
         <div
-          className="mb-12"
+          className="overflow-hidden mb-12 -mx-4 md:-mx-6"
           onMouseEnter={() => setPaused(true)}
           onMouseLeave={() => setPaused(false)}
           onTouchStart={() => setPaused(true)}
           onTouchEnd={() => setPaused(false)}
         >
-          <Carousel
-            setApi={setApi}
-            opts={{ loop: true, align: "start" }}
-            className="w-full"
+          <div
+            className="flex gap-4 w-max animate-marquee-left"
+            style={{ animationPlayState: paused ? "paused" : "running" }}
           >
-            <CarouselContent className="-ml-4">
-              {reviews.map((review, index) => (
-                <CarouselItem
-                  key={index}
-                  className="pl-4 basis-full md:basis-1/2 lg:basis-1/3"
-                >
-                  <ReviewCard review={review} />
-                </CarouselItem>
-              ))}
-            </CarouselContent>
-          </Carousel>
+            {[...reviews, ...reviews].map((review, index) => (
+              <div key={index} className="w-[300px] md:w-[340px] flex-shrink-0">
+                <ReviewCard review={review} />
+              </div>
+            ))}
+          </div>
         </div>
 
         {/* Google CTA */}

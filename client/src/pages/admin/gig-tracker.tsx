@@ -200,6 +200,7 @@ export default function AdminGigTrackerPage() {
       capCents: t.capCents,
       signature: g.signature ? {
         signerName: g.signature.signerName,
+        signerTitle: g.signature.signerTitle,
         place: g.signature.place,
         signedAt: g.signature.signedAt,
         customer: g.signature.customer,

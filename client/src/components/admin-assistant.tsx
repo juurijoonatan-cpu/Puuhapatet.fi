@@ -107,7 +107,8 @@ export function AdminAssistant() {
             exit={{ scale: 0, opacity: 0 }}
             whileTap={{ scale: 0.92 }}
             onClick={() => setOpen(true)}
-            className="fixed bottom-24 right-4 md:bottom-6 md:right-6 z-[55] w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center"
+            style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 5.75rem)" }}
+            className="fixed right-4 md:!bottom-6 md:right-6 z-[55] w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/25 flex items-center justify-center ring-4 ring-background/80"
             aria-label="Avaa avustaja"
             data-testid="admin-assistant-launcher"
           >
@@ -123,8 +124,8 @@ export function AdminAssistant() {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: 20 }}
             transition={{ type: "spring", stiffness: 380, damping: 30 }}
-            style={{ transformOrigin: "bottom right" }}
-            className="fixed bottom-24 right-4 md:bottom-6 md:right-6 z-[55] w-[calc(100vw-2rem)] max-w-[400px] h-[72vh] max-h-[620px] flex flex-col rounded-2xl overflow-hidden bg-card border border-border shadow-2xl"
+            style={{ transformOrigin: "bottom right", bottom: "calc(env(safe-area-inset-bottom, 0px) + 5.75rem)" }}
+            className="fixed right-4 md:!bottom-6 md:right-6 z-[58] w-[calc(100vw-2rem)] max-w-[400px] h-[calc(100dvh-9rem)] max-h-[620px] flex flex-col rounded-2xl overflow-hidden bg-card border border-border shadow-2xl"
           >
             <div className="flex items-center justify-between px-4 py-3 bg-primary text-primary-foreground">
               <div className="flex items-center gap-2">

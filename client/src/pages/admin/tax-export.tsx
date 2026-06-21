@@ -244,7 +244,7 @@ export default function TaxExportPage() {
           )}
           {profile?.startupBonus != null && profile.startupBonus > 0 && (
             <span className="text-xs px-3 py-1 rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 font-medium">
-              Aloitusbonus {(profile.startupBonus / 100).toFixed(0)} € — ks. yritysseteli-ohje alta
+              Aloitusbonus {(profile.startupBonus / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} € — ks. yritysseteli-ohje alta
             </span>
           )}
         </div>

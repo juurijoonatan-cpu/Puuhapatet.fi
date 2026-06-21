@@ -76,7 +76,7 @@ export default function AdminDashboard() {
   }, []);
 
   const fmt = (cents: number) =>
-    Math.round(cents / 100).toLocaleString("fi-FI") + " €";
+    (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
 
   const myDebt = workerStats && profile ? (workerStats.workerFees[profile.id] ?? 0) : null;
   const myJobCount = workerStats && profile ? (workerStats.workerJobCount[profile.id] ?? 0) : null;

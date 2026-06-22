@@ -557,7 +557,7 @@ export default function NewJobPage() {
   // Mode picker — shown before the wizard
   if (mode === "pick") {
     return (
-      <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28">
+      <div className="min-h-screen bg-background admin-shell-pad">
         <div className="container mx-auto px-4 max-w-2xl">
           <div className="flex items-center gap-4 mb-8">
             <Link href="/admin/dashboard">
@@ -626,7 +626,7 @@ export default function NewJobPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28">
+    <div className="min-h-screen bg-background admin-shell-pad">
       <div className="container mx-auto px-4 max-w-2xl">
 
         {/* Header */}

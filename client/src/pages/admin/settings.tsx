@@ -187,7 +187,7 @@ export default function AdminSettingsPage() {
     (cents / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" });
 
   return (
-    <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28">
+    <div className="min-h-screen bg-background admin-shell-pad">
       <div className="container mx-auto px-4 max-w-3xl">
         <div className="flex items-center gap-4 mb-8">
           <Link href="/admin/dashboard">

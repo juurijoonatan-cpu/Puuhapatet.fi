@@ -67,7 +67,7 @@ export default function AdminCrewPage() {
   if (loading || crewChecking) return <div className="min-h-screen flex items-center justify-center text-muted-foreground">Ladataan…</div>;
 
   return (
-    <div className="min-h-screen bg-background pt-20 md:pt-24 pb-24">
+    <div className="min-h-screen bg-background admin-shell-pad">
       <div className="mx-auto max-w-3xl px-4">
         <button onClick={() => navigate(`/admin/gig/${jobId}`)} className="flex items-center gap-1 text-sm text-muted-foreground mb-4">
           <ChevronLeft className="h-4 w-4" /> Takaisin keikkaan

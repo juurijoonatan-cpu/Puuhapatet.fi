@@ -156,7 +156,7 @@ export default function AdminDashboard() {
       ];
 
   return (
-    <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28">
+    <div className="min-h-screen bg-background admin-shell-pad">
       <div className="container mx-auto px-4 max-w-5xl">
         <div className="mb-8">
           <h1 className="text-2xl md:text-3xl font-semibold text-foreground mb-2">

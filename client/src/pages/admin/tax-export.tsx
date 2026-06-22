@@ -172,7 +172,7 @@ export default function TaxExportPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28 print:pt-4 print:pb-4">
+    <div className="min-h-screen bg-background admin-shell-pad print:pt-4 print:pb-4">
       <div className="container mx-auto px-4 max-w-4xl">
 
         {/* Header — hidden in print */}

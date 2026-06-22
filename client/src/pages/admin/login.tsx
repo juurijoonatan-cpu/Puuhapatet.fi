@@ -133,8 +133,15 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
+    <div
+      className="bg-background flex justify-center overflow-y-auto"
+      style={{
+        minHeight: "100dvh",
+        padding:
+          "calc(env(safe-area-inset-top) + 1.5rem) calc(env(safe-area-inset-right) + 1rem) calc(env(safe-area-inset-bottom) + 1.5rem) calc(env(safe-area-inset-left) + 1rem)",
+      }}
+    >
+      <div className="w-full max-w-sm my-auto">
         <div className="text-center mb-6">
           <h1 className="text-2xl font-semibold text-foreground mb-1">Puuhapatet.</h1>
           <p className="text-muted-foreground">{mode === "setpw" ? "Aseta oma salasanasi" : "Kuka kirjautuu?"}</p>

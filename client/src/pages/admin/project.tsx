@@ -250,11 +250,23 @@ export default function AdminProjectPage() {
         if (status === "pesty") d.washedBy[key] = washer;
         else delete d.washedBy[key];
       }
+      // A 50/50 split only makes sense on a fully-washed window — drop it otherwise.
+      if (status !== "pesty" && d.washedBy2) delete d.washedBy2[key];
       const p = getPriority(d, key);
       const floor = key.split("#")[0];
       d.log = [{ floor, key, p, status, ts: Date.now(), by: washer }, ...d.log].slice(0, 60);
     });
   }, [mutate, getPriority, currentWorker, defaultWasher]);
+
+  // Credit a fully-washed window to a second worker (50/50). Passing null clears
+  // the split. The window stays one washed window — only the earnings split.
+  const onSetSplit = useCallback((key: string, second: string | null) => {
+    mutate((d) => {
+      if (!d.washedBy2) d.washedBy2 = {};
+      if (second && d.washedBy[key] && d.washedBy[key] !== second) d.washedBy2[key] = second;
+      else delete d.washedBy2[key];
+    });
+  }, [mutate]);
 
   const onAddCustomMark = useCallback((floor: string, x: number, y: number, p: 1 | 2) => {
     mutate((d) => {
@@ -269,6 +281,7 @@ export default function AdminProjectPage() {
       delete d.posOverrides[key];
       delete d.statuses[key];
       delete d.washedBy[key];
+      if (d.washedBy2) delete d.washedBy2[key];
       if (key.includes("#c")) {
         d.customMarks[f] = (d.customMarks[f] || []).filter((c) => c.key !== key);
       } else {
@@ -431,8 +444,9 @@ export default function AdminProjectPage() {
   const earningsFor = (st: { worker: string; washed: number }): number => {
     const mm = crew.find((c) => c.id === st.worker);
     if (mm?.manualEarningsCents != null) return mm.manualEarningsCents;
-    if (isFounder(st.worker, mm?.role)) return st.washed * dealTotalCents + founderProfitEachCents;
-    return st.washed * (mm?.perWindowCents ?? dealTotalCents);
+    // washed can be fractional (50/50 split windows count as 0.5) — round cents.
+    if (isFounder(st.worker, mm?.role)) return Math.round(st.washed * dealTotalCents) + founderProfitEachCents;
+    return Math.round(st.washed * (mm?.perWindowCents ?? dealTotalCents));
   };
   const resolveName = (id: string): string => {
     const m = crew.find((c) => c.id === id);
@@ -528,6 +542,8 @@ export default function AdminProjectPage() {
             onMoveMarkCommit={onMoveMark}
             onResetFloor={onResetFloor}
             washedBy={project.washedBy}
+            washedBy2={project.washedBy2}
+            onSetSplit={onSetSplit}
             workerNames={workerNames}
             workers={gigWorkers}
             currentWorkerId={effectiveWasher}

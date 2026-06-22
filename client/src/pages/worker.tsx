@@ -14,7 +14,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRoute } from "wouter";
-import { api, type WorkerView } from "@/lib/api";
+import { api, warmBackend, type WorkerView } from "@/lib/api";
 import type { WindowStatus } from "@shared/project";
 import {
   ALL_AGREEMENTS, PROFILE_QUESTIONS, PROFILE_REQUIRED_IDS, WORKER_AGREEMENT_VERSION,
@@ -42,6 +42,15 @@ export default function WorkerPage() {
   const token = params?.token ?? "";
   const [view, setView] = useState<WorkerView | null>(null);
   const [status, setStatus] = useState<"loading" | "ok" | "error" | "locked">("loading");
+  // Distinguishes a transient connection problem (worth retrying — the Render
+  // free tier can take ~50s to wake) from a genuinely missing/expired link.
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+  const [slow, setSlow] = useState(false);
+
+  // Wake the (possibly sleeping) backend the instant the page opens, so the
+  // worker's first real request isn't the one paying the cold-start penalty —
+  // this is the main cause of the app appearing to "jam" on open.
+  useEffect(() => { warmBackend(); }, []);
 
   // Load Poppins once.
   useEffect(() => {
@@ -64,21 +73,66 @@ export default function WorkerPage() {
 
   const load = useCallback(async () => {
     if (!token) return;
-    const res = await api.getCrewView(token);
+    setStatus("loading");
+    setLoadErr(null);
+    setSlow(false);
+    // Show a "server is waking up" hint if the request is taking a while, so a
+    // cold start reads as progress instead of a frozen screen.
+    const slowTimer = setTimeout(() => setSlow(true), 6000);
+    // One automatic retry: a cold start or a dropped mobile connection usually
+    // recovers on the second try, so the worker rarely has to tap "retry".
+    let res = await api.getCrewView(token);
+    if (!res.ok) res = await api.getCrewView(token);
+    clearTimeout(slowTimer);
     if (res.ok && res.data?.view) {
       const v = res.data.view;
       setView(v);
       const unlocked = sessionStorage.getItem(`pp_crew_${token}`) === "1";
       setStatus(v.worker.hasPin && !unlocked ? "locked" : "ok");
     } else {
+      setLoadErr(res.error ?? null);
       setStatus("error");
     }
   }, [token]);
 
   useEffect(() => { load(); }, [load]);
 
-  if (status === "loading") return <Centered>Ladataan…</Centered>;
-  if (status === "error" || !view) return <Centered>Linkkiä ei löytynyt tai se on vanhentunut.</Centered>;
+  if (status === "loading") {
+    return (
+      <Centered>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
+          <Spinner />
+          <p style={{ margin: 0, fontSize: 14, color: T.muted }}>
+            {slow ? "Palvelin herää — hetki…" : "Ladataan…"}
+          </p>
+        </div>
+      </Centered>
+    );
+  }
+  if (status === "error" || !view) {
+    // A timeout / network error is transient (offer retry); anything else is
+    // most likely a wrong or expired link.
+    const transient = !loadErr || /aikakatkais|network|verkko|failed|fetch/i.test(loadErr);
+    return (
+      <Centered>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, maxWidth: 320 }}>
+          <p style={{ margin: 0, fontSize: 14.5, color: T.ink, fontWeight: 600 }}>
+            {transient ? "Yhteys ei juuri nyt onnistunut" : "Linkkiä ei löytynyt tai se on vanhentunut."}
+          </p>
+          {transient && (
+            <p style={{ margin: 0, fontSize: 13, color: T.muted, lineHeight: 1.5 }}>
+              Tarkista verkkoyhteys ja yritä uudelleen. Palvelin saattaa juuri herätä lepotilasta.
+            </p>
+          )}
+          {transient && (
+            <button onClick={() => load()} style={{ ...primaryBtn, width: "auto", padding: "11px 28px" }}>
+              Yritä uudelleen
+            </button>
+          )}
+        </div>
+      </Centered>
+    );
+  }
   if (status === "locked") return <PinGate token={token} view={view} onUnlock={() => { sessionStorage.setItem(`pp_crew_${token}`, "1"); setStatus("ok"); }} />;
   if (!view.worker.onboarded) {
     // Soft start (now): one-tap intro. Gated (later): the full sign flow.
@@ -1236,7 +1290,22 @@ function fmtDuration(min: number) {
 }
 
 function HoursTab({ token, view, setView }: { token: string; view: WorkerView; setView: (v: WorkerView) => void }) {
-  // Resume a running shift from the server (so it survives reload / reopen).
+  // Timer vs. manual entry. The worker can switch the live clock off entirely
+  // and just log finished days by hand — the choice is remembered per link.
+  const modeKey = `pp_hours_mode_${token}`;
+  const breakKey = `pp_shift_break_${token}`;
+  const [mode, setMode] = useState<"timer" | "manual">(() => {
+    try { return localStorage.getItem(modeKey) === "manual" ? "manual" : "timer"; } catch { return "timer"; }
+  });
+  const setModePersist = (m: "timer" | "manual") => {
+    setMode(m);
+    try { localStorage.setItem(modeKey, m); } catch { /* private mode */ }
+  };
+
+  // The running shift's start lives on the SERVER (view.worker.activeShiftAt) so
+  // it always survives a refresh / reopen. Break time is local-only, so we mirror
+  // it to localStorage and restore it on mount — a mid-shift refresh used to lose
+  // the break deduction, which is what made the clock look like it "reset".
   const [running, setRunning] = useState<number | null>(view.worker.activeShiftAt ?? null);
   const [breakMs, setBreakMs] = useState(0);          // accumulated break time this shift
   const [onBreak, setOnBreak] = useState<number | null>(null); // break start ms, if paused
@@ -1245,6 +1314,33 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
   const [busy, setBusy] = useState(false);
   const [recap, setRecap] = useState<WorkerView["worker"]["sessions"][number] | null>(null);
   const tick = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Keep the running flag in sync with the server (a shift started/ended on
+  // another device, and a clean reset once the day is ended).
+  useEffect(() => { setRunning(view.worker.activeShiftAt ?? null); }, [view.worker.activeShiftAt]);
+
+  // Restore saved break state on mount — only if it belongs to the shift that's
+  // still running on the server (otherwise it's stale and ignored).
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(breakKey);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as { start?: number; breakMs?: number; onBreak?: number | null };
+      if (saved.start && view.worker.activeShiftAt && saved.start === view.worker.activeShiftAt) {
+        setBreakMs(saved.breakMs ?? 0);
+        setOnBreak(saved.onBreak ?? null);
+      }
+    } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Mirror break state to localStorage while a shift runs; clear it otherwise.
+  useEffect(() => {
+    try {
+      if (running) localStorage.setItem(breakKey, JSON.stringify({ start: running, breakMs, onBreak }));
+      else localStorage.removeItem(breakKey);
+    } catch { /* private mode */ }
+  }, [running, breakMs, onBreak, breakKey]);
 
   useEffect(() => {
     if (running) {
@@ -1260,9 +1356,11 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
   const sessionEarnedCents = sessionWindows * view.worker.perWindowCents;
 
   const start = async () => {
-    setRunning(Date.now()); setBreakMs(0); setOnBreak(null); setTickNow(Date.now());
+    const now = Date.now();
+    setRunning(now); setBreakMs(0); setOnBreak(null); setTickNow(now);
     const res = await api.crewShift(token, true);
     if (res.ok && res.data?.view) setView(res.data.view);
+    else setRunning(null); // server didn't record it → don't show a phantom shift
   };
 
   const toggleBreak = () => {
@@ -1279,6 +1377,7 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
     if (hours > 0) await api.crewAddHours(token, hours);            // hours ledger
     const res = await api.crewShift(token, false, minutes);          // record session
     setBusy(false); setRunning(null); setOnBreak(null); setBreakMs(0);
+    try { localStorage.removeItem(breakKey); } catch { /* */ }
     if (res.ok && res.data?.view) {
       setView(res.data.view);
       setRecap(res.data.view.worker.sessions[0] ?? null);           // newest-first → recap
@@ -1304,41 +1403,80 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
   };
   const dayMonth = (ts: number) => new Date(ts).toLocaleDateString("fi-FI", { day: "numeric", month: "numeric" });
 
+  const segBtn = (active: boolean): React.CSSProperties => ({
+    flex: 1, padding: "9px 10px", borderRadius: 9, border: "none", cursor: "pointer",
+    fontFamily: FONT, fontSize: 13, fontWeight: 600,
+    background: active ? "#fff" : "transparent", color: active ? "#0a0a0c" : "rgba(255,255,255,0.6)",
+    transition: "all .15s",
+  });
+
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: 20 }}>
-      <div style={{ textAlign: "center", padding: "16px 0 6px" }}>
-        <p style={{ margin: 0, fontSize: 40, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: onBreak ? "#E0A800" : running ? "#7CE0A6" : "#fff" }}>{mmss(workedMs)}</p>
-        {running && (
-          <p style={{ margin: "4px 0 0", fontSize: 13, color: "rgba(255,255,255,0.6)" }}>
-            {onBreak ? "Tauolla" : "Vuoro käynnissä"} · {sessionWindows} ikkunaa · {euro(sessionEarnedCents)}
-          </p>
-        )}
-        {!running ? (
-          <button onClick={start} style={{ ...primaryBtn, width: "auto", padding: "13px 36px", background: T.green, marginTop: 12 }}>Aloita vuoro</button>
-        ) : (
-          <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 14, flexWrap: "wrap" }}>
-            <button onClick={toggleBreak} style={{ ...secondaryBtn, color: "#fff", border: "1px solid rgba(255,255,255,0.25)", background: onBreak ? "rgba(224,168,0,0.15)" : "transparent" }}>
-              {onBreak ? "Jatka työtä" : "Tauko"}
-            </button>
-            <button onClick={endDay} disabled={busy} style={{ ...primaryBtn, width: "auto", padding: "13px 28px", background: "#D9472B", opacity: busy ? 0.6 : 1 }}>
-              {busy ? "Päätetään…" : "Päätä päivä"}
-            </button>
-          </div>
-        )}
-        <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, marginTop: 12, lineHeight: 1.5 }}>
-          Aloita kun saavut työmaalle. Pidä tauko ruokatauon ajaksi — tauot eivät kerrytä tunteja. "Päätä päivä" kokoaa yhteenvedon.
-        </p>
+      {/* Timer / manual mode switch */}
+      <div style={{ display: "flex", gap: 5, padding: 5, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, marginBottom: 8 }}>
+        <button onClick={() => setModePersist("timer")} style={segBtn(mode === "timer")}>Ajastin</button>
+        <button onClick={() => setModePersist("manual")} style={segBtn(mode === "manual")}>Kirjaa käsin</button>
       </div>
 
-      <div style={{ marginTop: 6 }}>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <input value={manual} onChange={(e) => setManual(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addManual()} placeholder="Kirjaa työpäivä käsin (esim. 2,5 h)" inputMode="decimal" style={{ ...inputStyle, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff" }} />
-          <button onClick={addManual} disabled={busy} style={{ ...secondaryBtn, color: "#fff", border: "1px solid rgba(255,255,255,0.2)", whiteSpace: "nowrap", opacity: busy ? 0.6 : 1 }}>Kirjaa</button>
+      {mode === "timer" ? (
+        <>
+          <div style={{ textAlign: "center", padding: "16px 0 6px" }}>
+            <p style={{ margin: 0, fontSize: 40, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: onBreak ? "#E0A800" : running ? "#7CE0A6" : "#fff" }}>{mmss(workedMs)}</p>
+            {running && (
+              <p style={{ margin: "4px 0 0", fontSize: 13, color: "rgba(255,255,255,0.6)" }}>
+                {onBreak ? "Tauolla" : "Vuoro käynnissä"} · {sessionWindows} ikkunaa · {euro(sessionEarnedCents)}
+              </p>
+            )}
+            {!running ? (
+              <button onClick={start} style={{ ...primaryBtn, width: "auto", padding: "13px 36px", background: T.green, marginTop: 12 }}>Aloita vuoro</button>
+            ) : (
+              <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 14, flexWrap: "wrap" }}>
+                <button onClick={toggleBreak} style={{ ...secondaryBtn, color: "#fff", border: "1px solid rgba(255,255,255,0.25)", background: onBreak ? "rgba(224,168,0,0.15)" : "transparent" }}>
+                  {onBreak ? "Jatka työtä" : "Tauko"}
+                </button>
+                <button onClick={endDay} disabled={busy} style={{ ...primaryBtn, width: "auto", padding: "13px 28px", background: "#D9472B", opacity: busy ? 0.6 : 1 }}>
+                  {busy ? "Päätetään…" : "Päätä päivä"}
+                </button>
+              </div>
+            )}
+            <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, marginTop: 12, lineHeight: 1.5 }}>
+              Aloita kun saavut työmaalle. Pidä tauko ruokatauon ajaksi — tauot eivät kerrytä tunteja. "Päätä päivä" kokoaa yhteenvedon.
+            </p>
+          </div>
+
+          <div style={{ marginTop: 6 }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <input value={manual} onChange={(e) => setManual(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addManual()} placeholder="Kirjaa työpäivä käsin (esim. 2,5 h)" inputMode="decimal" style={{ ...inputStyle, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff" }} />
+              <button onClick={addManual} disabled={busy} style={{ ...secondaryBtn, color: "#fff", border: "1px solid rgba(255,255,255,0.2)", whiteSpace: "nowrap", opacity: busy ? 0.6 : 1 }}>Kirjaa</button>
+            </div>
+            <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
+              Unohtuiko vuoron aloitus? Kirjaa tehdyt tunnit käsin — päivä tallentuu päiväkirjaan.
+            </p>
+          </div>
+        </>
+      ) : (
+        // Manual mode — the clock is off. Just type the day's hours and press
+        // "Päätä päivä"; the day is saved straight to the diary.
+        <div style={{ padding: "16px 0 6px" }}>
+          {running && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", borderRadius: 11, background: "rgba(224,168,0,0.12)", border: "1px solid rgba(224,168,0,0.3)", marginBottom: 14 }}>
+              <span style={{ fontSize: 12.5, color: "#F4D58A" }}>Ajastin on yhä käynnissä.</span>
+              <button onClick={endDay} disabled={busy} style={{ ...secondaryBtn, padding: "8px 12px", color: "#fff", border: "1px solid rgba(255,255,255,0.25)", whiteSpace: "nowrap", opacity: busy ? 0.6 : 1 }}>
+                {busy ? "Päätetään…" : "Päätä vuoro"}
+              </button>
+            </div>
+          )}
+          <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "rgba(255,255,255,0.7)", marginBottom: 6 }}>Päivän tunnit</label>
+          <input value={manual} onChange={(e) => setManual(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addManual()} placeholder="esim. 6 tai 7,5" inputMode="decimal" autoFocus
+            style={{ ...inputStyle, fontSize: 22, fontWeight: 700, textAlign: "center", padding: "16px 13px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff" }} />
+          <button onClick={addManual} disabled={busy || !manual.trim()} style={{ ...primaryBtn, background: T.green, marginTop: 12, opacity: busy || !manual.trim() ? 0.6 : 1 }}>
+            {busy ? "Tallennetaan…" : "Päätä päivä"}
+          </button>
+          <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, marginTop: 12, lineHeight: 1.5 }}>
+            Ajastin on pois päältä. Kirjoita tehdyt tunnit ja paina "Päätä päivä" — päivä tallentuu päiväkirjaan. Voit ottaa ajastimen takaisin käyttöön ylhäältä.
+          </p>
         </div>
-        <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
-          Unohtuiko vuoron aloitus? Kirjaa tehdyt tunnit käsin — päivä tallentuu päiväkirjaan.
-        </p>
-      </div>
+      )}
 
       <div style={{ marginTop: 20, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Stat label="Tunteja yhteensä" value={view.stats.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} />
@@ -1585,6 +1723,17 @@ function Wrap({ children }: { children: React.ReactNode }) {
 }
 function Centered({ children }: { children: React.ReactNode }) {
   return <div style={{ minHeight: "100vh", background: T.paper, fontFamily: FONT, color: T.muted, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center" }}>{children}</div>;
+}
+
+/** Lightweight inline spinner (no extra deps) — a clear "it's loading" cue so a
+ *  slow/cold backend never reads as a frozen app. */
+function Spinner() {
+  return (
+    <>
+      <span style={{ width: 30, height: 30, borderRadius: "50%", border: "3px solid rgba(31,59,87,0.2)", borderTopColor: T.navy, display: "inline-block", animation: "pp-spin 0.8s linear infinite" }} />
+      <style>{"@keyframes pp-spin{to{transform:rotate(360deg)}}"}</style>
+    </>
+  );
 }
 
 const inputStyle: React.CSSProperties = {

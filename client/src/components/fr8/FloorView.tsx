@@ -45,6 +45,10 @@ interface Props {
   /** key → worker id who washed it (manager view). Enables the "who cleaned this"
    *  label in the status popover. Workers/customers don't pass this. */
   washedBy?: Record<string, string>;
+  /** key → second washer id for a window done together (50/50 split). Manager view. */
+  washedBy2?: Record<string, string>;
+  /** Credit a washed window to a second worker (50/50), or clear it (null). Manager view. */
+  onSetSplit?: (key: string, second: string | null) => void;
   /** worker id → display name, for the washedBy label. */
   workerNames?: Record<string, string>;
   /** This gig's pickable crew (id + name) for the washed-by picker. Manager view only. */
@@ -160,7 +164,7 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, activeZone, onSetActiveZone, onClearActiveZone, deal }: Props) {
+export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, activeZone, onSetActiveZone, onClearActiveZone, deal }: Props) {
   const [floor, setFloor] = useState(initialFloor);
   const [filter, setFilter] = useState<"all" | "unwashed" | "progress" | "done">("all");
   const [editMode, setEditMode] = useState(false);
@@ -170,6 +174,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   const [activeOrb, setActiveOrb] = useState<string | null>(null);
   const [orbAnchor, setOrbAnchor] = useState<Anchor | null>(null);
   const [showWasherPicker, setShowWasherPicker] = useState(false);
+  const [showSplitPicker, setShowSplitPicker] = useState(false);
   const [activeNote, setActiveNote] = useState<string | null>(null);
   const [noteAnchor, setNoteAnchor] = useState<Anchor | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
@@ -317,6 +322,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
       setOrbAnchor(next ? rectToAnchor((e.currentTarget as HTMLElement).getBoundingClientRect()) : null);
       setActiveNote(null);
       setShowWasherPicker(false); // names stay hidden until "Vaihda" is tapped
+      setShowSplitPicker(false);
       setActiveOrb(next);
     }
   }
@@ -755,6 +761,40 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                   )}
                 </div>
               )
+            )}
+
+            {/* 50/50 split — managers can credit a window done together to a
+                second worker. The window stays one washed window; only the
+                earnings/credit split half-and-half between the two. */}
+            {canEdit && onSetSplit && (statuses[activeOrb] || "ei") === "pesty" && workers && workers.length > 1 && (
+              <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                {washedBy2?.[activeOrb] ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "11.5px", color: "rgba(255,255,255,0.7)" }}>
+                    <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      Jaettu 50/50: <strong style={{ color: "#fff", fontWeight: 600 }}>{workerNames?.[washedBy2[activeOrb]] ?? washedBy2[activeOrb]}</strong>
+                    </span>
+                    <button onClick={() => { onSetSplit(activeOrb, null); setShowSplitPicker(false); }}
+                      style={{ marginLeft: "auto", flexShrink: 0, background: "transparent", border: "none", color: "rgba(255,155,155,0.95)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", padding: "2px 4px" }}>Poista jako</button>
+                  </div>
+                ) : showSplitPicker ? (
+                  <>
+                    <div style={{ fontSize: "9.5px", letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.38)", padding: "0 4px 6px" }}>Kuka teki yhdessä? (50/50)</div>
+                    {workers.filter((w) => w.id !== (washedBy?.[activeOrb] ?? currentWorkerId)).map((w) => (
+                      <button key={w.id} className="status-opt-btn"
+                        onClick={() => { onSetSplit(activeOrb, w.id); setShowSplitPicker(false); }}
+                        style={{ border: "1px solid transparent", background: "transparent", fontWeight: 500 }}>
+                        <span style={{ width: "18px", height: "18px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "9px", fontWeight: 700, background: "rgba(124,224,166,0.16)", color: "rgba(124,224,166,0.95)", flexShrink: 0 }}>{w.name.charAt(0).toUpperCase()}</span>
+                        <span style={{ flex: 1, textAlign: "left" }}>{w.name}</span>
+                      </button>
+                    ))}
+                  </>
+                ) : (
+                  <button className="status-opt-btn" onClick={() => setShowSplitPicker(true)} style={{ border: "1px solid transparent", background: "transparent" }}>
+                    <span style={{ width: "13px", height: "13px", display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(124,224,166,0.95)", fontSize: "15px", fontWeight: 700, flexShrink: 0 }}>+</span>
+                    <span style={{ flex: 1, textAlign: "left" }}>Jaa 50/50 toiselle</span>
+                  </button>
+                )}
+              </div>
             )}
 
             {/* Delete this window — managers only. Removes the dot from the map

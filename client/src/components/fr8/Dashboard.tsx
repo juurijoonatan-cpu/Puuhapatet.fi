@@ -283,7 +283,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                       <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.45)", flexShrink: 0 }}>{Math.round(share)} %</span>
                     </div>
                     <div style={{ fontSize: "26px", fontWeight: 700, lineHeight: 1 }}>
-                      {s.washed} <span style={{ fontSize: "13px", fontWeight: 500, color: "rgba(255,255,255,0.4)" }}>ikkunaa</span>
+                      {s.washed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} <span style={{ fontSize: "13px", fontWeight: 500, color: "rgba(255,255,255,0.4)" }}>ikkunaa</span>
                     </div>
                     {shiftStart && (
                       <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 10, padding: "3px 9px", borderRadius: 999, background: "rgba(95,224,138,0.12)", border: "1px solid rgba(95,224,138,0.3)" }}>

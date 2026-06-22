@@ -100,6 +100,10 @@ export interface ProjectData {
   marks: ProjMarksData;                            // seeded base marks (persisted)
   statuses: Record<string, WindowStatus>;          // key → status (non-"ei" only)
   washedBy: Record<string, string>;                // key → worker id who last washed it
+  /** Optional second washer for a window done together — the window stays one
+   *  fully-washed window for progress & billing, but its credit/earnings split
+   *  50/50 between washedBy[key] and washedBy2[key]. Manager-set only. */
+  washedBy2?: Record<string, string>;
   customMarks: Record<string, ProjCustomMark[]>;   // floor → manually added marks
   notes?: Record<string, ProjMapNote[]>;           // floor → navigation markers / notes
   activeZone?: ProjActiveZone | null;              // where work is happening right now
@@ -191,6 +195,7 @@ export function emptyProjectData(): ProjectData {
     marks: {},
     statuses: {},
     washedBy: {},
+    washedBy2: {},
     customMarks: {},
     notes: {},
     activeZone: null,
@@ -281,12 +286,25 @@ export interface WorkerStat {
 export function computeWorkerStats(data: ProjectData): WorkerStat[] {
   const pts = allPoints(data);
   const price = data.pricePerWindow || DEFAULT_PRICE_PER_WINDOW;
+  const washedBy2 = data.washedBy2 || {};
   // Union of configured workers + anyone who appears in attribution / hours.
   const ids = new Set<string>(data.workers || []);
-  pts.forEach((p) => { if (p.status === "pesty" && p.washedBy) ids.add(p.washedBy); });
+  pts.forEach((p) => {
+    if (p.status === "pesty" && p.washedBy) ids.add(p.washedBy);
+    if (p.status === "pesty" && washedBy2[p.key]) ids.add(washedBy2[p.key]);
+  });
   Object.keys(data.hours || {}).forEach((w) => ids.add(w));
   return Array.from(ids).map((worker) => {
-    const washed = pts.filter((p) => p.status === "pesty" && p.washedBy === worker).length;
+    // A window done together (washedBy2 set) splits its credit 50/50, so each of
+    // the two washers earns half a window; a solo window earns the full one.
+    const washed = pts.reduce((sum, p) => {
+      if (p.status !== "pesty") return sum;
+      const second = washedBy2[p.key];
+      const share = second ? 0.5 : 1;
+      if (p.washedBy === worker) return sum + share;
+      if (second === worker) return sum + 0.5;
+      return sum;
+    }, 0);
     const hours = Math.max(0, data.hours?.[worker] || 0);
     const revenueCents = Math.round(washed * price * 100);
     return {
@@ -420,7 +438,13 @@ export function syncGigSectorsFromProject(gig: GigData, project: ProjectData): G
   const deal = fixedDealFor(project);
   if (deal) {
     const red = allPoints(project).filter((p) => p.p === deal.billablePriority);
-    const total = FR8_DEAL_RED_WINDOWS;
+    // The window COUNT follows the live red dots on the map, so adding/removing
+    // dots moves the counter (FR8 was over-seeded to ~198 and is being trimmed to
+    // the agreed 168). The agreed €6300 stays pinned regardless: the FR8 dashboard
+    // accrual is hard-capped in computeDealBilling, and at the agreed 168 dots the
+    // count × €37,50 equals exactly €6300. FR8_DEAL_RED_WINDOWS stays the documented
+    // agreed scope but no longer freezes the live counter.
+    const total = red.length;
     const washed = Math.min(red.filter((p) => p.status === "pesty").length, total);
     const id = "deal:red";
     const prevInvoiced = Math.max(0, gig.sectors.find((s) => s.id === id)?.invoicedWashed ?? 0);
@@ -565,6 +589,17 @@ export function sanitizeProjectData(input: any): ProjectData {
     }
   }
 
+  // Second washer for a 50/50 split. Only kept when a primary washer exists and
+  // the two are different people, so a split always references two real workers.
+  const washedBy2: Record<string, string> = {};
+  if (input.washedBy2 && typeof input.washedBy2 === "object") {
+    for (const k of Object.keys(input.washedBy2).slice(0, 20000)) {
+      const key = cleanKey(k);
+      const v = input.washedBy2[k] ? String(input.washedBy2[k]).slice(0, 40) : "";
+      if (v && washedBy[key] && washedBy[key] !== v) washedBy2[key] = v;
+    }
+  }
+
   const posOverrides: Record<string, { x: number; y: number }> = {};
   if (input.posOverrides && typeof input.posOverrides === "object") {
     for (const k of Object.keys(input.posOverrides).slice(0, 20000)) {
@@ -626,6 +661,7 @@ export function sanitizeProjectData(input: any): ProjectData {
     marks,
     statuses,
     washedBy,
+    washedBy2,
     customMarks,
     notes,
     activeZone,

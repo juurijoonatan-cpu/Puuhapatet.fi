@@ -3646,6 +3646,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // work and add simple notes; they cannot move/delete windows.
       statuses: project.statuses,
       washedBy: project.washedBy,
+      keskenBy: project.keskenBy ?? {},
       workerNames,
       notes: project.notes ?? {},
       activeZone: project.activeZone ?? null,
@@ -3761,11 +3762,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         if (!project.washedBy[key] || project.washedBy[key] === member.id) {
           delete project.statuses[key];
           delete project.washedBy[key];
+          if (project.keskenBy) delete project.keskenBy[key];
         }
       } else {
         project.statuses[key] = status;
-        if (status === "pesty") project.washedBy[key] = member.id;
-        else delete project.washedBy[key];
+        if (status === "pesty") {
+          project.washedBy[key] = member.id;
+          if (project.keskenBy) delete project.keskenBy[key];
+        } else if (status === "kesken") {
+          delete project.washedBy[key];
+          project.keskenBy = project.keskenBy ?? {};
+          project.keskenBy[key] = member.id;
+        } else {
+          delete project.washedBy[key];
+          if (project.keskenBy) delete project.keskenBy[key];
+        }
       }
       const floor = key.split("#")[0];
       const p: 1 | 2 = req.body?.p === 2 ? 2 : 1;

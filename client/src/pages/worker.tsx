@@ -77,6 +77,15 @@ export default function WorkerPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  const logout = useCallback(() => {
+    try { sessionStorage.removeItem(`pp_crew_${token}`); } catch {}
+    if (view?.worker.hasPin) {
+      setStatus("locked");
+    } else {
+      window.location.href = "/";
+    }
+  }, [token, view]);
+
   if (status === "loading") return <Centered>Ladataan…</Centered>;
   if (status === "error" || !view) return <Centered>Linkkiä ei löytynyt tai se on vanhentunut.</Centered>;
   if (status === "locked") return <PinGate token={token} view={view} onUnlock={() => { sessionStorage.setItem(`pp_crew_${token}`, "1"); setStatus("ok"); }} />;
@@ -93,7 +102,7 @@ export default function WorkerPage() {
     return <Onboarding token={token} view={view} resign onDone={(v) => setView(v)} />;
   }
 
-  return <Dashboard token={token} view={view} setView={setView} reload={load} />;
+  return <Dashboard token={token} view={view} setView={setView} reload={load} onLogout={logout} />;
 }
 
 // ─── Install as a phone app (PWA), scoped to the worker dashboard ─────────────
@@ -732,7 +741,7 @@ function AgreementBody({ ag }: { ag: WorkerAgreement }) {
 
 // ─── Dashboard ──────────────────────────────────────────────────────────────
 
-type Tab = "map" | "earnings" | "hours" | "payouts" | "notes";
+type Tab = "map" | "earnings" | "hours" | "payouts" | "notes" | "summary";
 
 const NAV_ITEMS: [Tab, string][] = [
   ["map", "Kartta"],
@@ -740,6 +749,7 @@ const NAV_ITEMS: [Tab, string][] = [
   ["hours", "Tunnit"],
   ["payouts", "Maksut"],
   ["notes", "Info"],
+  ["summary", "Kokonaisuus"],
 ];
 
 /** Stroke icons for the bottom nav (inline so the dark worker theme stays self-contained). */
@@ -756,10 +766,12 @@ function NavIcon({ name, color }: { name: Tab; color: string }) {
       return <svg {...p}><rect x="3" y="6" width="18" height="12.5" rx="2.5" /><path d="M3 10.5h18" /><path d="M16 14.5h2" /></svg>;
     case "notes":
       return <svg {...p}><circle cx="12" cy="12" r="8.5" /><path d="M12 11v5" /><path d="M12 8h.01" /></svg>;
+    case "summary":
+      return <svg {...p}><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" /></svg>;
   }
 }
 
-function Dashboard({ token, view, setView, reload }: { token: string; view: WorkerView; setView: (v: WorkerView) => void; reload: () => void }) {
+function Dashboard({ token, view, setView, reload, onLogout }: { token: string; view: WorkerView; setView: (v: WorkerView) => void; reload: () => void; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("map");
   const pwa = usePwaInstall();
   const [showInstall, setShowInstall] = useState(false);
@@ -801,9 +813,16 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
     <div className="fr8-root" style={{ position: "fixed", inset: 0, background: "#060607", color: "#fff", display: "flex", flexDirection: "column", fontFamily: FONT, overflow: "hidden", overscrollBehavior: "none", WebkitTapHighlightColor: "transparent", WebkitUserSelect: "none", userSelect: "none" }}>
       {/* Header */}
       <div style={{ flexShrink: 0, padding: "calc(12px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 12px max(16px, env(safe-area-inset-left))", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-        <div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
           <p style={{ margin: 0, fontWeight: 700, fontSize: 15 }}>{view.worker.name || "Työntekijä"}</p>
           <p style={{ margin: 0, fontSize: 11.5, color: "rgba(255,255,255,0.5)" }}>{view.building.name || "Puuhapatet"}{view.building.address ? ` · ${view.building.address}` : ""}</p>
+          <button
+            onClick={onLogout}
+            style={{ marginTop: 3, alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.35)", fontSize: 10.5, fontFamily: FONT, padding: 0 }}
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
+            Kirjaudu ulos
+          </button>
         </div>
         <div style={{ textAlign: "right" }}>
           <p style={{ margin: 0, fontSize: 20, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: "#7CE0A6" }}>{euro(view.stats.earnedCents)}</p>
@@ -837,6 +856,7 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
             canAddNotes
             hideMoney
             washedBy={view.washedBy}
+            keskenBy={view.keskenBy}
             workerNames={view.workerNames}
             currentWorkerId={view.worker.id}
             notes={view.notes}
@@ -850,6 +870,7 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
         {tab === "hours" && <HoursTab token={token} view={view} setView={setView} />}
         {tab === "payouts" && <PayoutsTab token={token} view={view} setView={setView} />}
         {tab === "notes" && <NotesTab token={token} view={view} setView={setView} />}
+        {tab === "summary" && <SummaryTab view={view} />}
       </div>
 
       {/* Bottom nav — icons, active pill, mobile-friendly */}
@@ -1557,6 +1578,66 @@ function NotesTab({ token, view, setView }: { token: string; view: WorkerView; s
 }
 
 // ─── Small shared bits ──────────────────────────────────────────────────────
+
+function SummaryTab({ view }: { view: WorkerView }) {
+  const { redTotal, redWashed, myRedWashed } = useMemo(() => {
+    let redTotal = 0;
+    let redWashed = 0;
+    let myRedWashed = 0;
+    const floors = view.building.floors;
+    for (const f of floors) {
+      const seeded = view.marks[f]?.marks ?? [];
+      const custom = view.customMarks[f] ?? [];
+      const allMarks = [
+        ...seeded.map((mk, idx) => ({ key: `${f}#${idx}`, p: mk.p })),
+        ...custom.map((cm) => ({ key: cm.key, p: cm.p })),
+      ].filter(({ key }) => !view.deleted[key]);
+      for (const { key, p } of allMarks) {
+        if (p !== 1) continue;
+        redTotal++;
+        const status = view.statuses[key] ?? "ei";
+        if (status === "pesty") {
+          redWashed++;
+          if (view.washedBy[key] === view.worker.id) myRedWashed++;
+        }
+      }
+    }
+    return { redTotal, redWashed, myRedWashed };
+  }, [view]);
+
+  const pct = redTotal > 0 ? (redWashed / redTotal) * 100 : 0;
+  const myEarnedCents = myRedWashed * view.worker.perWindowCents;
+
+  return (
+    <div style={{ height: "100%", overflowY: "auto", padding: 20 }}>
+      <p style={{ margin: "0 0 20px", fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(255,255,255,0.4)" }}>Kokonaisuus</p>
+
+      {/* Red window progress */}
+      <div style={{ padding: 20, borderRadius: 16, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", marginBottom: 16 }}>
+        <p style={{ margin: "0 0 4px", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,72,72,0.8)" }}>Punaiset ikkunat (P1)</p>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "8px 0 14px" }}>
+          <span style={{ fontSize: 40, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: "#fff" }}>{redWashed}</span>
+          <span style={{ fontSize: 22, color: "rgba(255,255,255,0.35)", fontWeight: 500 }}>/ {redTotal}</span>
+          <span style={{ marginLeft: "auto", fontSize: 28, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: "rgb(255,72,72)" }}>{Math.round(pct)} %</span>
+        </div>
+        <div style={{ position: "relative", height: 10, borderRadius: 999, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+          <div style={{ position: "absolute", inset: 0, right: `${100 - pct}%`, background: "linear-gradient(90deg, rgb(255,72,72), rgb(255,120,90))", borderRadius: 999, transition: "right 0.6s ease" }} />
+        </div>
+        <p style={{ margin: "8px 0 0", fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{redTotal - redWashed} jäljellä</p>
+      </div>
+
+      {/* Worker's own contribution */}
+      <div style={{ padding: 20, borderRadius: 16, background: "linear-gradient(155deg, rgba(124,224,166,0.10), rgba(255,255,255,0.03))", border: "1px solid rgba(124,224,166,0.22)", marginBottom: 16 }}>
+        <p style={{ margin: "0 0 4px", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7CE0A6" }}>Oma osuus punaisia</p>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "8px 0 4px" }}>
+          <span style={{ fontSize: 36, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: "#7CE0A6" }}>{myRedWashed}</span>
+          <span style={{ fontSize: 16, color: "rgba(255,255,255,0.45)" }}>kpl</span>
+        </div>
+        <p style={{ margin: "6px 0 0", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{myRedWashed} × {euro(view.worker.perWindowCents)} = <strong style={{ color: "#7CE0A6", fontWeight: 700 }}>{euro(myEarnedCents)}</strong></p>
+      </div>
+    </div>
+  );
+}
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (

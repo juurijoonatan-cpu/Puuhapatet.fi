@@ -45,7 +45,9 @@ interface Props {
   /** key → worker id who washed it (manager view). Enables the "who cleaned this"
    *  label in the status popover. Workers/customers don't pass this. */
   washedBy?: Record<string, string>;
-  /** worker id → display name, for the washedBy label. */
+  /** key → worker id who marked it "kesken". */
+  keskenBy?: Record<string, string>;
+  /** worker id → display name, for the washedBy/keskenBy label. */
   workerNames?: Record<string, string>;
   /** This gig's pickable crew (id + name) for the washed-by picker. Manager view only. */
   workers?: { id: string; name: string }[];
@@ -160,7 +162,7 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, activeZone, onSetActiveZone, onClearActiveZone, deal }: Props) {
+export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, activeZone, onSetActiveZone, onClearActiveZone, deal }: Props) {
   const [floor, setFloor] = useState(initialFloor);
   const [filter, setFilter] = useState<"all" | "unwashed" | "progress" | "done">("all");
   const [editMode, setEditMode] = useState(false);
@@ -755,6 +757,16 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                   )}
                 </div>
               )
+            )}
+
+            {/* Kesken attribution — shows WHO marked this window as "kesken". */}
+            {(statuses[activeOrb] || "ei") === "kesken" && keskenBy?.[activeOrb] && (
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)", fontSize: "11.5px", color: "rgba(255,255,255,0.7)" }}>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(188,150,255,0.9)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 3" /></svg>
+                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  Kesken: <strong style={{ color: "#fff", fontWeight: 600 }}>{workerNames?.[keskenBy[activeOrb]] ?? keskenBy[activeOrb]}</strong>
+                </span>
+              </div>
             )}
 
             {/* Delete this window — managers only. Removes the dot from the map

@@ -775,6 +775,12 @@ export const api = {
     request<{ ok: boolean; crew: CrewMember[] }>(
       "DELETE", `/api/jobs/${jobId}/crew/${memberId}`),
 
+  // Host logs a worker's day on their behalf (hours + today's windows) and emails
+  // the worker their day summary.
+  crewLogDay: (jobId: number, memberId: string, hours: number) =>
+    request<{ ok: boolean; crew: CrewMember[]; windows: number; emailed: boolean }>(
+      "POST", `/api/jobs/${jobId}/crew/${memberId}/log-day`, { hours }),
+
   // Host: create a payout notification for a worker (Puuhapatet → alihankkija).
   // billerId = which leader (their Y-tunnus) is the BUYER the worker invoices.
   createPayout: (jobId: number, memberId: string, data: { amountCents: number; windows?: number; note?: string; billerId?: string }) =>

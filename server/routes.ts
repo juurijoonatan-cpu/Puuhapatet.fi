@@ -4144,6 +4144,50 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // Host logs a worker's whole day on their behalf and emails them the summary.
+  // Records the given hours in the ledger + a diary session counting the windows
+  // that worker marked pesty today, then sends the same day-summary email the
+  // worker would get from "Päätä päivä". Lets a leader close out the team's day.
+  app.post("/api/jobs/:id/crew/:memberId/log-day", async (req, res) => {
+    try {
+      const loaded = await loadJobProject(Number(req.params.id));
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const { job, project } = loaded;
+      const mid = String(req.params.memberId);
+      const member = (project.crew || []).find((m) => m.id === mid);
+      if (!member) return res.status(404).json({ error: "Työntekijää ei löydy" });
+      const hours = Math.round((Number(req.body?.hours) || 0) * 100) / 100;
+      const minutes = Math.max(0, Math.round(hours * 60));
+      // Windows this worker marked pesty today — count each window once.
+      const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+      const todayKeys = new Set<string>();
+      for (const l of project.log || []) {
+        if (l.by === member.id && l.status === "pesty" && l.ts >= startOfDay.getTime()) todayKeys.add(l.key);
+      }
+      const windows = todayKeys.size;
+      if (minutes === 0 && windows === 0) return res.status(400).json({ error: "Ei tunteja eikä ikkunoita kirjattavaksi" });
+      const end = Date.now();
+      const session = { start: end - minutes * 60000, end, minutes, windows, earnedCents: windows * member.perWindowCents, manual: true };
+      if (hours > 0) {
+        project.hours[member.id] = Math.max(0, +(((project.hours[member.id] || 0) + hours).toFixed(2)));
+        project.hourLog = [{ worker: member.id, delta: hours, ts: end, by: "johtaja" }, ...(project.hourLog || [])].slice(0, 200);
+      }
+      project.crew = (project.crew || []).map((m) =>
+        m.id !== member.id ? m : { ...m, sessions: [...(m.sessions || []), session].slice(-200) },
+      );
+      const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
+      let emailed = false;
+      if (resend && savedMember.profile?.email) {
+        try { await sendSessionSummaryEmail(savedMember, session, project.building?.name); emailed = true; }
+        catch (e: any) { console.warn("manager day-log email failed:", e?.message); }
+      }
+      res.json({ ok: true, crew: saved.crew, windows, emailed });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
   // ── Worker payouts (Puuhapatet → alihankkija) ───────────────────────────────
   // Host-only. Creating a payout sends the worker a "first payment" notification
   // they approve from their /tyo link. Marking it paid (after the manual bank

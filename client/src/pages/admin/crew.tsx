@@ -56,6 +56,9 @@ export default function AdminCrewPage() {
   const markPaid = async (id: string, payoutId: string) => {
     const res = await api.markPayoutPaid(jobId, id, payoutId); await load(); return res;
   };
+  const logDay = async (id: string, hours: number) => {
+    const res = await api.crewLogDay(jobId, id, hours); await load(); return res;
+  };
 
   const copyLink = (token: string) => {
     const url = `${PUBLIC_BASE}/tyo/${token}`;
@@ -184,6 +187,10 @@ export default function AdminCrewPage() {
                   </details>
                 )}
 
+                {/* Manager day-log — record this worker's day (hours + today's
+                    windows) and email them the summary, on their behalf. */}
+                <DayLogPanel member={member} onLog={(hours) => logDay(member.id, hours)} />
+
                 {/* Payouts (Puuhapatet → worker). Suggest only the UNPAID remainder
                     — what this worker has done since the last payout — so each payout
                     covers just the current billed period, never the cumulative total. */}
@@ -210,6 +217,64 @@ export default function AdminCrewPage() {
         )}
       </div>
     </div>
+  );
+}
+
+/** Manager logs a worker's day on their behalf: enter the hours, and the day's
+ *  windows (marked by that worker today) + a summary email are recorded/sent. */
+function DayLogPanel({
+  member, onLog,
+}: {
+  member: HostCrewRow["member"];
+  onLog: (hours: number) => Promise<{ ok: boolean; windows?: number; emailed?: boolean; error?: string }>;
+}) {
+  const [hours, setHours] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const submit = async () => {
+    const h = parseFloat(hours.replace(",", "."));
+    const valid = Number.isFinite(h) && h > 0;
+    setBusy(true); setMsg(null);
+    const res = await onLog(valid ? Math.round(h * 100) / 100 : 0);
+    setBusy(false);
+    if (res.ok) {
+      const parts = [`Päivä kirjattu`];
+      if (res.windows) parts.push(`${res.windows} ikkunaa`);
+      parts.push(res.emailed ? "yhteenveto sähköpostiin ✓" : member.profile?.email ? "sähköposti ei käytössä" : "ei sähköpostia tallennettu");
+      setMsg(parts.join(" · "));
+      setHours("");
+    } else {
+      setMsg(res.error || "Kirjaus epäonnistui");
+    }
+  };
+
+  return (
+    <details className="mt-3 rounded-xl border bg-muted/20 p-3">
+      <summary className="text-xs font-medium text-muted-foreground cursor-pointer">Kirjaa päivä & lähetä yhteenveto</summary>
+      <p className="mt-2 text-[11px] text-muted-foreground leading-relaxed">
+        Kirjaa työntekijän päivän tunnit hänen puolestaan. Tallennus laskee mukaan tänään merkityt ikkunat ja lähettää
+        päivän yhteenvedon työntekijän sähköpostiin{member.profile?.email ? ` (${member.profile.email})` : ""}.
+      </p>
+      <div className="mt-2 flex items-center gap-2">
+        <input
+          value={hours}
+          onChange={(e) => setHours(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+          inputMode="decimal"
+          placeholder="Tunnit (esim. 6,5)"
+          className="flex-1 rounded-lg border bg-background px-3 py-2 text-sm outline-none"
+        />
+        <button
+          onClick={submit}
+          disabled={busy}
+          className="shrink-0 rounded-lg bg-foreground px-3 py-2 text-xs font-semibold text-background disabled:opacity-50"
+        >
+          {busy ? "Tallennetaan…" : "Merkitse päivä"}
+        </button>
+      </div>
+      {msg && <p className="mt-2 text-[11px] text-muted-foreground">{msg}</p>}
+    </details>
   );
 }
 

@@ -51,22 +51,30 @@ työntekijä = omat × oma rate. Kun perustaja kysyy "päivän tuotto" / "paljon
 tienattiin tänään", apuri vastaa tästä. Näkyy VAIN perustajille, ei
 työntekijöille (HOST-only konteksti).
 
-## Harjoittelijat (esim. Milja) ja työharjoittelusopimus
+## Harjoittelijat (esim. Milja) — ei sopimuksia, ansiot ohjaajalle
 
 Harjoittelija (`shared/trainees.ts` → `TRAINEES`, esim. Milja Matiaksen vastuulla) EI
-ole alihankkija: palkaton, vapaaehtoinen, ohjaajan vastuulla, ei Y-tunnusta eikä
-laskutusta, ei vahinkovastuuta (ohjaaja vastaa).
-- **Oma sopimus**: harjoittelija allekirjoittaa **palkattoman työharjoittelu-
-  sopimuksen** (`shared/worker-agreements.ts` → `TRAINEE_AGREEMENTS`,
-  id `tyoharjoittelu`, versio `TRAINEE_AGREEMENT_VERSION`) — EI alihankkijasettiä.
-- **Gate**: `workerView` ja `/window`-reitti valitsevat vaaditun setin + version
-  harjoittelijuuden mukaan (`trainee ? TRAINEE_AGREEMENT_IDS : REQUIRED_AGREEMENT_IDS`).
-  Harjoittelija on nyt myös gated: hänet pyydetään allekirjoittamaan sopimus
-  ennen kuin kartan merkintä aukeaa.
-- **Onboarding**: harjoittelijalle näytetään suppeampi profiili (nimi, puhelin,
-  sähköposti, osoite) ilman vakuutus-/riskikohtaa, ja oma sopimusteksti. Dashboard
-  piilottaa alihankkija-/verokortit ja näyttää "ohjaajan vastuulla".
-- `ALL_AGREEMENTS` = alihankkija + harjoittelu; client resolvoi id:n tästä.
+ole alihankkija eikä allekirjoita mitään: palkaton, vapaaehtoinen, ohjaajan
+vastuulla.
+- **Ei sopimuksia / ei allekirjoituksia**: `workerView` lähettää harjoittelijalle
+  `requiredAgreementIds: []`, `agreementsGated: false`, `needsToSign: false`, ja
+  `/window`-reitti ei estä merkintää. Harjoittelija pääsee suoraan työpöydälle
+  (soft start), merkkaa ikkunoita ja näkee OMAT ikkunansa/tuntinsa omalla
+  työpöydällään (motivaatio).
+- **Ansiot/tunnit ohjaajalle (Matias)**: kaikki harjoittelijan merkkaamat ikkunat
+  ja kirjaamat tunnit lasketaan johtajien näkymässä ohjaajalle. Toteutus:
+  - Manageri-FR8 (`client/src/pages/admin/project.tsx`): `leaderOf(id)` mäppää
+    harjoittelijan crew-id:n → `responsibleLeaderId`. `workerStats`-laskenta ja
+    `managerHours` taittavat harjoittelijan pestyt ikkunat + tunnit ohjaajalle;
+    harjoittelija ei ole erillinen TEKIJÄT-/Tunnit-rivi. Ohjaajan ikkunat
+    arvotetaan täyteen 37,50 €:oon (kuten omat), EIVÄT työntekijän tuotto-pooliin.
+  - Tekoälyn päivän tuottoraportti (`server/routes.ts buildAdminContext`): sama
+    `effId`-mäppäys harjoittelija → ohjaaja.
+  - Kartan attribuutio (`washedBy`) säilyy harjoittelijalla, joten managerit
+    näkevät silti kuka fyysisesti pesi; vain laskenta/ansio menee ohjaajalle.
+- **Manuaalinen jako**: ohjaaja (Matias) siirtää tuoton/erotuksen toiselle
+  perustajalle ja maksaa harjoittelijalle käsin TEKIJÄT-kortin "Muokkaa ansiota"
+  -kentästä (`manualEarningsCents`).
 
 ## Rahan yksityisyys (TÄRKEÄ)
 

@@ -20,7 +20,7 @@ import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, type CrewMember,
 } from "@shared/crew";
-import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED, TRAINEE_AGREEMENT_IDS, TRAINEE_AGREEMENT_VERSION } from "@shared/worker-agreements";
+import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED } from "@shared/worker-agreements";
 import {
   computeTax, readVatStatus, readInPrepaymentRegister, WITHHOLDING_COMPANY,
   WITHHOLDING_NATURAL_PERSON, fmtPct, type TaxBreakdown,
@@ -3572,22 +3572,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       windowsTotal = Math.max(agreedScope, db.billableTotal);
       windowsWashed = db.billableWashed;
     }
-    // Trainee (harjoittelija, e.g. Milja under Matias): NOT an alihankkija — no
-    // own Y-tunnus, no self-invoicing, and not bound by the subcontractor signing
-    // gate. Matched by the linked login id / crew id, or first name as fallback.
+    // Trainee (harjoittelija, e.g. Milja under Matias): NOT an alihankkija and
+    // NOT asked to sign anything — soft-start dashboard only. Their marked windows
+    // and hours are credited to their responsible leader (Matias) in the manager
+    // views. Matched by the linked login id / crew id, or first name as fallback.
     const trainee: TraineeInfo | undefined =
       traineeForUserId(member.linkedUserId) || traineeForUserId(member.id) || traineeForName(member.name);
-    // A trainee signs the palkaton työharjoittelusopimus; everyone else the full
-    // alihankkija set. Each has its own required-id list + version.
-    const requiredIds = trainee ? TRAINEE_AGREEMENT_IDS : REQUIRED_AGREEMENT_IDS;
-    const agreementVersion = trainee ? TRAINEE_AGREEMENT_VERSION : WORKER_AGREEMENT_VERSION;
+    // A trainee signs nothing; everyone else the full alihankkija set.
+    const requiredIds = trainee ? [] : REQUIRED_AGREEMENT_IDS;
+    const agreementVersion = WORKER_AGREEMENT_VERSION;
     // Soft-start model: "in the app" (typed name) is decoupled from "has signed".
-    const signedAll = hasSignedAllAgreements(member, requiredIds, agreementVersion);
+    const signedAll = trainee ? true : hasSignedAllAgreements(member, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION);
     const enteredApp = !!member.onboardedAt;
     // Until signing is gated, the dashboard opens on name alone. Once gated, an
-    // already-entered worker who hasn't signed their current set must do so — a
-    // trainee signs the harjoittelusopimus, an alihankkija the contractor set.
-    const needsToSign = WORKER_AGREEMENTS_GATED && !signedAll;
+    // already-entered alihankkija who hasn't signed must do so — a trainee never.
+    const needsToSign = !trainee && WORKER_AGREEMENTS_GATED && !signedAll;
     // id → display name for every crew member, so the worker map can show WHO
     // washed each window ("Pesi Jani") and who left a note.
     const workerNames: Record<string, string> = {};
@@ -3660,11 +3659,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       windowsTotal,
       windowsWashed,
       agreementVersion,
-      // A trainee signs the harjoittelusopimus; everyone else the alihankkija set.
+      // A trainee signs nothing ([]); everyone else the alihankkija set.
       requiredAgreementIds: requiredIds,
       // Whether signing is currently enforced. Drives the client flow: soft start
-      // (intro + name only) when false; full sign flow / banner when true.
-      agreementsGated: WORKER_AGREEMENTS_GATED,
+      // (intro + name only) when false; full sign flow / banner when true. Trainees
+      // are never gated (no agreements).
+      agreementsGated: trainee ? false : WORKER_AGREEMENTS_GATED,
     };
   }
 
@@ -3745,15 +3745,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const found = await findJobByCrewToken(String(req.params.token));
       if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
       const { job, project, member } = found;
-      // Soft start: marking is open. Once signing is gated, block marking until
-      // the worker has signed their current agreement set — a trainee signs the
-      // harjoittelusopimus, an alihankkija the contractor set (the dashboard
-      // banner drives them there).
+      // Soft start: marking is open. Once signing is gated, block marking until an
+      // alihankkija has signed the current set (the dashboard banner drives them
+      // there). A trainee (e.g. Milja) signs nothing, so they are never blocked.
       const gateTrainee = traineeForUserId(member.linkedUserId) || traineeForUserId(member.id) || traineeForName(member.name);
-      const gateRequiredIds = gateTrainee ? TRAINEE_AGREEMENT_IDS : REQUIRED_AGREEMENT_IDS;
-      const gateVersion = gateTrainee ? TRAINEE_AGREEMENT_VERSION : WORKER_AGREEMENT_VERSION;
-      if (WORKER_AGREEMENTS_GATED && !hasSignedAllAgreements(member, gateRequiredIds, gateVersion)) {
-        return res.status(403).json({ error: "Lue lisätiedot ja allekirjoita sopimus ensin" });
+      if (!gateTrainee && WORKER_AGREEMENTS_GATED && !hasSignedAllAgreements(member, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION)) {
+        return res.status(403).json({ error: "Lue lisätiedot ja allekirjoita sopimukset ensin" });
       }
       const key = String(req.body?.key ?? "").slice(0, 64);
       const status = req.body?.status === "pesty" || req.body?.status === "kesken" ? req.body.status : "ei";
@@ -4982,6 +4979,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           isFounderMember(id, mRole) ? dealCents : (crew.find(c => c.id === id)?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS);
         const founderCount = Math.max(1, crew.filter(c => isFounderMember(c.id, c.role)).length || FOUNDER_IDS.length);
 
+        // A trainee's (e.g. Milja's) windows are credited to their responsible
+        // leader (Matias): map the trainee id → leader id for all attribution.
+        const effId = (id: string): string => {
+          const mm = crew.find(c => c.id === id);
+          const t = traineeForUserId(mm?.linkedUserId) || traineeForUserId(id) || traineeForName(mm?.name);
+          return t ? t.responsibleLeaderId : id;
+        };
         // Windows turned "pesty" today (billable priority only), deduped per key.
         const seenToday = new Set<string>();
         const todayBy = new Map<string, number>();
@@ -4989,7 +4993,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           if (l.status !== "pesty" || l.p !== deal.billablePriority || l.ts < todayMs) continue;
           if (seenToday.has(l.key)) continue;
           seenToday.add(l.key);
-          const w = project.washedBy[l.key] || l.by;
+          const w = effId(project.washedBy[l.key] || l.by || "");
           if (!w) continue;
           todayBy.set(w, (todayBy.get(w) || 0) + 1);
         }

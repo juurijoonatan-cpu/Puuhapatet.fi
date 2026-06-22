@@ -17,6 +17,7 @@ import {
 } from "@shared/project";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
 import { FOUNDER_IDS } from "@shared/team";
+import { traineeForUserId, traineeForName } from "@shared/trainees";
 import { DEFAULT_WORKER_PER_WINDOW_CENTS } from "@shared/crew";
 import Dashboard from "@/components/fr8/Dashboard";
 import FloorView from "@/components/fr8/FloorView";
@@ -394,7 +395,30 @@ export default function AdminProjectPage() {
   const isFounder = (id: string, role?: string) => role === "host" || FOUNDER_IDS.includes(id);
   const dealTotalCents = Math.round(effectivePrice * 100);
   const founderCount = Math.max(1, crew.filter((c) => isFounder(c.id, c.role)).length || FOUNDER_IDS.length);
-  const baseStats = computeWorkerStats(project);
+  // A trainee (e.g. Milja) is credited to their responsible leader (Matias):
+  // their washed windows + hours fold into the leader, and the trainee is NOT a
+  // separate earner here. (On the worker's own dashboard they still see their own
+  // work; this folding is only for the manager/earnings views.)
+  const leaderOf = (id: string): string | null => {
+    const mm = crew.find((c) => c.id === id);
+    const t = traineeForUserId(mm?.linkedUserId) || traineeForUserId(id) || traineeForName(mm?.name);
+    return t ? t.responsibleLeaderId : null;
+  };
+  const baseStatsRaw = computeWorkerStats(project);
+  const foldedStats = new Map<string, (typeof baseStatsRaw)[number]>();
+  for (const st of baseStatsRaw) {
+    const target = leaderOf(st.worker) || st.worker;
+    const cur = foldedStats.get(target);
+    if (cur) { cur.washed += st.washed; cur.hours += st.hours; }
+    else foldedStats.set(target, { ...st, worker: target });
+  }
+  const baseStats = Array.from(foldedStats.values());
+  // Hours folded the same way: a trainee's logged hours count under their leader.
+  const managerHours: Record<string, number> = {};
+  for (const [id, h] of Object.entries(project.hours || {})) {
+    const target = leaderOf(id) || id;
+    managerHours[target] = (managerHours[target] || 0) + (h || 0);
+  }
   // Profit pool = Σ over worker-washed windows of (deal total − that worker's rate).
   let profitPoolCents = 0;
   for (const st of baseStats) {
@@ -420,11 +444,16 @@ export default function AdminProjectPage() {
   // Founders appear even with 0 own windows — they still earn the profit share.
   const statIds = new Set(baseStats.map((s) => s.worker));
   for (const f of crew.filter((c) => isFounder(c.id, c.role))) {
-    if (!statIds.has(f.id)) baseStats.push({ worker: f.id, washed: 0, revenueCents: 0, hours: Math.max(0, project.hours?.[f.id] || 0), windowsPerHour: 0, eurPerHour: 0 });
+    if (!statIds.has(f.id)) baseStats.push({ worker: f.id, washed: 0, revenueCents: 0, hours: Math.max(0, managerHours[f.id] || 0), windowsPerHour: 0, eurPerHour: 0 });
   }
   const workerStats = baseStats.map((s) => {
     const cents = earningsFor(s);
-    return { ...s, revenueCents: cents, eurPerHour: s.hours > 0 ? cents / 100 / s.hours : 0 };
+    return {
+      ...s,
+      revenueCents: cents,
+      windowsPerHour: s.hours > 0 ? s.washed / s.hours : 0,
+      eurPerHour: s.hours > 0 ? cents / 100 / s.hours : 0,
+    };
   });
   // Founders can manually set their own day/session earnings (e.g. split 50/50).
   const setWorkerEarnings = (id: string, cents: number | null) => {
@@ -440,7 +469,7 @@ export default function AdminProjectPage() {
   const hoursIds = Array.from(new Set([
     ...(project.workers.length ? project.workers : ["matias", "joonatan"]),
     ...crew.filter((c) => c.active && c.role === "worker" && !c.adminLinked).map((c) => c.id),
-  ]));
+  ])).filter((id) => !leaderOf(id)); // trainees fold into their leader, no own row
   const hoursWorkers = hoursIds.map((id) => ({ id, name: resolveName(id), initial: resolveInitial(id) }));
   // Display-name map + this gig's pickable crew (used by both the "who washed"
   // and "default washer" pickers).
@@ -513,7 +542,7 @@ export default function AdminProjectPage() {
           />
         )}
         {tab === "hours" && (
-          <HoursView workers={hoursWorkers} hours={project.hours} hourLog={project.hourLog} stats={workerStats} onAddHours={onAddHours} />
+          <HoursView workers={hoursWorkers} hours={managerHours} hourLog={project.hourLog} stats={workerStats} onAddHours={onAddHours} />
         )}
       </main>
     </>,

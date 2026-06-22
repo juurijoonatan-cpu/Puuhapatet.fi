@@ -40,6 +40,34 @@ sama €). Tallennetaan `member.manualEarningsCents`; "↺" palauttaa lasketun. 
 johtajien dashboardissa, EI vaikuta työntekijän omaan näkymään. Editointi sallittu vain
 `role === "host"` -jäsenille. (Jatko: hienojakoisempi per-päivä, jos keikka on monipäiväinen.)
 
+### Tekoälyapurin päivän tuottoraportti (TOTEUTETTU)
+Puuhapatet-adminin tekoälyapuri (`/api/admin/assistant`) saa perustajille
+(`role === "HOST"`) kontekstiin **päivän tuottoraportin** kiinteähintaisilta
+keikoilta (FR8). `buildAdminContext` (server/routes.ts) laskee jokaiselle
+`fixedDealFor`-keikalle tänään pestyt ikkunat per tekijä (keikan lokista,
+billable-prioriteetti, deduplikoitu avaimittain) ja muuntaa ne ansioiksi samalla
+mallilla kuin johtajien dashboard: perustaja = omat × 37,50 € + tuotto-osuus,
+työntekijä = omat × oma rate. Kun perustaja kysyy "päivän tuotto" / "paljonko
+tienattiin tänään", apuri vastaa tästä. Näkyy VAIN perustajille, ei
+työntekijöille (HOST-only konteksti).
+
+## Harjoittelijat (esim. Milja) ja työharjoittelusopimus
+
+Harjoittelija (`shared/trainees.ts` → `TRAINEES`, esim. Milja Matiaksen vastuulla) EI
+ole alihankkija: palkaton, vapaaehtoinen, ohjaajan vastuulla, ei Y-tunnusta eikä
+laskutusta, ei vahinkovastuuta (ohjaaja vastaa).
+- **Oma sopimus**: harjoittelija allekirjoittaa **palkattoman työharjoittelu-
+  sopimuksen** (`shared/worker-agreements.ts` → `TRAINEE_AGREEMENTS`,
+  id `tyoharjoittelu`, versio `TRAINEE_AGREEMENT_VERSION`) — EI alihankkijasettiä.
+- **Gate**: `workerView` ja `/window`-reitti valitsevat vaaditun setin + version
+  harjoittelijuuden mukaan (`trainee ? TRAINEE_AGREEMENT_IDS : REQUIRED_AGREEMENT_IDS`).
+  Harjoittelija on nyt myös gated: hänet pyydetään allekirjoittamaan sopimus
+  ennen kuin kartan merkintä aukeaa.
+- **Onboarding**: harjoittelijalle näytetään suppeampi profiili (nimi, puhelin,
+  sähköposti, osoite) ilman vakuutus-/riskikohtaa, ja oma sopimusteksti. Dashboard
+  piilottaa alihankkija-/verokortit ja näyttää "ohjaajan vastuulla".
+- `ALL_AGREEMENTS` = alihankkija + harjoittelu; client resolvoi id:n tästä.
+
 ## Rahan yksityisyys (TÄRKEÄ)
 
 Työntekijä EI saa nähdä keikan kokonaishintoja, kattoa, liikevaihtoa eikä muiden

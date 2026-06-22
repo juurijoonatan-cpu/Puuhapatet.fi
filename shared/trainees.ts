@@ -27,7 +27,7 @@ export interface TraineeInfo {
 export const TRAINEES: TraineeInfo[] = [
   {
     userId: "milja",
-    name: "Milja Niminen",
+    name: "Milja Pitkänen",
     responsibleLeaderId: "matias",
     responsibleLeaderName: "Matias Pitkänen",
   },

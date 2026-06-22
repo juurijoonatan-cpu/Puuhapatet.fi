@@ -17,7 +17,7 @@ import { useRoute } from "wouter";
 import { api, type WorkerView } from "@/lib/api";
 import type { WindowStatus } from "@shared/project";
 import {
-  WORKER_AGREEMENTS, PROFILE_QUESTIONS, PROFILE_REQUIRED_IDS, WORKER_AGREEMENT_VERSION,
+  ALL_AGREEMENTS, PROFILE_QUESTIONS, PROFILE_REQUIRED_IDS, WORKER_AGREEMENT_VERSION,
   INSURANCE_QUESTION, INSURANCE_LATER_NOTE, RISK_ACK_TEXT, INSURANCE_ANSWER_KEY, RISK_ACK_KEY,
   type WorkerAgreement,
 } from "@shared/worker-agreements";
@@ -459,7 +459,13 @@ function PinGate({ token, view, onUnlock }: { token: string; view: WorkerView; o
 type Step = "intro" | "profile" | { agreementIndex: number } | "sign" | "pin" | "submitting";
 
 function Onboarding({ token, view, onDone, resign }: { token: string; view: WorkerView; onDone: (v: WorkerView) => void; resign?: boolean }) {
-  const required = WORKER_AGREEMENTS.filter((a) => view.requiredAgreementIds.includes(a.id));
+  const required = ALL_AGREEMENTS.filter((a) => view.requiredAgreementIds.includes(a.id));
+  const isTrainee = !!view.worker.trainee;
+  // A trainee (harjoittelija) is unpaid & not an alihankkija: skip the billing /
+  // insurance / risk fields and ask only the basics.
+  const profileQuestions = isTrainee
+    ? PROFILE_QUESTIONS.filter((q) => ["fullName", "phone", "email", "address"].includes(q.id))
+    : PROFILE_QUESTIONS;
   // resign = an already-entered worker completing the now-required info + signing.
   // Start at the profile ("lisätiedot") step and skip the optional PIN step.
   const [step, setStep] = useState<Step>(resign ? "profile" : "intro");
@@ -485,7 +491,7 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
     const signedAt = Date.now();
     const agreements = required.map((a) => ({
       agreementId: a.id,
-      version: WORKER_AGREEMENT_VERSION,
+      version: view.agreementVersion || WORKER_AGREEMENT_VERSION,
       signedAt,
       signerName: answers.fullName || view.worker.name,
       signatureDataUrl: signature, // one signature applies to all agreements
@@ -511,8 +517,12 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
             Tervetuloa tiimiin{view.worker.name ? `, ${view.worker.name.split(" ")[0]}` : ""}
           </h1>
           <p style={{ color: "rgba(255,255,255,0.7)", maxWidth: 440, fontSize: 15, lineHeight: 1.6 }}>
-            Ennen kuin pääset omalle työpöydällesi, täytä lyhyt profiili ja allekirjoita sopimukset.
-            Tienaat <strong style={{ color: "#fff" }}>{euro(view.worker.perWindowCents)}</strong> jokaisesta pesemästäsi ikkunasta.
+            {isTrainee ? (
+              <>Ennen kuin pääset omalle työpöydällesi, täytä lyhyt profiili ja allekirjoita työharjoittelusopimus. Olet harjoittelijana{view.worker.trainee ? ` ${view.worker.trainee.responsibleLeaderName}n` : ""} vastuulla — turvallisuus aina edellä.</>
+            ) : (
+              <>Ennen kuin pääset omalle työpöydällesi, täytä lyhyt profiili ja allekirjoita sopimukset.
+              Tienaat <strong style={{ color: "#fff" }}>{euro(view.worker.perWindowCents)}</strong> jokaisesta pesemästäsi ikkunasta.</>
+            )}
           </p>
           <button
             onClick={() => setStep("profile")}
@@ -532,12 +542,19 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
     const missing = PROFILE_REQUIRED_IDS.filter((id) => !(answers[id] || "").trim());
     const insurance = answers[INSURANCE_ANSWER_KEY] || "";
     const riskOk = answers[RISK_ACK_KEY] === "1";
-    const canContinue = missing.length === 0 && !!insurance && riskOk;
+    // Trainees skip the insurance/risk acknowledgement (their leader carries it).
+    const canContinue = missing.length === 0 && (isTrainee || (!!insurance && riskOk));
     return (
       <Paper>
         <Wrap>
-          <StepHeader title={resign ? "Täydennä tietosi" : "Profiilisi"} sub={resign ? "Sopimukset on nyt viimeistelty. Täydennä tiedot, lue ja allekirjoita — sen jälkeen voit jatkaa työtä." : "Näitä tietoja käytetään laskutukseen ja työvuorojen suunnitteluun."} n="1 / 3" />
-          {PROFILE_QUESTIONS.map((q) => (
+          <StepHeader
+            title={resign ? "Täydennä tietosi" : "Profiilisi"}
+            sub={isTrainee
+              ? "Lue ja allekirjoita seuraavaksi työharjoittelusopimus. Täydennä ensin yhteystietosi."
+              : resign ? "Sopimukset on nyt viimeistelty. Täydennä tiedot, lue ja allekirjoita — sen jälkeen voit jatkaa työtä." : "Näitä tietoja käytetään laskutukseen ja työvuorojen suunnitteluun."}
+            n="1 / 3"
+          />
+          {profileQuestions.map((q) => (
             <label key={q.id} style={{ display: "block", marginBottom: 14 }}>
               <span style={fieldLabel}>{q.label}{q.required ? " *" : ""}</span>
               {q.type === "textarea" ? (
@@ -549,7 +566,8 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
             </label>
           ))}
 
-          {/* Insurance status (can update later) + risk acknowledgement */}
+          {/* Insurance status (can update later) + risk acknowledgement — alihankkija only */}
+          {!isTrainee && (
           <div style={{ marginTop: 6, marginBottom: 14, padding: 14, borderRadius: 12, background: T.paper, border: `1px solid ${T.hair}` }}>
             <p style={{ ...fieldLabel, marginBottom: 8 }}>{INSURANCE_QUESTION} *</p>
             <div style={{ display: "flex", gap: 8 }}>
@@ -575,6 +593,7 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
               <span>{RISK_ACK_TEXT}</span>
             </label>
           </div>
+          )}
 
           <button
             disabled={!canContinue}

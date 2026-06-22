@@ -300,7 +300,11 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
       touchAction: "none",
       transition: isDragging ? "none" : "opacity .3s, transform .15s, box-shadow .2s",
     };
-    if (soft && !editMode) {
+    // The pulsing glow is pretty on desktop but murders phone performance: an
+    // FR8 floor has hundreds of unwashed dots, and that many infinite CSS
+    // animations inside a scaled/panned layer makes the whole PWA stutter. On
+    // mobile we use a static glow instead — smooth scrolling beats a pulse.
+    if (soft && !editMode && !isMobile) {
       base.animation = "fr8-orbPulse 3.2s ease-in-out infinite";
     } else {
       base.boxShadow = isDragging
@@ -440,7 +444,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
     <div style={{ position: "relative", height: "100%", width: "100%", display: "flex", flexDirection: "column" }}>
 
       {/* Sub-navbar */}
-      <div style={{ position: "relative", zIndex: 15, display: "flex", alignItems: "center", gap: isMobile ? "10px" : "18px", flexWrap: "wrap", padding: isMobile ? "10px 12px" : "14px 26px", borderBottom: "1px solid rgba(255,255,255,0.07)", background: "rgba(8,8,10,0.5)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)" }}>
+      <div style={{ position: "relative", zIndex: 15, display: "flex", alignItems: "center", gap: isMobile ? "10px" : "18px", flexWrap: "wrap", padding: isMobile ? "10px 12px" : "14px 26px", borderBottom: "1px solid rgba(255,255,255,0.07)", background: isMobile ? "rgba(10,10,12,0.96)" : "rgba(8,8,10,0.5)", backdropFilter: isMobile ? undefined : "blur(18px)", WebkitBackdropFilter: isMobile ? undefined : "blur(18px)" }}>
 
         {/* Floor selector */}
         <div style={{ display: "flex", alignItems: "center", gap: "7px", padding: "5px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: "13px" }}>

@@ -3840,9 +3840,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  // Worker logs a whole work day by hand (forgot the timer). Records the hours in
-  // the ledger AND appends a session so the day shows up in the diary. Windows /
-  // earnings are left at 0 (washed windows are tracked on the map separately).
+  // Worker logs a whole work day by hand (manual mode / forgot the timer). Records
+  // the hours in the ledger AND appends a session so the day shows up in the diary.
+  // The session also counts the windows this worker marked "pesty" TODAY (from the
+  // activity log), so a manually-logged day shows hours AND windows together.
   app.post("/api/crew/:token/manual-session", async (req, res) => {
     try {
       const found = await findJobByCrewToken(String(req.params.token));
@@ -3852,7 +3853,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!(hours > 0)) return res.status(400).json({ error: "tunnit puuttuu" });
       const minutes = Math.round(hours * 60);
       const end = Date.now();
-      const session = { start: end - minutes * 60000, end, minutes, windows: 0, earnedCents: 0, manual: true };
+      // Windows this worker marked pesty today — count each window once.
+      const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+      const todayKeys = new Set<string>();
+      for (const l of project.log || []) {
+        if (l.by === member.id && l.status === "pesty" && l.ts >= startOfDay.getTime()) todayKeys.add(l.key);
+      }
+      const windows = todayKeys.size;
+      const session = { start: end - minutes * 60000, end, minutes, windows, earnedCents: windows * member.perWindowCents, manual: true };
       project.hours[member.id] = Math.max(0, +(((project.hours[member.id] || 0) + hours).toFixed(2)));
       project.hourLog = [{ worker: member.id, delta: hours, ts: end, by: member.id }, ...(project.hourLog || [])].slice(0, 200);
       project.crew = (project.crew || []).map((m) =>

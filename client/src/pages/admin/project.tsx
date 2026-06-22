@@ -455,6 +455,15 @@ export default function AdminProjectPage() {
   };
   const resolveInitial = (id: string): string => (resolveName(id)[0] || "?").toUpperCase();
 
+  // Trainee breakdown: which trainees folded into which leader (e.g. Milja → Matias),
+  // so the leader's card can show "sis. Milja 12 ikk" — otherwise the trainee's work
+  // looks like it vanished. Milja never appears as her own earner anywhere else.
+  const traineeFold: Record<string, { name: string; washed: number }[]> = {};
+  for (const st of baseStatsRaw) {
+    const lead = leaderOf(st.worker);
+    if (lead && st.washed > 0) (traineeFold[lead] ||= []).push({ name: resolveName(st.worker), washed: st.washed });
+  }
+
   // Founders appear even with 0 own windows — they still earn the profit share.
   const statIds = new Set(baseStats.map((s) => s.worker));
   for (const f of crew.filter((c) => isFounder(c.id, c.role))) {
@@ -522,7 +531,7 @@ export default function AdminProjectPage() {
       )}
       <main style={{ position: "relative", zIndex: 10, height: "calc(100% - 62px)" }}>
         {tab === "dashboard" && (
-          <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} onSetEarnings={setWorkerEarnings} />
+          <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} onSetEarnings={setWorkerEarnings} traineeFold={traineeFold} />
         )}
         {tab === "floor" && (
           <FloorView

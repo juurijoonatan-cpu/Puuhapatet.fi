@@ -16,6 +16,9 @@ interface Props {
   deal?: FixedDeal | null;
   /** Manually set/clear a person's earnings (founders' agreed split). */
   onSetEarnings?: (id: string, cents: number | null) => void;
+  /** leader id → trainees folded into them (e.g. Matias ← Milja), so the leader's
+   *  card can show "sis. Milja X ikk" instead of the work seeming to disappear. */
+  traineeFold?: Record<string, { name: string; washed: number }[]>;
 }
 
 function fmt(n: number) { return Math.round(n).toLocaleString("fi-FI"); }
@@ -52,7 +55,7 @@ const mono: React.CSSProperties = {
   color: "rgba(255,255,255,0.4)",
 };
 
-export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings }: Props) {
+export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeFold }: Props) {
   const m = useIsMobile();
   const [showLog, setShowLog] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -285,6 +288,12 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                     <div style={{ fontSize: "26px", fontWeight: 700, lineHeight: 1 }}>
                       {s.washed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} <span style={{ fontSize: "13px", fontWeight: 500, color: "rgba(255,255,255,0.4)" }}>ikkunaa</span>
                     </div>
+                    {/* Folded trainee(s), e.g. "sis. Milja 12 ikk" — so a trainee's work shows under their leader. */}
+                    {(traineeFold?.[s.worker]?.length ?? 0) > 0 && (
+                      <div style={{ marginTop: 5, fontSize: "11px", color: "rgba(124,224,166,0.9)" }}>
+                        {traineeFold![s.worker].map((t) => `sis. ${t.name} ${t.washed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikk`).join(" · ")}
+                      </div>
+                    )}
                     {shiftStart && (
                       <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 10, padding: "3px 9px", borderRadius: 999, background: "rgba(95,224,138,0.12)", border: "1px solid rgba(95,224,138,0.3)" }}>
                         <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#5fe08a", boxShadow: "0 0 8px rgba(95,224,138,0.9)", animation: "fr8-zonePulse 1.8s ease-in-out infinite" }} />

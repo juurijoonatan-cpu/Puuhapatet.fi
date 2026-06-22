@@ -786,11 +786,11 @@ function AgreementBody({ ag }: { ag: WorkerAgreement }) {
 
 // ─── Dashboard ──────────────────────────────────────────────────────────────
 
-type Tab = "map" | "earnings" | "hours" | "payouts" | "notes";
+type Tab = "home" | "map" | "hours" | "payouts" | "notes";
 
 const NAV_ITEMS: [Tab, string][] = [
+  ["home", "Koti"],
   ["map", "Kartta"],
-  ["earnings", "Ansiot"],
   ["hours", "Tunnit"],
   ["payouts", "Maksut"],
   ["notes", "Info"],
@@ -800,10 +800,10 @@ const NAV_ITEMS: [Tab, string][] = [
 function NavIcon({ name, color }: { name: Tab; color: string }) {
   const p = { width: 22, height: 22, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 1.9, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
   switch (name) {
+    case "home":
+      return <svg {...p}><path d="M3 10.5 12 4l9 6.5" /><path d="M5 9.5V20h14V9.5" /></svg>;
     case "map":
       return <svg {...p}><path d="M9 20 3 17V4l6 3 6-3 6 3v13l-6-3-6 3Z" /><path d="M9 7v13M15 4v13" /></svg>;
-    case "earnings":
-      return <svg {...p}><circle cx="12" cy="12" r="8.5" /><path d="M14.5 9.3a3.6 3.6 0 1 0 0 5.4" /><path d="M7.5 11h5M7.5 13h4.5" /></svg>;
     case "hours":
       return <svg {...p}><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 1.8" /></svg>;
     case "payouts":
@@ -814,7 +814,7 @@ function NavIcon({ name, color }: { name: Tab; color: string }) {
 }
 
 function Dashboard({ token, view, setView, reload }: { token: string; view: WorkerView; setView: (v: WorkerView) => void; reload: () => void }) {
-  const [tab, setTab] = useState<Tab>("map");
+  const [tab, setTab] = useState<Tab>("home");
   const pwa = usePwaInstall();
   const [showInstall, setShowInstall] = useState(false);
 
@@ -900,14 +900,14 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
             activeZone={view.activeZone}
           />
         )}
-        {tab === "earnings" && <EarningsTab view={view} />}
+        {tab === "home" && <HomeTab view={view} setTab={setTab} />}
         {tab === "hours" && <HoursTab token={token} view={view} setView={setView} />}
         {tab === "payouts" && <PayoutsTab token={token} view={view} setView={setView} />}
         {tab === "notes" && <NotesTab token={token} view={view} setView={setView} />}
       </div>
 
       {/* Bottom nav — icons, active pill, mobile-friendly */}
-      <div style={{ flexShrink: 0, display: "flex", justifyContent: "space-around", alignItems: "stretch", gap: 2, borderTop: "1px solid rgba(255,255,255,0.08)", background: "rgba(8,8,10,0.96)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", padding: "8px 6px calc(8px + env(safe-area-inset-bottom))" }}>
+      <div style={{ flexShrink: 0, display: "flex", justifyContent: "space-around", alignItems: "stretch", gap: 2, borderTop: "1px solid rgba(255,255,255,0.08)", background: "#0b0b0d", padding: "8px 6px calc(8px + env(safe-area-inset-bottom))" }}>
         {NAV_ITEMS.map(([id, label]) => {
           const active = tab === id;
           const pending = id === "payouts" ? (view.payouts || []).filter((p) => p.status === "ilmoitettu").length : 0;
@@ -936,30 +936,84 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
   );
 }
 
-function EarningsTab({ view }: { view: WorkerView }) {
-  const potentialWindows = useMemo(() => {
-    // total live windows × their rate = the most this worker could earn here.
-    let total = 0;
-    const floors = view.building.floors;
-    for (const f of floors) {
-      total += (view.marks[f]?.marks?.length || 0) + (view.customMarks[f]?.length || 0);
-    }
-    return total;
-  }, [view]);
+/** Worker home / overview — the motivating landing screen: clear team progress on
+ *  the contract (red) windows, your own windows + earnings, quick actions, and the
+ *  team standings. Replaces "just a map" as the first thing a worker sees. */
+function HomeTab({ view, setTab }: { view: WorkerView; setTab: (t: Tab) => void }) {
   const s = view.stats;
+  // Live RED (priority 1 = contract) progress, computed from the worker's own
+  // map data so it always matches what they see on the map.
+  const red = useMemo(() => {
+    let total = 0, washed = 0, all = 0, allWashed = 0;
+    for (const f of view.building.floors) {
+      const seeded = view.marks[f]?.marks || [];
+      seeded.forEach((m, idx) => {
+        const key = `${f}#${idx}`;
+        if (view.deleted[key]) return;
+        const done = view.statuses[key] === "pesty";
+        all += 1; if (done) allWashed += 1;
+        if (m.p === 1) { total += 1; if (done) washed += 1; }
+      });
+      (view.customMarks[f] || []).forEach((cm) => {
+        if (view.deleted[cm.key]) return;
+        const done = view.statuses[cm.key] === "pesty";
+        all += 1; if (done) allWashed += 1;
+        if (cm.p === 1) { total += 1; if (done) washed += 1; }
+      });
+    }
+    return { total, washed, all, allWashed, pct: total > 0 ? (washed / total) * 100 : 0 };
+  }, [view]);
+
+  const CIRC = 2 * Math.PI * 52;
   return (
-    <div style={{ height: "100%", overflowY: "auto", padding: 20 }}>
-      <div style={{ textAlign: "center", padding: "30px 0" }}>
-        <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase" }}>Kertynyt ansio</p>
-        <p style={{ fontSize: 48, fontWeight: 800, margin: "6px 0", color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(s.earnedCents)}</p>
-        <p style={{ color: "rgba(255,255,255,0.6)" }}>{s.washed} pestyä ikkunaa × {euro(view.worker.perWindowCents)}</p>
+    <div style={{ height: "100%", overflowY: "auto", WebkitOverflowScrolling: "touch", padding: 20 }}>
+      {/* Team progress on the contract (red) windows — the big motivator */}
+      <div style={{ display: "flex", alignItems: "center", gap: 18, padding: 18, borderRadius: 18, background: "linear-gradient(155deg, rgba(255,72,72,0.10), rgba(255,255,255,0.03))", border: "1px solid rgba(255,72,72,0.22)" }}>
+        <div style={{ position: "relative", width: 116, height: 116, flexShrink: 0 }}>
+          <svg width="116" height="116" viewBox="0 0 116 116" style={{ transform: "rotate(-90deg)" }}>
+            <circle cx="58" cy="58" r="52" fill="none" stroke="rgba(255,255,255,0.09)" strokeWidth="8" />
+            <circle cx="58" cy="58" r="52" fill="none" stroke="#ff6b6b" strokeWidth="8" strokeLinecap="round"
+              strokeDasharray={`${((red.pct / 100) * CIRC).toFixed(1)} ${CIRC.toFixed(1)}`} style={{ transition: "stroke-dasharray .6s ease" }} />
+          </svg>
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ fontSize: 26, fontWeight: 800, lineHeight: 1 }}>{Math.round(red.pct)}%</span>
+            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>pesty</span>
+          </div>
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ margin: 0, fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "#ff9b9b" }}>Sopimusikkunat (punaiset)</p>
+          <p style={{ margin: "4px 0 0", fontSize: 30, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+            {red.washed}<span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 600 }}> / {red.total}</span>
+          </p>
+          <p style={{ margin: "2px 0 0", fontSize: 12.5, color: "rgba(255,255,255,0.6)" }}>
+            {red.total - red.washed > 0 ? `Vielä ${red.total - red.washed} punaista pestävänä` : "Kaikki punaiset pesty! 🎉"}
+          </p>
+        </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+
+      {/* Your own contribution + earnings */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+        <div style={{ padding: 16, borderRadius: 14, background: "rgba(124,224,166,0.10)", border: "1px solid rgba(124,224,166,0.22)" }}>
+          <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Sinun ansiosi</p>
+          <p style={{ margin: "4px 0 0", fontSize: 26, fontWeight: 800, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(s.earnedCents)}</p>
+        </div>
+        <div style={{ padding: 16, borderRadius: 14, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
+          <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Sinun ikkunasi</p>
+          <p style={{ margin: "4px 0 0", fontSize: 26, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{s.washed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })}</p>
+        </div>
+      </div>
+
+      {/* Quick actions */}
+      <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+        <button onClick={() => setTab("map")} style={{ ...primaryBtn, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff" }}>Avaa kartta →</button>
+        <button onClick={() => setTab("hours")} style={{ ...primaryBtn, background: T.green }}>Kirjaa tunnit →</button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 16 }}>
         <Stat label="Tunteja" value={s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} />
         <Stat label="€ / tunti" value={s.hours > 0 ? euro(Math.round(s.eurPerHour * 100)) : "—"} />
-        <Stat label="Ikkunaa / tunti" value={s.hours > 0 ? s.windowsPerHour.toLocaleString("fi-FI", { maximumFractionDigits: 1 }) : "—"} />
-        <Stat label="Ikkunoita kohteessa" value={String(potentialWindows)} />
       </div>
+
       <PaydateProgress total={view.windowsTotal} washed={view.windowsWashed} />
       <Leaderboard view={view} />
       {!view.worker.trainee && <PathCard />}
@@ -1492,11 +1546,16 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
               <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", borderRadius: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
                 <div>
                   <p style={{ margin: 0, fontSize: 13.5, fontWeight: 600 }}>{dayMonth(s.end)}</p>
-                  <p style={{ margin: "2px 0 0", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{s.manual ? `Käsin kirjattu · ${fmtDuration(s.minutes)}` : `${s.windows} ikkunaa · ${fmtDuration(s.minutes)}`}</p>
+                  <p style={{ margin: "2px 0 0", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
+                    {s.manual
+                      ? `Käsin kirjattu · ${s.windows > 0 ? `${s.windows} ikkunaa · ` : ""}${fmtDuration(s.minutes)}`
+                      : `${s.windows} ikkunaa · ${fmtDuration(s.minutes)}`}
+                  </p>
                 </div>
-                {s.manual
-                  ? <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.55)", fontVariantNumeric: "tabular-nums" }}>{fmtDuration(s.minutes)}</span>
-                  : <span style={{ fontSize: 15, fontWeight: 700, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(s.earnedCents)}</span>}
+                {/* Show the day's earnings whenever windows were logged (timed or manual); a pure-hours manual day shows the duration. */}
+                {s.windows > 0
+                  ? <span style={{ fontSize: 15, fontWeight: 700, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(s.earnedCents)}</span>
+                  : <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.55)", fontVariantNumeric: "tabular-nums" }}>{fmtDuration(s.minutes)}</span>}
               </div>
             ))}
           </div>
@@ -1511,9 +1570,19 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
             <h2 style={{ margin: "8px 0 2px", fontSize: 22, fontWeight: 800, color: "#fff" }}>{recap.manual ? "Päivä kirjattu" : "Hyvää työtä!"}</h2>
             <p style={{ margin: "0 0 18px", fontSize: 13.5, color: "rgba(255,255,255,0.6)" }}>{recap.manual ? "Käsin kirjattu työpäivä" : "Päivän yhteenveto"}</p>
             {recap.manual ? (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, marginBottom: 16 }}>
-                <Stat label="Kesto" value={fmtDuration(recap.minutes)} />
-              </div>
+              // A manual day with windows logged shows both; pure hours show duration only.
+              recap.windows > 0 ? (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+                  <Stat label="Ikkunaa" value={String(recap.windows)} />
+                  <Stat label="Ansio" value={euro(recap.earnedCents)} />
+                  <Stat label="Kesto" value={fmtDuration(recap.minutes)} />
+                  <Stat label="€ / tunti" value={recap.minutes > 0 ? euro(Math.round((recap.earnedCents / (recap.minutes / 60)))) : "—"} />
+                </div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, marginBottom: 16 }}>
+                  <Stat label="Kesto" value={fmtDuration(recap.minutes)} />
+                </div>
+              )
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
                 <Stat label="Ikkunaa" value={String(recap.windows)} />

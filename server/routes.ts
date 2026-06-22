@@ -20,7 +20,7 @@ import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, type CrewMember,
 } from "@shared/crew";
-import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED } from "@shared/worker-agreements";
+import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED, TRAINEE_AGREEMENT_IDS, TRAINEE_AGREEMENT_VERSION } from "@shared/worker-agreements";
 import {
   computeTax, readVatStatus, readInPrepaymentRegister, WITHHOLDING_COMPANY,
   WITHHOLDING_NATURAL_PERSON, fmtPct, type TaxBreakdown,
@@ -3577,13 +3577,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     // gate. Matched by the linked login id / crew id, or first name as fallback.
     const trainee: TraineeInfo | undefined =
       traineeForUserId(member.linkedUserId) || traineeForUserId(member.id) || traineeForName(member.name);
+    // A trainee signs the palkaton työharjoittelusopimus; everyone else the full
+    // alihankkija set. Each has its own required-id list + version.
+    const requiredIds = trainee ? TRAINEE_AGREEMENT_IDS : REQUIRED_AGREEMENT_IDS;
+    const agreementVersion = trainee ? TRAINEE_AGREEMENT_VERSION : WORKER_AGREEMENT_VERSION;
     // Soft-start model: "in the app" (typed name) is decoupled from "has signed".
-    const signedAll = hasSignedAllAgreements(member, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION);
+    const signedAll = hasSignedAllAgreements(member, requiredIds, agreementVersion);
     const enteredApp = !!member.onboardedAt;
     // Until signing is gated, the dashboard opens on name alone. Once gated, an
-    // already-entered worker who hasn't signed the current set must do so — but a
-    // trainee is never forced into the independent-contractor agreement.
-    const needsToSign = !trainee && WORKER_AGREEMENTS_GATED && !signedAll;
+    // already-entered worker who hasn't signed their current set must do so — a
+    // trainee signs the harjoittelusopimus, an alihankkija the contractor set.
+    const needsToSign = WORKER_AGREEMENTS_GATED && !signedAll;
     // id → display name for every crew member, so the worker map can show WHO
     // washed each window ("Pesi Jani") and who left a note.
     const workerNames: Record<string, string> = {};
@@ -3619,7 +3623,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         sessions: (member.sessions || []).slice(-30).reverse(), // newest-first
         profile: member.profile ?? null,
         signedAgreementIds: member.agreements
-          .filter((a) => a.version === WORKER_AGREEMENT_VERSION)
+          .filter((a) => a.version === agreementVersion)
           .map((a) => a.agreementId),
         notes: member.notes,
         // The worker's own billing details (their Y-tunnus + IBAN), used to
@@ -3655,13 +3659,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // euros, so the worker still never sees the gig total/price/cap.
       windowsTotal,
       windowsWashed,
-      agreementVersion: WORKER_AGREEMENT_VERSION,
-      // A trainee signs no subcontractor agreements; everyone else the full set.
-      requiredAgreementIds: trainee ? [] : REQUIRED_AGREEMENT_IDS,
+      agreementVersion,
+      // A trainee signs the harjoittelusopimus; everyone else the alihankkija set.
+      requiredAgreementIds: requiredIds,
       // Whether signing is currently enforced. Drives the client flow: soft start
-      // (intro + name only) when false; full sign flow / banner when true. Trainees
-      // are never gated (they're not independent contractors).
-      agreementsGated: trainee ? false : WORKER_AGREEMENTS_GATED,
+      // (intro + name only) when false; full sign flow / banner when true.
+      agreementsGated: WORKER_AGREEMENTS_GATED,
     };
   }
 
@@ -3743,10 +3746,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
       const { job, project, member } = found;
       // Soft start: marking is open. Once signing is gated, block marking until
-      // the worker has signed the current agreement set (the dashboard banner
-      // drives them there).
-      if (WORKER_AGREEMENTS_GATED && !hasSignedAllAgreements(member, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION)) {
-        return res.status(403).json({ error: "Lue lisätiedot ja allekirjoita sopimukset ensin" });
+      // the worker has signed their current agreement set — a trainee signs the
+      // harjoittelusopimus, an alihankkija the contractor set (the dashboard
+      // banner drives them there).
+      const gateTrainee = traineeForUserId(member.linkedUserId) || traineeForUserId(member.id) || traineeForName(member.name);
+      const gateRequiredIds = gateTrainee ? TRAINEE_AGREEMENT_IDS : REQUIRED_AGREEMENT_IDS;
+      const gateVersion = gateTrainee ? TRAINEE_AGREEMENT_VERSION : WORKER_AGREEMENT_VERSION;
+      if (WORKER_AGREEMENTS_GATED && !hasSignedAllAgreements(member, gateRequiredIds, gateVersion)) {
+        return res.status(403).json({ error: "Lue lisätiedot ja allekirjoita sopimus ensin" });
       }
       const key = String(req.body?.key ?? "").slice(0, 64);
       const status = req.body?.status === "pesty" || req.body?.status === "kesken" ? req.body.status : "ei";

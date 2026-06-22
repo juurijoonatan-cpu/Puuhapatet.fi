@@ -333,8 +333,96 @@ const TIIMI: WorkerAgreement = {
 
 export const WORKER_AGREEMENTS: WorkerAgreement[] = [ALIHANKINTA, TIETOTURVA, ASIAKASSUOJA, TIIMI];
 
+// ─── Trainee (harjoittelija) — palkaton työharjoittelusopimus ───────────────────
+//
+// A trainee (e.g. Milja, a minor working under Matias' responsibility) is NOT an
+// independent subcontractor: unpaid, voluntary, supervised, no Y-tunnus, no
+// invoicing, no liability for damages (the responsible leader carries it). So a
+// trainee signs THIS agreement instead of the alihankkija set. Faithful to the
+// official "Puuhapatet · Palkaton työharjoittelusopimus · 2026-06" document.
+//
+// ⚠️ The trainee is a minor — the responsible leader / guardian must be present
+// and aware. Keep this in mind before relying on a purely electronic signature.
+
+export const TRAINEE_AGREEMENT_VERSION = "2026-06";
+
+const TYOHARJOITTELU: WorkerAgreement = {
+  id: "tyoharjoittelu",
+  title: "Palkaton työharjoittelusopimus",
+  tagline: "Palkaton, vapaaehtoinen harjoittelu · ohjaajan vastuulla · ei työsuhdetta",
+  intro:
+    "Tämä sopimus solmitaan Puuhapatet-brändin (jota edustavat perustajat Joonatan Juuri ja Matias " +
+    "Pitkänen) ja harjoittelijan välillä. Sopimus perustuu Puuhapatejen toimintaperiaatteisiin ja nuoria " +
+    "koskevaan lainsäädäntöön. Kyseessä on palkaton, vapaaehtoinen työharjoittelu, jonka tarkoituksena on " +
+    "käytännön kokemus ja oppiminen turvallisessa, ikätasoisessa ympäristössä. Nimetty ohjaaja vastaa " +
+    "harjoittelijasta täysimääräisesti koko jakson ajan.",
+  sections: [
+    {
+      no: "01",
+      title: "Harjoittelun luonne ja asema",
+      body: [
+        "Kyseessä on palkaton, vapaaehtoinen työharjoittelu. En ole työsuhteessa Puuhapatejen kanssa eikä minulle synny työsuhteen oikeuksia, kuten palkkaa, lomakorvausta tai sairausajan korvausta.",
+        "Harjoittelun tarkoitus on käytännön kokemus ja oppiminen Puuhapatejen toimintaympäristössä. Osallistuminen on täysin vapaaehtoista.",
+        "Nimetty ohjaajani (Matias Pitkänen) toimii harjoitteluohjaajana ja vastaa minusta täysimääräisesti koko jakson ajan.",
+      ],
+    },
+    {
+      no: "02",
+      title: "Ikärajat ja lain asettamat rajoitukset",
+      body: [
+        "Sallitut tehtävät: ikkunanpesu maantasolta tai matalalta; välineiden kuljetus, järjestely ja huolto; apuhenkilönä toimiminen ohjaajan välittömässä valvonnassa; dokumentointi, valokuvaus ja merkinnät työmaa-applikaatiossa.",
+        "Kielletyt tehtävät: tikkailla tai telineillä työskentely ja muut putoamisriskin sisältävät työt (alle 18-v.); yksin tai valvomatta työskentely (ohjaajan on oltava paikalla koko ajan); raskas nostotyö tai ergonomisesti kuormittavat tehtävät; kemikaalien käsittely ilman ohjausta.",
+        "Työaika: koulupäivänä enintään 2 tuntia, loma-aikana enintään 7 tuntia päivässä ja 35 tuntia viikossa; ei yötyötä (klo 20–6); tauko vähintään 30 min yli 4,5 tunnin vuorossa.",
+      ],
+    },
+    {
+      no: "03",
+      title: "Vastuu, valvonta ja turvallisuus",
+      body: [
+        "Ohjaaja vastaa minusta täysimääräisesti: turvallisuudesta, ohjauksesta, tehtävien ikäsopivuudesta ja lakisääteisten rajoitusten noudattamisesta. Minua ei jätetä yksin työkohteeseen missään olosuhteissa.",
+        "Turvallisuus on aina etusijalla: minulla on oikeus kieltäytyä epäturvallisesta tehtävästä ilman seuraamuksia, ja tarvittavat suojavälineet toimitetaan minulle. Työtapaturmasta ilmoitetaan välittömästi ja se kirjataan.",
+        "Vahinkovastuu: en ole korvausvelvollinen tavanomaisessa työssä syntyneistä vahingoista. Ohjaaja (Matias Pitkänen) on vastuussa aiheuttamistani vahingoista.",
+      ],
+    },
+    {
+      no: "04",
+      title: "Luottamuksellisuus ja asiakassuoja",
+      body: [
+        "Käsittelen asiakas- ja kohdetietoja luottamuksellisesti: asiakasosoitteita, nimiä tai tietoja ei jaeta ulkopuolisille eikä somessa.",
+        "Valokuvat ja dokumentit pysyvät Puuhapatejen sisäisessä käytössä, enkä ota asiakkaisiin suoraan yhteyttä ilman Puuhapatejen lupaa.",
+        "Luottamuksellisuusvelvoite jatkuu harjoittelujakson päättymisen jälkeen.",
+      ],
+    },
+    {
+      no: "05",
+      title: "Puuhapatejen sitoumukset ja sopimuksen kesto",
+      body: [
+        "Puuhapatet sitoutuu tarjoamaan turvallisen, ikätasoisen ja opettavaisen harjoittelukokemuksen, antamaan harjoittelusuosituskirjeen jakson jälkeen (jos harjoittelu sujuu hyvin), maksamaan sovitut kulut sekä keskeyttämään harjoittelun välittömästi, mikäli tehtävät osoittautuvat sopimattomiksi.",
+        "Sopimus on voimassa sovitun harjoittelujakson ajan. Harjoittelu voidaan keskeyttää milloin tahansa kummankin osapuolen toimesta ilman perusteluvelvollisuutta.",
+        "Sopimukseen sovelletaan Suomen lakia, ja erimielisyydet pyritään ratkaisemaan ensisijaisesti neuvottelemalla.",
+      ],
+    },
+  ],
+  clauses: [
+    { id: "luonne", text: "Ymmärrän, että kyseessä on palkaton, vapaaehtoinen työharjoittelu — ei työsuhde — eikä minulle synny palkkaa tai työsuhteen oikeuksia." },
+    { id: "rajoitukset", text: "Sitoudun tekemään vain sallittuja, ikätasoisia tehtäviä ohjaajan valvonnassa enkä työskentele tikkailla, telineillä, yksin tai putoamisriskissä." },
+    { id: "turvallisuus", text: "Turvallisuus on etusijalla: minulla on oikeus kieltäytyä epäturvallisesta tehtävästä, ja ymmärrän että ohjaaja (Matias Pitkänen) vastaa minusta ja aiheuttamistani vahingoista." },
+    { id: "luottamus", text: "Käsittelen asiakas- ja kohdetietoja luottamuksellisesti enkä jaa niitä ulkopuolisille tai somessa — myös harjoittelun jälkeen." },
+  ],
+  accept:
+    "Olen lukenut palkattoman työharjoittelusopimuksen ja hyväksyn sen ehdot. Allekirjoittamalla vahvistan osallistuvani vapaaehtoisesti.",
+};
+
+export const TRAINEE_AGREEMENTS: WorkerAgreement[] = [TYOHARJOITTELU];
+
+/** All agreement ids a trainee must have signed (current version) to pass the gate. */
+export const TRAINEE_AGREEMENT_IDS = TRAINEE_AGREEMENTS.map((a) => a.id);
+
+/** Every agreement (subcontractor + trainee) — used to resolve an id to its document. */
+export const ALL_AGREEMENTS: WorkerAgreement[] = [...WORKER_AGREEMENTS, ...TRAINEE_AGREEMENTS];
+
 export function agreementById(id: string): WorkerAgreement | undefined {
-  return WORKER_AGREEMENTS.find((a) => a.id === id);
+  return ALL_AGREEMENTS.find((a) => a.id === id);
 }
 
 /** All agreement ids a worker must have signed (current version) to pass the gate. */

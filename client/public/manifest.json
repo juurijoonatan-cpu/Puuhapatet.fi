@@ -3,6 +3,7 @@
   "short_name": "Puuhapatet",
   "description": "Kotitalouspalvelut Espoossa ja Helsingissä — ikkunapesu, nurmikko, pihahoito.",
   "start_url": "/admin/dashboard",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#2d5016",
   "theme_color": "#2d5016",

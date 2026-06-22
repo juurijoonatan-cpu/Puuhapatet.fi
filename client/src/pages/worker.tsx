@@ -770,7 +770,7 @@ function EarningsTab({ view }: { view: WorkerView }) {
         <Stat label="Ikkunaa / tunti" value={s.hours > 0 ? s.windowsPerHour.toLocaleString("fi-FI", { maximumFractionDigits: 1 }) : "—"} />
         <Stat label="Ikkunoita kohteessa" value={String(potentialWindows)} />
       </div>
-      <PaydateProgress total={view.windowsTotal} washed={view.windowsWashed} />
+      <PaydateProgress total={view.windowsTotal} washed={view.windowsWashed} workerId={view.worker.id} />
       <Leaderboard view={view} />
       <PathCard />
       <InstallHint />
@@ -887,14 +887,17 @@ function AccessCard() {
 
 /** Shared "paydate progress" — how far the team is toward the next payment
  *  milestone (the gig is billed/paid in PAY_PERIODS instalments). Window counts
- *  only, never euros — the worker never sees the gig total/price/cap. */
-function PaydateProgress({ total, washed }: { total: number; washed: number }) {
+ *  only; 1575 € per period shown only to joonatan/matias. */
+function PaydateProgress({ total, washed, workerId }: { total: number; washed: number; workerId?: string }) {
   const p = computePayProgress(total, washed);
   if (p.total <= 0) return null;
+  const showEuro = workerId === "joonatan" || workerId === "matias";
   return (
     <div style={{ marginTop: 26, padding: 16, borderRadius: 16, background: "linear-gradient(155deg, rgba(124,224,166,0.10), rgba(255,255,255,0.03))", border: "1px solid rgba(124,224,166,0.22)" }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10 }}>
-        <p style={{ margin: 0, fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7CE0A6" }}>Maksuerä {p.currentPeriod}/{p.periods}</p>
+        <p style={{ margin: 0, fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7CE0A6" }}>
+          Maksuerä {p.currentPeriod}/{p.periods}{showEuro ? " · 1 575 €" : ""}
+        </p>
         <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", fontVariantNumeric: "tabular-nums" }}>{p.washed}/{p.total} ikkunaa</span>
       </div>
       <div style={{ position: "relative", height: 12, borderRadius: 999, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>

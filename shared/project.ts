@@ -100,6 +100,7 @@ export interface ProjectData {
   marks: ProjMarksData;                            // seeded base marks (persisted)
   statuses: Record<string, WindowStatus>;          // key → status (non-"ei" only)
   washedBy: Record<string, string>;                // key → worker id who last washed it
+  keskenBy?: Record<string, string>;               // key → worker id who marked it "kesken"
   customMarks: Record<string, ProjCustomMark[]>;   // floor → manually added marks
   notes?: Record<string, ProjMapNote[]>;           // floor → navigation markers / notes
   activeZone?: ProjActiveZone | null;              // where work is happening right now

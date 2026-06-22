@@ -499,6 +499,7 @@ export default function AdminProjectPage() {
             onMoveMarkCommit={onMoveMark}
             onResetFloor={onResetFloor}
             washedBy={project.washedBy}
+            keskenBy={project.keskenBy}
             workerNames={workerNames}
             workers={gigWorkers}
             currentWorkerId={effectiveWasher}

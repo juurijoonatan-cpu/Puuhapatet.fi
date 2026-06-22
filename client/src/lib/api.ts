@@ -39,6 +39,7 @@ export interface WorkerView {
   marks: ProjMarksData;
   statuses: Record<string, WindowStatus>;
   washedBy: Record<string, string>;
+  keskenBy: Record<string, string>;
   /** crew id → display name, for the "who washed / who noted this" labels. */
   workerNames: Record<string, string>;
   /** Host info notes (ladders, hazards, storage, …) + worker-added notes. */

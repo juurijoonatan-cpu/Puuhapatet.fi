@@ -60,7 +60,10 @@ export function AdminNav() {
 
   return (
     <>
-      <header className="fixed top-0 left-0 right-0 z-50 glass-nav md:hidden">
+      <header
+        className="fixed top-0 left-0 right-0 z-50 glass-nav md:hidden"
+        style={{ paddingTop: "env(safe-area-inset-top)" }}
+      >
         <div className="flex items-center justify-center h-14 px-4">
           <span className="text-lg font-semibold text-foreground tracking-tight">
             Puuhapatet <span className="text-muted-foreground font-normal text-sm">Admin</span>
@@ -68,8 +71,9 @@ export function AdminNav() {
         </div>
       </header>
 
-      <nav 
-        className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 glass-nav rounded-[20px] px-2 py-2 md:hidden"
+      <nav
+        className="fixed left-1/2 -translate-x-1/2 z-50 glass-nav rounded-[20px] px-2 py-2 md:hidden"
+        style={{ bottom: "calc(1rem + env(safe-area-inset-bottom))" }}
         role="navigation"
         aria-label="Admin-valikko"
       >

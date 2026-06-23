@@ -15,7 +15,7 @@ import {
 } from "./ai";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, type ProjectData } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, MAX_OBSERVATION_IMAGE_LEN, type ProjectData } from "@shared/project";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, type CrewMember,
@@ -173,6 +173,12 @@ function resolveBuyer(billerId?: string | null): BuyerSnapshot {
     ?? resolveBrandBiller(DEFAULT_BILLER_ID)
     ?? BRAND_BILLERS[0];
   return billerToBuyer(found);
+}
+
+/** Is this crew member a trainee (harjoittelija)? Matched by linked login / id /
+ *  first name. Trainees aren't bound by the subcontractor signing gate. */
+function isCrewTrainee(member: CrewMember): boolean {
+  return !!(traineeForUserId(member.linkedUserId) || traineeForUserId(member.id) || traineeForName(member.name));
 }
 // Optional: protect the calendar feed with a token (set CALENDAR_TOKEN env var on Render)
 const CALENDAR_TOKEN = process.env.CALENDAR_TOKEN || null;
@@ -3071,6 +3077,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         // Navigation markers + the live "work happening here now" highlight so the
         // customer can see ladders/entrances/hazards and where work is in progress.
         notes: proj.notes ?? {},
+        // Per-window observations the workers left (text + optional photo) — shown
+        // as small dismissible popups on the customer map.
+        observations: proj.observations ?? {},
         activeZone: proj.activeZone ?? null,
       } : null;
       // Only expose what the customer is meant to see — no internal billing notes.
@@ -3646,8 +3655,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // work and add simple notes; they cannot move/delete windows.
       statuses: project.statuses,
       washedBy: project.washedBy,
+      keskenBy: project.keskenBy ?? {},
       workerNames,
       notes: project.notes ?? {},
+      observations: project.observations ?? {},
       activeZone: project.activeZone ?? null,
       customMarks: project.customMarks,
       posOverrides: project.posOverrides,
@@ -3745,11 +3756,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const found = await findJobByCrewToken(String(req.params.token));
       if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
       const { job, project, member } = found;
-      // Soft start: marking is open. Once signing is gated, block marking until an
-      // alihankkija has signed the current set (the dashboard banner drives them
-      // there). A trainee (e.g. Milja) signs nothing, so they are never blocked.
-      const gateTrainee = traineeForUserId(member.linkedUserId) || traineeForUserId(member.id) || traineeForName(member.name);
-      if (!gateTrainee && WORKER_AGREEMENTS_GATED && !hasSignedAllAgreements(member, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION)) {
+      // Soft start: marking is open. Once signing is gated, block marking until
+      // the worker has signed the current agreement set (the dashboard banner
+      // drives them there). Trainees are never gated (they sign no subcontractor
+      // agreement) — they can mark windows straight away.
+      if (!isCrewTrainee(member) && WORKER_AGREEMENTS_GATED && !hasSignedAllAgreements(member, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION)) {
         return res.status(403).json({ error: "Lue lisätiedot ja allekirjoita sopimukset ensin" });
       }
       const key = String(req.body?.key ?? "").slice(0, 64);
@@ -3761,16 +3772,53 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         if (!project.washedBy[key] || project.washedBy[key] === member.id) {
           delete project.statuses[key];
           delete project.washedBy[key];
+          if (project.keskenBy) delete project.keskenBy[key];
         }
       } else {
         project.statuses[key] = status;
-        if (status === "pesty") project.washedBy[key] = member.id;
-        else delete project.washedBy[key];
+        if (status === "pesty") {
+          project.washedBy[key] = member.id;
+          if (project.keskenBy) delete project.keskenBy[key];
+        } else if (status === "kesken") {
+          delete project.washedBy[key];
+          project.keskenBy = project.keskenBy ?? {};
+          project.keskenBy[key] = member.id;
+        } else {
+          delete project.washedBy[key];
+          if (project.keskenBy) delete project.keskenBy[key];
+        }
       }
       const floor = key.split("#")[0];
       const p: 1 | 2 = req.body?.p === 2 ? 2 : 1;
       project.log = [{ floor, key, p, status, ts: Date.now(), by: member.id }, ...(project.log || [])].slice(0, 200);
 
+      const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
+      res.json({ ok: true, view: workerView(saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Worker leaves an OBSERVATION about a specific window (text + optional photo).
+  // Keyed by the window key, same as statuses. Empty text + no image clears it.
+  // Shown to the customer as a small dismissible popup on that window's dot.
+  app.post("/api/crew/:token/window-observation", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      if (!isCrewTrainee(member) && WORKER_AGREEMENTS_GATED && !hasSignedAllAgreements(member, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION)) {
+        return res.status(403).json({ error: "Lue lisätiedot ja allekirjoita sopimukset ensin" });
+      }
+      const key = String(req.body?.key ?? "").slice(0, 64);
+      if (!key) return res.status(400).json({ error: "key puuttuu" });
+      const text = String(req.body?.text ?? "").slice(0, 1000).trim();
+      const img = typeof req.body?.imageDataUrl === "string" && req.body.imageDataUrl.startsWith("data:image/")
+        ? req.body.imageDataUrl.slice(0, MAX_OBSERVATION_IMAGE_LEN) : undefined;
+      project.observations = project.observations || {};
+      if (!text && !img) delete project.observations[key];
+      else project.observations[key] = { text, imageDataUrl: img, by: member.id, ts: Date.now() };
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
       res.json({ ok: true, view: workerView(saved, savedMember) });

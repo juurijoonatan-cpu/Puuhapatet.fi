@@ -97,6 +97,13 @@ export default function WorkerPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Sign out — drop the unlock flag and either re-lock (if a PIN is set) or leave.
+  const logout = useCallback(() => {
+    try { sessionStorage.removeItem(`pp_crew_${token}`); } catch {}
+    if (view?.worker.hasPin) setStatus("locked");
+    else window.location.href = "/";
+  }, [token, view]);
+
   if (status === "loading") {
     return (
       <Centered>
@@ -147,7 +154,7 @@ export default function WorkerPage() {
     return <Onboarding token={token} view={view} resign onDone={(v) => setView(v)} />;
   }
 
-  return <Dashboard token={token} view={view} setView={setView} reload={load} />;
+  return <Dashboard token={token} view={view} setView={setView} reload={load} onLogout={logout} />;
 }
 
 // ─── Install as a phone app (PWA), scoped to the worker dashboard ─────────────
@@ -807,7 +814,7 @@ function NavIcon({ name, color }: { name: Tab; color: string }) {
   }
 }
 
-function Dashboard({ token, view, setView, reload }: { token: string; view: WorkerView; setView: (v: WorkerView) => void; reload: () => void }) {
+function Dashboard({ token, view, setView, reload, onLogout }: { token: string; view: WorkerView; setView: (v: WorkerView) => void; reload: () => void; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
   // Maksut + Info aren't bottom-nav tabs anymore — they open as sub-screens from
   // Koti, keeping the nav to three simple destinations.
@@ -841,6 +848,12 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
     if (res.ok && res.data?.view) setView(res.data.view);
   }, [token, setView]);
 
+  // Per-window observation (text + optional photo) the worker leaves on a window.
+  const setObservation = useCallback(async (key: string, text: string, imageDataUrl?: string) => {
+    const res = await api.crewSetWindowObservation(token, key, text, imageDataUrl);
+    if (res.ok && res.data?.view) setView(res.data.view);
+  }, [token, setView]);
+
   // Worker map notes — add a "huomio" / "tikkaat" marker, edit or delete own.
   const addNote = useCallback((floor: string, x: number, y: number, kind: string): void => {
     (async () => {
@@ -863,9 +876,16 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
     <div className="fr8-root" style={{ position: "fixed", inset: 0, background: "#060607", color: "#fff", display: "flex", flexDirection: "column", fontFamily: FONT, overflow: "hidden", overscrollBehavior: "none", WebkitTapHighlightColor: "transparent", WebkitUserSelect: "none", userSelect: "none" }}>
       {/* Header */}
       <div style={{ flexShrink: 0, padding: "calc(12px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 12px max(16px, env(safe-area-inset-left))", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-        <div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
           <p style={{ margin: 0, fontWeight: 700, fontSize: 15 }}>{view.worker.name || "Työntekijä"}</p>
           <p style={{ margin: 0, fontSize: 11.5, color: "rgba(255,255,255,0.5)" }}>{view.building.name || "Puuhapatet"}{view.building.address ? ` · ${view.building.address}` : ""}</p>
+          <button
+            onClick={onLogout}
+            style={{ marginTop: 3, alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.35)", fontSize: 10.5, fontFamily: FONT, padding: 0 }}
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
+            Kirjaudu ulos
+          </button>
         </div>
         <div style={{ textAlign: "right" }}>
           <p style={{ margin: 0, fontSize: 20, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: "#7CE0A6" }}>{euro(view.stats.earnedCents)}</p>
@@ -899,12 +919,16 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
             canAddNotes
             hideMoney
             washedBy={view.washedBy}
+            keskenBy={view.keskenBy}
             workerNames={view.workerNames}
             currentWorkerId={view.worker.id}
             notes={view.notes}
             onAddNote={addNote}
             onUpdateNote={updateNote}
             onDeleteNote={deleteNote}
+            observations={view.observations}
+            canObserve
+            onSetObservation={setObservation}
             activeZone={view.activeZone}
           />
         )}
@@ -1067,8 +1091,7 @@ function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
         <Stat label="Tunteja" value={s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} />
         <Stat label="€ / tunti" value={s.hours > 0 ? euro(Math.round(s.eurPerHour * 100)) : "—"} />
       </div>
-
-      <PaydateProgress total={view.windowsTotal} washed={view.windowsWashed} />
+      <PaydateProgress total={view.windowsTotal} washed={view.windowsWashed} workerId={view.worker.id} />
       <Leaderboard view={view} />
       {!view.worker.trainee && <PathCard />}
       <InstallHint />
@@ -1184,14 +1207,17 @@ function AccessCard() {
 
 /** Shared "paydate progress" — how far the team is toward the next payment
  *  milestone (the gig is billed/paid in PAY_PERIODS instalments). Window counts
- *  only, never euros — the worker never sees the gig total/price/cap. */
-function PaydateProgress({ total, washed }: { total: number; washed: number }) {
+ *  only; 1575 € per period shown only to joonatan/matias. */
+function PaydateProgress({ total, washed, workerId }: { total: number; washed: number; workerId?: string }) {
   const p = computePayProgress(total, washed);
   if (p.total <= 0) return null;
+  const showEuro = workerId === "joonatan" || workerId === "matias";
   return (
     <div style={{ marginTop: 26, padding: 16, borderRadius: 16, background: "linear-gradient(155deg, rgba(124,224,166,0.10), rgba(255,255,255,0.03))", border: "1px solid rgba(124,224,166,0.22)" }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10 }}>
-        <p style={{ margin: 0, fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7CE0A6" }}>Maksuerä {p.currentPeriod}/{p.periods}</p>
+        <p style={{ margin: 0, fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7CE0A6" }}>
+          Maksuerä {p.currentPeriod}/{p.periods}{showEuro ? " · 1 575 €" : ""}
+        </p>
         <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", fontVariantNumeric: "tabular-nums" }}>{p.washed}/{p.total} ikkunaa</span>
       </div>
       <div style={{ position: "relative", height: 12, borderRadius: 999, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>

@@ -15,7 +15,7 @@ export interface PayProgress {
   total: number;        // ikkunoita koko keikassa (scope)
   washed: number;       // pesty tähän mennessä (tiimi yhteensä)
   periods: number;      // maksuerien määrä
-  perPeriod: number;    // ikkunaa / maksuerä (= ceil(total/periods))
+  perPeriod: number;    // ikkunaa tässä erässä (voi vaihdella erien välillä)
   currentPeriod: number;// monesko erä menossa (1..periods)
   inPeriod: number;     // pesty tässä erässä
   toNext: number;       // ikkunaa seuraavaan maksuun
@@ -23,17 +23,40 @@ export interface PayProgress {
   done: boolean;        // koko keikka pesty
 }
 
+/**
+ * Jakaa n ikkunaa k maksuerään niin, että aiemmat erät saavat vähemmän
+ * (floor ensin, jaettavat ylijäämäikkunat lisätään viimeisiin eriin).
+ * Esim. 170 / 4 → [42, 42, 43, 43].
+ */
 export function computePayProgress(total: number, washed: number, periods: number = PAY_PERIODS): PayProgress {
   const t = Math.max(0, Math.floor(total || 0));
   const w = Math.max(0, Math.min(t || Infinity, Math.floor(washed || 0)));
   const n = Math.max(1, Math.floor(periods || PAY_PERIODS));
-  const perPeriod = t > 0 ? Math.ceil(t / n) : 0;
   const done = t > 0 && w >= t;
-  // Which instalment we're filling toward (cap at the last one).
-  const rawPeriod = perPeriod > 0 ? Math.floor(w / perPeriod) + 1 : 1;
-  const currentPeriod = Math.min(n, rawPeriod);
-  const inPeriod = perPeriod > 0 ? w - (currentPeriod - 1) * perPeriod : 0;
-  const toNext = Math.max(0, perPeriod - inPeriod);
-  const pct = perPeriod > 0 ? Math.min(1, inPeriod / perPeriod) : 0;
-  return { total: t, washed: w, periods: n, perPeriod, currentPeriod, inPeriod, toNext, pct, done };
+
+  if (t === 0) {
+    return { total: 0, washed: 0, periods: n, perPeriod: 0, currentPeriod: 1, inPeriod: 0, toNext: 0, pct: 0, done: false };
+  }
+
+  const base = Math.floor(t / n);
+  const remainder = t % n;
+  // Period i (0-based) size: base for the first (n - remainder) periods, base+1 for the rest.
+  const periodSize = (i: number) => base + (i >= n - remainder ? 1 : 0);
+
+  let cumulative = 0;
+  for (let i = 0; i < n; i++) {
+    const size = periodSize(i);
+    const nextCumulative = cumulative + size;
+    if (w < nextCumulative || i === n - 1) {
+      const currentPeriod = i + 1;
+      const inPeriod = w - cumulative;
+      const toNext = Math.max(0, size - inPeriod);
+      const pct = size > 0 ? Math.min(1, inPeriod / size) : 0;
+      return { total: t, washed: w, periods: n, perPeriod: size, currentPeriod, inPeriod, toNext, pct, done };
+    }
+    cumulative = nextCumulative;
+  }
+
+  // Unreachable, but TS needs a return.
+  return { total: t, washed: w, periods: n, perPeriod: base, currentPeriod: n, inPeriod: 0, toNext: 0, pct: 1, done };
 }

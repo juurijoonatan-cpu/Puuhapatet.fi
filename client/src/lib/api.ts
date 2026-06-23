@@ -42,10 +42,13 @@ export interface WorkerView {
   marks: ProjMarksData;
   statuses: Record<string, WindowStatus>;
   washedBy: Record<string, string>;
+  keskenBy: Record<string, string>;
   /** crew id → display name, for the "who washed / who noted this" labels. */
   workerNames: Record<string, string>;
   /** Host info notes (ladders, hazards, storage, …) + worker-added notes. */
   notes: Record<string, import("@shared/project").ProjMapNote[]>;
+  /** Per-window observations (text + optional photo) keyed by window key. */
+  observations: Record<string, import("@shared/project").ProjWindowObservation>;
   /** The single "work happening here now" highlight (read-only for workers). */
   activeZone: import("@shared/project").ProjActiveZone | null;
   customMarks: Record<string, ProjCustomMark[]>;
@@ -138,6 +141,7 @@ export interface GigPublicView {
     posOverrides: Record<string, { x: number; y: number }>;
     deleted: Record<string, boolean>;
     notes?: Record<string, import("@shared/project").ProjMapNote[]>;
+    observations?: Record<string, import("@shared/project").ProjWindowObservation>;
     activeZone?: import("@shared/project").ProjActiveZone | null;
   } | null;
   // Contract & signing gate
@@ -735,6 +739,10 @@ export const api = {
 
   crewAddNote: (token: string, text: string) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/note`, { text }),
+
+  // Per-window observation (text + optional photo). Empty text + no image clears it.
+  crewSetWindowObservation: (token: string, key: string, text: string, imageDataUrl?: string) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/window-observation`, { key, text, imageDataUrl }),
 
   // Worker map notes (simple shared markers on the floor plan).
   crewAddMapNote: (token: string, floor: string, x: number, y: number, kind: string, text?: string) =>

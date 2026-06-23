@@ -505,9 +505,16 @@ export default function AdminProjectPage() {
   // on the dashboard, with no euro — their pay is settled through the leader (Matias).
   // This maps a trainee id → the leader's display name for that "palkka <leader>" note.
   const traineeInfo: Record<string, { leaderName: string }> = {};
+  // Leader id → the trainee slices folded into their COMBINED pay, so the leader's card
+  // can break the total down ("sis. Milja 6 ikk · 225 €" — how much of the combined sum
+  // is the trainee's work). Each trainee window is worth the full deal rate.
+  const traineeShareByLeader: Record<string, { name: string; washed: number; cents: number }[]> = {};
   for (const st of baseStatsRaw) {
     const lead = leaderOf(st.worker);
-    if (lead) traineeInfo[st.worker] = { leaderName: resolveName(lead) };
+    if (lead) {
+      traineeInfo[st.worker] = { leaderName: resolveName(lead) };
+      if (st.washed > 0) (traineeShareByLeader[lead] ||= []).push({ name: resolveName(st.worker), washed: st.washed, cents: Math.round(st.washed * dealTotalCents) });
+    }
   }
 
   // Founders appear even with 0 own windows — they still earn the profit share.
@@ -579,7 +586,7 @@ export default function AdminProjectPage() {
       )}
       <main style={{ position: "relative", zIndex: 10, height: "calc(100% - 62px)" }}>
         {tab === "dashboard" && (
-          <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} onSetEarnings={setWorkerEarnings} traineeInfo={traineeInfo} />
+          <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} onSetEarnings={setWorkerEarnings} traineeInfo={traineeInfo} traineeShareByLeader={traineeShareByLeader} />
         )}
         {tab === "floor" && (
           <FloorView

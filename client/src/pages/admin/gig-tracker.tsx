@@ -414,16 +414,16 @@ export default function AdminGigTrackerPage() {
               <Card className="p-4 bg-card border-0 premium-shadow mb-4">
                 <div className="flex items-center justify-between">
                   <span className="flex items-center gap-2 text-sm font-medium text-foreground">
-                    <Receipt className="w-4 h-4 text-muted-foreground" /> Hinta &amp; katto
+                    <Receipt className="w-4 h-4 text-muted-foreground" /> Sopimushinta
                   </span>
                   <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
                     🔒 Sovittu sopimuksessa
                   </span>
                 </div>
                 <p className="mt-3 text-xs text-muted-foreground">
-                  Allekirjoitettu kiinteä hinta. {eurFromCents(Math.round(deal.pricePerWindow * 100))} per punainen ikkuna,
-                  kokonaiskatto {eurFromCents(deal.capCents)}. Keltaiset ikkunat eivät kuulu tähän sopimukseen.
-                  Hintaa ei voi muokata.
+                  Allekirjoitettu kiinteä kokonaishinta {eurFromCents(deal.capCents)} — laskutetaan neljässä yhtä suuressa
+                  erässä ({eurFromCents(Math.round(deal.capCents / 4))} / erä). Vain punaiset ikkunat kuuluvat sopimukseen,
+                  keltaiset eivät. Hintaa ei voi muokata.
                 </p>
               </Card>
             );

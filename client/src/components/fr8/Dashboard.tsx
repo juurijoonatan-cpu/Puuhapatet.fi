@@ -20,6 +20,9 @@ interface Props {
    *  OWN windows/hours card here, but no euro: their pay stays combined with the
    *  leader, so we only show a "palkka <leader>" note instead of earnings. */
   traineeInfo?: Record<string, { leaderName: string }>;
+  /** leader id → the trainee slices folded into their COMBINED pay, so the leader's
+   *  card can break the total down ("sis. Milja 6 ikk · 225 €"). */
+  traineeShareByLeader?: Record<string, { name: string; washed: number; cents: number }[]>;
 }
 
 function fmt(n: number) { return Math.round(n).toLocaleString("fi-FI"); }
@@ -56,7 +59,7 @@ const mono: React.CSSProperties = {
   color: "rgba(255,255,255,0.4)",
 };
 
-export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeInfo }: Props) {
+export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeInfo, traineeShareByLeader }: Props) {
   const m = useIsMobile();
   const [showLog, setShowLog] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -77,7 +80,6 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   // Money model: a signed deal accrues only on the billable priority (red) and
   // is capped at the agreed total; an open gig bills every washed window.
   const billing = deal ? computeDealBilling(project, deal) : null;
-  const accruedEur = billing ? billing.accruedCents / 100 : 0;
   const capEur = billing ? billing.capCents / 100 : 0;
   const all = allPoints(project);
   const log = project.log;
@@ -127,6 +129,14 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   const payTotal = deal ? (billing?.billableTotal ?? 0) : total;
   const payWashed = deal ? (billing?.billableWashed ?? 0) : washed;
   const payP = computePayProgress(payTotal, payWashed);
+
+  // Money is taken in whole instalments (€6300 / 4 = €1575 each), so "KERTYNYT SUMMA"
+  // steps by COMPLETED erät — not the linear window fraction, which drifts to e.g.
+  // 1 565,22 €. One erä done → 1 575 €, all four → 6 300 €.
+  const instalmentCents = billing ? Math.round(billing.capCents / payP.periods) : 0;
+  const completedInstalments = payP.done ? payP.periods : Math.max(0, payP.currentPeriod - 1);
+  const dealAccruedEur = (completedInstalments * instalmentCents) / 100;
+  const dealCollectedPct = payP.periods > 0 ? (completedInstalments / payP.periods) * 100 : 0;
 
   const activity = log.slice(0, 5).map((l) => {
     const rgb = colorRgb(l.p, l.status);
@@ -200,23 +210,23 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "10px", flexWrap: "wrap" }}>
               <div style={{ ...mono, minWidth: 0 }}>{deal ? "KERTYNYT SUMMA" : "LIIKEVAIHTO"}</div>
               <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10.5px", color: "rgba(255,255,255,0.4)", flexShrink: 0, whiteSpace: "nowrap" }}>
-                {euroUnit(PRICE)} / {deal ? "PUNAINEN" : "IKKUNA"}
+                {deal ? `${euro(instalmentCents / 100)} / ERÄ` : `${euroUnit(PRICE)} / IKKUNA`}
               </div>
             </div>
             <div>
-              <div style={{ fontSize: "46px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{euro(deal ? accruedEur : washed * PRICE)}</div>
+              <div style={{ fontSize: "46px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{euro(deal ? dealAccruedEur : washed * PRICE)}</div>
               <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.45)", marginTop: "4px" }}>
-                / {euro(deal ? capEur : total * PRICE)} {deal ? "kokonaishinta (kiinteä)" : "sopimusarvo"}
+                / {euro(deal ? capEur : total * PRICE)} {deal ? "kiinteä kokonaishinta" : "sopimusarvo"}
                 {deal && <span style={{ display: "inline-flex", alignItems: "center", gap: 4, marginLeft: 8, padding: "1px 7px", borderRadius: 7, background: "rgba(95,224,138,0.12)", border: "1px solid rgba(95,224,138,0.3)", color: "#9ff0bd", fontSize: "10px", fontWeight: 600 }}>🔒 sovittu hinta</span>}
               </div>
             </div>
             <div>
               <div style={{ height: "9px", borderRadius: "6px", background: "rgba(255,255,255,0.08)", overflow: "hidden", marginBottom: "9px" }}>
-                <div style={{ width: `${(deal ? billing!.pct : pct).toFixed(1)}%`, height: "100%", borderRadius: "6px", background: "linear-gradient(90deg,rgba(255,255,255,0.55),#fff)", boxShadow: "0 0 12px rgba(255,255,255,0.4)", transition: "width .6s" }} />
+                <div style={{ width: `${(deal ? dealCollectedPct : pct).toFixed(1)}%`, height: "100%", borderRadius: "6px", background: "linear-gradient(90deg,rgba(255,255,255,0.55),#fff)", boxShadow: "0 0 12px rgba(255,255,255,0.4)", transition: "width .6s" }} />
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10.5px", color: "rgba(255,255,255,0.45)" }}>
-                <span>{deal ? `${billing!.billableWashed} / ${billing!.billableTotal} punaista` : `${washed} × ${euroUnit(PRICE)}`}</span>
-                <span>{Math.round(deal ? billing!.pct : pct)} % {deal ? "valmis" : "kerätty"}</span>
+                <span>{deal ? `${completedInstalments}/${payP.periods} erää · ${billing!.billableWashed}/${billing!.billableTotal} punaista` : `${washed} × ${euroUnit(PRICE)}`}</span>
+                <span>{Math.round(deal ? dealCollectedPct : pct)} % kerätty</span>
               </div>
             </div>
             {/* Internal margin — founders only. The fixed €6300 spread over the live red
@@ -347,6 +357,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                         <span>{s.hours > 0 ? `${s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} h` : "0 h"}</span>
                       </div>
                     ) : (
+                    <>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>
                       <span>
                         <b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(s.revenueCents / 100)}</b>
@@ -356,6 +367,14 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                       </span>
                       <span>{s.hours > 0 ? `${euro(s.eurPerHour)}/h · ${s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} h` : "0 h"}</span>
                     </div>
+                    {/* Breakdown of the COMBINED sum: how much of this leader's total is a
+                        trainee's work (e.g. "sis. Milja 6 ikk · 225 €"). */}
+                    {(traineeShareByLeader?.[s.worker]?.length ?? 0) > 0 && (
+                      <div style={{ marginTop: 7, fontSize: "11px", color: "rgba(156,193,255,0.95)", lineHeight: 1.5 }}>
+                        {traineeShareByLeader![s.worker].map((t) => `sis. ${t.name} ${t.washed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikk · ${euro(t.cents / 100)}`).join(" · ")}
+                      </div>
+                    )}
+                    </>
                     )}
                     {canEditPay && !editing && (
                       <button onClick={() => { setEditId(s.worker); setEditVal(overridden ? String(Math.round((cm!.manualEarningsCents! / 100))) : String(Math.round(s.revenueCents / 100))); }}

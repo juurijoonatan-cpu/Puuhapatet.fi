@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
-import { Eye, EyeOff, ShieldCheck } from "lucide-react";
+import { Eye, EyeOff, ShieldCheck, ChevronDown, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -18,6 +18,20 @@ import { api, getAdminToken, setAdminToken, clearAdminToken } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const LAST_USER_KEY = "puuhapatet_last_user";
+
+/** Small round avatar — photo if set, otherwise the initial. */
+function Avatar({ user, size = 36 }: { user: AdminProfile; size?: number }) {
+  return user.photoUrl ? (
+    <img src={user.photoUrl} alt="" className="rounded-full object-cover object-top shrink-0" style={{ width: size, height: size }} />
+  ) : (
+    <div
+      className="rounded-full bg-muted flex items-center justify-center font-semibold text-muted-foreground shrink-0"
+      style={{ width: size, height: size, fontSize: size * 0.42 }}
+    >
+      {user.name[0]}
+    </div>
+  );
+}
 
 // Reads the (unverified) expiry from our token payload — purely for the UX-level
 // "am I still logged in?" check. The server is the real authority on validity.
@@ -47,6 +61,7 @@ export default function AdminLoginPage() {
   const { toast } = useToast();
 
   const [selected, setSelected] = useState<AdminProfile | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -182,37 +197,81 @@ export default function AdminLoginPage() {
           </div>
         </div>
 
-        {/* User selector */}
-        <div className="grid grid-cols-2 gap-3 mb-6">
-          {USERS.map((user) => (
-            <button
-              key={user.id}
-              type="button"
-              onClick={() => { setSelected(user); setPassword(""); }}
-              className={cn(
-                "flex flex-col items-center gap-3 p-4 rounded-2xl border-2 transition-all",
-                selected?.id === user.id
-                  ? "border-primary bg-primary/5"
-                  : "border-border bg-card hover:border-muted-foreground/40",
-              )}
-              data-testid={`btn-select-user-${user.id}`}
-            >
-              {user.photoUrl ? (
-                <img
-                  src={user.photoUrl}
-                  alt={user.name}
-                  className="w-16 h-16 rounded-xl object-cover object-top"
-                />
-              ) : (
-                <div className="w-16 h-16 rounded-xl bg-muted flex items-center justify-center text-2xl font-semibold text-muted-foreground">
-                  {user.name[0]}
+        {/* User selector — a clean dropdown that scales as more workers join */}
+        <div className="relative mb-6">
+          <button
+            type="button"
+            onClick={() => setPickerOpen((v) => !v)}
+            aria-haspopup="listbox"
+            aria-expanded={pickerOpen}
+            className={cn(
+              "flex w-full items-center gap-3 rounded-2xl border bg-card px-4 py-3 text-left transition-colors",
+              pickerOpen ? "border-primary" : "border-border hover:border-muted-foreground/40",
+            )}
+            data-testid="btn-open-user-picker"
+          >
+            {selected ? (
+              <>
+                <Avatar user={selected} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-foreground">{selected.name}</span>
+                  <span className="block text-xs text-muted-foreground">{selected.role === "HOST" ? "Johtaja" : "Tekijä"}</span>
+                </span>
+              </>
+            ) : (
+              <>
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-muted text-muted-foreground shrink-0">
+                  <ChevronDown className="h-4 w-4" />
                 </div>
-              )}
-              <span className="text-sm font-medium text-foreground leading-tight text-center">
-                {user.name.split(" ")[0]}
-              </span>
-            </button>
-          ))}
+                <span className="flex-1 text-sm text-muted-foreground">Valitse profiili…</span>
+              </>
+            )}
+            <ChevronDown className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", pickerOpen && "rotate-180")} />
+          </button>
+
+          {pickerOpen && (
+            <>
+              {/* Click-away backdrop */}
+              <div className="fixed inset-0 z-40" onClick={() => setPickerOpen(false)} />
+              <div
+                role="listbox"
+                className="absolute left-0 right-0 top-[calc(100%+8px)] z-50 max-h-72 overflow-y-auto rounded-2xl border border-border bg-card p-1.5 premium-shadow"
+              >
+                {(["HOST", "STAFF"] as const).map((role) => {
+                  const group = USERS.filter((u) => (role === "HOST" ? u.role === "HOST" : u.role !== "HOST"));
+                  if (!group.length) return null;
+                  return (
+                    <div key={role} className="mb-1 last:mb-0">
+                      <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        {role === "HOST" ? "Johtajat" : "Tekijät"}
+                      </p>
+                      {group.map((user) => {
+                        const active = selected?.id === user.id;
+                        return (
+                          <button
+                            key={user.id}
+                            type="button"
+                            role="option"
+                            aria-selected={active}
+                            onClick={() => { setSelected(user); setPassword(""); setPickerOpen(false); }}
+                            className={cn(
+                              "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors",
+                              active ? "bg-primary/10" : "hover:bg-muted",
+                            )}
+                            data-testid={`btn-select-user-${user.id}`}
+                          >
+                            <Avatar user={user} size={32} />
+                            <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{user.name}</span>
+                            {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Password form — shown after selecting a user */}

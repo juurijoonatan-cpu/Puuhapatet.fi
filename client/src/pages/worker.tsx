@@ -1087,9 +1087,9 @@ function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
         </button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 16 }}>
+      {/* Total hours only — no €/h average (the per-hour read-out isn't shown to workers). */}
+      <div style={{ marginTop: 16 }}>
         <Stat label="Tunteja" value={s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} />
-        <Stat label="€ / tunti" value={s.hours > 0 ? euro(Math.round(s.eurPerHour * 100)) : "—"} />
       </div>
       <PaydateProgress total={view.windowsTotal} washed={view.windowsWashed} workerId={view.worker.id} />
       <Leaderboard view={view} />

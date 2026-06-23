@@ -107,7 +107,7 @@ export default function EfficiencyTool({ project, workerName }: Props) {
             <div style={{ fontSize: m ? "30px" : "38px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>
               {euro(accruedCents)} <span style={{ fontSize: "15px", fontWeight: 500, color: "rgba(255,255,255,0.4)" }}>/ {euro(contractCents)}</span>
             </div>
-            <div style={mono}>{deal ? `SOPIMUSKATTO · ${deal.pricePerWindow.toLocaleString("fi-FI", { minimumFractionDigits: 2 })} € / PUNAINEN` : `SOPIMUSARVO · ${project.pricePerWindow} € / IKKUNA`}</div>
+            <div style={mono}>{deal ? `KIINTEÄ KOKONAISHINTA · ${euro(deal.capCents)}` : `SOPIMUSARVO · ${project.pricePerWindow} € / IKKUNA`}</div>
           </div>
           <div style={{ height: "10px", borderRadius: "6px", background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
             <div style={{ width: `${moneyPct.toFixed(1)}%`, height: "100%", borderRadius: "6px", background: "linear-gradient(90deg,rgba(95,224,138,0.65),#5fe08a)", boxShadow: "0 0 12px rgba(95,224,138,0.5)", transition: "width .6s" }} />

@@ -5103,7 +5103,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           invLine = ` Laskutettu ${eur(gt.invoicedCents)}, laskuttamatta ${eur(gt.uninvoicedCents)}.`;
         }
         const dealLine = deal && deal.capCents > 0 ? ` Sopimuksen kokonaisarvo ${eur(deal.capCents)} (kiinteä kattohinta).` : "";
-        lines.push(`- #${j.id} ${gigName}: ${washed}/${total} ikkunaa pesty (${pct} %).${dealLine} Maksuerä ${pp.currentPeriod}/${pp.periods}, ${pp.done ? "kaikki erät katettu" : `${pp.toNext} ikkunaa seuraavaan maksuerään`}.${invLine}${marginLine}${contact ? ` Asiakkaan yhteyshenkilö: ${contact}.` : ""}`);
+        // The instalment is the FLAT agreed total split evenly (€6300 / 4 = 1 575 €).
+        // State it explicitly so the assistant never derives it from the live red-window
+        // count (which drifts, e.g. 1 565,63 € at 167 windows).
+        const installmentLine = deal && deal.capCents > 0
+          ? ` Yhden maksuerän suuruus ${eur(Math.round(deal.capCents / pp.periods))} (kiinteä: kokonaishinta jaettuna ${pp.periods} erään — älä laske ikkunamäärästä).`
+          : "";
+        lines.push(`- #${j.id} ${gigName}: ${washed}/${total} ikkunaa pesty (${pct} %).${dealLine} Maksuerä ${pp.currentPeriod}/${pp.periods}, ${pp.done ? "kaikki erät katettu" : `${pp.toNext} ikkunaa seuraavaan maksuerään`}.${installmentLine}${invLine}${marginLine}${contact ? ` Asiakkaan yhteyshenkilö: ${contact}.` : ""}`);
       }
     }
 

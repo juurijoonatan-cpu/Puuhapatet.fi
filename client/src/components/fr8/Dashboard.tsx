@@ -182,7 +182,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             <div>
               <div style={{ fontSize: "46px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{euro(deal ? accruedEur : washed * PRICE)}</div>
               <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.45)", marginTop: "4px" }}>
-                / {euro(deal ? capEur : total * PRICE)} {deal ? "sopimuskatto" : "sopimusarvo"}
+                / {euro(deal ? capEur : total * PRICE)} {deal ? "kokonaishinta (kiinteä)" : "sopimusarvo"}
                 {deal && <span style={{ display: "inline-flex", alignItems: "center", gap: 4, marginLeft: 8, padding: "1px 7px", borderRadius: 7, background: "rgba(95,224,138,0.12)", border: "1px solid rgba(95,224,138,0.3)", color: "#9ff0bd", fontSize: "10px", fontWeight: 600 }}>🔒 sovittu hinta</span>}
               </div>
             </div>
@@ -191,8 +191,8 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                 <div style={{ width: `${(deal ? billing!.pct : pct).toFixed(1)}%`, height: "100%", borderRadius: "6px", background: "linear-gradient(90deg,rgba(255,255,255,0.55),#fff)", boxShadow: "0 0 12px rgba(255,255,255,0.4)", transition: "width .6s" }} />
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10.5px", color: "rgba(255,255,255,0.45)" }}>
-                <span>{deal ? billing!.billableWashed : washed} × {euroUnit(PRICE)}</span>
-                <span>{Math.round(deal ? billing!.pct : pct)} % {deal ? "katosta" : "kerätty"}</span>
+                <span>{deal ? `${billing!.billableWashed} / ${billing!.billableTotal} punaista` : `${washed} × ${euroUnit(PRICE)}`}</span>
+                <span>{Math.round(deal ? billing!.pct : pct)} % {deal ? "valmis" : "kerätty"}</span>
               </div>
             </div>
           </div>

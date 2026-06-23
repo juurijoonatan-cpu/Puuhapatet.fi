@@ -481,6 +481,11 @@ function WorkerCardHeader({
 
   const initials = (member.name || "?").trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 
+  // Trainees (harjoittelija, e.g. Milja) sign NOTHING — they work under a
+  // leader's responsibility. Showing "Odottaa allekirjoitusta" for them is wrong
+  // (no signature is ever coming), so they get their own status pill instead.
+  const trainee = traineeForUserId(member.linkedUserId) || traineeForUserId(member.id) || traineeForName(member.name);
+
   return (
     <div>
       {/* Identity row: avatar + editable name (clean inline title) + status + delete */}
@@ -498,9 +503,15 @@ function WorkerCardHeader({
           />
           <div className="flex items-center gap-1.5 flex-wrap mt-1">
             {member.adminLinked && <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold text-blue-600">ADMIN</span>}
-            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${onboarded ? "bg-green-500/10 text-green-600" : "bg-amber-500/10 text-amber-600"}`}>
-              {onboarded ? "Allekirjoittanut" : "Odottaa allekirjoitusta"}
-            </span>
+            {trainee ? (
+              <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold text-blue-600">
+                Harjoittelija · ei allekirjoitusta
+              </span>
+            ) : (
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${onboarded ? "bg-green-500/10 text-green-600" : "bg-amber-500/10 text-amber-600"}`}>
+                {onboarded ? "Allekirjoittanut" : "Odottaa allekirjoitusta"}
+              </span>
+            )}
             {!member.active && <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[10px] font-semibold text-zinc-500">Pois käytöstä</span>}
           </div>
         </div>

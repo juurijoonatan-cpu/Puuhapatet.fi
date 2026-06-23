@@ -176,24 +176,30 @@ export function fixedDealFor(data: ProjectData): FixedDeal | null {
 export interface DealBilling {
   billableTotal: number;   // billable (e.g. red) windows on the whole job
   billableWashed: number;  // billable windows marked "pesty"
-  accruedCents: number;    // billableWashed × price, capped at capCents
-  capCents: number;        // agreed total
-  pct: number;             // accrued / cap, 0..100
+  accruedCents: number;    // completion fraction × the fixed agreed total
+  capCents: number;        // agreed total (FIXED — a flat price, not count × unit)
+  pct: number;             // completion, 0..100
 }
 
-/** Compute accrued money for a fixed deal: billable windows only, capped. */
+/**
+ * Money for a fixed-price deal (FR8). The agreed sum is a FLAT TOTAL (`capCents`,
+ * e.g. €6300) — it is NOT count × unit price. So the contract value stays locked
+ * at the agreed total no matter how the red-window count changes (dots added or
+ * removed), and the accrued figure is simply the completion fraction of that fixed
+ * total — reaching exactly the agreed price when every live red window is washed.
+ */
 export function computeDealBilling(data: ProjectData, deal: FixedDeal): DealBilling {
   const pts = allPoints(data).filter((p) => p.p === deal.billablePriority);
   const billableTotal = pts.length;
   const billableWashed = pts.filter((p) => p.status === "pesty").length;
-  const raw = Math.round(billableWashed * deal.pricePerWindow * 100);
-  const accruedCents = Math.min(raw, deal.capCents);
+  const frac = billableTotal > 0 ? billableWashed / billableTotal : 0;
+  const accruedCents = Math.min(Math.round(frac * deal.capCents), deal.capCents);
   return {
     billableTotal,
     billableWashed,
     accruedCents,
     capCents: deal.capCents,
-    pct: deal.capCents > 0 ? (accruedCents / deal.capCents) * 100 : 0,
+    pct: frac * 100,
   };
 }
 
@@ -456,14 +462,15 @@ export function syncGigSectorsFromProject(gig: GigData, project: ProjectData): G
   const deal = fixedDealFor(project);
   if (deal) {
     const red = allPoints(project).filter((p) => p.p === deal.billablePriority);
-    // The window COUNT follows the live red dots on the map, so adding/removing
-    // dots moves the counter (FR8 was over-seeded to ~198 and is being trimmed to
-    // the agreed 168). The agreed €6300 stays pinned regardless: the FR8 dashboard
-    // accrual is hard-capped in computeDealBilling, and at the agreed 168 dots the
-    // count × €37,50 equals exactly €6300. FR8_DEAL_RED_WINDOWS stays the documented
-    // agreed scope but no longer freezes the live counter.
-    const total = red.length;
-    const washed = Math.min(red.filter((p) => p.status === "pesty").length, total);
+    const redTotal = red.length;
+    const redWashed = red.filter((p) => p.status === "pesty").length;
+    // FLAT-TOTAL contract: the agreed price is fixed (€6300), NOT count × unit.
+    // Represent it with the agreed scope so total × unit == the fixed total always
+    // (the cap never drifts when red dots are added/removed), and scale "washed" to
+    // that scope so the accrued amount tracks completion toward the fixed total.
+    const total = FR8_DEAL_RED_WINDOWS;                         // 168 × 37,50 € = 6300 € (locked)
+    const frac = redTotal > 0 ? redWashed / redTotal : 0;
+    const washed = Math.min(total, Math.round(frac * total));
     const id = "deal:red";
     const prevInvoiced = Math.max(0, gig.sectors.find((s) => s.id === id)?.invoicedWashed ?? 0);
     const sector: GigSector = {

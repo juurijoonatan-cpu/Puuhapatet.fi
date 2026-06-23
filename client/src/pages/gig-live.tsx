@@ -117,7 +117,8 @@ export default function GigLivePage() {
                 Tälle sopimukselle on sovittu kiinteä kokonaishinta. Työ tehdään sopimuksen mukaisten ehtojen mukaisesti.
               </p>
               <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
-                <Chip label="Pesty" value={`${t.washedTotal} / ${t.unitTotal}`} />
+                {/* Progress shown as a percentage — no raw window counts to the customer. */}
+                <Chip label="Edistyminen" value={`${pct} %`} />
                 {t.skippedTotal > 0 && <Chip label="Kuntovaraus" value={`${t.skippedTotal} kpl`} />}
               </div>
             </div>
@@ -166,7 +167,7 @@ export default function GigLivePage() {
                 <div style={{ height: "100%", borderRadius: 999, width: `${sp}%`, background: s.color }} />
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, alignItems: "center", flexWrap: "wrap", gap: 4 }}>
-                <span>Pesty <strong style={{ fontVariantNumeric: "tabular-nums" }}>{s.washed}</strong> / {s.total} ({sp} %)</span>
+                <span>Pesty <strong style={{ fontVariantNumeric: "tabular-nums" }}>{sp} %</strong></span>
                 {s.skipped > 0 && (
                   <span style={{ color: T.muted, fontSize: 13 }}>Kuntovaraus {s.skipped} kpl · hyvitys −{eur(credit)}</span>
                 )}

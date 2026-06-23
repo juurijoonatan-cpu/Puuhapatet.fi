@@ -215,9 +215,14 @@ async function sendSessionSummaryEmail(
     </div>
     <p style="text-align:center;color:#b8b5ab;font-size:11px;margin-top:14px">Puuhapatet · puuhapatet.fi</p>
   </div></body></html>`;
+  // Copy the bosses (us) so a finished day — whether stopped on the timer or
+  // logged by hand afterwards — always lands in our inbox too. Bcc keeps the
+  // worker's view clean (they don't see the founders' addresses).
+  const bcc = WORKER_NOTIFICATION_EMAILS.filter((e) => e && e !== to);
   await resend.emails.send({
     from: FROM_EMAIL,
     to,
+    ...(bcc.length ? { bcc } : {}),
     subject: `Päivän yhteenveto — ${s.windows} ikkunaa · ${eur(s.earnedCents)}`,
     html,
   });
@@ -3569,16 +3574,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   function workerView(project: ProjectData, member: CrewMember) {
     const stats = crewMemberStats(project, member);
     const projectTotals = computeProjectTotals(project);
-    // Paydate-progress counts: for a fixed deal (FR8) use the BILLABLE scope (the
-    // agreed red-window count, e.g. 168), so the milestone matches what's billed —
-    // independent of the live dot count. Otherwise use all mapped windows.
+    // Paydate-progress counts: for a fixed deal (FR8) track the LIVE billable (red)
+    // window count, so the milestone follows the actual dots on the map (e.g. 161 →
+    // ~41 / erä). The agreed total (€6300) is unaffected — only this window-count
+    // milestone tracks the live set. Otherwise use all mapped windows.
     const payDeal = fixedDealFor(project);
     let windowsTotal = projectTotals.total;
     let windowsWashed = projectTotals.washed;
     if (payDeal) {
       const db = computeDealBilling(project, payDeal);
-      const agreedScope = payDeal.pricePerWindow > 0 ? Math.round(payDeal.capCents / 100 / payDeal.pricePerWindow) : 0;
-      windowsTotal = Math.max(agreedScope, db.billableTotal);
+      windowsTotal = db.billableTotal;
       windowsWashed = db.billableWashed;
     }
     // Trainee (harjoittelija, e.g. Milja under Matias): NOT an alihankkija and
@@ -3916,6 +3921,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       );
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
+      // Same progress-update email as the timer flow — so a day logged by hand
+      // afterwards still notifies the worker (and bcc's the bosses). Best-effort.
+      if (resend && savedMember.profile?.email) {
+        sendSessionSummaryEmail(savedMember, session, project.building?.name).catch(
+          (e) => console.warn("manual session summary email failed:", e?.message),
+        );
+      }
       res.json({ ok: true, view: workerView(saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -5032,10 +5044,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const tot = computeProjectTotals(proj);
         const deal = fixedDealFor(proj);
         let total = tot.total, washed = tot.washed;
+        // For a fixed deal track the LIVE billable (red) count — same scope the
+        // worker/boss dashboards now use — so the AI reports the real situation.
+        let marginLine = "";
         if (deal && deal.pricePerWindow > 0) {
           const dealBill = computeDealBilling(proj, deal);
-          total = Math.max(Math.round(deal.capCents / 100 / deal.pricePerWindow), dealBill.billableTotal);
+          total = dealBill.billableTotal;
           washed = dealBill.billableWashed;
+          if (role === "HOST" && total > 0) {
+            const nominal = Math.round(deal.capCents / 100 / deal.pricePerWindow);
+            const perWin = eur(Math.round(deal.capCents / total));
+            // Flag a deviation from the agreed scope so the AI can raise it as an issue.
+            const drift = total !== nominal
+              ? ` HUOM: punaisia ikkunoita kartalla ${total}, sovittu mitoitus ${nominal} — tarkista (poikkeama ${total < nominal ? "−" : "+"}${Math.abs(total - nominal)} ikkunaa).`
+              : "";
+            marginLine = ` Sisäinen kate ${perWin}/ikkuna (kiinteä ${eur(deal.capCents)} jaettuna ${total} punaiselle; tekijän palkkio ennallaan).${drift}`;
+          }
         }
         const pct = total > 0 ? Math.round((washed / total) * 100) : 0;
         const pp = computePayProgress(total, washed);
@@ -5048,7 +5072,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           invLine = ` Laskutettu ${eur(gt.invoicedCents)}, laskuttamatta ${eur(gt.uninvoicedCents)}.`;
         }
         const dealLine = deal && deal.capCents > 0 ? ` Sopimuksen kokonaisarvo ${eur(deal.capCents)} (kiinteä kattohinta).` : "";
-        lines.push(`- #${j.id} ${gigName}: ${washed}/${total} ikkunaa pesty (${pct} %).${dealLine} Maksuerä ${pp.currentPeriod}/${pp.periods}, ${pp.done ? "kaikki erät katettu" : `${pp.toNext} ikkunaa seuraavaan maksuerään`}.${invLine}${contact ? ` Asiakkaan yhteyshenkilö: ${contact}.` : ""}`);
+        lines.push(`- #${j.id} ${gigName}: ${washed}/${total} ikkunaa pesty (${pct} %).${dealLine} Maksuerä ${pp.currentPeriod}/${pp.periods}, ${pp.done ? "kaikki erät katettu" : `${pp.toNext} ikkunaa seuraavaan maksuerään`}.${invLine}${marginLine}${contact ? ` Asiakkaan yhteyshenkilö: ${contact}.` : ""}`);
       }
     }
 

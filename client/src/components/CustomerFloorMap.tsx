@@ -123,8 +123,10 @@ export default function CustomerFloorMap({ map }: { map: MapData }) {
             );
           })}
         </div>
+        {/* Progress as a percentage only — the customer never sees raw window
+            counts (those are internal; the agreed price is fixed regardless). */}
         <div style={{ fontSize: 13, color: T.muted }}>
-          Pesty <strong style={{ color: T.ink, fontVariantNumeric: "tabular-nums" }}>{washed}</strong> / {total} ({pct} %)
+          Pesty <strong style={{ color: T.ink, fontVariantNumeric: "tabular-nums" }}>{pct} %</strong> tästä kerroksesta
         </div>
       </div>
 

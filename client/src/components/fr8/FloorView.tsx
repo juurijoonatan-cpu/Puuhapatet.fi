@@ -5,7 +5,7 @@
  * path differ.
  */
 import { useState, useRef, useEffect } from "react";
-import type { ProjMarksData, WindowStatus, ProjCustomMark, ProjMapNote, ProjNoteKind, ProjActiveZone, FixedDeal } from "@shared/project";
+import type { ProjMarksData, WindowStatus, ProjCustomMark, ProjMapNote, ProjNoteKind, ProjActiveZone, ProjWindowObservation, FixedDeal } from "@shared/project";
 import { NOTE_KINDS } from "@shared/project";
 import { useIsMobile } from "@/hooks/use-mobile";
 
@@ -58,6 +58,12 @@ interface Props {
   onAddNote?: (floor: string, x: number, y: number, kind: ProjNoteKind) => string | void;
   onUpdateNote?: (floor: string, key: string, text: string) => void;
   onDeleteNote?: (floor: string, key: string) => void;
+  /** Per-window observations (text + optional photo), keyed by window key. */
+  observations?: Record<string, ProjWindowObservation>;
+  /** Allow leaving an observation on a window (worker/admin). */
+  canObserve?: boolean;
+  /** Persist an observation. Empty text + no image clears it. */
+  onSetObservation?: (key: string, text: string, imageDataUrl?: string) => void;
   /** The single "work happening here now" highlight (shown to the customer too). */
   activeZone?: ProjActiveZone | null;
   onSetActiveZone?: (floor: string, x: number, y: number) => void;
@@ -162,7 +168,7 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, activeZone, onSetActiveZone, onClearActiveZone, deal }: Props) {
+export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, activeZone, onSetActiveZone, onClearActiveZone, deal }: Props) {
   const [floor, setFloor] = useState(initialFloor);
   const [filter, setFilter] = useState<"all" | "unwashed" | "progress" | "done">("all");
   const [editMode, setEditMode] = useState(false);
@@ -175,6 +181,11 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   const [activeNote, setActiveNote] = useState<string | null>(null);
   const [noteAnchor, setNoteAnchor] = useState<Anchor | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
+  // Per-window observation editor (text + optional photo) inside the status popover.
+  const [obsDraft, setObsDraft] = useState("");
+  const [obsImage, setObsImage] = useState<string | undefined>(undefined);
+  const [obsBusy, setObsBusy] = useState(false);
+  const [obsOpen, setObsOpen] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const planRef = useRef<HTMLImageElement>(null);
   const notesCanEdit = !!onAddNote;
@@ -319,8 +330,47 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
       setOrbAnchor(next ? rectToAnchor((e.currentTarget as HTMLElement).getBoundingClientRect()) : null);
       setActiveNote(null);
       setShowWasherPicker(false); // names stay hidden until "Vaihda" is tapped
+      // Load any existing observation for this window into the editor.
+      const ex = next ? observations?.[next] : undefined;
+      setObsDraft(ex?.text ?? "");
+      setObsImage(ex?.imageDataUrl);
+      setObsOpen(!!ex);
       setActiveOrb(next);
     }
+  }
+
+  // Downscale + compress a picked photo to a small data URL (kept inside the
+  // project JSON). Targets ≤ ~0.5 MB so several photos never bloat the gig.
+  async function pickObservationImage(file: File) {
+    try {
+      const bitmap = await createImageBitmap(file);
+      const maxDim = 1024;
+      const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+      const w = Math.max(1, Math.round(bitmap.width * scale));
+      const h = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      let q = 0.72;
+      let url = canvas.toDataURL("image/jpeg", q);
+      while (url.length > 650_000 && q > 0.4) { q -= 0.12; url = canvas.toDataURL("image/jpeg", q); }
+      setObsImage(url);
+    } catch {
+      // Fallback: read as-is (rare; e.g. createImageBitmap unsupported).
+      const reader = new FileReader();
+      reader.onload = () => { if (typeof reader.result === "string") setObsImage(reader.result.slice(0, 650_000)); };
+      reader.readAsDataURL(file);
+    }
+  }
+
+  function saveObservation() {
+    if (!activeOrb || !onSetObservation) return;
+    setObsBusy(true);
+    onSetObservation(activeOrb, obsDraft.trim(), obsImage);
+    setObsBusy(false);
+    setObsOpen(false);
   }
 
   function openNote(note: ProjMapNote, e: React.MouseEvent) {
@@ -663,6 +713,14 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                 );
               })}
 
+              {/* Observation badges — a small marker on windows that carry a note */}
+              {points.map((pt) => observations?.[pt.key] ? (
+                <span key={`obs-${pt.key}`} aria-hidden
+                  style={{ position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`, transform: "translate(3px, -13px)", pointerEvents: "none", width: "13px", height: "13px", borderRadius: "50%", background: "#1b1b1f", border: "1.5px solid #7CE0A6", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "7px", lineHeight: 1, zIndex: 5 }}>
+                  💬
+                </span>
+              ) : null)}
+
               {/* Navigation markers / notes layer */}
               {floorNotes.map((n) => (
                 <button key={n.key}
@@ -694,7 +752,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
       {activeOrb && !editMode && activePt && (
         <>
           <div onClick={() => { setActiveOrb(null); setOrbAnchor(null); }} style={{ position: "fixed", inset: 0, zIndex: 1100 }} />
-          <div data-fr8-pop="menu" style={{ ...fixedPopoverStyle(orbAnchor, 200, 230), width: "200px", padding: "11px", background: "rgba(16,16,20,0.92)", border: "1px solid rgba(255,255,255,0.16)", borderRadius: "15px", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 20px 50px rgba(0,0,0,0.7)" }}>
+          <div data-fr8-pop="menu" style={{ ...fixedPopoverStyle(orbAnchor, 210, canObserve ? 380 : 230), width: "210px", maxHeight: "min(78vh, 460px)", overflowY: "auto", padding: "11px", background: "rgba(16,16,20,0.92)", border: "1px solid rgba(255,255,255,0.16)", borderRadius: "15px", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 20px 50px rgba(0,0,0,0.7)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "2px 4px 9px", borderBottom: "1px solid rgba(255,255,255,0.08)", marginBottom: "7px" }}>
               <span style={{ width: "9px", height: "9px", borderRadius: "50%", background: `rgb(${colorRgb(activePt.p, statuses[activeOrb] || "ei")})`, boxShadow: `0 0 7px rgba(${colorRgb(activePt.p, statuses[activeOrb] || "ei")},0.7)` }} />
               <span style={{ fontSize: "12px", fontWeight: 600 }}>Ikkuna {activeIdx + 1}</span>
@@ -766,6 +824,48 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                 <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   Kesken: <strong style={{ color: "#fff", fontWeight: 600 }}>{workerNames?.[keskenBy[activeOrb]] ?? keskenBy[activeOrb]}</strong>
                 </span>
+              </div>
+            )}
+
+            {/* Per-window observation — text + optional photo. Shown to the
+                customer as a small popup on this window. */}
+            {canObserve && onSetObservation && (
+              <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                {!obsOpen ? (
+                  <button className="status-opt-btn" onClick={() => setObsOpen(true)}
+                    style={{ border: "1px solid transparent" }}>
+                    <span style={{ fontSize: "13px" }}>💬</span>
+                    <span style={{ flex: 1, textAlign: "left" }}>{(obsDraft.trim() || obsImage) ? "Muokkaa huomiota" : "Lisää huomio"}</span>
+                    {(obsDraft.trim() || obsImage) && <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#7CE0A6", flexShrink: 0 }} />}
+                  </button>
+                ) : (
+                  <>
+                    <div style={{ fontSize: "9.5px", letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.38)", padding: "0 2px 6px" }}>Huomio ikkunasta</div>
+                    <textarea value={obsDraft} onChange={(e) => setObsDraft(e.target.value)} rows={2}
+                      placeholder="Esim. rikkinäinen tiiviste, naarmu lasissa…" autoFocus
+                      style={{ width: "100%", resize: "none", padding: "8px 10px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(0,0,0,0.35)", color: "#fff", fontSize: "12.5px", outline: "none", fontFamily: "var(--font-onest, system-ui, sans-serif)", boxSizing: "border-box" }} />
+                    {obsImage && (
+                      <div style={{ position: "relative", marginTop: "8px" }}>
+                        <img src={obsImage} alt="huomio" style={{ width: "100%", maxHeight: "120px", objectFit: "cover", borderRadius: "9px", display: "block" }} />
+                        <button onClick={() => setObsImage(undefined)} aria-label="Poista kuva"
+                          style={{ position: "absolute", top: 5, right: 5, width: 22, height: 22, borderRadius: "50%", border: "none", background: "rgba(0,0,0,0.6)", color: "#fff", fontSize: "13px", cursor: "pointer", lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+                      </div>
+                    )}
+                    <div style={{ display: "flex", gap: "7px", marginTop: "8px" }}>
+                      {!obsImage && (
+                        <label style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "8px 11px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.16)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.8)", fontSize: "12.5px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", whiteSpace: "nowrap" }}>
+                          + Kuva
+                          <input type="file" accept="image/*" style={{ display: "none" }}
+                            onChange={(e) => { const f = e.target.files?.[0]; if (f) pickObservationImage(f); e.currentTarget.value = ""; }} />
+                        </label>
+                      )}
+                      <button onClick={saveObservation} disabled={obsBusy}
+                        style={{ flex: 1, padding: "8px 12px", borderRadius: "10px", border: "none", background: "#fff", color: "#0a0a0c", fontSize: "12.5px", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", opacity: obsBusy ? 0.6 : 1 }}>
+                        {(obsDraft.trim() || obsImage) ? "Tallenna" : "Poista huomio"}
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             )}
 

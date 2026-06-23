@@ -791,6 +791,12 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
     if (res.ok && res.data?.view) setView(res.data.view);
   }, [token, setView]);
 
+  // Per-window observation (text + optional photo) the worker leaves on a window.
+  const setObservation = useCallback(async (key: string, text: string, imageDataUrl?: string) => {
+    const res = await api.crewSetWindowObservation(token, key, text, imageDataUrl);
+    if (res.ok && res.data?.view) setView(res.data.view);
+  }, [token, setView]);
+
   // Worker map notes — add a "huomio" / "tikkaat" marker, edit or delete own.
   const addNote = useCallback((floor: string, x: number, y: number, kind: string): void => {
     (async () => {
@@ -863,6 +869,9 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
             onAddNote={addNote}
             onUpdateNote={updateNote}
             onDeleteNote={deleteNote}
+            observations={view.observations}
+            canObserve
+            onSetObservation={setObservation}
             activeZone={view.activeZone}
           />
         )}

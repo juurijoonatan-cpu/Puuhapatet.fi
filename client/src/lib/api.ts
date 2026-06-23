@@ -132,6 +132,9 @@ export interface GigPublicView {
   totals: GigTotals;
   updatedAt: number;
   invoicedCents: number;
+  paymentsCount: number;
+  /** True when the gig is billed as a fixed flat-rate contract (4 equal instalments). */
+  isFixedDeal: boolean;
   // Read-only floor-plan map (white, customer view). Null if no plan.
   map: {
     building: { name: string | null; address: string | null; floors: string[]; planBase: string };

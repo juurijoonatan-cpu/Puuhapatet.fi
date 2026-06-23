@@ -29,7 +29,7 @@ import {
   emptyGigData, computeTotals, nextInvoiceThreshold, invoiceDue, eur, eur2,
   sanitizeGigData, gigStatus, signatureRequired, type GigData, type GigCompany,
 } from "@shared/gig";
-import { computeProjectTotals, fixedDealFor, eurFromCents, type ProjectData } from "@shared/project";
+import { computeProjectTotals, fixedDealFor, computeDealBilling, eurFromCents, type ProjectData } from "@shared/project";
 import { downloadGigContract, openGigContractForPrint } from "@/lib/gig-contract-doc";
 
 const PUBLIC_BASE = "https://puuhapatet.fi";
@@ -293,7 +293,17 @@ export default function AdminGigTrackerPage() {
   }
 
   const totals = computeTotals(gig);
-  const due = invoiceDue(gig);
+  const deal = project ? fixedDealFor(project) : null;
+  const dealBilling = (deal && project) ? computeDealBilling(project, deal) : null;
+
+  // For fixed-price deals: invoice is available when the next quarter of windows is done.
+  // Quarter size = billableTotal / 4 and scales dynamically if dots are added to the map.
+  const fixedInstallmentCents = deal ? Math.round(deal.capCents / 4) : 0;
+  const perQuarter = dealBilling ? dealBilling.billableTotal / 4 : 0;
+  const nextQuarterNeeded = dealBilling ? perQuarter * (gig.payments.length + 1) : 0;
+  const fixedDue = !!(dealBilling && dealBilling.billableWashed >= nextQuarterNeeded && gig.payments.length < 4);
+
+  const due = deal ? fixedDue : invoiceDue(gig);
   const nextThr = nextInvoiceThreshold(gig);
 
   return (
@@ -559,20 +569,56 @@ export default function AdminGigTrackerPage() {
             <div className="flex items-start gap-2 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3 mb-3">
               <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
               <p className="text-sm text-amber-800 dark:text-amber-300">
-                Laskutusraja ylittynyt ({totals.washedTotal} ≥ {nextThr}). Muodosta osalasku kertyneestä summasta.
+                {deal && dealBilling
+                  ? `${gig.payments.length + 1}. maksuerä valmis — ${Math.round(dealBilling.pct)} % ikkunoista pesty.`
+                  : `Laskutusraja ylittynyt (${totals.washedTotal} ≥ ${nextThr}). Muodosta osalasku kertyneestä summasta.`}
               </p>
             </div>
           )}
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm text-muted-foreground">Laskuttamatta</span>
-            <span className="text-lg font-bold text-foreground tabular-nums">{eur(totals.uninvoicedCents)}</span>
-          </div>
-          {totals.invoicedCents > 0 && (
-            <p className="text-xs text-muted-foreground mb-3">Jo laskutettu: {eur(totals.invoicedCents)} ({gig.payments.length} laskua)</p>
+          {deal && dealBilling ? (
+            <>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm text-muted-foreground">Seuraava maksuerä</span>
+                <span className="text-lg font-bold text-foreground tabular-nums">{eur(fixedInstallmentCents)}</span>
+              </div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm text-muted-foreground">Tehty sopimuksesta</span>
+                <span className="text-sm font-semibold text-foreground tabular-nums">{gig.payments.length * 25} % · {gig.payments.length}/4 erää lähetetty</span>
+              </div>
+              {dealBilling.billableTotal > 0 && (
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-sm text-muted-foreground">Ikkunoita pesty</span>
+                  <span className="text-sm text-muted-foreground tabular-nums">
+                    {dealBilling.billableWashed} / {dealBilling.billableTotal} kpl
+                    {!due && gig.payments.length < 4 && (
+                      <span className="ml-1">(vielä {Math.ceil(nextQuarterNeeded - dealBilling.billableWashed)} ennen {gig.payments.length + 1}. erää)</span>
+                    )}
+                  </span>
+                </div>
+              )}
+              <Button
+                className="w-full"
+                disabled={!fixedDue || gig.payments.length >= 4}
+                onClick={() => setInvoiceOpen(true)}
+              >
+                <Send className="w-4 h-4 mr-2" />
+                {gig.payments.length >= 4 ? "Kaikki 4 erää lähetetty" : `Lähetä ${gig.payments.length + 1}. erä (1 575 €)`}
+              </Button>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm text-muted-foreground">Laskuttamatta</span>
+                <span className="text-lg font-bold text-foreground tabular-nums">{eur(totals.uninvoicedCents)}</span>
+              </div>
+              {totals.invoicedCents > 0 && (
+                <p className="text-xs text-muted-foreground mb-3">Jo laskutettu: {eur(totals.invoicedCents)} ({gig.payments.length} laskua)</p>
+              )}
+              <Button className="w-full" disabled={totals.uninvoicedCents <= 0} onClick={() => setInvoiceOpen(true)}>
+                <Send className="w-4 h-4 mr-2" /> Lähetä lasku sähköpostilla
+              </Button>
+            </>
           )}
-          <Button className="w-full" disabled={totals.uninvoicedCents <= 0} onClick={() => setInvoiceOpen(true)}>
-            <Send className="w-4 h-4 mr-2" /> Lähetä lasku sähköpostilla
-          </Button>
         </Card>
 
         {/* Contract — editable; this is what the customer reads & signs */}
@@ -656,8 +702,12 @@ export default function AdminGigTrackerPage() {
           </DialogHeader>
           <div className="space-y-3">
             <div className="rounded-xl bg-muted p-3 text-center">
-              <p className="text-xs text-muted-foreground">Laskutettava summa</p>
-              <p className="text-2xl font-bold text-foreground tabular-nums">{eur2(totals.uninvoicedCents)}</p>
+              <p className="text-xs text-muted-foreground">
+                {deal ? `Maksuerä ${gig.payments.length + 1}/4 — kiinteähintainen sopimus` : "Laskutettava summa"}
+              </p>
+              <p className="text-2xl font-bold text-foreground tabular-nums">
+                {deal ? eur2(fixedInstallmentCents) : eur2(totals.uninvoicedCents)}
+              </p>
             </div>
             <div>
               <Label className="text-xs">Vastaanottaja *</Label>

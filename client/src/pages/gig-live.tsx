@@ -71,7 +71,14 @@ export default function GigLivePage() {
   }
 
   const t = data.totals;
-  const pct = Math.round(t.percentByCap * 100);
+  // For fixed-price contracts: percentage and accumulated amount track invoices
+  // (25 % increments per instalment), not actual window counts.
+  const pct = data.isFixedDeal
+    ? Math.min(100, data.paymentsCount * 25)
+    : Math.round(t.percentByCap * 100);
+  const displayedAccruedCents = data.isFixedDeal
+    ? data.paymentsCount * Math.round(t.capCents / 4)
+    : t.accruedCents;
   const updated = new Date(data.updatedAt).toLocaleString("fi-FI", {
     day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit",
   });
@@ -106,10 +113,10 @@ export default function GigLivePage() {
         <Panel>
           <p style={{ margin: "0 0 4px", fontSize: 13, color: T.muted }}>{data.description}</p>
           <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap", marginTop: 8 }}>
-            <Gauge sectors={data.sectors} capCents={t.capCents} pct={pct} />
+            <Gauge sectors={data.sectors} capCents={t.capCents} pct={pct} isFixedDeal={data.isFixedDeal} />
             <div style={{ flex: "1 1 200px", minWidth: 180 }}>
               <p style={label}>Kertynyt summa</p>
-              <p style={{ margin: "2px 0 0", fontSize: 40, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>{eur(t.accruedCents)}</p>
+              <p style={{ margin: "2px 0 0", fontSize: 40, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>{eur(displayedAccruedCents)}</p>
               <p style={{ margin: "6px 0 0", fontSize: 14, color: T.muted }}>
                 Sovittu kokonaishinta <span style={{ fontWeight: 600, color: T.ink, fontVariantNumeric: "tabular-nums" }}>{eur(t.capCents)}</span>
               </p>
@@ -117,27 +124,29 @@ export default function GigLivePage() {
                 Tälle sopimukselle on sovittu kiinteä kokonaishinta. Työ tehdään sopimuksen mukaisten ehtojen mukaisesti.
               </p>
               <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
-                {/* Progress shown as a percentage — no raw window counts to the customer. */}
                 <Chip label="Edistyminen" value={`${pct} %`} />
-                {t.skippedTotal > 0 && <Chip label="Kuntovaraus" value={`${t.skippedTotal} kpl`} />}
               </div>
             </div>
           </div>
 
-          {/* Segmented progress bar */}
+          {/* Progress bar: invoice-based (fixed deal) or window-based (standard gig) */}
           <div style={{ height: 10, width: "100%", borderRadius: 999, background: T.paper, overflow: "hidden", display: "flex", marginTop: 20 }}>
-            {data.sectors.map((s) => {
-              const w = t.capCents > 0 ? (s.washed * s.unitPriceCents) / t.capCents * 100 : 0;
-              return <div key={s.id} style={{ width: `${w}%`, background: s.color, height: "100%" }} />;
-            })}
+            {data.isFixedDeal ? (
+              <div style={{ width: `${pct}%`, background: T.navy, height: "100%", borderRadius: 999 }} />
+            ) : (
+              data.sectors.map((s) => {
+                const w = t.capCents > 0 ? (s.washed * s.unitPriceCents) / t.capCents * 100 : 0;
+                return <div key={s.id} style={{ width: `${w}%`, background: s.color, height: "100%" }} />;
+              })
+            )}
           </div>
 
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: 16, paddingTop: 16, borderTop: `1px solid ${T.hair}` }}>
             <div>
-              <p style={label}>Arvioitu loppusumma</p>
-              <p style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{eur(t.estimatedFinalCents)}</p>
+              <p style={label}>Sovittu kokonaishinta</p>
+              <p style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{eur(t.capCents)}</p>
             </div>
-            {t.creditCents > 0 && (
+            {!data.isFixedDeal && t.creditCents > 0 && (
               <div style={{ textAlign: "right" }}>
                 <p style={label}>Hyvitykset</p>
                 <p style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>−{eur(t.creditCents)}</p>
@@ -146,8 +155,8 @@ export default function GigLivePage() {
           </div>
         </Panel>
 
-        {/* Sector cards */}
-        {data.sectors.map((s) => {
+        {/* Sector cards — hidden for fixed-price deals (flat rate, no per-sector billing). */}
+        {!data.isFixedDeal && data.sectors.map((s) => {
           const accrued = s.washed * s.unitPriceCents;
           const cap = s.total * s.unitPriceCents;
           const credit = s.skipped * s.unitPriceCents;
@@ -251,27 +260,38 @@ export default function GigLivePage() {
   );
 }
 
-/** Multi-segment radial gauge: each sector's accrued share draws its own arc. */
-function Gauge({ sectors, capCents, pct }: { sectors: GigPublicView["sectors"]; capCents: number; pct: number }) {
+/** Radial gauge: for fixed-price deals one arc at payment-based %; otherwise multi-segment. */
+function Gauge({ sectors, capCents, pct, isFixedDeal }: {
+  sectors: GigPublicView["sectors"]; capCents: number; pct: number; isFixedDeal: boolean;
+}) {
   const size = 132, stroke = 13, r = (size - stroke) / 2;
   const C = 2 * Math.PI * r;
   let offset = 0;
-  const arcs = sectors.map((s) => {
-    const frac = capCents > 0 ? (s.washed * s.unitPriceCents) / capCents : 0;
-    const len = frac * C;
-    const arc = (
-      <circle
-        key={s.id}
+  const arcs = isFixedDeal
+    ? [<circle
+        key="fixed"
         cx={size / 2} cy={size / 2} r={r}
-        fill="none" stroke={s.color} strokeWidth={stroke}
-        strokeDasharray={`${len} ${C - len}`}
-        strokeDashoffset={-offset}
+        fill="none" stroke={T.navy} strokeWidth={stroke}
+        strokeDasharray={`${(pct / 100) * C} ${C - (pct / 100) * C}`}
+        strokeDashoffset={0}
         strokeLinecap="butt"
-      />
-    );
-    offset += len;
-    return arc;
-  });
+      />]
+    : sectors.map((s) => {
+        const frac = capCents > 0 ? (s.washed * s.unitPriceCents) / capCents : 0;
+        const len = frac * C;
+        const arc = (
+          <circle
+            key={s.id}
+            cx={size / 2} cy={size / 2} r={r}
+            fill="none" stroke={s.color} strokeWidth={stroke}
+            strokeDasharray={`${len} ${C - len}`}
+            strokeDashoffset={-offset}
+            strokeLinecap="butt"
+          />
+        );
+        offset += len;
+        return arc;
+      });
   return (
     <div style={{ position: "relative", width: size, height: size, flex: "0 0 auto" }}>
       <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>

@@ -3102,6 +3102,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         totals,
         updatedAt: gig.updatedAt,
         invoicedCents: gig.invoicedCents,
+        paymentsCount: gig.payments.length,
+        isFixedDeal: !!(proj && fixedDealFor(proj)),
         // Read-only floor-plan map (null if the gig has no plan).
         map,
         // Contract & signing gate — the live view opens only after the customer signs.
@@ -3297,27 +3299,46 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const recipient = to || gig.company?.email;
       if (!recipient) return res.status(400).json({ error: "Vastaanottajan sähköposti puuttuu" });
 
-      const totalsBefore = computeTotals(gig);
-      const amountCents = totalsBefore.uninvoicedCents;
-      if (amountCents <= 0) return res.status(400).json({ error: "Ei laskutettavaa kertymää" });
+      // For fixed-price deals (FR8 / kiinteähintainen sopimus) the installment is
+      // always exactly 1/4 of the agreed total — never computed per window.
+      const proj = parseProject(job.projectData ?? null);
+      const fixedDeal = proj ? fixedDealFor(proj) : null;
+      const installmentCents = fixedDeal ? Math.round(fixedDeal.capCents / 4) : null;
 
-      // Bill only the units washed since the previous invoice, per sector, so the
-      // line items sum exactly to the amount due now.
+      const totalsBefore = computeTotals(gig);
+      const amountCents = installmentCents ?? totalsBefore.uninvoicedCents;
+      if (amountCents <= 0) return res.status(400).json({ error: "Ei laskutettavaa kertymää" });
+      if (fixedDeal && gig.payments.length >= 4) {
+        return res.status(400).json({ error: "Kaikki neljä maksuerää on jo lähetetty." });
+      }
+
       const fmtEur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
-      const lineRows = gig.sectors.map((s) => {
-        const delta = Math.max(0, s.washed - Math.min(s.washed, s.invoicedWashed || 0));
-        if (delta <= 0) return "";
-        const lineCents = delta * s.unitPriceCents;
-        const creditCents = s.skipped * s.unitPriceCents;
-        return `
-          <tr style="border-bottom:1px solid #E4E1D7">
+      const paymentNumber = gig.payments.length + 1;
+
+      // For fixed-price contracts one clean instalment line; for standard gigs
+      // per-sector window counts as before.
+      const lineRows = fixedDeal
+        ? `<tr style="border-bottom:1px solid #E4E1D7">
             <td style="padding:10px 0;color:#1A1A1A;font-size:14px">
-              ${s.name} — ${delta} ${s.unitLabel}a × ${fmtEur(s.unitPriceCents)}
-              ${s.skipped > 0 ? `<br><span style="color:#8C8A82;font-size:12px">Kuntovaraus yhteensä ${s.skipped} kpl · hyvitetty −${fmtEur(creditCents)}</span>` : ""}
+              Maksuerä ${paymentNumber}/4 — kiinteähintainen sopimus<br>
+              <span style="color:#8C8A82;font-size:12px">25 % sovitusta kokonaishinnasta ${fmtEur(fixedDeal.capCents)}</span>
             </td>
-            <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:#1A1A1A;font-variant-numeric:tabular-nums">${fmtEur(lineCents)}</td>
-          </tr>`;
-      }).join("");
+            <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:#1A1A1A;font-variant-numeric:tabular-nums">${fmtEur(amountCents)}</td>
+          </tr>`
+        : gig.sectors.map((s) => {
+            const delta = Math.max(0, s.washed - Math.min(s.washed, s.invoicedWashed || 0));
+            if (delta <= 0) return "";
+            const lineCents = delta * s.unitPriceCents;
+            const creditCents = s.skipped * s.unitPriceCents;
+            return `
+              <tr style="border-bottom:1px solid #E4E1D7">
+                <td style="padding:10px 0;color:#1A1A1A;font-size:14px">
+                  ${s.name} — ${delta} ${s.unitLabel}a × ${fmtEur(s.unitPriceCents)}
+                  ${s.skipped > 0 ? `<br><span style="color:#8C8A82;font-size:12px">Kuntovaraus yhteensä ${s.skipped} kpl · hyvitetty −${fmtEur(creditCents)}</span>` : ""}
+                </td>
+                <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:#1A1A1A;font-variant-numeric:tabular-nums">${fmtEur(lineCents)}</td>
+              </tr>`;
+          }).join("");
 
       const dueDisplay = dueDate ? new Date(dueDate + "T12:00:00").toLocaleDateString("fi-FI") : null;
       const barcodeHtml = iban
@@ -3344,8 +3365,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         <tbody>${lineRows}</tbody>
       </table>
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px">
-        <tr><td style="padding:8px 0;color:#8C8A82;font-size:13px">Kertymä yhteensä</td><td style="padding:8px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">${fmtEur(accruedSoFar)}</td></tr>
-        ${previouslyInvoiced > 0 ? `<tr><td style="padding:4px 0;color:#8C8A82;font-size:13px">Aiemmin laskutettu</td><td style="padding:4px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">−${fmtEur(previouslyInvoiced)}</td></tr>` : ""}
+        ${fixedDeal
+          ? `<tr><td style="padding:8px 0;color:#8C8A82;font-size:13px">Kokonaishinta (sovittu)</td><td style="padding:8px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">${fmtEur(fixedDeal.capCents)}</td></tr>
+             <tr><td style="padding:4px 0;color:#8C8A82;font-size:13px">Tähän mennessä laskutettu</td><td style="padding:4px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">${fmtEur((paymentNumber - 1) * amountCents)}</td></tr>`
+          : `<tr><td style="padding:8px 0;color:#8C8A82;font-size:13px">Kertymä yhteensä</td><td style="padding:8px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">${fmtEur(accruedSoFar)}</td></tr>
+             ${previouslyInvoiced > 0 ? `<tr><td style="padding:4px 0;color:#8C8A82;font-size:13px">Aiemmin laskutettu</td><td style="padding:4px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">−${fmtEur(previouslyInvoiced)}</td></tr>` : ""}`
+        }
         <tr><td style="padding:12px 0;border-top:2px solid #1A1A1A;color:#1A1A1A;font-size:16px;font-weight:700">Maksettavaa nyt</td><td style="padding:12px 0;border-top:2px solid #1A1A1A;text-align:right;color:#1A1A1A;font-size:22px;font-weight:800;font-variant-numeric:tabular-nums">${fmtEur(amountCents)}</td></tr>
       </table>
       <div style="background:#F6F4EE;border-radius:12px;padding:16px 20px;margin-top:20px">
@@ -3372,7 +3397,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         from: FROM_EMAIL,
         to: recipient,
         ...(bccArr?.length ? { bcc: bccArr } : {}),
-        subject: `${isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} — ${fmtEur(amountCents)} · Puuhapatet`,
+        subject: fixedDeal
+          ? `Osalasku ${paymentNumber}/4 · ${invoiceNo} — ${fmtEur(amountCents)} · Puuhapatet`
+          : `${isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} — ${fmtEur(amountCents)} · Puuhapatet`,
         html,
       });
 
@@ -3380,7 +3407,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       gig.sectors.forEach((s) => { s.invoicedWashed = s.washed; });
       const totalsAfter = computeTotals(gig);
       gig.invoicedThrough = totalsAfter.invoicedWashed;
-      gig.invoicedCents = totalsAfter.invoicedCents;
       gig.payments.push({
         t: Date.now(), countThrough: totalsAfter.invoicedWashed, amountCents,
         to: recipient, note: isFinal ? "Loppulasku" : "Osalasku", emailId: result.data?.id,
@@ -3392,6 +3418,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           yTunnus: senderYTunnus ? String(senderYTunnus).slice(0, 40) : undefined,
         } : undefined,
       });
+      // For fixed-price contracts, invoicedCents = N completed instalments × fixed amount
+      // (avoids mismatch between per-window accrual and agreed flat price).
+      gig.invoicedCents = fixedDeal
+        ? gig.payments.length * (installmentCents ?? 0)
+        : totalsAfter.invoicedCents;
       gig.log.push({ t: Date.now(), text: `${isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} lähetetty: ${fmtEur(amountCents)} → ${recipient}` });
       gig.updatedAt = Date.now();
       await db.update(jobs).set({ gigData: JSON.stringify(gig), updatedAt: new Date() }).where(eq(jobs.id, id));

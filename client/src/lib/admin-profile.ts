@@ -101,6 +101,17 @@ export const USERS: AdminProfile[] = [
     traineeOf: "matias",
     hasYTunnus: false,
   },
+  {
+    // FR8-tekijä (alihankkija, kuten Jani) — kirjautuu vain omaan keikka-
+    // dashboardiinsa. Käy läpi saman alihankkijan onboardingin: profiili + sopimukset
+    // (oma Y-tunnus, omat verot/vakuutukset, urakkaperusteinen korvaus). Aloitus-
+    // salasana "Oliver234" (server INITIAL_PASSWORDS); kirjautuessa pyydetään vaihtamaan.
+    // Crew-linkitys: linkedUserId = "oliver" tai etunimimatch (Oliver → oliver).
+    id: "oliver",
+    name: "Oliver",
+    role: "STAFF",
+    dashboardOnly: true,
+  },
 ];
 
 // ─── localStorage helpers ─────────────────────────────────────────────────────

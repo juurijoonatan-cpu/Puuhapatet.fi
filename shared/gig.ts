@@ -88,6 +88,19 @@ export interface GigApproval {
 /** High-level lifecycle of a gig, derived from signature + approval. */
 export type GigStatus = "draft" | "signed" | "approved";
 
+/**
+ * A short bulletin the bosses write for the customer's live view — e.g.
+ * "Useita ikkunoita oli osittain auki aloittaessa". Plain text, timestamped,
+ * shown newest-first on the public tracking page. Internal-only fields (who
+ * wrote it) are never exposed to the customer.
+ */
+export interface GigUpdate {
+  id: string;            // unique id
+  text: string;          // the note shown to the customer
+  ts: number;            // epoch ms (when posted)
+  by?: string;           // admin name (internal only)
+}
+
 export interface GigData {
   version: 1;
   contractId?: string;        // e.g. "PT-2026-02"
@@ -96,6 +109,7 @@ export interface GigData {
   currency: "EUR";
   vatNote?: string;           // e.g. "Hintoihin ei lisätä alv (AVL 3 §)"
   customerNote?: string;      // shown on the public live view
+  customerUpdates?: GigUpdate[]; // boss-written bulletins shown to the customer
   sectors: GigSector[];
   invoiceInterval: number;    // invoice roughly every N washed units (e.g. 100)
   invoicedThrough: number;    // cumulative washed-unit count already invoiced
@@ -289,6 +303,19 @@ export function sanitizeGigData(input: any): GigData {
     : [];
   const str = (v: any, max: number) => (v == null ? undefined : String(v).slice(0, max));
 
+  // Boss bulletins for the customer view. Keep the most recent 50; drop empties.
+  const customerUpdates: GigUpdate[] = Array.isArray(input.customerUpdates)
+    ? input.customerUpdates
+        .slice(-50)
+        .map((u: any) => ({
+          id: String(u?.id ?? "").slice(0, 40) || `u${Math.random().toString(36).slice(2, 10)}`,
+          text: String(u?.text ?? "").slice(0, 600).trim(),
+          ts: Number(u?.ts) || Date.now(),
+          by: u?.by ? String(u.by).slice(0, 80) : undefined,
+        }))
+        .filter((u: GigUpdate) => u.text)
+    : [];
+
   let signature: GigSignature | null = null;
   if (input.signature && typeof input.signature === "object") {
     const sg = input.signature;
@@ -346,6 +373,7 @@ export function sanitizeGigData(input: any): GigData {
     currency: "EUR",
     vatNote: str(input.vatNote, 240),
     customerNote: str(input.customerNote, 2000),
+    customerUpdates,
     sectors,
     invoiceInterval: clampNonNeg(Number(input.invoiceInterval)) || 100,
     invoicedThrough: clampNonNeg(Number(input.invoicedThrough)),

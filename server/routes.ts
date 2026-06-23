@@ -3095,6 +3095,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         currency: gig.currency,
         vatNote: gig.vatNote ?? null,
         customerNote: gig.customerNote ?? null,
+        // Boss bulletins for the customer — text + timestamp only (no author).
+        updates: (gig.customerUpdates ?? [])
+          .slice()
+          .sort((a, b) => b.ts - a.ts)
+          .map((u) => ({ id: u.id, text: u.text, ts: u.ts })),
         sectors: gig.sectors.map((s) => ({
           id: s.id, name: s.name, color: s.color, unitLabel: s.unitLabel,
           total: s.total, unitPriceCents: s.unitPriceCents, washed: s.washed, skipped: s.skipped,
@@ -3270,6 +3275,41 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         .set({ gigData: JSON.stringify(gig), agreedPrice: totals.capCents, isCustomGig: true, updatedAt: new Date() })
         .where(eq(jobs.id, id));
       res.json({ ok: true, gigData: gig, totals });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Boss bulletins for the customer view: add / remove a short note. These touch
+  // ONLY customerUpdates and re-read the gig fresh from the DB, so they never
+  // clobber sector counts that the project/dot sync writes on another path.
+  app.post("/api/jobs/:id/gig/customer-update", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const text = String(req.body?.text ?? "").trim().slice(0, 600);
+      if (!text) return res.status(400).json({ error: "Tyhjä tiedote" });
+      const gig = parseGig(job.gigData) ?? emptyGigData();
+      const update = { id: `u${Math.random().toString(36).slice(2, 10)}`, text, ts: Date.now(), by: String(req.body?.by ?? "").slice(0, 80) || undefined };
+      const clean = sanitizeGigData({ ...gig, customerUpdates: [...(gig.customerUpdates ?? []), update] });
+      await db.update(jobs).set({ gigData: JSON.stringify(clean), updatedAt: new Date() }).where(eq(jobs.id, id));
+      res.json({ ok: true, updates: clean.customerUpdates ?? [] });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/jobs/:id/gig/customer-update/delete", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const updateId = String(req.body?.updateId ?? "");
+      const gig = parseGig(job.gigData) ?? emptyGigData();
+      const clean = sanitizeGigData({ ...gig, customerUpdates: (gig.customerUpdates ?? []).filter((u) => u.id !== updateId) });
+      await db.update(jobs).set({ gigData: JSON.stringify(clean), updatedAt: new Date() }).where(eq(jobs.id, id));
+      res.json({ ok: true, updates: clean.customerUpdates ?? [] });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }

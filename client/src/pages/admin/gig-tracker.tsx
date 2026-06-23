@@ -12,6 +12,7 @@ import {
   ArrowLeft, Share2, Copy, Check, FileText,
   Send, AlertCircle, ChevronDown, Receipt, ExternalLink, ChevronRight,
   PenLine, ShieldCheck, Clock, Save, Download, Printer, LayoutDashboard, Users, Loader2,
+  Megaphone, Trash2, Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -70,6 +71,9 @@ export default function AdminGigTrackerPage() {
   const [savingContract, setSavingContract] = useState(false);
   const [savingPrices, setSavingPrices] = useState(false);
   const [draft, setDraft] = useState({ contractId: "", contractText: "", customerNote: "", vatNote: "", requireSignature: true });
+  // Boss bulletins for the customer view.
+  const [updateText, setUpdateText] = useState("");
+  const [postingUpdate, setPostingUpdate] = useState(false);
 
   // Invoice dialog state
   const [invoiceOpen, setInvoiceOpen] = useState(false);
@@ -140,6 +144,31 @@ export default function AdminGigTrackerPage() {
       toast({ title: "Sopimus tallennettu" });
     } else {
       toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
+    }
+  };
+
+  // Post a short bulletin the customer sees on their live page (newest first).
+  const addUpdate = async () => {
+    const text = updateText.trim();
+    if (!text || !gig) return;
+    setPostingUpdate(true);
+    const res = await api.addGigCustomerUpdate(jobId, text, profile?.name);
+    setPostingUpdate(false);
+    if (res.ok && res.data) {
+      setGig({ ...gig, customerUpdates: res.data.updates });
+      setUpdateText("");
+      toast({ title: "Tiedote julkaistu asiakkaalle" });
+    } else {
+      toast({ variant: "destructive", title: "Julkaisu epäonnistui", description: (res as any).error });
+    }
+  };
+  const removeUpdate = async (updateId: string) => {
+    if (!gig) return;
+    const res = await api.deleteGigCustomerUpdate(jobId, updateId);
+    if (res.ok && res.data) {
+      setGig({ ...gig, customerUpdates: res.data.updates });
+    } else {
+      toast({ variant: "destructive", title: "Poisto epäonnistui", description: (res as any).error });
     }
   };
 
@@ -620,6 +649,49 @@ export default function AdminGigTrackerPage() {
               <Button className="w-full" disabled={savingContract} onClick={saveContract}>
                 <Save className="w-4 h-4 mr-2" /> {savingContract ? "Tallennetaan…" : "Tallenna sopimus"}
               </Button>
+            </div>
+          )}
+        </Card>
+
+        {/* Customer bulletins — short notes that appear on the customer's live
+            view (e.g. "Useita ikkunoita oli osittain auki aloittaessa"). */}
+        <Card className="p-4 bg-card border-0 premium-shadow mb-4">
+          <div className="flex items-center gap-2 mb-1">
+            <Megaphone className="w-4 h-4 text-muted-foreground" />
+            <span className="text-sm font-semibold">Tiedotteet asiakkaalle</span>
+          </div>
+          <p className="text-xs text-muted-foreground mb-3">
+            Lyhyitä huomioita, jotka näkyvät heti asiakkaan seurantanäkymässä. Ei ikkunamääriä — vain viestisi.
+          </p>
+          <div className="flex items-start gap-2">
+            <Textarea
+              rows={2}
+              value={updateText}
+              onChange={(e) => setUpdateText(e.target.value)}
+              maxLength={600}
+              placeholder="Esim. Useita ikkunoita oli osittain auki aloittaessa — pesimme ne sovitusti."
+              onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") addUpdate(); }}
+            />
+            <Button className="shrink-0" disabled={postingUpdate || !updateText.trim()} onClick={addUpdate}>
+              {postingUpdate ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Plus className="w-4 h-4 mr-1" /> Lisää</>}
+            </Button>
+          </div>
+          {(gig.customerUpdates?.length ?? 0) > 0 && (
+            <div className="space-y-2 mt-3">
+              {[...(gig.customerUpdates ?? [])].sort((a, b) => b.ts - a.ts).map((u) => (
+                <div key={u.id} className="flex items-start justify-between gap-3 rounded-xl border border-border p-3">
+                  <div className="min-w-0">
+                    <p className="text-sm text-foreground whitespace-pre-wrap break-words">{u.text}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {new Date(u.ts).toLocaleString("fi-FI", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      {u.by ? ` · ${u.by.split(" ")[0]}` : ""}
+                    </p>
+                  </div>
+                  <button onClick={() => removeUpdate(u.id)} title="Poista" className="shrink-0 text-muted-foreground hover:text-destructive transition-colors">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
             </div>
           )}
         </Card>

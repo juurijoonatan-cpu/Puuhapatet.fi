@@ -451,26 +451,33 @@ export default function AdminProjectPage() {
     const t = traineeForUserId(mm?.linkedUserId) || traineeForUserId(id) || traineeForName(mm?.name);
     return t ? t.responsibleLeaderId : null;
   };
+  const isTrainee = (id: string): boolean => !!leaderOf(id);
   const baseStatsRaw = computeWorkerStats(project);
-  const foldedStats = new Map<string, (typeof baseStatsRaw)[number]>();
+  // Trainees (e.g. Milja) are NOT folded into their leader's DISPLAYED windows/hours
+  // anymore. Each person — trainees included — keeps their own window and hour counts
+  // so the bosses see real individual progress and a leader like Matias tracks only
+  // his own work. A trainee's washed windows still feed their LEADER's PAY below (the
+  // founder earns the full rate per trainee window), but the trainee never shows a
+  // euro figure of their own — their pay stays combined with the leader.
+  const baseStats = baseStatsRaw.map((st) => ({ ...st }));
+  // A trainee's washed windows, credited to their responsible leader FOR PAY ONLY.
+  const traineeWashedByLeader: Record<string, number> = {};
   for (const st of baseStatsRaw) {
-    const target = leaderOf(st.worker) || st.worker;
-    const cur = foldedStats.get(target);
-    if (cur) { cur.washed += st.washed; cur.hours += st.hours; }
-    else foldedStats.set(target, { ...st, worker: target });
+    const lead = leaderOf(st.worker);
+    if (lead) traineeWashedByLeader[lead] = (traineeWashedByLeader[lead] || 0) + st.washed;
   }
-  const baseStats = Array.from(foldedStats.values());
-  // Hours folded the same way: a trainee's logged hours count under their leader.
+  // Hours are shown per person (no folding) so a trainee's specific hours stay
+  // separate from their leader's.
   const managerHours: Record<string, number> = {};
   for (const [id, h] of Object.entries(project.hours || {})) {
-    const target = leaderOf(id) || id;
-    managerHours[target] = (managerHours[target] || 0) + (h || 0);
+    managerHours[id] = (managerHours[id] || 0) + (h || 0);
   }
-  // Profit pool = Σ over worker-washed windows of (deal total − that worker's rate).
+  // Profit pool = Σ over real workers (NOT founders, NOT trainees) of
+  // (deal total − that worker's rate) per worker-washed window.
   let profitPoolCents = 0;
-  for (const st of baseStats) {
+  for (const st of baseStatsRaw) {
     const mm = crew.find((c) => c.id === st.worker);
-    if (!isFounder(st.worker, mm?.role)) {
+    if (!isFounder(st.worker, mm?.role) && !isTrainee(st.worker)) {
       profitPoolCents += st.washed * Math.max(0, dealTotalCents - (mm?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS));
     }
   }
@@ -479,7 +486,12 @@ export default function AdminProjectPage() {
     const mm = crew.find((c) => c.id === st.worker);
     if (mm?.manualEarningsCents != null) return mm.manualEarningsCents;
     // washed can be fractional (50/50 split windows count as 0.5) — round cents.
-    if (isFounder(st.worker, mm?.role)) return Math.round(st.washed * dealTotalCents) + founderProfitEachCents;
+    // A founder's pay basis includes any trainee windows credited to them (the pay
+    // optimisation stays combined even though the windows are shown separately).
+    if (isFounder(st.worker, mm?.role)) {
+      const traineeWashed = traineeWashedByLeader[st.worker] || 0;
+      return Math.round((st.washed + traineeWashed) * dealTotalCents) + founderProfitEachCents;
+    }
     return Math.round(st.washed * (mm?.perWindowCents ?? dealTotalCents));
   };
   const resolveName = (id: string): string => {
@@ -489,13 +501,13 @@ export default function AdminProjectPage() {
   };
   const resolveInitial = (id: string): string => (resolveName(id)[0] || "?").toUpperCase();
 
-  // Trainee breakdown: which trainees folded into which leader (e.g. Milja → Matias),
-  // so the leader's card can show "sis. Milja 12 ikk" — otherwise the trainee's work
-  // looks like it vanished. Milja never appears as her own earner anywhere else.
-  const traineeFold: Record<string, { name: string; washed: number }[]> = {};
+  // Trainee indicator: each trainee (e.g. Milja) now gets their OWN windows/hours card
+  // on the dashboard, with no euro — their pay is settled through the leader (Matias).
+  // This maps a trainee id → the leader's display name for that "palkka <leader>" note.
+  const traineeInfo: Record<string, { leaderName: string }> = {};
   for (const st of baseStatsRaw) {
     const lead = leaderOf(st.worker);
-    if (lead && st.washed > 0) (traineeFold[lead] ||= []).push({ name: resolveName(st.worker), washed: st.washed });
+    if (lead) traineeInfo[st.worker] = { leaderName: resolveName(lead) };
   }
 
   // Founders appear even with 0 own windows — they still earn the profit share.
@@ -504,7 +516,8 @@ export default function AdminProjectPage() {
     if (!statIds.has(f.id)) baseStats.push({ worker: f.id, washed: 0, revenueCents: 0, hours: Math.max(0, managerHours[f.id] || 0), windowsPerHour: 0, eurPerHour: 0 });
   }
   const workerStats = baseStats.map((s) => {
-    const cents = earningsFor(s);
+    // Trainees show no euro of their own — their pay is folded into their leader.
+    const cents = isTrainee(s.worker) ? 0 : earningsFor(s);
     return {
       ...s,
       revenueCents: cents,
@@ -521,12 +534,13 @@ export default function AdminProjectPage() {
       return next;
     });
   };
-  // Tunnit-näkymä: perustajat + keikan aktiiviset työntekijät (esim. Jani), ei
-  // pelkät johtajat — jotta jokaisen tekijän tunnit näkyvät johtajille.
+  // Tunnit-näkymä: perustajat + keikan aktiiviset työntekijät (esim. Jani) JA
+  // harjoittelijat (esim. Milja) — jokaisen tekijän omat tunnit näkyvät johtajille
+  // erikseen (harjoittelijan palkka pysyy ohjaajalla, mutta tunnit ovat omat).
   const hoursIds = Array.from(new Set([
     ...(project.workers.length ? project.workers : ["matias", "joonatan"]),
     ...crew.filter((c) => c.active && c.role === "worker" && !c.adminLinked).map((c) => c.id),
-  ])).filter((id) => !leaderOf(id)); // trainees fold into their leader, no own row
+  ]));
   const hoursWorkers = hoursIds.map((id) => ({ id, name: resolveName(id), initial: resolveInitial(id) }));
   // Display-name map + this gig's pickable crew (used by both the "who washed"
   // and "default washer" pickers).
@@ -565,7 +579,7 @@ export default function AdminProjectPage() {
       )}
       <main style={{ position: "relative", zIndex: 10, height: "calc(100% - 62px)" }}>
         {tab === "dashboard" && (
-          <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} onSetEarnings={setWorkerEarnings} traineeFold={traineeFold} />
+          <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} onSetEarnings={setWorkerEarnings} traineeInfo={traineeInfo} />
         )}
         {tab === "floor" && (
           <FloorView
@@ -605,7 +619,7 @@ export default function AdminProjectPage() {
           />
         )}
         {tab === "hours" && (
-          <HoursView workers={hoursWorkers} hours={managerHours} hourLog={project.hourLog} stats={workerStats} onAddHours={onAddHours} />
+          <HoursView workers={hoursWorkers} hours={managerHours} hourLog={project.hourLog} stats={workerStats} onAddHours={onAddHours} traineeInfo={traineeInfo} />
         )}
       </main>
     </>,

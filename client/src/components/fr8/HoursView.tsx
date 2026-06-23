@@ -15,6 +15,9 @@ interface Props {
   hourLog: ProjHourEntry[];
   stats: WorkerStat[];
   onAddHours: (worker: string, delta: number) => void;
+  /** trainee id → their leader's name (e.g. Milja → "Matias"). Trainees show their
+   *  own hours/windows, but no euro — pay stays combined with the leader. */
+  traineeInfo?: Record<string, { leaderName: string }>;
 }
 
 function fmtH(n: number) { return (Math.round(n * 100) / 100).toLocaleString("fi-FI"); }
@@ -29,7 +32,7 @@ const card: React.CSSProperties = {
   WebkitBackdropFilter: "blur(22px)",
 };
 
-export default function HoursView({ workers, hours, hourLog, stats, onAddHours }: Props) {
+export default function HoursView({ workers, hours, hourLog, stats, onAddHours, traineeInfo }: Props) {
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const m = useIsMobile();
 
@@ -105,6 +108,7 @@ export default function HoursView({ workers, hours, hourLog, stats, onAddHours }
           {workers.map((w) => {
             const entries = hourLog.filter((e) => e.worker === w.id).slice(0, 4);
             const st = statFor(w.id);
+            const trainee = traineeInfo?.[w.id];
             return (
               <div key={w.id} style={{ ...card, padding: "24px" }}>
                 {/* Worker header */}
@@ -112,7 +116,7 @@ export default function HoursView({ workers, hours, hourLog, stats, onAddHours }
                   <div style={{ width: "46px", height: "46px", borderRadius: "14px", background: "linear-gradient(140deg,rgba(255,255,255,0.16),rgba(255,255,255,0.04))", border: "1px solid rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "18px", fontWeight: 700 }}>{w.initial}</div>
                   <div>
                     <div style={{ fontSize: "18px", fontWeight: 600 }}>{w.name}</div>
-                    <div style={{ fontSize: "12px", color: "rgba(255,255,255,0.4)" }}>Ikkunanpesijä</div>
+                    <div style={{ fontSize: "12px", color: trainee ? "#9cc1ff" : "rgba(255,255,255,0.4)" }}>{trainee ? `Harjoittelija · palkka ${trainee.leaderName}` : "Ikkunanpesijä"}</div>
                   </div>
                   <div style={{ marginLeft: "auto", textAlign: "right" }}>
                     <div style={{ fontSize: "32px", fontWeight: 700, lineHeight: 1, fontFamily: "var(--font-jetbrains-mono, monospace)" }}>{fmtH(hours[w.id] || 0)}</div>
@@ -125,7 +129,10 @@ export default function HoursView({ workers, hours, hourLog, stats, onAddHours }
                   {[
                     { label: "PESTY", val: String(st?.washed ?? 0), sub: "ikkunaa" },
                     { label: "IKK / H", val: st && st.windowsPerHour > 0 ? fmtH(st.windowsPerHour) : "—", sub: "tahti" },
-                    { label: "€ / H", val: st && st.eurPerHour > 0 ? fmtEur(st.eurPerHour) : "—", sub: "tuotto" },
+                    // Trainees show no €/h — their pay stays combined with their leader.
+                    trainee
+                      ? { label: "PALKKA", val: "yhd.", sub: trainee.leaderName }
+                      : { label: "€ / H", val: st && st.eurPerHour > 0 ? fmtEur(st.eurPerHour) : "—", sub: "tuotto" },
                   ].map((c) => (
                     <div key={c.label} style={{ padding: "11px 12px", background: "rgba(255,255,255,0.03)", borderRadius: "13px" }}>
                       <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)", marginBottom: "5px" }}>{c.label}</div>

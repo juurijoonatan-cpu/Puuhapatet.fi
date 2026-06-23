@@ -1418,39 +1418,25 @@ function PayoutsTab({ token, view, setView }: { token: string; view: WorkerView;
   );
 }
 
-function fmtDuration(min: number) {
-  const h = Math.floor(min / 60), mm = Math.round(min % 60);
-  return h > 0 ? `${h} t ${mm} min` : `${mm} min`;
-}
-
 function HoursTab({ token, view, setView }: { token: string; view: WorkerView; setView: (v: WorkerView) => void }) {
-  // Timer vs. manual entry. The worker can switch the live clock off entirely
-  // and just log finished days by hand — the choice is remembered per link.
-  const modeKey = `pp_hours_mode_${token}`;
+  // Deliberately simple: this view only tracks PRESENCE at the job site for the
+  // bosses (total time on location). No running clock, no windows, no €/h — the
+  // worker just presses "Aloita työaika" when they arrive, can pause for a break,
+  // and "Päätä työaika" when they leave. Pay is shown elsewhere; the live
+  // pay-per-hour read-out was removed on purpose.
   const breakKey = `pp_shift_break_${token}`;
-  const [mode, setMode] = useState<"timer" | "manual">(() => {
-    try { return localStorage.getItem(modeKey) === "manual" ? "manual" : "timer"; } catch { return "timer"; }
-  });
-  const setModePersist = (m: "timer" | "manual") => {
-    setMode(m);
-    try { localStorage.setItem(modeKey, m); } catch { /* private mode */ }
-  };
 
-  // The running shift's start lives on the SERVER (view.worker.activeShiftAt) so
-  // it always survives a refresh / reopen. Break time is local-only, so we mirror
-  // it to localStorage and restore it on mount — a mid-shift refresh used to lose
-  // the break deduction, which is what made the clock look like it "reset".
+  // The running shift's start lives on the SERVER (view.worker.activeShiftAt) so it
+  // survives a refresh / reopen. Break time is local-only and mirrored to
+  // localStorage so a mid-shift refresh keeps the break deduction.
   const [running, setRunning] = useState<number | null>(view.worker.activeShiftAt ?? null);
   const [breakMs, setBreakMs] = useState(0);          // accumulated break time this shift
   const [onBreak, setOnBreak] = useState<number | null>(null); // break start ms, if paused
-  const [tickNow, setTickNow] = useState(Date.now());
-  const [manual, setManual] = useState("");
   const [busy, setBusy] = useState(false);
-  const [recap, setRecap] = useState<WorkerView["worker"]["sessions"][number] | null>(null);
-  const tick = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [saved, setSaved] = useState(false);          // brief "tallennettu" confirmation
 
-  // Keep the running flag in sync with the server (a shift started/ended on
-  // another device, and a clean reset once the day is ended).
+  // Keep the running flag in sync with the server (shift started/ended elsewhere,
+  // and a clean reset once work is ended).
   useEffect(() => { setRunning(view.worker.activeShiftAt ?? null); }, [view.worker.activeShiftAt]);
 
   // Restore saved break state on mount — only if it belongs to the shift that's
@@ -1459,10 +1445,10 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
     try {
       const raw = localStorage.getItem(breakKey);
       if (!raw) return;
-      const saved = JSON.parse(raw) as { start?: number; breakMs?: number; onBreak?: number | null };
-      if (saved.start && view.worker.activeShiftAt && saved.start === view.worker.activeShiftAt) {
-        setBreakMs(saved.breakMs ?? 0);
-        setOnBreak(saved.onBreak ?? null);
+      const savedState = JSON.parse(raw) as { start?: number; breakMs?: number; onBreak?: number | null };
+      if (savedState.start && view.worker.activeShiftAt && savedState.start === view.worker.activeShiftAt) {
+        setBreakMs(savedState.breakMs ?? 0);
+        setOnBreak(savedState.onBreak ?? null);
       }
     } catch { /* ignore */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1476,22 +1462,10 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
     } catch { /* private mode */ }
   }, [running, breakMs, onBreak, breakKey]);
 
-  useEffect(() => {
-    if (running) {
-      tick.current = setInterval(() => setTickNow(Date.now()), 1000);
-      return () => { if (tick.current) clearInterval(tick.current); };
-    }
-  }, [running]);
-
-  // Worked time = elapsed − breaks (pauses while on break).
-  const workedMs = running ? Math.max(0, tickNow - running - breakMs - (onBreak ? tickNow - onBreak : 0)) : 0;
-  // Windows washed during this session (live).
-  const sessionWindows = running ? Math.max(0, view.stats.washed - (view.worker.shiftStartWashed ?? view.stats.washed)) : 0;
-  const sessionEarnedCents = sessionWindows * view.worker.perWindowCents;
-
   const start = async () => {
+    if (busy) return;
     const now = Date.now();
-    setRunning(now); setBreakMs(0); setOnBreak(null); setTickNow(now);
+    setRunning(now); setBreakMs(0); setOnBreak(null); setSaved(false);
     const res = await api.crewShift(token, true);
     if (res.ok && res.data?.view) setView(res.data.view);
     else setRunning(null); // server didn't record it → don't show a phantom shift
@@ -1502,179 +1476,62 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
     else setOnBreak(Date.now());
   };
 
-  const endDay = async () => {
+  const endWork = async () => {
     if (!running || busy) return;
     setBusy(true);
     const totalBreak = breakMs + (onBreak ? Date.now() - onBreak : 0);
     const minutes = Math.max(0, Math.round((Date.now() - running - totalBreak) / 60000));
     const hours = Math.round((minutes / 60) * 100) / 100;
-    if (hours > 0) await api.crewAddHours(token, hours);            // hours ledger
-    const res = await api.crewShift(token, false, minutes);          // record session
+    if (hours > 0) await api.crewAddHours(token, hours);            // hours ledger (for the bosses)
+    const res = await api.crewShift(token, false, minutes);          // record session/time
     setBusy(false); setRunning(null); setOnBreak(null); setBreakMs(0);
     try { localStorage.removeItem(breakKey); } catch { /* */ }
     if (res.ok && res.data?.view) {
       setView(res.data.view);
-      setRecap(res.data.view.worker.sessions[0] ?? null);           // newest-first → recap
+      setSaved(true);
+      setTimeout(() => setSaved(false), 4000);
     }
   };
 
-  const addManual = async () => {
-    const h = parseFloat(manual.replace(",", "."));
-    if (!Number.isFinite(h) || h <= 0 || busy) return;
-    setBusy(true);
-    const res = await api.crewManualShift(token, Math.round(h * 100) / 100);
-    setBusy(false);
-    if (res.ok && res.data?.view) {
-      setView(res.data.view);
-      setManual("");
-      setRecap(res.data.view.worker.sessions[0] ?? null); // show the logged day
-    }
-  };
-
-  const mmss = (ms: number) => {
-    const s = Math.floor(ms / 1000);
-    return `${String(Math.floor(s / 3600)).padStart(2, "0")}:${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
-  };
-  const dayMonth = (ts: number) => new Date(ts).toLocaleDateString("fi-FI", { day: "numeric", month: "numeric" });
-
-  const segBtn = (active: boolean): React.CSSProperties => ({
-    flex: 1, padding: "9px 10px", borderRadius: 9, border: "none", cursor: "pointer",
-    fontFamily: FONT, fontSize: 13, fontWeight: 600,
-    background: active ? "#fff" : "transparent", color: active ? "#0a0a0c" : "rgba(255,255,255,0.6)",
-    transition: "all .15s",
-  });
+  const statusLabel = onBreak ? "Tauolla" : running ? "Työaika käynnissä" : "Et ole töissä";
+  const statusColor = onBreak ? "#E0A800" : running ? "#7CE0A6" : "rgba(255,255,255,0.55)";
 
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: 20 }}>
-      {/* Timer / manual mode switch */}
-      <div style={{ display: "flex", gap: 5, padding: 5, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, marginBottom: 8 }}>
-        <button onClick={() => setModePersist("timer")} style={segBtn(mode === "timer")}>Ajastin</button>
-        <button onClick={() => setModePersist("manual")} style={segBtn(mode === "manual")}>Kirjaa käsin</button>
-      </div>
+      <div style={{ padding: "26px 20px", borderRadius: 18, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", textAlign: "center" }}>
+        {/* Status — a label + dot, never a running clock */}
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 9, padding: "8px 16px", borderRadius: 999, background: "rgba(255,255,255,0.05)", border: `1px solid ${running ? (onBreak ? "rgba(224,168,0,0.35)" : "rgba(124,224,166,0.35)") : "rgba(255,255,255,0.12)"}` }}>
+          <span style={{ width: 9, height: 9, borderRadius: "50%", background: statusColor, boxShadow: running && !onBreak ? "0 0 9px rgba(124,224,166,0.9)" : undefined, animation: running && !onBreak ? "ppPulse 1.8s ease-in-out infinite" : undefined }} />
+          <span style={{ fontSize: 15, fontWeight: 700, color: statusColor }}>{statusLabel}</span>
+        </div>
+        <style>{`@keyframes ppPulse{0%,100%{opacity:1}50%{opacity:.35}}`}</style>
 
-      {mode === "timer" ? (
-        <>
-          <div style={{ textAlign: "center", padding: "16px 0 6px" }}>
-            <p style={{ margin: 0, fontSize: 40, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: onBreak ? "#E0A800" : running ? "#7CE0A6" : "#fff" }}>{mmss(workedMs)}</p>
-            {running && (
-              <p style={{ margin: "4px 0 0", fontSize: 13, color: "rgba(255,255,255,0.6)" }}>
-                {onBreak ? "Tauolla" : "Vuoro käynnissä"} · {sessionWindows} ikkunaa · {euro(sessionEarnedCents)}
-              </p>
-            )}
-            {!running ? (
-              <button onClick={start} style={{ ...primaryBtn, width: "auto", padding: "13px 36px", background: T.green, marginTop: 12 }}>Aloita vuoro</button>
-            ) : (
-              <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 14, flexWrap: "wrap" }}>
-                <button onClick={toggleBreak} style={{ ...secondaryBtn, color: "#fff", border: "1px solid rgba(255,255,255,0.25)", background: onBreak ? "rgba(224,168,0,0.15)" : "transparent" }}>
-                  {onBreak ? "Jatka työtä" : "Tauko"}
-                </button>
-                <button onClick={endDay} disabled={busy} style={{ ...primaryBtn, width: "auto", padding: "13px 28px", background: "#D9472B", opacity: busy ? 0.6 : 1 }}>
-                  {busy ? "Päätetään…" : "Päätä päivä"}
-                </button>
-              </div>
-            )}
-            <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, marginTop: 12, lineHeight: 1.5 }}>
-              Aloita kun saavut työmaalle. Pidä tauko ruokatauon ajaksi — tauot eivät kerrytä tunteja. "Päätä päivä" kokoaa yhteenvedon.
-            </p>
-          </div>
-
-          <div style={{ marginTop: 6 }}>
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <input value={manual} onChange={(e) => setManual(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addManual()} placeholder="Kirjaa työpäivä käsin (esim. 2,5 h)" inputMode="decimal" style={{ ...inputStyle, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff" }} />
-              <button onClick={addManual} disabled={busy} style={{ ...secondaryBtn, color: "#fff", border: "1px solid rgba(255,255,255,0.2)", whiteSpace: "nowrap", opacity: busy ? 0.6 : 1 }}>Kirjaa</button>
-            </div>
-            <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
-              Unohtuiko vuoron aloitus? Kirjaa tehdyt tunnit käsin — päivä tallentuu päiväkirjaan.
-            </p>
-          </div>
-        </>
-      ) : (
-        // Manual mode — the clock is off. Just type the day's hours and press
-        // "Päätä päivä"; the day is saved straight to the diary.
-        <div style={{ padding: "16px 0 6px" }}>
-          {running && (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", borderRadius: 11, background: "rgba(224,168,0,0.12)", border: "1px solid rgba(224,168,0,0.3)", marginBottom: 14 }}>
-              <span style={{ fontSize: 12.5, color: "#F4D58A" }}>Ajastin on yhä käynnissä.</span>
-              <button onClick={endDay} disabled={busy} style={{ ...secondaryBtn, padding: "8px 12px", color: "#fff", border: "1px solid rgba(255,255,255,0.25)", whiteSpace: "nowrap", opacity: busy ? 0.6 : 1 }}>
-                {busy ? "Päätetään…" : "Päätä vuoro"}
+        {/* Big primary action */}
+        <div style={{ marginTop: 22 }}>
+          {!running ? (
+            <button onClick={start} disabled={busy} style={{ ...primaryBtn, background: T.green, fontSize: 17, padding: "16px", opacity: busy ? 0.6 : 1 }}>
+              Aloita työaika
+            </button>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <button onClick={toggleBreak} disabled={busy} style={{ ...primaryBtn, fontSize: 16, padding: "15px", color: "#fff", background: onBreak ? "rgba(224,168,0,0.18)" : "rgba(255,255,255,0.07)", border: `1px solid ${onBreak ? "rgba(224,168,0,0.4)" : "rgba(255,255,255,0.18)"}` }}>
+                {onBreak ? "Jatka työtä" : "Pidä tauko"}
+              </button>
+              <button onClick={endWork} disabled={busy} style={{ ...primaryBtn, fontSize: 17, padding: "16px", background: "#D9472B", opacity: busy ? 0.6 : 1 }}>
+                {busy ? "Päätetään…" : "Päätä työaika"}
               </button>
             </div>
           )}
-          <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "rgba(255,255,255,0.7)", marginBottom: 6 }}>Päivän tunnit</label>
-          <input value={manual} onChange={(e) => setManual(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addManual()} placeholder="esim. 6 tai 7,5" inputMode="decimal" autoFocus
-            style={{ ...inputStyle, fontSize: 22, fontWeight: 700, textAlign: "center", padding: "16px 13px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff" }} />
-          <button onClick={addManual} disabled={busy || !manual.trim()} style={{ ...primaryBtn, background: T.green, marginTop: 12, opacity: busy || !manual.trim() ? 0.6 : 1 }}>
-            {busy ? "Tallennetaan…" : "Päätä päivä"}
-          </button>
-          <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, marginTop: 12, lineHeight: 1.5 }}>
-            Ajastin on pois päältä. Kirjoita tehdyt tunnit ja paina "Päätä päivä" — päivä tallentuu päiväkirjaan. Voit ottaa ajastimen takaisin käyttöön ylhäältä.
-          </p>
         </div>
-      )}
 
-      <div style={{ marginTop: 20, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Stat label="Tunteja yhteensä" value={view.stats.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} />
-        <Stat label="€ / tunti" value={view.stats.hours > 0 ? euro(Math.round(view.stats.eurPerHour * 100)) : "—"} />
+        <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 12.5, marginTop: 18, lineHeight: 1.55 }}>
+          Aloita työaika kun saavut työmaalle ja päätä se kun lähdet. Pidä tauko esimerkiksi
+          ruokatauon ajaksi — tauot eivät kerry työaikaan. Aika tallentuu automaattisesti.
+        </p>
+        {saved && (
+          <p style={{ color: "#7CE0A6", fontSize: 13, fontWeight: 700, marginTop: 12 }}>✓ Työaika tallennettu</p>
+        )}
       </div>
-
-      {/* Session log */}
-      {view.worker.sessions.length > 0 && (
-        <div style={{ marginTop: 26 }}>
-          <p style={{ margin: "0 0 10px", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)" }}>Päiväkirja</p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {view.worker.sessions.map((s, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", borderRadius: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                <div>
-                  <p style={{ margin: 0, fontSize: 13.5, fontWeight: 600 }}>{dayMonth(s.end)}</p>
-                  <p style={{ margin: "2px 0 0", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
-                    {s.manual
-                      ? `Käsin kirjattu · ${s.windows > 0 ? `${s.windows} ikkunaa · ` : ""}${fmtDuration(s.minutes)}`
-                      : `${s.windows} ikkunaa · ${fmtDuration(s.minutes)}`}
-                  </p>
-                </div>
-                {/* Show the day's earnings whenever windows were logged (timed or manual); a pure-hours manual day shows the duration. */}
-                {s.windows > 0
-                  ? <span style={{ fontSize: 15, fontWeight: 700, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(s.earnedCents)}</span>
-                  : <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.55)", fontVariantNumeric: "tabular-nums" }}>{fmtDuration(s.minutes)}</span>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* End-of-day recap */}
-      {recap && (
-        <div onClick={() => setRecap(null)} style={{ position: "fixed", inset: 0, zIndex: 70, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 340, background: "#0f1216", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 18, padding: 24, textAlign: "center" }}>
-            <div style={{ fontSize: 40 }}>{recap.manual ? "📝" : "🎉"}</div>
-            <h2 style={{ margin: "8px 0 2px", fontSize: 22, fontWeight: 800, color: "#fff" }}>{recap.manual ? "Päivä kirjattu" : "Hyvää työtä!"}</h2>
-            <p style={{ margin: "0 0 18px", fontSize: 13.5, color: "rgba(255,255,255,0.6)" }}>{recap.manual ? "Käsin kirjattu työpäivä" : "Päivän yhteenveto"}</p>
-            {recap.manual ? (
-              // A manual day with windows logged shows both; pure hours show duration only.
-              recap.windows > 0 ? (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
-                  <Stat label="Ikkunaa" value={String(recap.windows)} />
-                  <Stat label="Ansio" value={euro(recap.earnedCents)} />
-                  <Stat label="Kesto" value={fmtDuration(recap.minutes)} />
-                  <Stat label="€ / tunti" value={recap.minutes > 0 ? euro(Math.round((recap.earnedCents / (recap.minutes / 60)))) : "—"} />
-                </div>
-              ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, marginBottom: 16 }}>
-                  <Stat label="Kesto" value={fmtDuration(recap.minutes)} />
-                </div>
-              )
-            ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
-                <Stat label="Ikkunaa" value={String(recap.windows)} />
-                <Stat label="Ansio" value={euro(recap.earnedCents)} />
-                <Stat label="Kesto" value={fmtDuration(recap.minutes)} />
-                <Stat label="€ / tunti" value={recap.minutes > 0 ? euro(Math.round((recap.earnedCents / (recap.minutes / 60)))) : "—"} />
-              </div>
-            )}
-            <button onClick={() => setRecap(null)} style={{ ...primaryBtn, background: T.green }}>Valmis</button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

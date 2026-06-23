@@ -16,9 +16,10 @@ interface Props {
   deal?: FixedDeal | null;
   /** Manually set/clear a person's earnings (founders' agreed split). */
   onSetEarnings?: (id: string, cents: number | null) => void;
-  /** leader id → trainees folded into them (e.g. Matias ← Milja), so the leader's
-   *  card can show "sis. Milja X ikk" instead of the work seeming to disappear. */
-  traineeFold?: Record<string, { name: string; washed: number }[]>;
+  /** trainee id → their leader's name (e.g. Milja → "Matias"). A trainee gets their
+   *  OWN windows/hours card here, but no euro: their pay stays combined with the
+   *  leader, so we only show a "palkka <leader>" note instead of earnings. */
+  traineeInfo?: Record<string, { leaderName: string }>;
 }
 
 function fmt(n: number) { return Math.round(n).toLocaleString("fi-FI"); }
@@ -55,7 +56,7 @@ const mono: React.CSSProperties = {
   color: "rgba(255,255,255,0.4)",
 };
 
-export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeFold }: Props) {
+export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeInfo }: Props) {
   const m = useIsMobile();
   const [showLog, setShowLog] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -236,7 +237,10 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
         {payP.total > 0 && (
           <div className="anim-fadeUp-1" style={{ ...card, padding: m ? "16px 18px" : "18px 24px", marginBottom: "14px" }}>
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: "10px", gap: 10, flexWrap: "wrap" }}>
-              <span style={mono}>MAKSUERÄ {payP.currentPeriod}/{payP.periods} · {payP.perPeriod} IKKUNAA / ERÄ</span>
+              {/* The instalment price is the FLAT agreed total split evenly (€6300 / 4 =
+                  1 575 € / erä) — a fixed figure, NOT derived from the live red-window
+                  count (which would drift, e.g. 1 565,63 € at 167 windows). */}
+              <span style={mono}>MAKSUERÄ {payP.currentPeriod}/{payP.periods} · {payP.perPeriod} IKKUNAA / ERÄ{deal ? ` · ${euro(capEur / payP.periods)} / ERÄ` : ""}</span>
               <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.5)" }}>{payP.washed}/{payP.total} ikkunaa</span>
             </div>
             <div style={{ position: "relative", height: "10px", borderRadius: "999px", background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
@@ -310,24 +314,22 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                 const rate = s.washed > 0 ? s.revenueCents / s.washed / 100 : 0; // €/ikkuna (personal pay)
                 const shiftStart = shiftStartFor(s.worker);
                 const cm = crewMemberOf(s.worker);
-                const canEditPay = !!onSetEarnings && cm?.role === "host"; // founders adjust own split
+                const trainee = traineeInfo?.[s.worker]; // e.g. Milja → pay folded into Matias, windows/hours shown on their own
+                const canEditPay = !!onSetEarnings && cm?.role === "host" && !trainee; // founders adjust own split
                 const overridden = cm?.manualEarningsCents != null;
                 const editing = editId === s.worker;
                 return (
                   <div key={s.worker} style={{ padding: "16px 18px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "15px" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px", gap: 8 }}>
-                      <span style={{ fontSize: "15px", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{workerName(s.worker)}</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                        <span style={{ fontSize: "15px", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{workerName(s.worker)}</span>
+                        {trainee && <span style={{ flexShrink: 0, fontSize: "9px", fontWeight: 700, letterSpacing: "0.06em", color: "#9cc1ff", padding: "2px 6px", borderRadius: 6, border: "1px solid rgba(124,180,255,0.35)", background: "rgba(124,180,255,0.12)" }}>HARJOITTELIJA</span>}
+                      </span>
                       <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.45)", flexShrink: 0 }}>{Math.round(share)} %</span>
                     </div>
                     <div style={{ fontSize: "26px", fontWeight: 700, lineHeight: 1 }}>
                       {s.washed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} <span style={{ fontSize: "13px", fontWeight: 500, color: "rgba(255,255,255,0.4)" }}>ikkunaa</span>
                     </div>
-                    {/* Folded trainee(s), e.g. "sis. Milja 12 ikk" — so a trainee's work shows under their leader. */}
-                    {(traineeFold?.[s.worker]?.length ?? 0) > 0 && (
-                      <div style={{ marginTop: 5, fontSize: "11px", color: "rgba(124,224,166,0.9)" }}>
-                        {traineeFold![s.worker].map((t) => `sis. ${t.name} ${t.washed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikk`).join(" · ")}
-                      </div>
-                    )}
                     {shiftStart && (
                       <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 10, padding: "3px 9px", borderRadius: 999, background: "rgba(95,224,138,0.12)", border: "1px solid rgba(95,224,138,0.3)" }}>
                         <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#5fe08a", boxShadow: "0 0 8px rgba(95,224,138,0.9)", animation: "fr8-zonePulse 1.8s ease-in-out infinite" }} />
@@ -337,6 +339,14 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                     <div style={{ height: "6px", borderRadius: "5px", background: "rgba(255,255,255,0.08)", overflow: "hidden", margin: "12px 0" }}>
                       <div style={{ width: `${share.toFixed(1)}%`, height: "100%", borderRadius: "5px", background: "linear-gradient(90deg,rgba(255,255,255,0.5),#fff)", transition: "width .6s" }} />
                     </div>
+                    {trainee ? (
+                      // A trainee shows only their own windows + hours; the euro (pay) stays
+                      // combined with their leader, so we show "palkka <leader>" instead.
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>
+                        <span style={{ color: "#9cc1ff" }}>palkka · {trainee.leaderName}</span>
+                        <span>{s.hours > 0 ? `${s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} h` : "0 h"}</span>
+                      </div>
+                    ) : (
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>
                       <span>
                         <b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(s.revenueCents / 100)}</b>
@@ -346,6 +356,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                       </span>
                       <span>{s.hours > 0 ? `${euro(s.eurPerHour)}/h · ${s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} h` : "0 h"}</span>
                     </div>
+                    )}
                     {canEditPay && !editing && (
                       <button onClick={() => { setEditId(s.worker); setEditVal(overridden ? String(Math.round((cm!.manualEarningsCents! / 100))) : String(Math.round(s.revenueCents / 100))); }}
                         style={{ marginTop: 10, width: "100%", padding: "7px", borderRadius: 9, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.7)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>
@@ -377,7 +388,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                             {[...cm!.sessions!].reverse().slice(0, 10).map(( se, i) => (
                               <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11.5px", color: "rgba(255,255,255,0.6)", padding: "5px 8px", background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>
                                 <span>{new Date(se.end).toLocaleDateString("fi-FI", { day: "numeric", month: "numeric" })} · {se.windows} ikk · {fmtDur(se.minutes * 60000)}</span>
-                                <span style={{ fontWeight: 700, color: "rgba(255,255,255,0.8)" }}>{euro(se.earnedCents / 100)}</span>
+                                {!trainee && <span style={{ fontWeight: 700, color: "rgba(255,255,255,0.8)" }}>{euro(se.earnedCents / 100)}</span>}
                               </div>
                             ))}
                           </div>

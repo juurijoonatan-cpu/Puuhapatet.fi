@@ -12,6 +12,21 @@ import { useMemo, useState } from "react";
 import type { GigPublicView } from "@/lib/api";
 import { NOTE_KINDS } from "@shared/project";
 
+/** Position a fixed popup near an on-screen anchor rect, flipping above/below and
+ *  clamping to the viewport so it's never clipped (mobile-friendly). */
+function popupStyle(rect: DOMRect | null, width: number, height: number): React.CSSProperties {
+  if (typeof window === "undefined" || !rect) {
+    return { position: "fixed", left: "50%", bottom: "16px", transform: "translateX(-50%)", zIndex: 60 };
+  }
+  const margin = 10, vw = window.innerWidth, vh = window.innerHeight;
+  let left = rect.left + rect.width / 2 - width / 2;
+  left = Math.max(margin, Math.min(vw - width - margin, left));
+  let top = rect.top - height - 10;
+  if (top < margin) top = Math.min(vh - height - margin, rect.bottom + 10);
+  top = Math.max(margin, top);
+  return { position: "fixed", left: `${left}px`, top: `${top}px`, zIndex: 60 };
+}
+
 const T = {
   ink: "#1A1A1A",
   paper: "#F6F4EE",
@@ -66,6 +81,10 @@ export default function CustomerFloorMap({ map }: { map: MapData }) {
 
   const points = useMemo(() => getPoints(floor, map), [floor, map]);
   const floorNotes = map.notes?.[floor] ?? [];
+  const observations = map.observations ?? {};
+  // The window whose observation popup is open (+ the badge rect to anchor it).
+  const [openObs, setOpenObs] = useState<{ key: string; rect: DOMRect } | null>(null);
+  const openObservation = openObs ? observations[openObs.key] : undefined;
   const washed = points.filter((p) => map.statuses[p.key] === "pesty").length;
   const total = points.length;
   const pct = total > 0 ? Math.round((washed / total) * 100) : 0;
@@ -147,6 +166,25 @@ export default function CustomerFloorMap({ map }: { map: MapData }) {
               );
             })}
 
+            {/* Observation badges — tappable marker on windows the crew noted */}
+            {points.map((pt) => observations[pt.key] ? (
+              <button
+                key={`obs-${pt.key}`}
+                onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setOpenObs({ key: pt.key, rect: r }); }}
+                title="Huomio tästä ikkunasta"
+                aria-label="Näytä huomio"
+                style={{
+                  position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`, transform: "translate(2px, -14px)",
+                  width: 16, height: 16, borderRadius: "50%", padding: 0, cursor: "pointer",
+                  background: "#fff", border: `1.5px solid ${T.navy}`, color: T.navy,
+                  display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, lineHeight: 1,
+                  boxShadow: "0 1px 4px rgba(0,0,0,0.25)", zIndex: 4,
+                }}
+              >
+                💬
+              </button>
+            ) : null)}
+
             {/* Navigation markers / notes (ladders, entrances, hazards, …) */}
             {floorNotes.map((n) => (
               <span
@@ -190,6 +228,26 @@ export default function CustomerFloorMap({ map }: { map: MapData }) {
         ))}
         <span style={{ marginLeft: "auto", fontSize: 11.5, color: T.muted }}>Päivittyy automaattisesti</span>
       </div>
+
+      {/* Window observation popup — small, dismissible, anchored over the dot */}
+      {openObs && openObservation && (
+        <>
+          <div onClick={() => setOpenObs(null)} style={{ position: "fixed", inset: 0, zIndex: 55 }} />
+          <div style={{ ...popupStyle(openObs.rect, 250, openObservation.imageDataUrl ? 280 : 130), width: 250, background: T.card, border: `1px solid ${T.hair}`, borderRadius: 14, boxShadow: "0 14px 40px rgba(0,0,0,0.22)", padding: 14, fontFamily: FONT }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <span style={{ fontSize: 15 }}>💬</span>
+              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: T.navy }}>Huomio ikkunasta</span>
+              <button onClick={() => setOpenObs(null)} aria-label="Sulje" style={{ marginLeft: "auto", width: 24, height: 24, borderRadius: "50%", border: "none", background: T.paper, color: T.muted, fontSize: 13, cursor: "pointer", lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+            </div>
+            {openObservation.text && (
+              <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: T.ink, whiteSpace: "pre-wrap" }}>{openObservation.text}</p>
+            )}
+            {openObservation.imageDataUrl && (
+              <img src={openObservation.imageDataUrl} alt="Huomion kuva" style={{ display: "block", width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 10, marginTop: openObservation.text ? 10 : 0, border: `1px solid ${T.hair}` }} />
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

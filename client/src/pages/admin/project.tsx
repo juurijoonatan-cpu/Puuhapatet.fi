@@ -313,6 +313,15 @@ export default function AdminProjectPage() {
     });
   }, [mutate]);
 
+  // Per-window observation (text + optional photo). Empty clears it.
+  const onSetObservation = useCallback((key: string, text: string, imageDataUrl?: string) => {
+    mutate((d) => {
+      if (!d.observations) d.observations = {};
+      if (!text.trim() && !imageDataUrl) delete d.observations[key];
+      else d.observations[key] = { text: text.trim(), imageDataUrl, by: currentWorker, ts: Date.now() };
+    });
+  }, [mutate, currentWorker]);
+
   // ── Active work zone ("work happening here now", visible to the customer) ────
   const onSetActiveZone = useCallback((floor: string, x: number, y: number) => {
     mutate((d) => { d.activeZone = { floor, x, y, ts: Date.now() }; });
@@ -536,6 +545,9 @@ export default function AdminProjectPage() {
             onAddNote={onAddNote}
             onUpdateNote={onUpdateNote}
             onDeleteNote={onDeleteNote}
+            observations={project.observations}
+            canObserve
+            onSetObservation={onSetObservation}
             activeZone={project.activeZone}
             onSetActiveZone={onSetActiveZone}
             onClearActiveZone={onClearActiveZone}

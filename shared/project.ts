@@ -70,6 +70,21 @@ export interface ProjActiveZone {
   ts: number;            // epoch ms (when set/moved)
 }
 
+/**
+ * A worker's observation about ONE specific window (keyed by the window key, same
+ * as statuses/washedBy). Text is the point; an optional photo is extra. Shown to
+ * the customer as a small dismissible popup on that window's dot.
+ */
+export interface ProjWindowObservation {
+  text: string;          // free-text note about the window
+  imageDataUrl?: string; // optional photo (downscaled data URL)
+  by?: string;           // worker id who wrote it
+  ts: number;            // epoch ms
+}
+
+/** Max stored size for an observation photo data URL (~0.5 MB base64). */
+export const MAX_OBSERVATION_IMAGE_LEN = 700_000;
+
 export interface ProjLogEntry {
   floor: string;
   key: string;
@@ -103,6 +118,7 @@ export interface ProjectData {
   keskenBy?: Record<string, string>;               // key → worker id who marked it "kesken"
   customMarks: Record<string, ProjCustomMark[]>;   // floor → manually added marks
   notes?: Record<string, ProjMapNote[]>;           // floor → navigation markers / notes
+  observations?: Record<string, ProjWindowObservation>; // window key → worker's observation
   activeZone?: ProjActiveZone | null;              // where work is happening right now
   posOverrides: Record<string, { x: number; y: number }>; // key → moved position
   deleted: Record<string, boolean>;                // key → true if seeded mark removed
@@ -194,6 +210,7 @@ export function emptyProjectData(): ProjectData {
     washedBy: {},
     customMarks: {},
     notes: {},
+    observations: {},
     activeZone: null,
     posOverrides: {},
     deleted: {},
@@ -583,6 +600,23 @@ export function sanitizeProjectData(input: any): ProjectData {
     }
   }
 
+  const observations: Record<string, ProjWindowObservation> = {};
+  if (input.observations && typeof input.observations === "object") {
+    for (const k of Object.keys(input.observations).slice(0, 5000)) {
+      const o = input.observations[k];
+      if (!o || typeof o !== "object") continue;
+      const text = String(o.text ?? "").slice(0, 1000).trim();
+      const img = typeof o.imageDataUrl === "string" && o.imageDataUrl.startsWith("data:image/")
+        ? o.imageDataUrl.slice(0, MAX_OBSERVATION_IMAGE_LEN) : undefined;
+      if (!text && !img) continue; // drop empty observations
+      observations[cleanKey(k)] = {
+        text, imageDataUrl: img,
+        by: o.by ? String(o.by).slice(0, 40) : undefined,
+        ts: Number(o.ts) || Date.now(),
+      };
+    }
+  }
+
   const log: ProjLogEntry[] = Array.isArray(input.log)
     ? input.log.slice(0, 200).map((l: any) => ({
         floor: String(l?.floor ?? "").slice(0, 8),
@@ -629,6 +663,7 @@ export function sanitizeProjectData(input: any): ProjectData {
     washedBy,
     customMarks,
     notes,
+    observations,
     activeZone,
     posOverrides,
     deleted,

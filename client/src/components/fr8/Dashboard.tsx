@@ -84,9 +84,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   const total = all.length;
   const washed = all.filter((a) => a.status === "pesty").length;
   const kesken = all.filter((a) => a.status === "kesken").length;
-  const unwashed = total - washed - kesken;
   const pct = total > 0 ? (washed / total) * 100 : 0;
-  const pctStr = Math.round(pct) + " %";
 
   const grp = (p: 1 | 2) => {
     const arr = all.filter((a) => a.p === p);
@@ -97,6 +95,24 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   };
   const p1 = grp(1), p2 = grp(2);
 
+  // ── Hero scope ────────────────────────────────────────────────────────────────
+  // For a signed deal (FR8) the first view is about the CONTRACT (red) windows, not
+  // the full dot count on the map. So the ring, the big number and the paydate bar
+  // all track the billable priority (e.g. 161 red windows), while the full map total
+  // is kept as a small secondary figure. Open gigs keep the all-windows view.
+  const billGrp = deal ? grp(deal.billablePriority) : null;
+  const heroTotal = billGrp ? billGrp.total : total;
+  const heroWashed = billGrp ? billGrp.washed : washed;
+  const heroKesken = billGrp ? billGrp.kesken : kesken;
+  const heroUnwashed = heroTotal - heroWashed - heroKesken;
+  const heroPct = heroTotal > 0 ? (heroWashed / heroTotal) * 100 : 0;
+  const heroPctStr = Math.round(heroPct) + " %";
+  // Internal per-window margin for the bosses: the FIXED agreed total spread over the
+  // live billable windows. Deleting red dots raises this (fewer windows for the same
+  // €6300), while the worker's own €/window rate is unchanged. Never shown to workers
+  // or the customer — this is the founders' admin overview only.
+  const internalPerWindowEur = billing && billing.billableTotal > 0 ? capEur / billing.billableTotal : 0;
+
   const startToday = new Date(); startToday.setHours(0, 0, 0, 0);
   const todaySet = new Set<string>();
   log.forEach((l) => { if (l.status === "pesty" && l.ts >= startToday.getTime() && (!deal || l.p === deal.billablePriority)) todaySet.add(l.key); });
@@ -104,8 +120,10 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   const remaining = total - washed;
   const estStr = remaining === 0 && total > 0 ? "valmis" : todayWindows > 0 ? "~" + Math.ceil(remaining / todayWindows) + " työpv" : "—";
 
-  // Paydate progress — for a fixed deal use the billable (red) scope, e.g. 168.
-  const payTotal = deal && deal.pricePerWindow > 0 ? Math.round(deal.capCents / 100 / deal.pricePerWindow) : total;
+  // Paydate progress — for a fixed deal track the LIVE billable (red) count, so the
+  // milestone follows the actual dots on the map (e.g. 161 → ~41 / erä). The agreed
+  // total (€6300) is unaffected; only the window-count milestone tracks the live set.
+  const payTotal = deal ? (billing?.billableTotal ?? 0) : total;
   const payWashed = deal ? (billing?.billableWashed ?? 0) : washed;
   const payP = computePayProgress(payTotal, payWashed);
 
@@ -132,7 +150,9 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             <h1 style={{ margin: 0, fontSize: m ? "22px" : "30px", fontWeight: 700, letterSpacing: "-0.01em" }}>Projektin yleiskatsaus</h1>
           </div>
           <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: m ? "10px" : "11px", color: "rgba(255,255,255,0.4)", letterSpacing: "0.06em", textAlign: "right", flexShrink: 0 }}>
-            {FLOORS.length} KERROSTA · {total > 0 ? total : "…"} IKKUNAA
+            {deal
+              ? <>{FLOORS.length} KERROSTA · {heroTotal > 0 ? heroTotal : "…"} SOPIMUSIKKUNAA<span style={{ opacity: 0.7 }}> · {total} kartalla</span></>
+              : <>{FLOORS.length} KERROSTA · {total > 0 ? total : "…"} IKKUNAA</>}
           </div>
         </div>
 
@@ -143,22 +163,25 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
               <svg width="184" height="184" viewBox="0 0 184 184" style={{ transform: "rotate(-90deg)" }}>
                 <circle cx="92" cy="92" r="80" fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="11" />
                 <circle cx="92" cy="92" r="80" fill="none" stroke="#ffffff" strokeWidth="11" strokeLinecap="round"
-                  strokeDasharray={`${((pct / 100) * CIRC).toFixed(1)} ${CIRC.toFixed(1)}`}
+                  strokeDasharray={`${((heroPct / 100) * CIRC).toFixed(1)} ${CIRC.toFixed(1)}`}
                   style={{ transition: "stroke-dasharray .7s cubic-bezier(.2,.8,.2,1)" }} />
               </svg>
               <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-                <div style={{ fontSize: "38px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{pctStr}</div>
+                <div style={{ fontSize: "38px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{heroPctStr}</div>
                 <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.45)", marginTop: "3px" }}>VALMIS</div>
               </div>
             </div>
             <div style={{ flex: 1, width: m ? "100%" : undefined, textAlign: m ? "center" : "left" }}>
-              <div style={{ ...mono, marginBottom: "10px" }}>KOKONAISEDISTYMINEN</div>
+              <div style={{ ...mono, marginBottom: "10px" }}>{deal ? "SOPIMUSIKKUNAT (PUNAISET)" : "KOKONAISEDISTYMINEN"}</div>
               <div style={{ fontSize: "34px", fontWeight: 700, letterSpacing: "-0.01em", marginBottom: "2px" }}>
-                {washed} <span style={{ color: "rgba(255,255,255,0.35)", fontWeight: 500 }}>/ {total}</span>
+                {heroWashed} <span style={{ color: "rgba(255,255,255,0.35)", fontWeight: 500 }}>/ {heroTotal}</span>
               </div>
-              <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.5)", marginBottom: "20px" }}>ikkunaa pesty</div>
+              <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.5)", marginBottom: "20px" }}>
+                {deal ? "punaista ikkunaa pesty" : "ikkunaa pesty"}
+                {deal && <span style={{ color: "rgba(255,255,255,0.32)" }}> · {total} kartalla yhteensä</span>}
+              </div>
               <div style={{ display: "flex", gap: "10px" }}>
-                {([["kesken", "rgb(188,150,255)", "rgba(188,150,255,0.7)", kesken], ["Pesemättä", "rgba(255,255,255,0.4)", undefined, unwashed]] as [string, string, string|undefined, number][]).map(([label, bg, shadow, val]) => (
+                {([["kesken", "rgb(188,150,255)", "rgba(188,150,255,0.7)", heroKesken], ["Pesemättä", "rgba(255,255,255,0.4)", undefined, heroUnwashed]] as [string, string, string|undefined, number][]).map(([label, bg, shadow, val]) => (
                   <div key={label} style={{ flex: 1, padding: "12px 14px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "13px" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: m ? "center" : "flex-start", gap: "7px", marginBottom: "5px" }}>
                       <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: bg, boxShadow: shadow ? `0 0 7px ${shadow}` : undefined, flexShrink: 0 }} />
@@ -195,6 +218,17 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                 <span>{Math.round(deal ? billing!.pct : pct)} % {deal ? "valmis" : "kerätty"}</span>
               </div>
             </div>
+            {/* Internal margin — founders only. The fixed €6300 spread over the live red
+                windows; rises as red dots are removed, while the worker rate stays put. */}
+            {deal && billing && billing.billableTotal > 0 && (
+              <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)" }}>SISÄINEN KATE / IKKUNA</span>
+                <span style={{ display: "inline-flex", alignItems: "baseline", gap: 8 }}>
+                  <b style={{ fontSize: "17px", fontWeight: 700 }}>{euroUnit(internalPerWindowEur)}</b>
+                  <span style={{ fontSize: "10.5px", color: "rgba(255,255,255,0.4)" }}>{billing.billableTotal} punaista · vain perustajille</span>
+                </span>
+              </div>
+            )}
           </div>
         </div>
 

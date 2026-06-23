@@ -104,10 +104,16 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   const remaining = total - washed;
   const estStr = remaining === 0 && total > 0 ? "valmis" : todayWindows > 0 ? "~" + Math.ceil(remaining / todayWindows) + " työpv" : "—";
 
-  // Paydate progress — for a fixed deal use the billable (red) scope, e.g. 168.
-  const payTotal = deal && deal.pricePerWindow > 0 ? Math.round(deal.capCents / 100 / deal.pricePerWindow) : total;
+  // Paydate progress — use the actual mapped (red) window count so the installment
+  // size tracks the map in real time (adding/removing dots updates it live).
+  const payTotal = deal ? (billing?.billableTotal ?? 0) : total;
   const payWashed = deal ? (billing?.billableWashed ?? 0) : washed;
   const payP = computePayProgress(payTotal, payWashed);
+
+  // For a fixed deal show only the billable (red) scope in KOKONAISEDISTYMINEN —
+  // these track the actual dot count on the map, not the contracted scope.
+  const dispTotal = deal ? (billing?.billableTotal ?? total) : total;
+  const dispWashed = deal ? (billing?.billableWashed ?? washed) : washed;
 
   const activity = log.slice(0, 5).map((l) => {
     const rgb = colorRgb(l.p, l.status);
@@ -154,7 +160,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             <div style={{ flex: 1, width: m ? "100%" : undefined, textAlign: m ? "center" : "left" }}>
               <div style={{ ...mono, marginBottom: "10px" }}>KOKONAISEDISTYMINEN</div>
               <div style={{ fontSize: "34px", fontWeight: 700, letterSpacing: "-0.01em", marginBottom: "2px" }}>
-                {washed} <span style={{ color: "rgba(255,255,255,0.35)", fontWeight: 500 }}>/ {total}</span>
+                {dispWashed} <span style={{ color: "rgba(255,255,255,0.35)", fontWeight: 500 }}>/ {dispTotal}</span>
               </div>
               <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.5)", marginBottom: "20px" }}>ikkunaa pesty</div>
               <div style={{ display: "flex", gap: "10px" }}>

@@ -6,7 +6,7 @@
  * Replaces the prototype's localStorage with debounced server autosave and adds
  * per-worker attribution so the dashboard can show window counts and €/h.
  */
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useRoute, useLocation } from "wouter";
 import { api } from "@/lib/api";
 import { getAdminProfile, USERS, getPreferredWasher, setPreferredWasher } from "@/lib/admin-profile";
@@ -374,6 +374,77 @@ export default function AdminProjectPage() {
 
   const backToGig = useCallback(() => navigate(`/admin/gig/${jobId}`), [navigate, jobId]);
 
+  // Memoize all project-derived data so tab switches, save-state flips and
+  // picker opens don't rerun computeWorkerStats / computeWorkerMaps.
+  const projectDerived = useMemo(() => {
+    if (!project) return null;
+    const deal = fixedDealFor(project);
+    const effectivePrice = deal ? deal.pricePerWindow : project.pricePerWindow;
+    const crew = project.crew ?? [];
+    const isFounder = (id: string, role?: string) => role === "host" || FOUNDER_IDS.includes(id);
+    const dealTotalCents = Math.round(effectivePrice * 100);
+    const founderCount = Math.max(1, crew.filter((c) => isFounder(c.id, c.role)).length || FOUNDER_IDS.length);
+    const leaderOf = (id: string): string | null => {
+      const mm = crew.find((c) => c.id === id);
+      const t = traineeForUserId(mm?.linkedUserId) || traineeForUserId(id) || traineeForName(mm?.name);
+      return t ? t.responsibleLeaderId : null;
+    };
+    const baseStatsRaw = computeWorkerStats(project);
+    const foldedStats = new Map<string, (typeof baseStatsRaw)[number]>();
+    for (const st of baseStatsRaw) {
+      const target = leaderOf(st.worker) || st.worker;
+      const cur = foldedStats.get(target);
+      if (cur) { cur.washed += st.washed; cur.hours += st.hours; }
+      else foldedStats.set(target, { ...st, worker: target });
+    }
+    const baseStats = Array.from(foldedStats.values());
+    const managerHours: Record<string, number> = {};
+    for (const [id, h] of Object.entries(project.hours || {})) {
+      const target = leaderOf(id) || id;
+      managerHours[target] = (managerHours[target] || 0) + (h || 0);
+    }
+    let profitPoolCents = 0;
+    for (const st of baseStats) {
+      const mm = crew.find((c) => c.id === st.worker);
+      if (!isFounder(st.worker, mm?.role)) {
+        profitPoolCents += st.washed * Math.max(0, dealTotalCents - (mm?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS));
+      }
+    }
+    const founderProfitEachCents = Math.round(profitPoolCents / founderCount);
+    const resolveName = (id: string): string => {
+      const m = crew.find((c) => c.id === id);
+      if (m?.name?.trim()) return m.name.trim().split(/\s+/)[0];
+      return workerName(id);
+    };
+    const resolveInitial = (id: string): string => (resolveName(id)[0] || "?").toUpperCase();
+    const earningsFor = (st: { worker: string; washed: number }): number => {
+      const mm = crew.find((c) => c.id === st.worker);
+      if (mm?.manualEarningsCents != null) return mm.manualEarningsCents;
+      if (isFounder(st.worker, mm?.role)) return Math.round(st.washed * dealTotalCents) + founderProfitEachCents;
+      return Math.round(st.washed * (mm?.perWindowCents ?? dealTotalCents));
+    };
+    const traineeFold: Record<string, { name: string; washed: number }[]> = {};
+    for (const st of baseStatsRaw) {
+      const lead = leaderOf(st.worker);
+      if (lead && st.washed > 0) (traineeFold[lead] ||= []).push({ name: resolveName(st.worker), washed: st.washed });
+    }
+    const statIds = new Set(baseStats.map((s) => s.worker));
+    for (const f of crew.filter((c) => isFounder(c.id, c.role))) {
+      if (!statIds.has(f.id)) baseStats.push({ worker: f.id, washed: 0, revenueCents: 0, hours: Math.max(0, managerHours[f.id] || 0), windowsPerHour: 0, eurPerHour: 0 });
+    }
+    const workerStats = baseStats.map((s) => {
+      const cents = earningsFor(s);
+      return { ...s, revenueCents: cents, windowsPerHour: s.hours > 0 ? s.washed / s.hours : 0, eurPerHour: s.hours > 0 ? cents / 100 / s.hours : 0 };
+    });
+    const hoursIds = Array.from(new Set([
+      ...(project.workers.length ? project.workers : ["matias", "joonatan"]),
+      ...crew.filter((c) => c.active && c.role === "worker" && !c.adminLinked).map((c) => c.id),
+    ])).filter((id) => !leaderOf(id));
+    const hoursWorkers = hoursIds.map((id) => ({ id, name: resolveName(id), initial: resolveInitial(id) }));
+    const { workerNames, gigWorkers } = computeWorkerMaps(project);
+    return { deal, effectivePrice, workerStats, traineeFold, managerHours, hoursWorkers, gigWorkers, workerNames, resolveName };
+  }, [project]);
+
   // ── Render ──────────────────────────────────────────────────────────────────
   const shell = (children: React.ReactNode) => (
     <div className="fr8-root" style={{ position: "fixed", inset: 0, background: "#060607", color: "#fff", overflow: "hidden", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>
@@ -401,92 +472,7 @@ export default function AdminProjectPage() {
     );
   }
 
-  // The FR8 gig is a signed, fixed-price deal (€37.50/red window, €6300 cap) —
-  // the price is locked and only red windows accrue money.
-  const deal = fixedDealFor(project);
-  const effectivePrice = deal ? deal.pricePerWindow : project.pricePerWindow;
-
-  // ── Ansiomalli ──────────────────────────────────────────────────────────────
-  // • Työntekijä: pestyt × oma €/ikkuna (esim. Jani 20 €).
-  // • Perustaja (Joonatan/Matias): 37,50 € jokaisesta ITSE pesemästään ikkunasta
-  //   + tuotto-osuus työntekijöiden ikkunoista: jokaisesta työntekijän pesemästä
-  //   ikkunasta (37,50 − työntekijän rate) jaetaan perustajien kesken (FR8:
-  //   (37,50 − 20) / 2 = 8,75 € / perustaja / työntekijän ikkuna).
-  // Manuaalinen ohitus (manualEarningsCents) voittaa aina. Nimet crew:stä.
-  const crew = project.crew ?? [];
-  const isFounder = (id: string, role?: string) => role === "host" || FOUNDER_IDS.includes(id);
-  const dealTotalCents = Math.round(effectivePrice * 100);
-  const founderCount = Math.max(1, crew.filter((c) => isFounder(c.id, c.role)).length || FOUNDER_IDS.length);
-  // A trainee (e.g. Milja) is credited to their responsible leader (Matias):
-  // their washed windows + hours fold into the leader, and the trainee is NOT a
-  // separate earner here. (On the worker's own dashboard they still see their own
-  // work; this folding is only for the manager/earnings views.)
-  const leaderOf = (id: string): string | null => {
-    const mm = crew.find((c) => c.id === id);
-    const t = traineeForUserId(mm?.linkedUserId) || traineeForUserId(id) || traineeForName(mm?.name);
-    return t ? t.responsibleLeaderId : null;
-  };
-  const baseStatsRaw = computeWorkerStats(project);
-  const foldedStats = new Map<string, (typeof baseStatsRaw)[number]>();
-  for (const st of baseStatsRaw) {
-    const target = leaderOf(st.worker) || st.worker;
-    const cur = foldedStats.get(target);
-    if (cur) { cur.washed += st.washed; cur.hours += st.hours; }
-    else foldedStats.set(target, { ...st, worker: target });
-  }
-  const baseStats = Array.from(foldedStats.values());
-  // Hours folded the same way: a trainee's logged hours count under their leader.
-  const managerHours: Record<string, number> = {};
-  for (const [id, h] of Object.entries(project.hours || {})) {
-    const target = leaderOf(id) || id;
-    managerHours[target] = (managerHours[target] || 0) + (h || 0);
-  }
-  // Profit pool = Σ over worker-washed windows of (deal total − that worker's rate).
-  let profitPoolCents = 0;
-  for (const st of baseStats) {
-    const mm = crew.find((c) => c.id === st.worker);
-    if (!isFounder(st.worker, mm?.role)) {
-      profitPoolCents += st.washed * Math.max(0, dealTotalCents - (mm?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS));
-    }
-  }
-  const founderProfitEachCents = Math.round(profitPoolCents / founderCount);
-  const earningsFor = (st: { worker: string; washed: number }): number => {
-    const mm = crew.find((c) => c.id === st.worker);
-    if (mm?.manualEarningsCents != null) return mm.manualEarningsCents;
-    // washed can be fractional (50/50 split windows count as 0.5) — round cents.
-    if (isFounder(st.worker, mm?.role)) return Math.round(st.washed * dealTotalCents) + founderProfitEachCents;
-    return Math.round(st.washed * (mm?.perWindowCents ?? dealTotalCents));
-  };
-  const resolveName = (id: string): string => {
-    const m = crew.find((c) => c.id === id);
-    if (m?.name?.trim()) return m.name.trim().split(/\s+/)[0];
-    return workerName(id);
-  };
-  const resolveInitial = (id: string): string => (resolveName(id)[0] || "?").toUpperCase();
-
-  // Trainee breakdown: which trainees folded into which leader (e.g. Milja → Matias),
-  // so the leader's card can show "sis. Milja 12 ikk" — otherwise the trainee's work
-  // looks like it vanished. Milja never appears as her own earner anywhere else.
-  const traineeFold: Record<string, { name: string; washed: number }[]> = {};
-  for (const st of baseStatsRaw) {
-    const lead = leaderOf(st.worker);
-    if (lead && st.washed > 0) (traineeFold[lead] ||= []).push({ name: resolveName(st.worker), washed: st.washed });
-  }
-
-  // Founders appear even with 0 own windows — they still earn the profit share.
-  const statIds = new Set(baseStats.map((s) => s.worker));
-  for (const f of crew.filter((c) => isFounder(c.id, c.role))) {
-    if (!statIds.has(f.id)) baseStats.push({ worker: f.id, washed: 0, revenueCents: 0, hours: Math.max(0, managerHours[f.id] || 0), windowsPerHour: 0, eurPerHour: 0 });
-  }
-  const workerStats = baseStats.map((s) => {
-    const cents = earningsFor(s);
-    return {
-      ...s,
-      revenueCents: cents,
-      windowsPerHour: s.hours > 0 ? s.washed / s.hours : 0,
-      eurPerHour: s.hours > 0 ? cents / 100 / s.hours : 0,
-    };
-  });
+  const { deal, effectivePrice, workerStats, traineeFold, managerHours, hoursWorkers, gigWorkers, workerNames, resolveName } = projectDerived!;
   // Founders can manually set their own day/session earnings (e.g. split 50/50).
   const setWorkerEarnings = (id: string, cents: number | null) => {
     setProject((cur) => {
@@ -496,18 +482,6 @@ export default function AdminProjectPage() {
       return next;
     });
   };
-  // Tunnit-näkymä: perustajat + keikan aktiiviset työntekijät (esim. Jani), ei
-  // pelkät johtajat — jotta jokaisen tekijän tunnit näkyvät johtajille.
-  const hoursIds = Array.from(new Set([
-    ...(project.workers.length ? project.workers : ["matias", "joonatan"]),
-    ...crew.filter((c) => c.active && c.role === "worker" && !c.adminLinked).map((c) => c.id),
-  ])).filter((id) => !leaderOf(id)); // trainees fold into their leader, no own row
-  const hoursWorkers = hoursIds.map((id) => ({ id, name: resolveName(id), initial: resolveInitial(id) }));
-  // Display-name map + this gig's pickable crew (used by both the "who washed"
-  // and "default washer" pickers).
-  const { workerNames, gigWorkers } = computeWorkerMaps(project);
-  // The default washer the picker shows is the saved preference if it's still a
-  // valid worker, else the logged-in admin.
   const effectiveWasher = gigWorkers.some((w) => w.id === defaultWasher) ? defaultWasher : currentWorker;
 
   return shell(

@@ -100,6 +100,10 @@ export default function AdminProjectPage() {
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latest = useRef<ProjectData | null>(null);
+  // True while `latest.current` holds changes that haven't been confirmed saved.
+  // Drives the last-chance flush on page hide/refresh so marks/notes can't be
+  // lost in the debounce window (the cause of "dots reset after refresh").
+  const dirty = useRef(false);
 
   // Lock browser page-zoom while the tool is open so pinch/scroll gestures zoom
   // only the floor-plan map (which has its own in-app zoom) — not the whole
@@ -199,6 +203,7 @@ export default function AdminProjectPage() {
   // ── Debounced autosave ──────────────────────────────────────────────────────
   const scheduleSave = useCallback((next: ProjectData) => {
     latest.current = next;
+    dirty.current = true;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       const payload = latest.current;
@@ -206,14 +211,34 @@ export default function AdminProjectPage() {
       setSaving(true);
       const res = await api.updateProject(jobId, payload);
       setSaving(false);
-      if (!res.ok) setError(res.error || "Tallennus epäonnistui");
+      if (res.ok) dirty.current = false;
+      else setError(res.error || "Tallennus epäonnistui");
     }, 700);
   }, [jobId]);
 
-  // Flush a pending save when leaving the page.
-  useEffect(() => () => {
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    if (latest.current) { void api.updateProject(jobId, latest.current); }
+  // Last-chance save when the page is hidden/closed/refreshed. A hard refresh or
+  // tab close does NOT run React's unmount cleanup, so a pending debounced save
+  // would be lost — that's why marked dots/notes "reset" after a refresh. We
+  // flush synchronously with a keepalive request that outlives the page.
+  // visibilitychange→hidden is the reliable signal on iOS Safari / PWAs (where
+  // beforeunload often doesn't fire); pagehide covers desktop reloads/closes.
+  useEffect(() => {
+    const flush = () => {
+      if (!dirty.current || !latest.current) return;
+      if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
+      api.flushProject(jobId, latest.current);
+      dirty.current = false;
+    };
+    const onHide = () => { if (document.visibilityState === "hidden") flush(); };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", flush);
+      // SPA navigation away from the page: flush whatever is still pending.
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      if (dirty.current && latest.current) { void api.updateProject(jobId, latest.current); }
+    };
   }, [jobId]);
 
   // Apply a mutation to the project (clone → mutate → set state + autosave).

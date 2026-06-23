@@ -712,6 +712,28 @@ export const api = {
       "PATCH", `/api/jobs/${jobId}/project`, { projectData },
     ),
 
+  /**
+   * Last-chance save for the floor-plan project, used when the page is being
+   * hidden/closed/refreshed (pagehide/visibilitychange). A normal fetch is
+   * cancelled the moment the document tears down, which is exactly when a
+   * pending debounced autosave would otherwise be lost — so the dots a worker
+   * just marked "reset" after a refresh. `keepalive` lets the request outlive
+   * the page so the marks actually reach the server. Fire-and-forget.
+   */
+  flushProject: (jobId: number, projectData: ProjectData): void => {
+    try {
+      void fetch(`${API_BASE}/api/jobs/${jobId}/project`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ projectData }),
+        mode: "cors",
+        keepalive: true,
+      }).catch(() => {});
+    } catch {
+      /* page is tearing down — nothing more we can do */
+    }
+  },
+
   // ─── Gig crew — worker dashboard (private link) ─────────────────────────────
   getCrewView: (token: string) =>
     request<{ ok: boolean; view: WorkerView }>("GET", `/api/crew/${token}`),

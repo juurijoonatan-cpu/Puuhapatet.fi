@@ -3888,9 +3888,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  // Worker logs a whole work day by hand (forgot the timer). Records the hours in
-  // the ledger AND appends a session so the day shows up in the diary. Windows /
-  // earnings are left at 0 (washed windows are tracked on the map separately).
+  // Worker logs a whole work day by hand (manual mode / forgot the timer). Records
+  // the hours in the ledger AND appends a session so the day shows up in the diary.
+  // The session also counts the windows this worker marked "pesty" TODAY (from the
+  // activity log), so a manually-logged day shows hours AND windows together.
   app.post("/api/crew/:token/manual-session", async (req, res) => {
     try {
       const found = await findJobByCrewToken(String(req.params.token));
@@ -3900,7 +3901,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!(hours > 0)) return res.status(400).json({ error: "tunnit puuttuu" });
       const minutes = Math.round(hours * 60);
       const end = Date.now();
-      const session = { start: end - minutes * 60000, end, minutes, windows: 0, earnedCents: 0, manual: true };
+      // Windows this worker marked pesty today — count each window once.
+      const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+      const todayKeys = new Set<string>();
+      for (const l of project.log || []) {
+        if (l.by === member.id && l.status === "pesty" && l.ts >= startOfDay.getTime()) todayKeys.add(l.key);
+      }
+      const windows = todayKeys.size;
+      const session = { start: end - minutes * 60000, end, minutes, windows, earnedCents: windows * member.perWindowCents, manual: true };
       project.hours[member.id] = Math.max(0, +(((project.hours[member.id] || 0) + hours).toFixed(2)));
       project.hourLog = [{ worker: member.id, delta: hours, ts: end, by: member.id }, ...(project.hourLog || [])].slice(0, 200);
       project.crew = (project.crew || []).map((m) =>
@@ -4179,6 +4187,50 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       project.crew = (project.crew || []).filter((m) => m.id !== mid);
       const saved = await saveProject(job, project);
       res.json({ ok: true, crew: saved.crew });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Host logs a worker's whole day on their behalf and emails them the summary.
+  // Records the given hours in the ledger + a diary session counting the windows
+  // that worker marked pesty today, then sends the same day-summary email the
+  // worker would get from "Päätä päivä". Lets a leader close out the team's day.
+  app.post("/api/jobs/:id/crew/:memberId/log-day", async (req, res) => {
+    try {
+      const loaded = await loadJobProject(Number(req.params.id));
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const { job, project } = loaded;
+      const mid = String(req.params.memberId);
+      const member = (project.crew || []).find((m) => m.id === mid);
+      if (!member) return res.status(404).json({ error: "Työntekijää ei löydy" });
+      const hours = Math.round((Number(req.body?.hours) || 0) * 100) / 100;
+      const minutes = Math.max(0, Math.round(hours * 60));
+      // Windows this worker marked pesty today — count each window once.
+      const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+      const todayKeys = new Set<string>();
+      for (const l of project.log || []) {
+        if (l.by === member.id && l.status === "pesty" && l.ts >= startOfDay.getTime()) todayKeys.add(l.key);
+      }
+      const windows = todayKeys.size;
+      if (minutes === 0 && windows === 0) return res.status(400).json({ error: "Ei tunteja eikä ikkunoita kirjattavaksi" });
+      const end = Date.now();
+      const session = { start: end - minutes * 60000, end, minutes, windows, earnedCents: windows * member.perWindowCents, manual: true };
+      if (hours > 0) {
+        project.hours[member.id] = Math.max(0, +(((project.hours[member.id] || 0) + hours).toFixed(2)));
+        project.hourLog = [{ worker: member.id, delta: hours, ts: end, by: "johtaja" }, ...(project.hourLog || [])].slice(0, 200);
+      }
+      project.crew = (project.crew || []).map((m) =>
+        m.id !== member.id ? m : { ...m, sessions: [...(m.sessions || []), session].slice(-200) },
+      );
+      const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
+      let emailed = false;
+      if (resend && savedMember.profile?.email) {
+        try { await sendSessionSummaryEmail(savedMember, session, project.building?.name); emailed = true; }
+        catch (e: any) { console.warn("manager day-log email failed:", e?.message); }
+      }
+      res.json({ ok: true, crew: saved.crew, windows, emailed });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }

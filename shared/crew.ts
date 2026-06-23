@@ -175,9 +175,17 @@ export interface CrewMemberStats {
 /** A worker's own progress: windows they marked pesty × their pay rate. */
 export function crewMemberStats(project: ProjectData, member: CrewMember): CrewMemberStats {
   const pts = allPoints(project);
-  const washed = pts.filter((p) => p.status === "pesty" && p.washedBy === member.id).length;
+  const washedBy2 = project.washedBy2 || {};
+  // A window done together (50/50 split) counts as half for each washer.
+  const washed = pts.reduce((sum, p) => {
+    if (p.status !== "pesty") return sum;
+    const second = washedBy2[p.key];
+    if (p.washedBy === member.id) return sum + (second ? 0.5 : 1);
+    if (second === member.id) return sum + 0.5;
+    return sum;
+  }, 0);
   const hours = Math.max(0, project.hours?.[member.id] || 0);
-  const earnedCents = washed * member.perWindowCents;
+  const earnedCents = Math.round(washed * member.perWindowCents);
   return {
     washed,
     earnedCents,

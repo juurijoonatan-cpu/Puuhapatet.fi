@@ -14,7 +14,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRoute } from "wouter";
-import { api, type WorkerView } from "@/lib/api";
+import { api, warmBackend, type WorkerView } from "@/lib/api";
 import type { WindowStatus } from "@shared/project";
 import {
   ALL_AGREEMENTS, PROFILE_QUESTIONS, PROFILE_REQUIRED_IDS, WORKER_AGREEMENT_VERSION,
@@ -42,6 +42,15 @@ export default function WorkerPage() {
   const token = params?.token ?? "";
   const [view, setView] = useState<WorkerView | null>(null);
   const [status, setStatus] = useState<"loading" | "ok" | "error" | "locked">("loading");
+  // Distinguishes a transient connection problem (worth retrying — the Render
+  // free tier can take ~50s to wake) from a genuinely missing/expired link.
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+  const [slow, setSlow] = useState(false);
+
+  // Wake the (possibly sleeping) backend the instant the page opens, so the
+  // worker's first real request isn't the one paying the cold-start penalty —
+  // this is the main cause of the app appearing to "jam" on open.
+  useEffect(() => { warmBackend(); }, []);
 
   // Load Poppins once.
   useEffect(() => {
@@ -64,30 +73,73 @@ export default function WorkerPage() {
 
   const load = useCallback(async () => {
     if (!token) return;
-    const res = await api.getCrewView(token);
+    setStatus("loading");
+    setLoadErr(null);
+    setSlow(false);
+    // Show a "server is waking up" hint if the request is taking a while, so a
+    // cold start reads as progress instead of a frozen screen.
+    const slowTimer = setTimeout(() => setSlow(true), 6000);
+    // One automatic retry: a cold start or a dropped mobile connection usually
+    // recovers on the second try, so the worker rarely has to tap "retry".
+    let res = await api.getCrewView(token);
+    if (!res.ok) res = await api.getCrewView(token);
+    clearTimeout(slowTimer);
     if (res.ok && res.data?.view) {
       const v = res.data.view;
       setView(v);
       const unlocked = sessionStorage.getItem(`pp_crew_${token}`) === "1";
       setStatus(v.worker.hasPin && !unlocked ? "locked" : "ok");
     } else {
+      setLoadErr(res.error ?? null);
       setStatus("error");
     }
   }, [token]);
 
   useEffect(() => { load(); }, [load]);
 
+  // Sign out — drop the unlock flag and either re-lock (if a PIN is set) or leave.
   const logout = useCallback(() => {
     try { sessionStorage.removeItem(`pp_crew_${token}`); } catch {}
-    if (view?.worker.hasPin) {
-      setStatus("locked");
-    } else {
-      window.location.href = "/";
-    }
+    if (view?.worker.hasPin) setStatus("locked");
+    else window.location.href = "/";
   }, [token, view]);
 
-  if (status === "loading") return <Centered>Ladataan…</Centered>;
-  if (status === "error" || !view) return <Centered>Linkkiä ei löytynyt tai se on vanhentunut.</Centered>;
+  if (status === "loading") {
+    return (
+      <Centered>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
+          <Spinner />
+          <p style={{ margin: 0, fontSize: 14, color: T.muted }}>
+            {slow ? "Palvelin herää — hetki…" : "Ladataan…"}
+          </p>
+        </div>
+      </Centered>
+    );
+  }
+  if (status === "error" || !view) {
+    // A timeout / network error is transient (offer retry); anything else is
+    // most likely a wrong or expired link.
+    const transient = !loadErr || /aikakatkais|network|verkko|failed|fetch/i.test(loadErr);
+    return (
+      <Centered>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, maxWidth: 320 }}>
+          <p style={{ margin: 0, fontSize: 14.5, color: T.ink, fontWeight: 600 }}>
+            {transient ? "Yhteys ei juuri nyt onnistunut" : "Linkkiä ei löytynyt tai se on vanhentunut."}
+          </p>
+          {transient && (
+            <p style={{ margin: 0, fontSize: 13, color: T.muted, lineHeight: 1.5 }}>
+              Tarkista verkkoyhteys ja yritä uudelleen. Palvelin saattaa juuri herätä lepotilasta.
+            </p>
+          )}
+          {transient && (
+            <button onClick={() => load()} style={{ ...primaryBtn, width: "auto", padding: "11px 28px" }}>
+              Yritä uudelleen
+            </button>
+          )}
+        </div>
+      </Centered>
+    );
+  }
   if (status === "locked") return <PinGate token={token} view={view} onUnlock={() => { sessionStorage.setItem(`pp_crew_${token}`, "1"); setStatus("ok"); }} />;
   if (!view.worker.onboarded) {
     // Soft start (now): one-tap intro. Gated (later): the full sign flow.
@@ -741,40 +793,35 @@ function AgreementBody({ ag }: { ag: WorkerAgreement }) {
 
 // ─── Dashboard ──────────────────────────────────────────────────────────────
 
-type Tab = "map" | "earnings" | "hours" | "payouts" | "notes" | "summary";
+type Tab = "home" | "map" | "hours";
 
 const NAV_ITEMS: [Tab, string][] = [
+  ["home", "Koti"],
   ["map", "Kartta"],
-  ["earnings", "Ansiot"],
   ["hours", "Tunnit"],
-  ["payouts", "Maksut"],
-  ["notes", "Info"],
-  ["summary", "Kokonaisuus"],
 ];
 
 /** Stroke icons for the bottom nav (inline so the dark worker theme stays self-contained). */
 function NavIcon({ name, color }: { name: Tab; color: string }) {
-  const p = { width: 22, height: 22, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 1.9, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+  const p = { width: 23, height: 23, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 1.9, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
   switch (name) {
+    case "home":
+      return <svg {...p}><path d="M3 10.5 12 4l9 6.5" /><path d="M5 9.5V20h14V9.5" /></svg>;
     case "map":
       return <svg {...p}><path d="M9 20 3 17V4l6 3 6-3 6 3v13l-6-3-6 3Z" /><path d="M9 7v13M15 4v13" /></svg>;
-    case "earnings":
-      return <svg {...p}><circle cx="12" cy="12" r="8.5" /><path d="M14.5 9.3a3.6 3.6 0 1 0 0 5.4" /><path d="M7.5 11h5M7.5 13h4.5" /></svg>;
     case "hours":
       return <svg {...p}><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 1.8" /></svg>;
-    case "payouts":
-      return <svg {...p}><rect x="3" y="6" width="18" height="12.5" rx="2.5" /><path d="M3 10.5h18" /><path d="M16 14.5h2" /></svg>;
-    case "notes":
-      return <svg {...p}><circle cx="12" cy="12" r="8.5" /><path d="M12 11v5" /><path d="M12 8h.01" /></svg>;
-    case "summary":
-      return <svg {...p}><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" /></svg>;
   }
 }
 
 function Dashboard({ token, view, setView, reload, onLogout }: { token: string; view: WorkerView; setView: (v: WorkerView) => void; reload: () => void; onLogout: () => void }) {
-  const [tab, setTab] = useState<Tab>("map");
+  const [tab, setTab] = useState<Tab>("home");
+  // Maksut + Info aren't bottom-nav tabs anymore — they open as sub-screens from
+  // Koti, keeping the nav to three simple destinations.
+  const [sub, setSub] = useState<null | "payouts" | "notes">(null);
   const pwa = usePwaInstall();
   const [showInstall, setShowInstall] = useState(false);
+  const pendingPayouts = (view.payouts || []).filter((p) => p.status === "ilmoitettu").length;
 
   // Lock page zoom so pinch zooms only the map (like the admin tool), and let the
   // dark UI extend under the notch / home indicator (viewport-fit=cover) — the
@@ -784,6 +831,16 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
     const prev = vp?.getAttribute("content") ?? null;
     vp?.setAttribute("content", "width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover");
     return () => { if (vp && prev != null) vp.setAttribute("content", prev); };
+  }, []);
+
+  // Paint the page (html/body) dark while the worker app is open, so no white
+  // strip shows behind the fixed app in the home-indicator / overscroll area.
+  useEffect(() => {
+    const html = document.documentElement, body = document.body;
+    const prev = { htmlBg: html.style.background, bodyBg: body.style.background };
+    html.style.background = "#060607";
+    body.style.background = "#060607";
+    return () => { html.style.background = prev.htmlBg; body.style.background = prev.bodyBg; };
   }, []);
 
   const markWindow = useCallback(async (key: string, st: WindowStatus) => {
@@ -841,7 +898,7 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
 
       {/* Content */}
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
-        {tab === "map" && (
+        {!sub && tab === "map" && (
           <FloorView
             floors={view.building.floors}
             planBase={view.building.planBase || ""}
@@ -875,33 +932,49 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
             activeZone={view.activeZone}
           />
         )}
-        {tab === "earnings" && <EarningsTab view={view} />}
-        {tab === "hours" && <HoursTab token={token} view={view} setView={setView} />}
-        {tab === "payouts" && <PayoutsTab token={token} view={view} setView={setView} />}
-        {tab === "notes" && <NotesTab token={token} view={view} setView={setView} />}
-        {tab === "summary" && <SummaryTab view={view} />}
+        {!sub && tab === "home" && (
+          <HomeTab
+            view={view}
+            setTab={setTab}
+            pendingPayouts={pendingPayouts}
+            onOpenPayouts={() => setSub("payouts")}
+            onOpenInfo={() => setSub("notes")}
+          />
+        )}
+        {!sub && tab === "hours" && <HoursTab token={token} view={view} setView={setView} />}
+
+        {/* Maksut / Info as full-screen sub-views with a back header */}
+        {sub && (
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", background: "#060607" }}>
+            <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+              <button onClick={() => setSub(null)} aria-label="Takaisin" style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: "#fff", cursor: "pointer", fontFamily: FONT, fontSize: 14, fontWeight: 600, padding: 0 }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+                {sub === "payouts" ? "Maksut" : "Info & ohjeet"}
+              </button>
+            </div>
+            <div style={{ flex: 1, minHeight: 0 }}>
+              {sub === "payouts" ? <PayoutsTab token={token} view={view} setView={setView} /> : <NotesTab token={token} view={view} setView={setView} />}
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Bottom nav — icons, active pill, mobile-friendly */}
-      <div style={{ flexShrink: 0, display: "flex", justifyContent: "space-around", alignItems: "stretch", gap: 2, borderTop: "1px solid rgba(255,255,255,0.08)", background: "rgba(8,8,10,0.96)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", padding: "8px 6px calc(8px + env(safe-area-inset-bottom))" }}>
+      {/* Bottom nav — three simple destinations */}
+      <div style={{ flexShrink: 0, display: "flex", justifyContent: "space-around", alignItems: "stretch", gap: 2, borderTop: "1px solid rgba(255,255,255,0.08)", background: "#0b0b0d", padding: "8px 6px calc(8px + env(safe-area-inset-bottom))" }}>
         {NAV_ITEMS.map(([id, label]) => {
-          const active = tab === id;
-          const pending = id === "payouts" ? (view.payouts || []).filter((p) => p.status === "ilmoitettu").length : 0;
+          const active = !sub && tab === id;
           return (
             <button
               key={id}
-              onClick={() => { setTab(id); if (id !== "map") reload(); }}
+              onClick={() => { setSub(null); setTab(id); if (id !== "map") reload(); }}
               aria-label={label}
               aria-current={active ? "page" : undefined}
               style={{ position: "relative", flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "8px 2px", background: "none", border: "none", cursor: "pointer", fontFamily: FONT, color: active ? "#fff" : "rgba(255,255,255,0.5)", transition: "color .2s" }}
             >
-              <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 46, height: 30, borderRadius: 999, background: active ? "rgba(124,224,166,0.16)" : "transparent", transition: "background .2s" }}>
+              <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 52, height: 30, borderRadius: 999, background: active ? "rgba(124,224,166,0.16)" : "transparent", transition: "background .2s" }}>
                 <NavIcon name={id} color={active ? "#7CE0A6" : "rgba(255,255,255,0.55)"} />
-                {pending > 0 && (
-                  <span style={{ position: "absolute", top: 4, left: "calc(50% + 8px)", minWidth: 15, height: 15, padding: "0 4px", borderRadius: 999, background: "#E03B3B", color: "#fff", fontSize: 9.5, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "1.5px solid #08080a" }}>{pending}</span>
-                )}
               </span>
-              <span style={{ fontSize: 10.5, fontWeight: active ? 700 : 500, letterSpacing: "0.01em", whiteSpace: "nowrap" }}>{label}</span>
+              <span style={{ fontSize: 11, fontWeight: active ? 700 : 500, letterSpacing: "0.01em", whiteSpace: "nowrap" }}>{label}</span>
             </button>
           );
         })}
@@ -912,29 +985,111 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
   );
 }
 
-function EarningsTab({ view }: { view: WorkerView }) {
-  const potentialWindows = useMemo(() => {
-    // total live windows × their rate = the most this worker could earn here.
-    let total = 0;
-    const floors = view.building.floors;
-    for (const f of floors) {
-      total += (view.marks[f]?.marks?.length || 0) + (view.customMarks[f]?.length || 0);
-    }
-    return total;
-  }, [view]);
+/** Worker home / overview — the motivating landing screen: clear team progress on
+ *  the contract (red) windows, your own windows + earnings, quick actions, and the
+ *  team standings. Replaces "just a map" as the first thing a worker sees. */
+function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
+  view: WorkerView; setTab: (t: Tab) => void;
+  pendingPayouts: number; onOpenPayouts: () => void; onOpenInfo: () => void;
+}) {
   const s = view.stats;
+  // Live RED (priority 1 = contract) progress, computed from the worker's own
+  // map data so it always matches what they see on the map.
+  const red = useMemo(() => {
+    let total = 0, washed = 0, all = 0, allWashed = 0;
+    for (const f of view.building.floors) {
+      const seeded = view.marks[f]?.marks || [];
+      seeded.forEach((m, idx) => {
+        const key = `${f}#${idx}`;
+        if (view.deleted[key]) return;
+        const done = view.statuses[key] === "pesty";
+        all += 1; if (done) allWashed += 1;
+        if (m.p === 1) { total += 1; if (done) washed += 1; }
+      });
+      (view.customMarks[f] || []).forEach((cm) => {
+        if (view.deleted[cm.key]) return;
+        const done = view.statuses[cm.key] === "pesty";
+        all += 1; if (done) allWashed += 1;
+        if (cm.p === 1) { total += 1; if (done) washed += 1; }
+      });
+    }
+    return { total, washed, all, allWashed, pct: total > 0 ? (washed / total) * 100 : 0 };
+  }, [view]);
+
+  const CIRC = 2 * Math.PI * 52;
   return (
-    <div style={{ height: "100%", overflowY: "auto", padding: 20 }}>
-      <div style={{ textAlign: "center", padding: "30px 0" }}>
-        <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase" }}>Kertynyt ansio</p>
-        <p style={{ fontSize: 48, fontWeight: 800, margin: "6px 0", color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(s.earnedCents)}</p>
-        <p style={{ color: "rgba(255,255,255,0.6)" }}>{s.washed} pestyä ikkunaa × {euro(view.worker.perWindowCents)}</p>
+    <div style={{ height: "100%", overflowY: "auto", WebkitOverflowScrolling: "touch", padding: 20 }}>
+      {/* Team progress on the contract (red) windows — the big motivator */}
+      <div style={{ display: "flex", alignItems: "center", gap: 18, padding: 18, borderRadius: 18, background: "linear-gradient(155deg, rgba(255,72,72,0.10), rgba(255,255,255,0.03))", border: "1px solid rgba(255,72,72,0.22)" }}>
+        <div style={{ position: "relative", width: 116, height: 116, flexShrink: 0 }}>
+          <svg width="116" height="116" viewBox="0 0 116 116" style={{ transform: "rotate(-90deg)" }}>
+            <circle cx="58" cy="58" r="52" fill="none" stroke="rgba(255,255,255,0.09)" strokeWidth="8" />
+            <circle cx="58" cy="58" r="52" fill="none" stroke="#ff6b6b" strokeWidth="8" strokeLinecap="round"
+              strokeDasharray={`${((red.pct / 100) * CIRC).toFixed(1)} ${CIRC.toFixed(1)}`} style={{ transition: "stroke-dasharray .6s ease" }} />
+          </svg>
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ fontSize: 26, fontWeight: 800, lineHeight: 1 }}>{Math.round(red.pct)}%</span>
+            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>pesty</span>
+          </div>
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ margin: 0, fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "#ff9b9b" }}>Sopimusikkunat (punaiset)</p>
+          <p style={{ margin: "4px 0 0", fontSize: 30, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+            {red.washed}<span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 600 }}> / {red.total}</span>
+          </p>
+          <p style={{ margin: "2px 0 0", fontSize: 12.5, color: "rgba(255,255,255,0.6)" }}>
+            {red.total - red.washed > 0 ? `Vielä ${red.total - red.washed} punaista pestävänä` : "Kaikki punaiset pesty! 🎉"}
+          </p>
+        </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+
+      {/* Your own contribution + earnings */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+        <div style={{ padding: 16, borderRadius: 14, background: "rgba(124,224,166,0.10)", border: "1px solid rgba(124,224,166,0.22)" }}>
+          <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Sinun ansiosi</p>
+          <p style={{ margin: "4px 0 0", fontSize: 26, fontWeight: 800, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(s.earnedCents)}</p>
+        </div>
+        <div style={{ padding: 16, borderRadius: 14, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
+          <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Sinun ikkunasi</p>
+          <p style={{ margin: "4px 0 0", fontSize: 26, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{s.washed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })}</p>
+        </div>
+      </div>
+
+      {/* Quick actions */}
+      <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+        <button onClick={() => setTab("map")} style={{ ...primaryBtn, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff" }}>Avaa kartta →</button>
+        <button onClick={() => setTab("hours")} style={{ ...primaryBtn, background: T.green }}>Kirjaa tunnit →</button>
+      </div>
+
+      {/* Pending payment — needs the worker's action */}
+      {pendingPayouts > 0 && (
+        <button onClick={onOpenPayouts} style={{ width: "100%", marginTop: 12, display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderRadius: 14, background: "rgba(224,168,0,0.14)", border: "1px solid rgba(224,168,0,0.35)", cursor: "pointer", fontFamily: FONT, textAlign: "left" }}>
+          <span style={{ fontSize: 20 }}>💸</span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: "block", fontSize: 14, fontWeight: 700, color: "#F4D58A" }}>Sinulla on {pendingPayouts} maksu{pendingPayouts > 1 ? "a" : ""} hyväksyttävänä</span>
+            <span style={{ display: "block", fontSize: 12, color: "rgba(255,255,255,0.6)" }}>Avaa ja vahvista laskutustietosi →</span>
+          </span>
+        </button>
+      )}
+
+      {/* Maksut + Info — folded off the bottom nav into the home screen */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+        <button onClick={onOpenPayouts} style={{ position: "relative", display: "flex", flexDirection: "column", gap: 6, padding: 16, borderRadius: 14, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", cursor: "pointer", fontFamily: FONT, textAlign: "left", color: "#fff" }}>
+          <span style={{ fontSize: 20 }}>💳</span>
+          <span style={{ fontSize: 14, fontWeight: 700 }}>Maksut</span>
+          <span style={{ fontSize: 11.5, color: "rgba(255,255,255,0.5)" }}>Hyväksy ja seuraa maksuja</span>
+          {pendingPayouts > 0 && <span style={{ position: "absolute", top: 12, right: 12, minWidth: 18, height: 18, padding: "0 5px", borderRadius: 999, background: "#E03B3B", color: "#fff", fontSize: 11, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{pendingPayouts}</span>}
+        </button>
+        <button onClick={onOpenInfo} style={{ display: "flex", flexDirection: "column", gap: 6, padding: 16, borderRadius: 14, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", cursor: "pointer", fontFamily: FONT, textAlign: "left", color: "#fff" }}>
+          <span style={{ fontSize: 20 }}>ℹ️</span>
+          <span style={{ fontSize: 14, fontWeight: 700 }}>Info & ohjeet</span>
+          <span style={{ fontSize: 11.5, color: "rgba(255,255,255,0.5)" }}>Ovikoodi, säännöt, vakuutukset</span>
+        </button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 16 }}>
         <Stat label="Tunteja" value={s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} />
         <Stat label="€ / tunti" value={s.hours > 0 ? euro(Math.round(s.eurPerHour * 100)) : "—"} />
-        <Stat label="Ikkunaa / tunti" value={s.hours > 0 ? s.windowsPerHour.toLocaleString("fi-FI", { maximumFractionDigits: 1 }) : "—"} />
-        <Stat label="Ikkunoita kohteessa" value={String(potentialWindows)} />
       </div>
       <PaydateProgress total={view.windowsTotal} washed={view.windowsWashed} workerId={view.worker.id} />
       <Leaderboard view={view} />
@@ -1269,7 +1424,22 @@ function fmtDuration(min: number) {
 }
 
 function HoursTab({ token, view, setView }: { token: string; view: WorkerView; setView: (v: WorkerView) => void }) {
-  // Resume a running shift from the server (so it survives reload / reopen).
+  // Timer vs. manual entry. The worker can switch the live clock off entirely
+  // and just log finished days by hand — the choice is remembered per link.
+  const modeKey = `pp_hours_mode_${token}`;
+  const breakKey = `pp_shift_break_${token}`;
+  const [mode, setMode] = useState<"timer" | "manual">(() => {
+    try { return localStorage.getItem(modeKey) === "manual" ? "manual" : "timer"; } catch { return "timer"; }
+  });
+  const setModePersist = (m: "timer" | "manual") => {
+    setMode(m);
+    try { localStorage.setItem(modeKey, m); } catch { /* private mode */ }
+  };
+
+  // The running shift's start lives on the SERVER (view.worker.activeShiftAt) so
+  // it always survives a refresh / reopen. Break time is local-only, so we mirror
+  // it to localStorage and restore it on mount — a mid-shift refresh used to lose
+  // the break deduction, which is what made the clock look like it "reset".
   const [running, setRunning] = useState<number | null>(view.worker.activeShiftAt ?? null);
   const [breakMs, setBreakMs] = useState(0);          // accumulated break time this shift
   const [onBreak, setOnBreak] = useState<number | null>(null); // break start ms, if paused
@@ -1278,6 +1448,33 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
   const [busy, setBusy] = useState(false);
   const [recap, setRecap] = useState<WorkerView["worker"]["sessions"][number] | null>(null);
   const tick = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Keep the running flag in sync with the server (a shift started/ended on
+  // another device, and a clean reset once the day is ended).
+  useEffect(() => { setRunning(view.worker.activeShiftAt ?? null); }, [view.worker.activeShiftAt]);
+
+  // Restore saved break state on mount — only if it belongs to the shift that's
+  // still running on the server (otherwise it's stale and ignored).
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(breakKey);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as { start?: number; breakMs?: number; onBreak?: number | null };
+      if (saved.start && view.worker.activeShiftAt && saved.start === view.worker.activeShiftAt) {
+        setBreakMs(saved.breakMs ?? 0);
+        setOnBreak(saved.onBreak ?? null);
+      }
+    } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Mirror break state to localStorage while a shift runs; clear it otherwise.
+  useEffect(() => {
+    try {
+      if (running) localStorage.setItem(breakKey, JSON.stringify({ start: running, breakMs, onBreak }));
+      else localStorage.removeItem(breakKey);
+    } catch { /* private mode */ }
+  }, [running, breakMs, onBreak, breakKey]);
 
   useEffect(() => {
     if (running) {
@@ -1293,9 +1490,11 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
   const sessionEarnedCents = sessionWindows * view.worker.perWindowCents;
 
   const start = async () => {
-    setRunning(Date.now()); setBreakMs(0); setOnBreak(null); setTickNow(Date.now());
+    const now = Date.now();
+    setRunning(now); setBreakMs(0); setOnBreak(null); setTickNow(now);
     const res = await api.crewShift(token, true);
     if (res.ok && res.data?.view) setView(res.data.view);
+    else setRunning(null); // server didn't record it → don't show a phantom shift
   };
 
   const toggleBreak = () => {
@@ -1312,6 +1511,7 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
     if (hours > 0) await api.crewAddHours(token, hours);            // hours ledger
     const res = await api.crewShift(token, false, minutes);          // record session
     setBusy(false); setRunning(null); setOnBreak(null); setBreakMs(0);
+    try { localStorage.removeItem(breakKey); } catch { /* */ }
     if (res.ok && res.data?.view) {
       setView(res.data.view);
       setRecap(res.data.view.worker.sessions[0] ?? null);           // newest-first → recap
@@ -1337,41 +1537,80 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
   };
   const dayMonth = (ts: number) => new Date(ts).toLocaleDateString("fi-FI", { day: "numeric", month: "numeric" });
 
+  const segBtn = (active: boolean): React.CSSProperties => ({
+    flex: 1, padding: "9px 10px", borderRadius: 9, border: "none", cursor: "pointer",
+    fontFamily: FONT, fontSize: 13, fontWeight: 600,
+    background: active ? "#fff" : "transparent", color: active ? "#0a0a0c" : "rgba(255,255,255,0.6)",
+    transition: "all .15s",
+  });
+
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: 20 }}>
-      <div style={{ textAlign: "center", padding: "16px 0 6px" }}>
-        <p style={{ margin: 0, fontSize: 40, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: onBreak ? "#E0A800" : running ? "#7CE0A6" : "#fff" }}>{mmss(workedMs)}</p>
-        {running && (
-          <p style={{ margin: "4px 0 0", fontSize: 13, color: "rgba(255,255,255,0.6)" }}>
-            {onBreak ? "Tauolla" : "Vuoro käynnissä"} · {sessionWindows} ikkunaa · {euro(sessionEarnedCents)}
-          </p>
-        )}
-        {!running ? (
-          <button onClick={start} style={{ ...primaryBtn, width: "auto", padding: "13px 36px", background: T.green, marginTop: 12 }}>Aloita vuoro</button>
-        ) : (
-          <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 14, flexWrap: "wrap" }}>
-            <button onClick={toggleBreak} style={{ ...secondaryBtn, color: "#fff", border: "1px solid rgba(255,255,255,0.25)", background: onBreak ? "rgba(224,168,0,0.15)" : "transparent" }}>
-              {onBreak ? "Jatka työtä" : "Tauko"}
-            </button>
-            <button onClick={endDay} disabled={busy} style={{ ...primaryBtn, width: "auto", padding: "13px 28px", background: "#D9472B", opacity: busy ? 0.6 : 1 }}>
-              {busy ? "Päätetään…" : "Päätä päivä"}
-            </button>
-          </div>
-        )}
-        <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, marginTop: 12, lineHeight: 1.5 }}>
-          Aloita kun saavut työmaalle. Pidä tauko ruokatauon ajaksi — tauot eivät kerrytä tunteja. "Päätä päivä" kokoaa yhteenvedon.
-        </p>
+      {/* Timer / manual mode switch */}
+      <div style={{ display: "flex", gap: 5, padding: 5, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, marginBottom: 8 }}>
+        <button onClick={() => setModePersist("timer")} style={segBtn(mode === "timer")}>Ajastin</button>
+        <button onClick={() => setModePersist("manual")} style={segBtn(mode === "manual")}>Kirjaa käsin</button>
       </div>
 
-      <div style={{ marginTop: 6 }}>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <input value={manual} onChange={(e) => setManual(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addManual()} placeholder="Kirjaa työpäivä käsin (esim. 2,5 h)" inputMode="decimal" style={{ ...inputStyle, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff" }} />
-          <button onClick={addManual} disabled={busy} style={{ ...secondaryBtn, color: "#fff", border: "1px solid rgba(255,255,255,0.2)", whiteSpace: "nowrap", opacity: busy ? 0.6 : 1 }}>Kirjaa</button>
+      {mode === "timer" ? (
+        <>
+          <div style={{ textAlign: "center", padding: "16px 0 6px" }}>
+            <p style={{ margin: 0, fontSize: 40, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: onBreak ? "#E0A800" : running ? "#7CE0A6" : "#fff" }}>{mmss(workedMs)}</p>
+            {running && (
+              <p style={{ margin: "4px 0 0", fontSize: 13, color: "rgba(255,255,255,0.6)" }}>
+                {onBreak ? "Tauolla" : "Vuoro käynnissä"} · {sessionWindows} ikkunaa · {euro(sessionEarnedCents)}
+              </p>
+            )}
+            {!running ? (
+              <button onClick={start} style={{ ...primaryBtn, width: "auto", padding: "13px 36px", background: T.green, marginTop: 12 }}>Aloita vuoro</button>
+            ) : (
+              <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 14, flexWrap: "wrap" }}>
+                <button onClick={toggleBreak} style={{ ...secondaryBtn, color: "#fff", border: "1px solid rgba(255,255,255,0.25)", background: onBreak ? "rgba(224,168,0,0.15)" : "transparent" }}>
+                  {onBreak ? "Jatka työtä" : "Tauko"}
+                </button>
+                <button onClick={endDay} disabled={busy} style={{ ...primaryBtn, width: "auto", padding: "13px 28px", background: "#D9472B", opacity: busy ? 0.6 : 1 }}>
+                  {busy ? "Päätetään…" : "Päätä päivä"}
+                </button>
+              </div>
+            )}
+            <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, marginTop: 12, lineHeight: 1.5 }}>
+              Aloita kun saavut työmaalle. Pidä tauko ruokatauon ajaksi — tauot eivät kerrytä tunteja. "Päätä päivä" kokoaa yhteenvedon.
+            </p>
+          </div>
+
+          <div style={{ marginTop: 6 }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <input value={manual} onChange={(e) => setManual(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addManual()} placeholder="Kirjaa työpäivä käsin (esim. 2,5 h)" inputMode="decimal" style={{ ...inputStyle, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff" }} />
+              <button onClick={addManual} disabled={busy} style={{ ...secondaryBtn, color: "#fff", border: "1px solid rgba(255,255,255,0.2)", whiteSpace: "nowrap", opacity: busy ? 0.6 : 1 }}>Kirjaa</button>
+            </div>
+            <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
+              Unohtuiko vuoron aloitus? Kirjaa tehdyt tunnit käsin — päivä tallentuu päiväkirjaan.
+            </p>
+          </div>
+        </>
+      ) : (
+        // Manual mode — the clock is off. Just type the day's hours and press
+        // "Päätä päivä"; the day is saved straight to the diary.
+        <div style={{ padding: "16px 0 6px" }}>
+          {running && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", borderRadius: 11, background: "rgba(224,168,0,0.12)", border: "1px solid rgba(224,168,0,0.3)", marginBottom: 14 }}>
+              <span style={{ fontSize: 12.5, color: "#F4D58A" }}>Ajastin on yhä käynnissä.</span>
+              <button onClick={endDay} disabled={busy} style={{ ...secondaryBtn, padding: "8px 12px", color: "#fff", border: "1px solid rgba(255,255,255,0.25)", whiteSpace: "nowrap", opacity: busy ? 0.6 : 1 }}>
+                {busy ? "Päätetään…" : "Päätä vuoro"}
+              </button>
+            </div>
+          )}
+          <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "rgba(255,255,255,0.7)", marginBottom: 6 }}>Päivän tunnit</label>
+          <input value={manual} onChange={(e) => setManual(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addManual()} placeholder="esim. 6 tai 7,5" inputMode="decimal" autoFocus
+            style={{ ...inputStyle, fontSize: 22, fontWeight: 700, textAlign: "center", padding: "16px 13px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff" }} />
+          <button onClick={addManual} disabled={busy || !manual.trim()} style={{ ...primaryBtn, background: T.green, marginTop: 12, opacity: busy || !manual.trim() ? 0.6 : 1 }}>
+            {busy ? "Tallennetaan…" : "Päätä päivä"}
+          </button>
+          <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, marginTop: 12, lineHeight: 1.5 }}>
+            Ajastin on pois päältä. Kirjoita tehdyt tunnit ja paina "Päätä päivä" — päivä tallentuu päiväkirjaan. Voit ottaa ajastimen takaisin käyttöön ylhäältä.
+          </p>
         </div>
-        <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
-          Unohtuiko vuoron aloitus? Kirjaa tehdyt tunnit käsin — päivä tallentuu päiväkirjaan.
-        </p>
-      </div>
+      )}
 
       <div style={{ marginTop: 20, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Stat label="Tunteja yhteensä" value={view.stats.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} />
@@ -1387,11 +1626,16 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
               <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", borderRadius: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
                 <div>
                   <p style={{ margin: 0, fontSize: 13.5, fontWeight: 600 }}>{dayMonth(s.end)}</p>
-                  <p style={{ margin: "2px 0 0", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{s.manual ? `Käsin kirjattu · ${fmtDuration(s.minutes)}` : `${s.windows} ikkunaa · ${fmtDuration(s.minutes)}`}</p>
+                  <p style={{ margin: "2px 0 0", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
+                    {s.manual
+                      ? `Käsin kirjattu · ${s.windows > 0 ? `${s.windows} ikkunaa · ` : ""}${fmtDuration(s.minutes)}`
+                      : `${s.windows} ikkunaa · ${fmtDuration(s.minutes)}`}
+                  </p>
                 </div>
-                {s.manual
-                  ? <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.55)", fontVariantNumeric: "tabular-nums" }}>{fmtDuration(s.minutes)}</span>
-                  : <span style={{ fontSize: 15, fontWeight: 700, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(s.earnedCents)}</span>}
+                {/* Show the day's earnings whenever windows were logged (timed or manual); a pure-hours manual day shows the duration. */}
+                {s.windows > 0
+                  ? <span style={{ fontSize: 15, fontWeight: 700, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(s.earnedCents)}</span>
+                  : <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.55)", fontVariantNumeric: "tabular-nums" }}>{fmtDuration(s.minutes)}</span>}
               </div>
             ))}
           </div>
@@ -1406,9 +1650,19 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
             <h2 style={{ margin: "8px 0 2px", fontSize: 22, fontWeight: 800, color: "#fff" }}>{recap.manual ? "Päivä kirjattu" : "Hyvää työtä!"}</h2>
             <p style={{ margin: "0 0 18px", fontSize: 13.5, color: "rgba(255,255,255,0.6)" }}>{recap.manual ? "Käsin kirjattu työpäivä" : "Päivän yhteenveto"}</p>
             {recap.manual ? (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, marginBottom: 16 }}>
-                <Stat label="Kesto" value={fmtDuration(recap.minutes)} />
-              </div>
+              // A manual day with windows logged shows both; pure hours show duration only.
+              recap.windows > 0 ? (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+                  <Stat label="Ikkunaa" value={String(recap.windows)} />
+                  <Stat label="Ansio" value={euro(recap.earnedCents)} />
+                  <Stat label="Kesto" value={fmtDuration(recap.minutes)} />
+                  <Stat label="€ / tunti" value={recap.minutes > 0 ? euro(Math.round((recap.earnedCents / (recap.minutes / 60)))) : "—"} />
+                </div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, marginBottom: 16 }}>
+                  <Stat label="Kesto" value={fmtDuration(recap.minutes)} />
+                </div>
+              )
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
                 <Stat label="Ikkunaa" value={String(recap.windows)} />
@@ -1591,66 +1845,6 @@ function NotesTab({ token, view, setView }: { token: string; view: WorkerView; s
 
 // ─── Small shared bits ──────────────────────────────────────────────────────
 
-function SummaryTab({ view }: { view: WorkerView }) {
-  const { redTotal, redWashed, myRedWashed } = useMemo(() => {
-    let redTotal = 0;
-    let redWashed = 0;
-    let myRedWashed = 0;
-    const floors = view.building.floors;
-    for (const f of floors) {
-      const seeded = view.marks[f]?.marks ?? [];
-      const custom = view.customMarks[f] ?? [];
-      const allMarks = [
-        ...seeded.map((mk, idx) => ({ key: `${f}#${idx}`, p: mk.p })),
-        ...custom.map((cm) => ({ key: cm.key, p: cm.p })),
-      ].filter(({ key }) => !view.deleted[key]);
-      for (const { key, p } of allMarks) {
-        if (p !== 1) continue;
-        redTotal++;
-        const status = view.statuses[key] ?? "ei";
-        if (status === "pesty") {
-          redWashed++;
-          if (view.washedBy[key] === view.worker.id) myRedWashed++;
-        }
-      }
-    }
-    return { redTotal, redWashed, myRedWashed };
-  }, [view]);
-
-  const pct = redTotal > 0 ? (redWashed / redTotal) * 100 : 0;
-  const myEarnedCents = myRedWashed * view.worker.perWindowCents;
-
-  return (
-    <div style={{ height: "100%", overflowY: "auto", padding: 20 }}>
-      <p style={{ margin: "0 0 20px", fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(255,255,255,0.4)" }}>Kokonaisuus</p>
-
-      {/* Red window progress */}
-      <div style={{ padding: 20, borderRadius: 16, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", marginBottom: 16 }}>
-        <p style={{ margin: "0 0 4px", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,72,72,0.8)" }}>Punaiset ikkunat (P1)</p>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "8px 0 14px" }}>
-          <span style={{ fontSize: 40, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: "#fff" }}>{redWashed}</span>
-          <span style={{ fontSize: 22, color: "rgba(255,255,255,0.35)", fontWeight: 500 }}>/ {redTotal}</span>
-          <span style={{ marginLeft: "auto", fontSize: 28, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: "rgb(255,72,72)" }}>{Math.round(pct)} %</span>
-        </div>
-        <div style={{ position: "relative", height: 10, borderRadius: 999, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
-          <div style={{ position: "absolute", inset: 0, right: `${100 - pct}%`, background: "linear-gradient(90deg, rgb(255,72,72), rgb(255,120,90))", borderRadius: 999, transition: "right 0.6s ease" }} />
-        </div>
-        <p style={{ margin: "8px 0 0", fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{redTotal - redWashed} jäljellä</p>
-      </div>
-
-      {/* Worker's own contribution */}
-      <div style={{ padding: 20, borderRadius: 16, background: "linear-gradient(155deg, rgba(124,224,166,0.10), rgba(255,255,255,0.03))", border: "1px solid rgba(124,224,166,0.22)", marginBottom: 16 }}>
-        <p style={{ margin: "0 0 4px", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7CE0A6" }}>Oma osuus punaisia</p>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "8px 0 4px" }}>
-          <span style={{ fontSize: 36, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: "#7CE0A6" }}>{myRedWashed}</span>
-          <span style={{ fontSize: 16, color: "rgba(255,255,255,0.45)" }}>kpl</span>
-        </div>
-        <p style={{ margin: "6px 0 0", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{myRedWashed} × {euro(view.worker.perWindowCents)} = <strong style={{ color: "#7CE0A6", fontWeight: 700 }}>{euro(myEarnedCents)}</strong></p>
-      </div>
-    </div>
-  );
-}
-
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ padding: 14, borderRadius: 12, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
@@ -1678,6 +1872,17 @@ function Wrap({ children }: { children: React.ReactNode }) {
 }
 function Centered({ children }: { children: React.ReactNode }) {
   return <div style={{ minHeight: "100vh", background: T.paper, fontFamily: FONT, color: T.muted, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center" }}>{children}</div>;
+}
+
+/** Lightweight inline spinner (no extra deps) — a clear "it's loading" cue so a
+ *  slow/cold backend never reads as a frozen app. */
+function Spinner() {
+  return (
+    <>
+      <span style={{ width: 30, height: 30, borderRadius: "50%", border: "3px solid rgba(31,59,87,0.2)", borderTopColor: T.navy, display: "inline-block", animation: "pp-spin 0.8s linear infinite" }} />
+      <style>{"@keyframes pp-spin{to{transform:rotate(360deg)}}"}</style>
+    </>
+  );
 }
 
 const inputStyle: React.CSSProperties = {

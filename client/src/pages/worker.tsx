@@ -786,19 +786,17 @@ function AgreementBody({ ag }: { ag: WorkerAgreement }) {
 
 // ─── Dashboard ──────────────────────────────────────────────────────────────
 
-type Tab = "home" | "map" | "hours" | "payouts" | "notes";
+type Tab = "home" | "map" | "hours";
 
 const NAV_ITEMS: [Tab, string][] = [
   ["home", "Koti"],
   ["map", "Kartta"],
   ["hours", "Tunnit"],
-  ["payouts", "Maksut"],
-  ["notes", "Info"],
 ];
 
 /** Stroke icons for the bottom nav (inline so the dark worker theme stays self-contained). */
 function NavIcon({ name, color }: { name: Tab; color: string }) {
-  const p = { width: 22, height: 22, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 1.9, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+  const p = { width: 23, height: 23, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 1.9, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
   switch (name) {
     case "home":
       return <svg {...p}><path d="M3 10.5 12 4l9 6.5" /><path d="M5 9.5V20h14V9.5" /></svg>;
@@ -806,17 +804,17 @@ function NavIcon({ name, color }: { name: Tab; color: string }) {
       return <svg {...p}><path d="M9 20 3 17V4l6 3 6-3 6 3v13l-6-3-6 3Z" /><path d="M9 7v13M15 4v13" /></svg>;
     case "hours":
       return <svg {...p}><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 1.8" /></svg>;
-    case "payouts":
-      return <svg {...p}><rect x="3" y="6" width="18" height="12.5" rx="2.5" /><path d="M3 10.5h18" /><path d="M16 14.5h2" /></svg>;
-    case "notes":
-      return <svg {...p}><circle cx="12" cy="12" r="8.5" /><path d="M12 11v5" /><path d="M12 8h.01" /></svg>;
   }
 }
 
 function Dashboard({ token, view, setView, reload }: { token: string; view: WorkerView; setView: (v: WorkerView) => void; reload: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
+  // Maksut + Info aren't bottom-nav tabs anymore — they open as sub-screens from
+  // Koti, keeping the nav to three simple destinations.
+  const [sub, setSub] = useState<null | "payouts" | "notes">(null);
   const pwa = usePwaInstall();
   const [showInstall, setShowInstall] = useState(false);
+  const pendingPayouts = (view.payouts || []).filter((p) => p.status === "ilmoitettu").length;
 
   // Lock page zoom so pinch zooms only the map (like the admin tool), and let the
   // dark UI extend under the notch / home indicator (viewport-fit=cover) — the
@@ -826,6 +824,16 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
     const prev = vp?.getAttribute("content") ?? null;
     vp?.setAttribute("content", "width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover");
     return () => { if (vp && prev != null) vp.setAttribute("content", prev); };
+  }, []);
+
+  // Paint the page (html/body) dark while the worker app is open, so no white
+  // strip shows behind the fixed app in the home-indicator / overscroll area.
+  useEffect(() => {
+    const html = document.documentElement, body = document.body;
+    const prev = { htmlBg: html.style.background, bodyBg: body.style.background };
+    html.style.background = "#060607";
+    body.style.background = "#060607";
+    return () => { html.style.background = prev.htmlBg; body.style.background = prev.bodyBg; };
   }, []);
 
   const markWindow = useCallback(async (key: string, st: WindowStatus) => {
@@ -870,7 +878,7 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
 
       {/* Content */}
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
-        {tab === "map" && (
+        {!sub && tab === "map" && (
           <FloorView
             floors={view.building.floors}
             planBase={view.building.planBase || ""}
@@ -900,32 +908,49 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
             activeZone={view.activeZone}
           />
         )}
-        {tab === "home" && <HomeTab view={view} setTab={setTab} />}
-        {tab === "hours" && <HoursTab token={token} view={view} setView={setView} />}
-        {tab === "payouts" && <PayoutsTab token={token} view={view} setView={setView} />}
-        {tab === "notes" && <NotesTab token={token} view={view} setView={setView} />}
+        {!sub && tab === "home" && (
+          <HomeTab
+            view={view}
+            setTab={setTab}
+            pendingPayouts={pendingPayouts}
+            onOpenPayouts={() => setSub("payouts")}
+            onOpenInfo={() => setSub("notes")}
+          />
+        )}
+        {!sub && tab === "hours" && <HoursTab token={token} view={view} setView={setView} />}
+
+        {/* Maksut / Info as full-screen sub-views with a back header */}
+        {sub && (
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", background: "#060607" }}>
+            <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+              <button onClick={() => setSub(null)} aria-label="Takaisin" style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: "#fff", cursor: "pointer", fontFamily: FONT, fontSize: 14, fontWeight: 600, padding: 0 }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+                {sub === "payouts" ? "Maksut" : "Info & ohjeet"}
+              </button>
+            </div>
+            <div style={{ flex: 1, minHeight: 0 }}>
+              {sub === "payouts" ? <PayoutsTab token={token} view={view} setView={setView} /> : <NotesTab token={token} view={view} setView={setView} />}
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Bottom nav — icons, active pill, mobile-friendly */}
+      {/* Bottom nav — three simple destinations */}
       <div style={{ flexShrink: 0, display: "flex", justifyContent: "space-around", alignItems: "stretch", gap: 2, borderTop: "1px solid rgba(255,255,255,0.08)", background: "#0b0b0d", padding: "8px 6px calc(8px + env(safe-area-inset-bottom))" }}>
         {NAV_ITEMS.map(([id, label]) => {
-          const active = tab === id;
-          const pending = id === "payouts" ? (view.payouts || []).filter((p) => p.status === "ilmoitettu").length : 0;
+          const active = !sub && tab === id;
           return (
             <button
               key={id}
-              onClick={() => { setTab(id); if (id !== "map") reload(); }}
+              onClick={() => { setSub(null); setTab(id); if (id !== "map") reload(); }}
               aria-label={label}
               aria-current={active ? "page" : undefined}
               style={{ position: "relative", flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "8px 2px", background: "none", border: "none", cursor: "pointer", fontFamily: FONT, color: active ? "#fff" : "rgba(255,255,255,0.5)", transition: "color .2s" }}
             >
-              <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 46, height: 30, borderRadius: 999, background: active ? "rgba(124,224,166,0.16)" : "transparent", transition: "background .2s" }}>
+              <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 52, height: 30, borderRadius: 999, background: active ? "rgba(124,224,166,0.16)" : "transparent", transition: "background .2s" }}>
                 <NavIcon name={id} color={active ? "#7CE0A6" : "rgba(255,255,255,0.55)"} />
-                {pending > 0 && (
-                  <span style={{ position: "absolute", top: 4, left: "calc(50% + 8px)", minWidth: 15, height: 15, padding: "0 4px", borderRadius: 999, background: "#E03B3B", color: "#fff", fontSize: 9.5, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "1.5px solid #08080a" }}>{pending}</span>
-                )}
               </span>
-              <span style={{ fontSize: 10.5, fontWeight: active ? 700 : 500, letterSpacing: "0.01em", whiteSpace: "nowrap" }}>{label}</span>
+              <span style={{ fontSize: 11, fontWeight: active ? 700 : 500, letterSpacing: "0.01em", whiteSpace: "nowrap" }}>{label}</span>
             </button>
           );
         })}
@@ -939,7 +964,10 @@ function Dashboard({ token, view, setView, reload }: { token: string; view: Work
 /** Worker home / overview — the motivating landing screen: clear team progress on
  *  the contract (red) windows, your own windows + earnings, quick actions, and the
  *  team standings. Replaces "just a map" as the first thing a worker sees. */
-function HomeTab({ view, setTab }: { view: WorkerView; setTab: (t: Tab) => void }) {
+function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
+  view: WorkerView; setTab: (t: Tab) => void;
+  pendingPayouts: number; onOpenPayouts: () => void; onOpenInfo: () => void;
+}) {
   const s = view.stats;
   // Live RED (priority 1 = contract) progress, computed from the worker's own
   // map data so it always matches what they see on the map.
@@ -1007,6 +1035,32 @@ function HomeTab({ view, setTab }: { view: WorkerView; setTab: (t: Tab) => void 
       <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
         <button onClick={() => setTab("map")} style={{ ...primaryBtn, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff" }}>Avaa kartta →</button>
         <button onClick={() => setTab("hours")} style={{ ...primaryBtn, background: T.green }}>Kirjaa tunnit →</button>
+      </div>
+
+      {/* Pending payment — needs the worker's action */}
+      {pendingPayouts > 0 && (
+        <button onClick={onOpenPayouts} style={{ width: "100%", marginTop: 12, display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderRadius: 14, background: "rgba(224,168,0,0.14)", border: "1px solid rgba(224,168,0,0.35)", cursor: "pointer", fontFamily: FONT, textAlign: "left" }}>
+          <span style={{ fontSize: 20 }}>💸</span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: "block", fontSize: 14, fontWeight: 700, color: "#F4D58A" }}>Sinulla on {pendingPayouts} maksu{pendingPayouts > 1 ? "a" : ""} hyväksyttävänä</span>
+            <span style={{ display: "block", fontSize: 12, color: "rgba(255,255,255,0.6)" }}>Avaa ja vahvista laskutustietosi →</span>
+          </span>
+        </button>
+      )}
+
+      {/* Maksut + Info — folded off the bottom nav into the home screen */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+        <button onClick={onOpenPayouts} style={{ position: "relative", display: "flex", flexDirection: "column", gap: 6, padding: 16, borderRadius: 14, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", cursor: "pointer", fontFamily: FONT, textAlign: "left", color: "#fff" }}>
+          <span style={{ fontSize: 20 }}>💳</span>
+          <span style={{ fontSize: 14, fontWeight: 700 }}>Maksut</span>
+          <span style={{ fontSize: 11.5, color: "rgba(255,255,255,0.5)" }}>Hyväksy ja seuraa maksuja</span>
+          {pendingPayouts > 0 && <span style={{ position: "absolute", top: 12, right: 12, minWidth: 18, height: 18, padding: "0 5px", borderRadius: 999, background: "#E03B3B", color: "#fff", fontSize: 11, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{pendingPayouts}</span>}
+        </button>
+        <button onClick={onOpenInfo} style={{ display: "flex", flexDirection: "column", gap: 6, padding: 16, borderRadius: 14, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", cursor: "pointer", fontFamily: FONT, textAlign: "left", color: "#fff" }}>
+          <span style={{ fontSize: 20 }}>ℹ️</span>
+          <span style={{ fontSize: 14, fontWeight: 700 }}>Info & ohjeet</span>
+          <span style={{ fontSize: 11.5, color: "rgba(255,255,255,0.5)" }}>Ovikoodi, säännöt, vakuutukset</span>
+        </button>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 16 }}>

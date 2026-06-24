@@ -81,7 +81,7 @@ export default function AdminGigTrackerPage() {
   const defaultBillerId = resolveBrandBiller(profile?.id) ? profile!.id : DEFAULT_BILLER_ID;
   const [invForm, setInvForm] = useState({
     to: "", iban: "", bic: "", viitenumero: "", dueDate: isoPlusDays(14),
-    message: "", isFinal: false, billerId: defaultBillerId, eInvoice: "",
+    message: "", isFinal: false, billerId: defaultBillerId, eInvoice: "", paymentNumber: 1,
   });
 
   useEffect(() => {
@@ -283,6 +283,7 @@ export default function AdminGigTrackerPage() {
       message: invForm.message || undefined,
       isFinal: invForm.isFinal,
       eInvoice: invForm.eInvoice || undefined,
+      paymentNumber: deal ? invForm.paymentNumber : undefined,
     });
     setSending(false);
     if (res.ok && res.data) {
@@ -303,6 +304,13 @@ export default function AdminGigTrackerPage() {
     } else {
       toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error });
     }
+  };
+
+  // Open the invoice dialog, defaulting the instalment number to the next one in
+  // sequence (the admin can still change it manually in the dialog).
+  const openInvoice = () => {
+    setInvForm((f) => ({ ...f, paymentNumber: (gig?.payments.length ?? 0) + 1 }));
+    setInvoiceOpen(true);
   };
 
   const undoInstalment = async () => {
@@ -634,17 +642,14 @@ export default function AdminGigTrackerPage() {
               )}
               <Button
                 className="w-full"
-                disabled={gig.payments.length >= 4}
-                onClick={() => setInvoiceOpen(true)}
+                onClick={openInvoice}
               >
                 <Send className="w-4 h-4 mr-2" />
-                {gig.payments.length >= 4 ? "Kaikki 4 erää lähetetty" : `Lähetä ${gig.payments.length + 1}. erä (${eur(fixedInstallmentCents)})`}
+                Lähetä lasku
               </Button>
-              {!fixedDue && gig.payments.length < 4 && (
-                <p className="text-[11px] text-muted-foreground mt-1 text-center">
-                  Voit lähettää erän manuaalisesti nyt, vaikka 25 %:n raja ei vielä täyttyisi.
-                </p>
-              )}
+              <p className="text-[11px] text-muted-foreground mt-1 text-center">
+                Valitse maksuerä ja täytä laskutustiedot itse seuraavassa näkymässä.
+              </p>
               {gig.payments.length > 0 && (
                 <Button variant="ghost" size="sm" className="w-full mt-1 text-xs text-muted-foreground" onClick={undoInstalment}>
                   Peruuta viimeisin erä (nollaa laskuri)
@@ -660,7 +665,7 @@ export default function AdminGigTrackerPage() {
               {totals.invoicedCents > 0 && (
                 <p className="text-xs text-muted-foreground mb-3">Jo laskutettu: {eur(totals.invoicedCents)} ({gig.payments.length} laskua)</p>
               )}
-              <Button className="w-full" disabled={totals.uninvoicedCents <= 0} onClick={() => setInvoiceOpen(true)}>
+              <Button className="w-full" disabled={totals.uninvoicedCents <= 0} onClick={openInvoice}>
                 <Send className="w-4 h-4 mr-2" /> Lähetä lasku sähköpostilla
               </Button>
             </>
@@ -757,12 +762,29 @@ export default function AdminGigTrackerPage() {
           <div className="space-y-3">
             <div className="rounded-xl bg-muted p-3 text-center">
               <p className="text-xs text-muted-foreground">
-                {deal ? `Maksuerä ${gig.payments.length + 1}/4 — kiinteähintainen sopimus` : "Laskutettava summa"}
+                {deal ? `Maksuerä ${invForm.paymentNumber}/4 — kiinteähintainen sopimus` : "Laskutettava summa"}
               </p>
               <p className="text-2xl font-bold text-foreground tabular-nums">
                 {deal ? eur2(fixedInstallmentCents) : eur2(totals.uninvoicedCents)}
               </p>
             </div>
+            {deal && (
+              <div>
+                <Label className="text-xs">Maksuerä (monesko)</Label>
+                <select
+                  value={invForm.paymentNumber}
+                  onChange={(e) => setInvForm({ ...invForm, paymentNumber: Number(e.target.value) })}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {[1, 2, 3, 4].map((n) => (
+                    <option key={n} value={n}>{n}. erä / 4</option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Valitse käsin monesko maksuerä tämä on. Oletus on seuraava lähettämättä oleva erä.
+                </p>
+              </div>
+            )}
             <div>
               <Label className="text-xs">Laskuttaja (kumman nimissä)</Label>
               <select

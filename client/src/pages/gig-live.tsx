@@ -200,6 +200,27 @@ export default function GigLivePage() {
           </Panel>
         )}
 
+        {/* Boss bulletins — short notes the team posts about the work (newest first). */}
+        {data.updates && data.updates.length > 0 && (
+          <Panel>
+            <p style={{ margin: "0 0 4px", ...label }}>Tiedotteet</p>
+            <p style={{ margin: "0 0 14px", fontSize: 13, color: T.muted }}>Huomioita työn etenemisestä.</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {data.updates.map((u) => (
+                <div key={u.id} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                  <span style={{ flexShrink: 0, marginTop: 6, width: 7, height: 7, borderRadius: 999, background: T.navy }} />
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: T.ink, whiteSpace: "pre-wrap" }}>{u.text}</p>
+                    <p style={{ margin: "3px 0 0", fontSize: 11.5, color: T.muted }}>
+                      {new Date(u.ts).toLocaleString("fi-FI", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        )}
+
         {/* Two-way info / contact note — keep it simple: WhatsApp for anything urgent. */}
         <Panel>
           <p style={{ margin: "0 0 4px", ...label }}>Tiedotus</p>

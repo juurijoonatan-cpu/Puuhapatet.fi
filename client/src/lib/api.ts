@@ -128,6 +128,8 @@ export interface GigPublicView {
   currency: string;
   vatNote: string | null;
   customerNote: string | null;
+  // Boss bulletins shown to the customer (newest first), text + timestamp only.
+  updates: Array<{ id: string; text: string; ts: number }>;
   sectors: Array<{ id: string; name: string; color: string; unitLabel: string; total: number; unitPriceCents: number; washed: number; skipped: number }>;
   totals: GigTotals;
   updatedAt: number;
@@ -684,6 +686,16 @@ export const api = {
   updateGig: (jobId: number, gigData: GigData) =>
     request<{ ok: boolean; gigData: GigData; totals: GigTotals }>(
       "PATCH", `/api/jobs/${jobId}/gig`, { gigData },
+    ),
+
+  // Boss bulletins for the customer view (add / remove a short note).
+  addGigCustomerUpdate: (jobId: number, text: string, by?: string) =>
+    request<{ ok: boolean; updates: import("@shared/gig").GigUpdate[] }>(
+      "POST", `/api/jobs/${jobId}/gig/customer-update`, { text, by },
+    ),
+  deleteGigCustomerUpdate: (jobId: number, updateId: string) =>
+    request<{ ok: boolean; updates: import("@shared/gig").GigUpdate[] }>(
+      "POST", `/api/jobs/${jobId}/gig/customer-update/delete`, { updateId },
     ),
 
   sendGigInvoice: (jobId: number, data: {

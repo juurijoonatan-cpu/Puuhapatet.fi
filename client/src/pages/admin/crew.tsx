@@ -86,6 +86,11 @@ export default function AdminCrewPage() {
 
         {err && <p className="text-sm text-amber-600 mb-4">{err}</p>}
 
+        {/* Payroll overview — every worker's pay at a glance: earned, paid and
+            still open, plus the gig's total labour cost. Detailed per-worker
+            payout actions stay in each worker's card below. */}
+        {crew.length > 0 && <PayrollSummary crew={crew} />}
+
         {crew.length === 0 ? (
           <div className="rounded-2xl border border-dashed p-8 text-center">
             <p className="text-muted-foreground mb-4">Ei vielä työntekijöitä. Luo aloitusrosteri (Petrus + 5 paikkaa).</p>
@@ -440,6 +445,87 @@ function PayoutPanel({
       </div>
     </details>
     </>
+  );
+}
+
+/** Consolidated payroll overview for the whole gig — what each worker has
+ *  earned, what's been paid out, and what's still open. This is the "see how
+ *  much money for each worker" view; it reads the same crew/payout data the
+ *  per-worker cards use, so it's always in sync. */
+function PayrollSummary({ crew }: { crew: HostCrewRow[] }) {
+  const rows = crew
+    .filter((c) => c.member.active)
+    .map(({ member, stats }) => {
+      const payouts = member.payouts || [];
+      const paidCents = payouts.filter((p) => p.status === "maksettu").reduce((s, p) => s + p.amountCents, 0);
+      // "Open" = work earned that hasn't actually been paid out yet (covers both
+      // not-yet-created payouts and created-but-unpaid ones).
+      const openCents = Math.max(0, stats.earnedCents - paidCents);
+      return { id: member.id, name: member.name, washed: stats.washed, earnedCents: stats.earnedCents, paidCents, openCents };
+    })
+    .filter((r) => r.earnedCents > 0 || r.washed > 0)
+    .sort((a, b) => b.earnedCents - a.earnedCents);
+
+  if (rows.length === 0) return null;
+
+  const totalEarned = rows.reduce((s, r) => s + r.earnedCents, 0);
+  const totalPaid = rows.reduce((s, r) => s + r.paidCents, 0);
+  const totalOpen = rows.reduce((s, r) => s + r.openCents, 0);
+  const totalWashed = rows.reduce((s, r) => s + r.washed, 0);
+
+  return (
+    <div className="rounded-2xl border bg-card p-4 mb-5">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="flex items-center gap-1.5 text-sm font-bold"><Wallet className="h-4 w-4" /> Palkkayhteenveto</h2>
+        <span className="text-[11px] text-muted-foreground">{totalWashed} ikkunaa · {rows.length} tekijää</span>
+      </div>
+
+      {/* Totals strip — the gig's total labour cost, paid out and still owed. */}
+      <div className="grid grid-cols-3 gap-2 mb-3 text-center">
+        <div className="rounded-xl bg-muted/40 py-2">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Palkat yhteensä</p>
+          <p className="text-sm font-bold tabular-nums">{eur(totalEarned)}</p>
+        </div>
+        <div className="rounded-xl bg-muted/40 py-2">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Maksettu</p>
+          <p className="text-sm font-bold tabular-nums text-green-600">{eur(totalPaid)}</p>
+        </div>
+        <div className="rounded-xl bg-muted/40 py-2">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Avoinna</p>
+          <p className="text-sm font-bold tabular-nums text-amber-600">{eur(totalOpen)}</p>
+        </div>
+      </div>
+
+      {/* Per-worker rows */}
+      <div className="divide-y divide-border">
+        {rows.map((r) => (
+          <div key={r.id} className="flex items-center justify-between gap-3 py-2">
+            <div className="min-w-0">
+              <p className="text-sm font-medium truncate">{r.name}</p>
+              <p className="text-[11px] text-muted-foreground">{r.washed} ikkunaa</p>
+            </div>
+            <div className="flex items-center gap-4 text-right shrink-0">
+              <div className="hidden sm:block">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Ansaittu</p>
+                <p className="text-sm font-semibold tabular-nums">{eur(r.earnedCents)}</p>
+              </div>
+              <div className="hidden sm:block">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Maksettu</p>
+                <p className="text-sm font-semibold tabular-nums text-green-600">{eur(r.paidCents)}</p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Avoinna</p>
+                <p className={`text-sm font-bold tabular-nums ${r.openCents > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{eur(r.openCents)}</p>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <p className="text-[11px] text-muted-foreground mt-3 pt-3 border-t border-border">
+        Palkka = pestyt ikkunat × tekijän €/ikkuna. "Avoinna" on vielä maksamatta oleva osuus. Luo ja merkitse maksut kunkin tekijän kortista alta — lasku syntyy automaattisesti.
+      </p>
+    </div>
   );
 }
 

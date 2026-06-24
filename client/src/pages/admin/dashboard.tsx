@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { getAdminProfile, USERS } from "@/lib/admin-profile";
 import { DashboardBriefing } from "@/components/dashboard-briefing";
-import { api, StatsResponse, WorkerStatsResponse } from "@/lib/api";
+import { api, StatsResponse, WorkerStatsResponse, type MyGigWork } from "@/lib/api";
 import { isMyJob, parseWorkerIds } from "@/lib/visibility";
 import { STAFF_SERVICE_FEE_RATE, STAFF_SERVICE_FEE_PCT, HOST_SERVICE_FEE_PCT, feeRateForWorker, feePctForWorker, effectiveJobTotal } from "@shared/team";
 
@@ -33,6 +33,15 @@ export default function AdminDashboard() {
   const [myJobUpcoming, setMyJobUpcoming] = useState<number | null>(null);
   const [myRevenue, setMyRevenue] = useState<number | null>(null);
   const [myInvestmentShare, setMyInvestmentShare] = useState<number | null>(null);
+  // Gigs where the logged-in admin is ALSO a worker (e.g. Petrus). Shows a small
+  // earnings card + a button straight to their own worker dashboard.
+  const [myGigWork, setMyGigWork] = useState<MyGigWork[]>([]);
+
+  useEffect(() => {
+    api.getMyGigWork().then((res) => {
+      if (res.ok && res.data) setMyGigWork(res.data.gigs.filter((g) => g.earnedCents > 0 || g.washed > 0 || g.pendingCents > 0));
+    });
+  }, []);
 
   useEffect(() => {
     api.stats().then((res) => {
@@ -182,6 +191,45 @@ export default function AdminDashboard() {
             );
           })}
         </div>
+
+        {/* Gigs where this admin also works (e.g. Petrus): own earnings + a
+            button straight to the worker dashboard. Limited on purpose — no gig
+            total, no other workers' euros. */}
+        {myGigWork.map((g) => (
+          <Card key={g.jobId} className="p-5 bg-card border-0 premium-shadow mb-6">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
+                  Oma keikka
+                </p>
+                <p className="text-base font-semibold text-foreground truncate">{g.gigName}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{g.washed} pestyä ikkunaa</p>
+              </div>
+              <div className="w-10 h-10 rounded-xl bg-green-100 dark:bg-green-900/30 flex items-center justify-center shrink-0">
+                <Banknote className="w-5 h-5 text-green-600 dark:text-green-400" />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              <div className="rounded-xl bg-muted/40 py-2 px-2 text-center">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Ansaittu</p>
+                <p className="text-base font-bold tabular-nums text-foreground">{fmt(g.earnedCents)}</p>
+              </div>
+              <div className="rounded-xl bg-muted/40 py-2 px-2 text-center">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Maksettu</p>
+                <p className="text-base font-bold tabular-nums text-green-600 dark:text-green-400">{fmt(g.paidCents)}</p>
+              </div>
+              <div className="rounded-xl bg-muted/40 py-2 px-2 text-center">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Avoinna</p>
+                <p className="text-base font-bold tabular-nums text-amber-600 dark:text-amber-400">{fmt(Math.max(0, g.earnedCents - g.paidCents))}</p>
+              </div>
+            </div>
+            <a href={`/tyo/${g.token}`} className="block">
+              <Button className="w-full">
+                Avaa oma työpöytä <ArrowRight className="w-4 h-4 ml-1" />
+              </Button>
+            </a>
+          </Card>
+        ))}
 
         <DashboardBriefing />
 

@@ -81,6 +81,17 @@ export interface HostCrewRow {
   onboarded: boolean;
 }
 
+/** The logged-in admin's own earnings on a gig they also work (e.g. Petrus). */
+export interface MyGigWork {
+  jobId: number;
+  gigName: string;
+  token: string;        // their private /tyo link token
+  washed: number;
+  earnedCents: number;
+  paidCents: number;
+  pendingCents: number;
+}
+
 // Defaults to the Render backend in production; override with VITE_API_BASE
 // (e.g. "" for same-origin) when running the server locally.
 const API_BASE = import.meta.env.VITE_API_BASE ?? "https://puuhapatet-fi.onrender.com";
@@ -823,6 +834,11 @@ export const api = {
   getHostCrew: (jobId: number) =>
     request<{ ok: boolean; crew: HostCrewRow[]; building: ProjBuilding; version: string }>(
       "GET", `/api/jobs/${jobId}/crew`),
+
+  // The logged-in admin's own gig worker memberships (e.g. Petrus). Used to show
+  // a small earnings card + link to their worker dashboard on the admin landing.
+  getMyGigWork: () =>
+    request<{ ok: boolean; gigs: MyGigWork[] }>("GET", `/api/me/gig-worker`),
 
   seedCrew: (jobId: number) =>
     request<{ ok: boolean; crew: CrewMember[]; alreadySeeded?: boolean }>(

@@ -26,7 +26,7 @@ const team = [
     school: "Otaniemen lukio",
     bioKey: "about.joonatan.bio" as const,
     photo: "/joonatan.jpg.jpeg",
-    photoPosition: "50% 30%",
+    photoPosition: "50% 35%",
     initials: "JJ",
     linkedin: "https://www.linkedin.com/in/joonatan-juuri-575857255",
     phone: "+358400389999",

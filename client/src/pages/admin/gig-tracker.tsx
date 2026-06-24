@@ -623,12 +623,17 @@ export default function AdminGigTrackerPage() {
               )}
               <Button
                 className="w-full"
-                disabled={!fixedDue || gig.payments.length >= 4}
+                disabled={gig.payments.length >= 4}
                 onClick={() => setInvoiceOpen(true)}
               >
                 <Send className="w-4 h-4 mr-2" />
-                {gig.payments.length >= 4 ? "Kaikki 4 erää lähetetty" : `Lähetä ${gig.payments.length + 1}. erä (1 575 €)`}
+                {gig.payments.length >= 4 ? "Kaikki 4 erää lähetetty" : `Lähetä ${gig.payments.length + 1}. erä (${eur(fixedInstallmentCents)})`}
               </Button>
+              {!fixedDue && gig.payments.length < 4 && (
+                <p className="text-[11px] text-muted-foreground mt-1 text-center">
+                  Voit lähettää erän manuaalisesti nyt, vaikka 25 %:n raja ei vielä täyttyisi.
+                </p>
+              )}
             </>
           ) : (
             <>

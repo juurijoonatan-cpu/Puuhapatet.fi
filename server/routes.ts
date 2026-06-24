@@ -323,7 +323,6 @@ async function sendSessionSummaryEmail(
   if (!to) return;
   const eur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + " €";
   const dur = s.minutes >= 60 ? `${Math.floor(s.minutes / 60)} t ${s.minutes % 60} min` : `${s.minutes} min`;
-  const perH = s.minutes > 0 ? eur(Math.round(s.earnedCents / (s.minutes / 60))) : "—";
   const first = (member.profile?.fullName || member.name || "").split(/\s+/)[0] || "";
   const day = new Date(s.end).toLocaleDateString("fi-FI", { day: "numeric", month: "numeric", year: "numeric" });
   const row = (label: string, value: string) =>
@@ -338,7 +337,6 @@ async function sendSessionSummaryEmail(
         ${row("Pestyt ikkunat", String(s.windows))}
         ${row("Ansio", eur(s.earnedCents))}
         ${row("Työaika", dur)}
-        ${row("€ / tunti", perH)}
       </table>
       <p style="margin:20px 0 0;color:#8C8A82;font-size:12.5px;line-height:1.6">Ansio kertyy tekemistäsi ikkunoista ja maksetaan oman Y-tunnuksesi kautta. Kiitos päivästä!</p>
     </div>
@@ -4443,6 +4441,51 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           onboarded: isOnboarded(m, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION),
         }));
       res.json({ ok: true, crew, building: project.building, version: WORKER_AGREEMENT_VERSION });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // The logged-in admin's OWN gig worker memberships. Some Puuhapatet admins
+  // (e.g. Petrus) are also workers on a gig (adminLinked crew). This lets their
+  // admin dashboard show a small "your gig earnings + open your worker view"
+  // card without exposing the gig total or other workers' euros. Scans active
+  // jobs for a crew member matching the caller's admin id (or linkedUserId).
+  app.get("/api/me/gig-worker", async (req, res) => {
+    try {
+      const sub = String((req as any).admin?.sub ?? "").toLowerCase();
+      if (!sub) return res.json({ ok: true, gigs: [] });
+      const rows = await db.select().from(jobs)
+        .where(and(ne(jobs.status, "cancelled"), ne(jobs.status, "lead")));
+      const gigs: Array<{
+        jobId: number; gigName: string; token: string;
+        washed: number; earnedCents: number; paidCents: number; pendingCents: number;
+      }> = [];
+      for (const job of rows) {
+        const project = parseProject(job.projectData ?? null);
+        if (!project) continue;
+        const member = (project.crew || []).find(
+          (m) => m.active && (m.id.toLowerCase() === sub || (m.linkedUserId ?? "").toLowerCase() === sub),
+        );
+        if (!member) continue;
+        const stats = crewMemberStats(project, member);
+        const paidCents = totalPaidPayoutCents(member);
+        const pendingCents = (member.payouts || [])
+          .filter((p) => p.status !== "maksettu")
+          .reduce((s, p) => s + p.amountCents, 0);
+        // Neutral gig name: company name → building name → job description.
+        let gigName = project.building?.name || "";
+        try {
+          const gd = job.gigData ? JSON.parse(job.gigData) : null;
+          if (gd?.company?.name) gigName = String(gd.company.name);
+        } catch { /* ignore */ }
+        if (!gigName) gigName = job.description || `Keikka #${job.id}`;
+        gigs.push({
+          jobId: job.id, gigName, token: member.token,
+          washed: stats.washed, earnedCents: stats.earnedCents, paidCents, pendingCents,
+        });
+      }
+      res.json({ ok: true, gigs });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

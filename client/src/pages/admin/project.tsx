@@ -547,6 +547,34 @@ export default function AdminProjectPage() {
       eurPerHour: s.hours > 0 ? cents / 100 / s.hours : 0,
     };
   });
+  // ── Perustajien (bossien) ansioerittely dashboardille ───────────────────────
+  // Jokaisen perustajan ansio = oma työ (omat + harjoittelijan hyvitetyt ikkunat
+  // × 37,50) + tuotto-osuus työntekijöiden ikkunoista. Tämä on sama logiikka kuin
+  // earningsFor, mutta puretaan osiin jotta bossit näkevät selkeästi mistä raha tulee.
+  const founderEarnings = workerStats
+    .filter((s) => isFounder(s.worker, crew.find((c) => c.id === s.worker)?.role))
+    .map((s) => {
+      const mm = crew.find((c) => c.id === s.worker);
+      const ownWashed = s.washed + (traineeWashedByLeader[s.worker] || 0);
+      const manual = mm?.manualEarningsCents != null;
+      return {
+        id: s.worker,
+        name: resolveName(s.worker),
+        ownWashed,
+        ownCents: Math.round(ownWashed * dealTotalCents),
+        shareCents: founderProfitEachCents,
+        totalCents: s.revenueCents, // respects manual override
+        manual,
+        hours: s.hours,
+      };
+    })
+    .sort((a, b) => b.totalCents - a.totalCents);
+  // What all real workers (not founders, not trainees) earn in total — the labour
+  // cost side of the gig, so the margin to the founders is obvious.
+  const workerLaborCents = workerStats
+    .filter((s) => { const mm = crew.find((c) => c.id === s.worker); return !isFounder(s.worker, mm?.role) && !isTrainee(s.worker); })
+    .reduce((sum, s) => sum + s.revenueCents, 0);
+
   // Founders can manually set their own day/session earnings (e.g. split 50/50).
   const setWorkerEarnings = (id: string, cents: number | null) => {
     setProject((cur) => {
@@ -601,7 +629,7 @@ export default function AdminProjectPage() {
       )}
       <main style={{ position: "relative", zIndex: 10, height: "calc(100% - 62px)" }}>
         {tab === "dashboard" && (
-          <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} onSetEarnings={setWorkerEarnings} traineeInfo={traineeInfo} traineeShareByLeader={traineeShareByLeader} />
+          <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} onSetEarnings={setWorkerEarnings} traineeInfo={traineeInfo} traineeShareByLeader={traineeShareByLeader} founderEarnings={founderEarnings} workerLaborCents={workerLaborCents} />
         )}
         {tab === "floor" && (
           <FloorView

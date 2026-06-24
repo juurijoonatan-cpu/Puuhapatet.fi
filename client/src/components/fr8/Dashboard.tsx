@@ -23,6 +23,11 @@ interface Props {
   /** leader id → the trainee slices folded into their COMBINED pay, so the leader's
    *  card can break the total down ("sis. Milja 6 ikk · 225 €"). */
   traineeShareByLeader?: Record<string, { name: string; washed: number; cents: number }[]>;
+  /** Per-founder (boss) earnings breakdown — own work + profit share from the
+   *  workers' windows. Only set for a signed deal; drives the "bossien ansiot" card. */
+  founderEarnings?: { id: string; name: string; ownWashed: number; ownCents: number; shareCents: number; totalCents: number; manual: boolean; hours: number }[];
+  /** Total paid to the real workers (labour cost) — the other side of the margin. */
+  workerLaborCents?: number;
 }
 
 function fmt(n: number) { return Math.round(n).toLocaleString("fi-FI"); }
@@ -59,7 +64,7 @@ const mono: React.CSSProperties = {
   color: "rgba(255,255,255,0.4)",
 };
 
-export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeInfo, traineeShareByLeader }: Props) {
+export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeInfo, traineeShareByLeader, founderEarnings, workerLaborCents }: Props) {
   const m = useIsMobile();
   const [showLog, setShowLog] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -208,15 +213,20 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
           {/* Revenue card */}
           <div className="anim-fadeUp-1" style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", padding: "26px", background: "linear-gradient(155deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))", border: "1px solid rgba(255,255,255,0.09)", borderRadius: "22px", backdropFilter: "blur(22px)", WebkitBackdropFilter: "blur(22px)" }}>
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "10px", flexWrap: "wrap" }}>
-              <div style={{ ...mono, minWidth: 0 }}>{deal ? "KERTYNYT SUMMA" : "LIIKEVAIHTO"}</div>
+              <div style={{ ...mono, minWidth: 0 }}>{deal ? "SOPIMUKSEN KOKONAISHINTA" : "LIIKEVAIHTO"}</div>
               <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10.5px", color: "rgba(255,255,255,0.4)", flexShrink: 0, whiteSpace: "nowrap" }}>
                 {deal ? `${euro(instalmentCents / 100)} / ERÄ` : `${euroUnit(PRICE)} / IKKUNA`}
               </div>
             </div>
             <div>
-              <div style={{ fontSize: "46px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{euro(deal ? dealAccruedEur : washed * PRICE)}</div>
+              {/* The headline is the WHOLE agreed contract value (e.g. 6 300 €), so the
+                  bosses see the full deal — not just the first instalment. What's been
+                  collected so far is the secondary, progress figure below. */}
+              <div style={{ fontSize: "46px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{euro(deal ? capEur : washed * PRICE)}</div>
               <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.45)", marginTop: "4px" }}>
-                / {euro(deal ? capEur : total * PRICE)} {deal ? "kiinteä kokonaishinta" : "sopimusarvo"}
+                {deal
+                  ? <>Kerätty {euro(dealAccruedEur)} · {completedInstalments}/{payP.periods} erää</>
+                  : <>/ {euro(total * PRICE)} sopimusarvo</>}
                 {deal && <span style={{ display: "inline-flex", alignItems: "center", gap: 4, marginLeft: 8, padding: "1px 7px", borderRadius: 7, background: "rgba(95,224,138,0.12)", border: "1px solid rgba(95,224,138,0.3)", color: "#9ff0bd", fontSize: "10px", fontWeight: 600 }}>🔒 sovittu hinta</span>}
               </div>
             </div>
@@ -242,6 +252,66 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             )}
           </div>
         </div>
+
+        {/* Perustajien ansiot — bosses' earnings: own washed windows at the full
+            contract rate + the profit share earned on every worker's window. Gives
+            the founders a clear, fair "how much have we made" view. Founders only. */}
+        {deal && founderEarnings && founderEarnings.length > 0 && (() => {
+          const foundersTotalCents = founderEarnings.reduce((s, f) => s + f.totalCents, 0);
+          const laborCents = workerLaborCents ?? 0;
+          return (
+            <div className="anim-fadeUp-1" style={{ ...card, padding: m ? "18px" : "20px 24px", marginBottom: "14px" }}>
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: "14px" }}>
+                <span style={mono}>PERUSTAJIEN ANSIOT</span>
+                <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", color: "rgba(255,255,255,0.4)" }}>VAIN PERUSTAJILLE</span>
+              </div>
+
+              {/* Gig money split: contract value → workers' labour vs founders' share. */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: m ? "8px" : "12px", marginBottom: "16px" }}>
+                {[
+                  { label: "Sopimushinta", val: euro(capEur), tone: "rgba(255,255,255,0.9)" },
+                  { label: "Työntekijöille", val: euro(laborCents / 100), tone: "rgba(255,255,255,0.7)" },
+                  { label: "Perustajille yht.", val: euro(foundersTotalCents / 100), tone: "#9ff0bd" },
+                ].map((b) => (
+                  <div key={b.label} style={{ padding: "12px 14px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "13px" }}>
+                    <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9.5px", letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)", marginBottom: "6px" }}>{b.label.toUpperCase()}</div>
+                    <div style={{ fontSize: m ? "16px" : "19px", fontWeight: 700, color: b.tone }}>{b.val}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Per-founder breakdown: own work + profit share = total. */}
+              <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : `repeat(${Math.min(founderEarnings.length, 2)}, 1fr)`, gap: m ? "10px" : "12px" }}>
+                {founderEarnings.map((f) => (
+                  <div key={f.id} style={{ padding: "16px 18px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "15px" }}>
+                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, marginBottom: "8px" }}>
+                      <span style={{ fontSize: "15px", fontWeight: 600 }}>{f.name}</span>
+                      <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", color: "rgba(255,255,255,0.4)" }}>PERUSTAJA</span>
+                    </div>
+                    <div style={{ fontSize: "28px", fontWeight: 700, lineHeight: 1, marginBottom: "10px" }}>{euro(f.totalCents / 100)}</div>
+                    {f.manual ? (
+                      <div style={{ fontSize: "12px", color: "#9ff0bd" }}>Käsin asetettu ansio</div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                          <span>Oma työ · {f.ownWashed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikkunaa</span>
+                          <b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(f.ownCents / 100)}</b>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                          <span>Tuotto-osuus työntekijöistä</span>
+                          <b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(f.shareCents / 100)}</b>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <p style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)", marginTop: "12px", lineHeight: 1.5 }}>
+                Perustaja ansaitsee {euroUnit(PRICE)} jokaisesta itse pesemästään ikkunasta + osuuden katteesta jokaisesta työntekijän pesemästä ikkunasta (sopimushinta − työntekijän palkka, jaettuna perustajien kesken). Päivittyy pesujen myötä.
+              </p>
+            </div>
+          );
+        })()}
 
         {/* Paydate progress — how far toward the next payment instalment */}
         {payP.total > 0 && (

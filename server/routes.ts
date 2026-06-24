@@ -15,10 +15,11 @@ import {
 } from "./ai";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, MAX_OBSERVATION_IMAGE_LEN, type ProjectData } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, MAX_OBSERVATION_IMAGE_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind } from "@shared/project";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
-  hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, type CrewMember,
+  hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, totalPaidPayoutCents,
+  type CrewMember,
 } from "@shared/crew";
 import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED } from "@shared/worker-agreements";
 import {
@@ -35,6 +36,134 @@ import { traineeForUserId, traineeForName, type TraineeInfo } from "@shared/trai
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 // Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
 const FROM_EMAIL = process.env.FROM_EMAIL || "Puuhapatet <onboarding@resend.dev>";
+
+const EXPENSE_KIND_LABELS: Record<string, string> = {
+  transport: "Kuljetus", materials: "Tarvikkeet", equipment: "Kalusto", other: "Muu",
+};
+
+/**
+ * Builds the internal "kattava maksuraportti" — a manager-only summary of: what we
+ * have billed the customer (instalments), what we have paid / still owe the
+ * alihankkijat (crew payouts), logged job expenses, and the resulting margin.
+ * Never sent to a customer — only to the founders (WORKER_NOTIFICATION_EMAILS).
+ */
+function buildGigReportHtml(job: { id: number; description: string | null }, gig: GigData, project: ProjectData | null): string {
+  const eur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+  const dt = (ts: number) => new Date(ts).toLocaleDateString("fi-FI");
+  const esc = (s: string) => String(s).replace(/</g, "&lt;");
+  const deal = project ? fixedDealFor(project) : null;
+
+  const invoicedCents = gig.payments.reduce((s, p) => s + p.amountCents, 0);
+  const contractCents = deal ? deal.capCents : Math.max(invoicedCents, gig.invoicedCents || 0);
+  const remainingCents = Math.max(0, contractCents - invoicedCents);
+
+  // Crew name lookup (for resolving who logged an expense / who got paid).
+  const crew = project?.crew || [];
+  const nameOf = (id: string) => crew.find((m) => m.id === id)?.name || id;
+
+  // 1) Instalments billed to the customer.
+  const instalmentRows = gig.payments.length
+    ? gig.payments.map((p, i) => `
+        <tr style="border-bottom:1px solid #E4E1D7">
+          <td style="padding:8px 0;font-size:13px;color:#1A1A1A">${i + 1}. erä · ${dt(p.t)}</td>
+          <td style="padding:8px 0;font-size:13px;color:#8C8A82">${p.biller?.name ? esc(p.biller.name) : "—"}</td>
+          <td style="padding:8px 0;text-align:right;font-size:13px;font-weight:600;color:#1A1A1A;font-variant-numeric:tabular-nums">${eur(p.amountCents)}</td>
+        </tr>`).join("")
+    : `<tr><td colspan="3" style="padding:8px 0;font-size:13px;color:#8C8A82">Ei vielä lähetettyjä eriä.</td></tr>`;
+
+  // 2) Alihankkija payouts (paid vs still pending).
+  let crewPaidTotal = 0, crewPendingTotal = 0;
+  const crewRows = crew.map((m) => {
+    const paid = totalPaidPayoutCents(m);
+    const pending = (m.payouts || []).filter((p) => p.status !== "maksettu").reduce((s, p) => s + p.amountCents, 0);
+    crewPaidTotal += paid; crewPendingTotal += pending;
+    if (paid === 0 && pending === 0) return "";
+    return `
+      <tr style="border-bottom:1px solid #E4E1D7">
+        <td style="padding:8px 0;font-size:13px;color:#1A1A1A">${esc(m.name)}</td>
+        <td style="padding:8px 0;text-align:right;font-size:13px;color:#1A1A1A;font-variant-numeric:tabular-nums">${eur(paid)}</td>
+        <td style="padding:8px 0;text-align:right;font-size:13px;color:${pending > 0 ? "#B45309" : "#8C8A82"};font-variant-numeric:tabular-nums">${eur(pending)}</td>
+      </tr>`;
+  }).join("");
+  const anyCrew = crewPaidTotal > 0 || crewPendingTotal > 0;
+
+  // 3) Logged expenses (managers + workers), grouped by category.
+  const expenses = project?.expenses || [];
+  const expTotal = expenses.reduce((s, e) => s + e.amountCents, 0);
+  const byKind = expenses.reduce<Record<string, number>>((acc, e) => {
+    acc[e.kind] = (acc[e.kind] || 0) + e.amountCents; return acc;
+  }, {});
+  const expRows = expenses.length
+    ? expenses.slice().sort((a, b) => b.ts - a.ts).map((e) => `
+        <tr style="border-bottom:1px solid #E4E1D7">
+          <td style="padding:8px 0;font-size:13px;color:#1A1A1A">${EXPENSE_KIND_LABELS[e.kind] || e.kind}${e.desc ? ` — ${esc(e.desc)}` : ""}</td>
+          <td style="padding:8px 0;font-size:12px;color:#8C8A82">${esc(nameOf(e.by))} · ${dt(e.ts)}</td>
+          <td style="padding:8px 0;text-align:right;font-size:13px;color:#1A1A1A;font-variant-numeric:tabular-nums">${eur(e.amountCents)}</td>
+        </tr>`).join("")
+    : `<tr><td colspan="3" style="padding:8px 0;font-size:13px;color:#8C8A82">Ei kirjattuja kuluja.</td></tr>`;
+
+  // 4) Margin = billed − paid to crew − expenses (rough; excludes pending payouts).
+  const marginCents = invoicedCents - crewPaidTotal - expTotal;
+
+  const sumRow = (label: string, value: string, strong = false, color = "#1A1A1A") =>
+    `<tr><td style="padding:${strong ? "10px" : "5px"} 0;font-size:${strong ? "15px" : "13px"};font-weight:${strong ? 700 : 400};color:${color}${strong ? ";border-top:2px solid #1A1A1A" : ""}">${label}</td>
+      <td style="padding:${strong ? "10px" : "5px"} 0;text-align:right;font-size:${strong ? "16px" : "13px"};font-weight:${strong ? 800 : 600};color:${color};font-variant-numeric:tabular-nums${strong ? ";border-top:2px solid #1A1A1A" : ""}">${value}</td></tr>`;
+
+  return `
+<!DOCTYPE html><html lang="fi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#F6F4EE;font-family:'Poppins',ui-sans-serif,system-ui,-apple-system,sans-serif">
+  <div style="max-width:640px;margin:24px auto;background:#FFFFFF;border-radius:14px;overflow:hidden;border:1px solid #E4E1D7">
+    <div style="padding:24px 32px;border-bottom:1px solid #E4E1D7">
+      <p style="margin:0;color:#1A1A1A;font-size:18px;font-weight:700">Maksuraportti — sisäinen</p>
+      <p style="margin:4px 0 0;color:#8C8A82;font-size:13px">${esc(gig.company?.name || job.description || `Keikka #${job.id}`)}${gig.contractId ? ` · ${esc(gig.contractId)}` : ""} · ${dt(Date.now())}</p>
+    </div>
+    <div style="padding:20px 32px">
+      <p style="margin:0 0 6px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Sopimus & laskutus</p>
+      <table width="100%" cellpadding="0" cellspacing="0">
+        ${sumRow("Sopimuksen kokonaisarvo", eur(contractCents))}
+        ${sumRow(`Laskutettu asiakkaalta (${gig.payments.length} erää)`, eur(invoicedCents))}
+        ${sumRow("Laskuttamatta jäljellä", eur(remainingCents))}
+      </table>
+
+      <p style="margin:22px 0 6px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Lähetetyt maksuerät</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-top:2px solid #1A1A1A">
+        <thead><tr><td style="padding:6px 0;font-size:11px;color:#8C8A82">Erä</td><td style="padding:6px 0;font-size:11px;color:#8C8A82">Laskuttaja</td><td style="padding:6px 0;text-align:right;font-size:11px;color:#8C8A82">Summa</td></tr></thead>
+        <tbody>${instalmentRows}</tbody>
+      </table>
+
+      <p style="margin:22px 0 6px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Alihankkijoiden maksut</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-top:2px solid #1A1A1A">
+        <thead><tr><td style="padding:6px 0;font-size:11px;color:#8C8A82">Tekijä</td><td style="padding:6px 0;text-align:right;font-size:11px;color:#8C8A82">Maksettu</td><td style="padding:6px 0;text-align:right;font-size:11px;color:#8C8A82">Avoinna</td></tr></thead>
+        <tbody>${anyCrew ? crewRows : `<tr><td colspan="3" style="padding:8px 0;font-size:13px;color:#8C8A82">Ei maksuja.</td></tr>`}</tbody>
+      </table>
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:2px">
+        ${sumRow("Maksettu alihankkijoille yhteensä", eur(crewPaidTotal))}
+        ${crewPendingTotal > 0 ? sumRow("Avoinna alihankkijoille", eur(crewPendingTotal), false, "#B45309") : ""}
+      </table>
+
+      <p style="margin:22px 0 6px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Kulut</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-top:2px solid #1A1A1A">
+        <tbody>${expRows}</tbody>
+      </table>
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:2px">
+        ${Object.entries(byKind).map(([k, v]) => sumRow(EXPENSE_KIND_LABELS[k] || k, eur(v))).join("")}
+        ${sumRow("Kulut yhteensä", eur(expTotal), false, "#1A1A1A")}
+      </table>
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:18px">
+        ${sumRow("Kate (laskutettu − maksetut − kulut)", eur(marginCents), true, marginCents >= 0 ? "#166534" : "#B91C1C")}
+      </table>
+      <p style="margin:14px 0 0;color:#8C8A82;font-size:11px;line-height:1.6">
+        Kate on suuntaa-antava: se vähentää laskutetusta vain jo MAKSETUT alihankkijaerät ja kirjatut kulut.
+        Avoimet alihankkijaerät (${eur(crewPendingTotal)}) eivät ole vielä mukana katteessa.
+      </p>
+    </div>
+    <div style="padding:14px 32px;border-top:1px solid #E4E1D7;background:#F6F4EE">
+      <p style="margin:0;color:#8C8A82;font-size:12px">Puuhapatet · sisäinen maksuraportti · ei lähetetä asiakkaalle</p>
+    </div>
+  </div>
+</body></html>`;
+}
 
 // ─── Asiakkaan yhteydenotto-sähköpostin runko (3 tyyliä) ────────────────────
 // Jaettu admin-AI:n luonnos-esikatselun ja varsinaisen lähetyksen kesken, jotta
@@ -326,9 +455,10 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   { method: "GET",  re: /^\/api\/gig\/[^/]+$/ },
   { method: "POST", re: /^\/api\/gig\/[^/]+\/sign$/ },
   { method: "GET",  re: /^\/api\/crew\/[^/]+$/ },
-  { method: "POST", re: /^\/api\/crew\/[^/]+\/(auth|onboard|window|hours|note|map-note|shift)$/ },
+  { method: "POST", re: /^\/api\/crew\/[^/]+\/(auth|onboard|window|hours|note|map-note|shift|expense)$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/map-note\/(update|delete)$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/payout\/[^/]+\/approve$/ },
+  { method: "DELETE", re: /^\/api\/crew\/[^/]+\/expense\/[^/]+$/ },
 ];
 
 function isPublicApi(method: string, path: string): boolean {
@@ -3293,7 +3423,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const {
         to, bcc, iban, bic, viitenumero, dueDate,
         senderName, senderYTunnus, senderAddress, workerPhone,
-        message, isFinal,
+        message, isFinal, eInvoice,
       } = req.body as Record<string, any>;
 
       const recipient = to || gig.company?.email;
@@ -3359,7 +3489,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     </div>
     <div style="padding:24px 32px">
       <p style="margin:0 0 4px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Laskutettava</p>
-      <p style="margin:0 0 16px;color:#1A1A1A;font-size:15px;font-weight:600">${gig.company?.name || job.description}</p>
+      <p style="margin:0 0 ${eInvoice ? "4px" : "16px"};color:#1A1A1A;font-size:15px;font-weight:600">${gig.company?.name || job.description}</p>
+      ${eInvoice ? `<p style="margin:0 0 16px;color:#8C8A82;font-size:12px">Verkkolaskuosoite: ${String(eInvoice).replace(/</g, "&lt;")}</p>` : ""}
       ${message ? `<p style="margin:0 0 20px;color:#1A1A1A;font-size:14px;line-height:1.7;white-space:pre-wrap">${String(message).replace(/</g, "&lt;")}</p>` : ""}
       <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border-top:2px solid #1A1A1A;margin-top:8px">
         <tbody>${lineRows}</tbody>
@@ -3392,11 +3523,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   </div>
 </body></html>`;
 
-      const bccArr = bcc ? String(bcc).split(",").map((s) => s.trim()).filter(Boolean) : undefined;
+      // Always BCC the team on every customer invoice — admins can also add extra
+      // addresses via the bcc field. Deduplicate and exclude the main recipient.
+      const bccArr = Array.from(new Set([
+        ...(bcc ? String(bcc).split(",").map((s) => s.trim()).filter(Boolean) : []),
+        ...WORKER_NOTIFICATION_EMAILS,
+      ])).filter((e) => e && e !== recipient);
       const result = await resend.emails.send({
         from: FROM_EMAIL,
         to: recipient,
-        ...(bccArr?.length ? { bcc: bccArr } : {}),
+        ...(bccArr.length ? { bcc: bccArr } : {}),
         subject: fixedDeal
           ? `Osalasku ${paymentNumber}/4 · ${invoiceNo} — ${fmtEur(amountCents)} · Puuhapatet`
           : `${isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} — ${fmtEur(amountCents)} · Puuhapatet`,
@@ -3417,6 +3553,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           name: senderName ? String(senderName).slice(0, 160) : undefined,
           yTunnus: senderYTunnus ? String(senderYTunnus).slice(0, 40) : undefined,
         } : undefined,
+        eInvoice: eInvoice ? String(eInvoice).slice(0, 200) : undefined,
       });
       // For fixed-price contracts, invoicedCents = N completed instalments × fixed amount
       // (avoids mismatch between per-window accrual and agreed flat price).
@@ -3427,10 +3564,89 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       gig.updatedAt = Date.now();
       await db.update(jobs).set({ gigData: JSON.stringify(gig), updatedAt: new Date() }).where(eq(jobs.id, id));
 
+      // Also email the founders a comprehensive internal payment report so they
+      // always get the full picture (instalments + alihankkija payouts + expenses
+      // + margin), not just the BCC'd customer invoice. Fire-and-forget — a report
+      // failure must never break the actual invoicing.
+      try {
+        const reportHtml = buildGigReportHtml({ id: job.id, description: job.description }, gig, proj);
+        await resend.emails.send({
+          from: FROM_EMAIL,
+          to: WORKER_NOTIFICATION_EMAILS,
+          subject: `Maksuraportti — ${gig.company?.name || job.description || `Keikka #${id}`} · Puuhapatet`,
+          html: reportHtml,
+        });
+      } catch (reportErr) {
+        console.error("Gig report (auto) error:", reportErr);
+      }
+
       res.json({ ok: true, id: result.data?.id, amountCents, gigData: gig });
     } catch (e: any) {
       console.error("Gig invoice error:", e);
       res.status(500).json({ error: e.message || "Laskun lähetys epäonnistui" });
+    }
+  });
+
+  // Manager-only: email the comprehensive payment report on demand (the same
+  // report that auto-sends with each instalment), without sending an invoice.
+  app.post("/api/jobs/:id/gig/report", async (req, res) => {
+    if (!resend) {
+      return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä — aseta RESEND_API_KEY ympäristömuuttuja." });
+    }
+    try {
+      const id = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const gig = parseGig(job.gigData);
+      if (!gig) return res.status(400).json({ error: "Keikalla ei ole seurantadataa" });
+      const project = parseProject(job.projectData ?? null);
+      const html = buildGigReportHtml({ id: job.id, description: job.description }, gig, project);
+      const result = await resend.emails.send({
+        from: FROM_EMAIL,
+        to: WORKER_NOTIFICATION_EMAILS,
+        subject: `Maksuraportti — ${gig.company?.name || job.description || `Keikka #${id}`} · Puuhapatet`,
+        html,
+      });
+      res.json({ ok: true, id: result.data?.id });
+    } catch (e: any) {
+      console.error("Gig report error:", e);
+      res.status(500).json({ error: e.message || "Raportin lähetys epäonnistui" });
+    }
+  });
+
+  // Undo the most recent instalment — pops the last payment from the gig's memory
+  // so the counter resets (e.g. a test/early send recorded a payment by mistake).
+  // Does NOT recall the email already sent; it only fixes the tracked state.
+  app.post("/api/jobs/:id/gig/invoice/undo", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const gig = parseGig(job.gigData);
+      if (!gig) return res.status(400).json({ error: "Keikalla ei ole seurantadataa" });
+      if (!gig.payments.length) return res.status(400).json({ error: "Ei peruttavia maksueriä" });
+
+      const removed = gig.payments.pop()!;
+      const proj = parseProject(job.projectData ?? null);
+      const fixedDeal = proj ? fixedDealFor(proj) : null;
+      const installmentCents = fixedDeal ? Math.round(fixedDeal.capCents / 4) : null;
+      // Recompute invoiced totals from the remaining payments.
+      if (fixedDeal) {
+        gig.invoicedCents = gig.payments.length * (installmentCents ?? 0);
+      } else {
+        gig.invoicedCents = gig.payments.reduce((s, p) => s + p.amountCents, 0);
+        gig.invoicedThrough = gig.payments.length ? gig.payments[gig.payments.length - 1].countThrough : 0;
+        // Roll the per-sector invoiced markers back to what's still invoiced.
+        gig.sectors.forEach((s) => { s.invoicedWashed = Math.min(s.invoicedWashed || 0, gig.invoicedThrough); });
+      }
+      const fmtEur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+      gig.log.push({ t: Date.now(), text: `Maksuerä peruttu seurannasta: ${fmtEur(removed.amountCents)}${removed.to ? ` (oli → ${removed.to})` : ""}` });
+      gig.updatedAt = Date.now();
+      await db.update(jobs).set({ gigData: JSON.stringify(gig), updatedAt: new Date() }).where(eq(jobs.id, id));
+      res.json({ ok: true, gigData: gig });
+    } catch (e: any) {
+      console.error("Gig invoice undo error:", e);
+      res.status(500).json({ error: e.message || "Erän peruutus epäonnistui" });
     }
   });
 
@@ -3712,6 +3928,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // (intro + name only) when false; full sign flow / banner when true. Trainees
       // are never gated (no agreements).
       agreementsGated: trainee ? false : WORKER_AGREEMENTS_GATED,
+      // Worker's own logged expenses (filtered — they never see other workers' costs).
+      expenses: (project.expenses || []).filter((e) => e.by === member.id),
     };
   }
 
@@ -4081,6 +4299,103 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
       res.json({ ok: true, view: workerView(saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // ── Worker expenses (crew token — public, own expenses only) ───────────────────
+  // Workers log their own job costs (transport, materials, equipment, other).
+  // The admin sees ALL expenses across workers in the project expense view.
+
+  const VALID_EXPENSE_KINDS: ProjExpenseKind[] = ["transport", "materials", "equipment", "other"];
+
+  function makeExpenseId(): string {
+    return `exp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  app.post("/api/crew/:token/expense", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const { kind, desc, amountCents } = req.body as Record<string, any>;
+      if (!amountCents || Number(amountCents) <= 0) {
+        return res.status(400).json({ error: "Summa puuttuu tai on nolla" });
+      }
+      const expense: ProjExpense = {
+        id: makeExpenseId(),
+        by: member.id,
+        kind: VALID_EXPENSE_KINDS.includes(kind) ? kind : "other",
+        desc: String(desc || "").slice(0, 300).trim(),
+        amountCents: Math.round(Number(amountCents)),
+        ts: Date.now(),
+      };
+      project.expenses = [...(project.expenses || []), expense];
+      await saveProject(job, project);
+      // Return only this worker's expenses for privacy
+      const myExpenses = (project.expenses || []).filter((e) => e.by === member.id);
+      res.json({ ok: true, expense, expenses: myExpenses });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/crew/:token/expense/:expenseId", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const expId = String(req.params.expenseId);
+      const target = (project.expenses || []).find((e) => e.id === expId);
+      if (!target) return res.status(404).json({ error: "Kulua ei löydy" });
+      if (target.by !== member.id) return res.status(403).json({ error: "Ei oikeutta poistaa tätä kulua" });
+      project.expenses = (project.expenses || []).filter((e) => e.id !== expId);
+      await saveProject(job, project);
+      const myExpenses = (project.expenses || []).filter((e) => e.by === member.id);
+      res.json({ ok: true, expenses: myExpenses });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // ── Admin project expenses (admin auth required) ────────────────────────────
+
+  app.post("/api/jobs/:id/project/expense", async (req, res) => {
+    try {
+      const loaded = await loadJobProject(Number(req.params.id));
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const { job, project } = loaded;
+      const { kind, desc, amountCents, by } = req.body as Record<string, any>;
+      if (!amountCents || Number(amountCents) <= 0) {
+        return res.status(400).json({ error: "Summa puuttuu tai on nolla" });
+      }
+      const adminSub = (req as any).admin?.sub || "admin";
+      const expense: ProjExpense = {
+        id: makeExpenseId(),
+        by: String(by || adminSub).slice(0, 40),
+        kind: VALID_EXPENSE_KINDS.includes(kind) ? kind : "other",
+        desc: String(desc || "").slice(0, 300).trim(),
+        amountCents: Math.round(Number(amountCents)),
+        ts: Date.now(),
+      };
+      project.expenses = [...(project.expenses || []), expense];
+      await saveProject(job, project);
+      res.json({ ok: true, expense, expenses: project.expenses });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/jobs/:id/project/expense/:expenseId", async (req, res) => {
+    try {
+      const loaded = await loadJobProject(Number(req.params.id));
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const { job, project } = loaded;
+      const expId = String(req.params.expenseId);
+      project.expenses = (project.expenses || []).filter((e) => e.id !== expId);
+      await saveProject(job, project);
+      res.json({ ok: true, expenses: project.expenses });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }

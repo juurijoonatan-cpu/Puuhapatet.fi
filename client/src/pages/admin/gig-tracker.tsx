@@ -24,6 +24,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
 import { getAdminProfile } from "@/lib/admin-profile";
+import { BRAND_BILLERS, resolveBrandBiller, DEFAULT_BILLER_ID } from "@shared/billers";
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import {
   emptyGigData, computeTotals, nextInvoiceThreshold, invoiceDue, eur, eur2,
@@ -74,9 +75,13 @@ export default function AdminGigTrackerPage() {
   // Invoice dialog state
   const [invoiceOpen, setInvoiceOpen] = useState(false);
   const [sending, setSending] = useState(false);
+  const [reporting, setReporting] = useState(false);
+  // billerId = which leader (Joonatan/Matias) is the laskuttaja for THIS instalment.
+  // Defaults to the logged-in leader when they are a brand biller, else Joonatan.
+  const defaultBillerId = resolveBrandBiller(profile?.id) ? profile!.id : DEFAULT_BILLER_ID;
   const [invForm, setInvForm] = useState({
     to: "", iban: "", bic: "", viitenumero: "", dueDate: isoPlusDays(14),
-    message: "", isFinal: false,
+    message: "", isFinal: false, billerId: defaultBillerId, eInvoice: "",
   });
 
   useEffect(() => {
@@ -99,12 +104,16 @@ export default function AdminGigTrackerPage() {
           vatNote: parsed.vatNote ?? "",
           requireSignature: signatureRequired(parsed),
         });
+        const startBiller = resolveBrandBiller(defaultBillerId);
+        const savedEInvoice = parsed.signature?.customer?.eInvoice ?? "";
         setInvForm((f) => ({
           ...f,
           to: parsed.company?.email ?? "",
-          iban: profile?.iban ?? "",
-          bic: profile?.bic ?? "",
+          iban: startBiller?.iban ?? profile?.iban ?? "",
+          bic: profile?.bic ?? "OKOYFIHH",
           viitenumero: String(jobId),
+          billerId: defaultBillerId,
+          eInvoice: savedEInvoice,
         }));
       } else {
         toast({ variant: "destructive", title: "Virhe", description: res.error || "Keikkaa ei löytynyt" });
@@ -256,19 +265,24 @@ export default function AdminGigTrackerPage() {
 
   const sendInvoice = async () => {
     setSending(true);
+    // The laskuttaja is the biller PICKED in the dialog (not necessarily the
+    // logged-in leader) — their name + Y-tunnus go on the invoice and become the
+    // buyer on the alihankkija invoices funded by this instalment.
+    const biller = resolveBrandBiller(invForm.billerId);
     const res = await api.sendGigInvoice(jobId, {
       to: invForm.to || undefined,
       iban: invForm.iban || undefined,
       bic: invForm.bic || undefined,
       viitenumero: invForm.viitenumero || undefined,
       dueDate: invForm.dueDate || undefined,
-      senderName: profile?.name,
-      senderYTunnus: profile?.yTunnus,
-      senderAddress: profile?.address,
-      billerId: profile?.id, // which leader billed the customer (buyer for alihankkija invoices)
+      senderName: biller?.name ?? profile?.name,
+      senderYTunnus: biller?.yTunnus ?? profile?.yTunnus,
+      senderAddress: biller?.address ?? profile?.address,
+      billerId: biller?.id ?? profile?.id, // which leader billed the customer
       workerPhone: profile?.phone,
       message: invForm.message || undefined,
       isFinal: invForm.isFinal,
+      eInvoice: invForm.eInvoice || undefined,
     });
     setSending(false);
     if (res.ok && res.data) {
@@ -277,6 +291,28 @@ export default function AdminGigTrackerPage() {
       toast({ title: "Lasku lähetetty", description: `${eur(res.data.amountCents)} → ${invForm.to}` });
     } else {
       toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error });
+    }
+  };
+
+  const sendReport = async () => {
+    setReporting(true);
+    const res = await api.sendGigReport(jobId);
+    setReporting(false);
+    if (res.ok) {
+      toast({ title: "Maksuraportti lähetetty", description: "Kooste lähetettiin johtajille sähköpostiin." });
+    } else {
+      toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error });
+    }
+  };
+
+  const undoInstalment = async () => {
+    if (!confirm("Peruutetaanko viimeisin maksuerä seurannasta? Tämä ei peru jo lähetettyä sähköpostia, mutta nollaa laskurin (esim. testilähetys).")) return;
+    const res = await api.undoGigInstalment(jobId);
+    if (res.ok && res.data) {
+      setGig(res.data.gigData);
+      toast({ title: "Maksuerä peruttu", description: "Laskuri palautettu." });
+    } else {
+      toast({ variant: "destructive", title: "Peruutus epäonnistui", description: res.error });
     }
   };
 
@@ -598,12 +634,22 @@ export default function AdminGigTrackerPage() {
               )}
               <Button
                 className="w-full"
-                disabled={!fixedDue || gig.payments.length >= 4}
+                disabled={gig.payments.length >= 4}
                 onClick={() => setInvoiceOpen(true)}
               >
                 <Send className="w-4 h-4 mr-2" />
-                {gig.payments.length >= 4 ? "Kaikki 4 erää lähetetty" : `Lähetä ${gig.payments.length + 1}. erä (1 575 €)`}
+                {gig.payments.length >= 4 ? "Kaikki 4 erää lähetetty" : `Lähetä ${gig.payments.length + 1}. erä (${eur(fixedInstallmentCents)})`}
               </Button>
+              {!fixedDue && gig.payments.length < 4 && (
+                <p className="text-[11px] text-muted-foreground mt-1 text-center">
+                  Voit lähettää erän manuaalisesti nyt, vaikka 25 %:n raja ei vielä täyttyisi.
+                </p>
+              )}
+              {gig.payments.length > 0 && (
+                <Button variant="ghost" size="sm" className="w-full mt-1 text-xs text-muted-foreground" onClick={undoInstalment}>
+                  Peruuta viimeisin erä (nollaa laskuri)
+                </Button>
+              )}
             </>
           ) : (
             <>
@@ -619,6 +665,14 @@ export default function AdminGigTrackerPage() {
               </Button>
             </>
           )}
+          {/* Comprehensive internal report — instalments + crew payouts + expenses
+              + margin — emailed to the founders, never the customer. */}
+          <Button variant="outline" className="w-full mt-2" disabled={reporting} onClick={sendReport}>
+            {reporting ? "Lähetetään…" : "Lähetä maksuraportti johtajille"}
+          </Button>
+          <p className="text-[11px] text-muted-foreground mt-1 text-center">
+            Kooste eristä, alihankkijoiden maksuista, kuluista ja katteesta — vain johtajille.
+          </p>
         </Card>
 
         {/* Contract — editable; this is what the customer reads & signs */}
@@ -710,8 +764,33 @@ export default function AdminGigTrackerPage() {
               </p>
             </div>
             <div>
-              <Label className="text-xs">Vastaanottaja *</Label>
+              <Label className="text-xs">Laskuttaja (kumman nimissä)</Label>
+              <select
+                value={invForm.billerId}
+                onChange={(e) => {
+                  const b = resolveBrandBiller(e.target.value);
+                  setInvForm({ ...invForm, billerId: e.target.value, iban: b?.iban ?? invForm.iban });
+                }}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {BRAND_BILLERS.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}{b.yTunnus ? ` · Y ${b.yTunnus}` : ""}</option>
+                ))}
+              </select>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Tämän erän laskuttava johtaja. Sama nimi + Y-tunnus näkyy laskulla ja on ostaja alihankkijan laskuilla.
+              </p>
+            </div>
+            <div>
+              <Label className="text-xs">Vastaanottaja (sähköposti) *</Label>
               <Input type="email" value={invForm.to} onChange={(e) => setInvForm({ ...invForm, to: e.target.value })} placeholder="laskut@yritys.fi" />
+            </div>
+            <div>
+              <Label className="text-xs">Verkkolaskuosoite (valinnainen)</Label>
+              <Input value={invForm.eInvoice} onChange={(e) => setInvForm({ ...invForm, eInvoice: e.target.value })} placeholder="esim. OVT 003712345678 / operaattori" />
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Asiakkaan antama verkkolaskuosoite. Merkitään laskulle. Itse lasku lähtee yllä olevaan sähköpostiin.
+              </p>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>

@@ -13,7 +13,7 @@ import { getAdminProfile, USERS, getPreferredWasher, setPreferredWasher } from "
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import {
   emptyProjectData, computeWorkerStats, isFr8Plans, fixedDealFor,
-  type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind,
+  type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense,
 } from "@shared/project";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
 import { FOUNDER_IDS } from "@shared/team";
@@ -399,6 +399,21 @@ export default function AdminProjectPage() {
 
   const backToGig = useCallback(() => navigate(`/admin/gig/${jobId}`), [navigate, jobId]);
 
+  // ── Expense management ──────────────────────────────────────────────────────
+  const addExpense = useCallback(async (data: { kind: string; desc: string; amountCents: number; by: string }) => {
+    const res = await api.addProjectExpense(jobId, data);
+    if (res.ok && res.data?.expenses) {
+      setProject((cur) => cur ? { ...cur, expenses: res.data!.expenses } : cur);
+    }
+  }, [jobId]);
+
+  const deleteExpense = useCallback(async (expenseId: string) => {
+    const res = await api.deleteProjectExpense(jobId, expenseId);
+    if (res.ok && res.data?.expenses) {
+      setProject((cur) => cur ? { ...cur, expenses: res.data!.expenses } : cur);
+    }
+  }, [jobId]);
+
   // ── Render ──────────────────────────────────────────────────────────────────
   const shell = (children: React.ReactNode) => (
     <div className="fr8-root" style={{ position: "fixed", inset: 0, background: "#060607", color: "#fff", overflow: "hidden", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>
@@ -628,7 +643,173 @@ export default function AdminProjectPage() {
         {tab === "hours" && (
           <HoursView workers={hoursWorkers} hours={managerHours} hourLog={project.hourLog} stats={workerStats} onAddHours={onAddHours} traineeInfo={traineeInfo} />
         )}
+        {tab === "expenses" && (
+          <ExpensesView
+            expenses={project.expenses || []}
+            workers={[...gigWorkers, ...crew.filter(c => !gigWorkers.some(w => w.id === c.id)).map(c => ({ id: c.id, name: resolveName(c.id) }))]}
+            currentWorker={currentWorker}
+            resolveName={resolveName}
+            onAdd={addExpense}
+            onDelete={deleteExpense}
+          />
+        )}
       </main>
     </>,
+  );
+}
+
+// ─── ExpensesView ─────────────────────────────────────────────────────────────
+
+const EXPENSE_KINDS: { id: string; label: string }[] = [
+  { id: "transport", label: "Kuljetukset" },
+  { id: "materials", label: "Tarvikkeet" },
+  { id: "equipment", label: "Välineet" },
+  { id: "other", label: "Muu" },
+];
+
+const EXPENSE_TOOLTIP =
+  "Mitä voi merkitä kuluksi:\n" +
+  "• Kuljetukset — polttoaine, julkinen liikenne, pysäköinti keikan takia\n" +
+  "• Tarvikkeet — pesuaineet, räsyt, muut keikalla kuluvat materiaalit\n" +
+  "• Välineet — työkalu tai varuste ostettu/vuokrattu tätä keikkaa varten\n" +
+  "• Muu — muu suoraan keikkaan liittyvä kulu\n\n" +
+  "Ei merkitä: yleinen toimistokulut, omat palkkakulut, myöhemmin palautettavat esineet.";
+
+function ExpensesView({
+  expenses, workers, currentWorker, resolveName, onAdd, onDelete,
+}: {
+  expenses: ProjExpense[];
+  workers: { id: string; name: string }[];
+  currentWorker: string;
+  resolveName: (id: string) => string;
+  onAdd: (data: { kind: string; desc: string; amountCents: number; by: string }) => Promise<void>;
+  onDelete: (expenseId: string) => Promise<void>;
+}) {
+  const [kind, setKind] = useState("transport");
+  const [desc, setDesc] = useState("");
+  const [amount, setAmount] = useState("");
+  const [by, setBy] = useState(currentWorker);
+  const [busy, setBusy] = useState(false);
+  const [showTip, setShowTip] = useState(false);
+
+  const fmtEur = (cents: number) => (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+  const totalCents = expenses.reduce((s, e) => s + e.amountCents, 0);
+
+  const submit = async () => {
+    const amountCents = Math.round(parseFloat(amount.replace(",", ".")) * 100);
+    if (!amountCents || amountCents <= 0 || isNaN(amountCents)) return;
+    setBusy(true);
+    await onAdd({ kind, desc: desc.trim(), amountCents, by });
+    setBusy(false);
+    setDesc("");
+    setAmount("");
+  };
+
+  const card: React.CSSProperties = {
+    background: "rgba(255,255,255,0.035)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    borderRadius: "16px",
+  };
+
+  const sorted = [...expenses].sort((a, b) => b.ts - a.ts);
+
+  return (
+    <div style={{ height: "100%", overflowY: "auto", padding: "24px 20px 44px" }}>
+      <div style={{ maxWidth: "780px", margin: "0 auto" }}>
+        {/* Header */}
+        <div style={{ marginBottom: "20px", display: "flex", alignItems: "baseline", gap: 12 }}>
+          <div>
+            <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.16em", color: "rgba(255,255,255,0.4)", marginBottom: 6 }}>PROJEKTIKULUT</div>
+            <h1 style={{ margin: 0, fontSize: "26px", fontWeight: 700, letterSpacing: "-0.01em" }}>Kulut</h1>
+          </div>
+          {totalCents > 0 && (
+            <span style={{ marginLeft: "auto", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "20px", fontWeight: 700, color: "#ff9b6e" }}>
+              {fmtEur(totalCents)}
+            </span>
+          )}
+        </div>
+
+        {/* Add expense form */}
+        <div style={{ ...card, padding: "20px", marginBottom: "18px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: "14px" }}>
+            <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.14em", color: "rgba(255,255,255,0.4)" }}>LISÄÄ KULU</span>
+            <div style={{ position: "relative" }}>
+              <button
+                onClick={() => setShowTip((v) => !v)}
+                style={{ width: 18, height: 18, borderRadius: "50%", border: "1px solid rgba(255,255,255,0.25)", background: "rgba(255,255,255,0.07)", color: "rgba(255,255,255,0.55)", fontSize: "11px", fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                title="Mitä voi merkitä kuluksi?"
+              >?</button>
+              {showTip && (
+                <>
+                  <div onClick={() => setShowTip(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+                  <div style={{ position: "absolute", left: 0, top: "calc(100% + 6px)", zIndex: 50, width: "320px", padding: "14px 16px", borderRadius: "12px", background: "rgba(18,18,22,0.97)", border: "1px solid rgba(255,255,255,0.14)", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 16px 40px rgba(0,0,0,0.65)" }}>
+                    <p style={{ margin: "0 0 8px", fontSize: "12px", fontWeight: 700, color: "rgba(255,255,255,0.85)" }}>Mitä voi merkitä kuluksi?</p>
+                    {EXPENSE_TOOLTIP.split("\n").map((line, i) => (
+                      <p key={i} style={{ margin: line === "" ? "8px 0" : "2px 0", fontSize: "12px", color: line.startsWith("•") ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.45)" }}>{line || " "}</p>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+            <select value={kind} onChange={(e) => setKind(e.target.value)} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.05)", color: "#fff", fontFamily: "inherit", fontSize: 13 }}>
+              {EXPENSE_KINDS.map((k) => <option key={k.id} value={k.id} style={{ background: "#1a1a1e" }}>{k.label}</option>)}
+            </select>
+            <select value={by} onChange={(e) => setBy(e.target.value)} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.05)", color: "#fff", fontFamily: "inherit", fontSize: 13 }}>
+              {workers.map((w) => <option key={w.id} value={w.id} style={{ background: "#1a1a1e" }}>{w.name}</option>)}
+            </select>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 10 }}>
+            <input
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+              placeholder="Kuvaus (valinnainen)"
+              style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.05)", color: "#fff", fontFamily: "inherit", fontSize: 13 }}
+            />
+            <input
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submit()}
+              placeholder="0,00 €"
+              style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.05)", color: "#fff", fontFamily: "inherit", fontSize: 13, width: "90px", textAlign: "right" }}
+            />
+            <button onClick={submit} disabled={busy || !amount} style={{ padding: "10px 18px", borderRadius: 10, border: "none", background: busy ? "rgba(255,255,255,0.1)" : "rgba(95,224,138,0.85)", color: busy ? "rgba(255,255,255,0.4)" : "#0a1a0e", fontFamily: "inherit", fontSize: 13, fontWeight: 700, cursor: busy ? "default" : "pointer" }}>
+              {busy ? "…" : "Lisää"}
+            </button>
+          </div>
+        </div>
+
+        {/* Expense list */}
+        {sorted.length === 0 ? (
+          <p style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13, marginTop: 24 }}>
+            Ei kuluja. Lisää ensimmäinen kulu yllä.
+          </p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {sorted.map((exp) => (
+              <div key={exp.id} style={{ ...card, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ width: 8, height: 8, borderRadius: "50%", background: "rgba(255,155,110,0.7)", flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>
+                    {EXPENSE_KINDS.find((k) => k.id === exp.kind)?.label ?? exp.kind}
+                    {exp.desc && <span style={{ fontWeight: 400, color: "rgba(255,255,255,0.55)", marginLeft: 8 }}>{exp.desc}</span>}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+                    {resolveName(exp.by)} · {new Date(exp.ts).toLocaleDateString("fi-FI")}
+                  </div>
+                </div>
+                <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 14, fontWeight: 700, color: "#ff9b6e", flexShrink: 0 }}>{fmtEur(exp.amountCents)}</span>
+                <button
+                  onClick={() => onDelete(exp.id)}
+                  title="Poista kulu"
+                  style={{ width: 28, height: 28, borderRadius: 8, border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.4)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, flexShrink: 0 }}
+                >×</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

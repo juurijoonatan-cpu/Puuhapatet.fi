@@ -703,6 +703,7 @@ export const api = {
     message?: string;
     isFinal?: boolean;
     eInvoice?: string;
+    paymentNumber?: number;
   }) => request<{ ok: boolean; id?: string; amountCents: number; gigData: GigData }>(
     "POST", `/api/jobs/${jobId}/gig/invoice`, data,
   ),

@@ -360,6 +360,11 @@ async function sendSessionSummaryEmail(
 const WORKER_NOTIFICATION_EMAILS: string[] = process.env.WORKER_EMAILS
   ? process.env.WORKER_EMAILS.split(",").map(e => e.trim()).filter(Boolean)
   : ["joonatan@puuhapatet.fi", "matias@puuhapatet.fi"];
+// Extra blind-copy recipients for CUSTOMER invoices, on top of the founders'
+// puuhapatet.fi addresses — e.g. Matias's personal inbox. Overridable via env.
+const INVOICE_BCC_EMAILS: string[] = process.env.INVOICE_BCC_EMAILS
+  ? process.env.INVOICE_BCC_EMAILS.split(",").map(e => e.trim()).filter(Boolean)
+  : ["matiaspit88@gmail.com"];
 // Admin / contact-form recipient
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "joonatan@puuhapatet.fi";
 
@@ -3443,7 +3448,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
 
       const fmtEur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
-      const paymentNumber = gig.payments.length + 1;
+      // Which instalment this is. For fixed deals the admin can override the
+      // number manually in the dialog (1–4); otherwise it follows the count sent.
+      const reqPaymentNumber = Number(req.body?.paymentNumber);
+      const paymentNumber = (fixedDeal && Number.isInteger(reqPaymentNumber) && reqPaymentNumber >= 1 && reqPaymentNumber <= 4)
+        ? reqPaymentNumber
+        : gig.payments.length + 1;
 
       // For fixed-price contracts one clean instalment line; for standard gigs
       // per-sector window counts as before.
@@ -3475,7 +3485,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ? await generateFinnishBarcodeHtml({ iban, amountCents, viitenumero: viitenumero || String(id), dueDateISO: dueDate, isEn: false })
         : "";
 
-      const invoiceNo = `${gig.contractId || "PT"}-${(gig.payments.length + 1).toString().padStart(2, "0")}`;
+      const invoiceNo = `${gig.contractId || "PT"}-${paymentNumber.toString().padStart(2, "0")}`;
       const accruedSoFar = totalsBefore.accruedCents;
       const previouslyInvoiced = totalsBefore.invoicedCents;
 
@@ -3528,6 +3538,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const bccArr = Array.from(new Set([
         ...(bcc ? String(bcc).split(",").map((s) => s.trim()).filter(Boolean) : []),
         ...WORKER_NOTIFICATION_EMAILS,
+        ...INVOICE_BCC_EMAILS,
       ])).filter((e) => e && e !== recipient);
       const result = await resend.emails.send({
         from: FROM_EMAIL,

@@ -12,6 +12,7 @@ export interface AdminProfile {
   name: string;
   role: UserRole;
   photoUrl?: string;
+  photoObjectPosition?: string;
   phone?: string;
   email?: string;         // Työntekijän sähköposti (piilokopio lähetettäviin viesteihin)
   yTunnus?: string;       // Y-tunnus (esim. "3598782-9")
@@ -39,6 +40,7 @@ export const USERS: AdminProfile[] = [
     name: "Joonatan Juuri",
     role: "HOST",
     photoUrl: "/joonatan.jpg.jpeg",
+    photoObjectPosition: "50% 35%",
     phone: "+358400389999",
     email: "joonatan@puuhapatet.fi",
     yTunnus: "3598782-9",

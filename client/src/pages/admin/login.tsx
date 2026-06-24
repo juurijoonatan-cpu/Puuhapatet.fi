@@ -22,7 +22,7 @@ const LAST_USER_KEY = "puuhapatet_last_user";
 /** Small round avatar — photo if set, otherwise the initial. */
 function Avatar({ user, size = 36 }: { user: AdminProfile; size?: number }) {
   return user.photoUrl ? (
-    <img src={user.photoUrl} alt="" className="rounded-full object-cover object-top shrink-0" style={{ width: size, height: size }} />
+    <img src={user.photoUrl} alt="" className="rounded-full object-cover shrink-0" style={{ width: size, height: size, objectPosition: user.photoObjectPosition ?? "top" }} />
   ) : (
     <div
       className="rounded-full bg-muted flex items-center justify-center font-semibold text-muted-foreground shrink-0"

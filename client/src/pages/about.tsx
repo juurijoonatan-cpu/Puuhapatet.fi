@@ -13,6 +13,7 @@ const team = [
     school: "Otaniemen lukio",
     bioKey: "about.matias.bio" as const,
     photo: "/matias.jpg.jpeg",
+    photoPosition: "50% 0%",
     initials: "MP",
     linkedin: "https://www.linkedin.com/in/matias-pitk%C3%A4nen-b513273a6/",
     phone: "+358442350881",
@@ -25,6 +26,7 @@ const team = [
     school: "Otaniemen lukio",
     bioKey: "about.joonatan.bio" as const,
     photo: "/joonatan.jpg.jpeg",
+    photoPosition: "50% 30%",
     initials: "JJ",
     linkedin: "https://www.linkedin.com/in/joonatan-juuri-575857255",
     phone: "+358400389999",
@@ -37,6 +39,7 @@ const team = [
     school: "Porkkalan lukio",
     bioKey: "about.petrus.bio" as const,
     photo: "/petrus.jpg.jpeg?v=2",
+    photoPosition: "50% 0%",
     initials: "PA",
     linkedin: null,
     phone: "+358442372930",
@@ -84,7 +87,8 @@ export default function AboutPage() {
                   <img
                     src={f.photo}
                     alt={f.name}
-                    className="w-full h-full object-cover object-top"
+                    className="w-full h-full object-cover"
+                    style={{ objectPosition: f.photoPosition }}
                     onError={(e) => {
                       const el = e.currentTarget;
                       el.style.display = "none";

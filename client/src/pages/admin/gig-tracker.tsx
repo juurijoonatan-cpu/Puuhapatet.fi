@@ -305,6 +305,17 @@ export default function AdminGigTrackerPage() {
     }
   };
 
+  const undoInstalment = async () => {
+    if (!confirm("Peruutetaanko viimeisin maksuerä seurannasta? Tämä ei peru jo lähetettyä sähköpostia, mutta nollaa laskurin (esim. testilähetys).")) return;
+    const res = await api.undoGigInstalment(jobId);
+    if (res.ok && res.data) {
+      setGig(res.data.gigData);
+      toast({ title: "Maksuerä peruttu", description: "Laskuri palautettu." });
+    } else {
+      toast({ variant: "destructive", title: "Peruutus epäonnistui", description: res.error });
+    }
+  };
+
   if (loading || crewChecking) {
     return <div className="min-h-screen bg-background pt-24 text-center text-muted-foreground">Ladataan…</div>;
   }
@@ -633,6 +644,11 @@ export default function AdminGigTrackerPage() {
                 <p className="text-[11px] text-muted-foreground mt-1 text-center">
                   Voit lähettää erän manuaalisesti nyt, vaikka 25 %:n raja ei vielä täyttyisi.
                 </p>
+              )}
+              {gig.payments.length > 0 && (
+                <Button variant="ghost" size="sm" className="w-full mt-1 text-xs text-muted-foreground" onClick={undoInstalment}>
+                  Peruuta viimeisin erä (nollaa laskuri)
+                </Button>
               )}
             </>
           ) : (

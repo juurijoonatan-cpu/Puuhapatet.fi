@@ -3614,6 +3614,42 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // Undo the most recent instalment — pops the last payment from the gig's memory
+  // so the counter resets (e.g. a test/early send recorded a payment by mistake).
+  // Does NOT recall the email already sent; it only fixes the tracked state.
+  app.post("/api/jobs/:id/gig/invoice/undo", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const gig = parseGig(job.gigData);
+      if (!gig) return res.status(400).json({ error: "Keikalla ei ole seurantadataa" });
+      if (!gig.payments.length) return res.status(400).json({ error: "Ei peruttavia maksueriä" });
+
+      const removed = gig.payments.pop()!;
+      const proj = parseProject(job.projectData ?? null);
+      const fixedDeal = proj ? fixedDealFor(proj) : null;
+      const installmentCents = fixedDeal ? Math.round(fixedDeal.capCents / 4) : null;
+      // Recompute invoiced totals from the remaining payments.
+      if (fixedDeal) {
+        gig.invoicedCents = gig.payments.length * (installmentCents ?? 0);
+      } else {
+        gig.invoicedCents = gig.payments.reduce((s, p) => s + p.amountCents, 0);
+        gig.invoicedThrough = gig.payments.length ? gig.payments[gig.payments.length - 1].countThrough : 0;
+        // Roll the per-sector invoiced markers back to what's still invoiced.
+        gig.sectors.forEach((s) => { s.invoicedWashed = Math.min(s.invoicedWashed || 0, gig.invoicedThrough); });
+      }
+      const fmtEur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+      gig.log.push({ t: Date.now(), text: `Maksuerä peruttu seurannasta: ${fmtEur(removed.amountCents)}${removed.to ? ` (oli → ${removed.to})` : ""}` });
+      gig.updatedAt = Date.now();
+      await db.update(jobs).set({ gigData: JSON.stringify(gig), updatedAt: new Date() }).where(eq(jobs.id, id));
+      res.json({ ok: true, gigData: gig });
+    } catch (e: any) {
+      console.error("Gig invoice undo error:", e);
+      res.status(500).json({ error: e.message || "Erän peruutus epäonnistui" });
+    }
+  });
+
   // ─── Project / floor-plan window tool (FR8 projektinäkymä) ────────────────────
 
   function parseProject(raw: string | null): ProjectData | null {

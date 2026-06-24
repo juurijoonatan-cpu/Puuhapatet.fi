@@ -712,6 +712,11 @@ export const api = {
   sendGigReport: (jobId: number) =>
     request<{ ok: boolean; id?: string }>("POST", `/api/jobs/${jobId}/gig/report`, {}),
 
+  /** Undo the most recent instalment in the gig's tracked state (does not recall a
+   *  sent email) — resets the "next instalment" counter after a mistaken send. */
+  undoGigInstalment: (jobId: number) =>
+    request<{ ok: boolean; gigData: GigData }>("POST", `/api/jobs/${jobId}/gig/invoice/undo`, {}),
+
   // ─── Project / floor-plan window tool (FR8 projektinäkymä) ──────────────────
   getProject: (jobId: number) =>
     request<{ ok: boolean; project: ProjectData | null; totals?: ProjTotals; workerStats?: WorkerStat[] }>(

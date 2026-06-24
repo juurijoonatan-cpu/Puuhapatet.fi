@@ -798,7 +798,6 @@ type Tab = "home" | "map" | "hours";
 const NAV_ITEMS: [Tab, string][] = [
   ["home", "Koti"],
   ["map", "Kartta"],
-  ["hours", "Tunnit"],
 ];
 
 /** Stroke icons for the bottom nav (inline so the dark worker theme stays self-contained). */
@@ -1532,6 +1531,139 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
           <p style={{ color: "#7CE0A6", fontSize: 13, fontWeight: 700, marginTop: 12 }}>✓ Työaika tallennettu</p>
         )}
       </div>
+
+      <WorkerExpenses token={token} view={view} setView={setView} />
+    </div>
+  );
+}
+
+/** Expense logger for workers/subcontractors — shown below shift controls. */
+function WorkerExpenses({ token, view, setView }: { token: string; view: WorkerView; setView: (v: WorkerView) => void }) {
+  const [open, setOpen] = useState(false);
+  const [kind, setKind] = useState("transport");
+  const [desc, setDesc] = useState("");
+  const [euros, setEuros] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [tipOpen, setTipOpen] = useState(false);
+  const expenses = view.expenses ?? [];
+
+  const KINDS: [string, string][] = [
+    ["transport", "Kuljetus"],
+    ["materials", "Tarvikkeet"],
+    ["equipment", "Kalusto"],
+    ["other", "Muu"],
+  ];
+
+  const add = async () => {
+    const cents = Math.round(parseFloat(euros.replace(",", ".")) * 100);
+    if (!cents || cents <= 0) return;
+    setBusy(true);
+    const res = await api.crewAddExpense(token, { kind, desc: desc.trim(), amountCents: cents });
+    setBusy(false);
+    if (res.ok && res.data?.expenses) {
+      setView({ ...view, expenses: res.data.expenses });
+      setDesc(""); setEuros(""); setKind("transport");
+    }
+  };
+
+  const del = async (id: string) => {
+    if (!confirm("Poistetaanko kulumerkintä?")) return;
+    const res = await api.crewDeleteExpense(token, id);
+    if (res.ok && res.data?.expenses) setView({ ...view, expenses: res.data.expenses });
+  };
+
+  const fmtDate = (ts: number) => new Date(ts).toLocaleDateString("fi-FI", { day: "numeric", month: "numeric" });
+  const totalCents = expenses.reduce((s, e) => s + e.amountCents, 0);
+
+  return (
+    <div style={{ marginTop: 16, padding: "18px 18px", borderRadius: 18, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: open || expenses.length > 0 ? 12 : 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: "rgba(255,255,255,0.85)" }}>Kulut</span>
+          {expenses.length > 0 && (
+            <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "rgba(255,255,255,0.07)", color: "rgba(255,255,255,0.55)" }}>
+              {expenses.length} · {(totalCents / 100).toFixed(2)} €
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => setTipOpen((v) => !v)}
+            style={{ width: 18, height: 18, borderRadius: "50%", border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.06)", cursor: "pointer", fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.55)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontFamily: FONT }}
+          >?</button>
+        </div>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          style={{ fontSize: 12.5, fontWeight: 600, padding: "6px 13px", borderRadius: 10, cursor: "pointer", border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.75)", fontFamily: FONT }}
+        >
+          {open ? "Sulje" : "+ Lisää kulu"}
+        </button>
+      </div>
+
+      {tipOpen && (
+        <div style={{ marginBottom: 12, padding: "12px 14px", borderRadius: 12, background: "rgba(62,124,89,0.12)", border: "1px solid rgba(62,124,89,0.3)", fontSize: 12.5, color: "rgba(255,255,255,0.7)", lineHeight: 1.55, fontFamily: FONT }}>
+          <strong style={{ color: "rgba(255,255,255,0.9)" }}>Mitä voi merkitä kuluksi?</strong>
+          <ul style={{ margin: "6px 0 0 16px", padding: 0 }}>
+            <li><b>Kuljetus</b> — polttoaine, parkkimaksut, tietullit (keikan vuoksi)</li>
+            <li><b>Tarvikkeet</b> — pesuaineet, mikrokuitu, muu materiaali (keikalle ostettu)</li>
+            <li><b>Kalusto</b> — vuokrakalusto tai laitteet keikan tarpeisiin</li>
+            <li><b>Muu</b> — muut suorat kulut, joista on tai tulee tosite</li>
+          </ul>
+          <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "rgba(255,255,255,0.45)" }}>Henkilökohtaiset kulut (ruoka, puhelin jne.) eivät kuulu tähän.</p>
+        </div>
+      )}
+
+      {open && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 9, marginBottom: 14 }}>
+          <select
+            value={kind}
+            onChange={(e) => setKind(e.target.value)}
+            style={{ width: "100%", padding: "10px 12px", borderRadius: 11, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.06)", color: "#fff", fontSize: 14, fontFamily: FONT, cursor: "pointer" }}
+          >
+            {KINDS.map(([v, l]) => <option key={v} value={v} style={{ background: "#1a1a1a" }}>{l}</option>)}
+          </select>
+          <input
+            placeholder="Kuvaus (esim. polttoaine Bulevardi)"
+            value={desc}
+            onChange={(e) => setDesc(e.target.value)}
+            style={{ width: "100%", padding: "10px 12px", borderRadius: 11, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.06)", color: "#fff", fontSize: 14, fontFamily: FONT, boxSizing: "border-box" }}
+          />
+          <div style={{ display: "flex", gap: 9 }}>
+            <input
+              placeholder="Summa €"
+              type="text"
+              inputMode="decimal"
+              value={euros}
+              onChange={(e) => setEuros(e.target.value)}
+              style={{ flex: 1, padding: "10px 12px", borderRadius: 11, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.06)", color: "#fff", fontSize: 14, fontFamily: FONT }}
+            />
+            <button
+              onClick={add}
+              disabled={busy || !euros}
+              style={{ padding: "10px 20px", borderRadius: 11, cursor: "pointer", border: "none", background: T.green, color: "#fff", fontSize: 14, fontWeight: 700, fontFamily: FONT, opacity: busy || !euros ? 0.5 : 1 }}
+            >
+              {busy ? "…" : "Lisää"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {expenses.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+          {expenses.slice().sort((a, b) => b.ts - a.ts).map((e) => {
+            const kindLabel = KINDS.find(([v]) => v === e.kind)?.[1] ?? e.kind;
+            return (
+              <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 12px", borderRadius: 11, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 6, background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.55)", flexShrink: 0 }}>{kindLabel}</span>
+                <span style={{ flex: 1, fontSize: 13, color: "rgba(255,255,255,0.8)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.desc || "—"}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.85)", flexShrink: 0 }}>{(e.amountCents / 100).toFixed(2)} €</span>
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", flexShrink: 0 }}>{fmtDate(e.ts)}</span>
+                <button onClick={() => del(e.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.3)", fontSize: 16, lineHeight: 1, padding: "0 2px", flexShrink: 0 }}>×</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

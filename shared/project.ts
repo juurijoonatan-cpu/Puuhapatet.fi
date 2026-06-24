@@ -101,6 +101,17 @@ export interface ProjHourEntry {
   by?: string;           // who recorded it
 }
 
+export type ProjExpenseKind = "transport" | "materials" | "equipment" | "other";
+
+export interface ProjExpense {
+  id: string;
+  by: string;            // worker/manager id who logged it
+  kind: ProjExpenseKind;
+  desc: string;
+  amountCents: number;
+  ts: number;            // epoch ms
+}
+
 export interface ProjBuilding {
   name?: string;         // "FR8 — VANHA TKK"
   address?: string;      // "Bulevardi 31"
@@ -131,6 +142,7 @@ export interface ProjectData {
   hourLog: ProjHourEntry[];                         // newest-first
   workers: string[];                                // worker ids shown in hours view
   crew?: CrewMember[];                              // hard-coded gig workers w/ private links (shared/crew.ts)
+  expenses?: ProjExpense[];                         // logged job expenses (managers + workers)
   updatedAt: number;                                // epoch ms
 }
 
@@ -230,6 +242,7 @@ export function emptyProjectData(): ProjectData {
     hourLog: [],
     workers: ["matias", "joonatan"],
     crew: [],
+    expenses: [],
     updatedAt: Date.now(),
   };
 }
@@ -690,6 +703,18 @@ export function sanitizeProjectData(input: any): ProjectData {
     ? Array.from(new Set(input.workers.slice(0, 40).map((w: any) => String(w).slice(0, 40)))) as string[]
     : [...base.workers];
 
+  const VALID_EXPENSE_KINDS: ProjExpenseKind[] = ["transport", "materials", "equipment", "other"];
+  const expenses: ProjExpense[] = Array.isArray(input.expenses)
+    ? input.expenses.slice(0, 500).map((e: any) => ({
+        id: String(e?.id ?? "").slice(0, 80),
+        by: String(e?.by ?? "").slice(0, 40),
+        kind: VALID_EXPENSE_KINDS.includes(e?.kind) ? e.kind : "other",
+        desc: String(e?.desc ?? "").slice(0, 300).trim(),
+        amountCents: Math.round(Math.max(0, Number(e?.amountCents) || 0)),
+        ts: Number(e?.ts) || Date.now(),
+      })).filter((e: ProjExpense) => e.id && e.by)
+    : [];
+
   return {
     version: 1,
     building: {
@@ -715,6 +740,7 @@ export function sanitizeProjectData(input: any): ProjectData {
     hourLog,
     workers,
     crew: sanitizeCrew(input.crew),
+    expenses,
     updatedAt: Date.now(),
   };
 }

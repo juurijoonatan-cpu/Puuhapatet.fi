@@ -15,7 +15,7 @@ import {
 } from "./ai";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, MAX_OBSERVATION_IMAGE_LEN, type ProjectData } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, MAX_OBSERVATION_IMAGE_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind } from "@shared/project";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, type CrewMember,
@@ -326,9 +326,10 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   { method: "GET",  re: /^\/api\/gig\/[^/]+$/ },
   { method: "POST", re: /^\/api\/gig\/[^/]+\/sign$/ },
   { method: "GET",  re: /^\/api\/crew\/[^/]+$/ },
-  { method: "POST", re: /^\/api\/crew\/[^/]+\/(auth|onboard|window|hours|note|map-note|shift)$/ },
+  { method: "POST", re: /^\/api\/crew\/[^/]+\/(auth|onboard|window|hours|note|map-note|shift|expense)$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/map-note\/(update|delete)$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/payout\/[^/]+\/approve$/ },
+  { method: "DELETE", re: /^\/api\/crew\/[^/]+\/expense\/[^/]+$/ },
 ];
 
 function isPublicApi(method: string, path: string): boolean {
@@ -3392,11 +3393,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   </div>
 </body></html>`;
 
-      const bccArr = bcc ? String(bcc).split(",").map((s) => s.trim()).filter(Boolean) : undefined;
+      // Always BCC the team on every customer invoice — admins can also add extra
+      // addresses via the bcc field. Deduplicate and exclude the main recipient.
+      const bccArr = Array.from(new Set([
+        ...(bcc ? String(bcc).split(",").map((s) => s.trim()).filter(Boolean) : []),
+        ...WORKER_NOTIFICATION_EMAILS,
+      ])).filter((e) => e && e !== recipient);
       const result = await resend.emails.send({
         from: FROM_EMAIL,
         to: recipient,
-        ...(bccArr?.length ? { bcc: bccArr } : {}),
+        ...(bccArr.length ? { bcc: bccArr } : {}),
         subject: fixedDeal
           ? `Osalasku ${paymentNumber}/4 · ${invoiceNo} — ${fmtEur(amountCents)} · Puuhapatet`
           : `${isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} — ${fmtEur(amountCents)} · Puuhapatet`,
@@ -3712,6 +3718,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // (intro + name only) when false; full sign flow / banner when true. Trainees
       // are never gated (no agreements).
       agreementsGated: trainee ? false : WORKER_AGREEMENTS_GATED,
+      // Worker's own logged expenses (filtered — they never see other workers' costs).
+      expenses: (project.expenses || []).filter((e) => e.by === member.id),
     };
   }
 
@@ -4081,6 +4089,103 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
       res.json({ ok: true, view: workerView(saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // ── Worker expenses (crew token — public, own expenses only) ───────────────────
+  // Workers log their own job costs (transport, materials, equipment, other).
+  // The admin sees ALL expenses across workers in the project expense view.
+
+  const VALID_EXPENSE_KINDS: ProjExpenseKind[] = ["transport", "materials", "equipment", "other"];
+
+  function makeExpenseId(): string {
+    return `exp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  app.post("/api/crew/:token/expense", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const { kind, desc, amountCents } = req.body as Record<string, any>;
+      if (!amountCents || Number(amountCents) <= 0) {
+        return res.status(400).json({ error: "Summa puuttuu tai on nolla" });
+      }
+      const expense: ProjExpense = {
+        id: makeExpenseId(),
+        by: member.id,
+        kind: VALID_EXPENSE_KINDS.includes(kind) ? kind : "other",
+        desc: String(desc || "").slice(0, 300).trim(),
+        amountCents: Math.round(Number(amountCents)),
+        ts: Date.now(),
+      };
+      project.expenses = [...(project.expenses || []), expense];
+      await saveProject(job, project);
+      // Return only this worker's expenses for privacy
+      const myExpenses = (project.expenses || []).filter((e) => e.by === member.id);
+      res.json({ ok: true, expense, expenses: myExpenses });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/crew/:token/expense/:expenseId", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const expId = String(req.params.expenseId);
+      const target = (project.expenses || []).find((e) => e.id === expId);
+      if (!target) return res.status(404).json({ error: "Kulua ei löydy" });
+      if (target.by !== member.id) return res.status(403).json({ error: "Ei oikeutta poistaa tätä kulua" });
+      project.expenses = (project.expenses || []).filter((e) => e.id !== expId);
+      await saveProject(job, project);
+      const myExpenses = (project.expenses || []).filter((e) => e.by === member.id);
+      res.json({ ok: true, expenses: myExpenses });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // ── Admin project expenses (admin auth required) ────────────────────────────
+
+  app.post("/api/jobs/:id/project/expense", async (req, res) => {
+    try {
+      const loaded = await loadJobProject(Number(req.params.id));
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const { job, project } = loaded;
+      const { kind, desc, amountCents, by } = req.body as Record<string, any>;
+      if (!amountCents || Number(amountCents) <= 0) {
+        return res.status(400).json({ error: "Summa puuttuu tai on nolla" });
+      }
+      const adminSub = (req as any).admin?.sub || "admin";
+      const expense: ProjExpense = {
+        id: makeExpenseId(),
+        by: String(by || adminSub).slice(0, 40),
+        kind: VALID_EXPENSE_KINDS.includes(kind) ? kind : "other",
+        desc: String(desc || "").slice(0, 300).trim(),
+        amountCents: Math.round(Number(amountCents)),
+        ts: Date.now(),
+      };
+      project.expenses = [...(project.expenses || []), expense];
+      await saveProject(job, project);
+      res.json({ ok: true, expense, expenses: project.expenses });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/jobs/:id/project/expense/:expenseId", async (req, res) => {
+    try {
+      const loaded = await loadJobProject(Number(req.params.id));
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const { job, project } = loaded;
+      const expId = String(req.params.expenseId);
+      project.expenses = (project.expenses || []).filter((e) => e.id !== expId);
+      await saveProject(job, project);
+      res.json({ ok: true, expenses: project.expenses });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }

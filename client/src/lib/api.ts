@@ -65,6 +65,8 @@ export interface WorkerView {
   agreementsGated: boolean;
   /** Team standings (workers only) — name + windows + windows/hour, no €/rates. */
   leaderboard: { id: string; name: string; washed: number; windowsPerHour: number; hours: number; isMe: boolean }[];
+  /** This worker's own logged expenses (other workers' costs never included). */
+  expenses: import("@shared/project").ProjExpense[];
 }
 
 export interface CrewOnboardPayload {
@@ -782,6 +784,24 @@ export const api = {
   // Worker approves a payout (locks in their billing snapshot for the invoice).
   crewApprovePayout: (token: string, payoutId: string, billing: { name?: string; yTunnus?: string; iban?: string; address?: string }) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/payout/${payoutId}/approve`, { billing }),
+
+  // Worker logs an expense for the current job (own costs only — transport, materials, etc.).
+  crewAddExpense: (token: string, data: { kind: string; desc: string; amountCents: number }) =>
+    request<{ ok: boolean; expense: import("@shared/project").ProjExpense; expenses: import("@shared/project").ProjExpense[] }>(
+      "POST", `/api/crew/${token}/expense`, data),
+
+  crewDeleteExpense: (token: string, expenseId: string) =>
+    request<{ ok: boolean; expenses: import("@shared/project").ProjExpense[] }>(
+      "DELETE", `/api/crew/${token}/expense/${expenseId}`),
+
+  // Admin adds/removes project-level expenses (all workers visible).
+  addProjectExpense: (jobId: number, data: { kind: string; desc: string; amountCents: number; by?: string }) =>
+    request<{ ok: boolean; expense: import("@shared/project").ProjExpense; expenses: import("@shared/project").ProjExpense[] }>(
+      "POST", `/api/jobs/${jobId}/project/expense`, data),
+
+  deleteProjectExpense: (jobId: number, expenseId: string) =>
+    request<{ ok: boolean; expenses: import("@shared/project").ProjExpense[] }>(
+      "DELETE", `/api/jobs/${jobId}/project/expense/${expenseId}`),
 
   getCrewAgreements: () =>
     request<{ ok: boolean; version: string; agreements: WorkerAgreement[]; requiredAgreementIds: string[] }>(

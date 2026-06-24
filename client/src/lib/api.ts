@@ -702,9 +702,15 @@ export const api = {
     workerPhone?: string;
     message?: string;
     isFinal?: boolean;
+    eInvoice?: string;
   }) => request<{ ok: boolean; id?: string; amountCents: number; gigData: GigData }>(
     "POST", `/api/jobs/${jobId}/gig/invoice`, data,
   ),
+
+  /** Email a comprehensive payment report (instalments + crew payouts + expenses
+   *  + margin) for a gig to the founders. Manager-only summary, never the customer. */
+  sendGigReport: (jobId: number) =>
+    request<{ ok: boolean; id?: string }>("POST", `/api/jobs/${jobId}/gig/report`, {}),
 
   // ─── Project / floor-plan window tool (FR8 projektinäkymä) ──────────────────
   getProject: (jobId: number) =>

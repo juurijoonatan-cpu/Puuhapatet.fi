@@ -43,6 +43,9 @@ export interface GigPayment {
   /** Which leader (biller) billed the customer for this instalment. Their Y-tunnus
    *  becomes the BUYER on the alihankkija invoices funded by this money. */
   biller?: { id?: string; name?: string; yTunnus?: string };
+  /** Customer e-invoice address (verkkolaskuosoite/OVT) this instalment was
+   *  directed to, when given — recorded for the customer's routing & our records. */
+  eInvoice?: string;
 }
 
 export interface GigCompany {
@@ -285,6 +288,7 @@ export function sanitizeGigData(input: any): GigData {
           name: p.biller.name ? String(p.biller.name).slice(0, 160) : undefined,
           yTunnus: p.biller.yTunnus ? String(p.biller.yTunnus).slice(0, 40) : undefined,
         } : undefined,
+        eInvoice: p?.eInvoice ? String(p.eInvoice).slice(0, 200) : undefined,
       }))
     : [];
   const str = (v: any, max: number) => (v == null ? undefined : String(v).slice(0, max));

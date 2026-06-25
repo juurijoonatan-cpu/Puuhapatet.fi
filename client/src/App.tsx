@@ -73,6 +73,7 @@ import AdminInboxPage from "@/pages/admin/inbox";
 import QuotePage from "@/pages/quote";
 import ITPage from "@/pages/it";
 import CVDemoPage from "@/pages/cv-demo";
+import RecruitmentPage from "@/pages/recruitment";
 import NotFound from "@/pages/not-found";
 
 function ScrollToTop() {
@@ -89,6 +90,17 @@ function PublicLayout({ children }: { children: React.ReactNode }) {
       <LiquidGlassNav />
       {children}
       <ChatWidget />
+    </>
+  );
+}
+
+/** Recruitment landing: site nav for findability, but no chat widget so the
+    single WhatsApp call-to-action stays unmistakable. */
+function RecruitmentLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <LiquidGlassNav />
+      {children}
     </>
   );
 }
@@ -142,6 +154,17 @@ function Router() {
         </PublicLayout>
       </Route>
       
+      <Route path="/toihin">
+        <RecruitmentLayout>
+          <RecruitmentPage />
+        </RecruitmentLayout>
+      </Route>
+      <Route path="/rekry">
+        <RecruitmentLayout>
+          <RecruitmentPage />
+        </RecruitmentLayout>
+      </Route>
+
       <Route path="/it" component={ITPage} />
       <Route path="/cv" component={CVDemoPage} />
 

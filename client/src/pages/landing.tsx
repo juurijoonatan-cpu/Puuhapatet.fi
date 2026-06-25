@@ -311,6 +311,11 @@ export default function LandingPage() {
                   {t("nav.about")}
                 </span>
               </Link>
+              <Link href="/toihin">
+                <span className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
+                  {lang === "fi" ? "Töihin meille" : "Work with us"}
+                </span>
+              </Link>
               <Link href="/ehdot">
                 <span className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
                   Sopimusehdot

@@ -5644,69 +5644,79 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       lines.push(`\nTalous (vain perustajat): valmiita keikkoja ${done.length}, liikevaihto valmiista ${eur(revenue)}.`);
       lines.push(`Asiakkaita yhteensä: ${allCustomers.length}.`);
 
-      // Päivän tuotto per tekijä kiinteähintaisilta keikoilta (FR8). Sama ansiomalli
-      // kuin johtajien FR8-dashboardissa: perustaja saa 37,50 € jokaisesta itse
-      // pesemästään ikkunasta + tuotto-osuuden työntekijöiden ikkunoista
-      // ((37,50 − työntekijän rate) jaettuna perustajien kesken). Työntekijä saa
-      // omat ikkunansa × oma rate. Tämä on perustajien sisäinen luku — ei näy
-      // työntekijöille.
-      const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
-      const todayMs = startOfToday.getTime();
+      // ── Omat ansiosi — HENKILÖKOHTAINEN, VAIN tälle käyttäjälle ──────────────
+      // TÄRKEÄ TIETOSUOJA: emme listaa muiden perustajien tai työntekijöiden
+      // euroja tähän yhteenvetoon. Jokainen perustaja näkee VAIN omat ansionsa,
+      // joten kenenkään palkkatieto ei vuoda toisen käyttäjän AI-yhteenvetoon.
+      // Lasketaan kiinteähintaisilta keikoilta (FR8): oma työ (omat ikkunat ×
+      // sopimushinta/ikkuna) + passiivinen tuotto-osuus työntekijöiden työstä
+      // ((sopimushinta − työntekijän palkkio) jaettuna perustajien kesken).
       const isFounderMember = (id: string, mRole?: string) => mRole === "host" || FOUNDER_IDS.includes(id);
-      for (const j of allJobs) {
-        const project = parseProject(j.projectData ?? null);
-        if (!project) continue;
-        const deal = fixedDealFor(project);
-        if (!deal) continue; // vain allekirjoitetut kiinteähintaiset keikat (FR8)
-        const crew = project.crew ?? [];
-        const dealCents = Math.round(deal.pricePerWindow * 100);
-        const rateOf = (id: string, mRole?: string) =>
-          isFounderMember(id, mRole) ? dealCents : (crew.find(c => c.id === id)?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS);
-        const founderCount = Math.max(1, crew.filter(c => isFounderMember(c.id, c.role)).length || FOUNDER_IDS.length);
+      if (isFounderMember(userId)) {
+        const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+        const todayMs = startOfToday.getTime();
+        let todayOwn = 0, todayPassive = 0, totalOwn = 0, totalPassive = 0;
+        for (const j of allJobs) {
+          const project = parseProject(j.projectData ?? null);
+          if (!project) continue;
+          const deal = fixedDealFor(project);
+          if (!deal) continue;
+          const crew = project.crew ?? [];
+          const dealCents = Math.round(deal.pricePerWindow * 100);
+          const rateOf = (id: string, mRole?: string) =>
+            isFounderMember(id, mRole) ? dealCents : (crew.find(c => c.id === id)?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS);
+          const founderCount = Math.max(1, crew.filter(c => isFounderMember(c.id, c.role)).length || FOUNDER_IDS.length);
+          const effId = (id: string): string => {
+            const mm = crew.find(c => c.id === id);
+            const t = traineeForUserId(mm?.linkedUserId) || traineeForUserId(id) || traineeForName(mm?.name);
+            return t ? t.responsibleLeaderId : id;
+          };
+          const mRoleOf = (id: string) => crew.find(c => c.id === id)?.role;
 
-        // A trainee's (e.g. Milja's) windows are credited to their responsible
-        // leader (Matias): map the trainee id → leader id for all attribution.
-        const effId = (id: string): string => {
-          const mm = crew.find(c => c.id === id);
-          const t = traineeForUserId(mm?.linkedUserId) || traineeForUserId(id) || traineeForName(mm?.name);
-          return t ? t.responsibleLeaderId : id;
-        };
-        // Windows turned "pesty" today (billable priority only), deduped per key.
-        const seenToday = new Set<string>();
-        const todayBy = new Map<string, number>();
-        for (const l of project.log) {
-          if (l.status !== "pesty" || l.p !== deal.billablePriority || l.ts < todayMs) continue;
-          if (seenToday.has(l.key)) continue;
-          seenToday.add(l.key);
-          const w = effId(project.washedBy[l.key] || l.by || "");
-          if (!w) continue;
-          todayBy.set(w, (todayBy.get(w) || 0) + 1);
-        }
-        const totalToday = Array.from(todayBy.values()).reduce((a, n) => a + n, 0);
-        if (totalToday === 0) continue;
-
-        // Today's profit pool from worker-washed windows, split between founders.
-        let poolCents = 0;
-        for (const [w, n] of Array.from(todayBy)) {
-          const mRole = crew.find(c => c.id === w)?.role;
-          if (!isFounderMember(w, mRole)) poolCents += n * Math.max(0, dealCents - rateOf(w, mRole));
-        }
-        const founderEachCents = Math.round(poolCents / founderCount);
-
-        const resolveName = (id: string) => crew.find(c => c.id === id)?.name?.trim().split(/\s+/)[0] || id;
-        const bname = project.building.name || `keikka #${j.id}`;
-        lines.push(`\nPäivän tuotto — ${bname} (${new Date().toLocaleDateString("fi-FI")}): ${totalToday} ikkunaa pesty tänään.`);
-        // Ensure founders show even with 0 own windows (they still get the share).
-        const ids = new Set<string>([...Array.from(todayBy.keys()), ...crew.filter(c => isFounderMember(c.id, c.role)).map(c => c.id)]);
-        for (const id of Array.from(ids)) {
-          const mRole = crew.find(c => c.id === id)?.role;
-          const own = todayBy.get(id) || 0;
-          if (isFounderMember(id, mRole)) {
-            const cents = own * dealCents + founderEachCents;
-            lines.push(`- ${resolveName(id)} (perustaja): ${own} omaa ikkunaa → ${eur(cents)} (sis. tuotto-osuus ${eur(founderEachCents)})`);
-          } else {
-            lines.push(`- ${resolveName(id)}: ${own} ikkunaa → ${eur(own * rateOf(id, mRole))} (palkkio ${eur(rateOf(id, mRole))}/ikkuna)`);
+          // Today (log, deduped per key, billable priority only).
+          const seenToday = new Set<string>();
+          const todayBy = new Map<string, number>();
+          for (const l of project.log) {
+            if (l.status !== "pesty" || l.p !== deal.billablePriority || l.ts < todayMs) continue;
+            if (seenToday.has(l.key)) continue;
+            seenToday.add(l.key);
+            const w = effId(project.washedBy[l.key] || l.by || "");
+            if (!w) continue;
+            todayBy.set(w, (todayBy.get(w) || 0) + 1);
           }
+          let todayPool = 0;
+          for (const [w, n] of Array.from(todayBy)) {
+            if (!isFounderMember(w, mRoleOf(w))) todayPool += n * Math.max(0, dealCents - rateOf(w, mRoleOf(w)));
+          }
+          todayOwn += (todayBy.get(userId) || 0) * dealCents;
+          todayPassive += Math.round(todayPool / founderCount);
+
+          // Cumulative (final attribution, billable priority only).
+          const washedBy2 = project.washedBy2 || {};
+          const totalBy = new Map<string, number>();
+          for (const p of allPoints(project)) {
+            if (p.status !== "pesty" || p.p !== deal.billablePriority) continue;
+            const second = washedBy2[p.key];
+            const primary = effId(p.washedBy || "");
+            if (primary) totalBy.set(primary, (totalBy.get(primary) || 0) + (second ? 0.5 : 1));
+            if (second) { const s = effId(second); totalBy.set(s, (totalBy.get(s) || 0) + 0.5); }
+          }
+          let totalPool = 0;
+          for (const [w, n] of Array.from(totalBy)) {
+            if (!isFounderMember(w, mRoleOf(w))) totalPool += n * Math.max(0, dealCents - rateOf(w, mRoleOf(w)));
+          }
+          totalOwn += Math.round((totalBy.get(userId) || 0) * dealCents);
+          totalPassive += Math.round(totalPool / founderCount);
+        }
+        const todayTotal = todayOwn + todayPassive;
+        const grand = totalOwn + totalPassive;
+        if (grand > 0 || todayTotal > 0) {
+          lines.push(
+            `\nOmat ansiosi (HENKILÖKOHTAINEN — vain sinulle, ${userName}; älä koskaan kerro muille käyttäjille): ` +
+            `tänään yhteensä ${eur(todayTotal)} — oma työ ${eur(todayOwn)} + passiivinen tuotto-osuus ${eur(todayPassive)} ` +
+            `(passiivinen kertyy vaikka et itse pesisi yhtään ikkunaa). ` +
+            `Koko kertymäsi tähän mennessä ${eur(grand)} (oma työ ${eur(totalOwn)} + passiivinen ${eur(totalPassive)}).`,
+          );
         }
       }
     } else {

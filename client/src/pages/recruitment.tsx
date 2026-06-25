@@ -155,10 +155,10 @@ export default function RecruitmentPage() {
   const perks = [
     {
       icon: Banknote,
-      title: fi ? "Palkka ~40 % yli keskiverron" : "~40% above average pay",
+      title: fi ? "Reilu palkka" : "Fair pay",
       desc: fi
-        ? "Aloituspalkka on noin 40 % tavallista korkeampi. Ahkeruus näkyy suoraan tilillä."
-        : "Starting pay is roughly 40% higher than usual. Hard work shows up directly in your account.",
+        ? "Aloituspalkka on arviolta ~40 % tavallista korkeampi. Ahkeruus näkyy suoraan tilillä."
+        : "Starting pay is an estimated ~40% above the usual. Hard work shows up directly in your account.",
     },
     {
       icon: CalendarClock,
@@ -185,29 +185,35 @@ export default function RecruitmentPage() {
 
   const gallery = [
     { src: "/rekry-2.jpg", alt: fi ? "Ikkunanpesua kirkkaassa säässä" : "Window cleaning on a bright day" },
-    { src: "/rekry-3.jpg", alt: fi ? "Työkohde keskustassa" : "A job site downtown" },
-    { src: "/rekry-4.jpg", alt: fi ? "Tiimi työn touhussa" : "The team at work" },
+    { src: "/rekry-photo-a.jpg", alt: fi ? "Töissä keskellä kaupunkia" : "On the job in the city" },
+    { src: "/rekry-photo-b.jpg", alt: fi ? "Tiimi työn touhussa" : "The team at work" },
     { src: "/rekry-5.jpg", alt: fi ? "Hyvää fiilistä keikalla" : "Good vibes on the job" },
   ];
 
   return (
     <div className="min-h-screen bg-background">
       {/* ───────────────────────── HERO ───────────────────────── */}
-      <section className="relative min-h-[92vh] flex items-center overflow-hidden">
+      <section className="relative min-h-[88vh] md:min-h-[92vh] flex items-center overflow-hidden">
         <div className="absolute inset-0">
-          <img
-            src="/rekry-hero.jpg"
-            alt={fi ? "Ikkunanpesijä työssä" : "Window cleaner at work"}
+          <video
             className="w-full h-full object-cover object-center"
-          />
+            autoPlay
+            muted
+            loop
+            playsInline
+            preload="metadata"
+            poster="/rekry-hero-vid-poster.jpg"
+          >
+            <source src="/rekry-hero-vid.mp4" type="video/mp4" />
+          </video>
           {/* Forest-green brand wash + bottom fade for legible white text */}
-          <div className="absolute inset-0 bg-gradient-to-br from-[#1f2a22]/85 via-[#2d3b30]/70 to-[#1a2019]/80" />
+          <div className="absolute inset-0 bg-gradient-to-br from-[#1a2019]/88 via-[#2d3b30]/72 to-[#1a2019]/85" />
           <div className="absolute inset-0 bg-gradient-to-t from-background via-transparent to-transparent" />
         </div>
 
-        <div className="container mx-auto px-4 md:px-6 relative z-10 pt-24 pb-20 md:pt-28">
+        <div className="container mx-auto px-5 md:px-6 relative z-10 pt-24 pb-20 md:pt-28">
           <div className="rk-hero-content max-w-3xl">
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#25D366]/15 border border-[#25D366]/30 text-[#7cf0a8] text-sm font-medium backdrop-blur-sm">
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#25D366]/15 border border-[#25D366]/30 text-[#7cf0a8] text-xs sm:text-sm font-medium backdrop-blur-sm">
               <span className="relative flex h-2.5 w-2.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#25D366] opacity-75" />
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#25D366]" />
@@ -215,20 +221,20 @@ export default function RecruitmentPage() {
               {fi ? "Paikkoja auki nyt — rajoitettu määrä" : "Positions open now — limited spots"}
             </div>
 
-            <h1 className="mt-6 text-4xl sm:text-5xl lg:text-6xl font-semibold text-white leading-[1.08] text-balance">
+            <h1 className="mt-6 text-[2rem] leading-[1.12] sm:text-5xl lg:text-6xl sm:leading-[1.08] font-semibold text-white text-balance">
               {fi ? "Hyvä palkka. Joustava arki." : "Great pay. A flexible week."}
               <span className="block text-[#7cf0a8]">
                 {fi ? "Pääset hommiin heti." : "Start working right away."}
               </span>
             </h1>
 
-            <p className="mt-6 text-lg md:text-xl text-white/85 leading-relaxed max-w-2xl text-balance">
+            <p className="mt-5 text-base sm:text-lg md:text-xl text-white/85 leading-relaxed max-w-xl sm:max-w-2xl text-balance">
               {fi
-                ? "Haemme reippaita ikkunanpesijöitä pääkaupunkiseudulle. Palkka on noin 40 % keskimääräistä aloituspalkkaa korkeampi, aikataulu joustaa ja perehdytys on nopea — pääset tienaamaan lähes saman tien."
-                : "We're hiring energetic window cleaners in the Helsinki region. Pay is around 40% above the average starting wage, the schedule is flexible and onboarding is fast — you'll be earning almost right away."}
+                ? "Haemme reippaita ikkunanpesijöitä pääkaupunkiseudulle. Aikataulu joustaa ja perehdytys on nopea — pääset hommiin lähes saman tien."
+                : "We're hiring energetic window cleaners in the Helsinki region. The schedule is flexible and onboarding is fast — you'll be on the job almost right away."}
             </p>
 
-            <div className="mt-9 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+            <div className="mt-8 flex flex-col sm:flex-row items-start sm:items-center gap-4">
               <WhatsAppButton
                 label={fi ? "Hae WhatsAppilla" : "Apply on WhatsApp"}
                 pulse
@@ -383,13 +389,55 @@ export default function RecruitmentPage() {
         </div>
       </section>
 
+      {/* ───────────────────────── HOW IT WORKS (demo) ───────────────────────── */}
+      <section className="py-16 md:py-24 bg-muted/30">
+        <div className="container mx-auto px-4 md:px-6">
+          <Reveal className="text-center max-w-2xl mx-auto mb-10">
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium mb-4">
+              {fi ? "Näin homma toimii" : "How it works"}
+            </div>
+            <h2 className="text-3xl md:text-4xl font-semibold text-foreground text-balance">
+              {fi ? "Vapautta — ja tehty helpoksi" : "Freedom — made simple"}
+            </h2>
+            <p className="mt-4 text-muted-foreground text-lg leading-relaxed">
+              {fi
+                ? "Tekijänä toimit kevytyrittäjänä, eli alihankkijana — sinä päätät omat työaikasi. Hommat pyörivät selkeällä työkalulla, ja yhteydenoton jälkeen saat oman perehdytyksen."
+                : "You work as a light entrepreneur (subcontractor) — you decide your own hours. Everything runs through one clear tool, and after you reach out you get your own onboarding."}
+            </p>
+          </Reveal>
+
+          <Reveal delay={120}>
+            <div className="max-w-4xl mx-auto rounded-2xl overflow-hidden premium-shadow border border-card-border bg-[#0e1311]">
+              {/* faux browser chrome */}
+              <div className="flex items-center gap-2 px-4 py-3 bg-black/40 border-b border-white/10">
+                <span className="w-3 h-3 rounded-full bg-[#ff5f57]" />
+                <span className="w-3 h-3 rounded-full bg-[#febc2e]" />
+                <span className="w-3 h-3 rounded-full bg-[#28c840]" />
+                <span className="ml-3 text-xs text-white/40">puuhapatet.fi · admin (demo)</span>
+              </div>
+              <video
+                className="w-full block"
+                autoPlay
+                muted
+                loop
+                playsInline
+                preload="metadata"
+                poster="/rekry-demo-poster.jpg"
+              >
+                <source src="/rekry-demo.mp4" type="video/mp4" />
+              </video>
+            </div>
+          </Reveal>
+        </div>
+      </section>
+
       {/* ───────────────────────── FINAL CTA ───────────────────────── */}
       <section className="pb-24 md:pb-28">
         <div className="container mx-auto px-4 md:px-6">
           <Reveal>
             <div className="relative overflow-hidden rounded-3xl bg-primary text-primary-foreground px-6 py-14 md:px-12 md:py-20 text-center">
               <div className="absolute inset-0 opacity-15">
-                <img src="/rekry-2.jpg" alt="" className="w-full h-full object-cover" />
+                <img src="/rekry-4.jpg" alt="" className="w-full h-full object-cover" />
               </div>
               <div className="relative z-10 max-w-2xl mx-auto">
                 <h2 className="text-3xl md:text-4xl font-semibold text-balance">
@@ -432,19 +480,6 @@ export default function RecruitmentPage() {
         </div>
       </footer>
 
-      {/* ───────────────────────── FLOATING WHATSAPP FAB ───────────────────────── */}
-      <a
-        href={WHATSAPP_URL}
-        target="_blank"
-        rel="noopener noreferrer"
-        data-testid="rekry-fab-whatsapp"
-        aria-label="WhatsApp"
-        className="fixed right-4 bottom-24 md:right-8 md:bottom-8 z-40 inline-flex items-center gap-2.5 rounded-full bg-[#25D366] pl-4 pr-5 py-3.5 text-white font-semibold shadow-[0_10px_30px_rgba(37,211,102,0.4)] transition-all duration-200 hover:bg-[#1ebe5b] hover:-translate-y-0.5 active:scale-[0.98]"
-      >
-        <SiWhatsapp className="w-6 h-6 shrink-0" />
-        <span className="hidden sm:inline">{fi ? "Hae töihin" : "Apply now"}</span>
-      </a>
-
       {/* ───────────────────────── LIMITED-OPPORTUNITY BANNER ───────────────────────── */}
       {bannerOpen && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 sm:p-6">
@@ -478,8 +513,8 @@ export default function RecruitmentPage() {
               </h3>
               <p className="mt-3 text-muted-foreground leading-relaxed">
                 {fi
-                  ? "Pääset hommiin lähes heti, palkka on noin 40 % keskimääräistä aloituspalkkaa korkeampi ja perehdytys on nopea. Paikkoja on rajoitettu määrä — tätä ei ole tarjolla aina."
-                  : "Start almost immediately, with pay around 40% above the average starting wage and fast onboarding. Spots are limited — this isn't open all the time."}
+                  ? "Pääset hommiin lähes heti ja perehdytys on nopea. Paikkoja on rajoitettu määrä — tätä ei ole tarjolla aina."
+                  : "Start almost immediately with fast onboarding. Spots are limited — this isn't open all the time."}
               </p>
               <div className="mt-6">
                 <WhatsAppButton

@@ -305,7 +305,7 @@ export default function LandingPage() {
             <p className="text-sm text-muted-foreground">
               &copy; {new Date().getFullYear()} Puuhapatet. {t("footer.rights")}
             </p>
-            <div className="flex items-center gap-6">
+            <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
               <Link href="/meista">
                 <span className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
                   {t("nav.about")}

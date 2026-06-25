@@ -1,0 +1,29 @@
+name: Daily earnings email (Joonatan)
+
+# Sends Joonatan a short, private end-of-day earnings summary: how much he made
+# today (own work + passive profit share from the workers) and the running total
+# per gig. This is an email only — there is no view for it in the app.
+#
+# Setup: add a repository secret CRON_SECRET that matches the server's
+# CRON_SECRET env var. The recipient is the server's FOUNDER_DAILY_EMAIL (falls
+# back to ADMIN_EMAIL = joonatan@puuhapatet.fi). Scheduled crons only run from
+# the default branch, so this takes effect once merged to main.
+
+on:
+  schedule:
+    # 18:30 UTC ≈ 21:30 Finnish time (summer) — end of the work day.
+    - cron: "30 18 * * *"
+  workflow_dispatch:
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger daily earnings email
+        run: |
+          curl -fsS --max-time 90 --retry 3 --retry-delay 15 \
+            -X POST \
+            -H "x-cron-key: ${{ secrets.CRON_SECRET }}" \
+            "https://puuhapatet-fi.onrender.com/api/cron/daily-earnings" \
+            && echo "Daily earnings email triggered" \
+            || (echo "Trigger failed" && exit 1)

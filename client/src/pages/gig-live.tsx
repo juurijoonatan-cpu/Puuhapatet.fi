@@ -71,14 +71,24 @@ export default function GigLivePage() {
   }
 
   const t = data.totals;
-  // For fixed-price contracts: percentage and accumulated amount track invoices
-  // (25 % increments per instalment), not actual window counts.
-  const pct = data.isFixedDeal
-    ? Math.min(100, data.paymentsCount * 25)
+  // Customer view shows ACTUAL work progress (washed windows / scope), never euros.
+  // This is the real, honest progress — and it matches the team dashboard's
+  // window-based figure, so the two views never disagree. (Previously the
+  // customer % was derived from invoices sent, which drifted from real work.)
+  const sectorsWashed = data.sectors.reduce((s, x) => s + x.washed, 0);
+  const sectorsTotal = data.sectors.reduce((s, x) => s + x.total, 0);
+  // ALWAYS work-based (washed / scope). Never derived from invoices sent, so the
+  // view can't claim progress the real work hasn't reached.
+  const pct = sectorsTotal > 0
+    ? Math.round((sectorsWashed / sectorsTotal) * 100)
     : Math.round(t.percentByCap * 100);
-  const displayedAccruedCents = data.isFixedDeal
-    ? data.paymentsCount * Math.round(t.capCents / 4)
-    : t.accruedCents;
+  // Billing milestones (maksuerät) — driven by ACTUAL WORK, not by invoices sent.
+  // A contract is billed in 4 equal instalments as the work passes each quarter;
+  // this shows which work-quarters are complete (no euro amount, no claim that an
+  // invoice has been sent). Deliberately NOT based on paymentsCount, so the
+  // customer never sees a milestone the real work hasn't reached.
+  const INSTALMENTS = 4;
+  const instalmentsDone = Math.min(INSTALMENTS, Math.floor(pct / 25));
   const updated = new Date(data.updatedAt).toLocaleString("fi-FI", {
     day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit",
   });
@@ -109,50 +119,62 @@ export default function GigLivePage() {
           </div>
         </div>
 
-        {/* Hero: radial gauge + headline figures */}
+        {/* Hero: radial gauge + work progress. The customer sees ONLY progress —
+            no euro figures and no total contract price. The agreed price lives in
+            the signed contract (downloadable below); this live view is about how
+            far the work has come and when the next billing milestone lands. */}
         <Panel>
           <p style={{ margin: "0 0 4px", fontSize: 13, color: T.muted }}>{data.description}</p>
           <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap", marginTop: 8 }}>
-            <Gauge sectors={data.sectors} capCents={t.capCents} pct={pct} isFixedDeal={data.isFixedDeal} />
+            <Gauge sectors={data.sectors} pct={pct} isFixedDeal={data.isFixedDeal} />
             <div style={{ flex: "1 1 200px", minWidth: 180 }}>
-              <p style={label}>Kertynyt summa</p>
-              <p style={{ margin: "2px 0 0", fontSize: 40, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>{eur(displayedAccruedCents)}</p>
-              <p style={{ margin: "6px 0 0", fontSize: 14, color: T.muted }}>
-                Sovittu kokonaishinta <span style={{ fontWeight: 600, color: T.ink, fontVariantNumeric: "tabular-nums" }}>{eur(t.capCents)}</span>
+              <p style={label}>Työn edistyminen</p>
+              <p style={{ margin: "2px 0 0", fontSize: 44, fontWeight: 800, lineHeight: 1.0, fontVariantNumeric: "tabular-nums" }}>{pct} %</p>
+              <p style={{ margin: "8px 0 0", fontSize: 13.5, color: T.muted, lineHeight: 1.55 }}>
+                Näet reaaliaikaisesti, kuinka suuri osa sovitusta työstä on valmis.
+                Työ tehdään sopimuksen mukaisten ehtojen mukaisesti.
               </p>
-              <p style={{ margin: "4px 0 0", fontSize: 11.5, color: T.muted, lineHeight: 1.5 }}>
-                Tälle sopimukselle on sovittu kiinteä kokonaishinta. Työ tehdään sopimuksen mukaisten ehtojen mukaisesti.
-              </p>
-              <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
-                <Chip label="Edistyminen" value={`${pct} %`} />
-              </div>
             </div>
           </div>
 
-          {/* Progress bar: invoice-based (fixed deal) or window-based (standard gig) */}
+          {/* Progress bar — always window-based (actual work done). */}
           <div style={{ height: 10, width: "100%", borderRadius: 999, background: T.paper, overflow: "hidden", display: "flex", marginTop: 20 }}>
-            {data.isFixedDeal ? (
+            {data.isFixedDeal || sectorsTotal === 0 ? (
               <div style={{ width: `${pct}%`, background: T.navy, height: "100%", borderRadius: 999 }} />
             ) : (
               data.sectors.map((s) => {
-                const w = t.capCents > 0 ? (s.washed * s.unitPriceCents) / t.capCents * 100 : 0;
+                const w = sectorsTotal > 0 ? (s.washed / sectorsTotal) * 100 : 0;
                 return <div key={s.id} style={{ width: `${w}%`, background: s.color, height: "100%" }} />;
               })
             )}
           </div>
 
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 16, paddingTop: 16, borderTop: `1px solid ${T.hair}` }}>
-            <div>
-              <p style={label}>Sovittu kokonaishinta</p>
-              <p style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{eur(t.capCents)}</p>
-            </div>
-            {!data.isFixedDeal && t.creditCents > 0 && (
-              <div style={{ textAlign: "right" }}>
-                <p style={label}>Hyvitykset</p>
-                <p style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>−{eur(t.creditCents)}</p>
+          {/* Billing milestones — which of the 4 instalments have been sent. No
+              amounts shown; just the "next payroll" rhythm so the customer knows
+              where things stand. Only meaningful for fixed-price contracts. */}
+          {data.isFixedDeal && (
+            <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${T.hair}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+                <p style={label}>Laskutuksen vaihe</p>
+                <span style={{ fontSize: 13, fontWeight: 600, color: T.ink, fontVariantNumeric: "tabular-nums" }}>
+                  {instalmentsDone} / {INSTALMENTS}
+                </span>
               </div>
-            )}
-          </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {Array.from({ length: INSTALMENTS }).map((_, i) => {
+                  const done = i < instalmentsDone;
+                  return (
+                    <div key={i} style={{ flex: 1, height: 8, borderRadius: 999, background: done ? T.navy : T.paper, border: `1px solid ${done ? T.navy : T.hair}` }} />
+                  );
+                })}
+              </div>
+              <p style={{ margin: "10px 0 0", fontSize: 11.5, color: T.muted, lineHeight: 1.5 }}>
+                {instalmentsDone >= INSTALMENTS
+                  ? "Työ on valmis — sopimus laskutetaan loppuun sovitusti."
+                  : `Sopimus laskutetaan ${INSTALMENTS} yhtä suuressa erässä työn edetessä. Seuraava erä erääntyy, kun työ etenee seuraavaan neljännekseen.`}
+              </p>
+            </div>
+          )}
         </Panel>
 
         {/* Sector cards — hidden for fixed-price deals (flat rate, no per-sector billing). */}
@@ -260,14 +282,16 @@ export default function GigLivePage() {
   );
 }
 
-/** Radial gauge: for fixed-price deals one arc at payment-based %; otherwise multi-segment. */
-function Gauge({ sectors, capCents, pct, isFixedDeal }: {
-  sectors: GigPublicView["sectors"]; capCents: number; pct: number; isFixedDeal: boolean;
+/** Radial gauge: one arc at the work-progress %, or a multi-segment ring split by
+ *  sector (window-based) for open gigs. Never derived from euros. */
+function Gauge({ sectors, pct, isFixedDeal }: {
+  sectors: GigPublicView["sectors"]; pct: number; isFixedDeal: boolean;
 }) {
   const size = 132, stroke = 13, r = (size - stroke) / 2;
   const C = 2 * Math.PI * r;
+  const sectorsTotal = sectors.reduce((s, x) => s + x.total, 0);
   let offset = 0;
-  const arcs = isFixedDeal
+  const arcs = isFixedDeal || sectorsTotal === 0
     ? [<circle
         key="fixed"
         cx={size / 2} cy={size / 2} r={r}
@@ -277,7 +301,7 @@ function Gauge({ sectors, capCents, pct, isFixedDeal }: {
         strokeLinecap="butt"
       />]
     : sectors.map((s) => {
-        const frac = capCents > 0 ? (s.washed * s.unitPriceCents) / capCents : 0;
+        const frac = sectorsTotal > 0 ? s.washed / sectorsTotal : 0;
         const len = frac * C;
         const arc = (
           <circle
@@ -316,15 +340,6 @@ function StatusBadge({ color, label }: { color: string; label: string }) {
     <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color, letterSpacing: "0.04em", border: `1px solid ${color}33`, borderRadius: 999, padding: "5px 10px", background: `${color}12`, whiteSpace: "nowrap" }}>
       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
       {label}
-    </span>
-  );
-}
-
-function Chip({ label, value }: { label: string; value: string }) {
-  return (
-    <span style={{ display: "inline-flex", flexDirection: "column", border: `1px solid ${T.hair}`, borderRadius: 10, padding: "6px 12px", background: T.paper }}>
-      <span style={{ fontSize: 10, color: T.muted, letterSpacing: "0.05em", textTransform: "uppercase" }}>{label}</span>
-      <span style={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{value}</span>
     </span>
   );
 }

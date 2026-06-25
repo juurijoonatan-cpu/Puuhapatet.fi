@@ -603,8 +603,13 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
     const missing = PROFILE_REQUIRED_IDS.filter((id) => !(answers[id] || "").trim());
     const insurance = answers[INSURANCE_ANSWER_KEY] || "";
     const riskOk = answers[RISK_ACK_KEY] === "1";
+    // Tax status — needed so each payout is computed and invoiced legally right
+    // (ALV 25,5 % vs. vähäinen toiminta; ennakonpidätys jos ei ennakkoperintä-
+    // rekisterissä). Alihankkija only; a trainee invoices nothing.
+    const vatStatus = answers[VAT_STATUS_KEY] || "";
+    const prepayReg = answers[PREPAYMENT_REGISTER_KEY] || "";
     // Trainees skip the insurance/risk acknowledgement (their leader carries it).
-    const canContinue = missing.length === 0 && (isTrainee || (!!insurance && riskOk));
+    const canContinue = missing.length === 0 && (isTrainee || (!!insurance && riskOk && !!vatStatus && !!prepayReg));
     return (
       <Paper>
         <Wrap>
@@ -653,6 +658,56 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
               <input type="checkbox" checked={riskOk} onChange={(e) => setAnswer(RISK_ACK_KEY, e.target.checked ? "1" : "")} style={{ marginTop: 3, width: 18, height: 18, flexShrink: 0 }} />
               <span>{RISK_ACK_TEXT}</span>
             </label>
+          </div>
+          )}
+
+          {/* Tax details — so payouts + your invoice are computed legally right. */}
+          {!isTrainee && (
+          <div style={{ marginTop: 6, marginBottom: 14, padding: 14, borderRadius: 12, background: T.paper, border: `1px solid ${T.hair}` }}>
+            <p style={{ ...fieldLabel, marginBottom: 8 }}>Arvonlisävero (ALV) *</p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {([["vahainen_toiminta", "Ei ALV:tä (vähäinen toiminta)"], ["alv_rekisterissa", "ALV-rekisterissä (25,5 %)"]] as [string, string][]).map(([val, lbl]) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => setAnswer(VAT_STATUS_KEY, val)}
+                  style={{
+                    flex: "1 1 140px", padding: "11px", borderRadius: 10, cursor: "pointer", fontFamily: FONT, fontSize: 13, fontWeight: 600,
+                    border: `1.5px solid ${vatStatus === val ? T.green : T.hair}`,
+                    background: vatStatus === val ? "rgba(62,124,89,0.10)" : "#fff",
+                    color: vatStatus === val ? T.green : T.ink,
+                  }}
+                >
+                  {vatStatus === val ? "✓ " : ""}{lbl}
+                </button>
+              ))}
+            </div>
+            <p style={{ fontSize: 11.5, color: T.muted, margin: "8px 0 0", lineHeight: 1.5 }}>
+              Jos toimintasi on vähäistä (alle ~15 000 €/12 kk), et lisää ALV:tä. Voit muuttaa tämän myöhemmin.
+            </p>
+
+            <p style={{ ...fieldLabel, marginTop: 16, marginBottom: 8 }}>Ennakkoperintärekisteri *</p>
+            <div style={{ display: "flex", gap: 8 }}>
+              {([["kylla", "Olen rekisterissä"], ["ei", "En ole / en tiedä"]] as [string, string][]).map(([val, lbl]) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => setAnswer(PREPAYMENT_REGISTER_KEY, val)}
+                  style={{
+                    flex: 1, padding: "11px", borderRadius: 10, cursor: "pointer", fontFamily: FONT, fontSize: 13, fontWeight: 600,
+                    border: `1.5px solid ${prepayReg === val ? T.green : T.hair}`,
+                    background: prepayReg === val ? "rgba(62,124,89,0.10)" : "#fff",
+                    color: prepayReg === val ? T.green : T.ink,
+                  }}
+                >
+                  {prepayReg === val ? "✓ " : ""}{lbl}
+                </button>
+              ))}
+            </div>
+            <p style={{ fontSize: 11.5, color: T.muted, margin: "8px 0 0", lineHeight: 1.5 }}>
+              Jos et ole ennakkoperintärekisterissä, laki vaatii että pidätämme ennakonpidätyksen ennen maksua ja
+              tilitämme sen Verolle. Pidätys luetaan hyväksesi verotuksessa.
+            </p>
           </div>
           )}
 

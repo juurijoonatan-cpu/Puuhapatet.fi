@@ -15,7 +15,7 @@ import {
 } from "./ai";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, MAX_OBSERVATION_IMAGE_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, allPoints, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind } from "@shared/project";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, totalPaidPayoutCents,
@@ -3623,6 +3623,158 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Joonatanin päivittäinen ansioraportti (autosend, vain hänelle) ──────────
+  // Lähettää Joonatanille joka päivä lyhyen, selkeän koosteen: paljonko tienasit
+  // tänään (oma työ + passiivinen tuotto-osuus työntekijöistä) ja koko keikan
+  // kertymä tähän mennessä. EI näy sovelluksessa — pelkkä sähköposti. Ajetaan
+  // GitHub Actions -ajastimella (.github/workflows/daily-earnings.yml).
+  //
+  // Suojaus: jos CRON_SECRET on asetettu, pyynnössä on oltava sama avain
+  // (?key= tai x-cron-key). Vastaanottaja: FOUNDER_DAILY_EMAIL || ADMIN_EMAIL.
+  app.post("/api/cron/daily-earnings", async (req, res) => {
+    const secret = process.env.CRON_SECRET;
+    if (secret) {
+      const given = (req.headers["x-cron-key"] as string) || String(req.query.key || "");
+      if (given !== secret) return res.status(401).json({ error: "Unauthorized" });
+    }
+    if (!resend) {
+      return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä — aseta RESEND_API_KEY." });
+    }
+    try {
+      const userId = String(req.query.user || "joonatan");
+      const to = process.env.FOUNDER_DAILY_EMAIL || ADMIN_EMAIL;
+      const allJobs = await db.select().from(jobs);
+
+      const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+      const todayMs = startOfToday.getTime();
+      const isFounderMember = (id: string, mRole?: string) => mRole === "host" || FOUNDER_IDS.includes(id);
+
+      let todayOwnCents = 0, todayPassiveCents = 0, totalOwnCents = 0, totalPassiveCents = 0;
+      const gigRows: { name: string; todayCents: number; totalCents: number }[] = [];
+
+      for (const j of allJobs) {
+        const project = parseProject((j as any).projectData ?? null);
+        if (!project) continue;
+        const deal = fixedDealFor(project);
+        if (!deal) continue; // vain allekirjoitetut kiinteähintaiset keikat (FR8)
+        const crew = project.crew ?? [];
+        const dealCents = Math.round(deal.pricePerWindow * 100);
+        const rateOf = (id: string, mRole?: string) =>
+          isFounderMember(id, mRole) ? dealCents : (crew.find((c) => c.id === id)?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS);
+        const founderCount = Math.max(1, crew.filter((c) => isFounderMember(c.id, c.role)).length || FOUNDER_IDS.length);
+        // Trainee windows (e.g. Milja) credit their responsible leader (Matias).
+        const effId = (id: string): string => {
+          const mm = crew.find((c) => c.id === id);
+          const t = traineeForUserId(mm?.linkedUserId) || traineeForUserId(id) || traineeForName(mm?.name);
+          return t ? t.responsibleLeaderId : id;
+        };
+        const mRoleOf = (id: string) => crew.find((c) => c.id === id)?.role;
+
+        // ── Today (log, deduped per key, billable priority only) ──
+        const seenToday = new Set<string>();
+        const todayBy = new Map<string, number>();
+        for (const l of project.log) {
+          if (l.status !== "pesty" || l.p !== deal.billablePriority || l.ts < todayMs) continue;
+          if (seenToday.has(l.key)) continue;
+          seenToday.add(l.key);
+          const w = effId(project.washedBy[l.key] || l.by || "");
+          if (!w) continue;
+          todayBy.set(w, (todayBy.get(w) || 0) + 1);
+        }
+        let todayPool = 0;
+        for (const [w, n] of Array.from(todayBy)) {
+          if (!isFounderMember(w, mRoleOf(w))) todayPool += n * Math.max(0, dealCents - rateOf(w, mRoleOf(w)));
+        }
+        const gTodayOwn = (todayBy.get(userId) || 0) * dealCents;
+        const gTodayPassive = Math.round(todayPool / founderCount);
+
+        // ── Cumulative (final attribution, billable priority only) ──
+        const washedBy2 = project.washedBy2 || {};
+        const totalByWorker = new Map<string, number>();
+        for (const p of allPoints(project)) {
+          if (p.status !== "pesty" || p.p !== deal.billablePriority) continue;
+          const second = washedBy2[p.key];
+          const primary = effId(p.washedBy || "");
+          if (primary) totalByWorker.set(primary, (totalByWorker.get(primary) || 0) + (second ? 0.5 : 1));
+          if (second) { const s = effId(second); totalByWorker.set(s, (totalByWorker.get(s) || 0) + 0.5); }
+        }
+        let totalPool = 0;
+        for (const [w, n] of Array.from(totalByWorker)) {
+          if (!isFounderMember(w, mRoleOf(w))) totalPool += n * Math.max(0, dealCents - rateOf(w, mRoleOf(w)));
+        }
+        const gTotalOwn = Math.round((totalByWorker.get(userId) || 0) * dealCents);
+        const gTotalPassive = Math.round(totalPool / founderCount);
+
+        todayOwnCents += gTodayOwn; todayPassiveCents += gTodayPassive;
+        totalOwnCents += gTotalOwn; totalPassiveCents += gTotalPassive;
+
+        const gToday = gTodayOwn + gTodayPassive;
+        const gTotal = gTotalOwn + gTotalPassive;
+        if (gToday > 0 || gTotal > 0) {
+          gigRows.push({ name: project.building?.name || (j as any).description || `Keikka #${(j as any).id}`, todayCents: gToday, totalCents: gTotal });
+        }
+      }
+
+      const todayTotal = todayOwnCents + todayPassiveCents;
+      const grandTotal = totalOwnCents + totalPassiveCents;
+      const fmt = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+      const esc = (s: string) => String(s).replace(/</g, "&lt;");
+      const dateStr = new Date().toLocaleDateString("fi-FI", { weekday: "long", day: "numeric", month: "numeric", year: "numeric" });
+
+      const rowsHtml = gigRows.length
+        ? gigRows.map((g) => `<tr>
+            <td style="padding:7px 0;font-size:13px;color:#1A1A1A">${esc(g.name)}</td>
+            <td style="padding:7px 0;text-align:right;font-size:13px;color:#1A1A1A;font-variant-numeric:tabular-nums">${fmt(g.todayCents)}</td>
+            <td style="padding:7px 0;text-align:right;font-size:13px;color:#8C8A82;font-variant-numeric:tabular-nums">${fmt(g.totalCents)}</td>
+          </tr>`).join("")
+        : `<tr><td colspan="3" style="padding:10px 0;font-size:13px;color:#8C8A82">Ei kertymää tänään.</td></tr>`;
+
+      const html = `<!doctype html><html><body style="margin:0;background:#F6F4EE;font-family:'Poppins',Arial,sans-serif">
+        <div style="max-width:560px;margin:0 auto;padding:28px 18px">
+          <p style="margin:0 0 2px;font-size:11px;letter-spacing:0.14em;color:#8C8A82;text-transform:uppercase">Puuhapatet · vain sinulle</p>
+          <h1 style="margin:0 0 4px;font-size:22px;color:#1A1A1A">Päivän ansiosi</h1>
+          <p style="margin:0 0 20px;font-size:13px;color:#8C8A82">${esc(dateStr)}</p>
+
+          <div style="background:#fff;border:1px solid #E4E1D7;border-radius:14px;padding:20px;margin-bottom:14px">
+            <p style="margin:0 0 2px;font-size:11px;letter-spacing:0.06em;color:#8C8A82;text-transform:uppercase">Tänään yhteensä</p>
+            <p style="margin:0 0 12px;font-size:34px;font-weight:800;color:#1A1A1A;font-variant-numeric:tabular-nums">${fmt(todayTotal)}</p>
+            <table style="width:100%;border-collapse:collapse">
+              <tr><td style="padding:4px 0;font-size:13px;color:#1A1A1A">Oma työ</td><td style="padding:4px 0;text-align:right;font-size:13px;color:#1A1A1A;font-variant-numeric:tabular-nums">${fmt(todayOwnCents)}</td></tr>
+              <tr><td style="padding:4px 0;font-size:13px;color:#1A1A1A">Passiivinen tuotto-osuus (työntekijöistä)</td><td style="padding:4px 0;text-align:right;font-size:13px;color:#3E7C59;font-variant-numeric:tabular-nums">${fmt(todayPassiveCents)}</td></tr>
+            </table>
+            <p style="margin:10px 0 0;font-size:11.5px;color:#8C8A82;line-height:1.5">Passiivinen osuus kertyy, vaikka et itse pesisi yhtään ikkunaa — se on osuutesi työntekijöiden tekemän työn katteesta.</p>
+          </div>
+
+          <div style="background:#fff;border:1px solid #E4E1D7;border-radius:14px;padding:20px">
+            <p style="margin:0 0 12px;font-size:11px;letter-spacing:0.06em;color:#8C8A82;text-transform:uppercase">Koko kertymä tähän mennessä</p>
+            <table style="width:100%;border-collapse:collapse">
+              <tr><td style="padding:4px 0;font-size:13px;color:#1A1A1A">Yhteensä</td><td style="padding:4px 0;text-align:right;font-size:15px;font-weight:700;color:#1A1A1A;font-variant-numeric:tabular-nums">${fmt(grandTotal)}</td></tr>
+              <tr><td style="padding:4px 0;font-size:13px;color:#8C8A82">— oma työ</td><td style="padding:4px 0;text-align:right;font-size:13px;color:#8C8A82;font-variant-numeric:tabular-nums">${fmt(totalOwnCents)}</td></tr>
+              <tr><td style="padding:4px 0;font-size:13px;color:#8C8A82">— passiivinen tuotto-osuus</td><td style="padding:4px 0;text-align:right;font-size:13px;color:#8C8A82;font-variant-numeric:tabular-nums">${fmt(totalPassiveCents)}</td></tr>
+            </table>
+            <table style="width:100%;border-collapse:collapse;margin-top:14px;border-top:1px solid #E4E1D7">
+              <tr><td style="padding:8px 0 4px;font-size:10px;letter-spacing:0.08em;color:#8C8A82;text-transform:uppercase">Keikka</td><td style="padding:8px 0 4px;text-align:right;font-size:10px;letter-spacing:0.08em;color:#8C8A82;text-transform:uppercase">Tänään</td><td style="padding:8px 0 4px;text-align:right;font-size:10px;letter-spacing:0.08em;color:#8C8A82;text-transform:uppercase">Yhteensä</td></tr>
+              ${rowsHtml}
+            </table>
+          </div>
+
+          <p style="margin:16px 2px 0;font-size:11px;color:#A8A59B;line-height:1.5">Automaattinen päiväkooste · vain sinulle (${esc(to)}) · puuhapatet.fi</p>
+        </div>
+      </body></html>`;
+
+      const result = await resend.emails.send({
+        from: FROM_EMAIL,
+        to,
+        subject: `Päivän ansiosi ${fmt(todayTotal)} — ${new Date().toLocaleDateString("fi-FI")} · Puuhapatet`,
+        html,
+      });
+      res.json({ ok: true, id: result.data?.id, to, todayTotal, grandTotal });
+    } catch (e: any) {
+      console.error("Daily earnings error:", e);
+      res.status(500).json({ error: e.message || "Päiväkoosteen lähetys epäonnistui" });
+    }
+  });
+
   // Undo the most recent instalment — pops the last payment from the gig's memory
   // so the counter resets (e.g. a test/early send recorded a payment by mistake).
   // Does NOT recall the email already sent; it only fixes the tracked state.
@@ -4375,11 +4527,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const loaded = await loadJobProject(Number(req.params.id));
       if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const { job, project } = loaded;
-      const { kind, desc, amountCents, by } = req.body as Record<string, any>;
+      const { kind, desc, amountCents, by, receiptDataUrl } = req.body as Record<string, any>;
       if (!amountCents || Number(amountCents) <= 0) {
         return res.status(400).json({ error: "Summa puuttuu tai on nolla" });
       }
       const adminSub = (req as any).admin?.sub || "admin";
+      const receipt = typeof receiptDataUrl === "string" && receiptDataUrl.startsWith("data:image/")
+        ? receiptDataUrl.slice(0, MAX_EXPENSE_RECEIPT_LEN) : undefined;
       const expense: ProjExpense = {
         id: makeExpenseId(),
         by: String(by || adminSub).slice(0, 40),
@@ -4387,6 +4541,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         desc: String(desc || "").slice(0, 300).trim(),
         amountCents: Math.round(Number(amountCents)),
         ts: Date.now(),
+        ...(receipt ? { receiptDataUrl: receipt } : {}),
       };
       project.expenses = [...(project.expenses || []), expense];
       await saveProject(job, project);

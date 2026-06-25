@@ -103,13 +103,19 @@ export interface ProjHourEntry {
 
 export type ProjExpenseKind = "transport" | "materials" | "equipment" | "other";
 
+/** Max stored size for an expense receipt photo data URL (~0.5 MB base64). */
+export const MAX_EXPENSE_RECEIPT_LEN = 700_000;
+
 export interface ProjExpense {
   id: string;
   by: string;            // worker/manager id who logged it
   kind: ProjExpenseKind;
   desc: string;
   amountCents: number;
-  ts: number;            // epoch ms
+  ts: number;            // epoch ms — automatic timestamp (kirjanpidon tosite)
+  /** Optional photo of the receipt (kuitti), downscaled data URL. Kirjanpitoa
+   *  varten: jokaisesta kulusta talletetaan kuitti + aikaleima. */
+  receiptDataUrl?: string;
 }
 
 export interface ProjBuilding {
@@ -712,6 +718,8 @@ export function sanitizeProjectData(input: any): ProjectData {
         desc: String(e?.desc ?? "").slice(0, 300).trim(),
         amountCents: Math.round(Math.max(0, Number(e?.amountCents) || 0)),
         ts: Number(e?.ts) || Date.now(),
+        receiptDataUrl: typeof e?.receiptDataUrl === "string" && e.receiptDataUrl.startsWith("data:image/")
+          ? e.receiptDataUrl.slice(0, MAX_EXPENSE_RECEIPT_LEN) : undefined,
       })).filter((e: ProjExpense) => e.id && e.by)
     : [];
 

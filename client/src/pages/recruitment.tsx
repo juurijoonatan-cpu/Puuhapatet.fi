@@ -80,6 +80,45 @@ function WhatsAppButton({
   );
 }
 
+/** Autoplaying, muted, looping portrait clip in a rounded "reel" frame. */
+function PortraitVideo({
+  src,
+  poster,
+  label,
+  className = "",
+  aspect = "aspect-[9/16]",
+}: {
+  src: string;
+  poster: string;
+  label?: string;
+  className?: string;
+  aspect?: string;
+}) {
+  return (
+    <div
+      className={`group relative rounded-3xl overflow-hidden premium-shadow bg-muted ${aspect} ${className}`}
+    >
+      <video
+        className="w-full h-full object-cover"
+        autoPlay
+        muted
+        loop
+        playsInline
+        preload="metadata"
+        poster={poster}
+      >
+        <source src={src} type="video/mp4" />
+      </video>
+      <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-transparent pointer-events-none" />
+      {label && (
+        <span className="absolute bottom-4 left-5 right-5 text-white text-sm font-medium drop-shadow leading-snug">
+          {label}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function RecruitmentPage() {
   const { lang } = useI18n();
   const fi = lang === "fi";
@@ -259,24 +298,34 @@ export default function RecruitmentPage() {
             </p>
           </Reveal>
 
-          {/* Photo gallery — real jobs, real team */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-5">
-            {gallery.map((img, i) => (
-              <Reveal key={img.src} delay={i * 80}>
-                <div className="group relative rounded-2xl overflow-hidden premium-shadow aspect-[3/4]">
-                  <img
-                    src={img.src}
-                    alt={img.alt}
-                    loading="lazy"
-                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.05]"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-transparent" />
-                  <span className="absolute bottom-3 left-4 right-4 text-white text-sm font-medium drop-shadow leading-snug">
-                    {img.alt}
-                  </span>
-                </div>
-              </Reveal>
-            ))}
+          {/* Reel (live video) + photo grid */}
+          <div className="grid lg:grid-cols-[minmax(0,340px)_1fr] gap-5 md:gap-6 items-start">
+            <Reveal className="mx-auto w-full max-w-[300px] lg:max-w-none lg:sticky lg:top-24">
+              <PortraitVideo
+                src="/rekry-clip-1.mp4"
+                poster="/rekry-clip-1-poster.jpg"
+                label={fi ? "Päivä keikalla" : "A day on the job"}
+              />
+            </Reveal>
+
+            <div className="grid grid-cols-2 gap-4 md:gap-5">
+              {gallery.map((img, i) => (
+                <Reveal key={img.src} delay={i * 80}>
+                  <div className="group relative rounded-2xl overflow-hidden premium-shadow aspect-[3/4]">
+                    <img
+                      src={img.src}
+                      alt={img.alt}
+                      loading="lazy"
+                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.05]"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-transparent" />
+                    <span className="absolute bottom-3 left-4 right-4 text-white text-sm font-medium drop-shadow leading-snug">
+                      {img.alt}
+                    </span>
+                  </div>
+                </Reveal>
+              ))}
+            </div>
           </div>
         </div>
       </section>
@@ -286,14 +335,12 @@ export default function RecruitmentPage() {
         <div className="container mx-auto px-4 md:px-6">
           <div className="max-w-4xl mx-auto grid md:grid-cols-[1.1fr_1fr] gap-8 md:gap-12 items-center">
             <Reveal>
-              <div className="rounded-3xl overflow-hidden premium-shadow aspect-[4/5]">
-                <img
-                  src="/rekry-4.jpg"
-                  alt={fi ? "Puuhapatet-tiimi töissä" : "The Puuhapatet team at work"}
-                  loading="lazy"
-                  className="w-full h-full object-cover"
-                />
-              </div>
+              <PortraitVideo
+                src="/rekry-clip-2.mp4"
+                poster="/rekry-clip-2-poster.jpg"
+                aspect="aspect-[4/5]"
+                label={fi ? "Töissä myös upeissa kohteissa" : "Work in stunning spaces too"}
+              />
             </Reveal>
             <Reveal delay={120}>
               <div>

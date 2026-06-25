@@ -67,6 +67,10 @@ export const USERS: AdminProfile[] = [
     address: "Haapaniemenrinne 5A, 02940 Espoo",
   },
   {
+    // Alihankkija — kirjautuu vain omaan keikkadashboardiinsa (ei admin-näkymää).
+    // Aloitussalasana "Petrus123" (server INITIAL_PASSWORDS); kirjautuessa pyydetään
+    // vaihtamaan se ja ohjataan suoraan /tyo-työpöydälle. Crew-linkitys:
+    // linkedUserId = "petrus" (aseta työntekijät-näkymästä).
     id: "petrus",
     name: "Petrus Aalto",
     role: "STAFF",
@@ -77,6 +81,7 @@ export const USERS: AdminProfile[] = [
     hasYTunnus: true,
     isUnder18: true,    // alle 18v
     startupBonus: 30000, // 300 €
+    dashboardOnly: true,
   },
   {
     // FR8-tekijä — kirjautuu vain omaan keikkadashboardiinsa (ei admin-näkymää).

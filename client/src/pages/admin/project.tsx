@@ -63,7 +63,7 @@ function computeWorkerMaps(project: ProjectData): {
   const workerNames: Record<string, string> = {};
   for (const u of USERS) workerNames[u.id] = u.name;
   for (const m of project.crew ?? []) workerNames[m.id] = m.name;
-  const maskedWorkerIds = new Set<string>(["petrus"]);
+  const maskedWorkerIds = new Set<string>();
   for (const m of project.crew ?? []) {
     if (m.adminLinked && m.role !== "host") maskedWorkerIds.add(m.id);
   }

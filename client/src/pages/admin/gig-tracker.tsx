@@ -47,9 +47,11 @@ export default function AdminGigTrackerPage() {
   const jobId = Number(params?.id);
   const { toast } = useToast();
   const profile = getAdminProfile();
-  // Admin-linked workers (e.g. Petrus) get bounced to their own worker dashboard
-  // so they never see the gig total or customer price.
-  const { checking: crewChecking } = useCrewWorkerRedirect(jobId);
+  // Admin-linked workers (e.g. Petrus) don't get the host view (no gig total /
+  // customer price). Instead of force-redirecting, we keep them in their normal
+  // admin and render a personalised "open my workspace" landing below — their
+  // gig shows in Keikat and they reach THEIR dashboard from there.
+  const { checking: crewChecking, linkedMember } = useCrewWorkerRedirect(jobId, { autoRedirect: false });
 
 
   const [gig, setGig] = useState<GigData | null>(null);
@@ -324,7 +326,56 @@ export default function AdminGigTrackerPage() {
     }
   };
 
-  if (loading || crewChecking) {
+  if (crewChecking) {
+    return <div className="min-h-screen bg-background pt-24 text-center text-muted-foreground">Ladataan…</div>;
+  }
+
+  // Admin-linked worker (e.g. Petrus): stay in the normal admin, but show a clean
+  // personalised landing — their gig + a button to open THEIR own dashboard. No
+  // customer price, no other workers' earnings, no host tools render here at all.
+  if (linkedMember) {
+    const first = linkedMember.name?.trim().split(/\s+/)[0] || "";
+    return (
+      <div className="min-h-screen bg-background admin-shell-pad">
+        <div className="container mx-auto px-4 max-w-2xl">
+          <div className="flex items-center gap-4 mb-6">
+            <Link href="/admin/jobs">
+              <Button variant="ghost" size="icon"><ArrowLeft className="w-5 h-5" /></Button>
+            </Link>
+            <div className="min-w-0">
+              <h1 className="text-xl font-semibold text-foreground truncate">
+                {gig?.company?.name || jobDescription || "Keikka"}
+              </h1>
+              <p className="text-sm text-muted-foreground truncate">Oma keikkasi</p>
+            </div>
+          </div>
+
+          <Card className="p-6 bg-card border-0 premium-shadow text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-foreground/5">
+              <LayoutDashboard className="h-7 w-7 text-foreground" />
+            </div>
+            <h2 className="text-lg font-semibold text-foreground mb-1">
+              Tervetuloa{first ? `, ${first}` : ""} 👋
+            </h2>
+            <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
+              Tämä on sinun keikkasi. Avaa oma työpöytäsi nähdäksesi kartan, omat ansiosi
+              ja tuntisi. Näet vain oman työsi — et asiakashintoja etkä muiden tietoja.
+            </p>
+            <Button className="w-full" onClick={() => navigate(`/tyo/${linkedMember.token}`)}>
+              <LayoutDashboard className="w-4 h-4 mr-2" /> Avaa oma työpöytä
+            </Button>
+            <Link href="/admin/jobs">
+              <Button variant="ghost" className="w-full mt-2 text-muted-foreground">
+                Takaisin keikkoihin
+              </Button>
+            </Link>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
     return <div className="min-h-screen bg-background pt-24 text-center text-muted-foreground">Ladataan…</div>;
   }
   if (!gig) {

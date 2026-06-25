@@ -213,19 +213,20 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
           {/* Revenue card */}
           <div className="anim-fadeUp-1" style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", padding: "26px", background: "linear-gradient(155deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))", border: "1px solid rgba(255,255,255,0.09)", borderRadius: "22px", backdropFilter: "blur(22px)", WebkitBackdropFilter: "blur(22px)" }}>
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "10px", flexWrap: "wrap" }}>
-              <div style={{ ...mono, minWidth: 0 }}>{deal ? "SOPIMUKSEN KOKONAISHINTA" : "LIIKEVAIHTO"}</div>
+              <div style={{ ...mono, minWidth: 0 }}>{deal ? "KERTYNYT LASKUTUS" : "LIIKEVAIHTO"}</div>
               <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10.5px", color: "rgba(255,255,255,0.4)", flexShrink: 0, whiteSpace: "nowrap" }}>
                 {deal ? `${euro(instalmentCents / 100)} / ERÄ` : `${euroUnit(PRICE)} / IKKUNA`}
               </div>
             </div>
             <div>
-              {/* The headline is the WHOLE agreed contract value (e.g. 6 300 €), so the
-                  bosses see the full deal — not just the first instalment. What's been
-                  collected so far is the secondary, progress figure below. */}
-              <div style={{ fontSize: "46px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{euro(deal ? capEur : washed * PRICE)}</div>
+              {/* The headline is what's actually been COLLECTED so far (billed
+                  instalments), not the full agreed cap — so the bosses see real
+                  money in, not the headline deal size. The agreed contract value
+                  stays as the secondary "/ 6 300 € sopimushinta" reference. */}
+              <div style={{ fontSize: "46px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{euro(deal ? dealAccruedEur : washed * PRICE)}</div>
               <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.45)", marginTop: "4px" }}>
                 {deal
-                  ? <>Kerätty {euro(dealAccruedEur)} · {completedInstalments}/{payP.periods} erää</>
+                  ? <>/ {euro(capEur)} sopimushinta · {completedInstalments}/{payP.periods} erää</>
                   : <>/ {euro(total * PRICE)} sopimusarvo</>}
                 {deal && <span style={{ display: "inline-flex", alignItems: "center", gap: 4, marginLeft: 8, padding: "1px 7px", borderRadius: 7, background: "rgba(95,224,138,0.12)", border: "1px solid rgba(95,224,138,0.3)", color: "#9ff0bd", fontSize: "10px", fontWeight: 600 }}>🔒 sovittu hinta</span>}
               </div>
@@ -282,21 +283,44 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
 
               {/* Per-founder breakdown: own work + profit share = total. */}
               <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : `repeat(${Math.min(founderEarnings.length, 2)}, 1fr)`, gap: m ? "10px" : "12px" }}>
-                {founderEarnings.map((f) => (
+                {founderEarnings.map((f) => {
+                  // A founder who leads a trainee (e.g. Matias → Milja) has the
+                  // trainee's windows folded into their "own work". Break that out
+                  // explicitly so the trainee's slice is unmistakable and the
+                  // founder doesn't accidentally keep money owed to the trainee.
+                  const slices = traineeShareByLeader?.[f.id] ?? [];
+                  const traineeCents = slices.reduce((s, t) => s + t.cents, 0);
+                  const traineeWashed = slices.reduce((s, t) => s + t.washed, 0);
+                  const selfWashed = Math.max(0, f.ownWashed - traineeWashed);
+                  const selfCents = Math.max(0, f.ownCents - traineeCents);
+                  return (
                   <div key={f.id} style={{ padding: "16px 18px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "15px" }}>
                     <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, marginBottom: "8px" }}>
                       <span style={{ fontSize: "15px", fontWeight: 600 }}>{f.name}</span>
                       <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", color: "rgba(255,255,255,0.4)" }}>PERUSTAJA</span>
                     </div>
-                    <div style={{ fontSize: "28px", fontWeight: 700, lineHeight: 1, marginBottom: "10px" }}>{euro(f.totalCents / 100)}</div>
+                    <div style={{ fontSize: "28px", fontWeight: 700, lineHeight: 1, marginBottom: slices.length ? "4px" : "10px" }}>{euro(f.totalCents / 100)}</div>
+                    {/* Trainee-aware total note: how much of this founder's total is
+                        actually the trainee's pay (to be passed on, not kept). */}
+                    {!f.manual && slices.length > 0 && (
+                      <div style={{ fontSize: "11px", color: "#9cc1ff", marginBottom: "10px", lineHeight: 1.4 }}>
+                        sis. {slices.map((t) => `${t.name} ${euro(t.cents / 100)}`).join(" · ")} — tilitä harjoittelijalle, älä pidä itselläsi
+                      </div>
+                    )}
                     {f.manual ? (
                       <div style={{ fontSize: "12px", color: "#9ff0bd" }}>Käsin asetettu ansio</div>
                     ) : (
                       <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                          <span>Oma työ · {f.ownWashed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikkunaa</span>
-                          <b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(f.ownCents / 100)}</b>
+                          <span>Oma työ · {selfWashed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikkunaa</span>
+                          <b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(selfCents / 100)}</b>
                         </div>
+                        {slices.map((t) => (
+                          <div key={t.name} style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "#9cc1ff" }}>
+                            <span>↳ {t.name} (harjoittelija) · {t.washed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikkunaa</span>
+                            <b style={{ fontWeight: 600 }}>{euro(t.cents / 100)}</b>
+                          </div>
+                        ))}
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                           <span>Tuotto-osuus työntekijöistä</span>
                           <b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(f.shareCents / 100)}</b>
@@ -304,7 +328,8 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                       </div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
               <p style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)", marginTop: "12px", lineHeight: 1.5 }}>
                 Perustaja ansaitsee {euroUnit(PRICE)} jokaisesta itse pesemästään ikkunasta + osuuden katteesta jokaisesta työntekijän pesemästä ikkunasta (sopimushinta − työntekijän palkka, jaettuna perustajien kesken). Päivittyy pesujen myötä.

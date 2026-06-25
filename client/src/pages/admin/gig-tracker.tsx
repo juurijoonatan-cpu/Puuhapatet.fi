@@ -625,9 +625,16 @@ export default function AdminGigTrackerPage() {
                 <span className="text-sm text-muted-foreground">Seuraava maksuerä</span>
                 <span className="text-lg font-bold text-foreground tabular-nums">{eur(fixedInstallmentCents)}</span>
               </div>
+              {/* Two SEPARATE, honest figures: actual work done (windows washed)
+                  vs. invoices actually sent. Never derive "done" from the invoice
+                  count — that would claim a milestone the work hasn't reached. */}
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-sm text-muted-foreground">Työ tehty</span>
+                <span className="text-sm font-semibold text-foreground tabular-nums">{Math.round(dealBilling.pct)} %</span>
+              </div>
               <div className="flex items-center justify-between mb-3">
-                <span className="text-sm text-muted-foreground">Tehty sopimuksesta</span>
-                <span className="text-sm font-semibold text-foreground tabular-nums">{gig.payments.length * 25} % · {gig.payments.length}/4 erää lähetetty</span>
+                <span className="text-sm text-muted-foreground">Laskuja lähetetty</span>
+                <span className="text-sm font-semibold text-foreground tabular-nums">{gig.payments.length}/4 erää</span>
               </div>
               {dealBilling.billableTotal > 0 && (
                 <div className="flex items-center justify-between mb-3">

@@ -22,6 +22,7 @@ import { DEFAULT_WORKER_PER_WINDOW_CENTS } from "@shared/crew";
 import Dashboard from "@/components/fr8/Dashboard";
 import FloorView from "@/components/fr8/FloorView";
 import HoursView from "@/components/fr8/HoursView";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 const MARKS_URL = "/fr8/marks_data.json";
 
@@ -400,7 +401,7 @@ export default function AdminProjectPage() {
   const backToGig = useCallback(() => navigate(`/admin/gig/${jobId}`), [navigate, jobId]);
 
   // ── Expense management ──────────────────────────────────────────────────────
-  const addExpense = useCallback(async (data: { kind: string; desc: string; amountCents: number; by: string }) => {
+  const addExpense = useCallback(async (data: { kind: string; desc: string; amountCents: number; by: string; receiptDataUrl?: string }) => {
     const res = await api.addProjectExpense(jobId, data);
     if (res.ok && res.data?.expenses) {
       setProject((cur) => cur ? { ...cur, expenses: res.data!.expenses } : cur);
@@ -703,6 +704,35 @@ const EXPENSE_TOOLTIP =
   "• Muu — muu suoraan keikkaan liittyvä kulu\n\n" +
   "Ei merkitä: yleinen toimistokulut, omat palkkakulut, myöhemmin palautettavat esineet.";
 
+/** Downscale a chosen receipt photo to a small JPEG data URL (kirjanpidon tosite). */
+async function fileToReceiptDataUrl(file: File): Promise<string> {
+  const dataUrl: string = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result || ""));
+    r.onerror = () => reject(new Error("Kuvan luku epäonnistui"));
+    r.readAsDataURL(file);
+  });
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error("Kuvaa ei voitu avata"));
+      i.src = dataUrl;
+    });
+    const maxDim = 1280;
+    const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+    const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return dataUrl;
+    ctx.drawImage(img, 0, 0, w, h);
+    return canvas.toDataURL("image/jpeg", 0.7);
+  } catch {
+    return dataUrl;
+  }
+}
+
 function ExpensesView({
   expenses, workers, currentWorker, resolveName, onAdd, onDelete,
 }: {
@@ -710,27 +740,36 @@ function ExpensesView({
   workers: { id: string; name: string }[];
   currentWorker: string;
   resolveName: (id: string) => string;
-  onAdd: (data: { kind: string; desc: string; amountCents: number; by: string }) => Promise<void>;
+  onAdd: (data: { kind: string; desc: string; amountCents: number; by: string; receiptDataUrl?: string }) => Promise<void>;
   onDelete: (expenseId: string) => Promise<void>;
 }) {
+  const m = useIsMobile();
   const [kind, setKind] = useState("transport");
   const [desc, setDesc] = useState("");
   const [amount, setAmount] = useState("");
   const [by, setBy] = useState(currentWorker);
+  const [receipt, setReceipt] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showTip, setShowTip] = useState(false);
 
   const fmtEur = (cents: number) => (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+  const fmtStamp = (ts: number) => new Date(ts).toLocaleString("fi-FI", { day: "numeric", month: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" });
   const totalCents = expenses.reduce((s, e) => s + e.amountCents, 0);
+
+  const pickReceipt = async (file: File | undefined) => {
+    if (!file) { setReceipt(null); return; }
+    try { setReceipt(await fileToReceiptDataUrl(file)); } catch { setReceipt(null); }
+  };
 
   const submit = async () => {
     const amountCents = Math.round(parseFloat(amount.replace(",", ".")) * 100);
     if (!amountCents || amountCents <= 0 || isNaN(amountCents)) return;
     setBusy(true);
-    await onAdd({ kind, desc: desc.trim(), amountCents, by });
+    await onAdd({ kind, desc: desc.trim(), amountCents, by, receiptDataUrl: receipt || undefined });
     setBusy(false);
     setDesc("");
     setAmount("");
+    setReceipt(null);
   };
 
   const card: React.CSSProperties = {
@@ -738,27 +777,40 @@ function ExpensesView({
     border: "1px solid rgba(255,255,255,0.08)",
     borderRadius: "16px",
   };
+  const fieldStyle: React.CSSProperties = {
+    padding: "11px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.05)", color: "#fff", fontFamily: "inherit", fontSize: 14, width: "100%", boxSizing: "border-box",
+  };
 
   const sorted = [...expenses].sort((a, b) => b.ts - a.ts);
 
   return (
-    <div style={{ height: "100%", overflowY: "auto", padding: "24px 20px 44px" }}>
+    <div style={{ height: "100%", overflowY: "auto", padding: m ? "16px 12px calc(96px + env(safe-area-inset-bottom))" : "24px 20px 44px" }}>
       <div style={{ maxWidth: "780px", margin: "0 auto" }}>
         {/* Header */}
-        <div style={{ marginBottom: "20px", display: "flex", alignItems: "baseline", gap: 12 }}>
+        <div style={{ marginBottom: "16px", display: "flex", alignItems: "baseline", gap: 12 }}>
           <div>
             <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.16em", color: "rgba(255,255,255,0.4)", marginBottom: 6 }}>PROJEKTIKULUT</div>
-            <h1 style={{ margin: 0, fontSize: "26px", fontWeight: 700, letterSpacing: "-0.01em" }}>Kulut</h1>
+            <h1 style={{ margin: 0, fontSize: m ? "22px" : "26px", fontWeight: 700, letterSpacing: "-0.01em" }}>Kulut</h1>
           </div>
           {totalCents > 0 && (
-            <span style={{ marginLeft: "auto", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "20px", fontWeight: 700, color: "#ff9b6e" }}>
+            <span style={{ marginLeft: "auto", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: m ? "17px" : "20px", fontWeight: 700, color: "#ff9b6e" }}>
               {fmtEur(totalCents)}
             </span>
           )}
         </div>
 
-        {/* Add expense form */}
-        <div style={{ ...card, padding: "20px", marginBottom: "18px" }}>
+        {/* Kirjanpito-ohje: kuitti + aikaleima. Pidetään yksinkertaisena. */}
+        <div style={{ ...card, padding: "12px 14px", marginBottom: "14px", background: "rgba(255,155,110,0.06)", border: "1px solid rgba(255,155,110,0.2)", display: "flex", gap: 10, alignItems: "flex-start" }}>
+          <span style={{ fontSize: 15, lineHeight: 1 }}>🧾</span>
+          <p style={{ margin: 0, fontSize: 12, lineHeight: 1.55, color: "rgba(255,255,255,0.7)" }}>
+            Lisää jokaisesta kulusta <b style={{ color: "#fff" }}>kuva kuitista</b> — se on kirjanpidon tosite. Aikaleima
+            tallentuu automaattisesti. Näin kirjanpito pysyy oikeana ja yksinkertaisena: kuitti, summa ja päivämäärä riittävät.
+          </p>
+        </div>
+
+        {/* Add expense form — stacks cleanly on phones, no horizontal overflow */}
+        <div style={{ ...card, padding: m ? "16px" : "20px", marginBottom: "18px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: "14px" }}>
             <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.14em", color: "rgba(255,255,255,0.4)" }}>LISÄÄ KULU</span>
             <div style={{ position: "relative" }}>
@@ -780,32 +832,50 @@ function ExpensesView({
               )}
             </div>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-            <select value={kind} onChange={(e) => setKind(e.target.value)} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.05)", color: "#fff", fontFamily: "inherit", fontSize: 13 }}>
-              {EXPENSE_KINDS.map((k) => <option key={k.id} value={k.id} style={{ background: "#1a1a1e" }}>{k.label}</option>)}
-            </select>
-            <select value={by} onChange={(e) => setBy(e.target.value)} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.05)", color: "#fff", fontFamily: "inherit", fontSize: 13 }}>
-              {workers.map((w) => <option key={w.id} value={w.id} style={{ background: "#1a1a1e" }}>{w.name}</option>)}
-            </select>
+          <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 10 }}>
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Kululaji</span>
+              <select value={kind} onChange={(e) => setKind(e.target.value)} style={fieldStyle}>
+                {EXPENSE_KINDS.map((k) => <option key={k.id} value={k.id} style={{ background: "#1a1a1e" }}>{k.label}</option>)}
+              </select>
+            </label>
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Maksaja</span>
+              <select value={by} onChange={(e) => setBy(e.target.value)} style={fieldStyle}>
+                {workers.map((w) => <option key={w.id} value={w.id} style={{ background: "#1a1a1e" }}>{w.name}</option>)}
+              </select>
+            </label>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 10 }}>
-            <input
-              value={desc}
-              onChange={(e) => setDesc(e.target.value)}
-              placeholder="Kuvaus (valinnainen)"
-              style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.05)", color: "#fff", fontFamily: "inherit", fontSize: 13 }}
-            />
-            <input
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && submit()}
-              placeholder="0,00 €"
-              style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.05)", color: "#fff", fontFamily: "inherit", fontSize: 13, width: "90px", textAlign: "right" }}
-            />
-            <button onClick={submit} disabled={busy || !amount} style={{ padding: "10px 18px", borderRadius: 10, border: "none", background: busy ? "rgba(255,255,255,0.1)" : "rgba(95,224,138,0.85)", color: busy ? "rgba(255,255,255,0.4)" : "#0a1a0e", fontFamily: "inherit", fontSize: 13, fontWeight: 700, cursor: busy ? "default" : "pointer" }}>
-              {busy ? "…" : "Lisää"}
-            </button>
+          <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1fr 130px", gap: 10, marginBottom: 10 }}>
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Kuvaus (valinnainen)</span>
+              <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="esim. pesuaineet" style={fieldStyle} />
+            </label>
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Summa</span>
+              <input value={amount} onChange={(e) => setAmount(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} inputMode="decimal" placeholder="0,00 €" style={{ ...fieldStyle, textAlign: "right" }} />
+            </label>
           </div>
+
+          {/* Receipt photo (kuitti) — camera on mobile, file on desktop */}
+          <label style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 12px", borderRadius: 10, border: "1px dashed rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.03)", cursor: "pointer", marginBottom: 12 }}>
+            <input type="file" accept="image/*" capture="environment" onChange={(e) => pickReceipt(e.target.files?.[0])} style={{ display: "none" }} />
+            {receipt ? (
+              <img src={receipt} alt="kuitti" style={{ width: 44, height: 44, borderRadius: 8, objectFit: "cover", flexShrink: 0 }} />
+            ) : (
+              <span style={{ width: 44, height: 44, borderRadius: 8, background: "rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>🧾</span>
+            )}
+            <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: receipt ? "#9ff0bd" : "rgba(255,255,255,0.6)" }}>
+              {receipt ? "Kuitti lisätty ✓ — vaihda napauttamalla" : "Lisää kuva kuitista (suositeltu)"}
+            </span>
+            {receipt && (
+              <button type="button" onClick={(e) => { e.preventDefault(); setReceipt(null); }} style={{ flexShrink: 0, padding: "5px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.14)", background: "transparent", color: "rgba(255,255,255,0.6)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Poista</button>
+            )}
+          </label>
+
+          <button onClick={submit} disabled={busy || !amount} style={{ width: "100%", padding: "12px 18px", borderRadius: 10, border: "none", background: busy || !amount ? "rgba(255,255,255,0.1)" : "rgba(95,224,138,0.85)", color: busy || !amount ? "rgba(255,255,255,0.4)" : "#0a1a0e", fontFamily: "inherit", fontSize: 14, fontWeight: 700, cursor: busy || !amount ? "default" : "pointer" }}>
+            {busy ? "Tallennetaan…" : "Lisää kulu"}
+          </button>
         </div>
 
         {/* Expense list */}
@@ -816,15 +886,22 @@ function ExpensesView({
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {sorted.map((exp) => (
-              <div key={exp.id} style={{ ...card, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
-                <div style={{ width: 8, height: 8, borderRadius: "50%", background: "rgba(255,155,110,0.7)", flexShrink: 0 }} />
+              <div key={exp.id} style={{ ...card, padding: m ? "12px 14px" : "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+                {exp.receiptDataUrl ? (
+                  <a href={exp.receiptDataUrl} target="_blank" rel="noreferrer" style={{ flexShrink: 0 }} title="Avaa kuitti">
+                    <img src={exp.receiptDataUrl} alt="kuitti" style={{ width: 40, height: 40, borderRadius: 8, objectFit: "cover", border: "1px solid rgba(255,255,255,0.12)" }} />
+                  </a>
+                ) : (
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "rgba(255,155,110,0.7)", flexShrink: 0 }} />
+                )}
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13.5, fontWeight: 600 }}>
                     {EXPENSE_KINDS.find((k) => k.id === exp.kind)?.label ?? exp.kind}
                     {exp.desc && <span style={{ fontWeight: 400, color: "rgba(255,255,255,0.55)", marginLeft: 8 }}>{exp.desc}</span>}
                   </div>
                   <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
-                    {resolveName(exp.by)} · {new Date(exp.ts).toLocaleDateString("fi-FI")}
+                    {resolveName(exp.by)} · {fmtStamp(exp.ts)}
+                    {!exp.receiptDataUrl && <span style={{ color: "#e7a17a", marginLeft: 6 }}>· ei kuittia</span>}
                   </div>
                 </div>
                 <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 14, fontWeight: 700, color: "#ff9b6e", flexShrink: 0 }}>{fmtEur(exp.amountCents)}</span>

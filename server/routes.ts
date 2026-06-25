@@ -380,7 +380,7 @@ const AUTH_SECRET = process.env.AUTH_SECRET || "";
 const ADMIN_DEFAULT_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || "";
 // Per-user starter passwords for brand-new accounts (worker logins). Accepted
 // only until the user sets their own; then it's hashed and this is ignored.
-const INITIAL_PASSWORDS: Record<string, string> = { jani: "Jani123", milja: "milja456", oliver: "Oliver234" };
+const INITIAL_PASSWORDS: Record<string, string> = { jani: "Jani123", milja: "milja456", oliver: "Oliver234", petrus: "Petrus123" };
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 function b64url(buf: Buffer): string {

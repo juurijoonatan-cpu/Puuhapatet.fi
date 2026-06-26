@@ -1,5 +1,5 @@
 import { Link } from "wouter";
-import { Home, AlertCircle } from "lucide-react";
+import { Home, AlertCircle, Briefcase } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 
@@ -19,12 +19,20 @@ export default function NotFound() {
             Etsimääsi sivua ei valitettavasti löytynyt. 
             Se on ehkä siirretty tai poistettu.
           </p>
-          <Link href="/">
-            <Button data-testid="not-found-home">
-              <Home className="w-4 h-4 mr-2" />
-              Palaa etusivulle
-            </Button>
-          </Link>
+          <div className="flex flex-col gap-3">
+            <Link href="/">
+              <Button data-testid="not-found-home" className="w-full">
+                <Home className="w-4 h-4 mr-2" />
+                Palaa etusivulle
+              </Button>
+            </Link>
+            <Link href="/rekry">
+              <Button variant="outline" className="w-full">
+                <Briefcase className="w-4 h-4 mr-2" />
+                Etsitkö rekrysivua?
+              </Button>
+            </Link>
+          </div>
         </Card>
       </div>
     </div>

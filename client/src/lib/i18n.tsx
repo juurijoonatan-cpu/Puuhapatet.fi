@@ -43,7 +43,19 @@ const translations: Record<Language, Record<string, string>> = {
     "contact.whatsapp": "WhatsApp",
     "contact.instagram": "Instagram",
     "contact.email": "Sähköposti",
-    
+
+    "trust.assessment": "Ilmainen kartoituskäynti",
+    "trust.deduction": "Kotitalousvähennys −35 %",
+    "trust.guarantee": "Tyytyväisyystakuu",
+
+    "trustband.title": "Miksi Puuhapatet?",
+    "trustband.assessment.title": "Ilmainen kartoituskäynti",
+    "trustband.assessment.desc": "Tulemme katsomaan kohteen veloituksetta ja annamme tarkan hinnan. Et sido itseäsi mihinkään.",
+    "trustband.deduction.title": "Kotitalousvähennys",
+    "trustband.deduction.desc": "Ikkunanpesu ja pihatyöt ovat kotitalousvähennyskelpoisia — säästät jopa 35 % työn osuudesta. Lasku tulee aina sinulle.",
+    "trustband.guarantee.title": "Tyytyväisyystakuu",
+    "trustband.guarantee.desc": "Jos jokin jäi vaivaamaan, korjaamme sen veloituksetta. Tärkeintä on, että jälki on kunnossa.",
+
     "services.title": "Palvelut",
     "services.subtitle": "Mitä tarjoamme?",
     "services.promise": "Jokainen työmme tehdään vastuuvakuutuksen alaisena. Meille tärkeintä on se, että asiakas on oikeasti tyytyväinen — ei se, kuinka nopeasti saamme työn alta pois. Jos homma ottaa kauemmin kuin arvioitu, teemme sen silti kunnolla loppuun. Siitä ei tule lisälaskua. Hinta sovitaan aina etukäteen — ei yllätyksiä.",
@@ -74,8 +86,8 @@ const translations: Record<Language, Record<string, string>> = {
 
     "gallery.title": "Työtä, josta näkee laadun",
     "gallery.subtitle": "Oikeaa työtä, oikeat välineet — kentältä",
-    "gallery.1.caption": "Tarkka jälki lasipinnoilla",
-    "gallery.2.caption": "Ammattitiimi kentällä",
+    "gallery.1.caption": "Korkeatkin kohteet puhtaaksi",
+    "gallery.2.caption": "Huolellinen, viimeistelty jälki",
     "gallery.3.caption": "Ammattilaisten välineet",
 
     "service.basic.title": "Ikkunanpesu",
@@ -244,7 +256,19 @@ const translations: Record<Language, Record<string, string>> = {
     "contact.whatsapp": "WhatsApp",
     "contact.instagram": "Instagram",
     "contact.email": "Email",
-    
+
+    "trust.assessment": "Free assessment visit",
+    "trust.deduction": "Household deduction −35%",
+    "trust.guarantee": "Satisfaction guarantee",
+
+    "trustband.title": "Why Puuhapatet?",
+    "trustband.assessment.title": "Free assessment visit",
+    "trustband.assessment.desc": "We come and look at the site at no cost and give you an exact price. No commitment.",
+    "trustband.deduction.title": "Household tax deduction",
+    "trustband.deduction.desc": "Window cleaning and yard work qualify for the kotitalousvähennys — save up to 35% of the labour. You always get an invoice.",
+    "trustband.guarantee.title": "Satisfaction guarantee",
+    "trustband.guarantee.desc": "If something's not right, we fix it at no charge. What matters is that the result is spotless.",
+
     "services.title": "Services",
     "services.subtitle": "What we offer",
     "services.promise": "Every job we do is covered by liability insurance and fully compliant with Finnish law. What matters most to us is that the customer is genuinely happy — not how quickly we can move on. If a job takes longer than expected, we finish it properly regardless. No extra charge. Price is always agreed in advance — no surprises.",
@@ -275,8 +299,8 @@ const translations: Record<Language, Record<string, string>> = {
 
     "gallery.title": "Work that shows its quality",
     "gallery.subtitle": "Real work, the right tools — from the field",
-    "gallery.1.caption": "Precise finish on glass",
-    "gallery.2.caption": "Professional team on site",
+    "gallery.1.caption": "Even high windows, spotless",
+    "gallery.2.caption": "Careful, polished results",
     "gallery.3.caption": "Professional-grade tools",
     
     "service.basic.title": "Window Cleaning",

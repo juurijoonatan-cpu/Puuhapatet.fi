@@ -2,7 +2,7 @@ import { Link } from "wouter";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowRight, Sparkles, Snowflake, Car, Building2, Check, Leaf, PaintBucket, ShieldCheck, Shovel } from "lucide-react";
+import { ArrowRight, Sparkles, Snowflake, Car, Building2, Check, Leaf, PaintBucket, ShieldCheck, Shovel, ClipboardCheck, BadgePercent } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 
 export default function ServicesPage() {
@@ -42,11 +42,28 @@ export default function ServicesPage() {
           </div>
         </div>
 
-        <div className="rounded-2xl bg-primary/5 border border-primary/10 p-5 md:p-6 mb-10 flex gap-4 items-start">
+        <div className="rounded-2xl bg-primary/5 border border-primary/10 p-5 md:p-6 mb-6 flex gap-4 items-start">
           <ShieldCheck className="w-6 h-6 text-primary flex-shrink-0 mt-0.5" />
           <p className="text-sm text-muted-foreground leading-relaxed">
             {t("services.promise")}
           </p>
+        </div>
+
+        {/* Trust band — the three reasons that beat the competition */}
+        <div className="grid gap-3 sm:grid-cols-3 mb-10">
+          {[
+            { icon: ClipboardCheck, titleKey: "trustband.assessment.title", descKey: "trustband.assessment.desc" },
+            { icon: BadgePercent, titleKey: "trustband.deduction.title", descKey: "trustband.deduction.desc" },
+            { icon: ShieldCheck, titleKey: "trustband.guarantee.title", descKey: "trustband.guarantee.desc" },
+          ].map(({ icon: Icon, titleKey, descKey }) => (
+            <Card key={titleKey} className="p-5 bg-card border-0 premium-shadow">
+              <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center mb-3">
+                <Icon className="w-5 h-5 text-primary" />
+              </div>
+              <h3 className="text-sm font-semibold text-foreground mb-1">{t(titleKey)}</h3>
+              <p className="text-xs text-muted-foreground leading-relaxed">{t(descKey)}</p>
+            </Card>
+          ))}
         </div>
 
         <div className="space-y-6 mb-12">

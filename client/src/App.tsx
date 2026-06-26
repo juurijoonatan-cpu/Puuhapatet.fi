@@ -8,6 +8,7 @@ import { I18nProvider } from "@/lib/i18n";
 import { LiquidGlassNav } from "@/components/liquid-glass-nav";
 import { ProtectedRoute } from "@/components/protected-route";
 import { ChatWidget } from "@/components/chat-widget";
+import { FreeAssessmentPrompt } from "@/components/free-assessment-prompt";
 import { useEffect, Component } from "react";
 import type { ReactNode, ErrorInfo } from "react";
 
@@ -90,6 +91,7 @@ function PublicLayout({ children }: { children: React.ReactNode }) {
       <LiquidGlassNav />
       {children}
       <ChatWidget />
+      <FreeAssessmentPrompt />
     </>
   );
 }

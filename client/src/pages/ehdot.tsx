@@ -39,8 +39,9 @@ export default function EhdotPage() {
             <h2 className="text-base font-semibold mb-2">Vastuu ja vakuutukset</h2>
             <p className="text-muted-foreground leading-relaxed text-sm mb-3">
               Puuhapatet on yhteinen brändi, jonka sisällä jokainen toimija on itsenäinen 4H-yrittäjä.
-              Jokaisella toimijalla on oma vastuuvakuutus, joka kattaa toiminnan vastuun sekä tuotevastuun.
-              Vakuutus on voimassa koko Euroopassa.
+              Sopimus työstä syntyy asiakkaan ja työn suorittavan toimijan välille, ja työ koordinoidaan
+              Puuhapatet-brändin kautta. Jokaisella toimijalla on oma vastuuvakuutus, joka kattaa toiminnan
+              vastuun sekä tuotevastuun. Vakuutus on voimassa koko Euroopassa.
             </p>
             <p className="text-muted-foreground leading-relaxed text-sm mt-3">
               Arvoesineet ja herkästi rikkoutuvat tavarat pyydämme siirtämään työkohteen läheisyydestä ennen työn aloittamista.
@@ -59,6 +60,26 @@ export default function EhdotPage() {
               <li>Viivästyskorko lain mukaan</li>
               <li>Maksumuistutus: <strong className="text-foreground">5 €</strong></li>
             </ul>
+          </section>
+
+          <section>
+            <h2 className="text-base font-semibold mb-2">Kotitalousvähennys</h2>
+            <p className="text-muted-foreground leading-relaxed text-sm">
+              Useat palvelumme — kuten ikkunanpesu ja pihatyöt — ovat kotitalousvähennys­kelpoisia.
+              Saat työstä aina laskun, joten vähennyksen hakeminen OmaVero-palvelussa on suoraviivaista.
+              Vähennys on enintään lain mukainen enimmäismäärä henkilöä kohden vuodessa. Vähennyksen
+              myöntää Verohallinto, emmekä vastaa sen lopullisesta määrästä.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-base font-semibold mb-2">Tyytyväisyystakuu</h2>
+            <p className="text-muted-foreground leading-relaxed text-sm">
+              Haluamme, että olet aidosti tyytyväinen. Jos lopputuloksessa on jotain
+              huomautettavaa, korjaamme sen veloituksetta — kunhan ilmoitat asiasta alla
+              kuvatun reklamaatioajan kuluessa. Meille tärkeintä on, että jälki on kunnossa,
+              ei se kuinka nopeasti työ valmistuu.
+            </p>
           </section>
 
           <section>

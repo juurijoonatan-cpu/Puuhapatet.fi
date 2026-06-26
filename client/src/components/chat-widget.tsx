@@ -48,6 +48,9 @@ export function ChatWidget() {
   const [showContact, setShowContact] = useState(false);
   const [contact, setContact] = useState({ name: "", phone: "", email: "" });
   const [requested, setRequested] = useState(false);
+  // Mobile keyboard handling: track the visual viewport so the panel always
+  // sits fully above the soft keyboard instead of being hidden behind it.
+  const [vv, setVv] = useState<{ height: number; keyboard: number } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
@@ -97,6 +100,31 @@ export function ChatWidget() {
   useEffect(() => {
     if (open) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [displayMessages.length, open, sending]);
+
+  // Track the visual viewport on mobile while the panel is open. The soft
+  // keyboard shrinks visualViewport.height (but not window.innerHeight), so we
+  // resize the panel and lift it above the keyboard. Desktop keeps CSS sizing.
+  useEffect(() => {
+    if (!open || typeof window === "undefined") { setVv(null); return; }
+    const visual = window.visualViewport;
+    const isMobile = window.matchMedia("(max-width: 767px)").matches;
+    if (!visual || !isMobile) { setVv(null); return; }
+    const update = () => {
+      const keyboard = Math.max(0, window.innerHeight - visual.height - visual.offsetTop);
+      setVv({ height: visual.height, keyboard });
+      // Keep the latest message visible as the layout changes.
+      requestAnimationFrame(() => {
+        scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+      });
+    };
+    update();
+    visual.addEventListener("resize", update);
+    visual.addEventListener("scroll", update);
+    return () => {
+      visual.removeEventListener("resize", update);
+      visual.removeEventListener("scroll", update);
+    };
+  }, [open]);
 
   // Mirror the conversation into the browser session so it survives navigation
   // between pages, but is wiped automatically when the visitor closes the tab.
@@ -174,7 +202,8 @@ export function ChatWidget() {
             exit={{ scale: 0, opacity: 0 }}
             whileTap={{ scale: 0.92 }}
             onClick={() => setOpen(true)}
-            className="fixed bottom-20 right-4 md:bottom-6 md:right-6 z-[60] w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center"
+            className="fixed bottom-[6.5rem] right-4 md:bottom-6 md:right-6 z-[60] w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center"
+            style={{ marginBottom: "env(safe-area-inset-bottom)" }}
             aria-label={tr.openAria}
             data-testid="chat-launcher"
           >
@@ -186,12 +215,20 @@ export function ChatWidget() {
       <AnimatePresence>
         {open && (
           <motion.div
-            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+            initial={{ opacity: 0, scale: 0.92, y: 24 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.9, y: 20 }}
-            transition={{ type: "spring", stiffness: 380, damping: 30 }}
-            style={{ transformOrigin: "bottom right" }}
-            className="fixed bottom-20 right-4 md:bottom-6 md:right-6 z-[60] w-[calc(100vw-2rem)] max-w-[380px] h-[70vh] max-h-[560px] flex flex-col rounded-2xl overflow-hidden bg-card border border-border shadow-2xl"
+            exit={{ opacity: 0, scale: 0.92, y: 24 }}
+            transition={{ type: "spring", stiffness: 380, damping: 32 }}
+            style={
+              vv
+                ? {
+                    transformOrigin: "bottom center",
+                    height: Math.min(vv.height - 24, 620),
+                    bottom: vv.keyboard + 12,
+                  }
+                : { transformOrigin: "bottom right" }
+            }
+            className="fixed left-3 right-3 bottom-3 md:left-auto md:right-6 md:bottom-6 z-[70] md:w-[380px] h-[80dvh] md:h-[70vh] max-h-[620px] md:max-h-[560px] flex flex-col rounded-2xl overflow-hidden bg-card border border-border shadow-2xl"
           >
             <div className="flex items-center justify-between px-4 py-3 bg-primary text-primary-foreground">
               <div className="flex items-center gap-2.5">
@@ -303,6 +340,10 @@ export function ChatWidget() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+                onFocus={() => {
+                  // Once the keyboard animates in, pin the view to the latest message.
+                  setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }), 300);
+                }}
                 placeholder={tr.placeholder}
                 rows={1}
                 className="flex-1 resize-none rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 max-h-24"

@@ -64,6 +64,21 @@ export default function AboutPage() {
           </p>
         </div>
 
+        {/* Field photo — real work, real view */}
+        <div className="relative rounded-2xl overflow-hidden premium-shadow mb-8 aspect-[16/10] sm:aspect-[16/9]">
+          <img
+            src="/work-round.jpg"
+            alt={t("about.title")}
+            className="w-full h-full object-cover"
+            style={{ objectPosition: "50% 40%" }}
+            loading="lazy"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/10 to-transparent" />
+          <p className="absolute bottom-4 left-5 right-5 text-white text-sm font-medium drop-shadow leading-snug">
+            {t("hero.tagline")}
+          </p>
+        </div>
+
         {/* Story */}
         <Card className="p-8 bg-card border-0 premium-shadow mb-8">
           <div className="space-y-4 text-muted-foreground leading-relaxed">

@@ -1,7 +1,7 @@
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { ArrowRight, Sparkles, Clock, Shield, Snowflake, Leaf, Car, PaintBucket, Shovel } from "lucide-react";
+import { ArrowRight, Sparkles, Clock, Shield, Snowflake, Leaf, Car, PaintBucket, Shovel, ClipboardCheck, BadgePercent, ShieldCheck } from "lucide-react";
 import { SiWhatsapp, SiInstagram } from "react-icons/si";
 import { Mail } from "lucide-react";
 import { Typewriter } from "@/components/typewriter";
@@ -98,6 +98,23 @@ export default function LandingPage() {
             <p className="text-sm text-muted-foreground mt-6 italic">
               {t("hero.tagline")}
             </p>
+
+            {/* Trust strip — our strongest no-risk signals up front */}
+            <div className="flex flex-wrap items-center justify-center gap-2 mt-6">
+              {[
+                { icon: ClipboardCheck, label: t("trust.assessment") },
+                { icon: BadgePercent, label: t("trust.deduction") },
+                { icon: ShieldCheck, label: t("trust.guarantee") },
+              ].map(({ icon: Icon, label }) => (
+                <span
+                  key={label}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-card/80 border border-border px-3 py-1.5 text-xs font-medium text-foreground premium-shadow"
+                >
+                  <Icon className="w-3.5 h-3.5 text-primary" />
+                  {label}
+                </span>
+              ))}
+            </div>
             </div>
           </div>
         </div>
@@ -156,7 +173,7 @@ export default function LandingPage() {
               {/* Left: tall hero photo */}
               <div className="group relative rounded-2xl overflow-hidden premium-shadow aspect-[3/2] md:aspect-auto md:min-h-[360px]">
                 <img
-                  src="/work-glass.jpg"
+                  src="/work-pole.jpg"
                   alt={t("gallery.1.caption")}
                   className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
                 />
@@ -169,7 +186,7 @@ export default function LandingPage() {
               <div className="hidden md:grid grid-rows-2 gap-4 md:gap-5">
                 <div className="group relative rounded-2xl overflow-hidden premium-shadow">
                   <img
-                    src="/work-team-back.jpg"
+                    src="/work-door.jpg"
                     alt={t("gallery.2.caption")}
                     className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
                   />

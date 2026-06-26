@@ -16,7 +16,7 @@ import {
 } from "./ai";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, allPoints, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, allPoints, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind } from "@shared/project";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, totalPaidPayoutCents,
@@ -5331,7 +5331,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           type: "function",
           function: {
             name: "create_lead_from_prospect",
-            description: "EHDOTA uuden liidin (asiakas + keikka tilassa 'lead') lisäämistä hyväksytystä prospektiehdotuksesta. EI luo dataa heti — luo ehdotuksen jonka käyttäjä hyväksyy napilla. Käytä VAIN kun käyttäjä on selkeästi hyväksynyt jonkin ehdotuksen ja pyytää lisäämään sen liidiksi. Ei lähetä viestiä asiakkaalle.",
+            description: "EHDOTA uuden liidin (asiakas + keikka tilassa 'lead') lisäämistä. EI luo dataa heti — luo ehdotuksen jonka käyttäjä hyväksyy napilla. Käytä VAIN kun käyttäjä nimenomaisesti pyytää lisäämään tietyn ULKOPUOLISEN kohteen liidiksi ja antaa vähintään nimen + osoitteen/yhteystiedon. ÄLÄ KOSKAAN luo liidiä pelkän kysymyksen tai tiedonhaun perusteella (esim. 'paljonko tienasin'), äläkä käytä tiimiläisen tai käyttäjän omaa nimeä. Jos et ole varma, älä kutsu tätä — vastaa tekstillä.",
             parameters: {
               type: "object",
               properties: {
@@ -5467,9 +5467,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
                 `Lopuksi kerro, että käyttäjä voi pyytää lisäämään minkä tahansa ehdotuksen liidiksi.`;
             } else if (tc.function.name === "create_lead_from_prospect") {
               // Puoliautonominen: EI luo dataa — luo ehdotuksen jonka käyttäjä
-              // hyväksyy napilla.
-              if (!args.name || !args.description) {
+              // hyväksyy napilla. Backstop weak models (esp. Groq) that fabricate
+              // a "lead" from a plain question — e.g. naming it after the user with
+              // the question as the reason. Reject obvious junk before proposing it.
+              const leadName = String(args.name || "").trim();
+              const leadDesc = String(args.description || "").trim();
+              const hasContact = !!(args.address || args.phone || args.email);
+              const teamNames = Array.from(new Set([userName, ...FOUNDER_IDS, "joonatan", "matias"]
+                .map(s => String(s || "").toLowerCase().trim()).filter(Boolean)));
+              const nameLc = leadName.toLowerCase();
+              const looksLikeTeam = teamNames.some(t => nameLc === t || nameLc.includes(t) || t.includes(nameLc));
+              // Description/notes that just echo an earnings/report question, not a real prospect.
+              const echoesQuestion = /kysy|tienann|paljonko|ansait|montako|raportti|eilen|t[äa]n[äa][äa]n/i.test(leadDesc + " " + String(args.notes || ""));
+              if (!leadName || !leadDesc) {
                 toolResult = `Virhe: liidin ehdotukseen tarvitaan vähintään nimi ja kuvaus.`;
+              } else if (!hasContact || looksLikeTeam || echoesQuestion) {
+                toolResult = `Ehdotusta EI luotu: tämä ei näytä oikealta ulkopuoliselta prospektilta (puuttuva osoite/yhteystieto, tai nimi viittaa tiimiläiseen / käyttäjän kysymykseen). ÄLÄ ehdota liidiä ellei käyttäjä nimenomaisesti pyydä lisäämään tietyn ulkopuolisen kohteen (nimi + osoite). Vastaa käyttäjän viestiin tekstillä.`;
               } else {
                 pendingActions.push({
                   id: `act_${pendingActions.length + 1}`,
@@ -5738,7 +5751,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const installmentLine = deal && deal.capCents > 0
           ? ` Yhden maksuerän suuruus ${eur(Math.round(deal.capCents / pp.periods))} (kiinteä: kokonaishinta jaettuna ${pp.periods} erään — älä laske ikkunamäärästä).`
           : "";
-        lines.push(`- #${j.id} ${gigName}: ${washed}/${total} ikkunaa pesty (${pct} %).${dealLine} Maksuerä ${pp.currentPeriod}/${pp.periods}, ${pp.done ? "kaikki erät katettu" : `${pp.toNext} ikkunaa seuraavaan maksuerään`}.${installmentLine}${invLine}${marginLine}${contact ? ` Asiakkaan yhteyshenkilö: ${contact}.` : ""}`);
+        // Pace / weekly throughput so the assistant can answer "miten viikko meni
+        // / milloin valmista". Based on the retained activity log (an estimate).
+        const eff = computeEfficiency(proj);
+        const paceLine = ` Vauhti: tänään ${eff.todayWashed} ikkunaa, viim. 7 pv ${eff.weekWashed}, ka ${eff.perDay.toFixed(1)}/työpäivä` +
+          (eff.etaWorkingDays != null ? `, arvio valmis ~${eff.etaWorkingDays} työpäivässä` : "") + ".";
+        lines.push(`- #${j.id} ${gigName}: ${washed}/${total} ikkunaa pesty (${pct} %).${dealLine} Maksuerä ${pp.currentPeriod}/${pp.periods}, ${pp.done ? "kaikki erät katettu" : `${pp.toNext} ikkunaa seuraavaan maksuerään`}.${installmentLine}${paceLine}${invLine}${marginLine}${contact ? ` Asiakkaan yhteyshenkilö: ${contact}.` : ""}`);
       }
     }
 
@@ -5760,7 +5778,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (isFounderMember(userId)) {
         const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
         const todayMs = startOfToday.getTime();
+        const weekStartMs = todayMs - 6 * 86400_000; // today + 6 prior days
         let todayOwn = 0, todayPassive = 0, totalOwn = 0, totalPassive = 0;
+        // Per-day earnings for the last 7 days, so the assistant can answer
+        // "entäs eilen / miten viikko meni". Keyed by local calendar day.
+        const byDayOwn = new Map<string, number>();
+        const byDayPassive = new Map<string, number>();
+        const byDayTs = new Map<string, number>(); // representative ts per day (label/sort)
 
         // ── Todennettava jälki ("raha-avustaja"): emme anna vain euroa vaan myös
         // todisteen mistä se tulee — mikä ikkuna, kerros, aika ja KUKA sen merkitsi.
@@ -5776,6 +5800,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const floorLabel = (f: string) => f === "K" ? "Kellari" : `${f}. kerros`;
         const hhmm = (ts: number) => new Date(ts).toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" });
         const dmHm = (ts: number) => `${new Date(ts).toLocaleDateString("fi-FI")} klo ${hhmm(ts)}`;
+        const dayKeyOf = (ts: number) => { const d = new Date(ts); return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`; };
+        const dayLabel = (ts: number) => new Date(ts).toLocaleDateString("fi-FI", { weekday: "short", day: "numeric", month: "numeric" });
         // Windows credited to ME today (with who actually marked each one).
         const myToday: Array<{ floor: string; ts: number; markedBy: string; gig: string }> = [];
         // Windows credited to ME across the retained log (for "latest dot" lookups).
@@ -5854,6 +5880,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           }
           totalOwn += Math.round((totalBy.get(userId) || 0) * kateCents);
           totalPassive += Math.round(totalPool / founderCount);
+
+          // Per-day breakdown for the last 7 days, deduped per (day, window).
+          // Same own/pool math as "today", just grouped by calendar day so the
+          // assistant can report yesterday / the week. (Based on the retained
+          // log, which is capped — older days may be partial.)
+          const seenDayKey = new Set<string>();
+          const byDayWorker = new Map<string, Map<string, number>>();
+          for (const l of project.log) {
+            if (l.status !== "pesty" || l.p !== deal.billablePriority || l.ts < weekStartMs) continue;
+            const dk = dayKeyOf(l.ts);
+            const dedupe = dk + "|" + l.key;
+            if (seenDayKey.has(dedupe)) continue;
+            seenDayKey.add(dedupe);
+            const w = effId(project.washedBy[l.key] || l.by || "");
+            if (!w) continue;
+            let mp = byDayWorker.get(dk);
+            if (!mp) { mp = new Map(); byDayWorker.set(dk, mp); }
+            mp.set(w, (mp.get(w) || 0) + 1);
+            if (!byDayTs.has(dk) || l.ts > (byDayTs.get(dk) || 0)) byDayTs.set(dk, l.ts);
+          }
+          for (const [dk, mp] of Array.from(byDayWorker)) {
+            let pool = 0;
+            for (const [w, n] of Array.from(mp)) {
+              if (!isFounderMember(w, mRoleOf(w))) pool += n * Math.max(0, kateCents - rateOf(w, mRoleOf(w)));
+            }
+            byDayOwn.set(dk, (byDayOwn.get(dk) || 0) + (mp.get(userId) || 0) * kateCents);
+            byDayPassive.set(dk, (byDayPassive.get(dk) || 0) + Math.round(pool / founderCount));
+          }
         }
         const todayTotal = todayOwn + todayPassive;
         const grand = totalOwn + totalPassive;
@@ -5899,6 +5953,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               ? `merkitsi ${nameOf(latest.markedBy)} (ei sinä itse)`
               : latest.markedBy === userId ? "merkitsit itse" : "merkitsijä ei tiedossa";
             lines.push(`Viimeisin sinulle pestyksi merkitty ikkuna: ${floorLabel(latest.floor)} — ${latest.gig}, ${dmHm(latest.ts)}, ${who}.`);
+          }
+
+          // ── Eilen + viime 7 päivää (jotta avustaja osaa vastata "entäs eilen") ──
+          const yKey = dayKeyOf(todayMs - 86400_000);
+          const yOwn = byDayOwn.get(yKey) || 0;
+          const yPassive = byDayPassive.get(yKey) || 0;
+          if (yOwn || yPassive) {
+            lines.push(`Eilen ansaitsit yhteensä ${eur(yOwn + yPassive)} (oma työ ${eur(yOwn)} + passiivinen ${eur(yPassive)}).`);
+          } else {
+            lines.push(`Eilen sinulle ei ole kirjattu ansioita.`);
+          }
+          // Daily list for the last 7 days, newest first, with a week total.
+          const dayKeys = Array.from(new Set(Array.from(byDayOwn.keys()).concat(Array.from(byDayPassive.keys()))))
+            .sort((a, b) => (byDayTs.get(b) || 0) - (byDayTs.get(a) || 0));
+          if (dayKeys.length) {
+            let weekTotal = 0;
+            const parts = dayKeys.map(dk => {
+              const tot = (byDayOwn.get(dk) || 0) + (byDayPassive.get(dk) || 0);
+              weekTotal += tot;
+              return `${dayLabel(byDayTs.get(dk) || todayMs)} ${eur(tot)}`;
+            });
+            lines.push(`Viimeiset 7 pv (ansiot/päivä): ${parts.join(", ")}. Viikon yhteensä ${eur(weekTotal)}. (Perustuu viimeisimpiin merkintöihin; vanhemmat päivät voivat olla osittaisia.)`);
           }
         }
       }

@@ -2,8 +2,11 @@
  * In-admin AI assistant — floating helper for the team.
  *
  * Knows the operational data (role-scoped server side) and helps with tasks:
- * summaries, scheduling/route ideas, drafting customer messages, optimising.
- * It advises and drafts — it does not change data itself.
+ * summaries, scheduling/route ideas, drafting customer messages, optimising,
+ * and explaining the money (who washed what, why you earned what).
+ * It advises, drafts and PROPOSES changes — but never writes data on its own:
+ * data-changing actions (update job, create lead) surface as confirm cards the
+ * user must approve, and emails are drafts the user sends.
  *
  * Conversation persists across admin navigation (sessionStorage) so the team
  * doesn't lose context when moving between pages.
@@ -11,7 +14,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, X, Send, Loader2, Trash2, Copy, Check, AlertCircle, Mail, AlertTriangle } from "lucide-react";
+import { Sparkles, X, Send, Loader2, Trash2, Copy, Check, AlertCircle, Mail, AlertTriangle, ClipboardCheck, UserPlus } from "lucide-react";
 import { getAdminProfile } from "@/lib/admin-profile";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { API_BASE, withAuth } from "@/lib/api";
@@ -25,7 +28,24 @@ interface EmailDraft {
   warning?: string;
 }
 type DraftState = "pending" | "sending" | "sent" | "error";
-interface Msg { role: "user" | "assistant"; content: string; drafts?: EmailDraft[]; draftStates?: DraftState[]; }
+// A data-changing action the assistant PROPOSES — nothing is written until the
+// user confirms it here with a button (semi-autonomous, same idea as drafts).
+interface PendingAction {
+  id: string;
+  type: "update_job" | "create_lead";
+  title: string;
+  detail: string;
+  payload: any;
+}
+type ActionState = "pending" | "applying" | "done" | "error";
+interface Msg {
+  role: "user" | "assistant";
+  content: string;
+  drafts?: EmailDraft[];
+  draftStates?: DraftState[];
+  actions?: PendingAction[];
+  actionStates?: ActionState[];
+}
 
 const STORE_KEY = "puuhapatet_assistant_thread";
 
@@ -90,11 +110,14 @@ export function AdminAssistant() {
       });
       const data = await res.json();
       const drafts: EmailDraft[] | undefined = Array.isArray(data.drafts) && data.drafts.length ? data.drafts : undefined;
+      const actions: PendingAction[] | undefined = Array.isArray(data.actions) && data.actions.length ? data.actions : undefined;
       setMessages([...next, {
         role: "assistant",
         content: data.reply || data.error || "Ei vastausta.",
         drafts,
         draftStates: drafts ? drafts.map(() => "pending" as DraftState) : undefined,
+        actions,
+        actionStates: actions ? actions.map(() => "pending" as ActionState) : undefined,
       }]);
     } catch {
       setMessages([...next, { role: "assistant", content: "Yhteysvirhe. Yritä hetken kuluttua uudelleen." }]);
@@ -122,6 +145,31 @@ export function AdminAssistant() {
       });
       const data = await res.json();
       setState(res.ok && data.ok ? "sent" : "error");
+    } catch {
+      setState("error");
+    }
+  }
+
+  async function applyAction(msgIndex: number, actionIndex: number) {
+    const msg = messages[msgIndex];
+    const action = msg?.actions?.[actionIndex];
+    if (!action) return;
+    const cur = msg.actionStates?.[actionIndex];
+    if (cur === "applying" || cur === "done") return;
+    const setState = (s: ActionState) => setMessages(prev => prev.map((m, i) => {
+      if (i !== msgIndex || !m.actionStates) return m;
+      const as = [...m.actionStates]; as[actionIndex] = s;
+      return { ...m, actionStates: as };
+    }));
+    setState("applying");
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/assistant/apply-action`, {
+        method: "POST",
+        headers: withAuth({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ type: action.type, payload: action.payload, role: profile?.role, userId: profile?.id }),
+      });
+      const data = await res.json();
+      setState(res.ok && data.ok ? "done" : "error");
     } catch {
       setState("error");
     }
@@ -279,6 +327,46 @@ export function AdminAssistant() {
                                   {state === "sending"
                                     ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Lähetetään…</>
                                     : <><Send className="w-3.5 h-3.5" /> Hyväksy ja lähetä</>}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {!mine && m.actions?.map((action, ai) => {
+                        const state = m.actionStates?.[ai] ?? "pending";
+                        const Icon = action.type === "create_lead" ? UserPlus : ClipboardCheck;
+                        return (
+                          <div key={ai} className="w-full rounded-xl border border-border bg-card overflow-hidden">
+                            <div className="flex items-center gap-1.5 px-3 py-2 bg-muted/50 border-b border-border">
+                              <Icon className="w-3.5 h-3.5 text-primary shrink-0" />
+                              <span className="text-xs font-medium truncate">{action.title}</span>
+                            </div>
+                            {action.detail && (
+                              <p className="px-3 py-2 text-[13px] leading-relaxed text-foreground/90 whitespace-pre-wrap">{action.detail}</p>
+                            )}
+                            <p className="px-3 pt-0.5 pb-1 text-[11px] text-muted-foreground">Ehdotus — mitään ei muuteta ennen kuin vahvistat.</p>
+                            <div className="px-3 pb-3 pt-1">
+                              {state === "done" ? (
+                                <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                                  <Check className="w-4 h-4" /> Tehty
+                                </div>
+                              ) : state === "error" ? (
+                                <button
+                                  onClick={() => applyAction(i, ai)}
+                                  className="w-full text-xs font-medium px-3 py-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
+                                >
+                                  Vahvistus epäonnistui — yritä uudelleen
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => applyAction(i, ai)}
+                                  disabled={state === "applying"}
+                                  className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity disabled:opacity-50"
+                                >
+                                  {state === "applying"
+                                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Vahvistetaan…</>
+                                    : <><Check className="w-3.5 h-3.5" /> Vahvista</>}
                                 </button>
                               )}
                             </div>

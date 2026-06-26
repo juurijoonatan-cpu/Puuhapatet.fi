@@ -3658,9 +3658,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const deal = fixedDealFor(project);
         if (!deal) continue; // vain allekirjoitetut kiinteähintaiset keikat (FR8)
         const crew = project.crew ?? [];
-        const dealCents = Math.round(deal.pricePerWindow * 100);
+        // Per-window kate is DYNAMIC, derived from the dots: the fixed contract
+        // total (capCents) divided by the LIVE billable (red) windows on the map —
+        // NOT the nominal €37,50 (which assumes exactly 168 windows). Fewer red
+        // dots ⇒ higher €/ikkuna. This mirrors the in-app dashboard
+        // (project.tsx → internalKateCents) so the email and the app agree.
+        const billableTotal = allPoints(project).filter((p) => p.p === deal.billablePriority).length;
+        const kateCents = billableTotal > 0 ? Math.round(deal.capCents / billableTotal) : Math.round(deal.pricePerWindow * 100);
         const rateOf = (id: string, mRole?: string) =>
-          isFounderMember(id, mRole) ? dealCents : (crew.find((c) => c.id === id)?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS);
+          isFounderMember(id, mRole) ? kateCents : (crew.find((c) => c.id === id)?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS);
         const founderCount = Math.max(1, crew.filter((c) => isFounderMember(c.id, c.role)).length || FOUNDER_IDS.length);
         // Trainee windows (e.g. Milja) credit their responsible leader (Matias).
         const effId = (id: string): string => {
@@ -3681,11 +3687,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           if (!w) continue;
           todayBy.set(w, (todayBy.get(w) || 0) + 1);
         }
+        // A founder earns the full kate on their own windows, and on each WORKER
+        // window a margin of (kate − that worker's rate, e.g. 38,18 − 20 = 18,18 €),
+        // split evenly between the founders.
         let todayPool = 0;
         for (const [w, n] of Array.from(todayBy)) {
-          if (!isFounderMember(w, mRoleOf(w))) todayPool += n * Math.max(0, dealCents - rateOf(w, mRoleOf(w)));
+          if (!isFounderMember(w, mRoleOf(w))) todayPool += n * Math.max(0, kateCents - rateOf(w, mRoleOf(w)));
         }
-        const gTodayOwn = (todayBy.get(userId) || 0) * dealCents;
+        const gTodayOwn = (todayBy.get(userId) || 0) * kateCents;
         const gTodayPassive = Math.round(todayPool / founderCount);
 
         // ── Cumulative (final attribution, billable priority only) ──
@@ -3700,9 +3709,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
         let totalPool = 0;
         for (const [w, n] of Array.from(totalByWorker)) {
-          if (!isFounderMember(w, mRoleOf(w))) totalPool += n * Math.max(0, dealCents - rateOf(w, mRoleOf(w)));
+          if (!isFounderMember(w, mRoleOf(w))) totalPool += n * Math.max(0, kateCents - rateOf(w, mRoleOf(w)));
         }
-        const gTotalOwn = Math.round((totalByWorker.get(userId) || 0) * dealCents);
+        const gTotalOwn = Math.round((totalByWorker.get(userId) || 0) * kateCents);
         const gTotalPassive = Math.round(totalPool / founderCount);
 
         todayOwnCents += gTodayOwn; todayPassiveCents += gTodayPassive;
@@ -5265,7 +5274,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           type: "function",
           function: {
             name: "update_job",
-            description: "Päivitä keikan status tai lisää muistiinpano. Käytä kun käyttäjä pyytää päivittämään keikan tilan tai lisäämään huomion.",
+            description: "EHDOTA keikan statuksen päivitystä tai muistiinpanon lisäämistä. EI muuta dataa heti — luo ehdotuksen jonka käyttäjä hyväksyy napilla. Käytä VAIN kun käyttäjä nimenomaisesti pyytää muuttamaan keikkaa (esim. 'merkitse keikka 12 valmiiksi'). ÄLÄ kutsu tätä pelkän kysymyksen tai jutustelun perusteella, äläkä kirjaa käyttäjän viestejä muistiinpanoiksi.",
             parameters: {
               type: "object",
               properties: {
@@ -5317,7 +5326,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           type: "function",
           function: {
             name: "create_lead_from_prospect",
-            description: "Luo uusi liidi (asiakas + keikka tilassa 'lead') hyväksytystä prospektiehdotuksesta. Käytä VAIN kun käyttäjä on selkeästi hyväksynyt jonkin ehdotuksen ja pyytää lisäämään sen liidiksi. Ei lähetä viestiä asiakkaalle.",
+            description: "EHDOTA uuden liidin (asiakas + keikka tilassa 'lead') lisäämistä hyväksytystä prospektiehdotuksesta. EI luo dataa heti — luo ehdotuksen jonka käyttäjä hyväksyy napilla. Käytä VAIN kun käyttäjä on selkeästi hyväksynyt jonkin ehdotuksen ja pyytää lisäämään sen liidiksi. Ei lähetä viestiä asiakkaalle.",
             parameters: {
               type: "object",
               properties: {
@@ -5349,13 +5358,25 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         jobId: number; customerName: string; email: string;
         style: OutreachStyle; message: string; warning?: string;
       }> = [];
+      // Dataa muuttavat työkalut (update_job, create_lead_from_prospect) EIVÄT
+      // suorita muutosta heti. Ne keräävät tänne EHDOTUKSEN, jonka frontend näyttää
+      // kortteina ja käyttäjä hyväksyy napilla → /api/admin/assistant/apply-action.
+      // Näin avustaja ei koskaan muuta keikkoja ilman käyttäjän nimenomaista lupaa.
+      const pendingActions: Array<{
+        id: string; type: "update_job" | "create_lead"; title: string;
+        detail: string; payload: any;
+      }> = [];
       for (let round = 0; round < 3; round++) {
         const result = await chatCompleteWithTools(turns, adminTools, { temperature: 0.4, maxTokens: 900 });
 
         if (!result.toolCalls || result.toolCalls.length === 0) {
           const reply = result.text ?? "En valitettavasti saanut yhteyttä tekoälypalveluun juuri nyt. Yritä hetken kuluttua uudelleen.";
           const fullReply = toolResultNotes.length > 0 ? toolResultNotes.join("\n") + "\n\n" + reply : reply;
-          return res.json({ reply: fullReply, drafts: emailDrafts.length ? emailDrafts : undefined });
+          return res.json({
+            reply: fullReply,
+            drafts: emailDrafts.length ? emailDrafts : undefined,
+            actions: pendingActions.length ? pendingActions : undefined,
+          });
         }
 
         turns.push({ role: "assistant", content: result.text ?? "", tool_calls: result.toolCalls });
@@ -5365,17 +5386,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           try {
             const args = JSON.parse(tc.function.arguments);
             if (tc.function.name === "update_job") {
+              // Puoliautonominen: EI suorita muutosta — luo ehdotuksen jonka
+              // käyttäjä hyväksyy napilla. Näin avustaja ei koskaan muokkaa
+              // keikkaa ilman nimenomaista lupaa (esim. omin päin lisätyt notet).
               const jobRow = (await db.select().from(jobs).where(eq(jobs.id, args.job_id)).limit(1))[0];
               if (!jobRow) {
                 toolResult = `Virhe: keikkaa #${args.job_id} ei löydy.`;
+              } else if (!args.status && !args.notes) {
+                toolResult = `Ei muutosta ehdotettavaksi keikalle #${args.job_id} (ei statusta eikä muistiinpanoa).`;
               } else {
-                const updates: any = { updatedAt: new Date() };
-                if (args.status) updates.status = args.status;
-                if (args.notes) updates.notes = (jobRow.notes || "") + "\n[" + new Date().toLocaleDateString("fi-FI") + "] " + args.notes;
-                await db.update(jobs).set(updates).where(eq(jobs.id, args.job_id));
-                const changes = [args.status ? `status → ${args.status}` : null, args.notes ? "muistiinpano lisätty" : null].filter(Boolean).join(", ");
-                toolResult = `Keikka #${args.job_id} päivitetty: ${changes}.`;
-                toolResultNotes.push(`✓ ${toolResult}`);
+                const customer = jobRow.customerId
+                  ? (await db.select().from(customers).where(eq(customers.id, jobRow.customerId)).limit(1))[0]
+                  : null;
+                const changes = [
+                  args.status ? `status → ${args.status}` : null,
+                  args.notes ? `muistiinpano: "${String(args.notes).slice(0, 120)}"` : null,
+                ].filter(Boolean).join(", ");
+                pendingActions.push({
+                  id: `act_${pendingActions.length + 1}`,
+                  type: "update_job",
+                  title: `Päivitä keikka #${args.job_id}${customer?.name ? ` · ${customer.name}` : ""}`,
+                  detail: changes,
+                  payload: { job_id: args.job_id, status: args.status || undefined, notes: args.notes || undefined },
+                });
+                toolResult = `Ehdotus luotu (EI vielä tehty): keikka #${args.job_id} — ${changes}. Käyttäjä näkee ehdotuksen ja hyväksyy sen itse napilla. ÄLÄ väitä että muutos on jo tehty.`;
               }
             } else if (tc.function.name === "draft_followup_email") {
               // Puoliautonominen: ei lähetä — luo luonnos jonka käyttäjä hyväksyy.
@@ -5424,26 +5458,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
                 `ÄLÄ keksi oikeiden ihmisten nimiä tai yhteystietoja. Muotoile selkeänä numeroituna listana. ` +
                 `Lopuksi kerro, että käyttäjä voi pyytää lisäämään minkä tahansa ehdotuksen liidiksi.`;
             } else if (tc.function.name === "create_lead_from_prospect") {
-              try {
-                const [newCustomer] = await db.insert(customers).values({
-                  name: String(args.name).slice(0, 200),
-                  phone: String(args.phone || "").slice(0, 60),
-                  email: args.email ? String(args.email).slice(0, 200) : null,
-                  address: String(args.address || "—").slice(0, 300),
-                  notes: args.notes ? `[Prospekti — AI-ehdotus ${new Date().toLocaleDateString("fi-FI")}] ${args.notes}` : null,
-                  ownedBy: String(userId || ""),
-                }).returning();
-                const [newJob] = await db.insert(jobs).values({
-                  customerId: newCustomer.id,
-                  description: String(args.description).slice(0, 500),
-                  agreedPrice: 0,
-                  status: "lead",
-                  notes: `[${new Date().toLocaleDateString("fi-FI")}] Liidi luotu AI:n prospektiehdotuksesta.${args.notes ? " Peruste: " + args.notes : ""}`,
-                }).returning();
-                toolResult = `Liidi luotu: ${newCustomer.name} (keikka #${newJob.id}, tila: lead). Se näkyy nyt avoimissa liideissä.`;
-                toolResultNotes.push(`✓ Lisäsin liidin: ${newCustomer.name} (#${newJob.id}).`);
-              } catch (e: any) {
-                toolResult = `Virhe liidin luonnissa: ${e.message}`;
+              // Puoliautonominen: EI luo dataa — luo ehdotuksen jonka käyttäjä
+              // hyväksyy napilla.
+              if (!args.name || !args.description) {
+                toolResult = `Virhe: liidin ehdotukseen tarvitaan vähintään nimi ja kuvaus.`;
+              } else {
+                pendingActions.push({
+                  id: `act_${pendingActions.length + 1}`,
+                  type: "create_lead",
+                  title: `Lisää liidi: ${String(args.name).slice(0, 80)}`,
+                  detail: [String(args.description).slice(0, 120), args.address ? `📍 ${args.address}` : null, args.notes ? `Peruste: ${String(args.notes).slice(0, 100)}` : null].filter(Boolean).join(" · "),
+                  payload: {
+                    name: String(args.name).slice(0, 200),
+                    address: args.address ? String(args.address).slice(0, 300) : "",
+                    phone: args.phone ? String(args.phone).slice(0, 60) : "",
+                    email: args.email ? String(args.email).slice(0, 200) : "",
+                    description: String(args.description).slice(0, 500),
+                    notes: args.notes ? String(args.notes).slice(0, 400) : "",
+                  },
+                });
+                toolResult = `Ehdotus luotu (EI vielä tehty): liidi "${args.name}". Käyttäjä näkee ehdotuksen ja hyväksyy sen itse napilla. ÄLÄ väitä että liidi on jo lisätty.`;
               }
             } else {
               toolResult = `Tuntematon työkalu: ${tc.function.name}`;
@@ -5454,9 +5488,64 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           turns.push({ role: "tool", tool_call_id: tc.id, content: toolResult });
         }
       }
-      res.json({ reply: toolResultNotes.join("\n") || "Toimenpiteet suoritettu.", drafts: emailDrafts.length ? emailDrafts : undefined });
+      res.json({
+        reply: toolResultNotes.join("\n") || "Tein ehdotukset — tarkista ja hyväksy ne alta.",
+        drafts: emailDrafts.length ? emailDrafts : undefined,
+        actions: pendingActions.length ? pendingActions : undefined,
+      });
     } catch (e: any) {
       console.error("Admin assistant error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Admin: apply an assistant-proposed action (HOST confirms) ──────────────
+  // Puoliautonominen flow: avustaja ehdottaa (update_job / create_lead), käyttäjä
+  // hyväksyy → tämä suorittaa muutoksen. Avustaja ei siis koskaan muuta dataa itse.
+  // Body: { type: "update_job" | "create_lead", payload, role, userId }
+  app.post("/api/admin/assistant/apply-action", async (req, res) => {
+    try {
+      const { type, payload, role, userId } = req.body ?? {};
+      if (role !== "HOST") return res.status(403).json({ error: "Vain perustaja voi vahvistaa toimenpiteitä." });
+      const p = payload ?? {};
+
+      if (type === "update_job") {
+        const jobId = Number(p.job_id);
+        if (!jobId) return res.status(400).json({ error: "Keikan ID puuttuu." });
+        const jobRow = (await db.select().from(jobs).where(eq(jobs.id, jobId)).limit(1))[0];
+        if (!jobRow) return res.status(404).json({ error: `Keikkaa #${jobId} ei löydy.` });
+        const updates: any = { updatedAt: new Date() };
+        const validStatus = ["lead", "scheduled", "in_progress", "done"].includes(String(p.status));
+        if (validStatus) updates.status = String(p.status);
+        if (p.notes) updates.notes = (jobRow.notes || "") + "\n[" + new Date().toLocaleDateString("fi-FI") + " avustaja] " + String(p.notes).slice(0, 400);
+        await db.update(jobs).set(updates).where(eq(jobs.id, jobId));
+        const changes = [validStatus ? `status → ${p.status}` : null, p.notes ? "muistiinpano lisätty" : null].filter(Boolean).join(", ");
+        return res.json({ ok: true, message: `Keikka #${jobId} päivitetty: ${changes || "ei muutosta"}.` });
+      }
+
+      if (type === "create_lead") {
+        if (!p.name || !p.description) return res.status(400).json({ error: "Nimi ja kuvaus vaaditaan." });
+        const [newCustomer] = await db.insert(customers).values({
+          name: String(p.name).slice(0, 200),
+          phone: String(p.phone || "").slice(0, 60),
+          email: p.email ? String(p.email).slice(0, 200) : null,
+          address: String(p.address || "—").slice(0, 300),
+          notes: p.notes ? `[Prospekti — AI-ehdotus ${new Date().toLocaleDateString("fi-FI")}] ${String(p.notes).slice(0, 400)}` : null,
+          ownedBy: String(userId || ""),
+        }).returning();
+        const [newJob] = await db.insert(jobs).values({
+          customerId: newCustomer.id,
+          description: String(p.description).slice(0, 500),
+          agreedPrice: 0,
+          status: "lead",
+          notes: `[${new Date().toLocaleDateString("fi-FI")}] Liidi luotu AI:n prospektiehdotuksesta.${p.notes ? " Peruste: " + String(p.notes).slice(0, 200) : ""}`,
+        }).returning();
+        return res.json({ ok: true, message: `Liidi lisätty: ${newCustomer.name} (keikka #${newJob.id}).` });
+      }
+
+      return res.status(400).json({ error: `Tuntematon toimenpide: ${type}` });
+    } catch (e: any) {
+      console.error("Assistant apply-action error:", e);
       res.status(500).json({ error: e.message });
     }
   });
@@ -5615,7 +5704,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             const drift = total !== nominal
               ? ` HUOM: punaisia ikkunoita kartalla ${total}, sovittu mitoitus ${nominal} — tarkista (poikkeama ${total < nominal ? "−" : "+"}${Math.abs(total - nominal)} ikkunaa).`
               : "";
-            marginLine = ` Sisäinen kate ${perWin}/ikkuna (kiinteä ${eur(deal.capCents)} jaettuna ${total} punaiselle; tekijän palkkio ennallaan).${drift}`;
+            // Per-window kate is dynamic (capCents / live red windows), so it is
+            // NOT locked at the nominal €37,50 — with fewer red dots it is higher.
+            // From a WORKER's window the founders keep (kate − työntekijän €/ikkuna),
+            // esim. oletustyöntekijä 20 €/ikkuna. Omasta ikkunasta jää koko kate.
+            const kateCents = Math.round(deal.capCents / total);
+            const workerMargin = eur(Math.max(0, kateCents - DEFAULT_WORKER_PER_WINDOW_CENTS));
+            marginLine = ` Sisäinen kate ${perWin}/ikkuna (kiinteä ${eur(deal.capCents)} jaettuna ${total} punaiselle; EI lukittu 37,50 €:oon — lasketaan kartan punaisista). Omasta ikkunasta perustajille jää koko kate ${perWin}; työntekijän ikkunasta jää kate ${workerMargin} (kate − työntekijän €/ikkuna, oletus 20 €), joka jaetaan perustajien kesken.${drift}`;
           }
         }
         const pct = total > 0 ? Math.round((washed / total) * 100) : 0;
@@ -5658,15 +5753,40 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
         const todayMs = startOfToday.getTime();
         let todayOwn = 0, todayPassive = 0, totalOwn = 0, totalPassive = 0;
+
+        // ── Todennettava jälki ("raha-avustaja"): emme anna vain euroa vaan myös
+        // todisteen mistä se tulee — mikä ikkuna, kerros, aika ja KUKA sen merkitsi.
+        // Näin käyttäjä voi tarkistaa esim. "miksi minulle on kirjattu 1 ikkuna,
+        // kun en pessyt yhtään" (pomo on voinut merkitä sen hänen nimiinsä).
+        const cap = (s: string) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+        const nameById = new Map<string, string>([["joonatan", "Joonatan"], ["matias", "Matias"]]);
+        for (const j of allJobs) {
+          const pj = parseProject(j.projectData ?? null);
+          for (const m of pj?.crew ?? []) if (m.id && m.name) nameById.set(m.id, m.name);
+        }
+        const nameOf = (id: string) => id ? (nameById.get(id) || cap(id)) : "?";
+        const floorLabel = (f: string) => f === "K" ? "Kellari" : `${f}. kerros`;
+        const hhmm = (ts: number) => new Date(ts).toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" });
+        const dmHm = (ts: number) => `${new Date(ts).toLocaleDateString("fi-FI")} klo ${hhmm(ts)}`;
+        // Windows credited to ME today (with who actually marked each one).
+        const myToday: Array<{ floor: string; ts: number; markedBy: string; gig: string }> = [];
+        // Windows credited to ME across the retained log (for "latest dot" lookups).
+        const myRecent: Array<{ floor: string; ts: number; markedBy: string; gig: string }> = [];
+        // Who washed how many today, across the founder's fixed-price gigs.
+        const washedTodayBy = new Map<string, number>();
+
         for (const j of allJobs) {
           const project = parseProject(j.projectData ?? null);
           if (!project) continue;
           const deal = fixedDealFor(project);
           if (!deal) continue;
           const crew = project.crew ?? [];
-          const dealCents = Math.round(deal.pricePerWindow * 100);
+          // DYNAMIC per-window kate from the dots (capCents / live red windows),
+          // matching the dashboard — not the nominal €37,50. See daily-earnings.
+          const billableTotal = allPoints(project).filter(p => p.p === deal.billablePriority).length;
+          const kateCents = billableTotal > 0 ? Math.round(deal.capCents / billableTotal) : Math.round(deal.pricePerWindow * 100);
           const rateOf = (id: string, mRole?: string) =>
-            isFounderMember(id, mRole) ? dealCents : (crew.find(c => c.id === id)?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS);
+            isFounderMember(id, mRole) ? kateCents : (crew.find(c => c.id === id)?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS);
           const founderCount = Math.max(1, crew.filter(c => isFounderMember(c.id, c.role)).length || FOUNDER_IDS.length);
           const effId = (id: string): string => {
             const mm = crew.find(c => c.id === id);
@@ -5674,8 +5794,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             return t ? t.responsibleLeaderId : id;
           };
           const mRoleOf = (id: string) => crew.find(c => c.id === id)?.role;
+          const gigName = project.building?.name || j.description?.slice(0, 40) || `keikka #${j.id}`;
 
-          // Today (log, deduped per key, billable priority only).
+          // Today (log, deduped per key, billable priority only). The log is
+          // newest-first, so the first entry seen per window is the latest mark.
           const seenToday = new Set<string>();
           const todayBy = new Map<string, number>();
           for (const l of project.log) {
@@ -5685,12 +5807,27 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             const w = effId(project.washedBy[l.key] || l.by || "");
             if (!w) continue;
             todayBy.set(w, (todayBy.get(w) || 0) + 1);
+            washedTodayBy.set(w, (washedTodayBy.get(w) || 0) + 1);
+            // If this window is credited to ME, record the evidence (who marked it).
+            if (w === userId) myToday.push({ floor: l.floor, ts: l.ts, markedBy: l.by || "", gig: gigName });
+          }
+
+          // Recent windows credited to ME (across the whole retained log) so the
+          // assistant can answer "which floor was the latest dot marked for me".
+          const seenRecent = new Set<string>();
+          for (const l of project.log) {
+            if (l.status !== "pesty" || l.p !== deal.billablePriority) continue;
+            if (seenRecent.has(l.key)) continue;
+            seenRecent.add(l.key);
+            if (effId(project.washedBy[l.key] || l.by || "") === userId) {
+              myRecent.push({ floor: l.floor, ts: l.ts, markedBy: l.by || "", gig: gigName });
+            }
           }
           let todayPool = 0;
           for (const [w, n] of Array.from(todayBy)) {
-            if (!isFounderMember(w, mRoleOf(w))) todayPool += n * Math.max(0, dealCents - rateOf(w, mRoleOf(w)));
+            if (!isFounderMember(w, mRoleOf(w))) todayPool += n * Math.max(0, kateCents - rateOf(w, mRoleOf(w)));
           }
-          todayOwn += (todayBy.get(userId) || 0) * dealCents;
+          todayOwn += (todayBy.get(userId) || 0) * kateCents;
           todayPassive += Math.round(todayPool / founderCount);
 
           // Cumulative (final attribution, billable priority only).
@@ -5705,9 +5842,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           }
           let totalPool = 0;
           for (const [w, n] of Array.from(totalBy)) {
-            if (!isFounderMember(w, mRoleOf(w))) totalPool += n * Math.max(0, dealCents - rateOf(w, mRoleOf(w)));
+            if (!isFounderMember(w, mRoleOf(w))) totalPool += n * Math.max(0, kateCents - rateOf(w, mRoleOf(w)));
           }
-          totalOwn += Math.round((totalBy.get(userId) || 0) * dealCents);
+          totalOwn += Math.round((totalBy.get(userId) || 0) * kateCents);
           totalPassive += Math.round(totalPool / founderCount);
         }
         const todayTotal = todayOwn + todayPassive;
@@ -5715,10 +5852,46 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         if (grand > 0 || todayTotal > 0) {
           lines.push(
             `\nOmat ansiosi (HENKILÖKOHTAINEN — vain sinulle, ${userName}; älä koskaan kerro muille käyttäjille): ` +
-            `tänään yhteensä ${eur(todayTotal)} — oma työ ${eur(todayOwn)} + passiivinen tuotto-osuus ${eur(todayPassive)} ` +
+            `tänään yhteensä ${eur(todayTotal)} — oma työ ${eur(todayOwn)} (${myToday.length} ikkunaa kirjattu sinulle tänään) + passiivinen tuotto-osuus ${eur(todayPassive)} ` +
             `(passiivinen kertyy vaikka et itse pesisi yhtään ikkunaa). ` +
             `Koko kertymäsi tähän mennessä ${eur(grand)} (oma työ ${eur(totalOwn)} + passiivinen ${eur(totalPassive)}).`,
           );
+
+          // Who washed how many today (names) — "kuka pesi montako".
+          if (washedTodayBy.size) {
+            const tally = Array.from(washedTodayBy.entries())
+              .sort((a, b) => b[1] - a[1])
+              .map(([w, n]) => `${nameOf(w)} ${n}`)
+              .join(", ");
+            lines.push(`Tänään pestyt ikkunat (kuka pesi montako, todelliset merkinnät): ${tally}.`);
+          }
+
+          // Per-window evidence for MY credited windows today, so the assistant
+          // can prove (or flag) each one: floor, time, and who marked it.
+          if (myToday.length) {
+            const detail = myToday
+              .sort((a, b) => b.ts - a.ts)
+              .slice(0, 12)
+              .map(w => {
+                const who = w.markedBy && w.markedBy !== userId
+                  ? `merkitsi ${nameOf(w.markedBy)} (EI sinä itse)`
+                  : w.markedBy === userId ? "merkitsit itse" : "merkitsijä ei tiedossa";
+                return `${floorLabel(w.floor)}, klo ${hhmm(w.ts)}, ${who}`;
+              })
+              .join("; ");
+            lines.push(`Sinulle tänään kirjatut ikkunat (todiste euroista): ${detail}.`);
+          } else if (todayOwn === 0) {
+            lines.push(`Sinulle ei ole tänään kirjattu yhtään ikkunaa omasta työstä — tämän päivän ansiosi ovat pelkkää passiivista tuotto-osuutta.`);
+          }
+
+          // The single latest dot marked as washed for ME (any day in the log).
+          if (myRecent.length) {
+            const latest = myRecent.sort((a, b) => b.ts - a.ts)[0];
+            const who = latest.markedBy && latest.markedBy !== userId
+              ? `merkitsi ${nameOf(latest.markedBy)} (ei sinä itse)`
+              : latest.markedBy === userId ? "merkitsit itse" : "merkitsijä ei tiedossa";
+            lines.push(`Viimeisin sinulle pestyksi merkitty ikkuna: ${floorLabel(latest.floor)} — ${latest.gig}, ${dmHm(latest.ts)}, ${who}.`);
+          }
         }
       }
     } else {

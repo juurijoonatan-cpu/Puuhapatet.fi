@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowRight, Send, Loader2, CheckCircle2, Info } from "lucide-react";
 import { Link } from "wouter";
+import { motion, AnimatePresence } from "framer-motion";
 
 const KOTITALOUS_PCT = 0.35;
 
@@ -439,9 +440,24 @@ export default function LaskuriPage() {
   return (
     <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28">
       {/* Postal code modal */}
+      <AnimatePresence>
       {showPcModal && (
-        <div className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-end md:items-center justify-center p-4">
-          <Card className="w-full max-w-sm p-6 bg-card border-0 premium-shadow space-y-4" data-testid="postal-modal">
+        <motion.div
+          className="fixed inset-0 z-[100] flex items-end md:items-center justify-center p-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.18 }}
+        >
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowPcModal(false)} />
+          <motion.div
+            className="relative w-full max-w-sm"
+            initial={{ y: 56, opacity: 0, scale: 0.97 }}
+            animate={{ y: 0, opacity: 1, scale: 1 }}
+            exit={{ y: 56, opacity: 0, scale: 0.97 }}
+            transition={{ type: "spring", stiffness: 300, damping: 28 }}
+          >
+          <Card className="w-full p-6 bg-card border-0 premium-shadow space-y-4" data-testid="postal-modal">
             <div>
               <h2 className="text-lg font-semibold text-foreground mb-1">Missä asut?</h2>
               <p className="text-xs text-muted-foreground">Postinumeron perusteella tarkennamme hinta-arviota alueellesi.</p>
@@ -507,8 +523,10 @@ export default function LaskuriPage() {
               </Button>
             </div>
           </Card>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
+      </AnimatePresence>
 
       <div className="container mx-auto px-4 max-w-5xl">
 

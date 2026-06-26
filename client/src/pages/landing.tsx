@@ -1,7 +1,7 @@
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { ArrowRight, Sparkles, Clock, Shield, Snowflake, Leaf, Car, PaintBucket, Shovel, ClipboardCheck, BadgePercent, ShieldCheck } from "lucide-react";
+import { ArrowRight, Sparkles, Clock, Shield, Snowflake, Leaf, PaintBucket, Shovel, ClipboardCheck, BadgePercent, ShieldCheck, Tag, Sun } from "lucide-react";
 import { SiWhatsapp, SiInstagram } from "react-icons/si";
 import { Mail } from "lucide-react";
 import { Typewriter } from "@/components/typewriter";
@@ -33,9 +33,9 @@ export default function LandingPage() {
       ]
     : [
         { icon: Sparkles, titleKey: "service.basic.title", descKey: "service.basic.1", color: "text-primary", bg: "bg-primary/10" },
+        { icon: Tag, titleKey: "service.signs.title", descKey: "service.signs.desc", color: "text-amber-600 dark:text-amber-400", bg: "bg-amber-500/10" },
+        { icon: Sun, titleKey: "service.gutters.title", descKey: "service.gutters.desc", color: "text-yellow-600 dark:text-yellow-400", bg: "bg-yellow-500/10" },
         { icon: Leaf, titleKey: "service.gardening.title", descKey: "service.gardening.desc", color: "text-lime-700 dark:text-lime-400", bg: "bg-lime-500/10" },
-        { icon: Car, titleKey: "service.cardetailing.title", descKey: "service.cardetailing.desc", color: "text-green-700 dark:text-green-400", bg: "bg-green-500/10" },
-        { icon: PaintBucket, titleKey: "service.painting.title", descKey: "service.painting.desc", color: "text-yellow-700 dark:text-yellow-400", bg: "bg-yellow-500/10" },
       ];
 
   return (
@@ -54,6 +54,7 @@ export default function LandingPage() {
           </video>
           <div className="absolute inset-0 bg-background/82" />
           <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-transparent to-background/40" />
+          <div className="absolute bottom-0 left-0 right-0 h-28 bg-gradient-to-t from-background to-transparent pointer-events-none" />
         </div>
 
         <div className="container mx-auto px-4 md:px-6 relative z-10">

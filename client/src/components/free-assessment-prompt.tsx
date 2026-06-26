@@ -60,11 +60,9 @@ export function FreeAssessmentPrompt() {
           transition={{ type: "spring", stiffness: 320, damping: 30 }}
           role="dialog"
           aria-label={tr.title}
-          className="fixed z-[55] top-[4.75rem] left-3 right-3 md:top-auto md:bottom-6 md:left-6 md:right-auto md:w-[360px] rounded-2xl bg-card border border-border shadow-2xl overflow-hidden"
+          className="fixed z-[55] top-[4.75rem] left-3 right-3 md:top-auto md:bottom-6 md:left-6 md:right-auto md:w-[360px] rounded-2xl bg-card border border-border border-t-[3px] border-t-primary shadow-2xl overflow-hidden"
           data-testid="assessment-prompt"
         >
-          {/* Accent header strip */}
-          <div className="relative h-1.5 bg-gradient-to-r from-primary via-primary/70 to-primary/30" />
 
           <button
             onClick={dismiss}

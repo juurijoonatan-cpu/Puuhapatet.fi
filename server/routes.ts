@@ -4527,13 +4527,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const loaded = await loadJobProject(Number(req.params.id));
       if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const { job, project } = loaded;
-      const { kind, desc, amountCents, by, receiptDataUrl } = req.body as Record<string, any>;
+      const { kind, desc, amountCents, by, forWhom, receiptDataUrl } = req.body as Record<string, any>;
       if (!amountCents || Number(amountCents) <= 0) {
         return res.status(400).json({ error: "Summa puuttuu tai on nolla" });
       }
       const adminSub = (req as any).admin?.sub || "admin";
       const receipt = typeof receiptDataUrl === "string" && receiptDataUrl.startsWith("data:image/")
         ? receiptDataUrl.slice(0, MAX_EXPENSE_RECEIPT_LEN) : undefined;
+      const forWhomVal = typeof forWhom === "string" && forWhom.trim() ? forWhom.trim().slice(0, 40) : undefined;
       const expense: ProjExpense = {
         id: makeExpenseId(),
         by: String(by || adminSub).slice(0, 40),
@@ -4541,6 +4542,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         desc: String(desc || "").slice(0, 300).trim(),
         amountCents: Math.round(Number(amountCents)),
         ts: Date.now(),
+        ...(forWhomVal ? { forWhom: forWhomVal } : {}),
         ...(receipt ? { receiptDataUrl: receipt } : {}),
       };
       project.expenses = [...(project.expenses || []), expense];

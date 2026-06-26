@@ -28,6 +28,9 @@ interface Props {
   founderEarnings?: { id: string; name: string; ownWashed: number; ownCents: number; shareCents: number; totalCents: number; manual: boolean; hours: number }[];
   /** Total paid to the real workers (labour cost) — the other side of the margin. */
   workerLaborCents?: number;
+  /** Dynamic per-window rate for founders (sisäinen kate = capCents / totalRedWindows).
+   *  Replaces the nominal deal.pricePerWindow in the footer explanation text. */
+  founderRateEur?: number;
 }
 
 function fmt(n: number) { return Math.round(n).toLocaleString("fi-FI"); }
@@ -64,7 +67,7 @@ const mono: React.CSSProperties = {
   color: "rgba(255,255,255,0.4)",
 };
 
-export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeInfo, traineeShareByLeader, founderEarnings, workerLaborCents }: Props) {
+export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeInfo, traineeShareByLeader, founderEarnings, workerLaborCents, founderRateEur }: Props) {
   const m = useIsMobile();
   const [showLog, setShowLog] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -332,7 +335,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                 })}
               </div>
               <p style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)", marginTop: "12px", lineHeight: 1.5 }}>
-                Perustaja ansaitsee {euroUnit(PRICE)} jokaisesta itse pesemästään ikkunasta + osuuden katteesta jokaisesta työntekijän pesemästä ikkunasta (sopimushinta − työntekijän palkka, jaettuna perustajien kesken). Päivittyy pesujen myötä.
+                Perustaja ansaitsee {euroUnit(founderRateEur ?? PRICE)} / ikkuna (sisäinen kate = sopimushinta ÷ punaiset ikkunat yhteensä) + osuuden katteesta jokaisesta työntekijän ikkunasta. Päivittyy pesujen myötä.
               </p>
             </div>
           );

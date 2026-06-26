@@ -18,7 +18,10 @@ const PROMPT =
   "ehdotusta mihin kannattaa keskittyä tänään. Lisää loppuun lyhyt kohta " +
   "\"Iso keikka\": kerro isojen keikkojen (esim. FR8) edistyminen — montako " +
   "ikkunaa pesty, maksuerän tilanne ja paljonko seuraavaan maksuun — muotoiltuna " +
-  "niin että sen voi suoraan kertoa asiakkaan yhteyshenkilölle. Pidä tiiviinä ja käytä lyhyttä listaa.";
+  "niin että sen voi suoraan kertoa asiakkaan yhteyshenkilölle. Pidä tiiviinä ja käytä lyhyttä listaa. " +
+  "TÄRKEÄÄ: Jätä täysin pois kaikki tapahtumat tai liidit joiden muistiinpanoissa lukee " +
+  "\"[Prospekti — AI-ehdotus\" — ne ovat tekoälyn automaattisesti luomia testikohteita, " +
+  "ei oikeita asiakkaita. Älä mainitse niitä katsauksessa millään tavalla.";
 
 export function DashboardBriefing() {
   const profile = typeof window !== "undefined" ? getAdminProfile() : null;

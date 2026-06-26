@@ -12,7 +12,7 @@ import { api } from "@/lib/api";
 import { getAdminProfile, USERS, getPreferredWasher, setPreferredWasher } from "@/lib/admin-profile";
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import {
-  emptyProjectData, computeWorkerStats, isFr8Plans, fixedDealFor,
+  emptyProjectData, computeWorkerStats, isFr8Plans, fixedDealFor, allPoints,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense,
 } from "@shared/project";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
@@ -406,7 +406,7 @@ export default function AdminProjectPage() {
   const backToGig = useCallback(() => navigate(`/admin/gig/${jobId}`), [navigate, jobId]);
 
   // ── Expense management ──────────────────────────────────────────────────────
-  const addExpense = useCallback(async (data: { kind: string; desc: string; amountCents: number; by: string; receiptDataUrl?: string }) => {
+  const addExpense = useCallback(async (data: { kind: string; desc: string; amountCents: number; by: string; forWhom?: string; receiptDataUrl?: string }) => {
     const res = await api.addProjectExpense(jobId, data);
     if (res.ok && res.data?.expenses) {
       setProject((cur) => cur ? { ...cur, expenses: res.data!.expenses } : cur);
@@ -454,14 +454,23 @@ export default function AdminProjectPage() {
 
   // ── Ansiomalli ──────────────────────────────────────────────────────────────
   // • Työntekijä: pestyt × oma €/ikkuna (esim. Jani 20 €).
-  // • Perustaja (Joonatan/Matias): 37,50 € jokaisesta ITSE pesemästään ikkunasta
+  // • Perustaja (Joonatan/Matias): sisäinen kate × itse pesemät ikkunat
   //   + tuotto-osuus työntekijöiden ikkunoista: jokaisesta työntekijän pesemästä
-  //   ikkunasta (37,50 − työntekijän rate) jaetaan perustajien kesken (FR8:
-  //   (37,50 − 20) / 2 = 8,75 € / perustaja / työntekijän ikkuna).
+  //   ikkunasta (sisäinen kate − työntekijän rate) jaetaan perustajien kesken.
+  //   Sisäinen kate = sopimuksen kokonaissumma / punaiset ikkunat yhteensä
+  //   (esim. 6300 € / 165 ikk = 38,18 €/ikk — dynaamisesti projektikohtaisesti).
   // Manuaalinen ohitus (manualEarningsCents) voittaa aina. Nimet crew:stä.
   const crew = project.crew ?? [];
   const isFounder = (id: string, role?: string) => role === "host" || FOUNDER_IDS.includes(id);
   const dealTotalCents = Math.round(effectivePrice * 100);
+  // Sisäinen kate: sopimushinta jaettuna todellisella punaisella ikkunamäärällä.
+  // Tämä on perustajien oman työn oikea ansio per ikkuna (ei sama kuin nimellinen
+  // 37,50 €, joka on laskettu sopimuksen 168 ikkunan mukaan eikä välttämättä vastaa
+  // todellista ikkunamäärää). Käytetään myös tuottolaskelmassa workers vs. founders.
+  const totalBillable = deal ? allPoints(project).filter((p) => p.p === deal.billablePriority).length : 0;
+  const internalKateCents = deal && totalBillable > 0
+    ? Math.round(deal.capCents / totalBillable)
+    : dealTotalCents;
   const founderCount = Math.max(1, crew.filter((c) => isFounder(c.id, c.role)).length || FOUNDER_IDS.length);
   // A trainee (e.g. Milja) is credited to their responsible leader (Matias):
   // their washed windows + hours fold into the leader, and the trainee is NOT a
@@ -494,12 +503,12 @@ export default function AdminProjectPage() {
     managerHours[id] = (managerHours[id] || 0) + (h || 0);
   }
   // Profit pool = Σ over real workers (NOT founders, NOT trainees) of
-  // (deal total − that worker's rate) per worker-washed window.
+  // (sisäinen kate − that worker's rate) per worker-washed window.
   let profitPoolCents = 0;
   for (const st of baseStatsRaw) {
     const mm = crew.find((c) => c.id === st.worker);
     if (!isFounder(st.worker, mm?.role) && !isTrainee(st.worker)) {
-      profitPoolCents += st.washed * Math.max(0, dealTotalCents - (mm?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS));
+      profitPoolCents += st.washed * Math.max(0, internalKateCents - (mm?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS));
     }
   }
   const founderProfitEachCents = Math.round(profitPoolCents / founderCount);
@@ -511,7 +520,7 @@ export default function AdminProjectPage() {
     // as margin, not extra pay. Founder's own windows still earn the full deal rate.
     if (isFounder(st.worker, mm?.role)) {
       const traineeWashed = traineeWashedByLeader[st.worker] || 0;
-      return Math.round(st.washed * dealTotalCents) + Math.round(traineeWashed * DEFAULT_WORKER_PER_WINDOW_CENTS) + founderProfitEachCents;
+      return Math.round((st.washed + traineeWashed) * internalKateCents) + founderProfitEachCents;
     }
     return Math.round(st.washed * (mm?.perWindowCents ?? dealTotalCents));
   };
@@ -534,7 +543,7 @@ export default function AdminProjectPage() {
     const lead = leaderOf(st.worker);
     if (lead) {
       traineeInfo[st.worker] = { leaderName: resolveName(lead) };
-      if (st.washed > 0) (traineeShareByLeader[lead] ||= []).push({ name: resolveName(st.worker), washed: st.washed, cents: Math.round(st.washed * DEFAULT_WORKER_PER_WINDOW_CENTS) });
+      if (st.washed > 0) (traineeShareByLeader[lead] ||= []).push({ name: resolveName(st.worker), washed: st.washed, cents: Math.round(st.washed * internalKateCents) });
     }
   }
 
@@ -566,7 +575,7 @@ export default function AdminProjectPage() {
         id: s.worker,
         name: resolveName(s.worker),
         ownWashed,
-        ownCents: Math.round(ownWashed * dealTotalCents),
+        ownCents: Math.round(ownWashed * internalKateCents),
         shareCents: founderProfitEachCents,
         totalCents: s.revenueCents, // respects manual override
         manual,
@@ -634,7 +643,7 @@ export default function AdminProjectPage() {
       )}
       <main style={{ position: "relative", zIndex: 10, height: "calc(100% - 62px)" }}>
         {tab === "dashboard" && (
-          <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} onSetEarnings={setWorkerEarnings} traineeInfo={traineeInfo} traineeShareByLeader={traineeShareByLeader} founderEarnings={founderEarnings} workerLaborCents={workerLaborCents} />
+          <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} onSetEarnings={setWorkerEarnings} traineeInfo={traineeInfo} traineeShareByLeader={traineeShareByLeader} founderEarnings={founderEarnings} workerLaborCents={workerLaborCents} founderRateEur={internalKateCents / 100} />
         )}
         {tab === "floor" && (
           <FloorView
@@ -744,7 +753,7 @@ function ExpensesView({
   workers: { id: string; name: string }[];
   currentWorker: string;
   resolveName: (id: string) => string;
-  onAdd: (data: { kind: string; desc: string; amountCents: number; by: string; receiptDataUrl?: string }) => Promise<void>;
+  onAdd: (data: { kind: string; desc: string; amountCents: number; by: string; forWhom?: string; receiptDataUrl?: string }) => Promise<void>;
   onDelete: (expenseId: string) => Promise<void>;
 }) {
   const m = useIsMobile();
@@ -752,6 +761,7 @@ function ExpensesView({
   const [desc, setDesc] = useState("");
   const [amount, setAmount] = useState("");
   const [by, setBy] = useState(currentWorker);
+  const [forWhom, setForWhom] = useState(currentWorker);
   const [receipt, setReceipt] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showTip, setShowTip] = useState(false);
@@ -769,7 +779,7 @@ function ExpensesView({
     const amountCents = Math.round(parseFloat(amount.replace(",", ".")) * 100);
     if (!amountCents || amountCents <= 0 || isNaN(amountCents)) return;
     setBusy(true);
-    await onAdd({ kind, desc: desc.trim(), amountCents, by, receiptDataUrl: receipt || undefined });
+    await onAdd({ kind, desc: desc.trim(), amountCents, by, forWhom: forWhom || undefined, receiptDataUrl: receipt || undefined });
     setBusy(false);
     setDesc("");
     setAmount("");
@@ -850,6 +860,15 @@ function ExpensesView({
               </select>
             </label>
           </div>
+          <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 10 }}>
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Kenelle (Y-tunnus / kirjanpito)</span>
+              <select value={forWhom} onChange={(e) => setForWhom(e.target.value)} style={fieldStyle}>
+                <option value="" style={{ background: "#1a1a1e" }}>— valitse —</option>
+                {workers.map((w) => <option key={w.id} value={w.id} style={{ background: "#1a1a1e" }}>{w.name}</option>)}
+              </select>
+            </label>
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1fr 130px", gap: 10, marginBottom: 10 }}>
             <label style={{ display: "block" }}>
               <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Kuvaus (valinnainen)</span>
@@ -904,7 +923,11 @@ function ExpensesView({
                     {exp.desc && <span style={{ fontWeight: 400, color: "rgba(255,255,255,0.55)", marginLeft: 8 }}>{exp.desc}</span>}
                   </div>
                   <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
-                    {resolveName(exp.by)} · {fmtStamp(exp.ts)}
+                    <span title="Maksaja">maksoi: {resolveName(exp.by)}</span>
+                    {exp.forWhom && exp.forWhom !== exp.by && (
+                      <span style={{ color: "#9cc1ff", marginLeft: 6 }} title="Kenelle kirjanpidossa">· kenelle: {resolveName(exp.forWhom)}</span>
+                    )}
+                    <span style={{ marginLeft: 6 }}>· {fmtStamp(exp.ts)}</span>
                     {!exp.receiptDataUrl && <span style={{ color: "#e7a17a", marginLeft: 6 }}>· ei kuittia</span>}
                   </div>
                 </div>

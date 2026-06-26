@@ -113,6 +113,9 @@ export interface ProjExpense {
   desc: string;
   amountCents: number;
   ts: number;            // epoch ms — automatic timestamp (kirjanpidon tosite)
+  /** Which person's company (Y-tunnus) bears this cost for accounting purposes.
+   *  Separate from `by` (who paid): e.g. Joonatan might pay but it's Matias's cost. */
+  forWhom?: string;
   /** Optional photo of the receipt (kuitti), downscaled data URL. Kirjanpitoa
    *  varten: jokaisesta kulusta talletetaan kuitti + aikaleima. */
   receiptDataUrl?: string;
@@ -718,6 +721,7 @@ export function sanitizeProjectData(input: any): ProjectData {
         desc: String(e?.desc ?? "").slice(0, 300).trim(),
         amountCents: Math.round(Math.max(0, Number(e?.amountCents) || 0)),
         ts: Number(e?.ts) || Date.now(),
+        ...(typeof e?.forWhom === "string" && e.forWhom.trim() ? { forWhom: e.forWhom.trim().slice(0, 40) } : {}),
         receiptDataUrl: typeof e?.receiptDataUrl === "string" && e.receiptDataUrl.startsWith("data:image/")
           ? e.receiptDataUrl.slice(0, MAX_EXPENSE_RECEIPT_LEN) : undefined,
       })).filter((e: ProjExpense) => e.id && e.by)

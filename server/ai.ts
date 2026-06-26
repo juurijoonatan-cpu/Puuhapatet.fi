@@ -13,9 +13,26 @@
  *   Google (OpenAI-compat): AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
  */
 
+import Anthropic from "@anthropic-ai/sdk";
+
 export const AI_ENABLED = !!process.env.AI_API_KEY;
 const AI_BASE_URL = (process.env.AI_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/$/, "");
 const AI_MODEL = process.env.AI_MODEL || "llama-3.3-70b-versatile";
+
+// ─── Premium provider for the in-admin assistant (Anthropic / Claude) ─────────
+// The public website bot stays on the free OpenAI-compatible provider above
+// (Groq). The internal team assistant ("Avustaja") can run on Claude instead,
+// which follows instructions far more reliably (no spurious tool calls) and
+// reads the operational/earnings data accurately. Enabled only when
+// ANTHROPIC_API_KEY is set; otherwise the assistant falls back to the Groq path.
+export const ADMIN_AI_ENABLED = !!process.env.ANTHROPIC_API_KEY;
+const ADMIN_AI_MODEL = process.env.ADMIN_AI_MODEL || "claude-opus-4-8";
+let anthropicClient: Anthropic | null = null;
+function getAnthropic(): Anthropic | null {
+  if (!ADMIN_AI_ENABLED) return null;
+  if (!anthropicClient) anthropicClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  return anthropicClient;
+}
 
 export type ChatRole = "system" | "user" | "assistant";
 export interface ChatTurn {
@@ -156,6 +173,96 @@ export async function chatCompleteWithTools(
   return { text: null, toolCalls: null };
 }
 
+/**
+ * Claude (Anthropic) variant of chatCompleteWithTools, used by the in-admin
+ * assistant when ANTHROPIC_API_KEY is set. Same input/return shape as the
+ * OpenAI-format version above (it takes OpenAI-style `messages` + `tools` and
+ * returns OpenAI-style `{ text, toolCalls }`), so the route handler's tool loop
+ * is unchanged — this only translates the wire format to/from the Messages API.
+ *
+ * Thinking is left off: the multi-round tool loop would otherwise have to echo
+ * thinking blocks back verbatim, and this assistant needs reliable instruction-
+ * following and accurate number-reading, not deep reasoning. The admin system
+ * prompt asks for a direct final answer so Opus doesn't narrate its reasoning.
+ */
+export async function chatCompleteWithToolsClaude(
+  messages: Array<{ role: string; content?: any; tool_calls?: ToolCall[]; tool_call_id?: string }>,
+  tools: AiTool[],
+  opts: { maxTokens?: number } = {},
+): Promise<{ text: string | null; toolCalls: ToolCall[] | null }> {
+  const client = getAnthropic();
+  if (!client) return { text: null, toolCalls: null };
+
+  // System turns → Anthropic top-level `system`; everything else → messages[].
+  const systemText = messages
+    .filter(m => m.role === "system")
+    .map(m => String(m.content ?? ""))
+    .join("\n\n");
+
+  const aMessages: Anthropic.MessageParam[] = [];
+  for (const m of messages) {
+    if (m.role === "system") continue;
+    if (m.role === "user") {
+      aMessages.push({ role: "user", content: String(m.content ?? "") });
+    } else if (m.role === "assistant") {
+      const blocks: Anthropic.ContentBlockParam[] = [];
+      const txt = typeof m.content === "string" ? m.content.trim() : "";
+      if (txt) blocks.push({ type: "text", text: txt });
+      for (const tc of m.tool_calls ?? []) {
+        let input: any = {};
+        try { input = JSON.parse(tc.function.arguments || "{}"); } catch { /* keep {} */ }
+        blocks.push({ type: "tool_use", id: tc.id, name: tc.function.name, input });
+      }
+      // An assistant turn must carry at least one content block.
+      aMessages.push({ role: "assistant", content: blocks.length ? blocks : [{ type: "text", text: "(ok)" }] });
+    } else if (m.role === "tool") {
+      aMessages.push({
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: String(m.tool_call_id ?? ""), content: String(m.content ?? "") }],
+      });
+    }
+  }
+  // The Messages API requires the first message to be a user turn.
+  while (aMessages.length && aMessages[0].role === "assistant") aMessages.shift();
+  if (!aMessages.length) return { text: null, toolCalls: null };
+
+  const aTools: Anthropic.Tool[] = tools.map(t => ({
+    name: t.function.name,
+    description: t.function.description,
+    input_schema: t.function.parameters as Anthropic.Tool.InputSchema,
+  }));
+
+  try {
+    const resp = await client.messages.create({
+      model: ADMIN_AI_MODEL,
+      max_tokens: opts.maxTokens ?? 1500,
+      ...(systemText ? { system: systemText } : {}),
+      messages: aMessages,
+      ...(aTools.length ? { tools: aTools } : {}),
+      thinking: { type: "disabled" },
+    });
+    let text = "";
+    const toolCalls: ToolCall[] = [];
+    for (const block of resp.content) {
+      if (block.type === "text") text += block.text;
+      else if (block.type === "tool_use") {
+        toolCalls.push({
+          id: block.id,
+          type: "function",
+          function: { name: block.name, arguments: JSON.stringify(block.input ?? {}) },
+        });
+      }
+    }
+    return {
+      text: text.trim() ? text.trim() : null,
+      toolCalls: toolCalls.length ? toolCalls : null,
+    };
+  } catch (e: any) {
+    console.error("Claude admin completion error:", e?.message || e);
+    return { text: null, toolCalls: null };
+  }
+}
+
 // ─── Knowledge base (public, customer-safe facts only) ────────────────────────
 // The public bot is grounded ONLY in this. It must never invent prices,
 // availability, or policies that aren't here.
@@ -267,6 +374,9 @@ TYYLI & ASENNE:
   ottaa yhteyttä", tai "Tällä viikolla on hiljaista, ehdotanko prospekteja?").
 - Saat puhua rennosti ja vapaasti, kuten tiimikaveri. Ei jäykkää virkakieltä.
 - Vastaa suomeksi, ytimekkäästi. Anna selkeitä toimintaehdotuksia.
+- Vastaa suoraan lopullisella vastauksella. ÄLÄ näytä sisäistä päättelyäsi,
+  välivaiheita tai pohdintaa ("mietitäänpä…", "ensin tarkistan…") — pelkkä
+  valmis, selkeä vastaus käyttäjälle.
 
 REHELLISYYS & TIETOSUOJA (näistä ei jousteta):
 - Käytä VAIN alla annettua kontekstidataa + yleistä osaamistasi. Jos tieto ei

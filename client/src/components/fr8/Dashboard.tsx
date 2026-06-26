@@ -287,15 +287,20 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
               {/* Per-founder breakdown: own work + profit share = total. */}
               <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : `repeat(${Math.min(founderEarnings.length, 2)}, 1fr)`, gap: m ? "10px" : "12px" }}>
                 {founderEarnings.map((f) => {
-                  // A founder who leads a trainee (e.g. Matias → Milja) has the
-                  // trainee's windows folded into their "own work". Break that out
-                  // explicitly so the trainee's slice is unmistakable and the
-                  // founder doesn't accidentally keep money owed to the trainee.
+                  // A founder who leads a trainee (e.g. Matias → Milja). The
+                  // trainee's windows are tracked under the trainee's OWN id in
+                  // computeWorkerStats, so f.ownWashed is the founder's own work
+                  // ONLY — it does NOT include the trainee's windows (the two are
+                  // disjoint). The trainee's slice is added on top in f.totalCents
+                  // (the money owed to the trainee, which the founder settles).
+                  // Show the founder's own count as-is and list the trainee slices
+                  // separately; own + trainee slices + profit share == f.totalCents.
+                  // (Previously this SUBTRACTED the trainee windows from ownWashed,
+                  // which understated "Oma työ" — e.g. 15,5 shown as 9,5 — and broke
+                  // the breakdown↔total reconciliation.)
                   const slices = traineeShareByLeader?.[f.id] ?? [];
-                  const traineeCents = slices.reduce((s, t) => s + t.cents, 0);
-                  const traineeWashed = slices.reduce((s, t) => s + t.washed, 0);
-                  const selfWashed = Math.max(0, f.ownWashed - traineeWashed);
-                  const selfCents = Math.max(0, f.ownCents - traineeCents);
+                  const selfWashed = f.ownWashed;
+                  const selfCents = f.ownCents;
                   return (
                   <div key={f.id} style={{ padding: "16px 18px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "15px" }}>
                     <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, marginBottom: "8px" }}>

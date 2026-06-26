@@ -10,7 +10,8 @@ import { customers, jobs, expenses, workerPayments, investments, startupBonusUsa
 import { feeRateForWorker, effectiveJobTotal, FOUNDER_IDS } from "@shared/team";
 import { randomUUID, createHash, createHmac, timingSafeEqual, scryptSync, randomBytes } from "crypto";
 import {
-  AI_ENABLED, chatComplete, chatCompleteWithTools, publicSystemPrompt, adminSystemPrompt,
+  AI_ENABLED, ADMIN_AI_ENABLED, chatComplete, chatCompleteWithTools, chatCompleteWithToolsClaude,
+  publicSystemPrompt, adminSystemPrompt,
   PUBLIC_FALLBACK_FI, type ChatTurn, type AiTool,
 } from "./ai";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
@@ -5018,7 +5019,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   const DISPLAY_LIMIT = 100; // messages returned to the client for rendering
 
   // Lets the admin UI show a clear "add your API key" hint when AI is off.
-  app.get("/api/ai-status", (_req, res) => res.json({ enabled: AI_ENABLED }));
+  // Consumed by the admin assistant + dashboard briefing — "is the assistant
+  // available", true when either the Claude or the Groq provider is configured.
+  app.get("/api/ai-status", (_req, res) => res.json({ enabled: AI_ENABLED || ADMIN_AI_ENABLED }));
 
   function escapeHtml(s: string): string {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -5262,8 +5265,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const text = String(message ?? "").trim();
       if (!text) return res.status(400).json({ error: "Viesti puuttuu." });
       if (text.length > MAX_MSG_LEN) return res.status(400).json({ error: "Viesti on liian pitkä." });
-      if (!AI_ENABLED) {
-        return res.json({ reply: "Tekoälyavustaja ei ole vielä käytössä — aseta AI_API_KEY ympäristömuuttuja ottaaksesi sen käyttöön." });
+      // The team assistant runs on Claude when ANTHROPIC_API_KEY is set, else the
+      // Groq path. It's available if either provider is configured.
+      if (!ADMIN_AI_ENABLED && !AI_ENABLED) {
+        return res.json({ reply: "Tekoälyavustaja ei ole vielä käytössä — aseta ANTHROPIC_API_KEY (Claude) tai AI_API_KEY ympäristömuuttuja ottaaksesi sen käyttöön." });
       }
 
       const effectiveRole: "HOST" | "STAFF" = role === "HOST" ? "HOST" : "STAFF";
@@ -5367,7 +5372,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         detail: string; payload: any;
       }> = [];
       for (let round = 0; round < 3; round++) {
-        const result = await chatCompleteWithTools(turns, adminTools, { temperature: 0.4, maxTokens: 900 });
+        // Claude (Opus) for the team assistant when configured; otherwise Groq.
+        const result = ADMIN_AI_ENABLED
+          ? await chatCompleteWithToolsClaude(turns, adminTools, { maxTokens: 1500 })
+          : await chatCompleteWithTools(turns, adminTools, { temperature: 0.4, maxTokens: 900 });
 
         if (!result.toolCalls || result.toolCalls.length === 0) {
           const reply = result.text ?? "En valitettavasti saanut yhteyttä tekoälypalveluun juuri nyt. Yritä hetken kuluttua uudelleen.";

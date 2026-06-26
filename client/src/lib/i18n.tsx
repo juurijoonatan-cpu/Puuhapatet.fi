@@ -93,6 +93,7 @@ const translations: Record<Language, Record<string, string>> = {
     "service.basic.title": "Ikkunanpesu",
     "service.basic.popular": "Suosittu",
     "service.basic.desc": "Käytämme ammattilaisten välineitä ja hyväksi havaittuja pesuaineita. Ikkunat, parvekelasit ja lasiterassit pestyinä — kirkkaina ja raidattomina.",
+    "service.basic.popup": "Ammattilaisten välineet, lasta ja mikrokuitu — ei raitoja, ei valumia. Pesemme sisältä ja ulkoa, myös parvekelasit ja lasiterassit. Kaikki hinta sovitaan etukäteen.",
     "service.basic.1": "Talon ikkunat sisältä ja ulkoa",
     "service.basic.2": "Parvekelasit ja lasiterassit",
     "service.basic.3": "Puitteet ja karmit kevyt pyyhintä",
@@ -221,6 +222,23 @@ const translations: Record<Language, Record<string, string>> = {
     "reviews.google.badge": "Google-arvostelut",
     "reviews.google.prompt": "Oletko tyytyväinen palveluumme? Arvostelusi auttaa muita löytämään meidät.",
     "reviews.google.cta": "Jätä arvostelu Googleen",
+
+    "service.signs.title": "Kylttien puhdistus",
+    "service.signs.desc": "Liikennemerkit, opasteet ja rakennusten fasadikyltit — puhtaana luovat oikean ensivaikutelman.",
+    "service.signs.popup": "Kyltit keräävät likaa, sammaletta ja säärasitusta vuodesta toiseen. Puuhapatet pesee ne ammattitaidolla niin, että ne taas houkuttelevat — eivätkä karkota.",
+    "service.signs.1": "Liikennemerkit ja tienvarsikyltit",
+    "service.signs.2": "Fasadikyltit ja toimistokyltit",
+    "service.signs.3": "Muut julkiset opasteet ja nimikyltit",
+
+    "service.gutters.title": "Rännit & aurinkopaneelit",
+    "service.gutters.desc": "Rännien tyhjennys ja aurinkopaneelien pesu — huollettu kohde toimii parhaiten.",
+    "service.gutters.popup": "Tukkoinen räntä tai likainen aurinkopaneeli maksaa enemmän kuin luulisi. Puhdistettu paneeli voi tuottaa jopa 30 % enemmän sähköä. Rännit pidetään virtaavina koko sateen ajan.",
+    "service.gutters.1": "Rännien tyhjennys lehtikaadosta ja roskaantumisesta",
+    "service.gutters.2": "Syöksytorvet auki ja virtaaviksi",
+    "service.gutters.3": "Aurinkopaneelien puhdistus — maksimituotto",
+
+    "services.main.title": "Pääpalvelumme",
+    "services.more.label": "Lisää palveluita",
   },
   en: {
     "nav.home": "Home",
@@ -306,6 +324,7 @@ const translations: Record<Language, Record<string, string>> = {
     "service.basic.title": "Window Cleaning",
     "service.basic.popular": "Popular",
     "service.basic.desc": "Professional equipment and proven cleaning products. The result is a clear, streak-free surface — windows, balcony glass and glass terraces.",
+    "service.basic.popup": "Professional squeegee, microfiber and tools — no streaks, no drips. We clean inside and out, including balcony glass and glass terraces. Price always agreed upfront.",
     "service.basic.1": "House windows interior and exterior",
     "service.basic.2": "Balcony glass and glass terraces",
     "service.basic.3": "Light wipe of frames",
@@ -434,6 +453,23 @@ const translations: Record<Language, Record<string, string>> = {
     "reviews.google.badge": "Google Reviews",
     "reviews.google.prompt": "Happy with our service? Your review helps others find us.",
     "reviews.google.cta": "Leave a Review on Google",
+
+    "service.signs.title": "Sign Cleaning",
+    "service.signs.desc": "Road signs, directory signs and facade signage — clean and welcoming to everyone who passes.",
+    "service.signs.popup": "Signs accumulate dirt, moss and weather damage year after year. Puuhapatet cleans them professionally so they attract rather than deter.",
+    "service.signs.1": "Road and traffic signs",
+    "service.signs.2": "Facade and office signage",
+    "service.signs.3": "Other public signs and nameplates",
+
+    "service.gutters.title": "Gutters & Solar Panels",
+    "service.gutters.desc": "Gutter clearing and solar panel washing — a well-maintained property performs better.",
+    "service.gutters.popup": "A blocked gutter or dirty solar panel costs more than you'd think. Clean panels can produce up to 30% more power. Gutters kept flowing all season.",
+    "service.gutters.1": "Gutter clearing of leaves and debris",
+    "service.gutters.2": "Downpipes flushed and flowing",
+    "service.gutters.3": "Solar panel cleaning — maximum output",
+
+    "services.main.title": "Our main services",
+    "services.more.label": "More services",
   },
 };
 

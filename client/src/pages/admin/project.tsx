@@ -507,11 +507,11 @@ export default function AdminProjectPage() {
     const mm = crew.find((c) => c.id === st.worker);
     if (mm?.manualEarningsCents != null) return mm.manualEarningsCents;
     // washed can be fractional (50/50 split windows count as 0.5) — round cents.
-    // A founder's pay basis includes any trainee windows credited to them (the pay
-    // optimisation stays combined even though the windows are shown separately).
+    // Trainee windows earn the worker rate (not the full deal rate) — the rest stays
+    // as margin, not extra pay. Founder's own windows still earn the full deal rate.
     if (isFounder(st.worker, mm?.role)) {
       const traineeWashed = traineeWashedByLeader[st.worker] || 0;
-      return Math.round((st.washed + traineeWashed) * dealTotalCents) + founderProfitEachCents;
+      return Math.round(st.washed * dealTotalCents) + Math.round(traineeWashed * DEFAULT_WORKER_PER_WINDOW_CENTS) + founderProfitEachCents;
     }
     return Math.round(st.washed * (mm?.perWindowCents ?? dealTotalCents));
   };
@@ -534,7 +534,7 @@ export default function AdminProjectPage() {
     const lead = leaderOf(st.worker);
     if (lead) {
       traineeInfo[st.worker] = { leaderName: resolveName(lead) };
-      if (st.washed > 0) (traineeShareByLeader[lead] ||= []).push({ name: resolveName(st.worker), washed: st.washed, cents: Math.round(st.washed * dealTotalCents) });
+      if (st.washed > 0) (traineeShareByLeader[lead] ||= []).push({ name: resolveName(st.worker), washed: st.washed, cents: Math.round(st.washed * DEFAULT_WORKER_PER_WINDOW_CENTS) });
     }
   }
 
@@ -554,14 +554,13 @@ export default function AdminProjectPage() {
     };
   });
   // ── Perustajien (bossien) ansioerittely dashboardille ───────────────────────
-  // Jokaisen perustajan ansio = oma työ (omat + harjoittelijan hyvitetyt ikkunat
-  // × 37,50) + tuotto-osuus työntekijöiden ikkunoista. Tämä on sama logiikka kuin
-  // earningsFor, mutta puretaan osiin jotta bossit näkevät selkeästi mistä raha tulee.
+  // Jokaisen perustajan ansio = oma työ (omat ikkunat × 37,50) + harjoittelijan osuus
+  // (harjoittelijan ikkunat × 20 €/ikkuna — tilitä harjoittelijalle) + tuotto-osuus.
   const founderEarnings = workerStats
     .filter((s) => isFounder(s.worker, crew.find((c) => c.id === s.worker)?.role))
     .map((s) => {
       const mm = crew.find((c) => c.id === s.worker);
-      const ownWashed = s.washed + (traineeWashedByLeader[s.worker] || 0);
+      const ownWashed = s.washed; // only the founder's own windows — trainee shown separately
       const manual = mm?.manualEarningsCents != null;
       return {
         id: s.worker,

@@ -54,8 +54,12 @@ function workerInitial(id: string): string {
 
 /**
  * Build the display-name map + this gig's pickable crew (for the "who washed"
- * and "default washer" pickers). Admin-linked crew (e.g. Petrus) are masked —
- * they're hidden from this gig, so they must not appear as a pickable worker.
+ * and "default washer" pickers).
+ *
+ * This page is founders-only (admin-linked workers like Petrus are redirected to
+ * their own dashboard), so every active crew member — INCLUDING admin-linked
+ * ones (Petrus) — is pickable here. That lets a founder (e.g. Matias) attribute
+ * windows/points to Petrus from the menu. Inactive crew are left out.
  */
 function computeWorkerMaps(project: ProjectData): {
   workerNames: Record<string, string>;
@@ -64,14 +68,15 @@ function computeWorkerMaps(project: ProjectData): {
   const workerNames: Record<string, string> = {};
   for (const u of USERS) workerNames[u.id] = u.name;
   for (const m of project.crew ?? []) workerNames[m.id] = m.name;
-  const maskedWorkerIds = new Set<string>();
+  // Crew members who can't be picked: only inactive (removed) ones.
+  const hiddenWorkerIds = new Set<string>();
   for (const m of project.crew ?? []) {
-    if (m.adminLinked && m.role !== "host") maskedWorkerIds.add(m.id);
+    if (m.active === false) hiddenWorkerIds.add(m.id);
   }
   const gigWorkers: { id: string; name: string }[] = [];
   const seen = new Set<string>();
   for (const id of [...(project.workers ?? []), ...((project.crew ?? []).map((m) => m.id))]) {
-    if (seen.has(id) || maskedWorkerIds.has(id)) continue;
+    if (seen.has(id) || hiddenWorkerIds.has(id)) continue;
     seen.add(id);
     gigWorkers.push({ id, name: workerNames[id] ?? workerName(id) });
   }

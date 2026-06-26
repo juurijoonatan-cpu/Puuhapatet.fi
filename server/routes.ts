@@ -3658,9 +3658,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const deal = fixedDealFor(project);
         if (!deal) continue; // vain allekirjoitetut kiinteähintaiset keikat (FR8)
         const crew = project.crew ?? [];
-        const dealCents = Math.round(deal.pricePerWindow * 100);
+        // Per-window kate is DYNAMIC, derived from the dots: the fixed contract
+        // total (capCents) divided by the LIVE billable (red) windows on the map —
+        // NOT the nominal €37,50 (which assumes exactly 168 windows). Fewer red
+        // dots ⇒ higher €/ikkuna. This mirrors the in-app dashboard
+        // (project.tsx → internalKateCents) so the email and the app agree.
+        const billableTotal = allPoints(project).filter((p) => p.p === deal.billablePriority).length;
+        const kateCents = billableTotal > 0 ? Math.round(deal.capCents / billableTotal) : Math.round(deal.pricePerWindow * 100);
         const rateOf = (id: string, mRole?: string) =>
-          isFounderMember(id, mRole) ? dealCents : (crew.find((c) => c.id === id)?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS);
+          isFounderMember(id, mRole) ? kateCents : (crew.find((c) => c.id === id)?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS);
         const founderCount = Math.max(1, crew.filter((c) => isFounderMember(c.id, c.role)).length || FOUNDER_IDS.length);
         // Trainee windows (e.g. Milja) credit their responsible leader (Matias).
         const effId = (id: string): string => {
@@ -3681,11 +3687,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           if (!w) continue;
           todayBy.set(w, (todayBy.get(w) || 0) + 1);
         }
+        // A founder earns the full kate on their own windows, and on each WORKER
+        // window a margin of (kate − that worker's rate, e.g. 38,18 − 20 = 18,18 €),
+        // split evenly between the founders.
         let todayPool = 0;
         for (const [w, n] of Array.from(todayBy)) {
-          if (!isFounderMember(w, mRoleOf(w))) todayPool += n * Math.max(0, dealCents - rateOf(w, mRoleOf(w)));
+          if (!isFounderMember(w, mRoleOf(w))) todayPool += n * Math.max(0, kateCents - rateOf(w, mRoleOf(w)));
         }
-        const gTodayOwn = (todayBy.get(userId) || 0) * dealCents;
+        const gTodayOwn = (todayBy.get(userId) || 0) * kateCents;
         const gTodayPassive = Math.round(todayPool / founderCount);
 
         // ── Cumulative (final attribution, billable priority only) ──
@@ -3700,9 +3709,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
         let totalPool = 0;
         for (const [w, n] of Array.from(totalByWorker)) {
-          if (!isFounderMember(w, mRoleOf(w))) totalPool += n * Math.max(0, dealCents - rateOf(w, mRoleOf(w)));
+          if (!isFounderMember(w, mRoleOf(w))) totalPool += n * Math.max(0, kateCents - rateOf(w, mRoleOf(w)));
         }
-        const gTotalOwn = Math.round((totalByWorker.get(userId) || 0) * dealCents);
+        const gTotalOwn = Math.round((totalByWorker.get(userId) || 0) * kateCents);
         const gTotalPassive = Math.round(totalPool / founderCount);
 
         todayOwnCents += gTodayOwn; todayPassiveCents += gTodayPassive;
@@ -5695,7 +5704,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             const drift = total !== nominal
               ? ` HUOM: punaisia ikkunoita kartalla ${total}, sovittu mitoitus ${nominal} — tarkista (poikkeama ${total < nominal ? "−" : "+"}${Math.abs(total - nominal)} ikkunaa).`
               : "";
-            marginLine = ` Sisäinen kate ${perWin}/ikkuna (kiinteä ${eur(deal.capCents)} jaettuna ${total} punaiselle; tekijän palkkio ennallaan).${drift}`;
+            // Per-window kate is dynamic (capCents / live red windows), so it is
+            // NOT locked at the nominal €37,50 — with fewer red dots it is higher.
+            // From a WORKER's window the founders keep (kate − työntekijän €/ikkuna),
+            // esim. oletustyöntekijä 20 €/ikkuna. Omasta ikkunasta jää koko kate.
+            const kateCents = Math.round(deal.capCents / total);
+            const workerMargin = eur(Math.max(0, kateCents - DEFAULT_WORKER_PER_WINDOW_CENTS));
+            marginLine = ` Sisäinen kate ${perWin}/ikkuna (kiinteä ${eur(deal.capCents)} jaettuna ${total} punaiselle; EI lukittu 37,50 €:oon — lasketaan kartan punaisista). Omasta ikkunasta perustajille jää koko kate ${perWin}; työntekijän ikkunasta jää kate ${workerMargin} (kate − työntekijän €/ikkuna, oletus 20 €), joka jaetaan perustajien kesken.${drift}`;
           }
         }
         const pct = total > 0 ? Math.round((washed / total) * 100) : 0;
@@ -5766,9 +5781,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           const deal = fixedDealFor(project);
           if (!deal) continue;
           const crew = project.crew ?? [];
-          const dealCents = Math.round(deal.pricePerWindow * 100);
+          // DYNAMIC per-window kate from the dots (capCents / live red windows),
+          // matching the dashboard — not the nominal €37,50. See daily-earnings.
+          const billableTotal = allPoints(project).filter(p => p.p === deal.billablePriority).length;
+          const kateCents = billableTotal > 0 ? Math.round(deal.capCents / billableTotal) : Math.round(deal.pricePerWindow * 100);
           const rateOf = (id: string, mRole?: string) =>
-            isFounderMember(id, mRole) ? dealCents : (crew.find(c => c.id === id)?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS);
+            isFounderMember(id, mRole) ? kateCents : (crew.find(c => c.id === id)?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS);
           const founderCount = Math.max(1, crew.filter(c => isFounderMember(c.id, c.role)).length || FOUNDER_IDS.length);
           const effId = (id: string): string => {
             const mm = crew.find(c => c.id === id);
@@ -5807,9 +5825,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           }
           let todayPool = 0;
           for (const [w, n] of Array.from(todayBy)) {
-            if (!isFounderMember(w, mRoleOf(w))) todayPool += n * Math.max(0, dealCents - rateOf(w, mRoleOf(w)));
+            if (!isFounderMember(w, mRoleOf(w))) todayPool += n * Math.max(0, kateCents - rateOf(w, mRoleOf(w)));
           }
-          todayOwn += (todayBy.get(userId) || 0) * dealCents;
+          todayOwn += (todayBy.get(userId) || 0) * kateCents;
           todayPassive += Math.round(todayPool / founderCount);
 
           // Cumulative (final attribution, billable priority only).
@@ -5824,9 +5842,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           }
           let totalPool = 0;
           for (const [w, n] of Array.from(totalBy)) {
-            if (!isFounderMember(w, mRoleOf(w))) totalPool += n * Math.max(0, dealCents - rateOf(w, mRoleOf(w)));
+            if (!isFounderMember(w, mRoleOf(w))) totalPool += n * Math.max(0, kateCents - rateOf(w, mRoleOf(w)));
           }
-          totalOwn += Math.round((totalBy.get(userId) || 0) * dealCents);
+          totalOwn += Math.round((totalBy.get(userId) || 0) * kateCents);
           totalPassive += Math.round(totalPool / founderCount);
         }
         const todayTotal = todayOwn + todayPassive;

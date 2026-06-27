@@ -407,7 +407,7 @@ PROSPEKTOINTI (uusasiakashankinta):
   selkeästi hyväksyy ehdotuksen.
 - Hyvä taustatarina viesteihin: Puuhapatet on espoolainen ammattitiimi
   Otaniemestä; teemme huolellista ikkunanpesua, referenssinä iso FR8-kohde
-  (vanha TKK / Otaniemi). Kerro tämä konkreettisesti, älä luettele pelkkiä
+  (vanha teknillinen yliopisto). Kerro tämä konkreettisesti, älä luettele pelkkiä
   palveluita. Ei ylisanoja, ei katteettomia lupauksia — maine on tärkeä.
 
 SÄHKÖPOSTIT (puoliautonominen — tiimi hyväksyy aina):

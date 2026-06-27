@@ -109,13 +109,13 @@ export function PitchDeck({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        {/* Slide 2 — before/after */}
+        {/* Slide 2 — the result (streak-free finish) */}
         {slide === 2 && (
           <div className="absolute inset-0 flex flex-col px-6 py-8" style={{ background: BRAND.dark }}>
-            <h2 style={heading}>Ero näkyy heti</h2>
-            <p style={sub}>Tavoitteena raidaton, kirkas jälki joka kerta.</p>
+            <h2 style={heading}>Raidaton jälki, joka kerta</h2>
+            <p style={sub}>Huolellinen, kirkas lopputulos — ei raitoja, ei kiirettä.</p>
             <div style={{ flex: 1, marginTop: 20, borderRadius: 20, overflow: "hidden", minHeight: 0 }}>
-              <img src="/it-before-after.png" alt="Ennen ja jälkeen" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              <img src="/work-glass.jpg" alt="Kirkas, raidaton ikkuna pesun jälkeen" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
             </div>
           </div>
         )}
@@ -127,8 +127,8 @@ export function PitchDeck({ onClose }: { onClose: () => void }) {
             <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(26,46,10,0.2) 0%, rgba(26,46,10,0.9) 100%)" }} />
             <div style={{ position: "relative", zIndex: 2, padding: "0 28px" }}>
               <p style={{ color: BRAND.accent, fontWeight: 700, fontSize: 13, letterSpacing: "1.5px", textTransform: "uppercase", margin: 0 }}>Referenssi</p>
-              <h2 style={{ ...heading, marginTop: 10 }}>Iso kohde Otaniemessä</h2>
-              <p style={{ ...sub, maxWidth: 360 }}>Hoidamme satojen ikkunoiden kohteita (mm. vanha TKK / FR8) sopimuksella — sama huolellisuus pätee jokaiseen kotiin.</p>
+              <h2 style={{ ...heading, marginTop: 10 }}>Iso kohde — vanha teknillinen yliopisto</h2>
+              <p style={{ ...sub, maxWidth: 360 }}>Hoidamme satojen ikkunoiden kohteita (mm. vanha teknillinen yliopisto / FR8) sopimuksella — sama huolellisuus pätee jokaiseen kotiin.</p>
             </div>
           </div>
         )}

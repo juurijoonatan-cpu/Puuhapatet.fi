@@ -7,13 +7,18 @@ import PDFDocument from "pdfkit";
 import rateLimit from "express-rate-limit";
 import { db } from "./db";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
-import { feeRateForWorker, effectiveJobTotal, FOUNDER_IDS, marketerCommissionCents } from "@shared/team";
+import { feeRateForWorker, effectiveJobTotal, FOUNDER_IDS, marketerCommissionCents, MARKETER_COMMISSION_RATE } from "@shared/team";
 import { randomUUID, createHash, createHmac, timingSafeEqual, scryptSync, randomBytes } from "crypto";
 import {
   AI_ENABLED, ADMIN_AI_ENABLED, chatComplete, chatCompleteWithTools, chatCompleteWithToolsClaude,
-  publicSystemPrompt, adminSystemPrompt,
+  publicSystemPrompt, adminSystemPrompt, marketerAssistantPrompt,
   PUBLIC_FALLBACK_FI, type ChatTurn, type AiTool,
 } from "./ai";
+import {
+  computeOfferCents, computeCustomOfferCents, estimateMinutes, formatEstimate,
+  CUSTOM_PRICING_SUMMARY, SQM_RANGES, HOUSE_TYPES,
+  type HouseKey, type TierKey, type HeightKey, type AreaKey, type AddonKey, type DifficultyKey,
+} from "@shared/pricing";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, allPoints, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind } from "@shared/project";
@@ -5690,6 +5695,263 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       return res.status(400).json({ error: `Tuntematon toimenpide: ${type}` });
     } catch (e: any) {
       console.error("Assistant apply-action error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Marketer AI offer assistant (Claude Opus) ──────────────────────────────
+  // Helps a door-to-door marketer price a target against our real price lists,
+  // estimate time, and build a valid, shareable offer. Prices ONLY through the
+  // deterministic tools (no invented numbers); offers are proposed and the
+  // marketer confirms (apply-action) before any data is written.
+
+  /** Map a m² value to the right SQM_RANGES index for a house type. */
+  function sqmIndexForHouse(house: HouseKey, sqm: number): number {
+    const ranges = SQM_RANGES[house] || [];
+    for (let i = 0; i < ranges.length; i++) {
+      const nums = (ranges[i].label.match(/\d+/g) || []).map(Number);
+      if (ranges[i].label.startsWith("alle")) { if (sqm < nums[0]) return i; }
+      else if (ranges[i].label.startsWith("yli")) { return i; }
+      else if (nums.length >= 2) { if (sqm <= nums[1]) return i; }
+    }
+    return Math.max(0, ranges.length - 1);
+  }
+
+  async function buildMarketerContext(marketerId: string): Promise<string> {
+    const mid = marketerId.toLowerCase();
+    let mineSummary = "Ei vielä omia liidejä.";
+    try {
+      const rows = mid ? await db.select().from(jobs).where(eq(jobs.marketerId, mid)) : [];
+      const approved = rows.filter(r => r.submissionStatus === "approved");
+      const pending = rows.filter(r => r.submissionStatus === "pending_review");
+      const commission = approved.reduce((s, r) => s + (r.marketerCommissionCents || 0), 0);
+      mineSummary = `Omia liidejä ${rows.length} (odottaa ${pending.length}, hyväksytty ${approved.length}). Ansaitut palkkiot yhteensä ${(commission / 100).toFixed(0)} €.`;
+    } catch { /* ignore */ }
+    const priceRef = HOUSE_TYPES.map(h => {
+      const r = SQM_RANGES[h.key] || [];
+      return `${h.label} ${r[0]?.price ?? 0}–${r[r.length - 1]?.price ?? 0} €`;
+    }).join(", ");
+    return [
+      `Tavallinen neliöperusteinen hinnasto (kaikki pinnat, arvio): ${priceRef}.`,
+      `Kertoimet: vain ulko ×0,58; tikas ×1,2 / 2.krs ×1,4; arvostettu alue ×1,1 / premium ×1,2.`,
+      ``,
+      CUSTOM_PRICING_SUMMARY,
+      ``,
+      `Myyjän palkkio: ${Math.round(MARKETER_COMMISSION_RATE * 100)} % toteutuvasta diilistä, ei kattoa.`,
+      mineSummary,
+    ].join("\n");
+  }
+
+  const marketerTools: AiTool[] = [
+    {
+      type: "function",
+      function: {
+        name: "price_per_m2",
+        description: "Laske tavallisen kodin hinta neliöperusteisesti (omakoti/pari/rivi/kerrostalo). Palauttaa virallisen hinnan. Käytä tätä tavallisille kodeille.",
+        parameters: {
+          type: "object",
+          properties: {
+            house: { type: "string", enum: ["omakoti", "paritalo", "rivitalo", "kerrostalo"], description: "Kohdetyyppi" },
+            sqm: { type: "number", description: "Asuinpinta-ala neliöinä (arvio riittää)" },
+            tier: { type: "string", enum: ["all", "outside"], description: "all = sisä+ulko, outside = vain ulko" },
+            height: { type: "string", enum: ["ground", "ladder", "second"], description: "Korkeus/pääsy" },
+            area: { type: "string", enum: ["normal", "valued", "premium"], description: "Alueen arvotaso" },
+            addons: { type: "array", items: { type: "string" }, description: "Lisäpalvelut: balcony, railing, mirror, canopy, gutter" },
+          },
+          required: ["house", "sqm"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "price_custom",
+        description: "Laske ISON tai erikoiskohteen hinta JA aika-arvio ikkunamäärän ja ruutujen perusteella. Käytä kun kohde ei ole tavallinen koti (paljon ikkunoita, monta ruutua/ikkuna, taloyhtiö, liiketila).",
+        parameters: {
+          type: "object",
+          properties: {
+            windows: { type: "number", description: "Ikkunoiden lukumäärä" },
+            panesPerWindow: { type: "number", description: "Ruutuja per ikkuna (oletus 2)" },
+            tier: { type: "string", enum: ["all", "outside"], description: "all = sisä+ulko, outside = vain ulko" },
+            height: { type: "string", enum: ["ground", "ladder", "second"], description: "Korkeus/pääsy" },
+            area: { type: "string", enum: ["normal", "valued", "premium"], description: "Alueen arvotaso" },
+            difficulty: { type: "string", enum: ["easy", "standard", "hard"], description: "Vaikeus (raamit, pääsy, likaisuus)" },
+            addons: { type: "array", items: { type: "string" }, description: "Lisäpalvelut: balcony, railing, mirror, canopy, gutter" },
+          },
+          required: ["windows"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "create_offer",
+        description: "EHDOTA valmista tarjousta asiakkaalle. EI luo mitään heti — tekee ehdotuksen, jonka myyjä hyväksyy napilla (→ liidi + jaettava /tarjous-linkki). Käytä VAIN kun sinulla on asiakkaan nimi + puhelin ja työkalulla laskettu hinta.",
+        parameters: {
+          type: "object",
+          properties: {
+            customerName: { type: "string", description: "Asiakkaan nimi" },
+            customerPhone: { type: "string", description: "Asiakkaan puhelin" },
+            customerAddress: { type: "string", description: "Osoite (valinnainen)" },
+            description: { type: "string", description: "Lyhyt kuvaus työstä (mitä pestään)" },
+            priceEur: { type: "number", description: "Tarjottava hinta euroina — käytä työkalun laskemaa hintaa" },
+            estimatedHours: { type: "number", description: "Karkea kesto tunteina (valinnainen, isoissa kohteissa)" },
+            notes: { type: "string", description: "Sisäinen muistiinpano (valinnainen)" },
+          },
+          required: ["customerName", "customerPhone", "priceEur", "description"],
+        },
+      },
+    },
+  ];
+
+  app.post("/api/marketer/assistant", async (req, res) => {
+    try {
+      // Auth like the other /api/marketer/* endpoints: any logged-in user (the
+      // server token role is "staff"/"host"; marketers are role-gated client-side).
+      const sub = String((req as any).admin?.sub ?? "").toLowerCase();
+      if (!sub) return res.status(403).json({ error: "Kirjautuminen vaaditaan." });
+      const { message, userName } = req.body ?? {};
+      const history: ChatTurn[] = Array.isArray(req.body?.history) ? req.body.history : [];
+      const text = String(message ?? "").trim();
+      if (!text) return res.status(400).json({ error: "Viesti puuttuu." });
+      if (text.length > MAX_MSG_LEN) return res.status(400).json({ error: "Viesti on liian pitkä." });
+      if (!ADMIN_AI_ENABLED && !AI_ENABLED) {
+        return res.json({ reply: "Tekoälyapuri ei ole vielä käytössä — aseta ANTHROPIC_API_KEY ympäristömuuttuja." });
+      }
+
+      const contextBlock = await buildMarketerContext(sub);
+      const systemTurn: ChatTurn = { role: "system", content: marketerAssistantPrompt({ marketerName: userName || "myyjä", contextBlock }) };
+      const historyTurns: ChatTurn[] = history.slice(-HISTORY_LIMIT).map((m): ChatTurn => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: String(m.content || ""),
+      }));
+      let turns: any[] = [systemTurn, ...historyTurns, { role: "user", content: text }];
+
+      const eur = (c: number) => `${(c / 100).toLocaleString("fi-FI", { maximumFractionDigits: 0 })} €`;
+      const pendingActions: Array<{ id: string; type: "create_offer"; title: string; detail: string; payload: any }> = [];
+
+      for (let round = 0; round < 3; round++) {
+        const result = ADMIN_AI_ENABLED
+          ? await chatCompleteWithToolsClaude(turns, marketerTools, { maxTokens: 1500 })
+          : await chatCompleteWithTools(turns, marketerTools, { temperature: 0.3, maxTokens: 900 });
+
+        if (!result.toolCalls || result.toolCalls.length === 0) {
+          return res.json({
+            reply: result.text ?? "En valitettavasti saanut yhteyttä tekoälyyn juuri nyt. Yritä hetken kuluttua uudelleen.",
+            actions: pendingActions.length ? pendingActions : undefined,
+          });
+        }
+        turns.push({ role: "assistant", content: result.text ?? "", tool_calls: result.toolCalls });
+
+        for (const tc of result.toolCalls) {
+          let toolResult = "";
+          try {
+            const args = JSON.parse(tc.function.arguments);
+            if (tc.function.name === "price_per_m2") {
+              const house = String(args.house) as HouseKey;
+              const sqmIndex = sqmIndexForHouse(house, Number(args.sqm) || 0);
+              const cents = computeOfferCents({
+                house, sqmIndex,
+                tier: (args.tier || "all") as TierKey,
+                height: (args.height || "ground") as HeightKey,
+                area: (args.area || "normal") as AreaKey,
+                addons: (Array.isArray(args.addons) ? args.addons : []) as AddonKey[],
+              });
+              const label = (SQM_RANGES[house] || [])[sqmIndex]?.label ?? "";
+              toolResult = `Hinta: ${eur(cents)} (${house}, ${label}). Tämä on virallinen hinta — esitä se asiakkaalle.`;
+            } else if (tc.function.name === "price_custom") {
+              const input = {
+                windows: Number(args.windows) || 0,
+                panesPerWindow: args.panesPerWindow != null ? Number(args.panesPerWindow) : undefined,
+                tier: (args.tier || "all") as TierKey,
+                height: (args.height || "ground") as HeightKey,
+                area: (args.area || "normal") as AreaKey,
+                difficulty: (args.difficulty || "standard") as DifficultyKey,
+                addons: (Array.isArray(args.addons) ? args.addons : []) as AddonKey[],
+              };
+              const cents = computeCustomOfferCents(input);
+              const est = formatEstimate(estimateMinutes(input));
+              toolResult = `Hinta: ${eur(cents)} (${input.windows} ikkunaa${input.panesPerWindow ? `, ${input.panesPerWindow} ruutua/ikkuna` : ""}). Aika-arvio: ${est.label}. Tämä on virallinen hinta — esitä se asiakkaalle.`;
+            } else if (tc.function.name === "create_offer") {
+              const name = String(args.customerName || "").trim();
+              const phone = String(args.customerPhone || "").trim();
+              const priceCents = Math.max(0, Math.round((Number(args.priceEur) || 0) * 100));
+              if (!name || !phone) {
+                toolResult = `Ehdotusta EI luotu: tarvitaan asiakkaan nimi ja puhelin.`;
+              } else if (priceCents <= 0) {
+                toolResult = `Ehdotusta EI luotu: laske ensin hinta price_per_m2- tai price_custom-työkalulla, älä arvaa.`;
+              } else {
+                const hrs = Number(args.estimatedHours) || 0;
+                pendingActions.push({
+                  id: `off_${pendingActions.length + 1}`,
+                  type: "create_offer",
+                  title: `Tarjous: ${name} — ${eur(priceCents)}`,
+                  detail: [String(args.description || "Ikkunanpesu").slice(0, 140), args.customerAddress ? `📍 ${args.customerAddress}` : null, hrs ? `⏱ ~${hrs} h` : null].filter(Boolean).join(" · "),
+                  payload: {
+                    name: name.slice(0, 200),
+                    phone: phone.slice(0, 60),
+                    address: String(args.customerAddress || "").slice(0, 300),
+                    description: String(args.description || "Ikkunanpesu").slice(0, 500),
+                    priceCents,
+                    notes: [args.notes ? String(args.notes) : "", hrs ? `Aika-arvio ~${hrs} h` : ""].filter(Boolean).join(" · ").slice(0, 400),
+                  },
+                });
+                toolResult = `Tarjousehdotus luotu (EI vielä lähetetty): ${name}, ${eur(priceCents)}. Myyjä näkee ehdotuksen ja vahvistaa sen napilla. ÄLÄ väitä että tarjous on jo luotu.`;
+              }
+            } else {
+              toolResult = `Tuntematon työkalu: ${tc.function.name}`;
+            }
+          } catch (e: any) {
+            toolResult = `Virhe työkalun suorituksessa: ${e.message}`;
+          }
+          turns.push({ role: "tool", tool_call_id: tc.id, content: toolResult });
+        }
+      }
+      res.json({
+        reply: "Tein tarjousehdotuksen — tarkista ja vahvista se alta.",
+        actions: pendingActions.length ? pendingActions : undefined,
+      });
+    } catch (e: any) {
+      console.error("Marketer assistant error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Marketer confirms an assistant-proposed offer → creates the lead + quote link.
+  app.post("/api/marketer/assistant/apply-action", async (req, res) => {
+    try {
+      const sub = String((req as any).admin?.sub ?? "").toLowerCase();
+      if (!sub) return res.status(403).json({ error: "Kirjautuminen vaaditaan." });
+      const { type, payload } = req.body ?? {};
+      if (type !== "create_offer") return res.status(400).json({ error: `Tuntematon toimenpide: ${type}` });
+      const p = payload ?? {};
+      if (!p.name || !p.phone) return res.status(400).json({ error: "Nimi ja puhelin vaaditaan." });
+      const today = new Date().toLocaleDateString("fi-FI");
+      const [newCustomer] = await db.insert(customers).values({
+        name: String(p.name).slice(0, 200),
+        phone: String(p.phone).slice(0, 60),
+        email: null,
+        address: String(p.address || "—").slice(0, 300),
+        notes: `[Myyjän AI-tarjous ${today} · ${sub}]`,
+        ownedBy: sub,
+      }).returning();
+      const price = Math.max(0, Math.round(Number(p.priceCents) || 0));
+      const quoteToken = randomUUID().replace(/-/g, "").slice(0, 16);
+      const [newJob] = await db.insert(jobs).values({
+        customerId: newCustomer.id,
+        description: (String(p.description || "").trim() || "Ikkunanpesu (myyjän liidi)").slice(0, 500),
+        agreedPrice: price,
+        status: "lead",
+        submittedBy: sub,
+        submissionStatus: "pending_review",
+        marketerId: sub,
+        quoteToken,
+        quoteStatus: price > 0 ? "pending" : null,
+        notes: p.notes ? `[${today}] ${String(p.notes).slice(0, 400)}` : null,
+      }).returning();
+      res.json({ ok: true, message: `Tarjous luotu: ${newCustomer.name} (keikka #${newJob.id}).`, quoteToken });
+    } catch (e: any) {
+      console.error("Marketer assistant apply-action error:", e);
       res.status(500).json({ error: e.message });
     }
   });

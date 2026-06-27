@@ -20,6 +20,7 @@ import {
 import { getAdminProfile } from "@/lib/admin-profile";
 import { API_BASE, withAuth } from "@/lib/api";
 import { PitchDeck } from "@/components/pitch-deck";
+import { MarketerAssistant } from "@/components/marketer-assistant";
 import {
   HOUSE_TYPES, SQM_RANGES, SERVICE_TIERS, HEIGHT_OPTS, AREA_TIERS, ADDONS,
   computeOfferCents, type HouseKey, type TierKey, type HeightKey, type AreaKey, type AddonKey,
@@ -86,6 +87,7 @@ export default function SellPage() {
   const [lastShare, setLastShare] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [pitch, setPitch] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
 
   const [leads, setLeads] = useState<LeadRow[]>([]);
   const [loadingLeads, setLoadingLeads] = useState(true);
@@ -218,6 +220,18 @@ export default function SellPage() {
             </p>
           </div>
         </div>
+
+        {/* AI offer assistant — prominent entry */}
+        <button onClick={() => setAiOpen(true)}
+          className="w-full flex items-center gap-3 rounded-2xl border border-primary/30 bg-primary/5 p-4 text-left hover:bg-primary/10 transition-colors">
+          <div className="w-10 h-10 rounded-xl bg-primary text-primary-foreground flex items-center justify-center shrink-0">
+            <Sparkles className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="font-semibold leading-tight">AI-tarjousapuri</p>
+            <p className="text-xs text-muted-foreground leading-tight mt-0.5">Kuvaile kohde — laske hinta, arvioi aika ja tee tarjous</p>
+          </div>
+        </button>
 
         {/* Dashboard */}
         <div className="grid grid-cols-2 gap-3">
@@ -451,6 +465,8 @@ export default function SellPage() {
           </div>
         )}
       </div>
+
+      <MarketerAssistant open={aiOpen} onClose={() => setAiOpen(false)} />
     </div>
   );
 }

@@ -7,8 +7,9 @@
 
 import { useState, useEffect, useRef } from "react";
 import { X, ChevronLeft, ChevronRight, ClipboardList } from "lucide-react";
+import { ContribGrid } from "@/components/contrib-grid";
 
-const SLIDE_COUNT = 5;
+const SLIDE_COUNT = 7;
 
 const BRAND = {
   dark: "#1a2e0a",
@@ -54,6 +55,15 @@ export function PitchDeck({ onClose }: { onClose: () => void }) {
     { img: "/work-glass.jpg", title: "Ikkunanpesu", detail: "Sisältä ja ulkoa, parvekelasit ja lasiterassit — raidaton jälki." },
     { img: "/work-highrise.jpg", title: "Korkeat kohteet", detail: "Varusteet jopa 10 m korkeuksiin, taloyhtiöt ja liiketilat." },
     { img: "/work-gutter.jpg", title: "Lisäpalvelut", detail: "Rännit, lasikaiteet, peilit, terassikatteet — sovitaan tarpeen mukaan." },
+  ];
+
+  // Researched window-cleaning benefits — each carries a source so it's
+  // defensible at the door. Not our own business numbers.
+  const stats = [
+    { big: "20–40 %", label: "enemmän luonnonvaloa puhtaista ikkunoista", src: "Alan arvio" },
+    { big: "78 %", label: "kokee luonnonvalon parantavan hyvinvointia ja onnellisuutta", src: "Työympäristötutkimus" },
+    { big: "+46 min", label: "parempaa unta, kun työtilassa on ikkunat ja luonnonvaloa", src: "Unitutkimus" },
+    { big: "2× / v", label: "suositeltu ammattipesu suojaa lasia pysyviltä syöpymiltä ja pidentää ikää", src: "Lasihuoltosuositus" },
   ];
 
   return (
@@ -109,19 +119,57 @@ export function PitchDeck({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        {/* Slide 2 — the result (streak-free finish) */}
+        {/* Slide 2 — why clean windows matter (researched industry stats) */}
         {slide === 2 && (
-          <div className="absolute inset-0 flex flex-col px-6 py-8" style={{ background: BRAND.dark }}>
-            <h2 style={heading}>Raidaton jälki, joka kerta</h2>
-            <p style={sub}>Huolellinen, kirkas lopputulos — ei raitoja, ei kiirettä.</p>
-            <div style={{ flex: 1, marginTop: 20, borderRadius: 20, overflow: "hidden", minHeight: 0 }}>
-              <img src="/work-glass.jpg" alt="Kirkas, raidaton ikkuna pesun jälkeen" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          <div className="absolute inset-0 overflow-y-auto px-6 py-8" style={{ background: BRAND.dark }}>
+            <p style={{ color: BRAND.accent, fontWeight: 700, fontSize: 13, letterSpacing: "1.5px", textTransform: "uppercase", margin: 0 }}>Tutkittua</p>
+            <h2 style={{ ...heading, marginTop: 8 }}>Miksi puhtaat ikkunat kannattaa</h2>
+            <p style={sub}>Kirkkaat ikkunat eivät ole pelkkä ulkonäköasia.</p>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 22 }}>
+              {stats.map(s => (
+                <div key={s.label} style={{ background: "rgba(255,255,255,0.05)", borderRadius: 18, padding: 16, display: "flex", flexDirection: "column" }}>
+                  <span style={{ color: BRAND.accent, fontWeight: 800, fontSize: 28, letterSpacing: "-0.5px", lineHeight: 1 }}>{s.big}</span>
+                  <span style={{ color: "rgba(255,255,255,0.78)", fontSize: 13, lineHeight: 1.35, marginTop: 8, flex: 1 }}>{s.label}</span>
+                  <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, marginTop: 10 }}>Lähde: {s.src}</span>
+                </div>
+              ))}
             </div>
           </div>
         )}
 
-        {/* Slide 3 — reference gig (FR8) */}
+        {/* Slide 3 — momentum / activity grid */}
         {slide === 3 && (
+          <div className="absolute inset-0 flex flex-col justify-center px-6 py-8" style={{ background: BRAND.dark }}>
+            <p style={{ color: BRAND.accent, fontWeight: 700, fontSize: 13, letterSpacing: "1.5px", textTransform: "uppercase", margin: 0 }}>Aktiivinen tiimi</p>
+            <h2 style={{ ...heading, marginTop: 8 }}>Töitä joka viikko</h2>
+            <p style={{ ...sub, marginBottom: 24 }}>Pesemme ikkunoita ympäri pääkaupunkiseutua läpi vuoden — kokenutta ja tasaista jälkeä.</p>
+            <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 20, padding: 18 }}>
+              <ContribGrid />
+            </div>
+            <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+              {[{ n: "Satoja", l: "pestyjä ikkunoita" }, { n: "10 m", l: "varusteet korkealle" }, { n: "100 %", l: "vastuuvakuutus" }].map(k => (
+                <div key={k.l} style={{ flex: 1, textAlign: "center", background: "rgba(255,255,255,0.05)", borderRadius: 14, padding: "12px 6px" }}>
+                  <p style={{ color: BRAND.accent, fontWeight: 800, fontSize: 19, margin: 0 }}>{k.n}</p>
+                  <p style={{ color: "rgba(255,255,255,0.65)", fontSize: 11, margin: "4px 0 0", lineHeight: 1.3 }}>{k.l}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Slide 4 — the result (streak-free finish) */}
+        {slide === 4 && (
+          <div className="absolute inset-0 flex flex-col px-6 py-8" style={{ background: BRAND.dark }}>
+            <h2 style={heading}>Raidaton jälki, joka kerta</h2>
+            <p style={sub}>Huolellinen, kirkas lopputulos — ei raitoja, ei kiirettä.</p>
+            <div style={{ flex: 1, marginTop: 20, borderRadius: 20, overflow: "hidden", minHeight: 0 }}>
+              <img src="/work-round.jpg" alt="Kirkas, raidaton ikkuna pesun jälkeen" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            </div>
+          </div>
+        )}
+
+        {/* Slide 5 — reference gig (FR8) */}
+        {slide === 5 && (
           <div className="absolute inset-0 flex flex-col justify-end pb-14" >
             <img src="/work-highrise.jpg" alt="Iso kohde" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
             <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(26,46,10,0.2) 0%, rgba(26,46,10,0.9) 100%)" }} />
@@ -133,16 +181,19 @@ export function PitchDeck({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        {/* Slide 4 — team + trust + CTA */}
-        {slide === 4 && (
+        {/* Slide 6 — vetted team + trust + CTA */}
+        {slide === 6 && (
           <div className="absolute inset-0 overflow-y-auto px-6 py-8 flex flex-col" style={{ background: BRAND.dark }}>
-            <h2 style={heading}>Ketkä tulevat</h2>
-            <div style={{ display: "flex", gap: 12, marginTop: 18 }}>
-              {[{ img: "/joonatan.jpg.jpeg", name: "Joonatan" }, { img: "/matias.jpg.jpeg", name: "Matias" }].map(p => (
-                <div key={p.name} style={{ flex: 1, textAlign: "center" }}>
-                  <img src={p.img} alt={p.name} style={{ width: "100%", aspectRatio: "1", borderRadius: 18, objectFit: "cover" }} />
-                  <p style={{ color: BRAND.white, fontWeight: 600, marginTop: 8 }}>{p.name}</p>
-                </div>
+            <h2 style={heading}>Koulutettu, vakuutettu tiimi</h2>
+            <p style={sub}>Ovellesi tulee aina perehdytetty Puuhapatet-ammattilainen — sama huolellisuus ja vakuutusturva joka kerta.</p>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 18 }}>
+              {[
+                { img: "/work-team-back.jpg", alt: "Tiimi työn touhussa" },
+                { img: "/work-pole.jpg", alt: "Pesua varustein" },
+                { img: "/work-sign.jpg", alt: "Brändätty tiimi" },
+                { img: "/work-door.jpg", alt: "Ammattilainen ovella" },
+              ].map(p => (
+                <img key={p.img} src={p.img} alt={p.alt} style={{ width: "100%", aspectRatio: "4/3", borderRadius: 14, objectFit: "cover" }} />
               ))}
             </div>
             <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -154,7 +205,7 @@ export function PitchDeck({ onClose }: { onClose: () => void }) {
             </div>
             <button
               onClick={onClose}
-              style={{ marginTop: "auto", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: BRAND.accent, color: BRAND.dark, fontWeight: 800, fontSize: 17, border: "none", borderRadius: 16, padding: "16px", cursor: "pointer" }}
+              style={{ marginTop: 24, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: BRAND.accent, color: BRAND.dark, fontWeight: 800, fontSize: 17, border: "none", borderRadius: 16, padding: "16px", cursor: "pointer" }}
             >
               <ClipboardList size={20} /> Tehdään tarjous
             </button>

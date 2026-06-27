@@ -43,7 +43,7 @@ export const FOUNDER_IDS: readonly string[] = ["joonatan", "matias"];
 //   • if the marketer discounts the price to close, the final value is lower,
 //     so the commission drops proportionally — no separate discount rule needed.
 // Tune the whole model with these two constants.
-export const MARKETER_COMMISSION_RATE = 0.10;        // 10 % of the closed deal value
+export const MARKETER_COMMISSION_RATE = 0.05;        // 5 % of the closed deal value
 export const MARKETER_COMMISSION_CAP_CENTS = 4000;   // 40,00 € roof
 
 /** Progressive marketer commission (cents) for a closed deal of the given value

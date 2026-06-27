@@ -3049,10 +3049,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy." });
       if (job.submissionStatus !== "pending_review") return res.status(400).json({ error: "Liidi ei ole enää tarkistettavana." });
 
-      // Progressive commission on the FINAL agreed value (so discounts to close
-      // reduce it), capped at the roof. Snapshotted here so it's locked in.
+      // Progressive, uncapped commission on the FINAL deal value (so discounts to
+      // close reduce it, and bigger gigs pay more). effectiveJobTotal handles
+      // taloyhtiö gigs where agreedPrice is per-apartment. Snapshotted here so
+      // it's locked in even if the rate changes later.
       const marketer = (job.marketerId || job.submittedBy || "").toLowerCase();
-      const commission = marketer ? marketerCommissionCents(job.agreedPrice) : 0;
+      const commission = marketer ? marketerCommissionCents(effectiveJobTotal(job)) : 0;
       const updates: any = { updatedAt: new Date() };
 
       if (action === "decline") {

@@ -15,6 +15,7 @@ import { Link } from "wouter";
 import {
   Loader2, Check, MapPin, Phone, Plus, ChevronLeft, Sparkles, Calculator,
   ExternalLink, Share2, Copy, ClipboardList, CheckCircle2, Clock, Euro,
+  TrendingUp, Users, MessageCircle,
 } from "lucide-react";
 import { getAdminProfile } from "@/lib/admin-profile";
 import { API_BASE, withAuth } from "@/lib/api";
@@ -23,7 +24,7 @@ import {
   HOUSE_TYPES, SQM_RANGES, SERVICE_TIERS, HEIGHT_OPTS, AREA_TIERS, ADDONS,
   computeOfferCents, type HouseKey, type TierKey, type HeightKey, type AreaKey, type AddonKey,
 } from "@shared/pricing";
-import { marketerCommissionCents, MARKETER_COMMISSION_RATE, MARKETER_COMMISSION_CAP_CENTS } from "@shared/team";
+import { marketerCommissionCents, MARKETER_COMMISSION_RATE } from "@shared/team";
 
 interface LeadRow {
   id: number;
@@ -103,12 +104,34 @@ export default function SellPage() {
   // Dashboard stats from the leads list.
   const stats = useMemo(() => {
     const approved = leads.filter(l => l.submissionStatus === "approved");
+    const pendingLeads = leads.filter(l => l.submissionStatus === "pending_review");
+    // Money still "in the pipeline": offered value of pending leads + what the
+    // marketer would earn if they all close (uncapped 5 %).
+    const pipelineCents = pendingLeads.reduce((s, l) => s + Math.max(0, l.agreedPrice || 0), 0);
     return {
       total: leads.length,
-      pending: leads.filter(l => l.submissionStatus === "pending_review").length,
+      pending: pendingLeads.length,
       approved: approved.length,
       commission: approved.reduce((s, l) => s + (l.marketerCommissionCents || 0), 0),
+      pipelineCents,
+      potentialCommissionCents: marketerCommissionCents(pipelineCents),
     };
+  }, [leads]);
+
+  // Collected contacts (CRM): unique people the marketer has captured, newest
+  // first, with quick call / map / WhatsApp actions for follow-up.
+  const contacts = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { name: string; phone: string; address: string }[] = [];
+    for (const l of leads) {
+      const c = l.customer;
+      if (!c) continue;
+      const key = (c.phone || c.name || "").trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ name: c.name || "—", phone: c.phone || "", address: c.address || "" });
+    }
+    return out;
   }, [leads]);
 
   function toggleAddon(k: AddonKey) {
@@ -183,6 +206,19 @@ export default function SellPage() {
       </div>
 
       <div className="max-w-md mx-auto px-4 pt-5 space-y-5">
+        {/* Brand marking — a branded business header for the field panel */}
+        <div className="relative overflow-hidden rounded-2xl p-5 text-white"
+          style={{ background: "linear-gradient(135deg, #1a2e0a 0%, #2d5016 60%, #3a6b1e 100%)" }}>
+          <div className="absolute -right-6 -top-8 w-32 h-32 rounded-full" style={{ background: "rgba(184,224,122,0.15)" }} />
+          <div className="relative">
+            <p className="text-[11px] font-semibold tracking-[0.18em] uppercase" style={{ color: "#b8e07a" }}>Puuhapatet · Myynti</p>
+            <h1 className="text-xl font-bold leading-tight mt-1">Ovelta ovelle -myyntipaneeli</h1>
+            <p className="text-sm text-white/75 mt-1">
+              {profile?.name ? `${profile.name} — ` : ""}kerää asiakkaita, tee tarjous ja tienaa jokaisesta diilistä.
+            </p>
+          </div>
+        </div>
+
         {/* Dashboard */}
         <div className="grid grid-cols-2 gap-3">
           {[
@@ -198,6 +234,21 @@ export default function SellPage() {
             </div>
           ))}
         </div>
+
+        {/* Pipeline highlight — money still in flight + potential commission */}
+        {stats.pending > 0 && (
+          <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-primary/15 flex items-center justify-center shrink-0">
+              <TrendingUp className="w-5 h-5 text-primary" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold leading-tight">Putkessa {eur(stats.pipelineCents)} tarjouksia</p>
+              <p className="text-xs text-muted-foreground leading-tight mt-0.5">
+                Jos kaikki menee läpi, palkkiosi <span className="font-semibold text-primary">+{eur(stats.potentialCommissionCents)}</span>
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Just-shared offer link */}
         {lastShare && (
@@ -302,7 +353,7 @@ export default function SellPage() {
             return (
               <p className="text-xs -mt-1 text-muted-foreground">
                 Palkkiosi tästä: <span className="font-semibold text-primary">{eur(marketerCommissionCents(pc))}</span>
-                {" "}({Math.round(MARKETER_COMMISSION_RATE * 100)} % diilistä, katto {eur(MARKETER_COMMISSION_CAP_CENTS)}) — jos alennat hintaa, palkkio pienenee.
+                {" "}({Math.round(MARKETER_COMMISSION_RATE * 100)} % diilistä — ei kattoa, isompi diili = isompi palkkio). Jos alennat hintaa, palkkio pienenee.
               </p>
             );
           })()}
@@ -356,6 +407,49 @@ export default function SellPage() {
             })
           )}
         </div>
+
+        {/* Kontaktit — collected contacts address book (CRM) for follow-up */}
+        {contacts.length > 0 && (
+          <div className="space-y-2">
+            <h2 className="text-base font-semibold px-1 flex items-center gap-2">
+              <Users className="w-4 h-4 text-primary" /> Kontaktit
+              <span className="text-xs font-normal text-muted-foreground">({contacts.length})</span>
+            </h2>
+            <div className="rounded-2xl border border-border bg-card divide-y divide-border overflow-hidden">
+              {contacts.map((c, i) => (
+                <div key={c.phone || c.name || i} className="flex items-center gap-3 p-3">
+                  <div className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center font-semibold text-sm shrink-0">
+                    {(c.name.trim()[0] || "?").toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium truncate text-sm">{c.name}</p>
+                    {c.address && <p className="text-xs text-muted-foreground truncate">{c.address}</p>}
+                    {c.phone && <p className="text-xs text-muted-foreground truncate">{c.phone}</p>}
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {c.phone && (
+                      <a href={`tel:${c.phone.replace(/\s/g, "")}`} className="w-9 h-9 rounded-full bg-muted text-foreground/80 flex items-center justify-center hover:bg-muted/70" title="Soita" aria-label="Soita">
+                        <Phone className="w-4 h-4" />
+                      </a>
+                    )}
+                    {c.phone && (
+                      <a href={`https://wa.me/${c.phone.replace(/[^\d]/g, "").replace(/^0/, "358")}`} target="_blank" rel="noreferrer"
+                        className="w-9 h-9 rounded-full bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 flex items-center justify-center hover:opacity-80" title="WhatsApp" aria-label="WhatsApp">
+                        <MessageCircle className="w-4 h-4" />
+                      </a>
+                    )}
+                    {c.address && (
+                      <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.address)}`} target="_blank" rel="noreferrer"
+                        className="w-9 h-9 rounded-full bg-muted text-foreground/80 flex items-center justify-center hover:bg-muted/70" title="Kartalla" aria-label="Kartalla">
+                        <MapPin className="w-4 h-4" />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -23,6 +23,7 @@ import {
   HOUSE_TYPES, SQM_RANGES, SERVICE_TIERS, HEIGHT_OPTS, AREA_TIERS, ADDONS,
   computeOfferCents, type HouseKey, type TierKey, type HeightKey, type AreaKey, type AddonKey,
 } from "@shared/pricing";
+import { marketerCommissionCents, MARKETER_COMMISSION_RATE, MARKETER_COMMISSION_CAP_CENTS } from "@shared/team";
 
 interface LeadRow {
   id: number;
@@ -295,6 +296,16 @@ export default function SellPage() {
             <input className={field + " flex-1"} placeholder="Tarjottu hinta €" inputMode="decimal" value={price} onChange={e => setPrice(e.target.value)} />
             <span className="text-sm text-muted-foreground shrink-0">€</span>
           </div>
+          {(() => {
+            const pc = price.trim() ? Math.round(parseFloat(price.replace(",", ".")) * 100) : 0;
+            if (!Number.isFinite(pc) || pc <= 0) return null;
+            return (
+              <p className="text-xs -mt-1 text-muted-foreground">
+                Palkkiosi tästä: <span className="font-semibold text-primary">{eur(marketerCommissionCents(pc))}</span>
+                {" "}({Math.round(MARKETER_COMMISSION_RATE * 100)} % diilistä, katto {eur(MARKETER_COMMISSION_CAP_CENTS)}) — jos alennat hintaa, palkkio pienenee.
+              </p>
+            );
+          })()}
           <textarea className={field} rows={2} placeholder="Muistiinpano (esim. paras soittoaika)" value={notes} onChange={e => setNotes(e.target.value)} />
           {error && <p className="text-sm text-destructive">{error}</p>}
           <button onClick={submit} disabled={sending}

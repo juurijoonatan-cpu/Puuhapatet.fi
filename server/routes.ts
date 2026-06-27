@@ -1,13 +1,13 @@
 import type { Express } from "express";
 import { type Server } from "http";
-import { eq, desc, sql, ne, and } from "drizzle-orm";
+import { eq, desc, sql, ne, and, isNotNull, inArray } from "drizzle-orm";
 import { Resend } from "resend";
 import bwipjs from "bwip-js";
 import PDFDocument from "pdfkit";
 import rateLimit from "express-rate-limit";
 import { db } from "./db";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
-import { feeRateForWorker, effectiveJobTotal, FOUNDER_IDS } from "@shared/team";
+import { feeRateForWorker, effectiveJobTotal, FOUNDER_IDS, marketerDealBonusCents } from "@shared/team";
 import { randomUUID, createHash, createHmac, timingSafeEqual, scryptSync, randomBytes } from "crypto";
 import {
   AI_ENABLED, ADMIN_AI_ENABLED, chatComplete, chatCompleteWithTools, chatCompleteWithToolsClaude,
@@ -381,7 +381,7 @@ const AUTH_SECRET = process.env.AUTH_SECRET || "";
 const ADMIN_DEFAULT_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || "";
 // Per-user starter passwords for brand-new accounts (worker logins). Accepted
 // only until the user sets their own; then it's hashed and this is ignored.
-const INITIAL_PASSWORDS: Record<string, string> = { jani: "Jani123", milja: "milja456", oliver: "Oliver234", petrus: "Petrus123" };
+const INITIAL_PASSWORDS: Record<string, string> = { jani: "Jani123", milja: "milja456", oliver: "Oliver234", petrus: "Petrus123", myyja1: "Myyja123" };
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 function b64url(buf: Buffer): string {
@@ -2955,6 +2955,119 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       res.json({ ok: true, job: updated });
     } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Door-to-door marketer: capture leads + founder triage ───────────────────
+  // A marketer (or founder) captures a lead in the field. Creates customer + job
+  // (status "lead", submissionStatus "pending_review") for the founders to
+  // accept → workers / take themselves / decline. submittedBy = logged-in user.
+  app.post("/api/marketer/leads", async (req, res) => {
+    try {
+      const sub = String((req as any).admin?.sub ?? "").toLowerCase();
+      if (!sub) return res.status(403).json({ error: "Kirjautuminen vaaditaan." });
+      const { name, phone, address, email, description, priceCents, notes } = req.body ?? {};
+      const custName = String(name ?? "").trim();
+      if (!custName || !String(phone ?? "").trim()) {
+        return res.status(400).json({ error: "Asiakkaan nimi ja puhelin vaaditaan." });
+      }
+      const today = new Date().toLocaleDateString("fi-FI");
+      const [newCustomer] = await db.insert(customers).values({
+        name: custName.slice(0, 200),
+        phone: String(phone).slice(0, 60),
+        email: email ? String(email).slice(0, 200) : null,
+        address: String(address ?? "—").slice(0, 300),
+        notes: `[Myyjän keräämä liidi ${today} · ${sub}]`,
+        ownedBy: sub,
+      }).returning();
+      const price = Math.max(0, Math.round(Number(priceCents) || 0));
+      const [newJob] = await db.insert(jobs).values({
+        customerId: newCustomer.id,
+        description: (String(description ?? "").trim() || "Ikkunanpesu (myyjän liidi)").slice(0, 500),
+        agreedPrice: price,
+        status: "lead",
+        submittedBy: sub,
+        submissionStatus: "pending_review",
+        marketerId: sub,
+        notes: notes ? `[${today}] ${String(notes).slice(0, 400)}` : null,
+      }).returning();
+      res.json({ ok: true, job: newJob, customer: newCustomer });
+    } catch (e: any) {
+      console.error("Marketer lead error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET /api/marketer/leads — leads I submitted (founders see everyone's).
+  app.get("/api/marketer/leads", async (req, res) => {
+    try {
+      const admin = (req as any).admin as AdminTokenPayload | undefined;
+      const sub = String(admin?.sub ?? "").toLowerCase();
+      const isHost = admin?.role === "host";
+      if (!sub) return res.status(403).json({ error: "Kirjautuminen vaaditaan." });
+      const rows = await db.select().from(jobs)
+        .where(isHost ? isNotNull(jobs.submittedBy) : eq(jobs.submittedBy, sub))
+        .orderBy(desc(jobs.updatedAt)).limit(200);
+      const custIds = Array.from(new Set(rows.map(r => r.customerId)));
+      const custs = custIds.length ? await db.select().from(customers).where(inArray(customers.id, custIds)) : [];
+      const custById = new Map(custs.map(c => [c.id, c]));
+      const out = rows.map(j => {
+        const c = custById.get(j.customerId);
+        return {
+          id: j.id, status: j.status, submissionStatus: j.submissionStatus,
+          description: j.description, agreedPrice: j.agreedPrice,
+          marketerId: j.marketerId, marketerCommissionCents: j.marketerCommissionCents,
+          submittedBy: j.submittedBy, createdAt: j.createdAt,
+          customer: c ? { name: c.name, address: c.address, phone: c.phone } : null,
+        };
+      });
+      res.json(out);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/jobs/:id/triage — founder accepts/takes/declines a marketer lead.
+  // accept_workers: approve (founders then invite workers via the normal flow).
+  // take_self: approve + assign to the founder + schedule.
+  // decline: reject (kept for the marketer's stats). Commission is snapshotted
+  // on approval (flat €/deal) so it's locked even if rates change later.
+  app.post("/api/jobs/:id/triage", async (req, res) => {
+    try {
+      const admin = (req as any).admin as AdminTokenPayload | undefined;
+      if (admin?.role !== "host") return res.status(403).json({ error: "Vain perustaja voi käsitellä liidejä." });
+      const jobId = Number(req.params.id);
+      const action = String(req.body?.action ?? "");
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy." });
+      if (job.submissionStatus !== "pending_review") return res.status(400).json({ error: "Liidi ei ole enää tarkistettavana." });
+
+      const marketer = (job.marketerId || job.submittedBy || "").toLowerCase();
+      const commission = marketer ? marketerDealBonusCents(marketer) : 0;
+      const updates: any = { updatedAt: new Date() };
+
+      if (action === "decline") {
+        updates.submissionStatus = "rejected";
+      } else if (action === "take_self") {
+        updates.submissionStatus = "approved";
+        updates.marketerCommissionCents = commission;
+        const me = String(admin?.sub ?? "");
+        const assigned = (job.assignedTo ?? "").split(",").map(s => s.trim()).filter(Boolean);
+        if (me && !assigned.includes(me)) assigned.push(me);
+        updates.assignedTo = assigned.join(",") || null;
+        updates.status = "scheduled";
+      } else if (action === "accept_workers") {
+        updates.submissionStatus = "approved";
+        updates.marketerCommissionCents = commission;
+        // Stays a "lead" so founders can invite workers via the existing flow.
+      } else {
+        return res.status(400).json({ error: "Tuntematon toimenpide." });
+      }
+      const [updated] = await db.update(jobs).set(updates).where(eq(jobs.id, jobId)).returning();
+      res.json({ ok: true, job: updated });
+    } catch (e: any) {
+      console.error("Triage error:", e);
       res.status(500).json({ error: e.message });
     }
   });
@@ -5766,6 +5879,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const revenue = done.reduce((s, j) => s + (j.agreedPrice || 0), 0);
       lines.push(`\nTalous (vain perustajat): valmiita keikkoja ${done.length}, liikevaihto valmiista ${eur(revenue)}.`);
       lines.push(`Asiakkaita yhteensä: ${allCustomers.length}.`);
+
+      // Ovelta ovelle -myyjien keräämät liidit + maksettavat palkkiot.
+      const marketerLeads = allJobs.filter(j => j.submittedBy);
+      if (marketerLeads.length) {
+        const pending = marketerLeads.filter(j => j.submissionStatus === "pending_review").length;
+        const approved = marketerLeads.filter(j => j.submissionStatus === "approved");
+        const owed = new Map<string, { count: number; cents: number }>();
+        for (const j of approved) {
+          const mid = String(j.marketerId || j.submittedBy || "?");
+          const cur = owed.get(mid) || { count: 0, cents: 0 };
+          cur.count += 1; cur.cents += j.marketerCommissionCents || 0;
+          owed.set(mid, cur);
+        }
+        const owedStr = Array.from(owed.entries())
+          .map(([m, v]) => `${m}: ${v.count} diiliä, palkkiot ${eur(v.cents)}`).join("; ");
+        lines.push(`Myyjien liidit: ${pending} odottaa tarkistusta, ${approved.length} hyväksytty.` +
+          (owedStr ? ` Myyjille maksettavat palkkiot — ${owedStr}.` : ""));
+      }
 
       // ── Omat ansiosi — HENKILÖKOHTAINEN, VAIN tälle käyttäjälle ──────────────
       // TÄRKEÄ TIETOSUOJA: emme listaa muiden perustajien tai työntekijöiden

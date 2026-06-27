@@ -66,6 +66,18 @@ export function ProtectedRoute({ children, requireProfile = true, bare = false, 
         }
       }
 
+      // Marketer (ovelta ovelle -myyjä): locked to the sell panel. No worker
+      // agreement gate; any other admin route bounces back to /admin/myynti.
+      if (profile?.marketerOnly) {
+        if (!location.startsWith("/admin/myynti")) {
+          setAuthState("unauthenticated");
+          navigate("/admin/myynti", { replace: true });
+          return;
+        }
+        if (!cancelled) setAuthState("ready");
+        return;
+      }
+
       // Member agreement gate — the first thing in the admin is signing.
       if (gateAgreement) {
         let signed = hasSignedCurrent(profile);

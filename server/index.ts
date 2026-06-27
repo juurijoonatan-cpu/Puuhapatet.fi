@@ -93,6 +93,11 @@ app.use((req, res, next) => {
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS board_contact_name   text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS board_contact_email  text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS board_contact_phone  text`,
+    // Door-to-door marketer lead capture + founder triage
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS submitted_by              text`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS submission_status         text`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS marketer_id               text`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS marketer_commission_cents integer`,
     sql`ALTER TABLE users     ADD COLUMN IF NOT EXISTS member_agreement     text`,
     sql`CREATE UNIQUE INDEX IF NOT EXISTS jobs_quote_token_unique ON jobs(quote_token) WHERE quote_token IS NOT NULL`,
     // Chat / AI assistant tables

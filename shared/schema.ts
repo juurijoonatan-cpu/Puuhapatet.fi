@@ -76,6 +76,11 @@ export const jobs = pgTable("jobs", {
   gigData:           text("gig_data"),           // JSON: GigData (shared/gig.ts)
   // Project / floor-plan window tool (FR8 projektinäkymä)
   projectData:       text("project_data"),       // JSON: ProjectData (shared/project.ts)
+  // Marketer (ovelta ovelle -myyjä) lead capture + founder triage
+  submittedBy:       text("submitted_by"),        // admin/marketer user id who captured this lead
+  submissionStatus:  text("submission_status"),   // null (normal) | "pending_review" | "approved" | "rejected"
+  marketerId:        text("marketer_id"),          // user id credited with the commission (usually = submittedBy)
+  marketerCommissionCents: integer("marketer_commission_cents"), // snapshotted flat €/deal at acceptance
   createdAt:         timestamp("created_at").defaultNow().notNull(),
   updatedAt:         timestamp("updated_at").defaultNow().notNull(),
 });

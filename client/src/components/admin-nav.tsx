@@ -5,37 +5,21 @@
  * Items: Dashboard, Uusi (New Job), Kalenteri, Keikat, Asiakkaat, Asetukset
  */
 
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Plus, Calendar, ClipboardList, Users, Settings, Sun, Moon, LogOut } from "lucide-react";
+import { LayoutDashboard, Plus, Calendar, ClipboardList, Users, Settings, Sun, Moon, LogOut, Inbox, Megaphone } from "lucide-react";
 import { useTheme } from "@/lib/theme";
 import { clearAdminSession } from "@/pages/admin/login";
-import { clearAdminProfile, getAdminProfile } from "@/lib/admin-profile";
+import { clearAdminProfile, getAdminProfile, canApproveLeads } from "@/lib/admin-profile";
+import { API_BASE, withAuth } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
   icon: typeof LayoutDashboard;
   label: string;
   href: string;
+  badge?: number;
 }
-
-// Mobile bottom bar — most-used items
-const mobileNavItems: NavItem[] = [
-  { icon: LayoutDashboard, label: "Dashboard", href: "/admin/dashboard" },
-  { icon: Plus,            label: "Uusi",      href: "/admin/new" },
-  { icon: Calendar,        label: "Kalenteri", href: "/admin/calendar" },
-  { icon: ClipboardList,   label: "Keikat",    href: "/admin/jobs" },
-  { icon: Settings,        label: "Asetukset", href: "/admin/settings" },
-];
-
-// Desktop top nav — show all
-const adminNavItems: NavItem[] = [
-  { icon: LayoutDashboard, label: "Dashboard", href: "/admin/dashboard" },
-  { icon: Plus,            label: "Uusi",      href: "/admin/new" },
-  { icon: Calendar,        label: "Kalenteri", href: "/admin/calendar" },
-  { icon: ClipboardList,   label: "Keikat",    href: "/admin/jobs" },
-  { icon: Users,           label: "Asiakkaat", href: "/admin/customers" },
-  { icon: Settings,        label: "Asetukset", href: "/admin/settings" },
-];
 
 export function AdminNav() {
   const [location, navigate] = useLocation();
@@ -43,6 +27,42 @@ export function AdminNav() {
 
   const currentPath = location || "";
   const profile = typeof window !== "undefined" ? getAdminProfile() : null;
+  const isHost = !!profile && canApproveLeads(profile.role);
+
+  // Founders see a live count of marketer leads waiting for triage.
+  const [pendingLeads, setPendingLeads] = useState(0);
+  useEffect(() => {
+    if (!isHost) return;
+    let cancelled = false;
+    fetch(`${API_BASE}/api/marketer/leads`, { headers: withAuth() })
+      .then(r => r.json())
+      .then(d => { if (!cancelled && Array.isArray(d)) setPendingLeads(d.filter((l: any) => l.submissionStatus === "pending_review").length); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [isHost, currentPath]);
+
+  const triageItem: NavItem = { icon: Inbox, label: "Liidit", href: "/admin/liidit", badge: pendingLeads };
+
+  // Mobile bottom bar — most-used items (+ Liidit for founders)
+  const mobileNavItems: NavItem[] = [
+    { icon: LayoutDashboard, label: "Dashboard", href: "/admin/dashboard" },
+    { icon: Plus,            label: "Uusi",      href: "/admin/new" },
+    { icon: Calendar,        label: "Kalenteri", href: "/admin/calendar" },
+    { icon: ClipboardList,   label: "Keikat",    href: "/admin/jobs" },
+    ...(isHost ? [triageItem] : []),
+    { icon: Settings,        label: "Asetukset", href: "/admin/settings" },
+  ];
+
+  // Desktop top nav — show all (+ Liidit/Myynti for founders)
+  const adminNavItems: NavItem[] = [
+    { icon: LayoutDashboard, label: "Dashboard", href: "/admin/dashboard" },
+    { icon: Plus,            label: "Uusi",      href: "/admin/new" },
+    { icon: Calendar,        label: "Kalenteri", href: "/admin/calendar" },
+    { icon: ClipboardList,   label: "Keikat",    href: "/admin/jobs" },
+    ...(isHost ? [triageItem, { icon: Megaphone, label: "Myynti", href: "/admin/myynti" } as NavItem] : []),
+    { icon: Users,           label: "Asiakkaat", href: "/admin/customers" },
+    { icon: Settings,        label: "Asetukset", href: "/admin/settings" },
+  ];
 
   const handleLogout = () => {
     clearAdminSession();
@@ -96,6 +116,9 @@ export function AdminNav() {
                   data-testid={`admin-nav-${item.label.toLowerCase()}`}
                 >
                   <Icon className="w-6 h-6" strokeWidth={active ? 2.5 : 2} />
+                  {(item.badge ?? 0) > 0 && (
+                    <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center">{item.badge}</span>
+                  )}
                 </button>
               </Link>
             );
@@ -129,6 +152,9 @@ export function AdminNav() {
                   >
                     <Icon className="w-4 h-4" />
                     <span className="text-sm font-medium">{item.label}</span>
+                    {(item.badge ?? 0) > 0 && (
+                      <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center">{item.badge}</span>
+                    )}
                   </button>
                 </Link>
               );

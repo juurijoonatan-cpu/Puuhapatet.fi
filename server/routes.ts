@@ -5880,6 +5880,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       lines.push(`\nTalous (vain perustajat): valmiita keikkoja ${done.length}, liikevaihto valmiista ${eur(revenue)}.`);
       lines.push(`Asiakkaita yhteensä: ${allCustomers.length}.`);
 
+      // Ovelta ovelle -myyjien keräämät liidit + maksettavat palkkiot.
+      const marketerLeads = allJobs.filter(j => j.submittedBy);
+      if (marketerLeads.length) {
+        const pending = marketerLeads.filter(j => j.submissionStatus === "pending_review").length;
+        const approved = marketerLeads.filter(j => j.submissionStatus === "approved");
+        const owed = new Map<string, { count: number; cents: number }>();
+        for (const j of approved) {
+          const mid = String(j.marketerId || j.submittedBy || "?");
+          const cur = owed.get(mid) || { count: 0, cents: 0 };
+          cur.count += 1; cur.cents += j.marketerCommissionCents || 0;
+          owed.set(mid, cur);
+        }
+        const owedStr = Array.from(owed.entries())
+          .map(([m, v]) => `${m}: ${v.count} diiliä, palkkiot ${eur(v.cents)}`).join("; ");
+        lines.push(`Myyjien liidit: ${pending} odottaa tarkistusta, ${approved.length} hyväksytty.` +
+          (owedStr ? ` Myyjille maksettavat palkkiot — ${owedStr}.` : ""));
+      }
+
       // ── Omat ansiosi — HENKILÖKOHTAINEN, VAIN tälle käyttäjälle ──────────────
       // TÄRKEÄ TIETOSUOJA: emme listaa muiden perustajien tai työntekijöiden
       // euroja tähän yhteenvetoon. Jokainen perustaja näkee VAIN omat ansionsa,

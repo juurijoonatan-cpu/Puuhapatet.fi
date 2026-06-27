@@ -5413,7 +5413,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               type: "object",
               properties: {
                 job_id: { type: "number", description: "Keikan ID-numero" },
-                message: { type: "string", description: "Viesti asiakkaalle suomeksi. Laadukas, kohtelias, ei liioittelua. Kerro konkreettisesti taustasta: teemme ammattimaista ikkunanpesua Espoossa ja Helsingissä, referenssinä mm. iso FR8-kohde (vanha TKK / Otaniemi). 3–6 lausetta." },
+                message: { type: "string", description: "Viesti asiakkaalle suomeksi. Laadukas, kohtelias, ei liioittelua. Kerro konkreettisesti taustasta: teemme ammattimaista ikkunanpesua Espoossa ja Helsingissä, referenssinä mm. iso FR8-kohde (vanha teknillinen yliopisto). 3–6 lausetta." },
                 style: { 
                   type: "string", 
                   enum: ["henkikohtainen", "pro", "lyhyt"],
@@ -5575,7 +5575,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               // kohteet vastaustekstinään; tämä työkalu vain ohjeistaa muodon.
               const n = Math.min(Math.max(Number(args.count) || 3, 1), 6);
               toolResult = `Tee ${n} konkreettista prospektiehdotusta alueelle "${args.area}"${args.building_type ? ` (tyyppi: ${args.building_type})` : ""}. ` +
-                `Anna jokaiselle: kohteen tyyppi/nimi- idea, sijainti, ja lyhyt PERUSTE miksi tämä sopisi Puuhapatetille (esim. ikkunapinta-ala, alueen profiili, lähellä FR8/Otaniemeä). ` +
+                `Anna jokaiselle: kohteen tyyppi/nimi- idea, sijainti, ja lyhyt PERUSTE miksi tämä sopisi Puuhapatetille (esim. ikkunapinta-ala, alueen profiili, lähellä isoa referenssikohdetta). ` +
                 `ÄLÄ keksi oikeiden ihmisten nimiä tai yhteystietoja. Muotoile selkeänä numeroituna listana. ` +
                 `Lopuksi kerro, että käyttäjä voi pyytää lisäämään minkä tahansa ehdotuksen liidiksi.`;
             } else if (tc.function.name === "create_lead_from_prospect") {

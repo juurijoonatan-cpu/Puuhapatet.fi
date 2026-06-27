@@ -432,41 +432,44 @@ export default function RecruitmentPage() {
       </section>
 
       {/* ───────────────────────── TEHOKAKSIKKO (apply as a duo) ───────────────────────── */}
-      <section className="py-16 md:py-24">
-        <div className="container mx-auto px-4 md:px-6">
-          <div className="grid md:grid-cols-2 gap-10 md:gap-14 items-center max-w-5xl mx-auto">
-            <Reveal>
-              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium mb-4">
-                {fi ? "Hae kaverin kanssa" : "Apply with a friend"}
-              </div>
-              <h2 className="text-3xl md:text-4xl font-semibold text-foreground text-balance">
-                {fi ? "Ootteko sä ja kaveri tehokaksikko?" : "Are you and a friend an efficient duo?"}
-              </h2>
-              <p className="mt-4 text-muted-foreground text-lg leading-relaxed">
-                {fi
-                  ? "Hakekaa yhdessä — hyvä pari tekee hommat nopeammin ja fiilis pysyy korkealla. Mainitse WhatsApp-viestissä että haette kaksin, niin koitetaan saada teidät samoille keikoille."
-                  : "Apply together — a good pair gets the work done faster and keeps the vibe high. Just mention in your WhatsApp message that you're applying as a duo, and we'll try to put you on the same jobs."}
-              </p>
-              <div className="mt-8">
-                <WhatsAppButton
-                  label={fi ? "Hae kaksikkona" : "Apply as a duo"}
-                  testId="rekry-duo-whatsapp"
-                />
-              </div>
-            </Reveal>
-            <Reveal delay={120}>
-              {/* NOTE: /rekry-duo.mp4 is a placeholder cut — replace with a final
-                  web-encoded (H.264 mp4) clip of Joonatan + Matias. Poster shows
-                  if a browser can't decode the current file. */}
-              <PortraitVideo
-                src="/rekry-duo.mp4"
-                poster="/work-team-back.jpg"
-                aspect="aspect-[4/5]"
-                className="max-w-sm mx-auto"
-                label={fi ? "Hyvä porukka, hyvä meininki." : "Good crew, good vibes."}
-              />
-            </Reveal>
-          </div>
+      {/* Joonatan + Matias clip as a soft background video, edges faded into the
+          page so it blends smoothly behind the text (no separate CTA button —
+          the page's main WhatsApp buttons handle applying). */}
+      <section className="relative overflow-hidden py-24 md:py-36">
+        <div className="absolute inset-0">
+          <video
+            className="w-full h-full object-cover object-center"
+            autoPlay
+            muted
+            loop
+            playsInline
+            preload="metadata"
+            poster="/work-team-back.jpg"
+          >
+            <source src="/rekry-duo.mp4" type="video/mp4" />
+          </video>
+          {/* Brand wash for legible white text */}
+          <div className="absolute inset-0 bg-gradient-to-br from-[#1a2019]/85 via-[#243026]/72 to-[#1a2019]/88" />
+          {/* Fade all four edges into the page background */}
+          <div className="absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-background to-transparent" />
+          <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-background to-transparent" />
+          <div className="absolute inset-y-0 left-0 w-20 bg-gradient-to-r from-background to-transparent" />
+          <div className="absolute inset-y-0 right-0 w-20 bg-gradient-to-l from-background to-transparent" />
+        </div>
+        <div className="relative z-10 container mx-auto px-4 md:px-6">
+          <Reveal className="max-w-2xl mx-auto text-center">
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 text-white text-sm font-medium mb-4 backdrop-blur-sm">
+              {fi ? "Hae kaverin kanssa" : "Apply with a friend"}
+            </div>
+            <h2 className="text-3xl md:text-4xl font-semibold text-white text-balance drop-shadow">
+              {fi ? "Ootteko sä ja kaveri tehokaksikko?" : "Are you and a friend an efficient duo?"}
+            </h2>
+            <p className="mt-4 text-white/85 text-lg leading-relaxed drop-shadow">
+              {fi
+                ? "Hakekaa yhdessä — hyvä pari tekee hommat nopeammin ja fiilis pysyy korkealla. Mainitse WhatsApp-viestissä että haette kaksin, niin koitetaan saada teidät samoille keikoille."
+                : "Apply together — a good pair gets the work done faster and keeps the vibe high. Just mention in your WhatsApp message that you're applying as a duo, and we'll try to put you on the same jobs."}
+            </p>
+          </Reveal>
         </div>
       </section>
 
@@ -498,12 +501,6 @@ export default function RecruitmentPage() {
                 <p className="mt-1 text-sm text-muted-foreground leading-relaxed">{p.desc}</p>
               </Reveal>
             ))}
-          </div>
-          <div className="mt-10 flex justify-center">
-            <WhatsAppButton
-              label={fi ? "Kysy myyntihommista" : "Ask about sales"}
-              testId="rekry-seller-whatsapp"
-            />
           </div>
         </div>
       </section>

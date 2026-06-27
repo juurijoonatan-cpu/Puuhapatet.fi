@@ -12,9 +12,149 @@ import {
   MapPin,
 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import { MARKETER_COMMISSION_RATE, STAFF_SERVICE_FEE_RATE } from "@shared/team";
 
 /** Matias Pitkänen's WhatsApp — leads go straight here, no pre-filled message. */
 const WHATSAPP_URL = "https://wa.me/358442350881";
+
+/** Worker's share of a job after the service fee (workers keep the majority). */
+const WORKER_SHARE = 1 - STAFF_SERVICE_FEE_RATE;
+
+const eur0 = (n: number) => Math.round(n).toLocaleString("fi-FI") + " €";
+
+/** A clean, brand-accented range slider with a label + live readout. */
+function Slider({
+  label,
+  value,
+  min,
+  max,
+  step = 1,
+  onChange,
+  read,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  onChange: (v: number) => void;
+  read: string;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3 text-sm">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="font-semibold text-foreground tabular-nums">{read}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full mt-2 accent-primary cursor-pointer"
+        aria-label={label}
+      />
+    </div>
+  );
+}
+
+/** Worker earnings estimator: drag the gig value + hours, see the per-hour rate.
+ *  Workers keep WORKER_SHARE of the gig (the rest is the brand's service fee). */
+function WorkerEarnings({ fi }: { fi: boolean }) {
+  const [gig, setGig] = useState(500);
+  const [hours, setHours] = useState(8);
+  const yours = gig * WORKER_SHARE;
+  const perHour = yours / Math.max(1, hours);
+  return (
+    <div className="rounded-2xl border border-card-border bg-card p-6 md:p-7 premium-shadow">
+      <div className="space-y-5">
+        <Slider
+          label={fi ? "Keikan arvo" : "Job value"}
+          value={gig}
+          min={150}
+          max={2000}
+          step={50}
+          onChange={setGig}
+          read={eur0(gig)}
+        />
+        <Slider
+          label={fi ? "Kesto yhteensä" : "Total time"}
+          value={hours}
+          min={2}
+          max={16}
+          step={1}
+          onChange={setHours}
+          read={`${hours} h`}
+        />
+      </div>
+      <div className="mt-6 pt-6 border-t border-border grid grid-cols-2 gap-4">
+        <div>
+          <p className="text-xs text-muted-foreground">{fi ? "Sinulle (osuutesi)" : "Your share"}</p>
+          <p className="text-2xl font-bold text-foreground mt-0.5">{eur0(yours)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">{fi ? "Tuntipalkka" : "Per hour"}</p>
+          <p className="text-2xl font-bold text-primary mt-0.5">{eur0(perHour)}/h</p>
+        </div>
+      </div>
+      <p className="mt-4 text-xs text-muted-foreground leading-relaxed">
+        {fi
+          ? `Esimerkki: ${eur0(500)} keikka, joka kestää 8 h → ${eur0(500 * WORKER_SHARE / 8)}/h. Sinä pidät ${Math.round(WORKER_SHARE * 100)} %, loput on palvelumaksu (välineet, vakuutus, asiakashankinta, työkalut).`
+          : `Example: a ${eur0(500)} job that takes 8 h → ${eur0(500 * WORKER_SHARE / 8)}/h. You keep ${Math.round(WORKER_SHARE * 100)} %; the rest is the service fee (gear, insurance, customer acquisition, tools).`}
+      </p>
+    </div>
+  );
+}
+
+/** Marketer earnings estimator: drag deal size + deals/month, see the uncapped
+ *  commission. Bigger deals pay more — no ceiling. */
+function MarketerEarnings({ fi }: { fi: boolean }) {
+  const [deal, setDeal] = useState(800);
+  const [perMonth, setPerMonth] = useState(10);
+  const perDeal = deal * MARKETER_COMMISSION_RATE;
+  const monthly = perDeal * perMonth;
+  return (
+    <div className="rounded-2xl border border-card-border bg-card p-6 md:p-7 premium-shadow text-left">
+      <div className="space-y-5">
+        <Slider
+          label={fi ? "Keskimääräinen diili" : "Average deal"}
+          value={deal}
+          min={150}
+          max={8000}
+          step={50}
+          onChange={setDeal}
+          read={eur0(deal)}
+        />
+        <Slider
+          label={fi ? "Diilejä kuukaudessa" : "Deals per month"}
+          value={perMonth}
+          min={1}
+          max={40}
+          step={1}
+          onChange={setPerMonth}
+          read={`${perMonth} ${fi ? "kpl" : "pcs"}`}
+        />
+      </div>
+      <div className="mt-6 pt-6 border-t border-border grid grid-cols-2 gap-4">
+        <div>
+          <p className="text-xs text-muted-foreground">{fi ? "Palkkio per diili" : "Per deal"}</p>
+          <p className="text-2xl font-bold text-foreground mt-0.5">{eur0(perDeal)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">{fi ? "Kuukaudessa" : "Per month"}</p>
+          <p className="text-2xl font-bold text-primary mt-0.5">{eur0(monthly)}</p>
+        </div>
+      </div>
+      <p className="mt-4 text-xs text-muted-foreground leading-relaxed">
+        {fi
+          ? `${Math.round(MARKETER_COMMISSION_RATE * 100)} % jokaisesta sovitusta diilistä — ei kattoa. Iso kohde, kuten ${eur0(8000)} taloyhtiö, tuo kerralla ${eur0(8000 * MARKETER_COMMISSION_RATE)} palkkion.`
+          : `${Math.round(MARKETER_COMMISSION_RATE * 100)} % of every closed deal — no cap. A big site like an ${eur0(8000)} housing company pays ${eur0(8000 * MARKETER_COMMISSION_RATE)} in one go.`}
+      </p>
+    </div>
+  );
+}
 
 /** Reveal-on-scroll wrapper. Adds .rk-in once the element enters the viewport. */
 function Reveal({
@@ -290,6 +430,28 @@ export default function RecruitmentPage() {
         </div>
       </section>
 
+      {/* ───────────────────────── EARNINGS (worker) ───────────────────────── */}
+      <section className="py-16 md:py-24 bg-muted/30">
+        <div className="container mx-auto px-4 md:px-6">
+          <Reveal className="text-center max-w-2xl mx-auto mb-10">
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium mb-4">
+              {fi ? "Paljonko voit tienata?" : "How much can you make?"}
+            </div>
+            <h2 className="text-3xl md:text-4xl font-semibold text-foreground text-balance">
+              {fi ? "Liikuta liukuria — katso tuntipalkka" : "Drag the slider — see your hourly pay"}
+            </h2>
+            <p className="mt-4 text-muted-foreground text-lg leading-relaxed">
+              {fi
+                ? "Tienaat keikan koon mukaan, et kellokorttiin. Hyvällä tahdilla tuntipalkka nousee korkeaksi."
+                : "You earn by the job, not by the clock. At a good pace the hourly rate climbs high."}
+            </p>
+          </Reveal>
+          <Reveal delay={120} className="max-w-xl mx-auto">
+            <WorkerEarnings fi={fi} />
+          </Reveal>
+        </div>
+      </section>
+
       {/* ───────────────────────── SHOWCASE ───────────────────────── */}
       <section className="py-16 md:py-24 bg-muted/30">
         <div className="container mx-auto px-4 md:px-6">
@@ -485,13 +647,13 @@ export default function RecruitmentPage() {
             </h2>
             <p className="mt-4 text-muted-foreground text-lg leading-relaxed">
               {fi
-                ? "Etsimme myös reippaita myyjiä: kierrät naapurustoja brändätyssä asussa, esittelet meidät tabletilla ja keräät asiakkaita. Saat palkkion jokaisesta sovitusta diilistä."
-                : "We're also looking for outgoing sellers: roam the neighbourhoods in branded gear, pitch us on a tablet, and bring in customers. You earn a fee for every deal that lands."}
+                ? `Etsimme myös reippaita myyjiä: kierrät naapurustoja brändätyssä asussa, esittelet meidät tabletilla ja keräät asiakkaita. Saat ${Math.round(MARKETER_COMMISSION_RATE * 100)} % jokaisesta sovitusta diilistä — ei kattoa, joten iso kohde tuo ison palkkion.`
+                : `We're also looking for outgoing sellers: roam the neighbourhoods in branded gear, pitch us on a tablet, and bring in customers. You earn ${Math.round(MARKETER_COMMISSION_RATE * 100)} % of every closed deal — uncapped, so a big site pays a big commission.`}
             </p>
           </Reveal>
           <div className="grid sm:grid-cols-3 gap-4 max-w-3xl mx-auto mt-10">
             {[
-              { icon: Banknote, title: fi ? "Palkkio per diili" : "Pay per deal", desc: fi ? "Jokaisesta sovitusta asiakkaasta kiinteä palkkio." : "A fixed fee for every customer you close." },
+              { icon: Banknote, title: fi ? `${Math.round(MARKETER_COMMISSION_RATE * 100)} % per diili` : `${Math.round(MARKETER_COMMISSION_RATE * 100)} % per deal`, desc: fi ? "Osuus jokaisesta sovitusta diilistä — ei kattoa." : "A share of every closed deal — no cap." },
               { icon: CalendarClock, title: fi ? "Joustava" : "Flexible", desc: fi ? "Kierrät silloin kun sinulle sopii." : "Go out whenever it suits you." },
               { icon: Users, title: fi ? "Hyvät työkalut" : "Great tools", desc: fi ? "Tabletti, esittely ja brändätyt asut valmiina." : "Tablet, pitch and branded gear ready to go." },
             ].map((p) => (
@@ -502,6 +664,9 @@ export default function RecruitmentPage() {
               </Reveal>
             ))}
           </div>
+          <Reveal delay={120} className="max-w-xl mx-auto mt-8">
+            <MarketerEarnings fi={fi} />
+          </Reveal>
         </div>
       </section>
 

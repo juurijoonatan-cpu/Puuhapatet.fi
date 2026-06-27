@@ -5,7 +5,7 @@
  * settled to the brand:
  *   • founders (HOST) ............... 10 %
  *   • current grandfathered workers . per-person rate (e.g. Petrus 30 %)
- *   • new / upcoming workers (STAFF)  35 %
+ *   • new / upcoming workers (STAFF)  40 %
  *
  * This is the single source of truth for the fee rates and who counts as a
  * founder. The client profile list (client/src/lib/admin-profile.ts) mirrors
@@ -15,15 +15,17 @@
 
 export type TeamRole = "HOST" | "STAFF";
 
-/** Service fee for new / upcoming STAFF workers, as a fraction of their share. */
-export const STAFF_SERVICE_FEE_RATE = 0.35;
+/** Service fee for new / upcoming STAFF workers, as a fraction of their share.
+ *  Raised to 40 % so the brand's cut covers the door-to-door marketer commission
+ *  (see MARKETER_COMMISSION_RATE below) while workers still keep the majority. */
+export const STAFF_SERVICE_FEE_RATE = 0.40;
 
 /** Service fee for founders (HOST), as a fraction of their net-revenue share. */
 export const HOST_SERVICE_FEE_RATE = 0.10;
 
 /**
  * Per-person rates that differ from the STAFF default — current workers whose
- * rate was agreed before the standard rose to 35 % keep their original rate.
+ * rate was agreed before the standard rose to 40 % keep their original rate.
  */
 export const GRANDFATHERED_FEE_RATES: Readonly<Record<string, number>> = {
   petrus: 0.30,
@@ -37,20 +39,21 @@ export const HOST_SERVICE_FEE_PCT = Math.round(HOST_SERVICE_FEE_RATE * 100);
 export const FOUNDER_IDS: readonly string[] = ["joonatan", "matias"];
 
 // ─── Door-to-door marketer commission ───────────────────────────────────────
-// Marketers (ovelta ovelle -myyjät) earn a PROGRESSIVE commission: a share of
-// the FINAL agreed deal value, capped at a roof. This is intentionally simple:
-//   • bigger gig value → bigger commission (up to the roof), and
+// Marketers (ovelta ovelle -myyjät) earn a PROGRESSIVE commission: a flat share
+// of the FINAL agreed deal value, with NO cap. This is intentionally simple and
+// as tempting as possible:
+//   • bigger gig value → bigger commission, all the way up (a big taloyhtiö or
+//     contract deal pays a big commission), and
 //   • if the marketer discounts the price to close, the final value is lower,
 //     so the commission drops proportionally — no separate discount rule needed.
-// Tune the whole model with these two constants.
-export const MARKETER_COMMISSION_RATE = 0.05;        // 5 % of the closed deal value
-export const MARKETER_COMMISSION_CAP_CENTS = 4000;   // 40,00 € roof
+// Tune the whole model with this single constant.
+export const MARKETER_COMMISSION_RATE = 0.05;        // 5 % of the closed deal value, uncapped
 
 /** Progressive marketer commission (cents) for a closed deal of the given value
- *  (in cents). A share of the final price, capped at the roof. */
+ *  (in cents). A flat share of the final price — no roof, so the bigger the
+ *  deal the bigger the payout. */
 export function marketerCommissionCents(dealValueCents: number): number {
-  const c = Math.round(Math.max(0, dealValueCents || 0) * MARKETER_COMMISSION_RATE);
-  return Math.min(MARKETER_COMMISSION_CAP_CENTS, c);
+  return Math.round(Math.max(0, dealValueCents || 0) * MARKETER_COMMISSION_RATE);
 }
 
 /** Is this user a founder (HOST)? */

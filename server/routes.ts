@@ -7,7 +7,7 @@ import PDFDocument from "pdfkit";
 import rateLimit from "express-rate-limit";
 import { db } from "./db";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
-import { feeRateForWorker, effectiveJobTotal, FOUNDER_IDS, marketerDealBonusCents } from "@shared/team";
+import { feeRateForWorker, effectiveJobTotal, FOUNDER_IDS, marketerCommissionCents } from "@shared/team";
 import { randomUUID, createHash, createHmac, timingSafeEqual, scryptSync, randomBytes } from "crypto";
 import {
   AI_ENABLED, ADMIN_AI_ENABLED, chatComplete, chatCompleteWithTools, chatCompleteWithToolsClaude,
@@ -3049,8 +3049,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy." });
       if (job.submissionStatus !== "pending_review") return res.status(400).json({ error: "Liidi ei ole enää tarkistettavana." });
 
+      // Progressive commission on the FINAL agreed value (so discounts to close
+      // reduce it), capped at the roof. Snapshotted here so it's locked in.
       const marketer = (job.marketerId || job.submittedBy || "").toLowerCase();
-      const commission = marketer ? marketerDealBonusCents(marketer) : 0;
+      const commission = marketer ? marketerCommissionCents(job.agreedPrice) : 0;
       const updates: any = { updatedAt: new Date() };
 
       if (action === "decline") {

@@ -37,17 +37,20 @@ export const HOST_SERVICE_FEE_PCT = Math.round(HOST_SERVICE_FEE_RATE * 100);
 export const FOUNDER_IDS: readonly string[] = ["joonatan", "matias"];
 
 // ─── Door-to-door marketer commission ───────────────────────────────────────
-// Marketers (ovelta ovelle -myyjät) earn a FLAT fee per closed deal — i.e. per
-// lead a founder accepts in triage. Not a % of the gig price. The amount is a
-// placeholder until Joonatan confirms it; override per marketer in the map.
-export const DEFAULT_MARKETER_DEAL_BONUS_CENTS = 3000; // 30,00 € / hyväksytty diili
-export const MARKETER_DEAL_BONUS_CENTS: Readonly<Record<string, number>> = {
-  // "myyja1": 4000,  // per-marketer override example (40,00 €)
-};
+// Marketers (ovelta ovelle -myyjät) earn a PROGRESSIVE commission: a share of
+// the FINAL agreed deal value, capped at a roof. This is intentionally simple:
+//   • bigger gig value → bigger commission (up to the roof), and
+//   • if the marketer discounts the price to close, the final value is lower,
+//     so the commission drops proportionally — no separate discount rule needed.
+// Tune the whole model with these two constants.
+export const MARKETER_COMMISSION_RATE = 0.10;        // 10 % of the closed deal value
+export const MARKETER_COMMISSION_CAP_CENTS = 4000;   // 40,00 € roof
 
-/** Flat commission (cents) a marketer earns per accepted deal. */
-export function marketerDealBonusCents(marketerId: string): number {
-  return MARKETER_DEAL_BONUS_CENTS[marketerId] ?? DEFAULT_MARKETER_DEAL_BONUS_CENTS;
+/** Progressive marketer commission (cents) for a closed deal of the given value
+ *  (in cents). A share of the final price, capped at the roof. */
+export function marketerCommissionCents(dealValueCents: number): number {
+  const c = Math.round(Math.max(0, dealValueCents || 0) * MARKETER_COMMISSION_RATE);
+  return Math.min(MARKETER_COMMISSION_CAP_CENTS, c);
 }
 
 /** Is this user a founder (HOST)? */

@@ -2982,6 +2982,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ownedBy: sub,
       }).returning();
       const price = Math.max(0, Math.round(Number(priceCents) || 0));
+      // Shareable offer link: give the lead a quote token so it renders at
+      // /tarjous/<token> and the customer can view (and accept) the price.
+      const quoteToken = randomUUID().replace(/-/g, "").slice(0, 16);
       const [newJob] = await db.insert(jobs).values({
         customerId: newCustomer.id,
         description: (String(description ?? "").trim() || "Ikkunanpesu (myyjän liidi)").slice(0, 500),
@@ -2990,9 +2993,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         submittedBy: sub,
         submissionStatus: "pending_review",
         marketerId: sub,
+        quoteToken,
+        quoteStatus: price > 0 ? "pending" : null,
         notes: notes ? `[${today}] ${String(notes).slice(0, 400)}` : null,
       }).returning();
-      res.json({ ok: true, job: newJob, customer: newCustomer });
+      res.json({ ok: true, job: newJob, customer: newCustomer, quoteToken });
     } catch (e: any) {
       console.error("Marketer lead error:", e);
       res.status(500).json({ error: e.message });
@@ -3019,6 +3024,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           description: j.description, agreedPrice: j.agreedPrice,
           marketerId: j.marketerId, marketerCommissionCents: j.marketerCommissionCents,
           submittedBy: j.submittedBy, createdAt: j.createdAt,
+          quoteToken: j.quoteToken, quoteStatus: j.quoteStatus,
           customer: c ? { name: c.name, address: c.address, phone: c.phone } : null,
         };
       });

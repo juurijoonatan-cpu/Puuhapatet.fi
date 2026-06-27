@@ -63,6 +63,8 @@ import WorkerPage from "@/pages/worker";
 import AdminCrewPage from "@/pages/admin/crew";
 import AdminCalendarPage from "@/pages/admin/calendar";
 import AdminJobsPage from "@/pages/admin/jobs";
+import AdminSellPage from "@/pages/admin/sell";
+import AdminLeadTriagePage from "@/pages/admin/lead-triage";
 import AdminPackagesPage from "@/pages/admin/packages";
 import AdminSettingsPage from "@/pages/admin/settings";
 import AdminCustomersPage from "@/pages/admin/customers";
@@ -220,6 +222,16 @@ function Router() {
       <Route path="/admin/jobs">
         <ProtectedRoute>
           <AdminJobsPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/admin/myynti">
+        <ProtectedRoute bare gateAgreement={false}>
+          <AdminSellPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/admin/liidit">
+        <ProtectedRoute>
+          <AdminLeadTriagePage />
         </ProtectedRoute>
       </Route>
       <Route path="/admin/packages">

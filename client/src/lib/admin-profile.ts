@@ -5,7 +5,7 @@
  * Login picks one of these profiles and stores the selection in localStorage.
  */
 
-export type UserRole = "HOST" | "STAFF";
+export type UserRole = "HOST" | "STAFF" | "MARKETER";
 
 export interface AdminProfile {
   id: string;
@@ -30,6 +30,9 @@ export interface AdminProfile {
   isTrainee?: boolean;
   /** Admin-profile id of the leader responsible for this trainee (e.g. "matias"). */
   traineeOf?: string;
+  /** Door-to-door marketer: logs in only to the sell panel (/admin/myynti),
+   *  captures leads for founder triage, never sees the rest of the admin. */
+  marketerOnly?: boolean;
 }
 
 // ─── Hard-coded team members ─────────────────────────────────────────────────
@@ -119,6 +122,17 @@ export const USERS: AdminProfile[] = [
     role: "STAFF",
     dashboardOnly: true,
   },
+  {
+    // Ovelta ovelle -myyjä — kirjautuu vain myyntipaneeliin (/admin/myynti).
+    // Kerää liidejä (asiakas + keikka tilassa "lead", submissionStatus
+    // "pending_review"), jotka perustajat hyväksyvät/ottavat/hylkäävät. Saa
+    // kiinteän palkkion jokaisesta hyväksytystä diilistä (shared/team.ts).
+    // Aloitussalasana "Myyja123" (server INITIAL_PASSWORDS).
+    id: "myyja1",
+    name: "Myyjä",
+    role: "MARKETER",
+    marketerOnly: true,
+  },
 ];
 
 // ─── localStorage helpers ─────────────────────────────────────────────────────
@@ -180,5 +194,15 @@ export function isProfileComplete(profile: AdminProfile | null): boolean {
 // ─── Role helpers ─────────────────────────────────────────────────────────────
 
 export function canManageUsers(role: UserRole): boolean {
+  return role === "HOST";
+}
+
+/** Can capture door-to-door leads (the sell panel): marketers + founders. */
+export function canSell(role: UserRole): boolean {
+  return role === "MARKETER" || role === "HOST";
+}
+
+/** Can triage marketer-submitted leads (accept/take/decline): founders only. */
+export function canApproveLeads(role: UserRole): boolean {
   return role === "HOST";
 }

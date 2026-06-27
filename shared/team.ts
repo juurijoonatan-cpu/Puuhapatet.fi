@@ -36,6 +36,20 @@ export const HOST_SERVICE_FEE_PCT = Math.round(HOST_SERVICE_FEE_RATE * 100);
 /** Founder (HOST) user IDs. Everyone else is treated as STAFF. */
 export const FOUNDER_IDS: readonly string[] = ["joonatan", "matias"];
 
+// ─── Door-to-door marketer commission ───────────────────────────────────────
+// Marketers (ovelta ovelle -myyjät) earn a FLAT fee per closed deal — i.e. per
+// lead a founder accepts in triage. Not a % of the gig price. The amount is a
+// placeholder until Joonatan confirms it; override per marketer in the map.
+export const DEFAULT_MARKETER_DEAL_BONUS_CENTS = 3000; // 30,00 € / hyväksytty diili
+export const MARKETER_DEAL_BONUS_CENTS: Readonly<Record<string, number>> = {
+  // "myyja1": 4000,  // per-marketer override example (40,00 €)
+};
+
+/** Flat commission (cents) a marketer earns per accepted deal. */
+export function marketerDealBonusCents(marketerId: string): number {
+  return MARKETER_DEAL_BONUS_CENTS[marketerId] ?? DEFAULT_MARKETER_DEAL_BONUS_CENTS;
+}
+
 /** Is this user a founder (HOST)? */
 export function isFounder(workerId: string): boolean {
   return FOUNDER_IDS.includes(workerId);

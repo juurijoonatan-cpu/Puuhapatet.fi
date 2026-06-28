@@ -22,6 +22,7 @@ import {
   type WorkerAgreement,
 } from "@shared/worker-agreements";
 import InkReveal from "@/components/InkReveal";
+import { Shine } from "@/components/animate-ui/primitives/effects/shine";
 import SignaturePad from "@/components/SignaturePad";
 import FloorView from "@/components/fr8/FloorView";
 import {
@@ -29,6 +30,7 @@ import {
   VAT_STATUS_KEY, PREPAYMENT_REGISTER_KEY, type VatStatus,
 } from "@shared/tax";
 import { computePayProgress } from "@shared/payprogress";
+import { MAX_PHOTO_DATAURL_LEN } from "@shared/crew";
 
 const T = { ink: "#1A1A1A", paper: "#F6F4EE", card: "#FFFFFF", hair: "#E4E1D7", muted: "#8C8A82", green: "#3E7C59", navy: "#1F3B57" };
 const FONT = "'Poppins', ui-sans-serif, system-ui, -apple-system, sans-serif";
@@ -355,17 +357,63 @@ function InstallModal({ pwa, onClose }: { pwa: PwaInstall; onClose: () => void }
 // ─── Quick start (soft launch) — intro + name only, then straight in ──────────
 
 /** Per-worker personal touches for the welcome intro. Keep the photo files in
- *  client/public/fr8/ (e.g. jani.jpg). Match is by first name, case-insensitive. */
-const WORKER_INTROS: Record<string, { photo: string; greeting: string; line: string }> = {
+ *  client/public/fr8/ (e.g. jani.jpg). Match is by first name, case-insensitive.
+ *  Optional flair: `tagline` (small kicker above the title) and `accent` (drives
+ *  the glow/CTA tint) let a single worker's welcome stand out from the default. */
+type WorkerIntro = {
+  photo: string;
+  greeting: string;
+  line: string;
+  tagline?: string;
+  accent?: string;
+};
+const WORKER_INTROS: Record<string, WorkerIntro> = {
   jani: {
     photo: "/fr8/jani.jpg",
     greeting: "Tervetuloa, Jani 👋",
     line: "Mahtavaa saada sut mukaan ekalle keikalle. Tehdään tästä yhdessä siistiä jälkeä — työpöytäsi odottaa.",
   },
+  oona: {
+    photo: "/fr8/oona.jpg",
+    tagline: "Uusi tekijä · FR8",
+    greeting: "Tervetuloa tiimiin, Oona ✨",
+    line: "Mahtavaa saada juuri sinut mukaan — ja heti isoimpaan keikkaamme. Tästä eteenpäin jokainen pesemäsi ikkuna näkyy reaaliajassa omalla työpöydälläsi. Tehdään yhdessä jälkeä, josta puhutaan. Mennään! 🚀",
+    accent: "#7CE0A6",
+  },
 };
 function introFor(name: string) {
   const first = (name || "").trim().split(/\s+/)[0]?.toLowerCase();
   return first ? WORKER_INTROS[first] : undefined;
+}
+
+/** Read an image File, centre-crop to a square ~256 px avatar and return a JPEG
+ *  data URL kept comfortably under the server's size cap. Keeps project_data small
+ *  so a worker's photo travels with their profile without bloating the gig JSON. */
+async function fileToAvatarDataUrl(file: File, size = 256): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result));
+    fr.onerror = () => reject(new Error("read"));
+    fr.readAsDataURL(file);
+  });
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const im = new Image();
+    im.onload = () => resolve(im);
+    im.onerror = () => reject(new Error("img"));
+    im.src = dataUrl;
+  });
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return dataUrl;
+  const min = Math.min(img.width, img.height);
+  ctx.drawImage(img, (img.width - min) / 2, (img.height - min) / 2, min, min, 0, 0, size, size);
+  for (const q of [0.82, 0.7, 0.6, 0.5]) {
+    const out = canvas.toDataURL("image/jpeg", q);
+    if (out.length <= MAX_PHOTO_DATAURL_LEN) return out;
+  }
+  return canvas.toDataURL("image/jpeg", 0.4);
 }
 
 /** Returns the right "add to home screen" instructions for the device. */
@@ -427,7 +475,7 @@ function QuickStart({ token, view, onDone }: { token: string; view: WorkerView; 
       <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "32px 24px", zIndex: 3 }}>
 
         {step === "welcome" && (<>
-          <p style={{ ...rise(0), color: "rgba(255,255,255,0.5)", fontSize: 13, letterSpacing: "0.18em", textTransform: "uppercase" }}>Puuhapatet</p>
+          <p style={{ ...rise(0), color: personal?.tagline ? (personal.accent ?? T.green) : "rgba(255,255,255,0.5)", fontSize: 13, letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: personal?.tagline ? 700 : 400 }}>{personal?.tagline ?? "Puuhapatet"}</p>
           {personal && photoOk && (
             <div style={{ position: "relative", width: 132, height: 132, margin: "18px 0 6px", animation: ready ? "pp-float 5s ease-in-out infinite 1s" : "none" }}>
               <div style={{ position: "absolute", inset: -7, borderRadius: "50%", background: "conic-gradient(from 0deg, #7CE0A6, #4aa6ff, #b98bff, #7CE0A6)", filter: "blur(2px)", animation: ready ? "pp-ring 6s linear infinite" : "none", opacity: ready ? 0.9 : 0 }} />
@@ -446,7 +494,9 @@ function QuickStart({ token, view, onDone }: { token: string; view: WorkerView; 
           </p>
           <div style={{ ...rise(4), width: "100%", maxWidth: 320, marginTop: 24, pointerEvents: ready ? "auto" : "none" }}>
             {err && <p style={{ color: "#FF9A9A", fontSize: 13, marginBottom: 8 }}>{err}</p>}
-            <button onClick={enter} disabled={busy} style={{ ...primaryBtn, background: T.green, opacity: busy ? 0.6 : 1 }}>{busy ? "Avataan…" : "Aloita →"}</button>
+            <Shine loop duration={2.2} loopDelay={1.6} deg={120}>
+              <button onClick={enter} disabled={busy} style={{ ...primaryBtn, background: personal?.accent ?? T.green, color: personal?.accent ? "#06210f" : "#fff", opacity: busy ? 0.6 : 1 }}>{busy ? "Avataan…" : "Aloita →"}</button>
+            </Shine>
           </div>
         </>)}
 
@@ -544,8 +594,28 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
   const [pin, setPin] = useState("");
   const [err, setErr] = useState("");
   const [introReady, setIntroReady] = useState(false);
+  const [photoDataUrl, setPhotoDataUrl] = useState(view.worker.profile?.photoDataUrl ?? "");
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoOk, setPhotoOk] = useState(true);
+
+  // Personal touches for the welcome (photo / tagline / accent), matched by first
+  // name. The worker's own uploaded photo always wins over any static fallback.
+  const personal = introFor(view.worker.name);
+  const firstName = view.worker.name ? view.worker.name.split(" ")[0] : "";
+  const introPhoto = photoDataUrl || personal?.photo || "";
 
   const setAnswer = (id: string, v: string) => setAnswers((a) => ({ ...a, [id]: v }));
+
+  const onPickPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const input = e.target;
+    const file = input.files?.[0];
+    if (!file) return;
+    setPhotoBusy(true);
+    try { setPhotoDataUrl(await fileToAvatarDataUrl(file)); }
+    catch { /* ignore unreadable image */ }
+    setPhotoBusy(false);
+    input.value = ""; // allow re-selecting the same file (re-crop)
+  };
 
   const submit = async () => {
     setStep("submitting");
@@ -561,6 +631,7 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
     const profile = {
       fullName: answers.fullName, phone: answers.phone, email: answers.email,
       city: answers.city, yTunnus: answers.yTunnus, iban: answers.iban,
+      photoDataUrl: photoDataUrl || undefined,
       answers,
     };
     const res = await api.crewOnboard(token, { profile, agreements, pin: pin || undefined });
@@ -570,14 +641,30 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
 
   // ── Intro ──
   if (step === "intro") {
+    const accent = personal?.accent;
     return (
-      <div style={{ position: "fixed", inset: 0, background: "#0a0a0c", fontFamily: FONT, overflow: "hidden" }}>
+      <div style={{ position: "fixed", inset: 0, background: "radial-gradient(120% 120% at 50% 0%, #14223a 0%, #0a0a0c 60%)", fontFamily: FONT, overflow: "hidden" }}>
+        <style>{`
+          @keyframes pp-pop { 0%{opacity:0;transform:scale(.6)} 60%{opacity:1;transform:scale(1.06)} 100%{opacity:1;transform:scale(1)} }
+          @keyframes pp-float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-7px)} }
+          @keyframes pp-ring { to { transform: rotate(360deg) } }
+        `}</style>
         <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 24, zIndex: 0 }}>
-          <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 13, letterSpacing: "0.18em", textTransform: "uppercase" }}>Puuhapatet</p>
+          <p style={{ color: personal?.tagline ? (accent ?? T.green) : "rgba(255,255,255,0.5)", fontSize: 13, letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: personal?.tagline ? 700 : 400 }}>{personal?.tagline ?? "Puuhapatet"}</p>
+          {introPhoto && photoOk && (
+            <div style={{ position: "relative", width: 120, height: 120, margin: "16px 0 6px", animation: introReady ? "pp-float 5s ease-in-out infinite 1s" : "none" }}>
+              <div style={{ position: "absolute", inset: -7, borderRadius: "50%", background: "conic-gradient(from 0deg, #7CE0A6, #4aa6ff, #b98bff, #7CE0A6)", filter: "blur(2px)", animation: introReady ? "pp-ring 6s linear infinite" : "none", opacity: introReady ? 0.9 : 0 }} />
+              <img src={introPhoto} alt={firstName} onError={() => setPhotoOk(false)}
+                style={{ position: "relative", width: 120, height: 120, borderRadius: "50%", objectFit: "cover", border: "3px solid rgba(10,10,12,1)", boxShadow: "0 10px 40px rgba(0,0,0,0.55)", animation: introReady ? "pp-pop .8s cubic-bezier(.2,.9,.3,1.2) both" : "none", opacity: introReady ? 1 : 0 }} />
+            </div>
+          )}
           <h1 style={{ color: "#fff", fontSize: "clamp(28px, 7vw, 48px)", fontWeight: 800, margin: "10px 0", lineHeight: 1.1 }}>
-            Tervetuloa tiimiin{view.worker.name ? `, ${view.worker.name.split(" ")[0]}` : ""}
+            {personal?.greeting ?? `Tervetuloa tiimiin${firstName ? `, ${firstName}` : ""}`}
           </h1>
-          <p style={{ color: "rgba(255,255,255,0.7)", maxWidth: 440, fontSize: 15, lineHeight: 1.6 }}>
+          {personal?.line && (
+            <p style={{ color: "rgba(255,255,255,0.78)", maxWidth: 460, fontSize: 15.5, lineHeight: 1.65 }}>{personal.line}</p>
+          )}
+          <p style={{ color: "rgba(255,255,255,0.6)", maxWidth: 440, fontSize: 14, lineHeight: 1.6, marginTop: personal?.line ? 12 : 0 }}>
             {isTrainee ? (
               <>Ennen kuin pääset omalle työpöydällesi, täytä lyhyt profiili ja allekirjoita työharjoittelusopimus. Olet harjoittelijana{view.worker.trainee ? ` ${view.worker.trainee.responsibleLeaderName}n` : ""} vastuulla — turvallisuus aina edellä.</>
             ) : (
@@ -585,12 +672,16 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
               Tienaat <strong style={{ color: "#fff" }}>{euro(view.worker.perWindowCents)}</strong> jokaisesta pesemästäsi ikkunasta.</>
             )}
           </p>
-          <button
-            onClick={() => setStep("profile")}
-            style={{ ...primaryBtn, marginTop: 28, position: "relative", zIndex: 3, opacity: introReady ? 1 : 0, transform: introReady ? "translateY(0)" : "translateY(8px)", transition: "opacity .5s ease, transform .5s ease", pointerEvents: introReady ? "auto" : "none" }}
-          >
-            Aloita →
-          </button>
+          <div style={{ width: "100%", maxWidth: 320, marginTop: 28, position: "relative", zIndex: 3, opacity: introReady ? 1 : 0, transform: introReady ? "translateY(0)" : "translateY(8px)", transition: "opacity .5s ease, transform .5s ease", pointerEvents: introReady ? "auto" : "none" }}>
+            <Shine loop duration={2.2} loopDelay={1.6} deg={120}>
+              <button
+                onClick={() => setStep("profile")}
+                style={{ ...primaryBtn, background: accent ?? T.green, color: accent ? "#06210f" : "#fff" }}
+              >
+                Aloita →
+              </button>
+            </Shine>
+          </div>
         </div>
         {/* Cool ink reveal that plays itself and then dissolves — no swipe needed. */}
         <InkReveal maskColor={[10, 10, 12]} brushSize={150} fadeOutAfter={1300} fadeOutDuration={1000} onRevealed={() => setIntroReady(true)} />
@@ -620,6 +711,26 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
               : resign ? "Sopimukset on nyt viimeistelty. Täydennä tiedot, lue ja allekirjoita — sen jälkeen voit jatkaa työtä." : "Näitä tietoja käytetään laskutukseen ja työvuorojen suunnitteluun."}
             n="1 / 3"
           />
+
+          {/* Profile picture — shown on your own welcome/dashboard. Optional, but a
+              friendly touch; downscaled in the browser before it's saved. */}
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 20 }}>
+            <label style={{ cursor: "pointer", position: "relative", display: "inline-block" }}>
+              <input type="file" accept="image/*" onChange={onPickPhoto} style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer", width: "100%", height: "100%" }} />
+              {photoDataUrl ? (
+                <img src={photoDataUrl} alt="Profiilikuva" style={{ width: 100, height: 100, borderRadius: "50%", objectFit: "cover", border: `2px solid ${T.hair}` }} />
+              ) : (
+                <div style={{ width: 100, height: 100, borderRadius: "50%", background: T.paper, border: `2px dashed ${T.hair}`, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 13, textAlign: "center", padding: 10, boxSizing: "border-box" }}>
+                  {photoBusy ? "Käsitellään…" : "Lisää kuva"}
+                </div>
+              )}
+              <span style={{ position: "absolute", right: -2, bottom: -2, width: 30, height: 30, borderRadius: "50%", background: T.green, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 700, border: "2px solid #fff", lineHeight: 1 }}>+</span>
+            </label>
+            <p style={{ fontSize: 12, color: T.muted, marginTop: 10 }}>
+              {photoDataUrl ? "Vaihda profiilikuvaa" : "Profiilikuva (näkyy omassa näkymässäsi)"}
+            </p>
+          </div>
+
           {profileQuestions.map((q) => (
             <label key={q.id} style={{ display: "block", marginBottom: 14 }}>
               <span style={fieldLabel}>{q.label}{q.required ? " *" : ""}</span>

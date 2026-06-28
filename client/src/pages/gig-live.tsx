@@ -94,7 +94,7 @@ export default function GigLivePage() {
   });
 
   return (
-    <div style={{ minHeight: "100vh", background: T.paper, fontFamily: FONT, color: T.ink, padding: "28px 16px 48px" }}>
+    <div style={{ minHeight: "100vh", background: T.paper, fontFamily: FONT, color: T.ink, padding: "calc(28px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(48px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left))" }}>
       <style>{`@keyframes ppPulse{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
       <div style={{ maxWidth: 640, margin: "0 auto" }}>
 

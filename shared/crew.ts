@@ -30,9 +30,15 @@ export interface CrewProfile {
   city?: string;
   yTunnus?: string;
   iban?: string;
+  /** Worker's profile picture as a data URL (set during onboarding). Shown on the
+   *  worker's own welcome/intro. Downscaled client-side and size-capped server-side. */
+  photoDataUrl?: string;
   /** Free-text answers to the prebaked profile questions, keyed by question id. */
   answers?: Record<string, string>;
 }
+
+/** ~150 KB cap on a profile photo data URL (downscaled client-side first). */
+export const MAX_PHOTO_DATAURL_LEN = 150_000;
 
 export interface CrewAgreementSignature {
   agreementId: string;          // "alihankinta" | "tietoturva" | "asiakassuoja" | "tiimi"
@@ -239,6 +245,11 @@ function sanitizeProfile(input: any): CrewProfile | undefined {
       if (v) answers[String(k).slice(0, 40)] = v;
     }
   }
+  // A photo is an image data URL — validate it whole (NEVER str()-truncate, which
+  // would corrupt the base64). Reject anything that isn't a reasonably-sized image.
+  const rawPhoto = typeof input.photoDataUrl === "string" ? input.photoDataUrl : "";
+  const photoDataUrl =
+    rawPhoto.startsWith("data:image/") && rawPhoto.length <= MAX_PHOTO_DATAURL_LEN ? rawPhoto : undefined;
   return {
     fullName: str(input.fullName, 160),
     phone: str(input.phone, 60),
@@ -246,6 +257,7 @@ function sanitizeProfile(input: any): CrewProfile | undefined {
     city: str(input.city, 120),
     yTunnus: str(input.yTunnus, 40),
     iban: str(input.iban, 40),
+    photoDataUrl,
     answers: Object.keys(answers).length ? answers : undefined,
   };
 }

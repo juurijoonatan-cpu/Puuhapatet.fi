@@ -123,6 +123,18 @@ export const USERS: AdminProfile[] = [
     dashboardOnly: true,
   },
   {
+    // FR8-tekijä (alihankkija, kuten Jani & Oliver) — aloittaa FR8-keikalla ja
+    // kirjautuu vain omaan keikkadashboardiinsa (ei admin-näkymää). Käy läpi saman
+    // alihankkijan onboardingin: profiili + sopimukset (oma Y-tunnus, omat verot/
+    // vakuutukset, urakkaperusteinen korvaus). Aloitussalasana "Oona345" (server
+    // INITIAL_PASSWORDS); kirjautuessa pyydetään vaihtamaan se. Crew-linkitys:
+    // linkedUserId = "oona" tai etunimimatch (Oona → oona) hoituu automaattisesti.
+    id: "oona",
+    name: "Oona",
+    role: "STAFF",
+    dashboardOnly: true,
+  },
+  {
     // Ovelta ovelle -myyjä — kirjautuu vain myyntipaneeliin (/admin/myynti).
     // Kerää liidejä (asiakas + keikka tilassa "lead", submissionStatus
     // "pending_review"), jotka perustajat hyväksyvät/ottavat/hylkäävät. Saa

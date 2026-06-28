@@ -386,7 +386,7 @@ const AUTH_SECRET = process.env.AUTH_SECRET || "";
 const ADMIN_DEFAULT_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || "";
 // Per-user starter passwords for brand-new accounts (worker logins). Accepted
 // only until the user sets their own; then it's hashed and this is ignored.
-const INITIAL_PASSWORDS: Record<string, string> = { jani: "Jani123", milja: "milja456", oliver: "Oliver234", petrus: "Petrus123", myyja1: "Myyja123" };
+const INITIAL_PASSWORDS: Record<string, string> = { jani: "Jani123", milja: "milja456", oliver: "Oliver234", oona: "Oona345", petrus: "Petrus123", myyja1: "Myyja123" };
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 function b64url(buf: Buffer): string {
@@ -2866,6 +2866,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     joonatan: { name: process.env.WORKER_JOONATAN_NAME || "Joonatan Juuri",  email: process.env.WORKER_JOONATAN_EMAIL || "joonatan@puuhapatet.fi" },
     matias:   { name: process.env.WORKER_MATIAS_NAME  || "Matias Pitkänen", email: process.env.WORKER_MATIAS_EMAIL  || "matias@puuhapatet.fi" },
     petrus:   { name: "Petrus Aalto",      email: process.env.WORKER_PETRUS_EMAIL || "petrus.aalto@icloud.com" },
+    oona:     { name: "Oona",              email: process.env.WORKER_OONA_EMAIL   || null },
   };
 
   // POST /api/jobs/:id/invite — add a worker to pendingWorkers, send email invite
@@ -4725,11 +4726,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const loaded = await loadJobProject(Number(req.params.id));
       if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const { project } = loaded;
-      // Mask admin-linked workers (e.g. Petrus Aalto) from this gig's roster
-      // entirely — they are not part of FR8 in the coming weeks. The redirect
-      // guard still protects their personal /tyo link if it's ever opened.
+      // Show the full worker roster INCLUDING admin-linked workers (e.g. Petrus
+      // Aalto, who is also a Puuhapatet admin) — hosts need to see and edit them
+      // here. Only the founder hosts (Joonatan/Matias, role "host") stay masked,
+      // since they manage from the admin views, not the worker roster UI. Each
+      // admin-linked worker shows an "ADMIN" badge in the crew card.
       const crew = (project.crew || [])
-        .filter((m) => !m.adminLinked)
+        .filter((m) => m.role !== "host")
         .map((m) => ({
           member: m,
           stats: crewMemberStats(project, m),

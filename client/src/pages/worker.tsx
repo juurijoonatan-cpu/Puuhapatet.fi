@@ -22,6 +22,7 @@ import {
   type WorkerAgreement,
 } from "@shared/worker-agreements";
 import InkReveal from "@/components/InkReveal";
+import { Shine } from "@/components/animate-ui/primitives/effects/shine";
 import SignaturePad from "@/components/SignaturePad";
 import FloorView from "@/components/fr8/FloorView";
 import {
@@ -355,12 +356,28 @@ function InstallModal({ pwa, onClose }: { pwa: PwaInstall; onClose: () => void }
 // ─── Quick start (soft launch) — intro + name only, then straight in ──────────
 
 /** Per-worker personal touches for the welcome intro. Keep the photo files in
- *  client/public/fr8/ (e.g. jani.jpg). Match is by first name, case-insensitive. */
-const WORKER_INTROS: Record<string, { photo: string; greeting: string; line: string }> = {
+ *  client/public/fr8/ (e.g. jani.jpg). Match is by first name, case-insensitive.
+ *  Optional flair: `tagline` (small kicker above the title) and `accent` (drives
+ *  the glow/CTA tint) let a single worker's welcome stand out from the default. */
+type WorkerIntro = {
+  photo: string;
+  greeting: string;
+  line: string;
+  tagline?: string;
+  accent?: string;
+};
+const WORKER_INTROS: Record<string, WorkerIntro> = {
   jani: {
     photo: "/fr8/jani.jpg",
     greeting: "Tervetuloa, Jani 👋",
     line: "Mahtavaa saada sut mukaan ekalle keikalle. Tehdään tästä yhdessä siistiä jälkeä — työpöytäsi odottaa.",
+  },
+  oona: {
+    photo: "/fr8/oona.jpg",
+    tagline: "Uusi tekijä · FR8",
+    greeting: "Tervetuloa tiimiin, Oona ✨",
+    line: "Mahtavaa saada juuri sinut mukaan — ja heti isoimpaan keikkaamme. Tästä eteenpäin jokainen pesemäsi ikkuna näkyy reaaliajassa omalla työpöydälläsi. Tehdään yhdessä jälkeä, josta puhutaan. Mennään! 🚀",
+    accent: "#7CE0A6",
   },
 };
 function introFor(name: string) {
@@ -427,7 +444,7 @@ function QuickStart({ token, view, onDone }: { token: string; view: WorkerView; 
       <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "32px 24px", zIndex: 3 }}>
 
         {step === "welcome" && (<>
-          <p style={{ ...rise(0), color: "rgba(255,255,255,0.5)", fontSize: 13, letterSpacing: "0.18em", textTransform: "uppercase" }}>Puuhapatet</p>
+          <p style={{ ...rise(0), color: personal?.tagline ? (personal.accent ?? T.green) : "rgba(255,255,255,0.5)", fontSize: 13, letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: personal?.tagline ? 700 : 400 }}>{personal?.tagline ?? "Puuhapatet"}</p>
           {personal && photoOk && (
             <div style={{ position: "relative", width: 132, height: 132, margin: "18px 0 6px", animation: ready ? "pp-float 5s ease-in-out infinite 1s" : "none" }}>
               <div style={{ position: "absolute", inset: -7, borderRadius: "50%", background: "conic-gradient(from 0deg, #7CE0A6, #4aa6ff, #b98bff, #7CE0A6)", filter: "blur(2px)", animation: ready ? "pp-ring 6s linear infinite" : "none", opacity: ready ? 0.9 : 0 }} />
@@ -446,7 +463,9 @@ function QuickStart({ token, view, onDone }: { token: string; view: WorkerView; 
           </p>
           <div style={{ ...rise(4), width: "100%", maxWidth: 320, marginTop: 24, pointerEvents: ready ? "auto" : "none" }}>
             {err && <p style={{ color: "#FF9A9A", fontSize: 13, marginBottom: 8 }}>{err}</p>}
-            <button onClick={enter} disabled={busy} style={{ ...primaryBtn, background: T.green, opacity: busy ? 0.6 : 1 }}>{busy ? "Avataan…" : "Aloita →"}</button>
+            <Shine loop duration={2.2} loopDelay={1.6} deg={120}>
+              <button onClick={enter} disabled={busy} style={{ ...primaryBtn, background: personal?.accent ?? T.green, color: personal?.accent ? "#06210f" : "#fff", opacity: busy ? 0.6 : 1 }}>{busy ? "Avataan…" : "Aloita →"}</button>
+            </Shine>
           </div>
         </>)}
 

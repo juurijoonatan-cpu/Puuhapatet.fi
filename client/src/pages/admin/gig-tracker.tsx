@@ -747,9 +747,9 @@ export default function AdminGigTrackerPage() {
             <ChevronDown className={`w-4 h-4 transition-transform ${showContract ? "rotate-180" : ""}`} />
           </button>
           {showContract && (
-            <div className="mt-4 space-y-3">
-              <div>
-                <Label className="text-xs">Kuvaus (näkyy keikkalistassa)</Label>
+            <div className="mt-4 space-y-5">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-muted-foreground">Kuvaus (näkyy keikkalistassa)</Label>
                 <div className="flex gap-2">
                   <Input value={jobDescription} onChange={(e) => setJobDescription(e.target.value)} placeholder="Esim. FR8 - Ikkunoiden pesu" className="text-sm" />
                   <Button size="sm" disabled={savingDescription} onClick={saveDescription} className="shrink-0">
@@ -764,20 +764,21 @@ export default function AdminGigTrackerPage() {
                 </span>
                 <input type="checkbox" className="h-5 w-5 accent-foreground" checked={draft.requireSignature} onChange={(e) => setDraft({ ...draft, requireSignature: e.target.checked })} />
               </label>
-              <div>
-                <Label className="text-xs">Sopimustunnus</Label>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-muted-foreground">Sopimustunnus</Label>
                 <Input value={draft.contractId} onChange={(e) => setDraft({ ...draft, contractId: e.target.value })} placeholder="Esim. PT-2026-02" />
               </div>
-              <div>
-                <Label className="text-xs">Sopimusteksti (asiakas näkee ja allekirjoittaa)</Label>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-muted-foreground">Sopimusteksti (asiakas näkee ja allekirjoittaa)</Label>
                 <Textarea rows={8} value={draft.contractText} onChange={(e) => setDraft({ ...draft, contractText: e.target.value })} className="font-mono text-xs" placeholder="Liitä koko sopimus tähän…" />
               </div>
-              <div>
-                <Label className="text-xs">Asiakkaalle näytettävä huomautus</Label>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-muted-foreground">Asiakkaalle näytettävä huomautus</Label>
                 <Textarea rows={2} value={draft.customerNote} onChange={(e) => setDraft({ ...draft, customerNote: e.target.value })} placeholder="Esim. Maksat vain pestyistä ikkunoista…" />
+                <p className="text-[11px] text-muted-foreground">Näkyy asiakkaan live-näkymässä edistymisen alla.</p>
               </div>
-              <div>
-                <Label className="text-xs">ALV-huomautus</Label>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-muted-foreground">ALV-huomautus</Label>
                 <Input value={draft.vatNote} onChange={(e) => setDraft({ ...draft, vatNote: e.target.value })} />
               </div>
               <Button className="w-full" disabled={savingContract} onClick={saveContract}>

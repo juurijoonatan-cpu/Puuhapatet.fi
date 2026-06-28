@@ -6,6 +6,7 @@ import { allPoints, computeDealBilling, type ProjectData, type WindowStatus, typ
 import { computePayProgress } from "@shared/payprogress";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useState, useEffect } from "react";
+import Section from "./Section";
 
 interface Props {
   project: ProjectData;
@@ -69,7 +70,6 @@ const mono: React.CSSProperties = {
 
 export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeInfo, traineeShareByLeader, founderEarnings, workerLaborCents, founderRateEur }: Props) {
   const m = useIsMobile();
-  const [showLog, setShowLog] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
   const [openSessions, setOpenSessions] = useState<string | null>(null);
@@ -128,8 +128,14 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   const todaySet = new Set<string>();
   log.forEach((l) => { if (l.status === "pesty" && l.ts >= startToday.getTime() && (!deal || l.p === deal.billablePriority)) todaySet.add(l.key); });
   const todayWindows = todaySet.size;
-  const remaining = total - washed;
-  const estStr = remaining === 0 && total > 0 ? "valmis" : todayWindows > 0 ? "~" + Math.ceil(remaining / todayWindows) + " työpv" : "—";
+  // Remaining + day estimate track the SAME scope as the hero, "today" and the
+  // pay-progress: for a signed deal that's the billable (red) set, otherwise all
+  // windows. (Previously this always used the full map total, so a deal's "days
+  // left" divided red-per-day into all-windows-left — an inconsistent estimate.)
+  const estTotal = deal ? heroTotal : total;
+  const estWashed = deal ? heroWashed : washed;
+  const remaining = Math.max(0, estTotal - estWashed);
+  const estStr = remaining === 0 && estTotal > 0 ? "valmis" : todayWindows > 0 ? "~" + Math.ceil(remaining / todayWindows) + " työpv" : "—";
 
   // Paydate progress — for a fixed deal track the LIVE billable (red) count, so the
   // milestone follows the actual dots on the map (e.g. 161 → ~41 / erä). The agreed
@@ -157,6 +163,11 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   const activeWorkers = workerStats
     .filter((s) => s.washed > 0 || s.hours > 0)
     .sort((a, b) => b.washed - a.washed);
+
+  // Founders' combined earnings — shown as the collapsed summary on the
+  // "PERUSTAJIEN ANSIOT" bar so the headline figure is glanceable while folded.
+  const foundersTotalCents = (founderEarnings ?? []).reduce((s, f) => s + f.totalCents, 0);
+  const laborCents = workerLaborCents ?? 0;
 
   return (
     <div style={{ height: "100%", overflowY: "auto", overflowX: "hidden", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch", boxSizing: "border-box", padding: m ? "16px 12px calc(96px + env(safe-area-inset-bottom))" : "26px 30px 40px" }}>
@@ -257,18 +268,15 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
           </div>
         </div>
 
+        {/* Collapsible "dropdown bar" sections — everything below the hero folds
+            away, each bar keeping its headline figure visible while closed. */}
+        <div style={{ display: "flex", flexDirection: "column", gap: m ? "12px" : "14px" }}>
+
         {/* Perustajien ansiot — bosses' earnings: own washed windows at the full
             contract rate + the profit share earned on every worker's window. Gives
             the founders a clear, fair "how much have we made" view. Founders only. */}
-        {deal && founderEarnings && founderEarnings.length > 0 && (() => {
-          const foundersTotalCents = founderEarnings.reduce((s, f) => s + f.totalCents, 0);
-          const laborCents = workerLaborCents ?? 0;
-          return (
-            <div className="anim-fadeUp-1" style={{ ...card, padding: m ? "18px" : "20px 24px", marginBottom: "14px" }}>
-              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: "14px" }}>
-                <span style={mono}>PERUSTAJIEN ANSIOT</span>
-                <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", color: "rgba(255,255,255,0.4)" }}>VAIN PERUSTAJILLE</span>
-              </div>
+        {deal && founderEarnings && founderEarnings.length > 0 && (
+            <Section id="founders" label="PERUSTAJIEN ANSIOT · VAIN PERUSTAJILLE" summary={euro(foundersTotalCents / 100)} animClass="anim-fadeUp-1">
 
               {/* Gig money split: contract value → workers' labour vs founders' share. */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: m ? "8px" : "12px", marginBottom: "16px" }}>
@@ -342,13 +350,12 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
               <p style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)", marginTop: "12px", lineHeight: 1.5 }}>
                 Perustaja ansaitsee {euroUnit(founderRateEur ?? PRICE)} / ikkuna (sisäinen kate = sopimushinta ÷ punaiset ikkunat yhteensä) + osuuden katteesta jokaisesta työntekijän ikkunasta. Päivittyy pesujen myötä.
               </p>
-            </div>
-          );
-        })()}
+            </Section>
+        )}
 
         {/* Paydate progress — how far toward the next payment instalment */}
         {payP.total > 0 && (
-          <div className="anim-fadeUp-1" style={{ ...card, padding: m ? "16px 18px" : "18px 24px", marginBottom: "14px" }}>
+          <Section id="payment" label="MAKSUERÄ" summary={`${completedInstalments}/${payP.periods} erää`} animClass="anim-fadeUp-2">
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: "10px", gap: 10, flexWrap: "wrap" }}>
               {/* The instalment price is the FLAT agreed total split evenly (€6300 / 4 =
                   1 575 € / erä) — a fixed figure, NOT derived from the live red-window
@@ -368,11 +375,12 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                 ? "Koko keikka pesty — kaikki maksuerät katettu 🎉"
                 : <>Vielä <b style={{ color: "#fff", fontWeight: 600 }}>{payP.toNext} ikkunaa</b> seuraavaan maksuun · {payP.inPeriod}/{payP.perPeriod} tässä erässä</>}
             </div>
-          </div>
+          </Section>
         )}
 
         {/* Row 2: P1 + P2 + mini cards */}
-        <div style={{ display: "grid", gridTemplateColumns: m ? "1fr 1fr" : "1fr 1fr 1fr", gap: m ? "10px" : "16px", marginBottom: "14px" }}>
+        <Section id="priority" label="PRIORITEETIT & TAHTI" summary={`P1 ${p1.pctStr} · tänään ${todayWindows}`} animClass="anim-fadeUp-3">
+          <div style={{ display: "grid", gridTemplateColumns: m ? "1fr 1fr" : "1fr 1fr 1fr", gap: m ? "10px" : "16px" }}>
           {[{ label: "Prioriteetti 1", rgb: "255,72,72", data: p1, p: 1 }, { label: "Prioriteetti 2", rgb: "255,205,40", data: p2, p: 2 }].map((g, gi) => {
             // With a signed deal, only the billable priority (red) earns money;
             // the other priority is mapped for future work, not billed now.
@@ -415,12 +423,12 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
               </div>
             ))}
           </div>
-        </div>
+          </div>
+        </Section>
 
         {/* Workers strip — per-worker window counts & €/h optimisation */}
         {activeWorkers.length > 0 && (
-          <div className="anim-fadeUp-6" style={{ ...card, padding: m ? "18px" : "20px 24px", marginBottom: "14px" }}>
-            <div style={{ ...mono, marginBottom: "16px" }}>TEKIJÄT · IKKUNAT & TEHO</div>
+          <Section id="workers" label="TEKIJÄT · IKKUNAT & TEHO" summary={`${activeWorkers.length} tekijää`} animClass="anim-fadeUp-5">
             <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(activeWorkers.length, m ? 2 : 4)}, 1fr)`, gap: m ? "10px" : "12px" }}>
               {activeWorkers.map((s) => {
                 const share = washed > 0 ? (s.washed / washed) * 100 : 0;
@@ -521,13 +529,11 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                 );
               })}
             </div>
-          </div>
+          </Section>
         )}
 
-        {/* Row 3: floor breakdown (activity log is tucked away below) */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: m ? "14px" : "16px" }}>
-          <div className="anim-fadeUp-7" style={{ ...card, padding: m ? "18px" : "22px 24px" }}>
-            <div style={{ ...mono, marginBottom: "16px" }}>KERROKSITTAIN</div>
+        {/* Row 3: floor breakdown + activity log */}
+        <Section id="floors" label="KERROKSITTAIN" summary={`${washed}/${total}`} animClass="anim-fadeUp-6">
             <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
               {FLOORS.map((f) => {
                 const arr = all.filter((a) => a.floor === f);
@@ -547,19 +553,11 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                 );
               })}
             </div>
-          </div>
+          </Section>
 
           {activity.length > 0 && (
-            <div className="anim-fadeUp-8" style={{ ...card, padding: m ? "14px 18px" : "16px 24px" }}>
-              <button
-                onClick={() => setShowLog((v) => !v)}
-                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", background: "none", border: "none", padding: 0, cursor: "pointer", color: "#fff" }}
-              >
-                <span style={mono}>VIIMEISIN TOIMINTA</span>
-                <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.4)" }}>{showLog ? "Piilota ▲" : "Näytä ▾"}</span>
-              </button>
-              {showLog && (
-                <div style={{ display: "flex", flexDirection: "column", gap: "11px", marginTop: "16px" }}>
+            <Section id="activity" label="VIIMEISIN TOIMINTA" summary={activity[0]?.time} animClass="anim-fadeUp-7">
+                <div style={{ display: "flex", flexDirection: "column", gap: "11px" }}>
                   {activity.map((a, i) => (
                     <div key={i} style={{ display: "flex", alignItems: "center", gap: "11px" }}>
                       <span style={{ width: "10px", height: "10px", borderRadius: "50%", flexShrink: 0, background: a.color, boxShadow: `0 0 8px ${a.glow}` }} />
@@ -571,8 +569,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                     </div>
                   ))}
                 </div>
-              )}
-            </div>
+            </Section>
           )}
         </div>
       </div>

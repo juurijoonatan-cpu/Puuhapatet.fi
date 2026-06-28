@@ -11,13 +11,14 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import {
   Loader2, Check, MapPin, Phone, Plus, ChevronLeft, Sparkles, Calculator,
   ExternalLink, Share2, Copy, ClipboardList, CheckCircle2, Clock, Euro,
-  TrendingUp, Users, MessageCircle,
+  TrendingUp, Users, MessageCircle, LogOut,
 } from "lucide-react";
-import { getAdminProfile } from "@/lib/admin-profile";
+import { clearAdminSession } from "@/pages/admin/login";
+import { getAdminProfile, clearAdminProfile } from "@/lib/admin-profile";
 import { API_BASE, withAuth } from "@/lib/api";
 import { PitchDeck } from "@/components/pitch-deck";
 import { MarketerAssistant } from "@/components/marketer-assistant";
@@ -58,6 +59,8 @@ function statusChip(l: LeadRow): { label: string; cls: string } {
 export default function SellPage() {
   const profile = typeof window !== "undefined" ? getAdminProfile() : null;
   const isFounder = profile?.role === "HOST";
+  const [, navigate] = useLocation();
+  const handleLogout = () => { clearAdminSession(); clearAdminProfile(); navigate("/admin/login"); };
 
   // Capture fields
   const [name, setName] = useState("");
@@ -202,9 +205,15 @@ export default function SellPage() {
             <p className="text-xs text-muted-foreground leading-tight">{profile?.name}</p>
           </div>
         </div>
-        <button onClick={() => setPitch(true)} className="flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-xl bg-primary/10 text-primary hover:bg-primary/15 transition-colors">
-          <Sparkles className="w-4 h-4" /> Näytä esittely
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setPitch(true)} className="flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-xl bg-primary/10 text-primary hover:bg-primary/15 transition-colors">
+            <Sparkles className="w-4 h-4" /> Näytä esittely
+          </button>
+          <button onClick={handleLogout} aria-label="Kirjaudu ulos" data-testid="sell-logout"
+            className="flex items-center justify-center w-10 h-10 rounded-xl text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors">
+            <LogOut className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       <div className="max-w-md mx-auto px-4 pt-5 space-y-5">

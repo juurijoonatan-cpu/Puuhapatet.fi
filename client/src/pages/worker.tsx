@@ -19,6 +19,7 @@ import type { WindowStatus } from "@shared/project";
 import {
   ALL_AGREEMENTS, PROFILE_QUESTIONS, PROFILE_REQUIRED_IDS, WORKER_AGREEMENT_VERSION,
   INSURANCE_QUESTION, INSURANCE_LATER_NOTE, RISK_ACK_TEXT, INSURANCE_ANSWER_KEY, RISK_ACK_KEY,
+  YTUNNUS_STATUS_KEY,
   type WorkerAgreement,
 } from "@shared/worker-agreements";
 import InkReveal from "@/components/InkReveal";
@@ -377,7 +378,7 @@ const WORKER_INTROS: Record<string, WorkerIntro> = {
     photo: "/fr8/oona.jpg",
     tagline: "Uusi tekijä · FR8",
     greeting: "Tervetuloa tiimiin, Oona ✨",
-    line: "Mahtavaa saada juuri sinut mukaan — ja heti isoimpaan keikkaamme. Tästä eteenpäin jokainen pesemäsi ikkuna näkyy reaaliajassa omalla työpöydälläsi. Tehdään yhdessä jälkeä, josta puhutaan. Mennään! 🚀",
+    line: "Tosi kiva että lähdit mukaan — ja heti meidän isoimmalle keikalle! Tää on sun oma työpöytä: täältä näät oman duunisi etenevän pitkin päivää. Otetaan rennosti ja tehdään yhdessä hyvää jälkeä. Nähdään keikalla! 🚀",
     accent: "#7CE0A6",
   },
 };
@@ -576,7 +577,9 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
   // insurance / risk fields and ask only the basics.
   const profileQuestions = isTrainee
     ? PROFILE_QUESTIONS.filter((q) => ["fullName", "phone", "email", "address"].includes(q.id))
-    : PROFILE_QUESTIONS;
+    // Y-tunnus is asked inside the dedicated Y-tunnus toggle below (only when the
+    // worker already has one), so drop it from the generic question list here.
+    : PROFILE_QUESTIONS.filter((q) => q.id !== "yTunnus");
   // resign = an already-entered worker completing the now-required info + signing.
   // Start at the profile ("lisätiedot") step and skip the optional PIN step.
   const [step, setStep] = useState<Step>(resign ? "profile" : "intro");
@@ -584,6 +587,10 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
     fullName: view.worker.profile?.fullName ?? view.worker.name ?? "",
     phone: view.worker.profile?.phone ?? "",
     email: view.worker.profile?.email ?? "",
+    // Default Y-tunnus status to "tulossa" — most of our workers don't have one
+    // yet, so the form starts clean (no Y-tunnus / register fields) until they
+    // flip the toggle to "On jo".
+    [YTUNNUS_STATUS_KEY]: view.worker.profile?.answers?.[YTUNNUS_STATUS_KEY] ?? "tulossa",
     ...(view.worker.profile?.answers ?? {}),
   }));
   // Per-agreement clause acceptance (each contract is read + accepted), but the
@@ -668,8 +675,8 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
             {isTrainee ? (
               <>Ennen kuin pääset omalle työpöydällesi, täytä lyhyt profiili ja allekirjoita työharjoittelusopimus. Olet harjoittelijana{view.worker.trainee ? ` ${view.worker.trainee.responsibleLeaderName}n` : ""} vastuulla — turvallisuus aina edellä.</>
             ) : (
-              <>Ennen kuin pääset omalle työpöydällesi, täytä lyhyt profiili ja allekirjoita sopimukset.
-              Tienaat <strong style={{ color: "#fff" }}>{euro(view.worker.perWindowCents)}</strong> jokaisesta pesemästäsi ikkunasta.</>
+              <>Hoidetaan ensin pari pikkujuttua kuntoon — lyhyt profiili ja sopparit — niin pääset omalle työpöydällesi.
+              Saat <strong style={{ color: "#fff" }}>{euro(view.worker.perWindowCents)}</strong> jokaisesta pesemästäsi ikkunasta.</>
             )}
           </p>
           <div style={{ width: "100%", maxWidth: 320, marginTop: 28, position: "relative", zIndex: 3, opacity: introReady ? 1 : 0, transform: introReady ? "translateY(0)" : "translateY(8px)", transition: "opacity .5s ease, transform .5s ease", pointerEvents: introReady ? "auto" : "none" }}>
@@ -694,13 +701,15 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
     const missing = PROFILE_REQUIRED_IDS.filter((id) => !(answers[id] || "").trim());
     const insurance = answers[INSURANCE_ANSWER_KEY] || "";
     const riskOk = answers[RISK_ACK_KEY] === "1";
-    // Tax status — needed so each payout is computed and invoiced legally right
-    // (ALV 25,5 % vs. vähäinen toiminta; ennakonpidätys jos ei ennakkoperintä-
-    // rekisterissä). Alihankkija only; a trainee invoices nothing.
-    const vatStatus = answers[VAT_STATUS_KEY] || "";
+    // Y-tunnus status drives the tax fields. Our workers don't add VAT, so we
+    // never ask about ALV. The prepayment-register detail is only relevant once a
+    // Y-tunnus actually exists ("On jo"); "Tulossa" workers skip it and we add it
+    // before the first invoice. (computeTax defaults: no VAT + withholding applied.)
+    const ytStatus = answers[YTUNNUS_STATUS_KEY] || "tulossa";
+    const hasYtunnus = ytStatus === "on";
     const prepayReg = answers[PREPAYMENT_REGISTER_KEY] || "";
     // Trainees skip the insurance/risk acknowledgement (their leader carries it).
-    const canContinue = missing.length === 0 && (isTrainee || (!!insurance && riskOk && !!vatStatus && !!prepayReg));
+    const canContinue = missing.length === 0 && (isTrainee || (!!insurance && riskOk && (hasYtunnus ? !!prepayReg : true)));
     return (
       <Paper>
         <Wrap>
@@ -772,53 +781,65 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
           </div>
           )}
 
-          {/* Tax details — so payouts + your invoice are computed legally right. */}
+          {/* Y-tunnus — simple toggle: do you already have one, or is it coming?
+              We don't ask about ALV (our tekijät don't add VAT). Only "On jo"
+              shows the Y-tunnus field + ennakkoperintärekisteri; "Tulossa" keeps
+              onboarding light and we sort the Y-tunnus out before the first lasku. */}
           {!isTrainee && (
           <div style={{ marginTop: 6, marginBottom: 14, padding: 14, borderRadius: 12, background: T.paper, border: `1px solid ${T.hair}` }}>
-            <p style={{ ...fieldLabel, marginBottom: 8 }}>Arvonlisävero (ALV) *</p>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {([["vahainen_toiminta", "Ei ALV:tä (vähäinen toiminta)"], ["alv_rekisterissa", "ALV-rekisterissä (25,5 %)"]] as [string, string][]).map(([val, lbl]) => (
-                <button
-                  key={val}
-                  type="button"
-                  onClick={() => setAnswer(VAT_STATUS_KEY, val)}
-                  style={{
-                    flex: "1 1 140px", padding: "11px", borderRadius: 10, cursor: "pointer", fontFamily: FONT, fontSize: 13, fontWeight: 600,
-                    border: `1.5px solid ${vatStatus === val ? T.green : T.hair}`,
-                    background: vatStatus === val ? "rgba(62,124,89,0.10)" : "#fff",
-                    color: vatStatus === val ? T.green : T.ink,
-                  }}
-                >
-                  {vatStatus === val ? "✓ " : ""}{lbl}
-                </button>
-              ))}
-            </div>
-            <p style={{ fontSize: 11.5, color: T.muted, margin: "8px 0 0", lineHeight: 1.5 }}>
-              Jos toimintasi on vähäistä (alle ~15 000 €/12 kk), et lisää ALV:tä. Voit muuttaa tämän myöhemmin.
-            </p>
-
-            <p style={{ ...fieldLabel, marginTop: 16, marginBottom: 8 }}>Ennakkoperintärekisteri *</p>
+            <p style={{ ...fieldLabel, marginBottom: 8 }}>Onko sinulla Y-tunnus? *</p>
             <div style={{ display: "flex", gap: 8 }}>
-              {([["kylla", "Olen rekisterissä"], ["ei", "En ole / en tiedä"]] as [string, string][]).map(([val, lbl]) => (
+              {([["on", "On jo"], ["tulossa", "Tulossa"]] as [string, string][]).map(([val, lbl]) => (
                 <button
                   key={val}
                   type="button"
-                  onClick={() => setAnswer(PREPAYMENT_REGISTER_KEY, val)}
+                  onClick={() => setAnswer(YTUNNUS_STATUS_KEY, val)}
                   style={{
-                    flex: 1, padding: "11px", borderRadius: 10, cursor: "pointer", fontFamily: FONT, fontSize: 13, fontWeight: 600,
-                    border: `1.5px solid ${prepayReg === val ? T.green : T.hair}`,
-                    background: prepayReg === val ? "rgba(62,124,89,0.10)" : "#fff",
-                    color: prepayReg === val ? T.green : T.ink,
+                    flex: 1, padding: "11px", borderRadius: 10, cursor: "pointer", fontFamily: FONT, fontSize: 14, fontWeight: 600,
+                    border: `1.5px solid ${ytStatus === val ? T.green : T.hair}`,
+                    background: ytStatus === val ? "rgba(62,124,89,0.10)" : "#fff",
+                    color: ytStatus === val ? T.green : T.ink,
                   }}
                 >
-                  {prepayReg === val ? "✓ " : ""}{lbl}
+                  {ytStatus === val ? "✓ " : ""}{lbl}
                 </button>
               ))}
             </div>
-            <p style={{ fontSize: 11.5, color: T.muted, margin: "8px 0 0", lineHeight: 1.5 }}>
-              Jos et ole ennakkoperintärekisterissä, laki vaatii että pidätämme ennakonpidätyksen ennen maksua ja
-              tilitämme sen Verolle. Pidätys luetaan hyväksesi verotuksessa.
-            </p>
+
+            {hasYtunnus ? (
+              <>
+                <label style={{ display: "block", marginTop: 14 }}>
+                  <span style={fieldLabel}>Y-tunnus</span>
+                  <input value={answers.yTunnus ?? ""} onChange={(e) => setAnswer("yTunnus", e.target.value)} placeholder="1234567-8" style={inputStyle} />
+                </label>
+                <p style={{ ...fieldLabel, marginTop: 16, marginBottom: 8 }}>Ennakkoperintärekisteri *</p>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {([["kylla", "Olen rekisterissä"], ["ei", "En ole / en tiedä"]] as [string, string][]).map(([val, lbl]) => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => setAnswer(PREPAYMENT_REGISTER_KEY, val)}
+                      style={{
+                        flex: 1, padding: "11px", borderRadius: 10, cursor: "pointer", fontFamily: FONT, fontSize: 13, fontWeight: 600,
+                        border: `1.5px solid ${prepayReg === val ? T.green : T.hair}`,
+                        background: prepayReg === val ? "rgba(62,124,89,0.10)" : "#fff",
+                        color: prepayReg === val ? T.green : T.ink,
+                      }}
+                    >
+                      {prepayReg === val ? "✓ " : ""}{lbl}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: 11.5, color: T.muted, margin: "8px 0 0", lineHeight: 1.5 }}>
+                  Jos et ole ennakkoperintärekisterissä, laki vaatii että pidätämme ennakonpidätyksen ennen maksua ja
+                  tilitämme sen Verolle. Pidätys luetaan hyväksesi verotuksessa.
+                </p>
+              </>
+            ) : (
+              <p style={{ fontSize: 11.5, color: T.muted, margin: "10px 0 0", lineHeight: 1.5 }}>
+                Ei hätää — voit hankkia Y-tunnuksen ja täydentää sen myöhemmin ennen ensimmäistä laskua. Hoidetaan loput sitten yhdessä.
+              </p>
+            )}
           </div>
           )}
 

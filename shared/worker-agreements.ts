@@ -364,8 +364,8 @@ export const PROFILE_QUESTIONS: ProfileQuestion[] = [
   { id: "experience", label: "Aiempi kokemus ikkunanpesusta tai siivouksesta", type: "textarea", placeholder: "Kerro lyhyesti…" },
   { id: "transport", label: "Miten pääset työmaalle? (oma auto / julkiset)", type: "text" },
   { id: "heights", label: "Oletko valmis työskentelemään korkeilla paikoilla / tikkailla?", type: "text", placeholder: "Kyllä / Ei / Riippuu" },
-  { id: "availability", label: "Milloin olet käytettävissä?", type: "textarea", placeholder: "Päivät ja kellonajat…" },
-  { id: "motivation", label: "Miksi haluat liittyä — ja haluatko jatkaa pitkäjänteisesti?", type: "textarea", placeholder: "Vapaa sana…" },
+  { id: "availability", label: "Toivotut työajat", type: "textarea", placeholder: "Milloin sinulle parhaiten sopii tehdä töitä? Esim. arkisin, viikonloppuisin, kokopäiväisesti…", help: "Suunnittelemme vuorot näiden mukaan — ei tarkkoja lupauksia, vaan mikä sinulle sopisi." },
+  { id: "motivation", label: "Toiveita tai odotuksia työltä?", type: "textarea", placeholder: "Vapaa sana — esim. mihin haluaisit panostaa tai oppia (vapaaehtoinen)" },
 ];
 
 export const PROFILE_REQUIRED_IDS = PROFILE_QUESTIONS.filter((q) => q.required).map((q) => q.id);
@@ -377,6 +377,7 @@ export const PROFILE_REQUIRED_IDS = PROFILE_QUESTIONS.filter((q) => q.required).
 
 export const INSURANCE_ANSWER_KEY = "insuranceValid"; // "kylla" | "ei"
 export const RISK_ACK_KEY = "riskAck";                 // "1" once accepted
+export const YTUNNUS_STATUS_KEY = "ytunnusStatus";     // "on" (jo) | "tulossa"
 
 export const INSURANCE_QUESTION =
   "Onko sinulla voimassa olevat vakuutukset? (toiminnan vastuuvakuutus ja tapaturmavakuutus)";

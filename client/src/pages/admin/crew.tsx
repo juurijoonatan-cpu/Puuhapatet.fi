@@ -23,7 +23,24 @@ import { getAdminProfile } from "@/lib/admin-profile";
 const PUBLIC_BASE = "https://puuhapatet.fi";
 const eur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
 const agreementTitle = (id: string) => WORKER_AGREEMENTS.find((a) => a.id === id)?.title ?? id;
-const profileLabel = (id: string) => PROFILE_QUESTIONS.find((q) => q.id === id)?.label ?? id;
+// Friendly labels/values for the internal onboarding keys (not in PROFILE_QUESTIONS),
+// so the host's worker summary reads cleanly instead of showing raw keys.
+const ANSWER_LABELS: Record<string, string> = {
+  ytunnusStatus: "Y-tunnus",
+  insuranceValid: "Vakuutukset voimassa",
+  riskAck: "Riskikuittaus",
+  prepaymentRegister: "Ennakkoperintärekisteri",
+  vatStatus: "ALV-asema",
+};
+const VALUE_LABELS: Record<string, string> = {
+  on: "On jo", tulossa: "Tulossa",
+  kylla: "Kyllä", ei: "Ei",
+  "1": "Hyväksytty",
+  vahainen_toiminta: "Ei ALV:tä (vähäinen toiminta)",
+  alv_rekisterissa: "ALV-rekisterissä (25,5 %)",
+};
+const profileLabel = (id: string) => ANSWER_LABELS[id] ?? PROFILE_QUESTIONS.find((q) => q.id === id)?.label ?? id;
+const profileValue = (v: string) => VALUE_LABELS[v] ?? v;
 
 export default function AdminCrewPage() {
   const [, params] = useRoute("/admin/gig/:id/tiimi");
@@ -144,19 +161,22 @@ export default function AdminCrewPage() {
                   </details>
                 )}
 
-                {/* Profile questionnaire answers */}
-                {member.profile?.answers && Object.keys(member.profile.answers).length > 0 && (
-                  <details className="mt-3">
-                    <summary className="text-xs font-medium text-muted-foreground cursor-pointer">Profiili & vastaukset</summary>
-                    <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
-                      {Object.entries(member.profile.answers).map(([k, v]) => (
-                        <div key={k} className="text-xs">
-                          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{profileLabel(k)}</p>
-                          <p className="break-words">{v}</p>
-                        </div>
-                      ))}
+                {/* Worker info summary — everything they filled in onboarding, laid
+                    out for the host (Joonatan / Matias). Shown open, not hidden. */}
+                {member.profile?.answers && Object.keys(member.profile.answers).filter((k) => (member.profile!.answers![k] || "").trim()).length > 0 && (
+                  <div className="mt-3 rounded-xl border bg-muted/20 p-3">
+                    <p className="text-xs font-semibold text-foreground mb-2">Työntekijän tiedot — mitä hän täytti</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
+                      {Object.entries(member.profile.answers)
+                        .filter(([, v]) => (v || "").trim())
+                        .map(([k, v]) => (
+                          <div key={k} className="text-xs">
+                            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{profileLabel(k)}</p>
+                            <p className="break-words">{profileValue(v)}</p>
+                          </div>
+                        ))}
                     </div>
-                  </details>
+                  </div>
                 )}
 
                 {/* Downloadable signed-agreement document (host's legal record) */}

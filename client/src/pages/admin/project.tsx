@@ -22,6 +22,7 @@ import { DEFAULT_WORKER_PER_WINDOW_CENTS } from "@shared/crew";
 import Dashboard from "@/components/fr8/Dashboard";
 import FloorView from "@/components/fr8/FloorView";
 import HoursView from "@/components/fr8/HoursView";
+import Section from "@/components/fr8/Section";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 const MARKS_URL = "/fr8/marks_data.json";
@@ -814,13 +815,15 @@ function ExpensesView({
           )}
         </div>
 
-        {/* Kirjanpito-ohje: kuitti + aikaleima. Pidetään yksinkertaisena. */}
-        <div style={{ ...card, padding: "12px 14px", marginBottom: "14px", background: "rgba(255,155,110,0.06)", border: "1px solid rgba(255,155,110,0.2)", display: "flex", gap: 10, alignItems: "flex-start" }}>
-          <span style={{ fontSize: 15, lineHeight: 1 }}>🧾</span>
-          <p style={{ margin: 0, fontSize: 12, lineHeight: 1.55, color: "rgba(255,255,255,0.7)" }}>
-            Lisää jokaisesta kulusta <b style={{ color: "#fff" }}>kuva kuitista</b> — se on kirjanpidon tosite. Aikaleima
-            tallentuu automaattisesti. Näin kirjanpito pysyy oikeana ja yksinkertaisena: kuitti, summa ja päivämäärä riittävät.
-          </p>
+        {/* Kirjanpito-ohje: kuitti + aikaleima. Tucked into a collapsible bar so the
+            add-expense form stays front and centre — open it when you need the rules. */}
+        <div style={{ marginBottom: "14px" }}>
+          <Section id="expense-help" label="🧾 KIRJANPITO-OHJE" summary="kuitti · summa · pvm">
+            <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.55, color: "rgba(255,255,255,0.7)" }}>
+              Lisää jokaisesta kulusta <b style={{ color: "#fff" }}>kuva kuitista</b> — se on kirjanpidon tosite. Aikaleima
+              tallentuu automaattisesti. Näin kirjanpito pysyy oikeana ja yksinkertaisena: kuitti, summa ja päivämäärä riittävät.
+            </p>
+          </Section>
         </div>
 
         {/* Add expense form — stacks cleanly on phones, no horizontal overflow */}

@@ -607,12 +607,14 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
   const setAnswer = (id: string, v: string) => setAnswers((a) => ({ ...a, [id]: v }));
 
   const onPickPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const input = e.target;
+    const file = input.files?.[0];
     if (!file) return;
     setPhotoBusy(true);
     try { setPhotoDataUrl(await fileToAvatarDataUrl(file)); }
     catch { /* ignore unreadable image */ }
     setPhotoBusy(false);
+    input.value = ""; // allow re-selecting the same file (re-crop)
   };
 
   const submit = async () => {

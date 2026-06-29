@@ -7,6 +7,7 @@ import { computePayProgress } from "@shared/payprogress";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useState, useEffect } from "react";
 import Section from "./Section";
+import Toggle from "./Toggle";
 
 interface Props {
   project: ProjectData;
@@ -32,6 +33,11 @@ interface Props {
   /** Dynamic per-window rate for founders (sisäinen kate = capCents / totalRedWindows).
    *  Replaces the nominal deal.pricePerWindow in the footer explanation text. */
   founderRateEur?: number;
+  /** Total of project expenses in cents — drives the collapsed KULUT bar summary. */
+  expensesTotalCents?: number;
+  /** Rendered <ExpensesView>, shown inside the collapsible KULUT section (no longer
+   *  its own tab). Handlers/data stay owned by the project page. */
+  expensesSlot?: React.ReactNode;
 }
 
 function fmt(n: number) { return Math.round(n).toLocaleString("fi-FI"); }
@@ -68,11 +74,14 @@ const mono: React.CSSProperties = {
   color: "rgba(255,255,255,0.4)",
 };
 
-export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeInfo, traineeShareByLeader, founderEarnings, workerLaborCents, founderRateEur }: Props) {
+export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeInfo, traineeShareByLeader, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot }: Props) {
   const m = useIsMobile();
   const [editId, setEditId] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
   const [openSessions, setOpenSessions] = useState<string | null>(null);
+  // Workers strip: false = show everyone assigned (incl. 0-activity like Oona),
+  // true = only people who've washed a window or logged hours.
+  const [showActiveOnly, setShowActiveOnly] = useState(false);
   const crewMemberOf = (id: string) => (project.crew || []).find((c) => c.id === id);
   // Live clock for "shift running" indicators (ticks once a minute).
   const [now, setNow] = useState(Date.now());
@@ -159,15 +168,29 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
     return { color: `rgb(${rgb})`, glow: `rgba(${rgb},0.7)`, title: "Ikkuna" + num + " — " + statusLabel(l.status), sub: "Kerros " + l.floor + " · P" + l.p + who, time: ago(l.ts) };
   });
 
-  // Workers with any activity or hours, busiest first.
-  const activeWorkers = workerStats
-    .filter((s) => s.washed > 0 || s.hours > 0)
-    .sort((a, b) => b.washed - a.washed);
+  // Full crew for the strip: every worker with stats PLUS any assigned crew member
+  // who hasn't done anything yet (e.g. Oona) so they're visible from day one. The
+  // "Vain aktiiviset" toggle narrows this to people with windows/hours.
+  const statIds = new Set(workerStats.map((s) => s.worker));
+  const zeroStats = (project.crew || [])
+    .filter((c) => c.active !== false && c.role === "worker" && !c.adminLinked && !statIds.has(c.id))
+    .map((c) => ({ worker: c.id, washed: 0, revenueCents: 0, hours: 0, windowsPerHour: 0, eurPerHour: 0 }));
+  const allWorkers = [...workerStats, ...zeroStats].sort((a, b) => b.washed - a.washed);
+  const activeWorkers = allWorkers.filter((s) => s.washed > 0 || s.hours > 0);
+  const shownWorkers = showActiveOnly ? activeWorkers : allWorkers;
 
   // Founders' combined earnings — shown as the collapsed summary on the
   // "PERUSTAJIEN ANSIOT" bar so the headline figure is glanceable while folded.
   const foundersTotalCents = (founderEarnings ?? []).reduce((s, f) => s + f.totalCents, 0);
   const laborCents = workerLaborCents ?? 0;
+
+  // Crew on the clock right now — drives the "KÄYNNISSÄ NYT" strip pinned under the
+  // hero. Read straight from the crew so someone who just started (0 windows yet)
+  // still shows. The strip is hidden entirely when nobody is working.
+  const runningShifts = (project.crew || [])
+    .filter((c) => c.activeShiftAt)
+    .map((c) => ({ id: c.id, name: workerName(c.id), since: c.activeShiftAt as number }))
+    .sort((a, b) => a.since - b.since);
 
   return (
     <div style={{ height: "100%", overflowY: "auto", overflowX: "hidden", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch", boxSizing: "border-box", padding: m ? "16px 12px calc(96px + env(safe-area-inset-bottom))" : "26px 30px 40px" }}>
@@ -267,6 +290,23 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             )}
           </div>
         </div>
+
+        {/* KÄYNNISSÄ NYT — live shift strip, pinned under the hero ONLY while someone
+            is on the clock (otherwise the top stays minimal). */}
+        {runningShifts.length > 0 && (
+          <div className="anim-fadeUp-1" style={{ ...card, padding: m ? "12px 14px" : "12px 18px", marginBottom: "14px", display: "flex", alignItems: "center", gap: m ? "8px" : "12px", flexWrap: "wrap" }}>
+            <span style={{ ...mono, display: "inline-flex", alignItems: "center", gap: "8px", color: "rgba(255,255,255,0.55)" }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#5fe08a", boxShadow: "0 0 8px rgba(95,224,138,0.9)", animation: "fr8-zonePulse 1.8s ease-in-out infinite" }} />
+              KÄYNNISSÄ NYT
+            </span>
+            {runningShifts.map((s) => (
+              <span key={s.id} style={{ display: "inline-flex", alignItems: "center", gap: "8px", padding: "5px 11px", borderRadius: 999, background: "rgba(95,224,138,0.1)", border: "1px solid rgba(95,224,138,0.28)" }}>
+                <span style={{ fontSize: "13px", fontWeight: 600 }}>{s.name}</span>
+                <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "#9ff0bd" }}>{fmtDur(now - s.since)}</span>
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* Collapsible "dropdown bar" sections — everything below the hero folds
             away, each bar keeping its headline figure visible while closed. */}
@@ -427,10 +467,15 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
         </Section>
 
         {/* Workers strip — per-worker window counts & €/h optimisation */}
-        {activeWorkers.length > 0 && (
-          <Section id="workers" label="TEKIJÄT · IKKUNAT & TEHO" summary={`${activeWorkers.length} tekijää`} animClass="anim-fadeUp-5">
-            <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(activeWorkers.length, m ? 2 : 4)}, 1fr)`, gap: m ? "10px" : "12px" }}>
-              {activeWorkers.map((s) => {
+        {allWorkers.length > 0 && (
+          <Section id="workers" label="TEKIJÄT · IKKUNAT & TEHO" summary={`${shownWorkers.length} tekijää`} animClass="anim-fadeUp-5">
+            {/* Kaikki ⇄ vain aktiiviset */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "10px", marginBottom: "14px" }}>
+              <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>Vain aktiiviset</span>
+              <Toggle checked={showActiveOnly} onChange={setShowActiveOnly} ariaLabel="Näytä vain aktiiviset tekijät" />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(Math.max(shownWorkers.length, 1), m ? 2 : 4)}, 1fr)`, gap: m ? "10px" : "12px" }}>
+              {shownWorkers.map((s) => {
                 const share = washed > 0 ? (s.washed / washed) * 100 : 0;
                 const rate = s.washed > 0 ? s.revenueCents / s.washed / 100 : 0; // €/ikkuna (personal pay)
                 const shiftStart = shiftStartFor(s.worker);
@@ -463,20 +508,44 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                     {trainee ? (
                       // A trainee shows only their own windows + hours; the euro (pay) stays
                       // combined with their leader, so we show "palkka <leader>" instead.
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>
-                        <span style={{ color: "#9cc1ff" }}>palkka · {trainee.leaderName}</span>
-                        <span>{s.hours > 0 ? `${s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} h` : "0 h"}</span>
+                      // Each metric on its own full-width row → no number collision on mobile.
+                      <div style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                          <span>Palkka</span>
+                          <span style={{ color: "#9cc1ff", textAlign: "right" }}>→ {trainee.leaderName}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                          <span>Tunnit</span>
+                          <span style={{ color: "rgba(255,255,255,0.85)", textAlign: "right" }}>{s.hours > 0 ? `${s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} h` : "0 h"}</span>
+                        </div>
                       </div>
                     ) : (
                     <>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>
-                      <span>
-                        <b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(s.revenueCents / 100)}</b>
-                        {overridden
-                          ? <span style={{ marginLeft: 6, color: "#9ff0bd", fontSize: 10.5 }}>muokattu</span>
-                          : cm?.role === "host" ? " · sis. tuotto-osuus" : ` · ${euroUnit(rate)}/ikkuna`}
-                      </span>
-                      <span>{s.hours > 0 ? `${euro(s.eurPerHour)}/h · ${s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} h` : "0 h"}</span>
+                    {/* Stacked label/value rows so the euro, rate and €/h figures never
+                        overlap each other when they wrap on a narrow card. */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                        <span>Ansio</span>
+                        <span style={{ textAlign: "right" }}>
+                          <b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(s.revenueCents / 100)}</b>
+                          {overridden && <span style={{ marginLeft: 6, color: "#9ff0bd", fontSize: 10.5 }}>muokattu</span>}
+                        </span>
+                      </div>
+                      {cm?.role === "host" ? (
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                          <span>Hinnoittelu</span>
+                          <span style={{ textAlign: "right", color: "rgba(255,255,255,0.5)" }}>sis. tuotto-osuus</span>
+                        </div>
+                      ) : (
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                          <span>€ / ikkuna</span>
+                          <span style={{ textAlign: "right", color: "rgba(255,255,255,0.85)" }}>{euroUnit(rate)}</span>
+                        </div>
+                      )}
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                        <span>Teho</span>
+                        <span style={{ textAlign: "right", color: "rgba(255,255,255,0.85)" }}>{s.hours > 0 ? `${euro(s.eurPerHour)} / h · ${s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} h` : "0 h"}</span>
+                      </div>
                     </div>
                     {/* Breakdown of the COMBINED sum: how much of this leader's total is a
                         trainee's work (e.g. "sis. Milja 6 ikk · 225 €"). */}
@@ -555,8 +624,16 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             </div>
           </Section>
 
+          {/* Kulut — moved off the tab bar into a collapsible bar here. The form +
+              list (ExpensesView) is rendered by the project page and passed in. */}
+          {expensesSlot && (
+            <Section id="expenses" label="KULUT" summary={expensesTotalCents ? euro((expensesTotalCents) / 100) : "0 €"} animClass="anim-fadeUp-7">
+              {expensesSlot}
+            </Section>
+          )}
+
           {activity.length > 0 && (
-            <Section id="activity" label="VIIMEISIN TOIMINTA" summary={activity[0]?.time} animClass="anim-fadeUp-7">
+            <Section id="activity" label="VIIMEISIN TOIMINTA" summary={activity[0]?.time} animClass="anim-fadeUp-8">
                 <div style={{ display: "flex", flexDirection: "column", gap: "11px" }}>
                   {activity.map((a, i) => (
                     <div key={i} style={{ display: "flex", alignItems: "center", gap: "11px" }}>

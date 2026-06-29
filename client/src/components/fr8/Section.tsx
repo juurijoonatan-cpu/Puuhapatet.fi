@@ -11,6 +11,7 @@
  * a block in here (drop the old outer card wrapper).
  */
 import { useState, useCallback, type ReactNode } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 const STORE_PREFIX = "fr8.section.";
@@ -143,14 +144,22 @@ export default function Section({ id, label, summary, defaultOpen = false, animC
           </span>
         </span>
       </button>
-      {open && (
-        <div
-          className="anim-fadeUp-0"
-          style={{ padding: m ? "0 16px 16px" : "0 22px 20px", borderTop: "1px solid rgba(255,255,255,0.06)" }}
-        >
-          <div style={{ marginTop: m ? "14px" : "16px" }}>{children}</div>
-        </div>
-      )}
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            key="body"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.28, ease: [0.2, 0.8, 0.2, 1] }}
+            style={{ overflow: "hidden" }}
+          >
+            <div style={{ padding: m ? "0 16px 16px" : "0 22px 20px", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+              <div style={{ marginTop: m ? "14px" : "16px" }}>{children}</div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

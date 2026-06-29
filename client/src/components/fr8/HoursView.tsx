@@ -4,6 +4,7 @@
  * window-throughput optimisation (windows/h and €/h).
  */
 import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import type { ProjHourEntry, WorkerStat } from "@shared/project";
 import { useIsMobile } from "@/hooks/use-mobile";
 
@@ -34,6 +35,7 @@ const card: React.CSSProperties = {
 
 export default function HoursView({ workers, hours, hourLog, stats, onAddHours, traineeInfo }: Props) {
   const [inputs, setInputs] = useState<Record<string, string>>({});
+  const [openLog, setOpenLog] = useState<Record<string, boolean>>({});
   const m = useIsMobile();
 
   function handleAdd(w: string) {
@@ -156,21 +158,41 @@ export default function HoursView({ workers, hours, hourLog, stats, onAddHours, 
                 </div>
                 <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.35)", marginBottom: "16px" }}>Pilkku ja piste käyvät · miinusmerkki vähentää (esim. -1,5)</div>
 
-                {/* Log */}
-                <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.35)", marginBottom: "9px" }}>VIIMEISIMMÄT KIRJAUKSET</div>
+                {/* Log — folded away by default so the card stays compact */}
                 {entries.length > 0 ? (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                    {entries.map((e, i) => (
-                      <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 11px", background: "rgba(255,255,255,0.025)", borderRadius: "10px" }}>
-                        <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "14px", fontWeight: 600, color: e.delta < 0 ? "rgb(255,140,140)" : "rgb(120,235,160)" }}>
-                          {(e.delta > 0 ? "+" : "") + fmtH(e.delta)} h
-                        </span>
-                        <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)" }}>{timeStr(e.ts)}</span>
-                      </div>
-                    ))}
-                  </div>
+                  <>
+                    <button
+                      onClick={() => setOpenLog((p) => ({ ...p, [w.id]: !p[w.id] }))}
+                      style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 0", background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.4)", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.12em" }}
+                    >
+                      <span>VIIMEISIMMÄT KIRJAUKSET ({entries.length})</span>
+                      <span>{openLog[w.id] ? "▲" : "▾"}</span>
+                    </button>
+                    <AnimatePresence initial={false}>
+                      {openLog[w.id] && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: "auto", opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.24, ease: [0.2, 0.8, 0.2, 1] }}
+                          style={{ overflow: "hidden" }}
+                        >
+                          <div style={{ display: "flex", flexDirection: "column", gap: "2px", marginTop: "6px" }}>
+                            {entries.map((e, i) => (
+                              <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 11px", background: "rgba(255,255,255,0.025)", borderRadius: "10px" }}>
+                                <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "14px", fontWeight: 600, color: e.delta < 0 ? "rgb(255,140,140)" : "rgb(120,235,160)" }}>
+                                  {(e.delta > 0 ? "+" : "") + fmtH(e.delta)} h
+                                </span>
+                                <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)" }}>{timeStr(e.ts)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </>
                 ) : (
-                  <div style={{ fontSize: "12px", color: "rgba(255,255,255,0.3)", padding: "6px 0" }}>Ei vielä kirjauksia.</div>
+                  <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.3)", padding: "6px 0" }}>EI VIELÄ KIRJAUKSIA</div>
                 )}
               </div>
             );

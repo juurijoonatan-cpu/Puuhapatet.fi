@@ -596,7 +596,17 @@ function WorkerCardHeader({
     <div>
       {/* Identity row: avatar + editable name (clean inline title) + status + delete */}
       <div className="flex items-center gap-3">
-        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-muted text-sm font-bold text-muted-foreground">{initials}</div>
+        {/* Avatar: onboarding photo → static /fr8/<id>.jpg → initials (image hides
+            itself on load error, revealing the initials underneath). */}
+        <div className="relative grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full bg-muted text-sm font-bold text-muted-foreground">
+          {initials}
+          <img
+            src={member.profile?.photoDataUrl || `/fr8/${member.id}.jpg`}
+            alt={member.name}
+            className="absolute inset-0 h-full w-full object-cover"
+            onError={(e) => { e.currentTarget.style.display = "none"; }}
+          />
+        </div>
         <div className="min-w-0 flex-1">
           <input
             value={name}

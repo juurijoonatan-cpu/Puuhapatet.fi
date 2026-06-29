@@ -4621,6 +4621,50 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // Worker downloads their own subcontractor invoice (PDF) for a PAID payout.
+  // Regenerated on demand from the payout's stored snapshot (tax/buyer/billing),
+  // so the invoice the worker sees on their dashboard matches the emailed copy.
+  app.get("/api/crew/:token/payout/:payoutId/invoice.pdf", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { member } = found;
+      const payout = (member.payouts || []).find((p) => p.id === String(req.params.payoutId));
+      if (!payout || payout.status !== "maksettu") return res.status(404).json({ error: "Laskua ei löytynyt" });
+
+      const billing = payout.billing || {};
+      const answers = member.profile?.answers;
+      // Prefer the snapshot captured at payment; fall back to a fresh computation.
+      const tax = payout.tax ?? computeTax({
+        laborCents: payout.amountCents,
+        vatStatus: readVatStatus(answers),
+        inPrepaymentRegister: readInPrepaymentRegister(answers),
+      });
+      const buyer = payout.buyer ?? resolveBuyer(null);
+      const invoiceDate = new Date(payout.paidAt || payout.createdAt).toLocaleDateString("fi-FI");
+      const pdf = await generateWorkerInvoicePdf({
+        invoiceNo: payout.invoiceNo || `${member.id.toUpperCase().slice(0, 6)}-01`,
+        workerName: billing.name || member.profile?.fullName || member.name,
+        workerYTunnus: billing.yTunnus || member.profile?.yTunnus || undefined,
+        workerAddress: billing.address || member.profile?.city || undefined,
+        workerIban: billing.iban || member.profile?.iban || undefined,
+        windows: payout.windows,
+        amountCents: payout.amountCents,
+        note: payout.note,
+        invoiceDate,
+        paidDate: invoiceDate,
+        tax,
+        buyer,
+        acceptedAt: payout.approvedAt,
+      });
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="lasku-${payout.invoiceNo || payout.id}.pdf"`);
+      res.send(pdf);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
   // ── Worker expenses (crew token — public, own expenses only) ───────────────────
   // Workers log their own job costs (transport, materials, equipment, other).
   // The admin sees ALL expenses across workers in the project expense view.

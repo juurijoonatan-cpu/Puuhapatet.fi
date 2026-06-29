@@ -6,7 +6,7 @@ import { useState, useEffect } from "react";
 import { ArrowLeft, Maximize2, Minimize2, ChevronDown, Check } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 
-export type Fr8Tab = "dashboard" | "floor" | "hours";
+export type Fr8Tab = "dashboard" | "floor";
 
 interface NavbarProps {
   activeTab: Fr8Tab;
@@ -27,7 +27,6 @@ interface NavbarProps {
 const TABS: { id: Fr8Tab; label: string; short: string }[] = [
   { id: "dashboard", label: "Kokonaistilanne", short: "Tilanne" },
   { id: "floor", label: "Tilanne kerroksittain", short: "Kerrokset" },
-  { id: "hours", label: "Tehdyt tunnit", short: "Tunnit" },
 ];
 
 function tabStyle(active: boolean): React.CSSProperties {

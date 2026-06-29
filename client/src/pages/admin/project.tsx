@@ -21,7 +21,6 @@ import { traineeForUserId, traineeForName } from "@shared/trainees";
 import { DEFAULT_WORKER_PER_WINDOW_CENTS } from "@shared/crew";
 import Dashboard from "@/components/fr8/Dashboard";
 import FloorView from "@/components/fr8/FloorView";
-import HoursView from "@/components/fr8/HoursView";
 import Section from "@/components/fr8/Section";
 import { useIsMobile } from "@/hooks/use-mobile";
 
@@ -376,13 +375,6 @@ export default function AdminProjectPage() {
     mutate((d) => { d.activeZone = null; });
   }, [mutate]);
 
-  const onAddHours = useCallback((worker: string, delta: number) => {
-    mutate((d) => {
-      d.hours[worker] = Math.max(0, +(((d.hours[worker] || 0) + delta).toFixed(2)));
-      d.hourLog = [{ worker, delta, ts: Date.now(), by: currentWorker }, ...d.hourLog].slice(0, 60);
-    });
-  }, [mutate, currentWorker]);
-
   const onGoToFloor = useCallback((floor: string) => {
     setActiveFloor(floor);
     setTab("floor");
@@ -530,7 +522,6 @@ export default function AdminProjectPage() {
     if (m?.name?.trim()) return m.name.trim().split(/\s+/)[0];
     return workerName(id);
   };
-  const resolveInitial = (id: string): string => (resolveName(id)[0] || "?").toUpperCase();
 
   // Trainee indicator: each trainee (e.g. Milja) now gets their OWN windows/hours card
   // on the dashboard, with no euro — their pay is settled through the leader (Matias).
@@ -599,14 +590,6 @@ export default function AdminProjectPage() {
       return next;
     });
   };
-  // Tunnit-näkymä: perustajat + keikan aktiiviset työntekijät (esim. Jani) JA
-  // harjoittelijat (esim. Milja) — jokaisen tekijän omat tunnit näkyvät johtajille
-  // erikseen (harjoittelijan palkka pysyy ohjaajalla, mutta tunnit ovat omat).
-  const hoursIds = Array.from(new Set([
-    ...(project.workers.length ? project.workers : ["matias", "joonatan"]),
-    ...crew.filter((c) => c.active && c.role === "worker" && !c.adminLinked).map((c) => c.id),
-  ]));
-  const hoursWorkers = hoursIds.map((id) => ({ id, name: resolveName(id), initial: resolveInitial(id) }));
   // Display-name map + this gig's pickable crew (used by both the "who washed"
   // and "default washer" pickers).
   const { workerNames, gigWorkers } = computeWorkerMaps(project);
@@ -694,9 +677,6 @@ export default function AdminProjectPage() {
             onClearActiveZone={onClearActiveZone}
             deal={deal}
           />
-        )}
-        {tab === "hours" && (
-          <HoursView workers={hoursWorkers} hours={managerHours} hourLog={project.hourLog} stats={workerStats} onAddHours={onAddHours} traineeInfo={traineeInfo} />
         )}
       </main>
     </>,

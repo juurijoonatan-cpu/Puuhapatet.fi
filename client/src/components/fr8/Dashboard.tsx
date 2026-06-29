@@ -3,7 +3,6 @@
  * Adds a per-worker "TEKIJÄT" strip (window counts + €/h optimisation).
  */
 import { allPoints, computeDealBilling, type ProjectData, type WindowStatus, type WorkerStat, type FixedDeal } from "@shared/project";
-import { computePayProgress } from "@shared/payprogress";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useState, useEffect } from "react";
 import Section from "./Section";
@@ -82,6 +81,10 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   // Workers strip: false = show everyone assigned (incl. 0-activity like Oona),
   // true = only people who've washed a window or logged hours.
   const [showActiveOnly, setShowActiveOnly] = useState(false);
+  // €/h + tunnit are hidden by default — too much info, and hours are rarely logged.
+  const [showTeho, setShowTeho] = useState(false);
+  // Kulut live in a popup, off the main view (rarely used right now).
+  const [showExpenses, setShowExpenses] = useState(false);
   const crewMemberOf = (id: string) => (project.crew || []).find((c) => c.id === id);
   // Live clock for "shift running" indicators (ticks once a minute).
   const [now, setNow] = useState(Date.now());
@@ -104,7 +107,6 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   const total = all.length;
   const washed = all.filter((a) => a.status === "pesty").length;
   const kesken = all.filter((a) => a.status === "kesken").length;
-  const pct = total > 0 ? (washed / total) * 100 : 0;
 
   const grp = (p: 1 | 2) => {
     const arr = all.filter((a) => a.p === p);
@@ -145,21 +147,6 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   const estWashed = deal ? heroWashed : washed;
   const remaining = Math.max(0, estTotal - estWashed);
   const estStr = remaining === 0 && estTotal > 0 ? "valmis" : todayWindows > 0 ? "~" + Math.ceil(remaining / todayWindows) + " työpv" : "—";
-
-  // Paydate progress — for a fixed deal track the LIVE billable (red) count, so the
-  // milestone follows the actual dots on the map (e.g. 161 → ~41 / erä). The agreed
-  // total (€6300) is unaffected; only the window-count milestone tracks the live set.
-  const payTotal = deal ? (billing?.billableTotal ?? 0) : total;
-  const payWashed = deal ? (billing?.billableWashed ?? 0) : washed;
-  const payP = computePayProgress(payTotal, payWashed);
-
-  // Money is taken in whole instalments (€6300 / 4 = €1575 each), so "KERTYNYT SUMMA"
-  // steps by COMPLETED erät — not the linear window fraction, which drifts to e.g.
-  // 1 565,22 €. One erä done → 1 575 €, all four → 6 300 €.
-  const instalmentCents = billing ? Math.round(billing.capCents / payP.periods) : 0;
-  const completedInstalments = payP.done ? payP.periods : Math.max(0, payP.currentPeriod - 1);
-  const dealAccruedEur = (completedInstalments * instalmentCents) / 100;
-  const dealCollectedPct = payP.periods > 0 ? (completedInstalments / payP.periods) * 100 : 0;
 
   const activity = log.slice(0, 5).map((l) => {
     const rgb = colorRgb(l.p, l.status);
@@ -204,7 +191,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
           </div>
           <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: m ? "10px" : "11px", color: "rgba(255,255,255,0.4)", letterSpacing: "0.06em", textAlign: "right", flexShrink: 0 }}>
             {deal
-              ? <>{FLOORS.length} KERROSTA · {heroTotal > 0 ? heroTotal : "…"} SOPIMUSIKKUNAA<span style={{ opacity: 0.7 }}> · {total} kartalla</span></>
+              ? <>{FLOORS.length} KERROSTA · {heroTotal > 0 ? heroTotal : "…"} SOPIMUSIKKUNAA</>
               : <>{FLOORS.length} KERROSTA · {total > 0 ? total : "…"} IKKUNAA</>}
           </div>
         </div>
@@ -231,7 +218,6 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
               </div>
               <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.5)", marginBottom: "20px" }}>
                 {deal ? "punaista ikkunaa pesty" : "ikkunaa pesty"}
-                {deal && <span style={{ color: "rgba(255,255,255,0.32)" }}> · {total} kartalla yhteensä</span>}
               </div>
               <div style={{ display: "flex", gap: "10px" }}>
                 {([["kesken", "rgb(188,150,255)", "rgba(188,150,255,0.7)", heroKesken], ["Pesemättä", "rgba(255,255,255,0.4)", undefined, heroUnwashed]] as [string, string, string|undefined, number][]).map(([label, bg, shadow, val]) => (
@@ -247,47 +233,13 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             </div>
           </div>
 
-          {/* Revenue card */}
-          <div className="anim-fadeUp-1" style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", padding: "26px", background: "linear-gradient(155deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))", border: "1px solid rgba(255,255,255,0.09)", borderRadius: "22px", backdropFilter: "blur(22px)", WebkitBackdropFilter: "blur(22px)" }}>
-            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "10px", flexWrap: "wrap" }}>
-              <div style={{ ...mono, minWidth: 0 }}>{deal ? "KERTYNYT LASKUTUS" : "LIIKEVAIHTO"}</div>
-              <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10.5px", color: "rgba(255,255,255,0.4)", flexShrink: 0, whiteSpace: "nowrap" }}>
-                {deal ? `${euro(instalmentCents / 100)} / ERÄ` : `${euroUnit(PRICE)} / IKKUNA`}
-              </div>
+          {/* Money card — one clean figure: the accumulated internal margin
+              (washed red × sisäinen kate). No instalments, no contract bubble. */}
+          <div className="anim-fadeUp-1" style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: "10px", padding: m ? "24px 22px" : "30px", background: "linear-gradient(155deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))", border: "1px solid rgba(255,255,255,0.09)", borderRadius: "22px", backdropFilter: "blur(22px)", WebkitBackdropFilter: "blur(22px)" }}>
+            <div style={{ ...mono }}>{deal ? "KERTYNYT · VAIN PERUSTAJILLE" : "LIIKEVAIHTO"}</div>
+            <div style={{ fontSize: m ? "44px" : "52px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>
+              {euro(deal ? heroWashed * internalPerWindowEur : washed * PRICE)}
             </div>
-            <div>
-              {/* The headline is what's actually been COLLECTED so far (billed
-                  instalments), not the full agreed cap — so the bosses see real
-                  money in, not the headline deal size. The agreed contract value
-                  stays as the secondary "/ 6 300 € sopimushinta" reference. */}
-              <div style={{ fontSize: "46px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{euro(deal ? dealAccruedEur : washed * PRICE)}</div>
-              <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.45)", marginTop: "4px" }}>
-                {deal
-                  ? <>/ {euro(capEur)} sopimushinta · {completedInstalments}/{payP.periods} erää</>
-                  : <>/ {euro(total * PRICE)} sopimusarvo</>}
-                {deal && <span style={{ display: "inline-flex", alignItems: "center", gap: 4, marginLeft: 8, padding: "1px 7px", borderRadius: 7, background: "rgba(95,224,138,0.12)", border: "1px solid rgba(95,224,138,0.3)", color: "#9ff0bd", fontSize: "10px", fontWeight: 600 }}>🔒 sovittu hinta</span>}
-              </div>
-            </div>
-            <div>
-              <div style={{ height: "9px", borderRadius: "6px", background: "rgba(255,255,255,0.08)", overflow: "hidden", marginBottom: "9px" }}>
-                <div style={{ width: `${(deal ? dealCollectedPct : pct).toFixed(1)}%`, height: "100%", borderRadius: "6px", background: "linear-gradient(90deg,rgba(255,255,255,0.55),#fff)", boxShadow: "0 0 12px rgba(255,255,255,0.4)", transition: "width .6s" }} />
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10.5px", color: "rgba(255,255,255,0.45)" }}>
-                <span>{deal ? `${completedInstalments}/${payP.periods} erää · ${billing!.billableWashed}/${billing!.billableTotal} punaista` : `${washed} × ${euroUnit(PRICE)}`}</span>
-                <span>{Math.round(deal ? dealCollectedPct : pct)} % kerätty</span>
-              </div>
-            </div>
-            {/* Internal margin — founders only. The fixed €6300 spread over the live red
-                windows; rises as red dots are removed, while the worker rate stays put. */}
-            {deal && billing && billing.billableTotal > 0 && (
-              <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)" }}>SISÄINEN KATE / IKKUNA</span>
-                <span style={{ display: "inline-flex", alignItems: "baseline", gap: 8 }}>
-                  <b style={{ fontSize: "17px", fontWeight: 700 }}>{euroUnit(internalPerWindowEur)}</b>
-                  <span style={{ fontSize: "10.5px", color: "rgba(255,255,255,0.4)" }}>{billing.billableTotal} punaista · vain perustajille</span>
-                </span>
-              </div>
-            )}
           </div>
         </div>
 
@@ -393,31 +345,6 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             </Section>
         )}
 
-        {/* Paydate progress — how far toward the next payment instalment */}
-        {payP.total > 0 && (
-          <Section id="payment" label="MAKSUERÄ" summary={`${completedInstalments}/${payP.periods} erää`} animClass="anim-fadeUp-2">
-            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: "10px", gap: 10, flexWrap: "wrap" }}>
-              {/* The instalment price is the FLAT agreed total split evenly (€6300 / 4 =
-                  1 575 € / erä) — a fixed figure, NOT derived from the live red-window
-                  count (which would drift, e.g. 1 565,63 € at 167 windows). */}
-              <span style={mono}>MAKSUERÄ {payP.currentPeriod}/{payP.periods} · {payP.perPeriod} IKKUNAA / ERÄ{deal ? ` · ${euro(capEur / payP.periods)} / ERÄ` : ""}</span>
-              <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.5)" }}>{payP.washed}/{payP.total} ikkunaa</span>
-            </div>
-            <div style={{ position: "relative", height: "10px", borderRadius: "999px", background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
-              {/* instalment ticks */}
-              {Array.from({ length: payP.periods - 1 }).map((_, i) => (
-                <span key={i} style={{ position: "absolute", top: 0, bottom: 0, left: `${((i + 1) / payP.periods) * 100}%`, width: "2px", background: "rgba(0,0,0,0.45)" }} />
-              ))}
-              <div style={{ position: "absolute", inset: 0, width: `${Math.round((payP.washed / payP.total) * 100)}%`, background: "linear-gradient(90deg,#5fe08a,#7CE0A6)", borderRadius: "999px", transition: "width .6s ease" }} />
-            </div>
-            <div style={{ marginTop: "9px", fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>
-              {payP.done
-                ? "Koko keikka pesty — kaikki maksuerät katettu 🎉"
-                : <>Vielä <b style={{ color: "#fff", fontWeight: 600 }}>{payP.toNext} ikkunaa</b> seuraavaan maksuun · {payP.inPeriod}/{payP.perPeriod} tässä erässä</>}
-            </div>
-          </Section>
-        )}
-
         {/* Row 2: P1 + P2 + mini cards */}
         <Section id="priority" label="PRIORITEETIT & TAHTI" summary={`P1 ${p1.pctStr} · tänään ${todayWindows}`} animClass="anim-fadeUp-3">
           <div style={{ display: "grid", gridTemplateColumns: m ? "1fr 1fr" : "1fr 1fr 1fr", gap: m ? "10px" : "16px" }}>
@@ -468,11 +395,17 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
 
         {/* Workers strip — per-worker window counts & €/h optimisation */}
         {allWorkers.length > 0 && (
-          <Section id="workers" label="TEKIJÄT · IKKUNAT & TEHO" summary={`${shownWorkers.length} tekijää`} animClass="anim-fadeUp-5">
-            {/* Kaikki ⇄ vain aktiiviset */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "10px", marginBottom: "14px" }}>
-              <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>Vain aktiiviset</span>
-              <Toggle checked={showActiveOnly} onChange={setShowActiveOnly} ariaLabel="Näytä vain aktiiviset tekijät" />
+          <Section id="workers" label="TEKIJÄT" summary={`${shownWorkers.length} tekijää`} animClass="anim-fadeUp-5">
+            {/* Controls: show-all-vs-active + reveal €/h teho */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "18px", marginBottom: "14px", flexWrap: "wrap" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "10px" }}>
+                <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>Näytä teho (€/h)</span>
+                <Toggle checked={showTeho} onChange={setShowTeho} ariaLabel="Näytä €/h ja tunnit" />
+              </span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "10px" }}>
+                <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>Vain aktiiviset</span>
+                <Toggle checked={showActiveOnly} onChange={setShowActiveOnly} ariaLabel="Näytä vain aktiiviset tekijät" />
+              </span>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(Math.max(shownWorkers.length, 1), m ? 2 : 4)}, 1fr)`, gap: m ? "10px" : "12px" }}>
               {shownWorkers.map((s) => {
@@ -514,10 +447,12 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                           <span>Palkka</span>
                           <span style={{ color: "#9cc1ff", textAlign: "right" }}>→ {trainee.leaderName}</span>
                         </div>
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                          <span>Tunnit</span>
-                          <span style={{ color: "rgba(255,255,255,0.85)", textAlign: "right" }}>{s.hours > 0 ? `${s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} h` : "0 h"}</span>
-                        </div>
+                        {showTeho && (
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                            <span>Tunnit</span>
+                            <span style={{ color: "rgba(255,255,255,0.85)", textAlign: "right" }}>{s.hours > 0 ? `${s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} h` : "0 h"}</span>
+                          </div>
+                        )}
                       </div>
                     ) : (
                     <>
@@ -542,10 +477,12 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                           <span style={{ textAlign: "right", color: "rgba(255,255,255,0.85)" }}>{euroUnit(rate)}</span>
                         </div>
                       )}
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                        <span>Teho</span>
-                        <span style={{ textAlign: "right", color: "rgba(255,255,255,0.85)" }}>{s.hours > 0 ? `${euro(s.eurPerHour)} / h · ${s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} h` : "0 h"}</span>
-                      </div>
+                      {showTeho && (
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                          <span>Teho</span>
+                          <span style={{ textAlign: "right", color: "rgba(255,255,255,0.85)" }}>{s.hours > 0 ? `${euro(s.eurPerHour)} / h · ${s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} h` : "0 h"}</span>
+                        </div>
+                      )}
                     </div>
                     {/* Breakdown of the COMBINED sum: how much of this leader's total is a
                         trainee's work (e.g. "sis. Milja 6 ikk · 225 €"). */}
@@ -624,14 +561,6 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             </div>
           </Section>
 
-          {/* Kulut — moved off the tab bar into a collapsible bar here. The form +
-              list (ExpensesView) is rendered by the project page and passed in. */}
-          {expensesSlot && (
-            <Section id="expenses" label="KULUT" summary={expensesTotalCents ? euro((expensesTotalCents) / 100) : "0 €"} animClass="anim-fadeUp-7">
-              {expensesSlot}
-            </Section>
-          )}
-
           {activity.length > 0 && (
             <Section id="activity" label="VIIMEISIN TOIMINTA" summary={activity[0]?.time} animClass="anim-fadeUp-8">
                 <div style={{ display: "flex", flexDirection: "column", gap: "11px" }}>
@@ -649,7 +578,45 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             </Section>
           )}
         </div>
+
+        {/* Kulut — tucked away off the main view. A quiet link opens the expense
+            form/list in a popup, for the rare time something needs logging. */}
+        {expensesSlot && (
+          <div style={{ display: "flex", justifyContent: "center", marginTop: m ? "18px" : "22px" }}>
+            <button
+              type="button"
+              onClick={() => setShowExpenses(true)}
+              style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 10, background: "transparent", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.45)", fontSize: "12px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}
+            >
+              Kulut{expensesTotalCents ? ` · ${euro(expensesTotalCents / 100)}` : ""}
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* Kulut popup */}
+      {expensesSlot && showExpenses && (
+        <div
+          onClick={() => setShowExpenses(false)}
+          style={{ position: "fixed", inset: 0, zIndex: 80, display: "flex", alignItems: m ? "flex-end" : "center", justifyContent: "center", padding: m ? "0" : "24px", background: "rgba(0,0,0,0.6)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "100%", maxWidth: "640px", maxHeight: m ? "88vh" : "86vh", overflowY: "auto", background: "#0c0c0e", border: "1px solid rgba(255,255,255,0.1)", borderRadius: m ? "20px 20px 0 0" : "20px", padding: m ? "18px 14px calc(20px + env(safe-area-inset-bottom))" : "22px 22px 24px", boxShadow: "0 24px 60px rgba(0,0,0,0.6)" }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "14px" }}>
+              <span style={{ ...mono, color: "rgba(255,255,255,0.55)" }}>KULUT{expensesTotalCents ? ` · ${euro(expensesTotalCents / 100)}` : ""}</span>
+              <button
+                type="button"
+                onClick={() => setShowExpenses(false)}
+                aria-label="Sulje"
+                style={{ width: 30, height: 30, borderRadius: 9, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.7)", fontSize: 15, cursor: "pointer", lineHeight: 1 }}
+              >×</button>
+            </div>
+            {expensesSlot}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

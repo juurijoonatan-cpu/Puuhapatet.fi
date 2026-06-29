@@ -1563,9 +1563,19 @@ function PayoutsTab({ token, view, setView }: { token: string; view: WorkerView;
               )}
 
               {p.status === "maksettu" && p.invoiceNo && (
-                <p style={{ margin: "12px 0 0", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
-                  Laskusi {p.invoiceNo} luotu{p.paidAt ? ` · ${new Date(p.paidAt).toLocaleDateString("fi-FI")}` : ""}.
-                </p>
+                <div style={{ margin: "12px 0 0" }}>
+                  <p style={{ margin: 0, fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
+                    Laskusi {p.invoiceNo} luotu{p.paidAt ? ` · ${new Date(p.paidAt).toLocaleDateString("fi-FI")}` : ""}.
+                  </p>
+                  <a
+                    href={`/api/crew/${token}/payout/${p.id}/invoice.pdf`}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ display: "inline-flex", alignItems: "center", gap: 7, marginTop: 9, padding: "8px 13px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.16)", background: "rgba(255,255,255,0.05)", color: "#fff", fontSize: 12.5, fontWeight: 600, textDecoration: "none" }}
+                  >
+                    Lataa lasku (PDF)
+                  </a>
+                </div>
               )}
 
               {p.status === "ilmoitettu" && !open && (

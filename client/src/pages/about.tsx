@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { ArrowRight, MapPin, Mail, Phone } from "lucide-react";
 import { SiWhatsapp, SiInstagram, SiLinkedin } from "react-icons/si";
 import { useI18n } from "@/lib/i18n";
+import { AvatarGroup } from "@/components/animate-ui/components/animate/avatar-group";
 
 const team = [
   {
@@ -45,6 +46,16 @@ const team = [
     phone: "+358442372930",
     email: "petrus.aalto@icloud.com",
   },
+];
+
+// Tekijätiimi (alihankkijat) — näytetään about-sivulla avatar-ryhmänä. Kuvat
+// /public-kansiosta; puuttuvat putoavat nimikirjaimiin.
+const ALIHANKKIJAT = [
+  { src: "/petrus.jpg.jpeg", fallback: "PA", tooltip: "Petrus" },
+  { src: "/fr8/jani.jpg", fallback: "JA", tooltip: "Jani" },
+  { src: "/fr8/oliver.jpg", fallback: "OL", tooltip: "Oliver" },
+  { src: "/fr8/oona.jpg", fallback: "OO", tooltip: "Oona" },
+  { fallback: "MI", tooltip: "Milja" },
 ];
 
 export default function AboutPage() {
@@ -153,6 +164,17 @@ export default function AboutPage() {
             </Card>
           ))}
         </div>
+
+        {/* Tiimi & alihankkijat — the crew who does the work */}
+        <Card className="p-6 md:p-8 bg-card border-0 premium-shadow mb-8">
+          <h2 className="text-xl font-semibold text-foreground mb-2">Tiimimme & erinomaiset alihankkijamme</h2>
+          <p className="text-sm text-muted-foreground leading-relaxed mb-6 max-w-xl">
+            Työn tekevät koulutetut, sopimuksen allekirjoittaneet alihankkijamme — heihin luotamme
+            jokaisella keikalla. Haluatko mukaan tiimiin?{" "}
+            <a href="mailto:info@puuhapatet.fi" className="text-primary underline underline-offset-2">Ota yhteyttä</a>.
+          </p>
+          <AvatarGroup avatars={ALIHANKKIJAT} />
+        </Card>
 
         {/* Contact */}
         <Card className="p-8 bg-card border-0 premium-shadow mb-8">

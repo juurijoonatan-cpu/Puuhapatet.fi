@@ -20,8 +20,8 @@
  *
  * 2) ARVONLISÄVERO (ALV). Jos alihankkija on ALV-rekisterissä, hänen laskunsa
  *    Puuhapatetille lisää yleisen ALV-kannan 25,5 % (voimassa 1.9.2024 alkaen).
- *    Jos toiminta on vähäistä (AVL 3 §, alle ~15 000 €/12 kk → tarkista vero.fi),
- *    ALV:tä ei lisätä ja laskuun merkitään verottomuuden peruste.
+ *    Jos toiminta on vähäistä (AVL 3 §, alle 20 000 €/kalenterivuosi 1.1.2025 alkaen
+ *    → tarkista vero.fi), ALV:tä ei lisätä ja laskuun merkitään verottomuuden peruste.
  *
  * ALV lisätään työkorvauksen päälle; ennakonpidätys lasketaan työkorvauksesta
  * ILMAN ALV:tä (ALV:stä ei koskaan pidätetä). Lopullinen tilille maksettava:
@@ -31,8 +31,9 @@
 /** Yleinen arvonlisäverokanta Suomessa 1.9.2024 alkaen. */
 export const ALV_RATE = 0.255;
 
-/** Vähäisen toiminnan (AVL 3 §) liikevaihtoraja 12 kk:lta. Tarkista vero.fi. */
-export const VAT_SMALL_BUSINESS_LIMIT_EUR = 15000;
+/** Vähäisen toiminnan (AVL 3 §) liikevaihtoraja. Nousi 20 000 €:oon (kalenterivuosi)
+ *  1.1.2025 alkaen; alarajahuojennus poistui samalla. Tarkista vero.fi. */
+export const VAT_SMALL_BUSINESS_LIMIT_EUR = 20000;
 
 /** Ennakonpidätys työkorvauksesta, kun saaja EI ole ennakkoperintärekisterissä. */
 export const WITHHOLDING_NATURAL_PERSON = 0.60; // luonnollinen henkilö / toiminimi, ei verokorttia
@@ -100,7 +101,7 @@ export function computeTax(input: TaxInputs): TaxBreakdown {
   if (vatRegistered) {
     notes.push(`ALV ${fmtPct(vatRate)} (yleinen verokanta). Laskuttaja on arvonlisäverovelvollinen.`);
   } else {
-    notes.push("Arvonlisäveroa ei lisätä (AVL 3 §, vähäinen toiminta).");
+    notes.push("Veroton myynti – ei arvonlisäveroa (AVL 3 §, vähäinen toiminta).");
   }
   if (withheld) {
     notes.push(

@@ -670,6 +670,9 @@ function generateWorkerInvoicePdf(params: {
   tax: TaxBreakdown;
   /** Laskun OSTAJA — johtaja (oma Y-tunnus) joka laskutti asiakkaan, tai yhtiö. */
   buyer: BuyerSnapshot;
+  /** Itselaskutuksen hyväksyntä: milloin laskuttaja (työntekijä) hyväksyi maksun
+   *  (epoch ms). Todentaa AVL 209 b §:n edellyttämän hyväksymismenettelyn. */
+  acceptedAt?: number;
 }): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 48, size: "A4" });
@@ -718,7 +721,18 @@ function generateWorkerInvoicePdf(params: {
     y = Math.max(y, ry) + 6;
     // Supply date (AVL 209 b § edellyttää toimituspäivän).
     doc.fill(GRAY).font("Helvetica").fontSize(9).text(`Toimituspäivä: ${params.paidDate || params.invoiceDate}`, 48, y);
-    y += 18;
+    y += 16;
+    // Itselaskutus — pakollinen laskumerkintä, kun OSTAJA laatii laskun myyjän
+    // nimissä (AVL 209 b §). Edellyttää myyjän hyväksyntää; merkitään se tähän.
+    doc.fill(NAVY).font("Helvetica-Bold").fontSize(9).text("Itselaskutus — ostajan laatima lasku (AVL 209 b §)", 48, y);
+    y += 13;
+    if (params.acceptedAt) {
+      doc.fill(GRAY).font("Helvetica").fontSize(8)
+        .text(`Laskuttaja hyväksynyt laskun: ${new Date(params.acceptedAt).toLocaleDateString("fi-FI")}`, 48, y);
+      y += 14;
+    } else {
+      y += 4;
+    }
 
     const tax = params.tax;
     // Line item — veroton työkorvaus.
@@ -728,10 +742,13 @@ function generateWorkerInvoicePdf(params: {
     doc.text("VEROTON", 48 + pageW - 100, y + 9, { width: 88, align: "right" });
     y += 26;
 
-    const desc = params.note || `Ikkunanpesutyö${params.windows ? ` — ${params.windows} ikkunaa` : ""}`;
-    doc.fill(INK).font("Helvetica").fontSize(10).text(desc, 60, y + 8, { width: pageW - 140 });
-    doc.font("Helvetica-Bold").text(fmtEur(tax.laborCents), 48 + pageW - 100, y + 8, { width: 88, align: "right" });
-    y += 34;
+    const desc = params.note || "Ikkunanpesutyö (alihankinta)";
+    const unitCents = params.windows > 0 ? Math.round(tax.laborCents / params.windows) : 0;
+    const qtyLine = params.windows > 0 ? `${params.windows} ikkunaa × ${fmtEur(unitCents)} / ikkuna` : "";
+    doc.fill(INK).font("Helvetica").fontSize(10).text(desc, 60, y + 7, { width: pageW - 140 });
+    if (qtyLine) doc.fill(GRAY).font("Helvetica").fontSize(8).text(qtyLine, 60, y + 22, { width: pageW - 140 });
+    doc.fill(INK).font("Helvetica-Bold").fontSize(10).text(fmtEur(tax.laborCents), 48 + pageW - 100, y + 7, { width: 88, align: "right" });
+    y += 38;
     doc.moveTo(48, y).lineTo(48 + pageW, y).strokeColor("#E2E8F0").stroke();
     y += 12;
 
@@ -5053,6 +5070,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           invoiceNo, workerName, workerYTunnus, workerAddress, workerIban,
           windows: payout.windows, amountCents: payout.amountCents,
           note: payout.note, invoiceDate, paidDate: invoiceDate, tax, buyer,
+          acceptedAt: payout.approvedAt,
         });
         if (resend) {
           const html = `

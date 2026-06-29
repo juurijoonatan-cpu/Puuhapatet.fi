@@ -644,7 +644,19 @@ export default function AdminProjectPage() {
       )}
       <main style={{ position: "relative", zIndex: 10, height: "calc(100% - 62px)" }}>
         {tab === "dashboard" && (
-          <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} onSetEarnings={setWorkerEarnings} traineeInfo={traineeInfo} traineeShareByLeader={traineeShareByLeader} founderEarnings={founderEarnings} workerLaborCents={workerLaborCents} founderRateEur={internalKateCents / 100} />
+          <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} onSetEarnings={setWorkerEarnings} traineeInfo={traineeInfo} traineeShareByLeader={traineeShareByLeader} founderEarnings={founderEarnings} workerLaborCents={workerLaborCents} founderRateEur={internalKateCents / 100}
+            expensesTotalCents={(project.expenses || []).reduce((s, e) => s + e.amountCents, 0)}
+            expensesSlot={
+              <ExpensesView
+                expenses={project.expenses || []}
+                workers={[...gigWorkers, ...crew.filter(c => !gigWorkers.some(w => w.id === c.id)).map(c => ({ id: c.id, name: resolveName(c.id) }))]}
+                currentWorker={currentWorker}
+                resolveName={resolveName}
+                onAdd={addExpense}
+                onDelete={deleteExpense}
+              />
+            }
+          />
         )}
         {tab === "floor" && (
           <FloorView
@@ -685,16 +697,6 @@ export default function AdminProjectPage() {
         )}
         {tab === "hours" && (
           <HoursView workers={hoursWorkers} hours={managerHours} hourLog={project.hourLog} stats={workerStats} onAddHours={onAddHours} traineeInfo={traineeInfo} />
-        )}
-        {tab === "expenses" && (
-          <ExpensesView
-            expenses={project.expenses || []}
-            workers={[...gigWorkers, ...crew.filter(c => !gigWorkers.some(w => w.id === c.id)).map(c => ({ id: c.id, name: resolveName(c.id) }))]}
-            currentWorker={currentWorker}
-            resolveName={resolveName}
-            onAdd={addExpense}
-            onDelete={deleteExpense}
-          />
         )}
       </main>
     </>,
@@ -769,7 +771,6 @@ function ExpensesView({
 
   const fmtEur = (cents: number) => (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
   const fmtStamp = (ts: number) => new Date(ts).toLocaleString("fi-FI", { day: "numeric", month: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" });
-  const totalCents = expenses.reduce((s, e) => s + e.amountCents, 0);
 
   const pickReceipt = async (file: File | undefined) => {
     if (!file) { setReceipt(null); return; }
@@ -800,21 +801,8 @@ function ExpensesView({
   const sorted = [...expenses].sort((a, b) => b.ts - a.ts);
 
   return (
-    <div style={{ height: "100%", overflowY: "auto", padding: m ? "16px 12px calc(96px + env(safe-area-inset-bottom))" : "24px 20px 44px" }}>
+    <div>
       <div style={{ maxWidth: "780px", margin: "0 auto" }}>
-        {/* Header */}
-        <div style={{ marginBottom: "16px", display: "flex", alignItems: "baseline", gap: 12 }}>
-          <div>
-            <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.16em", color: "rgba(255,255,255,0.4)", marginBottom: 6 }}>PROJEKTIKULUT</div>
-            <h1 style={{ margin: 0, fontSize: m ? "22px" : "26px", fontWeight: 700, letterSpacing: "-0.01em" }}>Kulut</h1>
-          </div>
-          {totalCents > 0 && (
-            <span style={{ marginLeft: "auto", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: m ? "17px" : "20px", fontWeight: 700, color: "#ff9b6e" }}>
-              {fmtEur(totalCents)}
-            </span>
-          )}
-        </div>
-
         {/* Kirjanpito-ohje: kuitti + aikaleima. Tucked into a collapsible bar so the
             add-expense form stays front and centre — open it when you need the rules. */}
         <div style={{ marginBottom: "14px" }}>

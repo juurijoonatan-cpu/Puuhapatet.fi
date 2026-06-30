@@ -18,7 +18,7 @@ import { downloadWorkerContract, openWorkerContractForPrint, downloadSignatureIm
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import { ChevronLeft, Copy, Check, RotateCw, Trash2, Plus, UserPlus, FileText, Printer, Download, Wallet } from "lucide-react";
 import type { CrewPayout } from "@shared/crew";
-import { computeTax, readVatStatus, readInPrepaymentRegister, fmtPct, fmtEurCents } from "@shared/tax";
+import { computeTax, readVatStatus, readInPrepaymentRegister, readPayeeType, fmtPct, fmtEurCents } from "@shared/tax";
 import { BRAND_BILLERS, DEFAULT_BILLER_ID } from "@shared/billers";
 import { traineeForUserId, traineeForName } from "@shared/trainees";
 import { getAdminProfile } from "@/lib/admin-profile";
@@ -370,6 +370,7 @@ function PayoutPanel({
       laborCents: p.amountCents,
       vatStatus: readVatStatus(member.profile?.answers),
       inPrepaymentRegister: readInPrepaymentRegister(member.profile?.answers),
+      payeeType: readPayeeType(member.profile?.answers),
     });
     const extra = tx.withheld
       ? `\n\nHuom: työntekijä ei ole ennakkoperintärekisterissä → tilille ${eur2(tx.payableCents)}, ennakonpidätys ${fmtPct(tx.withholdingRate)} (${eur2(tx.withholdingCents)}) tilitettävä Verolle.`
@@ -405,6 +406,7 @@ function PayoutPanel({
             laborCents: p.amountCents,
             vatStatus: readVatStatus(member.profile?.answers),
             inPrepaymentRegister: readInPrepaymentRegister(member.profile?.answers),
+            payeeType: readPayeeType(member.profile?.answers),
           });
           const taxAdjusted = tx.vatRegistered || tx.withheld;
           return (

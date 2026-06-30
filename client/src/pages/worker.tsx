@@ -27,8 +27,8 @@ import { Shine } from "@/components/animate-ui/primitives/effects/shine";
 import SignaturePad from "@/components/SignaturePad";
 import FloorView from "@/components/fr8/FloorView";
 import {
-  computeTax, readVatStatus, readInPrepaymentRegister, fmtPct, fmtEurCents,
-  VAT_STATUS_KEY, PREPAYMENT_REGISTER_KEY, type VatStatus,
+  computeTax, readVatStatus, readInPrepaymentRegister, readPayeeType, fmtPct, fmtEurCents,
+  VAT_STATUS_KEY, PREPAYMENT_REGISTER_KEY, PAYEE_TYPE_KEY, type VatStatus,
 } from "@shared/tax";
 import { computePayProgress } from "@shared/payprogress";
 import { MAX_PHOTO_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN } from "@shared/crew";
@@ -1499,6 +1499,7 @@ function PayoutsTab({ token, view, setView }: { token: string; view: WorkerView;
   const answers = view.worker.profile?.answers;
   const vatStatus = readVatStatus(answers);
   const inRegister = readInPrepaymentRegister(answers);
+  const payeeType = readPayeeType(answers);
   const [openId, setOpenId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: b.name || "", yTunnus: b.yTunnus || "", iban: b.iban || "", address: b.address || "" });
   // Worker's own deductible kulut entered while approving — optional. These never
@@ -1571,7 +1572,7 @@ function PayoutsTab({ token, view, setView }: { token: string; view: WorkerView;
           const open = openId === p.id;
           // Paid payouts carry a tax snapshot; for pending ones preview from the
           // worker's current declared status so they see what they'll receive.
-          const tx = p.tax ?? computeTax({ laborCents: p.amountCents, vatStatus, inPrepaymentRegister: inRegister });
+          const tx = p.tax ?? computeTax({ laborCents: p.amountCents, vatStatus, inPrepaymentRegister: inRegister, payeeType });
           const showBreakdown = tx.vatRegistered || tx.withheld;
           return (
             <div key={p.id} style={{ padding: 16, borderRadius: 14, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
@@ -2028,6 +2029,8 @@ function TaxStatusCard({ token, view, setView }: { token: string; view: WorkerVi
   const vat = readVatStatus(answers);
   const inRegister = readInPrepaymentRegister(answers);
   const declaredRegister = answers?.[PREPAYMENT_REGISTER_KEY] === "kylla" || answers?.[PREPAYMENT_REGISTER_KEY] === "ei";
+  const payeeIsCompany = answers?.[PAYEE_TYPE_KEY] === "yritys";
+  const declaredPayee = answers?.[PAYEE_TYPE_KEY] === "yritys" || answers?.[PAYEE_TYPE_KEY] === "henkilo";
   const [busy, setBusy] = useState(false);
 
   const save = async (key: string, val: string) => {
@@ -2062,7 +2065,7 @@ function TaxStatusCard({ token, view, setView }: { token: string; view: WorkerVi
         <button onClick={() => save(VAT_STATUS_KEY, "alv_rekisterissa")} disabled={busy} style={opt(vat === "alv_rekisterissa")}>ALV-rekisterissä<br/><span style={{ fontWeight: 400, fontSize: 11, opacity: 0.85 }}>lisää 25,5 %</span></button>
       </div>
       <p style={{ margin: "0 0 14px", fontSize: 11.5, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
-        Jos liikevaihtosi on alle ~15 000 € / 12 kk, voit toimia ilman ALV:tä (AVL 3 §). Tarkista vero.fi.
+        Jos liikevaihtosi on alle ~20 000 € / kalenterivuosi, voit toimia ilman ALV:tä (AVL 3 §). Tarkista vero.fi.
       </p>
 
       {/* Ennakkoperintärekisteri */}
@@ -2071,11 +2074,22 @@ function TaxStatusCard({ token, view, setView }: { token: string; view: WorkerVi
         <button onClick={() => save(PREPAYMENT_REGISTER_KEY, "kylla")} disabled={busy} style={opt(inRegister)}>Kyllä, olen</button>
         <button onClick={() => save(PREPAYMENT_REGISTER_KEY, "ei")} disabled={busy} style={opt(declaredRegister && !inRegister)}>En / en tiedä</button>
       </div>
+
+      {/* Maksunsaajan muoto — ratkaisee ennakonpidätys-%:n (60 % henkilö / 13 % yhtiö),
+          ja vain jos et ole ennakkoperintärekisterissä. */}
       {!inRegister && (
-        <p style={{ margin: "10px 0 0", fontSize: 11.5, color: "#E0A800", lineHeight: 1.55 }}>
-          ⚠️ Jos et ole ennakkoperintärekisterissä, Puuhapatetin on pidätettävä verosi maksusta (oletus 60 %).
-          Rekisteröidy maksutta osoitteessa <b>ytj.fi</b> — silloin saat koko summan ja hoidat verot itse.
-        </p>
+        <>
+          <p style={{ margin: "14px 0 6px", fontSize: 12.5, fontWeight: 600, color: "rgba(255,255,255,0.85)" }}>Toimitko henkilönä vai yhtiönä?</p>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => save(PAYEE_TYPE_KEY, "henkilo")} disabled={busy} style={opt(declaredPayee && !payeeIsCompany)}>Henkilö / toiminimi<br/><span style={{ fontWeight: 400, fontSize: 11, opacity: 0.85 }}>ennakonpidätys 60 %</span></button>
+            <button onClick={() => save(PAYEE_TYPE_KEY, "yritys")} disabled={busy} style={opt(payeeIsCompany)}>Yhtiö (Oy/Ky/Ay)<br/><span style={{ fontWeight: 400, fontSize: 11, opacity: 0.85 }}>ennakonpidätys 13 %</span></button>
+          </div>
+          <p style={{ margin: "10px 0 0", fontSize: 11.5, color: "#E0A800", lineHeight: 1.55 }}>
+            ⚠️ Koska et ole ennakkoperintärekisterissä, Puuhapatetin on pidätettävä verosi maksusta
+            ({payeeIsCompany ? "13 % — yhtiö" : "60 % — henkilö/toiminimi"}). Rekisteröidy maksutta osoitteessa <b>ytj.fi</b> —
+            silloin saat koko summan ja hoidat verot itse.
+          </p>
+        </>
       )}
     </div>
   );

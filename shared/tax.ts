@@ -45,9 +45,16 @@ export type VatStatus =
   | "vahainen_toiminta"  // AVL 3 §, ei ALV:tä
   | "ei_tiedossa";       // ei vielä ilmoitettu → oletuksena ei ALV:tä
 
+/** Maksunsaajan oikeudellinen muoto — ratkaisee ennakonpidätys-%:n, jos saaja EI
+ *  ole ennakkoperintärekisterissä: luonnollinen henkilö / toiminimi 60 %, yhtiö 13 %. */
+export type PayeeType =
+  | "individual"   // luonnollinen henkilö tai toiminimi (yksityinen elinkeinonharjoittaja)
+  | "company";     // oikeushenkilö: Oy, Ky, Ay, osuuskunta…
+
 /** Profiiliin (profile.answers) tallennettavat avaimet. */
 export const VAT_STATUS_KEY = "vatStatus";
 export const PREPAYMENT_REGISTER_KEY = "prepaymentRegister"; // "kylla" | "ei"
+export const PAYEE_TYPE_KEY = "payeeType"; // "henkilo" | "yritys"
 
 export interface TaxInputs {
   /** Työkorvaus ilman ALV:tä, sentteinä (esim. pestyt ikkunat × hinta). */
@@ -55,8 +62,11 @@ export interface TaxInputs {
   vatStatus: VatStatus;
   /** Onko saaja ennakkoperintärekisterissä? */
   inPrepaymentRegister: boolean;
-  /** Ennakonpidätysprosentti, jos ei rekisterissä. Oletus 60 % (henkilö ilman
-   *  verokorttia). Voidaan korvata esim. verokortin %:lla tai 13 %:lla (yhtiö). */
+  /** Maksunsaajan muoto. Ratkaisee oletus-ennakonpidätyksen, kun ei rekisterissä:
+   *  "company" → 13 %, muutoin (henkilö/toiminimi) → 60 %. Oletus "individual". */
+  payeeType?: PayeeType;
+  /** Ennakonpidätysprosentin nimenomainen ohitus (esim. verokortin %). Jos annettu,
+   *  käytetään tätä payeeType-oletuksen sijaan. */
   withholdingRate?: number;
 }
 
@@ -92,7 +102,10 @@ export function computeTax(input: TaxInputs): TaxBreakdown {
   const invoiceTotalCents = laborCents + vatCents;
 
   const withheld = !input.inPrepaymentRegister;
-  const withholdingRate = withheld ? (input.withholdingRate ?? WITHHOLDING_NATURAL_PERSON) : 0;
+  // Default rate by payee type (60 % person / 13 % company), unless an explicit
+  // override (e.g. a verokortti rate) is given.
+  const defaultWithholdingRate = input.payeeType === "company" ? WITHHOLDING_COMPANY : WITHHOLDING_NATURAL_PERSON;
+  const withholdingRate = withheld ? (input.withholdingRate ?? defaultWithholdingRate) : 0;
   // Ennakonpidätys lasketaan TYÖKORVAUKSESTA ilman ALV:tä; ALV:stä ei pidätetä.
   const withholdingCents = withheld ? round(laborCents * withholdingRate) : 0;
   const payableCents = invoiceTotalCents - withholdingCents;
@@ -127,6 +140,13 @@ export function readVatStatus(answers: Record<string, string> | undefined | null
 /** Onko alihankkija ennakkoperintärekisterissä (oletus: ei → varovainen). */
 export function readInPrepaymentRegister(answers: Record<string, string> | undefined | null): boolean {
   return answers?.[PREPAYMENT_REGISTER_KEY] === "kylla";
+}
+
+/** Maksunsaajan muoto profiilin vastauksista. "yritys" → company, muu → individual
+ *  (oletus, ja yleisin: toiminimi / kevytyrittäjä). Vaikuttaa vain ennakonpidätys-
+ *  %:iin, ja vain jos saaja EI ole ennakkoperintärekisterissä. */
+export function readPayeeType(answers: Record<string, string> | undefined | null): PayeeType {
+  return answers?.[PAYEE_TYPE_KEY] === "yritys" ? "company" : "individual";
 }
 
 export function fmtPct(rate: number): string {

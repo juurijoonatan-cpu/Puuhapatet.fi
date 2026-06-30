@@ -3,7 +3,7 @@
  */
 
 import type { GigData, GigTotals } from "@shared/gig";
-import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding, FixedDeal } from "@shared/project";
+import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding, FixedDeal, EraDebtBreakdown } from "@shared/project";
 import type { MemberAgreementSignature } from "@shared/member-agreement";
 import type { CrewMember, CrewMemberStats, CrewProfile, CrewAgreementSignature } from "@shared/crew";
 import type { WorkerAgreement } from "@shared/worker-agreements";
@@ -832,7 +832,7 @@ export const api = {
 
   // ─── Host crew management ───────────────────────────────────────────────────
   getHostCrew: (jobId: number) =>
-    request<{ ok: boolean; crew: HostCrewRow[]; building: ProjBuilding; version: string; deal: FixedDeal | null; totalBillable: number; billableWashed: number; eraWindows: number[] | null }>(
+    request<{ ok: boolean; crew: HostCrewRow[]; building: ProjBuilding; version: string; deal: FixedDeal | null; totalBillable: number; billableWashed: number; eraWindows: number[] | null; eraBreakdown: EraDebtBreakdown[] }>(
       "GET", `/api/jobs/${jobId}/crew`),
 
   // Founders' editable per-erä (instalment) window counts for the fixed deal.

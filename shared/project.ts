@@ -14,6 +14,7 @@
 
 import type { GigData, GigSector } from "./gig";
 import { sanitizeCrew, type CrewMember } from "./crew";
+import { PAY_PERIODS, eraWindowCounts } from "./payprogress";
 
 // ─── Data shapes ───────────────────────────────────────────────────────────────
 
@@ -366,6 +367,108 @@ export function computeWorkerStats(data: ProjectData): WorkerStat[] {
       eurPerHour: hours > 0 ? revenueCents / 100 / hours : 0,
     };
   });
+}
+
+// ─── Per-erä (instalment) debt attribution ─────────────────────────────────────
+//
+// "Eräkohtainen velka": when the founders set erä 1 = 40 windows, who washed those
+// FIRST 40 windows (in wash order) and how many each — and thus the palkka owed for
+// that erä. The wash order is taken from the activity log's `pesty` timestamps; the
+// authoritative washer for each window is `washedBy`/`washedBy2` (same attribution
+// the earnings model uses everywhere else), so the per-erä split always reconciles
+// with each worker's total earnings. Pure reporting: it never changes pay.
+
+export interface EraWorkerShare {
+  workerId: string;
+  name: string;
+  windows: number;      // windows credited to this worker in this erä (0.5 for a shared window)
+  earnedCents: number;  // windows × the worker's €/ikkuna rate
+}
+
+export interface EraDebtBreakdown {
+  era: number;              // 1-based erä number
+  size: number;             // target window count for this erä
+  washed: number;           // windows of this erä actually washed so far
+  complete: boolean;        // the whole erä has been washed
+  earnedCents: number;      // total palkka owed for this erä's washed windows
+  workers: EraWorkerShare[];// who washed them, biggest share first
+}
+
+/**
+ * Attribute the washed billable windows to the founders' erät in wash order, and
+ * within each erä break the windows down by washer (+ the palkka that implies).
+ * `eraWindows` are the founders' editable per-erä sizes (absent → even split).
+ */
+export function computeEraDebts(
+  data: ProjectData,
+  deal: FixedDeal,
+  crew: CrewMember[],
+  eraWindows: number[] | null,
+): EraDebtBreakdown[] {
+  const billable = allPoints(data).filter((p) => p.p === deal.billablePriority);
+  const totalBillable = billable.length;
+  const sizes = eraWindowCounts(totalBillable, PAY_PERIODS, eraWindows);
+  const washedBy2 = data.washedBy2 || {};
+
+  // Earliest "pesty" timestamp per window key, from the activity log — the basis
+  // for wash order. The log is capped, so some washed windows may have no entry.
+  const firstWashTs = new Map<string, number>();
+  for (const l of data.log) {
+    if (l.status !== "pesty") continue;
+    const prev = firstWashTs.get(l.key);
+    if (prev === undefined || l.ts < prev) firstWashTs.set(l.key, l.ts);
+  }
+
+  // Washed billable windows in wash order. The activity log is capped (newest
+  // events kept), so a washed window with NO log entry was marked pesty before
+  // the oldest retained event — i.e. it is older than any timestamped window.
+  // Order: untimestamped (oldest) first, then timestamped ascending, key as a
+  // stable tiebreak — so the earliest washes correctly land in the first erät.
+  const ordered = billable
+    .filter((p) => p.status === "pesty")
+    .sort((a, b) => {
+      const ta = firstWashTs.get(a.key);
+      const tb = firstWashTs.get(b.key);
+      if (ta !== undefined && tb !== undefined) return ta - tb || (a.key < b.key ? -1 : 1);
+      if (ta !== undefined) return 1;   // a timestamped, b not → b (older) first
+      if (tb !== undefined) return -1;  // b timestamped, a not → a (older) first
+      return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+    });
+
+  const rateOf = (id: string) => crew.find((m) => m.id === id)?.perWindowCents ?? 0;
+  const nameOf = (id: string) => crew.find((m) => m.id === id)?.name ?? id;
+
+  const out: EraDebtBreakdown[] = [];
+  let cursor = 0;
+  for (let i = 0; i < sizes.length; i++) {
+    const size = sizes[i];
+    const slice = ordered.slice(cursor, cursor + size);
+    cursor += slice.length;
+    // Credit each window to its washer(s) — a shared window splits 0.5 / 0.5.
+    const credit = new Map<string, number>();
+    for (const p of slice) {
+      const second = washedBy2[p.key];
+      if (p.washedBy) credit.set(p.washedBy, (credit.get(p.washedBy) || 0) + (second ? 0.5 : 1));
+      if (second) credit.set(second, (credit.get(second) || 0) + 0.5);
+    }
+    const workers: EraWorkerShare[] = Array.from(credit.entries())
+      .map(([workerId, windows]) => ({
+        workerId,
+        name: nameOf(workerId),
+        windows,
+        earnedCents: Math.round(windows * rateOf(workerId)),
+      }))
+      .sort((a, b) => b.windows - a.windows);
+    out.push({
+      era: i + 1,
+      size,
+      washed: slice.length,
+      complete: size > 0 && slice.length >= size,
+      earnedCents: workers.reduce((s, w) => s + w.earnedCents, 0),
+      workers,
+    });
+  }
+  return out;
 }
 
 // ─── Efficiency / pace analytics ───────────────────────────────────────────────

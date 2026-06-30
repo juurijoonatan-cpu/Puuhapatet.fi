@@ -419,16 +419,19 @@ export function computeEraDebts(
     if (prev === undefined || l.ts < prev) firstWashTs.set(l.key, l.ts);
   }
 
-  // Washed billable windows in wash order: known timestamps first (ascending),
-  // any without a log entry last (stable by key) so they still get attributed.
+  // Washed billable windows in wash order. The activity log is capped (newest
+  // events kept), so a washed window with NO log entry was marked pesty before
+  // the oldest retained event — i.e. it is older than any timestamped window.
+  // Order: untimestamped (oldest) first, then timestamped ascending, key as a
+  // stable tiebreak — so the earliest washes correctly land in the first erät.
   const ordered = billable
     .filter((p) => p.status === "pesty")
     .sort((a, b) => {
       const ta = firstWashTs.get(a.key);
       const tb = firstWashTs.get(b.key);
       if (ta !== undefined && tb !== undefined) return ta - tb || (a.key < b.key ? -1 : 1);
-      if (ta !== undefined) return -1;
-      if (tb !== undefined) return 1;
+      if (ta !== undefined) return 1;   // a timestamped, b not → b (older) first
+      if (tb !== undefined) return -1;  // b timestamped, a not → a (older) first
       return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
     });
 

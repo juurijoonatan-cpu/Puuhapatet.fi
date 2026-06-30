@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Disclosure } from "@/components/ui/disclosure";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -66,8 +67,6 @@ export default function AdminGigTrackerPage() {
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
-  const [showContract, setShowContract] = useState(false);
-  const [showLog, setShowLog] = useState(false);
   const [approving, setApproving] = useState(false);
   const [sigOpen, setSigOpen] = useState(false);
   const [savingContract, setSavingContract] = useState(false);
@@ -419,18 +418,17 @@ export default function AdminGigTrackerPage() {
         </div>
 
         {/* Customer contact details — editable, sourced from gigData.company. */}
-        <Card className="p-4 bg-card border-0 premium-shadow mb-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-muted-foreground" />
-              <p className="text-sm font-medium text-foreground">Yhteystiedot</p>
-            </div>
-            {!editingCompany && (
+        <Disclosure
+          icon={<Users className="w-4 h-4 text-muted-foreground" />}
+          title="Yhteystiedot"
+        >
+          {!editingCompany && (
+            <div className="flex justify-end -mt-1 mb-2">
               <Button variant="ghost" size="sm" onClick={() => { setCompanyDraft(gig.company ?? {}); setEditingCompany(true); }} className="text-xs gap-1.5 h-7 px-2">
                 <PenLine className="w-3.5 h-3.5" /> Muokkaa
               </Button>
-            )}
-          </div>
+            </div>
+          )}
           {editingCompany ? (
             <div className="space-y-3">
               <div>
@@ -493,7 +491,7 @@ export default function AdminGigTrackerPage() {
               </div>
             );
           })()}
-        </Card>
+        </Disclosure>
 
         {/* Quick price editor — tweak the deal fast right before signing. For a
             floor-plan gig it edits the single €/window + total cap (saved on the
@@ -506,21 +504,26 @@ export default function AdminGigTrackerPage() {
           // A signed, fixed-price deal (FR8) is locked — show it read-only.
           if (deal) {
             return (
-              <Card className="p-4 bg-card border-0 premium-shadow mb-4">
-                <div className="flex items-center justify-between">
-                  <span className="flex items-center gap-2 text-sm font-medium text-foreground">
-                    <Receipt className="w-4 h-4 text-muted-foreground" /> Sopimushinta
-                  </span>
-                  <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                    🔒 Sovittu sopimuksessa
-                  </span>
+              <Disclosure
+                icon={<Receipt className="w-4 h-4 text-muted-foreground" />}
+                title="Sopimushinta"
+                right={<span className="text-sm font-bold text-foreground tabular-nums">{eurFromCents(deal.capCents)}</span>}
+              >
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">Kokonaishinta (kiinteä)</span>
+                    <span className="text-sm font-bold text-foreground tabular-nums">{eurFromCents(deal.capCents)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">Maksuerä (4 × yhtä suuri)</span>
+                    <span className="text-sm font-semibold text-foreground tabular-nums">{eurFromCents(Math.round(deal.capCents / 4))}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">Tila</span>
+                    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">🔒 Sovittu sopimuksessa</span>
+                  </div>
                 </div>
-                <p className="mt-3 text-xs text-muted-foreground">
-                  Allekirjoitettu kiinteä kokonaishinta {eurFromCents(deal.capCents)} — laskutetaan neljässä yhtä suuressa
-                  erässä ({eurFromCents(Math.round(deal.capCents / 4))} / erä). Vain punaiset ikkunat kuuluvat sopimukseen,
-                  keltaiset eivät. Hintaa ei voi muokata.
-                </p>
-              </Card>
+              </Disclosure>
             );
           }
           return (
@@ -569,27 +572,27 @@ export default function AdminGigTrackerPage() {
           const status = gigStatus(gig);
           const sig = gig.signature;
           const appr = gig.approval;
+          const statusPill = (
+            <span
+              className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-full px-2.5 py-1 ${
+                status === "approved"
+                  ? "bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300"
+                  : status === "signed"
+                    ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
+                    : "bg-muted text-muted-foreground"
+              }`}
+            >
+              {status === "approved" ? <ShieldCheck className="w-3.5 h-3.5" /> : status === "signed" ? <Check className="w-3.5 h-3.5" /> : <Clock className="w-3.5 h-3.5" />}
+              {status === "approved" ? "Hyväksytty" : status === "signed" ? "Allekirjoitettu" : "Odottaa"}
+            </span>
+          );
           return (
-            <Card className="p-4 bg-card border-0 premium-shadow mb-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <PenLine className="w-4 h-4 text-muted-foreground" />
-                  <p className="text-sm font-medium text-foreground">Sopimus & hyväksyntä</p>
-                </div>
-                <span
-                  className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-full px-2.5 py-1 ${
-                    status === "approved"
-                      ? "bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300"
-                      : status === "signed"
-                        ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
-                        : "bg-muted text-muted-foreground"
-                  }`}
-                >
-                  {status === "approved" ? <ShieldCheck className="w-3.5 h-3.5" /> : status === "signed" ? <Check className="w-3.5 h-3.5" /> : <Clock className="w-3.5 h-3.5" />}
-                  {status === "approved" ? "Hyväksytty" : status === "signed" ? "Allekirjoitettu" : "Odottaa allekirjoitusta"}
-                </span>
-              </div>
-
+            <Disclosure
+              icon={<PenLine className="w-4 h-4 text-muted-foreground" />}
+              title="Sopimus & hyväksyntä"
+              right={statusPill}
+              defaultOpen={status === "draft"}
+            >
               {sig ? (
                 <div className="text-sm space-y-1.5">
                   <div className="flex items-start justify-between gap-3">
@@ -624,20 +627,18 @@ export default function AdminGigTrackerPage() {
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  Asiakas ei ole vielä allekirjoittanut. Jaa live-linkki — asiakas lukee ja allekirjoittaa sopimuksen,
-                  jonka jälkeen seurantanäkymä avautuu hänelle.
+                  Asiakas ei ole vielä allekirjoittanut. Jaa live-linkki allekirjoitettavaksi.
                 </p>
               )}
-            </Card>
+            </Disclosure>
           );
         })()}
 
         {/* Share link */}
-        <Card className="p-4 bg-card border-0 premium-shadow mb-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Share2 className="w-4 h-4 text-muted-foreground" />
-            <p className="text-sm font-medium text-foreground">Asiakkaan live-linkki</p>
-          </div>
+        <Disclosure
+          icon={<Share2 className="w-4 h-4 text-muted-foreground" />}
+          title="Asiakkaan live-linkki"
+        >
           <div className="flex items-center gap-2">
             <Input readOnly value={shareUrl} className="text-xs" onFocus={(e) => e.currentTarget.select()} />
             <Button variant="outline" size="icon" onClick={copyLink} aria-label="Kopioi linkki">
@@ -651,8 +652,7 @@ export default function AdminGigTrackerPage() {
               </a>
             )}
           </div>
-          <p className="text-xs text-muted-foreground mt-2">Jaa tämä linkki asiakkaalle — näkymä päivittyy itsestään.</p>
-        </Card>
+        </Disclosure>
 
         {/* Invoicing */}
         <Card className="p-5 bg-card border-0 premium-shadow mb-4">
@@ -705,9 +705,6 @@ export default function AdminGigTrackerPage() {
                 <Send className="w-4 h-4 mr-2" />
                 Lähetä lasku
               </Button>
-              <p className="text-[11px] text-muted-foreground mt-1 text-center">
-                Valitse maksuerä ja täytä laskutustiedot itse seuraavassa näkymässä.
-              </p>
               {gig.payments.length > 0 && (
                 <Button variant="ghost" size="sm" className="w-full mt-1 text-xs text-muted-foreground" onClick={undoInstalment}>
                   Peruuta viimeisin erä (nollaa laskuri)
@@ -733,21 +730,14 @@ export default function AdminGigTrackerPage() {
           <Button variant="outline" className="w-full mt-2" disabled={reporting} onClick={sendReport}>
             {reporting ? "Lähetetään…" : "Lähetä maksuraportti johtajille"}
           </Button>
-          <p className="text-[11px] text-muted-foreground mt-1 text-center">
-            Kooste eristä, alihankkijoiden maksuista, kuluista ja katteesta — vain johtajille.
-          </p>
         </Card>
 
         {/* Contract — editable; this is what the customer reads & signs */}
-        <Card className="p-4 bg-card border-0 premium-shadow mb-4">
-          <button className="flex items-center justify-between w-full" onClick={() => setShowContract((v) => !v)}>
-            <span className="flex items-center gap-2 text-sm font-medium text-foreground">
-              <FileText className="w-4 h-4 text-muted-foreground" /> Sopimus & asiakasnäkymä
-            </span>
-            <ChevronDown className={`w-4 h-4 transition-transform ${showContract ? "rotate-180" : ""}`} />
-          </button>
-          {showContract && (
-            <div className="mt-4 space-y-5">
+        <Disclosure
+          icon={<FileText className="w-4 h-4 text-muted-foreground" />}
+          title="Sopimus & asiakasnäkymä"
+        >
+            <div className="space-y-5">
               <div className="space-y-1.5">
                 <Label className="text-xs font-medium text-muted-foreground">Kuvaus (näkyy keikkalistassa)</Label>
                 <div className="flex gap-2">
@@ -785,29 +775,22 @@ export default function AdminGigTrackerPage() {
                 <Save className="w-4 h-4 mr-2" /> {savingContract ? "Tallennetaan…" : "Tallenna sopimus"}
               </Button>
             </div>
-          )}
-        </Card>
+        </Disclosure>
 
         {/* Activity log — tucked away; collapsed by default */}
         {gig.log.length > 0 && (
-          <Card className="p-4 bg-card border-0 premium-shadow mb-4">
-            <button className="flex items-center justify-between w-full" onClick={() => setShowLog((v) => !v)}>
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Loki · {gig.log.length}</span>
-              <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${showLog ? "rotate-180" : ""}`} />
-            </button>
-            {showLog && (
-              <div className="space-y-1.5 max-h-72 overflow-y-auto mt-3">
-                {[...gig.log].reverse().slice(0, 60).map((l, i) => (
-                  <div key={i} className="flex items-center justify-between text-xs">
-                    <span className="text-foreground">{l.text}{l.by ? ` · ${l.by.split(" ")[0]}` : ""}</span>
-                    <span className="text-muted-foreground shrink-0 ml-2">
-                      {new Date(l.t).toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" })}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
+          <Disclosure title={`Loki · ${gig.log.length}`}>
+            <div className="space-y-1.5 max-h-72 overflow-y-auto">
+              {[...gig.log].reverse().slice(0, 60).map((l, i) => (
+                <div key={i} className="flex items-center justify-between text-xs">
+                  <span className="text-foreground">{l.text}{l.by ? ` · ${l.by.split(" ")[0]}` : ""}</span>
+                  <span className="text-muted-foreground shrink-0 ml-2">
+                    {new Date(l.t).toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </Disclosure>
         )}
 
       </div>

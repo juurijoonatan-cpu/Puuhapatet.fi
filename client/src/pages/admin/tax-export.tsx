@@ -65,6 +65,9 @@ export default function TaxExportPage() {
   const [year, setYear] = useState(new Date().getFullYear());
   const [showGuide, setShowGuide] = useState(false);
   const [allBonusUsages, setAllBonusUsages] = useState<BonusUsage[]>([]);
+  const isHost = profile?.role === "HOST";
+  // Per-founder customer-invoice turnover for the ALV vähäinen-toiminta tracker.
+  const [turnover, setTurnover] = useState<Awaited<ReturnType<typeof api.getBillerTurnover>>["data"] | null>(null);
 
   useEffect(() => {
     api.getJobs().then((res) => {
@@ -81,6 +84,11 @@ export default function TaxExportPage() {
     if (profile?.startupBonus && profile.startupBonus > 0) {
       api.getStartupBonusUsages(profile.id).then((res) => {
         if (res.ok && res.data) setAllBonusUsages(res.data as BonusUsage[]);
+      });
+    }
+    if (profile?.role === "HOST") {
+      api.getBillerTurnover().then((res) => {
+        if (res.ok && res.data) setTurnover(res.data);
       });
     }
   }, []);
@@ -251,6 +259,55 @@ export default function TaxExportPage() {
             </span>
           )}
         </div>
+
+        {/* ALV vähäisen toiminnan seuranta — per founder, this calendar year.
+            Each founder invoices customers under their own Y-tunnus and stays
+            VAT-free only while under the limit. */}
+        {isHost && turnover && (() => {
+          const limitCents = turnover.limitEur * 100;
+          const yearMap = turnover.turnoverByYear[String(year)] || {};
+          return (
+            <Card className="p-5 bg-card border-0 premium-shadow mb-6">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-sm font-bold text-foreground">ALV-seuranta — vähäinen toiminta {year}</p>
+                <span className="text-[11px] text-muted-foreground">raja {turnover.limitEur.toLocaleString("fi-FI")} € / hlö</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground mb-4">
+                Pysyt ALV-vapaana niin kauan kuin kunkin johtajan vuosittainen liikevaihto on rajan alla (AVL 3 §).
+              </p>
+              <div className="space-y-4">
+                {turnover.billers.map((b) => {
+                  const cents = yearMap[b.id] ?? 0;
+                  const pct = limitCents > 0 ? Math.min(100, Math.round((cents / limitCents) * 100)) : 0;
+                  const over = cents >= limitCents;
+                  const near = !over && cents >= limitCents * 0.8;
+                  const barColor = over ? "bg-red-500" : near ? "bg-amber-500" : "bg-green-500";
+                  const txtColor = over ? "text-red-600" : near ? "text-amber-600" : "text-green-600";
+                  return (
+                    <div key={b.id}>
+                      <div className="flex items-baseline justify-between gap-2 mb-1">
+                        <span className="text-sm font-medium text-foreground">{b.name}{b.yTunnus ? <span className="text-[11px] text-muted-foreground"> · {b.yTunnus}</span> : null}</span>
+                        <span className={`text-sm font-bold tabular-nums ${txtColor}`}>{fmt(cents)}</span>
+                      </div>
+                      <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                        <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.max(2, pct)}%` }} />
+                      </div>
+                      <div className="flex items-center justify-between mt-1">
+                        <span className="text-[11px] text-muted-foreground">{pct} % rajasta</span>
+                        <span className={`text-[11px] ${txtColor}`}>
+                          {over ? "⚠️ raja ylittynyt — rekisteröidy ALV-velvolliseksi" : `jäljellä ${fmt(Math.max(0, limitCents - cents))}`}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-4 pt-3 border-t border-border">
+                Huom: laskee vain Puuhapatetin asiakaslaskut (laskutuspäivän mukaan). Raja koskee <b>kaikkea</b> liiketoimintaasi — laske mukaan myös muut tulosi. Tarkista vero.fi.
+              </p>
+            </Card>
+          );
+        })()}
 
         {loading ? (
           <p className="text-muted-foreground text-center py-12">Ladataan…</p>

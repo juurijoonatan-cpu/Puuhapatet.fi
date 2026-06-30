@@ -425,6 +425,16 @@ export const api = {
   workersStats: () =>
     request<WorkerStatsResponse>("GET", "/api/workers/stats"),
 
+  // Per-founder (biller) customer-invoice turnover by calendar year, for the
+  // ALV vähäinen-toiminta threshold tracker in the Verotus view.
+  getBillerTurnover: () =>
+    request<{
+      ok: boolean;
+      limitEur: number;
+      billers: { id: string; name: string; yTunnus?: string }[];
+      turnoverByYear: Record<string, Record<string, number>>;
+    }>("GET", "/api/admin/biller-turnover"),
+
   markWorkerPaid: (workerId: string, amount: number) =>
     request<{ id: number }>("POST", `/api/workers/${workerId}/mark-paid`, { amount }),
 

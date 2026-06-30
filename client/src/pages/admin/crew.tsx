@@ -9,7 +9,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRoute, useLocation } from "wouter";
 import { api, type HostCrewRow } from "@/lib/api";
-import type { ProjBuilding, FixedDeal } from "@shared/project";
+import type { ProjBuilding, FixedDeal, EraDebtBreakdown } from "@shared/project";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { PAY_PERIODS, eraWindowCounts, computePayProgress } from "@shared/payprogress";
 import { WORKER_AGREEMENTS, PROFILE_QUESTIONS } from "@shared/worker-agreements";
 import { downloadWorkerContract, openWorkerContractForPrint, downloadSignatureImage } from "@/lib/worker-contract-doc";
@@ -55,6 +56,7 @@ export default function AdminCrewPage() {
   const [totalBillable, setTotalBillable] = useState(0);
   const [billableWashed, setBillableWashed] = useState(0);
   const [eraWindows, setEraWindowsState] = useState<number[] | null>(null);
+  const [eraBreakdown, setEraBreakdown] = useState<EraDebtBreakdown[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -66,6 +68,7 @@ export default function AdminCrewPage() {
       setCrew(res.data.crew); setBuilding(res.data.building);
       setDeal(res.data.deal); setTotalBillable(res.data.totalBillable);
       setBillableWashed(res.data.billableWashed); setEraWindowsState(res.data.eraWindows);
+      setEraBreakdown(res.data.eraBreakdown || []);
       setErr(null);
     }
     else setErr(res.error || "Lataus epäonnistui");
@@ -124,14 +127,16 @@ export default function AdminCrewPage() {
             payout actions stay in each worker's card below. */}
         {crew.length > 0 && <PayrollSummary crew={crew} />}
 
-        {/* Maksuerät & kate — founders set the per-erä window counts; the per-erä
-            kate (€1575 / erän ikkunat) follows. Display/planning only. */}
+        {/* Maksuerät & kate — tucked behind a button so it doesn't crowd the page.
+            The popup holds the per-erä window editor + the per-erä kate AND the
+            "who washed which erä" debt breakdown. Display/planning only. */}
         {deal && (
-          <EraKatePanel
+          <EraKateDialog
             deal={deal}
             totalBillable={totalBillable}
             billableWashed={billableWashed}
             eraWindows={eraWindows}
+            eraBreakdown={eraBreakdown}
             onSave={saveEraWindows}
           />
         )}
@@ -496,9 +501,54 @@ function PayoutPanel({
   );
 }
 
-/** Maksuerät & kate — founders set the per-erä (instalment) window counts; the
- *  per-erä kate (€1575 ÷ erän ikkunat) follows. Pure display/planning: it never
- *  touches worker pay or the FR8 dashboard's whole-deal earnings model. */
+/** Maksuerät & kate — behind a button so it stays out of the way. The popup holds
+ *  the per-erä window editor + per-erä kate AND the per-erä debt breakdown (who
+ *  washed each erä's windows). Pure display/planning: never touches worker pay. */
+function EraKateDialog({ deal, totalBillable, billableWashed, eraWindows, eraBreakdown, onSave }: {
+  deal: FixedDeal;
+  totalBillable: number;
+  billableWashed: number;
+  eraWindows: number[] | null;
+  eraBreakdown: EraDebtBreakdown[];
+  onSave: (windows: number[]) => Promise<boolean>;
+}) {
+  const [open, setOpen] = useState(false);
+  const periods = PAY_PERIODS;
+  const instalmentCents = Math.round(deal.capCents / periods);
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <button className="w-full flex items-center gap-2 rounded-2xl border bg-card px-4 py-3 mb-5 text-left hover:bg-muted/40 transition-colors">
+          <Wallet className="h-4 w-4 shrink-0" />
+          <span className="text-sm font-bold">Maksuerät &amp; kate</span>
+          <span className="ml-auto text-[11px] text-muted-foreground tabular-nums">{eur(deal.capCents)} · {periods} erää ›</span>
+        </button>
+      </DialogTrigger>
+      <DialogContent className="max-w-lg max-h-[88vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-1.5"><Wallet className="h-4 w-4" /> Maksuerät &amp; kate</DialogTitle>
+          <DialogDescription>
+            {eur(deal.capCents)} · {periods} erää · {eur(instalmentCents)}/erä. Vain perustajille, ei vaikuta palkkoihin.
+          </DialogDescription>
+        </DialogHeader>
+
+        <EraKatePanel
+          deal={deal}
+          totalBillable={totalBillable}
+          billableWashed={billableWashed}
+          eraWindows={eraWindows}
+          onSave={onSave}
+        />
+
+        <EraDebtList eraBreakdown={eraBreakdown} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** The per-erä window-count editor: founders set each erä's window count, the
+ *  per-erä kate (€1575 ÷ erän ikkunat) follows. Lives inside EraKateDialog. */
 function EraKatePanel({ deal, totalBillable, billableWashed, eraWindows, onSave }: {
   deal: FixedDeal;
   totalBillable: number;
@@ -528,13 +578,9 @@ function EraKatePanel({ deal, totalBillable, billableWashed, eraWindows, onSave 
   const save = async () => { setBusy(true); const ok = await onSave(counts); setBusy(false); if (ok) setSaved(true); };
 
   return (
-    <div className="rounded-2xl border bg-card p-4 mb-5">
-      <div className="flex items-center justify-between mb-1">
-        <h2 className="flex items-center gap-1.5 text-sm font-bold"><Wallet className="h-4 w-4" /> Maksuerät &amp; kate</h2>
-        <span className="text-[11px] text-muted-foreground">{eur(deal.capCents)} · {periods} erää · {eur(instalmentCents)}/erä</span>
-      </div>
+    <div>
       <p className="text-[11px] text-muted-foreground mb-3">
-        Aseta kunkin erän ikkunamäärä — eräkohtainen kate = {eur(instalmentCents)} ÷ erän ikkunat. Vain perustajille, ei vaikuta palkkoihin.
+        Aseta kunkin erän ikkunamäärä — eräkohtainen kate = {eur(instalmentCents)} ÷ erän ikkunat.
       </p>
 
       <div className="space-y-2">
@@ -570,6 +616,55 @@ function EraKatePanel({ deal, totalBillable, billableWashed, eraWindows, onSave 
           {busy ? "Tallennetaan…" : saved && !dirty ? <><Check className="h-3.5 w-3.5" /> Tallennettu</> : "Tallenna erät"}
         </button>
       </div>
+    </div>
+  );
+}
+
+/** Per-erä debt breakdown: for each erä, who washed its windows (in wash order)
+ *  and the palkka that implies — answering "kuka pesi erän 1 ensimmäiset 40
+ *  ikkunaa ja kuinka monta kukin". Reads server-computed attribution. */
+function EraDebtList({ eraBreakdown }: { eraBreakdown: EraDebtBreakdown[] }) {
+  if (!eraBreakdown || eraBreakdown.length === 0) return null;
+  const fmtWindows = (n: number) => n.toLocaleString("fi-FI", { maximumFractionDigits: 1 });
+  const anyWashed = eraBreakdown.some((e) => e.washed > 0);
+
+  return (
+    <div className="mt-1 pt-4 border-t border-border">
+      <h3 className="text-sm font-bold mb-1">Kuka pesi minkä erän</h3>
+      <p className="text-[11px] text-muted-foreground mb-3">
+        Ikkunat jaetaan eriin pesujärjestyksessä — erän 1 ensimmäiset {eraBreakdown[0]?.size ?? 0} ikkunaa jne. Näet kuka ne pesi ja paljonko palkkaa erästä kertyy.
+      </p>
+
+      {!anyWashed ? (
+        <p className="text-[11px] text-muted-foreground">Ei vielä pestyjä ikkunoita.</p>
+      ) : (
+        <div className="space-y-2">
+          {eraBreakdown.map((e) => (
+            <div key={e.era} className="rounded-xl border bg-muted/20 p-3">
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <span className="text-xs font-semibold">Erä {e.era}{e.complete ? " · valmis ✓" : ""}</span>
+                <span className="text-[11px] text-muted-foreground tabular-nums">
+                  {e.washed} / {e.size} ikkunaa · <span className="font-semibold text-foreground">{eur(e.earnedCents)}</span>
+                </span>
+              </div>
+              {e.workers.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground">Ei vielä pesty.</p>
+              ) : (
+                <div className="space-y-1">
+                  {e.workers.map((w) => (
+                    <div key={w.workerId} className="flex items-center justify-between gap-2 text-xs">
+                      <span className="truncate">{w.name}</span>
+                      <span className="shrink-0 text-muted-foreground tabular-nums">
+                        {fmtWindows(w.windows)} ikkunaa · <span className="font-semibold text-foreground">{eur(w.earnedCents)}</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

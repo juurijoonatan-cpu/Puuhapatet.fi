@@ -21,7 +21,7 @@ import {
 } from "@shared/pricing";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, allPoints, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, computeEraDebts, allPoints, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, totalPaidPayoutCents,
@@ -4805,9 +4805,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const billablePts = deal ? allPoints(project).filter((p) => p.p === deal.billablePriority) : [];
       const totalBillable = billablePts.length;
       const billableWashed = billablePts.filter((p) => p.status === "pesty").length;
+      // Per-erä debt: who washed each instalment's windows (in wash order) and the
+      // palkka that implies. Display only — never affects pay.
+      const eraBreakdown: EraDebtBreakdown[] = deal
+        ? computeEraDebts(project, deal, project.crew || [], project.eraWindows ?? null)
+        : [];
       res.json({
         ok: true, crew, building: project.building, version: WORKER_AGREEMENT_VERSION,
-        deal, totalBillable, billableWashed, eraWindows: project.eraWindows ?? null,
+        deal, totalBillable, billableWashed, eraWindows: project.eraWindows ?? null, eraBreakdown,
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

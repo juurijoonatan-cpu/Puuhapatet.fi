@@ -81,15 +81,26 @@ export interface HostCrewRow {
   onboarded: boolean;
 }
 
-/** Per-founder passive-income summary for a fixed deal — the margin (instalment −
- *  labour) on the erät each founder billed the customer for. */
-export interface FounderMargin {
-  id: string;
-  name: string;
-  eras: number;          // how many instalments this founder billed
-  invoicedCents: number; // total they invoiced the customer (their Y-tunnus)
-  labourCents: number;   // workers' pay funded by those instalments
-  marginCents: number;   // passive income = invoiced − labour
+/** Founder settlement for a fixed deal. The biller collects the full instalment;
+ *  the kate (instalment − palkat) is split equally as passive income; the biller
+ *  pays the others their share. Computed over BILLED erät only. */
+export interface FounderSettlement {
+  founders: {
+    id: string;
+    name: string;
+    billedCents: number;     // total this founder collected from the customer (as biller)
+    kateShareCents: number;  // their passive-income share of the kate
+  }[];
+  settlements: {
+    era: number;
+    billerId: string;
+    billerName: string;
+    instalmentCents: number;   // 1575 — what the biller collected
+    palkatCents: number;       // paid to workers
+    kateCents: number;         // instalment − palkat
+    billerShareCents: number;  // biller's own kate share (what they keep)
+    paysOut: { id: string; name: string; cents: number }[]; // biller pays each other founder this
+  }[];
 }
 
 /** The logged-in admin's own earnings on a gig they also work (e.g. Petrus). */
@@ -858,7 +869,7 @@ export const api = {
 
   // ─── Host crew management ───────────────────────────────────────────────────
   getHostCrew: (jobId: number) =>
-    request<{ ok: boolean; crew: HostCrewRow[]; building: ProjBuilding; version: string; deal: FixedDeal | null; totalBillable: number; billableWashed: number; eraWindows: number[] | null; eraBreakdown: EraDebtBreakdown[]; founderMargins: FounderMargin[] }>(
+    request<{ ok: boolean; crew: HostCrewRow[]; building: ProjBuilding; version: string; deal: FixedDeal | null; totalBillable: number; billableWashed: number; eraWindows: number[] | null; eraBreakdown: EraDebtBreakdown[]; founderSettlement: FounderSettlement }>(
       "GET", `/api/jobs/${jobId}/crew`),
 
   // Founders' editable per-erä (instalment) window counts for the fixed deal.

@@ -4906,29 +4906,48 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ? computeEraDebts(project, deal, project.crew || [], project.eraWindows ?? null)
         : [];
       // Tie each erä to the founder who BILLED that instalment (instalments are
-      // sent in order, so payments[i] ↔ erä i+1), so the margin (passive income =
-      // instalment − labour) is attributed to whoever took the customer's money.
+      // sent in order, so payments[i] ↔ erä i+1).
       const gig = parseGig(job.gigData);
       const payments = gig?.payments ?? [];
       eraBreakdown.forEach((e, i) => {
         const b = payments[i]?.biller;
         e.biller = b ? { id: b.id, name: b.name } : null;
       });
-      // Per-founder passive-income summary, attributed by who billed each erä.
-      const founderMargins = BRAND_BILLERS.map((b) => {
-        const mine = eraBreakdown.filter((e) => e.biller?.id === b.id);
-        return {
-          id: b.id,
-          name: b.name,
-          eras: mine.length,
-          invoicedCents: mine.reduce((s, e) => s + e.instalmentCents, 0),
-          labourCents: mine.reduce((s, e) => s + e.earnedCents, 0),
-          marginCents: mine.reduce((s, e) => s + e.marginCents, 0),
-        };
-      });
+      // Founder settlement model. The biller COLLECTS the full instalment from the
+      // customer; the kate (instalment − workers' palkat) is split EQUALLY between
+      // the founders as passive income; the biller then pays the workers' palkat
+      // and the OTHER founders their kate share, keeping their own share. Computed
+      // only for BILLED erät (where cash actually moved). Per billed erä we return a
+      // settlement "kuitti" so the biller sees exactly why they're left with X.
+      const founderList = BRAND_BILLERS.map((b) => ({ id: b.id, name: b.name }));
+      const n = Math.max(1, founderList.length);
+      const founders = founderList.map((f) => ({ id: f.id, name: f.name, billedCents: 0, kateShareCents: 0 }));
+      const idxOf = (id?: string) => founders.findIndex((f) => f.id === id);
+      const settlements = eraBreakdown
+        .filter((e) => e.biller?.id)
+        .map((e) => {
+          const kate = e.marginCents;
+          const base = Math.floor(kate / n);
+          // Remainder cent(s) go to the first founder so shares reconcile exactly.
+          const shares = founders.map((f, i) => ({ id: f.id, name: f.name, cents: i === 0 ? kate - base * (n - 1) : base }));
+          shares.forEach((s) => { const j = idxOf(s.id); if (j >= 0) founders[j].kateShareCents += s.cents; });
+          const bj = idxOf(e.biller!.id);
+          if (bj >= 0) founders[bj].billedCents += e.instalmentCents;
+          return {
+            era: e.era,
+            billerId: e.biller!.id || "",
+            billerName: e.biller!.name || (bj >= 0 ? founders[bj].name : ""),
+            instalmentCents: e.instalmentCents,
+            palkatCents: e.earnedCents,
+            kateCents: kate,
+            billerShareCents: shares.find((s) => s.id === e.biller!.id)?.cents ?? 0,
+            paysOut: shares.filter((s) => s.id !== e.biller!.id), // biller pays each other founder this
+          };
+        });
+      const founderSettlement = { founders, settlements };
       res.json({
         ok: true, crew, building: project.building, version: WORKER_AGREEMENT_VERSION,
-        deal, totalBillable, billableWashed, eraWindows: project.eraWindows ?? null, eraBreakdown, founderMargins,
+        deal, totalBillable, billableWashed, eraWindows: project.eraWindows ?? null, eraBreakdown, founderSettlement,
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

@@ -8,7 +8,7 @@
  */
 import { useEffect, useState, useCallback } from "react";
 import { useRoute, useLocation } from "wouter";
-import { api, type HostCrewRow } from "@/lib/api";
+import { api, type HostCrewRow, type FounderMargin } from "@/lib/api";
 import type { ProjBuilding, FixedDeal, EraDebtBreakdown } from "@shared/project";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Disclosure } from "@/components/ui/disclosure";
@@ -58,6 +58,7 @@ export default function AdminCrewPage() {
   const [billableWashed, setBillableWashed] = useState(0);
   const [eraWindows, setEraWindowsState] = useState<number[] | null>(null);
   const [eraBreakdown, setEraBreakdown] = useState<EraDebtBreakdown[]>([]);
+  const [founderMargins, setFounderMargins] = useState<FounderMargin[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -70,6 +71,7 @@ export default function AdminCrewPage() {
       setDeal(res.data.deal); setTotalBillable(res.data.totalBillable);
       setBillableWashed(res.data.billableWashed); setEraWindowsState(res.data.eraWindows);
       setEraBreakdown(res.data.eraBreakdown || []);
+      setFounderMargins(res.data.founderMargins || []);
       setErr(null);
     }
     else setErr(res.error || "Lataus epäonnistui");
@@ -134,6 +136,7 @@ export default function AdminCrewPage() {
             billableWashed={billableWashed}
             eraWindows={eraWindows}
             eraBreakdown={eraBreakdown}
+            founderMargins={founderMargins}
             onSave={saveEraWindows}
           />
         )}
@@ -511,12 +514,13 @@ function PayoutPanel({
 /** Maksuerät & kate — behind a button so it stays out of the way. The popup holds
  *  the per-erä window editor + per-erä kate AND the per-erä debt breakdown (who
  *  washed each erä's windows). Pure display/planning: never touches worker pay. */
-function EraKateDialog({ deal, totalBillable, billableWashed, eraWindows, eraBreakdown, onSave }: {
+function EraKateDialog({ deal, totalBillable, billableWashed, eraWindows, eraBreakdown, founderMargins, onSave }: {
   deal: FixedDeal;
   totalBillable: number;
   billableWashed: number;
   eraWindows: number[] | null;
   eraBreakdown: EraDebtBreakdown[];
+  founderMargins: FounderMargin[];
   onSave: (windows: number[]) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
@@ -548,9 +552,41 @@ function EraKateDialog({ deal, totalBillable, billableWashed, eraWindows, eraBre
           onSave={onSave}
         />
 
+        <FounderMarginSummary founderMargins={founderMargins} />
+
         <EraDebtList eraBreakdown={eraBreakdown} />
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Bossien passiivinen tulo per perustaja — kunkin laskuttamansa erän kate
+ *  (1575 € − työntekijöiden palkat). Attribuoitu sille, joka laskutti asiakkaan. */
+function FounderMarginSummary({ founderMargins }: { founderMargins: FounderMargin[] }) {
+  const rows = (founderMargins || []).filter((f) => f.eras > 0);
+  if (rows.length === 0) return null;
+  const totalMargin = rows.reduce((s, f) => s + f.marginCents, 0);
+  return (
+    <div className="mt-1 pt-4 border-t border-border">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-bold">Bossien tulo (kate) per laskuttaja</h3>
+        <span className="text-sm font-bold tabular-nums text-emerald-600">{eur(totalMargin)}</span>
+      </div>
+      <div className="space-y-2">
+        {rows.map((f) => (
+          <div key={f.id} className="flex items-center justify-between gap-2 rounded-xl border bg-muted/20 px-3 py-2">
+            <div className="min-w-0">
+              <p className="text-sm font-medium truncate">{f.name}</p>
+              <p className="text-[11px] text-muted-foreground">{f.eras} erää laskutettu · {eur(f.invoicedCents)} − palkat {eur(f.labourCents)}</p>
+            </div>
+            <span className="shrink-0 text-right">
+              <span className="block text-sm font-bold tabular-nums text-emerald-600">{eur(f.marginCents)}</span>
+              <span className="text-[10px] text-muted-foreground">kate</span>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -641,16 +677,24 @@ function EraDebtList({ eraBreakdown }: { eraBreakdown: EraDebtBreakdown[] }) {
         <div className="space-y-2">
           {eraBreakdown.map((e) => (
             <div key={e.era} className="rounded-xl border bg-muted/20 p-3">
-              <div className="flex items-center justify-between gap-2 mb-1.5">
-                <span className="text-xs font-semibold">Erä {e.era}{e.complete ? " · valmis ✓" : ""}</span>
-                <span className="text-[11px] text-muted-foreground tabular-nums">
-                  {e.washed} / {e.size} ikkunaa · <span className="font-semibold text-foreground">{eur(e.earnedCents)}</span>
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <span className="text-xs font-semibold">
+                  Erä {e.era}{e.complete ? " · valmis ✓" : ""}
+                  {e.biller?.name
+                    ? <span className="ml-1 font-normal text-muted-foreground">· laskutti {e.biller.name.split(/\s+/)[0]}</span>
+                    : <span className="ml-1 font-normal text-amber-600">· ei vielä laskutettu</span>}
                 </span>
+                <span className="text-[11px] text-muted-foreground tabular-nums">{e.washed} / {e.size} ikkunaa</span>
+              </div>
+              {/* Lasku → palkat → kate (bossien passiivinen tulo tästä erästä). */}
+              <div className="flex items-center justify-between gap-2 mb-1.5 text-[11px] tabular-nums">
+                <span className="text-muted-foreground">Lasku {eur(e.instalmentCents)} − palkat {eur(e.earnedCents)}</span>
+                <span className="font-semibold text-emerald-600">kate {eur(e.marginCents)}</span>
               </div>
               {e.workers.length === 0 ? (
                 <p className="text-[11px] text-muted-foreground">Ei vielä pesty.</p>
               ) : (
-                <div className="space-y-1">
+                <div className="space-y-1 pt-1 border-t border-border/60">
                   {e.workers.map((w) => (
                     <div key={w.workerId} className="flex items-center justify-between gap-2 text-xs">
                       <span className="truncate">{w.name}</span>

@@ -4881,7 +4881,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const loaded = await loadJobProject(Number(req.params.id));
       if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
-      const { project } = loaded;
+      const { job, project } = loaded;
       // Show the full worker roster INCLUDING admin-linked workers (e.g. Petrus
       // Aalto, who is also a Puuhapatet admin) — hosts need to see and edit them
       // here. Only the founder hosts (Joonatan/Matias, role "host") stay masked,
@@ -4905,9 +4905,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const eraBreakdown: EraDebtBreakdown[] = deal
         ? computeEraDebts(project, deal, project.crew || [], project.eraWindows ?? null)
         : [];
+      // Tie each erä to the founder who BILLED that instalment (instalments are
+      // sent in order, so payments[i] ↔ erä i+1), so the margin (passive income =
+      // instalment − labour) is attributed to whoever took the customer's money.
+      const gig = parseGig(job.gigData);
+      const payments = gig?.payments ?? [];
+      eraBreakdown.forEach((e, i) => {
+        const b = payments[i]?.biller;
+        e.biller = b ? { id: b.id, name: b.name } : null;
+      });
+      // Per-founder passive-income summary, attributed by who billed each erä.
+      const founderMargins = BRAND_BILLERS.map((b) => {
+        const mine = eraBreakdown.filter((e) => e.biller?.id === b.id);
+        return {
+          id: b.id,
+          name: b.name,
+          eras: mine.length,
+          invoicedCents: mine.reduce((s, e) => s + e.instalmentCents, 0),
+          labourCents: mine.reduce((s, e) => s + e.earnedCents, 0),
+          marginCents: mine.reduce((s, e) => s + e.marginCents, 0),
+        };
+      });
       res.json({
         ok: true, crew, building: project.building, version: WORKER_AGREEMENT_VERSION,
-        deal, totalBillable, billableWashed, eraWindows: project.eraWindows ?? null, eraBreakdown,
+        deal, totalBillable, billableWashed, eraWindows: project.eraWindows ?? null, eraBreakdown, founderMargins,
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

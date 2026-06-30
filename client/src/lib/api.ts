@@ -81,6 +81,17 @@ export interface HostCrewRow {
   onboarded: boolean;
 }
 
+/** Per-founder passive-income summary for a fixed deal — the margin (instalment −
+ *  labour) on the erät each founder billed the customer for. */
+export interface FounderMargin {
+  id: string;
+  name: string;
+  eras: number;          // how many instalments this founder billed
+  invoicedCents: number; // total they invoiced the customer (their Y-tunnus)
+  labourCents: number;   // workers' pay funded by those instalments
+  marginCents: number;   // passive income = invoiced − labour
+}
+
 /** The logged-in admin's own earnings on a gig they also work (e.g. Petrus). */
 export interface MyGigWork {
   jobId: number;
@@ -847,7 +858,7 @@ export const api = {
 
   // ─── Host crew management ───────────────────────────────────────────────────
   getHostCrew: (jobId: number) =>
-    request<{ ok: boolean; crew: HostCrewRow[]; building: ProjBuilding; version: string; deal: FixedDeal | null; totalBillable: number; billableWashed: number; eraWindows: number[] | null; eraBreakdown: EraDebtBreakdown[] }>(
+    request<{ ok: boolean; crew: HostCrewRow[]; building: ProjBuilding; version: string; deal: FixedDeal | null; totalBillable: number; billableWashed: number; eraWindows: number[] | null; eraBreakdown: EraDebtBreakdown[]; founderMargins: FounderMargin[] }>(
       "GET", `/api/jobs/${jobId}/crew`),
 
   // Founders' editable per-erä (instalment) window counts for the fixed deal.

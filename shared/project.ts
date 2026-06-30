@@ -390,7 +390,15 @@ export interface EraDebtBreakdown {
   size: number;             // target window count for this erä
   washed: number;           // windows of this erä actually washed so far
   complete: boolean;        // the whole erä has been washed
-  earnedCents: number;      // total palkka owed for this erä's washed windows
+  earnedCents: number;      // total palkka owed for this erä's washed windows (labour)
+  /** The fixed instalment this erä is billed at (capCents ÷ erät, e.g. 1575 €). */
+  instalmentCents: number;
+  /** Founders' passive income for this erä = instalment − labour for its washed
+   *  windows. Exact once the erä is fully washed; a running figure before that. */
+  marginCents: number;
+  /** Which founder billed the customer for this instalment (set server-side from
+   *  the sent invoice). Undefined until the instalment has been invoiced. */
+  biller?: { id?: string; name?: string } | null;
   workers: EraWorkerShare[];// who washed them, biggest share first
 }
 
@@ -437,6 +445,8 @@ export function computeEraDebts(
 
   const rateOf = (id: string) => crew.find((m) => m.id === id)?.perWindowCents ?? 0;
   const nameOf = (id: string) => crew.find((m) => m.id === id)?.name ?? id;
+  // The fixed instalment each erä is billed at (e.g. 6300 € ÷ 4 = 1575 €).
+  const instalmentCents = Math.round(deal.capCents / PAY_PERIODS);
 
   const out: EraDebtBreakdown[] = [];
   let cursor = 0;
@@ -459,12 +469,16 @@ export function computeEraDebts(
         earnedCents: Math.round(windows * rateOf(workerId)),
       }))
       .sort((a, b) => b.windows - a.windows);
+    const earnedCents = workers.reduce((s, w) => s + w.earnedCents, 0);
     out.push({
       era: i + 1,
       size,
       washed: slice.length,
       complete: size > 0 && slice.length >= size,
-      earnedCents: workers.reduce((s, w) => s + w.earnedCents, 0),
+      earnedCents,
+      instalmentCents,
+      marginCents: instalmentCents - earnedCents,
+      biller: null,
       workers,
     });
   }

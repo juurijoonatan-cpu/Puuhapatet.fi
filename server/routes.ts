@@ -29,7 +29,7 @@ import {
 } from "@shared/crew";
 import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED } from "@shared/worker-agreements";
 import {
-  computeTax, readVatStatus, readInPrepaymentRegister, WITHHOLDING_COMPANY,
+  computeTax, readVatStatus, readInPrepaymentRegister, readPayeeType, WITHHOLDING_COMPANY,
   WITHHOLDING_NATURAL_PERSON, fmtPct, type TaxBreakdown,
 } from "@shared/tax";
 import {
@@ -1211,7 +1211,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         totalRevenue += price;
         totalExpenses += jobExp;
         // Role-aware service fee: each worker's share is charged at their own
-        // rate (founders 10 %, staff 25 %).
+        // rate (founders 10 %, staff 40 %).
         if (!job.waiveFee) {
           const net = Math.max(0, price - jobExp);
           const workerIds = normalizeWorkerIds(job.assignedTo);
@@ -1229,7 +1229,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         totalJobs:       Number(counts.totalJobs),
         totalRevenue,    // senttiä — valmistuneista keikoista
         totalExpenses,   // senttiä
-        serviceFeeTotal, // senttiä — palvelumaksut (perustajat 10 %, työntekijät 25 %)
+        serviceFeeTotal, // senttiä — palvelumaksut (perustajat 10 %, työntekijät 40 %)
         netIncome,       // senttiä — verotettava nettotulo
         upcoming:        Number(counts.upcoming),
       });
@@ -1295,7 +1295,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         if (workerIds.length === 0) continue;
         const sharePerWorker = netRevenue / workerIds.length;
         for (const wid of workerIds) {
-          // Each worker's fee uses their own role's rate (10 % / 25 %).
+          // Each worker's fee uses their own role's rate (10 % / 40 %).
           const fee = job.waiveFee ? 0 : Math.round(sharePerWorker * feeRateForWorker(wid));
           workerFeesTotal[wid] = (workerFeesTotal[wid] ?? 0) + fee;
           workerJobCount[wid] = (workerJobCount[wid] ?? 0) + 1;
@@ -3661,6 +3661,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         : "";
 
       const invoiceNo = `${gig.contractId || "PT"}-${paymentNumber.toString().padStart(2, "0")}`;
+      const invoiceDate = new Date().toLocaleDateString("fi-FI"); // laskun päivämäärä (AVL 209 e §)
       const accruedSoFar = totalsBefore.accruedCents;
       const previouslyInvoiced = totalsBefore.invoicedCents;
 
@@ -3670,11 +3671,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   <div style="max-width:600px;margin:24px auto;background:#FFFFFF;border-radius:14px;overflow:hidden;border:1px solid #E4E1D7">
     <div style="padding:28px 32px;border-bottom:1px solid #E4E1D7">
       <p style="margin:0;color:#1A1A1A;font-size:20px;font-weight:700;letter-spacing:-0.3px">Puuhapatet</p>
+      ${senderName ? `<p style="margin:4px 0 0;color:#8C8A82;font-size:12px">Myyjä: ${senderName}${senderYTunnus ? ` · Y-tunnus ${senderYTunnus}` : ""}</p>` : ""}
       <p style="margin:4px 0 0;color:#8C8A82;font-size:13px">${isFinal ? "Loppulasku" : "Osalasku"} · ${invoiceNo}${gig.contractId ? ` · sopimus ${gig.contractId}` : ""}</p>
+      <p style="margin:2px 0 0;color:#8C8A82;font-size:12px">Laskun päivämäärä: ${invoiceDate} · Toimituspäivä: ${invoiceDate}</p>
     </div>
     <div style="padding:24px 32px">
       <p style="margin:0 0 4px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Laskutettava</p>
-      <p style="margin:0 0 ${eInvoice ? "4px" : "16px"};color:#1A1A1A;font-size:15px;font-weight:600">${gig.company?.name || job.description}</p>
+      <p style="margin:0 0 ${eInvoice ? "4px" : "16px"};color:#1A1A1A;font-size:15px;font-weight:600">${gig.company?.name || job.description}${gig.company?.businessId ? ` · Y-tunnus ${gig.company.businessId}` : ""}</p>
       ${eInvoice ? `<p style="margin:0 0 16px;color:#8C8A82;font-size:12px">Verkkolaskuosoite: ${String(eInvoice).replace(/</g, "&lt;")}</p>` : ""}
       ${message ? `<p style="margin:0 0 20px;color:#1A1A1A;font-size:14px;line-height:1.7;white-space:pre-wrap">${String(message).replace(/</g, "&lt;")}</p>` : ""}
       <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border-top:2px solid #1A1A1A;margin-top:8px">
@@ -4633,6 +4636,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (payout.status !== "ilmoitettu") {
         return res.status(409).json({ error: "Maksu on jo hyväksytty" });
       }
+      // Trainees (harjoittelija) don't invoice us — they never go through the
+      // alihankkija payout/withholding flow. Block the path defensively.
+      if (isCrewTrainee(member)) {
+        return res.status(400).json({ error: "Harjoittelija ei laskuta — maksu hoidetaan tiimin kautta." });
+      }
       const b = (req.body?.billing ?? {}) as Record<string, any>;
       payout.status = "hyvaksytty";
       payout.approvedAt = Date.now();
@@ -4642,6 +4650,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         iban: String(b.iban ?? member.profile?.iban ?? "").slice(0, 40) || undefined,
         address: String(b.address ?? "").slice(0, 240) || undefined,
       };
+      // Freeze the tax breakdown the worker just saw & approved, computed from their
+      // CURRENT declared status — so the final invoice matches the preview even if
+      // they edit their profile later (the "paid" step reuses this snapshot).
+      payout.tax = computeTax({
+        laborCents: payout.amountCents,
+        vatStatus: readVatStatus(member.profile?.answers),
+        inPrepaymentRegister: readInPrepaymentRegister(member.profile?.answers),
+        payeeType: readPayeeType(member.profile?.answers),
+      });
       // Worker's own deductible expenses (kulut) attached at approval — recorded
       // for their tax deduction; they NEVER change amountCents (the labour paid).
       // Final shape is re-validated by sanitizeProjectData on save.
@@ -4675,11 +4692,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const billing = payout.billing || {};
       const answers = member.profile?.answers;
-      // Prefer the snapshot captured at payment; fall back to a fresh computation.
+      // Prefer the snapshot captured at approval/payment; fall back to a fresh computation.
       const tax = payout.tax ?? computeTax({
         laborCents: payout.amountCents,
         vatStatus: readVatStatus(answers),
         inPrepaymentRegister: readInPrepaymentRegister(answers),
+        payeeType: readPayeeType(answers),
       });
       const buyer = payout.buyer ?? resolveBuyer(null);
       const invoiceDate = new Date(payout.paidAt || payout.createdAt).toLocaleDateString("fi-FI");
@@ -5097,6 +5115,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const mid = String(req.params.memberId);
       const member = (project.crew || []).find((m) => m.id === mid);
       if (!member) return res.status(404).json({ error: "Työntekijää ei löydy" });
+      // Trainees don't invoice us — earnings are handled by their responsible
+      // leader, not via the alihankkija payout flow.
+      if (isCrewTrainee(member)) {
+        return res.status(400).json({ error: "Harjoittelijalle ei luoda alihankkijamaksua — korvaus hoidetaan tiimin kautta." });
+      }
       const amountCents = Math.floor(Number(req.body?.amountCents));
       if (!Number.isFinite(amountCents) || amountCents <= 0) {
         return res.status(400).json({ error: "Virheellinen summa" });
@@ -5140,6 +5163,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (payout.status === "maksettu") {
         return res.status(409).json({ error: "Maksu on jo merkitty maksetuksi" });
       }
+      // Server-side approval gate: the worker MUST have approved (self-billing,
+      // AVL 209 b §) before we mark paid & generate their invoice. The admin UI
+      // already enforces this, but a direct API call must not bypass it.
+      if (payout.status !== "hyvaksytty") {
+        return res.status(409).json({ error: "Työntekijän on ensin hyväksyttävä maksu." });
+      }
 
       const billing = payout.billing || {};
       const workerName = billing.name || member.profile?.fullName || member.name;
@@ -5157,12 +5186,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // ohituksen (esim. 0.13 oikeushenkilölle tai verokortin %).
       const answers = member.profile?.answers;
       const overrideRate = Number(req.body?.withholdingRate);
-      const tax = computeTax({
+      const hasOverride = Number.isFinite(overrideRate) && overrideRate >= 0 && overrideRate <= 1;
+      // Reuse the snapshot frozen at approval (what the worker actually approved),
+      // unless the admin explicitly overrides the withholding rate at payment.
+      const tax = (payout.tax && !hasOverride) ? payout.tax : computeTax({
         laborCents: payout.amountCents,
         vatStatus: readVatStatus(answers),
         inPrepaymentRegister: readInPrepaymentRegister(answers),
-        withholdingRate: Number.isFinite(overrideRate) && overrideRate >= 0 && overrideRate <= 1
-          ? overrideRate : undefined,
+        payeeType: readPayeeType(answers),
+        withholdingRate: hasOverride ? overrideRate : undefined,
       });
 
       // Buyer = the leader who billed the customer. Use the one chosen at creation;

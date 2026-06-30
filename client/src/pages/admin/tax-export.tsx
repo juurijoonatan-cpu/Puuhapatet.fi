@@ -98,7 +98,7 @@ export default function TaxExportPage() {
     return new Date(d).getFullYear() === year;
   });
 
-  // Service-fee rate for the logged-in user (founders 10 %, workers 25 %).
+  // Service-fee rate for the logged-in user (founders 10 %, workers 40 %).
   const myFeeRate = profile ? feeRateForWorker(profile.id) : STAFF_SERVICE_FEE_RATE;
   const myFeePct = Math.round(myFeeRate * 100);
 
@@ -110,7 +110,10 @@ export default function TaxExportPage() {
 
     // taloyhtiö gigs bill per apartment × unitCount — use the full total.
     const myRevenue = Math.round(effectiveJobTotal(r.job) * share);
-    // expenses not tracked per-job here (would require per-job fetch); use 0 for now
+    // NOTE: per-job kulut are logged separately (gig expenses) and are NOT summed
+    // into this yearly export, so the service fee here is computed on GROSS revenue
+    // — an UPPER BOUND. The dashboard "Palveluvelka" deducts kulut and is the
+    // authoritative figure. Kept 0 here to avoid an N-job expense fetch.
     const expenses = 0;
     const netRevenue = Math.max(0, myRevenue - expenses);
     const serviceFee = r.job.waiveFee ? 0 : Math.round(netRevenue * myFeeRate);
@@ -279,8 +282,8 @@ export default function TaxExportPage() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6 print:grid-cols-4">
               {[
                 { label: "Bruttokorvaus",  value: fmt(totals.revenue),    note: "Asiakkailta laskutettu",   color: "text-blue-600" },
-                { label: "Kulut",          value: fmt(totals.expenses),   note: "Materiaalit ym.",           color: "text-orange-600" },
-                { label: "Palvelumaksu",   value: fmt(totals.serviceFee), note: `${myFeePct} % nettotuloista`, color: "text-purple-600" },
+                { label: "Kulut",          value: fmt(totals.expenses),   note: "Kirjaa kuitit erikseen — ei summattu tähän", color: "text-orange-600" },
+                { label: "Palvelumaksu",   value: fmt(totals.serviceFee), note: `${myFeePct} % bruttosta (yläraja, kulut ei vähennetty)`, color: "text-purple-600" },
                 { label: "4H-tulos",       value: fmt(totals.net),        note: "Ilmoita OmaVeroon",         color: "text-green-600" },
               ].map((c, i) => (
                 <Card key={i} className="p-4 bg-card border-0 premium-shadow print:shadow-none print:border print:border-gray-200">

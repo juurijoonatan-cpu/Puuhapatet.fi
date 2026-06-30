@@ -4,7 +4,8 @@
  * Puuhapatet ei ole vielä juridinen yhtiö, vaan BRÄNDI, jota pyörittää kaksi
  * johtajaa, joilla on omat Y-tunnukset (toiminimet). Iso keikka laskutetaan
  * asiakkaalta useassa erässä JAETTUNA kahden johtajan kesken, jotta kummankaan
- * liikevaihto ei ylitä rajoja (mm. ALV:n vähäisen toiminnan 15 000 € raja).
+ * liikevaihto ei ylitä rajoja (mm. ALV:n vähäisen toiminnan 20 000 € raja,
+ * voimassa 1.1.2025 alkaen — tarkista vero.fi).
  *
  * SÄÄNTÖ: se johtaja, joka laskutti asiakasta tästä erästä, on myös se, jolle
  * alihankkija (esim. Jani) laskuttaa oman työnsä. Eli alihankkijan laskun OSTAJA

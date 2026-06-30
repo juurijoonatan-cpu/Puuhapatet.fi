@@ -15,7 +15,7 @@ johtajaa, joilla on omat Y-tunnukset** (Joonatan 3598782-9, Matias 3609912-9).
 
 - **Asiakas → johtaja:** iso keikka laskutetaan asiakkaalta **useassa erässä,
   jaettuna kahden johtajan kesken**, jotta kummankaan liikevaihto ei ylitä rajoja
-  (mm. ALV:n vähäisen toiminnan 15 000 €). Kukin asiakaslasku tallentaa, **kuka
+  (mm. ALV:n vähäisen toiminnan 20 000 €, voimassa 1.1.2025 alkaen). Kukin asiakaslasku tallentaa, **kuka
   johtaja** sen lähetti (`GigPayment.biller`).
 - **Alihankkija → johtaja:** alihankkija (esim. Jani) laskuttaa **sitä johtajaa,
   joka laskutti asiakkaan tästä erästä**. Eli alihankkijan laskun **OSTAJA** =
@@ -69,7 +69,7 @@ Pidätetty määrä tilitetään Verolle ja luetaan työntekijän hyväksi häne
 | Saajan ALV-asema | Lasku |
 |---|---|
 | **ALV-rekisterissä** | Lisää yleisen kannan **25,5 %** (voimassa 1.9.2024 alkaen). |
-| **Vähäinen toiminta** (AVL 3 §, alv. ~15 000 € / 12 kk) | Ei ALV:tä; laskuun merkitään verottomuuden peruste. |
+| **Vähäinen toiminta** (AVL 3 §, alle ~20 000 € / kalenterivuosi, 1.1.2025 alkaen) | Ei ALV:tä; laskuun merkitään verottomuuden peruste. |
 
 ALV lisätään työkorvauksen **päälle**.
 
@@ -110,6 +110,6 @@ Ennen yhtiöitymistä ostaja on aina toinen johtajista (`shared/billers.ts`).
 
 - `ALV_RATE = 0.255`
 - `WITHHOLDING_NATURAL_PERSON = 0.60`, `WITHHOLDING_COMPANY = 0.13`
-- `VAT_SMALL_BUSINESS_LIMIT_EUR = 15000` (tarkista vero.fi)
+- `VAT_SMALL_BUSINESS_LIMIT_EUR = 20000` (voimassa 1.1.2025 alkaen; tarkista vero.fi)
 
 Päivitä nämä yhdestä paikasta, jos verokannat muuttuvat.

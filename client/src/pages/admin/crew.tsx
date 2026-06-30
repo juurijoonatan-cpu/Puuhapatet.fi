@@ -11,6 +11,7 @@ import { useRoute, useLocation } from "wouter";
 import { api, type HostCrewRow } from "@/lib/api";
 import type { ProjBuilding, FixedDeal, EraDebtBreakdown } from "@shared/project";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Disclosure } from "@/components/ui/disclosure";
 import { PAY_PERIODS, eraWindowCounts, computePayProgress } from "@shared/payprogress";
 import { WORKER_AGREEMENTS, PROFILE_QUESTIONS } from "@shared/worker-agreements";
 import { downloadWorkerContract, openWorkerContractForPrint, downloadSignatureImage } from "@/lib/worker-contract-doc";
@@ -111,14 +112,10 @@ export default function AdminCrewPage() {
         <button onClick={() => navigate(`/admin/gig/${jobId}`)} className="flex items-center gap-1 text-sm text-muted-foreground mb-4">
           <ChevronLeft className="h-4 w-4" /> Takaisin keikkaan
         </button>
-        <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold">Tiimi &amp; työntekijät</h1>
           <span className="text-sm text-muted-foreground">{crew.length} hlö</span>
         </div>
-        <p className="text-sm text-muted-foreground mb-6">
-          Jokainen työntekijä saa oman yksityisen linkin. He allekirjoittavat sopimukset ja merkitsevät
-          pesemänsä ikkunat — sinä näet kaiken täältä. Työntekijät eivät näe keikan kokonaishintaa.
-        </p>
 
         {err && <p className="text-sm text-amber-600 mb-4">{err}</p>}
 
@@ -156,11 +153,8 @@ export default function AdminCrewPage() {
 
                 {/* Signed agreements + signatures (downloadable) */}
                 {member.agreements.length > 0 && (
-                  <details className="mt-3">
-                    <summary className="text-xs font-medium text-muted-foreground cursor-pointer">
-                      Allekirjoitetut sopimukset ({member.agreements.length})
-                    </summary>
-                    <div className="mt-2 space-y-2">
+                  <Disclosure variant="inline" className="mt-3" title={`Allekirjoitetut sopimukset (${member.agreements.length})`}>
+                    <div className="space-y-2">
                       {member.agreements.map((a, i) => (
                         <div key={i} className="rounded-lg border bg-muted/30 p-3">
                           <div className="flex items-center justify-between gap-2">
@@ -191,14 +185,13 @@ export default function AdminCrewPage() {
                         </div>
                       ))}
                     </div>
-                  </details>
+                  </Disclosure>
                 )}
 
-                {/* Worker info summary — everything they filled in onboarding, laid
-                    out for the host (Joonatan / Matias). Shown open, not hidden. */}
+                {/* Worker info summary — everything they filled in onboarding, folded
+                    into a smooth dropdown so the card stays compact for the host. */}
                 {member.profile?.answers && Object.keys(member.profile.answers).filter((k) => (member.profile!.answers![k] || "").trim()).length > 0 && (
-                  <div className="mt-3 rounded-xl border bg-muted/20 p-3">
-                    <p className="text-xs font-semibold text-foreground mb-2">Työntekijän tiedot — mitä hän täytti</p>
+                  <Disclosure variant="inline" className="mt-3" title="Työntekijän tiedot">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
                       {Object.entries(member.profile.answers)
                         .filter(([, v]) => (v || "").trim())
@@ -209,7 +202,7 @@ export default function AdminCrewPage() {
                           </div>
                         ))}
                     </div>
-                  </div>
+                  </Disclosure>
                 )}
 
                 {/* Downloadable signed-agreement document (host's legal record) */}
@@ -232,9 +225,8 @@ export default function AdminCrewPage() {
 
                 {/* Notes */}
                 {member.notes.length > 0 && (
-                  <details className="mt-3">
-                    <summary className="text-xs font-medium text-muted-foreground cursor-pointer">Muistiinpanot ({member.notes.length})</summary>
-                    <div className="mt-2 space-y-1.5">
+                  <Disclosure variant="inline" className="mt-3" title={`Muistiinpanot (${member.notes.length})`}>
+                    <div className="space-y-1.5">
                       {member.notes.map((n, i) => (
                         <div key={i} className="rounded-lg bg-muted/40 px-3 py-2 text-xs">
                           <p>{n.text}</p>
@@ -242,7 +234,7 @@ export default function AdminCrewPage() {
                         </div>
                       ))}
                     </div>
-                  </details>
+                  </Disclosure>
                 )}
 
                 {/* Manager day-log — record this worker's day (hours + today's
@@ -308,13 +300,8 @@ function DayLogPanel({
   };
 
   return (
-    <details className="mt-3 rounded-xl border bg-muted/20 p-3">
-      <summary className="text-xs font-medium text-muted-foreground cursor-pointer">Kirjaa päivä & lähetä yhteenveto</summary>
-      <p className="mt-2 text-[11px] text-muted-foreground leading-relaxed">
-        Kirjaa työntekijän päivän tunnit hänen puolestaan. Tallennus laskee mukaan tänään merkityt ikkunat ja lähettää
-        päivän yhteenvedon työntekijän sähköpostiin{member.profile?.email ? ` (${member.profile.email})` : ""}.
-      </p>
-      <div className="mt-2 flex items-center gap-2">
+    <Disclosure variant="inline" className="mt-3 rounded-xl border bg-muted/20 px-3 py-2" title="Kirjaa päivä & lähetä yhteenveto">
+      <div className="flex items-center gap-2">
         <input
           value={hours}
           onChange={(e) => setHours(e.target.value)}
@@ -332,7 +319,7 @@ function DayLogPanel({
         </button>
       </div>
       {msg && <p className="mt-2 text-[11px] text-muted-foreground">{msg}</p>}
-    </details>
+    </Disclosure>
   );
 }
 
@@ -403,11 +390,13 @@ function PayoutPanel({
           <b className="text-foreground">Harjoittelija</b> — {trainee.responsibleLeaderName} vastaa. Ei omaa Y-tunnusta eikä alihankkijalaskutusta; ansiot jaetaan tiimin kesken.
         </p>
       )}
-    <details className="mt-3">
-      <summary className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground cursor-pointer">
-        <Wallet className="h-3.5 w-3.5" /> Maksut työntekijälle ({payouts.length})
-      </summary>
-      <div className="mt-2 space-y-2">
+    <Disclosure
+      variant="inline"
+      className="mt-3"
+      icon={<Wallet className="h-3.5 w-3.5 text-muted-foreground" />}
+      title={`Maksut työntekijälle (${payouts.length})`}
+    >
+      <div className="space-y-2">
         {payouts.map((p) => {
           const st = STATUS[p.status] || STATUS.ilmoitettu;
           // Net to transfer = työkorvaus + ALV − ennakonpidätys. Use the snapshot
@@ -496,7 +485,7 @@ function PayoutPanel({
           </button>
         )}
       </div>
-    </details>
+    </Disclosure>
     </>
   );
 }
@@ -528,8 +517,8 @@ function EraKateDialog({ deal, totalBillable, billableWashed, eraWindows, eraBre
       <DialogContent className="max-w-lg max-h-[88vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-1.5"><Wallet className="h-4 w-4" /> Maksuerät &amp; kate</DialogTitle>
-          <DialogDescription>
-            {eur(deal.capCents)} · {periods} erää · {eur(instalmentCents)}/erä. Vain perustajille, ei vaikuta palkkoihin.
+          <DialogDescription className="tabular-nums">
+            {eur(deal.capCents)} · {periods} erää · {eur(instalmentCents)}/erä
           </DialogDescription>
         </DialogHeader>
 
@@ -579,10 +568,6 @@ function EraKatePanel({ deal, totalBillable, billableWashed, eraWindows, onSave 
 
   return (
     <div>
-      <p className="text-[11px] text-muted-foreground mb-3">
-        Aseta kunkin erän ikkunamäärä — eräkohtainen kate = {eur(instalmentCents)} ÷ erän ikkunat.
-      </p>
-
       <div className="space-y-2">
         {counts.map((n, i) => {
           const current = prog.currentPeriod === i + 1 && !prog.done && billableWashed > 0;
@@ -630,10 +615,7 @@ function EraDebtList({ eraBreakdown }: { eraBreakdown: EraDebtBreakdown[] }) {
 
   return (
     <div className="mt-1 pt-4 border-t border-border">
-      <h3 className="text-sm font-bold mb-1">Kuka pesi minkä erän</h3>
-      <p className="text-[11px] text-muted-foreground mb-3">
-        Ikkunat jaetaan eriin pesujärjestyksessä — erän 1 ensimmäiset {eraBreakdown[0]?.size ?? 0} ikkunaa jne. Näet kuka ne pesi ja paljonko palkkaa erästä kertyy.
-      </p>
+      <h3 className="text-sm font-bold mb-3">Kuka pesi minkä erän</h3>
 
       {!anyWashed ? (
         <p className="text-[11px] text-muted-foreground">Ei vielä pestyjä ikkunoita.</p>
@@ -742,10 +724,6 @@ function PayrollSummary({ crew }: { crew: HostCrewRow[] }) {
           </div>
         ))}
       </div>
-
-      <p className="text-[11px] text-muted-foreground mt-3 pt-3 border-t border-border">
-        Palkka = pestyt ikkunat × tekijän €/ikkuna. "Avoinna" on vielä maksamatta oleva osuus. Luo ja merkitse maksut kunkin tekijän kortista alta — lasku syntyy automaattisesti.
-      </p>
     </div>
   );
 }

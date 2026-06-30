@@ -24,7 +24,7 @@ import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, computeEraDebts, allPoints, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
-  hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, totalPaidPayoutCents,
+  hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN, totalPaidPayoutCents,
   type CrewMember,
 } from "@shared/crew";
 import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED } from "@shared/worker-agreements";
@@ -673,6 +673,9 @@ function generateWorkerInvoicePdf(params: {
   /** Itselaskutuksen hyväksyntä: milloin laskuttaja (työntekijä) hyväksyi maksun
    *  (epoch ms). Todentaa AVL 209 b §:n edellyttämän hyväksymismenettelyn. */
   acceptedAt?: number;
+  /** Laskuttajan omat vähennyskelpoiset kulut — EI osa maksettavaa summaa, vain
+   *  tiedoksi/verotusta varten. */
+  expenses?: { desc: string; amountCents: number }[];
 }): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 48, size: "A4" });
@@ -784,6 +787,33 @@ function generateWorkerInvoicePdf(params: {
     }
     doc.text("Lasku alihankintatyöstä Puuhapatetille.", 48, y, { width: pageW });
     y += 20;
+
+    // Laskuttajan omat vähennyskelpoiset kulut — informatiivinen, EI osa
+    // maksettavaa summaa. Auttaa työntekijää vähentämään kulut omassa verotuksessa.
+    const exp = (params.expenses || []).filter((e) => e.amountCents > 0);
+    if (exp.length > 0) {
+      const expTotal = exp.reduce((s, e) => s + e.amountCents, 0);
+      const taxableAfter = Math.max(0, tax.laborCents - expTotal);
+      doc.moveTo(48, y).lineTo(48 + pageW, y).strokeColor("#E2E8F0").stroke();
+      y += 12;
+      doc.fill(NAVY).font("Helvetica-Bold").fontSize(9)
+        .text("Laskuttajan vähennyskelpoiset kulut (tiedoksi verotusta varten — ei osa maksettavaa summaa)", 48, y, { width: pageW });
+      y += 16;
+      doc.font("Helvetica").fontSize(9);
+      for (const e of exp) {
+        doc.fill(INK).text(e.desc, 60, y, { width: pageW - 160 });
+        doc.fill(INK).text(fmtEur(e.amountCents), 48 + pageW - 100, y, { width: 88, align: "right" });
+        y += 14;
+      }
+      doc.fill(GRAY).font("Helvetica-Bold").fontSize(9)
+        .text("Kulut yhteensä", 48 + pageW - 240, y, { width: 140, align: "right" });
+      doc.fill(INK).text("−" + fmtEur(expTotal), 48 + pageW - 100, y, { width: 88, align: "right" });
+      y += 14;
+      doc.fill(GRAY).font("Helvetica").fontSize(8)
+        .text(`Verotettava tulo kulujen jälkeen (arvio): ${fmtEur(taxableAfter)}. Säilytä kuitit tositteina.`, 48, y, { width: pageW });
+      y += 18;
+    }
+
     if (params.workerIban) {
       doc.fill(INK).font("Helvetica-Bold").fontSize(9).text("Maksutiedot", 48, y); y += 14;
       doc.fill(GRAY).font("Helvetica").fontSize(9).text(`Tilinumero (IBAN): ${params.workerIban}`, 48, y); y += 12;
@@ -4612,6 +4642,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         iban: String(b.iban ?? member.profile?.iban ?? "").slice(0, 40) || undefined,
         address: String(b.address ?? "").slice(0, 240) || undefined,
       };
+      // Worker's own deductible expenses (kulut) attached at approval — recorded
+      // for their tax deduction; they NEVER change amountCents (the labour paid).
+      // Final shape is re-validated by sanitizeProjectData on save.
+      const rawExpenses = Array.isArray(req.body?.expenses) ? req.body.expenses : [];
+      payout.expenses = rawExpenses.slice(0, 30).map((e: any, i: number) => ({
+        id: String(e?.id ?? `pe_${Date.now()}_${i}`).slice(0, 40),
+        desc: String(e?.desc ?? "").slice(0, 200).trim(),
+        amountCents: Math.max(0, Math.floor(Number(e?.amountCents) || 0)),
+        receiptDataUrl: typeof e?.receiptDataUrl === "string" && e.receiptDataUrl.startsWith("data:image/")
+          ? e.receiptDataUrl.slice(0, MAX_PAYOUT_RECEIPT_LEN) : undefined,
+      })).filter((e: any) => e.desc && e.amountCents > 0);
       project.crew = (project.crew || []).map((m) => (m.id === member.id ? { ...m, payouts: list } : m));
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
@@ -4656,6 +4697,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         tax,
         buyer,
         acceptedAt: payout.approvedAt,
+        expenses: payout.expenses,
       });
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", `inline; filename="lasku-${payout.invoiceNo || payout.id}.pdf"`);
@@ -5148,6 +5190,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           windows: payout.windows, amountCents: payout.amountCents,
           note: payout.note, invoiceDate, paidDate: invoiceDate, tax, buyer,
           acceptedAt: payout.approvedAt,
+          expenses: payout.expenses,
         });
         if (resend) {
           const html = `

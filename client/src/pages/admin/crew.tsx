@@ -432,6 +432,22 @@ function PayoutPanel({
               {p.status === "maksettu" && p.invoiceNo && (
                 <p className="mt-1.5 text-[11px] text-muted-foreground">Lasku {p.invoiceNo}{p.paidAt ? ` · ${new Date(p.paidAt).toLocaleDateString("fi-FI")}` : ""}</p>
               )}
+              {(p.expenses || []).length > 0 && (
+                <div className="mt-2 rounded-lg border border-border bg-muted/30 p-2.5">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Tekijän vähennyskelpoiset kulut (ei vaikuta maksuun)</p>
+                  <div className="space-y-1">
+                    {(p.expenses || []).map((e) => (
+                      <div key={e.id} className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="flex items-center gap-1.5 min-w-0">
+                          {e.receiptDataUrl && <img src={e.receiptDataUrl} alt="" className="h-5 w-5 rounded object-cover shrink-0" />}
+                          <span className="truncate">{e.desc}</span>
+                        </span>
+                        <span className="shrink-0 tabular-nums text-muted-foreground">{eur2(e.amountCents)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {p.status === "hyvaksytty" && (
                 <button onClick={() => pay(p)} disabled={busy} className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
                   <Check className="h-3.5 w-3.5" /> Merkitse maksetuksi

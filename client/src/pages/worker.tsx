@@ -31,7 +31,7 @@ import {
   VAT_STATUS_KEY, PREPAYMENT_REGISTER_KEY, type VatStatus,
 } from "@shared/tax";
 import { computePayProgress } from "@shared/payprogress";
-import { MAX_PHOTO_DATAURL_LEN } from "@shared/crew";
+import { MAX_PHOTO_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN } from "@shared/crew";
 
 const T = { ink: "#1A1A1A", paper: "#F6F4EE", card: "#FFFFFF", hair: "#E4E1D7", muted: "#8C8A82", green: "#3E7C59", navy: "#1F3B57" };
 const FONT = "'Poppins', ui-sans-serif, system-ui, -apple-system, sans-serif";
@@ -415,6 +415,36 @@ async function fileToAvatarDataUrl(file: File, size = 256): Promise<string> {
     if (out.length <= MAX_PHOTO_DATAURL_LEN) return out;
   }
   return canvas.toDataURL("image/jpeg", 0.4);
+}
+
+/** Read a receipt photo, scale to fit within `maxDim` (preserving aspect ratio —
+ *  receipts are documents, never square-crop) and return a JPEG data URL kept under
+ *  the server's size cap. */
+async function fileToReceiptDataUrl(file: File, maxDim = 1100): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result));
+    fr.onerror = () => reject(new Error("read"));
+    fr.readAsDataURL(file);
+  });
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const im = new Image();
+    im.onload = () => resolve(im);
+    im.onerror = () => reject(new Error("img"));
+    im.src = dataUrl;
+  });
+  const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(img.width * scale));
+  canvas.height = Math.max(1, Math.round(img.height * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return dataUrl;
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  for (const q of [0.8, 0.68, 0.55, 0.45, 0.35]) {
+    const out = canvas.toDataURL("image/jpeg", q);
+    if (out.length <= MAX_PAYOUT_RECEIPT_LEN) return out;
+  }
+  return canvas.toDataURL("image/jpeg", 0.3);
 }
 
 /** Returns the right "add to home screen" instructions for the device. */
@@ -1471,20 +1501,39 @@ function PayoutsTab({ token, view, setView }: { token: string; view: WorkerView;
   const inRegister = readInPrepaymentRegister(answers);
   const [openId, setOpenId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: b.name || "", yTunnus: b.yTunnus || "", iban: b.iban || "", address: b.address || "" });
+  // Worker's own deductible kulut entered while approving — optional. These never
+  // change what Puuhapatet pays; they're recorded on the invoice so the worker can
+  // deduct them in their own taxation.
+  const [exp, setExp] = useState<{ id: string; desc: string; amount: string; receiptDataUrl?: string }[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  const newExpId = () => `pe_${Math.random().toString(36).slice(2, 9)}`;
+  const addExpRow = () => setExp((xs) => [...xs, { id: newExpId(), desc: "", amount: "" }]);
+  const setExpAt = (id: string, patch: Partial<{ desc: string; amount: string; receiptDataUrl?: string }>) =>
+    setExp((xs) => xs.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+  const removeExp = (id: string) => setExp((xs) => xs.filter((x) => x.id !== id));
+  const pickReceipt = async (id: string, file?: File) => {
+    if (!file) return;
+    try { setExpAt(id, { receiptDataUrl: await fileToReceiptDataUrl(file) }); }
+    catch { /* ignore bad image */ }
+  };
 
   const approve = async (id: string) => {
     setErr("");
     if (!form.name.trim()) return setErr("Täytä laskuttajan nimi.");
     if (!form.iban.trim()) return setErr("Täytä IBAN, jolle maksu maksetaan.");
+    // Only keep complete kulut rows (description + a positive amount).
+    const expenses = exp
+      .map((x) => ({ id: x.id, desc: x.desc.trim(), amountCents: Math.round(parseFloat(x.amount.replace(",", ".")) * 100), receiptDataUrl: x.receiptDataUrl }))
+      .filter((x) => x.desc && Number.isFinite(x.amountCents) && x.amountCents > 0);
     setBusy(true);
     const res = await api.crewApprovePayout(token, id, {
       name: form.name.trim(), yTunnus: form.yTunnus.trim() || undefined,
       iban: form.iban.trim(), address: form.address.trim() || undefined,
-    });
+    }, expenses.length ? expenses : undefined);
     setBusy(false);
-    if (res.ok && res.data?.view) { setView(res.data.view); setOpenId(null); }
+    if (res.ok && res.data?.view) { setView(res.data.view); setOpenId(null); setExp([]); }
     else setErr(res.error || "Hyväksyntä epäonnistui.");
   };
 
@@ -1562,6 +1611,31 @@ function PayoutsTab({ token, view, setView }: { token: string; view: WorkerView;
                 </div>
               )}
 
+              {(p.expenses || []).length > 0 && (() => {
+                const expTotal = (p.expenses || []).reduce((s, e) => s + e.amountCents, 0);
+                const taxableAfter = Math.max(0, tx.laborCents - expTotal);
+                return (
+                  <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 10, background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,0.06)", fontSize: 12.5 }}>
+                    <p style={{ margin: "0 0 6px", fontSize: 11, letterSpacing: "0.04em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)" }}>Vähennyskelpoiset kulut</p>
+                    {(p.expenses || []).map((e) => (
+                      <div key={e.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "3px 0", color: "rgba(255,255,255,0.7)" }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          {e.receiptDataUrl && <img src={e.receiptDataUrl} alt="" style={{ width: 22, height: 22, borderRadius: 4, objectFit: "cover" }} />}
+                          {e.desc}
+                        </span>
+                        <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtEurCents(e.amountCents)}</span>
+                      </div>
+                    ))}
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "7px 0 0", marginTop: 4, borderTop: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.85)" }}>
+                      <span>Verotettava kulujen jälkeen (arvio)</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtEurCents(taxableAfter)}</span>
+                    </div>
+                    <p style={{ margin: "8px 0 0", fontSize: 11, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
+                      Ei vaikuta maksettavaan summaan. Näkyvät laskullasi, jotta voit vähentää ne omassa verotuksessasi. Säilytä kuitit.
+                    </p>
+                  </div>
+                );
+              })()}
+
               {p.status === "maksettu" && p.invoiceNo && (
                 <div style={{ margin: "12px 0 0" }}>
                   <p style={{ margin: 0, fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
@@ -1579,7 +1653,7 @@ function PayoutsTab({ token, view, setView }: { token: string; view: WorkerView;
               )}
 
               {p.status === "ilmoitettu" && !open && (
-                <button onClick={() => { setOpenId(p.id); setErr(""); }} style={{ ...primaryBtn, background: T.green, marginTop: 14 }}>
+                <button onClick={() => { setOpenId(p.id); setErr(""); setExp([]); }} style={{ ...primaryBtn, background: T.green, marginTop: 14 }}>
                   Hyväksy ja vahvista tiedot
                 </button>
               )}
@@ -1597,12 +1671,55 @@ function PayoutsTab({ token, view, setView }: { token: string; view: WorkerView;
                       />
                     </div>
                   ))}
+
+                  {/* Optional deductible kulut — added to the worker's invoice so
+                      they can deduct them in their own taxation. Does NOT change
+                      the paid amount. */}
+                  <div style={{ marginTop: 6, marginBottom: 4, paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                    <p style={{ margin: "0 0 3px", fontSize: 12, color: "rgba(255,255,255,0.55)" }}>Vähennyskelpoiset kulut (valinnainen)</p>
+                    <p style={{ margin: "0 0 10px", fontSize: 11, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
+                      Omat työhön liittyvät kulusi (esim. tarvikkeet, matkat). Lisätään laskullesi vähennyksiä varten — ei vaikuta maksettavaan summaan.
+                    </p>
+                    {exp.map((x) => (
+                      <div key={x.id} style={{ marginBottom: 10, padding: 10, borderRadius: 10, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <input
+                            value={x.desc}
+                            onChange={(e) => setExpAt(x.id, { desc: e.target.value })}
+                            placeholder="Kulun nimi (esim. lasinpesuaine)"
+                            style={{ ...inputStyle, flex: 1, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff" }}
+                          />
+                          <input
+                            value={x.amount}
+                            onChange={(e) => setExpAt(x.id, { amount: e.target.value })}
+                            inputMode="decimal"
+                            placeholder="€"
+                            style={{ ...inputStyle, width: 76, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff", textAlign: "right" }}
+                          />
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+                          <label style={{ display: "inline-flex", alignItems: "center", gap: 7, cursor: "pointer", fontSize: 12, color: "rgba(255,255,255,0.6)" }}>
+                            {x.receiptDataUrl ? (
+                              <img src={x.receiptDataUrl} alt="kuitti" style={{ width: 34, height: 34, borderRadius: 6, objectFit: "cover", border: "1px solid rgba(255,255,255,0.15)" }} />
+                            ) : (
+                              <span style={{ display: "inline-flex", width: 34, height: 34, borderRadius: 6, border: "1px dashed rgba(255,255,255,0.25)", alignItems: "center", justifyContent: "center" }}>📷</span>
+                            )}
+                            {x.receiptDataUrl ? "Vaihda kuitti" : "Lisää kuitti (valinn.)"}
+                            <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => pickReceipt(x.id, e.target.files?.[0])} />
+                          </label>
+                          <button onClick={() => removeExp(x.id)} style={{ marginLeft: "auto", background: "transparent", border: "none", color: "rgba(255,154,154,0.9)", fontSize: 12, cursor: "pointer" }}>Poista</button>
+                        </div>
+                      </div>
+                    ))}
+                    <button onClick={addExpRow} style={{ ...secondaryBtn, width: "100%", fontSize: 12.5 }}>+ Lisää kulu</button>
+                  </div>
+
                   {err && <p style={{ margin: "0 0 8px", fontSize: 12.5, color: "#FF9A9A" }}>{err}</p>}
                   <div style={{ display: "flex", gap: 8 }}>
                     <button onClick={() => approve(p.id)} disabled={busy} style={{ ...primaryBtn, background: T.green, flex: 1, opacity: busy ? 0.6 : 1 }}>
                       {busy ? "Hyväksytään…" : "Hyväksy maksu"}
                     </button>
-                    <button onClick={() => setOpenId(null)} style={{ ...secondaryBtn, flex: "0 0 auto" }}>Peruuta</button>
+                    <button onClick={() => { setOpenId(null); setExp([]); }} style={{ ...secondaryBtn, flex: "0 0 auto" }}>Peruuta</button>
                   </div>
                 </div>
               )}

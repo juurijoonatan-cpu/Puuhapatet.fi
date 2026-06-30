@@ -82,6 +82,23 @@ export interface CrewSession {
  */
 export type CrewPayoutStatus = "ilmoitettu" | "hyvaksytty" | "maksettu";
 
+/** Max stored size for a payout-expense receipt photo data URL (~0.5 MB base64). */
+export const MAX_PAYOUT_RECEIPT_LEN = 700_000;
+
+/**
+ * A deductible expense (kulu) the WORKER attaches to their own payout/invoice when
+ * approving it. These are the worker's OWN costs (supplies, transport, …) that they
+ * deduct in their own taxation — Puuhapatet does NOT reimburse them, so they never
+ * change `amountCents` (the labour Puuhapatet pays). Stored with an optional receipt
+ * photo as the worker's proof (tosite).
+ */
+export interface PayoutExpense {
+  id: string;
+  desc: string;             // what the expense was
+  amountCents: number;      // cost
+  receiptDataUrl?: string;  // optional receipt photo (kuitti)
+}
+
 export interface CrewPayout {
   id: string;                   // stable id
   amountCents: number;          // gross amount paid to the worker
@@ -109,6 +126,15 @@ export interface CrewPayout {
    *  no company yet, so this is one of the two leaders; future-proofed for a
    *  company. Captured at creation, finalised at payment. */
   buyer?: BuyerSnapshot;
+  /** Worker's own deductible expenses (kulut) attached at approval. Informational
+   *  — they do NOT change `amountCents`; they're shown on the invoice + dashboard so
+   *  the worker can deduct them in their own taxation. */
+  expenses?: PayoutExpense[];
+}
+
+/** Sum of a payout's worker-declared deductible expenses (cents). */
+export function payoutExpensesCents(p: CrewPayout): number {
+  return (p.expenses || []).reduce((s, e) => s + Math.max(0, e.amountCents || 0), 0);
 }
 
 export interface CrewMember {
@@ -332,6 +358,15 @@ function sanitizePayout(input: any): CrewPayout | null {
       address: str(by.address, 240),
       email: str(by.email, 200),
     } : undefined,
+    expenses: Array.isArray(input.expenses)
+      ? input.expenses.slice(0, 30).map((e: any, i: number): PayoutExpense => ({
+          id: String(e?.id ?? `pe_${i}`).slice(0, 40),
+          desc: String(e?.desc ?? "").slice(0, 200).trim(),
+          amountCents: Math.max(0, Math.floor(Number(e?.amountCents) || 0)),
+          receiptDataUrl: typeof e?.receiptDataUrl === "string" && e.receiptDataUrl.startsWith("data:image/")
+            ? e.receiptDataUrl.slice(0, MAX_PAYOUT_RECEIPT_LEN) : undefined,
+        })).filter((e: PayoutExpense) => e.desc && e.amountCents > 0)
+      : undefined,
   };
 }
 

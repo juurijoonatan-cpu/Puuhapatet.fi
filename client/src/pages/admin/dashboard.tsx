@@ -5,6 +5,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "wouter";
 import { Card } from "@/components/ui/card";
+import { Disclosure } from "@/components/ui/disclosure";
 import { Button } from "@/components/ui/button";
 import {
   Briefcase,
@@ -308,10 +309,14 @@ export default function AdminDashboard() {
 
         {/* Worker service fee debts — HOST only */}
         {isHost && workerStats && (
-          <Card className="p-4 bg-card border-0 premium-shadow mb-8">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-4">
-              Tekijöiden palvelumaksut — maksamatta
-            </p>
+          <Disclosure
+            className="mb-8"
+            title="Tekijöiden palvelumaksut — maksamatta"
+            right={(() => {
+              const totalOwed = USERS.reduce((s, u) => s + (workerStats.workerFees[u.id] ?? 0), 0);
+              return <span className={`text-sm font-bold tabular-nums ${totalOwed > 0 ? "text-purple-600 dark:text-purple-400" : "text-muted-foreground"}`}>{fmt(totalOwed)}</span>;
+            })()}
+          >
             <div className="space-y-3">
               {USERS.map((u) => {
                 const owed = workerStats.workerFees[u.id] ?? 0;
@@ -352,7 +357,7 @@ export default function AdminDashboard() {
             <p className="text-xs text-muted-foreground mt-4 pt-3 border-t border-border">
               Laskettu valmistuneista keikoista: (hinta − kulut) × palvelumaksu-% per tekijä — perustajat {HOST_SERVICE_FEE_PCT} %, työntekijät {STAFF_SERVICE_FEE_PCT} %
             </p>
-          </Card>
+          </Disclosure>
         )}
 
         <Link href="/admin/new">

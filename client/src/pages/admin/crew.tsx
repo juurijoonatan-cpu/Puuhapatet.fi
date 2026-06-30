@@ -8,7 +8,8 @@
  */
 import { useEffect, useState, useCallback } from "react";
 import { useRoute, useLocation } from "wouter";
-import { api, type HostCrewRow, type FounderMargin } from "@/lib/api";
+import { api, type HostCrewRow, type FounderSettlement } from "@/lib/api";
+import { isFounder } from "@shared/team";
 import type { ProjBuilding, FixedDeal, EraDebtBreakdown } from "@shared/project";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Disclosure } from "@/components/ui/disclosure";
@@ -58,7 +59,7 @@ export default function AdminCrewPage() {
   const [billableWashed, setBillableWashed] = useState(0);
   const [eraWindows, setEraWindowsState] = useState<number[] | null>(null);
   const [eraBreakdown, setEraBreakdown] = useState<EraDebtBreakdown[]>([]);
-  const [founderMargins, setFounderMargins] = useState<FounderMargin[]>([]);
+  const [founderSettlement, setFounderSettlement] = useState<FounderSettlement | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -71,7 +72,7 @@ export default function AdminCrewPage() {
       setDeal(res.data.deal); setTotalBillable(res.data.totalBillable);
       setBillableWashed(res.data.billableWashed); setEraWindowsState(res.data.eraWindows);
       setEraBreakdown(res.data.eraBreakdown || []);
-      setFounderMargins(res.data.founderMargins || []);
+      setFounderSettlement(res.data.founderSettlement || null);
       setErr(null);
     }
     else setErr(res.error || "Lataus epäonnistui");
@@ -136,7 +137,7 @@ export default function AdminCrewPage() {
             billableWashed={billableWashed}
             eraWindows={eraWindows}
             eraBreakdown={eraBreakdown}
-            founderMargins={founderMargins}
+            founderSettlement={founderSettlement}
             onSave={saveEraWindows}
           />
         )}
@@ -514,13 +515,13 @@ function PayoutPanel({
 /** Maksuerät & kate — behind a button so it stays out of the way. The popup holds
  *  the per-erä window editor + per-erä kate AND the per-erä debt breakdown (who
  *  washed each erä's windows). Pure display/planning: never touches worker pay. */
-function EraKateDialog({ deal, totalBillable, billableWashed, eraWindows, eraBreakdown, founderMargins, onSave }: {
+function EraKateDialog({ deal, totalBillable, billableWashed, eraWindows, eraBreakdown, founderSettlement, onSave }: {
   deal: FixedDeal;
   totalBillable: number;
   billableWashed: number;
   eraWindows: number[] | null;
   eraBreakdown: EraDebtBreakdown[];
-  founderMargins: FounderMargin[];
+  founderSettlement: FounderSettlement | null;
   onSave: (windows: number[]) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
@@ -552,7 +553,7 @@ function EraKateDialog({ deal, totalBillable, billableWashed, eraWindows, eraBre
           onSave={onSave}
         />
 
-        <FounderMarginSummary founderMargins={founderMargins} />
+        <FounderSettlementView settlement={founderSettlement} />
 
         <EraDebtList eraBreakdown={eraBreakdown} />
       </DialogContent>
@@ -560,31 +561,80 @@ function EraKateDialog({ deal, totalBillable, billableWashed, eraWindows, eraBre
   );
 }
 
-/** Bossien passiivinen tulo per perustaja — kunkin laskuttamansa erän kate
- *  (1575 € − työntekijöiden palkat). Attribuoitu sille, joka laskutti asiakkaan. */
-function FounderMarginSummary({ founderMargins }: { founderMargins: FounderMargin[] }) {
-  const rows = (founderMargins || []).filter((f) => f.eras > 0);
-  if (rows.length === 0) return null;
-  const totalMargin = rows.reduce((s, f) => s + f.marginCents, 0);
-  return (
-    <div className="mt-1 pt-4 border-t border-border">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm font-bold">Bossien tulo (kate) per laskuttaja</h3>
-        <span className="text-sm font-bold tabular-nums text-emerald-600">{eur(totalMargin)}</span>
+/** Bossien tulot & jako. The kate (1575 − palkat) is split equally between the
+ *  founders as passive income; the founder who billed an erä collected the full
+ *  instalment from the customer and pays out the workers + the other founder's
+ *  share. Per billed erä we show a settlement "kuitti" so each biller sees why
+ *  they're left with their amount. */
+function FounderSettlementView({ settlement }: { settlement: FounderSettlement | null }) {
+  if (!settlement) return null;
+  const { founders, settlements } = settlement;
+  const earners = founders.filter((f) => f.kateShareCents > 0 || f.billedCents > 0);
+  if (settlements.length === 0 || earners.length === 0) {
+    return (
+      <div className="mt-1 pt-4 border-t border-border">
+        <h3 className="text-sm font-bold mb-1">Bossien tulot</h3>
+        <p className="text-[11px] text-muted-foreground">Ei vielä laskutettuja eriä — tulot näkyvät, kun ensimmäinen erä laskutetaan asiakkaalta.</p>
       </div>
-      <div className="space-y-2">
-        {rows.map((f) => (
-          <div key={f.id} className="flex items-center justify-between gap-2 rounded-xl border bg-muted/20 px-3 py-2">
-            <div className="min-w-0">
-              <p className="text-sm font-medium truncate">{f.name}</p>
-              <p className="text-[11px] text-muted-foreground">{f.eras} erää laskutettu · {eur(f.invoicedCents)} − palkat {eur(f.labourCents)}</p>
+    );
+  }
+  const totalKate = founders.reduce((s, f) => s + f.kateShareCents, 0);
+  const firstName = (n: string) => n.trim().split(/\s+/)[0];
+
+  return (
+    <div className="mt-1 pt-4 border-t border-border space-y-4">
+      {/* Passive income — each founder's equal share of the kate from billed erät. */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-bold">Bossien passiiviset tulot</h3>
+          <span className="text-sm font-bold tabular-nums text-emerald-600">{eur(totalKate)}</span>
+        </div>
+        <p className="text-[11px] text-muted-foreground mb-2">Kate (lasku − palkat) jaetaan tasan. Laskutetuista eristä.</p>
+        <div className="space-y-2">
+          {earners.map((f) => (
+            <div key={f.id} className="flex items-center justify-between gap-2 rounded-xl border bg-muted/20 px-3 py-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium truncate">{f.name}</p>
+                <p className="text-[11px] text-muted-foreground">Laskutti asiakkaalta {eur(f.billedCents)}</p>
+              </div>
+              <span className="shrink-0 text-right">
+                <span className="block text-sm font-bold tabular-nums text-emerald-600">{eur(f.kateShareCents)}</span>
+                <span className="text-[10px] text-muted-foreground">kate-osuus</span>
+              </span>
             </div>
-            <span className="shrink-0 text-right">
-              <span className="block text-sm font-bold tabular-nums text-emerald-600">{eur(f.marginCents)}</span>
-              <span className="text-[10px] text-muted-foreground">kate</span>
-            </span>
-          </div>
-        ))}
+          ))}
+        </div>
+      </div>
+
+      {/* Settlement receipts — per billed erä, how the biller's instalment is split. */}
+      <div>
+        <h3 className="text-sm font-bold mb-2">Laskutus & jako per erä</h3>
+        <div className="space-y-2">
+          {settlements.map((s) => (
+            <div key={s.era} className="rounded-xl border bg-muted/20 p-3">
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <span className="text-xs font-semibold">Erä {s.era} · {firstName(s.billerName)} laskutti</span>
+                <span className="text-[11px] text-muted-foreground tabular-nums">sai {eur(s.instalmentCents)}</span>
+              </div>
+              <div className="space-y-1 text-xs">
+                <div className="flex items-center justify-between gap-2 text-muted-foreground">
+                  <span>→ Työntekijöille (palkat)</span>
+                  <span className="tabular-nums">−{eur(s.palkatCents)}</span>
+                </div>
+                {s.paysOut.map((p) => (
+                  <div key={p.id} className="flex items-center justify-between gap-2 text-muted-foreground">
+                    <span>→ {firstName(p.name)}lle (kate-osuus)</span>
+                    <span className="tabular-nums">−{eur(p.cents)}</span>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between gap-2 pt-1 mt-1 border-t border-border/60 font-semibold">
+                  <span>{firstName(s.billerName)}lle jää</span>
+                  <span className="tabular-nums text-emerald-600">{eur(s.billerShareCents)}</span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -691,20 +741,33 @@ function EraDebtList({ eraBreakdown }: { eraBreakdown: EraDebtBreakdown[] }) {
                 <span className="text-muted-foreground">Lasku {eur(e.instalmentCents)} − palkat {eur(e.earnedCents)}</span>
                 <span className="font-semibold text-emerald-600">kate {eur(e.marginCents)}</span>
               </div>
-              {e.workers.length === 0 ? (
-                <p className="text-[11px] text-muted-foreground">Ei vielä pesty.</p>
-              ) : (
-                <div className="space-y-1 pt-1 border-t border-border/60">
-                  {e.workers.map((w) => (
-                    <div key={w.workerId} className="flex items-center justify-between gap-2 text-xs">
-                      <span className="truncate">{w.name}</span>
-                      <span className="shrink-0 text-muted-foreground tabular-nums">
-                        {fmtWindows(w.windows)} ikkunaa · <span className="font-semibold text-foreground">{eur(w.earnedCents)}</span>
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              {(() => {
+                // Real workers (paid per window) vs founders (wash at no palkka —
+                // their work just lifts the kate, so show them cleanly, not as 0 € rows).
+                const paid = e.workers.filter((w) => !isFounder(w.workerId));
+                const bosses = e.workers.filter((w) => isFounder(w.workerId));
+                if (e.workers.length === 0) return <p className="text-[11px] text-muted-foreground">Ei vielä pesty.</p>;
+                return (
+                  <div className="space-y-1 pt-1 border-t border-border/60">
+                    {paid.map((w) => (
+                      <div key={w.workerId} className="flex items-center justify-between gap-2 text-xs">
+                        <span className="truncate">{w.name}</span>
+                        <span className="shrink-0 text-muted-foreground tabular-nums">
+                          {fmtWindows(w.windows)} ikkunaa · <span className="font-semibold text-foreground">{eur(w.earnedCents)}</span>
+                        </span>
+                      </div>
+                    ))}
+                    {bosses.length > 0 && (
+                      <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground pt-0.5">
+                        <span className="truncate italic">
+                          Bossien omat ikkunat: {bosses.map((b) => `${b.name.trim().split(/\s+/)[0]} ${fmtWindows(b.windows)}`).join(" · ")}
+                        </span>
+                        <span className="shrink-0">ei palkkaa</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           ))}
         </div>

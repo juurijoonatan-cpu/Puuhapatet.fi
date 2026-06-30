@@ -4799,9 +4799,37 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           stats: crewMemberStats(project, m),
           onboarded: isOnboarded(m, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION),
         }));
-      res.json({ ok: true, crew, building: project.building, version: WORKER_AGREEMENT_VERSION });
+      // Deal + billable-window count so the payroll page can show the per-erä
+      // kate (€1575 / erän ikkunat). eraWindows = founders' editable per-erä counts.
+      const deal = fixedDealFor(project);
+      const billablePts = deal ? allPoints(project).filter((p) => p.p === deal.billablePriority) : [];
+      const totalBillable = billablePts.length;
+      const billableWashed = billablePts.filter((p) => p.status === "pesty").length;
+      res.json({
+        ok: true, crew, building: project.building, version: WORKER_AGREEMENT_VERSION,
+        deal, totalBillable, billableWashed, eraWindows: project.eraWindows ?? null,
+      });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Founders set the per-erä (instalment) window counts for the fixed deal. Pure
+  // display/planning data (drives the per-erä kate on the payroll page); does NOT
+  // affect worker pay or the earnings model.
+  app.post("/api/jobs/:id/project/era-windows", async (req, res) => {
+    try {
+      const loaded = await loadJobProject(Number(req.params.id));
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const { job, project } = loaded;
+      const raw = Array.isArray(req.body?.windows) ? req.body.windows : null;
+      if (!raw) return res.status(400).json({ error: "windows-taulukko puuttuu" });
+      const windows = raw.slice(0, 24).map((n: any) => Math.max(0, Math.min(100000, Math.floor(Number(n) || 0))));
+      project.eraWindows = windows;
+      const saved = await saveProject(job, project);
+      res.json({ ok: true, eraWindows: saved.eraWindows ?? windows });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
     }
   });
 

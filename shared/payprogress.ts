@@ -28,10 +28,21 @@ export interface PayProgress {
  * (floor ensin, jaettavat ylijäämäikkunat lisätään viimeisiin eriin).
  * Esim. 170 / 4 → [42, 42, 43, 43].
  */
-export function computePayProgress(total: number, washed: number, periods: number = PAY_PERIODS): PayProgress {
-  const t = Math.max(0, Math.floor(total || 0));
+export function computePayProgress(
+  total: number,
+  washed: number,
+  periods: number = PAY_PERIODS,
+  /** Optional explicit per-erä window counts (e.g. [40,41,42,45]). When given,
+   *  these define the erä sizes and the scope (total = their sum); `total`/`periods`
+   *  are ignored. Absent → the even split below (unchanged behaviour). */
+  customPeriods?: number[] | null,
+): PayProgress {
+  const custom = Array.isArray(customPeriods) && customPeriods.length > 0 && customPeriods.some((x) => x > 0)
+    ? customPeriods.map((x) => Math.max(0, Math.floor(x || 0)))
+    : null;
+  const t = custom ? custom.reduce((s, x) => s + x, 0) : Math.max(0, Math.floor(total || 0));
   const w = Math.max(0, Math.min(t || Infinity, Math.floor(washed || 0)));
-  const n = Math.max(1, Math.floor(periods || PAY_PERIODS));
+  const n = custom ? custom.length : Math.max(1, Math.floor(periods || PAY_PERIODS));
   const done = t > 0 && w >= t;
 
   if (t === 0) {
@@ -40,8 +51,9 @@ export function computePayProgress(total: number, washed: number, periods: numbe
 
   const base = Math.floor(t / n);
   const remainder = t % n;
-  // Period i (0-based) size: base for the first (n - remainder) periods, base+1 for the rest.
-  const periodSize = (i: number) => base + (i >= n - remainder ? 1 : 0);
+  // Period i (0-based) size: custom array when given, else base for the first
+  // (n - remainder) periods and base+1 for the rest.
+  const periodSize = (i: number) => (custom ? custom[i] : base + (i >= n - remainder ? 1 : 0));
 
   let cumulative = 0;
   for (let i = 0; i < n; i++) {
@@ -59,4 +71,20 @@ export function computePayProgress(total: number, washed: number, periods: numbe
 
   // Unreachable, but TS needs a return.
   return { total: t, washed: w, periods: n, perPeriod: base, currentPeriod: n, inPeriod: 0, toNext: 0, pct: 1, done };
+}
+
+/**
+ * The per-erä window counts to show in the UI: the founders' custom array when
+ * valid, otherwise an even split of `total` into `periods` — matching the
+ * distribution `computePayProgress` uses (earlier erät smaller).
+ */
+export function eraWindowCounts(total: number, periods: number = PAY_PERIODS, custom?: number[] | null): number[] {
+  if (Array.isArray(custom) && custom.length > 0 && custom.some((x) => x > 0)) {
+    return custom.map((x) => Math.max(0, Math.floor(x || 0)));
+  }
+  const t = Math.max(0, Math.floor(total || 0));
+  const n = Math.max(1, Math.floor(periods || PAY_PERIODS));
+  const base = Math.floor(t / n);
+  const remainder = t % n;
+  return Array.from({ length: n }, (_, i) => base + (i >= n - remainder ? 1 : 0));
 }

@@ -3,7 +3,7 @@
  */
 
 import type { GigData, GigTotals } from "@shared/gig";
-import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding } from "@shared/project";
+import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding, FixedDeal } from "@shared/project";
 import type { MemberAgreementSignature } from "@shared/member-agreement";
 import type { CrewMember, CrewMemberStats, CrewProfile, CrewAgreementSignature } from "@shared/crew";
 import type { WorkerAgreement } from "@shared/worker-agreements";
@@ -832,8 +832,13 @@ export const api = {
 
   // ─── Host crew management ───────────────────────────────────────────────────
   getHostCrew: (jobId: number) =>
-    request<{ ok: boolean; crew: HostCrewRow[]; building: ProjBuilding; version: string }>(
+    request<{ ok: boolean; crew: HostCrewRow[]; building: ProjBuilding; version: string; deal: FixedDeal | null; totalBillable: number; billableWashed: number; eraWindows: number[] | null }>(
       "GET", `/api/jobs/${jobId}/crew`),
+
+  // Founders' editable per-erä (instalment) window counts for the fixed deal.
+  setEraWindows: (jobId: number, windows: number[]) =>
+    request<{ ok: boolean; eraWindows: number[] }>(
+      "POST", `/api/jobs/${jobId}/project/era-windows`, { windows }),
 
   // The logged-in admin's own gig worker memberships (e.g. Petrus). Used to show
   // a small earnings card + link to their worker dashboard on the admin landing.

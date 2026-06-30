@@ -805,8 +805,13 @@ export const api = {
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/map-note/delete`, { floor, key }),
 
   // Worker approves a payout (locks in their billing snapshot for the invoice).
-  crewApprovePayout: (token: string, payoutId: string, billing: { name?: string; yTunnus?: string; iban?: string; address?: string }) =>
-    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/payout/${payoutId}/approve`, { billing }),
+  crewApprovePayout: (
+    token: string,
+    payoutId: string,
+    billing: { name?: string; yTunnus?: string; iban?: string; address?: string },
+    expenses?: { id?: string; desc: string; amountCents: number; receiptDataUrl?: string }[],
+  ) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/payout/${payoutId}/approve`, { billing, expenses }),
 
   // Worker logs an expense for the current job (own costs only — transport, materials, etc.).
   crewAddExpense: (token: string, data: { kind: string; desc: string; amountCents: number }) =>

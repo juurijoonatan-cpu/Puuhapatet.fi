@@ -589,47 +589,145 @@ export default function AdminGigTrackerPage() {
           return (
             <Disclosure
               icon={<PenLine className="w-4 h-4 text-muted-foreground" />}
-              title="Sopimus & hyväksyntä"
+              title="Sopimus & asiakasnäkymä"
               right={statusPill}
               defaultOpen={status === "draft"}
             >
-              {sig ? (
-                <div className="text-sm space-y-1.5">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-foreground font-medium truncate">{sig.customer.legalName}</p>
-                      <p className="text-xs text-muted-foreground truncate">
-                        Allekirjoitti {sig.signerName}
-                        {sig.place ? ` · ${sig.place}` : ""} · {new Date(sig.signedAt).toLocaleString("fi-FI")}
-                      </p>
-                      {sig.customer.businessId && <p className="text-xs text-muted-foreground">Y-tunnus {sig.customer.businessId}</p>}
-                      {sig.customer.eInvoice && <p className="text-xs text-muted-foreground truncate">Lasku: {sig.customer.eInvoice}</p>}
-                    </div>
-                    <Button variant="outline" size="sm" onClick={() => setSigOpen(true)} className="shrink-0">
-                      <FileText className="w-3.5 h-3.5 mr-1.5" /> Näytä
-                    </Button>
-                  </div>
-
-                  {appr ? (
-                    <div className="flex items-center justify-between gap-2 pt-2 mt-1 border-t border-border">
-                      <p className="text-xs text-sky-700 dark:text-sky-300">
-                        Hyväksytty {new Date(appr.approvedAt).toLocaleDateString("fi-FI")}{appr.by ? ` · ${appr.by}` : ""}
-                      </p>
-                      <Button variant="ghost" size="sm" disabled={approving} onClick={() => approve(false)} className="text-muted-foreground">
-                        Peru hyväksyntä
+              <div className="space-y-5">
+                {/* Allekirjoitus & hyväksyntä */}
+                {sig ? (
+                  <div className="text-sm space-y-1.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-foreground font-medium truncate">{sig.customer.legalName}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          Allekirjoitti {sig.signerName}
+                          {sig.place ? ` · ${sig.place}` : ""} · {new Date(sig.signedAt).toLocaleString("fi-FI")}
+                        </p>
+                        {sig.customer.businessId && <p className="text-xs text-muted-foreground">Y-tunnus {sig.customer.businessId}</p>}
+                        {sig.customer.eInvoice && <p className="text-xs text-muted-foreground truncate">Lasku: {sig.customer.eInvoice}</p>}
+                      </div>
+                      <Button variant="outline" size="sm" onClick={() => setSigOpen(true)} className="shrink-0">
+                        <FileText className="w-3.5 h-3.5 mr-1.5" /> Näytä
                       </Button>
                     </div>
-                  ) : (
-                    <Button className="w-full mt-2" disabled={approving} onClick={() => approve(true)}>
-                      <ShieldCheck className="w-4 h-4 mr-2" /> {approving ? "Hyväksytään…" : "Hyväksy keikka"}
+
+                    {appr ? (
+                      <div className="flex items-center justify-between gap-2 pt-2 mt-1 border-t border-border">
+                        <p className="text-xs text-sky-700 dark:text-sky-300">
+                          Hyväksytty {new Date(appr.approvedAt).toLocaleDateString("fi-FI")}{appr.by ? ` · ${appr.by}` : ""}
+                        </p>
+                        <Button variant="ghost" size="sm" disabled={approving} onClick={() => approve(false)} className="text-muted-foreground">
+                          Peru hyväksyntä
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button className="w-full mt-2" disabled={approving} onClick={() => approve(true)}>
+                        <ShieldCheck className="w-4 h-4 mr-2" /> {approving ? "Hyväksytään…" : "Hyväksy keikka"}
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Asiakas ei ole vielä allekirjoittanut. Jaa live-linkki allekirjoitettavaksi.
+                  </p>
+                )}
+
+                {/* Customer live-link — signing page before signature, live tracker after. */}
+                <div className="space-y-1.5 pt-1 border-t border-border">
+                  <Label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                    <Share2 className="w-3.5 h-3.5" /> Asiakkaan live-linkki
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <Input readOnly value={shareUrl} className="text-xs" onFocus={(e) => e.currentTarget.select()} />
+                    <Button variant="outline" size="icon" onClick={copyLink} aria-label="Kopioi linkki">
+                      {copied ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
                     </Button>
-                  )}
+                    {shareUrl && (
+                      <a href={shareUrl} target="_blank" rel="noreferrer">
+                        <Button variant="outline" size="icon" aria-label="Avaa asiakkaan näkymä">
+                          <ExternalLink className="w-4 h-4" />
+                        </Button>
+                      </a>
+                    )}
+                  </div>
                 </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  Asiakas ei ole vielä allekirjoittanut. Jaa live-linkki allekirjoitettavaksi.
-                </p>
-              )}
+
+                {/* Internal list label — not part of the signed agreement, always editable. */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-muted-foreground">Kuvaus (näkyy keikkalistassa)</Label>
+                  <div className="flex gap-2">
+                    <Input value={jobDescription} onChange={(e) => setJobDescription(e.target.value)} placeholder="Esim. FR8 - Ikkunoiden pesu" className="text-sm" />
+                    <Button size="sm" disabled={savingDescription} onClick={saveDescription} className="shrink-0">
+                      {savingDescription ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    </Button>
+                  </div>
+                </div>
+
+                {gig.signature ? (
+                  /* Signed → the agreed contract is locked and shown read-only. */
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                      <ShieldCheck className="w-4 h-4 shrink-0" />
+                      Sopimus on allekirjoitettu ja lukittu — tietoja ei voi enää muokata.
+                    </div>
+                    {draft.contractId && (
+                      <div className="space-y-1">
+                        <Label className="text-xs font-medium text-muted-foreground">Sopimustunnus</Label>
+                        <p className="text-sm text-foreground">{draft.contractId}</p>
+                      </div>
+                    )}
+                    <div className="space-y-1">
+                      <Label className="text-xs font-medium text-muted-foreground">Sopimusteksti (allekirjoitettu)</Label>
+                      <div className="rounded-xl border bg-muted/30 p-3 text-xs font-mono whitespace-pre-wrap max-h-72 overflow-y-auto">
+                        {draft.contractText || "—"}
+                      </div>
+                    </div>
+                    {draft.customerNote && (
+                      <div className="space-y-1">
+                        <Label className="text-xs font-medium text-muted-foreground">Asiakkaalle näytettävä huomautus</Label>
+                        <p className="text-sm text-foreground whitespace-pre-wrap">{draft.customerNote}</p>
+                      </div>
+                    )}
+                    {draft.vatNote && (
+                      <div className="space-y-1">
+                        <Label className="text-xs font-medium text-muted-foreground">ALV-huomautus</Label>
+                        <p className="text-sm text-foreground">{draft.vatNote}</p>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* Draft → still editable until the customer signs. */
+                  <>
+                    <label className="flex items-center justify-between gap-3 rounded-xl border border-border p-3">
+                      <span className="text-sm">
+                        Vaadi sähköinen allekirjoitus
+                        <span className="block text-xs text-muted-foreground">Asiakas allekirjoittaa ennen kuin live-näkymä avautuu.</span>
+                      </span>
+                      <input type="checkbox" className="h-5 w-5 accent-foreground" checked={draft.requireSignature} onChange={(e) => setDraft({ ...draft, requireSignature: e.target.checked })} />
+                    </label>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-medium text-muted-foreground">Sopimustunnus</Label>
+                      <Input value={draft.contractId} onChange={(e) => setDraft({ ...draft, contractId: e.target.value })} placeholder="Esim. PT-2026-02" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-medium text-muted-foreground">Sopimusteksti (asiakas näkee ja allekirjoittaa)</Label>
+                      <Textarea rows={8} value={draft.contractText} onChange={(e) => setDraft({ ...draft, contractText: e.target.value })} className="font-mono text-xs" placeholder="Liitä koko sopimus tähän…" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-medium text-muted-foreground">Asiakkaalle näytettävä huomautus</Label>
+                      <Textarea rows={2} value={draft.customerNote} onChange={(e) => setDraft({ ...draft, customerNote: e.target.value })} placeholder="Esim. Maksat vain pestyistä ikkunoista…" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-medium text-muted-foreground">ALV-huomautus</Label>
+                      <Input value={draft.vatNote} onChange={(e) => setDraft({ ...draft, vatNote: e.target.value })} />
+                    </div>
+                    <Button className="w-full" disabled={savingContract} onClick={saveContract}>
+                      <Save className="w-4 h-4 mr-2" /> {savingContract ? "Tallennetaan…" : "Tallenna sopimus"}
+                    </Button>
+                  </>
+                )}
+              </div>
             </Disclosure>
           );
         })()}
@@ -711,130 +809,6 @@ export default function AdminGigTrackerPage() {
             {reporting ? "Lähetetään…" : "Lähetä maksuraportti johtajille"}
           </Button>
         </Card>
-
-        {/* Contract & customer view — holds the customer live-link, and the
-            contract itself. Once the customer has signed, the agreed contract is
-            LOCKED (read-only) so the signed version is preserved as-is. */}
-        <Disclosure
-          icon={<FileText className="w-4 h-4 text-muted-foreground" />}
-          title="Sopimus & asiakasnäkymä"
-          defaultOpen={!gig.signature}
-        >
-            <div className="space-y-5">
-              {/* Customer live-link — always available (signing page before
-                  signature, live tracker after). */}
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                  <Share2 className="w-3.5 h-3.5" /> Asiakkaan live-linkki
-                </Label>
-                <div className="flex items-center gap-2">
-                  <Input readOnly value={shareUrl} className="text-xs" onFocus={(e) => e.currentTarget.select()} />
-                  <Button variant="outline" size="icon" onClick={copyLink} aria-label="Kopioi linkki">
-                    {copied ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
-                  </Button>
-                  {shareUrl && (
-                    <a href={shareUrl} target="_blank" rel="noreferrer">
-                      <Button variant="outline" size="icon" aria-label="Avaa asiakkaan näkymä">
-                        <ExternalLink className="w-4 h-4" />
-                      </Button>
-                    </a>
-                  )}
-                </div>
-              </div>
-
-              {/* Internal list label — not part of the signed agreement, so it
-                  stays editable regardless of signing status. */}
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-muted-foreground">Kuvaus (näkyy keikkalistassa)</Label>
-                <div className="flex gap-2">
-                  <Input value={jobDescription} onChange={(e) => setJobDescription(e.target.value)} placeholder="Esim. FR8 - Ikkunoiden pesu" className="text-sm" />
-                  <Button size="sm" disabled={savingDescription} onClick={saveDescription} className="shrink-0">
-                    {savingDescription ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  </Button>
-                </div>
-              </div>
-
-              {gig.signature ? (
-                /* Signed → the agreed contract is locked and shown read-only. */
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs font-medium text-emerald-700 dark:text-emerald-400">
-                    <ShieldCheck className="w-4 h-4 shrink-0" />
-                    Sopimus on allekirjoitettu ja lukittu — tietoja ei voi enää muokata.
-                  </div>
-                  {draft.contractId && (
-                    <div className="space-y-1">
-                      <Label className="text-xs font-medium text-muted-foreground">Sopimustunnus</Label>
-                      <p className="text-sm text-foreground">{draft.contractId}</p>
-                    </div>
-                  )}
-                  <div className="space-y-1">
-                    <Label className="text-xs font-medium text-muted-foreground">Sopimusteksti (allekirjoitettu)</Label>
-                    <div className="rounded-xl border bg-muted/30 p-3 text-xs font-mono whitespace-pre-wrap max-h-72 overflow-y-auto">
-                      {draft.contractText || "—"}
-                    </div>
-                  </div>
-                  {draft.customerNote && (
-                    <div className="space-y-1">
-                      <Label className="text-xs font-medium text-muted-foreground">Asiakkaalle näytettävä huomautus</Label>
-                      <p className="text-sm text-foreground whitespace-pre-wrap">{draft.customerNote}</p>
-                    </div>
-                  )}
-                  {draft.vatNote && (
-                    <div className="space-y-1">
-                      <Label className="text-xs font-medium text-muted-foreground">ALV-huomautus</Label>
-                      <p className="text-sm text-foreground">{draft.vatNote}</p>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                /* Draft → still editable until the customer signs. */
-                <>
-                  <label className="flex items-center justify-between gap-3 rounded-xl border border-border p-3">
-                    <span className="text-sm">
-                      Vaadi sähköinen allekirjoitus
-                      <span className="block text-xs text-muted-foreground">Asiakas allekirjoittaa ennen kuin live-näkymä avautuu.</span>
-                    </span>
-                    <input type="checkbox" className="h-5 w-5 accent-foreground" checked={draft.requireSignature} onChange={(e) => setDraft({ ...draft, requireSignature: e.target.checked })} />
-                  </label>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-medium text-muted-foreground">Sopimustunnus</Label>
-                    <Input value={draft.contractId} onChange={(e) => setDraft({ ...draft, contractId: e.target.value })} placeholder="Esim. PT-2026-02" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-medium text-muted-foreground">Sopimusteksti (asiakas näkee ja allekirjoittaa)</Label>
-                    <Textarea rows={8} value={draft.contractText} onChange={(e) => setDraft({ ...draft, contractText: e.target.value })} className="font-mono text-xs" placeholder="Liitä koko sopimus tähän…" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-medium text-muted-foreground">Asiakkaalle näytettävä huomautus</Label>
-                    <Textarea rows={2} value={draft.customerNote} onChange={(e) => setDraft({ ...draft, customerNote: e.target.value })} placeholder="Esim. Maksat vain pestyistä ikkunoista…" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-medium text-muted-foreground">ALV-huomautus</Label>
-                    <Input value={draft.vatNote} onChange={(e) => setDraft({ ...draft, vatNote: e.target.value })} />
-                  </div>
-                  <Button className="w-full" disabled={savingContract} onClick={saveContract}>
-                    <Save className="w-4 h-4 mr-2" /> {savingContract ? "Tallennetaan…" : "Tallenna sopimus"}
-                  </Button>
-                </>
-              )}
-            </div>
-        </Disclosure>
-
-        {/* Activity log — tucked away; collapsed by default */}
-        {gig.log.length > 0 && (
-          <Disclosure title={`Loki · ${gig.log.length}`}>
-            <div className="space-y-1.5 max-h-72 overflow-y-auto">
-              {[...gig.log].reverse().slice(0, 60).map((l, i) => (
-                <div key={i} className="flex items-center justify-between text-xs">
-                  <span className="text-foreground">{l.text}{l.by ? ` · ${l.by.split(" ")[0]}` : ""}</span>
-                  <span className="text-muted-foreground shrink-0 ml-2">
-                    {new Date(l.t).toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" })}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </Disclosure>
-        )}
 
       </div>
 

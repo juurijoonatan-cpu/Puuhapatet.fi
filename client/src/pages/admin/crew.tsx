@@ -9,7 +9,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRoute, useLocation } from "wouter";
 import { api, type HostCrewRow } from "@/lib/api";
-import type { ProjBuilding } from "@shared/project";
+import type { ProjBuilding, FixedDeal } from "@shared/project";
+import { PAY_PERIODS, eraWindowCounts, computePayProgress } from "@shared/payprogress";
 import { WORKER_AGREEMENTS, PROFILE_QUESTIONS } from "@shared/worker-agreements";
 import { downloadWorkerContract, openWorkerContractForPrint, downloadSignatureImage } from "@/lib/worker-contract-doc";
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
@@ -19,6 +20,7 @@ import { computeTax, readVatStatus, readInPrepaymentRegister, fmtPct, fmtEurCent
 import { BRAND_BILLERS, DEFAULT_BILLER_ID } from "@shared/billers";
 import { traineeForUserId, traineeForName } from "@shared/trainees";
 import { getAdminProfile } from "@/lib/admin-profile";
+import { Input } from "@/components/ui/input";
 
 const PUBLIC_BASE = "https://puuhapatet.fi";
 const eur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
@@ -49,6 +51,10 @@ export default function AdminCrewPage() {
   const { checking: crewChecking } = useCrewWorkerRedirect(jobId);
   const [crew, setCrew] = useState<HostCrewRow[]>([]);
   const [building, setBuilding] = useState<ProjBuilding | null>(null);
+  const [deal, setDeal] = useState<FixedDeal | null>(null);
+  const [totalBillable, setTotalBillable] = useState(0);
+  const [billableWashed, setBillableWashed] = useState(0);
+  const [eraWindows, setEraWindowsState] = useState<number[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -56,7 +62,12 @@ export default function AdminCrewPage() {
 
   const load = useCallback(async () => {
     const res = await api.getHostCrew(jobId);
-    if (res.ok && res.data) { setCrew(res.data.crew); setBuilding(res.data.building); setErr(null); }
+    if (res.ok && res.data) {
+      setCrew(res.data.crew); setBuilding(res.data.building);
+      setDeal(res.data.deal); setTotalBillable(res.data.totalBillable);
+      setBillableWashed(res.data.billableWashed); setEraWindowsState(res.data.eraWindows);
+      setErr(null);
+    }
     else setErr(res.error || "Lataus epäonnistui");
     setLoading(false);
   }, [jobId]);
@@ -75,6 +86,11 @@ export default function AdminCrewPage() {
   };
   const logDay = async (id: string, hours: number) => {
     const res = await api.crewLogDay(jobId, id, hours); await load(); return res;
+  };
+  const saveEraWindows = async (windows: number[]) => {
+    const res = await api.setEraWindows(jobId, windows);
+    if (res.ok && res.data) setEraWindowsState(res.data.eraWindows);
+    return res.ok;
   };
 
   const copyLink = (token: string) => {
@@ -107,6 +123,18 @@ export default function AdminCrewPage() {
             still open, plus the gig's total labour cost. Detailed per-worker
             payout actions stay in each worker's card below. */}
         {crew.length > 0 && <PayrollSummary crew={crew} />}
+
+        {/* Maksuerät & kate — founders set the per-erä window counts; the per-erä
+            kate (€1575 / erän ikkunat) follows. Display/planning only. */}
+        {deal && (
+          <EraKatePanel
+            deal={deal}
+            totalBillable={totalBillable}
+            billableWashed={billableWashed}
+            eraWindows={eraWindows}
+            onSave={saveEraWindows}
+          />
+        )}
 
         {crew.length === 0 ? (
           <div className="rounded-2xl border border-dashed p-8 text-center">
@@ -465,6 +493,84 @@ function PayoutPanel({
       </div>
     </details>
     </>
+  );
+}
+
+/** Maksuerät & kate — founders set the per-erä (instalment) window counts; the
+ *  per-erä kate (€1575 ÷ erän ikkunat) follows. Pure display/planning: it never
+ *  touches worker pay or the FR8 dashboard's whole-deal earnings model. */
+function EraKatePanel({ deal, totalBillable, billableWashed, eraWindows, onSave }: {
+  deal: FixedDeal;
+  totalBillable: number;
+  billableWashed: number;
+  eraWindows: number[] | null;
+  onSave: (windows: number[]) => Promise<boolean>;
+}) {
+  const periods = PAY_PERIODS;
+  const instalmentCents = Math.round(deal.capCents / periods);
+  const canonical = eraWindowCounts(totalBillable, periods, eraWindows);
+  const [counts, setCounts] = useState<number[]>(canonical);
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  // Re-sync when the server data changes (initial load / after save).
+  useEffect(() => { setCounts(eraWindowCounts(totalBillable, periods, eraWindows)); setSaved(false); }, [totalBillable, eraWindows, periods]);
+
+  const sum = counts.reduce((s, n) => s + n, 0);
+  const prog = computePayProgress(0, billableWashed, periods, counts);
+  const dirty = JSON.stringify(counts) !== JSON.stringify(canonical);
+
+  const setAt = (i: number, v: string) => {
+    const n = Math.max(0, Math.floor(Number(v.replace(/[^0-9]/g, "")) || 0));
+    setCounts((c) => c.map((x, j) => (j === i ? n : x)));
+    setSaved(false);
+  };
+  const save = async () => { setBusy(true); const ok = await onSave(counts); setBusy(false); if (ok) setSaved(true); };
+
+  return (
+    <div className="rounded-2xl border bg-card p-4 mb-5">
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="flex items-center gap-1.5 text-sm font-bold"><Wallet className="h-4 w-4" /> Maksuerät &amp; kate</h2>
+        <span className="text-[11px] text-muted-foreground">{eur(deal.capCents)} · {periods} erää · {eur(instalmentCents)}/erä</span>
+      </div>
+      <p className="text-[11px] text-muted-foreground mb-3">
+        Aseta kunkin erän ikkunamäärä — eräkohtainen kate = {eur(instalmentCents)} ÷ erän ikkunat. Vain perustajille, ei vaikuta palkkoihin.
+      </p>
+
+      <div className="space-y-2">
+        {counts.map((n, i) => {
+          const current = prog.currentPeriod === i + 1 && !prog.done && billableWashed > 0;
+          const kateCents = n > 0 ? Math.round(instalmentCents / n) : 0;
+          return (
+            <div key={i} className={`flex items-center gap-3 rounded-xl border px-3 py-2 ${current ? "border-primary/50 bg-primary/5" : "border-border"}`}>
+              <span className="text-xs font-semibold w-16 shrink-0">Erä {i + 1}{current ? " ·nyt" : ""}</span>
+              <Input
+                type="text" inputMode="numeric" value={String(n)}
+                onChange={(e) => setAt(i, e.target.value)}
+                className="h-8 w-20 text-right tabular-nums"
+                aria-label={`Erän ${i + 1} ikkunamäärä`}
+              />
+              <span className="text-[11px] text-muted-foreground">ikkunaa</span>
+              <span className="ml-auto text-right whitespace-nowrap">
+                <span className="text-sm font-bold tabular-nums">{eur(kateCents)}</span>
+                <span className="text-[10px] text-muted-foreground"> /ikkuna</span>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center justify-between gap-3 mt-3 pt-3 border-t border-border">
+        <span className={`text-[11px] ${sum === totalBillable ? "text-muted-foreground" : "text-amber-600"}`}>
+          Yhteensä {sum} / {totalBillable} sopimusikkunaa{sum !== totalBillable ? " — tarkista" : ""}
+          {" · "}{billableWashed} pesty{prog.done ? " · valmis 🎉" : billableWashed > 0 ? ` · ${prog.toNext} seuraavaan erään` : ""}
+        </span>
+        <button onClick={save} disabled={busy || !dirty}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-foreground px-3 py-1.5 text-xs font-semibold text-background shrink-0 disabled:opacity-40">
+          {busy ? "Tallennetaan…" : saved && !dirty ? <><Check className="h-3.5 w-3.5" /> Tallennettu</> : "Tallenna erät"}
+        </button>
+      </div>
+    </div>
   );
 }
 

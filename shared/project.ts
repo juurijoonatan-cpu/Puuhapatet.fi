@@ -152,6 +152,10 @@ export interface ProjectData {
   workers: string[];                                // worker ids shown in hours view
   crew?: CrewMember[];                              // hard-coded gig workers w/ private links (shared/crew.ts)
   expenses?: ProjExpense[];                         // logged job expenses (managers + workers)
+  /** Founders' editable per-instalment (erä) window counts for the fixed deal,
+   *  e.g. [40,41,42,45]. Drives the per-erä kate on the crew/payroll page; absent
+   *  → even split. Display/planning only — does NOT affect worker pay or earnings. */
+  eraWindows?: number[];
   updatedAt: number;                                // epoch ms
 }
 
@@ -727,6 +731,11 @@ export function sanitizeProjectData(input: any): ProjectData {
       })).filter((e: ProjExpense) => e.id && e.by)
     : [];
 
+  // Founders' editable per-erä window counts (clamped positive ints, ≤ 24 erää).
+  const eraWindows: number[] | undefined = Array.isArray(input.eraWindows) && input.eraWindows.length
+    ? input.eraWindows.slice(0, 24).map((n: any) => Math.max(0, Math.min(100000, Math.floor(Number(n) || 0))))
+    : undefined;
+
   return {
     version: 1,
     building: {
@@ -753,6 +762,7 @@ export function sanitizeProjectData(input: any): ProjectData {
     workers,
     crew: sanitizeCrew(input.crew),
     expenses,
+    ...(eraWindows ? { eraWindows } : {}),
     updatedAt: Date.now(),
   };
 }

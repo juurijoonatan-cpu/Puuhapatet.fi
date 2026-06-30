@@ -30,7 +30,7 @@ import {
 import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED } from "@shared/worker-agreements";
 import {
   computeTax, readVatStatus, readInPrepaymentRegister, readPayeeType, WITHHOLDING_COMPANY,
-  WITHHOLDING_NATURAL_PERSON, fmtPct, type TaxBreakdown,
+  WITHHOLDING_NATURAL_PERSON, VAT_SMALL_BUSINESS_LIMIT_EUR, fmtPct, type TaxBreakdown,
 } from "@shared/tax";
 import {
   BRAND_BILLERS, DEFAULT_BILLER_ID, resolveBrandBiller, billerToBuyer,
@@ -1318,6 +1318,41 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const brandEarned = Object.values(workerFeesTotal).reduce((s, v) => s + v, 0);
 
       res.json({ workerFees, workerJobCount, brandCash, brandEarned });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Per-founder (biller) customer-invoice turnover by calendar year, for the
+  // admin "Verotus" view. Each founder invoices customers under their own
+  // Y-tunnus, and the ALV vähäinen-toiminta exemption (AVL 3 §) depends on each
+  // staying under the limit. We sum every gig instalment (GigPayment) tagged to
+  // a biller, by the year it was invoiced. NOTE: this counts ONLY Puuhapatet
+  // customer invoices — the legal threshold counts ALL of a person's business
+  // activity, so this is a floor, surfaced with that caveat in the UI.
+  app.get("/api/admin/biller-turnover", async (_req, res) => {
+    try {
+      const rows = await db.select({ id: jobs.id, gigData: jobs.gigData }).from(jobs);
+      // year -> billerId -> cents
+      const byYear: Record<string, Record<string, number>> = {};
+      for (const row of rows) {
+        if (!row.gigData) continue;
+        let gig: GigData | null = null;
+        try { gig = sanitizeGigData(JSON.parse(row.gigData)); } catch { continue; }
+        for (const p of gig.payments || []) {
+          if (!p?.amountCents || p.amountCents <= 0) continue;
+          const billerId = p.biller?.id || DEFAULT_BILLER_ID; // legacy payments → first founder
+          const year = String(new Date(p.t || 0).getFullYear());
+          (byYear[year] ||= {});
+          byYear[year][billerId] = (byYear[year][billerId] ?? 0) + p.amountCents;
+        }
+      }
+      res.json({
+        ok: true,
+        limitEur: VAT_SMALL_BUSINESS_LIMIT_EUR,
+        billers: BRAND_BILLERS.map((b) => ({ id: b.id, name: b.name, yTunnus: b.yTunnus })),
+        turnoverByYear: byYear, // { "2026": { joonatan: cents, matias: cents } }
+      });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

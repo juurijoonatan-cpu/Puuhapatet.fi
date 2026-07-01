@@ -24,8 +24,8 @@ import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, computeEraDebts, allPoints, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
-  hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN, totalPaidPayoutCents,
-  type CrewMember,
+  hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN, MAX_CREW_DOC_LEN, totalPaidPayoutCents, retentionFromDate,
+  type CrewMember, type CrewDocument,
 } from "@shared/crew";
 import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED } from "@shared/worker-agreements";
 import {
@@ -4951,6 +4951,90 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Single-person admin view: aggregate ONE worker across every gig — profile,
+  // money movement (earned / paid / open + each payout tagged with its keikka),
+  // and documents. Used by /admin/tiimi/:workerId. Host-facing.
+  const matchesWorker = (m: CrewMember, wid: string) =>
+    m.id.toLowerCase() === wid || (m.linkedUserId ?? "").toLowerCase() === wid;
+
+  app.get("/api/admin/worker/:workerId", async (req, res) => {
+    try {
+      const wid = String(req.params.workerId).toLowerCase();
+      const allJobs = await db.select().from(jobs);
+      let worker: any = null;
+      const payouts: any[] = [];
+      const documents: any[] = [];
+      let earnedCents = 0, paidCents = 0;
+      for (const job of allJobs) {
+        const project = parseProject(job.projectData ?? null);
+        const m = (project?.crew || []).find((c) => matchesWorker(c, wid));
+        if (!m) continue;
+        const gigName = job.description || project!.building?.name || `Keikka #${job.id}`;
+        const stats = crewMemberStats(project!, m);
+        earnedCents += stats.earnedCents;
+        for (const p of (m.payouts || [])) {
+          if (p.status === "maksettu") paidCents += p.amountCents;
+          payouts.push({ ...p, jobId: job.id, gigName, token: m.token });
+        }
+        for (const d of (m.documents || [])) documents.push({ ...d, jobId: job.id });
+        if (!worker) {
+          worker = {
+            id: m.id, name: m.name, role: m.role, token: m.token,
+            photoDataUrl: m.profile?.photoDataUrl,
+            phone: m.profile?.phone, email: m.profile?.email,
+            yTunnus: m.profile?.yTunnus, city: m.profile?.city,
+            answers: m.profile?.answers ?? {},
+          };
+        }
+      }
+      if (!worker) return res.status(404).json({ error: "Työntekijää ei löytynyt" });
+      payouts.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      documents.sort((a, b) => (b.date || 0) - (a.date || 0));
+      res.json({
+        ok: true, worker,
+        totals: { earnedCents, paidCents, openCents: Math.max(0, earnedCents - paidCents) },
+        payouts, documents,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Host attaches a document (receipt/invoice) to a worker by hand. Stored on the
+  // member in the first gig they belong to; retention = date + 6 years.
+  app.post("/api/admin/worker/:workerId/document", async (req, res) => {
+    try {
+      const wid = String(req.params.workerId).toLowerCase();
+      const { date, desc, amountCents, fileName, fileDataUrl, kind } = (req.body || {}) as Record<string, any>;
+      const dt = Number(date) || Date.now();
+      const doc: CrewDocument = {
+        id: `doc_${randomUUID().slice(0, 12)}`,
+        date: dt,
+        desc: String(desc ?? "").slice(0, 300).trim(),
+        amountCents: amountCents != null && Number.isFinite(Number(amountCents)) ? Math.max(0, Math.round(Number(amountCents))) : undefined,
+        fileName: fileName ? String(fileName).slice(0, 200) : undefined,
+        fileDataUrl: typeof fileDataUrl === "string" && /^data:(image\/|application\/pdf)/.test(fileDataUrl) ? fileDataUrl.slice(0, MAX_CREW_DOC_LEN) : undefined,
+        kind: kind === "kuitti" || kind === "lasku" ? kind : "muu",
+        retentionUntil: retentionFromDate(dt),
+        addedAt: Date.now(),
+      };
+      if (!doc.desc && !doc.fileDataUrl) return res.status(400).json({ error: "Anna kuvaus tai tiedosto." });
+      const allJobs = await db.select().from(jobs);
+      for (const job of allJobs) {
+        const project = parseProject(job.projectData ?? null);
+        if (!project?.crew) continue;
+        const idx = project.crew.findIndex((c) => matchesWorker(c, wid));
+        if (idx < 0) continue;
+        project.crew[idx] = { ...project.crew[idx], documents: [doc, ...(project.crew[idx].documents || [])] };
+        await saveProject(job, project);
+        return res.json({ ok: true, document: doc });
+      }
+      return res.status(404).json({ error: "Työntekijää ei löytynyt" });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
     }
   });
 

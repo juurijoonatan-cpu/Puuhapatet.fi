@@ -286,7 +286,7 @@ export default function TaxExportPage() {
                   return (
                     <div key={b.id}>
                       <div className="flex items-baseline justify-between gap-2 mb-1">
-                        <span className="text-sm font-medium text-foreground">{b.name}{b.yTunnus ? <span className="text-[11px] text-muted-foreground"> · {b.yTunnus}</span> : null}</span>
+                        <Link href={`/admin/tiimi/${b.id}`} className="text-sm font-medium text-foreground hover:underline">{b.name}{b.yTunnus ? <span className="text-[11px] text-muted-foreground"> · {b.yTunnus}</span> : null}</Link>
                         <span className={`text-sm font-bold tabular-nums ${txtColor}`}>{fmt(cents)}</span>
                       </div>
                       <div className="h-2 w-full rounded-full bg-muted overflow-hidden">

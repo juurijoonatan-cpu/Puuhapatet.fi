@@ -137,6 +137,32 @@ export function payoutExpensesCents(p: CrewPayout): number {
   return (p.expenses || []).reduce((s, e) => s + Math.max(0, e.amountCents || 0), 0);
 }
 
+/** Max stored size for a manually-attached document/receipt data URL (~1.5 MB). */
+export const MAX_CREW_DOC_LEN = 1_500_000;
+
+/** Bookkeeping retention: documents must be kept 6 years from the end of the
+ *  accounting year (kirjanpitolaki). We store the concrete date for reference. */
+export const DOC_RETENTION_YEARS = 6;
+
+/**
+ * A document attached to a worker for the host's records: a receipt or invoice
+ * that relates to this person. Auto documents (their payout invoices) are derived
+ * from payouts; THIS type is for ones the host adds by hand. `retentionUntil` is a
+ * background field (kept 6 years) — not shown prominently.
+ */
+export interface CrewDocument {
+  id: string;
+  date: number;             // epoch ms — the document's date
+  desc: string;
+  amountCents?: number;
+  fileName?: string;
+  fileDataUrl?: string;     // uploaded file (image/pdf) as a data URL
+  kind?: "kuitti" | "lasku" | "muu";
+  retentionUntil: number;   // date + 6 years (säilytysaika) — background info
+  addedAt: number;
+  addedBy?: string;
+}
+
 export interface CrewMember {
   id: string;                   // stable worker id (matches washedBy / hours)
   token: string;                // secret link token (the worker's private URL)
@@ -168,6 +194,7 @@ export interface CrewMember {
   sessions?: CrewSession[];
   notes: CrewNote[];
   payouts?: CrewPayout[];       // Puuhapatet -> worker payments (newest-first)
+  documents?: CrewDocument[];   // host-attached receipts/invoices for this person
   createdAt: number;
 }
 
@@ -422,8 +449,35 @@ export function sanitizeCrewMember(input: any): CrewMember | null {
       .slice(0, 100)
       .map(sanitizePayout)
       .filter((p: CrewPayout | null): p is CrewPayout => !!p),
+    documents: (Array.isArray(input.documents) ? input.documents : [])
+      .slice(0, 200)
+      .map((d: any, i: number): CrewDocument => {
+        const date = Number(d?.date) || Date.now();
+        return {
+          id: String(d?.id ?? `doc_${i}`).slice(0, 40),
+          date,
+          desc: String(d?.desc ?? "").slice(0, 300).trim(),
+          amountCents: d?.amountCents != null && Number.isFinite(Number(d.amountCents))
+            ? Math.max(0, Math.round(Number(d.amountCents))) : undefined,
+          fileName: d?.fileName ? String(d.fileName).slice(0, 200) : undefined,
+          fileDataUrl: typeof d?.fileDataUrl === "string" && /^data:(image\/|application\/pdf)/.test(d.fileDataUrl)
+            ? d.fileDataUrl.slice(0, MAX_CREW_DOC_LEN) : undefined,
+          kind: d?.kind === "kuitti" || d?.kind === "lasku" ? d.kind : "muu",
+          retentionUntil: Number(d?.retentionUntil) || retentionFromDate(date),
+          addedAt: Number(d?.addedAt) || Date.now(),
+          addedBy: d?.addedBy ? String(d.addedBy).slice(0, 40) : undefined,
+        };
+      })
+      .filter((d: CrewDocument) => d.desc || d.fileDataUrl),
     createdAt: Number(input.createdAt) || Date.now(),
   };
+}
+
+/** Retention date = document date + 6 years (kirjanpidon säilytysaika). */
+export function retentionFromDate(dateMs: number): number {
+  const d = new Date(dateMs);
+  d.setFullYear(d.getFullYear() + DOC_RETENTION_YEARS);
+  return d.getTime();
 }
 
 export function sanitizeCrew(input: any): CrewMember[] {

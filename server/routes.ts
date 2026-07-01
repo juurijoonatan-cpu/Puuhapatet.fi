@@ -1358,6 +1358,91 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // Founder cross-invoicing across ALL gigs. The two founders split every gig
+  // 50/50 but only ONE of them bills the customer (they alternate whose Y-tunnus
+  // collects each erä). So the biller ends up holding the other founder's half —
+  // this endpoint nets, across every billed erä of every gig, who owes whom, so
+  // they can settle up with a founder-to-founder invoice/kuitti.
+  app.get("/api/admin/founder-settlement", async (_req, res) => {
+    try {
+      const rows = await db.select().from(jobs);
+      const founderList = BRAND_BILLERS.map((b) => ({ id: b.id, name: b.name, yTunnus: b.yTunnus }));
+      const n = Math.max(1, founderList.length);
+      const founders = founderList.map((f) => ({
+        id: f.id, name: f.name, yTunnus: f.yTunnus,
+        billedCents: 0,      // total collected from customers as biller
+        kateShareCents: 0,   // their equal share of the total kate
+        palkatPaidCents: 0,  // workers' palkat the biller fronted
+      }));
+      const idxOf = (id?: string) => founders.findIndex((f) => f.id === id);
+      // owes[fromId][toId] = cents the biller (from) holds that belongs to (to).
+      const owes: Record<string, Record<string, number>> = {};
+      const bump = (from: string, to: string, cents: number) => {
+        if (!from || !to || from === to || cents <= 0) return;
+        (owes[from] ||= {})[to] = (owes[from][to] ?? 0) + cents;
+      };
+      const perGig: {
+        jobId: number; gigName: string;
+        eras: { era: number; billerName: string; instalmentCents: number; palkatCents: number; kateCents: number; paysOut: { name: string; cents: number }[] }[];
+      }[] = [];
+
+      for (const job of rows) {
+        const project = parseProject(job.projectData ?? null);
+        if (!project) continue;
+        const deal = fixedDealFor(project);
+        if (!deal) continue;
+        const eraBreakdown = computeEraDebts(project, deal, project.crew || [], project.eraWindows ?? null);
+        const gig = parseGig(job.gigData);
+        const payments = gig?.payments ?? [];
+        eraBreakdown.forEach((e, i) => {
+          const b = payments[i]?.biller;
+          (e as any).biller = b ? { id: b.id, name: b.name } : null;
+        });
+        const gigName = gig?.company?.name || job.description || `Keikka #${job.id}`;
+        const eras: (typeof perGig)[number]["eras"] = [];
+        for (const e of eraBreakdown) {
+          const biller = (e as any).biller as { id: string; name: string } | null;
+          if (!biller?.id) continue; // only billed erät (cash actually moved)
+          const kate = e.marginCents;
+          const base = Math.floor(kate / n);
+          const shares = founders.map((f, i) => ({ id: f.id, name: f.name, cents: i === 0 ? kate - base * (n - 1) : base }));
+          shares.forEach((s) => { const j = idxOf(s.id); if (j >= 0) founders[j].kateShareCents += s.cents; });
+          const bj = idxOf(biller.id);
+          if (bj >= 0) { founders[bj].billedCents += e.instalmentCents; founders[bj].palkatPaidCents += e.earnedCents; }
+          const paysOut = shares.filter((s) => s.id !== biller.id);
+          paysOut.forEach((s) => bump(biller.id, s.id, s.cents));
+          eras.push({
+            era: e.era,
+            billerName: biller.name || (bj >= 0 ? founders[bj].name : ""),
+            instalmentCents: e.instalmentCents,
+            palkatCents: e.earnedCents,
+            kateCents: kate,
+            paysOut: paysOut.map((s) => ({ name: s.name, cents: s.cents })),
+          });
+        }
+        if (eras.length > 0) perGig.push({ jobId: job.id, gigName, eras });
+      }
+
+      // Net pairwise: for each unordered founder pair, cancel opposing debts so
+      // we end up with a single "X should pay Y €Z" line per pair.
+      const crossInvoices: { fromId: string; fromName: string; toId: string; toName: string; cents: number }[] = [];
+      for (let i = 0; i < founders.length; i++) {
+        for (let j = i + 1; j < founders.length; j++) {
+          const a = founders[i], b = founders[j];
+          const ab = owes[a.id]?.[b.id] ?? 0; // a holds b's money
+          const ba = owes[b.id]?.[a.id] ?? 0; // b holds a's money
+          const net = ab - ba;
+          if (net > 0) crossInvoices.push({ fromId: a.id, fromName: a.name, toId: b.id, toName: b.name, cents: net });
+          else if (net < 0) crossInvoices.push({ fromId: b.id, fromName: b.name, toId: a.id, toName: a.name, cents: -net });
+        }
+      }
+
+      res.json({ ok: true, founders, crossInvoices, perGig });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Mark a worker's current debt as paid (inserts a payment record)
   app.post("/api/workers/:id/mark-paid", async (req, res) => {
     try {

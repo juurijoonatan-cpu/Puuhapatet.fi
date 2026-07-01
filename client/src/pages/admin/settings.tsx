@@ -435,17 +435,22 @@ export default function AdminSettingsPage() {
           </Card>
         )}
 
-        {/* Tax export link */}
+        {/* Verotus & tiimi — combined finance hub (verotuloste + ALV + bossien
+            laskutus + tiimi, all folded into dropdowns on one clean page) */}
         <Link href="/admin/tax-export">
-          <Card className="p-5 bg-card border-0 premium-shadow mb-4 cursor-pointer hover:opacity-95 transition-opacity">
+          <Card className="p-5 bg-card border-0 premium-shadow mb-4 cursor-pointer hover:opacity-95 transition-opacity ring-1 ring-green-500/20">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
                   <FileSpreadsheet className="w-5 h-5 text-green-600 dark:text-green-400" />
                 </div>
                 <div>
-                  <p className="font-semibold text-foreground">Verotuloste</p>
-                  <p className="text-sm text-muted-foreground">Keikat verotusta varten · CSV / tulosta</p>
+                  <p className="font-semibold text-foreground">Verotus &amp; tiimi</p>
+                  <p className="text-sm text-muted-foreground">
+                    {isHost
+                      ? "Verotuloste, ALV-seuranta, bossien tilitys & tekijät"
+                      : "Keikat verotusta varten · CSV / tulosta"}
+                  </p>
                 </div>
               </div>
               <ArrowLeft className="w-4 h-4 text-muted-foreground rotate-180" />

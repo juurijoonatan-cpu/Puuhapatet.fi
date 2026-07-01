@@ -71,6 +71,7 @@ import AdminCustomersPage from "@/pages/admin/customers";
 import AdminQuotesPage from "@/pages/admin/quotes";
 import AdminGuidePage from "@/pages/admin/guide";
 import AdminTaxExportPage from "@/pages/admin/tax-export";
+import AdminWorkerDetailPage from "@/pages/admin/worker-detail";
 import AdminInvestmentsPage from "@/pages/admin/investments";
 import AdminInboxPage from "@/pages/admin/inbox";
 import QuotePage from "@/pages/quote";
@@ -262,6 +263,11 @@ function Router() {
       <Route path="/admin/tax-export">
         <ProtectedRoute>
           <AdminTaxExportPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/admin/tiimi/:workerId">
+        <ProtectedRoute>
+          <AdminWorkerDetailPage />
         </ProtectedRoute>
       </Route>
       <Route path="/admin/investments">

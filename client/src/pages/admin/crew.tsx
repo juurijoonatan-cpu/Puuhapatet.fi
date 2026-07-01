@@ -7,7 +7,7 @@
  * their own /tyo/:token dashboard.
  */
 import { useEffect, useState, useCallback } from "react";
-import { useRoute, useLocation } from "wouter";
+import { useRoute, useLocation, Link } from "wouter";
 import { api, type HostCrewRow, type FounderSettlement } from "@/lib/api";
 import { isFounder } from "@shared/team";
 import type { ProjBuilding, FixedDeal, EraDebtBreakdown } from "@shared/project";
@@ -919,7 +919,7 @@ function WorkerCardHeader({
       <div className="flex items-center gap-3">
         {/* Avatar: onboarding photo → static /fr8/<id>.jpg → initials (image hides
             itself on load error, revealing the initials underneath). */}
-        <div className="relative grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full bg-muted text-sm font-bold text-muted-foreground">
+        <Link href={`/admin/tiimi/${member.id}`} aria-label={`Avaa ${member.name}`} className="relative grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full bg-muted text-sm font-bold text-muted-foreground transition-transform hover:scale-105 active:scale-95">
           {initials}
           <img
             src={member.profile?.photoDataUrl || `/fr8/${member.id}.jpg`}
@@ -927,7 +927,7 @@ function WorkerCardHeader({
             className="absolute inset-0 h-full w-full object-cover"
             onError={(e) => { e.currentTarget.style.display = "none"; }}
           />
-        </div>
+        </Link>
         <div className="min-w-0 flex-1">
           <input
             value={name}

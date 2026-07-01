@@ -103,6 +103,18 @@ export interface FounderSettlement {
   }[];
 }
 
+/** Aggregated single-worker admin view (/admin/tiimi/:workerId). */
+export interface WorkerDetail {
+  worker: {
+    id: string; name: string; role: string; token: string;
+    photoDataUrl?: string; phone?: string; email?: string; yTunnus?: string; city?: string;
+    answers: Record<string, string>;
+  };
+  totals: { earnedCents: number; paidCents: number; openCents: number };
+  payouts: (import("@shared/crew").CrewPayout & { jobId: number; gigName: string; token: string })[];
+  documents: (import("@shared/crew").CrewDocument & { jobId: number })[];
+}
+
 /** The logged-in admin's own earnings on a gig they also work (e.g. Petrus). */
 export interface MyGigWork {
   jobId: number;
@@ -914,6 +926,18 @@ export const api = {
   deletePayout: (jobId: number, memberId: string, payoutId: string) =>
     request<{ ok: boolean; member: CrewMember }>(
       "DELETE", `/api/jobs/${jobId}/crew/${memberId}/payout/${payoutId}`),
+
+  // Host: single-worker detail (profile + money movement + documents) across gigs.
+  getWorker: (workerId: string) =>
+    request<{ ok: boolean } & WorkerDetail>("GET", `/api/admin/worker/${workerId}`),
+
+  // Host: attach a document (receipt/invoice) to a worker by hand.
+  addWorkerDocument: (
+    workerId: string,
+    data: { date?: number; desc: string; amountCents?: number; fileName?: string; fileDataUrl?: string; kind?: "kuitti" | "lasku" | "muu" },
+  ) =>
+    request<{ ok: boolean; document: import("@shared/crew").CrewDocument }>(
+      "POST", `/api/admin/worker/${workerId}/document`, data),
 
   // Host: mark a payout paid (after manual bank transfer) → auto-invoice + email.
   // Optional billerId overrides the buyer captured at creation.

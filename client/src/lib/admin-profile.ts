@@ -132,6 +132,7 @@ export const USERS: AdminProfile[] = [
     id: "oona",
     name: "Oona",
     role: "STAFF",
+    photoUrl: "/fr8/oona.jpg",
     dashboardOnly: true,
   },
   {

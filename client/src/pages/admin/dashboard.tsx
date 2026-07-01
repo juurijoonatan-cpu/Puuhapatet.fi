@@ -324,19 +324,21 @@ export default function AdminDashboard() {
                 return (
                   <div key={u.id} className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      {u.photoUrl ? (
-                        <img
-                          src={u.photoUrl}
-                          alt={u.name}
-                          className="w-8 h-8 rounded-full object-cover"
-                        />
-                      ) : (
-                        <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
-                          <span className="text-xs font-semibold text-muted-foreground">
-                            {u.name[0]}
-                          </span>
-                        </div>
-                      )}
+                      <Link href={`/admin/tiimi/${u.id}`} aria-label={`Avaa ${u.name}`} className="shrink-0 rounded-full transition-transform hover:scale-105 active:scale-95">
+                        {u.photoUrl ? (
+                          <img
+                            src={u.photoUrl}
+                            alt={u.name}
+                            className="w-8 h-8 rounded-full object-cover"
+                          />
+                        ) : (
+                          <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+                            <span className="text-xs font-semibold text-muted-foreground">
+                              {u.name[0]}
+                            </span>
+                          </div>
+                        )}
+                      </Link>
                       <div>
                         <p className="text-sm font-medium text-foreground">{u.name}</p>
                         <p className="text-xs text-muted-foreground">

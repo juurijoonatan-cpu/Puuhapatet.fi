@@ -910,6 +910,11 @@ export const api = {
     request<{ ok: boolean; member: CrewMember }>(
       "POST", `/api/jobs/${jobId}/crew/${memberId}/payout`, data),
 
+  // Host: delete a NON-paid payout (scrap a wrong one and make a new one).
+  deletePayout: (jobId: number, memberId: string, payoutId: string) =>
+    request<{ ok: boolean; member: CrewMember }>(
+      "DELETE", `/api/jobs/${jobId}/crew/${memberId}/payout/${payoutId}`),
+
   // Host: mark a payout paid (after manual bank transfer) → auto-invoice + email.
   // Optional billerId overrides the buyer captured at creation.
   markPayoutPaid: (jobId: number, memberId: string, payoutId: string, billerId?: string) =>

@@ -28,7 +28,7 @@ import SignaturePad from "@/components/SignaturePad";
 import FloorView from "@/components/fr8/FloorView";
 import {
   computeTax, readVatStatus, readInPrepaymentRegister, readPayeeType, fmtPct, fmtEurCents,
-  VAT_STATUS_KEY, PREPAYMENT_REGISTER_KEY, PAYEE_TYPE_KEY, type VatStatus,
+  VAT_STATUS_KEY, type VatStatus,
 } from "@shared/tax";
 import { computePayProgress } from "@shared/payprogress";
 import { MAX_PHOTO_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN } from "@shared/crew";
@@ -737,9 +737,8 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
     // before the first invoice. (computeTax defaults: no VAT + withholding applied.)
     const ytStatus = answers[YTUNNUS_STATUS_KEY] || "tulossa";
     const hasYtunnus = ytStatus === "on";
-    const prepayReg = answers[PREPAYMENT_REGISTER_KEY] || "";
     // Trainees skip the insurance/risk acknowledgement (their leader carries it).
-    const canContinue = missing.length === 0 && (isTrainee || (!!insurance && riskOk && (hasYtunnus ? !!prepayReg : true)));
+    const canContinue = missing.length === 0 && (isTrainee || (!!insurance && riskOk));
     return (
       <Paper>
         <Wrap>
@@ -842,27 +841,8 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
                   <span style={fieldLabel}>Y-tunnus</span>
                   <input value={answers.yTunnus ?? ""} onChange={(e) => setAnswer("yTunnus", e.target.value)} placeholder="1234567-8" style={inputStyle} />
                 </label>
-                <p style={{ ...fieldLabel, marginTop: 16, marginBottom: 8 }}>Ennakkoperintärekisteri *</p>
-                <div style={{ display: "flex", gap: 8 }}>
-                  {([["kylla", "Olen rekisterissä"], ["ei", "En ole / en tiedä"]] as [string, string][]).map(([val, lbl]) => (
-                    <button
-                      key={val}
-                      type="button"
-                      onClick={() => setAnswer(PREPAYMENT_REGISTER_KEY, val)}
-                      style={{
-                        flex: 1, padding: "11px", borderRadius: 10, cursor: "pointer", fontFamily: FONT, fontSize: 13, fontWeight: 600,
-                        border: `1.5px solid ${prepayReg === val ? T.green : T.hair}`,
-                        background: prepayReg === val ? "rgba(62,124,89,0.10)" : "#fff",
-                        color: prepayReg === val ? T.green : T.ink,
-                      }}
-                    >
-                      {prepayReg === val ? "✓ " : ""}{lbl}
-                    </button>
-                  ))}
-                </div>
-                <p style={{ fontSize: 11.5, color: T.muted, margin: "8px 0 0", lineHeight: 1.5 }}>
-                  Jos et ole ennakkoperintärekisterissä, laki vaatii että pidätämme ennakonpidätyksen ennen maksua ja
-                  tilitämme sen Verolle. Pidätys luetaan hyväksesi verotuksessa.
+                <p style={{ fontSize: 11.5, color: T.muted, margin: "10px 0 0", lineHeight: 1.5 }}>
+                  Laskutat työsi omalla Y-tunnuksellasi ja hoidat verosi itse. Saat koko summan tilillesi.
                 </p>
               </>
             ) : (
@@ -2027,10 +2007,6 @@ function InsuranceCard({ token, view, setView }: { token: string; view: WorkerVi
 function TaxStatusCard({ token, view, setView }: { token: string; view: WorkerView; setView: (v: WorkerView) => void }) {
   const answers = view.worker.profile?.answers;
   const vat = readVatStatus(answers);
-  const inRegister = readInPrepaymentRegister(answers);
-  const declaredRegister = answers?.[PREPAYMENT_REGISTER_KEY] === "kylla" || answers?.[PREPAYMENT_REGISTER_KEY] === "ei";
-  const payeeIsCompany = answers?.[PAYEE_TYPE_KEY] === "yritys";
-  const declaredPayee = answers?.[PAYEE_TYPE_KEY] === "yritys" || answers?.[PAYEE_TYPE_KEY] === "henkilo";
   const [busy, setBusy] = useState(false);
 
   const save = async (key: string, val: string) => {
@@ -2064,33 +2040,12 @@ function TaxStatusCard({ token, view, setView }: { token: string; view: WorkerVi
         <button onClick={() => save(VAT_STATUS_KEY, "vahainen_toiminta")} disabled={busy} style={opt(vat === "vahainen_toiminta")}>Ei ALV:tä<br/><span style={{ fontWeight: 400, fontSize: 11, opacity: 0.85 }}>vähäinen toiminta</span></button>
         <button onClick={() => save(VAT_STATUS_KEY, "alv_rekisterissa")} disabled={busy} style={opt(vat === "alv_rekisterissa")}>ALV-rekisterissä<br/><span style={{ fontWeight: 400, fontSize: 11, opacity: 0.85 }}>lisää 25,5 %</span></button>
       </div>
-      <p style={{ margin: "0 0 14px", fontSize: 11.5, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
+      <p style={{ margin: "0 0 4px", fontSize: 11.5, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
         Jos liikevaihtosi on alle ~20 000 € / kalenterivuosi, voit toimia ilman ALV:tä (AVL 3 §). Tarkista vero.fi.
       </p>
-
-      {/* Ennakkoperintärekisteri */}
-      <p style={{ margin: "0 0 6px", fontSize: 12.5, fontWeight: 600, color: "rgba(255,255,255,0.85)" }}>Ennakkoperintärekisteri</p>
-      <div style={{ display: "flex", gap: 8 }}>
-        <button onClick={() => save(PREPAYMENT_REGISTER_KEY, "kylla")} disabled={busy} style={opt(inRegister)}>Kyllä, olen</button>
-        <button onClick={() => save(PREPAYMENT_REGISTER_KEY, "ei")} disabled={busy} style={opt(declaredRegister && !inRegister)}>En / en tiedä</button>
-      </div>
-
-      {/* Maksunsaajan muoto — ratkaisee ennakonpidätys-%:n (60 % henkilö / 13 % yhtiö),
-          ja vain jos et ole ennakkoperintärekisterissä. */}
-      {!inRegister && (
-        <>
-          <p style={{ margin: "14px 0 6px", fontSize: 12.5, fontWeight: 600, color: "rgba(255,255,255,0.85)" }}>Toimitko henkilönä vai yhtiönä?</p>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => save(PAYEE_TYPE_KEY, "henkilo")} disabled={busy} style={opt(declaredPayee && !payeeIsCompany)}>Henkilö / toiminimi<br/><span style={{ fontWeight: 400, fontSize: 11, opacity: 0.85 }}>ennakonpidätys 60 %</span></button>
-            <button onClick={() => save(PAYEE_TYPE_KEY, "yritys")} disabled={busy} style={opt(payeeIsCompany)}>Yhtiö (Oy/Ky/Ay)<br/><span style={{ fontWeight: 400, fontSize: 11, opacity: 0.85 }}>ennakonpidätys 13 %</span></button>
-          </div>
-          <p style={{ margin: "10px 0 0", fontSize: 11.5, color: "#E0A800", lineHeight: 1.55 }}>
-            ⚠️ Koska et ole ennakkoperintärekisterissä, Puuhapatetin on pidätettävä verosi maksusta
-            ({payeeIsCompany ? "13 % — yhtiö" : "60 % — henkilö/toiminimi"}). Rekisteröidy maksutta osoitteessa <b>ytj.fi</b> —
-            silloin saat koko summan ja hoidat verot itse.
-          </p>
-        </>
-      )}
+      <p style={{ margin: "0", fontSize: 11.5, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
+        Saat koko summan tilillesi ja hoidat verosi itse — Puuhapatet ei pidätä veroa maksusta.
+      </p>
     </div>
   );
 }

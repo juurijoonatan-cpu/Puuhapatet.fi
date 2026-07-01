@@ -5220,6 +5220,32 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // Delete a payout notification (host-only). Only NON-paid payouts can be removed
+  // — a paid one has an issued invoice and must stay. Lets the host scrap a wrong
+  // payout and create a fresh one.
+  app.delete("/api/jobs/:id/crew/:memberId/payout/:payoutId", async (req, res) => {
+    try {
+      const loaded = await loadJobProject(Number(req.params.id));
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const { job, project } = loaded;
+      const mid = String(req.params.memberId);
+      const pid = String(req.params.payoutId);
+      const member = (project.crew || []).find((m) => m.id === mid);
+      if (!member) return res.status(404).json({ error: "Työntekijää ei löydy" });
+      const payout = (member.payouts || []).find((p) => p.id === pid);
+      if (!payout) return res.status(404).json({ error: "Maksua ei löytynyt" });
+      if (payout.status === "maksettu") {
+        return res.status(409).json({ error: "Maksettua maksua ei voi poistaa (lasku on jo luotu)." });
+      }
+      const payouts = (member.payouts || []).filter((p) => p.id !== pid);
+      project.crew = (project.crew || []).map((m) => (m.id === mid ? { ...m, payouts } : m));
+      const saved = await saveProject(job, project);
+      res.json({ ok: true, member: (saved.crew || []).find((m) => m.id === mid) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
   // Mark a payout as paid (after manual bank transfer): generate the worker's
   // invoice PDF and email it to the team. Idempotent-ish: only acts when not
   // already paid.

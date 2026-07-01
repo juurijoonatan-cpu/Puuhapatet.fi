@@ -137,9 +137,11 @@ export function readVatStatus(answers: Record<string, string> | undefined | null
   return v === "alv_rekisterissa" || v === "vahainen_toiminta" ? v : "ei_tiedossa";
 }
 
-/** Onko alihankkija ennakkoperintärekisterissä (oletus: ei → varovainen). */
+/** Toimitetaanko ennakonpidätys? Puuhapatet EI tee ennakonpidätystä — alihankkijat
+ *  hoitavat omat veronsa itse (käsitellään ennakkoperintärekisterissä olevina).
+ *  Palautetaan siis oletuksena true (= ei pidätystä); vain nimenomainen "ei" pidättää. */
 export function readInPrepaymentRegister(answers: Record<string, string> | undefined | null): boolean {
-  return answers?.[PREPAYMENT_REGISTER_KEY] === "kylla";
+  return answers?.[PREPAYMENT_REGISTER_KEY] !== "ei";
 }
 
 /** Maksunsaajan muoto profiilin vastauksista. "yritys" → company, muu → individual

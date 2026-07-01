@@ -103,6 +103,27 @@ export interface FounderSettlement {
   }[];
 }
 
+/** Founder cross-invoicing netted across all gigs. The founders split gigs
+ *  50/50 but only one bills each erä, so the biller holds the other's half —
+ *  `crossInvoices` is the net "X should pay Y €Z" after cancelling opposing debts. */
+export interface FounderCrossSettlement {
+  ok: boolean;
+  founders: {
+    id: string;
+    name: string;
+    yTunnus?: string;
+    billedCents: number;      // total collected from customers as biller
+    kateShareCents: number;   // equal share of the total kate (passive income)
+    palkatPaidCents: number;  // workers' palkat the biller fronted
+  }[];
+  crossInvoices: { fromId: string; fromName: string; toId: string; toName: string; cents: number }[];
+  perGig: {
+    jobId: number;
+    gigName: string;
+    eras: { era: number; billerName: string; instalmentCents: number; palkatCents: number; kateCents: number; paysOut: { name: string; cents: number }[] }[];
+  }[];
+}
+
 /** Aggregated single-worker admin view (/admin/tiimi/:workerId). */
 export interface WorkerDetail {
   worker: {
@@ -468,6 +489,11 @@ export const api = {
       billers: { id: string; name: string; yTunnus?: string }[];
       turnoverByYear: Record<string, Record<string, number>>;
     }>("GET", "/api/admin/biller-turnover"),
+
+  // Founder cross-invoicing netted across ALL gigs: who owes whom, plus each
+  // founder's totals and a per-gig breakdown. Powers "Bossien laskutus & tilitys".
+  getFounderSettlement: () =>
+    request<FounderCrossSettlement>("GET", "/api/admin/founder-settlement"),
 
   markWorkerPaid: (workerId: string, amount: number) =>
     request<{ id: number }>("POST", `/api/workers/${workerId}/mark-paid`, { amount }),

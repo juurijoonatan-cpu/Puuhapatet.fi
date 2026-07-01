@@ -91,6 +91,9 @@ export default function AdminCrewPage() {
   const markPaid = async (id: string, payoutId: string) => {
     const res = await api.markPayoutPaid(jobId, id, payoutId); await load(); return res;
   };
+  const deletePayout = async (id: string, payoutId: string) => {
+    const res = await api.deletePayout(jobId, id, payoutId); await load(); return res.ok;
+  };
   const logDay = async (id: string, hours: number) => {
     const res = await api.crewLogDay(jobId, id, hours); await load(); return res;
   };
@@ -258,6 +261,7 @@ export default function AdminCrewPage() {
                       suggestedWindows={Math.max(0, stats.washed - claimedWindows)}
                       onCreate={createPayout}
                       onMarkPaid={markPaid}
+                      onDelete={deletePayout}
                     />
                   );
                 })()}
@@ -330,13 +334,14 @@ function DayLogPanel({
 /** Payout management for one worker (Puuhapatet → alihankkija). Create a payout
  *  notification; once the worker approves, mark it paid → invoice auto-generated. */
 function PayoutPanel({
-  member, suggestedCents, suggestedWindows, onCreate, onMarkPaid,
+  member, suggestedCents, suggestedWindows, onCreate, onMarkPaid, onDelete,
 }: {
   member: HostCrewRow["member"];
   suggestedCents: number;
   suggestedWindows: number;
   onCreate: (id: string, data: { amountCents: number; windows?: number; note?: string; billerId?: string }) => Promise<boolean>;
   onMarkPaid: (id: string, payoutId: string) => Promise<{ ok: boolean; data?: { emailId?: string }; error?: string }>;
+  onDelete: (id: string, payoutId: string) => Promise<boolean>;
 }) {
   const payouts: CrewPayout[] = member.payouts || [];
   const [open, setOpen] = useState(false);
@@ -454,11 +459,23 @@ function PayoutPanel({
                   </div>
                 </div>
               )}
-              {p.status === "hyvaksytty" && (
-                <button onClick={() => pay(p)} disabled={busy} className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
-                  <Check className="h-3.5 w-3.5" /> Merkitse maksetuksi
-                </button>
-              )}
+              <div className="flex items-center gap-2 mt-2">
+                {p.status === "hyvaksytty" && (
+                  <button onClick={() => pay(p)} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
+                    <Check className="h-3.5 w-3.5" /> Merkitse maksetuksi
+                  </button>
+                )}
+                {/* A non-paid payout can be scrapped (e.g. wrong amount) and re-created. */}
+                {p.status !== "maksettu" && (
+                  <button
+                    onClick={async () => { if (confirm("Poistetaanko tämä maksu? Voit luoda uuden.")) { setBusy(true); await onDelete(member.id, p.id); setBusy(false); } }}
+                    disabled={busy}
+                    className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-red-500 disabled:opacity-50"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" /> Poista
+                  </button>
+                )}
+              </div>
             </div>
           );
         })}

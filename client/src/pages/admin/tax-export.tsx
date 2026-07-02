@@ -14,14 +14,17 @@
  * dropdownit ovat vain ruudulla.
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, Download, Printer, FileSpreadsheet, Percent, Users, Sparkles, Info, ArrowRight, Wallet } from "lucide-react";
+import { ArrowLeft, Download, Printer, FileSpreadsheet, Percent, Users, Sparkles, Info, ArrowRight, Wallet, FileText, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Disclosure } from "@/components/ui/disclosure";
 import { api, type FounderCrossSettlement, type WorkerStatsResponse } from "@/lib/api";
 import { getAdminProfile, USERS } from "@/lib/admin-profile";
+import { BRAND_BILLERS } from "@shared/billers";
 import { feeRateForWorker, STAFF_SERVICE_FEE_RATE, effectiveJobTotal } from "@shared/team";
 
 interface JobRow {
@@ -37,6 +40,7 @@ interface JobRow {
     quoteStatus?: string | null;
     unitCount?: number | null;
     isTaloyhtiio?: boolean | null;
+    billedBy?: string | null;
   };
   customer: { id: number; name: string; address: string } | null;
 }
@@ -82,7 +86,7 @@ export default function TaxExportPage() {
   const [settlement, setSettlement] = useState<FounderCrossSettlement | null>(null);
   const [workerStats, setWorkerStats] = useState<WorkerStatsResponse | null>(null);
 
-  useEffect(() => {
+  const loadMoney = useCallback(() => {
     api.getJobs().then((res) => {
       if (res.ok && res.data) {
         // Completed jobs only, and never a declined/cancelled quote — a declined
@@ -93,17 +97,29 @@ export default function TaxExportPage() {
       }
       setLoading(false);
     });
-    if (profile?.startupBonus && profile.startupBonus > 0) {
-      api.getStartupBonusUsages(profile.id).then((res) => {
-        if (res.ok && res.data) setAllBonusUsages(res.data as BonusUsage[]);
-      });
-    }
     if (isHost) {
       api.getBillerTurnover().then((res) => { if (res.ok && res.data) setTurnover(res.data); });
       api.getFounderSettlement().then((res) => { if (res.ok && res.data) setSettlement(res.data); });
       api.workersStats().then((res) => { if (res.ok && res.data) setWorkerStats(res.data); });
     }
+  }, [isHost]);
+
+  useEffect(() => {
+    loadMoney();
+    if (profile?.startupBonus && profile.startupBonus > 0) {
+      api.getStartupBonusUsages(profile.id).then((res) => {
+        if (res.ok && res.data) setAllBonusUsages(res.data as BonusUsage[]);
+      });
+    }
   }, []);
+
+  // HOST sets who billed a past job — the ALV turnover + founder cross-invoicing
+  // reload so the money lands on the right person immediately.
+  const setBilledBy = async (jobId: number, billedBy: string) => {
+    setJobs(prev => prev.map(r => r.job.id === jobId ? { ...r, job: { ...r.job, billedBy: billedBy || null } } : r));
+    await api.updateJob(jobId, { billedBy: billedBy || null } as any);
+    loadMoney();
+  };
 
   // Filter to the current user's jobs, then the selected year.
   const myJobs = jobs.filter(r => {
@@ -259,6 +275,25 @@ export default function TaxExportPage() {
                               <p className="font-medium text-foreground">{r.customer?.name ?? "—"}</p>
                               <p className="text-xs text-muted-foreground">{r.customer?.address ?? ""}</p>
                               {r.numWorkers > 1 && <p className="text-xs text-blue-600 dark:text-blue-400">1/{r.numWorkers} osuus</p>}
+                              {/* Kuka laskutti asiakasta (kenen Y-tunnukselle raha meni) — ohjaa
+                                  ALV-seurannan ja bossien tilityksen oikealle henkilölle. */}
+                              {isHost && (
+                                <select
+                                  value={r.job.billedBy ?? ""}
+                                  onChange={(e) => setBilledBy(r.job.id, e.target.value)}
+                                  className={`mt-1 rounded-md border bg-background px-1.5 py-0.5 text-[11px] ${r.job.billedBy ? "text-foreground" : "border-amber-400 text-amber-600"}`}
+                                >
+                                  <option value="">Laskutti: ?</option>
+                                  {BRAND_BILLERS.map(b => (
+                                    <option key={b.id} value={b.id}>Laskutti: {firstName(b.name)}</option>
+                                  ))}
+                                  {/* Staff with own Y-tunnus (e.g. Petrus) can be the biller too —
+                                      then the job just isn't founders' turnover. */}
+                                  {USERS.filter(u => u.yTunnus && !BRAND_BILLERS.some(b => b.id === u.id)).map(u => (
+                                    <option key={u.id} value={u.id}>Laskutti: {firstName(u.name)}</option>
+                                  ))}
+                                </select>
+                              )}
                             </td>
                             <td className="py-2 pr-3 text-right font-medium">{fmt(r.myRevenue)}</td>
                             <td className="py-2 pr-3 text-right text-purple-600 dark:text-purple-400 hidden sm:table-cell">−{fmt(r.serviceFee)}</td>
@@ -356,8 +391,49 @@ export default function TaxExportPage() {
                       );
                     })}
                   </div>
+                  {(() => {
+                    const un = turnover.unassignedByYear?.[String(year)];
+                    if (!un || un.count === 0) return null;
+                    // ALL done jobs without a biller for this year (not just the
+                    // viewer's own) — attributable right here so the warning is
+                    // always resolvable.
+                    const unassignedJobs = jobs.filter(r => {
+                      const d = r.job.scheduledAt || r.job.createdAt;
+                      return !r.job.billedBy && new Date(d).getFullYear() === year;
+                    });
+                    return (
+                      <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                        <p className="text-[11px] text-amber-600 mb-1.5">
+                          ⚠️ {un.count} valmista keikkaa ({fmt(un.cents)}) ilman laskuttajaa — merkitse
+                          kuka laskutti, jotta liikevaihto kohdistuu oikealle henkilölle.
+                        </p>
+                        <div className="space-y-1">
+                          {unassignedJobs.map(r => (
+                            <div key={r.job.id} className="flex items-center justify-between gap-2 text-[11px]">
+                              <span className="truncate text-foreground">
+                                {fmtDate(r.job.scheduledAt || r.job.createdAt)} · {r.customer?.name ?? r.job.description}
+                                <span className="text-muted-foreground"> · {fmt(effectiveJobTotal(r.job))}</span>
+                              </span>
+                              <select
+                                value=""
+                                onChange={(e) => e.target.value && setBilledBy(r.job.id, e.target.value)}
+                                className="shrink-0 rounded-md border border-amber-400 bg-background px-1.5 py-0.5 text-[11px] text-amber-600"
+                              >
+                                <option value="">Laskutti: ?</option>
+                                {BRAND_BILLERS.map(b => <option key={b.id} value={b.id}>{firstName(b.name)}</option>)}
+                                {USERS.filter(u => u.yTunnus && !BRAND_BILLERS.some(b => b.id === u.id)).map(u => (
+                                  <option key={u.id} value={u.id}>{firstName(u.name)}</option>
+                                ))}
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   <p className="text-[11px] text-muted-foreground mt-4 pt-3 border-t border-border">
-                    Laskee vain Puuhapatetin asiakaslaskut (laskutuspäivän mukaan). Raja koskee <b>kaikkea</b> liiketoimintaasi — laske mukaan myös muut tulosi. Tarkista vero.fi.
+                    Laskee Puuhapatetin asiakaslaskut: isot keikat laskutuserien mukaan ja pikkukeikat
+                    "Laskutti"-merkinnän mukaan. Raja koskee <b>kaikkea</b> liiketoimintaasi — laske mukaan myös muut tulosi. Tarkista vero.fi.
                   </p>
                 </Disclosure>
               );
@@ -375,7 +451,7 @@ export default function TaxExportPage() {
                     : <span className="text-xs text-muted-foreground">tasan</span>
                 }
               >
-                <FounderCrossView settlement={settlement} />
+                <FounderCrossView settlement={settlement} onChanged={loadMoney} />
               </Disclosure>
             )}
 
@@ -579,13 +655,15 @@ export default function TaxExportPage() {
   );
 }
 
-/** Founder cross-invoicing across all gigs: the net "who pays whom", each
- *  founder's totals, and a per-gig breakdown. */
-function FounderCrossView({ settlement }: { settlement: FounderCrossSettlement }) {
-  const { founders, crossInvoices, perGig } = settlement;
+/** Founder cross-invoicing across all gigs: the net "who pays whom", the
+ *  counter-invoice (vastalasku) generator, each founder's totals, and a
+ *  per-gig breakdown. */
+function FounderCrossView({ settlement, onChanged }: { settlement: FounderCrossSettlement; onChanged: () => void }) {
+  const { founders, crossInvoices, perGig, smallJobs, settled } = settlement;
   const earners = founders.filter(f => f.billedCents > 0 || f.kateShareCents > 0);
+  const [invoiceFor, setInvoiceFor] = useState<FounderCrossSettlement["crossInvoices"][number] | null>(null);
 
-  if (earners.length === 0) {
+  if (earners.length === 0 && smallJobs.length === 0 && (settled ?? []).length === 0) {
     return <p className="text-[11px] text-muted-foreground">Ei vielä laskutettuja eriä — tilitys näkyy, kun ensimmäinen erä laskutetaan asiakkaalta.</p>;
   }
 
@@ -595,31 +673,88 @@ function FounderCrossView({ settlement }: { settlement: FounderCrossSettlement }
       <div>
         <h3 className="text-sm font-bold mb-1">Keskinäinen tilitys</h3>
         <p className="text-[11px] text-muted-foreground mb-2">
-          Keikat on vedetty puoliksi, mutta vain toinen laskutti asiakasta kustakin erästä.
-          Alla on <b>nettosumma</b> kaikista keikoista: kuka laskuttaa keneltä tasatakseen puolikkaat.
+          Keikat on vedetty puoliksi, mutta vain toinen laskutti asiakasta.
+          Alla on <b>nettosumma</b> kaikista keikoista (FR8-erät + pikkukeikat):
+          saajapuoli tekee vastalaskun, maksaja maksaa sen.
         </p>
         {crossInvoices.length === 0 ? (
           <div className="rounded-xl border bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
             Tilanne on tasan — kenenkään ei tarvitse laskuttaa toista.
+            {(settled ?? []).length > 0 && " Aiemmat tilitykset on huomioitu."}
           </div>
         ) : (
           <div className="space-y-2">
             {crossInvoices.map((c, i) => (
-              <div key={i} className="flex items-center justify-between gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-3 py-2.5">
-                <span className="flex items-center gap-1.5 text-sm min-w-0">
-                  <span className="font-semibold truncate">{firstName(c.fromName)}</span>
-                  <ArrowRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                  <span className="font-semibold truncate">{firstName(c.toName)}</span>
-                </span>
-                <span className="shrink-0 text-right">
-                  <span className="block text-sm font-bold tabular-nums text-emerald-600">{fmt(c.cents)}</span>
-                  <span className="text-[10px] text-muted-foreground">{firstName(c.fromName)} laskuttaa</span>
-                </span>
+              <div key={i} className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-3 py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-1.5 text-sm min-w-0">
+                    <span className="font-semibold truncate">{firstName(c.fromName)}</span>
+                    <ArrowRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    <span className="font-semibold truncate">{firstName(c.toName)}</span>
+                  </span>
+                  <span className="shrink-0 text-right">
+                    <span className="block text-sm font-bold tabular-nums text-emerald-600">{fmt(c.cents)}</span>
+                    <span className="text-[10px] text-muted-foreground">{firstName(c.fromName)} maksaa</span>
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-emerald-500/20">
+                  <span className="text-[11px] text-muted-foreground">
+                    {firstName(c.toName)} laskuttaa {firstName(c.fromName)}lta osuutensa
+                  </span>
+                  <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={() => setInvoiceFor(c)}>
+                    <FileText className="h-3.5 w-3.5" /> Luo vastalasku
+                  </Button>
+                </div>
               </div>
             ))}
           </div>
         )}
+        <p className="text-[11px] text-muted-foreground mt-2">
+          Huom: vastalasku on myyntiä sen laskuttajalle — muista, että se kasvattaa hänen
+          liikevaihtoaan ALV-rajaa seuratessa.
+        </p>
       </div>
+
+      {/* Recorded settlements — issued vastalaskut already netted out above. */}
+      {(settled ?? []).length > 0 && (
+        <div>
+          <h3 className="text-sm font-bold mb-1.5">Kirjatut tilitykset</h3>
+          <div className="space-y-1.5">
+            {settled.map(s => (
+              <div key={s.id} className="flex items-center justify-between gap-2 rounded-lg border bg-muted/20 px-3 py-2 text-[11px]">
+                <span className="min-w-0 truncate text-muted-foreground">
+                  {new Date(s.createdAtMs).toLocaleDateString("fi-FI")} · {firstName(founders.find(f => f.id === s.toId)?.name ?? s.toId)} laskutti {firstName(founders.find(f => f.id === s.fromId)?.name ?? s.fromId)}lta
+                  {s.invoiceNo ? ` · ${s.invoiceNo}` : ""}
+                </span>
+                <span className="flex items-center gap-2 shrink-0">
+                  <span className="font-semibold tabular-nums">{fmt(s.cents)}</span>
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-red-500"
+                    title="Peru kirjaus (jos lasku hylättiin)"
+                    onClick={async () => {
+                      if (!confirm("Perutaanko tämä tilityskirjaus? Summa palaa avoimeen velkaan.")) return;
+                      await api.deleteFounderSettlement(s.id);
+                      onChanged();
+                    }}
+                  >
+                    ✕
+                  </button>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {invoiceFor && (
+        <SettlementInvoiceDialog
+          inv={invoiceFor}
+          settlement={settlement}
+          onClose={() => setInvoiceFor(null)}
+          onRecorded={() => { setInvoiceFor(null); onChanged(); }}
+        />
+      )}
 
       {/* Per-founder totals. */}
       <div>
@@ -654,8 +789,8 @@ function FounderCrossView({ settlement }: { settlement: FounderCrossSettlement }
       </div>
 
       {/* Per-gig breakdown, folded. */}
-      {perGig.length > 0 && (
-        <Disclosure variant="inline" title={`Erittely keikoittain (${perGig.length})`}>
+      {(perGig.length > 0 || smallJobs.length > 0) && (
+        <Disclosure variant="inline" title={`Erittely keikoittain (${perGig.length + smallJobs.length})`}>
           <div className="space-y-3">
             {perGig.map(g => (
               <div key={g.jobId} className="rounded-xl border bg-muted/20 p-3">
@@ -682,9 +817,293 @@ function FounderCrossView({ settlement }: { settlement: FounderCrossSettlement }
                 </div>
               </div>
             ))}
+            {smallJobs.map(j => (
+              <div key={j.jobId} className="rounded-xl border bg-muted/20 p-3">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <p className="text-xs font-semibold truncate">{j.name}</p>
+                  <span className="text-[11px] text-muted-foreground tabular-nums shrink-0">{new Date(j.dateMs).toLocaleDateString("fi-FI")}</span>
+                </div>
+                <div className="space-y-1 text-[11px]">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground">{firstName(j.billerName)} laskutti asiakasta</span>
+                    <span className="tabular-nums text-muted-foreground">{fmt(j.totalCents)}</span>
+                  </div>
+                  {j.expensesCents > 0 && (
+                    <div className="flex items-center justify-between gap-2 text-muted-foreground">
+                      <span>Kulut (laskuttaja pitää — maksoi tarvikkeet)</span>
+                      <span className="tabular-nums">−{fmt(j.expensesCents)}</span>
+                    </div>
+                  )}
+                  {j.owes.map((o, i) => (
+                    <div key={i} className="flex items-center justify-between gap-2 text-muted-foreground">
+                      <span>→ {firstName(o.name)}lle (osuus 1/{j.numWorkers})</span>
+                      <span className="tabular-nums">{fmt(o.cents)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         </Disclosure>
       )}
     </div>
   );
+}
+
+// ─── Vastalasku (founder-to-founder settlement invoice) ─────────────────────────
+
+interface InvoiceItem { label: string; cents: number }
+
+/** Itemize everything between one founder pair: rows where the payer (from)
+ *  billed and owes the creditor (to), credit rows for the opposite direction,
+ *  and credits for already-recorded settlements. Mirrors the server's netting
+ *  exactly (entries ≤ 0 are skipped on both sides), so the sum equals the
+ *  netted crossInvoice amount. */
+function pairItems(s: FounderCrossSettlement, fromId: string, toId: string): InvoiceItem[] {
+  const items: InvoiceItem[] = [];
+  for (const g of s.perGig) {
+    for (const e of g.eras) {
+      if (e.billerId === fromId) {
+        const p = e.paysOut.find(x => x.id === toId);
+        if (p && p.cents > 0) items.push({ label: `${g.gigName} — erä ${e.era}, kate-osuus`, cents: p.cents });
+      } else if (e.billerId === toId) {
+        const p = e.paysOut.find(x => x.id === fromId);
+        if (p && p.cents > 0) items.push({ label: `Hyvitys: ${g.gigName} — erä ${e.era}, kate-osuus`, cents: -p.cents });
+      }
+    }
+  }
+  for (const j of s.smallJobs) {
+    const date = new Date(j.dateMs).toLocaleDateString("fi-FI");
+    if (j.billerId === fromId) {
+      const o = j.owes.find(x => x.id === toId);
+      if (o && o.cents > 0) items.push({ label: `${j.name} ${date} — osuus 1/${j.numWorkers}`, cents: o.cents });
+    } else if (j.billerId === toId) {
+      const o = j.owes.find(x => x.id === fromId);
+      if (o && o.cents > 0) items.push({ label: `Hyvitys: ${j.name} ${date} — osuus 1/${j.numWorkers}`, cents: -o.cents });
+    }
+  }
+  for (const st of s.settled ?? []) {
+    const date = new Date(st.createdAtMs).toLocaleDateString("fi-FI");
+    if (st.fromId === fromId && st.toId === toId) {
+      items.push({ label: `Hyvitys: tilitetty aiemmin ${date}${st.invoiceNo ? ` (lasku ${st.invoiceNo})` : ""}`, cents: -st.cents });
+    } else if (st.fromId === toId && st.toId === fromId) {
+      items.push({ label: `Aiempi vastakkainen tilitys ${date}${st.invoiceNo ? ` (lasku ${st.invoiceNo})` : ""}`, cents: st.cents });
+    }
+  }
+  return items;
+}
+
+/** Dialog that builds the legally-marked settlement invoice (creditor →
+ *  debtor), opens it as a printable page, and files a copy in the creditor's
+ *  documents (6-year retention rides on the document record). */
+function SettlementInvoiceDialog({
+  inv, settlement, onClose, onRecorded,
+}: {
+  inv: FounderCrossSettlement["crossInvoices"][number];
+  settlement: FounderCrossSettlement;
+  onClose: () => void;
+  onRecorded: () => void;
+}) {
+  // Creditor (laskuttaja) = the founder who is OWED money; debtor pays.
+  const creditor = BRAND_BILLERS.find(b => b.id === inv.toId);
+  const debtor = BRAND_BILLERS.find(b => b.id === inv.fromId);
+  const today = new Date();
+  const defaultDue = new Date(today.getTime() + 14 * 86400_000);
+  const [invoiceNo, setInvoiceNo] = useState(() =>
+    `T${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}-${inv.toId.slice(0, 2).toUpperCase()}`);
+  const [iban, setIban] = useState(creditor?.iban ?? "");
+  const [dueDate, setDueDate] = useState(defaultDue.toISOString().slice(0, 10));
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [recordedOnce, setRecordedOnce] = useState(false);
+
+  const items = pairItems(settlement, inv.fromId, inv.toId);
+  const itemSum = items.reduce((s, i) => s + i.cents, 0);
+
+  const generate = async () => {
+    if (!creditor || !debtor) return;
+    setBusy(true); setMsg(null);
+    const opened = openSettlementInvoicePrint({
+      invoiceNo, dateStr: today.toLocaleDateString("fi-FI"),
+      dueDateStr: dueDate ? new Date(dueDate + "T12:00:00").toLocaleDateString("fi-FI") : "",
+      creditor, debtor, items, totalCents: inv.cents, iban,
+    });
+    if (!opened) { setBusy(false); setMsg("Selain esti ponnahdusikkunan — salli ponnahdusikkunat ja yritä uudelleen."); return; }
+    // Record + file the invoice ONCE per dialog: re-opening the print view
+    // (e.g. to fix the IBAN) must not double-book the settlement or spam
+    // duplicate documents into the 6-year register.
+    if (!recordedOnce) {
+      setRecordedOnce(true);
+      const rec = await api.recordFounderSettlement({
+        fromId: inv.fromId, toId: inv.toId, cents: inv.cents, invoiceNo,
+      });
+      await api.addWorkerDocument(inv.toId, {
+        date: today.getTime(),
+        desc: `Tilityslasku ${invoiceNo} — ${firstName(inv.toName)} laskutti ${firstName(inv.fromName)}lta`,
+        amountCents: inv.cents,
+        kind: "lasku",
+      });
+      setBusy(false);
+      setMsg(rec.ok
+        ? "Lasku avattu ✓ Tilitys kirjattu — avoin velka nollattu ja kopio tallennettu dokumentteihin."
+        : "Lasku avattu — tilityksen kirjaus epäonnistui, yritä uudelleen.");
+      if (rec.ok) setTimeout(onRecorded, 1600);
+    } else {
+      setBusy(false);
+      setMsg("Lasku avattu uudelleen (tilitys oli jo kirjattu).");
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md max-h-[88vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-1.5"><FileText className="h-4 w-4" /> Vastalasku</DialogTitle>
+          <DialogDescription>
+            {firstName(inv.toName)} laskuttaa {firstName(inv.fromName)}lta {fmt(inv.cents)} — osuus yhteisistä keikoista.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-2.5">
+          <div className="flex gap-2">
+            <label className="flex-1 text-[11px] text-muted-foreground">
+              Laskun numero
+              <Input value={invoiceNo} onChange={e => setInvoiceNo(e.target.value)} className="mt-1 h-9" />
+            </label>
+            <label className="w-36 text-[11px] text-muted-foreground">
+              Eräpäivä
+              <Input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="mt-1 h-9" />
+            </label>
+          </div>
+          <label className="block text-[11px] text-muted-foreground">
+            Tilinumero (IBAN) — {firstName(inv.toName)}n tili, jolle maksetaan
+            <Input value={iban} onChange={e => setIban(e.target.value)} className="mt-1 h-9 font-mono" placeholder="FI00 0000 0000 0000 00" />
+          </label>
+
+          {/* Itemization preview */}
+          <div className="rounded-xl border bg-muted/20 p-3">
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">Erittely ({items.length} riviä)</p>
+            <div className="space-y-1 max-h-44 overflow-y-auto">
+              {items.map((it, i) => (
+                <div key={i} className="flex items-baseline justify-between gap-2 text-[11px]">
+                  <span className={`truncate ${it.cents < 0 ? "text-muted-foreground italic" : ""}`}>{it.label}</span>
+                  <span className="shrink-0 tabular-nums">{fmt(it.cents)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-border text-sm font-bold">
+              <span>Yhteensä</span>
+              <span className="tabular-nums text-emerald-600">{fmt(inv.cents)}</span>
+            </div>
+            {itemSum !== inv.cents && (
+              <p className="text-[10px] text-amber-600 mt-1">Huom: erittelyn summa {fmt(itemSum)} poikkeaa netosta (pyöristys).</p>
+            )}
+          </div>
+
+          {msg && <p className="text-[11px] text-muted-foreground">{msg}</p>}
+
+          <div className="flex gap-2">
+            <Button onClick={generate} disabled={busy || !invoiceNo.trim()} className="flex-1 gap-1.5">
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Printer className="h-4 w-4" /> Avaa tulostettava lasku</>}
+            </Button>
+            <Button variant="outline" onClick={onClose}>Sulje</Button>
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Laskussa on lakisääteiset merkinnät (laskun numero, päivämäärä, molempien Y-tunnukset,
+            ALV-merkintä "ei arvonlisäveroa — vähäinen toiminta"). Säilytä 6 vuotta.
+          </p>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Open the settlement invoice as a clean printable page (no new libraries —
+ *  same pattern as the worker-contract print view). Returns false if the
+ *  browser blocked the popup. */
+function openSettlementInvoicePrint(p: {
+  invoiceNo: string; dateStr: string; dueDateStr: string;
+  creditor: { name: string; address?: string; yTunnus?: string };
+  debtor: { name: string; address?: string; yTunnus?: string };
+  items: InvoiceItem[]; totalCents: number; iban: string;
+}): boolean {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const rows = p.items.map(it => `
+    <tr>
+      <td style="padding:8px 0;border-bottom:1px solid #eee;color:${it.cents < 0 ? "#6b7280" : "#111"};font-style:${it.cents < 0 ? "italic" : "normal"}">${esc(it.label)}</td>
+      <td style="padding:8px 0;border-bottom:1px solid #eee;text-align:right;white-space:nowrap">${fmt(it.cents)}</td>
+    </tr>`).join("");
+  const html = `<!DOCTYPE html>
+<html lang="fi"><head><meta charset="utf-8"><title>Lasku ${esc(p.invoiceNo)}</title>
+<style>
+  body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; color:#111; max-width: 640px; margin: 40px auto; padding: 0 24px; font-size: 14px; }
+  @media print { body { margin: 0 auto; } .noprint { display:none } }
+</style></head>
+<body>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #14532d;padding-bottom:16px;margin-bottom:20px">
+    <div>
+      <h1 style="margin:0;font-size:26px;letter-spacing:1px">LASKU</h1>
+      <p style="margin:4px 0 0;color:#6b7280;font-size:12px">Nro ${esc(p.invoiceNo)} · ${p.dateStr}</p>
+    </div>
+    <div style="text-align:right;color:#14532d;font-weight:700">Puuhapatet<br><span style="color:#6b7280;font-weight:400;font-size:11px">sisäinen tilitys — bossien keskinäinen laskutus</span></div>
+  </div>
+
+  <table style="width:100%;margin-bottom:20px;font-size:13px">
+    <tr>
+      <td style="vertical-align:top;width:50%;padding-right:16px">
+        <p style="margin:0 0 4px;font-size:10px;letter-spacing:1px;color:#9ca3af;text-transform:uppercase">Laskuttaja (myyjä)</p>
+        <strong>${esc(p.creditor.name)}</strong><br>
+        ${p.creditor.address ? esc(p.creditor.address) + "<br>" : ""}
+        ${p.creditor.yTunnus ? "Y-tunnus: " + esc(p.creditor.yTunnus) : ""}
+      </td>
+      <td style="vertical-align:top;width:50%">
+        <p style="margin:0 0 4px;font-size:10px;letter-spacing:1px;color:#9ca3af;text-transform:uppercase">Laskutetaan (ostaja)</p>
+        <strong>${esc(p.debtor.name)}</strong><br>
+        ${p.debtor.address ? esc(p.debtor.address) + "<br>" : ""}
+        ${p.debtor.yTunnus ? "Y-tunnus: " + esc(p.debtor.yTunnus) : ""}
+      </td>
+    </tr>
+  </table>
+
+  <p style="font-size:13px;color:#374151;margin:0 0 12px">
+    Tilitys yhteisistä keikoista: ostaja on laskuttanut asiakkaita koko summalla ja tilittää
+    tällä laskulla myyjälle hänen osuutensa (keikat vedetty puoliksi).
+  </p>
+
+  <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <tr>
+      <th style="text-align:left;padding:6px 0;border-bottom:2px solid #111;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#6b7280">Erittely</th>
+      <th style="text-align:right;padding:6px 0;border-bottom:2px solid #111;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#6b7280">Summa</th>
+    </tr>
+    ${rows}
+    <tr>
+      <td style="padding:12px 0;font-weight:800;font-size:15px">Yhteensä (maksettava)</td>
+      <td style="padding:12px 0;text-align:right;font-weight:800;font-size:18px;white-space:nowrap">${fmt(p.totalCents)}</td>
+    </tr>
+  </table>
+
+  <p style="font-size:11px;color:#6b7280;margin:6px 0 20px">
+    Ei arvonlisäveroa — myyjä ei ole arvonlisäverovelvollinen (vähäinen toiminta, AVL 3 §).
+  </p>
+
+  <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;font-size:13px">
+    <p style="margin:0 0 4px;font-size:10px;letter-spacing:1px;color:#9ca3af;text-transform:uppercase">Maksutiedot</p>
+    ${p.iban ? `Tilinumero (IBAN): <strong style="font-family:monospace">${esc(p.iban)}</strong><br>` : ""}
+    Viite / viesti: ${esc(p.invoiceNo)}<br>
+    ${p.dueDateStr ? `Eräpäivä: <strong>${p.dueDateStr}</strong>` : ""}
+  </div>
+
+  <p style="font-size:10px;color:#9ca3af;margin-top:24px">
+    Molemmat osapuolet säilyttävät laskun kirjanpidossaan 6 vuotta. Puuhapatet on brändi —
+    myyjä ja ostaja toimivat omilla Y-tunnuksillaan.
+  </p>
+
+  <button class="noprint" onclick="window.print()" style="margin-top:16px;padding:10px 20px;border-radius:8px;border:0;background:#14532d;color:#fff;font-weight:700;cursor:pointer">Tulosta / tallenna PDF</button>
+</body></html>`;
+  const w = window.open("", "_blank");
+  if (!w) return false;
+  w.document.write(html);
+  w.document.close();
+  w.focus();
+  return true;
 }

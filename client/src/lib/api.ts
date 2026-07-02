@@ -120,8 +120,17 @@ export interface FounderCrossSettlement {
   perGig: {
     jobId: number;
     gigName: string;
-    eras: { era: number; billerName: string; instalmentCents: number; palkatCents: number; kateCents: number; paysOut: { name: string; cents: number }[] }[];
+    eras: { era: number; billerId: string; billerName: string; instalmentCents: number; palkatCents: number; kateCents: number; paysOut: { id: string; name: string; cents: number }[] }[];
   }[];
+  /** Done small jobs where the biller owes the other founder their 50/50 share
+   *  (computed on total − kulut, matching the tilitystosite maths). */
+  smallJobs: {
+    jobId: number; name: string; dateMs: number; totalCents: number; expensesCents: number;
+    billerId: string; billerName: string; numWorkers: number;
+    owes: { id: string; name: string; cents: number }[];
+  }[];
+  /** Already-issued vastalaskut — subtracted from crossInvoices by the server. */
+  settled: { id: number; fromId: string; toId: string; cents: number; invoiceNo?: string; createdAtMs: number }[];
 }
 
 /** Aggregated single-worker admin view (/admin/tiimi/:workerId). */
@@ -488,12 +497,21 @@ export const api = {
       limitEur: number;
       billers: { id: string; name: string; yTunnus?: string }[];
       turnoverByYear: Record<string, Record<string, number>>;
+      /** Done small jobs with no biller set — attribute them or the tracker under-counts. */
+      unassignedByYear: Record<string, { count: number; cents: number }>;
     }>("GET", "/api/admin/biller-turnover"),
 
   // Founder cross-invoicing netted across ALL gigs: who owes whom, plus each
   // founder's totals and a per-gig breakdown. Powers "Bossien laskutus & tilitys".
   getFounderSettlement: () =>
     request<FounderCrossSettlement>("GET", "/api/admin/founder-settlement"),
+
+  // Record an issued vastalasku so the open cross-debt goes to zero (and the
+  // same euros are never billed twice); delete = undo a scrapped invoice.
+  recordFounderSettlement: (data: { fromId: string; toId: string; cents: number; invoiceNo?: string }) =>
+    request<{ ok: boolean }>("POST", "/api/admin/founder-settlement/record", data),
+  deleteFounderSettlement: (id: number) =>
+    request<{ ok: boolean }>("DELETE", `/api/admin/founder-settlement/${id}`),
 
   markWorkerPaid: (workerId: string, amount: number) =>
     request<{ id: number }>("POST", `/api/workers/${workerId}/mark-paid`, { amount }),

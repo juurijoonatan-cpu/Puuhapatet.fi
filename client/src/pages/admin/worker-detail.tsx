@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, type WorkerDetail } from "@/lib/api";
-import { getAdminProfile } from "@/lib/admin-profile";
+import { getAdminProfile, USERS } from "@/lib/admin-profile";
 import { computeTax, readVatStatus, readInPrepaymentRegister, readPayeeType, fmtPct } from "@shared/tax";
 import { MAX_CREW_DOC_LEN, retentionFromDate } from "@shared/crew";
 
@@ -118,7 +118,7 @@ export default function AdminWorkerDetailPage() {
             <div className="relative grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-full bg-muted text-lg font-bold text-muted-foreground">
               {initials}
               <img
-                src={worker.photoDataUrl || `/fr8/${worker.id}.jpg`}
+                src={worker.photoDataUrl || USERS.find((u) => u.id === worker.id)?.photoUrl || `/fr8/${worker.id}.jpg`}
                 alt={worker.name}
                 className="absolute inset-0 h-full w-full object-cover"
                 onError={(e) => { e.currentTarget.style.display = "none"; }}

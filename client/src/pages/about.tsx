@@ -167,11 +167,10 @@ export default function AboutPage() {
 
         {/* Tiimi & alihankkijat — the crew who does the work */}
         <Card className="p-6 md:p-8 bg-card border-0 premium-shadow mb-8">
-          <h2 className="text-xl font-semibold text-foreground mb-2">Tiimimme & erinomaiset alihankkijamme</h2>
+          <h2 className="text-xl font-semibold text-foreground mb-2">{t("about.crew.title")}</h2>
           <p className="text-sm text-muted-foreground leading-relaxed mb-6 max-w-xl">
-            Työn tekevät koulutetut, sopimuksen allekirjoittaneet alihankkijamme — heihin luotamme
-            jokaisella keikalla. Haluatko mukaan tiimiin?{" "}
-            <a href="mailto:info@puuhapatet.fi" className="text-primary underline underline-offset-2">Ota yhteyttä</a>.
+            {t("about.crew.desc")}{" "}
+            <a href="mailto:info@puuhapatet.fi" className="text-primary underline underline-offset-2">{t("about.crew.cta")}</a>.
           </p>
           <AvatarGroup avatars={ALIHANKKIJAT} />
         </Card>

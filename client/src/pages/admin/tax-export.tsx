@@ -40,6 +40,7 @@ interface JobRow {
     quoteStatus?: string | null;
     unitCount?: number | null;
     isTaloyhtiio?: boolean | null;
+    isCustomGig?: boolean | null;
     billedBy?: string | null;
   };
   customer: { id: number; name: string; address: string } | null;
@@ -276,8 +277,9 @@ export default function TaxExportPage() {
                               <p className="text-xs text-muted-foreground">{r.customer?.address ?? ""}</p>
                               {r.numWorkers > 1 && <p className="text-xs text-blue-600 dark:text-blue-400">1/{r.numWorkers} osuus</p>}
                               {/* Kuka laskutti asiakasta (kenen Y-tunnukselle raha meni) — ohjaa
-                                  ALV-seurannan ja bossien tilityksen oikealle henkilölle. */}
-                              {isHost && (
+                                  ALV-seurannan ja bossien tilityksen oikealle henkilölle. FR8-
+                                  tyyppiset urakat kirjaavat laskuttajan per erä, ei tässä. */}
+                              {isHost && !r.job.isCustomGig && (
                                 <select
                                   value={r.job.billedBy ?? ""}
                                   onChange={(e) => setBilledBy(r.job.id, e.target.value)}
@@ -399,7 +401,8 @@ export default function TaxExportPage() {
                     // always resolvable.
                     const unassignedJobs = jobs.filter(r => {
                       const d = r.job.scheduledAt || r.job.createdAt;
-                      return !r.job.billedBy && new Date(d).getFullYear() === year;
+                      // Custom gigs (FR8) track billers per instalment — never listed here.
+                      return !r.job.billedBy && !r.job.isCustomGig && new Date(d).getFullYear() === year;
                     });
                     return (
                       <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
@@ -933,16 +936,19 @@ function SettlementInvoiceDialog({
     // (e.g. to fix the IBAN) must not double-book the settlement or spam
     // duplicate documents into the 6-year register.
     if (!recordedOnce) {
-      setRecordedOnce(true);
       const rec = await api.recordFounderSettlement({
         fromId: inv.fromId, toId: inv.toId, cents: inv.cents, invoiceNo,
       });
-      await api.addWorkerDocument(inv.toId, {
-        date: today.getTime(),
-        desc: `Tilityslasku ${invoiceNo} — ${firstName(inv.toName)} laskutti ${firstName(inv.fromName)}lta`,
-        amountCents: inv.cents,
-        kind: "lasku",
-      });
+      if (rec.ok) {
+        // Marked recorded only on SUCCESS — a failed booking must stay retryable.
+        setRecordedOnce(true);
+        await api.addWorkerDocument(inv.toId, {
+          date: today.getTime(),
+          desc: `Tilityslasku ${invoiceNo} — ${firstName(inv.toName)} laskutti ${firstName(inv.fromName)}lta`,
+          amountCents: inv.cents,
+          kind: "lasku",
+        });
+      }
       setBusy(false);
       setMsg(rec.ok
         ? "Lasku avattu ✓ Tilitys kirjattu — avoin velka nollattu ja kopio tallennettu dokumentteihin."

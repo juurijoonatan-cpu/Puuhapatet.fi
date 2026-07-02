@@ -131,15 +131,15 @@ export default function ConfirmationPage() {
           <ul className="space-y-3 text-sm">
             <li className="flex items-start gap-3">
               <span className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 text-xs font-medium text-primary">1</span>
-              <span className="text-muted-foreground">Käsittelemme pyyntösi ja tarkistamme tiedot.</span>
+              <span className="text-muted-foreground">{t("confirm.step1")}</span>
             </li>
             <li className="flex items-start gap-3">
               <span className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 text-xs font-medium text-primary">2</span>
-              <span className="text-muted-foreground">Otamme sinuun yhteyttä sovittuaksemme yksityiskohdista.</span>
+              <span className="text-muted-foreground">{t("confirm.step2")}</span>
             </li>
             <li className="flex items-start gap-3">
               <span className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 text-xs font-medium text-primary">3</span>
-              <span className="text-muted-foreground">Tyypillisesti vastaamme saman päivän aikana.</span>
+              <span className="text-muted-foreground">{t("confirm.step3")}</span>
             </li>
           </ul>
         </Card>

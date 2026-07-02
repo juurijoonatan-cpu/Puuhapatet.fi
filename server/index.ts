@@ -98,6 +98,15 @@ app.use((req, res, next) => {
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS submission_status         text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS marketer_id               text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS marketer_commission_cents integer`,
+    sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS billed_by                 text`,
+    sql`CREATE TABLE IF NOT EXISTS founder_settlements (
+      id         serial PRIMARY KEY,
+      from_id    text NOT NULL,
+      to_id      text NOT NULL,
+      cents      integer NOT NULL,
+      invoice_no text,
+      created_at timestamp NOT NULL DEFAULT now()
+    )`,
     sql`ALTER TABLE users     ADD COLUMN IF NOT EXISTS member_agreement     text`,
     sql`CREATE UNIQUE INDEX IF NOT EXISTS jobs_quote_token_unique ON jobs(quote_token) WHERE quote_token IS NOT NULL`,
     // Chat / AI assistant tables

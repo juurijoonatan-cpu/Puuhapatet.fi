@@ -1917,6 +1917,12 @@ export default function AdminJobsPage() {
                         allWorkers: allWorkersData.length > 0 ? allWorkersData : undefined,
                         senderName: senderUser?.name,
                         senderAddress: senderUser?.address,
+                        // Seller identity: the invoice's Y-tunnus MUST be the sender's
+                        // (not another worker's), and the server records billedBy so the
+                        // ALV turnover + founder cross-invoicing land on the right person.
+                        senderYTunnus: senderUser?.yTunnus,
+                        senderId: senderUser?.id ?? profile?.id,
+                        jobId: job.id,
                         agreedPriceCents: unitPrice ?? job.agreedPrice,
                         expensesTotalCents: expensesTotal > 0 && !unitPrice ? expensesTotal : undefined,
                         estimatedHours: summaryHours ? Number(summaryHours) : undefined,

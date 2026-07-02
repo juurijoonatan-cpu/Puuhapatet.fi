@@ -1,12 +1,12 @@
 import type { Express } from "express";
 import { type Server } from "http";
-import { eq, desc, sql, ne, and, isNotNull, inArray } from "drizzle-orm";
+import { eq, desc, sql, ne, and, isNotNull, isNull, inArray } from "drizzle-orm";
 import { Resend } from "resend";
 import bwipjs from "bwip-js";
 import PDFDocument from "pdfkit";
 import rateLimit from "express-rate-limit";
 import { db } from "./db";
-import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
+import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, founderSettlements, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 import { feeRateForWorker, effectiveJobTotal, FOUNDER_IDS, marketerCommissionCents, MARKETER_COMMISSION_RATE } from "@shared/team";
 import { randomUUID, createHash, createHmac, timingSafeEqual, scryptSync, randomBytes } from "crypto";
 import {
@@ -1332,19 +1332,43 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // activity, so this is a floor, surfaced with that caveat in the UI.
   app.get("/api/admin/biller-turnover", async (_req, res) => {
     try {
-      const rows = await db.select({ id: jobs.id, gigData: jobs.gigData }).from(jobs);
+      const rows = await db.select().from(jobs);
       // year -> billerId -> cents
       const byYear: Record<string, Record<string, number>> = {};
+      // Done small jobs with NO biller set yet — surfaced so the founders can
+      // attribute them (otherwise the ALV tracker under-counts someone).
+      const unassignedByYear: Record<string, { count: number; cents: number }> = {};
       for (const row of rows) {
-        if (!row.gigData) continue;
-        let gig: GigData | null = null;
-        try { gig = sanitizeGigData(JSON.parse(row.gigData)); } catch { continue; }
-        for (const p of gig.payments || []) {
-          if (!p?.amountCents || p.amountCents <= 0) continue;
-          const billerId = p.biller?.id || DEFAULT_BILLER_ID; // legacy payments → first founder
-          const year = String(new Date(p.t || 0).getFullYear());
-          (byYear[year] ||= {});
-          byYear[year][billerId] = (byYear[year][billerId] ?? 0) + p.amountCents;
+        // Custom gigs (FR8 etc.): each recorded instalment payment carries its biller.
+        if (row.gigData) {
+          let gig: GigData | null = null;
+          try { gig = sanitizeGigData(JSON.parse(row.gigData)); } catch { gig = null; }
+          for (const p of gig?.payments || []) {
+            if (!p?.amountCents || p.amountCents <= 0) continue;
+            const billerId = p.biller?.id || DEFAULT_BILLER_ID; // legacy payments → first founder
+            const year = String(new Date(p.t || 0).getFullYear());
+            (byYear[year] ||= {});
+            byYear[year][billerId] = (byYear[year][billerId] ?? 0) + p.amountCents;
+          }
+        }
+        // Small jobs: the whole invoice goes to whoever billed (billedBy). A job
+        // whose money is already tracked via gig payments must not count twice.
+        if (!row.isCustomGig && !row.gigData && row.status === "done" && row.quoteStatus !== "declined") {
+          const total = effectiveJobTotal(row);
+          if (total <= 0) continue;
+          const year = String(new Date(row.scheduledAt ?? row.createdAt).getFullYear());
+          if (row.billedBy) {
+            // Founders feed the ALV tracker; a staff biller (own Y-tunnus, e.g.
+            // Petrus) is a valid attribution too — just not a founder's turnover.
+            if (BRAND_BILLERS.some((b) => b.id === row.billedBy)) {
+              (byYear[year] ||= {});
+              byYear[year][row.billedBy] = (byYear[year][row.billedBy] ?? 0) + total;
+            }
+          } else {
+            (unassignedByYear[year] ||= { count: 0, cents: 0 });
+            unassignedByYear[year].count += 1;
+            unassignedByYear[year].cents += total;
+          }
         }
       }
       res.json({
@@ -1352,6 +1376,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         limitEur: VAT_SMALL_BUSINESS_LIMIT_EUR,
         billers: BRAND_BILLERS.map((b) => ({ id: b.id, name: b.name, yTunnus: b.yTunnus })),
         turnoverByYear: byYear, // { "2026": { joonatan: cents, matias: cents } }
+        unassignedByYear,
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1361,11 +1386,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Founder cross-invoicing across ALL gigs. The two founders split every gig
   // 50/50 but only ONE of them bills the customer (they alternate whose Y-tunnus
   // collects each erä). So the biller ends up holding the other founder's half —
-  // this endpoint nets, across every billed erä of every gig, who owes whom, so
-  // they can settle up with a founder-to-founder invoice/kuitti.
+  // this endpoint nets, across every billed erä of every FR8 gig AND every done
+  // small job (billedBy), who owes whom, so they can settle up with a
+  // founder-to-founder invoice (vastalasku).
   app.get("/api/admin/founder-settlement", async (_req, res) => {
     try {
       const rows = await db.select().from(jobs);
+      const customerRows = await db.select().from(customers);
+      const customerName = new Map(customerRows.map((c) => [c.id, c.name]));
+      // Job expenses: the biller fronted materials and keeps the reimbursement,
+      // so shares are computed on (total − kulut) — same maths as the
+      // tilitystosite the workers receive.
+      const expenseRows = await db.select().from(expenses);
+      const expByJob = new Map<number, number>();
+      for (const e of expenseRows) expByJob.set(e.jobId, (expByJob.get(e.jobId) ?? 0) + e.amount);
+      // Already-issued vastalaskut: subtracted from the cumulative debt so the
+      // same euros are never invoiced twice.
+      const settledRows = await db.select().from(founderSettlements).orderBy(desc(founderSettlements.createdAt));
       const founderList = BRAND_BILLERS.map((b) => ({ id: b.id, name: b.name, yTunnus: b.yTunnus }));
       const n = Math.max(1, founderList.length);
       const founders = founderList.map((f) => ({
@@ -1383,7 +1420,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       };
       const perGig: {
         jobId: number; gigName: string;
-        eras: { era: number; billerName: string; instalmentCents: number; palkatCents: number; kateCents: number; paysOut: { name: string; cents: number }[] }[];
+        eras: { era: number; billerId: string; billerName: string; instalmentCents: number; palkatCents: number; kateCents: number; paysOut: { id: string; name: string; cents: number }[] }[];
       }[] = [];
 
       for (const job of rows) {
@@ -1413,15 +1450,66 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           paysOut.forEach((s) => bump(biller.id, s.id, s.cents));
           eras.push({
             era: e.era,
+            billerId: biller.id,
             billerName: biller.name || (bj >= 0 ? founders[bj].name : ""),
             instalmentCents: e.instalmentCents,
             palkatCents: e.earnedCents,
             kateCents: kate,
-            paysOut: paysOut.map((s) => ({ name: s.name, cents: s.cents })),
+            paysOut: paysOut.map((s) => ({ id: s.id, name: s.name, cents: s.cents })),
           });
         }
         if (eras.length > 0) perGig.push({ jobId: job.id, gigName, eras });
       }
+
+      // Small jobs: the founders have split these 50/50 and alternated whose
+      // Y-tunnus takes the customer's payment. The biller (billedBy) collected
+      // the FULL sum → owes every OTHER founder among the assigned workers their
+      // equal share. (Non-founder workers are settled via the tilitystosite flow.)
+      const founderByName = new Map(founderList.map((f) => [f.name.trim().toLowerCase(), f.id]));
+      const resolveWorkerId = (s: string) => {
+        const t = s.trim().toLowerCase();
+        return founderByName.get(t) ?? t; // founder name → id; else raw id string
+      };
+      const smallJobs: {
+        jobId: number; name: string; dateMs: number; totalCents: number; expensesCents: number;
+        billerId: string; billerName: string; numWorkers: number;
+        owes: { id: string; name: string; cents: number }[];
+      }[] = [];
+      for (const job of rows) {
+        if (job.isCustomGig || job.gigData || job.status !== "done" || job.quoteStatus === "declined") continue;
+        const billerId = job.billedBy;
+        if (!billerId || idxOf(billerId) < 0) continue;
+        const total = effectiveJobTotal(job);
+        if (total <= 0) continue;
+        const expensesCents = expByJob.get(job.id) ?? 0;
+        const baseCents = Math.max(0, total - expensesCents);
+        const workerIds = (job.assignedTo || "").split(",").map(resolveWorkerId).filter(Boolean);
+        const numWorkers = Math.max(workerIds.length, 1);
+        const share = Math.round(baseCents / numWorkers);
+        const owesList = founderList
+          .filter((f) => f.id !== billerId && workerIds.includes(f.id))
+          .map((f) => ({ id: f.id, name: f.name, cents: share }))
+          .filter((o) => o.cents > 0);
+        if (owesList.length === 0) continue;
+        owesList.forEach((o) => bump(billerId, o.id, o.cents));
+        const bj = idxOf(billerId);
+        smallJobs.push({
+          jobId: job.id,
+          name: customerName.get(job.customerId) || job.description || `Keikka #${job.id}`,
+          dateMs: new Date(job.scheduledAt ?? job.createdAt).getTime(),
+          totalCents: total,
+          expensesCents,
+          billerId,
+          billerName: founderList[bj]?.name ?? billerId,
+          numWorkers,
+          owes: owesList,
+        });
+      }
+      smallJobs.sort((a, b) => b.dateMs - a.dateMs);
+
+      // Apply already-recorded settlements as opposing debts — the pairwise
+      // netting below then reports only what is STILL open.
+      for (const s of settledRows) bump(s.toId, s.fromId, s.cents);
 
       // Net pairwise: for each unordered founder pair, cancel opposing debts so
       // we end up with a single "X should pay Y €Z" line per pair.
@@ -1437,7 +1525,45 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
       }
 
-      res.json({ ok: true, founders, crossInvoices, perGig });
+      res.json({
+        ok: true, founders, crossInvoices, perGig, smallJobs,
+        settled: settledRows.map((s) => ({
+          id: s.id, fromId: s.fromId, toId: s.toId, cents: s.cents,
+          invoiceNo: s.invoiceNo ?? undefined,
+          createdAtMs: new Date(s.createdAt).getTime(),
+        })),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Record an ISSUED founder-to-founder settlement invoice — reduces the open
+  // cross-debt so the next vastalasku starts from zero, not from all history.
+  app.post("/api/admin/founder-settlement/record", async (req, res) => {
+    try {
+      const { fromId, toId, cents, invoiceNo } = (req.body || {}) as Record<string, any>;
+      const validParty = (id: any) => BRAND_BILLERS.some((b) => b.id === id);
+      const c = Math.round(Number(cents));
+      if (!validParty(fromId) || !validParty(toId) || fromId === toId || !Number.isFinite(c) || c <= 0) {
+        return res.status(400).json({ error: "Virheellinen tilitys" });
+      }
+      const [row] = await db.insert(founderSettlements)
+        .values({ fromId, toId, cents: c, invoiceNo: invoiceNo ? String(invoiceNo).slice(0, 60) : null })
+        .returning();
+      res.status(201).json({ ok: true, settlement: row });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Undo a recorded settlement (e.g. the invoice was scrapped before payment).
+  app.delete("/api/admin/founder-settlement/:id", async (req, res) => {
+    try {
+      const [row] = await db.delete(founderSettlements)
+        .where(eq(founderSettlements.id, Number(req.params.id))).returning();
+      if (!row) return res.status(404).json({ error: "Ei löydy" });
+      res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -1779,7 +1905,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         workerMessage, jobNotes,
         photoDataUrl,
         allWorkers,
-        senderName, senderAddress,
+        senderName, senderAddress, senderYTunnus, senderId, jobId,
         agreedPriceCents, expensesTotalCents,
         estimatedHours,
         lang,
@@ -1884,7 +2010,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
                 <div style="font-size:9px;font-weight:700;color:#9ca3af;letter-spacing:1px;margin-bottom:6px;text-transform:uppercase">${isEn ? "From" : "Laskuttaja"}</div>
                 ${senderName ? `<div style="font-weight:700;color:#111827;font-size:13px">${senderName}</div>` : ""}
                 ${senderAddress ? `<div style="color:#6b7280;font-size:12px;margin-top:2px">${senderAddress}</div>` : ""}
-                ${workers[0]?.yTunnus ? `<div style="color:#6b7280;font-size:12px;margin-top:2px">Y-tunnus: ${workers[0].yTunnus}</div>` : ""}
+                ${(() => {
+                  // Y-tunnus must be the SELLER's (the invoicing founder) — never
+                  // another assigned worker's. Fall back to matching the sender by
+                  // name in the workers list; the old workers[0] fallback printed
+                  // the wrong founder's Y-tunnus when someone else billed.
+                  const yt = senderYTunnus || workers.find(w => w.name === senderName)?.yTunnus;
+                  return yt ? `<div style="color:#6b7280;font-size:12px;margin-top:2px">Y-tunnus: ${yt}</div>` : "";
+                })()}
               </td>
               <td width="50%" style="padding:16px 24px;vertical-align:top">
                 <div style="font-size:9px;font-weight:700;color:#9ca3af;letter-spacing:1px;margin-bottom:6px;text-transform:uppercase">${isEn ? "Bill to" : "Laskutetaan"}</div>
@@ -1915,6 +2048,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               ${estimatedHours ? `<td style="padding:10px 12px"></td>` : ""}
               <td style="padding:10px 24px;text-align:right;color:#6b7280">${fmtC(expensesTotalCents)}</td>
             </tr>` : ""}
+            <tr>
+              <td colspan="${estimatedHours ? "3" : "2"}" style="padding:6px 24px;font-size:10px;color:#9ca3af">
+                ${isEn ? "No VAT — the seller is not VAT-liable (Finnish VAT Act § 3, small-scale business)." : "Ei arvonlisäveroa — myyjä ei ole arvonlisäverovelvollinen (AVL 3 §, vähäinen toiminta)."}
+              </td>
+            </tr>
             <tr style="background:#f9fafb">
               <td colspan="${estimatedHours ? "2" : "1"}" style="padding:14px 24px;font-weight:700;color:#111827;font-size:14px">${isEn ? "Total" : "Yhteensä"}</td>
               <td style="padding:14px 24px;text-align:right;font-size:20px;font-weight:800;color:#111827">${price}</td>
@@ -2156,7 +2294,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       let pdfAttachment: { filename: string; content: Buffer } | null = null;
       if (agreedPriceCents) {
         try {
-          const senderWorker = workers[0];
+          // The receipt's seller must be the SENDER (same identity as the
+          // invoice header) — not the first assigned worker, whose Y-tunnus
+          // used to leak onto other founders' receipts.
+          const senderWorker = senderName
+            ? { name: senderName, yTunnus: senderYTunnus || workers.find(w => w.name === senderName)?.yTunnus }
+            : workers[0];
           const pdfBuffer = await generateKotitalousReceiptPdf({
             customerName,
             customerAddress,
@@ -2273,6 +2416,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           } catch (err) {
             console.warn("Tilitystosite send failed for", w.name, err);
           }
+        }
+      }
+
+      // Record WHO billed this job (whose account/Y-tunnus collected the money).
+      // Founder ids feed the ALV turnover + founder cross-invoicing; a staff
+      // sender counts only with their own Y-tunnus (otherwise the job must stay
+      // in the "laskuttaja puuttuu" bucket). Only fills an EMPTY billedBy — a
+      // re-send never overwrites a manually corrected attribution.
+      const senderIsBiller = senderId && /^[a-z0-9]{1,40}$/i.test(String(senderId))
+        && (FOUNDER_IDS.includes(String(senderId).toLowerCase()) || !!senderYTunnus);
+      if (jobId && senderIsBiller) {
+        try {
+          await db.update(jobs)
+            .set({ billedBy: String(senderId).toLowerCase(), updatedAt: new Date() })
+            .where(and(eq(jobs.id, Number(jobId)), isNull(jobs.billedBy)));
+        } catch (err) {
+          console.warn("billedBy save failed for job", jobId, err);
         }
       }
 
@@ -5042,36 +5202,59 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Single-person admin view: aggregate ONE worker across every gig — profile,
   // money movement (earned / paid / open + each payout tagged with its keikka),
   // and documents. Used by /admin/tiimi/:workerId. Host-facing.
-  const matchesWorker = (m: CrewMember, wid: string) =>
+  const matchesWorkerExact = (m: CrewMember, wid: string) =>
     m.id.toLowerCase() === wid || (m.linkedUserId ?? "").toLowerCase() === wid;
+  // First-name fallback (like the /tyo login linking): admin ids are first
+  // names (oona, oliver, …) but old crew rows may lack linkedUserId. Never
+  // overrides an explicit linkedUserId pointing at someone else, and is only
+  // consulted when NO exact match exists anywhere.
+  const matchesWorkerByName = (m: CrewMember, wid: string) =>
+    !m.linkedUserId && (m.name ?? "").trim().split(/\s+/)[0].toLowerCase() === wid;
 
   app.get("/api/admin/worker/:workerId", async (req, res) => {
     try {
       const wid = String(req.params.workerId).toLowerCase();
       const allJobs = await db.select().from(jobs);
       let worker: any = null;
-      const payouts: any[] = [];
-      const documents: any[] = [];
+      let payouts: any[] = [];
+      let documents: any[] = [];
       let earnedCents = 0, paidCents = 0;
-      for (const job of allJobs) {
-        const project = parseProject(job.projectData ?? null);
-        const m = (project?.crew || []).find((c) => matchesWorker(c, wid));
-        if (!m) continue;
-        const gigName = job.description || project!.building?.name || `Keikka #${job.id}`;
-        const stats = crewMemberStats(project!, m);
-        earnedCents += stats.earnedCents;
-        for (const p of (m.payouts || [])) {
-          if (p.status === "maksettu") paidCents += p.amountCents;
-          payouts.push({ ...p, jobId: job.id, gigName, token: m.token });
+      const collect = (pred: (m: CrewMember, wid: string) => boolean) => {
+        worker = null; payouts = []; documents = []; earnedCents = 0; paidCents = 0;
+        for (const job of allJobs) {
+          const project = parseProject(job.projectData ?? null);
+          const m = (project?.crew || []).find((c) => pred(c, wid));
+          if (!m) continue;
+          const gigName = job.description || project!.building?.name || `Keikka #${job.id}`;
+          const stats = crewMemberStats(project!, m);
+          earnedCents += stats.earnedCents;
+          for (const p of (m.payouts || [])) {
+            if (p.status === "maksettu") paidCents += p.amountCents;
+            payouts.push({ ...p, jobId: job.id, gigName, token: m.token });
+          }
+          for (const d of (m.documents || [])) documents.push({ ...d, jobId: job.id });
+          if (!worker) {
+            worker = {
+              id: m.id, name: m.name, role: m.role, token: m.token,
+              photoDataUrl: m.profile?.photoDataUrl,
+              phone: m.profile?.phone, email: m.profile?.email,
+              yTunnus: m.profile?.yTunnus, city: m.profile?.city,
+              answers: m.profile?.answers ?? {},
+            };
+          }
         }
-        for (const d of (m.documents || [])) documents.push({ ...d, jobId: job.id });
-        if (!worker) {
+      };
+      collect(matchesWorkerExact);
+      if (!worker) collect(matchesWorkerByName);
+      // Founders (and other admins) may not be crew on any gig — never 404 the
+      // bosses' own pages: build the profile from the biller registry instead.
+      if (!worker) {
+        const biller = BRAND_BILLERS.find((b) => b.id === wid);
+        if (biller) {
           worker = {
-            id: m.id, name: m.name, role: m.role, token: m.token,
-            photoDataUrl: m.profile?.photoDataUrl,
-            phone: m.profile?.phone, email: m.profile?.email,
-            yTunnus: m.profile?.yTunnus, city: m.profile?.city,
-            answers: m.profile?.answers ?? {},
+            id: biller.id, name: biller.name, role: "host", token: "",
+            email: biller.email, yTunnus: biller.yTunnus, city: biller.address,
+            answers: {},
           };
         }
       }
@@ -5108,14 +5291,38 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       };
       if (!doc.desc && !doc.fileDataUrl) return res.status(400).json({ error: "Anna kuvaus tai tiedosto." });
       const allJobs = await db.select().from(jobs);
-      for (const job of allJobs) {
-        const project = parseProject(job.projectData ?? null);
-        if (!project?.crew) continue;
-        const idx = project.crew.findIndex((c) => matchesWorker(c, wid));
-        if (idx < 0) continue;
-        project.crew[idx] = { ...project.crew[idx], documents: [doc, ...(project.crew[idx].documents || [])] };
-        await saveProject(job, project);
-        return res.json({ ok: true, document: doc });
+      // Exact id/link matches first; the first-name fallback only if none exist.
+      for (const pred of [matchesWorkerExact, matchesWorkerByName]) {
+        for (const job of allJobs) {
+          const project = parseProject(job.projectData ?? null);
+          if (!project?.crew) continue;
+          const idx = project.crew.findIndex((c) => pred(c, wid));
+          if (idx < 0) continue;
+          project.crew[idx] = { ...project.crew[idx], documents: [doc, ...(project.crew[idx].documents || [])] };
+          await saveProject(job, project);
+          return res.json({ ok: true, document: doc });
+        }
+      }
+      // Founders may not be crew anywhere — hold their documents on a hidden
+      // host-role member in the first project-bearing gig (hosts are filtered
+      // out of the roster UI, so this never shows up as a "worker").
+      const biller = BRAND_BILLERS.find((b) => b.id === wid);
+      if (biller) {
+        for (const job of allJobs) {
+          const project = parseProject(job.projectData ?? null);
+          if (!project) continue;
+          const member = sanitizeCrewMember({
+            id: biller.id, token: await genUniqueCrewToken(), name: biller.name,
+            // active:false + 1-cent rate: a pure document holder that never
+            // shifts payroll/kate math (rateOf has no role filter).
+            role: "host", adminLinked: true, active: false, perWindowCents: 1,
+            agreements: [], notes: [], createdAt: Date.now(), documents: [doc],
+          });
+          if (!member) break;
+          project.crew = [...(project.crew || []), member];
+          await saveProject(job, project);
+          return res.json({ ok: true, document: doc });
+        }
       }
       return res.status(404).json({ error: "Työntekijää ei löytynyt" });
     } catch (e: any) {

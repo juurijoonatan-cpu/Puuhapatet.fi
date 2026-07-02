@@ -76,6 +76,10 @@ export const jobs = pgTable("jobs", {
   gigData:           text("gig_data"),           // JSON: GigData (shared/gig.ts)
   // Project / floor-plan window tool (FR8 projektinäkymä)
   projectData:       text("project_data"),       // JSON: ProjectData (shared/project.ts)
+  // Founder (biller) whose Y-tunnus collected the customer's money for this job.
+  // Set automatically when the summary/invoice email is sent; editable in the
+  // Verotus view. Drives per-founder ALV turnover + founder cross-invoicing.
+  billedBy:          text("billed_by"),            // admin user id ("joonatan"|"matias")
   // Marketer (ovelta ovelle -myyjä) lead capture + founder triage
   submittedBy:       text("submitted_by"),        // admin/marketer user id who captured this lead
   submissionStatus:  text("submission_status"),   // null (normal) | "pending_review" | "approved" | "rejected"
@@ -107,6 +111,19 @@ export const expenses = pgTable("expenses", {
 export const expensesRelations = relations(expenses, ({ one }) => ({
   job: one(jobs, { fields: [expenses.jobId], references: [jobs.id] }),
 }));
+
+// ─── Founder settlements (bossien vastalaskut) ────────────────────────────────
+// Each row records an ISSUED founder-to-founder settlement invoice. The
+// founder-settlement endpoint subtracts these from the cumulative cross-debt,
+// so already-invoiced euros are never billed twice.
+export const founderSettlements = pgTable("founder_settlements", {
+  id:        serial("id").primaryKey(),
+  fromId:    text("from_id").notNull(),  // debtor — pays the invoice
+  toId:      text("to_id").notNull(),    // creditor — issued the invoice
+  cents:     integer("cents").notNull(),
+  invoiceNo: text("invoice_no"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
 
 export const insertExpenseSchema = createInsertSchema(expenses).omit({ id: true, createdAt: true });
 export type Expense = typeof expenses.$inferSelect;

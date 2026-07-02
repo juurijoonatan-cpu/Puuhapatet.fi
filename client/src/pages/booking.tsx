@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2, Send, User, CheckCircle2 } from "lucide-react";
@@ -19,19 +19,21 @@ import {
 import { useI18n } from "@/lib/i18n";
 import { postJson, warmBackend } from "@/lib/api";
 
-const schema = z.object({
-  name:      z.string().min(2,  "Nimi on pakollinen"),
-  phone:     z.string().min(6,  "Puhelinnumero on pakollinen"),
-  email:     z.string().email("Virheellinen sähköposti").or(z.literal("")),
-  address:   z.string().min(2,  "Osoite tai alue on pakollinen"),
-  message:   z.string().min(5,  "Kerro lyhyesti mitä tarvitset"),
+// Validation messages follow the site language, so the schema is built per lang.
+const makeSchema = (fi: boolean) => z.object({
+  name:      z.string().min(2,  fi ? "Nimi on pakollinen" : "Name is required"),
+  phone:     z.string().min(6,  fi ? "Puhelinnumero on pakollinen" : "Phone number is required"),
+  email:     z.string().email(fi ? "Virheellinen sähköposti" : "Invalid email").or(z.literal("")),
+  address:   z.string().min(2,  fi ? "Osoite tai alue on pakollinen" : "Address or area is required"),
+  message:   z.string().min(5,  fi ? "Kerro lyhyesti mitä tarvitset" : "Briefly tell us what you need"),
   urgency:   z.enum(["this_week", "flexible"]).optional(),
 });
 
-type FormData = z.infer<typeof schema>;
+type FormData = z.infer<ReturnType<typeof makeSchema>>;
 
 export default function BookingPage() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const schema = useMemo(() => makeSchema(lang === "fi"), [lang]);
   const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -66,7 +68,7 @@ export default function BookingPage() {
     if (res.ok) {
       setSent(true);
     } else {
-      setError("Jotain meni pieleen. Soita suoraan: 0400 389 999");
+      setError(t("booking.error"));
     }
     setLoading(false);
   };
@@ -82,10 +84,10 @@ export default function BookingPage() {
             {t("success.title")}
           </h1>
           <p className="text-muted-foreground leading-relaxed mb-8">
-            Olemme sinuun yhteydessä pian. Tyypillisesti saman päivän aikana.
+            {t("booking.sent.desc")}
           </p>
           <Button variant="outline" onClick={() => { setSent(false); form.reset(); }}>
-            Tee uusi pyyntö
+            {t("booking.sent.again")}
           </Button>
         </div>
       </div>
@@ -103,7 +105,7 @@ export default function BookingPage() {
             {t("form.title")}
           </h1>
           <p className="text-muted-foreground">
-            Täytä tiedot — otamme yhteyttä pian.
+            {t("booking.subtitle")}
           </p>
         </div>
 
@@ -113,7 +115,7 @@ export default function BookingPage() {
 
               <FormField control={form.control} name="name" render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Nimi *</FormLabel>
+                  <FormLabel>{t("form.name")} *</FormLabel>
                   <FormControl>
                     <Input placeholder="Matti Meikäläinen" {...field} />
                   </FormControl>
@@ -124,7 +126,7 @@ export default function BookingPage() {
               <div className="grid md:grid-cols-2 gap-4">
                 <FormField control={form.control} name="phone" render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Puhelinnumero *</FormLabel>
+                    <FormLabel>{t("form.phone")} *</FormLabel>
                     <FormControl>
                       <Input type="tel" placeholder="040 123 4567" {...field} />
                     </FormControl>
@@ -134,7 +136,7 @@ export default function BookingPage() {
 
                 <FormField control={form.control} name="email" render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Sähköposti</FormLabel>
+                    <FormLabel>{t("form.email")}</FormLabel>
                     <FormControl>
                       <Input type="email" placeholder="matti@esimerkki.fi" {...field} />
                     </FormControl>
@@ -145,7 +147,7 @@ export default function BookingPage() {
 
               <FormField control={form.control} name="address" render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Alue tai osoite *</FormLabel>
+                  <FormLabel>{t("booking.address")} *</FormLabel>
                   <FormControl>
                     <Input placeholder="Westend, Espoo" {...field} />
                   </FormControl>
@@ -155,11 +157,11 @@ export default function BookingPage() {
 
               <FormField control={form.control} name="urgency" render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Kiireellisyys <span className="text-muted-foreground font-normal">(vapaaehtoinen)</span></FormLabel>
+                  <FormLabel>{t("booking.urgency")} <span className="text-muted-foreground font-normal">({t("booking.optional")})</span></FormLabel>
                   <div className="grid grid-cols-2 gap-3 mt-1">
                     {([
-                      { value: "this_week", label: "Tällä viikolla" },
-                      { value: "flexible",  label: "Ei kiireellinen" },
+                      { value: "this_week", label: t("form.time.thisWeek") },
+                      { value: "flexible",  label: t("booking.urgency.flexible") },
                     ] as const).map((opt) => (
                       <button
                         key={opt.value}
@@ -180,10 +182,10 @@ export default function BookingPage() {
 
               <FormField control={form.control} name="message" render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Mitä tarvitset? *</FormLabel>
+                  <FormLabel>{t("form.needs")} *</FormLabel>
                   <FormControl>
                     <Textarea
-                      placeholder="Kerro vapaasti mitä palvelua tarvitset, milloin sopisi ja mahdolliset lisätiedot..."
+                      placeholder={t("booking.msg.placeholder")}
                       className="resize-none"
                       rows={4}
                       {...field}
@@ -195,7 +197,7 @@ export default function BookingPage() {
 
               <div>
                 <label className="text-sm font-medium text-muted-foreground mb-1 block">
-                  Alennuskoodi <span className="font-normal">(vapaaehtoinen)</span>
+                  {t("booking.coupon")} <span className="font-normal">({t("booking.optional")})</span>
                 </label>
                 <Input
                   placeholder="esim. MATTI-X4Z"
@@ -204,7 +206,7 @@ export default function BookingPage() {
                   className="font-mono tracking-wider"
                 />
                 {coupon && (
-                  <p className="text-xs text-primary mt-1">Koodi lisätty — 5 % alennus vahvistetaan yhteydenoton yhteydessä.</p>
+                  <p className="text-xs text-primary mt-1">{t("booking.coupon.added")}</p>
                 )}
               </div>
 
@@ -215,13 +217,13 @@ export default function BookingPage() {
               <div className="pt-2 space-y-3">
                 <Button type="submit" size="lg" className="w-full h-14 text-base font-semibold rounded-2xl" disabled={loading}>
                   {loading ? (
-                    <><Loader2 className="w-5 h-5 mr-2 animate-spin" /> Lähetetään...</>
+                    <><Loader2 className="w-5 h-5 mr-2 animate-spin" /> {t("form.submitting")}</>
                   ) : (
-                    <><Send className="w-4 h-4 mr-2" /> Lähetä viesti</>
+                    <><Send className="w-4 h-4 mr-2" /> {t("booking.send")}</>
                   )}
                 </Button>
                 <p className="text-center text-xs text-muted-foreground">
-                  Tai soita:{" "}
+                  {t("booking.orCall")}{" "}
                   <a href="tel:+358400389999" className="font-medium text-foreground hover:underline">
                     0400 389 999
                   </a>

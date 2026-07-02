@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useI18n } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -10,19 +11,19 @@ import { motion, AnimatePresence } from "framer-motion";
 const KOTITALOUS_PCT = 0.35;
 
 const CAR_SIZES = [
-  { key: "small",  label: "Pikkuauto",      sub: "Hatchback, city-auto", price: 30 },
-  { key: "medium", label: "Keskikokoinen",  sub: "Sedan, pieni SUV",     price: 40 },
-  { key: "large",  label: "Iso auto",       sub: "SUV, tila-auto, vm",   price: 50 },
+  { key: "small",  labelKey: "laskuri.car.small",  subKey: "laskuri.car.small.sub",  price: 30 },
+  { key: "medium", labelKey: "laskuri.car.medium", subKey: "laskuri.car.medium.sub", price: 40 },
+  { key: "large",  labelKey: "laskuri.car.large",  subKey: "laskuri.car.large.sub",  price: 50 },
 ] as const;
 type CarSize = (typeof CAR_SIZES)[number]["key"];
 
-const CAR_INCLUDES = [
-  "Imurointi",
-  "Kojelaudan ja pintojen puhdistus",
-  "Ovien sisäpinnat",
-  "Keskikonsoli",
-  "Auton sisäikkunoiden kevyt putsaus",
-];
+const CAR_INCLUDES_KEYS = [
+  "laskuri.carIncludes.1",
+  "laskuri.carIncludes.2",
+  "laskuri.carIncludes.3",
+  "laskuri.carIncludes.4",
+  "laskuri.carIncludes.5",
+] as const;
 
 // ─── NURMIKKO (lawn mowing pricing) ─────────────────────────────────────────
 
@@ -37,12 +38,12 @@ const LAWN_SIZES = [
 ] as const;
 
 const VISIT_PLANS = [
-  { visits: 1,  label: "1 käynti",    disc: 0,    desc: "Kertaluontoinen" },
-  { visits: 4,  label: "4 käyntiä",   disc: 0.05, desc: "Noin kuukausittain" },
-  { visits: 8,  label: "8 käyntiä",   disc: 0.10, desc: "Joka toinen viikko" },
-  { visits: 12, label: "12 käyntiä",  disc: 0.15, desc: "Kausisuositus ⭐" },
-  { visits: 16, label: "16 käyntiä",  disc: 0.18, desc: "Viikoittain" },
-  { visits: 20, label: "20 käyntiä",  disc: 0.20, desc: "Täyskausi — paras hinta" },
+  { visits: 1,  labelKey: "laskuri.visit.once", disc: 0,    descKey: "laskuri.visit.once.desc" },
+  { visits: 4,  labelKey: "laskuri.visit.4",    disc: 0.05, descKey: "laskuri.visit.4.desc" },
+  { visits: 8,  labelKey: "laskuri.visit.8",    disc: 0.10, descKey: "laskuri.visit.8.desc" },
+  { visits: 12, labelKey: "laskuri.visit.12",   disc: 0.15, descKey: "laskuri.visit.12.desc" },
+  { visits: 16, labelKey: "laskuri.visit.16",   disc: 0.18, descKey: "laskuri.visit.16.desc" },
+  { visits: 20, labelKey: "laskuri.visit.20",   disc: 0.20, descKey: "laskuri.visit.20.desc" },
 ] as const;
 
 
@@ -51,10 +52,10 @@ const VISIT_PLANS = [
 // Competitor ikkunanpesu.com: omakoti 189–799, rivitalo 129–349, kerrostalo 149–449.
 
 const HOUSE_TYPES = [
-  { key: "omakoti",   label: "Omakotitalo",    sub: "Erillistalo" },
-  { key: "paritalo",  label: "Paritalo",       sub: "2 huoneistoa" },
-  { key: "rivitalo",  label: "Rivitalo",       sub: "Oma huoneisto" },
-  { key: "kerrostalo",label: "Kerrostalo",     sub: "Huoneisto" },
+  { key: "omakoti",   labelKey: "laskuri.house.omakoti",    subKey: "laskuri.house.omakoti.sub" },
+  { key: "paritalo",  labelKey: "laskuri.house.paritalo",   subKey: "laskuri.house.paritalo.sub" },
+  { key: "rivitalo",  labelKey: "laskuri.house.rivitalo",   subKey: "laskuri.house.rivitalo.sub" },
+  { key: "kerrostalo",labelKey: "laskuri.house.kerrostalo", subKey: "laskuri.house.kerrostalo.sub" },
 ] as const;
 type HouseKey = (typeof HOUSE_TYPES)[number]["key"];
 
@@ -118,57 +119,57 @@ const SQM_RANGES: Record<HouseKey, { label: string; price: number }[]> = {
 };
 
 const SERVICE_TIERS = [
-  { key: "all",      label: "Kaikkien pintojen pesu",  sub: "Sisä + ulko",           mult: 1.00 },
-  { key: "outside",  label: "Vain ulkopintojen pesu",  sub: "Nopea ja edullinen",    mult: 0.58 },
-  { key: "annual",   label: "Vuosipaketti (2×/v)",     sub: "10 % alennus",          mult: 1.80 },
+  { key: "all",      labelKey: "laskuri.tier.all",     subKey: "laskuri.tier.all.sub",     mult: 1.00 },
+  { key: "outside",  labelKey: "laskuri.tier.outside", subKey: "laskuri.tier.outside.sub", mult: 0.58 },
+  { key: "annual",   labelKey: "laskuri.tier.annual",  subKey: "laskuri.tier.annual.sub",  mult: 1.80 },
 ] as const;
 type TierKey = (typeof SERVICE_TIERS)[number]["key"];
 
 const ADDONS = [
-  { key: "balcony",  label: "Parveke-/terassilasitus", price: 39 },
-  { key: "railing",  label: "Lasikaide",               price: 39 },
-  { key: "mirror",   label: "Peilien pesu",            price: 19 },
-  { key: "canopy",   label: "Terassin lasikate",       price: 89 },
-  { key: "gutter",   label: "Rännien puhdistus",       price: 69 },
+  { key: "balcony",  labelKey: "laskuri.addon.balcony", price: 39 },
+  { key: "railing",  labelKey: "laskuri.addon.railing", price: 39 },
+  { key: "mirror",   labelKey: "laskuri.addon.mirror",  price: 19 },
+  { key: "canopy",   labelKey: "laskuri.addon.canopy",  price: 89 },
+  { key: "gutter",   labelKey: "laskuri.addon.gutter",  price: 69 },
 ] as const;
 type AddonKey = (typeof ADDONS)[number]["key"];
 
 const DIFF_GROUPS = [
   {
-    label: "Korkeus / kerrosluku",
+    labelKey: "laskuri.diff.height",
     key: "height" as const,
     options: [
-      { label: "Maantaso", value: 1 },
-      { label: "Tikastus", value: 1.20, tag: "×1.20" },
-      { label: "2. kerros", value: 1.40, tag: "×1.40" },
-      { label: "Erikois", value: 1.65, tag: "×1.65" },
+      { labelKey: "laskuri.diff.height.ground", value: 1 },
+      { labelKey: "laskuri.diff.height.ladder", value: 1.20, tag: "×1.20" },
+      { labelKey: "laskuri.diff.height.2ndFloor", value: 1.40, tag: "×1.40" },
+      { labelKey: "laskuri.diff.height.special", value: 1.65, tag: "×1.65" },
     ],
   },
   {
-    label: "Pääsy / saavutettavuus",
+    labelKey: "laskuri.diff.access",
     key: "access" as const,
     options: [
-      { label: "Normaali", value: 1 },
-      { label: "Haastava", value: 1.10, tag: "×1.10" },
-      { label: "Vaikea", value: 1.25, tag: "×1.25" },
+      { labelKey: "laskuri.diff.access.normal", value: 1 },
+      { labelKey: "laskuri.diff.access.hard", value: 1.10, tag: "×1.10" },
+      { labelKey: "laskuri.diff.access.difficult", value: 1.25, tag: "×1.25" },
     ],
   },
   {
-    label: "Ikkunatyyppi",
+    labelKey: "laskuri.diff.windowType",
     key: "windowType" as const,
     options: [
-      { label: "Tavalliset", value: 1 },
-      { label: "Kippi-käännös", value: 1.10, tag: "×1.10" },
-      { label: "Erikoikoot", value: 1.25, tag: "×1.25" },
+      { labelKey: "laskuri.diff.windowType.normal", value: 1 },
+      { labelKey: "laskuri.diff.windowType.tilt", value: 1.10, tag: "×1.10" },
+      { labelKey: "laskuri.diff.windowType.special", value: 1.25, tag: "×1.25" },
     ],
   },
   {
-    label: "Likaisuus / rakennuslika",
+    labelKey: "laskuri.diff.dirt",
     key: "dirt" as const,
     options: [
-      { label: "Normaali", value: 1 },
-      { label: "Tavallista enemmän", value: 1.15, tag: "×1.15" },
-      { label: "Rakennuslika", value: 1.40, tag: "×1.40" },
+      { labelKey: "laskuri.diff.dirt.normal", value: 1 },
+      { labelKey: "laskuri.diff.dirt.more", value: 1.15, tag: "×1.15" },
+      { labelKey: "laskuri.diff.dirt.construction", value: 1.40, tag: "×1.40" },
     ],
   },
 ] as const;
@@ -302,29 +303,39 @@ const AREA_TABLE: Record<string, { mult: number; label: string }> = {
   "01800": { mult: 0.84, label: "Klaukkala" },
 };
 
-function regionMultiplier(pc: string): { mult: number; label: string } {
+// Named neighbourhoods (AREA_TABLE) are proper nouns and stay as-is in both
+// languages; only the generic fallback buckets get a translatable labelKey.
+function regionMultiplier(pc: string): { mult: number; label?: string; labelKey?: string } {
   const p = pc.trim();
-  if (!/^\d{5}$/.test(p)) return { mult: 1.00, label: "Pääkaupunkiseutu" };
+  if (!/^\d{5}$/.test(p)) return { mult: 1.00, labelKey: "laskuri.region.default" };
   // Exact match first
   if (AREA_TABLE[p]) return AREA_TABLE[p];
   // Helsinki kantakaupunki fallback (001xx)
-  if (p.startsWith("001")) return { mult: 1.05, label: "Helsinki kantakaupunki" };
-  if (p.startsWith("002")) return { mult: 0.97, label: "Helsinki länsi" };
+  if (p.startsWith("001")) return { mult: 1.05, labelKey: "laskuri.region.hkiCore" };
+  if (p.startsWith("002")) return { mult: 0.97, labelKey: "laskuri.region.hkiWest" };
   // Muu Helsinki
-  if (p.startsWith("00")) return { mult: 0.84, label: "Helsinki" };
+  if (p.startsWith("00")) return { mult: 0.84, labelKey: "laskuri.region.hki" };
   // Muu Espoo
-  if (p.startsWith("02")) return { mult: 0.88, label: "Espoo" };
+  if (p.startsWith("02")) return { mult: 0.88, labelKey: "laskuri.region.espoo" };
   // Kauniainen
-  if (p.startsWith("028")) return { mult: 1.02, label: "Kauniainen" };
+  if (p.startsWith("028")) return { mult: 1.02, labelKey: "laskuri.region.kauniainen" };
   // Vantaa fallback
-  if (p.startsWith("01")) return { mult: 0.83, label: "Vantaa" };
+  if (p.startsWith("01")) return { mult: 0.83, labelKey: "laskuri.region.vantaa" };
   // Kauempi (Kirkkonummi, Järvenpää, jne.)
-  return { mult: 0.78, label: "Muu alue" };
+  return { mult: 0.78, labelKey: "laskuri.region.other" };
 }
+/** Named area (proper noun) or a translated generic bucket. */
+const regionLabel = (r: { label?: string; labelKey?: string }, t: (k: string) => string) =>
+  r.label ?? (r.labelKey ? t(r.labelKey) : "");
+// "alle X m²" / "yli X m²" size ranges translate the leading word only — the
+// numeric range itself needs no localization.
+const sizeLabel = (label: string, lang: "fi" | "en") =>
+  lang === "fi" ? label : label.replace(/^alle /, "under ").replace(/^yli /, "over ");
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function LaskuriPage() {
+  const { t, lang } = useI18n();
   const [tab, setTab] = useState<"nelio" | "nurmikko" | "auto">("nelio");
   const [carSize, setCarSize] = useState<CarSize | null>(null);
 
@@ -391,14 +402,16 @@ export default function LaskuriPage() {
     if (!form.name || !form.phone || !form.address) return;
     setSending(true); setSendError("");
     try {
-      const houseLabel = HOUSE_TYPES.find(h => h.key === houseType)?.label;
-      const sqmLabel = sqmIdx !== null ? SQM_RANGES[houseType][sqmIdx].label : "";
-      const addonsList = ADDONS.filter(a => addons[a.key]).map(a => a.label).join(", ") || "—";
+      // This note lands in the admin's inbox — built in the site's active
+      // language, which is fine either way for the founders to read.
+      const houseLabel = t(HOUSE_TYPES.find(h => h.key === houseType)!.labelKey);
+      const sqmLabel = sqmIdx !== null ? sizeLabel(SQM_RANGES[houseType][sqmIdx].label, lang) : "";
+      const addonsList = ADDONS.filter(a => addons[a.key]).map(a => t(a.labelKey)).join(", ") || "—";
       const serviceDesc = tab === "auto"
-        ? `Sisäfreesaus — ${CAR_SIZES.find(c => c.key === carSize)?.label} (${carPrice} €). Sisältää: ${CAR_INCLUDES.join(", ")}.`
+        ? `${t("laskuri.tab.car")} — ${t(CAR_SIZES.find(c => c.key === carSize)!.labelKey)} (${carPrice} €). ${t("laskuri.car.includes")}: ${CAR_INCLUDES_KEYS.map(t).join(", ")}.`
         : tab === "nurmikko"
-        ? `Nurmikon leikkuu — ${lawnSizeIdx !== null ? LAWN_SIZES[lawnSizeIdx].label : ""}, ${lawnVisits}× kaudessa (${lawnPlan.desc}). Hinta: ${lawnPricePerVisit} €/kerta, yht. ${lawnTotal} €${lawnSavings > 0 ? `, säästät ${lawnSavings} €` : ""}.`
-        : `Ikkunapesu — ${houseLabel} ${sqmLabel}, ${tierObj.label}. Lisät: ${addonsList}. Vaikeuskerroin: ×${combinedDiffMult.toFixed(2)}. Alue: ${region.label} (${region.mult}×). Postinumero: ${postalCode || "—"}`;
+        ? `${t("laskuri.lawn.title")} — ${lawnSizeIdx !== null ? sizeLabel(LAWN_SIZES[lawnSizeIdx].label, lang) : ""}, ${lawnVisits}× (${t(lawnPlan.descKey)}). ${lawnPricePerVisit} €${t("laskuri.lawn.perVisit")}, ${t("laskuri.lawn.total")} ${lawnTotal} €${lawnSavings > 0 ? `, ${t("laskuri.lawn.save")} ${lawnSavings} €` : ""}.`
+        : `${t("laskuri.tab.windows")} — ${houseLabel} ${sqmLabel}, ${t(tierObj.labelKey)}. ${t("laskuri.addons")}: ${addonsList}. ×${combinedDiffMult.toFixed(2)}. ${t("laskuri.area")}: ${regionLabel(region, t)} (${region.mult}×). ${postalCode || "—"}`;
       const fullMessage = [
         `Palvelu: ${serviceDesc}`,
         `Hinta-arvio: ${activeTotal} € (kotitalousväh. jälkeen ~${afterKotitalous} €)`,
@@ -420,7 +433,7 @@ export default function LaskuriPage() {
       const json = await res.json();
       if (!res.ok || !json.ok) throw new Error();
       setSent(true);
-    } catch { setSendError("Jotain meni pieleen. Soita suoraan: 0400 389 999"); }
+    } catch { setSendError(t("booking.error")); }
     finally { setSending(false); }
   };
 
@@ -430,9 +443,9 @@ export default function LaskuriPage() {
         <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-6">
           <CheckCircle2 className="w-8 h-8 text-primary" />
         </div>
-        <h1 className="text-2xl font-semibold text-foreground mb-3">Lähetetty!</h1>
-        <p className="text-muted-foreground leading-relaxed mb-8">Tarkistamme arvion ja vahvistamme hinnan sinulle pian.</p>
-        <Button variant="outline" onClick={() => { setSent(false); setShowForm(false); }}>Tee uusi arvio</Button>
+        <h1 className="text-2xl font-semibold text-foreground mb-3">{t("laskuri.sent.title")}</h1>
+        <p className="text-muted-foreground leading-relaxed mb-8">{t("laskuri.sent.desc")}</p>
+        <Button variant="outline" onClick={() => { setSent(false); setShowForm(false); }}>{t("laskuri.sent.again")}</Button>
       </div>
     </div>
   );
@@ -459,8 +472,8 @@ export default function LaskuriPage() {
           >
           <Card className="w-full p-6 bg-card border-0 premium-shadow space-y-4" data-testid="postal-modal">
             <div>
-              <h2 className="text-lg font-semibold text-foreground mb-1">Missä asut?</h2>
-              <p className="text-xs text-muted-foreground">Postinumeron perusteella tarkennamme hinta-arviota alueellesi.</p>
+              <h2 className="text-lg font-semibold text-foreground mb-1">{t("laskuri.postal.title")}</h2>
+              <p className="text-xs text-muted-foreground">{t("laskuri.postal.desc")}</p>
             </div>
             <Input
               type="text"
@@ -475,28 +488,28 @@ export default function LaskuriPage() {
             />
             {pcInput.length === 5 && (
               <p className="text-xs text-center text-muted-foreground">
-                {regionMultiplier(pcInput).label}
+                {regionLabel(regionMultiplier(pcInput), t)}
               </p>
             )}
 
             {/* KV question — asked here together with area */}
             <div className="border-t pt-4">
-              <p className="text-sm font-semibold text-foreground mb-1">Kotitalousvähennys käytössä?</p>
+              <p className="text-sm font-semibold text-foreground mb-1">{t("laskuri.kv.question")}</p>
               <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
-                Ikkunanpesu on kotitalousvähennyskelpoista. Vähennys haetaan itse OmaVero-palvelussa — enintään <strong>2 250 € / henkilö / vuosi</strong>.
+                {t("laskuri.kv.desc")}
               </p>
               <div className="flex gap-2">
                 <button
                   onClick={() => setKvEligible(false)}
                   className={`flex-1 py-2.5 rounded-xl border text-sm font-semibold transition-colors ${!kvEligible ? "border-foreground bg-foreground text-background" : "border-border text-muted-foreground hover:bg-muted"}`}
                 >
-                  Ei
+                  {t("laskuri.no")}
                 </button>
                 <button
                   onClick={() => setKvEligible(true)}
                   className={`flex-1 py-2.5 rounded-xl border text-sm font-semibold transition-colors ${kvEligible ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-muted"}`}
                 >
-                  Kyllä, käytän
+                  {t("laskuri.yes.use")}
                 </button>
               </div>
             </div>
@@ -507,7 +520,7 @@ export default function LaskuriPage() {
                 className="flex-1"
                 onClick={() => { setShowPcModal(false); if (typeof window !== "undefined") window.localStorage.setItem("pp_postal", postalCode || ""); }}
               >
-                Ohita
+                {t("laskuri.skip")}
               </Button>
               <Button
                 className="flex-1"
@@ -519,7 +532,7 @@ export default function LaskuriPage() {
                 }}
                 data-testid="postal-confirm"
               >
-                Vahvista
+                {t("laskuri.confirm")}
               </Button>
             </div>
           </Card>
@@ -532,18 +545,18 @@ export default function LaskuriPage() {
 
         {/* Header */}
         <div className="text-center mb-8">
-          <h1 className="text-2xl md:text-3xl font-semibold text-foreground mb-2">Hinta-arvio</h1>
+          <h1 className="text-2xl md:text-3xl font-semibold text-foreground mb-2">{t("laskuri.title")}</h1>
           <p className="text-muted-foreground text-sm max-w-md mx-auto">
-            Laske suuntaa-antava hinta. Isommille kohteille teemme aina erillisen tarjouksen paikan päällä.
+            {t("laskuri.subtitle")}
           </p>
         </div>
 
         {/* Tab */}
         <div className="flex rounded-2xl bg-muted p-1 mb-6 max-w-xl mx-auto">
-          {(["nelio", "nurmikko", "auto"] as const).map(t => (
-            <button key={t} onClick={() => { setTab(t as typeof tab); setShowForm(false); }}
-              className={`flex-1 py-2.5 px-2 rounded-xl text-xs md:text-sm font-medium transition-all ${tab === t ? "bg-card premium-shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-              {t === "nelio" ? "Ikkunapesu" : t === "nurmikko" ? "Nurmikko" : "Sisä­freesaus"}
+          {(["nelio", "nurmikko", "auto"] as const).map(tabKey => (
+            <button key={tabKey} onClick={() => { setTab(tabKey); setShowForm(false); }}
+              className={`flex-1 py-2.5 px-2 rounded-xl text-xs md:text-sm font-medium transition-all ${tab === tabKey ? "bg-card premium-shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+              {t(tabKey === "nelio" ? "laskuri.tab.windows" : tabKey === "nurmikko" ? "laskuri.tab.lawn" : "laskuri.tab.car")}
             </button>
           ))}
         </div>
@@ -564,13 +577,13 @@ export default function LaskuriPage() {
                   data-testid="postal-bar"
                 >
                   <div className="text-left">
-                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Alue</p>
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{t("laskuri.area")}</p>
                     <p className="text-sm font-semibold text-foreground">
-                      {postalCode ? `${postalCode} · ${region.label}` : "Syötä postinumero"}
+                      {postalCode ? `${postalCode} · ${regionLabel(region, t)}` : t("laskuri.area.enter")}
                     </p>
                   </div>
                   <span className="text-xs text-primary font-medium">
-                    {postalCode ? "Muuta" : "Muuta"}
+                    {t("laskuri.change")}
                   </span>
                 </button>
 
@@ -581,9 +594,9 @@ export default function LaskuriPage() {
                   data-testid="kv-toggle"
                 >
                   <div className="text-left">
-                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Kotitalousvähennys</p>
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{t("laskuri.kv.label")}</p>
                     <p className="text-sm font-semibold text-foreground">
-                      {kvEligible ? "Käytössä — haen OmaVerosta" : "Ei käytössä"}
+                      {kvEligible ? t("laskuri.kv.active") : t("laskuri.kv.inactive")}
                     </p>
                   </div>
                   <div className={`w-10 h-6 rounded-full relative transition-colors shrink-0 ${kvEligible ? "bg-primary" : "bg-muted-foreground/30"}`}>
@@ -593,16 +606,16 @@ export default function LaskuriPage() {
 
                 {/* House type */}
                 <div>
-                  <p className="text-sm font-medium text-foreground mb-3">Talotyyppi</p>
+                  <p className="text-sm font-medium text-foreground mb-3">{t("laskuri.houseType")}</p>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                    {HOUSE_TYPES.map(({ key, label, sub }) => (
+                    {HOUSE_TYPES.map(({ key, labelKey, subKey }) => (
                       <button key={key}
                         onClick={() => { setHouseType(key); setSqmIdx(null); }}
                         className={`p-3 rounded-2xl border-2 text-center transition-all ${houseType === key ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"}`}
                         data-testid={`house-${key}`}
                       >
-                        <p className="text-xs font-semibold text-foreground">{label}</p>
-                        <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{sub}</p>
+                        <p className="text-xs font-semibold text-foreground">{t(labelKey)}</p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{t(subKey)}</p>
                       </button>
                     ))}
                   </div>
@@ -610,7 +623,7 @@ export default function LaskuriPage() {
 
                 {/* Square meters */}
                 <div>
-                  <p className="text-sm font-medium text-foreground mb-3">Kohteen koko</p>
+                  <p className="text-sm font-medium text-foreground mb-3">{t("laskuri.size")}</p>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                     {SQM_RANGES[houseType].map((r, i) => {
                       const fullPrice = Math.round(r.price * region.mult);
@@ -622,27 +635,27 @@ export default function LaskuriPage() {
                           className={`p-2.5 rounded-xl border-2 text-left transition-all ${sqmIdx === i ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"}`}
                           data-testid={`sqm-${i}`}
                         >
-                          <p className="text-xs font-semibold text-foreground">{r.label}</p>
+                          <p className="text-xs font-semibold text-foreground">{sizeLabel(r.label, lang)}</p>
                           <p className="text-sm font-bold text-primary mt-0.5">
                             {kvEligible ? "~" : ""}{displayPrice} €{kvEligible && <span className="text-[9px] font-normal text-primary/70 ml-0.5">*</span>}
                           </p>
-                          {kvEligible && <p className="text-[9px] text-muted-foreground leading-tight">norm. {fullPrice} €</p>}
+                          {kvEligible && <p className="text-[9px] text-muted-foreground leading-tight">{t("laskuri.kv.norm")} {fullPrice} €</p>}
                         </button>
                       );
                     })}
                   </div>
                   {kvEligible && (
                     <p className="text-[10px] text-muted-foreground mt-2">
-                      <span className="text-primary font-medium">*</span> Kotitalousvähennyksellä (35 %) maksat vain noin kaksi kolmasosaa — vähennys haetaan itse OmaVero-palvelussa. Enintään 2 250 € / henkilö / vuosi.
+                      <span className="text-primary font-medium">*</span> {t("laskuri.kv.note")}
                     </p>
                   )}
                 </div>
 
                 {/* Service tier */}
                 <div>
-                  <p className="text-sm font-medium text-foreground mb-3">Palvelu</p>
+                  <p className="text-sm font-medium text-foreground mb-3">{t("laskuri.service")}</p>
                   <div className="space-y-2">
-                    {SERVICE_TIERS.map(({ key, label, sub, mult }) => (
+                    {SERVICE_TIERS.map(({ key, labelKey, subKey, mult }) => (
                       <button key={key}
                         onClick={() => setTier(key)}
                         className={`w-full p-3.5 rounded-2xl border-2 text-left flex items-center gap-3 transition-all ${tier === key ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"}`}
@@ -650,8 +663,8 @@ export default function LaskuriPage() {
                       >
                         <div className={`w-3 h-3 rounded-full flex-shrink-0 ${tier === key ? "bg-primary" : "bg-muted-foreground/30"}`} />
                         <div className="flex-1">
-                          <p className="text-sm font-medium text-foreground">{label}</p>
-                          <p className="text-xs text-muted-foreground">{sub}</p>
+                          <p className="text-sm font-medium text-foreground">{t(labelKey)}</p>
+                          <p className="text-xs text-muted-foreground">{t(subKey)}</p>
                         </div>
                         {sqmIdx !== null && (() => {
                           const full = Math.round(sqmBase * mult * combinedDiffMult * region.mult);
@@ -673,12 +686,12 @@ export default function LaskuriPage() {
 
                 {/* Difficulty multipliers */}
                 <div>
-                  <p className="text-sm font-medium text-foreground mb-1">Vaikeustekijät</p>
-                  <p className="text-[10px] text-muted-foreground mb-3">Vaikuttaako jokin tekijä pesun hintaan? Valitse tarkentaaksesi arviota.</p>
+                  <p className="text-sm font-medium text-foreground mb-1">{t("laskuri.difficulty")}</p>
+                  <p className="text-[10px] text-muted-foreground mb-3">{t("laskuri.difficulty.desc")}</p>
                   <div className="space-y-3">
                     {DIFF_GROUPS.map(group => (
                       <div key={group.key}>
-                        <p className="text-xs text-muted-foreground mb-1.5">{group.label}</p>
+                        <p className="text-xs text-muted-foreground mb-1.5">{t(group.labelKey)}</p>
                         <div className="flex flex-wrap gap-1.5">
                           {group.options.map(opt => (
                             <button
@@ -691,7 +704,7 @@ export default function LaskuriPage() {
                                   : "border-border bg-card hover:bg-muted/50 text-foreground"
                               }`}
                             >
-                              {opt.label}{"tag" in opt && opt.tag ? <span className="ml-1 text-[10px] opacity-60">{opt.tag}</span> : null}
+                              {t(opt.labelKey)}{"tag" in opt && opt.tag ? <span className="ml-1 text-[10px] opacity-60">{opt.tag}</span> : null}
                             </button>
                           ))}
                         </div>
@@ -700,7 +713,7 @@ export default function LaskuriPage() {
                     {combinedDiffMult > 1 && (
                       <div className="rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 px-3 py-2">
                         <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">
-                          Vaikeuskerroin ×{combinedDiffMult.toFixed(2)} — hinta korotettu valitsemiesi tekijöiden mukaan
+                          {t("laskuri.difficulty.note").replace("{mult}", combinedDiffMult.toFixed(2))}
                         </p>
                       </div>
                     )}
@@ -709,9 +722,9 @@ export default function LaskuriPage() {
 
                 {/* Add-ons */}
                 <div>
-                  <p className="text-sm font-medium text-foreground mb-3">Lisäpalvelut</p>
+                  <p className="text-sm font-medium text-foreground mb-3">{t("laskuri.addons")}</p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {ADDONS.map(({ key, label, price }) => (
+                    {ADDONS.map(({ key, labelKey, price }) => (
                       <button key={key}
                         onClick={() => setAddons(p => ({ ...p, [key]: !p[key] }))}
                         className={`p-3 rounded-xl border-2 text-left flex items-center justify-between gap-2 transition-all ${addons[key] ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"}`}
@@ -721,7 +734,7 @@ export default function LaskuriPage() {
                           <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${addons[key] ? "border-primary bg-primary" : "border-muted-foreground/40"}`}>
                             {addons[key] && <CheckCircle2 className="w-3 h-3 text-white" />}
                           </div>
-                          <span className="text-xs font-medium text-foreground">{label}</span>
+                          <span className="text-xs font-medium text-foreground">{t(labelKey)}</span>
                         </div>
                         <span className="text-xs font-semibold text-primary">+{price} €</span>
                       </button>
@@ -730,7 +743,7 @@ export default function LaskuriPage() {
                 </div>
 
                 <p className="text-[10px] text-muted-foreground text-center pt-1">
-                  Suuntaa-antava arvio. Lopullinen hinta vahvistetaan katselmuksen jälkeen.
+                  {t("laskuri.disclaimer")}
                 </p>
               </div>
             )}
@@ -742,19 +755,18 @@ export default function LaskuriPage() {
                 {/* Header */}
                 <div className="rounded-2xl bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 px-4 py-3">
                   <p className="text-[10px] font-semibold uppercase tracking-widest text-green-700 dark:text-green-400 mb-0.5">Puuhapatet</p>
-                  <p className="text-base font-bold text-foreground">Nurmikon leikkuu</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Kertaluontoinen tai kausitilaus · Toukokuu–syyskuu</p>
+                  <p className="text-base font-bold text-foreground">{t("laskuri.lawn.title")}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{t("laskuri.lawn.subtitle")}</p>
                 </div>
 
                 {/* Lawn size */}
                 <div>
                   <div className="flex items-center gap-2 mb-3">
-                    <p className="text-sm font-medium text-foreground">Nurmikon koko</p>
+                    <p className="text-sm font-medium text-foreground">{t("laskuri.lawn.size")}</p>
                     <button
                       type="button"
                       onClick={() => setShowMeasureHelp(v => !v)}
                       className="w-5 h-5 rounded-full border border-border bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground hover:text-foreground transition-colors"
-                      title="Kuinka mitata?"
                     >?</button>
                   </div>
                   {showMeasureHelp && (
@@ -762,12 +774,12 @@ export default function LaskuriPage() {
                       <div className="flex items-start gap-2.5">
                         <span className="text-2xl leading-none mt-0.5">👟</span>
                         <div>
-                          <p className="text-xs font-semibold text-amber-800 dark:text-amber-300 mb-1">Mittaa askelilla — helppo tapa</p>
+                          <p className="text-xs font-semibold text-amber-800 dark:text-amber-300 mb-1">{t("laskuri.lawn.measureHelp.title")}</p>
                           <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
-                            Kävele nurmikon pituus ja leveys laskien askeleet. Yksi normaali askel on noin <strong>0,75 m</strong>. Kerro pituus × leveys = pinta-ala neliömetreinä.
+                            {t("laskuri.lawn.measureHelp.desc")}
                           </p>
                           <p className="text-[11px] text-amber-600 dark:text-amber-500 mt-1.5 font-medium">
-                            Esim: 14 askelta × 10 askelta ≈ 10,5 m × 7,5 m = 79 m²
+                            {t("laskuri.lawn.measureHelp.example")}
                           </p>
                         </div>
                       </div>
@@ -780,8 +792,8 @@ export default function LaskuriPage() {
                         className={`p-2.5 rounded-xl border-2 text-left transition-all ${lawnSizeIdx === i ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"}`}
                         data-testid={`lawn-${i}`}
                       >
-                        <p className="text-xs font-semibold text-foreground">{s.label}</p>
-                        <p className="text-sm font-bold text-primary mt-0.5">{s.pricePerVisit} €<span className="text-[10px] font-normal text-muted-foreground">/kerta</span></p>
+                        <p className="text-xs font-semibold text-foreground">{sizeLabel(s.label, lang)}</p>
+                        <p className="text-sm font-bold text-primary mt-0.5">{s.pricePerVisit} €<span className="text-[10px] font-normal text-muted-foreground">{t("laskuri.lawn.perVisit")}</span></p>
                       </button>
                     ))}
                   </div>
@@ -789,7 +801,7 @@ export default function LaskuriPage() {
 
                 {/* Visit frequency */}
                 <div>
-                  <p className="text-sm font-medium text-foreground mb-3">Käyntimäärä kaudella</p>
+                  <p className="text-sm font-medium text-foreground mb-3">{t("laskuri.lawn.visits")}</p>
                   <div className="space-y-2">
                     {VISIT_PLANS.map(plan => {
                       const ppv = lawnSizeIdx !== null ? Math.round(LAWN_SIZES[lawnSizeIdx].pricePerVisit * (1 - plan.disc)) : 0;
@@ -804,20 +816,20 @@ export default function LaskuriPage() {
                           <div className={`w-3 h-3 rounded-full flex-shrink-0 ${isSelected ? "bg-primary" : "bg-muted-foreground/30"}`} />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <p className="text-sm font-medium text-foreground">{plan.label}</p>
+                              <p className="text-sm font-medium text-foreground">{t(plan.labelKey)}</p>
                               {plan.disc > 0 && (
                                 <span className="text-[10px] font-bold text-green-700 bg-green-100 dark:bg-green-900/50 dark:text-green-400 px-1.5 py-0.5 rounded-full">
                                   −{Math.round(plan.disc * 100)} %
                                 </span>
                               )}
                             </div>
-                            <p className="text-xs text-muted-foreground">{plan.desc}</p>
+                            <p className="text-xs text-muted-foreground">{t(plan.descKey)}</p>
                           </div>
                           {lawnSizeIdx !== null && (
                             <div className="text-right shrink-0">
-                              <p className="text-sm font-bold text-primary">{ppv} €<span className="text-[10px] font-normal text-muted-foreground">/kerta</span></p>
-                              {sav > 0 && <p className="text-[10px] text-green-600 font-medium">Säästät {sav} €</p>}
-                              {plan.visits > 1 && ppv > 0 && <p className="text-[10px] text-muted-foreground">Yht. {tot} €</p>}
+                              <p className="text-sm font-bold text-primary">{ppv} €<span className="text-[10px] font-normal text-muted-foreground">{t("laskuri.lawn.perVisit")}</span></p>
+                              {sav > 0 && <p className="text-[10px] text-green-600 font-medium">{t("laskuri.lawn.save")} {sav} €</p>}
+                              {plan.visits > 1 && ppv > 0 && <p className="text-[10px] text-muted-foreground">{t("laskuri.lawn.total")} {tot} €</p>}
                             </div>
                           )}
                         </button>
@@ -831,8 +843,8 @@ export default function LaskuriPage() {
                   <div className="rounded-2xl bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 p-4">
                     <div className="flex justify-between items-center">
                       <div>
-                        <p className="text-xs font-semibold text-green-800 dark:text-green-300 uppercase tracking-wide">Kausihinta yhteensä</p>
-                        <p className="text-[11px] text-green-700 dark:text-green-400 mt-0.5">{lawnVisits} käyntiä · toukokuu–syyskuu</p>
+                        <p className="text-xs font-semibold text-green-800 dark:text-green-300 uppercase tracking-wide">{t("laskuri.lawn.seasonTotal")}</p>
+                        <p className="text-[11px] text-green-700 dark:text-green-400 mt-0.5">{lawnVisits} {t("laskuri.lawn.seasonSub")}</p>
                       </div>
                       <div className="text-right">
                         <p className="text-2xl font-bold text-green-800 dark:text-green-300">{lawnTotal} €</p>
@@ -841,7 +853,7 @@ export default function LaskuriPage() {
                     </div>
                     {lawnSavings > 0 && (
                       <p className="text-xs text-green-700 dark:text-green-400 mt-2 pt-2 border-t border-green-200 dark:border-green-800">
-                        Säästät <strong>{lawnSavings} €</strong> verrattuna yksittäisiin käynteihin.
+                        {t("laskuri.lawn.save")} <strong>{lawnSavings} €</strong> {t("laskuri.lawn.savingsVsOnce")}
                       </p>
                     )}
                   </div>
@@ -849,17 +861,17 @@ export default function LaskuriPage() {
 
                 {/* Free assessment CTA */}
                 <div className="rounded-2xl border-2 border-dashed border-green-300 dark:border-green-700 p-4 text-center">
-                  <p className="text-sm font-semibold text-foreground mb-1">Epävarma koosta?</p>
-                  <p className="text-xs text-muted-foreground mb-3">Käymme arvioimassa nurmikon maksutta — hinnoittelu paikan päällä.</p>
+                  <p className="text-sm font-semibold text-foreground mb-1">{t("laskuri.lawn.unsure.title")}</p>
+                  <p className="text-xs text-muted-foreground mb-3">{t("laskuri.lawn.unsure.desc")}</p>
                   <Link href="/tilaus">
                     <Button size="sm" variant="outline" className="gap-2 border-green-400 text-green-700 hover:bg-green-50 dark:text-green-400 dark:border-green-700 dark:hover:bg-green-950/30">
-                      Pyydä ilmainen arviointikäynti →
+                      {t("laskuri.lawn.unsure.cta")}
                     </Button>
                   </Link>
                 </div>
 
                 <p className="text-[10px] text-muted-foreground text-center">
-                  Hinnat suuntaa-antavia · lopullinen hinta vahvistetaan katselmuksessa
+                  {t("laskuri.lawn.disclaimer")}
                 </p>
               </div>
             )}
@@ -870,19 +882,19 @@ export default function LaskuriPage() {
                 {/* Header badge */}
                 <div className="rounded-2xl bg-primary/5 border border-primary/20 px-4 py-3">
                   <p className="text-[10px] font-semibold uppercase tracking-widest text-primary/70 mb-0.5">Puuhapatet × KJ Cardetailing</p>
-                  <p className="text-base font-bold text-foreground">Sisäfreesaus</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Kevyt ja vaivaton auton sisäpuhdistus · 20–30 min · Kuivapesu</p>
+                  <p className="text-base font-bold text-foreground">{t("laskuri.tab.car")}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{t("laskuri.car.subtitle")}</p>
                 </div>
 
                 {/* Car size picker */}
                 <div>
-                  <p className="text-sm font-medium text-foreground mb-3">Valitse autosi koko</p>
+                  <p className="text-sm font-medium text-foreground mb-3">{t("laskuri.car.chooseSize")}</p>
                   <div className="grid grid-cols-3 gap-3">
-                    {CAR_SIZES.map(({ key, label, sub, price }) => (
+                    {CAR_SIZES.map(({ key, labelKey, subKey, price }) => (
                       <button key={key} onClick={() => setCarSize(key)}
                         className={`p-3.5 rounded-2xl border-2 text-center transition-all ${carSize === key ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"}`}>
-                        <p className="text-xs font-semibold text-foreground">{label}</p>
-                        <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{sub}</p>
+                        <p className="text-xs font-semibold text-foreground">{t(labelKey)}</p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{t(subKey)}</p>
                         <p className="text-lg font-bold text-primary mt-2">{price} €</p>
                       </button>
                     ))}
@@ -891,19 +903,19 @@ export default function LaskuriPage() {
 
                 {/* What's included */}
                 <div className="rounded-2xl border border-border bg-card p-4">
-                  <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">Sisältää</p>
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">{t("laskuri.car.includes")}</p>
                   <ul className="space-y-2">
-                    {CAR_INCLUDES.map((item, i) => (
+                    {CAR_INCLUDES_KEYS.map((key, i) => (
                       <li key={i} className="flex items-center gap-2.5 text-sm text-foreground">
                         <span className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />
-                        {item}
+                        {t(key)}
                       </li>
                     ))}
                   </ul>
                 </div>
 
                 <p className="text-[10px] text-muted-foreground text-center">
-                  Varaa aika soittamalla tai laskurin kautta — tulemme luoksesi.
+                  {t("laskuri.car.disclaimer")}
                 </p>
               </div>
             )}
@@ -915,30 +927,30 @@ export default function LaskuriPage() {
 
               {/* Summary card */}
               <Card className="p-4 bg-card border-0 premium-shadow">
-                <h3 className="text-sm font-semibold text-foreground mb-3">Yhteenveto</h3>
+                <h3 className="text-sm font-semibold text-foreground mb-3">{t("laskuri.summary")}</h3>
 
                 {!hasResult && (
-                  <p className="text-xs text-muted-foreground text-center py-4">Valitse palvelut vasemmalta</p>
+                  <p className="text-xs text-muted-foreground text-center py-4">{t("laskuri.summary.empty")}</p>
                 )}
 
                 {tab === "nurmikko" && lawnSizeIdx !== null && (
                   <div className="space-y-1.5 mb-3">
                     <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground truncate mr-2">{LAWN_SIZES[lawnSizeIdx].label}</span>
+                      <span className="text-muted-foreground truncate mr-2">{sizeLabel(LAWN_SIZES[lawnSizeIdx].label, lang)}</span>
                     </div>
                     <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">{lawnPlan.label} · {lawnPlan.desc}</span>
-                      <span className="text-foreground font-medium">{lawnPricePerVisit} €/kerta</span>
+                      <span className="text-muted-foreground">{t(lawnPlan.labelKey)} · {t(lawnPlan.descKey)}</span>
+                      <span className="text-foreground font-medium">{lawnPricePerVisit} €{t("laskuri.lawn.perVisit")}</span>
                     </div>
                     {lawnSavings > 0 && (
                       <div className="flex justify-between text-xs text-green-600">
-                        <span>Säästät</span>
+                        <span>{t("laskuri.lawn.save")}</span>
                         <span className="font-medium">{lawnSavings} €</span>
                       </div>
                     )}
                     {lawnMonthly > 0 && (
                       <div className="flex justify-between text-xs border-t border-border pt-1.5 mt-1.5">
-                        <span className="text-muted-foreground">Kaudessa yhteensä</span>
+                        <span className="text-muted-foreground">{t("laskuri.summary.total")}</span>
                         <span className="font-medium">{lawnTotal} €</span>
                       </div>
                     )}
@@ -948,7 +960,7 @@ export default function LaskuriPage() {
                 {tab === "auto" && carSize && (
                   <div className="space-y-1.5 mb-3">
                     <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">Sisäfreesaus · {CAR_SIZES.find(c => c.key === carSize)?.label}</span>
+                      <span className="text-muted-foreground">{t("laskuri.summary.carDetailing")} · {t(CAR_SIZES.find(c => c.key === carSize)!.labelKey)}</span>
                       <span className="text-foreground font-medium">{carPrice} €</span>
                     </div>
                   </div>
@@ -958,22 +970,22 @@ export default function LaskuriPage() {
                   <div className="space-y-1.5 mb-3">
                     <div className="flex justify-between text-xs">
                       <span className="text-muted-foreground truncate mr-2">
-                        {HOUSE_TYPES.find(h => h.key === houseType)?.label} · {SQM_RANGES[houseType][sqmIdx].label}
+                        {t(HOUSE_TYPES.find(h => h.key === houseType)!.labelKey)} · {sizeLabel(SQM_RANGES[houseType][sqmIdx].label, lang)}
                       </span>
                     </div>
                     <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">{tierObj.label}</span>
+                      <span className="text-muted-foreground">{t(tierObj.labelKey)}</span>
                       <span className="text-foreground font-medium">{sqmTiered} €</span>
                     </div>
                     {combinedDiffMult > 1 && (
                       <div className="flex justify-between text-xs text-amber-600 dark:text-amber-400">
-                        <span>Vaikeuskerroin</span>
+                        <span>{t("laskuri.difficulty")}</span>
                         <span className="font-medium">×{combinedDiffMult.toFixed(2)}</span>
                       </div>
                     )}
                     {ADDONS.filter(a => addons[a.key]).map(a => (
                       <div key={a.key} className="flex justify-between text-xs">
-                        <span className="text-muted-foreground truncate mr-2">{a.label}</span>
+                        <span className="text-muted-foreground truncate mr-2">{t(a.labelKey)}</span>
                         <span className="text-foreground font-medium">+{a.price} €</span>
                       </div>
                     ))}
@@ -985,20 +997,20 @@ export default function LaskuriPage() {
                     <div className="bg-primary/5 rounded-xl px-3 py-2.5 text-center">
                       {kvEligible ? (
                         <>
-                          <p className="text-[10px] text-muted-foreground mb-0.5">Maksat kotitalousväh. jälkeen</p>
+                          <p className="text-[10px] text-muted-foreground mb-0.5">{t("laskuri.priceAfterKv")}</p>
                           <p className="text-2xl font-bold text-primary">~{afterKotitalous} €</p>
-                          <p className="text-[10px] text-muted-foreground mt-0.5">Hae kotitalousvähennys OmaVerossa (max 2 250 € / hlö / v)</p>
+                          <p className="text-[10px] text-muted-foreground mt-0.5">{t("laskuri.priceAfterKv.hint")}</p>
                         </>
                       ) : (
                         <>
-                          <p className="text-[10px] text-muted-foreground mb-0.5">Hinta-arvio (sis. ALV)</p>
+                          <p className="text-[10px] text-muted-foreground mb-0.5">{t("laskuri.priceWithVat")}</p>
                           <p className="text-2xl font-bold text-primary">{activeTotal} €</p>
                         </>
                       )}
                     </div>
                     {kvEligible && (
                       <div className="flex justify-between items-center">
-                        <span className="text-[10px] text-muted-foreground">Normaali hinta (sis. ALV)</span>
+                        <span className="text-[10px] text-muted-foreground">{t("laskuri.priceNormal")}</span>
                         <span className="text-xs font-medium text-muted-foreground line-through">{activeTotal} €</span>
                       </div>
                     )}
@@ -1007,7 +1019,7 @@ export default function LaskuriPage() {
 
                 {hasResult && !showForm && (
                   <Button className="w-full mt-4" size="sm" onClick={() => setShowForm(true)}>
-                    Lähetä vahvistettavaksi
+                    {t("laskuri.submit")}
                     <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
                   </Button>
                 )}
@@ -1018,9 +1030,9 @@ export default function LaskuriPage() {
                 <div className="flex items-start gap-2">
                   <Info className="w-3.5 h-3.5 text-muted-foreground mt-0.5 flex-shrink-0" />
                   <div className="space-y-1.5">
-                    <p className="text-[11px] text-muted-foreground leading-relaxed">Kaikki välineet mukana, ei lisäkuluja</p>
-                    <p className="text-[11px] text-muted-foreground leading-relaxed">Isommille kohteille teemme erillisen tarjouksen</p>
-                    <p className="text-[11px] text-muted-foreground leading-relaxed">Hinta tarkentuu katselmuksen yhteydessä</p>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">{t("laskuri.info.1")}</p>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">{t("laskuri.info.2")}</p>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">{t("laskuri.info.3")}</p>
                   </div>
                 </div>
               </Card>
@@ -1031,25 +1043,25 @@ export default function LaskuriPage() {
         {/* Order form */}
         {showForm && hasResult && (
           <Card className="mt-6 p-5 bg-card border-0 premium-shadow max-w-lg mx-auto space-y-4">
-            <h2 className="text-base font-semibold text-foreground">Yhteystiedot</h2>
+            <h2 className="text-base font-semibold text-foreground">{t("laskuri.form.title")}</h2>
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2 md:col-span-1">
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">Nimi *</label>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("form.name")} *</label>
                 <Input placeholder="Matti Meikäläinen" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
               </div>
               <div className="col-span-2 md:col-span-1">
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">Puhelin *</label>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("form.phone")} *</label>
                 <Input type="tel" placeholder="040 123 4567" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
               </div>
               <div className="col-span-2">
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">Alue tai osoite *</label>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("booking.address")} *</label>
                 <Input placeholder="Westend, Espoo" value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} />
               </div>
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-2 block">Kiireellisyys</label>
+              <label className="text-xs font-medium text-muted-foreground mb-2 block">{t("booking.urgency")}</label>
               <div className="grid grid-cols-2 gap-2">
-                {([{ v: "this_week", l: "Tällä viikolla" }, { v: "flexible", l: "Ei kiireellinen" }] as const).map(opt => (
+                {([{ v: "this_week", l: t("form.time.thisWeek") }, { v: "flexible", l: t("booking.urgency.flexible") }] as const).map(opt => (
                   <button key={opt.v} type="button"
                     onClick={() => setForm(f => ({ ...f, urgency: f.urgency === opt.v ? "" : opt.v }))}
                     className={`py-2 px-3 rounded-xl border text-xs font-medium transition-all ${form.urgency === opt.v ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground hover:border-primary/50"}`}>
@@ -1060,7 +1072,7 @@ export default function LaskuriPage() {
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                Alennuskoodi <span className="text-muted-foreground font-normal">(vapaaehtoinen)</span>
+                {t("booking.coupon")} <span className="text-muted-foreground font-normal">({t("booking.optional")})</span>
               </label>
               <Input
                 placeholder="esim. MATTI-X4Z"
@@ -1069,18 +1081,18 @@ export default function LaskuriPage() {
                 className="font-mono tracking-wider text-sm"
               />
               {form.coupon && (
-                <p className="text-xs text-primary mt-1">Koodi lisätty — 5 % alennus vahvistetaan yhteydenoton yhteydessä.</p>
+                <p className="text-xs text-primary mt-1">{t("booking.coupon.added")}</p>
               )}
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Lisätiedot</label>
-              <Textarea placeholder="Vapaaehtoinen..." rows={3} className="resize-none text-sm"
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("laskuri.form.notes")}</label>
+              <Textarea placeholder={t("laskuri.form.notes.placeholder")} rows={3} className="resize-none text-sm"
                 value={form.message} onChange={e => setForm(f => ({ ...f, message: e.target.value }))} />
             </div>
             {sendError && <p className="text-xs text-destructive">{sendError}</p>}
             <Button className="w-full h-12 text-sm font-semibold rounded-2xl"
               disabled={sending || !form.name || !form.phone || !form.address} onClick={handleSend}>
-              {sending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Lähetetään...</> : <><Send className="w-4 h-4 mr-2" />Lähetä vahvistettavaksi</>}
+              {sending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{t("form.submitting")}</> : <><Send className="w-4 h-4 mr-2" />{t("laskuri.submit")}</>}
             </Button>
           </Card>
         )}

@@ -50,8 +50,8 @@ export const USERS: AdminProfile[] = [
     hasYTunnus: true,
     isUnder18: true,   // 17v
     startupBonus: 30000, // 300 €
-    iban: "FI49 5780 2420 5091 79",
-    bic: "OKOYFIHH",
+    iban: "FI05 1808 3500 0328 48",
+    bic: "NDEAFIHH",
     address: "Braskarna 8, 02380 Espoo",
   },
   {
@@ -65,7 +65,7 @@ export const USERS: AdminProfile[] = [
     hasYTunnus: true,
     isUnder18: false,  // 18v
     startupBonus: 30000, // 300 €
-    iban: "FI49 5780 2420 5091 79",
+    iban: "FI74 5720 2320 2418 33",
     bic: "OKOYFIHH",
     address: "Haapaniemenrinne 5A, 02940 Espoo",
   },

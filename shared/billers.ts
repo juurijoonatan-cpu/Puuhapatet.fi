@@ -25,6 +25,7 @@ export interface Biller {
   yTunnus?: string;
   address?: string;
   iban?: string;
+  bic?: string;
   email?: string;
   kind: "person" | "company";
 }
@@ -36,7 +37,8 @@ export const BRAND_BILLERS: Biller[] = [
     name: "Joonatan Juuri",
     yTunnus: "3598782-9",
     address: "Braskarna 8, 02380 Espoo",
-    iban: "FI49 5780 2420 5091 79",
+    iban: "FI05 1808 3500 0328 48",
+    bic: "NDEAFIHH",
     email: "joonatan@puuhapatet.fi",
     kind: "person",
   },
@@ -45,7 +47,8 @@ export const BRAND_BILLERS: Biller[] = [
     name: "Matias Pitkänen",
     yTunnus: "3609912-9",
     address: "Haapaniemenrinne 5A, 02940 Espoo",
-    iban: "FI49 5780 2420 5091 79",
+    iban: "FI74 5720 2320 2418 33",
+    bic: "OKOYFIHH",
     email: "matias@puuhapatet.fi",
     kind: "person",
   },

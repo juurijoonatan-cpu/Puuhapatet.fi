@@ -915,6 +915,7 @@ function SettlementInvoiceDialog({
   const [invoiceNo, setInvoiceNo] = useState(() =>
     `T${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}-${inv.toId.slice(0, 2).toUpperCase()}`);
   const [iban, setIban] = useState(creditor?.iban ?? "");
+  const [bic, setBic] = useState(creditor?.bic ?? "");
   const [dueDate, setDueDate] = useState(defaultDue.toISOString().slice(0, 10));
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -929,7 +930,7 @@ function SettlementInvoiceDialog({
     const opened = openSettlementInvoicePrint({
       invoiceNo, dateStr: today.toLocaleDateString("fi-FI"),
       dueDateStr: dueDate ? new Date(dueDate + "T12:00:00").toLocaleDateString("fi-FI") : "",
-      creditor, debtor, items, totalCents: inv.cents, iban,
+      creditor, debtor, items, totalCents: inv.cents, iban, bic,
     });
     if (!opened) { setBusy(false); setMsg("Selain esti ponnahdusikkunan — salli ponnahdusikkunat ja yritä uudelleen."); return; }
     // Record + file the invoice ONCE per dialog: re-opening the print view
@@ -981,10 +982,16 @@ function SettlementInvoiceDialog({
               <Input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="mt-1 h-9" />
             </label>
           </div>
-          <label className="block text-[11px] text-muted-foreground">
-            Tilinumero (IBAN) — {firstName(inv.toName)}n tili, jolle maksetaan
-            <Input value={iban} onChange={e => setIban(e.target.value)} className="mt-1 h-9 font-mono" placeholder="FI00 0000 0000 0000 00" />
-          </label>
+          <div className="flex gap-2">
+            <label className="flex-1 text-[11px] text-muted-foreground">
+              Tilinumero (IBAN) — {firstName(inv.toName)}n tili, jolle maksetaan
+              <Input value={iban} onChange={e => setIban(e.target.value)} className="mt-1 h-9 font-mono" placeholder="FI00 0000 0000 0000 00" />
+            </label>
+            <label className="w-28 text-[11px] text-muted-foreground">
+              BIC
+              <Input value={bic} onChange={e => setBic(e.target.value)} className="mt-1 h-9 font-mono" placeholder="XXXXFIHH" />
+            </label>
+          </div>
 
           {/* Itemization preview */}
           <div className="rounded-xl border bg-muted/20 p-3">
@@ -1031,7 +1038,7 @@ function openSettlementInvoicePrint(p: {
   invoiceNo: string; dateStr: string; dueDateStr: string;
   creditor: { name: string; address?: string; yTunnus?: string };
   debtor: { name: string; address?: string; yTunnus?: string };
-  items: InvoiceItem[]; totalCents: number; iban: string;
+  items: InvoiceItem[]; totalCents: number; iban: string; bic: string;
 }): boolean {
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const rows = p.items.map(it => `
@@ -1095,6 +1102,7 @@ function openSettlementInvoicePrint(p: {
   <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;font-size:13px">
     <p style="margin:0 0 4px;font-size:10px;letter-spacing:1px;color:#9ca3af;text-transform:uppercase">Maksutiedot</p>
     ${p.iban ? `Tilinumero (IBAN): <strong style="font-family:monospace">${esc(p.iban)}</strong><br>` : ""}
+    ${p.bic ? `BIC: <strong style="font-family:monospace">${esc(p.bic)}</strong><br>` : ""}
     Viite / viesti: ${esc(p.invoiceNo)}<br>
     ${p.dueDateStr ? `Eräpäivä: <strong>${p.dueDateStr}</strong>` : ""}
   </div>

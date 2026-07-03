@@ -3,9 +3,10 @@
  *
  * Yksi selkeä sivu, jossa kaikki on piilotettu sujuviin dropdowneihin:
  *  · OmaVeroon ilmoitettava tulos (aina näkyvissä)
- *  · Dokumentit & keikat (verotuloste, CSV / tulosta)
+ *  · Bossien rahat — avoin velka, MobilePay-maksukirjaukset, vastalaskut (auki oletuksena)
+ *  · Omat asiakaslaskut (lähetetyt laskut per vuosi — pikkukeikat + urakkaerät)
+ *  · Verotuloste — omat keikat (CSV / tulosta)
  *  · ALV-seuranta (vähäinen toiminta, per johtaja)
- *  · Bossien laskutus & tilitys (johtajien keskinäinen laskutus kaikista keikoista)
  *  · Tiimi & työntekijät (linkit jokaisen tekijän omaan näkymään)
  *  · Aloitustuki / yritysseteli
  *  · OmaVero-ohjeet
@@ -86,6 +87,8 @@ export default function TaxExportPage() {
   const [turnover, setTurnover] = useState<Awaited<ReturnType<typeof api.getBillerTurnover>>["data"] | null>(null);
   const [settlement, setSettlement] = useState<FounderCrossSettlement | null>(null);
   const [workerStats, setWorkerStats] = useState<WorkerStatsResponse | null>(null);
+  // The logged-in founder's own money trail (sent customer invoices etc.).
+  const [myDetail, setMyDetail] = useState<Awaited<ReturnType<typeof api.getWorker>>["data"] | null>(null);
 
   const loadMoney = useCallback(() => {
     api.getJobs().then((res) => {
@@ -102,8 +105,9 @@ export default function TaxExportPage() {
       api.getBillerTurnover().then((res) => { if (res.ok && res.data) setTurnover(res.data); });
       api.getFounderSettlement().then((res) => { if (res.ok && res.data) setSettlement(res.data); });
       api.workersStats().then((res) => { if (res.ok && res.data) setWorkerStats(res.data); });
+      if (profile?.id) api.getWorker(profile.id).then((res) => { if (res.ok && res.data) setMyDetail(res.data); });
     }
-  }, [isHost]);
+  }, [isHost, profile?.id]);
 
   useEffect(() => {
     loadMoney();
@@ -245,12 +249,74 @@ export default function TaxExportPage() {
               </p>
             </Card>
 
+            {/* ── Bossien rahat: velat, tilitykset (MobilePay/vastalasku) ───── */}
+            {isHost && settlement && (
+              <Disclosure
+                defaultOpen
+                className="print:hidden"
+                icon={<Wallet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />}
+                title="Bossien rahat — velat & tilitys"
+                right={
+                  settlement.crossInvoices.length > 0
+                    ? <span className="text-xs font-medium text-emerald-600 tabular-nums">avoinna {settlement.crossInvoices.map(c => fmt(c.cents)).join(" · ")}</span>
+                    : <span className="text-xs text-muted-foreground">tasan ✓</span>
+                }
+              >
+                <FounderCrossView settlement={settlement} onChanged={loadMoney} />
+              </Disclosure>
+            )}
+
+            {/* ── Omat asiakaslaskut: mitä MINÄ olen laskuttanut asiakkailta ── */}
+            {isHost && myDetail && (() => {
+              const yearInvoices = (myDetail.customerInvoices ?? []).filter(
+                inv => new Date(inv.dateMs).getFullYear() === year
+              );
+              const sum = yearInvoices.reduce((s2, i) => s2 + i.amountCents, 0);
+              return (
+                <Disclosure
+                  className="print:hidden"
+                  icon={<FileText className="w-4 h-4 text-green-600 dark:text-green-400" />}
+                  title="Omat asiakaslaskut"
+                  right={<span className="text-xs text-muted-foreground tabular-nums">{yearInvoices.length} kpl · {fmt(sum)}</span>}
+                >
+                  <p className="text-[11px] text-muted-foreground mb-3">
+                    Kaikki {year} sinun Y-tunnuksellasi laskutetut asiakasmaksut — pikkukeikat ja urakkaerät (esim. FR8).
+                    Sama summa ohjaa ALV-seurantaasi. Koko historia: <Link href={`/admin/tiimi/${profile?.id}`} className="text-primary underline underline-offset-2">oma sivusi</Link>.
+                  </p>
+                  {yearInvoices.length === 0 ? (
+                    <p className="text-sm text-muted-foreground py-1">
+                      Ei laskuja vuodelle {year}. Jos keikka puuttuu, merkitse sen "Laskutti" alla olevasta
+                      Verotuloste-osiosta — tai kirjaa urakan erämaksu keikan Laskutus-kortista.
+                    </p>
+                  ) : (
+                    <div className="divide-y divide-border/60">
+                      {yearInvoices.map((inv, i) => (
+                        <div key={i} className="flex items-center justify-between gap-2 py-2">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium truncate">{inv.name}</p>
+                            <p className="text-[11px] text-muted-foreground">
+                              {new Date(inv.dateMs).toLocaleDateString("fi-FI")}{inv.ref ? ` · viite ${inv.ref}` : ""} · {inv.source === "era" ? "urakkaerä" : "keikka"}
+                            </p>
+                          </div>
+                          <span className="shrink-0 text-sm font-bold tabular-nums">{fmt(inv.amountCents)}</span>
+                        </div>
+                      ))}
+                      <div className="flex items-center justify-between gap-2 pt-2 text-sm font-bold">
+                        <span>Yhteensä {year}</span>
+                        <span className="tabular-nums">{fmt(sum)}</span>
+                      </div>
+                    </div>
+                  )}
+                </Disclosure>
+              );
+            })()}
+
             {/* ── Dropdown: Dokumentit & keikat ─────────────────────────────── */}
             <Disclosure
               defaultOpen
               className="print:hidden"
               icon={<FileSpreadsheet className="w-4 h-4 text-green-600 dark:text-green-400" />}
-              title="Dokumentit & keikat"
+              title="Verotuloste — omat keikat"
               right={<span className="text-xs text-muted-foreground tabular-nums">{rows.length} keikkaa · {fmt(totals.revenue)}</span>}
             >
               {rows.length === 0 ? (
@@ -441,22 +507,6 @@ export default function TaxExportPage() {
                 </Disclosure>
               );
             })()}
-
-            {/* ── Dropdown: Bossien laskutus & tilitys (HOST) ───────────────── */}
-            {isHost && settlement && (
-              <Disclosure
-                className="print:hidden"
-                icon={<Wallet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />}
-                title="Bossien laskutus & tilitys"
-                right={
-                  settlement.crossInvoices.length > 0
-                    ? <span className="text-xs font-medium text-emerald-600 tabular-nums">{settlement.crossInvoices.map(c => fmt(c.cents)).join(" · ")}</span>
-                    : <span className="text-xs text-muted-foreground">tasan</span>
-                }
-              >
-                <FounderCrossView settlement={settlement} onChanged={loadMoney} />
-              </Disclosure>
-            )}
 
             {/* ── Dropdown: Tiimi & työntekijät (HOST) ──────────────────────── */}
             {isHost && (
@@ -674,59 +724,81 @@ function FounderCrossView({ settlement, onChanged }: { settlement: FounderCrossS
     <div className="space-y-4">
       {/* The bottom line: who settles up with whom. */}
       <div>
-        <h3 className="text-sm font-bold mb-1">Keskinäinen tilitys</h3>
+        <h3 className="text-sm font-bold mb-1">Keskinäinen velka</h3>
         <p className="text-[11px] text-muted-foreground mb-2">
-          Keikat on vedetty puoliksi, mutta vain toinen laskutti asiakasta.
-          Alla on <b>nettosumma</b> kaikista keikoista (FR8-erät + pikkukeikat):
-          saajapuoli tekee vastalaskun, maksaja maksaa sen.
+          Keikat vedetään puoliksi, mutta vain toinen laskuttaa asiakasta (FR8-erät + pikkukeikat).
+          Kun maksatte osuuksia toisillenne (esim. <b>MobilePay</b>), kirjatkaa maksu tässä —
+          avoin velka pysyy silloin aina ajan tasalla.
         </p>
         {crossInvoices.length === 0 ? (
           <div className="rounded-xl border bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
-            Tilanne on tasan — kenenkään ei tarvitse laskuttaa toista.
-            {(settled ?? []).length > 0 && " Aiemmat tilitykset on huomioitu."}
+            Tilanne on tasan — kenenkään ei tarvitse maksaa toiselle.
+            {(settled ?? []).length > 0 && " Kirjatut maksut on huomioitu."}
           </div>
         ) : (
           <div className="space-y-2">
-            {crossInvoices.map((c, i) => (
-              <div key={i} className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-3 py-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-1.5 text-sm min-w-0">
-                    <span className="font-semibold truncate">{firstName(c.fromName)}</span>
-                    <ArrowRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                    <span className="font-semibold truncate">{firstName(c.toName)}</span>
-                  </span>
-                  <span className="shrink-0 text-right">
-                    <span className="block text-sm font-bold tabular-nums text-emerald-600">{fmt(c.cents)}</span>
-                    <span className="text-[10px] text-muted-foreground">{firstName(c.fromName)} maksaa</span>
-                  </span>
+            {crossInvoices.map((c, i) => {
+              const grossFromTo = pairGrossOwed(settlement, c.fromId, c.toId);
+              const grossToFrom = pairGrossOwed(settlement, c.toId, c.fromId);
+              const paidFromTo = (settled ?? []).filter(s => s.fromId === c.fromId && s.toId === c.toId).reduce((s2, x) => s2 + x.cents, 0);
+              const paidToFrom = (settled ?? []).filter(s => s.fromId === c.toId && s.toId === c.fromId).reduce((s2, x) => s2 + x.cents, 0);
+              return (
+                <div key={i} className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-3 py-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-1.5 text-sm min-w-0">
+                      <span className="font-semibold truncate">{firstName(c.fromName)}</span>
+                      <ArrowRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                      <span className="font-semibold truncate">{firstName(c.toName)}</span>
+                    </span>
+                    <span className="shrink-0 text-right">
+                      <span className="block text-lg font-bold tabular-nums text-emerald-600">{fmt(c.cents)}</span>
+                      <span className="text-[10px] text-muted-foreground">{firstName(c.fromName)} maksaa {firstName(c.toName)}lle</span>
+                    </span>
+                  </div>
+                  {/* Where the number comes from — keikoista kertynyt vs jo maksettu. */}
+                  <div className="mt-2 pt-2 border-t border-emerald-500/20 space-y-0.5 text-[11px] tabular-nums">
+                    <div className="flex items-center justify-between gap-2 text-muted-foreground">
+                      <span>Keikoista kertynyt ({firstName(c.fromName)} keräsi {firstName(c.toName)}n osuuksia)</span>
+                      <span>{fmt(grossFromTo - grossToFrom)}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 text-muted-foreground">
+                      <span>Jo maksettu / kuitattu</span>
+                      <span>−{fmt(paidFromTo - paidToFrom)}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 font-semibold text-foreground">
+                      <span>Avoinna</span>
+                      <span className="text-emerald-600">{fmt(c.cents)}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 mt-2 pt-2 border-t border-emerald-500/20">
+                    <RecordPaymentInline inv={c} onChanged={onChanged} />
+                    <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={() => setInvoiceFor(c)}>
+                      <FileText className="h-3.5 w-3.5" /> Vastalasku
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-emerald-500/20">
-                  <span className="text-[11px] text-muted-foreground">
-                    {firstName(c.toName)} laskuttaa {firstName(c.fromName)}lta osuutensa
-                  </span>
-                  <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={() => setInvoiceFor(c)}>
-                    <FileText className="h-3.5 w-3.5" /> Luo vastalasku
-                  </Button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
+        {/* Manual booking — for old MobilePay payments that predate this ledger. */}
+        <ManualRecordForm founders={founders} onChanged={onChanged} />
         <p className="text-[11px] text-muted-foreground mt-2">
-          Huom: vastalasku on myyntiä sen laskuttajalle — muista, että se kasvattaa hänen
-          liikevaihtoaan ALV-rajaa seuratessa.
+          Vastalasku = virallinen lasku kirjanpitoon (kasvattaa laskuttajansa liikevaihtoa ALV-rajassa).
+          Pelkkä maksukirjaus (MobilePay) riittää arjessa — molemmat pienentävät avointa velkaa.
         </p>
       </div>
 
-      {/* Recorded settlements — issued vastalaskut already netted out above. */}
+      {/* Recorded settlements — MobilePay payments + issued vastalaskut, all
+          already netted out of the open balance above. */}
       {(settled ?? []).length > 0 && (
         <div>
-          <h3 className="text-sm font-bold mb-1.5">Kirjatut tilitykset</h3>
+          <h3 className="text-sm font-bold mb-1.5">Maksuhistoria</h3>
           <div className="space-y-1.5">
             {settled.map(s => (
               <div key={s.id} className="flex items-center justify-between gap-2 rounded-lg border bg-muted/20 px-3 py-2 text-[11px]">
                 <span className="min-w-0 truncate text-muted-foreground">
-                  {new Date(s.createdAtMs).toLocaleDateString("fi-FI")} · {firstName(founders.find(f => f.id === s.toId)?.name ?? s.toId)} laskutti {firstName(founders.find(f => f.id === s.fromId)?.name ?? s.fromId)}lta
+                  {new Date(s.createdAtMs).toLocaleDateString("fi-FI")} · {firstName(founders.find(f => f.id === s.fromId)?.name ?? s.fromId)} maksoi {firstName(founders.find(f => f.id === s.toId)?.name ?? s.toId)}lle
                   {s.invoiceNo ? ` · ${s.invoiceNo}` : ""}
                 </span>
                 <span className="flex items-center gap-2 shrink-0">
@@ -734,9 +806,9 @@ function FounderCrossView({ settlement, onChanged }: { settlement: FounderCrossS
                   <button
                     type="button"
                     className="text-muted-foreground hover:text-red-500"
-                    title="Peru kirjaus (jos lasku hylättiin)"
+                    title="Peru kirjaus (summa palaa avoimeen velkaan)"
                     onClick={async () => {
-                      if (!confirm("Perutaanko tämä tilityskirjaus? Summa palaa avoimeen velkaan.")) return;
+                      if (!confirm("Perutaanko tämä kirjaus? Summa palaa avoimeen velkaan.")) return;
                       await api.deleteFounderSettlement(s.id);
                       onChanged();
                     }}
@@ -894,6 +966,120 @@ function pairItems(s: FounderCrossSettlement, fromId: string, toId: string): Inv
     }
   }
   return items;
+}
+
+/** Total a founder has collected of ANOTHER founder's shares across all gigs
+ *  (gross, before settlements) — the "keikoista kertynyt" figure. */
+function pairGrossOwed(s: FounderCrossSettlement, fromId: string, toId: string): number {
+  let sum = 0;
+  for (const g of s.perGig) {
+    for (const e of g.eras) {
+      if (e.billerId !== fromId) continue;
+      const p = e.paysOut.find(x => x.id === toId);
+      if (p && p.cents > 0) sum += p.cents;
+    }
+  }
+  for (const j of s.smallJobs) {
+    if (j.billerId !== fromId) continue;
+    const o = j.owes.find(x => x.id === toId);
+    if (o && o.cents > 0) sum += o.cents;
+  }
+  return sum;
+}
+
+/** One-tap payment booking on an open debt: "maksettu MobilePaylla X €".
+ *  No invoice ceremony — just reduces the open balance via the ledger. */
+function RecordPaymentInline({
+  inv, onChanged,
+}: {
+  inv: FounderCrossSettlement["crossInvoices"][number];
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState(() => (inv.cents / 100).toFixed(2).replace(".", ","));
+  const [note, setNote] = useState("MobilePay");
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    const cents = Math.round(parseFloat(amount.replace(",", ".")) * 100);
+    if (!Number.isFinite(cents) || cents <= 0) return;
+    setBusy(true);
+    const res = await api.recordFounderSettlement({
+      fromId: inv.fromId, toId: inv.toId, cents, invoiceNo: note.trim() || "MobilePay",
+    });
+    setBusy(false);
+    if (res.ok) { setOpen(false); onChanged(); }
+  };
+
+  if (!open) {
+    return (
+      <Button size="sm" className="h-7 gap-1.5 text-xs" onClick={() => { setAmount((inv.cents / 100).toFixed(2).replace(".", ",")); setOpen(true); }}>
+        <Wallet className="h-3.5 w-3.5" /> Kirjaa maksu
+      </Button>
+    );
+  }
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      <Input value={amount} onChange={e => setAmount(e.target.value)} inputMode="decimal" className="h-7 w-20 text-xs tabular-nums" aria-label="Summa (€)" />
+      <Input value={note} onChange={e => setNote(e.target.value)} className="h-7 w-24 text-xs" placeholder="MobilePay" aria-label="Tapa/viesti" />
+      <Button size="sm" className="h-7 text-xs" disabled={busy} onClick={save}>{busy ? "…" : "OK"}</Button>
+      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setOpen(false)}>×</Button>
+    </div>
+  );
+}
+
+/** Manual booking with a direction picker — for MobilePay payments made before
+ *  this ledger existed (or when the balance already shows even). */
+function ManualRecordForm({
+  founders, onChanged,
+}: {
+  founders: FounderCrossSettlement["founders"];
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [fromId, setFromId] = useState(founders[0]?.id ?? "");
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("MobilePay");
+  const [busy, setBusy] = useState(false);
+  const toId = founders.find(f => f.id !== fromId)?.id ?? "";
+
+  if (founders.length < 2) return null;
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="mt-2 text-[11px] text-muted-foreground underline underline-offset-2">
+        + Kirjaa vanha maksu käsin (esim. aiemmat MobilePay-tasaukset)
+      </button>
+    );
+  }
+
+  const save = async () => {
+    const cents = Math.round(parseFloat(amount.replace(",", ".")) * 100);
+    if (!Number.isFinite(cents) || cents <= 0 || !toId) return;
+    setBusy(true);
+    const res = await api.recordFounderSettlement({ fromId, toId, cents, invoiceNo: note.trim() || "MobilePay" });
+    setBusy(false);
+    if (res.ok) { setOpen(false); setAmount(""); onChanged(); }
+  };
+
+  return (
+    <div className="mt-2 rounded-xl border bg-muted/20 p-3 space-y-2">
+      <p className="text-[11px] font-semibold text-foreground">Kirjaa maksu käsin</p>
+      <div className="flex items-center gap-2 flex-wrap text-[11px]">
+        <select value={fromId} onChange={e => setFromId(e.target.value)} className="h-8 rounded-md border bg-background px-2 text-xs text-foreground">
+          {founders.map(f => <option key={f.id} value={f.id}>{firstName(f.name)} maksoi</option>)}
+        </select>
+        <span className="text-muted-foreground">→ {firstName(founders.find(f => f.id === toId)?.name ?? "")}lle</span>
+        <Input value={amount} onChange={e => setAmount(e.target.value)} inputMode="decimal" placeholder="Summa €" className="h-8 w-24 text-xs tabular-nums" />
+        <Input value={note} onChange={e => setNote(e.target.value)} placeholder="MobilePay" className="h-8 w-28 text-xs" />
+        <Button size="sm" className="h-8 text-xs" disabled={busy || !amount.trim()} onClick={save}>{busy ? "…" : "Kirjaa"}</Button>
+        <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setOpen(false)}>Peruuta</Button>
+      </div>
+      <p className="text-[10px] text-muted-foreground">
+        Kirjaus pienentää maksajan avointa velkaa. Jos maksoitte jo kaiken puoliksi, kirjaa summat
+        niin avoin velka menee nollaan.
+      </p>
+    </div>
+  );
 }
 
 /** Dialog that builds the legally-marked settlement invoice (creditor →

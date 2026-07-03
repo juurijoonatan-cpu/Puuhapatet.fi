@@ -1432,8 +1432,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const gig = parseGig(job.gigData);
         const payments = gig?.payments ?? [];
         eraBreakdown.forEach((e, i) => {
-          const b = payments[i]?.biller;
-          (e as any).biller = b ? { id: b.id, name: b.name } : null;
+          const p = payments[i];
+          // A recorded payment = cash moved. Legacy payments without a biller
+          // default to the first founder — the SAME rule the ALV turnover uses,
+          // so FR8 money never silently drops out of the debt maths.
+          const b = p?.biller;
+          (e as any).biller = p
+            ? (b?.id
+                ? { id: b.id, name: b.name }
+                : { id: DEFAULT_BILLER_ID, name: BRAND_BILLERS.find((x) => x.id === DEFAULT_BILLER_ID)?.name ?? DEFAULT_BILLER_ID })
+            : null;
         });
         const gigName = gig?.company?.name || job.description || `Keikka #${job.id}`;
         const eras: (typeof perGig)[number]["eras"] = [];
@@ -5151,12 +5159,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ? computeEraDebts(project, deal, project.crew || [], project.eraWindows ?? null)
         : [];
       // Tie each erä to the founder who BILLED that instalment (instalments are
-      // sent in order, so payments[i] ↔ erä i+1).
+      // sent in order, so payments[i] ↔ erä i+1). Legacy payments without a
+      // biller default to the first founder — same rule as ALV turnover +
+      // founder settlement, so old money never disappears from the maths.
       const gig = parseGig(job.gigData);
       const payments = gig?.payments ?? [];
       eraBreakdown.forEach((e, i) => {
-        const b = payments[i]?.biller;
-        e.biller = b ? { id: b.id, name: b.name } : null;
+        const p = payments[i];
+        const b = p?.biller;
+        e.biller = p
+          ? (b?.id
+              ? { id: b.id, name: b.name }
+              : { id: DEFAULT_BILLER_ID, name: BRAND_BILLERS.find((x) => x.id === DEFAULT_BILLER_ID)?.name ?? DEFAULT_BILLER_ID })
+          : null;
       });
       // Founder settlement model. The biller COLLECTS the full instalment from the
       // customer; the kate (instalment − workers' palkat) is split EQUALLY between
@@ -5261,10 +5276,56 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!worker) return res.status(404).json({ error: "Työntekijää ei löytynyt" });
       payouts.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       documents.sort((a, b) => (b.date || 0) - (a.date || 0));
+
+      // ── Asiakaslaskutus — the person's SENT customer invoices, computed live
+      // from the jobs so past gigs are always included (nothing to backfill):
+      //  · small jobs where this person billed (billedBy)
+      //  · gig instalments (FR8) whose recorded payment carries their biller id
+      //    (legacy payments without a biller default to the first founder, the
+      //    same rule the ALV turnover uses).
+      const customerRows2 = await db.select({ id: customers.id, name: customers.name }).from(customers);
+      const custName = new Map(customerRows2.map((c) => [c.id, c.name]));
+      const customerInvoices: { jobId: number; dateMs: number; name: string; ref?: string; amountCents: number; source: "keikka" | "era" }[] = [];
+      for (const job of allJobs) {
+        if (job.gigData) {
+          let gig: GigData | null = null;
+          try { gig = sanitizeGigData(JSON.parse(job.gigData)); } catch { gig = null; }
+          const gigName = gig?.company?.name || job.description || `Keikka #${job.id}`;
+          (gig?.payments || []).forEach((p, i) => {
+            if (!p?.amountCents || p.amountCents <= 0) return;
+            if ((p.biller?.id || DEFAULT_BILLER_ID) !== wid) return;
+            customerInvoices.push({
+              jobId: job.id, dateMs: p.t || 0, name: `${gigName} — erä ${i + 1}`,
+              amountCents: p.amountCents, source: "era",
+            });
+          });
+        }
+        if (!job.isCustomGig && !job.gigData && job.status === "done" && job.quoteStatus !== "declined" && job.billedBy === wid) {
+          const total = effectiveJobTotal(job);
+          if (total <= 0) continue;
+          customerInvoices.push({
+            jobId: job.id,
+            dateMs: new Date(job.scheduledAt ?? job.createdAt).getTime(),
+            name: custName.get(job.customerId) || job.description || `Keikka #${job.id}`,
+            ref: formatFinnishRef(finnishRefWithCheckDigit(String(job.id))),
+            amountCents: total, source: "keikka",
+          });
+        }
+      }
+      customerInvoices.sort((a, b) => b.dateMs - a.dateMs);
+
+      // Founder-to-founder settlement history involving this person (vastalaskut
+      // + MobilePay-kirjaukset) — their money trail in one place.
+      const settlementRows = FOUNDER_IDS.includes(wid)
+        ? (await db.select().from(founderSettlements).orderBy(desc(founderSettlements.createdAt)))
+            .filter((s) => s.fromId === wid || s.toId === wid)
+            .map((s) => ({ id: s.id, fromId: s.fromId, toId: s.toId, cents: s.cents, invoiceNo: s.invoiceNo ?? undefined, createdAtMs: new Date(s.createdAt).getTime() }))
+        : [];
+
       res.json({
         ok: true, worker,
         totals: { earnedCents, paidCents, openCents: Math.max(0, earnedCents - paidCents) },
-        payouts, documents,
+        payouts, documents, customerInvoices, settlements: settlementRows,
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

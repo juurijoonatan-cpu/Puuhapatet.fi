@@ -76,6 +76,15 @@ const fmtDate = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString("fi-FI") : "—";
 const firstName = (n: string) => n.trim().split(/\s+/)[0];
 
+/** Mirror of the server's inferBillerId: explicit billedBy wins; otherwise a
+ *  job whose workers contain EXACTLY ONE founder was billed by that founder. */
+function inferredBiller(job: JobRow["job"]): { id: string; name: string } | null {
+  if (job.billedBy) return null; // explicit — nothing to infer
+  const ids = parseWorkerIds(job.assignedTo);
+  const matches = BRAND_BILLERS.filter(b => ids.includes(b.id));
+  return matches.length === 1 ? { id: matches[0].id, name: matches[0].name } : null;
+}
+
 export default function TaxExportPage() {
   const profile = getAdminProfile();
   const isHost = profile?.role === "HOST";
@@ -307,6 +316,32 @@ export default function TaxExportPage() {
                       </div>
                     </div>
                   )}
+                  {yearInvoices.length > 0 && (
+                    <Button
+                      variant="outline" size="sm" className="mt-3 gap-1.5 text-xs"
+                      onClick={() => {
+                        // Laskuluettelo kirjanpitoon — CSV per year.
+                        const header = "Pvm;Kuvaus;Viite;Tyyppi;Summa (EUR)";
+                        const lines = yearInvoices.map(inv => [
+                          new Date(inv.dateMs).toLocaleDateString("fi-FI"),
+                          `"${inv.name.replace(/"/g, "'")}"`,
+                          inv.ref ?? "",
+                          inv.source === "era" ? "urakkaerä" : "keikka",
+                          (inv.amountCents / 100).toFixed(2).replace(".", ","),
+                        ].join(";"));
+                        const csv = [header, ...lines, `Yhteensä;;;;${(sum / 100).toFixed(2).replace(".", ",")}`].join("\n");
+                        const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `puuhapatet_laskuluettelo_${year}_${profile?.id}.csv`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                    >
+                      <Download className="w-3.5 h-3.5" /> Lataa laskuluettelo (CSV)
+                    </Button>
+                  )}
                 </Disclosure>
               );
             })()}
@@ -345,13 +380,13 @@ export default function TaxExportPage() {
                               {/* Kuka laskutti asiakasta (kenen Y-tunnukselle raha meni) — ohjaa
                                   ALV-seurannan ja bossien tilityksen oikealle henkilölle. FR8-
                                   tyyppiset urakat kirjaavat laskuttajan per erä, ei tässä. */}
-                              {isHost && !r.job.isCustomGig && (
+                              {isHost && !r.job.isCustomGig && (() => { const inf = inferredBiller(r.job); return (
                                 <select
                                   value={r.job.billedBy ?? ""}
                                   onChange={(e) => setBilledBy(r.job.id, e.target.value)}
-                                  className={`mt-1 rounded-md border bg-background px-1.5 py-0.5 text-[11px] ${r.job.billedBy ? "text-foreground" : "border-amber-400 text-amber-600"}`}
+                                  className={`mt-1 rounded-md border bg-background px-1.5 py-0.5 text-[11px] ${r.job.billedBy || inf ? "text-foreground" : "border-amber-400 text-amber-600"}`}
                                 >
-                                  <option value="">Laskutti: ?</option>
+                                  <option value="">{inf ? `Laskutti: ${firstName(inf.name)} (päätelty)` : "Laskutti: ?"}</option>
                                   {BRAND_BILLERS.map(b => (
                                     <option key={b.id} value={b.id}>Laskutti: {firstName(b.name)}</option>
                                   ))}
@@ -361,7 +396,7 @@ export default function TaxExportPage() {
                                     <option key={u.id} value={u.id}>Laskutti: {firstName(u.name)}</option>
                                   ))}
                                 </select>
-                              )}
+                              ); })()}
                             </td>
                             <td className="py-2 pr-3 text-right font-medium">{fmt(r.myRevenue)}</td>
                             <td className="py-2 pr-3 text-right text-purple-600 dark:text-purple-400 hidden sm:table-cell">−{fmt(r.serviceFee)}</td>
@@ -467,8 +502,10 @@ export default function TaxExportPage() {
                     // always resolvable.
                     const unassignedJobs = jobs.filter(r => {
                       const d = r.job.scheduledAt || r.job.createdAt;
-                      // Custom gigs (FR8) track billers per instalment — never listed here.
-                      return !r.job.billedBy && !r.job.isCustomGig && new Date(d).getFullYear() === year;
+                      // Custom gigs (FR8) track billers per instalment, and jobs
+                      // whose biller the server can INFER (exactly one founder in
+                      // the crew) are already attributed — neither is listed here.
+                      return !r.job.billedBy && !r.job.isCustomGig && !inferredBiller(r.job) && new Date(d).getFullYear() === year;
                     });
                     return (
                       <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
@@ -502,7 +539,8 @@ export default function TaxExportPage() {
                   })()}
                   <p className="text-[11px] text-muted-foreground mt-4 pt-3 border-t border-border">
                     Laskee Puuhapatetin asiakaslaskut: isot keikat laskutuserien mukaan ja pikkukeikat
-                    "Laskutti"-merkinnän mukaan. Raja koskee <b>kaikkea</b> liiketoimintaasi — laske mukaan myös muut tulosi. Tarkista vero.fi.
+                    "Laskutti"-merkinnän mukaan (jos merkintää ei ole ja keikalla oli vain yksi bossi,
+                    hänet päätellään laskuttajaksi automaattisesti). Raja koskee <b>kaikkea</b> liiketoimintaasi — laske mukaan myös muut tulosi. Tarkista vero.fi.
                   </p>
                 </Disclosure>
               );

@@ -1330,6 +1330,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // a biller, by the year it was invoiced. NOTE: this counts ONLY Puuhapatet
   // customer invoices — the legal threshold counts ALL of a person's business
   // activity, so this is a floor, surfaced with that caveat in the UI.
+  // Who billed a small job — ONE rule for the ALV turnover, the founder
+  // settlement and the per-person invoice register, so the three can never
+  // drift apart:
+  //   1. explicit billedBy (set on invoice send / in the Verotus view) wins;
+  //   2. otherwise, if the job's workers contain EXACTLY ONE founder, that
+  //      founder billed it (the pair alternates whose Y-tunnus collects, but a
+  //      solo founder gig is always billed by its founder) — this repairs the
+  //      history without any manual re-marking;
+  //   3. otherwise unknown (both founders / staff only) → shown as unassigned.
+  function inferBillerId(job: { billedBy?: string | null; assignedTo?: string | null }): string | null {
+    if (job.billedBy) return job.billedBy;
+    const tokens = (job.assignedTo || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+    if (tokens.length === 0) return null;
+    const matches = BRAND_BILLERS.filter((b) =>
+      tokens.includes(b.id) ||
+      tokens.includes(b.name.trim().toLowerCase()) ||
+      tokens.includes(b.name.trim().split(/\s+/)[0].toLowerCase()));
+    return matches.length === 1 ? matches[0].id : null;
+  }
+
   app.get("/api/admin/biller-turnover", async (_req, res) => {
     try {
       const rows = await db.select().from(jobs);
@@ -1351,20 +1371,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             byYear[year][billerId] = (byYear[year][billerId] ?? 0) + p.amountCents;
           }
         }
-        // Small jobs: the whole invoice goes to whoever billed (billedBy). A job
-        // whose money is already tracked via gig payments must not count twice.
+        // Small jobs: the whole invoice goes to whoever billed (explicit or
+        // inferred — see inferBillerId). A job whose money is already tracked
+        // via gig payments must not count twice.
         if (!row.isCustomGig && !row.gigData && row.status === "done" && row.quoteStatus !== "declined") {
           const total = effectiveJobTotal(row);
           if (total <= 0) continue;
           const year = String(new Date(row.scheduledAt ?? row.createdAt).getFullYear());
-          if (row.billedBy) {
-            // Founders feed the ALV tracker; a staff biller (own Y-tunnus, e.g.
-            // Petrus) is a valid attribution too — just not a founder's turnover.
-            if (BRAND_BILLERS.some((b) => b.id === row.billedBy)) {
-              (byYear[year] ||= {});
-              byYear[year][row.billedBy] = (byYear[year][row.billedBy] ?? 0) + total;
-            }
-          } else {
+          const eff = inferBillerId(row);
+          if (eff && BRAND_BILLERS.some((b) => b.id === eff)) {
+            (byYear[year] ||= {});
+            byYear[year][eff] = (byYear[year][eff] ?? 0) + total;
+          } else if (!row.billedBy) {
+            // Genuinely unknown (both founders / staff-only crew) — surfaced
+            // for manual attribution. An explicit staff biller (own Y-tunnus)
+            // is a valid attribution that just isn't founder turnover.
             (unassignedByYear[year] ||= { count: 0, cents: 0 });
             unassignedByYear[year].count += 1;
             unassignedByYear[year].cents += total;
@@ -1485,7 +1506,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }[] = [];
       for (const job of rows) {
         if (job.isCustomGig || job.gigData || job.status !== "done" || job.quoteStatus === "declined") continue;
-        const billerId = job.billedBy;
+        const billerId = inferBillerId(job);
         if (!billerId || idxOf(billerId) < 0) continue;
         const total = effectiveJobTotal(job);
         if (total <= 0) continue;
@@ -2006,6 +2027,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               </td>
               <td style="padding:16px 24px;text-align:right;vertical-align:middle">
                 <div style="color:#94a3b8;font-size:11px">${isEn ? "Date" : "Päivämäärä"}: ${todayDisplay}</div>
+                <div style="color:#94a3b8;font-size:11px;margin-top:2px">${isEn ? "Delivery date" : "Toimituspäivä"}: ${completionDate}</div>
                 ${dueDateDisplay ? `<div style="color:#fbbf24;font-size:12px;font-weight:700;margin-top:4px">${isEn ? "Due" : "Eräpäivä"}: ${dueDateDisplay}</div>` : ""}
               </td>
             </tr>
@@ -5295,12 +5317,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             if (!p?.amountCents || p.amountCents <= 0) return;
             if ((p.biller?.id || DEFAULT_BILLER_ID) !== wid) return;
             customerInvoices.push({
-              jobId: job.id, dateMs: p.t || 0, name: `${gigName} — erä ${i + 1}`,
+              jobId: job.id,
+              dateMs: p.t || new Date(job.updatedAt ?? job.createdAt).getTime(),
+              name: `${gigName} — erä ${i + 1}`,
               amountCents: p.amountCents, source: "era",
             });
           });
         }
-        if (!job.isCustomGig && !job.gigData && job.status === "done" && job.quoteStatus !== "declined" && job.billedBy === wid) {
+        if (!job.isCustomGig && !job.gigData && job.status === "done" && job.quoteStatus !== "declined" && inferBillerId(job) === wid) {
           const total = effectiveJobTotal(job);
           if (total <= 0) continue;
           customerInvoices.push({

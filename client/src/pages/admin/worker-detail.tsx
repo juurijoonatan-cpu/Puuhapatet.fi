@@ -59,7 +59,7 @@ export default function AdminWorkerDetailPage() {
     );
   }
 
-  const { worker, totals, payouts, documents } = data;
+  const { worker, totals, payouts, documents, customerInvoices = [], settlements = [] } = data;
   const answers = worker.answers || {};
   const initials = (worker.name || "?").trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 
@@ -172,6 +172,75 @@ export default function AdminWorkerDetailPage() {
             </div>
           )}
         </Card>
+
+        {/* 2b — Asiakaslaskutus: every customer invoice this person has SENT,
+            computed live from the gigs (small jobs + FR8 erät) so the register
+            covers past gigs automatically. This is the "kuitit"-trail. */}
+        {customerInvoices.length > 0 && (() => {
+          const byYear = new Map<number, typeof customerInvoices>();
+          for (const inv of customerInvoices) {
+            const y = new Date(inv.dateMs).getFullYear();
+            byYear.set(y, [...(byYear.get(y) ?? []), inv]);
+          }
+          const years = Array.from(byYear.keys()).sort((a, b) => b - a);
+          return (
+            <Card className="p-5 bg-card border-0 premium-shadow mb-4">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="flex items-center gap-1.5 text-sm font-bold"><FileText className="h-4 w-4" /> Asiakaslaskutus</h2>
+                <span className="text-[11px] text-muted-foreground tabular-nums">{customerInvoices.length} laskua · {eur(customerInvoices.reduce((s, i) => s + i.amountCents, 0))}</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground mb-3">
+                Kaikki tämän henkilön Y-tunnuksella laskutetut asiakasmaksut — pikkukeikat ja urakkaerät. Sama summa ohjaa ALV-seurantaa.
+              </p>
+              {years.map((y) => {
+                const list = byYear.get(y)!;
+                return (
+                  <div key={y} className="mb-2 last:mb-0">
+                    <div className="flex items-center justify-between py-1 border-b border-border">
+                      <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">{y}</span>
+                      <span className="text-[11px] font-bold tabular-nums">{eur(list.reduce((s, i) => s + i.amountCents, 0))}</span>
+                    </div>
+                    <div className="divide-y divide-border/50">
+                      {list.map((inv, i) => (
+                        <div key={i} className="flex items-center justify-between gap-2 py-2">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium truncate">{inv.name}</p>
+                            <p className="text-[11px] text-muted-foreground">
+                              {fmtDate(inv.dateMs)}{inv.ref ? ` · viite ${inv.ref}` : ""} · {inv.source === "era" ? "urakkaerä" : "keikka"}
+                            </p>
+                          </div>
+                          <span className="shrink-0 text-sm font-bold tabular-nums">{eur(inv.amountCents)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </Card>
+          );
+        })()}
+
+        {/* 2c — Bossien keskinäiset tilitykset (vastalaskut + MobilePay-kirjaukset) */}
+        {settlements.length > 0 && (
+          <Card className="p-5 bg-card border-0 premium-shadow mb-4">
+            <h2 className="flex items-center gap-1.5 text-sm font-bold mb-3"><Wallet className="h-4 w-4" /> Keskinäiset tilitykset</h2>
+            <div className="divide-y divide-border">
+              {settlements.map((s) => (
+                <div key={s.id} className="flex items-center justify-between gap-2 py-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate">
+                      {s.toId === workerId ? `Sai tilityksen (${s.fromId})` : `Maksoi tilityksen (${s.toId})`}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">{fmtDate(s.createdAtMs)}{s.invoiceNo ? ` · ${s.invoiceNo}` : ""}</p>
+                  </div>
+                  <span className={`shrink-0 text-sm font-bold tabular-nums ${s.toId === workerId ? "text-green-600" : "text-muted-foreground"}`}>
+                    {s.toId === workerId ? "+" : "−"}{eur(s.cents)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
 
         {/* 3 — Dokumentit */}
         <Card className="p-5 bg-card border-0 premium-shadow mb-4">

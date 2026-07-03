@@ -143,6 +143,11 @@ export interface WorkerDetail {
   totals: { earnedCents: number; paidCents: number; openCents: number };
   payouts: (import("@shared/crew").CrewPayout & { jobId: number; gigName: string; token: string })[];
   documents: (import("@shared/crew").CrewDocument & { jobId: number })[];
+  /** SENT customer invoices, computed live from jobs (small jobs by billedBy +
+   *  gig instalments by payment biller) — past gigs always included. */
+  customerInvoices: { jobId: number; dateMs: number; name: string; ref?: string; amountCents: number; source: "keikka" | "era" }[];
+  /** Founder-to-founder settlements involving this person (vastalaskut + MobilePay). */
+  settlements: { id: number; fromId: string; toId: string; cents: number; invoiceNo?: string; createdAtMs: number }[];
 }
 
 /** The logged-in admin's own earnings on a gig they also work (e.g. Petrus). */

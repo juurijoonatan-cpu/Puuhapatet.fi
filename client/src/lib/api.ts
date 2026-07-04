@@ -520,10 +520,15 @@ export const api = {
   getFounderSettlement: () =>
     request<FounderCrossSettlement>("GET", "/api/admin/founder-settlement"),
 
-  // Record an issued vastalasku so the open cross-debt goes to zero (and the
-  // same euros are never billed twice); delete = undo a scrapped invoice.
+  // Record a PAYMENT between the founders — the open cross-debt shrinks and
+  // the same euros are never billed twice; delete = undo a wrong booking.
   recordFounderSettlement: (data: { fromId: string; toId: string; cents: number; invoiceNo?: string }) =>
     request<{ ok: boolean }>("POST", "/api/admin/founder-settlement/record", data),
+  // Issue a vastalasku: files myyntilasku + ostolasku into both founders'
+  // Dokumentit WITHOUT touching the open debt — the payment is recorded
+  // separately when the money actually moves.
+  issueFounderInvoice: (data: { fromId: string; toId: string; cents: number; invoiceNo: string }) =>
+    request<{ ok: boolean }>("POST", "/api/admin/founder-settlement/issue-invoice", data),
   deleteFounderSettlement: (id: number) =>
     request<{ ok: boolean }>("DELETE", `/api/admin/founder-settlement/${id}`),
 

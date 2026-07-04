@@ -826,7 +826,6 @@ function FounderDebtCard({ settlement, onChanged }: { settlement: FounderCrossSe
           inv={invoiceFor}
           settlement={settlement}
           onClose={() => setInvoiceFor(null)}
-          onRecorded={() => { setInvoiceFor(null); onChanged(); }}
         />
       )}
     </Card>
@@ -869,8 +868,9 @@ function FounderDetails({ settlement, onChanged }: { settlement: FounderCrossSet
       {/* Manual booking — for MobilePay payments made before this ledger existed. */}
       <ManualRecordForm founders={founders} onChanged={onChanged} />
       <p className="text-[11px] text-muted-foreground">
-        Vastalasku = virallinen lasku kirjanpitoon (kasvattaa laskuttajansa liikevaihtoa ALV-rajassa).
-        Pelkkä maksukirjaus (MobilePay) riittää arjessa — molemmat pienentävät avointa velkaa.
+        Vastalasku = virallinen lasku kirjanpitoon — arkistoituu molempien Dokumentteihin,
+        mutta velka pysyy avoimena kunnes maksu kirjataan. Arjessa pelkkä maksukirjaus
+        (MobilePay) riittää; vain kirjattu maksu pienentää avointa velkaa.
       </p>
 
       {/* Payment history — MobilePay payments + issued vastalaskut. */}
@@ -1125,15 +1125,15 @@ function ManualRecordForm({
 }
 
 /** Dialog that builds the legally-marked settlement invoice (creditor →
- *  debtor), opens it as a printable page, and files a copy in the creditor's
- *  documents (6-year retention rides on the document record). */
+ *  debtor), opens it as a printable page, and files it into BOTH founders'
+ *  Dokumentit (myyntilasku/ostolasku, 6-year retention). Issuing does NOT
+ *  clear the debt — that happens when the payment is recorded. */
 function SettlementInvoiceDialog({
-  inv, settlement, onClose, onRecorded,
+  inv, settlement, onClose,
 }: {
   inv: FounderCrossSettlement["crossInvoices"][number];
   settlement: FounderCrossSettlement;
   onClose: () => void;
-  onRecorded: () => void;
 }) {
   // Creditor (laskuttaja) = the founder who is OWED money; debtor pays.
   const creditor = BRAND_BILLERS.find(b => b.id === inv.toId);
@@ -1161,25 +1161,23 @@ function SettlementInvoiceDialog({
       creditor, debtor, items, totalCents: inv.cents, iban, bic,
     });
     if (!opened) { setBusy(false); setMsg("Selain esti ponnahdusikkunan — salli ponnahdusikkunat ja yritä uudelleen."); return; }
-    // Record + file the invoice ONCE per dialog: re-opening the print view
-    // (e.g. to fix the IBAN) must not double-book the settlement or spam
-    // duplicate documents into the 6-year register.
+    // Issuing an invoice is NOT getting paid: the server files the invoice
+    // (myyntilasku + ostolasku) into BOTH founders' Dokumentit, but the open
+    // debt stays open until the payment itself is recorded ("Kirjaa maksu").
+    // File once per dialog; the server also dedupes on re-issue.
     if (!recordedOnce) {
-      // The server books the ledger row AND files the tositteet into BOTH
-      // founders' Dokumentit — no client-side double filing.
-      const rec = await api.recordFounderSettlement({
+      const rec = await api.issueFounderInvoice({
         fromId: inv.fromId, toId: inv.toId, cents: inv.cents, invoiceNo,
       });
-      // Marked recorded only on SUCCESS — a failed booking must stay retryable.
+      // Marked issued only on SUCCESS — a failed filing must stay retryable.
       if (rec.ok) setRecordedOnce(true);
       setBusy(false);
       setMsg(rec.ok
-        ? "Lasku avattu ✓ Tilitys kirjattu — avoin velka nollattu ja tositteet arkistoitu molemmille."
-        : "Lasku avattu — tilityksen kirjaus epäonnistui, yritä uudelleen.");
-      if (rec.ok) setTimeout(onRecorded, 1600);
+        ? `Lasku avattu ✓ Arkistoitu molempien Dokumentteihin. Velka pysyy avoimena — kun ${firstName(inv.fromName)} maksaa, paina "Kirjaa maksu" ja laita viestiksi ${invoiceNo}.`
+        : "Lasku avattu — arkistointi epäonnistui, yritä uudelleen.");
     } else {
       setBusy(false);
-      setMsg("Lasku avattu uudelleen (tilitys oli jo kirjattu).");
+      setMsg("Lasku avattu uudelleen (oli jo arkistoitu).");
     }
   };
 
@@ -1245,7 +1243,8 @@ function SettlementInvoiceDialog({
           </div>
           <p className="text-[10px] text-muted-foreground">
             Laskussa on lakisääteiset merkinnät (laskun numero, päivämäärä, molempien Y-tunnukset,
-            ALV-merkintä "ei arvonlisäveroa — vähäinen toiminta"). Säilytä 6 vuotta.
+            ALV-merkintä "ei arvonlisäveroa — vähäinen toiminta"). Kopio arkistoituu automaattisesti
+            molempien Dokumentteihin (säilytys 6 v). Kun maksu saapuu, kuittaa se "Kirjaa maksu" -napilla.
           </p>
         </div>
       </DialogContent>

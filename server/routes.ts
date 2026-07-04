@@ -1585,6 +1585,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const [row] = await db.insert(founderSettlements)
         .values({ fromId, toId, cents: c, invoiceNo: invoiceNo ? String(invoiceNo).slice(0, 60) : null })
         .returning();
+
+      // File a tosite in BOTH founders' Dokumentit automatically — the payer
+      // gets an expense receipt, the receiver an income receipt (kirjanpito,
+      // 6-year retention rides on the document record). Best-effort: the
+      // ledger row above is the source of truth even if filing fails.
+      try {
+        const nameOf = (id: string) => BRAND_BILLERS.find((b) => b.id === id)?.name.split(/\s+/)[0] ?? id;
+        const note = row.invoiceNo ? ` (${row.invoiceNo})` : "";
+        const now = Date.now();
+        const mkDoc = (desc: string): CrewDocument => ({
+          id: `doc_${randomUUID().slice(0, 12)}`,
+          date: now, desc, amountCents: c, kind: "kuitti",
+          retentionUntil: retentionFromDate(now), addedAt: now,
+        });
+        await attachPersonDocument(toId, mkDoc(`Tilitys saatu: ${nameOf(fromId)} maksoi${note}`));
+        await attachPersonDocument(fromId, mkDoc(`Tilitys maksettu: ${nameOf(toId)}lle${note}`));
+      } catch (err) {
+        console.warn("settlement tosite filing failed", err);
+      }
+
       res.status(201).json({ ok: true, settlement: row });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -5380,45 +5400,50 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         addedAt: Date.now(),
       };
       if (!doc.desc && !doc.fileDataUrl) return res.status(400).json({ error: "Anna kuvaus tai tiedosto." });
-      const allJobs = await db.select().from(jobs);
-      // Exact id/link matches first; the first-name fallback only if none exist.
-      for (const pred of [matchesWorkerExact, matchesWorkerByName]) {
-        for (const job of allJobs) {
-          const project = parseProject(job.projectData ?? null);
-          if (!project?.crew) continue;
-          const idx = project.crew.findIndex((c) => pred(c, wid));
-          if (idx < 0) continue;
-          project.crew[idx] = { ...project.crew[idx], documents: [doc, ...(project.crew[idx].documents || [])] };
-          await saveProject(job, project);
-          return res.json({ ok: true, document: doc });
-        }
-      }
-      // Founders may not be crew anywhere — hold their documents on a hidden
-      // host-role member in the first project-bearing gig (hosts are filtered
-      // out of the roster UI, so this never shows up as a "worker").
-      const biller = BRAND_BILLERS.find((b) => b.id === wid);
-      if (biller) {
-        for (const job of allJobs) {
-          const project = parseProject(job.projectData ?? null);
-          if (!project) continue;
-          const member = sanitizeCrewMember({
-            id: biller.id, token: await genUniqueCrewToken(), name: biller.name,
-            // active:false + 1-cent rate: a pure document holder that never
-            // shifts payroll/kate math (rateOf has no role filter).
-            role: "host", adminLinked: true, active: false, perWindowCents: 1,
-            agreements: [], notes: [], createdAt: Date.now(), documents: [doc],
-          });
-          if (!member) break;
-          project.crew = [...(project.crew || []), member];
-          await saveProject(job, project);
-          return res.json({ ok: true, document: doc });
-        }
-      }
-      return res.status(404).json({ error: "Työntekijää ei löytynyt" });
+      const ok = await attachPersonDocument(wid, doc);
+      if (!ok) return res.status(404).json({ error: "Työntekijää ei löytynyt" });
+      return res.json({ ok: true, document: doc });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
   });
+
+  // Attach a document to a person's Dokumentit: exact crew match first, then
+  // first-name fallback; founders who aren't crew anywhere get a hidden
+  // host-role holder member (active:false + 1-cent rate so payroll/kate math
+  // never shifts). Shared by the manual-document endpoint and the automatic
+  // settlement tositteet.
+  async function attachPersonDocument(wid: string, doc: CrewDocument): Promise<boolean> {
+    const allJobs = await db.select().from(jobs);
+    for (const pred of [matchesWorkerExact, matchesWorkerByName]) {
+      for (const job of allJobs) {
+        const project = parseProject(job.projectData ?? null);
+        if (!project?.crew) continue;
+        const idx = project.crew.findIndex((c) => pred(c, wid));
+        if (idx < 0) continue;
+        project.crew[idx] = { ...project.crew[idx], documents: [doc, ...(project.crew[idx].documents || [])] };
+        await saveProject(job, project);
+        return true;
+      }
+    }
+    const biller = BRAND_BILLERS.find((b) => b.id === wid);
+    if (biller) {
+      for (const job of allJobs) {
+        const project = parseProject(job.projectData ?? null);
+        if (!project) continue;
+        const member = sanitizeCrewMember({
+          id: biller.id, token: await genUniqueCrewToken(), name: biller.name,
+          role: "host", adminLinked: true, active: false, perWindowCents: 1,
+          agreements: [], notes: [], createdAt: Date.now(), documents: [doc],
+        });
+        if (!member) break;
+        project.crew = [...(project.crew || []), member];
+        await saveProject(job, project);
+        return true;
+      }
+    }
+    return false;
+  }
 
   // Founders set the per-erä (instalment) window counts for the fixed deal. Pure
   // display/planning data (drives the per-erä kate on the payroll page); does NOT

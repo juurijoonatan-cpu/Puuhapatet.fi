@@ -755,8 +755,25 @@ export default function TaxExportPage() {
  *  (kirjaa maksu / vastalasku). Every detail lives in the
  *  "Bossien maksuhistoria & erittely" disclosure instead. */
 function FounderDebtCard({ settlement, onChanged }: { settlement: FounderCrossSettlement; onChanged: () => void }) {
-  const { crossInvoices, settled } = settlement;
+  const { crossInvoices, settled, founders, smallJobs } = settlement;
   const [invoiceFor, setInvoiceFor] = useState<FounderCrossSettlement["crossInvoices"][number] | null>(null);
+
+  // One-time helper: the founders have ALREADY paid each other the small-gig
+  // shares via MobilePay (everything except FR8). One tap books that history,
+  // so the open balance shows only what is genuinely unpaid (the FR8 shares).
+  const MARKER = "MobilePay — pikkukeikat kuitattu";
+  const alreadyMarked = (settled ?? []).some(x => (x.invoiceNo ?? "").startsWith(MARKER));
+  const [a, b] = founders;
+  let smallNet = 0; // + => a owes b
+  if (a && b) {
+    for (const j of smallJobs) {
+      if (j.billerId === a.id) smallNet += j.owes.find(o => o.id === b.id)?.cents ?? 0;
+      else if (j.billerId === b.id) smallNet -= j.owes.find(o => o.id === a.id)?.cents ?? 0;
+    }
+  }
+  const smallFrom = smallNet > 0 ? a : b;
+  const smallTo = smallNet > 0 ? b : a;
+  const smallAbs = Math.abs(smallNet);
 
   return (
     <Card className="p-5 bg-card border-0 premium-shadow mb-4 print:hidden">
@@ -786,6 +803,23 @@ function FounderDebtCard({ settlement, onChanged }: { settlement: FounderCrossSe
             </div>
           </div>
         ))
+      )}
+      {!alreadyMarked && smallAbs > 0 && a && b && (
+        <button
+          type="button"
+          className="mt-2 block text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          onClick={async () => {
+            if (!confirm(
+              `Kuitataanko pikkukeikkojen osuudet maksetuiksi?\n\n` +
+              `Kirjataan: ${firstName(smallFrom.name)} maksoi ${firstName(smallTo.name)}lle ${fmt(smallAbs)} (MobilePay).\n` +
+              `FR8-urakan osuudet jäävät avoimeksi. Tosite arkistoituu molemmille. Tehdään vain kerran.`
+            )) return;
+            const res = await api.recordFounderSettlement({ fromId: smallFrom.id, toId: smallTo.id, cents: smallAbs, invoiceNo: MARKER });
+            if (res.ok) onChanged();
+          }}
+        >
+          ✓ Kuittaa pikkukeikat jo maksetuiksi (MobilePay) — {fmt(smallAbs)}
+        </button>
       )}
       {invoiceFor && (
         <SettlementInvoiceDialog
@@ -1131,22 +1165,16 @@ function SettlementInvoiceDialog({
     // (e.g. to fix the IBAN) must not double-book the settlement or spam
     // duplicate documents into the 6-year register.
     if (!recordedOnce) {
+      // The server books the ledger row AND files the tositteet into BOTH
+      // founders' Dokumentit — no client-side double filing.
       const rec = await api.recordFounderSettlement({
         fromId: inv.fromId, toId: inv.toId, cents: inv.cents, invoiceNo,
       });
-      if (rec.ok) {
-        // Marked recorded only on SUCCESS — a failed booking must stay retryable.
-        setRecordedOnce(true);
-        await api.addWorkerDocument(inv.toId, {
-          date: today.getTime(),
-          desc: `Tilityslasku ${invoiceNo} — ${firstName(inv.toName)} laskutti ${firstName(inv.fromName)}lta`,
-          amountCents: inv.cents,
-          kind: "lasku",
-        });
-      }
+      // Marked recorded only on SUCCESS — a failed booking must stay retryable.
+      if (rec.ok) setRecordedOnce(true);
       setBusy(false);
       setMsg(rec.ok
-        ? "Lasku avattu ✓ Tilitys kirjattu — avoin velka nollattu ja kopio tallennettu dokumentteihin."
+        ? "Lasku avattu ✓ Tilitys kirjattu — avoin velka nollattu ja tositteet arkistoitu molemmille."
         : "Lasku avattu — tilityksen kirjaus epäonnistui, yritä uudelleen.");
       if (rec.ok) setTimeout(onRecorded, 1600);
     } else {

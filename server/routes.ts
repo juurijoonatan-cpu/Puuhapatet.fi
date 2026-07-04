@@ -1611,6 +1611,36 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // Issue a vastalasku WITHOUT booking a payment. Issuing an invoice and
+  // getting paid are separate events: the creditor files a myyntilasku, the
+  // debtor an ostolasku, and the open cross-debt stays open until the actual
+  // payment is recorded (MobilePay → "Kirjaa maksu" with the invoice number).
+  app.post("/api/admin/founder-settlement/issue-invoice", async (req, res) => {
+    try {
+      const { fromId, toId, cents, invoiceNo } = (req.body || {}) as Record<string, any>;
+      const validParty = (id: any) => BRAND_BILLERS.some((b) => b.id === id);
+      const c = Math.round(Number(cents));
+      const no = String(invoiceNo ?? "").trim().slice(0, 60);
+      if (!validParty(fromId) || !validParty(toId) || fromId === toId || !Number.isFinite(c) || c <= 0 || !no) {
+        return res.status(400).json({ error: "Virheellinen lasku" });
+      }
+      const nameOf = (id: string) => BRAND_BILLERS.find((b) => b.id === id)?.name.split(/\s+/)[0] ?? id;
+      const now = Date.now();
+      const mkDoc = (desc: string): CrewDocument => ({
+        id: `doc_${randomUUID().slice(0, 12)}`,
+        date: now, desc: desc.slice(0, 300), amountCents: c, kind: "lasku",
+        retentionUntil: retentionFromDate(now), addedAt: now,
+      });
+      await attachPersonDocument(toId, mkDoc(
+        `Myyntilasku ${no} (vastalasku): ${nameOf(fromId)} maksaa osuudet yhteisistä keikoista`), true);
+      await attachPersonDocument(fromId, mkDoc(
+        `Ostolasku ${no} (vastalasku): maksettava ${nameOf(toId)}lle — osuudet yhteisistä keikoista`), true);
+      res.status(201).json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Undo a recorded settlement (e.g. the invoice was scrapped before payment).
   app.delete("/api/admin/founder-settlement/:id", async (req, res) => {
     try {
@@ -2489,6 +2519,45 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         } catch (err) {
           console.warn("billedBy save failed for job", jobId, err);
         }
+      }
+
+      // ── Auto-file into document management (kirjanpito, 6 v säilytys) ──────
+      // 1) The biller keeps a copy of every sales invoice/receipt they send —
+      //    a legal retention duty that used to depend on remembering to save
+      //    the email. 2) Every other worker on the gig gets a työkorvaus
+      //    receipt for their net share: the legal record of the compensation
+      //    from the person who billed the customer. Best-effort — the email
+      //    already went out; a filing failure must not fail the request.
+      try {
+        const now = Date.now();
+        const mkDoc = (desc: string, amountCents: number, kind: "lasku" | "kuitti"): CrewDocument => ({
+          id: `doc_${randomUUID().slice(0, 12)}`,
+          date: now, desc: desc.slice(0, 300), amountCents, kind,
+          retentionUntil: retentionFromDate(now), addedAt: now,
+        });
+        // completionDate in the desc keeps repeat gigs (same customer, same
+        // price, same service) distinct while a plain re-send still dedupes.
+        const grossCents = Math.round(Number(agreedPriceCents) || 0);
+        if (senderIsBiller && grossCents > 0) {
+          await attachPersonDocument(String(senderId).toLowerCase(), mkDoc(
+            isInvoice
+              ? `Myyntilasku #${refDisplay}: ${customerName} — ${description}`
+              : `Myyntitosite (${paymentMethod}) ${completionDate}: ${customerName} — ${description}`,
+            grossCents, "lasku",
+          ), true);
+        }
+        const collectorName: string = settlement?.collectorName || senderName || "";
+        for (const w of settlementWorkers) {
+          const shareCents = Math.round(Number(w?.netCents) || 0);
+          if (!w?.name || shareCents <= 0) continue;
+          if (collectorName && w.name === collectorName) continue; // biller's record is the invoice copy above
+          await attachPersonDocument(w.name.trim().split(/\s+/)[0].toLowerCase(), mkDoc(
+            `Työkorvaus-osuus ${completionDate}: ${customerName} — ${description} (${(collectorName || "toinen tekijä").split(/\s+/)[0]} laskutti ja tilittää)`,
+            shareCents, "kuitti",
+          ), true);
+        }
+      } catch (err) {
+        console.warn("send-job-summary document filing failed", err);
       }
 
       res.json({ ok: true, id: result.data?.id, settlementSent });
@@ -5413,7 +5482,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // host-role holder member (active:false + 1-cent rate so payroll/kate math
   // never shifts). Shared by the manual-document endpoint and the automatic
   // settlement tositteet.
-  async function attachPersonDocument(wid: string, doc: CrewDocument): Promise<boolean> {
+  async function attachPersonDocument(wid: string, doc: CrewDocument, dedupe = false): Promise<boolean> {
     const allJobs = await db.select().from(jobs);
     for (const pred of [matchesWorkerExact, matchesWorkerByName]) {
       for (const job of allJobs) {
@@ -5421,6 +5490,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         if (!project?.crew) continue;
         const idx = project.crew.findIndex((c) => pred(c, wid));
         if (idx < 0) continue;
+        // Automatic filings pass dedupe: re-sending the same invoice or
+        // re-issuing the same vastalasku must not stack identical rows in
+        // the 6-year register (same desc + amount = the same tosite).
+        if (dedupe && (project.crew[idx].documents || []).some(
+          (d) => d.desc === doc.desc && d.amountCents === doc.amountCents,
+        )) return true;
         project.crew[idx] = { ...project.crew[idx], documents: [doc, ...(project.crew[idx].documents || [])] };
         await saveProject(job, project);
         return true;

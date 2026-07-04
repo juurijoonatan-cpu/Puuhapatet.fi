@@ -1441,7 +1441,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       };
       const perGig: {
         jobId: number; gigName: string;
-        eras: { era: number; billerId: string; billerName: string; instalmentCents: number; palkatCents: number; kateCents: number; paysOut: { id: string; name: string; cents: number }[] }[];
+        eras: { era: number; dateMs: number | null; billerId: string; billerName: string; instalmentCents: number; palkatCents: number; kateCents: number; shares: { id: string; cents: number }[]; paysOut: { id: string; name: string; cents: number }[] }[];
       }[] = [];
 
       for (const job of rows) {
@@ -1479,11 +1479,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           paysOut.forEach((s) => bump(biller.id, s.id, s.cents));
           eras.push({
             era: e.era,
+            // Billing date from the recorded payment — lets the client put the
+            // kate income in the right YEAR for the founder's OmaVero figure.
+            dateMs: payments[e.era - 1]?.t || null,
             billerId: biller.id,
             billerName: biller.name || (bj >= 0 ? founders[bj].name : ""),
             instalmentCents: e.instalmentCents,
             palkatCents: e.earnedCents,
             kateCents: kate,
+            // EVERY founder's kate share of this erä (incl. the biller's own).
+            shares: shares.map((s) => ({ id: s.id, cents: s.cents })),
             paysOut: paysOut.map((s) => ({ id: s.id, name: s.name, cents: s.cents })),
           });
         }

@@ -120,7 +120,16 @@ export interface FounderCrossSettlement {
   perGig: {
     jobId: number;
     gigName: string;
-    eras: { era: number; billerId: string; billerName: string; instalmentCents: number; palkatCents: number; kateCents: number; paysOut: { id: string; name: string; cents: number }[] }[];
+    eras: {
+      era: number;
+      /** Billing date of the instalment (ms) — used to year-bucket kate income. */
+      dateMs: number | null;
+      billerId: string; billerName: string;
+      instalmentCents: number; palkatCents: number; kateCents: number;
+      /** Every founder's kate share of this erä (incl. the biller's own). */
+      shares: { id: string; cents: number }[];
+      paysOut: { id: string; name: string; cents: number }[];
+    }[];
   }[];
   /** Done small jobs where the biller owes the other founder their 50/50 share
    *  (computed on total − kulut, matching the tilitystosite maths). */

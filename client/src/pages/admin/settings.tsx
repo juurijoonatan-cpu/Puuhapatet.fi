@@ -445,10 +445,10 @@ export default function AdminSettingsPage() {
                   <FileSpreadsheet className="w-5 h-5 text-green-600 dark:text-green-400" />
                 </div>
                 <div>
-                  <p className="font-semibold text-foreground">Verotus &amp; tiimi</p>
+                  <p className="font-semibold text-foreground">Talous &amp; verotus</p>
                   <p className="text-sm text-muted-foreground">
                     {isHost
-                      ? "Verotuloste, ALV-seuranta, bossien tilitys & tekijät"
+                      ? "Tulos, bossien velka, ALV-raja, laskut & tiimi"
                       : "Keikat verotusta varten · CSV / tulosta"}
                   </p>
                 </div>

@@ -169,6 +169,18 @@ export default function TaxExportPage() {
     { revenue: 0, serviceFee: 0, net: 0 },
   );
 
+  // The founder's FR8 kate share for the selected year — urakkatulot belong in
+  // the yearly result too, not only keikkaosuudet. Eras without a recorded
+  // billing date count into the selected year so they are never hidden.
+  const fr8KateYear = (isHost && settlement && profile)
+    ? settlement.perGig.reduce((sum, g) => sum + g.eras.reduce((s2, e) => {
+        const y = e.dateMs ? new Date(e.dateMs).getFullYear() : year;
+        if (y !== year) return s2;
+        return s2 + (e.shares?.find(sh => sh.id === profile.id)?.cents ?? 0);
+      }, 0), 0)
+    : 0;
+  const heroTotal = totals.net + fr8KateYear;
+
   const yearBonusUsages = allBonusUsages.filter(u => new Date(u.usedAt).getFullYear() === year);
   const yearBonusTotal = yearBonusUsages.reduce((s, u) => s + u.amount, 0);
 
@@ -213,9 +225,9 @@ export default function TaxExportPage() {
             <Button variant="ghost" size="icon"><ArrowLeft className="w-5 h-5" /></Button>
           </Link>
           <div className="flex-1 min-w-0">
-            <h1 className="text-2xl font-semibold text-foreground">Verotus &amp; tiimi</h1>
+            <h1 className="text-2xl font-semibold text-foreground">Talous &amp; verotus</h1>
             <p className="text-sm text-muted-foreground truncate">
-              {profile?.name ?? "Omat"} · kaikki talous yhdessä paikassa
+              {profile?.name ?? "Omat"} · tulos, velat ja dokumentit
             </p>
           </div>
           <div className="flex gap-2 shrink-0">
@@ -243,37 +255,112 @@ export default function TaxExportPage() {
           <p className="text-muted-foreground text-center py-12">Ladataan…</p>
         ) : (
           <>
-            {/* ── Hero: the one number for OmaVero (always visible, screen) ── */}
+            {/* ── Status 1/3: the one number for OmaVero (always visible) ──── */}
             <Card className="p-5 bg-green-50 dark:bg-green-900/20 border-0 premium-shadow mb-4 print:hidden">
               <p className="text-xs font-bold uppercase tracking-wide text-green-800 dark:text-green-300 mb-1">
                 {profile?.hasYTunnus
                   ? `Elinkeinotoiminnan tulos (lomake 5) — ${year}`
                   : `OmaVeroon ilmoitettava tulos — ${year}`}
               </p>
-              <p className="text-4xl font-bold text-green-700 dark:text-green-400 mb-1">{fmt(totals.net)}</p>
+              <p className="text-4xl font-bold text-green-700 dark:text-green-400 mb-1">{fmt(heroTotal)}</p>
               <p className="text-xs text-green-700 dark:text-green-400">
-                {profile?.hasYTunnus
-                  ? <>Bruttokorvaus {fmt(totals.revenue)} − palvelumaksu {fmt(totals.serviceFee)} · ilmoita <strong>lomakkeella 5</strong></>
-                  : <>Bruttokorvaus {fmt(totals.revenue)} − palvelumaksu {fmt(totals.serviceFee)} · kohtaan <strong>Muut ansiotulot</strong></>}
+                Keikkaosuudet {fmt(totals.net)}{fr8KateYear > 0 ? <> + urakkakate (FR8) {fmt(fr8KateYear)}</> : null}
+                {" · ilmoita "}
+                {profile?.hasYTunnus ? <strong>lomakkeella 5</strong> : <>kohtaan <strong>Muut ansiotulot</strong></>}
               </p>
             </Card>
 
-            {/* ── Bossien rahat: velat, tilitykset (MobilePay/vastalasku) ───── */}
+            {/* ── Status 2/3: bossien velka — one number, two actions ──────── */}
             {isHost && settlement && (
-              <Disclosure
-                defaultOpen
-                className="print:hidden"
-                icon={<Wallet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />}
-                title="Bossien rahat — velat & tilitys"
-                right={
-                  settlement.crossInvoices.length > 0
-                    ? <span className="text-xs font-medium text-emerald-600 tabular-nums">avoinna {settlement.crossInvoices.map(c => fmt(c.cents)).join(" · ")}</span>
-                    : <span className="text-xs text-muted-foreground">tasan ✓</span>
-                }
-              >
-                <FounderCrossView settlement={settlement} onChanged={loadMoney} />
-              </Disclosure>
+              <FounderDebtCard settlement={settlement} onChanged={loadMoney} />
             )}
+
+            {/* ── Status 3/3: ALV-raja — a green check until it matters ────── */}
+            {isHost && turnover && (() => {
+              const limitCents = turnover.limitEur * 100;
+              const yearMap = turnover.turnoverByYear[String(year)] || {};
+              const un = turnover.unassignedByYear?.[String(year)];
+              const unassignedJobs = jobs.filter(r => {
+                const d = r.job.scheduledAt || r.job.createdAt;
+                return !r.job.billedBy && !r.job.isCustomGig && !inferredBiller(r.job) && new Date(d).getFullYear() === year;
+              });
+              return (
+                <Card className="p-5 bg-card border-0 premium-shadow mb-4 print:hidden">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-2">
+                      <Percent className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                      <h2 className="text-sm font-bold">ALV-raja {year}</h2>
+                    </div>
+                    <span className="text-[11px] text-muted-foreground">ALV-vapaa alle {turnover.limitEur.toLocaleString("fi-FI")} €/hlö</span>
+                  </div>
+                  <div className="space-y-2">
+                    {turnover.billers.map((b) => {
+                      const cents = yearMap[b.id] ?? 0;
+                      const pct = limitCents > 0 ? (cents / limitCents) * 100 : 0;
+                      const level = pct >= 100 ? "over" : pct >= 70 ? "near" : "ok";
+                      return (
+                        <div key={b.id}>
+                          <div className="flex items-center justify-between gap-2">
+                            <Link href={`/admin/tiimi/${b.id}`} className="text-sm font-medium text-foreground hover:underline">{firstName(b.name)}</Link>
+                            <span className={`text-sm font-semibold tabular-nums ${level === "over" ? "text-red-600" : level === "near" ? "text-amber-600" : "text-foreground"}`}>
+                              {fmt(cents)} <span className="text-[11px] font-normal text-muted-foreground">/ {turnover.limitEur.toLocaleString("fi-FI")} €</span> {level === "ok" ? "✓" : level === "near" ? "⚠️" : "❗"}
+                            </span>
+                          </div>
+                          {level !== "ok" && (
+                            <>
+                              <div className="h-2 w-full rounded-full bg-muted overflow-hidden mt-1">
+                                <div className={`h-full rounded-full ${level === "over" ? "bg-red-500" : "bg-amber-500"}`} style={{ width: `${Math.min(100, pct)}%` }} />
+                              </div>
+                              <p className={`text-[11px] mt-0.5 ${level === "over" ? "text-red-600" : "text-amber-600"}`}>
+                                {level === "over"
+                                  ? "Raja ylittynyt — rekisteröidy ALV-velvolliseksi (vero.fi)"
+                                  : `Jäljellä ${fmt(Math.max(0, limitCents - cents))} — suosikaa toisen laskutusta`}
+                              </p>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {un && un.count > 0 && (
+                    <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                      <p className="text-[11px] text-amber-600 mb-1.5">
+                        {un.count} keikkaa ({fmt(un.cents)}) ilman laskuttajaa — merkitse, niin summa kohdistuu oikein.
+                      </p>
+                      <div className="space-y-1">
+                        {unassignedJobs.map(r => (
+                          <div key={r.job.id} className="flex items-center justify-between gap-2 text-[11px]">
+                            <span className="truncate text-foreground">
+                              {fmtDate(r.job.scheduledAt || r.job.createdAt)} · {r.customer?.name ?? r.job.description}
+                              <span className="text-muted-foreground"> · {fmt(effectiveJobTotal(r.job))}</span>
+                            </span>
+                            <select
+                              value=""
+                              onChange={(e) => e.target.value && setBilledBy(r.job.id, e.target.value)}
+                              className="shrink-0 rounded-md border border-amber-400 bg-background px-1.5 py-0.5 text-[11px] text-amber-600"
+                            >
+                              <option value="">Laskutti: ?</option>
+                              {BRAND_BILLERS.map(b => <option key={b.id} value={b.id}>{firstName(b.name)}</option>)}
+                              {USERS.filter(u => u.yTunnus && !BRAND_BILLERS.some(b => b.id === u.id)).map(u => (
+                                <option key={u.id} value={u.id}>{firstName(u.name)}</option>
+                              ))}
+                            </select>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <p className="text-[11px] text-muted-foreground mt-3 pt-2 border-t border-border">
+                    Raja koskee henkilön <b>kaikkea</b> liiketoimintaa — muista myös Puuhapatetin ulkopuoliset tulot.
+                  </p>
+                </Card>
+              );
+            })()}
+
+            {/* ── Yksityiskohdat: everything below is reference material ───── */}
+            <p className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground mt-6 mb-2 print:hidden">
+              Yksityiskohdat &amp; dokumentit
+            </p>
 
             {/* ── Omat asiakaslaskut: mitä MINÄ olen laskuttanut asiakkailta ── */}
             {isHost && myDetail && (() => {
@@ -345,6 +432,18 @@ export default function TaxExportPage() {
                 </Disclosure>
               );
             })()}
+
+            {/* ── Dropdown: Bossien maksuhistoria & erittely ────────────────── */}
+            {isHost && settlement && (settlement.perGig.length > 0 || settlement.smallJobs.length > 0 || (settlement.settled ?? []).length > 0) && (
+              <Disclosure
+                className="print:hidden"
+                icon={<Wallet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />}
+                title="Bossien maksuhistoria & erittely"
+                right={<span className="text-xs text-muted-foreground tabular-nums">{(settlement.settled ?? []).length} kirjausta</span>}
+              >
+                <FounderDetails settlement={settlement} onChanged={loadMoney} />
+              </Disclosure>
+            )}
 
             {/* ── Dropdown: Dokumentit & keikat ─────────────────────────────── */}
             <Disclosure
@@ -451,100 +550,6 @@ export default function TaxExportPage() {
                 </>
               )}
             </Disclosure>
-
-            {/* ── Dropdown: ALV-seuranta (HOST) ─────────────────────────────── */}
-            {isHost && turnover && (() => {
-              const limitCents = turnover.limitEur * 100;
-              const yearMap = turnover.turnoverByYear[String(year)] || {};
-              const anyOver = turnover.billers.some(b => (yearMap[b.id] ?? 0) >= limitCents);
-              return (
-                <Disclosure
-                  className="print:hidden"
-                  icon={<Percent className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
-                  title="ALV-seuranta — vähäinen toiminta"
-                  right={<span className={`text-xs font-medium ${anyOver ? "text-red-600" : "text-muted-foreground"}`}>{anyOver ? "⚠️ raja ylittynyt" : `raja ${turnover.limitEur.toLocaleString("fi-FI")} €/hlö`}</span>}
-                >
-                  <p className="text-[11px] text-muted-foreground mb-4">
-                    Pysyt ALV-vapaana niin kauan kuin kunkin johtajan vuosittainen liikevaihto on rajan alla (AVL 3 §).
-                  </p>
-                  <div className="space-y-4">
-                    {turnover.billers.map((b) => {
-                      const cents = yearMap[b.id] ?? 0;
-                      const pct = limitCents > 0 ? Math.min(100, Math.round((cents / limitCents) * 100)) : 0;
-                      const over = cents >= limitCents;
-                      const near = !over && cents >= limitCents * 0.8;
-                      const barColor = over ? "bg-red-500" : near ? "bg-amber-500" : "bg-green-500";
-                      const txtColor = over ? "text-red-600" : near ? "text-amber-600" : "text-green-600";
-                      return (
-                        <div key={b.id}>
-                          <div className="flex items-baseline justify-between gap-2 mb-1">
-                            <Link href={`/admin/tiimi/${b.id}`} className="text-sm font-medium text-foreground hover:underline">{b.name}{b.yTunnus ? <span className="text-[11px] text-muted-foreground"> · {b.yTunnus}</span> : null}</Link>
-                            <span className={`text-sm font-bold tabular-nums ${txtColor}`}>{fmt(cents)}</span>
-                          </div>
-                          <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
-                            <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.max(2, pct)}%` }} />
-                          </div>
-                          <div className="flex items-center justify-between mt-1">
-                            <span className="text-[11px] text-muted-foreground">{pct} % rajasta</span>
-                            <span className={`text-[11px] ${txtColor}`}>
-                              {over ? "rekisteröidy ALV-velvolliseksi" : `jäljellä ${fmt(Math.max(0, limitCents - cents))}`}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {(() => {
-                    const un = turnover.unassignedByYear?.[String(year)];
-                    if (!un || un.count === 0) return null;
-                    // ALL done jobs without a biller for this year (not just the
-                    // viewer's own) — attributable right here so the warning is
-                    // always resolvable.
-                    const unassignedJobs = jobs.filter(r => {
-                      const d = r.job.scheduledAt || r.job.createdAt;
-                      // Custom gigs (FR8) track billers per instalment, and jobs
-                      // whose biller the server can INFER (exactly one founder in
-                      // the crew) are already attributed — neither is listed here.
-                      return !r.job.billedBy && !r.job.isCustomGig && !inferredBiller(r.job) && new Date(d).getFullYear() === year;
-                    });
-                    return (
-                      <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
-                        <p className="text-[11px] text-amber-600 mb-1.5">
-                          ⚠️ {un.count} valmista keikkaa ({fmt(un.cents)}) ilman laskuttajaa — merkitse
-                          kuka laskutti, jotta liikevaihto kohdistuu oikealle henkilölle.
-                        </p>
-                        <div className="space-y-1">
-                          {unassignedJobs.map(r => (
-                            <div key={r.job.id} className="flex items-center justify-between gap-2 text-[11px]">
-                              <span className="truncate text-foreground">
-                                {fmtDate(r.job.scheduledAt || r.job.createdAt)} · {r.customer?.name ?? r.job.description}
-                                <span className="text-muted-foreground"> · {fmt(effectiveJobTotal(r.job))}</span>
-                              </span>
-                              <select
-                                value=""
-                                onChange={(e) => e.target.value && setBilledBy(r.job.id, e.target.value)}
-                                className="shrink-0 rounded-md border border-amber-400 bg-background px-1.5 py-0.5 text-[11px] text-amber-600"
-                              >
-                                <option value="">Laskutti: ?</option>
-                                {BRAND_BILLERS.map(b => <option key={b.id} value={b.id}>{firstName(b.name)}</option>)}
-                                {USERS.filter(u => u.yTunnus && !BRAND_BILLERS.some(b => b.id === u.id)).map(u => (
-                                  <option key={u.id} value={u.id}>{firstName(u.name)}</option>
-                                ))}
-                              </select>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })()}
-                  <p className="text-[11px] text-muted-foreground mt-4 pt-3 border-t border-border">
-                    Laskee Puuhapatetin asiakaslaskut: isot keikat laskutuserien mukaan ja pikkukeikat
-                    "Laskutti"-merkinnän mukaan (jos merkintää ei ole ja keikalla oli vain yksi bossi,
-                    hänet päätellään laskuttajaksi automaattisesti). Raja koskee <b>kaikkea</b> liiketoimintaasi — laske mukaan myös muut tulosi. Tarkista vero.fi.
-                  </p>
-                </Disclosure>
-              );
-            })()}
 
             {/* ── Dropdown: Tiimi & työntekijät (HOST) ──────────────────────── */}
             {isHost && (
@@ -692,8 +697,8 @@ export default function TaxExportPage() {
 
               <div className="mb-4 p-3 border border-gray-300 rounded">
                 <p className="text-xs font-bold uppercase text-gray-600">{profile?.hasYTunnus ? "Elinkeinotoiminnan tulos (lomake 5)" : "OmaVeroon ilmoitettava tulos"} — {year}</p>
-                <p className="text-3xl font-bold">{fmt(totals.net)}</p>
-                <p className="text-xs text-gray-600">Bruttokorvaus {fmt(totals.revenue)} − palvelumaksu {fmt(totals.serviceFee)}</p>
+                <p className="text-3xl font-bold">{fmt(heroTotal)}</p>
+                <p className="text-xs text-gray-600">Keikkaosuudet {fmt(totals.net)} (brutto {fmt(totals.revenue)} − palvelumaksu {fmt(totals.serviceFee)}){fr8KateYear > 0 ? ` + urakkakate ${fmt(fr8KateYear)}` : ""}</p>
               </div>
 
               <table className="w-full text-sm border-collapse">
@@ -733,8 +738,8 @@ export default function TaxExportPage() {
                 <p className="font-medium text-gray-700">{profile?.name ?? "Puuhapatet"}{profile?.yTunnus ? ` · Y-tunnus ${profile.yTunnus}` : ""}</p>
                 <p className="mt-1">
                   {profile?.hasYTunnus
-                    ? `Elinkeinotoiminnan tulos ${year}: ${fmt(totals.net)} — ilmoita lomakkeella 5 (OmaVero). Palvelumaksu ${fmt(totals.serviceFee)} vähennetty.`
-                    : `4H-yrityksen tulos ${year}: ${fmt(totals.net)} — ilmoita kohdassa "Muut ansiotulot" (OmaVero). Palvelumaksu ${fmt(totals.serviceFee)} vähennetty.`}
+                    ? `Elinkeinotoiminnan tulos ${year}: ${fmt(heroTotal)} — ilmoita lomakkeella 5 (OmaVero). Palvelumaksu ${fmt(totals.serviceFee)} vähennetty${fr8KateYear > 0 ? `, urakkakate ${fmt(fr8KateYear)} mukana` : ""}.`
+                    : `4H-yrityksen tulos ${year}: ${fmt(heroTotal)} — ilmoita kohdassa "Muut ansiotulot" (OmaVero). Palvelumaksu ${fmt(totals.serviceFee)} vähennetty${fr8KateYear > 0 ? `, urakkakate ${fmt(fr8KateYear)} mukana` : ""}.`}
                 </p>
                 <p className="mt-1">Puuhapatet · info@puuhapatet.fi · puuhapatet.fi</p>
               </div>
@@ -746,108 +751,114 @@ export default function TaxExportPage() {
   );
 }
 
-/** Founder cross-invoicing across all gigs: the net "who pays whom", the
- *  counter-invoice (vastalasku) generator, each founder's totals, and a
- *  per-gig breakdown. */
-function FounderCrossView({ settlement, onChanged }: { settlement: FounderCrossSettlement; onChanged: () => void }) {
-  const { founders, crossInvoices, perGig, smallJobs, settled } = settlement;
-  const earners = founders.filter(f => f.billedCents > 0 || f.kateShareCents > 0);
+/** Status card: the ONE number between the founders + the two actions
+ *  (kirjaa maksu / vastalasku). Every detail lives in the
+ *  "Bossien maksuhistoria & erittely" disclosure instead. */
+function FounderDebtCard({ settlement, onChanged }: { settlement: FounderCrossSettlement; onChanged: () => void }) {
+  const { crossInvoices, settled } = settlement;
   const [invoiceFor, setInvoiceFor] = useState<FounderCrossSettlement["crossInvoices"][number] | null>(null);
 
-  if (earners.length === 0 && smallJobs.length === 0 && (settled ?? []).length === 0) {
-    return <p className="text-[11px] text-muted-foreground">Ei vielä laskutettuja eriä — tilitys näkyy, kun ensimmäinen erä laskutetaan asiakkaalta.</p>;
-  }
+  return (
+    <Card className="p-5 bg-card border-0 premium-shadow mb-4 print:hidden">
+      <div className="flex items-center gap-2 mb-1.5">
+        <Wallet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+        <h2 className="text-sm font-bold">Bossien velka</h2>
+      </div>
+      {crossInvoices.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Tasan ✓ — kenenkään ei tarvitse maksaa toiselle.
+          {(settled ?? []).length > 0 ? " Kirjatut maksut on huomioitu." : ""}
+        </p>
+      ) : (
+        crossInvoices.map((c, i) => (
+          <div key={i} className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="min-w-0">
+              <p className="text-3xl font-bold tabular-nums text-emerald-600">{fmt(c.cents)}</p>
+              <p className="text-[11px] text-muted-foreground">
+                {firstName(c.fromName)} maksaa {firstName(c.toName)}lle — esim. MobilePay, kuittaa maksu tästä
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <RecordPaymentInline inv={c} onChanged={onChanged} />
+              <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={() => setInvoiceFor(c)}>
+                <FileText className="h-3.5 w-3.5" /> Vastalasku
+              </Button>
+            </div>
+          </div>
+        ))
+      )}
+      {invoiceFor && (
+        <SettlementInvoiceDialog
+          inv={invoiceFor}
+          settlement={settlement}
+          onClose={() => setInvoiceFor(null)}
+          onRecorded={() => { setInvoiceFor(null); onChanged(); }}
+        />
+      )}
+    </Card>
+  );
+}
+
+/** Reference material behind a dropdown: how the open balance is formed,
+ *  the payment history (MobilePay + vastalaskut), manual booking for old
+ *  payments, and the per-gig breakdown. */
+function FounderDetails({ settlement, onChanged }: { settlement: FounderCrossSettlement; onChanged: () => void }) {
+  const { founders, crossInvoices, perGig, smallJobs, settled } = settlement;
 
   return (
     <div className="space-y-4">
-      {/* The bottom line: who settles up with whom. */}
-      <div>
-        <h3 className="text-sm font-bold mb-1">Keskinäinen velka</h3>
-        <p className="text-[11px] text-muted-foreground mb-2">
-          Keikat vedetään puoliksi, mutta vain toinen laskuttaa asiakasta (FR8-erät + pikkukeikat).
-          Kun maksatte osuuksia toisillenne (esim. <b>MobilePay</b>), kirjatkaa maksu tässä —
-          avoin velka pysyy silloin aina ajan tasalla.
-        </p>
-        {crossInvoices.length === 0 ? (
-          <div className="rounded-xl border bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
-            Tilanne on tasan — kenenkään ei tarvitse maksaa toiselle.
-            {(settled ?? []).length > 0 && " Kirjatut maksut on huomioitu."}
+      {/* How each open balance is formed — keikoista kertynyt − maksettu. */}
+      {crossInvoices.map((c, i) => {
+        const grossFromTo = pairGrossOwed(settlement, c.fromId, c.toId);
+        const grossToFrom = pairGrossOwed(settlement, c.toId, c.fromId);
+        const paidFromTo = (settled ?? []).filter(x => x.fromId === c.fromId && x.toId === c.toId).reduce((s2, x) => s2 + x.cents, 0);
+        const paidToFrom = (settled ?? []).filter(x => x.fromId === c.toId && x.toId === c.fromId).reduce((s2, x) => s2 + x.cents, 0);
+        return (
+          <div key={i} className="rounded-xl border bg-muted/20 px-3 py-2.5 space-y-0.5 text-[11px] tabular-nums">
+            <p className="text-xs font-semibold text-foreground mb-1">Näin avoin velka muodostuu</p>
+            <div className="flex items-center justify-between gap-2 text-muted-foreground">
+              <span>Keikoista kertynyt ({firstName(c.fromName)} keräsi {firstName(c.toName)}n osuuksia)</span>
+              <span>{fmt(grossFromTo - grossToFrom)}</span>
+            </div>
+            <div className="flex items-center justify-between gap-2 text-muted-foreground">
+              <span>Jo maksettu / kuitattu</span>
+              <span>−{fmt(paidFromTo - paidToFrom)}</span>
+            </div>
+            <div className="flex items-center justify-between gap-2 font-semibold text-foreground">
+              <span>Avoinna</span>
+              <span className="text-emerald-600">{fmt(c.cents)}</span>
+            </div>
           </div>
-        ) : (
-          <div className="space-y-2">
-            {crossInvoices.map((c, i) => {
-              const grossFromTo = pairGrossOwed(settlement, c.fromId, c.toId);
-              const grossToFrom = pairGrossOwed(settlement, c.toId, c.fromId);
-              const paidFromTo = (settled ?? []).filter(s => s.fromId === c.fromId && s.toId === c.toId).reduce((s2, x) => s2 + x.cents, 0);
-              const paidToFrom = (settled ?? []).filter(s => s.fromId === c.toId && s.toId === c.fromId).reduce((s2, x) => s2 + x.cents, 0);
-              return (
-                <div key={i} className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-3 py-2.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="flex items-center gap-1.5 text-sm min-w-0">
-                      <span className="font-semibold truncate">{firstName(c.fromName)}</span>
-                      <ArrowRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                      <span className="font-semibold truncate">{firstName(c.toName)}</span>
-                    </span>
-                    <span className="shrink-0 text-right">
-                      <span className="block text-lg font-bold tabular-nums text-emerald-600">{fmt(c.cents)}</span>
-                      <span className="text-[10px] text-muted-foreground">{firstName(c.fromName)} maksaa {firstName(c.toName)}lle</span>
-                    </span>
-                  </div>
-                  {/* Where the number comes from — keikoista kertynyt vs jo maksettu. */}
-                  <div className="mt-2 pt-2 border-t border-emerald-500/20 space-y-0.5 text-[11px] tabular-nums">
-                    <div className="flex items-center justify-between gap-2 text-muted-foreground">
-                      <span>Keikoista kertynyt ({firstName(c.fromName)} keräsi {firstName(c.toName)}n osuuksia)</span>
-                      <span>{fmt(grossFromTo - grossToFrom)}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 text-muted-foreground">
-                      <span>Jo maksettu / kuitattu</span>
-                      <span>−{fmt(paidFromTo - paidToFrom)}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 font-semibold text-foreground">
-                      <span>Avoinna</span>
-                      <span className="text-emerald-600">{fmt(c.cents)}</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 mt-2 pt-2 border-t border-emerald-500/20">
-                    <RecordPaymentInline inv={c} onChanged={onChanged} />
-                    <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={() => setInvoiceFor(c)}>
-                      <FileText className="h-3.5 w-3.5" /> Vastalasku
-                    </Button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-        {/* Manual booking — for old MobilePay payments that predate this ledger. */}
-        <ManualRecordForm founders={founders} onChanged={onChanged} />
-        <p className="text-[11px] text-muted-foreground mt-2">
-          Vastalasku = virallinen lasku kirjanpitoon (kasvattaa laskuttajansa liikevaihtoa ALV-rajassa).
-          Pelkkä maksukirjaus (MobilePay) riittää arjessa — molemmat pienentävät avointa velkaa.
-        </p>
-      </div>
+        );
+      })}
 
-      {/* Recorded settlements — MobilePay payments + issued vastalaskut, all
-          already netted out of the open balance above. */}
+      {/* Manual booking — for MobilePay payments made before this ledger existed. */}
+      <ManualRecordForm founders={founders} onChanged={onChanged} />
+      <p className="text-[11px] text-muted-foreground">
+        Vastalasku = virallinen lasku kirjanpitoon (kasvattaa laskuttajansa liikevaihtoa ALV-rajassa).
+        Pelkkä maksukirjaus (MobilePay) riittää arjessa — molemmat pienentävät avointa velkaa.
+      </p>
+
+      {/* Payment history — MobilePay payments + issued vastalaskut. */}
       {(settled ?? []).length > 0 && (
         <div>
           <h3 className="text-sm font-bold mb-1.5">Maksuhistoria</h3>
           <div className="space-y-1.5">
-            {settled.map(s => (
-              <div key={s.id} className="flex items-center justify-between gap-2 rounded-lg border bg-muted/20 px-3 py-2 text-[11px]">
+            {settled.map(x => (
+              <div key={x.id} className="flex items-center justify-between gap-2 rounded-lg border bg-muted/20 px-3 py-2 text-[11px]">
                 <span className="min-w-0 truncate text-muted-foreground">
-                  {new Date(s.createdAtMs).toLocaleDateString("fi-FI")} · {firstName(founders.find(f => f.id === s.fromId)?.name ?? s.fromId)} maksoi {firstName(founders.find(f => f.id === s.toId)?.name ?? s.toId)}lle
-                  {s.invoiceNo ? ` · ${s.invoiceNo}` : ""}
+                  {new Date(x.createdAtMs).toLocaleDateString("fi-FI")} · {firstName(founders.find(f => f.id === x.fromId)?.name ?? x.fromId)} maksoi {firstName(founders.find(f => f.id === x.toId)?.name ?? x.toId)}lle
+                  {x.invoiceNo ? ` · ${x.invoiceNo}` : ""}
                 </span>
                 <span className="flex items-center gap-2 shrink-0">
-                  <span className="font-semibold tabular-nums">{fmt(s.cents)}</span>
+                  <span className="font-semibold tabular-nums">{fmt(x.cents)}</span>
                   <button
                     type="button"
                     className="text-muted-foreground hover:text-red-500"
                     title="Peru kirjaus (summa palaa avoimeen velkaan)"
                     onClick={async () => {
                       if (!confirm("Perutaanko tämä kirjaus? Summa palaa avoimeen velkaan.")) return;
-                      await api.deleteFounderSettlement(s.id);
+                      await api.deleteFounderSettlement(x.id);
                       onChanged();
                     }}
                   >
@@ -860,48 +871,7 @@ function FounderCrossView({ settlement, onChanged }: { settlement: FounderCrossS
         </div>
       )}
 
-      {invoiceFor && (
-        <SettlementInvoiceDialog
-          inv={invoiceFor}
-          settlement={settlement}
-          onClose={() => setInvoiceFor(null)}
-          onRecorded={() => { setInvoiceFor(null); onChanged(); }}
-        />
-      )}
-
-      {/* Per-founder totals. */}
-      <div>
-        <h3 className="text-sm font-bold mb-2">Johtajakohtaiset summat</h3>
-        <div className="space-y-2">
-          {earners.map(f => (
-            <div key={f.id} className="rounded-xl border bg-muted/20 px-3 py-2">
-              <div className="flex items-center justify-between gap-2">
-                <Link href={`/admin/tiimi/${f.id}`} className="text-sm font-medium hover:underline truncate">{f.name}</Link>
-                <span className="text-[11px] text-muted-foreground">passiivinen tulo</span>
-              </div>
-              <div className="mt-1 grid grid-cols-3 gap-2 text-center">
-                <div>
-                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Laskutti as.</p>
-                  <p className="text-xs font-semibold tabular-nums">{fmt(f.billedCents)}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Palkat</p>
-                  <p className="text-xs font-semibold tabular-nums">{fmt(f.palkatPaidCents)}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Kate-osuus</p>
-                  <p className="text-xs font-bold tabular-nums text-emerald-600">{fmt(f.kateShareCents)}</p>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-        <p className="text-[11px] text-muted-foreground mt-2">
-          Kate (lasku − palkat) jaetaan tasan johtajien kesken passiivisena tulona. Laskutetuista eristä.
-        </p>
-      </div>
-
-      {/* Per-gig breakdown, folded. */}
+      {/* Per-gig breakdown. */}
       {(perGig.length > 0 || smallJobs.length > 0) && (
         <Disclosure variant="inline" title={`Erittely keikoittain (${perGig.length + smallJobs.length})`}>
           <div className="space-y-3">
@@ -912,17 +882,17 @@ function FounderCrossView({ settlement, onChanged }: { settlement: FounderCrossS
                   {g.eras.map(e => (
                     <div key={e.era} className="text-[11px]">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-muted-foreground">Erä {e.era} · {firstName(e.billerName)} laskutti</span>
+                        <span className="text-muted-foreground">Erä {e.era}{e.dateMs ? ` · ${new Date(e.dateMs).toLocaleDateString("fi-FI")}` : ""} · {firstName(e.billerName)} laskutti</span>
                         <span className="tabular-nums text-muted-foreground">{fmt(e.instalmentCents)}</span>
                       </div>
                       <div className="flex items-center justify-between gap-2 tabular-nums">
                         <span className="text-muted-foreground">lasku − palkat {fmt(e.palkatCents)}</span>
                         <span className="font-semibold text-emerald-600">kate {fmt(e.kateCents)}</span>
                       </div>
-                      {e.paysOut.map((p, j) => (
+                      {e.paysOut.map((pp, j) => (
                         <div key={j} className="flex items-center justify-between gap-2 text-muted-foreground">
-                          <span>→ {firstName(p.name)}lle</span>
-                          <span className="tabular-nums">{fmt(p.cents)}</span>
+                          <span>→ {firstName(pp.name)}lle</span>
+                          <span className="tabular-nums">{fmt(pp.cents)}</span>
                         </div>
                       ))}
                     </div>

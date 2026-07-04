@@ -1358,18 +1358,31 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Done small jobs with NO biller set yet — surfaced so the founders can
       // attribute them (otherwise the ALV tracker under-counts someone).
       const unassignedByYear: Record<string, { count: number; cents: number }> = {};
+      // Gig instalments recorded before the biller field existed. NEVER default
+      // these to anyone: a silent default puts another founder's turnover on
+      // the wrong person's ALV counter and inverts the founder debt. They stay
+      // out of everyone's figures and are listed here for one-tap attribution.
+      const unassignedEras: { jobId: number; index: number; name: string; dateMs: number | null; cents: number }[] = [];
       for (const row of rows) {
         // Custom gigs (FR8 etc.): each recorded instalment payment carries its biller.
         if (row.gigData) {
           let gig: GigData | null = null;
           try { gig = sanitizeGigData(JSON.parse(row.gigData)); } catch { gig = null; }
-          for (const p of gig?.payments || []) {
-            if (!p?.amountCents || p.amountCents <= 0) continue;
-            const billerId = p.biller?.id || DEFAULT_BILLER_ID; // legacy payments → first founder
+          const gigName = gig?.company?.name || row.description || `Keikka #${row.id}`;
+          (gig?.payments || []).forEach((p, i) => {
+            if (!p?.amountCents || p.amountCents <= 0) return;
+            const billerId = p.biller?.id;
+            if (!billerId) {
+              unassignedEras.push({
+                jobId: row.id, index: i, name: `${gigName} — erä ${i + 1}`,
+                dateMs: p.t || null, cents: p.amountCents,
+              });
+              return;
+            }
             const year = String(new Date(p.t || 0).getFullYear());
             (byYear[year] ||= {});
             byYear[year][billerId] = (byYear[year][billerId] ?? 0) + p.amountCents;
-          }
+          });
         }
         // Small jobs: the whole invoice goes to whoever billed (explicit or
         // inferred — see inferBillerId). A job whose money is already tracked
@@ -1398,6 +1411,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         billers: BRAND_BILLERS.map((b) => ({ id: b.id, name: b.name, yTunnus: b.yTunnus })),
         turnoverByYear: byYear, // { "2026": { joonatan: cents, matias: cents } }
         unassignedByYear,
+        unassignedEras,
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1443,6 +1457,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         jobId: number; gigName: string;
         eras: { era: number; dateMs: number | null; billerId: string; billerName: string; instalmentCents: number; palkatCents: number; kateCents: number; shares: { id: string; cents: number }[]; paysOut: { id: string; name: string; cents: number }[] }[];
       }[] = [];
+      // Recorded gig instalments with no biller — excluded from the maths above
+      // until attributed (the ALV card lists them with a one-tap assign).
+      let unassignedEraCount = 0;
 
       for (const job of rows) {
         const project = parseProject(job.projectData ?? null);
@@ -1454,21 +1471,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const payments = gig?.payments ?? [];
         eraBreakdown.forEach((e, i) => {
           const p = payments[i];
-          // A recorded payment = cash moved. Legacy payments without a biller
-          // default to the first founder — the SAME rule the ALV turnover uses,
-          // so FR8 money never silently drops out of the debt maths.
+          // A recorded payment = cash moved. A payment WITHOUT a biller is
+          // never defaulted to anyone (a wrong default inverts who owes whom):
+          // it stays out of the debt maths and is counted below so the UI can
+          // demand attribution — same rule as the ALV turnover.
           const b = p?.biller;
-          (e as any).biller = p
-            ? (b?.id
-                ? { id: b.id, name: b.name }
-                : { id: DEFAULT_BILLER_ID, name: BRAND_BILLERS.find((x) => x.id === DEFAULT_BILLER_ID)?.name ?? DEFAULT_BILLER_ID })
-            : null;
+          (e as any).biller = b?.id ? { id: b.id, name: b.name } : null;
+          if (p && !b?.id) unassignedEraCount += 1;
         });
         const gigName = gig?.company?.name || job.description || `Keikka #${job.id}`;
         const eras: (typeof perGig)[number]["eras"] = [];
         for (const e of eraBreakdown) {
           const biller = (e as any).biller as { id: string; name: string } | null;
-          if (!biller?.id) continue; // only billed erät (cash actually moved)
+          if (!biller?.id) continue; // only billed erät with a KNOWN biller
           const kate = e.marginCents;
           const base = Math.floor(kate / n);
           const shares = founders.map((f, i) => ({ id: f.id, name: f.name, cents: i === 0 ? kate - base * (n - 1) : base }));
@@ -1560,7 +1575,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
 
       res.json({
-        ok: true, founders, crossInvoices, perGig, smallJobs,
+        ok: true, founders, crossInvoices, perGig, smallJobs, unassignedEraCount,
         settled: settledRows.map((s) => ({
           id: s.id, fromId: s.fromId, toId: s.toId, cents: s.cents,
           invoiceNo: s.invoiceNo ?? undefined,
@@ -5275,19 +5290,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ? computeEraDebts(project, deal, project.crew || [], project.eraWindows ?? null)
         : [];
       // Tie each erä to the founder who BILLED that instalment (instalments are
-      // sent in order, so payments[i] ↔ erä i+1). Legacy payments without a
-      // biller default to the first founder — same rule as ALV turnover +
-      // founder settlement, so old money never disappears from the maths.
+      // sent in order, so payments[i] ↔ erä i+1). A payment without a biller is
+      // never defaulted to anyone — same rule as ALV turnover + founder
+      // settlement; the Verotus view lists it for one-tap attribution.
       const gig = parseGig(job.gigData);
       const payments = gig?.payments ?? [];
       eraBreakdown.forEach((e, i) => {
-        const p = payments[i];
-        const b = p?.biller;
-        e.biller = p
-          ? (b?.id
-              ? { id: b.id, name: b.name }
-              : { id: DEFAULT_BILLER_ID, name: BRAND_BILLERS.find((x) => x.id === DEFAULT_BILLER_ID)?.name ?? DEFAULT_BILLER_ID })
-          : null;
+        const b = payments[i]?.biller;
+        e.biller = b?.id ? { id: b.id, name: b.name } : null;
       });
       // Founder settlement model. The biller COLLECTS the full instalment from the
       // customer; the kate (instalment − workers' palkat) is split EQUALLY between
@@ -5409,7 +5419,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           const gigName = gig?.company?.name || job.description || `Keikka #${job.id}`;
           (gig?.payments || []).forEach((p, i) => {
             if (!p?.amountCents || p.amountCents <= 0) return;
-            if ((p.biller?.id || DEFAULT_BILLER_ID) !== wid) return;
+            // Explicit biller only — an unattributed instalment is NOBODY's
+            // invoice until a founder assigns it (Verotus → ALV card).
+            if (p.biller?.id !== wid) return;
             customerInvoices.push({
               jobId: job.id,
               dateMs: p.t || new Date(job.updatedAt ?? job.createdAt).getTime(),
@@ -5519,6 +5531,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
     return false;
   }
+
+  // Attribute (or correct) WHO billed a recorded gig instalment. Legacy
+  // payments recorded before the biller field existed carry no biller — they
+  // are excluded from ALV turnover, the invoice register and the founder debt
+  // until a founder assigns them here (Verotus → ALV card → one-tap).
+  app.post("/api/jobs/:id/gig-payment-biller", async (req, res) => {
+    try {
+      const jobId = Number(req.params.id);
+      const idx = Math.floor(Number(req.body?.index));
+      const billerId = String(req.body?.billerId ?? "").toLowerCase();
+      const biller = BRAND_BILLERS.find((b) => b.id === billerId);
+      if (!biller || !Number.isFinite(idx) || idx < 0) {
+        return res.status(400).json({ error: "Virheellinen laskuttaja tai erä" });
+      }
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+      const gig = parseGig(job?.gigData ?? null);
+      if (!gig || !gig.payments[idx]) return res.status(404).json({ error: "Erämaksua ei löydy" });
+      gig.payments[idx] = {
+        ...gig.payments[idx],
+        biller: { id: biller.id, name: biller.name, yTunnus: biller.yTunnus },
+      };
+      await db.update(jobs).set({ gigData: JSON.stringify(gig), updatedAt: new Date() }).where(eq(jobs.id, jobId));
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
 
   // Founders set the per-erä (instalment) window counts for the fixed deal. Pure
   // display/planning data (drives the per-erä kate on the payroll page); does NOT

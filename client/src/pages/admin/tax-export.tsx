@@ -284,6 +284,11 @@ export default function TaxExportPage() {
                 const d = r.job.scheduledAt || r.job.createdAt;
                 return !r.job.billedBy && !r.job.isCustomGig && !inferredBiller(r.job) && new Date(d).getFullYear() === year;
               });
+              // Gig instalments with no biller are shown for EVERY year — they
+              // are in nobody's figures at all until someone attributes them.
+              const unEras = turnover.unassignedEras ?? [];
+              const unTotal = (un?.cents ?? 0) + unEras.reduce((s2, e) => s2 + e.cents, 0);
+              const unCount = (un?.count ?? 0) + unEras.length;
               return (
                 <Card className="p-5 bg-card border-0 premium-shadow mb-4 print:hidden">
                   <div className="flex items-center justify-between gap-2 mb-2">
@@ -322,12 +327,34 @@ export default function TaxExportPage() {
                       );
                     })}
                   </div>
-                  {un && un.count > 0 && (
+                  {unCount > 0 && (
                     <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
                       <p className="text-[11px] text-amber-600 mb-1.5">
-                        {un.count} keikkaa ({fmt(un.cents)}) ilman laskuttajaa — merkitse, niin summa kohdistuu oikein.
+                        {unCount} laskua ({fmt(unTotal)}) ilman laskuttajaa — nämä eivät ole vielä kenenkään
+                        luvuissa. Merkitse kuka laskutti, niin summa siirtyy oikean henkilön ALV-seurantaan,
+                        laskuluetteloon ja bossien velkaan.
                       </p>
                       <div className="space-y-1">
+                        {unEras.map(e2 => (
+                          <div key={`era-${e2.jobId}-${e2.index}`} className="flex items-center justify-between gap-2 text-[11px]">
+                            <span className="truncate text-foreground">
+                              {e2.dateMs ? new Date(e2.dateMs).toLocaleDateString("fi-FI") : "—"} · {e2.name}
+                              <span className="text-muted-foreground"> · {fmt(e2.cents)}</span>
+                            </span>
+                            <select
+                              value=""
+                              onChange={async (ev) => {
+                                if (!ev.target.value) return;
+                                await api.setGigPaymentBiller(e2.jobId, e2.index, ev.target.value);
+                                loadMoney();
+                              }}
+                              className="shrink-0 rounded-md border border-amber-400 bg-background px-1.5 py-0.5 text-[11px] text-amber-600"
+                            >
+                              <option value="">Laskutti: ?</option>
+                              {BRAND_BILLERS.map(b => <option key={b.id} value={b.id}>{firstName(b.name)}</option>)}
+                            </select>
+                          </div>
+                        ))}
                         {unassignedJobs.map(r => (
                           <div key={r.job.id} className="flex items-center justify-between gap-2 text-[11px]">
                             <span className="truncate text-foreground">
@@ -378,6 +405,8 @@ export default function TaxExportPage() {
                   <p className="text-[11px] text-muted-foreground mb-3">
                     Kaikki {year} sinun Y-tunnuksellasi laskutetut asiakasmaksut — pikkukeikat ja urakkaerät (esim. FR8).
                     Sama summa ohjaa ALV-seurantaasi. Koko historia: <Link href={`/admin/tiimi/${profile?.id}`} className="text-primary underline underline-offset-2">oma sivusi</Link>.
+                    {" "}Toisen bossin laskuttamat keikat eivät kuulu tähän — sinun osuutesi niistä näkyy
+                    Omassa tuloksessa (urakkakate/keikkaosuus) ja Bossien velassa.
                   </p>
                   {yearInvoices.length === 0 ? (
                     <p className="text-sm text-muted-foreground py-1">
@@ -804,15 +833,38 @@ function FounderDebtCard({ settlement, onChanged }: { settlement: FounderCrossSe
           </div>
         ))
       )}
+      {(settlement.unassignedEraCount ?? 0) > 0 && (
+        <p className="mt-2 text-[11px] text-amber-600">
+          ⚠ {settlement.unassignedEraCount} urakkaerää ilman laskuttajaa — velka ei ole täydellinen
+          ennen kuin kohdistat ne ALV-kortin listasta.
+        </p>
+      )}
       {!alreadyMarked && smallAbs > 0 && a && b && (
         <button
           type="button"
           className="mt-2 block text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
           onClick={async () => {
+            // Spell out exactly which gigs the one-tap sum consists of — the
+            // founders must see what they are marking as already paid.
+            const parts: string[] = [];
+            for (const j of smallJobs) {
+              const d = new Date(j.dateMs).toLocaleDateString("fi-FI");
+              if (j.billerId === a.id) {
+                const o = j.owes.find(x => x.id === b.id);
+                if (o?.cents) parts.push(`• ${j.name} ${d}: ${firstName(a.name)} → ${firstName(b.name)}lle ${fmt(o.cents)}`);
+              } else if (j.billerId === b.id) {
+                const o = j.owes.find(x => x.id === a.id);
+                if (o?.cents) parts.push(`• ${j.name} ${d}: ${firstName(b.name)} → ${firstName(a.name)}lle ${fmt(o.cents)}`);
+              }
+            }
+            const shown = parts.slice(0, 12);
+            if (parts.length > shown.length) shown.push(`…ja ${parts.length - shown.length} muuta`);
             if (!confirm(
               `Kuitataanko pikkukeikkojen osuudet maksetuiksi?\n\n` +
+              `Summa koostuu näistä keikoista (suunnat vastakkain, netto ${fmt(smallAbs)}):\n` +
+              `${shown.join("\n")}\n\n` +
               `Kirjataan: ${firstName(smallFrom.name)} maksoi ${firstName(smallTo.name)}lle ${fmt(smallAbs)} (MobilePay).\n` +
-              `FR8-urakan osuudet jäävät avoimeksi. Tosite arkistoituu molemmille. Tehdään vain kerran.`
+              `Urakkaerien (esim. FR8) osuudet jäävät avoimeksi. Tosite arkistoituu molemmille. Tehdään vain kerran.`
             )) return;
             const res = await api.recordFounderSettlement({ fromId: smallFrom.id, toId: smallTo.id, cents: smallAbs, invoiceNo: MARKER });
             if (res.ok) onChanged();

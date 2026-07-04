@@ -107,6 +107,18 @@ app.use((req, res, next) => {
       invoice_no text,
       created_at timestamp NOT NULL DEFAULT now()
     )`,
+    // Evidence-based billed_by backfill from the founders' SENT invoices
+    // (screenshots of the actual customer invoices, July 2026): Matias billed
+    // Ilmari Salmio (440 €), Elisa Stenvall (339 €) and Rami Inkiläinen
+    // (200 €); Joonatan billed Stina Pitkänen (339 €) and the Apajapolku
+    // apartment gig (130 €). IS NULL guard = a manual correction in the
+    // Verotus view always wins and this never runs over it.
+    sql`UPDATE jobs SET billed_by = 'matias' WHERE billed_by IS NULL AND customer_id IN (
+      SELECT id FROM customers WHERE name ILIKE '%Ilmari Salmio%' OR name ILIKE '%Elisa Stenvall%' OR name ILIKE '%Rami Inkil%'
+    )`,
+    sql`UPDATE jobs SET billed_by = 'joonatan' WHERE billed_by IS NULL AND customer_id IN (
+      SELECT id FROM customers WHERE name ILIKE '%Stina Pitk%' OR name ILIKE '%Apajapolku%' OR address ILIKE '%Apajapolku%'
+    )`,
     sql`ALTER TABLE users     ADD COLUMN IF NOT EXISTS member_agreement     text`,
     sql`CREATE UNIQUE INDEX IF NOT EXISTS jobs_quote_token_unique ON jobs(quote_token) WHERE quote_token IS NOT NULL`,
     // Chat / AI assistant tables

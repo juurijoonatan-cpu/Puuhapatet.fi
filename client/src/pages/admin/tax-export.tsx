@@ -96,6 +96,10 @@ export default function TaxExportPage() {
   const [turnover, setTurnover] = useState<Awaited<ReturnType<typeof api.getBillerTurnover>>["data"] | null>(null);
   const [settlement, setSettlement] = useState<FounderCrossSettlement | null>(null);
   const [workerStats, setWorkerStats] = useState<WorkerStatsResponse | null>(null);
+  // Serializes the one-tap era-biller assignments: the endpoint rewrites the
+  // whole gigData blob, so two in-flight assignments on the same job would
+  // race and one would silently vanish.
+  const [eraBusy, setEraBusy] = useState(false);
   // The logged-in founder's own money trail (sent customer invoices etc.).
   const [myDetail, setMyDetail] = useState<Awaited<ReturnType<typeof api.getWorker>>["data"] | null>(null);
 
@@ -284,6 +288,11 @@ export default function TaxExportPage() {
                 const d = r.job.scheduledAt || r.job.createdAt;
                 return !r.job.billedBy && !r.job.isCustomGig && !inferredBiller(r.job) && new Date(d).getFullYear() === year;
               });
+              // Gig instalments with no biller are shown for EVERY year — they
+              // are in nobody's figures at all until someone attributes them.
+              const unEras = turnover.unassignedEras ?? [];
+              const unTotal = (un?.cents ?? 0) + unEras.reduce((s2, e) => s2 + e.cents, 0);
+              const unCount = (un?.count ?? 0) + unEras.length;
               return (
                 <Card className="p-5 bg-card border-0 premium-shadow mb-4 print:hidden">
                   <div className="flex items-center justify-between gap-2 mb-2">
@@ -322,12 +331,38 @@ export default function TaxExportPage() {
                       );
                     })}
                   </div>
-                  {un && un.count > 0 && (
+                  {unCount > 0 && (
                     <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
                       <p className="text-[11px] text-amber-600 mb-1.5">
-                        {un.count} keikkaa ({fmt(un.cents)}) ilman laskuttajaa — merkitse, niin summa kohdistuu oikein.
+                        {unCount} laskua ({fmt(unTotal)}) ilman laskuttajaa — nämä eivät ole vielä kenenkään
+                        luvuissa. Merkitse kuka laskutti, niin summa siirtyy oikean henkilön ALV-seurantaan
+                        ja laskuluetteloon (FR8-urakan erissä myös bossien velkaan).
                       </p>
                       <div className="space-y-1">
+                        {unEras.map(e2 => (
+                          <div key={`era-${e2.jobId}-${e2.index}`} className="flex items-center justify-between gap-2 text-[11px]">
+                            <span className="truncate text-foreground">
+                              {e2.dateMs ? new Date(e2.dateMs).toLocaleDateString("fi-FI") : "—"} · {e2.name}
+                              <span className="text-muted-foreground"> · {fmt(e2.cents)}</span>
+                            </span>
+                            <select
+                              value=""
+                              disabled={eraBusy}
+                              onChange={async (ev) => {
+                                if (!ev.target.value || eraBusy) return;
+                                setEraBusy(true);
+                                const r = await api.setGigPaymentBiller(e2.jobId, e2.index, ev.target.value);
+                                setEraBusy(false);
+                                if (!r.ok) alert(r.error || "Kohdistus epäonnistui — päivitä sivu ja yritä uudelleen.");
+                                loadMoney();
+                              }}
+                              className="shrink-0 rounded-md border border-amber-400 bg-background px-1.5 py-0.5 text-[11px] text-amber-600 disabled:opacity-50"
+                            >
+                              <option value="">Laskutti: ?</option>
+                              {BRAND_BILLERS.map(b => <option key={b.id} value={b.id}>{firstName(b.name)}</option>)}
+                            </select>
+                          </div>
+                        ))}
                         {unassignedJobs.map(r => (
                           <div key={r.job.id} className="flex items-center justify-between gap-2 text-[11px]">
                             <span className="truncate text-foreground">
@@ -378,6 +413,8 @@ export default function TaxExportPage() {
                   <p className="text-[11px] text-muted-foreground mb-3">
                     Kaikki {year} sinun Y-tunnuksellasi laskutetut asiakasmaksut — pikkukeikat ja urakkaerät (esim. FR8).
                     Sama summa ohjaa ALV-seurantaasi. Koko historia: <Link href={`/admin/tiimi/${profile?.id}`} className="text-primary underline underline-offset-2">oma sivusi</Link>.
+                    {" "}Toisen bossin laskuttamat keikat eivät kuulu tähän — sinun osuutesi niistä näkyy
+                    Omassa tuloksessa (urakkakate/keikkaosuus) ja Bossien velassa.
                   </p>
                   {yearInvoices.length === 0 ? (
                     <p className="text-sm text-muted-foreground py-1">
@@ -804,21 +841,75 @@ function FounderDebtCard({ settlement, onChanged }: { settlement: FounderCrossSe
           </div>
         ))
       )}
+      {(settlement.unassignedEraCount ?? 0) > 0 && (
+        <p className="mt-2 text-[11px] text-amber-600">
+          ⚠ {settlement.unassignedEraCount} urakkaerää ilman laskuttajaa — velka ei ole täydellinen
+          ennen kuin kohdistat ne ALV-kortin listasta.
+        </p>
+      )}
       {!alreadyMarked && smallAbs > 0 && a && b && (
         <button
           type="button"
           className="mt-2 block text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
           onClick={async () => {
+            // Retroactive full settlement for the already-MobilePaid small
+            // gigs: an itemized settlement invoice (stamped PAID) + the
+            // ledger booking + tositteet for both — the missing paperwork
+            // for the old gigs in one tap. Spell out exactly which gigs the
+            // sum consists of; the founders must see what they mark paid.
+            const parts: string[] = [];
+            const items: InvoiceItem[] = [];
+            for (const j of smallJobs) {
+              const d = new Date(j.dateMs).toLocaleDateString("fi-FI");
+              if (j.billerId === smallFrom.id) {
+                const o = j.owes.find(x => x.id === smallTo.id);
+                if (o?.cents) {
+                  parts.push(`• ${j.name} ${d}: ${firstName(smallFrom.name)} → ${firstName(smallTo.name)}lle ${fmt(o.cents)}`);
+                  items.push({ label: `${j.name} ${d} — osuus 1/${j.numWorkers}`, cents: o.cents });
+                }
+              } else if (j.billerId === smallTo.id) {
+                const o = j.owes.find(x => x.id === smallFrom.id);
+                if (o?.cents) {
+                  parts.push(`• ${j.name} ${d}: ${firstName(smallTo.name)} → ${firstName(smallFrom.name)}lle ${fmt(o.cents)}`);
+                  items.push({ label: `Hyvitys: ${j.name} ${d} — osuus 1/${j.numWorkers}`, cents: -o.cents });
+                }
+              }
+            }
+            const shown = parts.slice(0, 12);
+            if (parts.length > shown.length) shown.push(`…ja ${parts.length - shown.length} muuta`);
+            const priorBookings = (settled ?? []).length > 0
+              ? `\nHuom: Maksuhistoriassa on jo kirjauksia — tarkista ettei samoja euroja kuitata kahdesti (kirjauksen voi perua ✕:llä).\n`
+              : "";
             if (!confirm(
               `Kuitataanko pikkukeikkojen osuudet maksetuiksi?\n\n` +
-              `Kirjataan: ${firstName(smallFrom.name)} maksoi ${firstName(smallTo.name)}lle ${fmt(smallAbs)} (MobilePay).\n` +
-              `FR8-urakan osuudet jäävät avoimeksi. Tosite arkistoituu molemmille. Tehdään vain kerran.`
+              `Summa koostuu näistä keikoista (suunnat vastakkain, netto ${fmt(smallAbs)}):\n` +
+              `${shown.join("\n")}\n${priorBookings}\n` +
+              `Tehdään kerralla: avataan tulostettava erittelylasku (merkitty MAKSETUKSI, MobilePay), ` +
+              `kirjataan maksu ${firstName(smallFrom.name)} → ${firstName(smallTo.name)} ${fmt(smallAbs)} ja ` +
+              `arkistoidaan lasku + kuitit molempien Dokumentteihin. Urakkaerien (esim. FR8) osuudet jäävät avoimeksi.`
             )) return;
+            const today = new Date();
+            const invoiceNo = `MP-${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}`;
+            const creditor = BRAND_BILLERS.find(x => x.id === smallTo.id);
+            const debtor = BRAND_BILLERS.find(x => x.id === smallFrom.id);
+            if (creditor && debtor) {
+              openSettlementInvoicePrint({
+                invoiceNo, dateStr: today.toLocaleDateString("fi-FI"), dueDateStr: "",
+                creditor, debtor, items, totalCents: smallAbs,
+                iban: creditor.iban ?? "", bic: creditor.bic ?? "",
+                paidNote: `MAKSETTU — MobilePay (kuitattu ${today.toLocaleDateString("fi-FI")})`,
+              });
+            }
+            // Vastalasku into both founders' Dokumentit + the payment booking
+            // (which files the payment kuitit for both). Ledger row carries the
+            // MARKER so this one-tap can never run twice.
+            await api.issueFounderInvoice({ fromId: smallFrom.id, toId: smallTo.id, cents: smallAbs, invoiceNo });
             const res = await api.recordFounderSettlement({ fromId: smallFrom.id, toId: smallTo.id, cents: smallAbs, invoiceNo: MARKER });
             if (res.ok) onChanged();
+            else alert(res.error || "Kirjaus epäonnistui — yritä uudelleen.");
           }}
         >
-          ✓ Kuittaa pikkukeikat jo maksetuiksi (MobilePay) — {fmt(smallAbs)}
+          ✓ Kuittaa pikkukeikat jo maksetuiksi (MobilePay) + luo tosite — {fmt(smallAbs)}
         </button>
       )}
       {invoiceFor && (
@@ -1260,6 +1351,9 @@ function openSettlementInvoicePrint(p: {
   creditor: { name: string; address?: string; yTunnus?: string };
   debtor: { name: string; address?: string; yTunnus?: string };
   items: InvoiceItem[]; totalCents: number; iban: string; bic: string;
+  /** When set, the invoice renders a PAID stamp (retroactive settlement doc
+   *  for money that already moved, e.g. MobilePay) instead of a due date. */
+  paidNote?: string;
 }): boolean {
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const rows = p.items.map(it => `
@@ -1320,13 +1414,17 @@ function openSettlementInvoicePrint(p: {
     Ei arvonlisäveroa — myyjä ei ole arvonlisäverovelvollinen (vähäinen toiminta, AVL 3 §).
   </p>
 
+  ${p.paidNote ? `
+  <div style="background:#f0fdf4;border:2px solid #16a34a;border-radius:8px;padding:12px 16px;font-size:14px;font-weight:800;color:#166534;text-align:center;letter-spacing:1px">
+    ✓ ${esc(p.paidNote)}
+  </div>` : `
   <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;font-size:13px">
     <p style="margin:0 0 4px;font-size:10px;letter-spacing:1px;color:#9ca3af;text-transform:uppercase">Maksutiedot</p>
     ${p.iban ? `Tilinumero (IBAN): <strong style="font-family:monospace">${esc(p.iban)}</strong><br>` : ""}
     ${p.bic ? `BIC: <strong style="font-family:monospace">${esc(p.bic)}</strong><br>` : ""}
     Viite / viesti: ${esc(p.invoiceNo)}<br>
     ${p.dueDateStr ? `Eräpäivä: <strong>${p.dueDateStr}</strong>` : ""}
-  </div>
+  </div>`}
 
   <p style="font-size:10px;color:#9ca3af;margin-top:24px">
     Molemmat osapuolet säilyttävät laskun kirjanpidossaan 6 vuotta. Puuhapatet on brändi —

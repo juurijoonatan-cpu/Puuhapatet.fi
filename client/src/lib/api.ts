@@ -140,6 +140,9 @@ export interface FounderCrossSettlement {
   }[];
   /** Already-issued vastalaskut — subtracted from crossInvoices by the server. */
   settled: { id: number; fromId: string; toId: string; cents: number; invoiceNo?: string; createdAtMs: number }[];
+  /** Recorded gig instalments with NO biller — excluded from the debt maths
+   *  until attributed (ALV card lists them with a one-tap assign). */
+  unassignedEraCount?: number;
 }
 
 /** Aggregated single-worker admin view (/admin/tiimi/:workerId). */
@@ -513,7 +516,15 @@ export const api = {
       turnoverByYear: Record<string, Record<string, number>>;
       /** Done small jobs with no biller set — attribute them or the tracker under-counts. */
       unassignedByYear: Record<string, { count: number; cents: number }>;
+      /** Recorded gig instalments (urakkaerät) with no biller — in NOBODY's
+       *  turnover/debt until assigned via setGigPaymentBiller. */
+      unassignedEras: { jobId: number; index: number; name: string; dateMs: number | null; cents: number }[];
     }>("GET", "/api/admin/biller-turnover"),
+
+  // Attribute (or correct) who billed a recorded gig instalment — feeds the
+  // ALV turnover, the invoice register and the founder debt in one go.
+  setGigPaymentBiller: (jobId: number, index: number, billerId: string) =>
+    request<{ ok: boolean }>("POST", `/api/jobs/${jobId}/gig-payment-biller`, { index, billerId }),
 
   // Founder cross-invoicing netted across ALL gigs: who owes whom, plus each
   // founder's totals and a per-gig breakdown. Powers "Bossien laskutus & tilitys".

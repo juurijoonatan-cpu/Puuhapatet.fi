@@ -100,6 +100,8 @@ export default function TaxExportPage() {
   // whole gigData blob, so two in-flight assignments on the same job would
   // race and one would silently vanish.
   const [eraBusy, setEraBusy] = useState(false);
+  // Enterprise instalment manager (all gig erät, editable/deletable).
+  const [instalments, setInstalments] = useState<Awaited<ReturnType<typeof api.getGigInstalments>>["data"] | null>(null);
   // The logged-in founder's own money trail (sent customer invoices etc.).
   const [myDetail, setMyDetail] = useState<Awaited<ReturnType<typeof api.getWorker>>["data"] | null>(null);
 
@@ -118,6 +120,7 @@ export default function TaxExportPage() {
       api.getBillerTurnover().then((res) => { if (res.ok && res.data) setTurnover(res.data); });
       api.getFounderSettlement().then((res) => { if (res.ok && res.data) setSettlement(res.data); });
       api.workersStats().then((res) => { if (res.ok && res.data) setWorkerStats(res.data); });
+      api.getGigInstalments().then((res) => { if (res.ok && res.data) setInstalments(res.data); });
       if (profile?.id) api.getWorker(profile.id).then((res) => { if (res.ok && res.data) setMyDetail(res.data); });
     }
   }, [isHost, profile?.id]);
@@ -470,6 +473,18 @@ export default function TaxExportPage() {
               );
             })()}
 
+            {/* ── Dropdown: Urakkaerien hallinta (kaikki laskutuserät) ──────── */}
+            {isHost && instalments && instalments.instalments.length > 0 && (
+              <Disclosure
+                className="print:hidden"
+                icon={<FileText className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
+                title="Urakkaerien hallinta"
+                right={<span className="text-xs text-muted-foreground tabular-nums">{instalments.instalments.length} erää</span>}
+              >
+                <GigInstalmentManager data={instalments} onChanged={loadMoney} />
+              </Disclosure>
+            )}
+
             {/* ── Dropdown: Bossien maksuhistoria & erittely ────────────────── */}
             {isHost && settlement && (settlement.perGig.length > 0 || settlement.smallJobs.length > 0 || (settlement.settled ?? []).length > 0) && (
               <Disclosure
@@ -784,6 +799,160 @@ export default function TaxExportPage() {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Enterprise instalment manager: every recorded gig instalment (urakkaerä)
+ *  in one editable list. A host can re-attribute the biller, fix the amount or
+ *  date, or delete a bogus erä — all recompute the tracker + tax figures. This
+ *  is the answer to "what is FAFO Capital erä 1 and why is it in my view":
+ *  it's the FR8 gig (customer = FAFO Capital Oy), fully editable here. */
+function GigInstalmentManager({
+  data, onChanged,
+}: {
+  data: NonNullable<Awaited<ReturnType<typeof api.getGigInstalments>>["data"]>;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [editKey, setEditKey] = useState<string | null>(null);
+
+  const run = async (fn: () => Promise<{ ok: boolean; error?: string }>) => {
+    if (busy) return;
+    setBusy(true);
+    const r = await fn();
+    setBusy(false);
+    if (!r.ok) { alert(r.error || "Toiminto epäonnistui — yritä uudelleen."); return; }
+    setEditKey(null);
+    onChanged();
+  };
+
+  return (
+    <div className="space-y-2">
+      <p className="text-[11px] text-muted-foreground">
+        Kaikki kirjatut urakan laskutuserät. Vaihda laskuttaja, korjaa summa tai päivämäärä,
+        tai poista virheellinen erä. Muutos päivittää heti ALV-seurannan, laskuluettelon ja bossien velan.
+      </p>
+      {data.instalments.map((it) => {
+        const key = `${it.jobId}-${it.index}`;
+        const editing = editKey === key;
+        return (
+          <div key={key} className="rounded-xl border bg-muted/20 p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium truncate">
+                  {it.gigName} — erä {it.index + 1}
+                  {it.jobDescription && it.jobDescription !== it.gigName && (
+                    <span className="font-normal text-muted-foreground"> ({it.jobDescription})</span>
+                  )}
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  {it.dateMs ? new Date(it.dateMs).toLocaleDateString("fi-FI") : "ei pvm"}
+                  {" · "}
+                  {it.biller ? `laskutti ${firstName(it.biller.name)}` : <span className="text-amber-600">ei laskuttajaa</span>}
+                </p>
+              </div>
+              <span className="shrink-0 text-sm font-bold tabular-nums">{fmt(it.amountCents)}</span>
+            </div>
+
+            {/* What the amount consists of (fixed-deal gigs only). The kate is
+                derived from the deal's per-erä basis + washed windows, so the
+                breakdown reconciles on its own regardless of the recorded amount. */}
+            {it.kateCents != null && (
+              <div className="mt-1.5 rounded-lg bg-background/60 px-2.5 py-1.5 text-[11px] text-muted-foreground tabular-nums space-y-0.5">
+                <div className="flex justify-between gap-2"><span>Erän laskutusperuste</span><span>{fmt(it.instalmentBasisCents ?? it.amountCents)}</span></div>
+                <div className="flex justify-between gap-2"><span>− työntekijöiden palkat</span><span>−{fmt(it.palkatCents ?? 0)}</span></div>
+                <div className="flex justify-between gap-2 font-semibold text-foreground"><span>= kate (bossien kesken)</span><span>{fmt(it.kateCents)}</span></div>
+                {it.shares?.map((s) => (
+                  <div key={s.id} className="flex justify-between gap-2"><span>→ {firstName(s.name)}n osuus</span><span>{fmt(s.cents)}</span></div>
+                ))}
+                {it.instalmentBasisCents != null && it.instalmentBasisCents !== it.amountCents && (
+                  <div className="flex justify-between gap-2 pt-0.5 text-amber-600"><span>Kirjattu summa poikkeaa perusteesta</span><span>{fmt(it.amountCents)}</span></div>
+                )}
+              </div>
+            )}
+
+            {!editing ? (
+              <div className="mt-2 flex items-center gap-2 flex-wrap">
+                <select
+                  value={it.biller?.id ?? ""}
+                  disabled={busy}
+                  onChange={(e) => run(() => api.editGigPayment(it.jobId, it.index, { billerId: e.target.value || null }))}
+                  className="h-7 rounded-md border bg-background px-1.5 text-[11px] text-foreground disabled:opacity-50"
+                >
+                  <option value="">Laskutti: ? (ei kenenkään)</option>
+                  {data.billers.map((b) => <option key={b.id} value={b.id}>Laskutti: {firstName(b.name)}</option>)}
+                </select>
+                <button type="button" className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => setEditKey(key)}>
+                  {it.isFixedDeal ? "Muokkaa pvm" : "Muokkaa summaa/pvm"}
+                </button>
+                {/* Fixed-deal erät are positional — only the last one may be
+                    removed (server enforces this too). Non-fixed: any erä. */}
+                {(!it.isFixedDeal || it.isLast) && (
+                  <button
+                    type="button"
+                    className="ml-auto text-[11px] text-red-500 hover:text-red-600"
+                    disabled={busy}
+                    onClick={() => {
+                      if (!confirm(`Poistetaanko erä "${it.gigName} — erä ${it.index + 1}" (${fmt(it.amountCents)})?\n\nTämä poistaa erän seurannasta ja päivittää kaikki luvut. Ei voi peruuttaa.`)) return;
+                      run(() => api.deleteGigPayment(it.jobId, it.index));
+                    }}
+                  >
+                    Poista
+                  </button>
+                )}
+              </div>
+            ) : (
+              <EraEditForm it={it} busy={busy} onCancel={() => setEditKey(null)} onSave={(patch) => run(() => api.editGigPayment(it.jobId, it.index, patch))} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Inline editor for one instalment. Amount is editable only for non-fixed
+ *  gigs (a fixed deal's per-erä amount is contract-derived); date always. */
+function EraEditForm({
+  it, busy, onCancel, onSave,
+}: {
+  it: { amountCents: number; dateMs: number | null; isFixedDeal: boolean };
+  busy: boolean;
+  onCancel: () => void;
+  onSave: (patch: { amountCents?: number; dateMs: number }) => void;
+}) {
+  const [amount, setAmount] = useState((it.amountCents / 100).toFixed(2).replace(".", ","));
+  // Local-date yyyy-mm-dd (not toISOString, which is UTC and can shift the day).
+  const [date, setDate] = useState(() => {
+    const d = new Date(it.dateMs ?? Date.now());
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      {it.isFixedDeal ? (
+        <p className="text-[10px] text-muted-foreground w-full">
+          Summa määräytyy sopimuksesta — muuta sopimushintaa keikan Laskutus-kortista. Tästä voit korjata päivämäärän.
+        </p>
+      ) : (
+        <label className="text-[11px] text-muted-foreground">Summa €
+          <Input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" className="mt-0.5 h-8 w-24 text-xs tabular-nums" />
+        </label>
+      )}
+      <label className="text-[11px] text-muted-foreground">Päivämäärä
+        <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="mt-0.5 h-8 w-36 text-xs" />
+      </label>
+      <Button
+        size="sm" className="h-8 text-xs self-end" disabled={busy}
+        onClick={() => {
+          const dateMs = new Date(date + "T12:00:00").getTime();
+          if (it.isFixedDeal) { onSave({ dateMs }); return; }
+          const cents = Math.round(parseFloat(amount.replace(",", ".")) * 100);
+          if (!Number.isFinite(cents) || cents < 0) { alert("Virheellinen summa."); return; }
+          onSave({ amountCents: cents, dateMs });
+        }}
+      >Tallenna</Button>
+      <Button size="sm" variant="ghost" className="h-8 text-xs self-end" onClick={onCancel}>Peruuta</Button>
     </div>
   );
 }

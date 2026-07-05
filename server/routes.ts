@@ -5545,6 +5545,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // until a founder assigns them here (Verotus → ALV card → one-tap).
   app.post("/api/jobs/:id/gig-payment-biller", async (req, res) => {
     try {
+      if ((req as any).admin?.role !== "host") return res.status(403).json({ error: "Vain perustaja voi kohdistaa laskutuseriä." });
       const jobId = Number(req.params.id);
       const idx = Math.floor(Number(req.body?.index));
       const billerId = String(req.body?.billerId ?? "").toLowerCase();
@@ -5572,6 +5573,175 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.status(500).json({ error: e.message });
     }
   });
+
+  // ── Urakkaerien hallinta — enterprise-grade instalment management ──────────
+  // One list of EVERY recorded gig instalment across all gigs, with its biller
+  // and (for fixed-deal gigs) the kate breakdown so a founder sees exactly what
+  // each amount consists of. Powers the "Urakkaerien hallinta" panel where any
+  // instalment can be re-attributed, edited or deleted. Host-facing.
+  app.get("/api/admin/gig-instalments", async (req, res) => {
+    try {
+      if ((req as any).admin?.role !== "host") return res.status(403).json({ error: "Vain perustaja voi hallita laskutuseriä." });
+      const rows = await db.select().from(jobs);
+      const n = Math.max(1, BRAND_BILLERS.length);
+      const nameOfBiller = (id: string) => BRAND_BILLERS.find((b) => b.id === id)?.name ?? id;
+      const instalments: {
+        jobId: number; index: number; gigName: string; jobDescription: string;
+        dateMs: number | null; amountCents: number;
+        biller: { id: string; name: string } | null;
+        // Fixed-deal gigs: amount is contract-derived (read-only) and only the
+        // last erä may be deleted (positional erä↔payment pairing). isLast lets
+        // the UI show delete only where the server will allow it.
+        isFixedDeal: boolean; isLast: boolean;
+        // Kate is derived from the DEAL's per-erä basis + washed windows, NOT
+        // from the recorded amount — so the breakdown carries its own basis
+        // (basis − palkat = kate) and always reconciles on its own.
+        instalmentBasisCents: number | null;
+        kateCents: number | null; palkatCents: number | null;
+        shares: { id: string; name: string; cents: number }[] | null;
+      }[] = [];
+      for (const job of rows) {
+        if (!job.gigData) continue;
+        const gig = parseGig(job.gigData);
+        if (!gig?.payments?.length) continue;
+        const gigName = gig.company?.name || job.description || `Keikka #${job.id}`;
+        // Kate breakdown only exists for fixed-deal (FR8-style) gigs with a
+        // floor-plan project; other gigs just carry the invoiced amount.
+        const project = parseProject(job.projectData ?? null);
+        const deal = project ? fixedDealFor(project) : null;
+        const eraBreakdown = deal && project
+          ? computeEraDebts(project, deal, project.crew || [], project.eraWindows ?? null)
+          : [];
+        gig.payments.forEach((p, i) => {
+          const e = eraBreakdown[i];
+          const kate = e ? e.marginCents : null;
+          let shares: { id: string; name: string; cents: number }[] | null = null;
+          if (kate != null) {
+            const base = Math.floor(kate / n);
+            shares = BRAND_BILLERS.map((b, k) => ({ id: b.id, name: b.name, cents: k === 0 ? kate - base * (n - 1) : base }));
+          }
+          instalments.push({
+            jobId: job.id, index: i, gigName, jobDescription: job.description || "",
+            dateMs: p?.t || null, amountCents: p?.amountCents ?? 0,
+            biller: p?.biller?.id ? { id: p.biller.id, name: p.biller.name || nameOfBiller(p.biller.id) } : null,
+            isFixedDeal: !!deal, isLast: i === gig.payments.length - 1,
+            instalmentBasisCents: e ? e.instalmentCents : null,
+            kateCents: kate, palkatCents: e ? e.earnedCents : null, shares,
+          });
+        });
+      }
+      instalments.sort((a, b) => (b.dateMs ?? 0) - (a.dateMs ?? 0));
+      res.json({ ok: true, instalments, billers: BRAND_BILLERS.map((b) => ({ id: b.id, name: b.name })) });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Edit a specific recorded gig instalment (amount, date and/or biller). Unlike
+  // the one-tap assign above this DELIBERATELY overwrites — it is the founders'
+  // correction surface. Recomputes the gig's invoiced totals so the tracker,
+  // ALV turnover and founder debt all stay consistent.
+  app.patch("/api/jobs/:id/gig-payment/:index", async (req, res) => {
+    try {
+      if ((req as any).admin?.role !== "host") return res.status(403).json({ error: "Vain perustaja voi muokata laskutuseriä." });
+      const jobId = Number(req.params.id);
+      const idx = Math.floor(Number(req.params.index));
+      const { amountCents, dateMs, billerId } = (req.body || {}) as Record<string, any>;
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+      const gig = parseGig(job?.gigData ?? null);
+      if (!gig || !Number.isFinite(idx) || idx < 0 || !gig.payments[idx]) {
+        return res.status(404).json({ error: "Erämaksua ei löydy" });
+      }
+      // A fixed-deal (FR8-style) gig's per-erä amount is derived from the
+      // contract cap and its kate is window-derived — editing the recorded
+      // amount would flow to ALV turnover but NOT to the kate/debt, silently
+      // desyncing them. So amount is read-only for fixed deals (edit the
+      // contract cap in the gig's Laskutus-kortti); date + biller stay editable.
+      const projForDeal = parseProject(job.projectData ?? null);
+      const isFixedDeal = !!(projForDeal && fixedDealFor(projForDeal));
+      const p = { ...gig.payments[idx] };
+      if (amountCents != null) {
+        if (isFixedDeal) {
+          return res.status(400).json({ error: "Kiinteähintaisen urakan erän summa määräytyy sopimuksesta — muuta sopimushintaa keikan Laskutus-kortista." });
+        }
+        const c = Math.round(Number(amountCents));
+        // Reject 0 too — a zero-euro erä is a phantom row; delete it instead.
+        if (!Number.isFinite(c) || c <= 0) return res.status(400).json({ error: "Summan on oltava suurempi kuin 0 — poista erä kokonaan jos se on virheellinen." });
+        p.amountCents = c;
+      }
+      if (dateMs != null) {
+        const t = Math.round(Number(dateMs));
+        if (!Number.isFinite(t) || t <= 0) return res.status(400).json({ error: "Virheellinen päivämäärä" });
+        p.t = t;
+      }
+      if (billerId !== undefined) {
+        if (billerId === "" || billerId === null) {
+          p.biller = undefined; // clear attribution → back to the unassigned list
+        } else {
+          const b = BRAND_BILLERS.find((x) => x.id === String(billerId).toLowerCase());
+          if (!b) return res.status(400).json({ error: "Tuntematon laskuttaja" });
+          p.biller = { id: b.id, name: b.name, yTunnus: b.yTunnus };
+        }
+      }
+      gig.payments[idx] = p;
+      recomputeGigInvoiced(gig, job);
+      gig.updatedAt = Date.now();
+      await db.update(jobs).set({ gigData: JSON.stringify(gig), updatedAt: new Date() }).where(eq(jobs.id, jobId));
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Delete a specific recorded gig instalment (any position, not just the last).
+  // For a genuinely bogus/duplicate erä. Recomputes invoiced totals afterwards.
+  app.delete("/api/jobs/:id/gig-payment/:index", async (req, res) => {
+    try {
+      if ((req as any).admin?.role !== "host") return res.status(403).json({ error: "Vain perustaja voi poistaa laskutuseriä." });
+      const jobId = Number(req.params.id);
+      const idx = Math.floor(Number(req.params.index));
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+      const gig = parseGig(job?.gigData ?? null);
+      if (!gig || !Number.isFinite(idx) || idx < 0 || !gig.payments[idx]) {
+        return res.status(404).json({ error: "Erämaksua ei löydy" });
+      }
+      // Fixed-deal gigs pair each payment to its erä BY POSITION (payment i ↔
+      // erä i+1, kate from that erä's washed windows). Deleting a middle
+      // payment would shift every later payment onto the wrong erä and drop the
+      // last erä's kate — so only the LAST instalment may be removed (peru
+      // järjestyksessä lopusta). Non-fixed gigs have no positional pairing.
+      const projForDeal = parseProject(job.projectData ?? null);
+      const isFixedDeal = !!(projForDeal && fixedDealFor(projForDeal));
+      if (isFixedDeal && idx !== gig.payments.length - 1) {
+        return res.status(409).json({ error: "Kiinteähintaisen urakan eriä voi poistaa vain lopusta — peru viimeisin ensin." });
+      }
+      const [removed] = gig.payments.splice(idx, 1);
+      recomputeGigInvoiced(gig, job);
+      const fmtEur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+      gig.log.push({ t: Date.now(), text: `Maksuerä poistettu seurannasta: ${fmtEur(removed?.amountCents ?? 0)}` });
+      gig.updatedAt = Date.now();
+      await db.update(jobs).set({ gigData: JSON.stringify(gig), updatedAt: new Date() }).where(eq(jobs.id, jobId));
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Recompute a gig's invoiced totals from its remaining payments — shared by the
+  // edit/delete endpoints so the tracker's "laskutettu" figure never drifts from
+  // the actual recorded instalments. Mirrors the undo endpoint's logic.
+  function recomputeGigInvoiced(gig: GigData, job: typeof jobs.$inferSelect) {
+    const proj = parseProject(job.projectData ?? null);
+    const fixedDeal = proj ? fixedDealFor(proj) : null;
+    if (fixedDeal) {
+      const installmentCents = Math.round(fixedDeal.capCents / 4);
+      gig.invoicedCents = gig.payments.length * installmentCents;
+    } else {
+      gig.invoicedCents = gig.payments.reduce((s, p) => s + p.amountCents, 0);
+      gig.invoicedThrough = gig.payments.length ? gig.payments[gig.payments.length - 1].countThrough : 0;
+      gig.sectors.forEach((s) => { s.invoicedWashed = Math.min(s.invoicedWashed || 0, gig.invoicedThrough); });
+    }
+  }
 
   // Founders set the per-erä (instalment) window counts for the fixed deal. Pure
   // display/planning data (drives the per-erä kate on the payroll page); does NOT

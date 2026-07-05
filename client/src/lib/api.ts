@@ -526,6 +526,28 @@ export const api = {
   setGigPaymentBiller: (jobId: number, index: number, billerId: string) =>
     request<{ ok: boolean }>("POST", `/api/jobs/${jobId}/gig-payment-biller`, { index, billerId }),
 
+  // Enterprise instalment management: list EVERY gig instalment (with kate
+  // breakdown), edit any one (amount/date/biller — deliberately overwrites),
+  // or delete a bogus one. All recompute the gig's invoiced totals.
+  getGigInstalments: () =>
+    request<{
+      ok: boolean;
+      billers: { id: string; name: string }[];
+      instalments: {
+        jobId: number; index: number; gigName: string; jobDescription: string;
+        dateMs: number | null; amountCents: number;
+        biller: { id: string; name: string } | null;
+        isFixedDeal: boolean; isLast: boolean;
+        instalmentBasisCents: number | null;
+        kateCents: number | null; palkatCents: number | null;
+        shares: { id: string; name: string; cents: number }[] | null;
+      }[];
+    }>("GET", "/api/admin/gig-instalments"),
+  editGigPayment: (jobId: number, index: number, patch: { amountCents?: number; dateMs?: number; billerId?: string | null }) =>
+    request<{ ok: boolean }>("PATCH", `/api/jobs/${jobId}/gig-payment/${index}`, patch),
+  deleteGigPayment: (jobId: number, index: number) =>
+    request<{ ok: boolean }>("DELETE", `/api/jobs/${jobId}/gig-payment/${index}`),
+
   // Founder cross-invoicing netted across ALL gigs: who owes whom, plus each
   // founder's totals and a per-gig breakdown. Powers "Bossien laskutus & tilitys".
   getFounderSettlement: () =>

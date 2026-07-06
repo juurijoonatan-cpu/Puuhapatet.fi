@@ -5868,7 +5868,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  // Update a worker's editable fields (host): name, rate, active, role.
+  // Update a worker's editable fields (host): name, rate, active, role, and — for
+  // an experienced hire the founder onboards on their behalf — entrepreneur facts
+  // (insurance / Y-tunnus / ennakkoperintärekisteri / ALV) via a `profile` partial.
   app.patch("/api/jobs/:id/crew/:memberId", async (req, res) => {
     try {
       const loaded = await loadJobProject(Number(req.params.id));
@@ -5877,6 +5879,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const mid = String(req.params.memberId);
       // Mint a globally-unique replacement token up front if rotating.
       const rotatedToken = req.body?.rotateToken ? await genUniqueCrewToken() : null;
+      // Merge an optional profile partial (top-level fields + answers) onto the
+      // existing profile. Only provided keys change; sanitizeProfile validates it.
+      const bp = req.body?.profile;
+      const mergeProfile = (existing: CrewMember["profile"]) => {
+        if (!bp || typeof bp !== "object") return existing;
+        const pick = (k: string) => (bp[k] !== undefined ? { [k]: bp[k] } : {});
+        return {
+          ...(existing ?? {}),
+          ...pick("fullName"), ...pick("phone"), ...pick("email"),
+          ...pick("city"), ...pick("yTunnus"), ...pick("iban"),
+          answers: { ...(existing?.answers ?? {}), ...(bp.answers && typeof bp.answers === "object" ? bp.answers : {}) },
+        };
+      };
       let updated: CrewMember | null = null;
       project.crew = (project.crew || []).map((m) => {
         if (m.id !== mid) return m;
@@ -5892,6 +5907,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           manualEarningsCents: req.body?.manualEarningsCents === undefined
             ? m.manualEarningsCents
             : (req.body.manualEarningsCents == null || req.body.manualEarningsCents === "" ? undefined : Number(req.body.manualEarningsCents)),
+          // Entrepreneur facts the founder can pre-fill/verify for a worker.
+          profile: mergeProfile(m.profile),
           // Host can rotate a leaked link — the old link dies immediately.
           token: rotatedToken ?? m.token,
         });
@@ -5900,6 +5917,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!updated) return res.status(404).json({ error: "Työntekijää ei löydy" });
       const saved = await saveProject(job, project);
       res.json({ ok: true, member: updated, crew: saved.crew });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Host adds a note against a worker (e.g. "lyhytaikainen apu, tulee huomenna").
+  // Mirrors the worker-side note endpoint but is keyed by jobId + memberId.
+  app.post("/api/jobs/:id/crew/:memberId/note", async (req, res) => {
+    try {
+      const loaded = await loadJobProject(Number(req.params.id));
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const { job, project } = loaded;
+      const mid = String(req.params.memberId);
+      const text = String(req.body?.text ?? "").trim().slice(0, 2000);
+      if (!text) return res.status(400).json({ error: "Tyhjä muistiinpano" });
+      let found = false;
+      project.crew = (project.crew || []).map((m) => {
+        if (m.id !== mid) return m;
+        found = true;
+        return { ...m, notes: [{ t: Date.now(), text }, ...(m.notes || [])].slice(0, 200) };
+      });
+      if (!found) return res.status(404).json({ error: "Työntekijää ei löydy" });
+      const saved = await saveProject(job, project);
+      res.json({ ok: true, member: (saved.crew || []).find((m) => m.id === mid), crew: saved.crew });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }

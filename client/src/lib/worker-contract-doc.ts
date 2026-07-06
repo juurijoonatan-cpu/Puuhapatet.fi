@@ -12,7 +12,7 @@
 
 import type { CrewMember } from "@shared/crew";
 import {
-  WORKER_AGREEMENTS, PROFILE_QUESTIONS, type WorkerAgreement,
+  ALL_AGREEMENTS, PROFILE_QUESTIONS, requiredAgreementIdsForSet, type WorkerAgreement,
 } from "@shared/worker-agreements";
 
 function esc(s: string) {
@@ -118,7 +118,10 @@ function brandSignatureBlock(): string {
 
 export function buildWorkerContractHtml(input: WorkerDocInput): string {
   const m = input.member;
-  const agreements = WORKER_AGREEMENTS.map((ag) => agreementBlock(ag, m)).join("");
+  // Show the agreements this worker's package requires PLUS any he actually signed
+  // (covers a worker whose set was switched), in the canonical order.
+  const idsToShow = new Set<string>([...requiredAgreementIdsForSet(m.agreementSet), ...m.agreements.map((a) => a.agreementId)]);
+  const agreements = ALL_AGREEMENTS.filter((ag) => idsToShow.has(ag.id)).map((ag) => agreementBlock(ag, m)).join("");
   const where = [input.buildingName, input.buildingAddress].filter(Boolean).join(" · ");
   return `<!doctype html><html lang="fi"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

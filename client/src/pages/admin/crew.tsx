@@ -385,6 +385,26 @@ function EntrepreneurPanel({ member, onUpdate }: {
   return (
     <Disclosure variant="inline" className="mt-3" title="Yrittäjätiedot">
       <div className="space-y-3">
+        {/* Sopimustyyppi — which agreement package the worker signs. Applies
+            immediately; set it BEFORE he signs. Switching never affects others. */}
+        <div className="rounded-lg border bg-muted/20 p-2.5">
+          <label className="block text-[11px] text-muted-foreground">
+            Sopimustyyppi
+            <select
+              value={member.agreementSet === "kevyt" ? "kevyt" : "standard"}
+              onChange={(e) => onUpdate(member.id, { agreementSet: e.target.value as "standard" | "kevyt" })}
+              className="mt-1 w-full rounded-md border bg-background px-2 py-2 text-sm text-foreground"
+            >
+              <option value="standard">Vakio — koko paketti (sis. kilpailukielto & sitoumus)</option>
+              <option value="kevyt">Kevyt — lyhytaikainen / ulkoinen yrittäjä (ei kilpailukieltoa)</option>
+            </select>
+          </label>
+          <p className="mt-1.5 text-[11px] text-muted-foreground">
+            {member.agreementSet === "kevyt"
+              ? "Allekirjoitettavana vain alihankkijasopimus + tietosuoja & turvallisuus. Ei kilpailukieltoa, asiakassuojasakkoa eikä pitkäaikaissitoumusta."
+              : "Koko sopimuspaketti: alihankkija, tietosuoja, asiakassuoja & kilpailukielto sekä tiimisitoumus."}
+          </p>
+        </div>
         <p className="text-[11px] text-muted-foreground">Voit esitäyttää tai varmistaa nämä työntekijän puolesta. Hän vahvistaa ne allekirjoittaessaan.</p>
         <ToggleRow label="Vakuutukset voimassa" value={insurance} onChange={setInsurance} options={[["kylla", "Kyllä"], ["ei", "Ei vielä"]]} />
         <ToggleRow label="Ennakkoperintärekisterissä" value={register} onChange={setRegister} options={[["kylla", "Kyllä"], ["ei", "Ei"]]} />

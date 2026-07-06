@@ -429,8 +429,12 @@ export function sanitizeCrewMember(input: any): CrewMember | null {
     adminLinked: !!input.adminLinked,
     linkedUserId: input.linkedUserId ? String(input.linkedUserId).slice(0, 40).replace(/[^a-z0-9]/gi, "").toLowerCase() || undefined : undefined,
     perWindowCents: clampCents(input.perWindowCents),
-    // Only persist a non-default set; undefined means "standard".
-    agreementSet: input.agreementSet === "kevyt" ? "kevyt" : undefined,
+    // Persist an EXPLICIT choice ("kevyt" or "standard"); anything else → undefined
+    // (= use the resolved default). Persisting "standard" too is what lets the
+    // founder override a per-person default — e.g. upgrade a worker who defaults to
+    // "kevyt" back to the full package. Without this, an explicit "standard" would
+    // collapse to undefined and the default would silently re-apply.
+    agreementSet: input.agreementSet === "kevyt" || input.agreementSet === "standard" ? input.agreementSet : undefined,
     manualEarningsCents: input.manualEarningsCents != null && Number.isFinite(Number(input.manualEarningsCents))
       ? Math.max(0, Math.min(10_000_000, Math.round(Number(input.manualEarningsCents))))
       : undefined,

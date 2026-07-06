@@ -4029,11 +4029,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const {
         to, bcc, iban, bic, viitenumero, dueDate,
         senderName, senderYTunnus, senderAddress, workerPhone,
-        message, isFinal, eInvoice,
+        message, isFinal, eInvoice, viaEInvoice,
       } = req.body as Record<string, any>;
 
       const recipient = to || gig.company?.email;
       if (!recipient) return res.status(400).json({ error: "Vastaanottajan sähköposti puuttuu" });
+      // "Sent as verkkolasku" means the actual invoice already went out through
+      // the biller's own accounting/e-invoicing software — this endpoint then
+      // just emails the customer a heads-up (viite, description, amount) so it
+      // matches what lands in their books. Needs a real e-invoice address.
+      if (viaEInvoice && !String(eInvoice || "").trim()) {
+        return res.status(400).json({ error: "Verkkolaskuosoite puuttuu — se tarvitaan ilmoitusviestiin." });
+      }
 
       // For fixed-price deals (FR8 / kiinteähintainen sopimus) the installment is
       // always exactly 1/4 of the agreed total — never computed per window.
@@ -4081,8 +4088,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               </tr>`;
           }).join("");
 
+      // Plain-text version of the same line(s), used by the verkkolasku
+      // notification email below (no HTML table needed there).
+      const plainDescription = fixedDeal
+        ? `Maksuerä ${paymentNumber}/4 — kiinteähintainen sopimus (25 % sovitusta kokonaishinnasta ${fmtEur(fixedDeal.capCents)})`
+        : gig.sectors.map((s) => {
+            const delta = Math.max(0, s.washed - Math.min(s.washed, s.invoicedWashed || 0));
+            return delta > 0 ? `${s.name} — ${delta} ${s.unitLabel}a × ${fmtEur(s.unitPriceCents)}` : "";
+          }).filter(Boolean).join(", ");
+
       const dueDisplay = dueDate ? new Date(dueDate + "T12:00:00").toLocaleDateString("fi-FI") : null;
-      const barcodeHtml = iban
+      const barcodeHtml = (iban && !viaEInvoice)
         ? await generateFinnishBarcodeHtml({ iban, amountCents, viitenumero: viitenumero || String(id), dueDateISO: dueDate, isEn: false })
         : "";
 
@@ -4090,6 +4106,45 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const invoiceDate = new Date().toLocaleDateString("fi-FI"); // laskun päivämäärä (AVL 209 e §)
       const accruedSoFar = totalsBefore.accruedCents;
       const previouslyInvoiced = totalsBefore.invoicedCents;
+      const viiteDisplay = viitenumero || String(id);
+
+      // Verkkolasku flow: the actual invoice already went out through the
+      // biller's own accounting software's e-invoicing — this is just a heads-up
+      // to the customer so they can match it (viite, description, amount), not
+      // a payable document itself (no barcode / bank details table).
+      const eInvoiceNoticeHtml = `
+<!DOCTYPE html><html lang="fi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#F6F4EE;font-family:'Poppins',ui-sans-serif,system-ui,-apple-system,sans-serif">
+  <div style="max-width:600px;margin:24px auto;background:#FFFFFF;border-radius:14px;overflow:hidden;border:1px solid #E4E1D7">
+    <div style="padding:28px 32px;border-bottom:1px solid #E4E1D7">
+      <p style="margin:0;color:#1A1A1A;font-size:20px;font-weight:700;letter-spacing:-0.3px">Puuhapatet</p>
+      ${senderName ? `<p style="margin:4px 0 0;color:#8C8A82;font-size:12px">Myyjä: ${senderName}${senderYTunnus ? ` · Y-tunnus ${senderYTunnus}` : ""}</p>` : ""}
+      <p style="margin:4px 0 0;color:#8C8A82;font-size:13px">Verkkolasku ${fixedDeal ? `${paymentNumber}/4` : ""} · ${invoiceNo}${gig.contractId ? ` · sopimus ${gig.contractId}` : ""}</p>
+    </div>
+    <div style="padding:24px 32px">
+      <p style="margin:0 0 16px;color:#1A1A1A;font-size:14px;line-height:1.7">
+        ${gig.company?.name || job.description ? `Hei${gig.company?.contact ? ` ${gig.company.contact}` : ""},<br><br>` : ""}
+        ${fixedDeal ? `Maksuerä ${paymentNumber}/4` : "Lasku"} on lähetetty verkkolaskuna osoitteeseen
+        <strong>${String(eInvoice).replace(/</g, "&lt;")}</strong>. Alla tiedot laskun täsmäytystä varten.
+      </p>
+      ${message ? `<p style="margin:0 0 16px;color:#1A1A1A;font-size:14px;line-height:1.7;white-space:pre-wrap">${String(message).replace(/</g, "&lt;")}</p>` : ""}
+      <div style="background:#F6F4EE;border-radius:12px;padding:16px 20px">
+        <p style="margin:0 0 2px;font-size:13px;color:#1A1A1A"><strong>Kuvaus:</strong> ${plainDescription.replace(/</g, "&lt;") || (isFinal ? "Loppulasku" : "Osalasku")}</p>
+        <p style="margin:0 0 2px;font-size:13px;color:#1A1A1A"><strong>Viite:</strong> ${viiteDisplay}</p>
+        <p style="margin:0 0 2px;font-size:13px;color:#1A1A1A"><strong>Summa:</strong> ${fmtEur(amountCents)}</p>
+        ${dueDisplay ? `<p style="margin:0 0 2px;font-size:13px;color:#1A1A1A"><strong>Eräpäivä:</strong> ${dueDisplay}</p>` : ""}
+        ${senderName ? `<p style="margin:8px 0 0;font-size:13px;color:#1A1A1A"><strong>Laskuttaja:</strong> ${senderName}${senderYTunnus ? ` · Y-tunnus ${senderYTunnus}` : ""}</p>` : ""}
+        ${gig.vatNote ? `<p style="margin:8px 0 0;font-size:12px;color:#8C8A82">${gig.vatNote}</p>` : ""}
+      </div>
+      <p style="margin:20px 0 0;color:#8C8A82;font-size:12px;line-height:1.6">
+        Tämä on ilmoitus jo lähetetystä verkkolaskusta, ei erillinen maksukehotus. Jos verkkolasku ei näy kirjanpidossanne, ota yhteyttä.
+      </p>
+    </div>
+    <div style="padding:16px 32px;border-top:1px solid #E4E1D7;background:#F6F4EE">
+      <p style="margin:0;color:#8C8A82;font-size:12px">Puuhapatet · info@puuhapatet.fi · puuhapatet.fi${workerPhone ? ` · ${workerPhone}` : ""}</p>
+    </div>
+  </div>
+</body></html>`;
 
       const html = `
 <!DOCTYPE html><html lang="fi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -4148,10 +4203,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         from: FROM_EMAIL,
         to: recipient,
         ...(bccArr.length ? { bcc: bccArr } : {}),
-        subject: fixedDeal
-          ? `Osalasku ${paymentNumber}/4 · ${invoiceNo} — ${fmtEur(amountCents)} · Puuhapatet`
-          : `${isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} — ${fmtEur(amountCents)} · Puuhapatet`,
-        html,
+        subject: viaEInvoice
+          ? `Verkkolasku ${fixedDeal ? `${paymentNumber}/4 ` : ""}lähetetty · ${invoiceNo} — ${fmtEur(amountCents)} · Puuhapatet`
+          : fixedDeal
+            ? `Osalasku ${paymentNumber}/4 · ${invoiceNo} — ${fmtEur(amountCents)} · Puuhapatet`
+            : `${isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} — ${fmtEur(amountCents)} · Puuhapatet`,
+        html: viaEInvoice ? eInvoiceNoticeHtml : html,
       });
 
       // Advance per-sector invoiced markers, then refresh the summary fields.
@@ -4160,7 +4217,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       gig.invoicedThrough = totalsAfter.invoicedWashed;
       gig.payments.push({
         t: Date.now(), countThrough: totalsAfter.invoicedWashed, amountCents,
-        to: recipient, note: isFinal ? "Loppulasku" : "Osalasku", emailId: result.data?.id,
+        to: recipient, note: viaEInvoice ? "Verkkolasku" : (isFinal ? "Loppulasku" : "Osalasku"), emailId: result.data?.id,
         // Record WHICH leader billed the customer — their Y-tunnus becomes the buyer
         // on the alihankkija invoices funded by this instalment.
         biller: (senderName || senderYTunnus || req.body?.billerId) ? {
@@ -4175,7 +4232,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       gig.invoicedCents = fixedDeal
         ? gig.payments.length * (installmentCents ?? 0)
         : totalsAfter.invoicedCents;
-      gig.log.push({ t: Date.now(), text: `${isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} lähetetty: ${fmtEur(amountCents)} → ${recipient}` });
+      gig.log.push({
+        t: Date.now(),
+        text: viaEInvoice
+          ? `Verkkolasku ${invoiceNo} lähetetty: ${fmtEur(amountCents)} · viite ${viiteDisplay} → ${eInvoice}`
+          : `${isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} lähetetty: ${fmtEur(amountCents)} → ${recipient}`,
+      });
       gig.updatedAt = Date.now();
       await db.update(jobs).set({ gigData: JSON.stringify(gig), updatedAt: new Date() }).where(eq(jobs.id, id));
 
@@ -5589,6 +5651,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const instalments: {
         jobId: number; index: number; gigName: string; jobDescription: string;
         dateMs: number | null; amountCents: number;
+        note: string | null;
         biller: { id: string; name: string } | null;
         // Fixed-deal gigs: amount is contract-derived (read-only) and only the
         // last erä may be deleted (positional erä↔payment pairing). isLast lets
@@ -5624,6 +5687,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           instalments.push({
             jobId: job.id, index: i, gigName, jobDescription: job.description || "",
             dateMs: p?.t || null, amountCents: p?.amountCents ?? 0,
+            note: p?.note || null,
             biller: p?.biller?.id ? { id: p.biller.id, name: p.biller.name || nameOfBiller(p.biller.id) } : null,
             isFixedDeal: !!deal, isLast: i === gig.payments.length - 1,
             instalmentBasisCents: e ? e.instalmentCents : null,

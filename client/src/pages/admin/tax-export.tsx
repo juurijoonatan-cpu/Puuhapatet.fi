@@ -850,6 +850,12 @@ function GigInstalmentManager({
                   {it.dateMs ? new Date(it.dateMs).toLocaleDateString("fi-FI") : "ei pvm"}
                   {" · "}
                   {it.biller ? `laskutti ${firstName(it.biller.name)}` : <span className="text-amber-600">ei laskuttajaa</span>}
+                  {it.note && (
+                    <>
+                      {" · "}
+                      <span className={it.note === "Verkkolasku" ? "text-sky-600 dark:text-sky-400" : ""}>{it.note}</span>
+                    </>
+                  )}
                 </p>
               </div>
               <span className="shrink-0 text-sm font-bold tabular-nums">{fmt(it.amountCents)}</span>

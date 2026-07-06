@@ -536,6 +536,7 @@ export const api = {
       instalments: {
         jobId: number; index: number; gigName: string; jobDescription: string;
         dateMs: number | null; amountCents: number;
+        note: string | null;
         biller: { id: string; name: string } | null;
         isFixedDeal: boolean; isLast: boolean;
         instalmentBasisCents: number | null;
@@ -855,6 +856,7 @@ export const api = {
     isFinal?: boolean;
     eInvoice?: string;
     paymentNumber?: number;
+    viaEInvoice?: boolean;
   }) => request<{ ok: boolean; id?: string; amountCents: number; gigData: GigData }>(
     "POST", `/api/jobs/${jobId}/gig/invoice`, data,
   ),

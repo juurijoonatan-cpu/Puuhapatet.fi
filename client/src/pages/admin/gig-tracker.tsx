@@ -83,6 +83,7 @@ export default function AdminGigTrackerPage() {
   const [invForm, setInvForm] = useState({
     to: "", iban: "", bic: "", viitenumero: "", dueDate: isoPlusDays(14),
     message: "", isFinal: false, billerId: defaultBillerId, eInvoice: "", paymentNumber: 1,
+    viaEInvoice: false,
   });
 
   useEffect(() => {
@@ -285,12 +286,16 @@ export default function AdminGigTrackerPage() {
       isFinal: invForm.isFinal,
       eInvoice: invForm.eInvoice || undefined,
       paymentNumber: deal ? invForm.paymentNumber : undefined,
+      viaEInvoice: invForm.viaEInvoice,
     });
     setSending(false);
     if (res.ok && res.data) {
       setGig(res.data.gigData);
       setInvoiceOpen(false);
-      toast({ title: "Lasku lähetetty", description: `${eur(res.data.amountCents)} → ${invForm.to}` });
+      toast({
+        title: invForm.viaEInvoice ? "Ilmoitus verkkolaskusta lähetetty" : "Lasku lähetetty",
+        description: `${eur(res.data.amountCents)} → ${invForm.to}`,
+      });
     } else {
       toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error });
     }
@@ -310,7 +315,7 @@ export default function AdminGigTrackerPage() {
   // Open the invoice dialog, defaulting the instalment number to the next one in
   // sequence (the admin can still change it manually in the dialog).
   const openInvoice = () => {
-    setInvForm((f) => ({ ...f, paymentNumber: (gig?.payments.length ?? 0) + 1 }));
+    setInvForm((f) => ({ ...f, paymentNumber: (gig?.payments.length ?? 0) + 1, viaEInvoice: false }));
     setInvoiceOpen(true);
   };
 
@@ -816,7 +821,7 @@ export default function AdminGigTrackerPage() {
       <Dialog open={invoiceOpen} onOpenChange={setInvoiceOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Lähetä lasku</DialogTitle>
+            <DialogTitle>{invForm.viaEInvoice ? "Ilmoita verkkolaskusta" : "Lähetä lasku"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div className="rounded-xl bg-muted p-3 text-center">
@@ -827,6 +832,22 @@ export default function AdminGigTrackerPage() {
                 {deal ? eur2(fixedInstallmentCents) : eur2(totals.uninvoicedCents)}
               </p>
             </div>
+            <label className="flex items-start gap-2 rounded-xl border border-border p-3">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 accent-foreground"
+                checked={invForm.viaEInvoice}
+                onChange={(e) => setInvForm({ ...invForm, viaEInvoice: e.target.checked })}
+              />
+              <span className="text-sm">
+                Lasku on jo lähetetty verkkolaskuna
+                <span className="block text-xs text-muted-foreground mt-0.5">
+                  Käytä kun lasku lähtee erikseen kirjanpito-ohjelmasta (esim. Procountor/Netvisor)
+                  laskuttajan omalla Y-tunnuksella. Tämä ei lähetä maksukehotusta — se vain ilmoittaa
+                  asiakkaalle sähköpostilla viitteen, kuvauksen ja summan verkkolaskun täsmäytystä varten.
+                </span>
+              </span>
+            </label>
             {deal && (
               <div>
                 <Label className="text-xs">Maksuerä (monesko)</Label>
@@ -867,22 +888,26 @@ export default function AdminGigTrackerPage() {
               <Input type="email" value={invForm.to} onChange={(e) => setInvForm({ ...invForm, to: e.target.value })} placeholder="laskut@yritys.fi" />
             </div>
             <div>
-              <Label className="text-xs">Verkkolaskuosoite (valinnainen)</Label>
+              <Label className="text-xs">Verkkolaskuosoite{invForm.viaEInvoice ? " *" : " (valinnainen)"}</Label>
               <Input value={invForm.eInvoice} onChange={(e) => setInvForm({ ...invForm, eInvoice: e.target.value })} placeholder="esim. OVT 003712345678 / operaattori" />
               <p className="text-[11px] text-muted-foreground mt-1">
-                Asiakkaan antama verkkolaskuosoite. Merkitään laskulle. Itse lasku lähtee yllä olevaan sähköpostiin.
+                {invForm.viaEInvoice
+                  ? "Osoite johon verkkolasku on jo lähetetty. Mainitaan asiakkaalle menevässä ilmoituksessa."
+                  : "Asiakkaan antama verkkolaskuosoite. Merkitään laskulle. Itse lasku lähtee yllä olevaan sähköpostiin."}
               </p>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs">IBAN</Label>
-                <Input value={invForm.iban} onChange={(e) => setInvForm({ ...invForm, iban: e.target.value })} />
+            {!invForm.viaEInvoice && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs">IBAN</Label>
+                  <Input value={invForm.iban} onChange={(e) => setInvForm({ ...invForm, iban: e.target.value })} />
+                </div>
+                <div>
+                  <Label className="text-xs">BIC</Label>
+                  <Input value={invForm.bic} onChange={(e) => setInvForm({ ...invForm, bic: e.target.value })} />
+                </div>
               </div>
-              <div>
-                <Label className="text-xs">BIC</Label>
-                <Input value={invForm.bic} onChange={(e) => setInvForm({ ...invForm, bic: e.target.value })} />
-              </div>
-            </div>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className="text-xs">Viitenumero</Label>
@@ -904,8 +929,8 @@ export default function AdminGigTrackerPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setInvoiceOpen(false)}>Peruuta</Button>
-            <Button disabled={sending || !invForm.to} onClick={sendInvoice}>
-              {sending ? "Lähetetään…" : "Lähetä lasku"}
+            <Button disabled={sending || !invForm.to || (invForm.viaEInvoice && !invForm.eInvoice.trim())} onClick={sendInvoice}>
+              {sending ? "Lähetetään…" : invForm.viaEInvoice ? "Lähetä ilmoitus" : "Lähetä lasku"}
             </Button>
           </DialogFooter>
         </DialogContent>

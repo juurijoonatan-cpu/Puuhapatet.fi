@@ -71,9 +71,10 @@ export const USERS: AdminProfile[] = [
   },
   {
     // Alihankkija — kirjautuu vain omaan keikkadashboardiinsa (ei admin-näkymää).
-    // Aloitussalasana on jaettu WORKER_STARTER_PASSWORD (server routes.ts);
-    // kirjautuessa pyydetään vaihtamaan oma salasana ja ohjataan suoraan
-    // /tyo-työpöydälle. Crew-linkitys: linkedUserId = "petrus" (aseta työntekijät-näkymästä).
+    // Aloitussalasana on sama jaettu ADMIN_DEFAULT_PASSWORD (server routes.ts) kuin
+    // kaikilla muillakin; kirjautuessa pyydetään vaihtamaan oma salasana ja
+    // ohjataan suoraan /tyo-työpöydälle. Crew-linkitys: linkedUserId = "petrus"
+    // (aseta työntekijät-näkymästä).
     id: "petrus",
     name: "Petrus Aalto",
     role: "STAFF",
@@ -88,9 +89,10 @@ export const USERS: AdminProfile[] = [
   },
   {
     // FR8-tekijä — kirjautuu vain omaan keikkadashboardiinsa (ei admin-näkymää).
-    // Aloitussalasana on jaettu WORKER_STARTER_PASSWORD (server routes.ts);
-    // kirjautuessa pyydetään vaihtamaan oma salasana ja ohjataan suoraan
-    // /tyo-työpöydälle. Linkitys: crew-jäsenen linkedUserId = "jani" (aseta työntekijät-näkymästä).
+    // Aloitussalasana on sama jaettu ADMIN_DEFAULT_PASSWORD (server routes.ts) kuin
+    // kaikilla muillakin; kirjautuessa pyydetään vaihtamaan oma salasana ja
+    // ohjataan suoraan /tyo-työpöydälle. Linkitys: crew-jäsenen linkedUserId =
+    // "jani" (aseta työntekijät-näkymästä).
     id: "jani",
     name: "Jani Ihalainen",
     role: "STAFF",
@@ -100,9 +102,10 @@ export const USERS: AdminProfile[] = [
   {
     // Harjoittelija — kirjautuu vain omaan keikkadashboardiinsa (kuten Jani), mutta
     // EI alihankkija: ei omaa Y-tunnusta, ei itselaskutusta. Matias Pitkänen vastaa
-    // hänestä keikalla; ansiot jaetaan tiimin kesken. Aloitussalasana on jaettu
-    // WORKER_STARTER_PASSWORD (server routes.ts). Crew-linkitys: linkedUserId =
-    // "milja" tai etunimimatch (Milja → milja) hoituu automaattisesti.
+    // hänestä keikalla; ansiot jaetaan tiimin kesken. Aloitussalasana on sama jaettu
+    // ADMIN_DEFAULT_PASSWORD (server routes.ts) kuin kaikilla muillakin. Crew-
+    // linkitys: linkedUserId = "milja" tai etunimimatch (Milja → milja) hoituu
+    // automaattisesti.
     id: "milja",
     name: "Milja Niminen",
     role: "STAFF",
@@ -115,9 +118,9 @@ export const USERS: AdminProfile[] = [
     // FR8-tekijä (alihankkija, kuten Jani) — kirjautuu vain omaan keikka-
     // dashboardiinsa. Käy läpi saman alihankkijan onboardingin: profiili + sopimukset
     // (oma Y-tunnus, omat verot/vakuutukset, urakkaperusteinen korvaus). Aloitus-
-    // salasana on jaettu WORKER_STARTER_PASSWORD (server routes.ts); kirjautuessa
-    // pyydetään vaihtamaan oma salasana. Crew-linkitys: linkedUserId = "oliver" tai
-    // etunimimatch (Oliver → oliver).
+    // salasana on sama jaettu ADMIN_DEFAULT_PASSWORD (server routes.ts) kuin
+    // kaikilla muillakin; kirjautuessa pyydetään vaihtamaan oma salasana. Crew-
+    // linkitys: linkedUserId = "oliver" tai etunimimatch (Oliver → oliver).
     id: "oliver",
     name: "Oliver",
     role: "STAFF",
@@ -127,10 +130,10 @@ export const USERS: AdminProfile[] = [
     // FR8-tekijä (alihankkija, kuten Jani & Oliver) — aloittaa FR8-keikalla ja
     // kirjautuu vain omaan keikkadashboardiinsa (ei admin-näkymää). Käy läpi saman
     // alihankkijan onboardingin: profiili + sopimukset (oma Y-tunnus, omat verot/
-    // vakuutukset, urakkaperusteinen korvaus). Aloitussalasana on jaettu
-    // WORKER_STARTER_PASSWORD (server routes.ts); kirjautuessa pyydetään vaihtamaan
-    // se. Crew-linkitys: linkedUserId = "oona" tai etunimimatch (Oona → oona)
-    // hoituu automaattisesti.
+    // vakuutukset, urakkaperusteinen korvaus). Aloitussalasana on sama jaettu
+    // ADMIN_DEFAULT_PASSWORD (server routes.ts) kuin kaikilla muillakin;
+    // kirjautuessa pyydetään vaihtamaan se. Crew-linkitys: linkedUserId = "oona"
+    // tai etunimimatch (Oona → oona) hoituu automaattisesti.
     id: "oona",
     name: "Oona",
     role: "STAFF",
@@ -142,9 +145,10 @@ export const USERS: AdminProfile[] = [
     // kirjautuu vain omaan keikkadashboardiinsa (ei admin-näkymää). Käy läpi
     // "kevyt" sopimuspaketin (shared/worker-agreements.ts DEFAULT_AGREEMENT_SETS):
     // oma Y-tunnus, omat verot/vakuutukset, urakkaperusteinen korvaus, ei kilpailu-
-    // kieltoa. Aloitussalasana on jaettu WORKER_STARTER_PASSWORD (server routes.ts);
-    // kirjautuessa pyydetään vaihtamaan oma salasana. Crew-linkitys: linkedUserId =
-    // "doma" tai etunimimatch (Doma → doma) hoituu automaattisesti.
+    // kieltoa. Aloitussalasana on sama jaettu ADMIN_DEFAULT_PASSWORD (server
+    // routes.ts) kuin kaikilla muillakin; kirjautuessa pyydetään vaihtamaan oma
+    // salasana. Crew-linkitys: linkedUserId = "doma" tai etunimimatch (Doma → doma)
+    // hoituu automaattisesti.
     id: "doma",
     name: "Doma",
     role: "STAFF",
@@ -156,7 +160,8 @@ export const USERS: AdminProfile[] = [
     // Kerää liidejä (asiakas + keikka tilassa "lead", submissionStatus
     // "pending_review"), jotka perustajat hyväksyvät/ottavat/hylkäävät. Saa
     // kiinteän palkkion jokaisesta hyväksytystä diilistä (shared/team.ts).
-    // Aloitussalasana on jaettu WORKER_STARTER_PASSWORD (server routes.ts).
+    // Aloitussalasana on sama jaettu ADMIN_DEFAULT_PASSWORD (server routes.ts)
+    // kuin kaikilla muillakin.
     id: "myyja1",
     name: "Myyjä",
     role: "MARKETER",

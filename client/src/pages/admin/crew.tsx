@@ -14,7 +14,7 @@ import type { ProjBuilding, FixedDeal, EraDebtBreakdown } from "@shared/project"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Disclosure } from "@/components/ui/disclosure";
 import { PAY_PERIODS, eraWindowCounts, computePayProgress } from "@shared/payprogress";
-import { WORKER_AGREEMENTS, PROFILE_QUESTIONS } from "@shared/worker-agreements";
+import { WORKER_AGREEMENTS, PROFILE_QUESTIONS, resolveAgreementSet } from "@shared/worker-agreements";
 import { downloadWorkerContract, openWorkerContractForPrint, downloadSignatureImage } from "@/lib/worker-contract-doc";
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import { ChevronLeft, Copy, Check, RotateCw, Trash2, Plus, UserPlus, FileText, Printer, Download, Wallet } from "lucide-react";
@@ -391,7 +391,7 @@ function EntrepreneurPanel({ member, onUpdate }: {
           <label className="block text-[11px] text-muted-foreground">
             Sopimustyyppi
             <select
-              value={member.agreementSet === "kevyt" ? "kevyt" : "standard"}
+              value={resolveAgreementSet(member)}
               onChange={(e) => onUpdate(member.id, { agreementSet: e.target.value as "standard" | "kevyt" })}
               className="mt-1 w-full rounded-md border bg-background px-2 py-2 text-sm text-foreground"
             >
@@ -400,7 +400,7 @@ function EntrepreneurPanel({ member, onUpdate }: {
             </select>
           </label>
           <p className="mt-1.5 text-[11px] text-muted-foreground">
-            {member.agreementSet === "kevyt"
+            {resolveAgreementSet(member) === "kevyt"
               ? "Allekirjoitettavana vain alihankkijasopimus + tietosuoja & turvallisuus. Ei kilpailukieltoa, asiakassuojasakkoa eikä pitkäaikaissitoumusta."
               : "Koko sopimuspaketti: alihankkija, tietosuoja, asiakassuoja & kilpailukielto sekä tiimisitoumus."}
           </p>

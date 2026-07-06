@@ -27,7 +27,7 @@ import {
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN, MAX_CREW_DOC_LEN, totalPaidPayoutCents, retentionFromDate,
   type CrewMember, type CrewDocument,
 } from "@shared/crew";
-import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED, requiredAgreementIdsForSet } from "@shared/worker-agreements";
+import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED, requiredAgreementIdsForSet, resolveAgreementSet } from "@shared/worker-agreements";
 import {
   computeTax, readVatStatus, readInPrepaymentRegister, readPayeeType, WITHHOLDING_COMPANY,
   WITHHOLDING_NATURAL_PERSON, VAT_SMALL_BUSINESS_LIMIT_EUR, fmtPct, type TaxBreakdown,
@@ -4617,7 +4617,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       traineeForUserId(member.linkedUserId) || traineeForUserId(member.id) || traineeForName(member.name);
     // A trainee signs nothing; everyone else the set for their agreement package
     // ("standard" = full 4, "kevyt" = lighter set for a short-term/external pro).
-    const requiredIds = trainee ? [] : requiredAgreementIdsForSet(member.agreementSet);
+    const requiredIds = trainee ? [] : requiredAgreementIdsForSet(resolveAgreementSet(member));
     const agreementVersion = WORKER_AGREEMENT_VERSION;
     // Soft-start model: "in the app" (typed name) is decoupled from "has signed".
     const signedAll = trainee ? true : hasSignedAllAgreements(member, requiredIds, WORKER_AGREEMENT_VERSION);
@@ -4791,7 +4791,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // the worker has signed the current agreement set (the dashboard banner
       // drives them there). Trainees are never gated (they sign no subcontractor
       // agreement) — they can mark windows straight away.
-      if (!isCrewTrainee(member) && WORKER_AGREEMENTS_GATED && !hasSignedAllAgreements(member, requiredAgreementIdsForSet(member.agreementSet), WORKER_AGREEMENT_VERSION)) {
+      if (!isCrewTrainee(member) && WORKER_AGREEMENTS_GATED && !hasSignedAllAgreements(member, requiredAgreementIdsForSet(resolveAgreementSet(member)), WORKER_AGREEMENT_VERSION)) {
         return res.status(403).json({ error: "Lue lisätiedot ja allekirjoita sopimukset ensin" });
       }
       const key = String(req.body?.key ?? "").slice(0, 64);
@@ -4839,7 +4839,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const found = await findJobByCrewToken(String(req.params.token));
       if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
       const { job, project, member } = found;
-      if (!isCrewTrainee(member) && WORKER_AGREEMENTS_GATED && !hasSignedAllAgreements(member, requiredAgreementIdsForSet(member.agreementSet), WORKER_AGREEMENT_VERSION)) {
+      if (!isCrewTrainee(member) && WORKER_AGREEMENTS_GATED && !hasSignedAllAgreements(member, requiredAgreementIdsForSet(resolveAgreementSet(member)), WORKER_AGREEMENT_VERSION)) {
         return res.status(403).json({ error: "Lue lisätiedot ja allekirjoita sopimukset ensin" });
       }
       const key = String(req.body?.key ?? "").slice(0, 64);
@@ -5284,7 +5284,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         .map((m) => ({
           member: m,
           stats: crewMemberStats(project, m),
-          onboarded: isOnboarded(m, requiredAgreementIdsForSet(m.agreementSet), WORKER_AGREEMENT_VERSION),
+          onboarded: isOnboarded(m, requiredAgreementIdsForSet(resolveAgreementSet(m)), WORKER_AGREEMENT_VERSION),
         }));
       // Deal + billable-window count so the payroll page can show the per-erä
       // kate (€1575 / erän ikkunat). eraWindows = founders' editable per-erä counts.

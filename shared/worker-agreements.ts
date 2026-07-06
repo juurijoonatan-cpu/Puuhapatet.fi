@@ -373,6 +373,35 @@ export function requiredAgreementIdsForSet(set: WorkerAgreementSet | undefined |
   return AGREEMENT_SETS[normalizeAgreementSet(set)];
 }
 
+// Known workers who default to a specific package BEFORE the founder picks one in
+// the admin — so a link can be shared immediately without any configuration step.
+// Matched by crew id, linked login id, or first name (same convention as
+// WORKER_INTROS / TRAINEES). An explicit admin choice (member.agreementSet) always
+// wins over this default.
+export const DEFAULT_AGREEMENT_SETS: Record<string, WorkerAgreementSet> = {
+  doma: "kevyt", // experienced external entrepreneur, short-term — lighter package, no kilpailukielto
+};
+
+/** Resolve the package for a worker: explicit admin choice first, then the
+ *  per-person default registry, else "standard". Takes a minimal structural type
+ *  so this module stays free of a crew.ts import (no cycle). */
+export function resolveAgreementSet(member: {
+  agreementSet?: WorkerAgreementSet | null;
+  id?: string | null;
+  linkedUserId?: string | null;
+  name?: string | null;
+}): WorkerAgreementSet {
+  if (member.agreementSet === "kevyt" || member.agreementSet === "standard") return member.agreementSet;
+  const keys = [member.id, member.linkedUserId, (member.name || "").trim().split(/\s+/)[0]]
+    .filter(Boolean)
+    .map((k) => String(k).toLowerCase());
+  for (const k of keys) {
+    const d = DEFAULT_AGREEMENT_SETS[k];
+    if (d) return d;
+  }
+  return "standard";
+}
+
 // ─── Profile questionnaire (prebaked, "profile-optimizing") ─────────────────────
 
 export interface ProfileQuestion {

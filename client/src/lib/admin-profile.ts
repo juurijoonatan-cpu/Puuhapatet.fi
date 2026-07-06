@@ -136,6 +136,20 @@ export const USERS: AdminProfile[] = [
     dashboardOnly: true,
   },
   {
+    // FR8-tekijä (alihankkija, kuten Jani, Oliver & Oona) — kokenut ammattilainen,
+    // kirjautuu vain omaan keikkadashboardiinsa (ei admin-näkymää). Käy läpi
+    // "kevyt" sopimuspaketin (shared/worker-agreements.ts DEFAULT_AGREEMENT_SETS):
+    // oma Y-tunnus, omat verot/vakuutukset, urakkaperusteinen korvaus, ei kilpailu-
+    // kieltoa. Aloitussalasana "Doma123" (server INITIAL_PASSWORDS); kirjautuessa
+    // pyydetään vaihtamaan se. Crew-linkitys: linkedUserId = "doma" tai etunimimatch
+    // (Doma → doma) hoituu automaattisesti.
+    id: "doma",
+    name: "Doma",
+    role: "STAFF",
+    photoUrl: "/fr8/doma.jpg",
+    dashboardOnly: true,
+  },
+  {
     // Ovelta ovelle -myyjä — kirjautuu vain myyntipaneeliin (/admin/myynti).
     // Kerää liidejä (asiakas + keikka tilassa "lead", submissionStatus
     // "pending_review"), jotka perustajat hyväksyvät/ottavat/hylkäävät. Saa

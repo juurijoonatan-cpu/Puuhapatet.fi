@@ -998,9 +998,15 @@ export const api = {
     request<{ ok: boolean; member: CrewMember; crew: CrewMember[] }>(
       "POST", `/api/jobs/${jobId}/crew`, data),
 
-  updateCrewMember: (jobId: number, memberId: string, data: { name?: string; perWindowCents?: number; active?: boolean; role?: "worker" | "host"; rotateToken?: boolean; linkedUserId?: string }) =>
+  updateCrewMember: (jobId: number, memberId: string, data: { name?: string; perWindowCents?: number; active?: boolean; role?: "worker" | "host"; rotateToken?: boolean; linkedUserId?: string; agreementSet?: "standard" | "kevyt"; profile?: { fullName?: string; phone?: string; email?: string; city?: string; yTunnus?: string; iban?: string; answers?: Record<string, string> } }) =>
     request<{ ok: boolean; member: CrewMember; crew: CrewMember[] }>(
       "PATCH", `/api/jobs/${jobId}/crew/${memberId}`, data),
+
+  // Host adds a note against a worker (e.g. "lyhytaikainen apu"). Admin-keyed
+  // counterpart to crewAddNote (which is worker-token keyed).
+  addCrewNote: (jobId: number, memberId: string, text: string) =>
+    request<{ ok: boolean; member: CrewMember; crew: CrewMember[] }>(
+      "POST", `/api/jobs/${jobId}/crew/${memberId}/note`, { text }),
 
   removeCrewMember: (jobId: number, memberId: string) =>
     request<{ ok: boolean; crew: CrewMember[] }>(

@@ -18,6 +18,7 @@ import type { ProjectData } from "./project";
 import { allPoints } from "./project";
 import type { TaxBreakdown } from "./tax";
 import type { BuyerSnapshot } from "./billers";
+import type { WorkerAgreementSet } from "./worker-agreements";
 
 export const DEFAULT_WORKER_PER_WINDOW_CENTS = 2000; // 20,00 €
 
@@ -174,6 +175,11 @@ export interface CrewMember {
    *  still being reachable via an admin login. */
   linkedUserId?: string;
   perWindowCents: number;       // worker pay per pesty window, in cents
+  /** Which agreement package this worker signs. undefined/"standard" = the full 4;
+   *  "kevyt" = a lighter set (subcontractor + data/safety only, no non-compete) for
+   *  a short-term / external entrepreneur. Per-worker, so switching it never forces
+   *  anyone else to re-sign. */
+  agreementSet?: WorkerAgreementSet;
   /** Optional manual override of this person's TOTAL earnings for the gig/day,
    *  shown on the managers' dashboard instead of (washed × rate). Used by the
    *  founders to agree a split (e.g. "tehdään päivä yhdessä, jaetaan 50/50").
@@ -423,6 +429,12 @@ export function sanitizeCrewMember(input: any): CrewMember | null {
     adminLinked: !!input.adminLinked,
     linkedUserId: input.linkedUserId ? String(input.linkedUserId).slice(0, 40).replace(/[^a-z0-9]/gi, "").toLowerCase() || undefined : undefined,
     perWindowCents: clampCents(input.perWindowCents),
+    // Persist an EXPLICIT choice ("kevyt" or "standard"); anything else → undefined
+    // (= use the resolved default). Persisting "standard" too is what lets the
+    // founder override a per-person default — e.g. upgrade a worker who defaults to
+    // "kevyt" back to the full package. Without this, an explicit "standard" would
+    // collapse to undefined and the default would silently re-apply.
+    agreementSet: input.agreementSet === "kevyt" || input.agreementSet === "standard" ? input.agreementSet : undefined,
     manualEarningsCents: input.manualEarningsCents != null && Number.isFinite(Number(input.manualEarningsCents))
       ? Math.max(0, Math.min(10_000_000, Math.round(Number(input.manualEarningsCents))))
       : undefined,

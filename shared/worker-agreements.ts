@@ -343,6 +343,65 @@ export function agreementById(id: string): WorkerAgreement | undefined {
 /** All agreement ids a worker must have signed (current version) to pass the gate. */
 export const REQUIRED_AGREEMENT_IDS = WORKER_AGREEMENTS.map((a) => a.id);
 
+// ─── Per-worker agreement sets ──────────────────────────────────────────────────
+// A worker can be placed on a LIGHTER set per person WITHOUT changing any agreement
+// text and WITHOUT bumping WORKER_AGREEMENT_VERSION — so nobody who already signed
+// is ever forced to re-sign. This mirrors the trainee mechanism (which requires an
+// empty set), but for full alihankkijat who just need a lighter package.
+//
+//   • "standard" — the full package (default): subcontractor + data/safety +
+//     customer-protection/non-compete + long-term team commitment. For career hires.
+//   • "kevyt"    — a short-term / external entrepreneur who runs his own book:
+//     ONLY the subcontractor agreement + data/key/safety. NO post-term kilpailukielto,
+//     NO 24 kk asiakassuoja + 2 000 € sopimussakko, NO long-term (TIIMI) commitment.
+//     Tietoturva still forbids using customer/site data behind the brand, so basic
+//     confidentiality is kept while the heavy covenants are dropped.
+
+export type WorkerAgreementSet = "standard" | "kevyt";
+
+export const AGREEMENT_SETS: Record<WorkerAgreementSet, string[]> = {
+  standard: [ALIHANKINTA.id, TIETOTURVA.id, ASIAKASSUOJA.id, TIIMI.id],
+  kevyt: [ALIHANKINTA.id, TIETOTURVA.id],
+};
+
+export function normalizeAgreementSet(set: unknown): WorkerAgreementSet {
+  return set === "kevyt" ? "kevyt" : "standard";
+}
+
+/** The agreement ids a given set requires at the current version. */
+export function requiredAgreementIdsForSet(set: WorkerAgreementSet | undefined | null): string[] {
+  return AGREEMENT_SETS[normalizeAgreementSet(set)];
+}
+
+// Known workers who default to a specific package BEFORE the founder picks one in
+// the admin — so a link can be shared immediately without any configuration step.
+// Matched by crew id, linked login id, or first name (same convention as
+// WORKER_INTROS / TRAINEES). An explicit admin choice (member.agreementSet) always
+// wins over this default.
+export const DEFAULT_AGREEMENT_SETS: Record<string, WorkerAgreementSet> = {
+  doma: "kevyt", // experienced external entrepreneur, short-term — lighter package, no kilpailukielto
+};
+
+/** Resolve the package for a worker: explicit admin choice first, then the
+ *  per-person default registry, else "standard". Takes a minimal structural type
+ *  so this module stays free of a crew.ts import (no cycle). */
+export function resolveAgreementSet(member: {
+  agreementSet?: WorkerAgreementSet | null;
+  id?: string | null;
+  linkedUserId?: string | null;
+  name?: string | null;
+}): WorkerAgreementSet {
+  if (member.agreementSet === "kevyt" || member.agreementSet === "standard") return member.agreementSet;
+  const keys = [member.id, member.linkedUserId, (member.name || "").trim().split(/\s+/)[0]]
+    .filter(Boolean)
+    .map((k) => String(k).toLowerCase());
+  for (const k of keys) {
+    const d = DEFAULT_AGREEMENT_SETS[k];
+    if (d) return d;
+  }
+  return "standard";
+}
+
 // ─── Profile questionnaire (prebaked, "profile-optimizing") ─────────────────────
 
 export interface ProfileQuestion {

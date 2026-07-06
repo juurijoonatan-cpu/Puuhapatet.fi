@@ -28,7 +28,7 @@ import SignaturePad from "@/components/SignaturePad";
 import FloorView from "@/components/fr8/FloorView";
 import {
   computeTax, readVatStatus, readInPrepaymentRegister, readPayeeType, fmtPct, fmtEurCents,
-  VAT_STATUS_KEY, type VatStatus,
+  VAT_STATUS_KEY, PREPAYMENT_REGISTER_KEY, type VatStatus,
 } from "@shared/tax";
 import { computePayProgress } from "@shared/payprogress";
 import { MAX_PHOTO_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN } from "@shared/crew";
@@ -381,6 +381,16 @@ const WORKER_INTROS: Record<string, WorkerIntro> = {
     line: "Tosi kiva että lähdit mukaan — ja heti meidän isoimmalle keikalle! Tää on sun oma työpöytä: täältä näät oman duunisi etenevän pitkin päivää. Otetaan rennosti ja tehdään yhdessä hyvää jälkeä. Nähdään keikalla! 🚀",
     accent: "#7CE0A6",
   },
+  // Doma — kokenut ammattilainen ja oma yrittäjä, tulossa aluksi auttamaan. Sävy
+  // on tekijää kunnioittava (ei "eka keikka" -aloittelijapuhe), ovi jatkolle auki.
+  // Kuva näytetään vain jos hän lataa oman kuvan tai lisäät /public/fr8/doma.jpg.
+  doma: {
+    photo: "/fr8/doma.jpg",
+    tagline: "Kokenut tekijä · tervetuloa",
+    greeting: "Tervetuloa mukaan, Doma 🙌",
+    line: "Hienoa saada kokenut ikkunanpesijä tiimiin. Tässä on sinun oma työpöytäsi — näet työsi ja ansiosi kertyvän reaaliajassa. Laskutat omalla Y-tunnuksellasi ja hoidat verosi itse, me tuomme keikat ja maksamme ajallaan. Tehdään yhdessä siistiä jälkeä — ja katsotaan mihin tästä jatketaan. 💪",
+    accent: "#7CE0A6",
+  },
 };
 function introFor(name: string) {
   const first = (name || "").trim().split(/\s+/)[0]?.toLowerCase();
@@ -613,16 +623,27 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
   // resign = an already-entered worker completing the now-required info + signing.
   // Start at the profile ("lisätiedot") step and skip the optional PIN step.
   const [step, setStep] = useState<Step>(resign ? "profile" : "intro");
-  const [answers, setAnswers] = useState<Record<string, string>>(() => ({
-    fullName: view.worker.profile?.fullName ?? view.worker.name ?? "",
-    phone: view.worker.profile?.phone ?? "",
-    email: view.worker.profile?.email ?? "",
-    // Default Y-tunnus status to "tulossa" — most of our workers don't have one
-    // yet, so the form starts clean (no Y-tunnus / register fields) until they
-    // flip the toggle to "On jo".
-    [YTUNNUS_STATUS_KEY]: view.worker.profile?.answers?.[YTUNNUS_STATUS_KEY] ?? "tulossa",
-    ...(view.worker.profile?.answers ?? {}),
-  }));
+  const [answers, setAnswers] = useState<Record<string, string>>(() => {
+    // An established entrepreneur (e.g. added with a Y-tunnus already on file) should
+    // land on "On jo" with his Y-tunnus prefilled, not on the newbie "Tulossa" option.
+    const knownYtunnus = view.worker.profile?.yTunnus ?? view.worker.profile?.answers?.yTunnus ?? "";
+    return {
+      fullName: view.worker.profile?.fullName ?? view.worker.name ?? "",
+      phone: view.worker.profile?.phone ?? "",
+      email: view.worker.profile?.email ?? "",
+      yTunnus: knownYtunnus,
+      // Y-tunnus status: default to "on" when one is already known (pre-filled by an
+      // admin for an experienced hire), otherwise "tulossa" so a first-timer's form
+      // starts clean until they flip the toggle to "On jo".
+      [YTUNNUS_STATUS_KEY]: view.worker.profile?.answers?.[YTUNNUS_STATUS_KEY] ?? (knownYtunnus ? "on" : "tulossa"),
+      // Ennakkoperintärekisteri: default "kylla" (paid gross, no withholding — the
+      // correct treatment for a registered entrepreneur, and the app's existing
+      // default). Making it explicit means the fact is captured & auditable rather
+      // than silently assumed. A worker not yet registered can flip it to "ei".
+      [PREPAYMENT_REGISTER_KEY]: view.worker.profile?.answers?.[PREPAYMENT_REGISTER_KEY] ?? "kylla",
+      ...(view.worker.profile?.answers ?? {}),
+    };
+  });
   // Per-agreement clause acceptance (each contract is read + accepted), but the
   // worker draws their signature ONCE at the end — that single signature then
   // applies to every agreement.
@@ -841,8 +862,46 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
                   <span style={fieldLabel}>Y-tunnus</span>
                   <input value={answers.yTunnus ?? ""} onChange={(e) => setAnswer("yTunnus", e.target.value)} placeholder="1234567-8" style={inputStyle} />
                 </label>
-                <p style={{ fontSize: 11.5, color: T.muted, margin: "10px 0 0", lineHeight: 1.5 }}>
-                  Laskutat työsi omalla Y-tunnuksellasi ja hoidat verosi itse. Saat koko summan tilillesi.
+
+                {/* Ennakkoperintärekisteri — ratkaisee, maksetaanko bruttona (ei
+                    ennakonpidätystä). Oletus "kylla": rekisterissä oleva yrittäjä saa
+                    koko summan ja hoitaa verot itse. */}
+                <p style={{ ...fieldLabel, marginTop: 16, marginBottom: 8 }}>Oletko ennakkoperintärekisterissä?</p>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {([["kylla", "Kyllä"], ["ei", "En / en tiedä"]] as [string, string][]).map(([val, lbl]) => {
+                    const active = (answers[PREPAYMENT_REGISTER_KEY] || "kylla") === val;
+                    return (
+                      <button key={val} type="button" onClick={() => setAnswer(PREPAYMENT_REGISTER_KEY, val)}
+                        style={{ flex: 1, padding: "11px", borderRadius: 10, cursor: "pointer", fontFamily: FONT, fontSize: 14, fontWeight: 600,
+                          border: `1.5px solid ${active ? T.green : T.hair}`, background: active ? "rgba(62,124,89,0.10)" : "#fff", color: active ? T.green : T.ink }}>
+                        {active ? "✓ " : ""}{lbl}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* ALV-asema — lisätäänkö laskulle 25,5 % ALV. Oletuksena ei valittu
+                    (ei ALV:tä); ALV-velvollinen yrittäjä valitsee "ALV-rekisterissä". */}
+                <p style={{ ...fieldLabel, marginTop: 16, marginBottom: 8 }}>Arvonlisävero (ALV)</p>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {([["vahainen_toiminta", "Ei ALV:tä", "vähäinen toiminta"], ["alv_rekisterissa", "ALV-rekisterissä", "lisää 25,5 %"]] as [string, string, string][]).map(([val, lbl, sub]) => {
+                    const active = answers[VAT_STATUS_KEY] === val;
+                    return (
+                      <button key={val} type="button" onClick={() => setAnswer(VAT_STATUS_KEY, val)}
+                        style={{ flex: 1, padding: "11px", borderRadius: 10, cursor: "pointer", fontFamily: FONT, fontSize: 13.5, fontWeight: 600, lineHeight: 1.3,
+                          border: `1.5px solid ${active ? T.green : T.hair}`, background: active ? "rgba(62,124,89,0.10)" : "#fff", color: active ? T.green : T.ink }}>
+                        {active ? "✓ " : ""}{lbl}<br /><span style={{ fontWeight: 400, fontSize: 11, opacity: 0.85 }}>{sub}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <p style={{ fontSize: 11.5, color: T.muted, margin: "12px 0 0", lineHeight: 1.5 }}>
+                  Laskutat työsi omalla Y-tunnuksellasi ja hoidat verosi itse.
+                  {(answers[PREPAYMENT_REGISTER_KEY] || "kylla") !== "ei"
+                    ? " Koska olet ennakkoperintärekisterissä, maksu tehdään ilman ennakonpidätystä — saat koko summan tilillesi."
+                    : " Koska et ole (vielä) ennakkoperintärekisterissä, maksusta toimitetaan ennakonpidätys ja tilitetään Verolle. Rekisteröitymällä (ytj.fi) saat koko summan."}
+                  {" "}Voit muuttaa näitä myöhemmin työpöydältä. Tarkista tarvittaessa vero.fi.
                 </p>
               </>
             ) : (

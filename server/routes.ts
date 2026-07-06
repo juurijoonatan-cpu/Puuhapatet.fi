@@ -27,7 +27,7 @@ import {
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN, MAX_CREW_DOC_LEN, totalPaidPayoutCents, retentionFromDate,
   type CrewMember, type CrewDocument,
 } from "@shared/crew";
-import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED } from "@shared/worker-agreements";
+import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED, requiredAgreementIdsForSet, resolveAgreementSet } from "@shared/worker-agreements";
 import {
   computeTax, readVatStatus, readInPrepaymentRegister, readPayeeType, WITHHOLDING_COMPANY,
   WITHHOLDING_NATURAL_PERSON, VAT_SMALL_BUSINESS_LIMIT_EUR, fmtPct, type TaxBreakdown,
@@ -4615,11 +4615,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     // views. Matched by the linked login id / crew id, or first name as fallback.
     const trainee: TraineeInfo | undefined =
       traineeForUserId(member.linkedUserId) || traineeForUserId(member.id) || traineeForName(member.name);
-    // A trainee signs nothing; everyone else the full alihankkija set.
-    const requiredIds = trainee ? [] : REQUIRED_AGREEMENT_IDS;
+    // A trainee signs nothing; everyone else the set for their agreement package
+    // ("standard" = full 4, "kevyt" = lighter set for a short-term/external pro).
+    const requiredIds = trainee ? [] : requiredAgreementIdsForSet(resolveAgreementSet(member));
     const agreementVersion = WORKER_AGREEMENT_VERSION;
     // Soft-start model: "in the app" (typed name) is decoupled from "has signed".
-    const signedAll = trainee ? true : hasSignedAllAgreements(member, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION);
+    const signedAll = trainee ? true : hasSignedAllAgreements(member, requiredIds, WORKER_AGREEMENT_VERSION);
     const enteredApp = !!member.onboardedAt;
     // Until signing is gated, the dashboard opens on name alone. Once gated, an
     // already-entered alihankkija who hasn't signed must do so — a trainee never.
@@ -4790,7 +4791,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // the worker has signed the current agreement set (the dashboard banner
       // drives them there). Trainees are never gated (they sign no subcontractor
       // agreement) — they can mark windows straight away.
-      if (!isCrewTrainee(member) && WORKER_AGREEMENTS_GATED && !hasSignedAllAgreements(member, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION)) {
+      if (!isCrewTrainee(member) && WORKER_AGREEMENTS_GATED && !hasSignedAllAgreements(member, requiredAgreementIdsForSet(resolveAgreementSet(member)), WORKER_AGREEMENT_VERSION)) {
         return res.status(403).json({ error: "Lue lisätiedot ja allekirjoita sopimukset ensin" });
       }
       const key = String(req.body?.key ?? "").slice(0, 64);
@@ -4838,7 +4839,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const found = await findJobByCrewToken(String(req.params.token));
       if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
       const { job, project, member } = found;
-      if (!isCrewTrainee(member) && WORKER_AGREEMENTS_GATED && !hasSignedAllAgreements(member, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION)) {
+      if (!isCrewTrainee(member) && WORKER_AGREEMENTS_GATED && !hasSignedAllAgreements(member, requiredAgreementIdsForSet(resolveAgreementSet(member)), WORKER_AGREEMENT_VERSION)) {
         return res.status(403).json({ error: "Lue lisätiedot ja allekirjoita sopimukset ensin" });
       }
       const key = String(req.body?.key ?? "").slice(0, 64);
@@ -5283,7 +5284,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         .map((m) => ({
           member: m,
           stats: crewMemberStats(project, m),
-          onboarded: isOnboarded(m, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION),
+          onboarded: isOnboarded(m, requiredAgreementIdsForSet(resolveAgreementSet(m)), WORKER_AGREEMENT_VERSION),
         }));
       // Deal + billable-window count so the payroll page can show the per-erä
       // kate (€1575 / erän ikkunat). eraWindows = founders' editable per-erä counts.
@@ -5868,7 +5869,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  // Update a worker's editable fields (host): name, rate, active, role.
+  // Update a worker's editable fields (host): name, rate, active, role, and — for
+  // an experienced hire the founder onboards on their behalf — entrepreneur facts
+  // (insurance / Y-tunnus / ennakkoperintärekisteri / ALV) via a `profile` partial.
   app.patch("/api/jobs/:id/crew/:memberId", async (req, res) => {
     try {
       const loaded = await loadJobProject(Number(req.params.id));
@@ -5877,6 +5880,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const mid = String(req.params.memberId);
       // Mint a globally-unique replacement token up front if rotating.
       const rotatedToken = req.body?.rotateToken ? await genUniqueCrewToken() : null;
+      // Merge an optional profile partial (top-level fields + answers) onto the
+      // existing profile. Only provided keys change; sanitizeProfile validates it.
+      const bp = req.body?.profile;
+      const mergeProfile = (existing: CrewMember["profile"]) => {
+        if (!bp || typeof bp !== "object") return existing;
+        const pick = (k: string) => (bp[k] !== undefined ? { [k]: bp[k] } : {});
+        return {
+          ...(existing ?? {}),
+          ...pick("fullName"), ...pick("phone"), ...pick("email"),
+          ...pick("city"), ...pick("yTunnus"), ...pick("iban"),
+          answers: { ...(existing?.answers ?? {}), ...(bp.answers && typeof bp.answers === "object" ? bp.answers : {}) },
+        };
+      };
       let updated: CrewMember | null = null;
       project.crew = (project.crew || []).map((m) => {
         if (m.id !== mid) return m;
@@ -5886,12 +5902,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           perWindowCents: req.body?.perWindowCents ?? m.perWindowCents,
           active: typeof req.body?.active === "boolean" ? req.body.active : m.active,
           role: req.body?.role ?? m.role,
+          // Agreement package ("standard" | "kevyt"). sanitizeCrewMember normalises
+          // it; only "kevyt" is stored, so switching never affects other workers.
+          agreementSet: req.body?.agreementSet === undefined ? m.agreementSet : req.body.agreementSet,
           // Link / unlink an admin login user to this dashboard ("" clears it).
           linkedUserId: req.body?.linkedUserId === undefined ? m.linkedUserId : (req.body.linkedUserId || undefined),
           // Manual earnings override (managers' dashboard); null/"" clears it.
           manualEarningsCents: req.body?.manualEarningsCents === undefined
             ? m.manualEarningsCents
             : (req.body.manualEarningsCents == null || req.body.manualEarningsCents === "" ? undefined : Number(req.body.manualEarningsCents)),
+          // Entrepreneur facts the founder can pre-fill/verify for a worker.
+          profile: mergeProfile(m.profile),
           // Host can rotate a leaked link — the old link dies immediately.
           token: rotatedToken ?? m.token,
         });
@@ -5900,6 +5921,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!updated) return res.status(404).json({ error: "Työntekijää ei löydy" });
       const saved = await saveProject(job, project);
       res.json({ ok: true, member: updated, crew: saved.crew });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Host adds a note against a worker (e.g. "lyhytaikainen apu, tulee huomenna").
+  // Mirrors the worker-side note endpoint but is keyed by jobId + memberId.
+  app.post("/api/jobs/:id/crew/:memberId/note", async (req, res) => {
+    try {
+      const loaded = await loadJobProject(Number(req.params.id));
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const { job, project } = loaded;
+      const mid = String(req.params.memberId);
+      const text = String(req.body?.text ?? "").trim().slice(0, 2000);
+      if (!text) return res.status(400).json({ error: "Tyhjä muistiinpano" });
+      let found = false;
+      project.crew = (project.crew || []).map((m) => {
+        if (m.id !== mid) return m;
+        found = true;
+        return { ...m, notes: [{ t: Date.now(), text }, ...(m.notes || [])].slice(0, 200) };
+      });
+      if (!found) return res.status(404).json({ error: "Työntekijää ei löydy" });
+      const saved = await saveProject(job, project);
+      res.json({ ok: true, member: (saved.crew || []).find((m) => m.id === mid), crew: saved.crew });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }

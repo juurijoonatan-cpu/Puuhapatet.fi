@@ -14,7 +14,7 @@ import type { ProjBuilding, FixedDeal, EraDebtBreakdown } from "@shared/project"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Disclosure } from "@/components/ui/disclosure";
 import { PAY_PERIODS, eraWindowCounts, computePayProgress } from "@shared/payprogress";
-import { WORKER_AGREEMENTS, PROFILE_QUESTIONS } from "@shared/worker-agreements";
+import { WORKER_AGREEMENTS, PROFILE_QUESTIONS, resolveAgreementSet } from "@shared/worker-agreements";
 import { downloadWorkerContract, openWorkerContractForPrint, downloadSignatureImage } from "@/lib/worker-contract-doc";
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import { ChevronLeft, Copy, Check, RotateCw, Trash2, Plus, UserPlus, FileText, Printer, Download, Wallet } from "lucide-react";
@@ -85,6 +85,7 @@ export default function AdminCrewPage() {
   const addWorker = async () => { setBusy(true); await api.addCrewMember(jobId, {}); await load(); setBusy(false); };
   const update = async (id: string, data: Parameters<typeof api.updateCrewMember>[2]) => { await api.updateCrewMember(jobId, id, data); await load(); };
   const remove = async (id: string) => { if (confirm("Poistetaanko työntekijä?")) { await api.removeCrewMember(jobId, id); await load(); } };
+  const addNote = async (id: string, text: string) => { const res = await api.addCrewNote(jobId, id, text); await load(); return res.ok; };
   const createPayout = async (id: string, data: { amountCents: number; windows?: number; note?: string; billerId?: string }) => {
     const res = await api.createPayout(jobId, id, data); await load(); return res.ok;
   };
@@ -158,6 +159,10 @@ export default function AdminCrewPage() {
               <div key={member.id} className="rounded-2xl border bg-card p-4">
                 <WorkerCardHeader member={member} stats={stats} onboarded={onboarded} copied={copied} onCopy={copyLink} onUpdate={update} onRemove={remove} />
 
+                {/* Yrittäjätiedot — founder can pre-fill/verify insurance, Y-tunnus,
+                    ennakkoperintärekisteri, ALV & email on the worker's behalf. */}
+                <EntrepreneurPanel member={member} onUpdate={update} />
+
                 {/* Signed agreements + signatures (downloadable) */}
                 {member.agreements.length > 0 && (
                   <Disclosure variant="inline" className="mt-3" title={`Allekirjoitetut sopimukset (${member.agreements.length})`}>
@@ -230,19 +235,9 @@ export default function AdminCrewPage() {
                   </div>
                 )}
 
-                {/* Notes */}
-                {member.notes.length > 0 && (
-                  <Disclosure variant="inline" className="mt-3" title={`Muistiinpanot (${member.notes.length})`}>
-                    <div className="space-y-1.5">
-                      {member.notes.map((n, i) => (
-                        <div key={i} className="rounded-lg bg-muted/40 px-3 py-2 text-xs">
-                          <p>{n.text}</p>
-                          <p className="text-muted-foreground mt-0.5">{new Date(n.t).toLocaleString("fi-FI", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </Disclosure>
-                )}
+                {/* Notes — always available so the founder can jot e.g.
+                    "lyhytaikainen apu, tulee huomenna" against a worker. */}
+                <AdminNotesPanel member={member} onAddNote={addNote} />
 
                 {/* Manager day-log — record this worker's day (hours + today's
                     windows) and email them the summary, on their behalf. */}
@@ -327,6 +322,156 @@ function DayLogPanel({
         </button>
       </div>
       {msg && <p className="mt-2 text-[11px] text-muted-foreground">{msg}</p>}
+    </Disclosure>
+  );
+}
+
+/** A labelled two-choice toggle row (tap the active choice again to clear it). */
+function ToggleRow({ label, value, onChange, options }: {
+  label: string; value: string; onChange: (v: string) => void; options: [string, string][];
+}) {
+  return (
+    <div>
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">{label}</p>
+      <div className="flex gap-2">
+        {options.map(([val, lbl]) => (
+          <button
+            key={val}
+            type="button"
+            onClick={() => onChange(value === val ? "" : val)}
+            className={`flex-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${value === val ? "border-green-600 bg-green-500/10 text-green-600" : "border-border text-muted-foreground"}`}
+          >
+            {value === val ? "✓ " : ""}{lbl}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Host-editable entrepreneur facts: insurance, ennakkoperintärekisteri, ALV,
+ *  Y-tunnus and email. Lets the founder pre-fill or verify these on the worker's
+ *  behalf (e.g. an experienced hire working before he onboards himself). The worker
+ *  still confirms them when he signs. Writes to profile + profile.answers. */
+function EntrepreneurPanel({ member, onUpdate }: {
+  member: HostCrewRow["member"];
+  onUpdate: (id: string, data: Parameters<typeof api.updateCrewMember>[2]) => Promise<void> | void;
+}) {
+  const a = member.profile?.answers || {};
+  const base = {
+    insurance: a.insuranceValid || "", register: a.prepaymentRegister || "", vat: a.vatStatus || "",
+    yTunnus: member.profile?.yTunnus || "", email: member.profile?.email || "",
+  };
+  const [insurance, setInsurance] = useState(base.insurance);
+  const [register, setRegister] = useState(base.register);
+  const [vat, setVat] = useState(base.vat);
+  const [yTunnus, setYTunnus] = useState(base.yTunnus);
+  const [email, setEmail] = useState(base.email);
+  const [busy, setBusy] = useState(false);
+
+  const dirty = insurance !== base.insurance || register !== base.register || vat !== base.vat
+    || yTunnus.trim() !== base.yTunnus || email.trim() !== base.email;
+
+  const save = async () => {
+    setBusy(true);
+    const answers: Record<string, string> = {};
+    if (insurance) answers.insuranceValid = insurance;
+    if (register) answers.prepaymentRegister = register;
+    if (vat) answers.vatStatus = vat;
+    await onUpdate(member.id, { profile: { yTunnus: yTunnus.trim(), email: email.trim(), answers } });
+    setBusy(false);
+  };
+
+  return (
+    <Disclosure variant="inline" className="mt-3" title="Yrittäjätiedot">
+      <div className="space-y-3">
+        {/* Sopimustyyppi — which agreement package the worker signs. Applies
+            immediately; set it BEFORE he signs. Switching never affects others. */}
+        <div className="rounded-lg border bg-muted/20 p-2.5">
+          <label className="block text-[11px] text-muted-foreground">
+            Sopimustyyppi
+            <select
+              value={resolveAgreementSet(member)}
+              onChange={(e) => onUpdate(member.id, { agreementSet: e.target.value as "standard" | "kevyt" })}
+              className="mt-1 w-full rounded-md border bg-background px-2 py-2 text-sm text-foreground"
+            >
+              <option value="standard">Vakio — koko paketti (sis. kilpailukielto & sitoumus)</option>
+              <option value="kevyt">Kevyt — lyhytaikainen / ulkoinen yrittäjä (ei kilpailukieltoa)</option>
+            </select>
+          </label>
+          <p className="mt-1.5 text-[11px] text-muted-foreground">
+            {resolveAgreementSet(member) === "kevyt"
+              ? "Allekirjoitettavana vain alihankkijasopimus + tietosuoja & turvallisuus. Ei kilpailukieltoa, asiakassuojasakkoa eikä pitkäaikaissitoumusta."
+              : "Koko sopimuspaketti: alihankkija, tietosuoja, asiakassuoja & kilpailukielto sekä tiimisitoumus."}
+          </p>
+        </div>
+        <p className="text-[11px] text-muted-foreground">Voit esitäyttää tai varmistaa nämä työntekijän puolesta. Hän vahvistaa ne allekirjoittaessaan.</p>
+        <ToggleRow label="Vakuutukset voimassa" value={insurance} onChange={setInsurance} options={[["kylla", "Kyllä"], ["ei", "Ei vielä"]]} />
+        <ToggleRow label="Ennakkoperintärekisterissä" value={register} onChange={setRegister} options={[["kylla", "Kyllä"], ["ei", "Ei"]]} />
+        <ToggleRow label="ALV-asema" value={vat} onChange={setVat} options={[["vahainen_toiminta", "Ei ALV:tä"], ["alv_rekisterissa", "ALV 25,5 %"]]} />
+        <div className="flex gap-2">
+          <label className="flex-1 text-[11px] text-muted-foreground">
+            Y-tunnus
+            <Input value={yTunnus} onChange={(e) => setYTunnus(e.target.value)} placeholder="1234567-8" className="mt-1 h-9" />
+          </label>
+          <label className="flex-1 text-[11px] text-muted-foreground">
+            Sähköposti (yhteenvedot)
+            <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nimi@esimerkki.fi" className="mt-1 h-9" />
+          </label>
+        </div>
+        <button onClick={save} disabled={busy || !dirty}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-foreground px-3 py-1.5 text-xs font-semibold text-background disabled:opacity-40">
+          {busy ? "Tallennetaan…" : "Tallenna yrittäjätiedot"}
+        </button>
+      </div>
+    </Disclosure>
+  );
+}
+
+/** Worker notes — read the log and add new ones from admin (e.g. tag a
+ *  short-term helper). Always available, unlike the old read-only block. */
+function AdminNotesPanel({ member, onAddNote }: {
+  member: HostCrewRow["member"];
+  onAddNote: (id: string, text: string) => Promise<boolean>;
+}) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const add = async () => {
+    const t = text.trim();
+    if (!t) return;
+    setBusy(true);
+    const ok = await onAddNote(member.id, t);
+    setBusy(false);
+    if (ok) setText("");
+  };
+  return (
+    <Disclosure variant="inline" className="mt-3" title={`Muistiinpanot (${member.notes.length})`}>
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") add(); }}
+            placeholder="Lisää muistiinpano (esim. lyhytaikainen apu, tulee huomenna)"
+            className="flex-1 rounded-lg border bg-background px-3 py-2 text-sm outline-none"
+          />
+          <button onClick={add} disabled={busy || !text.trim()} className="shrink-0 rounded-lg bg-foreground px-3 py-2 text-xs font-semibold text-background disabled:opacity-50">
+            {busy ? "…" : "Lisää"}
+          </button>
+        </div>
+        {member.notes.length > 0 ? (
+          <div className="space-y-1.5">
+            {member.notes.map((n, i) => (
+              <div key={i} className="rounded-lg bg-muted/40 px-3 py-2 text-xs">
+                <p>{n.text}</p>
+                <p className="text-muted-foreground mt-0.5">{new Date(n.t).toLocaleString("fi-FI", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">Ei vielä muistiinpanoja.</p>
+        )}
+      </div>
     </Disclosure>
   );
 }

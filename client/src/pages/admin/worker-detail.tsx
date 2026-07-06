@@ -134,6 +134,25 @@ export default function AdminWorkerDetailPage() {
               )}
             </div>
           </div>
+          {/* Yrittäjä & valmius — insurance / register / ALV at a glance. */}
+          {worker.role !== "host" && (() => {
+            const ins = answers.insuranceValid;
+            const inReg = readInPrepaymentRegister(answers);
+            const vat = readVatStatus(answers);
+            const chips: { label: string; ok: boolean }[] = [];
+            if (ins === "kylla") chips.push({ label: "Vakuutukset OK", ok: true });
+            else if (ins === "ei") chips.push({ label: "Vakuutukset puuttuu", ok: false });
+            chips.push({ label: inReg ? "Ennakkoperintärekisterissä" : "Ei ennakkoperintärekisterissä", ok: inReg });
+            if (vat === "alv_rekisterissa") chips.push({ label: "ALV 25,5 %", ok: true });
+            else if (vat === "vahainen_toiminta") chips.push({ label: "Ei ALV:tä", ok: true });
+            return (
+              <div className="flex flex-wrap gap-1.5 mt-3">
+                {chips.map((c) => (
+                  <span key={c.label} className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${c.ok ? "bg-green-500/10 text-green-600" : "bg-amber-500/10 text-amber-600"}`}>{c.label}</span>
+                ))}
+              </div>
+            );
+          })()}
         </Card>
 
         {/* 2 — Rahaliikenne */}

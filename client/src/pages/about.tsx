@@ -1,10 +1,12 @@
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, MapPin, Mail, Phone } from "lucide-react";
 import { SiWhatsapp, SiInstagram, SiLinkedin } from "react-icons/si";
 import { useI18n } from "@/lib/i18n";
-import { AvatarGroup } from "@/components/animate-ui/components/animate/avatar-group";
+import { AvatarGroup, type AvatarGroupItem } from "@/components/animate-ui/components/animate/avatar-group";
+import { api } from "@/lib/api";
 
 const team = [
   {
@@ -62,6 +64,21 @@ const TIIMI = [
 
 export default function AboutPage() {
   const { t } = useI18n();
+
+  // Workers who've finished onboarding (entered the app + signed their
+  // agreements) show up here automatically, on top of the hand-curated TIIMI
+  // list above — a new hire never needs a code change to appear.
+  const [roster, setRoster] = useState<{ id: string; name: string; photoUrl?: string }[]>([]);
+  useEffect(() => {
+    api.getTeamRoster().then((r) => { if (r.ok && r.data?.workers) setRoster(r.data.workers); }).catch(() => {});
+  }, []);
+  const tiimi = useMemo<AvatarGroupItem[]>(() => {
+    const known = new Set(TIIMI.map((a) => a.tooltip.toLowerCase()));
+    const discovered: AvatarGroupItem[] = roster
+      .filter((w) => !known.has(w.name.trim().split(/\s+/)[0]?.toLowerCase()))
+      .map((w) => ({ src: w.photoUrl, fallback: w.name.slice(0, 2).toUpperCase(), tooltip: w.name }));
+    return [...TIIMI, ...discovered];
+  }, [roster]);
 
   return (
     <div className="min-h-screen bg-background pt-20 md:pt-24 pb-28">
@@ -174,7 +191,7 @@ export default function AboutPage() {
             {t("about.crew.desc")}{" "}
             <a href="mailto:info@puuhapatet.fi" className="text-primary underline underline-offset-2">{t("about.crew.cta")}</a>.
           </p>
-          <AvatarGroup avatars={TIIMI} size={72} />
+          <AvatarGroup avatars={tiimi} size={72} />
         </Card>
 
         {/* Contact */}

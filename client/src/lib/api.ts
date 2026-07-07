@@ -810,6 +810,12 @@ export const api = {
   getMyDashboard: () =>
     request<{ ok: boolean; token: string | null }>("GET", "/api/admin/my-dashboard"),
 
+  // Workers who've finished onboarding (entered the app + signed their agreements) —
+  // powers the login picker and the about-page team photos so a new hire appears
+  // automatically, on top of the hand-maintained profiles in admin-profile.ts.
+  getTeamRoster: () =>
+    request<{ ok: boolean; workers: { id: string; name: string; photoUrl?: string }[] }>("GET", "/api/team-roster"),
+
   setUserPasswordRemote: (userId: string, password: string, currentPassword: string) =>
     request<{ ok: boolean }>("POST", `/api/admin/user-password/${userId}`, { password, currentPassword }),
 

@@ -4092,8 +4092,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           }).join("");
 
       const dueDisplay = dueDate ? new Date(dueDate + "T12:00:00").toLocaleDateString("fi-FI") : null;
+      // Same checksummed reference as the barcode encodes, so the printed "Viite"
+      // text is a valid Finnish reference number and matches what the barcode pays.
+      const refNumeric = (viitenumero || String(id)).replace(/\D/g, "") || String(id);
+      const refDisplay = formatFinnishRef(finnishRefWithCheckDigit(refNumeric));
       const barcodeHtml = iban
-        ? await generateFinnishBarcodeHtml({ iban, amountCents, viitenumero: viitenumero || String(id), dueDateISO: dueDate, isEn: false })
+        ? await generateFinnishBarcodeHtml({ iban, amountCents, viitenumero: refNumeric, dueDateISO: dueDate, isEn: false })
         : "";
 
       const invoiceNo = `${gig.contractId || "PT"}-${paymentNumber.toString().padStart(2, "0")}`;
@@ -4132,7 +4136,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         <p style="margin:0 0 8px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Maksutiedot</p>
         ${senderName ? `<p style="margin:0 0 2px;font-size:13px;color:#1A1A1A">Saaja: ${senderName}${senderYTunnus ? ` · Y-tunnus ${senderYTunnus}` : ""}</p>` : ""}
         ${iban ? `<p style="margin:0 0 2px;font-size:13px;color:#1A1A1A">IBAN: ${iban}${bic ? ` · BIC ${bic}` : ""}</p>` : ""}
-        ${viitenumero ? `<p style="margin:0 0 2px;font-size:13px;color:#1A1A1A">Viite: ${viitenumero}</p>` : ""}
+        ${viitenumero ? `<p style="margin:0 0 2px;font-size:13px;color:#1A1A1A">Viite: ${refDisplay}</p>` : ""}
         ${dueDisplay ? `<p style="margin:0;font-size:13px;color:#1A1A1A">Eräpäivä: ${dueDisplay}</p>` : ""}
         ${gig.vatNote ? `<p style="margin:8px 0 0;font-size:12px;color:#8C8A82">${gig.vatNote}</p>` : ""}
       </div>
@@ -5643,10 +5647,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         jobId: number; index: number; gigName: string; jobDescription: string;
         dateMs: number | null; amountCents: number;
         biller: { id: string; name: string } | null;
-        // Fixed-deal gigs: amount is contract-derived (read-only) and only the
-        // last erä may be deleted (positional erä↔payment pairing). isLast lets
-        // the UI show delete only where the server will allow it.
-        isFixedDeal: boolean; isLast: boolean;
+        // Fixed-deal gigs: amount is contract-derived (read-only). Any erä may
+        // be deleted, including a mid-list bogus/duplicate one.
+        isFixedDeal: boolean;
         // Kate is derived from the DEAL's per-erä basis + washed windows, NOT
         // from the recorded amount — so the breakdown carries its own basis
         // (basis − palkat = kate) and always reconciles on its own.
@@ -5678,7 +5681,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             jobId: job.id, index: i, gigName, jobDescription: job.description || "",
             dateMs: p?.t || null, amountCents: p?.amountCents ?? 0,
             biller: p?.biller?.id ? { id: p.biller.id, name: p.biller.name || nameOfBiller(p.biller.id) } : null,
-            isFixedDeal: !!deal, isLast: i === gig.payments.length - 1,
+            isFixedDeal: !!deal,
             instalmentBasisCents: e ? e.instalmentCents : null,
             kateCents: kate, palkatCents: e ? e.earnedCents : null, shares,
           });
@@ -5760,15 +5763,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(404).json({ error: "Erämaksua ei löydy" });
       }
       // Fixed-deal gigs pair each payment to its erä BY POSITION (payment i ↔
-      // erä i+1, kate from that erä's washed windows). Deleting a middle
-      // payment would shift every later payment onto the wrong erä and drop the
-      // last erä's kate — so only the LAST instalment may be removed (peru
-      // järjestyksessä lopusta). Non-fixed gigs have no positional pairing.
-      const projForDeal = parseProject(job.projectData ?? null);
-      const isFixedDeal = !!(projForDeal && fixedDealFor(projForDeal));
-      if (isFixedDeal && idx !== gig.payments.length - 1) {
-        return res.status(409).json({ error: "Kiinteähintaisen urakan eriä voi poistaa vain lopusta — peru viimeisin ensin." });
-      }
+      // erä i+1, kate from that erä's washed windows) — but that pairing is
+      // recomputed fresh from the remaining payments on every read, and every
+      // instalment is worth the same fixed amount regardless of position, so
+      // removing a bogus/duplicate erä from anywhere in the list (not just the
+      // end) is safe: the rest simply shift down and re-pair in order.
       const [removed] = gig.payments.splice(idx, 1);
       recomputeGigInvoiced(gig, job);
       const fmtEur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";

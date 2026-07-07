@@ -886,21 +886,17 @@ function GigInstalmentManager({
                 <button type="button" className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => setEditKey(key)}>
                   {it.isFixedDeal ? "Muokkaa pvm" : "Muokkaa summaa/pvm"}
                 </button>
-                {/* Fixed-deal erät are positional — only the last one may be
-                    removed (server enforces this too). Non-fixed: any erä. */}
-                {(!it.isFixedDeal || it.isLast) && (
-                  <button
-                    type="button"
-                    className="ml-auto text-[11px] text-red-500 hover:text-red-600"
-                    disabled={busy}
-                    onClick={() => {
-                      if (!confirm(`Poistetaanko erä "${it.gigName} — erä ${it.index + 1}" (${fmt(it.amountCents)})?\n\nTämä poistaa erän seurannasta ja päivittää kaikki luvut. Ei voi peruuttaa.`)) return;
-                      run(() => api.deleteGigPayment(it.jobId, it.index));
-                    }}
-                  >
-                    Poista
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className="ml-auto text-[11px] text-red-500 hover:text-red-600"
+                  disabled={busy}
+                  onClick={() => {
+                    if (!confirm(`Poistetaanko erä "${it.gigName} — erä ${it.index + 1}" (${fmt(it.amountCents)})?\n\nTämä poistaa erän seurannasta ja päivittää kaikki luvut. Ei voi peruuttaa.`)) return;
+                    run(() => api.deleteGigPayment(it.jobId, it.index));
+                  }}
+                >
+                  Poista
+                </button>
               </div>
             ) : (
               <EraEditForm it={it} busy={busy} onCancel={() => setEditKey(null)} onSave={(patch) => run(() => api.editGigPayment(it.jobId, it.index, patch))} />

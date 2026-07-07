@@ -386,6 +386,13 @@ const AUTH_SECRET = process.env.AUTH_SECRET || "";
 // their own password on first successful login, so it's a one-time key per
 // account, not a permanent shared login.
 const ADMIN_DEFAULT_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || "";
+// Logins that pre-date the auto-roster below (founders, the marketer, and
+// every worker hand-added to admin-profile.ts before this existed) — always
+// allowed to use the shared default password on their first login, regardless
+// of whether their crew-onboarding data would satisfy loadOnboardedTeamRoster.
+// Anyone else must actually appear in that roster (entered the app + signed
+// their agreements) to log in — typing an arbitrary new name no longer works.
+const KNOWN_LOGIN_IDS = new Set(["joonatan", "matias", "myyja1", "jani", "milja", "oliver", "oona", "doma", "petrus", "selma"]);
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 function b64url(buf: Buffer): string {
@@ -456,6 +463,7 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   { method: "POST", re: /^\/api\/chat$/ },
   { method: "POST", re: /^\/api\/chat\/handoff$/ },
   { method: "POST", re: /^\/api\/admin\/login$/ },
+  { method: "GET",  re: /^\/api\/team-roster$/ },
   { method: "GET",  re: /^\/api\/calendar\.ics$/ },
   { method: "GET",  re: /^\/api\/crew-agreements$/ },
   { method: "GET",  re: /^\/api\/quote\/[^/]+$/ },
@@ -904,10 +912,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       let usedStarter = false;
       if (stored) {
         ok = verifyPassword(String(password), stored);
-      } else {
-        // Account has no password yet → accept the one shared one-time default
-        // (everyone — hosts and workers alike — logs in once with the same code).
-        if (ADMIN_DEFAULT_PASSWORD && String(password) === ADMIN_DEFAULT_PASSWORD) { ok = true; usedStarter = true; }
+      } else if (ADMIN_DEFAULT_PASSWORD && String(password) === ADMIN_DEFAULT_PASSWORD) {
+        // Account has no password yet → the shared one-time default gets you in
+        // ONCE (everyone then sets their own). Gated to known people only: the
+        // founders/marketer, or a crew member who's actually finished onboarding
+        // + signed their agreements — typing an arbitrary new name no longer
+        // silently creates an account.
+        const id = String(userId).toLowerCase();
+        const allowed = KNOWN_LOGIN_IDS.has(id) || (await loadOnboardedTeamRoster()).some((w) => w.id === id);
+        if (allowed) { ok = true; usedStarter = true; }
       }
       if (!ok) return res.status(401).json({ error: "Virheellinen salasana." });
 
@@ -4545,6 +4558,49 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
       }
       res.json({ ok: true, token: fallback });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Team roster (auto-derived from crew who finished onboarding) ──────────
+  // A worker "graduates" onto the admin login screen + the public about-page
+  // team photos automatically once they've entered the app AND signed every
+  // agreement required for their package (shared/worker-agreements.ts) — no
+  // more manual admin-profile.ts / about.tsx edit per new hire. Founders and
+  // the marketer aren't crew, so they're untouched; this only ever ADDS
+  // dashboard-only workers on top of the hand-maintained profiles already in
+  // the codebase, never removes or overrides one.
+  async function loadOnboardedTeamRoster(): Promise<{ id: string; name: string; photoUrl?: string; onboardedAt: number }[]> {
+    const rows = await db.select().from(jobs).where(eq(jobs.isCustomGig, true));
+    const byId = new Map<string, { id: string; name: string; photoUrl?: string; onboardedAt: number }>();
+    for (const job of rows) {
+      const project = parseProject(job.projectData ?? null);
+      for (const m of project?.crew ?? []) {
+        if (!m.active || m.role !== "worker" || !m.onboardedAt) continue;
+        const trainee = isCrewTrainee(m);
+        const required = trainee ? [] : requiredAgreementIdsForSet(resolveAgreementSet(m));
+        const signedAll = trainee ? true : hasSignedAllAgreements(m, required, WORKER_AGREEMENT_VERSION);
+        if (!signedAll) continue;
+        const firstName = (m.name || "").trim().split(/\s+/)[0]?.toLowerCase() || "";
+        const key = (m.linkedUserId || firstName || "").toLowerCase();
+        if (!key) continue;
+        const existing = byId.get(key);
+        if (!existing || m.onboardedAt > existing.onboardedAt) {
+          byId.set(key, { id: key, name: m.name || key, photoUrl: m.profile?.photoDataUrl, onboardedAt: m.onboardedAt });
+        }
+      }
+    }
+    return Array.from(byId.values()).sort((a, b) => a.onboardedAt - b.onboardedAt);
+  }
+
+  // Public: powers the login picker (pre-auth, so it must be public) and the
+  // about-page team photos. No more exposure than admin-profile.ts USERS,
+  // which is already bundled into the public client JS today.
+  app.get("/api/team-roster", async (req, res) => {
+    try {
+      const workers = await loadOnboardedTeamRoster();
+      res.json({ ok: true, workers: workers.map(({ id, name, photoUrl }) => ({ id, name, photoUrl })) });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

@@ -6,14 +6,14 @@
  * token, so hiding the screen is no longer the only thing protecting data.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
-import { Eye, EyeOff, ShieldCheck, ChevronDown, Check } from "lucide-react";
+import { Eye, EyeOff, ShieldCheck, ChevronDown, Check, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { USERS, setAdminProfile, type AdminProfile } from "@/lib/admin-profile";
+import { USERS, setAdminProfile, type AdminProfile, type UserRole } from "@/lib/admin-profile";
 import { api, getAdminToken, setAdminToken, clearAdminToken } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -62,6 +62,7 @@ export default function AdminLoginPage() {
 
   const [selected, setSelected] = useState<AdminProfile | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerQuery, setPickerQuery] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -70,6 +71,21 @@ export default function AdminLoginPage() {
   const [starterPw, setStarterPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [newPw2, setNewPw2] = useState("");
+
+  // Workers who've finished onboarding show up here automatically, on top of
+  // the hand-maintained profiles in admin-profile.ts — no code change needed
+  // per new hire. Only ever adds; never overrides an existing profile.
+  const [roster, setRoster] = useState<{ id: string; name: string; photoUrl?: string }[]>([]);
+  useEffect(() => {
+    api.getTeamRoster().then((r) => { if (r.ok && r.data?.workers) setRoster(r.data.workers); }).catch(() => {});
+  }, []);
+  const allUsers = useMemo<AdminProfile[]>(() => {
+    const known = new Set(USERS.map((u) => u.id));
+    const discovered: AdminProfile[] = roster
+      .filter((w) => !known.has(w.id))
+      .map((w) => ({ id: w.id, name: w.name, role: "STAFF" as UserRole, dashboardOnly: true, photoUrl: w.photoUrl }));
+    return [...USERS, ...discovered];
+  }, [roster]);
 
   // Resolve a dashboard-only user's personal worker link and go there.
   const goToDashboard = async () => {
@@ -97,11 +113,11 @@ export default function AdminLoginPage() {
     try {
       const lastId = localStorage.getItem(LAST_USER_KEY);
       if (lastId) {
-        const u = USERS.find((x) => x.id === lastId);
+        const u = allUsers.find((x) => x.id === lastId);
         if (u) setSelected(u);
       }
     } catch {}
-  }, []);
+  }, [allUsers]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -215,7 +231,7 @@ export default function AdminLoginPage() {
                 <Avatar user={selected} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium text-foreground">{selected.name}</span>
-                  <span className="block text-xs text-muted-foreground">{selected.role === "HOST" ? "Johtaja" : "Tekijä"}</span>
+                  <span className="block text-xs text-muted-foreground">{selected.role === "HOST" ? "Johtaja" : selected.role === "MARKETER" ? "Myynti" : "Tekijä"}</span>
                 </span>
               </>
             ) : (
@@ -232,43 +248,60 @@ export default function AdminLoginPage() {
           {pickerOpen && (
             <>
               {/* Click-away backdrop */}
-              <div className="fixed inset-0 z-40" onClick={() => setPickerOpen(false)} />
-              <div
-                role="listbox"
-                className="absolute left-0 right-0 top-[calc(100%+8px)] z-50 max-h-72 overflow-y-auto rounded-2xl border border-border bg-card p-1.5 premium-shadow"
-              >
-                {(["HOST", "STAFF"] as const).map((role) => {
-                  const group = USERS.filter((u) => (role === "HOST" ? u.role === "HOST" : u.role !== "HOST"));
-                  if (!group.length) return null;
-                  return (
-                    <div key={role} className="mb-1 last:mb-0">
-                      <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                        {role === "HOST" ? "Johtajat" : "Tekijät"}
-                      </p>
-                      {group.map((user) => {
-                        const active = selected?.id === user.id;
-                        return (
-                          <button
-                            key={user.id}
-                            type="button"
-                            role="option"
-                            aria-selected={active}
-                            onClick={() => { setSelected(user); setPassword(""); setPickerOpen(false); }}
-                            className={cn(
-                              "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors",
-                              active ? "bg-primary/10" : "hover:bg-muted",
-                            )}
-                            data-testid={`btn-select-user-${user.id}`}
-                          >
-                            <Avatar user={user} size={32} />
-                            <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{user.name}</span>
-                            {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
+              <div className="fixed inset-0 z-40" onClick={() => { setPickerOpen(false); setPickerQuery(""); }} />
+              <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-50 rounded-2xl border border-border bg-card p-1.5 premium-shadow">
+                {/* Search — the team's grown past a quick scroll-and-tap list */}
+                {allUsers.length > 6 && (
+                  <div className="relative mb-1 px-0.5 pt-0.5">
+                    <Search className="pointer-events-none absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <input
+                      autoFocus
+                      value={pickerQuery}
+                      onChange={(e) => setPickerQuery(e.target.value)}
+                      placeholder="Hae nimellä…"
+                      className="w-full rounded-xl border border-transparent bg-muted/60 py-2 pl-9 pr-3 text-sm text-foreground outline-none focus:border-primary/40"
+                      data-testid="input-user-search"
+                    />
+                  </div>
+                )}
+                <div role="listbox" className="max-h-72 overflow-y-auto">
+                  {(["HOST", "STAFF", "MARKETER"] as const).map((role) => {
+                    const q = pickerQuery.trim().toLowerCase();
+                    const group = allUsers.filter((u) => u.role === role && (!q || u.name.toLowerCase().includes(q)));
+                    if (!group.length) return null;
+                    return (
+                      <div key={role} className="mb-1 last:mb-0">
+                        <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                          {role === "HOST" ? "Johtajat" : role === "MARKETER" ? "Myynti" : "Tekijät"}
+                        </p>
+                        {group.map((user) => {
+                          const active = selected?.id === user.id;
+                          return (
+                            <button
+                              key={user.id}
+                              type="button"
+                              role="option"
+                              aria-selected={active}
+                              onClick={() => { setSelected(user); setPassword(""); setPickerOpen(false); setPickerQuery(""); }}
+                              className={cn(
+                                "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors",
+                                active ? "bg-primary/10" : "hover:bg-muted",
+                              )}
+                              data-testid={`btn-select-user-${user.id}`}
+                            >
+                              <Avatar user={user} size={32} />
+                              <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{user.name}</span>
+                              {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                  {pickerQuery.trim() && !allUsers.some((u) => u.name.toLowerCase().includes(pickerQuery.trim().toLowerCase())) && (
+                    <p className="px-3 py-4 text-center text-sm text-muted-foreground">Ei tuloksia.</p>
+                  )}
+                </div>
               </div>
             </>
           )}

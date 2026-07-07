@@ -537,7 +537,7 @@ export const api = {
         jobId: number; index: number; gigName: string; jobDescription: string;
         dateMs: number | null; amountCents: number;
         biller: { id: string; name: string } | null;
-        isFixedDeal: boolean; isLast: boolean;
+        isFixedDeal: boolean;
         instalmentBasisCents: number | null;
         kateCents: number | null; palkatCents: number | null;
         shares: { id: string; name: string; cents: number }[] | null;

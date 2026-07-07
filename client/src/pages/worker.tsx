@@ -391,6 +391,13 @@ const WORKER_INTROS: Record<string, WorkerIntro> = {
     line: "Hienoa saada kokenut ikkunanpesijä tiimiin. Tässä on sinun oma työpöytäsi — näet työsi ja ansiosi kertyvän reaaliajassa. Laskutat omalla Y-tunnuksellasi ja hoidat verosi itse, me tuomme keikat ja maksamme ajallaan. Tehdään yhdessä siistiä jälkeä — ja katsotaan mihin tästä jatketaan. 💪",
     accent: "#7CE0A6",
   },
+  selma: {
+    photo: "/fr8/selma.jpg",
+    tagline: "Uusi tekijä",
+    greeting: "Tervetuloa tiimiin, Selma ✨",
+    line: "Kiva että lähdit mukaan! Tää on sun oma työpöytä: täältä näät oman duunisi ja ansiosi etenevän pitkin päivää. Otetaan rennosti ja tehdään yhdessä hyvää jälkeä. Nähdään keikalla! 🚀",
+    accent: "#7CE0A6",
+  },
 };
 function introFor(name: string) {
   const first = (name || "").trim().split(/\s+/)[0]?.toLowerCase();

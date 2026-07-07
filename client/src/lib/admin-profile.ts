@@ -156,6 +156,19 @@ export const USERS: AdminProfile[] = [
     dashboardOnly: true,
   },
   {
+    // FR8-tekijä (alihankkija, kuten Jani, Oliver, Oona & Doma) — uusi tekijä,
+    // aloittaa normaalisti alusta. Kirjautuu vain omaan keikkadashboardiinsa (ei
+    // admin-näkymää). Aloitussalasana on sama jaettu ADMIN_DEFAULT_PASSWORD
+    // (server routes.ts) kuin kaikilla muillakin; kirjautuessa pyydetään
+    // vaihtamaan oma salasana. Crew-linkitys: linkedUserId = "selma" tai
+    // etunimimatch (Selma → selma) hoituu automaattisesti.
+    id: "selma",
+    name: "Selma",
+    role: "STAFF",
+    photoUrl: "/fr8/selma.jpg",
+    dashboardOnly: true,
+  },
+  {
     // Ovelta ovelle -myyjä — kirjautuu vain myyntipaneeliin (/admin/myynti).
     // Kerää liidejä (asiakas + keikka tilassa "lead", submissionStatus
     // "pending_review"), jotka perustajat hyväksyvät/ottavat/hylkäävät. Saa

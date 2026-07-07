@@ -191,7 +191,7 @@ export default function AboutPage() {
             {t("about.crew.desc")}{" "}
             <a href="mailto:info@puuhapatet.fi" className="text-primary underline underline-offset-2">{t("about.crew.cta")}</a>.
           </p>
-          <AvatarGroup avatars={tiimi} size={72} />
+          <AvatarGroup avatars={tiimi} />
         </Card>
 
         {/* Contact */}

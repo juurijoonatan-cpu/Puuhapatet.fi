@@ -48,14 +48,16 @@ const team = [
   },
 ];
 
-// Tekijätiimi (alihankkijat) — näytetään about-sivulla avatar-ryhmänä. Kuvat
-// /public-kansiosta; puuttuvat putoavat nimikirjaimiin.
-const ALIHANKKIJAT = [
+// Tekijätiimi — näytetään about-sivulla avatar-ryhmänä. Kuvat /public-kansiosta;
+// puuttuvat putoavat nimikirjaimiin.
+const TIIMI = [
   { src: "/petrus.jpg.jpeg", fallback: "PA", tooltip: "Petrus" },
   { src: "/fr8/jani.jpg", fallback: "JA", tooltip: "Jani" },
   { src: "/fr8/oliver.jpg", fallback: "OL", tooltip: "Oliver" },
   { src: "/fr8/oona.jpg", fallback: "OO", tooltip: "Oona" },
   { fallback: "MI", tooltip: "Milja" },
+  { src: "/fr8/doma.jpg", fallback: "DO", tooltip: "Doma" },
+  { src: "/fr8/selma.jpg", fallback: "SE", tooltip: "Selma" },
 ];
 
 export default function AboutPage() {
@@ -165,14 +167,14 @@ export default function AboutPage() {
           ))}
         </div>
 
-        {/* Tiimi & alihankkijat — the crew who does the work */}
+        {/* Tiimi — the crew who does the work */}
         <Card className="p-6 md:p-8 bg-card border-0 premium-shadow mb-8">
           <h2 className="text-xl font-semibold text-foreground mb-2">{t("about.crew.title")}</h2>
           <p className="text-sm text-muted-foreground leading-relaxed mb-6 max-w-xl">
             {t("about.crew.desc")}{" "}
             <a href="mailto:info@puuhapatet.fi" className="text-primary underline underline-offset-2">{t("about.crew.cta")}</a>.
           </p>
-          <AvatarGroup avatars={ALIHANKKIJAT} />
+          <AvatarGroup avatars={TIIMI} size={72} />
         </Card>
 
         {/* Contact */}

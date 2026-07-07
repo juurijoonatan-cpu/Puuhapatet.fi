@@ -381,12 +381,11 @@ const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "joonatan@puuhapatet.fi";
 // AUTH_SECRET MUST be set in the deployment environment. Without it the admin
 // API refuses to log anyone in (fail closed) rather than trusting everyone.
 const AUTH_SECRET = process.env.AUTH_SECRET || "";
-// First-time password for an account that has never set one. Lets the team log
-// in once after the upgrade; the password is hashed on first successful login.
+// First-time password for ANY account that has never set one — hosts and
+// workers alike log in once with this single shared code; it's hashed into
+// their own password on first successful login, so it's a one-time key per
+// account, not a permanent shared login.
 const ADMIN_DEFAULT_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || "";
-// Per-user starter passwords for brand-new accounts (worker logins). Accepted
-// only until the user sets their own; then it's hashed and this is ignored.
-const INITIAL_PASSWORDS: Record<string, string> = { jani: "Jani123", milja: "milja456", oliver: "Oliver234", oona: "Oona345", doma: "Doma123", petrus: "Petrus123", myyja1: "Myyja123" };
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 function b64url(buf: Buffer): string {
@@ -906,11 +905,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (stored) {
         ok = verifyPassword(String(password), stored);
       } else {
-        // Account has no password yet → accept a per-user starter password (e.g.
-        // Jani logs in once with "Jani123") or the shared one-time default.
-        const starter = INITIAL_PASSWORDS[String(userId).toLowerCase()];
-        if (starter && String(password) === starter) { ok = true; usedStarter = true; }
-        else if (ADMIN_DEFAULT_PASSWORD && String(password) === ADMIN_DEFAULT_PASSWORD) { ok = true; usedStarter = true; }
+        // Account has no password yet → accept the one shared one-time default
+        // (everyone — hosts and workers alike — logs in once with the same code).
+        if (ADMIN_DEFAULT_PASSWORD && String(password) === ADMIN_DEFAULT_PASSWORD) { ok = true; usedStarter = true; }
       }
       if (!ok) return res.status(401).json({ error: "Virheellinen salasana." });
 

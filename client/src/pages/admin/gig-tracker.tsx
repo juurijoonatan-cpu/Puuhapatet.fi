@@ -83,6 +83,11 @@ export default function AdminGigTrackerPage() {
   const [invForm, setInvForm] = useState({
     to: "", iban: "", bic: "", viitenumero: "", dueDate: isoPlusDays(14),
     message: "", isFinal: false, billerId: defaultBillerId, eInvoice: "", paymentNumber: 1,
+    // "email": Puuhapatet sends the full priced invoice by email (default).
+    // "verkkolasku": the founder issues the real invoice themselves via their
+    // own invoicing software (e.g. Laskuguru) to the verkkolaskuosoite below —
+    // Puuhapatet only sends a short confirmation and records the instalment.
+    sendMethod: "email" as "email" | "verkkolasku",
   });
 
   useEffect(() => {
@@ -285,12 +290,15 @@ export default function AdminGigTrackerPage() {
       isFinal: invForm.isFinal,
       eInvoice: invForm.eInvoice || undefined,
       paymentNumber: deal ? invForm.paymentNumber : undefined,
+      sendMethod: invForm.sendMethod,
     });
     setSending(false);
     if (res.ok && res.data) {
       setGig(res.data.gigData);
       setInvoiceOpen(false);
-      toast({ title: "Lasku lähetetty", description: `${eur(res.data.amountCents)} → ${invForm.to}` });
+      toast(invForm.sendMethod === "verkkolasku"
+        ? { title: "Vahvistus lähetetty", description: `${eur(res.data.amountCents)} → ${invForm.eInvoice} (muista lähettää itse varsinainen verkkolasku)` }
+        : { title: "Lasku lähetetty", description: `${eur(res.data.amountCents)} → ${invForm.to}` });
     } else {
       toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error });
     }
@@ -827,6 +835,30 @@ export default function AdminGigTrackerPage() {
                 {deal ? eur2(fixedInstallmentCents) : eur2(totals.uninvoicedCents)}
               </p>
             </div>
+            <div>
+              <Label className="text-xs">Lähetystapa</Label>
+              <div className="flex rounded-lg border p-0.5 gap-0.5 mt-1">
+                <button
+                  type="button"
+                  onClick={() => setInvForm({ ...invForm, sendMethod: "email" })}
+                  className={`flex-1 rounded-md py-1.5 text-xs font-medium transition-colors ${invForm.sendMethod === "email" ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  Sähköposti
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInvForm({ ...invForm, sendMethod: "verkkolasku" })}
+                  className={`flex-1 rounded-md py-1.5 text-xs font-medium transition-colors ${invForm.sendMethod === "verkkolasku" ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  Verkkolaskutusosoite
+                </button>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                {invForm.sendMethod === "verkkolasku"
+                  ? "Lähetät itse varsinaisen laskun omalla laskutusohjelmallasi verkkolaskuosoitteeseen. Puuhapatet lähettää asiakkaalle vain lyhyen vahvistuksen ja kirjaa erän seurantaan."
+                  : "Puuhapatet lähettää täyden, eritellyn laskun suoraan sähköpostitse."}
+              </p>
+            </div>
             {deal && (
               <div>
                 <Label className="text-xs">Maksuerä (monesko)</Label>
@@ -867,10 +899,12 @@ export default function AdminGigTrackerPage() {
               <Input type="email" value={invForm.to} onChange={(e) => setInvForm({ ...invForm, to: e.target.value })} placeholder="laskut@yritys.fi" />
             </div>
             <div>
-              <Label className="text-xs">Verkkolaskuosoite (valinnainen)</Label>
+              <Label className="text-xs">Verkkolaskuosoite{invForm.sendMethod === "verkkolasku" ? " *" : " (valinnainen)"}</Label>
               <Input value={invForm.eInvoice} onChange={(e) => setInvForm({ ...invForm, eInvoice: e.target.value })} placeholder="esim. OVT 003712345678 / operaattori" />
               <p className="text-[11px] text-muted-foreground mt-1">
-                Asiakkaan antama verkkolaskuosoite. Merkitään laskulle. Itse lasku lähtee yllä olevaan sähköpostiin.
+                {invForm.sendMethod === "verkkolasku"
+                  ? "Tähän osoitteeseen lähetät itse laskun (esim. Laskuguru). IBAN, viitenumero ja eräpäivä alla ovat samat tiedot valmiina kopioitavaksi omaan laskutusohjelmaan."
+                  : "Asiakkaan antama verkkolaskuosoite. Merkitään laskulle. Itse lasku lähtee yllä olevaan sähköpostiin."}
               </p>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -904,8 +938,11 @@ export default function AdminGigTrackerPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setInvoiceOpen(false)}>Peruuta</Button>
-            <Button disabled={sending || !invForm.to} onClick={sendInvoice}>
-              {sending ? "Lähetetään…" : "Lähetä lasku"}
+            <Button
+              disabled={sending || !invForm.to || (invForm.sendMethod === "verkkolasku" && !invForm.eInvoice)}
+              onClick={sendInvoice}
+            >
+              {sending ? "Lähetetään…" : invForm.sendMethod === "verkkolasku" ? "Lähetä verkkolaskutusosoitteella" : "Lähetä lasku"}
             </Button>
           </DialogFooter>
         </DialogContent>

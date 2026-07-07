@@ -822,7 +822,7 @@ export default function AdminGigTrackerPage() {
 
       {/* Invoice dialog */}
       <Dialog open={invoiceOpen} onOpenChange={setInvoiceOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md max-h-[88vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Lähetä lasku</DialogTitle>
           </DialogHeader>

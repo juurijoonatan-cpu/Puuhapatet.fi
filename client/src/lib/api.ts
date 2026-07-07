@@ -861,6 +861,7 @@ export const api = {
     isFinal?: boolean;
     eInvoice?: string;
     paymentNumber?: number;
+    sendMethod?: "email" | "verkkolasku";
   }) => request<{ ok: boolean; id?: string; amountCents: number; gigData: GigData }>(
     "POST", `/api/jobs/${jobId}/gig/invoice`, data,
   ),

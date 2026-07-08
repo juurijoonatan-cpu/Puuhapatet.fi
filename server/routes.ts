@@ -4042,8 +4042,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         message, isFinal, eInvoice, sendMethod,
       } = req.body as Record<string, any>;
 
-      const recipient = to || gig.company?.email;
-      if (!recipient) return res.status(400).json({ error: "Vastaanottajan sähköposti puuttuu" });
+      // The recipient field may hold several addresses (two contact people etc.)
+      // separated by comma / semicolon / "&" / whitespace — split them into a
+      // real list so each gets the email, instead of one malformed "a & b" string.
+      const recipientList = String(to || gig.company?.email || "")
+        .split(/[\s,;&]+/).map((s) => s.trim()).filter((s) => s.includes("@"));
+      if (recipientList.length === 0) return res.status(400).json({ error: "Vastaanottajan sähköposti puuttuu" });
+      const recipient = recipientList.join(", "); // for display / logging / the payment record
 
       // Verkkolasku mode: the founder issues the actual e-invoice themselves
       // through their own invoicing software (e.g. Laskuguru) to the customer's
@@ -4192,15 +4197,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 </body></html>`;
 
       // Always BCC the team on every customer invoice — admins can also add extra
-      // addresses via the bcc field. Deduplicate and exclude the main recipient.
+      // addresses via the bcc field (comma/space/&/;-separated). Deduplicate and
+      // exclude the main recipients so nobody gets both a To and a Bcc copy.
       const bccArr = Array.from(new Set([
-        ...(bcc ? String(bcc).split(",").map((s) => s.trim()).filter(Boolean) : []),
+        ...(bcc ? String(bcc).split(/[\s,;&]+/).map((s) => s.trim()).filter(Boolean) : []),
         ...WORKER_NOTIFICATION_EMAILS,
         ...INVOICE_BCC_EMAILS,
-      ])).filter((e) => e && e !== recipient);
+      ])).filter((e) => e && !recipientList.includes(e));
       const result = await resend.emails.send({
         from: FROM_EMAIL,
-        to: recipient,
+        to: recipientList.length === 1 ? recipientList[0] : recipientList,
         ...(bccArr.length ? { bcc: bccArr } : {}),
         subject: fixedDeal
           ? `Osalasku ${paymentNumber}/4 · ${invoiceNo}${viaEInvoice ? " (verkkolaskuosoitteeseen)" : ` — ${fmtEur(amountCents)}`} · Puuhapatet`

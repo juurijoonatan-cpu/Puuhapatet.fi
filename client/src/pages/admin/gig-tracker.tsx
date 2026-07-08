@@ -42,6 +42,14 @@ function isoPlusDays(days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** Split a recipient field into individual addresses. The customer often has two
+ *  contact people, entered as "a@x.fi & b@x.fi" / comma- / semicolon-separated. */
+function parseEmailList(s: string): string[] {
+  return Array.from(new Set(
+    String(s).split(/[\s,;&]+/).map((e) => e.trim()).filter((e) => e.includes("@")),
+  ));
+}
+
 export default function AdminGigTrackerPage() {
   const [, params] = useRoute("/admin/gig/:id");
   const [, navigate] = useLocation();
@@ -88,6 +96,11 @@ export default function AdminGigTrackerPage() {
     // own invoicing software (e.g. Laskuguru) to the verkkolaskuosoite below —
     // Puuhapatet only sends a short confirmation and records the instalment.
     sendMethod: "email" as "email" | "verkkolasku",
+    // When the recipient field holds several addresses, the ones the user has
+    // unticked in the chip row (so they can send to one contact or both).
+    excludedRecipients: [] as string[],
+    // BCC a copy to the invoicing founder's own inbox.
+    bccSelf: true,
   });
 
   useEffect(() => {
@@ -275,8 +288,15 @@ export default function AdminGigTrackerPage() {
     // logged-in leader) — their name + Y-tunnus go on the invoice and become the
     // buyer on the alihankkija invoices funded by this instalment.
     const biller = resolveBrandBiller(invForm.billerId);
+    // Only the ticked recipients (a customer may have two contact people). Fall
+    // back to whatever's typed if the parse found nothing to toggle.
+    const allTo = parseEmailList(invForm.to);
+    const chosenTo = allTo.filter((e) => !invForm.excludedRecipients.includes(e));
+    const recipients = (chosenTo.length ? chosenTo : allTo).join(", ") || invForm.to;
+    const bccSelfEmail = invForm.bccSelf ? (biller?.email ?? profile?.email ?? "") : "";
     const res = await api.sendGigInvoice(jobId, {
-      to: invForm.to || undefined,
+      to: recipients || undefined,
+      bcc: bccSelfEmail || undefined,
       iban: invForm.iban || undefined,
       bic: invForm.bic || undefined,
       viitenumero: invForm.viitenumero || undefined,
@@ -297,8 +317,8 @@ export default function AdminGigTrackerPage() {
       setGig(res.data.gigData);
       setInvoiceOpen(false);
       toast(invForm.sendMethod === "verkkolasku"
-        ? { title: "Vahvistus lähetetty", description: `${eur(res.data.amountCents)} → ${invForm.eInvoice} (muista lähettää itse varsinainen verkkolasku)` }
-        : { title: "Lasku lähetetty", description: `${eur(res.data.amountCents)} → ${invForm.to}` });
+        ? { title: "Vahvistus lähetetty", description: `${eur(res.data.amountCents)} → ${recipients} (muista lähettää itse varsinainen verkkolasku)` }
+        : { title: "Lasku lähetetty", description: `${eur(res.data.amountCents)} → ${recipients}` });
     } else {
       toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error });
     }
@@ -397,6 +417,11 @@ export default function AdminGigTrackerPage() {
   const totals = computeTotals(gig);
   const deal = project ? fixedDealFor(project) : null;
   const dealBilling = (deal && project) ? computeDealBilling(project, deal) : null;
+
+  // Recipient addresses parsed from the "to" field (a customer can have two
+  // contact people), and the subset the founder has kept ticked in the chip row.
+  const invoiceToEmails = parseEmailList(invForm.to);
+  const chosenToEmails = invoiceToEmails.filter((e) => !invForm.excludedRecipients.includes(e));
 
   // For fixed-price deals: invoice is available when the next quarter of windows is done.
   // Quarter size = billableTotal / 4 and scales dynamically if dots are added to the map.
@@ -896,7 +921,36 @@ export default function AdminGigTrackerPage() {
             </div>
             <div>
               <Label className="text-xs">Vastaanottaja (sähköposti) *</Label>
-              <Input type="email" value={invForm.to} onChange={(e) => setInvForm({ ...invForm, to: e.target.value })} placeholder="laskut@yritys.fi" />
+              <Input type="text" value={invForm.to} onChange={(e) => setInvForm({ ...invForm, to: e.target.value })} placeholder="laskut@yritys.fi" />
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Voit lisätä useamman osoitteen — erota välilyönnillä, pilkulla tai &-merkillä.
+              </p>
+              {/* Two contact people → let the founder pick who gets it or both. */}
+              {invoiceToEmails.length >= 2 && (
+                <div className="mt-2">
+                  <p className="text-[11px] text-muted-foreground mb-1.5">Kenelle lähetetään:</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {invoiceToEmails.map((email) => {
+                      const on = !invForm.excludedRecipients.includes(email);
+                      return (
+                        <button
+                          key={email}
+                          type="button"
+                          onClick={() => setInvForm((f) => ({
+                            ...f,
+                            excludedRecipients: on
+                              ? [...f.excludedRecipients, email]
+                              : f.excludedRecipients.filter((x) => x !== email),
+                          }))}
+                          className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${on ? "bg-foreground text-background border-foreground" : "bg-background text-muted-foreground border-border"}`}
+                        >
+                          {on ? "✓ " : ""}{email}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
             <div>
               <Label className="text-xs">Verkkolaskuosoite{invForm.sendMethod === "verkkolasku" ? " *" : " (valinnainen)"}</Label>
@@ -940,6 +994,10 @@ export default function AdminGigTrackerPage() {
               <Textarea rows={2} value={invForm.message} onChange={(e) => setInvForm({ ...invForm, message: e.target.value })} />
             </div>
             <label className="flex items-center gap-2 text-sm text-foreground">
+              <input type="checkbox" checked={invForm.bccSelf} onChange={(e) => setInvForm({ ...invForm, bccSelf: e.target.checked })} />
+              Lähetä piilokopio myös minulle{(resolveBrandBiller(invForm.billerId)?.email) ? ` (${resolveBrandBiller(invForm.billerId)!.email})` : ""}
+            </label>
+            <label className="flex items-center gap-2 text-sm text-foreground">
               <input type="checkbox" checked={invForm.isFinal} onChange={(e) => setInvForm({ ...invForm, isFinal: e.target.checked })} />
               Loppulasku (työ valmis)
             </label>
@@ -947,7 +1005,7 @@ export default function AdminGigTrackerPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setInvoiceOpen(false)}>Peruuta</Button>
             <Button
-              disabled={sending || !invForm.to || (invForm.sendMethod === "verkkolasku" && !invForm.eInvoice)}
+              disabled={sending || chosenToEmails.length === 0 || (invForm.sendMethod === "verkkolasku" && !invForm.eInvoice)}
               onClick={sendInvoice}
             >
               {sending ? "Lähetetään…" : invForm.sendMethod === "verkkolasku" ? "Lähetä verkkolaskutusosoitteella" : "Lähetä lasku"}

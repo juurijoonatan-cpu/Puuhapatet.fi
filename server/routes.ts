@@ -4128,16 +4128,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     </div>
     <div style="padding:24px 32px">
       <p style="margin:0 0 16px;color:#1A1A1A;font-size:15px;font-weight:600">${gig.company?.name || job.description}${gig.company?.businessId ? ` · Y-tunnus ${gig.company.businessId}` : ""}</p>
-      <p style="margin:0 0 4px;color:#1A1A1A;font-size:14px;line-height:1.7">
-        ${fixedDeal ? `Maksuerä ${paymentNumber}/4 (${fmtEur(amountCents)})` : `${isFinal ? "Loppulasku" : "Osalasku"} (${fmtEur(amountCents)})`}
-        on lähetetty verkkolaskuosoitteeseenne:
+      <p style="margin:0 0 12px;color:#1A1A1A;font-size:14px;line-height:1.7">Hei,</p>
+      <p style="margin:0 0 16px;color:#1A1A1A;font-size:14px;line-height:1.7">
+        ${fixedDeal ? `Ikkunanpesu-urakan maksuerä ${paymentNumber}/4` : (isFinal ? "Loppulasku työstä" : "Osalasku työstä")}
+        (${fmtEur(amountCents)}) on lähetetty teille verkkolaskuna${eInvoice ? ` osoitteeseen <span style="font-weight:600">${String(eInvoice).replace(/</g, "&lt;")}</span>` : ""}.
       </p>
-      <p style="margin:0 0 20px;color:#1A1A1A;font-size:15px;font-weight:700;font-family:'Courier New',monospace">${String(eInvoice).replace(/</g, "&lt;")}</p>
-      ${message ? `<p style="margin:0 0 20px;color:#1A1A1A;font-size:14px;line-height:1.7;white-space:pre-wrap">${String(message).replace(/</g, "&lt;")}</p>` : ""}
-      ${dueDisplay ? `<p style="margin:0 0 16px;color:#8C8A82;font-size:13px">Eräpäivä: ${dueDisplay}</p>` : ""}
-      <p style="margin:20px 0 0;color:#8C8A82;font-size:12px;line-height:1.6">
-        Tämä viesti on vahvistus — varsinainen, eritelty lasku saapuu verkkolaskuna yllä mainittuun osoitteeseen. Seuraa työn edistymistä reaaliaikaisesti seurantalinkistä.
+      <p style="margin:0 0 16px;color:#1A1A1A;font-size:14px;line-height:1.7">
+        Maksutiedot ja eräpäivä löytyvät itse laskulta. Tämä viesti on vain vahvistus lähetyksestä.
       </p>
+      ${message ? `<p style="margin:16px 0 0;color:#1A1A1A;font-size:14px;line-height:1.7;white-space:pre-wrap">${String(message).replace(/</g, "&lt;")}</p>` : ""}
+      <p style="margin:20px 0 0;color:#1A1A1A;font-size:14px;line-height:1.7">Ystävällisin terveisin,<br>Puuhapatet</p>
     </div>
     <div style="padding:16px 32px;border-top:1px solid #E4E1D7;background:#F6F4EE">
       <p style="margin:0;color:#8C8A82;font-size:12px">Puuhapatet · info@puuhapatet.fi · puuhapatet.fi${workerPhone ? ` · ${workerPhone}` : ""}</p>

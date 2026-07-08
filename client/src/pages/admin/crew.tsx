@@ -1095,6 +1095,11 @@ function WorkerCardHeader({
               </span>
             )}
             {!member.active && <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[10px] font-semibold text-zinc-500">Pois käytöstä</span>}
+            {member.activeShiftAt && (
+              <span className="rounded-full bg-green-500/10 px-2 py-0.5 text-[10px] font-semibold text-green-600">
+                Työaika käynnissä · {fmtShiftDuration(Date.now() - member.activeShiftAt)}
+              </span>
+            )}
           </div>
         </div>
         {dirty
@@ -1136,10 +1141,29 @@ function WorkerCardHeader({
           />
           €/ikkuna
         </label>
+        {member.activeShiftAt && (
+          <button
+            onClick={() => {
+              if (!confirm(`Päätetäänkö ${member.name}n käynnissä oleva työaika (${fmtShiftDuration(Date.now() - member.activeShiftAt!)})?\n\nKäytä tätä kun työntekijä on unohtanut painaa "Päätä työaika" itse. Ei vaikuta tuntikirjanpitoon.`)) return;
+              onUpdate(member.id, { endShift: true });
+            }}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 px-2.5 py-1.5 text-xs font-medium text-amber-600"
+          >
+            Päätä vuoro
+          </button>
+        )}
         <button onClick={() => onUpdate(member.id, { active: !member.active })} className="text-xs underline text-muted-foreground ml-auto">
           {member.active ? "Poista käytöstä" : "Ota käyttöön"}
         </button>
       </div>
     </div>
   );
+}
+
+/** "2 t 47 min" / "47 min" for the stuck-shift badge + confirm dialog. */
+function fmtShiftDuration(ms: number): string {
+  const totalMin = Math.max(0, Math.round(ms / 60000));
+  const h = Math.floor(totalMin / 60);
+  const min = totalMin % 60;
+  return h > 0 ? `${h} t ${min} min` : `${min} min`;
 }

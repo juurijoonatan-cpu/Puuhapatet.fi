@@ -1005,7 +1005,7 @@ export const api = {
     request<{ ok: boolean; member: CrewMember; crew: CrewMember[] }>(
       "POST", `/api/jobs/${jobId}/crew`, data),
 
-  updateCrewMember: (jobId: number, memberId: string, data: { name?: string; perWindowCents?: number; active?: boolean; role?: "worker" | "host"; rotateToken?: boolean; linkedUserId?: string; agreementSet?: "standard" | "kevyt"; profile?: { fullName?: string; phone?: string; email?: string; city?: string; yTunnus?: string; iban?: string; answers?: Record<string, string> } }) =>
+  updateCrewMember: (jobId: number, memberId: string, data: { name?: string; perWindowCents?: number; active?: boolean; role?: "worker" | "host"; rotateToken?: boolean; linkedUserId?: string; agreementSet?: "standard" | "kevyt"; endShift?: boolean; profile?: { fullName?: string; phone?: string; email?: string; city?: string; yTunnus?: string; iban?: string; answers?: Record<string, string> } }) =>
     request<{ ok: boolean; member: CrewMember; crew: CrewMember[] }>(
       "PATCH", `/api/jobs/${jobId}/crew/${memberId}`, data),
 

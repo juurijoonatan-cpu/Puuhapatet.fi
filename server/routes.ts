@@ -6018,6 +6018,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           profile: mergeProfile(m.profile),
           // Host can rotate a leaked link — the old link dies immediately.
           token: rotatedToken ?? m.token,
+          // Host force-clears a stuck "shift running" timer — e.g. the worker
+          // left the site without pressing "Päätä työaika" and it's still
+          // showing as running a day later. This only clears the live-timer
+          // flag; it does not touch the hours ledger or past sessions.
+          ...(req.body?.endShift ? { activeShiftAt: undefined, shiftStartWashed: undefined } : {}),
         });
         return updated ?? m;
       });

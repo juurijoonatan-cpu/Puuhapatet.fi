@@ -903,30 +903,38 @@ export default function AdminGigTrackerPage() {
               <Input value={invForm.eInvoice} onChange={(e) => setInvForm({ ...invForm, eInvoice: e.target.value })} placeholder="esim. OVT 003712345678 / operaattori" />
               <p className="text-[11px] text-muted-foreground mt-1">
                 {invForm.sendMethod === "verkkolasku"
-                  ? "Tähän osoitteeseen lähetät itse laskun (esim. Laskuguru). IBAN, viitenumero ja eräpäivä alla ovat samat tiedot valmiina kopioitavaksi omaan laskutusohjelmaan."
+                  ? "Tähän osoitteeseen lähetät itse varsinaisen laskun omalla laskutusohjelmallasi. Puuhapatet lähettää asiakkaalle vain lyhyen vahvistuksen."
                   : "Asiakkaan antama verkkolaskuosoite. Merkitään laskulle. Itse lasku lähtee yllä olevaan sähköpostiin."}
               </p>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs">IBAN</Label>
-                <Input value={invForm.iban} onChange={(e) => setInvForm({ ...invForm, iban: e.target.value })} />
-              </div>
-              <div>
-                <Label className="text-xs">BIC</Label>
-                <Input value={invForm.bic} onChange={(e) => setInvForm({ ...invForm, bic: e.target.value })} />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs">Viitenumero</Label>
-                <Input value={invForm.viitenumero} onChange={(e) => setInvForm({ ...invForm, viitenumero: e.target.value })} />
-              </div>
-              <div>
-                <Label className="text-xs">Eräpäivä</Label>
-                <Input type="date" value={invForm.dueDate} onChange={(e) => setInvForm({ ...invForm, dueDate: e.target.value })} />
-              </div>
-            </div>
+            {/* IBAN / BIC / viite / eräpäivä matter only for the email invoice
+                (barcode + payment block). In verkkolasku mode the founder's own
+                invoicing software carries all of that, so these fields do nothing
+                here — hide them to keep the dialog clean. */}
+            {invForm.sendMethod !== "verkkolasku" && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs">IBAN</Label>
+                    <Input value={invForm.iban} onChange={(e) => setInvForm({ ...invForm, iban: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">BIC</Label>
+                    <Input value={invForm.bic} onChange={(e) => setInvForm({ ...invForm, bic: e.target.value })} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs">Viitenumero</Label>
+                    <Input value={invForm.viitenumero} onChange={(e) => setInvForm({ ...invForm, viitenumero: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Eräpäivä</Label>
+                    <Input type="date" value={invForm.dueDate} onChange={(e) => setInvForm({ ...invForm, dueDate: e.target.value })} />
+                  </div>
+                </div>
+              </>
+            )}
             <div>
               <Label className="text-xs">Viesti (valinnainen)</Label>
               <Textarea rows={2} value={invForm.message} onChange={(e) => setInvForm({ ...invForm, message: e.target.value })} />

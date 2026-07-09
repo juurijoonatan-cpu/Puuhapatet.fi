@@ -140,12 +140,65 @@ toteutusta verrataan. Päivitä yllä oleva taulukko jokaisen vaiheen jälkeen.
   (`shared/trainees.ts`) → hän ei näy Maksu-dialogissa eikä voi lähettää
   laskua — spekin kohdan 7 testitapaus Miljan riveillä toimii silti
   serverissä/testeissä. Jos Miljan pitää oikeasti laskuttaa, harjoittelija-
-  status pitää purkaa erikseen. (2) Johtajareitin viitenumerokaava
-  (`1_000_000 + jobId*100 + seq`) voi periaatteessa törmätä kahden eri
-  lähettäjän kesken — tekijäreitti käyttää jo id-pohjaista kaavaa; yhtenäistä
-  vaiheessa 5. (3) Kirjautumisen ensimmäinen oletussalasanakirjautuminen luo
-  users-rivin roolilla "staff" myös johtajille — kaikki johtaja-rajaukset
-  käyttävät siksi `role === "host" || FOUNDER_IDS.includes(sub)` -muotoa.
+  status pitää purkaa erikseen. (2) ~~Johtajareitin viitenumerokaava voi
+  törmätä~~ **korjattu, ks. alla.** (3) Kirjautumisen ensimmäinen
+  oletussalasanakirjautuminen luo users-rivin roolilla "staff" myös
+  johtajille — kaikki johtaja-rajaukset käyttävät siksi
+  `role === "host" || FOUNDER_IDS.includes(sub)` -muotoa.
+
+### Vaihe 3 — adversariaalinen katselmointi + korjaukset (commit `51a6744`)
+
+Ennen vaiheeseen 4 siirtymistä ajettiin 5-kulmainen adversariaalinen
+koodikatselmointi (`/code-review --effort high`) merge-committiin `3314768`,
+ristiin-vahvistettuna suoralla koodin lukemisella. Löydöt ja korjaukset:
+
+- **Korjattu — laskunumeroinnin race-condition (raha-tarkkuusvirhe):**
+  `count(*)`-sitten-kirjoita -kaava ei ollut atominen: sama tekijä/johtaja
+  saattoi lähettää kaksi eri laskua lähes yhtäaikaa (esim. erä 1-3 ja erä 4)
+  ja saada molemmille saman juoksevan numeron. **4/5 katselmointikulmaa
+  löysi tämän itsenäisesti.** Korjattu `withNextInvoiceNumber()`-funktiolla
+  (`server/routes.ts`), joka sarjoittaa saman lähettäjän numeroinnin Postgresin
+  `pg_advisory_xact_lock`-lukolla transaktion sisällä.
+- **Korjattu — viitenumerotörmäys johtajien välillä:** vanha kaava
+  (`1_000_000 + jobId*100 + seq`) ei sisältänyt lähettäjän tunnistetta, joten
+  Joonatanin ja Matiaksen ensimmäinen ristiinlasku samalla keikalla saivat
+  saman viitteen. Molemmat laskutyypit käyttävät nyt yhtenäistä,
+  törmäysvapaata kaavaa `1_000_000 + laskun_id` (id on globaalisti uniikki).
+- **Korjattu — onnistunut lähetys saattoi raportoitua virheenä:**
+  `respondToEraInvoice` rakensi vastauksen `workerView()`-kutsulla SAMAN
+  try/catchin sisällä kuin varsinaisen tilamuutoksen — jos näkymän
+  uudelleenrakennus epäonnistui mistä tahansa siihen liittymättömästä syystä,
+  koko pyyntö palautti 500:n vaikka lasku oli jo lukittu ja numeroitu.
+  Eristetty omaan try/catchiin; asiakas käsittelee nyt myös tapauksen jossa
+  `invoice` palautuu mutta `view` puuttuu (worker.tsx päivittää rivin
+  paikallisesti sen sijaan että näyttäisi virheen onnistuneelle toiminnolle).
+- **Korjattu — migraatiovarmuuden epäsymmetria:** `GET
+  /api/jobs/:id/era-invoices` puuttui sama "taulua ei ole vielä" -suoja kuin
+  `workerView()`:ssä → Maksut-sivu olisi 500:annut ennen `db:push`-ajoa.
+  Molemmat käyttävät nyt `isMissingTableError()`-tarkistusta (Postgres 42P01)
+  joka erottaa "taulu puuttuu" (turvallinen) muista virheistä (nyt lokittuvat).
+- **Korjattu — harjoittelija näki toimimattoman "Lähetä lasku" -napin:**
+  `EraInvoiceSection` piilottaa nyt lähetyspainikkeen (tarjoaa vain Hylkää)
+  jos `view.worker.trainee` on asetettu, koska serveri hylkää sen aina 400:lla.
+- **Korjattu — kaksi eri johtajanimi-toteutusta:** `worker.tsx` haki nimet
+  kovakoodatusta id-mäpistä; nyt käyttää samaa `BRAND_BILLERS`-lähdettä kuin
+  `MaksutView.tsx`.
+- **Korjattu — Maksut-välilehden client-side portti epäjohdonmukainen:**
+  `project.tsx` käytti pelkkää `FOUNDER_IDS`-tarkistusta kun palvelin ja
+  muut portit samassa diffissä käyttivät `role==='host'||FOUNDER_IDS`-mallia.
+  Yhtenäistetty.
+- **Tunnistettu, EI korjattu (dokumentoitu, matala prioriteetti):**
+  3-kirjaiminen laskunumeroprefiksi (`id.slice(0,3)`) voi periaatteessa
+  törmätä kahden samalla alulla alkavan tekijä-id:n välillä (esim.
+  "milja"/"milla") — kosmeettinen, ei vaikuta laskun juoksevan numeron
+  yksilöllisyyteen per lähettäjä, vain visuaaliseen prefiksiin.
+  `founderInvoiceSlot` (project.tsx) renderöityy vain jos johtaja on jo
+  kyseisen keikan `project.crew`-taulukossa — ei voitu vahvistaa/korjata
+  ilman pääsyä oikeaan tuotantokantaan, jossa FR8:n crew-data jo on.
+- `npm run check`: sama 6 esiolemassaolevan virheen baseline. `npm run test`:
+  25/25 vihreää. Transaktio/advisory-lock-muutoksia ei ole voitu ajaa
+  tietokantaa vasten tässä ympäristössä (db:push tuotantoon yhä ajamatta) —
+  varmistettu suoralla koodikatselmoinnilla, ei integraatiotestillä.
 
 ### Mitä koodikannasta löytyi ennen vaihetta 1 (tärkeä konteksti jatkajalle)
 

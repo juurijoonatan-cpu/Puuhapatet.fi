@@ -20,8 +20,8 @@
 | 1 | Datamalli + puhdas laskentamoottori + yksikkötesti (kohdat 2, 5, 7) | ☑ tehty — ks. alla |
 | 2 | Johtajan näkymät: laskun luonti ja lähetys (kohdat 3A, 3C) | ☑ tehty — ks. alla |
 | 3 | Vastaanottajan näkymät + kokonaistilanne-sivu (kohdat 3B, 3D) | ☑ tehty — ks. alla |
-| 4 | Lailliset vaatimukset: lukitus, laskumerkinnät, PDF, sähköposti (kohta 4) | ☐ odottaa lupaa |
-| 5 | Bugikorjaus (kohta 6.1) + kokonaisvaltainen validointi (kohta 6) | ☐ |
+| 4 | Lailliset vaatimukset: lukitus, laskumerkinnät, PDF, sähköposti (kohta 4) | ☑ tehty — ks. alla |
+| 5 | Bugikorjaus (kohta 6.1) + kokonaisvaltainen validointi (kohta 6) | ☐ odottaa lupaa |
 
 Yksityiskohtainen tekninen suunnitelma (mitä tiedostoja koskettaa, mitä
 olemassa olevaa koodia hyödynnetään, poistumiskriteerit per vaihe) on kirjoitettu
@@ -199,6 +199,57 @@ ristiin-vahvistettuna suoralla koodin lukemisella. Löydöt ja korjaukset:
   25/25 vihreää. Transaktio/advisory-lock-muutoksia ei ole voitu ajaa
   tietokantaa vasten tässä ympäristössä (db:push tuotantoon yhä ajamatta) —
   varmistettu suoralla koodikatselmoinnilla, ei integraatiotestillä.
+
+### Vaihe 4 — valmis (commit `9e59019`)
+
+- **PDF (kohta 4):** uusi `generateEraInvoicePdf()` (server/routes.ts) kattaa
+  molemmat laskutyypit ja sisältää kaikki pakolliset kentät: päiväys,
+  juokseva laskunumero, myyjän+ostajan nimi ja Y-tunnus, suoritteen kuvaus
+  ("Ikkunanpesu, N ikkunaa — Erä X"), veloitusperuste/summa, eräpäivä,
+  viitenumero, ALV-merkintä. `buildEraInvoicePdfParams()` kokoaa kentät
+  tallennetusta, lukitusta rivistä. **Kaksi tulkintapäätöstä, jotka
+  kirjanpitäjän pitää vahvistaa** (sama huomautus kuin spekissä):
+  1. Eräpäivä = 14 vrk laskun lähetyksestä — spekissä ei annettu maksuehtoa,
+     tämä on suomalainen yleiskäytäntö-oletus.
+  2. Tekijä-laskuille lasketaan sama ALV+ennakonpidätys-erittely kuin
+     tavallisille alihankkijan laskuille (`shared/tax.ts`, sama kuin
+     olemassa oleva payout-järjestelmä) — **KOKO** ansaitusta summasta, ei
+     vain "maksettava nyt" -jäännöksestä; jo maksettu ennakko vähennetään
+     vasta verolaskennan jälkeen omana rivinään (muuten ennakko jäisi
+     kokonaan verottamatta). Johtaja-välisille laskuille EI lasketa
+     ennakonpidätystä (ei työkorvausta ennakkoperintälain mielessä) — vain
+     ALV-vapaa-merkintä.
+- PDF-lataus: `GET /api/jobs/:id/era-invoice/:invoiceId/pdf` (johtajille) ja
+  `GET /api/crew/:token/era-invoice/:invoiceId/pdf` (tekijän oma). Regeneroitu
+  aina deterministisesti tallennetusta rivistä — ei erillistä
+  tiedostotallennusta (kohdan 4 "säilytys"-vaatimus täyttyy DB-tietueella).
+- **Sähköposti (kohta 3C.4 + 4):** `sendEraInvoiceEmail()` liipaisee heti kun
+  lasku lukittuu (sekä johtaja-välinen luonti että tekijän "Lähetä lasku"),
+  PDF liitteenä, lokitetaan `era_invoice_emails`-tauluun. Vastaanottajat
+  koottu OLEMASSA OLEVISTA vakioista `WORKER_NOTIFICATION_EMAILS` +
+  `INVOICE_BCC_EMAILS` — jälkimmäinen on jo valmiiksi `["matiaspit88@gmail.com"]`
+  — täsmää spekin kohdan 3C.4 vaatimukseen ilman uutta konfiguraatiota.
+  Best-effort, ei koskaan kaada pyyntöä.
+- **Muuttumattomuus (kohta 4):** todennettu, ei vain oletettu — jokainen
+  `db.update`/`db.delete`-kutsu `era_invoices`-tauluun grepattiin läpi.
+  Löytyi täsmälleen ne 4 kutsua jotka kuuluvat kahteen jo vaiheissa 2-3
+  rakennettuun lukitusvaihtoon (molemmat `WHERE tila='luonnos'` -ehdollisia).
+  Ei yhtään reittiä joka voisi muokata lukittua riviä — korjaus vaatii aina
+  uuden rivin (append-only täyttyy rakenteellisesti, ei tarvinnut lisätä
+  erillistä estoa).
+- Tekijän oma näkymä (`worker.tsx`): erittely näyttää nyt saman ALV/
+  ennakonpidätys-laskelman kuin PDF (aiemmin näytti verottoman
+  `maksettavaCents`-luvun sellaisenaan, mikä olisi poikennut PDF:n
+  lopullisesta summasta) + "Lataa lasku (PDF)" -linkki lukitulle laskulle.
+  `MaksutView.tsx`: "Lataa PDF" -painike jokaiselle johtaja-väliselle ja
+  hyväksytylle tekijä-laskulle.
+- `npm run check`: sama 6 virheen baseline. `npm run test`: 25/25 vihreää.
+  **PDF/sähköposti/transaktiokoodia ei ole ajettu oikeaa tietokantaa/Resend-
+  avainta vasten tässä ympäristössä** — varmistettu koodikatselmoinnilla.
+  Kun db:push on ajettu, testaa käytännössä: lähetä testilasku → PDF avautuu
+  → sähköposti saapuu (tai lokittuu best-effort jos RESEND_API_KEY puuttuu)
+  → yritä muokata lukittua riviä suoraan kannasta ja vahvista ettei mikään
+  reitti tarjoa tähän tapaa.
 
 ### Mitä koodikannasta löytyi ennen vaihetta 1 (tärkeä konteksti jatkajalle)
 

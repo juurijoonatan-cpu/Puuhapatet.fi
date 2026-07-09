@@ -18,8 +18,8 @@
 |---|---|---|
 | 0 | Speksi + suunnitelma talteen, PR auki | ☑ tehty |
 | 1 | Datamalli + puhdas laskentamoottori + yksikkötesti (kohdat 2, 5, 7) | ☑ tehty — ks. alla |
-| 2 | Johtajan näkymät: laskun luonti ja lähetys (kohdat 3A, 3C) | ☐ odottaa lupaa |
-| 3 | Vastaanottajan näkymät + kokonaistilanne-sivu (kohdat 3B, 3D) | ☐ |
+| 2 | Johtajan näkymät: laskun luonti ja lähetys (kohdat 3A, 3C) | ☑ tehty — ks. alla |
+| 3 | Vastaanottajan näkymät + kokonaistilanne-sivu (kohdat 3B, 3D) | ☐ odottaa lupaa |
 | 4 | Lailliset vaatimukset: lukitus, laskumerkinnät, PDF, sähköposti (kohta 4) | ☐ |
 | 5 | Bugikorjaus (kohta 6.1) + kokonaisvaltainen validointi (kohta 6) | ☐ |
 
@@ -53,6 +53,34 @@ toteutusta verrataan. Päivitä yllä oleva taulukko jokaisen vaiheen jälkeen.
   uudet taulut on vain määritelty skeemassa. Tämä pitää ajaa (tai migraatio
   ajaa muuten) ennen kuin vaiheen 2 backend-reitit voivat toimia oikeasti;
   kysy/vahvista tämä käyttäjältä ennen ajoa jos et ole varma ympäristöstä.
+
+### Vaihe 2 — valmis (commit `d4a8abc`)
+
+- **Reititys-avoin-kysymys ratkaistu käyttäjän kanssa:** erävalinta on VAPAA
+  (ei sidottu klikattuun riviin); vastaanottaja määräytyy AINA erän numerosta.
+  Itsensälaskutus estetään sekä UI:ssa (dialogi tarjoaa vain sen yhden eränsä
+  joka johtaa toiseen johtajaan) että serverillä (nimenomainen tarkistus).
+- `server/routes.ts`: `POST /api/jobs/:id/era-invoice/worker-batch` (johtaja →
+  tekijä, jää "luonnos"-tilaan odottamaan tekijän hyväksyntää vaiheessa 3),
+  `POST /api/jobs/:id/era-invoice/founder` (johtaja → johtaja, lukitaan heti),
+  `GET /api/jobs/:id/era-invoices`. Johtaja-välinen lasku laskee tekijöiden
+  ansaitun summan automaattisesti jo luoduista tekijä-laskuista (EI uudelleen
+  käsin syötettynä) ja päättelee vastaanottajan omat pesut jäännöksenä
+  (kokonaisikkunat − tekijät − lähettäjän omat) — ks. koodikommentit reitissä.
+- `shared/era-billing.ts`: `normalizeEraNumbers()` (vain [1,2,3] tai [4]
+  kelpaavat), `eraRecipientFounderId()`, `EraInvoiceKind`/`EraInvoiceTila`-
+  tyypit. 4 uutta testiä (yhteensä 19/19 vihreää).
+- Frontend: `WorkerEraInvoiceDialog.tsx` (johtajan "Maksu"-painike FR8-
+  dashboardin nurkassa, project.tsx), `FounderEraInvoiceDialog.tsx` ("Maksut"-
+  painike vain toisen johtajan rivillä, crew.tsx) — molemmissa elävä
+  esikatselu `computeEraBilling()`-funktiolla ennen lähetystä.
+- `npm run check` + `npm run test`: molemmat vihreät, ei uusia typecheck-
+  virheitä.
+- **HUOM jatkajalle:** täysi selainpohjainen E2E-testaus on YHÄ estynyt samasta
+  syystä kuin vaiheessa 1 — `era_invoices`-taulua ei ole vielä oikeassa
+  kannassa. Kysyin käyttäjältä lupaa ajaa `db:push` (additiivinen, ei koske
+  olemassa olevia tauluja) jotta vaiheen 2 ja 3 selainverifiointi olisi
+  mahdollista — ks. vastaus keskustelussa / seuraava commit.
 
 ### Mitä koodikannasta löytyi ennen vaihetta 1 (tärkeä konteksti jatkajalle)
 

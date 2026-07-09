@@ -33,6 +33,11 @@ interface Props {
    *  kortille perustajien osiossa — omalle kortille palautetaan null. Slotina,
    *  koska vain project.tsx tietää kuka katsoo (getAdminProfile). */
   founderInvoiceSlot?: (founderId: string) => React.ReactNode;
+  /** FR8 erälaskutus (kohta 3A): renderöi tekijöiden "Maksu"-painikkeen
+   *  (WorkerEraInvoiceDialog) klikattavaksi alaotsikoksi KERROKSITTAIN- ja
+   *  VIIMEISIN TOIMINTA -palkkien väliin, samaan tyyliin kuin muut osiot —
+   *  ei enää kelluva nappi. Slotina samasta syystä kuin founderInvoiceSlot. */
+  workerInvoiceSlot?: () => React.ReactNode;
   /** Dynamic per-window rate for founders (sisäinen kate = capCents / totalRedWindows).
    *  Replaces the nominal deal.pricePerWindow in the footer explanation text. */
   founderRateEur?: number;
@@ -77,7 +82,7 @@ const mono: React.CSSProperties = {
   color: "rgba(255,255,255,0.4)",
 };
 
-export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeInfo, traineeShareByLeader, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot, founderInvoiceSlot }: Props) {
+export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeInfo, traineeShareByLeader, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot, founderInvoiceSlot, workerInvoiceSlot }: Props) {
   const m = useIsMobile();
   const [editId, setEditId] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
@@ -187,6 +192,8 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
     .filter((c) => c.activeShiftAt)
     .map((c) => ({ id: c.id, name: workerName(c.id), since: c.activeShiftAt as number }))
     .sort((a, b) => a.since - b.since);
+
+  const workerSlot = workerInvoiceSlot?.();
 
   return (
     <div style={{ height: "100%", overflowY: "auto", overflowX: "hidden", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch", boxSizing: "border-box", padding: m ? "16px 12px calc(96px + env(safe-area-inset-bottom))" : "26px 30px 40px" }}>
@@ -580,6 +587,8 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
               })}
             </div>
           </Section>
+
+          {workerSlot && <div className="anim-fadeUp-7">{workerSlot}</div>}
 
           {activity.length > 0 && (
             <Section id="activity" label="VIIMEISIN TOIMINTA" summary={activity[0]?.time} animClass="anim-fadeUp-8">

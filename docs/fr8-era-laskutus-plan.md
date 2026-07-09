@@ -16,9 +16,9 @@
 
 | Vaihe | Kuvaus | Tila |
 |---|---|---|
-| 0 | Speksi + suunnitelma talteen, PR auki | ☑ tehty (tämä commit) |
-| 1 | Datamalli + puhdas laskentamoottori + yksikkötesti (kohdat 2, 5, 7) | ☐ |
-| 2 | Johtajan näkymät: laskun luonti ja lähetys (kohdat 3A, 3C) | ☐ |
+| 0 | Speksi + suunnitelma talteen, PR auki | ☑ tehty |
+| 1 | Datamalli + puhdas laskentamoottori + yksikkötesti (kohdat 2, 5, 7) | ☑ tehty — ks. alla |
+| 2 | Johtajan näkymät: laskun luonti ja lähetys (kohdat 3A, 3C) | ☐ odottaa lupaa |
 | 3 | Vastaanottajan näkymät + kokonaistilanne-sivu (kohdat 3B, 3D) | ☐ |
 | 4 | Lailliset vaatimukset: lukitus, laskumerkinnät, PDF, sähköposti (kohta 4) | ☐ |
 | 5 | Bugikorjaus (kohta 6.1) + kokonaisvaltainen validointi (kohta 6) | ☐ |
@@ -29,6 +29,30 @@ Claude Code -ajon suunnitelmatiedostoon toteutuksen alussa; tiivistelmä
 alla olevan speksin jälkeen ei ole tarpeen toistaa täällä — **tämä tiedosto on
 ensisijaisesti alkuperäisen speksin sana sanalta -tallennus**, jota vasten
 toteutusta verrataan. Päivitä yllä oleva taulukko jokaisen vaiheen jälkeen.
+
+### Vaihe 1 — valmis (commit `27fc018`)
+
+- `shared/era-billing.ts`: `computeEraBilling()` toteuttaa spekin kohdan 2
+  kaavat 1–8 täsmälleen (sentteinä, x pyöristetty 2 desimaaliin, kate
+  jäännöksenä, 50/50-jako niin että pariton sentti ei riko täsmäytystä).
+  `sumWindows()` on tarkka (ei rivikohtaista pyöristystä) — tämä otetaan
+  käyttöön myös kohdan 6.1 bugikorjaukseen vaiheessa 5.
+- `shared/schema.ts`: uudet Drizzle-taulut `era_invoices` (lasku, ks. kohta 5)
+  ja `era_invoice_emails` (sähköposti_loki). **Additiivinen migraatio** (ei
+  koske olemassa olevia tauluja).
+- `shared/era-billing.test.ts` (vitest, uusi devDependency): toistaa kohdan 7
+  testitapauksen täsmälleen (x=37,20; tekijät 1800,00; Jani 240,00; J
+  502,20/1257,90; M 911,40/1667,10; kate 1511,40; tarkistus 4725,00 ero 0;
+  ikkunat 127) + reunatapaukset (desimaali-ikkunoiden summaus, nolla ikkunaa,
+  negatiivinen sovittu muutos, pariton kate-senttimäärä).
+- **`npm run check`** ja **`npm run test`**: molemmat vihreät; typecheck-diffi
+  ajon aikaiseen baseline-tilaan on identtinen (ei uusia virheitä — 6
+  esiolemassaolevaa, tähän työhön liittymätöntä virhettä muissa tiedostoissa
+  ennallaan).
+- **HUOM jatkajalle:** `npm run db:push` EI ole ajettu oikeaa kantaa vastaan —
+  uudet taulut on vain määritelty skeemassa. Tämä pitää ajaa (tai migraatio
+  ajaa muuten) ennen kuin vaiheen 2 backend-reitit voivat toimia oikeasti;
+  kysy/vahvista tämä käyttäjältä ennen ajoa jos et ole varma ympäristöstä.
 
 ### Mitä koodikannasta löytyi ennen vaihetta 1 (tärkeä konteksti jatkajalle)
 

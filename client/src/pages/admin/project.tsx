@@ -661,17 +661,29 @@ export default function AdminProjectPage() {
                 />
               );
             }}
+            workerInvoiceSlot={() => {
+              if (!deal) return null;
+              // Sisällytä myös tekijät, joilla ei vielä ole yhtään pesyä ikkunaa
+              // (esim. juuri liittynyt), jotta heidät voi silti vapaasti lisätä
+              // maksuun — sama unioni kuin Dashboardin oma TEKIJÄT-lista tekee
+              // (workerStats yksin näyttäisi vain jo aktiiviset).
+              const statIds = new Set(workerStats.map((s) => s.worker));
+              const zeroActivity = (project.crew || [])
+                .filter((c) => c.active !== false && c.role === "worker" && !c.adminLinked && !isTrainee(c.id) && !statIds.has(c.id))
+                .map((c) => ({ id: c.id, name: resolveName(c.id), washed: 0 }));
+              return (
+                <WorkerEraInvoiceDialog
+                  jobId={jobId}
+                  workers={[
+                    ...workerStats
+                      .filter((s) => !isFounder(s.worker) && !isTrainee(s.worker))
+                      .map((s) => ({ id: s.worker, name: resolveName(s.worker), washed: s.washed })),
+                    ...zeroActivity,
+                  ]}
+                />
+              );
+            }}
           />
-        )}
-        {tab === "dashboard" && deal && (
-          <div style={{ position: "fixed", right: 16, bottom: 16, zIndex: 40 }}>
-            <WorkerEraInvoiceDialog
-              jobId={jobId}
-              workers={workerStats
-                .filter((s) => !isFounder(s.worker) && !isTrainee(s.worker))
-                .map((s) => ({ id: s.worker, name: resolveName(s.worker), washed: s.washed }))}
-            />
-          </div>
         )}
         {/* Maksut — erälaskutuksen kokonaistilanne (kohta 3D), vain FR8 + johtajat.
             Navbar näyttää välilehden vain johtajille; tämä ehto on sama tuplavarmistus. */}

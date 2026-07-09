@@ -644,11 +644,10 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
       // admin for an experienced hire), otherwise "tulossa" so a first-timer's form
       // starts clean until they flip the toggle to "On jo".
       [YTUNNUS_STATUS_KEY]: view.worker.profile?.answers?.[YTUNNUS_STATUS_KEY] ?? (knownYtunnus ? "on" : "tulossa"),
-      // Ennakkoperintärekisteri: default "kylla" (paid gross, no withholding — the
-      // correct treatment for a registered entrepreneur, and the app's existing
-      // default). Making it explicit means the fact is captured & auditable rather
-      // than silently assumed. A worker not yet registered can flip it to "ei".
-      [PREPAYMENT_REGISTER_KEY]: view.worker.profile?.answers?.[PREPAYMENT_REGISTER_KEY] ?? "kylla",
+      // Ennakkoperintärekisteri: varovainen oletus "ei" (pidätys), koska
+      // pidättämättä jättäminen on Puuhapatetin oma vastuu jos tekijä ei
+      // lopulta olekaan rekisterissä. Tekijä vahvistaa itse "Kyllä", jos on.
+      [PREPAYMENT_REGISTER_KEY]: view.worker.profile?.answers?.[PREPAYMENT_REGISTER_KEY] ?? "ei",
       ...(view.worker.profile?.answers ?? {}),
     };
   });
@@ -872,12 +871,12 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
                 </label>
 
                 {/* Ennakkoperintärekisteri — ratkaisee, maksetaanko bruttona (ei
-                    ennakonpidätystä). Oletus "kylla": rekisterissä oleva yrittäjä saa
-                    koko summan ja hoitaa verot itse. */}
+                    ennakonpidätystä). Varovainen oletus "ei" (pidätys), kunnes
+                    tekijä itse vahvistaa olevansa rekisterissä. */}
                 <p style={{ ...fieldLabel, marginTop: 16, marginBottom: 8 }}>Oletko ennakkoperintärekisterissä?</p>
                 <div style={{ display: "flex", gap: 8 }}>
                   {([["kylla", "Kyllä"], ["ei", "En / en tiedä"]] as [string, string][]).map(([val, lbl]) => {
-                    const active = (answers[PREPAYMENT_REGISTER_KEY] || "kylla") === val;
+                    const active = (answers[PREPAYMENT_REGISTER_KEY] || "ei") === val;
                     return (
                       <button key={val} type="button" onClick={() => setAnswer(PREPAYMENT_REGISTER_KEY, val)}
                         style={{ flex: 1, padding: "11px", borderRadius: 10, cursor: "pointer", fontFamily: FONT, fontSize: 14, fontWeight: 600,
@@ -906,7 +905,7 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
 
                 <p style={{ fontSize: 11.5, color: T.muted, margin: "12px 0 0", lineHeight: 1.5 }}>
                   Laskutat työsi omalla Y-tunnuksellasi ja hoidat verosi itse.
-                  {(answers[PREPAYMENT_REGISTER_KEY] || "kylla") !== "ei"
+                  {(answers[PREPAYMENT_REGISTER_KEY] || "ei") !== "ei"
                     ? " Koska olet ennakkoperintärekisterissä, maksu tehdään ilman ennakonpidätystä — saat koko summan tilillesi."
                     : " Koska et ole (vielä) ennakkoperintärekisterissä, maksusta toimitetaan ennakonpidätys ja tilitetään Verolle. Rekisteröitymällä (ytj.fi) saat koko summan."}
                   {" "}Voit muuttaa näitä myöhemmin työpöydältä. Tarkista tarvittaessa vero.fi.

@@ -334,6 +334,40 @@ järjestelmässä. Ennakonpidätys on eri asia ja luetaan edelleen normaalisti.
   konfiguroitu (esim. tuotantoympäristö tai kehittäjän oma kone) —
   muutos on additiivinen (uusi nullable-sarake), ei riko olemassa olevaa dataa.
 
+### Jälkikäteinen korjaus: ennakonpidätyksen oletus käännetty varovaiseksi (2026-07-09)
+
+Käyttäjä kysyi mitä PR:n avoimissa kohdissa mainittu "tekijä-laskujen
+ennakonpidätyskäsittely" tarkoittaa. Selvitettäessä löytyi todellinen
+ristiriita koodin ja `docs/fr8-vero-ja-maksut.md`:n välillä:
+- Dokumentti väitti: "Varovainen oletus: ei ALV:tä, ei rekisterissä" (eli
+  pitäisi pidättää 60 %/13 %, kunnes tekijä nimenomaan vahvistaa olevansa
+  ennakkoperintärekisterissä).
+- Mutta `shared/tax.ts`:n `readInPrepaymentRegister()` teki päinvastoin:
+  palautti `true` (= EI pidätystä) aina paitsi kun tekijä nimenomaan valitsi
+  "En / en tiedä". Sama oletus toisti myös `client/src/pages/worker.tsx`:n
+  onboarding-lomakkeen esivalinta ("Kyllä" pre-valittuna).
+- Käytännön riski: jos tekijälle luodaan maksu (tavallinen payout TAI FR8
+  erälasku) ennen kuin hän on ikinä käynyt omissa asetuksissaan, järjestelmä
+  oletti hiljaa "rekisterissä" ja maksoi bruttona ilman pidätystä — vastuu
+  pidättämättä jääneestä verosta olisi jäänyt Puuhapatetille/johtajalle.
+
+Kysyin käyttäjältä `AskUserQuestion`-työkalulla miten oletus pitäisi
+korjata; **käyttäjä valitsi: "Käännä oletus varovaiseksi"** (suositeltu
+vaihtoehto). Toteutettu:
+- `shared/tax.ts`: `readInPrepaymentRegister()` palauttaa nyt `true`
+  (ei pidätystä) **vain** kun tekijä on nimenomaisesti merkinnyt `"kylla"`;
+  kaikki muu (tyhjä, puuttuva, `"ei"`) → pidätetään 60 %/13 %.
+- `client/src/pages/worker.tsx`: onboarding-lomakkeen oletusvalinta
+  käännetty `"kylla"` → `"ei"` (kolme kohtaa: alkuarvo, aktiivisen napin
+  laskenta, selitystekstin ehto) — tekijä näkee nyt "En / en tiedä"
+  esivalittuna, kunnes hän itse vahvistaa "Kyllä".
+- Tämä vaikuttaa keskitetysti sekä tavalliseen payout-järjestelmään että
+  FR8-erälaskuihin, koska molemmat kutsuvat samaa jaettua funktiota.
+  `docs/fr8-vero-ja-maksut.md` ei tarvinnut muutosta — sen teksti oli jo
+  oikein, koodi vain ei vastannut sitä.
+- Verifioitu: `npm run check` sama 6 virheen baseline, `npm run test`
+  28/28 vihreää (ei olemassa olevaa testiä koskenut tätä oletusarvoa).
+
 ### Mitä koodikannasta löytyi ennen vaihetta 1 (tärkeä konteksti jatkajalle)
 
 FR8-keikalla on jo **osittainen** erä/kate-toteutus ennen tätä työtä, joka EI

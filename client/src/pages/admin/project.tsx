@@ -614,7 +614,7 @@ export default function AdminProjectPage() {
         workers={gigWorkers}
         defaultWasherId={effectiveWasher}
         onChangeDefaultWasher={changeDefaultWasher}
-        showMaksutTab={!!deal && FOUNDER_IDS.includes(profile?.id || "")}
+        showMaksutTab={!!deal && (profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || ""))}
       />
       {error && (
         <div
@@ -675,7 +675,7 @@ export default function AdminProjectPage() {
         )}
         {/* Maksut — erälaskutuksen kokonaistilanne (kohta 3D), vain FR8 + johtajat.
             Navbar näyttää välilehden vain johtajille; tämä ehto on sama tuplavarmistus. */}
-        {tab === "maksut" && deal && FOUNDER_IDS.includes(profile?.id || "") && (
+        {tab === "maksut" && deal && (profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")) && (
           <MaksutView jobId={jobId} />
         )}
         {tab === "floor" && (

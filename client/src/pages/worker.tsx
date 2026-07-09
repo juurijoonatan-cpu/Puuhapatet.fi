@@ -32,6 +32,7 @@ import {
 } from "@shared/tax";
 import { computePayProgress } from "@shared/payprogress";
 import { MAX_PHOTO_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN } from "@shared/crew";
+import { BRAND_BILLERS } from "@shared/billers";
 
 const T = { ink: "#1A1A1A", paper: "#F6F4EE", card: "#FFFFFF", hair: "#E4E1D7", muted: "#8C8A82", green: "#3E7C59", navy: "#1F3B57" };
 const FONT = "'Poppins', ui-sans-serif, system-ui, -apple-system, sans-serif";
@@ -1552,6 +1553,10 @@ function EraInvoiceSection({ token, view, setView }: { token: string; view: Work
   const [busyId, setBusyId] = useState<number | null>(null);
   const [confirm, setConfirm] = useState<{ id: number; action: "send" | "reject" } | null>(null);
   const [err, setErr] = useState("");
+  // Harjoittelija ei voi laskuttaa alihankkijana (sama sääntö palvelimella,
+  // joka torjuu 400:lla) — piilota "Lähetä"-vaihtoehto ettei nappi näytä
+  // toimivalta kun se aina epäonnistuu.
+  const isTrainee = !!view.worker.trainee;
 
   if (invoices.length === 0) return null;
 
@@ -1561,8 +1566,18 @@ function EraInvoiceSection({ token, view, setView }: { token: string; view: Work
     const res = action === "send" ? await api.crewSendEraInvoice(token, id) : await api.crewRejectEraInvoice(token, id);
     setBusyId(null);
     setConfirm(null);
-    if (res.ok && res.data?.view) setView(res.data.view);
-    else setErr(res.error || "Toiminto epäonnistui. Yritä uudelleen.");
+    if (res.ok && res.data?.view) {
+      setView(res.data.view);
+    } else if (res.ok && res.data?.invoice) {
+      // Näkymän uudelleenrakennus epäonnistui serverillä (harvinainen, siihen
+      // liittymätön virhe) mutta tilasiirtymä on jo tallessa — päivitä
+      // ainakin tämä yksi rivi paikallisesti, ettei kortti jää vanhentuneeksi
+      // näyttämään aktiivisia "Lähetä"/"Hylkää"-painikkeita.
+      const updated = res.data.invoice;
+      setView({ ...view, eraInvoices: (view.eraInvoices || []).map((inv) => (inv.id === updated.id ? updated : inv)) });
+    } else {
+      setErr(res.error || "Toiminto epäonnistui. Yritä uudelleen.");
+    }
   };
 
   const STATUS: Record<string, { label: string; color: string; bg: string }> = {
@@ -1570,7 +1585,10 @@ function EraInvoiceSection({ token, view, setView }: { token: string; view: Work
     hyväksytty: { label: "Lähetetty · lukittu", color: "#7CE0A6", bg: "rgba(124,224,166,0.14)" },
     hylätty: { label: "Hylätty", color: "#FF8A8A", bg: "rgba(224,59,59,0.14)" },
   };
-  const founderName = (id: string) => (id === "joonatan" ? "Joonatan" : id === "matias" ? "Matias" : id);
+  // Etunimi BRAND_BILLERS:stä (sama lähde kuin MaksutView.tsx:ssä) — pysyy
+  // ajan tasalla jos johtajan nimi joskus muuttuu, sen sijaan että se olisi
+  // kovakoodattu tänne erikseen.
+  const founderName = (id: string) => BRAND_BILLERS.find((b) => b.id === id)?.name.split(" ")[0] || id;
   const eraLabel = (nums: number[]) => (nums.length === 1 ? `Erä ${nums[0]}` : `Erät ${nums[0]}–${nums[nums.length - 1]}`);
   const fiDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("fi-FI") : "");
 
@@ -1656,17 +1674,24 @@ function EraInvoiceSection({ token, view, setView }: { token: string; view: Work
                     </>
                   ) : (
                     <>
-                      <button onClick={() => setConfirm({ id: inv.id, action: "send" })}
-                        style={{ flex: 1, padding: "12px 14px", borderRadius: 12, border: "none", cursor: "pointer", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, background: "#7CE0A6", color: "#06231A" }}>
-                        Lähetä lasku
-                      </button>
+                      {!isTrainee && (
+                        <button onClick={() => setConfirm({ id: inv.id, action: "send" })}
+                          style={{ flex: 1, padding: "12px 14px", borderRadius: 12, border: "none", cursor: "pointer", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, background: "#7CE0A6", color: "#06231A" }}>
+                          Lähetä lasku
+                        </button>
+                      )}
                       <button onClick={() => setConfirm({ id: inv.id, action: "reject" })}
-                        style={{ padding: "12px 14px", borderRadius: 12, border: "1px solid rgba(224,59,59,0.5)", cursor: "pointer", fontFamily: FONT, fontSize: 13.5, fontWeight: 600, background: "none", color: "#FF8A8A" }}>
+                        style={{ flex: isTrainee ? 1 : undefined, padding: "12px 14px", borderRadius: 12, border: "1px solid rgba(224,59,59,0.5)", cursor: "pointer", fontFamily: FONT, fontSize: 13.5, fontWeight: 600, background: "none", color: "#FF8A8A" }}>
                         Hylkää
                       </button>
                     </>
                   )}
                 </div>
+              )}
+              {inv.tila === "luonnos" && isTrainee && (
+                <p style={{ margin: "8px 0 0", fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+                  Harjoittelijana et voi laskuttaa itse — maksu hoidetaan tiimin kautta.
+                </p>
               )}
             </div>
           );

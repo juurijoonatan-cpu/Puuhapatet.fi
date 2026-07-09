@@ -499,6 +499,44 @@ function toIcsDate(d: Date): string {
 
 // ─── Finnish payment barcode helpers ─────────────────────────────────────────
 
+// ─── FR8 erälaskutus — atominen laskunumerointi ───────────────────────────────
+// Kohta 4 vaatii juoksevan laskunumeron per laskuttaja. Pelkkä "lue count(*),
+// laske seuraava numero, kirjoita" on race-altis: kaksi samanaikaista pyyntöä
+// samalta lähettäjältä (esim. kaksi eri erä-luonnosta lähetettynä lähes
+// yhtäaikaa) voisivat molemmat lukea saman määrän ja saada saman numeron.
+// `pg_advisory_xact_lock` sarjoittaa saman lähettäjän pyynnöt: lukko vapautuu
+// vasta transaktion committiin, joten `fn`:n PITÄÄ tehdä kaikki kirjoituksensa
+// annetun `tx`:n sisällä, ei `db`:n kautta suoraan.
+async function withNextInvoiceNumber<T>(
+  senderId: string,
+  fn: (tx: Parameters<Parameters<typeof db.transaction>[0]>[0], invoiceNumber: string) => Promise<T>,
+): Promise<T> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${senderId}))`);
+    const countRes = await tx.select({ c: sql<number>`count(*)` }).from(eraInvoices)
+      .where(and(eq(eraInvoices.senderId, senderId), ne(eraInvoices.tila, "luonnos" satisfies EraInvoiceTila)));
+    const seq = Number((countRes[0] as any)?.c || 0) + 1;
+    const invoiceNumber = `${senderId.toUpperCase().slice(0, 3)}-${String(seq).padStart(4, "0")}`;
+    return fn(tx, invoiceNumber);
+  });
+}
+
+/** Viitenumero lasketaan laskun OMASTA id:stä (serial, globaalisti uniikki
+ *  koko era_invoices-taulun yli) — ei voi koskaan törmätä toisen laskuttajan
+ *  tai -tyypin (tekijä vs. johtaja-välinen) viitteeseen, koska id ei riipu
+ *  mistään erikseen lasketusta sarjasta. */
+function eraInvoiceReference(invoiceId: number): string {
+  return finnishRefWithCheckDigit(String(1_000_000 + invoiceId));
+}
+
+/** Postgresin "taulua ei ole" -virhekoodi (42P01, undefined_table). Erottaa
+ *  "era_invoices ei ole vielä migratoitu kantaan" (turvallinen, näytä tyhjä
+ *  lista) muista, oikeista virheistä (yhteyskatko, tyyppivirhe…), jotka
+ *  pitää lokittua/näkyä eikä vain hiljaa niellä. */
+function isMissingTableError(e: any): boolean {
+  return e?.code === "42P01";
+}
+
 function finnishRefWithCheckDigit(numericStr: string): string {
   const s = numericStr.replace(/\D/g, "") || "0";
   const weights = [7, 3, 1];
@@ -1718,21 +1756,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(403).json({ error: "Vain johtajat voivat tarkastella erälaskuja." });
       }
       const jobId = Number(req.params.id);
-      const rows = await db.select().from(eraInvoices)
-        .where(eq(eraInvoices.jobId, jobId)).orderBy(desc(eraInvoices.createdAt));
-      // Sähköposti_loki per lasku (kohta 3D: kopiot kummankin johtajan
-      // sähköpostissa). Rivit syntyvät vasta vaiheessa 4 — siihen asti tyhjä.
+      // Sama migraatiovarmuus kuin workerView():ssä — jos era_invoices (tai
+      // era_invoice_emails) ei ole vielä ajettu tuotantokantaan, näytä tyhjä
+      // lista sen sijaan että koko Maksut-sivu 500:aa. Muut virheet lokittuvat
+      // ja päätyvät normaalisti uloimman catch-lohkon 500-vastaukseen.
+      let rows: (typeof eraInvoices.$inferSelect)[] = [];
       const emailsByInvoice = new Map<number, { recipients: string[]; success: boolean; sentAt: Date }[]>();
-      if (rows.length > 0) {
-        const emailRows = await db.select().from(eraInvoiceEmails)
-          .where(inArray(eraInvoiceEmails.invoiceId, rows.map((r) => r.id)));
-        for (const e of emailRows) {
-          let recipients: string[] = [];
-          try { recipients = JSON.parse(e.recipients); } catch { /* jätä tyhjäksi */ }
-          const list = emailsByInvoice.get(e.invoiceId) ?? [];
-          list.push({ recipients, success: e.success, sentAt: e.sentAt });
-          emailsByInvoice.set(e.invoiceId, list);
+      try {
+        rows = await db.select().from(eraInvoices)
+          .where(eq(eraInvoices.jobId, jobId)).orderBy(desc(eraInvoices.createdAt));
+        // Sähköposti_loki per lasku (kohta 3D: kopiot kummankin johtajan
+        // sähköpostissa). Rivit syntyvät vasta vaiheessa 4 — siihen asti tyhjä.
+        if (rows.length > 0) {
+          const emailRows = await db.select().from(eraInvoiceEmails)
+            .where(inArray(eraInvoiceEmails.invoiceId, rows.map((r) => r.id)));
+          for (const e of emailRows) {
+            let recipients: string[] = [];
+            try { recipients = JSON.parse(e.recipients); } catch { /* jätä tyhjäksi */ }
+            const list = emailsByInvoice.get(e.invoiceId) ?? [];
+            list.push({ recipients, success: e.success, sentAt: e.sentAt });
+            emailsByInvoice.set(e.invoiceId, list);
+          }
         }
+      } catch (e: any) {
+        if (!isMissingTableError(e)) throw e;
       }
       res.json({
         ok: true,
@@ -1867,30 +1914,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const senderRow = result.founders.find((f) => f.founderId === senderId)!;
       const finalCents = senderRow.loppusummaCents + manualAdjustmentCents;
 
-      const countRes = await db.select({ c: sql<number>`count(*)` }).from(eraInvoices)
-        .where(and(eq(eraInvoices.senderId, senderId), ne(eraInvoices.tila, "luonnos" satisfies EraInvoiceTila)));
-      const seq = Number((countRes[0] as any)?.c || 0) + 1;
-      const invoiceNumber = `${senderId.toUpperCase().slice(0, 3)}-${String(seq).padStart(4, "0")}`;
-      const referenceNumber = finnishRefWithCheckDigit(String(1_000_000 + jobId * 100 + seq));
-
-      const [row] = await db.insert(eraInvoices).values({
-        jobId,
-        kind: "johtaja_valinen" satisfies EraInvoiceKind,
-        senderId, recipientId,
-        eraNumbers: JSON.stringify(eraNumbers),
-        rivit: JSON.stringify({
-          input: { itsepestytIkkunat, kokonaisikkunat, recipientPestytIkkunat, tekijatIkkunatSum, tekijatAnsaittuYhtCents },
-          computed: result,
-        }),
-        totalCents: finalCents,
-        xCents: result.xCents,
-        kateCents: result.kateCents,
-        katePerJohtajaCents: senderRow.katePerJohtajaCents,
-        manualAdjustmentCents,
-        tila: "lähetetty" satisfies EraInvoiceTila,
-        invoiceNumber, referenceNumber,
-        sentAt: new Date(),
-      }).returning();
+      // Numerointi + viite atomisesti (withNextInvoiceNumber) — advisory lock
+      // estää kahta samalta lähettäjältä lähes yhtäaikaa lähetettyä laskua
+      // saamasta samaa juoksevaa numeroa (ks. funktion kommentti).
+      const row = await withNextInvoiceNumber(senderId, async (tx, invoiceNumber) => {
+        const [inserted] = await tx.insert(eraInvoices).values({
+          jobId,
+          kind: "johtaja_valinen" satisfies EraInvoiceKind,
+          senderId, recipientId,
+          eraNumbers: JSON.stringify(eraNumbers),
+          rivit: JSON.stringify({
+            input: { itsepestytIkkunat, kokonaisikkunat, recipientPestytIkkunat, tekijatIkkunatSum, tekijatAnsaittuYhtCents },
+            computed: result,
+          }),
+          totalCents: finalCents,
+          xCents: result.xCents,
+          kateCents: result.kateCents,
+          katePerJohtajaCents: senderRow.katePerJohtajaCents,
+          manualAdjustmentCents,
+          tila: "lähetetty" satisfies EraInvoiceTila,
+          invoiceNumber,
+          sentAt: new Date(),
+        }).returning();
+        const [final] = await tx.update(eraInvoices)
+          .set({ referenceNumber: eraInvoiceReference(inserted.id) })
+          .where(eq(eraInvoices.id, inserted.id)).returning();
+        return final;
+      });
 
       // HUOM: sähköpostikopiot (kummallekin johtajalle riippumatta suunnasta)
       // ja PDF toteutetaan vaiheessa 4 (kohta 4) — tämä reitti vain tallentaa.
@@ -4923,7 +4973,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     // vastausta + jo käsitelty historia. Suodatus senderId:llä takaa ettei
     // kukaan koskaan näe toisen tekijän rivejä. Defensiivinen try/catch: jos
     // era_invoices-taulua ei ole vielä migratoitu kantaan (db:push ajamatta),
-    // koko dashboardin ei saa kaatua — silloin lista on tyhjä.
+    // koko dashboardin ei saa kaatua — silloin lista on tyhjä. Vain "taulua ei
+    // ole" -virhe (42P01) niellään hiljaa; muut virheet lokittuvat, koska
+    // muuten tekijä voisi jäädä koskaan näkemättä odottavaa laskuaan.
     let workerEraInvoices: ReturnType<typeof toClientEraInvoice>[] = [];
     try {
       const rows = await db.select().from(eraInvoices).where(and(
@@ -4932,7 +4984,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         eq(eraInvoices.senderId, member.id),
       )).orderBy(desc(eraInvoices.createdAt));
       workerEraInvoices = rows.map(toClientEraInvoice);
-    } catch { /* taulu puuttuu vielä — näytä tyhjä lista, älä kaada näkymää */ }
+    } catch (e: any) {
+      if (!isMissingTableError(e)) console.error("workerView era_invoices query failed:", e?.message);
+    }
     const projectTotals = computeProjectTotals(project);
     // Paydate-progress counts: for a fixed deal (FR8) track the LIVE billable (red)
     // window count, so the milestone follows the actual dots on the map (e.g. 161 →
@@ -5477,31 +5531,45 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
 
       const now = new Date();
-      const patch: Partial<typeof eraInvoices.$inferInsert> & { sentAt?: Date; respondedAt?: Date } = {
-        tila: nextTila, respondedAt: now,
-      };
+      let updated: typeof eraInvoices.$inferSelect | undefined;
       if (action === "send") {
-        // Juokseva laskunumero per laskuttaja — sama käytäntö kuin johtaja-
-        // välisissä laskuissa. Viite lasketaan laskun id:stä (2 000 000 + id):
-        // id on globaalisti uniikki, joten viite ei voi törmätä toisen
-        // laskuttajan viitteeseen samalla keikalla (johtajareitin jobId*100+seq
-        // -kaava voisi — huomioidaan vaiheen 5 validoinnissa).
-        const countRes = await db.select({ c: sql<number>`count(*)` }).from(eraInvoices)
-          .where(and(eq(eraInvoices.senderId, member.id), ne(eraInvoices.tila, "luonnos" satisfies EraInvoiceTila)));
-        const seq = Number((countRes[0] as any)?.c || 0) + 1;
-        patch.sentAt = now;
-        patch.invoiceNumber = invoice.invoiceNumber ?? `${member.id.toUpperCase().slice(0, 3)}-${String(seq).padStart(4, "0")}`;
-        patch.referenceNumber = invoice.referenceNumber ?? finnishRefWithCheckDigit(String(2_000_000 + invoice.id));
+        // Juokseva laskunumero per laskuttaja + viite atomisesti — sama
+        // withNextInvoiceNumber-suojaus kuin johtaja-välisissä laskuissa, niin
+        // ettei kaksi tämän tekijän luonnosta (esim. erä 1-3 ja erä 4) voi
+        // koskaan saada samaa numeroa vaikka ne lähetettäisiin lähes yhtäaikaa.
+        updated = await withNextInvoiceNumber(member.id, async (tx, invoiceNumber) => {
+          const [row] = await tx.update(eraInvoices)
+            .set({ tila: nextTila, respondedAt: now, sentAt: now, invoiceNumber })
+            .where(and(eq(eraInvoices.id, invoice.id), eq(eraInvoices.tila, "luonnos" satisfies EraInvoiceTila)))
+            .returning();
+          if (!row) return undefined;
+          const [final] = await tx.update(eraInvoices)
+            .set({ referenceNumber: eraInvoiceReference(row.id) })
+            .where(eq(eraInvoices.id, row.id)).returning();
+          return final;
+        });
+      } else {
+        const [row] = await db.update(eraInvoices).set({ tila: nextTila, respondedAt: now })
+          .where(and(eq(eraInvoices.id, invoice.id), eq(eraInvoices.tila, "luonnos" satisfies EraInvoiceTila)))
+          .returning();
+        updated = row;
       }
-
-      const [updated] = await db.update(eraInvoices).set(patch)
-        .where(and(eq(eraInvoices.id, invoice.id), eq(eraInvoices.tila, "luonnos" satisfies EraInvoiceTila)))
-        .returning();
       if (!updated) {
         return res.status(409).json({ error: "Lasku on jo käsitelty — sitä ei voi lähettää tai hylätä uudelleen." });
       }
 
-      res.json({ ok: true, invoice: toClientEraInvoice(updated), view: await workerView(job, project, member) });
+      // Näkymän uudelleenrakennus eristetty omaan try/catchiin: tilasiirtymä on
+      // jo tallessa tähän mennessä, joten siihen liittymätön virhe workerView-
+      // funktiossa ei saa raportoida onnistunutta lähetystä epäonnistuneena
+      // (kohta 4: muuttumattomuus + tekijän luottamus "lähetä"-napin
+      // kertakäyttöisyyteen — ei koskaan "yritä uudelleen" jo tehdylle asialle).
+      let view: Awaited<ReturnType<typeof workerView>> | undefined;
+      try {
+        view = await workerView(job, project, member);
+      } catch (viewErr: any) {
+        console.error("workerView rebuild after era-invoice respond failed:", viewErr?.message);
+      }
+      res.json({ ok: true, invoice: toClientEraInvoice(updated), view });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

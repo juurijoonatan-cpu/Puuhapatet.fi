@@ -6,7 +6,12 @@ import bwipjs from "bwip-js";
 import PDFDocument from "pdfkit";
 import rateLimit from "express-rate-limit";
 import { db } from "./db";
-import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, founderSettlements, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
+import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, founderSettlements, eraInvoices, eraInvoiceEmails, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
+import {
+  computeEraBilling, TEKIJA_HINTA_CENTS, eraRecipientFounderId, normalizeEraNumbers,
+  eraInvoiceRespondTransition,
+  type EraInvoiceKind, type EraInvoiceTila, type EraInvoiceRespondAction,
+} from "@shared/era-billing";
 import { feeRateForWorker, effectiveJobTotal, FOUNDER_IDS, marketerCommissionCents, MARKETER_COMMISSION_RATE } from "@shared/team";
 import { randomUUID, createHash, createHmac, timingSafeEqual, scryptSync, randomBytes } from "crypto";
 import {
@@ -30,7 +35,7 @@ import {
 import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED, requiredAgreementIdsForSet, resolveAgreementSet } from "@shared/worker-agreements";
 import {
   computeTax, readVatStatus, readInPrepaymentRegister, readPayeeType, WITHHOLDING_COMPANY,
-  WITHHOLDING_NATURAL_PERSON, VAT_SMALL_BUSINESS_LIMIT_EUR, fmtPct, type TaxBreakdown,
+  WITHHOLDING_NATURAL_PERSON, VAT_SMALL_BUSINESS_LIMIT_EUR, fmtPct, fmtEurCents, type TaxBreakdown,
 } from "@shared/tax";
 import {
   BRAND_BILLERS, DEFAULT_BILLER_ID, resolveBrandBiller, billerToBuyer, inferBillerId,
@@ -497,6 +502,11 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   { method: "POST", re: /^\/api\/crew\/[^/]+\/(auth|onboard|window|hours|note|map-note|shift|expense)$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/map-note\/(update|delete)$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/payout\/[^/]+\/approve$/ },
+  // FR8 erälaskutus, tekijän vastaus (kohta 3B): tekijä lähettää tai hylkää
+  // johtajan luonnostaman erälaskun omalla dashboard-tokenillaan.
+  { method: "POST", re: /^\/api\/crew\/[^/]+\/era-invoice\/\d+\/(send|reject)$/ },
+  // Tekijän oman erälaskun PDF-lataus (kohta 4).
+  { method: "GET",  re: /^\/api\/crew\/[^/]+\/era-invoice\/\d+\/pdf$/ },
   { method: "DELETE", re: /^\/api\/crew\/[^/]+\/expense\/[^/]+$/ },
 ];
 
@@ -513,6 +523,54 @@ function toIcsDate(d: Date): string {
 }
 
 // ─── Finnish payment barcode helpers ─────────────────────────────────────────
+
+// ─── FR8 erälaskutus — atominen laskunumerointi ───────────────────────────────
+// Kohta 4 vaatii juoksevan laskunumeron per laskuttaja. Pelkkä "lue count(*),
+// laske seuraava numero, kirjoita" on race-altis: kaksi samanaikaista pyyntöä
+// samalta lähettäjältä (esim. kaksi eri erä-luonnosta lähetettynä lähes
+// yhtäaikaa) voisivat molemmat lukea saman määrän ja saada saman numeron.
+// `pg_advisory_xact_lock` sarjoittaa saman lähettäjän pyynnöt: lukko vapautuu
+// vasta transaktion committiin, joten `fn`:n PITÄÄ tehdä kaikki kirjoituksensa
+// annetun `tx`:n sisällä, ei `db`:n kautta suoraan.
+async function withNextInvoiceNumber<T>(
+  senderId: string,
+  fn: (tx: Parameters<Parameters<typeof db.transaction>[0]>[0], invoiceNumber: string) => Promise<T>,
+): Promise<T> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${senderId}))`);
+    const countRes = await tx.select({ c: sql<number>`count(*)` }).from(eraInvoices)
+      .where(and(eq(eraInvoices.senderId, senderId), ne(eraInvoices.tila, "luonnos" satisfies EraInvoiceTila)));
+    const seq = Number((countRes[0] as any)?.c || 0) + 1;
+    const invoiceNumber = `${senderId.toUpperCase().slice(0, 3)}-${String(seq).padStart(4, "0")}`;
+    return fn(tx, invoiceNumber);
+  });
+}
+
+/** Viitenumero lasketaan laskun OMASTA id:stä (serial, globaalisti uniikki
+ *  koko era_invoices-taulun yli) — ei voi koskaan törmätä toisen laskuttajan
+ *  tai -tyypin (tekijä vs. johtaja-välinen) viitteeseen, koska id ei riipu
+ *  mistään erikseen lasketusta sarjasta. */
+function eraInvoiceReference(invoiceId: number): string {
+  return finnishRefWithCheckDigit(String(1_000_000 + invoiceId));
+}
+
+/** Postgresin "taulua ei ole" -virhekoodi (42P01, undefined_table). Erottaa
+ *  "era_invoices ei ole vielä migratoitu kantaan" (turvallinen, näytä tyhjä
+ *  lista) muista, oikeista virheistä (yhteyskatko, tyyppivirhe…), jotka
+ *  pitää lokittua/näkyä eikä vain hiljaa niellä. */
+function isMissingTableError(e: any): boolean {
+  return e?.code === "42P01";
+}
+
+/** Eräpäivä (kohta 4): johtaja valitsee sen aina itse laskua tehdessä — ei
+ *  enää kiinteä oletus. Hyväksyy vain kelvollisen "YYYY-MM-DD"-muotoisen
+ *  päivämäärän; muuten null (PDF-generointi lankeaa 14 vrk -oletukseen). */
+function normalizeDueDate(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const s = raw.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  return Number.isNaN(new Date(s + "T12:00:00").getTime()) ? null : s;
+}
 
 function finnishRefWithCheckDigit(numericStr: string): string {
   const s = numericStr.replace(/\D/g, "") || "0";
@@ -957,6 +1015,140 @@ function generateFounderSettlementInvoicePdf(params: {
 
     doc.fill("#9ca3af").font("Helvetica").fontSize(8)
       .text("Molemmat osapuolet säilyttävät laskun kirjanpidossaan 6 vuotta. Puuhapatet on brändi — myyjä ja ostaja toimivat omilla Y-tunnuksillaan.", 48, y + 10, { width: pageW });
+
+    doc.end();
+  });
+}
+
+// ─── FR8 erälasku PDF (kohta 4) ────────────────────────────────────────────
+// Sama visuaalinen malli kuin generateWorkerInvoicePdf, mutta kattaa MOLEMMAT
+// erälaskutyypit yhdellä funktiolla: "tekija" (alihankkija → johtaja, vero-
+// erittelyllä samaan tapaan kuin tavallinen alihankkijan lasku — `tax`
+// annettuna) ja "johtaja_valinen" (johtaja → johtaja, ei ennakonpidätystä —
+// B2B-tilitys kahden oman Y-tunnuksen välillä, ei työkorvausta ennakkoperintä-
+// lain mielessä — `tax` puuttuu). Regeneroidaan aina deterministisesti
+// tallennetusta, muuttumattomasta era_invoices-rivistä (ei erillistä PDF-
+// tiedostotallennusta, ks. docs/fr8-era-laskutus-plan.md kohta 4).
+function generateEraInvoicePdf(params: {
+  invoiceNumber: string;
+  referenceNumber: string;
+  invoiceDate: string;   // pvm, fi-FI muodossa
+  dueDate: string;       // eräpäivä, fi-FI muodossa
+  seller: { name: string; yTunnus?: string; address?: string; iban?: string; email?: string };
+  buyer: { name: string; yTunnus?: string; address?: string; email?: string };
+  description: string;   // esim. "Ikkunanpesu, 31 ikkunaa — erä 1-3"
+  /** Työkorvauksen vero-erittely (vain "tekija"-tyyppi). Puuttuessaan
+   *  näytetään pelkkä ALV-vapaa loppusumma (johtaja-välinen tilitys). */
+  tax?: TaxBreakdown;
+  totalCents: number;
+}): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 48, size: "A4" });
+    const chunks: Buffer[] = [];
+    doc.on("data", (c: Buffer) => chunks.push(c));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    const INK = "#1A1A1A";
+    const GRAY = "#64748b";
+    const NAVY = "#1F3B57";
+    const fmtEur = (cents: number) =>
+      (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+    const pageW = doc.page.width - 96;
+
+    doc.rect(48, 48, pageW, 56).fill(NAVY);
+    doc.fill("#fff").font("Helvetica-Bold").fontSize(16).text("LASKU", 64, 62, { width: pageW - 32 });
+    doc.fill("#cdd9e6").font("Helvetica").fontSize(9)
+      .text(`Laskunumero ${params.invoiceNumber}  ·  ${params.invoiceDate}`, 64, 84, { width: pageW - 32 });
+
+    let y = 124;
+    const colW = (pageW - 16) / 2;
+
+    doc.fill(GRAY).font("Helvetica-Bold").fontSize(7).text("MYYJÄ", 48, y, { width: colW });
+    doc.text("OSTAJA", 48 + colW + 16, y, { width: colW });
+    y += 14;
+    doc.fill(INK).font("Helvetica-Bold").fontSize(10);
+    doc.text(params.seller.name, 48, y, { width: colW });
+    doc.text(params.buyer.name, 48 + colW + 16, y, { width: colW });
+    y += 14;
+    doc.fill(GRAY).font("Helvetica").fontSize(9);
+    const leftStartY = y;
+    if (params.seller.yTunnus) { doc.text(`Y-tunnus: ${params.seller.yTunnus}`, 48, y, { width: colW }); y += 12; }
+    if (params.seller.address) { doc.text(params.seller.address, 48, y, { width: colW }); y += 12; }
+    if (params.seller.iban) { doc.text(`IBAN: ${params.seller.iban}`, 48, y, { width: colW }); y += 12; }
+    let ry = leftStartY;
+    if (params.buyer.yTunnus) { doc.text(`Y-tunnus: ${params.buyer.yTunnus}`, 48 + colW + 16, ry, { width: colW }); ry += 12; }
+    if (params.buyer.address) { doc.text(params.buyer.address, 48 + colW + 16, ry, { width: colW }); ry += 12; }
+    if (params.buyer.email) { doc.text(params.buyer.email, 48 + colW + 16, ry, { width: colW }); ry += 12; }
+
+    y = Math.max(y, ry) + 10;
+    doc.fill(GRAY).font("Helvetica").fontSize(9)
+      .text(`Toimituspäivä: ${params.invoiceDate}   ·   Eräpäivä: ${params.dueDate}   ·   Viite: ${params.referenceNumber}`, 48, y, { width: pageW });
+    y += 20;
+
+    doc.rect(48, y, pageW, 26).fill("#F1F5F9");
+    doc.fill(GRAY).font("Helvetica-Bold").fontSize(8);
+    doc.text("KUVAUS", 60, y + 9, { width: pageW - 140 });
+    doc.text("VEROTON", 48 + pageW - 100, y + 9, { width: 88, align: "right" });
+    y += 26;
+
+    const laborCents = params.tax ? params.tax.laborCents : params.totalCents;
+    doc.fill(INK).font("Helvetica").fontSize(10).text(params.description, 60, y + 7, { width: pageW - 140 });
+    doc.fill(INK).font("Helvetica-Bold").fontSize(10).text(fmtEur(laborCents), 48 + pageW - 100, y + 7, { width: 88, align: "right" });
+    y += 34;
+    doc.moveTo(48, y).lineTo(48 + pageW, y).strokeColor("#E2E8F0").stroke();
+    y += 12;
+
+    const sumRow = (label: string, value: string, opts?: { bold?: boolean; color?: string; size?: number }) => {
+      const size = opts?.size ?? 9;
+      doc.fill(opts?.color ?? GRAY).font(opts?.bold ? "Helvetica-Bold" : "Helvetica").fontSize(size)
+        .text(label, 48 + pageW - 240, y, { width: 140, align: "right" });
+      doc.fill(opts?.color ?? INK).font(opts?.bold ? "Helvetica-Bold" : "Helvetica").fontSize(size)
+        .text(value, 48 + pageW - 100, y, { width: 88, align: "right" });
+      y += size + 7;
+    };
+
+    if (params.tax) {
+      const tax = params.tax;
+      sumRow("Veroton (työkorvaus)", fmtEur(tax.laborCents));
+      if (tax.vatRegistered) {
+        sumRow(`ALV ${fmtPct(tax.vatRate)}`, fmtEur(tax.vatCents));
+        sumRow("Laskun loppusumma", fmtEur(tax.invoiceTotalCents), { bold: true });
+      }
+      if (tax.withheld) {
+        y += 2;
+        sumRow(`Ennakonpidätys ${fmtPct(tax.withholdingRate)}`, "−" + fmtEur(tax.withholdingCents));
+      }
+      y += 4;
+      doc.fill(NAVY).font("Helvetica-Bold").fontSize(13)
+        .text(tax.withheld ? "Maksetaan tilille" : "Maksettavaa", 48 + pageW - 240, y, { width: 140, align: "right" });
+      doc.text(fmtEur(tax.payableCents), 48 + pageW - 100, y, { width: 88, align: "right" });
+      y += 30;
+      doc.fill(GRAY).font("Helvetica").fontSize(8);
+      for (const note of tax.notes) {
+        doc.text(note, 48, y, { width: pageW });
+        y += doc.heightOfString(note, { width: pageW }) + 4;
+      }
+    } else {
+      // Johtaja-välinen tilitys — ei ennakonpidätystä (ei työkorvausta
+      // ennakkoperintälain mielessä), oletuksena ALV-vapaa kunnes toisin
+      // vahvistetaan kirjanpitäjältä (ks. kohta 4 huomautus).
+      y += 4;
+      doc.fill(NAVY).font("Helvetica-Bold").fontSize(13)
+        .text("Maksettavaa", 48 + pageW - 240, y, { width: 140, align: "right" });
+      doc.text(fmtEur(params.totalCents), 48 + pageW - 100, y, { width: 88, align: "right" });
+      y += 30;
+      doc.fill(GRAY).font("Helvetica").fontSize(8)
+        .text("Arvonlisäveroton myynti, vähäinen toiminta. Vahvista lopullinen ALV-käsittely kirjanpitäjältä.", 48, y, { width: pageW });
+      y += 16;
+    }
+
+    if (params.seller.iban) {
+      y += 8;
+      doc.fill(INK).font("Helvetica-Bold").fontSize(9).text("Maksutiedot", 48, y); y += 14;
+      doc.fill(GRAY).font("Helvetica").fontSize(9).text(`Tilinumero (IBAN): ${params.seller.iban}`, 48, y); y += 12;
+      doc.text(`Viite: ${params.referenceNumber}`, 48, y); y += 12;
+    }
 
     doc.end();
   });
@@ -1603,6 +1795,380 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         .where(eq(founderSettlements.id, Number(req.params.id))).returning();
       if (!row) return res.status(404).json({ error: "Ei löydy" });
       res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── FR8 erälaskutus (Vaihe 2) ────────────────────────────────────────────
+  // Ks. docs/fr8-era-laskutus-plan.md ja shared/era-billing.ts. Kaksi laskutyyppiä:
+  //  - "tekija": johtaja luo ehdotuksen tekijän puolesta (esitäytetty), tallentuu
+  //    tilaan "luonnos" ja odottaa tekijän omaa hyväksyntää/hylkäystä (vaihe 3:n
+  //    tekijän näkymässä — EI lukita vielä tässä reitissä).
+  //  - "johtaja_valinen": lähettävä johtaja lähettää suoraan (ei erillistä
+  //    hyväksyntää toiselta osapuolelta), joten lukitaan heti.
+  function toClientEraInvoice(row: typeof eraInvoices.$inferSelect) {
+    let eraNumbers: number[] = [];
+    let rivit: any = null;
+    try { eraNumbers = JSON.parse(row.eraNumbers); } catch { /* jätä tyhjäksi */ }
+    try { rivit = JSON.parse(row.rivit); } catch { /* jätä nulliksi */ }
+    return { ...row, eraNumbers, rivit };
+  }
+
+  const eraLabelOf = (nums: number[]) => (nums.length === 1 ? `Erä ${nums[0]}` : `Erät ${nums[0]}–${nums[nums.length - 1]}`);
+
+  // Rakentaa generateEraInvoicePdf-parametrit tallennetusta, lukitusta
+  // erälaskurivistä (kohta 4: lasku regeneroidaan aina deterministisesti
+  // muuttumattomasta tietueesta, ei erillistä PDF-tallennusta). Tekijä-
+  // laskuille lasketaan sama ALV+ennakonpidätys-erittely kuin tavallisille
+  // alihankkijan laskuille (shared/tax.ts) — TÄRKEÄ tulkinta: vero lasketaan
+  // KOKO ansaitusta summasta (ei vain "maksettava nyt" -jäännöksestä), ja jo
+  // maksettu ennakko vähennetään VASTA verolaskennan jälkeen omana rivinään.
+  // Johtaja-välisille laskuille ei lasketa ennakonpidätystä (ei työkorvausta
+  // ennakkoperintälain mielessä) — vain ALV-vapaa-merkintä. Vahvista molemmat
+  // tulkinnat kirjanpitäjältä ennen tuotantokäyttöä (spekin oma huomautus).
+  function buildEraInvoicePdfParams(
+    row: typeof eraInvoices.$inferSelect,
+    project: ProjectData,
+  ): Parameters<typeof generateEraInvoicePdf>[0] {
+    const eraNumbers: number[] = JSON.parse(row.eraNumbers || "[]");
+    const rivit = JSON.parse(row.rivit || "{}");
+    const invoiceDate = new Date(row.sentAt || row.createdAt).toLocaleDateString("fi-FI");
+    // Eräpäivä: johtaja valitsee sen aina itse laskua tehdessä (tallennettu
+    // `row.dueDate`:en, "YYYY-MM-DD"). Jos syystä tai toisesta puuttuu (esim.
+    // ennen tätä muutosta luotu lasku), langetaan "14 vrk netto" -oletukseen.
+    const dueDate = row.dueDate
+      ? new Date(row.dueDate + "T12:00:00").toLocaleDateString("fi-FI")
+      : new Date((row.sentAt ? new Date(row.sentAt).getTime() : Date.now()) + 14 * 24 * 3600 * 1000)
+        .toLocaleDateString("fi-FI");
+    const invoiceNumber = row.invoiceNumber || "—";
+    const referenceNumber = row.referenceNumber || "—";
+
+    if (row.kind === "tekija") {
+      const input = rivit.input || {};
+      const computed = rivit.computed || {};
+      const member = (project.crew || []).find((m) => m.id === row.senderId);
+      const workerName = input.name || member?.name || row.senderId;
+      const answers = member?.profile?.answers;
+      const ansaittuCents = Math.round(Number(computed.ansaittuCents) || 0);
+      const ennakkoCents = Math.max(0, Math.round(Number(input.ennakkoCents) || 0));
+      // ALV: EI Puuhapatet (Joonatan/Matias) EIKÄ mikään FR8-tekijöistä ole
+      // ALV-rekisterissä (käyttäjän vahvistama liiketoiminnan tosiasia) —
+      // pakotettu "vahainen_toiminta" tässä, EI lueta profile.answers:sta
+      // kuten tavallisessa alihankkijan payout-järjestelmässä. Ennakonpidätys
+      // on eri asia (ennakkoperintärekisteri) ja luetaan edelleen normaalisti.
+      const tax = computeTax({
+        laborCents: ansaittuCents,
+        vatStatus: "vahainen_toiminta",
+        inPrepaymentRegister: readInPrepaymentRegister(answers),
+        payeeType: readPayeeType(answers),
+      });
+      if (ennakkoCents > 0) {
+        tax.payableCents -= ennakkoCents;
+        tax.notes = [...tax.notes, `Josta ennakkoa jo maksettu ${fmtEurCents(ennakkoCents)} — vähennetty yllä olevasta.`];
+      }
+      const buyer = resolveBuyer(row.recipientId);
+      const ikkunat = Number(input.pestytIkkunat) || 0;
+      return {
+        invoiceNumber, referenceNumber, invoiceDate, dueDate,
+        seller: {
+          name: workerName,
+          yTunnus: member?.profile?.yTunnus,
+          address: member?.profile?.city,
+          iban: member?.profile?.iban,
+        },
+        buyer: { name: buyer.name, yTunnus: buyer.yTunnus, address: buyer.address, email: buyer.email },
+        description: `Ikkunanpesu, ${ikkunat.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikkunaa — ${eraLabelOf(eraNumbers)}`,
+        tax,
+        totalCents: row.totalCents,
+      };
+    }
+
+    // "johtaja_valinen"
+    const seller = resolveBuyer(row.senderId);
+    const buyer = resolveBuyer(row.recipientId);
+    return {
+      invoiceNumber, referenceNumber, invoiceDate, dueDate,
+      seller: { name: seller.name, yTunnus: seller.yTunnus, address: seller.address, iban: BRAND_BILLERS.find((b) => b.id === row.senderId)?.iban },
+      buyer: { name: buyer.name, yTunnus: buyer.yTunnus, address: buyer.address, email: buyer.email },
+      description: `FR8-keikan tilitys, ${eraLabelOf(eraNumbers)}`,
+      totalCents: row.totalCents,
+    };
+  }
+
+  // Sähköpostikopio lukitusta erälaskusta liitteineen (kohta 4 + 3D). Best-
+  // effort: virhe ei saa koskaan kaataa kutsujan pyyntöä. Kohderyhmä:
+  // - "tekija": tekijän oma sähköposti (jos ilmoitettu) + molemmat johtajat.
+  // - "johtaja_valinen": molemmat johtajat AINA, riippumatta laskun suunnasta
+  //   (kohta 3C.4 — matiaspit88@gmail.com tulee INVOICE_BCC_EMAILS:stä).
+  async function sendEraInvoiceEmail(row: typeof eraInvoices.$inferSelect, project: ProjectData): Promise<void> {
+    if (!resend) return;
+    try {
+      const pdf = await generateEraInvoicePdf(buildEraInvoicePdfParams(row, project));
+      const recipients = new Set<string>([...WORKER_NOTIFICATION_EMAILS, ...INVOICE_BCC_EMAILS]);
+      if (row.kind === "tekija") {
+        const member = (project.crew || []).find((m) => m.id === row.senderId);
+        if (member?.profile?.email) recipients.add(member.profile.email);
+      }
+      const to = Array.from(recipients).filter(Boolean);
+      if (to.length === 0) return;
+      const eraNumbers: number[] = JSON.parse(row.eraNumbers || "[]");
+      const subject = `Lasku ${row.invoiceNumber || row.id} — ${eraLabelOf(eraNumbers)} · ${fmtEurCents(row.totalCents)}`;
+      const html = `<!DOCTYPE html><html lang="fi"><body style="margin:0;background:#F6F4EE;font-family:sans-serif">
+        <div style="max-width:520px;margin:24px auto;background:#fff;border:1px solid #E4E1D7;border-radius:14px;padding:24px 32px">
+          <p style="margin:0 0 8px;font-size:18px;font-weight:700;color:#1A1A1A">Lasku ${row.invoiceNumber || ""}</p>
+          <p style="margin:0 0 4px;color:#475569;font-size:13px">${eraLabelOf(eraNumbers)} · ${fmtEurCents(row.totalCents)}</p>
+          <p style="margin:12px 0 0;color:#475569;font-size:13px">Lasku liitteenä PDF-muodossa.</p>
+        </div></body></html>`;
+      let success = true;
+      let error: string | undefined;
+      try {
+        await resend.emails.send({
+          from: FROM_EMAIL, to, subject, html,
+          attachments: [{ filename: `lasku-${row.invoiceNumber || row.id}.pdf`, content: pdf.toString("base64") }],
+        });
+      } catch (sendErr: any) {
+        success = false;
+        error = sendErr?.message || String(sendErr);
+      }
+      await db.insert(eraInvoiceEmails).values({
+        invoiceId: row.id, recipients: JSON.stringify(to), success, error,
+      });
+    } catch (e: any) {
+      console.error("sendEraInvoiceEmail failed:", e?.message);
+    }
+  }
+
+  // Koko keikan laskulista sisältää jokaisen tekijän maksutiedot, joten se on
+  // vain johtajille (tekijä näkee omat laskunsa /api/crew/:token -näkymässään).
+  app.get("/api/jobs/:id/era-invoices", async (req, res) => {
+    try {
+      const caller = (req as any).admin as AdminTokenPayload | undefined;
+      const sub = String(caller?.sub ?? "").toLowerCase();
+      if (caller?.role !== "host" && !FOUNDER_IDS.includes(sub)) {
+        return res.status(403).json({ error: "Vain johtajat voivat tarkastella erälaskuja." });
+      }
+      const jobId = Number(req.params.id);
+      // Sama migraatiovarmuus kuin workerView():ssä — jos era_invoices (tai
+      // era_invoice_emails) ei ole vielä ajettu tuotantokantaan, näytä tyhjä
+      // lista sen sijaan että koko Maksut-sivu 500:aa. Muut virheet lokittuvat
+      // ja päätyvät normaalisti uloimman catch-lohkon 500-vastaukseen.
+      let rows: (typeof eraInvoices.$inferSelect)[] = [];
+      const emailsByInvoice = new Map<number, { recipients: string[]; success: boolean; sentAt: Date }[]>();
+      try {
+        rows = await db.select().from(eraInvoices)
+          .where(eq(eraInvoices.jobId, jobId)).orderBy(desc(eraInvoices.createdAt));
+        // Sähköposti_loki per lasku (kohta 3D: kopiot kummankin johtajan
+        // sähköpostissa). Rivit syntyvät vasta vaiheessa 4 — siihen asti tyhjä.
+        if (rows.length > 0) {
+          const emailRows = await db.select().from(eraInvoiceEmails)
+            .where(inArray(eraInvoiceEmails.invoiceId, rows.map((r) => r.id)));
+          for (const e of emailRows) {
+            let recipients: string[] = [];
+            try { recipients = JSON.parse(e.recipients); } catch { /* jätä tyhjäksi */ }
+            const list = emailsByInvoice.get(e.invoiceId) ?? [];
+            list.push({ recipients, success: e.success, sentAt: e.sentAt });
+            emailsByInvoice.set(e.invoiceId, list);
+          }
+        }
+      } catch (e: any) {
+        if (!isMissingTableError(e)) throw e;
+      }
+      res.json({
+        ok: true,
+        invoices: rows.map((r) => ({ ...toClientEraInvoice(r), emails: emailsByInvoice.get(r.id) ?? [] })),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Johtajan PDF-lataus mille tahansa keikan erälaskulle (kohta 4). Regeneroidaan
+  // aina tallennetusta rivistä — deterministinen, ei erillistä tiedostotallennusta.
+  app.get("/api/jobs/:id/era-invoice/:invoiceId/pdf", async (req, res) => {
+    try {
+      const caller = (req as any).admin as AdminTokenPayload | undefined;
+      const sub = String(caller?.sub ?? "").toLowerCase();
+      if (caller?.role !== "host" && !FOUNDER_IDS.includes(sub)) {
+        return res.status(403).json({ error: "Vain johtajat voivat ladata erälaskuja." });
+      }
+      const jobId = Number(req.params.id);
+      const loaded = await loadJobProject(jobId);
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const invoiceId = Number(req.params.invoiceId);
+      const [invoice] = await db.select().from(eraInvoices).where(eq(eraInvoices.id, invoiceId));
+      if (!invoice || invoice.jobId !== jobId) return res.status(404).json({ error: "Laskua ei löydy" });
+      const pdf = await generateEraInvoicePdf(buildEraInvoicePdfParams(invoice, loaded.project));
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="lasku-${invoice.invoiceNumber || invoice.id}.pdf"`);
+      res.send(pdf);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Johtaja luo tekijä-maksuehdotukset valitulle eräl(l)e — yksi rivi per
+  // tekijä. Kohta 3A: pestyt_ikkunat*20€ esitäytetty, sovittu_muutos ja ennakko
+  // erillisinä kenttinä. Reititys (kohta 1): erät 1-3 → Joonatan, erä 4 → Matias.
+  app.post("/api/jobs/:id/era-invoice/worker-batch", async (req, res) => {
+    try {
+      const jobId = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+
+      const eraNumbers = normalizeEraNumbers(req.body?.eraNumbers);
+      if (!eraNumbers) return res.status(400).json({ error: "Virheellinen erävalinta (1-3 tai 4)" });
+      const recipientId = eraRecipientFounderId(eraNumbers);
+      const dueDate = normalizeDueDate(req.body?.dueDate);
+
+      const rawWorkers = Array.isArray(req.body?.workers) ? req.body.workers : [];
+      if (rawWorkers.length === 0) return res.status(400).json({ error: "Tekijöitä puuttuu" });
+
+      const created: (typeof eraInvoices.$inferSelect)[] = [];
+      for (const w of rawWorkers) {
+        const workerId = String(w?.workerId || "").slice(0, 100);
+        if (!workerId) continue;
+        const name = String(w?.name || workerId).slice(0, 200);
+        const pestytIkkunat = Math.max(0, Number(w?.pestytIkkunat) || 0);
+        const sovittuMuutosCents = Math.round(Number(w?.sovittuMuutosCents) || 0);
+        const ennakkoCents = Math.max(0, Math.round(Number(w?.ennakkoCents) || 0));
+        const result = computeEraBilling(0, [{ workerId, name, pestytIkkunat, sovittuMuutosCents, ennakkoCents }], []);
+        const computed = result.workers[0];
+        const [row] = await db.insert(eraInvoices).values({
+          jobId,
+          kind: "tekija" satisfies EraInvoiceKind,
+          senderId: workerId,       // myyjä = tekijä (alihankkija laskuttaa omalla työllään)
+          recipientId,              // ostaja = erän mukaan valittu johtaja
+          eraNumbers: JSON.stringify(eraNumbers),
+          rivit: JSON.stringify({ input: { workerId, name, pestytIkkunat, sovittuMuutosCents, ennakkoCents }, computed }),
+          totalCents: computed.maksettavaCents,
+          dueDate,
+          tila: "luonnos" satisfies EraInvoiceTila,
+        }).returning();
+        created.push(row);
+      }
+      if (created.length === 0) return res.status(400).json({ error: "Ei luotu yhtään laskua" });
+      res.status(201).json({ ok: true, invoices: created.map(toClientEraInvoice) });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Johtaja-välinen ristiinlasku (kohta 3C). Lähettäjä laskuttaa AINA vain
+  // toista johtajaa — vastaanottaja määräytyy erän numerosta (1-3 → Joonatan,
+  // 4 → Matias), ei siitä minkä rivin painiketta klikattiin. Siksi tarkistetaan
+  // erikseen ettei lähettäjä pääty myös vastaanottajaksi (ei voi laskuttaa
+  // itseään) — käyttäjän vahvistama sääntö vapaalle erävalinnalle.
+  app.post("/api/jobs/:id/era-invoice/founder", async (req, res) => {
+    try {
+      const jobId = Number(req.params.id);
+      const loaded = await loadJobProject(jobId);
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const { project } = loaded;
+
+      const sub = String((req as any).admin?.sub ?? "").toLowerCase();
+      const senderId = String(req.body?.senderId || "").toLowerCase();
+      if (!FOUNDER_IDS.includes(senderId)) return res.status(400).json({ error: "Lähettäjän pitää olla johtaja" });
+      if (senderId !== sub) return res.status(403).json({ error: "Et voi lähettää laskua toisen puolesta" });
+
+      const eraNumbers = normalizeEraNumbers(req.body?.eraNumbers);
+      if (!eraNumbers) return res.status(400).json({ error: "Virheellinen erävalinta (1-3 tai 4)" });
+      const recipientId = eraRecipientFounderId(eraNumbers);
+      if (recipientId === senderId) {
+        return res.status(400).json({
+          error: "Et voi laskuttaa itseäsi tällä erällä — tämä erä laskutetaan toiselle johtajalle.",
+        });
+      }
+
+      const itsepestytIkkunat = Math.max(0, Number(req.body?.itsepestytIkkunat) || 0);
+      const kokonaisikkunat = Math.max(0, Number(req.body?.kokonaisikkunat) || 0);
+      const totalCents = Math.round(Number(req.body?.totalCents) || 0);
+      const manualAdjustmentCents = Math.round(Number(req.body?.manualAdjustmentCents) || 0);
+      const dueDate = normalizeDueDate(req.body?.dueDate);
+      if (totalCents <= 0) return res.status(400).json({ error: "Kokonaissumma puuttuu" });
+
+      // Tekijöiden ansaittu + ikkunat tälle erälle: summataan jo luoduista
+      // tekijä-laskuista (hylätyt eivät lasketa mukaan — luonnos/lähetetty/
+      // hyväksytty kylläkin, koska johtaja on jo sitoutunut näihin summiin).
+      const workerRows = await db.select().from(eraInvoices).where(and(
+        eq(eraInvoices.jobId, jobId), eq(eraInvoices.kind, "tekija" satisfies EraInvoiceKind), ne(eraInvoices.tila, "hylätty" satisfies EraInvoiceTila),
+      ));
+      const matchingWorkerRows = workerRows.filter((r) => {
+        try { const nums = JSON.parse(r.eraNumbers) as number[]; return nums.some((n) => eraNumbers.includes(n)); }
+        catch { return false; }
+      });
+      const tekijatIkkunatSum = matchingWorkerRows.reduce((s, r) => {
+        try { return s + (JSON.parse(r.rivit)?.input?.pestytIkkunat || 0); } catch { return s; }
+      }, 0);
+      const tekijatAnsaittuYhtCents = matchingWorkerRows.reduce((s, r) => {
+        try { return s + (JSON.parse(r.rivit)?.computed?.ansaittuCents || 0); } catch { return s; }
+      }, 0);
+
+      // Loput ikkunat kokonaismäärästä kuuluvat vastaanottajalle (kolme
+      // kategoriaa: tekijät + lähettäjä + vastaanottaja = kokonaisikkunat).
+      const recipientPestytIkkunat = kokonaisikkunat - tekijatIkkunatSum - itsepestytIkkunat;
+      if (recipientPestytIkkunat < -0.001) {
+        return res.status(400).json({
+          error: `Ikkunamäärä ei täsmää: kokonaisikkunat (${kokonaisikkunat}) on pienempi kuin tekijöiden ` +
+            `(${tekijatIkkunatSum}) + omat (${itsepestytIkkunat}) ikkunat yhteensä.`,
+        });
+      }
+
+      const senderName = BRAND_BILLERS.find((b) => b.id === senderId)?.name || senderId;
+      const recipientName = BRAND_BILLERS.find((b) => b.id === recipientId)?.name || recipientId;
+
+      // Synteettinen yhdistetty tekijärivi: säilyttää tarkan ansaittu-summan
+      // (sis. sovitut muutokset) ilman että jokainen alkuperäinen tekijä-lasku
+      // pitäisi purkaa takaisin yksittäisiksi pesty_ikkunat-riveiksi.
+      const syntheticWorkers = matchingWorkerRows.length > 0
+        ? [{
+            workerId: "_tekijat_yht", name: "Tekijät yhteensä", pestytIkkunat: tekijatIkkunatSum,
+            sovittuMuutosCents: tekijatAnsaittuYhtCents - Math.round(tekijatIkkunatSum * TEKIJA_HINTA_CENTS),
+            ennakkoCents: 0,
+          }]
+        : [];
+
+      const result = computeEraBilling(totalCents, syntheticWorkers, [
+        { founderId: senderId, name: senderName, pestytIkkunat: itsepestytIkkunat },
+        { founderId: recipientId, name: recipientName, pestytIkkunat: recipientPestytIkkunat },
+      ]);
+      const senderRow = result.founders.find((f) => f.founderId === senderId)!;
+      const finalCents = senderRow.loppusummaCents + manualAdjustmentCents;
+
+      // Numerointi + viite atomisesti (withNextInvoiceNumber) — advisory lock
+      // estää kahta samalta lähettäjältä lähes yhtäaikaa lähetettyä laskua
+      // saamasta samaa juoksevaa numeroa (ks. funktion kommentti).
+      const row = await withNextInvoiceNumber(senderId, async (tx, invoiceNumber) => {
+        const [inserted] = await tx.insert(eraInvoices).values({
+          jobId,
+          kind: "johtaja_valinen" satisfies EraInvoiceKind,
+          senderId, recipientId,
+          eraNumbers: JSON.stringify(eraNumbers),
+          rivit: JSON.stringify({
+            input: { itsepestytIkkunat, kokonaisikkunat, recipientPestytIkkunat, tekijatIkkunatSum, tekijatAnsaittuYhtCents },
+            computed: result,
+          }),
+          totalCents: finalCents,
+          xCents: result.xCents,
+          kateCents: result.kateCents,
+          katePerJohtajaCents: senderRow.katePerJohtajaCents,
+          manualAdjustmentCents,
+          dueDate,
+          tila: "lähetetty" satisfies EraInvoiceTila,
+          invoiceNumber,
+          sentAt: new Date(),
+        }).returning();
+        const [final] = await tx.update(eraInvoices)
+          .set({ referenceNumber: eraInvoiceReference(inserted.id) })
+          .where(eq(eraInvoices.id, inserted.id)).returning();
+        return final;
+      });
+
+      // Sähköpostikopiot kummallekin johtajalle riippumatta laskun suunnasta
+      // (kohta 3C.4) + PDF liitteenä (kohta 4). Best-effort — ei koskaan estä
+      // vastausta, koska lasku on jo tallessa ja lukittu tässä vaiheessa.
+      void sendEraInvoiceEmail(row, project);
+      res.status(201).json({ ok: true, invoice: toClientEraInvoice(row) });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -4633,8 +5199,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   }
 
   // Build the worker-facing view: floor map + their own progress, NO gig price.
-  function workerView(project: ProjectData, member: CrewMember) {
+  async function workerView(job: typeof jobs.$inferSelect, project: ProjectData, member: CrewMember) {
     const stats = crewMemberStats(project, member);
+    // FR8 erälaskut (kohta 3B): tekijän OMAT laskut — luonnokset odottamassa
+    // vastausta + jo käsitelty historia. Suodatus senderId:llä takaa ettei
+    // kukaan koskaan näe toisen tekijän rivejä. Defensiivinen try/catch: jos
+    // era_invoices-taulua ei ole vielä migratoitu kantaan (db:push ajamatta),
+    // koko dashboardin ei saa kaatua — silloin lista on tyhjä. Vain "taulua ei
+    // ole" -virhe (42P01) niellään hiljaa; muut virheet lokittuvat, koska
+    // muuten tekijä voisi jäädä koskaan näkemättä odottavaa laskuaan.
+    let workerEraInvoices: ReturnType<typeof toClientEraInvoice>[] = [];
+    try {
+      const rows = await db.select().from(eraInvoices).where(and(
+        eq(eraInvoices.jobId, job.id),
+        eq(eraInvoices.kind, "tekija" satisfies EraInvoiceKind),
+        eq(eraInvoices.senderId, member.id),
+      )).orderBy(desc(eraInvoices.createdAt));
+      workerEraInvoices = rows.map(toClientEraInvoice);
+    } catch (e: any) {
+      if (!isMissingTableError(e)) console.error("workerView era_invoices query failed:", e?.message);
+    }
     const projectTotals = computeProjectTotals(project);
     // Paydate-progress counts: for a fixed deal (FR8) track the LIVE billable (red)
     // window count, so the milestone follows the actual dots on the map (e.g. 161 →
@@ -4714,6 +5298,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Puuhapatet -> worker payouts (newest-first). The worker sees and approves
       // these; the gig price/cap stays hidden as always.
       payouts: (member.payouts || []).slice().sort((a, b) => b.createdAt - a.createdAt),
+      // FR8 erälaskut, vain tekijän omat (kohta 3B) — luonnos = odottaa tekijän
+      // "Lähetä lasku" / "Hylkää" -vastausta, hyväksytty/hylätty = lukittu.
+      eraInvoices: workerEraInvoices,
       building: project.building,
       pricePerWindow: member.perWindowCents / 100, // worker's OWN rate, not the gig price
       marks: project.marks,
@@ -4754,7 +5341,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const found = await findJobByCrewToken(String(req.params.token));
       if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
-      res.json({ ok: true, view: workerView(found.project, found.member) });
+      res.json({ ok: true, view: await workerView(found.job, found.project, found.member) });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -4814,7 +5401,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       project.crew = (project.crew || []).map((m) => (m.id === member.id ? merged : m));
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
-      res.json({ ok: true, view: workerView(saved, savedMember) });
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -4864,7 +5451,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
-      res.json({ ok: true, view: workerView(saved, savedMember) });
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -4891,7 +5478,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       else project.observations[key] = { text, imageDataUrl: img, by: member.id, ts: Date.now() };
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
-      res.json({ ok: true, view: workerView(saved, savedMember) });
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -4934,7 +5521,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           (e) => console.warn("session summary email failed:", e?.message),
         );
       }
-      res.json({ ok: true, view: workerView(saved, savedMember) });
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -4952,7 +5539,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       project.hourLog = [{ worker: member.id, delta, ts: Date.now(), by: member.id }, ...(project.hourLog || [])].slice(0, 200);
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
-      res.json({ ok: true, view: workerView(saved, savedMember) });
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -4993,7 +5580,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           (e) => console.warn("manual session summary email failed:", e?.message),
         );
       }
-      res.json({ ok: true, view: workerView(saved, savedMember) });
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -5012,7 +5599,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       );
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
-      res.json({ ok: true, view: workerView(saved, savedMember) });
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -5040,7 +5627,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       notes[floor] = [...(notes[floor] || []), note].slice(0, 500);
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
-      res.json({ ok: true, key, view: workerView(saved, savedMember) });
+      res.json({ ok: true, key, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -5062,7 +5649,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       note.text = text || undefined;
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
-      res.json({ ok: true, view: workerView(saved, savedMember) });
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -5081,7 +5668,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       project.notes![floor] = list!.filter((n) => n.key !== key);
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
-      res.json({ ok: true, view: workerView(saved, savedMember) });
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -5139,9 +5726,112 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       project.crew = (project.crew || []).map((m) => (m.id === member.id ? { ...m, payouts: list } : m));
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
-      res.json({ ok: true, view: workerView(saved, savedMember) });
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
+    }
+  });
+
+  // FR8 erälaskutus — tekijän vastaus johtajan luonnostamaan erälaskuun (kohta
+  // 3B). "send" = tekijä hyväksyy ja lähettää laskunsa: lasku lukittuu, saa
+  // juoksevan laskunumeron ja viitteen. "reject" = tekijä hylkää (lopullinen —
+  // johtaja voi aina luoda uuden ehdotuksen tilalle, kohta 3B.4). Molemmat
+  // toimivat TASAN kerran: siirtymä sallitaan vain "luonnos"-tilasta ja UPDATE
+  // on ehdollinen samaan tilaan, joten kilpailevista pyynnöistä vain
+  // ensimmäinen voittaa (kohta 3B.3 + kohdan 4 muuttumattomuus).
+  async function respondToEraInvoice(req: any, res: any, action: EraInvoiceRespondAction) {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const invoiceId = Number(req.params.invoiceId);
+      if (!Number.isFinite(invoiceId)) return res.status(404).json({ error: "Laskua ei löytynyt" });
+      const [invoice] = await db.select().from(eraInvoices).where(eq(eraInvoices.id, invoiceId));
+      // Vieras tai olematon lasku näyttää tekijälle aina samalta (404) — rivien
+      // olemassaoloa ei vuodeta tokenia arvaamalla.
+      if (!invoice || invoice.jobId !== job.id || invoice.kind !== ("tekija" satisfies EraInvoiceKind) || invoice.senderId !== member.id) {
+        return res.status(404).json({ error: "Laskua ei löytynyt" });
+      }
+      const nextTila = eraInvoiceRespondTransition(invoice.tila as EraInvoiceTila, action);
+      if (!nextTila) {
+        return res.status(409).json({ error: "Lasku on jo käsitelty — sitä ei voi lähettää tai hylätä uudelleen." });
+      }
+      // Sama defensiivinen sääntö kuin payout-hyväksynnässä: harjoittelija ei
+      // laskuta alihankkijana. Hylkäys sallitaan silti (siivoaa virheellisen rivin).
+      if (action === "send" && isCrewTrainee(member)) {
+        return res.status(400).json({ error: "Harjoittelija ei laskuta — maksu hoidetaan tiimin kautta." });
+      }
+
+      const now = new Date();
+      let updated: typeof eraInvoices.$inferSelect | undefined;
+      if (action === "send") {
+        // Juokseva laskunumero per laskuttaja + viite atomisesti — sama
+        // withNextInvoiceNumber-suojaus kuin johtaja-välisissä laskuissa, niin
+        // ettei kaksi tämän tekijän luonnosta (esim. erä 1-3 ja erä 4) voi
+        // koskaan saada samaa numeroa vaikka ne lähetettäisiin lähes yhtäaikaa.
+        updated = await withNextInvoiceNumber(member.id, async (tx, invoiceNumber) => {
+          const [row] = await tx.update(eraInvoices)
+            .set({ tila: nextTila, respondedAt: now, sentAt: now, invoiceNumber })
+            .where(and(eq(eraInvoices.id, invoice.id), eq(eraInvoices.tila, "luonnos" satisfies EraInvoiceTila)))
+            .returning();
+          if (!row) return undefined;
+          const [final] = await tx.update(eraInvoices)
+            .set({ referenceNumber: eraInvoiceReference(row.id) })
+            .where(eq(eraInvoices.id, row.id)).returning();
+          return final;
+        });
+      } else {
+        const [row] = await db.update(eraInvoices).set({ tila: nextTila, respondedAt: now })
+          .where(and(eq(eraInvoices.id, invoice.id), eq(eraInvoices.tila, "luonnos" satisfies EraInvoiceTila)))
+          .returning();
+        updated = row;
+      }
+      if (!updated) {
+        return res.status(409).json({ error: "Lasku on jo käsitelty — sitä ei voi lähettää tai hylätä uudelleen." });
+      }
+
+      // Sähköpostikopio + PDF vain kun lasku oikeasti lukittui ("send"), ei
+      // hylkäyksellä. Best-effort, ei koskaan estä vastausta.
+      if (action === "send") void sendEraInvoiceEmail(updated, project);
+
+      // Näkymän uudelleenrakennus eristetty omaan try/catchiin: tilasiirtymä on
+      // jo tallessa tähän mennessä, joten siihen liittymätön virhe workerView-
+      // funktiossa ei saa raportoida onnistunutta lähetystä epäonnistuneena
+      // (kohta 4: muuttumattomuus + tekijän luottamus "lähetä"-napin
+      // kertakäyttöisyyteen — ei koskaan "yritä uudelleen" jo tehdylle asialle).
+      let view: Awaited<ReturnType<typeof workerView>> | undefined;
+      try {
+        view = await workerView(job, project, member);
+      } catch (viewErr: any) {
+        console.error("workerView rebuild after era-invoice respond failed:", viewErr?.message);
+      }
+      res.json({ ok: true, invoice: toClientEraInvoice(updated), view });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  }
+
+  app.post("/api/crew/:token/era-invoice/:invoiceId/send", (req, res) => respondToEraInvoice(req, res, "send"));
+  app.post("/api/crew/:token/era-invoice/:invoiceId/reject", (req, res) => respondToEraInvoice(req, res, "reject"));
+
+  // Tekijän oman erälaskun PDF-lataus (kohta 4) — vain omat rivit, sama
+  // senderId-suodatus kuin workerView():ssä ja respondToEraInvoice:ssa.
+  app.get("/api/crew/:token/era-invoice/:invoiceId/pdf", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const invoiceId = Number(req.params.invoiceId);
+      const [invoice] = await db.select().from(eraInvoices).where(eq(eraInvoices.id, invoiceId));
+      if (!invoice || invoice.jobId !== job.id || invoice.kind !== ("tekija" satisfies EraInvoiceKind) || invoice.senderId !== member.id) {
+        return res.status(404).json({ error: "Laskua ei löydy" });
+      }
+      const pdf = await generateEraInvoicePdf(buildEraInvoicePdfParams(invoice, project));
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="lasku-${invoice.invoiceNumber || invoice.id}.pdf"`);
+      res.send(pdf);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
   });
 

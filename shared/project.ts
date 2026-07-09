@@ -369,6 +369,34 @@ export function computeWorkerStats(data: ProjectData): WorkerStat[] {
   });
 }
 
+/**
+ * FR8-speksin kohta 6.1: kokonaistilanteen ikkunamäärän ("Kaikki pesijät
+ * yhteensä") pitää täsmätä TARKALLEEN pesty-tilassa olevien ikkunoiden
+ * määrään — summattuna tarkoilla desimaaleilla (0.5-jaetut ikkunat), EI
+ * pyöristäen jokaista tekijän riviä ennen summausta. Tämä funktio ei itse
+ * pyöristä mitään: jos jokin `computeWorkerStats`-kutsuja pyöristäisi
+ * `washed`-arvon per rivi ennen summausta, tämä paljastaisi eron.
+ *
+ * Toinen mahdollinen syy erolle (ei pyöristys vaan puuttuva attribuutio):
+ * pesty-ikkuna, jonka `washedBy` ei osu kehenkään `computeWorkerStats`:n
+ * tuntemaan tekijään (esim. poistettu/tuntematon id) — silloin ikkuna
+ * lasketaan `computeProjectTotals().washed`:iin mutta ei kenenkään omaan
+ * summaan, ja `attributedSum` jää `dotCount`:ia pienemmäksi.
+ */
+export interface WindowAttributionCheck {
+  dotCount: number;         // computeProjectTotals().washed — tarkka pesty-pisteiden määrä
+  attributedSum: number;    // SUM(computeWorkerStats().washed), tarkoilla desimaaleilla
+  diff: number;             // dotCount - attributedSum (0 = täsmää)
+  matches: boolean;         // |diff| < 1e-6
+}
+
+export function checkWindowAttribution(data: ProjectData): WindowAttributionCheck {
+  const dotCount = computeProjectTotals(data).washed;
+  const attributedSum = computeWorkerStats(data).reduce((s, w) => s + w.washed, 0);
+  const diff = dotCount - attributedSum;
+  return { dotCount, attributedSum, diff, matches: Math.abs(diff) < 1e-6 };
+}
+
 // ─── Per-erä (instalment) debt attribution ─────────────────────────────────────
 //
 // "Eräkohtainen velka": when the founders set erä 1 = 40 windows, who washed those

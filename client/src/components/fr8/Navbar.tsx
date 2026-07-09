@@ -6,7 +6,7 @@ import { useState, useEffect } from "react";
 import { ArrowLeft, Maximize2, Minimize2, ChevronDown, Check } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 
-export type Fr8Tab = "dashboard" | "floor";
+export type Fr8Tab = "dashboard" | "floor" | "maksut";
 
 interface NavbarProps {
   activeTab: Fr8Tab;
@@ -22,11 +22,15 @@ interface NavbarProps {
   workers?: { id: string; name: string }[];
   defaultWasherId?: string;
   onChangeDefaultWasher?: (id: string) => void;
+  /** "Maksut" — erälaskutuksen kokonaistilanne (kohta 3D). Näytetään vain
+   *  johtajille, koska sivu sisältää jokaisen tekijän maksutiedot. */
+  showMaksutTab?: boolean;
 }
 
 const TABS: { id: Fr8Tab; label: string; short: string }[] = [
   { id: "dashboard", label: "Kokonaistilanne", short: "Tilanne" },
   { id: "floor", label: "Tilanne kerroksittain", short: "Kerrokset" },
+  { id: "maksut", label: "Maksut", short: "Maksut" },
 ];
 
 function tabStyle(active: boolean): React.CSSProperties {
@@ -45,7 +49,7 @@ function tabStyle(active: boolean): React.CSSProperties {
   };
 }
 
-export default function Navbar({ activeTab, onTabChange, buildingName, buildingAddress, currentWorkerName, saving, onBack, workers, defaultWasherId, onChangeDefaultWasher }: NavbarProps) {
+export default function Navbar({ activeTab, onTabChange, buildingName, buildingAddress, currentWorkerName, saving, onBack, workers, defaultWasherId, onChangeDefaultWasher, showMaksutTab }: NavbarProps) {
   const m = useIsMobile();
   const [isFs, setIsFs] = useState(false);
   const [washerOpen, setWasherOpen] = useState(false);
@@ -103,7 +107,7 @@ export default function Navbar({ activeTab, onTabChange, buildingName, buildingA
           borderRadius: "13px", overflowX: "auto", flexShrink: 1, minWidth: 0,
         }}
       >
-        {TABS.map((t) => (
+        {TABS.filter((t) => t.id !== "maksut" || showMaksutTab).map((t) => (
           <button key={t.id} onClick={() => onTabChange(t.id)} style={{ ...tabStyle(activeTab === t.id), whiteSpace: "nowrap", padding: m ? "8px 12px" : "8px 15px" }}>
             {m ? t.short : t.label}
           </button>

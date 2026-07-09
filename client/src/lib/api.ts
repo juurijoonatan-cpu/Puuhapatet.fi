@@ -7,6 +7,7 @@ import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark
 import type { MemberAgreementSignature } from "@shared/member-agreement";
 import type { CrewMember, CrewMemberStats, CrewProfile, CrewAgreementSignature } from "@shared/crew";
 import type { WorkerAgreement } from "@shared/worker-agreements";
+import type { EraInvoiceKind, EraInvoiceTila } from "@shared/era-billing";
 
 // Worker dashboard payload — the gig price/cap is intentionally absent.
 export interface WorkerView {
@@ -37,6 +38,9 @@ export interface WorkerView {
     billing: { name: string | null; yTunnus: string | null; iban: string | null; address: string | null };
   };
   payouts: import("@shared/crew").CrewPayout[];
+  /** FR8 erälaskut, vain tämän tekijän omat (kohta 3B): "luonnos" odottaa
+   *  tekijän Lähetä lasku / Hylkää -vastausta; hyväksytty/hylätty on lukittu. */
+  eraInvoices: EraInvoiceClient[];
   building: ProjBuilding;
   pricePerWindow: number;          // the worker's OWN rate (not the gig price)
   marks: ProjMarksData;
@@ -79,6 +83,34 @@ export interface HostCrewRow {
   member: CrewMember;
   stats: CrewMemberStats;
   onboarded: boolean;
+}
+
+/** Client-side shape of an `era_invoices` row — `eraNumbers`/`rivit` arrive as
+ *  JSON text from the DB but are parsed server-side before the response, ks.
+ *  shared/era-billing.ts + docs/fr8-era-laskutus-plan.md. */
+export interface EraInvoiceClient {
+  id: number;
+  jobId: number;
+  kind: EraInvoiceKind;
+  senderId: string;
+  recipientId: string;
+  eraNumbers: number[];
+  rivit: any;
+  totalCents: number;
+  xCents: number | null;
+  kateCents: number | null;
+  katePerJohtajaCents: number | null;
+  manualAdjustmentCents: number;
+  dueDate: string | null;
+  tila: EraInvoiceTila;
+  invoiceNumber: string | null;
+  referenceNumber: string | null;
+  createdAt: string;
+  sentAt: string | null;
+  respondedAt: string | null;
+  /** Sähköposti_loki (kohta 3D) — rivejä syntyy vaiheesta 4 alkaen. Mukana vain
+   *  johtajien listauksessa (GET /era-invoices), ei tekijän omassa näkymässä. */
+  emails?: { recipients: string[]; success: boolean; sentAt: string }[];
 }
 
 /** Founder settlement for a fixed deal. The biller collects the full instalment;
@@ -571,6 +603,39 @@ export const api = {
   deleteFounderSettlement: (id: number) =>
     request<{ ok: boolean }>("DELETE", `/api/admin/founder-settlement/${id}`),
 
+  // ─── FR8 erälaskutus (docs/fr8-era-laskutus-plan.md) ─────────────────────
+  getEraInvoices: (jobId: number) =>
+    request<{ ok: boolean; invoices: EraInvoiceClient[] }>("GET", `/api/jobs/${jobId}/era-invoices`),
+  // Johtaja luo tekijä-maksuehdotukset valitulle erälle (§3A) — yksi rivi per
+  // tekijä; jää tilaan "luonnos" kunnes tekijä itse hyväksyy/hylkää (vaihe 3).
+  createWorkerEraInvoiceBatch: (jobId: number, data: {
+    eraNumbers: number[];
+    workers: { workerId: string; name: string; pestytIkkunat: number; sovittuMuutosCents: number; ennakkoCents: number }[];
+    /** Eräpäivä, johtajan valitsema ("YYYY-MM-DD"). Puuttuessaan 14 vrk -oletus. */
+    dueDate?: string;
+  }) => request<{ ok: boolean; invoices: EraInvoiceClient[] }>("POST", `/api/jobs/${jobId}/era-invoice/worker-batch`, data),
+  // Johtaja lähettää suoraan toiselle johtajalle ristiinlaskun (§3C) — lukittu heti.
+  sendFounderEraInvoice: (jobId: number, data: {
+    eraNumbers: number[]; senderId: string; itsepestytIkkunat: number; kokonaisikkunat: number;
+    totalCents: number; manualAdjustmentCents?: number; dueDate?: string;
+  }) => request<{ ok: boolean; invoice: EraInvoiceClient }>("POST", `/api/jobs/${jobId}/era-invoice/founder`, data),
+  // Johtajan PDF-lataus (kohta 4) — admin-Bearer-autentikoitu reitti, joten ei
+  // kelpaa suoraan <a href>:ksi; haetaan blobina ja avataan/ladataan JS:llä.
+  downloadEraInvoicePdf: async (jobId: number, invoiceId: number): Promise<{ ok: boolean; blob?: Blob; error?: string }> => {
+    try {
+      const res = await fetch(`${API_BASE}/api/jobs/${jobId}/era-invoice/${invoiceId}/pdf`, { headers: authHeaders() });
+      if (res.status === 401) { handleUnauthorized(); return { ok: false, error: "Kirjautuminen vaaditaan" }; }
+      if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+      return { ok: true, blob: await res.blob() };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "Network error" };
+    }
+  },
+  // Tekijän oman laskun PDF-URL — token on jo itsessään autentikointi, joten
+  // kelpaa suoraan <a href>:ksi (sama malli kuin payout/:id/invoice.pdf).
+  crewEraInvoicePdfUrl: (token: string, invoiceId: number) =>
+    `${API_BASE}/api/crew/${token}/era-invoice/${invoiceId}/pdf`,
+
   markWorkerPaid: (workerId: string, amount: number) =>
     request<{ id: number }>("POST", `/api/workers/${workerId}/mark-paid`, { amount }),
 
@@ -965,6 +1030,17 @@ export const api = {
     expenses?: { id?: string; desc: string; amountCents: number; receiptDataUrl?: string }[],
   ) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/payout/${payoutId}/approve`, { billing, expenses }),
+
+  // FR8 erälasku (kohta 3B): tekijä hyväksyy ja LÄHETTÄÄ johtajan luonnosteleman
+  // laskun — toimii tasan kerran, lasku lukittuu ja saa laskunumeron + viitteen.
+  crewSendEraInvoice: (token: string, invoiceId: number) =>
+    request<{ ok: boolean; invoice: EraInvoiceClient; view: WorkerView }>(
+      "POST", `/api/crew/${token}/era-invoice/${invoiceId}/send`),
+
+  // FR8 erälasku: tekijä hylkää luonnoksen (lopullinen; johtaja voi lähettää uuden).
+  crewRejectEraInvoice: (token: string, invoiceId: number) =>
+    request<{ ok: boolean; invoice: EraInvoiceClient; view: WorkerView }>(
+      "POST", `/api/crew/${token}/era-invoice/${invoiceId}/reject`),
 
   // Worker logs an expense for the current job (own costs only — transport, materials, etc.).
   crewAddExpense: (token: string, data: { kind: string; desc: string; amountCents: number }) =>

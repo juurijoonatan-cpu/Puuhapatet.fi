@@ -92,6 +92,7 @@ export const jobs = pgTable("jobs", {
 export const jobsRelations = relations(jobs, ({ one, many }) => ({
   customer: one(customers, { fields: [jobs.customerId], references: [customers.id] }),
   expenses: many(expenses),
+  eraInvoices: many(eraInvoices),
 }));
 
 export const insertJobSchema = createInsertSchema(jobs).omit({ id: true, createdAt: true, updatedAt: true });
@@ -144,6 +145,72 @@ export const workerPayments = pgTable("worker_payments", {
 export const insertWorkerPaymentSchema = createInsertSchema(workerPayments).omit({ id: true, paidAt: true });
 export type WorkerPayment = typeof workerPayments.$inferSelect;
 export type InsertWorkerPayment = z.infer<typeof insertWorkerPaymentSchema>;
+
+// ─── FR8 era-invoices (erälaskutus) ───────────────────────────────────────────
+// Yksi rivi = yksi lasku, joko tekijän itsensä johtajalle laskuttama työkorvaus
+// ("tekijä", myyjä=tekijä, ostaja=erän mukaan valittu johtaja) tai kahden
+// johtajan välinen ristiinlasku ("johtaja_valinen", myyjä=lähettävä johtaja,
+// ostaja=toinen johtaja). Laskentaperusteet ks. shared/era-billing.ts ja
+// docs/fr8-era-laskutus-plan.md. `rivit` tallentaa JSON-muodossa sekä käsin
+// syötetyt lähtötiedot (pestyt_ikkunat/sovittu_muutos/ennakko per tekijä tai
+// johtaja) että lasketut tulokset (EraBillingResult) — muuttumaton tilannekuva
+// lähetyshetkeltä, jotta PDF voidaan regeneroida deterministisesti jälkikäteen
+// eikä laskua tarvitse tallentaa binäärinä.
+//
+// Lukitus: kun `tila` siirtyy pois "luonnos"-tilasta (`sentAt` asetetaan),
+// palvelimen tulee estää rivin muokkaus ja uudelleenlähetys — korjaus on aina
+// uusi lasku, ei tämän rivin päivitys (ks. speksin kohta 4, muuttumattomuus).
+export const eraInvoices = pgTable("era_invoices", {
+  id:                     serial("id").primaryKey(),
+  jobId:                  integer("job_id").references(() => jobs.id).notNull(),
+  kind:                   text("kind").notNull(),              // "tekija" | "johtaja_valinen"
+  senderId:               text("sender_id").notNull(),          // myyjä: tekijän workerId tai johtajan id
+  recipientId:            text("recipient_id").notNull(),       // ostaja: johtajan id (erän mukaan reititetty)
+  eraNumbers:             text("era_numbers").notNull(),        // JSON int[], esim. "[1,2,3]" tai "[4]"
+  rivit:                  text("rivit").notNull(),               // JSON: lähtötiedot + EraBillingResult-tilannekuva
+  totalCents:             integer("total_cents").notNull(),      // S (johtaja_valinen) tai maksettavaCents (tekija)
+  xCents:                 integer("x_cents"),                    // €/ikkuna (vain johtaja_valinen)
+  kateCents:              integer("kate_cents"),                 // vain johtaja_valinen
+  katePerJohtajaCents:    integer("kate_per_johtaja_cents"),      // vain johtaja_valinen
+  manualAdjustmentCents:  integer("manual_adjustment_cents").notNull().default(0), // vapaa muokkauskenttä
+  dueDate:                text("due_date"),                      // eräpäivä, johtajan valitsema (ISO "YYYY-MM-DD")
+  tila:                   text("tila").notNull().default("luonnos"), // luonnos|lähetetty|hyväksytty|hylätty
+  invoiceNumber:          text("invoice_number"),                // juokseva, per laskuttaja — asetetaan lähetettäessä
+  referenceNumber:        text("reference_number"),              // viitenumero — asetetaan lähetettäessä
+  createdAt:              timestamp("created_at").defaultNow().notNull(),
+  sentAt:                 timestamp("sent_at"),                  // lukitushetki (lähetetty/hyväksytty)
+  respondedAt:            timestamp("responded_at"),             // tekijän/toisen osapuolen hyväksyntä/hylkäys
+});
+
+export const eraInvoicesRelations = relations(eraInvoices, ({ one, many }) => ({
+  job: one(jobs, { fields: [eraInvoices.jobId], references: [jobs.id] }),
+  emails: many(eraInvoiceEmails),
+}));
+
+export const insertEraInvoiceSchema = createInsertSchema(eraInvoices).omit({
+  id: true, createdAt: true, sentAt: true, respondedAt: true,
+});
+export type EraInvoice = typeof eraInvoices.$inferSelect;
+export type InsertEraInvoice = z.infer<typeof insertEraInvoiceSchema>;
+
+// ─── FR8 era-invoice email log (sähköposti_loki) ──────────────────────────────
+
+export const eraInvoiceEmails = pgTable("era_invoice_emails", {
+  id:         serial("id").primaryKey(),
+  invoiceId:  integer("invoice_id").references(() => eraInvoices.id).notNull(),
+  recipients: text("recipients").notNull(),  // JSON string[] of email addresses
+  success:    boolean("success").notNull().default(true),
+  error:      text("error"),                 // best-effort: virheen kuvaus jos lähetys epäonnistui
+  sentAt:     timestamp("sent_at").defaultNow().notNull(),
+});
+
+export const eraInvoiceEmailsRelations = relations(eraInvoiceEmails, ({ one }) => ({
+  invoice: one(eraInvoices, { fields: [eraInvoiceEmails.invoiceId], references: [eraInvoices.id] }),
+}));
+
+export const insertEraInvoiceEmailSchema = createInsertSchema(eraInvoiceEmails).omit({ id: true, sentAt: true });
+export type EraInvoiceEmail = typeof eraInvoiceEmails.$inferSelect;
+export type InsertEraInvoiceEmail = z.infer<typeof insertEraInvoiceEmailSchema>;
 
 // ─── Investments (välineet ja hankinnat) ─────────────────────────────────────
 

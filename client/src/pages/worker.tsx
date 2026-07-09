@@ -32,6 +32,7 @@ import {
 } from "@shared/tax";
 import { computePayProgress } from "@shared/payprogress";
 import { MAX_PHOTO_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN } from "@shared/crew";
+import { BRAND_BILLERS } from "@shared/billers";
 
 const T = { ink: "#1A1A1A", paper: "#F6F4EE", card: "#FFFFFF", hair: "#E4E1D7", muted: "#8C8A82", green: "#3E7C59", navy: "#1F3B57" };
 const FONT = "'Poppins', ui-sans-serif, system-ui, -apple-system, sans-serif";
@@ -643,11 +644,10 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
       // admin for an experienced hire), otherwise "tulossa" so a first-timer's form
       // starts clean until they flip the toggle to "On jo".
       [YTUNNUS_STATUS_KEY]: view.worker.profile?.answers?.[YTUNNUS_STATUS_KEY] ?? (knownYtunnus ? "on" : "tulossa"),
-      // Ennakkoperintärekisteri: default "kylla" (paid gross, no withholding — the
-      // correct treatment for a registered entrepreneur, and the app's existing
-      // default). Making it explicit means the fact is captured & auditable rather
-      // than silently assumed. A worker not yet registered can flip it to "ei".
-      [PREPAYMENT_REGISTER_KEY]: view.worker.profile?.answers?.[PREPAYMENT_REGISTER_KEY] ?? "kylla",
+      // Ennakkoperintärekisteri: varovainen oletus "ei" (pidätys), koska
+      // pidättämättä jättäminen on Puuhapatetin oma vastuu jos tekijä ei
+      // lopulta olekaan rekisterissä. Tekijä vahvistaa itse "Kyllä", jos on.
+      [PREPAYMENT_REGISTER_KEY]: view.worker.profile?.answers?.[PREPAYMENT_REGISTER_KEY] ?? "ei",
       ...(view.worker.profile?.answers ?? {}),
     };
   });
@@ -871,12 +871,12 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
                 </label>
 
                 {/* Ennakkoperintärekisteri — ratkaisee, maksetaanko bruttona (ei
-                    ennakonpidätystä). Oletus "kylla": rekisterissä oleva yrittäjä saa
-                    koko summan ja hoitaa verot itse. */}
+                    ennakonpidätystä). Varovainen oletus "ei" (pidätys), kunnes
+                    tekijä itse vahvistaa olevansa rekisterissä. */}
                 <p style={{ ...fieldLabel, marginTop: 16, marginBottom: 8 }}>Oletko ennakkoperintärekisterissä?</p>
                 <div style={{ display: "flex", gap: 8 }}>
                   {([["kylla", "Kyllä"], ["ei", "En / en tiedä"]] as [string, string][]).map(([val, lbl]) => {
-                    const active = (answers[PREPAYMENT_REGISTER_KEY] || "kylla") === val;
+                    const active = (answers[PREPAYMENT_REGISTER_KEY] || "ei") === val;
                     return (
                       <button key={val} type="button" onClick={() => setAnswer(PREPAYMENT_REGISTER_KEY, val)}
                         style={{ flex: 1, padding: "11px", borderRadius: 10, cursor: "pointer", fontFamily: FONT, fontSize: 14, fontWeight: 600,
@@ -905,7 +905,7 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
 
                 <p style={{ fontSize: 11.5, color: T.muted, margin: "12px 0 0", lineHeight: 1.5 }}>
                   Laskutat työsi omalla Y-tunnuksellasi ja hoidat verosi itse.
-                  {(answers[PREPAYMENT_REGISTER_KEY] || "kylla") !== "ei"
+                  {(answers[PREPAYMENT_REGISTER_KEY] || "ei") !== "ei"
                     ? " Koska olet ennakkoperintärekisterissä, maksu tehdään ilman ennakonpidätystä — saat koko summan tilillesi."
                     : " Koska et ole (vielä) ennakkoperintärekisterissä, maksusta toimitetaan ennakonpidätys ja tilitetään Verolle. Rekisteröitymällä (ytj.fi) saat koko summan."}
                   {" "}Voit muuttaa näitä myöhemmin työpöydältä. Tarkista tarvittaessa vero.fi.
@@ -1083,7 +1083,11 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
   const [sub, setSub] = useState<null | "payouts" | "notes">(null);
   const pwa = usePwaInstall();
   const [showInstall, setShowInstall] = useState(false);
-  const pendingPayouts = (view.payouts || []).filter((p) => p.status === "ilmoitettu").length;
+  // Toimintaa odottavat: perinteiset payoutit + FR8 erälaskuluonnokset (kohta 3B)
+  // — molemmat aukeavat samasta "Maksut"-alanäkymästä.
+  const pendingPayouts =
+    (view.payouts || []).filter((p) => p.status === "ilmoitettu").length +
+    (view.eraInvoices || []).filter((inv) => inv.tila === "luonnos").length;
 
   // Lock page zoom so pinch zooms only the map (like the admin tool), and let the
   // dark UI extend under the notch / home indicator (viewport-fit=cover) — the
@@ -1537,6 +1541,197 @@ function Leaderboard({ view }: { view: WorkerView }) {
   );
 }
 
+/** FR8 erälaskut (kohta 3B): johtajan luonnostama lasku ilmestyy tähän, ja
+ *  tekijä joko hyväksyy ja LÄHETTÄÄ sen ("Lähetä lasku" — toimii tasan kerran,
+ *  minkä jälkeen lasku on lukittu) tai hylkää sen. Hylkäys on lopullinen, mutta
+ *  johtaja voi aina lähettää uuden maksun tilalle (kohta 3B.4). Kummankin
+ *  painikkeen alla on vahvistusaskel, ettei peruuttamatonta valintaa tehdä
+ *  vahingossa yhdellä näpäytyksellä. */
+function EraInvoiceSection({ token, view, setView }: { token: string; view: WorkerView; setView: (v: WorkerView) => void }) {
+  const invoices = view.eraInvoices || [];
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [confirm, setConfirm] = useState<{ id: number; action: "send" | "reject" } | null>(null);
+  const [err, setErr] = useState("");
+  // Harjoittelija ei voi laskuttaa alihankkijana (sama sääntö palvelimella,
+  // joka torjuu 400:lla) — piilota "Lähetä"-vaihtoehto ettei nappi näytä
+  // toimivalta kun se aina epäonnistuu.
+  const isTrainee = !!view.worker.trainee;
+
+  if (invoices.length === 0) return null;
+
+  const respond = async (id: number, action: "send" | "reject") => {
+    setErr("");
+    setBusyId(id);
+    const res = action === "send" ? await api.crewSendEraInvoice(token, id) : await api.crewRejectEraInvoice(token, id);
+    setBusyId(null);
+    setConfirm(null);
+    if (res.ok && res.data?.view) {
+      setView(res.data.view);
+    } else if (res.ok && res.data?.invoice) {
+      // Näkymän uudelleenrakennus epäonnistui serverillä (harvinainen, siihen
+      // liittymätön virhe) mutta tilasiirtymä on jo tallessa — päivitä
+      // ainakin tämä yksi rivi paikallisesti, ettei kortti jää vanhentuneeksi
+      // näyttämään aktiivisia "Lähetä"/"Hylkää"-painikkeita.
+      const updated = res.data.invoice;
+      setView({ ...view, eraInvoices: (view.eraInvoices || []).map((inv) => (inv.id === updated.id ? updated : inv)) });
+    } else {
+      setErr(res.error || "Toiminto epäonnistui. Yritä uudelleen.");
+    }
+  };
+
+  const STATUS: Record<string, { label: string; color: string; bg: string }> = {
+    luonnos: { label: "Odottaa lähetystäsi", color: "#E0A800", bg: "rgba(224,168,0,0.14)" },
+    hyväksytty: { label: "Lähetetty · lukittu", color: "#7CE0A6", bg: "rgba(124,224,166,0.14)" },
+    hylätty: { label: "Hylätty", color: "#FF8A8A", bg: "rgba(224,59,59,0.14)" },
+  };
+  // Etunimi BRAND_BILLERS:stä (sama lähde kuin MaksutView.tsx:ssä) — pysyy
+  // ajan tasalla jos johtajan nimi joskus muuttuu, sen sijaan että se olisi
+  // kovakoodattu tänne erikseen.
+  const founderName = (id: string) => BRAND_BILLERS.find((b) => b.id === id)?.name.split(" ")[0] || id;
+  const eraLabel = (nums: number[]) => (nums.length === 1 ? `Erä ${nums[0]}` : `Erät ${nums[0]}–${nums[nums.length - 1]}`);
+  const fiDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("fi-FI") : "");
+
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <p style={{ margin: "0 0 8px", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)" }}>
+        FR8-erälaskut
+      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {invoices.map((inv) => {
+          const st = STATUS[inv.tila] || STATUS.luonnos;
+          const input = inv.rivit?.input || {};
+          const computed = inv.rivit?.computed || {};
+          const ikkunat = Number(input.pestytIkkunat) || 0;
+          const sovittuMuutos = Number(input.sovittuMuutosCents) || 0;
+          const ennakko = Number(input.ennakkoCents) || 0;
+          const ansaittu = Number(computed.ansaittuCents) || 0;
+          // Sama vero-erittely kuin PayoutsTabissa (ja PDF:ssä, ks. kohta 4:
+          // server/routes.ts buildEraInvoicePdfParams) — vero lasketaan koko
+          // ansaitusta summasta, ennakko vähennetään sen jälkeen omana rivinään,
+          // jotta tekijä näkee saman lopullisen summan kuin laskun PDF:llä.
+          // ALV pakotettu pois (ei Puuhapatet eikä yksikään FR8-tekijä ole
+          // ALV-rekisterissä) — ennakonpidätys luetaan silti normaalisti.
+          const tx = computeTax({
+            laborCents: ansaittu,
+            vatStatus: "vahainen_toiminta",
+            inPrepaymentRegister: readInPrepaymentRegister(view.worker.profile?.answers),
+            payeeType: readPayeeType(view.worker.profile?.answers),
+          });
+          const maksetaanTilille = tx.payableCents - ennakko;
+          const confirming = confirm?.id === inv.id ? confirm.action : null;
+          const busy = busyId === inv.id;
+          return (
+            <div key={inv.id} style={{ padding: 16, borderRadius: 14, background: "rgba(255,255,255,0.05)", border: `1px solid ${inv.tila === "luonnos" ? "rgba(224,168,0,0.35)" : "rgba(255,255,255,0.08)"}` }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                <div>
+                  <p style={{ margin: 0, fontSize: 24, fontWeight: 800, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{fmtEurCents(maksetaanTilille)}</p>
+                  <p style={{ margin: "2px 0 0", fontSize: 12.5, color: "rgba(255,255,255,0.55)" }}>
+                    {eraLabel(inv.eraNumbers)} · lasku {founderName(inv.recipientId)}lle
+                  </p>
+                </div>
+                <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 600, color: st.color, background: st.bg, borderRadius: 999, padding: "5px 10px", whiteSpace: "nowrap" }}>{st.label}</span>
+              </div>
+
+              {/* Erittely: mistä maksettava summa muodostuu (kohta 2, kaava 1) +
+                  vero (ALV/ennakonpidätys, sama malli kuin PayoutsTab ja PDF). */}
+              <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 10, background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,0.06)", fontSize: 12.5 }}>
+                {([
+                  [`Pestyt ikkunat ${ikkunat.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} × 20 €`, fmtEurCents(ansaittu - sovittuMuutos), "rgba(255,255,255,0.7)"],
+                  ...(sovittuMuutos !== 0 ? [["Sovittu muutos", `${sovittuMuutos > 0 ? "+ " : "− "}${fmtEurCents(Math.abs(sovittuMuutos))}`, "rgba(255,255,255,0.7)"]] : []),
+                  ...(tx.vatRegistered ? [[`ALV ${fmtPct(tx.vatRate)}`, "+ " + fmtEurCents(tx.vatCents), "rgba(255,255,255,0.7)"]] : []),
+                  ...(tx.withheld ? [[`Ennakonpidätys ${fmtPct(tx.withholdingRate)}`, "− " + fmtEurCents(tx.withholdingCents), "#E0A800"]] : []),
+                  ...(ennakko > 0 ? [["Ennakko / jo maksettu", "− " + fmtEurCents(ennakko), "#E0A800"]] : []),
+                ] as [string, string, string][]).map(([lbl, val, col]) => (
+                  <div key={lbl} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: col }}>
+                    <span>{lbl}</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{val}</span>
+                  </div>
+                ))}
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "7px 0 0", marginTop: 4, borderTop: "1px solid rgba(255,255,255,0.1)", fontWeight: 700, color: "#7CE0A6" }}>
+                  <span>Maksetaan tilillesi</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtEurCents(maksetaanTilille)}</span>
+                </div>
+                {tx.withheld && (
+                  <p style={{ margin: "8px 0 0", fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
+                    Et ole ennakkoperintärekisterissä, joten pidätämme veron ja tilitämme sen Verolle. Rekisteröidy maksutta{" "}
+                    <a href="https://www.ytj.fi" target="_blank" rel="noreferrer" style={{ color: "#E0A800" }}>ytj.fi</a>ssä saadaksesi koko summan tilille.
+                  </p>
+                )}
+              </div>
+
+              {inv.tila === "hyväksytty" && (
+                <>
+                  <p style={{ margin: "10px 0 0", fontSize: 11.5, color: "rgba(255,255,255,0.45)" }}>
+                    Lähetetty {fiDate(inv.sentAt)}{inv.invoiceNumber ? ` · laskunumero ${inv.invoiceNumber}` : ""}{inv.referenceNumber ? ` · viite ${inv.referenceNumber}` : ""}.
+                    Lasku on lukittu — sitä ei voi lähettää uudelleen.
+                  </p>
+                  <a href={api.crewEraInvoicePdfUrl(token, inv.id)} target="_blank" rel="noreferrer"
+                    style={{ display: "inline-block", marginTop: 8, fontSize: 12, fontWeight: 600, color: "#7CE0A6", textDecoration: "underline" }}>
+                    Lataa lasku (PDF)
+                  </a>
+                </>
+              )}
+              {inv.tila === "hylätty" && (
+                <p style={{ margin: "10px 0 0", fontSize: 11.5, color: "rgba(255,255,255,0.45)" }}>
+                  Hylkäsit tämän laskun {fiDate(inv.respondedAt)}. Johtaja voi lähettää uuden tilalle.
+                </p>
+              )}
+
+              {inv.tila === "luonnos" && (
+                <div style={{ marginTop: 12, display: "flex", gap: 10 }}>
+                  {confirming === "send" ? (
+                    <>
+                      <button disabled={busy} onClick={() => respond(inv.id, "send")}
+                        style={{ flex: 1, padding: "12px 14px", borderRadius: 12, border: "none", cursor: "pointer", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, background: "#7CE0A6", color: "#06231A", opacity: busy ? 0.5 : 1 }}>
+                        {busy ? "Lähetetään…" : "Vahvista — lähetä lasku"}
+                      </button>
+                      <button disabled={busy} onClick={() => setConfirm(null)}
+                        style={{ padding: "12px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.14)", cursor: "pointer", fontFamily: FONT, fontSize: 13.5, fontWeight: 600, background: "none", color: "rgba(255,255,255,0.7)" }}>
+                        Peruuta
+                      </button>
+                    </>
+                  ) : confirming === "reject" ? (
+                    <>
+                      <button disabled={busy} onClick={() => respond(inv.id, "reject")}
+                        style={{ flex: 1, padding: "12px 14px", borderRadius: 12, border: "none", cursor: "pointer", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, background: "#E03B3B", color: "#fff", opacity: busy ? 0.5 : 1 }}>
+                        {busy ? "Hylätään…" : "Vahvista — hylkää lasku"}
+                      </button>
+                      <button disabled={busy} onClick={() => setConfirm(null)}
+                        style={{ padding: "12px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.14)", cursor: "pointer", fontFamily: FONT, fontSize: 13.5, fontWeight: 600, background: "none", color: "rgba(255,255,255,0.7)" }}>
+                        Peruuta
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      {!isTrainee && (
+                        <button onClick={() => setConfirm({ id: inv.id, action: "send" })}
+                          style={{ flex: 1, padding: "12px 14px", borderRadius: 12, border: "none", cursor: "pointer", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, background: "#7CE0A6", color: "#06231A" }}>
+                          Lähetä lasku
+                        </button>
+                      )}
+                      <button onClick={() => setConfirm({ id: inv.id, action: "reject" })}
+                        style={{ flex: isTrainee ? 1 : undefined, padding: "12px 14px", borderRadius: 12, border: "1px solid rgba(224,59,59,0.5)", cursor: "pointer", fontFamily: FONT, fontSize: 13.5, fontWeight: 600, background: "none", color: "#FF8A8A" }}>
+                        Hylkää
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+              {inv.tila === "luonnos" && isTrainee && (
+                <p style={{ margin: "8px 0 0", fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+                  Harjoittelijana et voi laskuttaa itse — maksu hoidetaan tiimin kautta.
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {err && <p style={{ margin: "10px 0 0", fontSize: 12.5, color: "#FF8A8A" }}>{err}</p>}
+      <p style={{ margin: "14px 0 0", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)" }}>
+        Muut maksut
+      </p>
+    </div>
+  );
+}
+
 /** Payouts (Puuhapatet → you). Approve the amount + confirm billing details;
  *  Puuhapatet then pays manually and your invoice is generated automatically. */
 function PayoutsTab({ token, view, setView }: { token: string; view: WorkerView; setView: (v: WorkerView) => void }) {
@@ -1606,7 +1801,10 @@ function PayoutsTab({ token, view, setView }: { token: string; view: WorkerView;
         </p>
       )}
 
-      {payouts.length === 0 && (
+      {/* FR8 erälaskut ensin — luonnokset odottavat tekijän omaa toimintaa. */}
+      <EraInvoiceSection token={token} view={view} setView={setView} />
+
+      {payouts.length === 0 && (view.eraInvoices || []).length === 0 && (
         <div style={{ padding: 18, borderRadius: 12, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.6)", fontSize: 13.5, textAlign: "center" }}>
           Ei vielä maksuja. Näet täällä maksuilmoitukset, kun ne luodaan.
         </div>

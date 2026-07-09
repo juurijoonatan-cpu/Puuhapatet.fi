@@ -383,3 +383,23 @@ export const forecastEntries = pgTable("forecast_entries", {
 export const insertForecastEntrySchema = createInsertSchema(forecastEntries).omit({ id: true, createdAt: true });
 export type ForecastEntry = typeof forecastEntries.$inferSelect;
 export type InsertForecastEntry = z.infer<typeof insertForecastEntrySchema>;
+
+// ─── Google Drive backup tracking (Talous ja verotus, Osa 2) ──────────────────
+//
+// Tracks which document/report is already saved in Drive and under which
+// file id, so re-uploads update the SAME Drive file in place instead of
+// creating duplicates. See server/drive/*.ts and docs/google-drive-backup.md.
+
+export const driveFiles = pgTable("drive_files", {
+  id:            serial("id").primaryKey(),
+  kind:          text("kind").notNull(),        // "customer_invoice" | "worker_invoice" | "internal_invoice" | "chart_of_accounts" | "journal" | "general_ledger" | "income_statement" | "balance_sheet" | "forecast"
+  sourceKey:     text("source_key").notNull(),  // stable key, e.g. "job:123:era:2", "joonatan:2026"
+  driveFileId:   text("drive_file_id").notNull(),
+  driveFolderId: text("drive_folder_id"),
+  webViewLink:   text("web_view_link"),
+  updatedAt:     timestamp("updated_at").defaultNow().notNull(),
+}, (t) => ({
+  oneFilePerSource: unique().on(t.kind, t.sourceKey),
+}));
+
+export type DriveFile = typeof driveFiles.$inferSelect;

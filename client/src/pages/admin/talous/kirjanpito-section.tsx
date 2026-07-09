@@ -16,7 +16,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Disclosure } from "@/components/ui/disclosure";
-import { Trash2 } from "lucide-react";
+import { Trash2, HardDriveUpload, CheckCircle2 } from "lucide-react";
 import {
   api,
   type FinanceAccount, type FinanceJournalEntry, type FinanceLedgerAccount,
@@ -66,6 +66,8 @@ export function KirjanpitoSection({ defaultLedgerId }: { defaultLedgerId: string
           </select>
         </div>
       </div>
+
+      <DriveBackupBar ledgerId={ledgerId} year={year} />
 
       <Tabs defaultValue="yhteenveto">
         <TabsList className="h-auto flex-wrap justify-start gap-1">
@@ -380,6 +382,60 @@ function ForecastTab({ ledgerId }: { ledgerId: string }) {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Google Drive backup (Osa 2) ────────────────────────────────────────────
+
+function DriveBackupBar({ ledgerId, year }: { ledgerId: string; year: number }) {
+  const [status, setStatus] = useState<Awaited<ReturnType<typeof api.financeBackupStatus>>["data"] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const load = () => { api.financeBackupStatus(ledgerId, year).then((r) => { if (r.ok && r.data) setStatus(r.data); }); };
+  useEffect(() => { setStatus(null); setMsg(null); load(); }, [ledgerId, year]);
+
+  if (!status) return null;
+  if (!status.configured) {
+    return (
+      <p className="text-[11px] text-muted-foreground mb-3 rounded-lg bg-muted/30 px-3 py-2">
+        Google Drive -varmuuskopiointi ei ole vielä konfiguroitu tälle palvelimelle
+        (ks. docs/google-drive-backup.md).
+      </p>
+    );
+  }
+
+  const latest = Object.values(status.files).filter(Boolean).sort(
+    (a, b) => new Date(b!.updatedAt).getTime() - new Date(a!.updatedAt).getTime(),
+  )[0] as { webViewLink?: string; updatedAt: string } | undefined;
+
+  const run = async () => {
+    setBusy(true); setMsg(null);
+    const res = await api.financeBackupNow(ledgerId, year);
+    setBusy(false);
+    if (res.ok && res.data?.ok) {
+      const failed = res.data.reports.uploaded.filter((u) => !u.ok);
+      setMsg(failed.length === 0 ? "Varmuuskopioitu Google Driveen ✓" : `Osittain onnistui — epäonnistui: ${failed.map((f) => f.report).join(", ")}`);
+      load();
+    } else {
+      setMsg(res.error || "Varmuuskopiointi epäonnistui.");
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2 mb-3 flex-wrap text-[11px] text-muted-foreground">
+      <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" disabled={busy} onClick={run}>
+        <HardDriveUpload className="w-3.5 h-3.5" /> {busy ? "Varmuuskopioidaan…" : "Varmuuskopioi Google Driveen"}
+      </Button>
+      {latest && (
+        <span className="flex items-center gap-1">
+          <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />
+          Viimeksi {new Date(latest.updatedAt).toLocaleString("fi-FI")}
+          {latest.webViewLink && <a href={latest.webViewLink} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2 ml-1">avaa Drive</a>}
+        </span>
+      )}
+      {msg && <span>{msg}</span>}
     </div>
   );
 }

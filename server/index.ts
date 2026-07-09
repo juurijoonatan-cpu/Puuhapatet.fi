@@ -148,6 +148,77 @@ app.use((req, res, next) => {
     )`,
     sql`CREATE INDEX IF NOT EXISTS chat_conversations_session_idx ON chat_conversations(session_token)`,
     sql`CREATE INDEX IF NOT EXISTS chat_messages_conversation_idx ON chat_messages(conversation_id)`,
+    // Kirjanpito (double-entry ledger) — Talous ja verotus, Osa 1
+    sql`CREATE TABLE IF NOT EXISTS ledgers (
+      id          text PRIMARY KEY,
+      name        text NOT NULL,
+      y_tunnus    text,
+      entity_type text NOT NULL DEFAULT 'toiminimi',
+      created_at  timestamp NOT NULL DEFAULT now()
+    )`,
+    sql`CREATE TABLE IF NOT EXISTS fiscal_years (
+      id         serial PRIMARY KEY,
+      ledger_id  text NOT NULL REFERENCES ledgers(id),
+      start_date timestamp NOT NULL,
+      end_date   timestamp NOT NULL,
+      is_closed  boolean NOT NULL DEFAULT false,
+      created_at timestamp NOT NULL DEFAULT now(),
+      UNIQUE (ledger_id, start_date)
+    )`,
+    sql`CREATE TABLE IF NOT EXISTS accounts (
+      id                serial PRIMARY KEY,
+      ledger_id         text NOT NULL REFERENCES ledgers(id),
+      code              text NOT NULL,
+      name              text NOT NULL,
+      account_type      text NOT NULL,
+      is_system_account boolean NOT NULL DEFAULT false,
+      created_at        timestamp NOT NULL DEFAULT now(),
+      UNIQUE (ledger_id, code)
+    )`,
+    sql`CREATE TABLE IF NOT EXISTS journal_entries (
+      id            serial PRIMARY KEY,
+      ledger_id     text NOT NULL REFERENCES ledgers(id),
+      fiscal_year_id integer NOT NULL REFERENCES fiscal_years(id),
+      entry_number  integer NOT NULL,
+      date          timestamp NOT NULL,
+      description   text NOT NULL,
+      source_type   text NOT NULL,
+      source_key    text NOT NULL,
+      created_at    timestamp NOT NULL DEFAULT now(),
+      UNIQUE (ledger_id, source_key),
+      UNIQUE (ledger_id, entry_number)
+    )`,
+    sql`CREATE TABLE IF NOT EXISTS journal_lines (
+      id           serial PRIMARY KEY,
+      entry_id     integer NOT NULL REFERENCES journal_entries(id),
+      account_id   integer NOT NULL REFERENCES accounts(id),
+      debit_cents  integer NOT NULL DEFAULT 0,
+      credit_cents integer NOT NULL DEFAULT 0,
+      line_no      integer NOT NULL DEFAULT 0
+    )`,
+    sql`CREATE TABLE IF NOT EXISTS forecast_entries (
+      id           serial PRIMARY KEY,
+      ledger_id    text NOT NULL REFERENCES ledgers(id),
+      label        text NOT NULL,
+      kind         text NOT NULL,
+      amount_cents integer NOT NULL,
+      start_month  text NOT NULL,
+      end_month    text,
+      recurring    boolean NOT NULL DEFAULT true,
+      category     text NOT NULL DEFAULT 'muu',
+      created_at   timestamp NOT NULL DEFAULT now()
+    )`,
+    // Google Drive backup tracking — Talous ja verotus, Osa 2
+    sql`CREATE TABLE IF NOT EXISTS drive_files (
+      id              serial PRIMARY KEY,
+      kind            text NOT NULL,
+      source_key      text NOT NULL,
+      drive_file_id   text NOT NULL,
+      drive_folder_id text,
+      web_view_link   text,
+      updated_at      timestamp NOT NULL DEFAULT now(),
+      UNIQUE (kind, source_key)
+    )`,
   ]) {
     try { await db.execute(stmt); } catch (e: any) { console.warn("Migration warning:", e.message); }
   }

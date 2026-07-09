@@ -40,6 +40,27 @@ import { computePayProgress } from "@shared/payprogress";
 import { traineeForUserId, traineeForName, type TraineeInfo } from "@shared/trainees";
 import { computeBillerTurnover, computeFounderSettlement } from "./finance/settlement";
 import { registerFinanceRoutes } from "./finance/routes";
+import { uploadPdf } from "./drive/upload";
+import { BRAND_BILLERS as DRIVE_BRAND_BILLERS } from "@shared/billers";
+
+/** Best-effort Drive backup for an invoice PDF — never throws, never blocks
+ *  the response that generated the PDF. See docs/google-drive-backup.md. */
+function backupInvoicePdf(
+  kind: "customer_invoice" | "internal_invoice" | "worker_invoice",
+  sourceKey: string,
+  folderPath: string[],
+  filename: string,
+  buffer: Buffer,
+): void {
+  uploadPdf({ kind, sourceKey, folderPath, filename: filename.replace(/[\\/:*?"<>|]/g, "-").slice(0, 150) }, buffer)
+    .catch((e) => console.warn(`Drive-varmuuskopio epäonnistui (${kind}/${sourceKey}):`, e?.message));
+}
+
+/** Parses a "d.m.yyyy" fi-FI date string; falls back to the current year. */
+function yearFromFiDate(s: string | undefined): number {
+  const m = /(\d{1,2})\.(\d{1,2})\.(\d{4})/.exec(s ?? "");
+  return m ? Number(m[3]) : new Date().getFullYear();
+}
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 // Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
@@ -836,6 +857,110 @@ function generateWorkerInvoicePdf(params: {
   });
 }
 
+// ─── Founder-to-founder ("yrittäjien välinen") settlement invoice PDF ────────
+// Mirrors the client's openSettlementInvoicePrint HTML (tax-export.tsx) — same
+// fields, same content — but as a real PDF so it can be filed as a tosite and
+// backed up to Google Drive (server/drive), not just a browser print popup.
+function generateFounderSettlementInvoicePdf(params: {
+  invoiceNo: string;
+  dateStr: string;
+  dueDateStr?: string;
+  creditor: { name: string; address?: string; yTunnus?: string };
+  debtor: { name: string; address?: string; yTunnus?: string };
+  items: { label: string; cents: number }[];
+  totalCents: number;
+  iban?: string;
+  bic?: string;
+  /** Set when this documents money that already moved (e.g. retroactive MobilePay booking). */
+  paidNote?: string;
+}): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 48, size: "A4" });
+    const chunks: Buffer[] = [];
+    doc.on("data", (c: Buffer) => chunks.push(c));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    const INK = "#1A1A1A";
+    const GRAY = "#64748b";
+    const GREEN = "#14532d";
+    const fmtEur = (cents: number) =>
+      (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+    const pageW = doc.page.width - 96;
+
+    doc.rect(48, 48, pageW, 56).fill(GREEN);
+    doc.fill("#fff").font("Helvetica-Bold").fontSize(16).text("LASKU", 64, 62, { width: pageW - 32 });
+    doc.fill("#b8e07a").font("Helvetica").fontSize(9)
+      .text(`Nro ${params.invoiceNo}  ·  ${params.dateStr}  ·  sisäinen tilitys — bossien keskinäinen laskutus`, 64, 84, { width: pageW - 32 });
+
+    let y = 124;
+    const colW = (pageW - 16) / 2;
+    doc.fill(GRAY).font("Helvetica-Bold").fontSize(7)
+      .text("LASKUTTAJA (MYYJÄ)", 48, y, { width: colW })
+      .text("LASKUTETAAN (OSTAJA)", 48 + colW + 16, y, { width: colW });
+    y += 14;
+    doc.fill(INK).font("Helvetica-Bold").fontSize(10);
+    doc.text(params.creditor.name, 48, y, { width: colW });
+    doc.text(params.debtor.name, 48 + colW + 16, y, { width: colW });
+    y += 14;
+    doc.fill(GRAY).font("Helvetica").fontSize(9);
+    let ly = y, ry = y;
+    if (params.creditor.address) { doc.text(params.creditor.address, 48, ly, { width: colW }); ly += 12; }
+    if (params.creditor.yTunnus) { doc.text(`Y-tunnus: ${params.creditor.yTunnus}`, 48, ly, { width: colW }); ly += 12; }
+    if (params.debtor.address) { doc.text(params.debtor.address, 48 + colW + 16, ry, { width: colW }); ry += 12; }
+    if (params.debtor.yTunnus) { doc.text(`Y-tunnus: ${params.debtor.yTunnus}`, 48 + colW + 16, ry, { width: colW }); ry += 12; }
+    y = Math.max(ly, ry) + 10;
+
+    doc.fill("#374151").font("Helvetica").fontSize(9).text(
+      "Tilitys yhteisistä keikoista: ostaja on laskuttanut asiakkaita koko summalla ja tilittää tällä laskulla myyjälle hänen osuutensa.",
+      48, y, { width: pageW },
+    );
+    y += doc.heightOfString("x", { width: pageW }) + 16;
+
+    doc.rect(48, y, pageW, 20).fill("#F1F5F9");
+    doc.fill(GRAY).font("Helvetica-Bold").fontSize(8)
+      .text("ERITTELY", 60, y + 6, { width: pageW - 140 })
+      .text("SUMMA", 48 + pageW - 100, y + 6, { width: 88, align: "right" });
+    y += 26;
+
+    doc.font("Helvetica").fontSize(9);
+    for (const it of params.items) {
+      const lines = doc.heightOfString(it.label, { width: pageW - 140 });
+      doc.fill(it.cents < 0 ? GRAY : INK).text(it.label, 60, y, { width: pageW - 140 });
+      doc.fill(it.cents < 0 ? GRAY : INK).text(fmtEur(it.cents), 48 + pageW - 100, y, { width: 88, align: "right" });
+      y += Math.max(lines, 12) + 6;
+    }
+    y += 6;
+    doc.moveTo(48, y).lineTo(48 + pageW, y).strokeColor("#E2E8F0").stroke();
+    y += 12;
+    doc.fill(INK).font("Helvetica-Bold").fontSize(13)
+      .text("Yhteensä (maksettava)", 48 + pageW - 240, y, { width: 140, align: "right" });
+    doc.text(fmtEur(params.totalCents), 48 + pageW - 100, y, { width: 88, align: "right" });
+    y += 28;
+
+    doc.fill(GRAY).font("Helvetica").fontSize(8)
+      .text("Ei arvonlisäveroa — myyjä ei ole arvonlisäverovelvollinen (vähäinen toiminta, AVL 3 §).", 48, y, { width: pageW });
+    y += 20;
+
+    if (params.paidNote) {
+      doc.rect(48, y, pageW, 30).fillAndStroke("#f0fdf4", "#16a34a");
+      doc.fill("#166534").font("Helvetica-Bold").fontSize(11).text(`✓ ${params.paidNote}`, 48, y + 9, { width: pageW, align: "center" });
+      y += 40;
+    } else {
+      doc.fill(INK).font("Helvetica-Bold").fontSize(9).text("Maksutiedot", 48, y); y += 14;
+      doc.fill(GRAY).font("Helvetica").fontSize(9);
+      if (params.iban) { doc.text(`Tilinumero (IBAN): ${params.iban}`, 48, y); y += 12; }
+      if (params.bic) { doc.text(`BIC: ${params.bic}`, 48, y); y += 12; }
+      doc.text(`Viite / viesti: ${params.invoiceNo}`, 48, y); y += 12;
+      if (params.dueDateStr) { doc.text(`Eräpäivä: ${params.dueDateStr}`, 48, y); y += 12; }
+    }
+
+    doc.fill("#9ca3af").font("Helvetica").fontSize(8)
+      .text("Molemmat osapuolet säilyttävät laskun kirjanpidossaan 6 vuotta. Puuhapatet on brändi — myyjä ja ostaja toimivat omilla Y-tunnuksillaan.", 48, y + 10, { width: pageW });
+
+    doc.end();
+  });
+}
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
 
@@ -1420,7 +1545,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // payment is recorded (MobilePay → "Kirjaa maksu" with the invoice number).
   app.post("/api/admin/founder-settlement/issue-invoice", async (req, res) => {
     try {
-      const { fromId, toId, cents, invoiceNo } = (req.body || {}) as Record<string, any>;
+      const { fromId, toId, cents, invoiceNo, items, dueDateStr, iban, bic, paidNote } = (req.body || {}) as Record<string, any>;
       const validParty = (id: any) => BRAND_BILLERS.some((b) => b.id === id);
       const c = Math.round(Number(cents));
       const no = String(invoiceNo ?? "").trim().slice(0, 60);
@@ -1438,6 +1563,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         `Myyntilasku ${no} (vastalasku): ${nameOf(fromId)} maksaa osuudet yhteisistä keikoista`), true);
       await attachPersonDocument(fromId, mkDoc(
         `Ostolasku ${no} (vastalasku): maksettava ${nameOf(toId)}lle — osuudet yhteisistä keikoista`), true);
+
+      // Real PDF (not just the client's print popup) — filed to Drive so the
+      // yrittäjien välinen lasku survives a server failure. Best-effort: a
+      // PDF/backup failure must never fail the invoice filing above.
+      try {
+        const creditor = BRAND_BILLERS.find((b) => b.id === toId)!;
+        const debtor = BRAND_BILLERS.find((b) => b.id === fromId)!;
+        const itemLines = Array.isArray(items)
+          ? items.slice(0, 60).map((it: any) => ({ label: String(it?.label ?? "").slice(0, 200), cents: Math.round(Number(it?.cents) || 0) }))
+          : [];
+        const pdf = await generateFounderSettlementInvoicePdf({
+          invoiceNo: no, dateStr: new Date(now).toLocaleDateString("fi-FI"),
+          dueDateStr: dueDateStr ? String(dueDateStr).slice(0, 40) : undefined,
+          creditor, debtor, items: itemLines, totalCents: c,
+          iban: iban ? String(iban).slice(0, 60) : creditor.iban,
+          bic: bic ? String(bic).slice(0, 20) : creditor.bic,
+          paidNote: paidNote ? String(paidNote).slice(0, 200) : undefined,
+        });
+        const year = new Date(now).getFullYear();
+        backupInvoicePdf(
+          "internal_invoice", `settlement-invoice:${no}`, ["Laskut", String(year), "Sisäiset laskut"],
+          `Lasku ${no} - ${nameOf(toId)} - ${nameOf(fromId)}.pdf`, pdf,
+        );
+      } catch (pdfErr) {
+        console.warn("Yrittäjien välisen laskun PDF epäonnistui:", pdfErr);
+      }
+
       res.status(201).json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -2207,6 +2359,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             filename: isEn ? "service-receipt.pdf" : "palvelutosite.pdf",
             content: pdfBuffer,
           };
+          if (jobId) {
+            const year = yearFromFiDate(completionDate);
+            backupInvoicePdf(
+              "customer_invoice", `job:${jobId}`, ["Laskut", String(year), "Asiakaslaskut"],
+              `Lasku - ${senderWorker?.name ?? "Puuhapatet"} - ${customerName} - ${completionDate}.pdf`,
+              pdfBuffer,
+            );
+          }
         } catch (pdfErr) {
           console.warn("PDF generation failed, sending email without attachment:", pdfErr);
         }
@@ -6038,6 +6198,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           acceptedAt: payout.approvedAt,
           expenses: payout.expenses,
         });
+        backupInvoicePdf(
+          "worker_invoice", `payout:${job.id}:${mid}:${pid}`, ["Laskut", String(new Date(now).getFullYear()), "Alihankkijalaskut"],
+          `Lasku ${invoiceNo} - ${workerName} - ${buyer.name}.pdf`, pdf,
+        );
         if (resend) {
           const html = `
 <!DOCTYPE html><html lang="fi"><body style="margin:0;background:#F6F4EE;font-family:'Poppins',ui-sans-serif,system-ui,sans-serif">

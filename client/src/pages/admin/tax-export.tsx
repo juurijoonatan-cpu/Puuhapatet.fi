@@ -1081,7 +1081,11 @@ function FounderDebtCard({ settlement, onChanged }: { settlement: FounderCrossSe
             // Vastalasku into both founders' Dokumentit + the payment booking
             // (which files the payment kuitit for both). Ledger row carries the
             // MARKER so this one-tap can never run twice.
-            await api.issueFounderInvoice({ fromId: smallFrom.id, toId: smallTo.id, cents: smallAbs, invoiceNo });
+            await api.issueFounderInvoice({
+              fromId: smallFrom.id, toId: smallTo.id, cents: smallAbs, invoiceNo, items,
+              iban: creditor?.iban ?? undefined, bic: creditor?.bic ?? undefined,
+              paidNote: `MAKSETTU — MobilePay (kuitattu ${today.toLocaleDateString("fi-FI")})`,
+            });
             const res = await api.recordFounderSettlement({ fromId: smallFrom.id, toId: smallTo.id, cents: smallAbs, invoiceNo: MARKER });
             if (res.ok) onChanged();
             else alert(res.error || "Kirjaus epäonnistui — yritä uudelleen.");
@@ -1436,7 +1440,9 @@ function SettlementInvoiceDialog({
     // File once per dialog; the server also dedupes on re-issue.
     if (!recordedOnce) {
       const rec = await api.issueFounderInvoice({
-        fromId: inv.fromId, toId: inv.toId, cents: inv.cents, invoiceNo,
+        fromId: inv.fromId, toId: inv.toId, cents: inv.cents, invoiceNo, items,
+        dueDateStr: dueDate ? new Date(dueDate + "T12:00:00").toLocaleDateString("fi-FI") : undefined,
+        iban: iban || undefined, bic: bic || undefined,
       });
       // Marked issued only on SUCCESS — a failed filing must stay retryable.
       if (rec.ok) setRecordedOnce(true);

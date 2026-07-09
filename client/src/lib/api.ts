@@ -560,7 +560,13 @@ export const api = {
   // Issue a vastalasku: files myyntilasku + ostolasku into both founders'
   // Dokumentit WITHOUT touching the open debt — the payment is recorded
   // separately when the money actually moves.
-  issueFounderInvoice: (data: { fromId: string; toId: string; cents: number; invoiceNo: string }) =>
+  issueFounderInvoice: (data: {
+    fromId: string; toId: string; cents: number; invoiceNo: string;
+    // Optional: lets the server generate a real PDF (filed + backed up to
+    // Google Drive) matching exactly what the printable preview showed.
+    items?: { label: string; cents: number }[];
+    dueDateStr?: string; iban?: string; bic?: string; paidNote?: string;
+  }) =>
     request<{ ok: boolean }>("POST", "/api/admin/founder-settlement/issue-invoice", data),
   deleteFounderSettlement: (id: number) =>
     request<{ ok: boolean }>("DELETE", `/api/admin/founder-settlement/${id}`),
@@ -1105,6 +1111,14 @@ export const api = {
   financeForecastProjection: (ledgerId: string, start?: string, end?: string) =>
     request<{ months: { month: string; incomeCents: number; expenseCents: number; profitCents: number }[] }>(
       "GET", `/api/finance/forecast/projection?ledgerId=${ledgerId}${start ? `&start=${start}` : ""}${end ? `&end=${end}` : ""}`),
+
+  financeBackupStatus: (ledgerId: string, year: number) =>
+    request<{ configured: boolean; files: Record<string, { webViewLink?: string; updatedAt: string } | null> }>(
+      "GET", `/api/finance/backup/status?ledgerId=${ledgerId}&year=${year}`),
+
+  financeBackupNow: (ledgerId: string, year: number) =>
+    request<{ ok: boolean; reports: { uploaded: { report: string; ok: boolean }[] }; forecast: { ok: boolean } }>(
+      "POST", "/api/finance/backup", { ledgerId, year }),
 };
 
 // ─── Kirjanpito types (mirror server/finance/*.ts) ────────────────────────────

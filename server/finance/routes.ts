@@ -10,6 +10,9 @@ import { db } from "../db";
 import { forecastEntries, insertForecastEntrySchema } from "@shared/schema";
 import { ledgerList, getChartOfAccounts, getJournal, getGeneralLedger, getIncomeStatement, getBalanceSheet, getFinanceSummary } from "./reports";
 import { monthRange, projectMonths } from "./forecast";
+import { backupLedgerReports, backupForecast } from "./backup";
+import { isDriveConfigured } from "../drive/client";
+import { getTrackedFile } from "../drive/upload";
 
 function parseYear(v: unknown): number {
   const y = Number(v);
@@ -131,6 +134,44 @@ export function registerFinanceRoutes(app: Express) {
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Google Drive backup (Osa 2) ───────────────────────────────────────────
+
+  app.get("/api/finance/backup/status", async (req, res) => {
+    try {
+      const ledgerId = requireLedgerId(req.query.ledgerId);
+      const year = parseYear(req.query.year);
+      const [chart, journal, ledger, income, balance, forecast] = await Promise.all([
+        getTrackedFile("chart_of_accounts", ledgerId),
+        getTrackedFile("journal", `${ledgerId}:${year}`),
+        getTrackedFile("general_ledger", `${ledgerId}:${year}`),
+        getTrackedFile("income_statement", `${ledgerId}:${year}`),
+        getTrackedFile("balance_sheet", ledgerId),
+        getTrackedFile("forecast", ledgerId),
+      ]);
+      res.json({
+        configured: isDriveConfigured(),
+        files: { chart, journal, ledger, income, balance, forecast },
+      });
+    } catch (e: any) {
+      res.status(e.status ?? 500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/finance/backup", async (req, res) => {
+    try {
+      const ledgerId = requireLedgerId(req.body?.ledgerId);
+      const year = parseYear(req.body?.year);
+      if (!isDriveConfigured()) {
+        return res.status(503).json({ error: "Google Drive -varmuuskopiointi ei ole konfiguroitu (GOOGLE_SERVICE_ACCOUNT_KEY / GOOGLE_DRIVE_ROOT_FOLDER_ID puuttuu)." });
+      }
+      const reports = await backupLedgerReports(ledgerId, year);
+      const forecast = await backupForecast(ledgerId);
+      res.json({ ok: true, reports, forecast });
+    } catch (e: any) {
+      res.status(e.status ?? 500).json({ error: e.message });
     }
   });
 

@@ -143,3 +143,24 @@ iOS:ssa ne saa pois VAIN lisäämällä sovelluksen kotinäyttöön. Logiikka:
 - `client/src/pages/admin/project.tsx` — johtajien FR8-näkymä (ansiolaskenta, nimet).
 - `client/src/components/fr8/Dashboard.tsx` — johtajien yleiskatsaus + TEKIJÄT.
 - `client/src/components/fr8/FloorView.tsx` — kartta (jaettu; `hideMoney`, `canAddNotes`).
+
+## Erälaskutus (arvomääräiset maksuerät) — ERI JÄRJESTELMÄ kuin yllä
+
+Tämän dokumentin ansiomalli (`earningsFor`, jatkuva €/ikkuna-laskenta) on
+**reaaliaikainen dashboard-arvio**, ei laskutus. Varsinainen, lähetettävä
+laskutus (erä 1-3 / erä 4, käsin syötetyt pestyt ikkunat per erä, tekijän
+hyväksyntä, PDF, sähköpostikopiot, lakisääteiset kentät) on **oma,
+rinnakkainen järjestelmänsä**:
+
+- `shared/era-billing.ts` — puhdas laskentamoottori (`computeEraBilling`).
+- `shared/schema.ts` — `era_invoices`/`era_invoice_emails`-taulut.
+- `client/src/components/fr8/WorkerEraInvoiceDialog.tsx` (johtajan "Maksu"),
+  `FounderEraInvoiceDialog.tsx` (johtaja-välinen), `MaksutView.tsx`
+  ("Maksut"-kokonaistilanne).
+- `client/src/pages/worker.tsx` → `EraInvoiceSection` (tekijän hyväksyntä).
+- `server/routes.ts` — `/api/jobs/:id/era-invoice/*`, `/api/crew/:token/era-invoice/*`.
+
+Täysi speksi, laskentakaavat ja toteutuksen tila: **`docs/fr8-era-laskutus-plan.md`**.
+Vanha `crew.tsx`:n "Maksuerät & kate" -dialogi (`EraKateDialog`) jää karkeaksi
+ennakkoarvioksi (laskee pesujärjestyksen perusteella, ei käsin syötettynä) —
+ei enää totuuden lähde varsinaiselle laskutukselle.

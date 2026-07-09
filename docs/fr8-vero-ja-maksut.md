@@ -113,3 +113,20 @@ Ennen yhtiöitymistä ostaja on aina toinen johtajista (`shared/billers.ts`).
 - `VAT_SMALL_BUSINESS_LIMIT_EUR = 20000` (voimassa 1.1.2025 alkaen; tarkista vero.fi)
 
 Päivitä nämä yhdestä paikasta, jos verokannat muuttuvat.
+
+## FR8-erälaskutus (`shared/era-billing.ts`) — ALV AINA pois
+
+Erälaskutuksen (arvomääräiset maksuerät, ks. `docs/fr8-era-laskutus-plan.md`)
+laskuille **ALV on aina 0 %** — käyttäjän (Matias) vahvistama liiketoiminnan
+tosiasia: **ei Puuhapatet (Joonatan/Matias) eikä yksikään FR8-tekijä ole
+ALV-rekisterissä.** Tätä EI lueta tekijän `profile.answers`-itseilmoituksesta
+(toisin kuin tavallisessa payout-järjestelmässä yllä) — `vatStatus` on
+pakotettu `"vahainen_toiminta"`-arvoon sekä laskun PDF:ssä
+(`server/routes.ts` → `buildEraInvoicePdfParams`) että tekijän omassa
+näkymässä (`client/src/pages/worker.tsx` → `EraInvoiceSection`).
+**Ennakonpidätys on eri asia** (ennakkoperintärekisteri, ei ALV-rekisteri) —
+sitä sovelletaan edelleen normaalisti tekijän ilmoittaman tilan mukaan.
+
+Johtaja-välisille (johtaja_valinen) laskuille ei koskaan lasketa
+ennakonpidätystä (ei työkorvausta ennakkoperintälain mielessä) eikä ALV:tä —
+vain "Arvonlisäveroton myynti, vähäinen toiminta" -merkintä.

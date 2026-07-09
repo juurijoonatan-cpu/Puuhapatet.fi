@@ -714,6 +714,11 @@ function EraKateDialog({ deal, totalBillable, billableWashed, eraWindows, eraBre
             {eur(deal.capCents)} · {periods} erää · {eur(instalmentCents)}/erä
           </DialogDescription>
         </DialogHeader>
+        <p className="text-[11px] text-muted-foreground -mt-2 mb-3 rounded-lg bg-muted/30 px-3 py-2">
+          Karkea ennakkoarvio pesujärjestyksen perusteella — ei lähetettäviä laskuja.
+          Viralliset erälaskut lähetetään projektinäkymän "Maksu"-toiminnosta ja
+          näkyvät kokonaisuudessaan "Maksut"-välilehdellä.
+        </p>
 
         <EraKatePanel
           deal={deal}

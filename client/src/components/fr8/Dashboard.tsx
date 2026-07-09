@@ -2,7 +2,7 @@
  * FR8 projektinäkymä — overview dashboard (ported from fr8-ikkunat prototype).
  * Adds a per-worker "TEKIJÄT" strip (window counts + €/h optimisation).
  */
-import { allPoints, computeDealBilling, type ProjectData, type WindowStatus, type WorkerStat, type FixedDeal } from "@shared/project";
+import { allPoints, computeDealBilling, checkWindowAttribution, type ProjectData, type WindowStatus, type WorkerStat, type FixedDeal } from "@shared/project";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useState, useEffect } from "react";
 import Section from "./Section";
@@ -107,6 +107,11 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   const capEur = billing ? billing.capCents / 100 : 0;
   const all = allPoints(project);
   const log = project.log;
+  // Kohta 6.1: kokonaistilanteen ikkunamäärän pitää täsmätä tekijöiden/johtajien
+  // attribuoitujen ikkunoiden tarkkaan summaan. Elävä tarkistus (ei vain
+  // yksikkötesti) — jos joku pesty ikkuna jää ilman attribuutiota, näytetään
+  // hienovarainen varoitus johtajille sen sijaan että virhe jäisi huomaamatta.
+  const attributionCheck = checkWindowAttribution(project);
 
   const total = all.length;
   const washed = all.filter((a) => a.status === "pesty").length;
@@ -223,6 +228,12 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
               <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.5)", marginBottom: "20px" }}>
                 {deal ? "punaista ikkunaa pesty" : "ikkunaa pesty"}
               </div>
+              {!attributionCheck.matches && (
+                <div style={{ marginBottom: "16px", padding: "9px 12px", borderRadius: "10px", background: "rgba(224,168,0,0.12)", border: "1px solid rgba(224,168,0,0.3)", fontSize: "11.5px", color: "rgba(255,206,80,0.9)" }}>
+                  Ikkunamäärä ei täsmää: {attributionCheck.dotCount} pestyä ikkunaa, mutta tekijöiden/johtajien summa on {attributionCheck.attributedSum}
+                  {" "}(ero {attributionCheck.diff > 0 ? "+" : ""}{attributionCheck.diff}). Jollain pestyllä ikkunalla ei ole pesijää merkittynä.
+                </div>
+              )}
               <div style={{ display: "flex", gap: "10px" }}>
                 {([["kesken", "rgb(188,150,255)", "rgba(188,150,255,0.7)", heroKesken], ["Pesemättä", "rgba(255,255,255,0.4)", undefined, heroUnwashed]] as [string, string, string|undefined, number][]).map(([label, bg, shadow, val]) => (
                   <div key={label} style={{ flex: 1, padding: "12px 14px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "13px" }}>

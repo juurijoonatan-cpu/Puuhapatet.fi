@@ -1610,9 +1610,11 @@ function EraInvoiceSection({ token, view, setView }: { token: string; view: Work
           // server/routes.ts buildEraInvoicePdfParams) — vero lasketaan koko
           // ansaitusta summasta, ennakko vähennetään sen jälkeen omana rivinään,
           // jotta tekijä näkee saman lopullisen summan kuin laskun PDF:llä.
+          // ALV pakotettu pois (ei Puuhapatet eikä yksikään FR8-tekijä ole
+          // ALV-rekisterissä) — ennakonpidätys luetaan silti normaalisti.
           const tx = computeTax({
             laborCents: ansaittu,
-            vatStatus: readVatStatus(view.worker.profile?.answers),
+            vatStatus: "vahainen_toiminta",
             inPrepaymentRegister: readInPrepaymentRegister(view.worker.profile?.answers),
             payeeType: readPayeeType(view.worker.profile?.answers),
           });

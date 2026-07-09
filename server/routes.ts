@@ -1917,9 +1917,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const answers = member?.profile?.answers;
       const ansaittuCents = Math.round(Number(computed.ansaittuCents) || 0);
       const ennakkoCents = Math.max(0, Math.round(Number(input.ennakkoCents) || 0));
+      // ALV: EI Puuhapatet (Joonatan/Matias) EIKÄ mikään FR8-tekijöistä ole
+      // ALV-rekisterissä (käyttäjän vahvistama liiketoiminnan tosiasia) —
+      // pakotettu "vahainen_toiminta" tässä, EI lueta profile.answers:sta
+      // kuten tavallisessa alihankkijan payout-järjestelmässä. Ennakonpidätys
+      // on eri asia (ennakkoperintärekisteri) ja luetaan edelleen normaalisti.
       const tax = computeTax({
         laborCents: ansaittuCents,
-        vatStatus: readVatStatus(answers),
+        vatStatus: "vahainen_toiminta",
         inPrepaymentRegister: readInPrepaymentRegister(answers),
         payeeType: readPayeeType(answers),
       });

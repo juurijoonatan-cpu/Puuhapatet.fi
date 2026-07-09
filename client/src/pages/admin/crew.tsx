@@ -159,6 +159,14 @@ export default function AdminCrewPage() {
               <div key={member.id} className="rounded-2xl border bg-card p-4">
                 <WorkerCardHeader member={member} stats={stats} onboarded={onboarded} copied={copied} onCopy={copyLink} onUpdate={update} onRemove={remove} />
 
+                {/* FR8 erälaskutus (kohta 3C): johtaja-välisen laskun painike EI
+                    ole täällä, koska /api/jobs/:id/crew suodattaa host-rivit pois
+                    (perustajien rivejä ei koskaan renderöidä tälle sivulle) —
+                    Vaihe 2 kiinnitti sen tänne kuolleena koodina. Painike asuu
+                    projektinäkymän Perustajien ansiot -korteissa (project.tsx →
+                    Dashboard.founderInvoiceSlot), aina vain TOISEN johtajan
+                    kortilla (kriteeri 6.5). */}
+
                 {/* Yrittäjätiedot — founder can pre-fill/verify insurance, Y-tunnus,
                     ennakkoperintärekisteri, ALV & email on the worker's behalf. */}
                 <EntrepreneurPanel member={member} onUpdate={update} />
@@ -706,6 +714,11 @@ function EraKateDialog({ deal, totalBillable, billableWashed, eraWindows, eraBre
             {eur(deal.capCents)} · {periods} erää · {eur(instalmentCents)}/erä
           </DialogDescription>
         </DialogHeader>
+        <p className="text-[11px] text-muted-foreground -mt-2 mb-3 rounded-lg bg-muted/30 px-3 py-2">
+          Karkea ennakkoarvio pesujärjestyksen perusteella — ei lähetettäviä laskuja.
+          Viralliset erälaskut lähetetään projektinäkymän "Maksu"-toiminnosta ja
+          näkyvät kokonaisuudessaan "Maksut"-välilehdellä.
+        </p>
 
         <EraKatePanel
           deal={deal}

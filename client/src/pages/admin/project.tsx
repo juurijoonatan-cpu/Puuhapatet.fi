@@ -20,6 +20,10 @@ import { FOUNDER_IDS } from "@shared/team";
 import { traineeForUserId, traineeForName } from "@shared/trainees";
 import { DEFAULT_WORKER_PER_WINDOW_CENTS } from "@shared/crew";
 import Dashboard from "@/components/fr8/Dashboard";
+import WorkerEraInvoiceDialog from "@/components/fr8/WorkerEraInvoiceDialog";
+import FounderEraInvoiceDialog from "@/components/fr8/FounderEraInvoiceDialog";
+import MaksutView from "@/components/fr8/MaksutView";
+import { BRAND_BILLERS } from "@shared/billers";
 import FloorView from "@/components/fr8/FloorView";
 import Section from "@/components/fr8/Section";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -610,6 +614,7 @@ export default function AdminProjectPage() {
         workers={gigWorkers}
         defaultWasherId={effectiveWasher}
         onChangeDefaultWasher={changeDefaultWasher}
+        showMaksutTab={!!deal && (profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || ""))}
       />
       {error && (
         <div
@@ -639,7 +644,39 @@ export default function AdminProjectPage() {
                 onDelete={deleteExpense}
               />
             }
+            founderInvoiceSlot={(founderId) => {
+              // Johtaja-välinen erälasku (kohta 3C.1): painike VAIN toisen
+              // johtajan kortilla — omalla kortilla ei koskaan (kriteeri 6.5).
+              // HUOM: crew.tsx:n Tiimi-sivu ei kelpaa paikaksi, koska
+              // /api/jobs/:id/crew suodattaa host-rivit pois (ks. reitin
+              // kommentti) — perustajakortit ovat siellä olemattomia.
+              const myId = profile?.id || "";
+              if (!deal || founderId === myId || !FOUNDER_IDS.includes(myId) || !FOUNDER_IDS.includes(founderId)) return null;
+              return (
+                <FounderEraInvoiceDialog
+                  jobId={jobId}
+                  senderId={myId}
+                  senderName={BRAND_BILLERS.find((b) => b.id === myId)?.name || myId}
+                  recipient={{ id: founderId, name: BRAND_BILLERS.find((b) => b.id === founderId)?.name || resolveName(founderId) }}
+                />
+              );
+            }}
           />
+        )}
+        {tab === "dashboard" && deal && (
+          <div style={{ position: "fixed", right: 16, bottom: 16, zIndex: 40 }}>
+            <WorkerEraInvoiceDialog
+              jobId={jobId}
+              workers={workerStats
+                .filter((s) => !isFounder(s.worker) && !isTrainee(s.worker))
+                .map((s) => ({ id: s.worker, name: resolveName(s.worker), washed: s.washed }))}
+            />
+          </div>
+        )}
+        {/* Maksut — erälaskutuksen kokonaistilanne (kohta 3D), vain FR8 + johtajat.
+            Navbar näyttää välilehden vain johtajille; tämä ehto on sama tuplavarmistus. */}
+        {tab === "maksut" && deal && (profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")) && (
+          <MaksutView jobId={jobId} />
         )}
         {tab === "floor" && (
           <FloorView

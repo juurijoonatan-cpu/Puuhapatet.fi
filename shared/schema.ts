@@ -1,4 +1,4 @@
-import { pgTable, text, integer, timestamp, pgEnum, serial, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, timestamp, pgEnum, serial, boolean, unique } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -125,6 +125,8 @@ export const founderSettlements = pgTable("founder_settlements", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export type FounderSettlement = typeof founderSettlements.$inferSelect;
+
 export const insertExpenseSchema = createInsertSchema(expenses).omit({ id: true, createdAt: true });
 export type Expense = typeof expenses.$inferSelect;
 export type InsertExpense = z.infer<typeof insertExpenseSchema>;
@@ -239,3 +241,145 @@ export type ChatConversation = typeof chatConversations.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type InsertChatConversation = z.infer<typeof insertChatConversationSchema>;
 export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;
+
+// ─── Kirjanpito (double-entry bookkeeping, FAS) ───────────────────────────────
+//
+// One fully separate, self-balancing set of books per "kirjanpitovelvollinen"
+// (accounting entity — a `ledger`). Today that's the two founders' own
+// toiminimi (Joonatan, Matias); a future Oy is just another ledger row with
+// entityType "oy" — no schema change needed. Every journal entry is derived
+// automatically from the underlying source data (jobs, expenses, investments,
+// founder settlements) by server/finance/post.ts — nothing here is hand-typed.
+// See docs/talous-kirjanpito.md for the full design + posting rules.
+
+export const ledgerEntityTypeEnum = pgEnum("ledger_entity_type", ["toiminimi", "oy"]);
+
+export const ledgers = pgTable("ledgers", {
+  id:         text("id").primaryKey(),          // "joonatan" | "matias" (future: "oy")
+  name:       text("name").notNull(),
+  yTunnus:    text("y_tunnus"),
+  entityType: ledgerEntityTypeEnum("entity_type").notNull().default("toiminimi"),
+  createdAt:  timestamp("created_at").defaultNow().notNull(),
+});
+
+export type Ledger = typeof ledgers.$inferSelect;
+
+// ─── Fiscal years (tilikaudet) ─────────────────────────────────────────────────
+
+export const fiscalYears = pgTable("fiscal_years", {
+  id:        serial("id").primaryKey(),
+  ledgerId:  text("ledger_id").references(() => ledgers.id).notNull(),
+  startDate: timestamp("start_date").notNull(),
+  endDate:   timestamp("end_date").notNull(),
+  isClosed:  boolean("is_closed").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  oneYearPerLedger: unique().on(t.ledgerId, t.startDate),
+}));
+
+export type FiscalYear = typeof fiscalYears.$inferSelect;
+
+// ─── Chart of accounts (tilikartta) ────────────────────────────────────────────
+
+export const accountTypeEnum = pgEnum("account_type", ["asset", "liability", "equity", "revenue", "expense"]);
+
+export const accounts = pgTable("accounts", {
+  id:               serial("id").primaryKey(),
+  ledgerId:         text("ledger_id").references(() => ledgers.id).notNull(),
+  code:             text("code").notNull(),      // FAS-style tilinumero, e.g. "1910"
+  name:             text("name").notNull(),
+  accountType:      accountTypeEnum("account_type").notNull(),
+  // Standard accounts created by ensureLedger() and used by the auto-poster;
+  // kept apart from any future user-added accounts so the poster's targets
+  // are never accidentally renamed/removed from the UI.
+  isSystemAccount:  boolean("is_system_account").notNull().default(false),
+  createdAt:        timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  oneCodePerLedger: unique().on(t.ledgerId, t.code),
+}));
+
+export type Account = typeof accounts.$inferSelect;
+
+// ─── Journal (päiväkirja) & general ledger (pääkirja) ──────────────────────────
+//
+// journalEntries = one row per bookkeeping event (a tapahtuma — one invoice,
+// one expense, one inter-founder settlement...). journalLines = its debit/
+// credit rows; every entry's lines must sum debit = credit (enforced by the
+// poster, not the DB — see server/finance/post.ts `postEntry`).
+//
+// The pääkirja (general ledger, grouped by account) is not a separate table —
+// it is journalLines joined to accounts, grouped by account (a view, computed
+// on read in server/finance/reports.ts) so it can never drift from the
+// päiväkirja.
+
+export const journalSourceTypeEnum = pgEnum("journal_source_type", [
+  "customer_invoice",   // asiakaslasku (mukaan lukien FR8-erät)
+  "internal_invoice",   // yrittäjien välinen lasku (founder settlement)
+  "expense",            // kirjattu kulu (jobiin liitetty kuitti)
+  "investment",         // väline-/kalustohankinta
+  "manual",             // käsin lisätty korjausvienti (varattu tulevaa varten)
+]);
+
+export const journalEntries = pgTable("journal_entries", {
+  id:          serial("id").primaryKey(),
+  ledgerId:    text("ledger_id").references(() => ledgers.id).notNull(),
+  fiscalYearId: integer("fiscal_year_id").references(() => fiscalYears.id).notNull(),
+  entryNumber: integer("entry_number").notNull(),    // juokseva numero per ledger (päiväkirjan tapahtumanro)
+  date:        timestamp("date").notNull(),          // kirjanpitopäivä (tapahtuman pvm)
+  description: text("description").notNull(),
+  sourceType:  journalSourceTypeEnum("source_type").notNull(),
+  // Stable dedupe key (e.g. "job:123:era:2", "expense:55", "settlement:9") —
+  // makes the auto-rebuild idempotent: same source always produces exactly
+  // one entry per ledger, never duplicated on re-run.
+  sourceKey:   text("source_key").notNull(),
+  createdAt:   timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  oneEntryPerSource: unique().on(t.ledgerId, t.sourceKey),
+  oneNumberPerLedger: unique().on(t.ledgerId, t.entryNumber),
+}));
+
+export const journalLines = pgTable("journal_lines", {
+  id:          serial("id").primaryKey(),
+  entryId:     integer("entry_id").references(() => journalEntries.id).notNull(),
+  accountId:   integer("account_id").references(() => accounts.id).notNull(),
+  debitCents:  integer("debit_cents").notNull().default(0),
+  creditCents: integer("credit_cents").notNull().default(0),
+  lineNo:      integer("line_no").notNull().default(0),
+});
+
+export const journalEntriesRelations = relations(journalEntries, ({ many, one }) => ({
+  lines: many(journalLines),
+  fiscalYear: one(fiscalYears, { fields: [journalEntries.fiscalYearId], references: [fiscalYears.id] }),
+}));
+
+export const journalLinesRelations = relations(journalLines, ({ one }) => ({
+  entry: one(journalEntries, { fields: [journalLines.entryId], references: [journalEntries.id] }),
+  account: one(accounts, { fields: [journalLines.accountId], references: [accounts.id] }),
+}));
+
+export type JournalEntry = typeof journalEntries.$inferSelect;
+export type JournalLine = typeof journalLines.$inferSelect;
+
+// ─── Forecast (ennustelaskelma) ────────────────────────────────────────────────
+//
+// Purely a planning tool — a forecast line never touches the real ledger.
+// One row = one recurring or one-off projected income/expense line.
+
+export const forecastKindEnum = pgEnum("forecast_kind", ["income", "expense"]);
+
+export const forecastEntries = pgTable("forecast_entries", {
+  id:         serial("id").primaryKey(),
+  ledgerId:   text("ledger_id").references(() => ledgers.id).notNull(),
+  label:      text("label").notNull(),
+  kind:       forecastKindEnum("kind").notNull(),
+  amountCents: integer("amount_cents").notNull(),      // per kuukausi
+  startMonth: text("start_month").notNull(),           // "YYYY-MM"
+  endMonth:   text("end_month"),                       // null = toistuu toistaiseksi
+  recurring:  boolean("recurring").notNull().default(true), // false = kertaluonteinen (vain startMonth)
+  category:   text("category").notNull().default("muu"),
+  createdAt:  timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertForecastEntrySchema = createInsertSchema(forecastEntries).omit({ id: true, createdAt: true });
+export type ForecastEntry = typeof forecastEntries.$inferSelect;
+export type InsertForecastEntry = z.infer<typeof insertForecastEntrySchema>;

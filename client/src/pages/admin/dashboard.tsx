@@ -289,7 +289,7 @@ export default function AdminDashboard() {
           </Card>
         )}
         {!isHost && (
-          <Link href="/admin/tax-export">
+          <Link href="/admin/talous">
             <Card className="p-4 bg-card border-0 premium-shadow mb-8 cursor-pointer hover:opacity-95 transition-opacity">
               <div className="flex items-center justify-between">
                 <div>

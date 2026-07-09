@@ -260,6 +260,13 @@ function Router() {
           <AdminGuidePage />
         </ProtectedRoute>
       </Route>
+      {/* /admin/talous is the current URL; /admin/tax-export kept as an alias
+          so old bookmarks/links keep working. */}
+      <Route path="/admin/talous">
+        <ProtectedRoute>
+          <AdminTaxExportPage />
+        </ProtectedRoute>
+      </Route>
       <Route path="/admin/tax-export">
         <ProtectedRoute>
           <AdminTaxExportPage />

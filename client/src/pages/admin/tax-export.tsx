@@ -1,8 +1,13 @@
 /**
- * Verotus & tiimi — yhdistetty talousnäkymä
+ * Talous & verotus — yhdistetty talousnäkymä
  *
- * Yksi selkeä sivu, jossa kaikki on piilotettu sujuviin dropdowneihin:
- *  · OmaVeroon ilmoitettava tulos (aina näkyvissä)
+ * Kaksi eri linssiä samalla sivulla, tarkoituksella:
+ *  · "Oma tulos" — nopea OmaVero-täyttöluku (ENNALLAAN, tätä numeroa yhä ilmoitetaan).
+ *  · "Kirjanpito" (client/src/pages/admin/talous/kirjanpito-section.tsx) — UUSI
+ *    kahdenkertainen kirjanpito, joka muodostuu automaattisesti laskutuksesta.
+ *    Näiden kahden luvun ei tarvitse täsmätä tänään — ks. docs/talous-kirjanpito.md.
+ *
+ * Muu sisältö piilotettu sujuviin dropdowneihin:
  *  · Bossien rahat — avoin velka, MobilePay-maksukirjaukset, vastalaskut (auki oletuksena)
  *  · Omat asiakaslaskut (lähetetyt laskut per vuosi — pikkukeikat + urakkaerät)
  *  · Verotuloste — omat keikat (CSV / tulosta)
@@ -27,6 +32,7 @@ import { api, type FounderCrossSettlement, type WorkerStatsResponse } from "@/li
 import { getAdminProfile, USERS } from "@/lib/admin-profile";
 import { BRAND_BILLERS } from "@shared/billers";
 import { feeRateForWorker, STAFF_SERVICE_FEE_RATE, effectiveJobTotal } from "@shared/team";
+import { KirjanpitoSection } from "./talous/kirjanpito-section";
 
 interface JobRow {
   job: {
@@ -394,6 +400,13 @@ export default function TaxExportPage() {
                 </Card>
               );
             })()}
+
+            {/* ── Kirjanpito: uusi kahdenkertainen kirjanpito, muodostuu
+                automaattisesti laskutuksesta/kuluista. Oma linssi "Oma tulos"
+                -kortin rinnalla, ei korvaa sitä — ks. tiedoston yläkommentti. */}
+            {isHost && (
+              <KirjanpitoSection defaultLedgerId={profile?.id === "matias" ? "matias" : "joonatan"} />
+            )}
 
             {/* ── Yksityiskohdat: everything below is reference material ───── */}
             <p className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground mt-6 mb-2 print:hidden">

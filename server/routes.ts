@@ -33,11 +33,13 @@ import {
   WITHHOLDING_NATURAL_PERSON, VAT_SMALL_BUSINESS_LIMIT_EUR, fmtPct, type TaxBreakdown,
 } from "@shared/tax";
 import {
-  BRAND_BILLERS, DEFAULT_BILLER_ID, resolveBrandBiller, billerToBuyer,
+  BRAND_BILLERS, DEFAULT_BILLER_ID, resolveBrandBiller, billerToBuyer, inferBillerId,
   type Biller, type BuyerSnapshot,
 } from "@shared/billers";
 import { computePayProgress } from "@shared/payprogress";
 import { traineeForUserId, traineeForName, type TraineeInfo } from "@shared/trainees";
+import { computeBillerTurnover, computeFounderSettlement } from "./finance/settlement";
+import { registerFinanceRoutes } from "./finance/routes";
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 // Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
@@ -1342,87 +1344,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // activity, so this is a floor, surfaced with that caveat in the UI.
   // Who billed a small job — ONE rule for the ALV turnover, the founder
   // settlement and the per-person invoice register, so the three can never
-  // drift apart:
-  //   1. explicit billedBy (set on invoice send / in the Verotus view) wins;
-  //   2. otherwise, if the job's workers contain EXACTLY ONE founder, that
-  //      founder billed it (the pair alternates whose Y-tunnus collects, but a
-  //      solo founder gig is always billed by its founder) — this repairs the
-  //      history without any manual re-marking;
-  //   3. otherwise unknown (both founders / staff only) → shown as unassigned.
-  function inferBillerId(job: { billedBy?: string | null; assignedTo?: string | null }): string | null {
-    if (job.billedBy) return job.billedBy;
-    const tokens = (job.assignedTo || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-    if (tokens.length === 0) return null;
-    const matches = BRAND_BILLERS.filter((b) =>
-      tokens.includes(b.id) ||
-      tokens.includes(b.name.trim().toLowerCase()) ||
-      tokens.includes(b.name.trim().split(/\s+/)[0].toLowerCase()));
-    return matches.length === 1 ? matches[0].id : null;
-  }
+  // drift apart (and, since @shared/billers, the same rule the kirjanpito
+  // auto-poster and the client Verotus view use too). See inferBillerId in
+  // @shared/billers for the rule itself.
 
   app.get("/api/admin/biller-turnover", async (_req, res) => {
     try {
       const rows = await db.select().from(jobs);
-      // year -> billerId -> cents
-      const byYear: Record<string, Record<string, number>> = {};
-      // Done small jobs with NO biller set yet — surfaced so the founders can
-      // attribute them (otherwise the ALV tracker under-counts someone).
-      const unassignedByYear: Record<string, { count: number; cents: number }> = {};
-      // Gig instalments recorded before the biller field existed. NEVER default
-      // these to anyone: a silent default puts another founder's turnover on
-      // the wrong person's ALV counter and inverts the founder debt. They stay
-      // out of everyone's figures and are listed here for one-tap attribution.
-      const unassignedEras: { jobId: number; index: number; name: string; dateMs: number | null; cents: number }[] = [];
-      for (const row of rows) {
-        // Custom gigs (FR8 etc.): each recorded instalment payment carries its biller.
-        if (row.gigData) {
-          let gig: GigData | null = null;
-          try { gig = sanitizeGigData(JSON.parse(row.gigData)); } catch { gig = null; }
-          const gigName = gig?.company?.name || row.description || `Keikka #${row.id}`;
-          (gig?.payments || []).forEach((p, i) => {
-            if (!p?.amountCents || p.amountCents <= 0) return;
-            const billerId = p.biller?.id;
-            if (!billerId) {
-              unassignedEras.push({
-                jobId: row.id, index: i, name: `${gigName} — erä ${i + 1}`,
-                dateMs: p.t || null, cents: p.amountCents,
-              });
-              return;
-            }
-            const year = String(new Date(p.t || 0).getFullYear());
-            (byYear[year] ||= {});
-            byYear[year][billerId] = (byYear[year][billerId] ?? 0) + p.amountCents;
-          });
-        }
-        // Small jobs: the whole invoice goes to whoever billed (explicit or
-        // inferred — see inferBillerId). A job whose money is already tracked
-        // via gig payments must not count twice.
-        if (!row.isCustomGig && !row.gigData && row.status === "done" && row.quoteStatus !== "declined") {
-          const total = effectiveJobTotal(row);
-          if (total <= 0) continue;
-          const year = String(new Date(row.scheduledAt ?? row.createdAt).getFullYear());
-          const eff = inferBillerId(row);
-          if (eff && BRAND_BILLERS.some((b) => b.id === eff)) {
-            (byYear[year] ||= {});
-            byYear[year][eff] = (byYear[year][eff] ?? 0) + total;
-          } else if (!row.billedBy) {
-            // Genuinely unknown (both founders / staff-only crew) — surfaced
-            // for manual attribution. An explicit staff biller (own Y-tunnus)
-            // is a valid attribution that just isn't founder turnover.
-            (unassignedByYear[year] ||= { count: 0, cents: 0 });
-            unassignedByYear[year].count += 1;
-            unassignedByYear[year].cents += total;
-          }
-        }
-      }
-      res.json({
-        ok: true,
-        limitEur: VAT_SMALL_BUSINESS_LIMIT_EUR,
-        billers: BRAND_BILLERS.map((b) => ({ id: b.id, name: b.name, yTunnus: b.yTunnus })),
-        turnoverByYear: byYear, // { "2026": { joonatan: cents, matias: cents } }
-        unassignedByYear,
-        unassignedEras,
-      });
+      res.json(computeBillerTurnover(rows));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -1438,167 +1367,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const rows = await db.select().from(jobs);
       const customerRows = await db.select().from(customers);
-      const customerName = new Map(customerRows.map((c) => [c.id, c.name]));
-      // Job expenses: the biller fronted materials and keeps the reimbursement,
-      // so shares are computed on (total − kulut) — same maths as the
-      // tilitystosite the workers receive.
       const expenseRows = await db.select().from(expenses);
-      const expByJob = new Map<number, number>();
-      for (const e of expenseRows) expByJob.set(e.jobId, (expByJob.get(e.jobId) ?? 0) + e.amount);
-      // Already-issued vastalaskut: subtracted from the cumulative debt so the
-      // same euros are never invoiced twice.
       const settledRows = await db.select().from(founderSettlements).orderBy(desc(founderSettlements.createdAt));
-      const founderList = BRAND_BILLERS.map((b) => ({ id: b.id, name: b.name, yTunnus: b.yTunnus }));
-      const n = Math.max(1, founderList.length);
-      const founders = founderList.map((f) => ({
-        id: f.id, name: f.name, yTunnus: f.yTunnus,
-        billedCents: 0,      // total collected from customers as biller
-        kateShareCents: 0,   // their equal share of the total kate
-        palkatPaidCents: 0,  // workers' palkat the biller fronted
-      }));
-      const idxOf = (id?: string) => founders.findIndex((f) => f.id === id);
-      // owes[fromId][toId] = cents the biller (from) holds that belongs to (to).
-      const owes: Record<string, Record<string, number>> = {};
-      const bump = (from: string, to: string, cents: number) => {
-        if (!from || !to || from === to || cents <= 0) return;
-        (owes[from] ||= {})[to] = (owes[from][to] ?? 0) + cents;
-      };
-      const perGig: {
-        jobId: number; gigName: string;
-        eras: { era: number; dateMs: number | null; billerId: string; billerName: string; instalmentCents: number; palkatCents: number; kateCents: number; shares: { id: string; cents: number }[]; paysOut: { id: string; name: string; cents: number }[] }[];
-      }[] = [];
-      // Recorded gig instalments with no biller — excluded from ALL maths
-      // until attributed. Counted over EVERY gig with payments (not only
-      // fixed-deal gigs) so this matches the ALV card's unassigned list.
-      let unassignedEraCount = 0;
-      for (const job of rows) {
-        if (!job.gigData) continue;
-        const g = parseGig(job.gigData);
-        for (const p of g?.payments || []) {
-          if (p?.amountCents > 0 && !p.biller?.id) unassignedEraCount += 1;
-        }
-      }
-
-      for (const job of rows) {
-        const project = parseProject(job.projectData ?? null);
-        if (!project) continue;
-        const deal = fixedDealFor(project);
-        if (!deal) continue;
-        const eraBreakdown = computeEraDebts(project, deal, project.crew || [], project.eraWindows ?? null);
-        const gig = parseGig(job.gigData);
-        const payments = gig?.payments ?? [];
-        eraBreakdown.forEach((e, i) => {
-          const p = payments[i];
-          // A recorded payment = cash moved. A payment WITHOUT a biller is
-          // never defaulted to anyone (a wrong default inverts who owes whom):
-          // it stays out of the debt maths until attributed — same rule as
-          // the ALV turnover.
-          const b = p?.biller;
-          (e as any).biller = b?.id ? { id: b.id, name: b.name } : null;
-        });
-        const gigName = gig?.company?.name || job.description || `Keikka #${job.id}`;
-        const eras: (typeof perGig)[number]["eras"] = [];
-        for (const e of eraBreakdown) {
-          const biller = (e as any).biller as { id: string; name: string } | null;
-          if (!biller?.id) continue; // only billed erät with a KNOWN biller
-          const kate = e.marginCents;
-          const base = Math.floor(kate / n);
-          const shares = founders.map((f, i) => ({ id: f.id, name: f.name, cents: i === 0 ? kate - base * (n - 1) : base }));
-          shares.forEach((s) => { const j = idxOf(s.id); if (j >= 0) founders[j].kateShareCents += s.cents; });
-          const bj = idxOf(biller.id);
-          if (bj >= 0) { founders[bj].billedCents += e.instalmentCents; founders[bj].palkatPaidCents += e.earnedCents; }
-          const paysOut = shares.filter((s) => s.id !== biller.id);
-          paysOut.forEach((s) => bump(biller.id, s.id, s.cents));
-          eras.push({
-            era: e.era,
-            // Billing date from the recorded payment — lets the client put the
-            // kate income in the right YEAR for the founder's OmaVero figure.
-            dateMs: payments[e.era - 1]?.t || null,
-            billerId: biller.id,
-            billerName: biller.name || (bj >= 0 ? founders[bj].name : ""),
-            instalmentCents: e.instalmentCents,
-            palkatCents: e.earnedCents,
-            kateCents: kate,
-            // EVERY founder's kate share of this erä (incl. the biller's own).
-            shares: shares.map((s) => ({ id: s.id, cents: s.cents })),
-            paysOut: paysOut.map((s) => ({ id: s.id, name: s.name, cents: s.cents })),
-          });
-        }
-        if (eras.length > 0) perGig.push({ jobId: job.id, gigName, eras });
-      }
-
-      // Small jobs: the founders have split these 50/50 and alternated whose
-      // Y-tunnus takes the customer's payment. The biller (billedBy) collected
-      // the FULL sum → owes every OTHER founder among the assigned workers their
-      // equal share. (Non-founder workers are settled via the tilitystosite flow.)
-      const founderByName = new Map(founderList.map((f) => [f.name.trim().toLowerCase(), f.id]));
-      const resolveWorkerId = (s: string) => {
-        const t = s.trim().toLowerCase();
-        return founderByName.get(t) ?? t; // founder name → id; else raw id string
-      };
-      const smallJobs: {
-        jobId: number; name: string; dateMs: number; totalCents: number; expensesCents: number;
-        billerId: string; billerName: string; numWorkers: number;
-        owes: { id: string; name: string; cents: number }[];
-      }[] = [];
-      for (const job of rows) {
-        if (job.isCustomGig || job.gigData || job.status !== "done" || job.quoteStatus === "declined") continue;
-        const billerId = inferBillerId(job);
-        if (!billerId || idxOf(billerId) < 0) continue;
-        const total = effectiveJobTotal(job);
-        if (total <= 0) continue;
-        const expensesCents = expByJob.get(job.id) ?? 0;
-        const baseCents = Math.max(0, total - expensesCents);
-        const workerIds = (job.assignedTo || "").split(",").map(resolveWorkerId).filter(Boolean);
-        const numWorkers = Math.max(workerIds.length, 1);
-        const share = Math.round(baseCents / numWorkers);
-        const owesList = founderList
-          .filter((f) => f.id !== billerId && workerIds.includes(f.id))
-          .map((f) => ({ id: f.id, name: f.name, cents: share }))
-          .filter((o) => o.cents > 0);
-        if (owesList.length === 0) continue;
-        owesList.forEach((o) => bump(billerId, o.id, o.cents));
-        const bj = idxOf(billerId);
-        smallJobs.push({
-          jobId: job.id,
-          name: customerName.get(job.customerId) || job.description || `Keikka #${job.id}`,
-          dateMs: new Date(job.scheduledAt ?? job.createdAt).getTime(),
-          totalCents: total,
-          expensesCents,
-          billerId,
-          billerName: founderList[bj]?.name ?? billerId,
-          numWorkers,
-          owes: owesList,
-        });
-      }
-      smallJobs.sort((a, b) => b.dateMs - a.dateMs);
-
-      // Apply already-recorded settlements as opposing debts — the pairwise
-      // netting below then reports only what is STILL open.
-      for (const s of settledRows) bump(s.toId, s.fromId, s.cents);
-
-      // Net pairwise: for each unordered founder pair, cancel opposing debts so
-      // we end up with a single "X should pay Y €Z" line per pair.
-      const crossInvoices: { fromId: string; fromName: string; toId: string; toName: string; cents: number }[] = [];
-      for (let i = 0; i < founders.length; i++) {
-        for (let j = i + 1; j < founders.length; j++) {
-          const a = founders[i], b = founders[j];
-          const ab = owes[a.id]?.[b.id] ?? 0; // a holds b's money
-          const ba = owes[b.id]?.[a.id] ?? 0; // b holds a's money
-          const net = ab - ba;
-          if (net > 0) crossInvoices.push({ fromId: a.id, fromName: a.name, toId: b.id, toName: b.name, cents: net });
-          else if (net < 0) crossInvoices.push({ fromId: b.id, fromName: b.name, toId: a.id, toName: a.name, cents: -net });
-        }
-      }
-
-      res.json({
-        ok: true, founders, crossInvoices, perGig, smallJobs, unassignedEraCount,
-        settled: settledRows.map((s) => ({
-          id: s.id, fromId: s.fromId, toId: s.toId, cents: s.cents,
-          invoiceNo: s.invoiceNo ?? undefined,
-          createdAtMs: new Date(s.createdAt).getTime(),
-        })),
-      });
+      res.json(computeFounderSettlement(rows, customerRows, expenseRows, settledRows));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -7603,6 +7374,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
     return lines.join("\n");
   }
+
+  // ─── Kirjanpito (double-entry ledger) — Talous ja verotus -osio ─────────────
+  registerFinanceRoutes(app);
 
   return httpServer;
 }

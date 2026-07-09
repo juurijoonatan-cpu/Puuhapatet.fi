@@ -76,3 +76,24 @@ export function resolveBrandBiller(id?: string | null): Biller | undefined {
 export function billerToBuyer(b: Biller): BuyerSnapshot {
   return { billerId: b.id, name: b.name, yTunnus: b.yTunnus, address: b.address, email: b.email };
 }
+
+/**
+ * Kuka laskutti tätä (pientä, ei-FR8) keikkaa — YKSI sääntö, jota käyttävät ALV-
+ * seuranta, bossien tilitys, henkilön laskuluettelo ja kirjanpito, jotta ne eivät
+ * voi ajautua eri linjoille:
+ *   1. selkeä `billedBy` voittaa aina;
+ *   2. muuten, jos keikan tekijöissä on TÄSMÄLLEEN YKSI johtaja, hän laskutti
+ *      (johtajat vuorottelevat kumman Y-tunnus kerää, mutta yksin tehty keikka on
+ *      aina sen johtajan laskuttama) — korjaa historian ilman käsin merkintää;
+ *   3. muuten tuntematon (molemmat johtajat / vain työntekijöitä) → null.
+ */
+export function inferBillerId(job: { billedBy?: string | null; assignedTo?: string | null }): string | null {
+  if (job.billedBy) return job.billedBy;
+  const tokens = (job.assignedTo || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (tokens.length === 0) return null;
+  const matches = BRAND_BILLERS.filter((b) =>
+    tokens.includes(b.id) ||
+    tokens.includes(b.name.trim().toLowerCase()) ||
+    tokens.includes(b.name.trim().split(/\s+/)[0].toLowerCase()));
+  return matches.length === 1 ? matches[0].id : null;
+}

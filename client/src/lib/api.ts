@@ -592,7 +592,13 @@ export const api = {
   // Issue a vastalasku: files myyntilasku + ostolasku into both founders'
   // Dokumentit WITHOUT touching the open debt — the payment is recorded
   // separately when the money actually moves.
-  issueFounderInvoice: (data: { fromId: string; toId: string; cents: number; invoiceNo: string }) =>
+  issueFounderInvoice: (data: {
+    fromId: string; toId: string; cents: number; invoiceNo: string;
+    // Optional: lets the server generate a real PDF (filed + backed up to
+    // Google Drive) matching exactly what the printable preview showed.
+    items?: { label: string; cents: number }[];
+    dueDateStr?: string; iban?: string; bic?: string; paidNote?: string;
+  }) =>
     request<{ ok: boolean }>("POST", "/api/admin/founder-settlement/issue-invoice", data),
   deleteFounderSettlement: (id: number) =>
     request<{ ok: boolean }>("DELETE", `/api/admin/founder-settlement/${id}`),
@@ -1136,6 +1142,114 @@ export const api = {
 
   upsertJob: (_job: unknown): Promise<ApiResponse<{ ok: boolean; jobId?: string; error?: string }>> =>
     Promise.resolve({ ok: false, error: "Deprecated" }),
+
+  // ─── Kirjanpito (double-entry ledger) — Talous ja verotus -osio ────────────
+  // Every GET rebuilds the ledger server-side from jobs/expenses/investments/
+  // founderSettlements first, so the numbers are always current.
+
+  financeLedgers: () =>
+    request<{ ledgers: { id: string; name: string; yTunnus?: string; entityType: "toiminimi" | "oy" }[] }>(
+      "GET", "/api/finance/ledgers"),
+
+  financeChartOfAccounts: (ledgerId: string) =>
+    request<{ accounts: FinanceAccount[] }>("GET", `/api/finance/chart-of-accounts?ledgerId=${ledgerId}`),
+
+  financeJournal: (ledgerId: string, year?: number) =>
+    request<{ entries: FinanceJournalEntry[] }>(
+      "GET", `/api/finance/journal?ledgerId=${ledgerId}${year ? `&year=${year}` : ""}`),
+
+  financeGeneralLedger: (ledgerId: string, year?: number) =>
+    request<{ accounts: FinanceLedgerAccount[] }>(
+      "GET", `/api/finance/general-ledger?ledgerId=${ledgerId}${year ? `&year=${year}` : ""}`),
+
+  financeIncomeStatement: (ledgerId: string, year: number) =>
+    request<FinanceIncomeStatement>("GET", `/api/finance/income-statement?ledgerId=${ledgerId}&year=${year}`),
+
+  financeBalanceSheet: (ledgerId: string, asOf?: string) =>
+    request<FinanceBalanceSheet>(
+      "GET", `/api/finance/balance-sheet?ledgerId=${ledgerId}${asOf ? `&asOf=${asOf}` : ""}`),
+
+  financeSummary: (ledgerId: string, year: number) =>
+    request<FinanceSummary>("GET", `/api/finance/summary?ledgerId=${ledgerId}&year=${year}`),
+
+  financeForecast: (ledgerId: string) =>
+    request<{ entries: FinanceForecastEntry[] }>("GET", `/api/finance/forecast?ledgerId=${ledgerId}`),
+
+  addFinanceForecastEntry: (data: Omit<FinanceForecastEntry, "id" | "createdAt">) =>
+    request<FinanceForecastEntry>("POST", "/api/finance/forecast", data),
+
+  updateFinanceForecastEntry: (id: number, patch: Partial<Omit<FinanceForecastEntry, "id" | "createdAt">>) =>
+    request<FinanceForecastEntry>("PATCH", `/api/finance/forecast/${id}`, patch),
+
+  deleteFinanceForecastEntry: (id: number) =>
+    request<{ ok: boolean }>("DELETE", `/api/finance/forecast/${id}`),
+
+  financeForecastProjection: (ledgerId: string, start?: string, end?: string) =>
+    request<{ months: { month: string; incomeCents: number; expenseCents: number; profitCents: number }[] }>(
+      "GET", `/api/finance/forecast/projection?ledgerId=${ledgerId}${start ? `&start=${start}` : ""}${end ? `&end=${end}` : ""}`),
+
+  financeBackupStatus: (ledgerId: string, year: number) =>
+    request<{ configured: boolean; files: Record<string, { webViewLink?: string; updatedAt: string } | null> }>(
+      "GET", `/api/finance/backup/status?ledgerId=${ledgerId}&year=${year}`),
+
+  financeBackupNow: (ledgerId: string, year: number) =>
+    request<{ ok: boolean; reports: { uploaded: { report: string; ok: boolean }[] }; forecast: { ok: boolean } }>(
+      "POST", "/api/finance/backup", { ledgerId, year }),
 };
+
+// ─── Kirjanpito types (mirror server/finance/*.ts) ────────────────────────────
+
+export interface FinanceAccount {
+  id: number; ledgerId: string; code: string; name: string;
+  accountType: "asset" | "liability" | "equity" | "revenue" | "expense";
+  isSystemAccount: boolean;
+}
+
+export interface FinanceJournalEntry {
+  id: number; entryNumber: number; date: string; description: string;
+  sourceType: "customer_invoice" | "internal_invoice" | "expense" | "investment" | "manual";
+  lines: { accountCode: string; accountName: string; debitCents: number; creditCents: number }[];
+}
+
+export interface FinanceLedgerAccount {
+  account: FinanceAccount;
+  rows: { date: string; entryNumber: number; description: string; debitCents: number; creditCents: number; balanceCents: number }[];
+  endBalanceCents: number;
+}
+
+export interface FinanceIncomeStatement {
+  year: number;
+  revenue: { code: string; name: string; cents: number }[];
+  revenueTotal: number;
+  expenses: { code: string; name: string; cents: number }[];
+  expensesTotal: number;
+  result: number;
+}
+
+export interface FinanceBalanceSheet {
+  asOf: string;
+  assets: { code: string; name: string; cents: number }[];
+  assetsTotal: number;
+  liabilities: { code: string; name: string; cents: number }[];
+  liabilitiesTotal: number;
+  equity: { code: string; name: string; cents: number }[];
+  cumulativeResultCents: number;
+  equityTotal: number;
+  liabilitiesAndEquityTotal: number;
+}
+
+export interface FinanceSummary {
+  year: number;
+  totalInvoicedCents: number;
+  totalIncomeCents: number;
+  totalExpensesCents: number;
+  profitCents: number;
+}
+
+export interface FinanceForecastEntry {
+  id: number; ledgerId: string; label: string; kind: "income" | "expense";
+  amountCents: number; startMonth: string; endMonth: string | null;
+  recurring: boolean; category: string; createdAt?: string;
+}
 
 export { API_BASE };

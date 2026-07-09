@@ -1,8 +1,13 @@
 /**
- * Verotus & tiimi — yhdistetty talousnäkymä
+ * Talous & verotus — yhdistetty talousnäkymä
  *
- * Yksi selkeä sivu, jossa kaikki on piilotettu sujuviin dropdowneihin:
- *  · OmaVeroon ilmoitettava tulos (aina näkyvissä)
+ * Kaksi eri linssiä samalla sivulla, tarkoituksella:
+ *  · "Oma tulos" — nopea OmaVero-täyttöluku (ENNALLAAN, tätä numeroa yhä ilmoitetaan).
+ *  · "Kirjanpito" (client/src/pages/admin/talous/kirjanpito-section.tsx) — UUSI
+ *    kahdenkertainen kirjanpito, joka muodostuu automaattisesti laskutuksesta.
+ *    Näiden kahden luvun ei tarvitse täsmätä tänään — ks. docs/talous-kirjanpito.md.
+ *
+ * Muu sisältö piilotettu sujuviin dropdowneihin:
  *  · Bossien rahat — avoin velka, MobilePay-maksukirjaukset, vastalaskut (auki oletuksena)
  *  · Omat asiakaslaskut (lähetetyt laskut per vuosi — pikkukeikat + urakkaerät)
  *  · Verotuloste — omat keikat (CSV / tulosta)
@@ -27,6 +32,7 @@ import { api, type FounderCrossSettlement, type WorkerStatsResponse } from "@/li
 import { getAdminProfile, USERS } from "@/lib/admin-profile";
 import { BRAND_BILLERS } from "@shared/billers";
 import { feeRateForWorker, STAFF_SERVICE_FEE_RATE, effectiveJobTotal } from "@shared/team";
+import { KirjanpitoSection } from "./talous/kirjanpito-section";
 
 interface JobRow {
   job: {
@@ -394,6 +400,13 @@ export default function TaxExportPage() {
                 </Card>
               );
             })()}
+
+            {/* ── Kirjanpito: uusi kahdenkertainen kirjanpito, muodostuu
+                automaattisesti laskutuksesta/kuluista. Oma linssi "Oma tulos"
+                -kortin rinnalla, ei korvaa sitä — ks. tiedoston yläkommentti. */}
+            {isHost && (
+              <KirjanpitoSection defaultLedgerId={profile?.id === "matias" ? "matias" : "joonatan"} />
+            )}
 
             {/* ── Yksityiskohdat: everything below is reference material ───── */}
             <p className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground mt-6 mb-2 print:hidden">
@@ -1068,7 +1081,11 @@ function FounderDebtCard({ settlement, onChanged }: { settlement: FounderCrossSe
             // Vastalasku into both founders' Dokumentit + the payment booking
             // (which files the payment kuitit for both). Ledger row carries the
             // MARKER so this one-tap can never run twice.
-            await api.issueFounderInvoice({ fromId: smallFrom.id, toId: smallTo.id, cents: smallAbs, invoiceNo });
+            await api.issueFounderInvoice({
+              fromId: smallFrom.id, toId: smallTo.id, cents: smallAbs, invoiceNo, items,
+              iban: creditor?.iban ?? undefined, bic: creditor?.bic ?? undefined,
+              paidNote: `MAKSETTU — MobilePay (kuitattu ${today.toLocaleDateString("fi-FI")})`,
+            });
             const res = await api.recordFounderSettlement({ fromId: smallFrom.id, toId: smallTo.id, cents: smallAbs, invoiceNo: MARKER });
             if (res.ok) onChanged();
             else alert(res.error || "Kirjaus epäonnistui — yritä uudelleen.");
@@ -1423,7 +1440,9 @@ function SettlementInvoiceDialog({
     // File once per dialog; the server also dedupes on re-issue.
     if (!recordedOnce) {
       const rec = await api.issueFounderInvoice({
-        fromId: inv.fromId, toId: inv.toId, cents: inv.cents, invoiceNo,
+        fromId: inv.fromId, toId: inv.toId, cents: inv.cents, invoiceNo, items,
+        dueDateStr: dueDate ? new Date(dueDate + "T12:00:00").toLocaleDateString("fi-FI") : undefined,
+        iban: iban || undefined, bic: bic || undefined,
       });
       // Marked issued only on SUCCESS — a failed filing must stay retryable.
       if (rec.ok) setRecordedOnce(true);

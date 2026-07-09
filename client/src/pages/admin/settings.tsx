@@ -437,7 +437,7 @@ export default function AdminSettingsPage() {
 
         {/* Verotus & tiimi — combined finance hub (verotuloste + ALV + bossien
             laskutus + tiimi, all folded into dropdowns on one clean page) */}
-        <Link href="/admin/tax-export">
+        <Link href="/admin/talous">
           <Card className="p-5 bg-card border-0 premium-shadow mb-4 cursor-pointer hover:opacity-95 transition-opacity ring-1 ring-green-500/20">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">

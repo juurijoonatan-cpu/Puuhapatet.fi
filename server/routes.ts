@@ -38,11 +38,34 @@ import {
   WITHHOLDING_NATURAL_PERSON, VAT_SMALL_BUSINESS_LIMIT_EUR, fmtPct, fmtEurCents, type TaxBreakdown,
 } from "@shared/tax";
 import {
-  BRAND_BILLERS, DEFAULT_BILLER_ID, resolveBrandBiller, billerToBuyer,
+  BRAND_BILLERS, DEFAULT_BILLER_ID, resolveBrandBiller, billerToBuyer, inferBillerId,
   type Biller, type BuyerSnapshot,
 } from "@shared/billers";
 import { computePayProgress } from "@shared/payprogress";
 import { traineeForUserId, traineeForName, type TraineeInfo } from "@shared/trainees";
+import { computeBillerTurnover, computeFounderSettlement } from "./finance/settlement";
+import { registerFinanceRoutes } from "./finance/routes";
+import { uploadPdf } from "./drive/upload";
+import { BRAND_BILLERS as DRIVE_BRAND_BILLERS } from "@shared/billers";
+
+/** Best-effort Drive backup for an invoice PDF — never throws, never blocks
+ *  the response that generated the PDF. See docs/google-drive-backup.md. */
+function backupInvoicePdf(
+  kind: "customer_invoice" | "internal_invoice" | "worker_invoice",
+  sourceKey: string,
+  folderPath: string[],
+  filename: string,
+  buffer: Buffer,
+): void {
+  uploadPdf({ kind, sourceKey, folderPath, filename: filename.replace(/[\\/:*?"<>|]/g, "-").slice(0, 150) }, buffer)
+    .catch((e) => console.warn(`Drive-varmuuskopio epäonnistui (${kind}/${sourceKey}):`, e?.message));
+}
+
+/** Parses a "d.m.yyyy" fi-FI date string; falls back to the current year. */
+function yearFromFiDate(s: string | undefined): number {
+  const m = /(\d{1,2})\.(\d{1,2})\.(\d{4})/.exec(s ?? "");
+  return m ? Number(m[3]) : new Date().getFullYear();
+}
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 // Ennen kuin puuhapatet.fi-domain on vahvistettu Resendissä, käytä onboarding@resend.dev
@@ -892,6 +915,111 @@ function generateWorkerInvoicePdf(params: {
   });
 }
 
+// ─── Founder-to-founder ("yrittäjien välinen") settlement invoice PDF ────────
+// Mirrors the client's openSettlementInvoicePrint HTML (tax-export.tsx) — same
+// fields, same content — but as a real PDF so it can be filed as a tosite and
+// backed up to Google Drive (server/drive), not just a browser print popup.
+function generateFounderSettlementInvoicePdf(params: {
+  invoiceNo: string;
+  dateStr: string;
+  dueDateStr?: string;
+  creditor: { name: string; address?: string; yTunnus?: string };
+  debtor: { name: string; address?: string; yTunnus?: string };
+  items: { label: string; cents: number }[];
+  totalCents: number;
+  iban?: string;
+  bic?: string;
+  /** Set when this documents money that already moved (e.g. retroactive MobilePay booking). */
+  paidNote?: string;
+}): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 48, size: "A4" });
+    const chunks: Buffer[] = [];
+    doc.on("data", (c: Buffer) => chunks.push(c));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    const INK = "#1A1A1A";
+    const GRAY = "#64748b";
+    const GREEN = "#14532d";
+    const fmtEur = (cents: number) =>
+      (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+    const pageW = doc.page.width - 96;
+
+    doc.rect(48, 48, pageW, 56).fill(GREEN);
+    doc.fill("#fff").font("Helvetica-Bold").fontSize(16).text("LASKU", 64, 62, { width: pageW - 32 });
+    doc.fill("#b8e07a").font("Helvetica").fontSize(9)
+      .text(`Nro ${params.invoiceNo}  ·  ${params.dateStr}  ·  sisäinen tilitys — bossien keskinäinen laskutus`, 64, 84, { width: pageW - 32 });
+
+    let y = 124;
+    const colW = (pageW - 16) / 2;
+    doc.fill(GRAY).font("Helvetica-Bold").fontSize(7)
+      .text("LASKUTTAJA (MYYJÄ)", 48, y, { width: colW })
+      .text("LASKUTETAAN (OSTAJA)", 48 + colW + 16, y, { width: colW });
+    y += 14;
+    doc.fill(INK).font("Helvetica-Bold").fontSize(10);
+    doc.text(params.creditor.name, 48, y, { width: colW });
+    doc.text(params.debtor.name, 48 + colW + 16, y, { width: colW });
+    y += 14;
+    doc.fill(GRAY).font("Helvetica").fontSize(9);
+    let ly = y, ry = y;
+    if (params.creditor.address) { doc.text(params.creditor.address, 48, ly, { width: colW }); ly += 12; }
+    if (params.creditor.yTunnus) { doc.text(`Y-tunnus: ${params.creditor.yTunnus}`, 48, ly, { width: colW }); ly += 12; }
+    if (params.debtor.address) { doc.text(params.debtor.address, 48 + colW + 16, ry, { width: colW }); ry += 12; }
+    if (params.debtor.yTunnus) { doc.text(`Y-tunnus: ${params.debtor.yTunnus}`, 48 + colW + 16, ry, { width: colW }); ry += 12; }
+    y = Math.max(ly, ry) + 10;
+
+    doc.fill("#374151").font("Helvetica").fontSize(9).text(
+      "Tilitys yhteisistä keikoista: ostaja on laskuttanut asiakkaita koko summalla ja tilittää tällä laskulla myyjälle hänen osuutensa.",
+      48, y, { width: pageW },
+    );
+    y += doc.heightOfString("x", { width: pageW }) + 16;
+
+    doc.rect(48, y, pageW, 20).fill("#F1F5F9");
+    doc.fill(GRAY).font("Helvetica-Bold").fontSize(8)
+      .text("ERITTELY", 60, y + 6, { width: pageW - 140 })
+      .text("SUMMA", 48 + pageW - 100, y + 6, { width: 88, align: "right" });
+    y += 26;
+
+    doc.font("Helvetica").fontSize(9);
+    for (const it of params.items) {
+      const lines = doc.heightOfString(it.label, { width: pageW - 140 });
+      doc.fill(it.cents < 0 ? GRAY : INK).text(it.label, 60, y, { width: pageW - 140 });
+      doc.fill(it.cents < 0 ? GRAY : INK).text(fmtEur(it.cents), 48 + pageW - 100, y, { width: 88, align: "right" });
+      y += Math.max(lines, 12) + 6;
+    }
+    y += 6;
+    doc.moveTo(48, y).lineTo(48 + pageW, y).strokeColor("#E2E8F0").stroke();
+    y += 12;
+    doc.fill(INK).font("Helvetica-Bold").fontSize(13)
+      .text("Yhteensä (maksettava)", 48 + pageW - 240, y, { width: 140, align: "right" });
+    doc.text(fmtEur(params.totalCents), 48 + pageW - 100, y, { width: 88, align: "right" });
+    y += 28;
+
+    doc.fill(GRAY).font("Helvetica").fontSize(8)
+      .text("Ei arvonlisäveroa — myyjä ei ole arvonlisäverovelvollinen (vähäinen toiminta, AVL 3 §).", 48, y, { width: pageW });
+    y += 20;
+
+    if (params.paidNote) {
+      doc.rect(48, y, pageW, 30).fillAndStroke("#f0fdf4", "#16a34a");
+      doc.fill("#166534").font("Helvetica-Bold").fontSize(11).text(`✓ ${params.paidNote}`, 48, y + 9, { width: pageW, align: "center" });
+      y += 40;
+    } else {
+      doc.fill(INK).font("Helvetica-Bold").fontSize(9).text("Maksutiedot", 48, y); y += 14;
+      doc.fill(GRAY).font("Helvetica").fontSize(9);
+      if (params.iban) { doc.text(`Tilinumero (IBAN): ${params.iban}`, 48, y); y += 12; }
+      if (params.bic) { doc.text(`BIC: ${params.bic}`, 48, y); y += 12; }
+      doc.text(`Viite / viesti: ${params.invoiceNo}`, 48, y); y += 12;
+      if (params.dueDateStr) { doc.text(`Eräpäivä: ${params.dueDateStr}`, 48, y); y += 12; }
+    }
+
+    doc.fill("#9ca3af").font("Helvetica").fontSize(8)
+      .text("Molemmat osapuolet säilyttävät laskun kirjanpidossaan 6 vuotta. Puuhapatet on brändi — myyjä ja ostaja toimivat omilla Y-tunnuksillaan.", 48, y + 10, { width: pageW });
+
+    doc.end();
+  });
+}
+
 // ─── FR8 erälasku PDF (kohta 4) ────────────────────────────────────────────
 // Sama visuaalinen malli kuin generateWorkerInvoicePdf, mutta kattaa MOLEMMAT
 // erälaskutyypit yhdellä funktiolla: "tekija" (alihankkija → johtaja, vero-
@@ -1025,7 +1153,6 @@ function generateEraInvoicePdf(params: {
     doc.end();
   });
 }
-
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
 
@@ -1534,87 +1661,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // activity, so this is a floor, surfaced with that caveat in the UI.
   // Who billed a small job — ONE rule for the ALV turnover, the founder
   // settlement and the per-person invoice register, so the three can never
-  // drift apart:
-  //   1. explicit billedBy (set on invoice send / in the Verotus view) wins;
-  //   2. otherwise, if the job's workers contain EXACTLY ONE founder, that
-  //      founder billed it (the pair alternates whose Y-tunnus collects, but a
-  //      solo founder gig is always billed by its founder) — this repairs the
-  //      history without any manual re-marking;
-  //   3. otherwise unknown (both founders / staff only) → shown as unassigned.
-  function inferBillerId(job: { billedBy?: string | null; assignedTo?: string | null }): string | null {
-    if (job.billedBy) return job.billedBy;
-    const tokens = (job.assignedTo || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-    if (tokens.length === 0) return null;
-    const matches = BRAND_BILLERS.filter((b) =>
-      tokens.includes(b.id) ||
-      tokens.includes(b.name.trim().toLowerCase()) ||
-      tokens.includes(b.name.trim().split(/\s+/)[0].toLowerCase()));
-    return matches.length === 1 ? matches[0].id : null;
-  }
+  // drift apart (and, since @shared/billers, the same rule the kirjanpito
+  // auto-poster and the client Verotus view use too). See inferBillerId in
+  // @shared/billers for the rule itself.
 
   app.get("/api/admin/biller-turnover", async (_req, res) => {
     try {
       const rows = await db.select().from(jobs);
-      // year -> billerId -> cents
-      const byYear: Record<string, Record<string, number>> = {};
-      // Done small jobs with NO biller set yet — surfaced so the founders can
-      // attribute them (otherwise the ALV tracker under-counts someone).
-      const unassignedByYear: Record<string, { count: number; cents: number }> = {};
-      // Gig instalments recorded before the biller field existed. NEVER default
-      // these to anyone: a silent default puts another founder's turnover on
-      // the wrong person's ALV counter and inverts the founder debt. They stay
-      // out of everyone's figures and are listed here for one-tap attribution.
-      const unassignedEras: { jobId: number; index: number; name: string; dateMs: number | null; cents: number }[] = [];
-      for (const row of rows) {
-        // Custom gigs (FR8 etc.): each recorded instalment payment carries its biller.
-        if (row.gigData) {
-          let gig: GigData | null = null;
-          try { gig = sanitizeGigData(JSON.parse(row.gigData)); } catch { gig = null; }
-          const gigName = gig?.company?.name || row.description || `Keikka #${row.id}`;
-          (gig?.payments || []).forEach((p, i) => {
-            if (!p?.amountCents || p.amountCents <= 0) return;
-            const billerId = p.biller?.id;
-            if (!billerId) {
-              unassignedEras.push({
-                jobId: row.id, index: i, name: `${gigName} — erä ${i + 1}`,
-                dateMs: p.t || null, cents: p.amountCents,
-              });
-              return;
-            }
-            const year = String(new Date(p.t || 0).getFullYear());
-            (byYear[year] ||= {});
-            byYear[year][billerId] = (byYear[year][billerId] ?? 0) + p.amountCents;
-          });
-        }
-        // Small jobs: the whole invoice goes to whoever billed (explicit or
-        // inferred — see inferBillerId). A job whose money is already tracked
-        // via gig payments must not count twice.
-        if (!row.isCustomGig && !row.gigData && row.status === "done" && row.quoteStatus !== "declined") {
-          const total = effectiveJobTotal(row);
-          if (total <= 0) continue;
-          const year = String(new Date(row.scheduledAt ?? row.createdAt).getFullYear());
-          const eff = inferBillerId(row);
-          if (eff && BRAND_BILLERS.some((b) => b.id === eff)) {
-            (byYear[year] ||= {});
-            byYear[year][eff] = (byYear[year][eff] ?? 0) + total;
-          } else if (!row.billedBy) {
-            // Genuinely unknown (both founders / staff-only crew) — surfaced
-            // for manual attribution. An explicit staff biller (own Y-tunnus)
-            // is a valid attribution that just isn't founder turnover.
-            (unassignedByYear[year] ||= { count: 0, cents: 0 });
-            unassignedByYear[year].count += 1;
-            unassignedByYear[year].cents += total;
-          }
-        }
-      }
-      res.json({
-        ok: true,
-        limitEur: VAT_SMALL_BUSINESS_LIMIT_EUR,
-        billers: BRAND_BILLERS.map((b) => ({ id: b.id, name: b.name, yTunnus: b.yTunnus })),
-        turnoverByYear: byYear, // { "2026": { joonatan: cents, matias: cents } }
-        unassignedByYear,
-        unassignedEras,
-      });
+      res.json(computeBillerTurnover(rows));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -1630,167 +1684,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const rows = await db.select().from(jobs);
       const customerRows = await db.select().from(customers);
-      const customerName = new Map(customerRows.map((c) => [c.id, c.name]));
-      // Job expenses: the biller fronted materials and keeps the reimbursement,
-      // so shares are computed on (total − kulut) — same maths as the
-      // tilitystosite the workers receive.
       const expenseRows = await db.select().from(expenses);
-      const expByJob = new Map<number, number>();
-      for (const e of expenseRows) expByJob.set(e.jobId, (expByJob.get(e.jobId) ?? 0) + e.amount);
-      // Already-issued vastalaskut: subtracted from the cumulative debt so the
-      // same euros are never invoiced twice.
       const settledRows = await db.select().from(founderSettlements).orderBy(desc(founderSettlements.createdAt));
-      const founderList = BRAND_BILLERS.map((b) => ({ id: b.id, name: b.name, yTunnus: b.yTunnus }));
-      const n = Math.max(1, founderList.length);
-      const founders = founderList.map((f) => ({
-        id: f.id, name: f.name, yTunnus: f.yTunnus,
-        billedCents: 0,      // total collected from customers as biller
-        kateShareCents: 0,   // their equal share of the total kate
-        palkatPaidCents: 0,  // workers' palkat the biller fronted
-      }));
-      const idxOf = (id?: string) => founders.findIndex((f) => f.id === id);
-      // owes[fromId][toId] = cents the biller (from) holds that belongs to (to).
-      const owes: Record<string, Record<string, number>> = {};
-      const bump = (from: string, to: string, cents: number) => {
-        if (!from || !to || from === to || cents <= 0) return;
-        (owes[from] ||= {})[to] = (owes[from][to] ?? 0) + cents;
-      };
-      const perGig: {
-        jobId: number; gigName: string;
-        eras: { era: number; dateMs: number | null; billerId: string; billerName: string; instalmentCents: number; palkatCents: number; kateCents: number; shares: { id: string; cents: number }[]; paysOut: { id: string; name: string; cents: number }[] }[];
-      }[] = [];
-      // Recorded gig instalments with no biller — excluded from ALL maths
-      // until attributed. Counted over EVERY gig with payments (not only
-      // fixed-deal gigs) so this matches the ALV card's unassigned list.
-      let unassignedEraCount = 0;
-      for (const job of rows) {
-        if (!job.gigData) continue;
-        const g = parseGig(job.gigData);
-        for (const p of g?.payments || []) {
-          if (p?.amountCents > 0 && !p.biller?.id) unassignedEraCount += 1;
-        }
-      }
-
-      for (const job of rows) {
-        const project = parseProject(job.projectData ?? null);
-        if (!project) continue;
-        const deal = fixedDealFor(project);
-        if (!deal) continue;
-        const eraBreakdown = computeEraDebts(project, deal, project.crew || [], project.eraWindows ?? null);
-        const gig = parseGig(job.gigData);
-        const payments = gig?.payments ?? [];
-        eraBreakdown.forEach((e, i) => {
-          const p = payments[i];
-          // A recorded payment = cash moved. A payment WITHOUT a biller is
-          // never defaulted to anyone (a wrong default inverts who owes whom):
-          // it stays out of the debt maths until attributed — same rule as
-          // the ALV turnover.
-          const b = p?.biller;
-          (e as any).biller = b?.id ? { id: b.id, name: b.name } : null;
-        });
-        const gigName = gig?.company?.name || job.description || `Keikka #${job.id}`;
-        const eras: (typeof perGig)[number]["eras"] = [];
-        for (const e of eraBreakdown) {
-          const biller = (e as any).biller as { id: string; name: string } | null;
-          if (!biller?.id) continue; // only billed erät with a KNOWN biller
-          const kate = e.marginCents;
-          const base = Math.floor(kate / n);
-          const shares = founders.map((f, i) => ({ id: f.id, name: f.name, cents: i === 0 ? kate - base * (n - 1) : base }));
-          shares.forEach((s) => { const j = idxOf(s.id); if (j >= 0) founders[j].kateShareCents += s.cents; });
-          const bj = idxOf(biller.id);
-          if (bj >= 0) { founders[bj].billedCents += e.instalmentCents; founders[bj].palkatPaidCents += e.earnedCents; }
-          const paysOut = shares.filter((s) => s.id !== biller.id);
-          paysOut.forEach((s) => bump(biller.id, s.id, s.cents));
-          eras.push({
-            era: e.era,
-            // Billing date from the recorded payment — lets the client put the
-            // kate income in the right YEAR for the founder's OmaVero figure.
-            dateMs: payments[e.era - 1]?.t || null,
-            billerId: biller.id,
-            billerName: biller.name || (bj >= 0 ? founders[bj].name : ""),
-            instalmentCents: e.instalmentCents,
-            palkatCents: e.earnedCents,
-            kateCents: kate,
-            // EVERY founder's kate share of this erä (incl. the biller's own).
-            shares: shares.map((s) => ({ id: s.id, cents: s.cents })),
-            paysOut: paysOut.map((s) => ({ id: s.id, name: s.name, cents: s.cents })),
-          });
-        }
-        if (eras.length > 0) perGig.push({ jobId: job.id, gigName, eras });
-      }
-
-      // Small jobs: the founders have split these 50/50 and alternated whose
-      // Y-tunnus takes the customer's payment. The biller (billedBy) collected
-      // the FULL sum → owes every OTHER founder among the assigned workers their
-      // equal share. (Non-founder workers are settled via the tilitystosite flow.)
-      const founderByName = new Map(founderList.map((f) => [f.name.trim().toLowerCase(), f.id]));
-      const resolveWorkerId = (s: string) => {
-        const t = s.trim().toLowerCase();
-        return founderByName.get(t) ?? t; // founder name → id; else raw id string
-      };
-      const smallJobs: {
-        jobId: number; name: string; dateMs: number; totalCents: number; expensesCents: number;
-        billerId: string; billerName: string; numWorkers: number;
-        owes: { id: string; name: string; cents: number }[];
-      }[] = [];
-      for (const job of rows) {
-        if (job.isCustomGig || job.gigData || job.status !== "done" || job.quoteStatus === "declined") continue;
-        const billerId = inferBillerId(job);
-        if (!billerId || idxOf(billerId) < 0) continue;
-        const total = effectiveJobTotal(job);
-        if (total <= 0) continue;
-        const expensesCents = expByJob.get(job.id) ?? 0;
-        const baseCents = Math.max(0, total - expensesCents);
-        const workerIds = (job.assignedTo || "").split(",").map(resolveWorkerId).filter(Boolean);
-        const numWorkers = Math.max(workerIds.length, 1);
-        const share = Math.round(baseCents / numWorkers);
-        const owesList = founderList
-          .filter((f) => f.id !== billerId && workerIds.includes(f.id))
-          .map((f) => ({ id: f.id, name: f.name, cents: share }))
-          .filter((o) => o.cents > 0);
-        if (owesList.length === 0) continue;
-        owesList.forEach((o) => bump(billerId, o.id, o.cents));
-        const bj = idxOf(billerId);
-        smallJobs.push({
-          jobId: job.id,
-          name: customerName.get(job.customerId) || job.description || `Keikka #${job.id}`,
-          dateMs: new Date(job.scheduledAt ?? job.createdAt).getTime(),
-          totalCents: total,
-          expensesCents,
-          billerId,
-          billerName: founderList[bj]?.name ?? billerId,
-          numWorkers,
-          owes: owesList,
-        });
-      }
-      smallJobs.sort((a, b) => b.dateMs - a.dateMs);
-
-      // Apply already-recorded settlements as opposing debts — the pairwise
-      // netting below then reports only what is STILL open.
-      for (const s of settledRows) bump(s.toId, s.fromId, s.cents);
-
-      // Net pairwise: for each unordered founder pair, cancel opposing debts so
-      // we end up with a single "X should pay Y €Z" line per pair.
-      const crossInvoices: { fromId: string; fromName: string; toId: string; toName: string; cents: number }[] = [];
-      for (let i = 0; i < founders.length; i++) {
-        for (let j = i + 1; j < founders.length; j++) {
-          const a = founders[i], b = founders[j];
-          const ab = owes[a.id]?.[b.id] ?? 0; // a holds b's money
-          const ba = owes[b.id]?.[a.id] ?? 0; // b holds a's money
-          const net = ab - ba;
-          if (net > 0) crossInvoices.push({ fromId: a.id, fromName: a.name, toId: b.id, toName: b.name, cents: net });
-          else if (net < 0) crossInvoices.push({ fromId: b.id, fromName: b.name, toId: a.id, toName: a.name, cents: -net });
-        }
-      }
-
-      res.json({
-        ok: true, founders, crossInvoices, perGig, smallJobs, unassignedEraCount,
-        settled: settledRows.map((s) => ({
-          id: s.id, fromId: s.fromId, toId: s.toId, cents: s.cents,
-          invoiceNo: s.invoiceNo ?? undefined,
-          createdAtMs: new Date(s.createdAt).getTime(),
-        })),
-      });
+      res.json(computeFounderSettlement(rows, customerRows, expenseRows, settledRows));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -1841,7 +1737,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // payment is recorded (MobilePay → "Kirjaa maksu" with the invoice number).
   app.post("/api/admin/founder-settlement/issue-invoice", async (req, res) => {
     try {
-      const { fromId, toId, cents, invoiceNo } = (req.body || {}) as Record<string, any>;
+      const { fromId, toId, cents, invoiceNo, items, dueDateStr, iban, bic, paidNote } = (req.body || {}) as Record<string, any>;
       const validParty = (id: any) => BRAND_BILLERS.some((b) => b.id === id);
       const c = Math.round(Number(cents));
       const no = String(invoiceNo ?? "").trim().slice(0, 60);
@@ -1859,6 +1755,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         `Myyntilasku ${no} (vastalasku): ${nameOf(fromId)} maksaa osuudet yhteisistä keikoista`), true);
       await attachPersonDocument(fromId, mkDoc(
         `Ostolasku ${no} (vastalasku): maksettava ${nameOf(toId)}lle — osuudet yhteisistä keikoista`), true);
+
+      // Real PDF (not just the client's print popup) — filed to Drive so the
+      // yrittäjien välinen lasku survives a server failure. Best-effort: a
+      // PDF/backup failure must never fail the invoice filing above.
+      try {
+        const creditor = BRAND_BILLERS.find((b) => b.id === toId)!;
+        const debtor = BRAND_BILLERS.find((b) => b.id === fromId)!;
+        const itemLines = Array.isArray(items)
+          ? items.slice(0, 60).map((it: any) => ({ label: String(it?.label ?? "").slice(0, 200), cents: Math.round(Number(it?.cents) || 0) }))
+          : [];
+        const pdf = await generateFounderSettlementInvoicePdf({
+          invoiceNo: no, dateStr: new Date(now).toLocaleDateString("fi-FI"),
+          dueDateStr: dueDateStr ? String(dueDateStr).slice(0, 40) : undefined,
+          creditor, debtor, items: itemLines, totalCents: c,
+          iban: iban ? String(iban).slice(0, 60) : creditor.iban,
+          bic: bic ? String(bic).slice(0, 20) : creditor.bic,
+          paidNote: paidNote ? String(paidNote).slice(0, 200) : undefined,
+        });
+        const year = new Date(now).getFullYear();
+        backupInvoicePdf(
+          "internal_invoice", `settlement-invoice:${no}`, ["Laskut", String(year), "Sisäiset laskut"],
+          `Lasku ${no} - ${nameOf(toId)} - ${nameOf(fromId)}.pdf`, pdf,
+        );
+      } catch (pdfErr) {
+        console.warn("Yrittäjien välisen laskun PDF epäonnistui:", pdfErr);
+      }
+
       res.status(201).json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -3002,6 +2925,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             filename: isEn ? "service-receipt.pdf" : "palvelutosite.pdf",
             content: pdfBuffer,
           };
+          if (jobId) {
+            const year = yearFromFiDate(completionDate);
+            backupInvoicePdf(
+              "customer_invoice", `job:${jobId}`, ["Laskut", String(year), "Asiakaslaskut"],
+              `Lasku - ${senderWorker?.name ?? "Puuhapatet"} - ${customerName} - ${completionDate}.pdf`,
+              pdfBuffer,
+            );
+          }
         } catch (pdfErr) {
           console.warn("PDF generation failed, sending email without attachment:", pdfErr);
         }
@@ -6957,6 +6888,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           acceptedAt: payout.approvedAt,
           expenses: payout.expenses,
         });
+        backupInvoicePdf(
+          "worker_invoice", `payout:${job.id}:${mid}:${pid}`, ["Laskut", String(new Date(now).getFullYear()), "Alihankkijalaskut"],
+          `Lasku ${invoiceNo} - ${workerName} - ${buyer.name}.pdf`, pdf,
+        );
         if (resend) {
           const html = `
 <!DOCTYPE html><html lang="fi"><body style="margin:0;background:#F6F4EE;font-family:'Poppins',ui-sans-serif,system-ui,sans-serif">
@@ -8293,6 +8228,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
     return lines.join("\n");
   }
+
+  // ─── Kirjanpito (double-entry ledger) — Talous ja verotus -osio ─────────────
+  registerFinanceRoutes(app);
 
   return httpServer;
 }

@@ -310,6 +310,30 @@ järjestelmässä. Ennakonpidätys on eri asia ja luetaan edelleen normaalisti.
   merge-päätökseen. `npm run db:push` on yhä ajamatta oikeaa tietokantaa
   vastaan — tämä on viimeinen askel ennen tuotantokäyttöä.
 
+### Jälkikäteinen lisäys: eräpäivä aina johtajan valittavissa (2026-07-09)
+
+- Käyttäjän pyynnöstä: eräpäivä ei ole enää kiinteä 14 vrk lähetyshetkestä,
+  vaan johtaja **valitsee sen aina itse** laskua lähettäessä (oletusehdotus
+  yhä +14 vrk, mutta täysin muokattavissa) — sekä tekijä-maksuille
+  (`WorkerEraInvoiceDialog.tsx`) että johtaja-välisille laskuille
+  (`FounderEraInvoiceDialog.tsx`).
+- `shared/schema.ts`: `eraInvoices.dueDate` (text, `YYYY-MM-DD`, nullable —
+  vanhat rivit ilman arvoa käyttävät yhä 14 vrk -laskentaa fallbackina).
+  `server/routes.ts`: `normalizeDueDate()` validoi/parsii syötteen; molemmat
+  luontireitit (`worker-batch`, `founder`) tallentavat sen; `buildEraInvoicePdfParams`
+  käyttää tallennettua arvoa PDF:n eräpäivänä kun se on asetettu.
+  `client/src/lib/api.ts`: `dueDate?: string` molempiin lähetysfunktioihin +
+  `EraInvoiceClient.dueDate`.
+- Verifioitu: `npm run check` sama 6 virheen baseline (ei uusia), `npm run test`
+  28/28 vihreää (tämä muutos ei koske testattua puhdasta laskentalogiikkaa).
+  Committed & pushed (`b60b339`).
+- **`npm run db:push` yritetty käyttäjän luvalla** — tässä etäsuoritusympäristössä
+  (kertakäyttöinen kontti) ei ole `DATABASE_URL`-ympäristömuuttujaa eikä
+  `.env`-tiedostoa lainkaan, joten migraatiota ei voitu ajaa täältä oikeaa
+  kantaa vastaan. Tämä pitää ajaa ympäristössä jossa `DATABASE_URL` on
+  konfiguroitu (esim. tuotantoympäristö tai kehittäjän oma kone) —
+  muutos on additiivinen (uusi nullable-sarake), ei riko olemassa olevaa dataa.
+
 ### Mitä koodikannasta löytyi ennen vaihetta 1 (tärkeä konteksti jatkajalle)
 
 FR8-keikalla on jo **osittainen** erä/kate-toteutus ennen tätä työtä, joka EI

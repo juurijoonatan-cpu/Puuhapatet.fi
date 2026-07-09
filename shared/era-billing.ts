@@ -27,6 +27,55 @@ export function eraRecipientFounderId(eraNumbers: number[]): "joonatan" | "matia
   return eraNumbers.includes(4) ? "matias" : "joonatan";
 }
 
+/** Tekijän vastaus johtajan luonnokseen (kohta 3B): "send" = hyväksy ja lähetä
+ *  lasku, "reject" = hylkää. */
+export type EraInvoiceRespondAction = "send" | "reject";
+
+/**
+ * Tilasiirtymä tekijän vastatessa laskuun. Vain "luonnos"-tilassa olevaan
+ * laskuun voi vastata — kaikki muut tilat ovat lukittuja (kohta 3B.3: painike
+ * toimii tasan kerran; kohta 4: lähetetty/hyväksytty lasku on muuttumaton).
+ * Palauttaa uuden tilan, tai null jos lasku on jo lukittu.
+ */
+export function eraInvoiceRespondTransition(
+  tila: EraInvoiceTila,
+  action: EraInvoiceRespondAction,
+): EraInvoiceTila | null {
+  if (tila !== "luonnos") return null;
+  return action === "send" ? "hyväksytty" : "hylätty";
+}
+
+/** Minimikentät, jotka kokonaistilanteen ryhmittely tarvitsee laskulta. */
+export interface EraInvoiceSummaryRow {
+  kind: EraInvoiceKind;
+  tila: EraInvoiceTila;
+  totalCents: number;
+}
+
+/**
+ * Ryhmittelee keikan erälaskut "Maksut"-kokonaistilannesivua varten (kohta 3D):
+ * johtaja-väliset laskut, kaikki tekijöille lähetetyt maksut sekä tekijöiden
+ * kuittaamat (hyväksytyt) laskut summineen. Hylättyjä ei lasketa summiin.
+ */
+export function summarizeEraInvoices<T extends EraInvoiceSummaryRow>(invoices: T[]) {
+  const founderInvoices = invoices.filter((i) => i.kind === "johtaja_valinen");
+  const workerInvoices = invoices.filter((i) => i.kind === "tekija");
+  const workerPending = workerInvoices.filter((i) => i.tila === "luonnos");
+  const workerAccepted = workerInvoices.filter((i) => i.tila === "hyväksytty");
+  const workerRejected = workerInvoices.filter((i) => i.tila === "hylätty");
+  const sum = (rows: T[]) => rows.reduce((s, i) => s + i.totalCents, 0);
+  return {
+    founderInvoices,
+    workerInvoices,
+    workerPending,
+    workerAccepted,
+    workerRejected,
+    founderSumCents: sum(founderInvoices.filter((i) => i.tila !== "hylätty")),
+    workerPendingSumCents: sum(workerPending),
+    workerAcceptedSumCents: sum(workerAccepted),
+  };
+}
+
 /** Ainoat sallitut erävalinnat: [1,2,3] yhdessä tai [4] yksin (kohta 3A.1: johtaja
  *  valitsee "erät 1-3" tai "erä 4" — ei mielivaltaisia osajoukkoja). */
 export function normalizeEraNumbers(raw: unknown): number[] | null {

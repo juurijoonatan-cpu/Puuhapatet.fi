@@ -29,6 +29,10 @@ interface Props {
   founderEarnings?: { id: string; name: string; ownWashed: number; ownCents: number; shareCents: number; totalCents: number; manual: boolean; hours: number }[];
   /** Total paid to the real workers (labour cost) — the other side of the margin. */
   workerLaborCents?: number;
+  /** FR8 erälaskutus (kohta 3C.1): renderöi "Maksut"-toiminnon TOISEN johtajan
+   *  kortille perustajien osiossa — omalle kortille palautetaan null. Slotina,
+   *  koska vain project.tsx tietää kuka katsoo (getAdminProfile). */
+  founderInvoiceSlot?: (founderId: string) => React.ReactNode;
   /** Dynamic per-window rate for founders (sisäinen kate = capCents / totalRedWindows).
    *  Replaces the nominal deal.pricePerWindow in the footer explanation text. */
   founderRateEur?: number;
@@ -73,7 +77,7 @@ const mono: React.CSSProperties = {
   color: "rgba(255,255,255,0.4)",
 };
 
-export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeInfo, traineeShareByLeader, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot }: Props) {
+export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeInfo, traineeShareByLeader, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot, founderInvoiceSlot }: Props) {
   const m = useIsMobile();
   const [editId, setEditId] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
@@ -335,6 +339,11 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                         </div>
                       </div>
                     )}
+                    {/* Johtaja-välinen erälasku (kohta 3C.1) — vain toisen johtajan kortilla. */}
+                    {(() => {
+                      const slot = founderInvoiceSlot?.(f.id);
+                      return slot ? <div style={{ marginTop: "12px" }}>{slot}</div> : null;
+                    })()}
                   </div>
                   );
                 })}

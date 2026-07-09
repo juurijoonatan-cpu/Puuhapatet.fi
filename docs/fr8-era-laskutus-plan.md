@@ -19,8 +19,8 @@
 | 0 | Speksi + suunnitelma talteen, PR auki | ☑ tehty |
 | 1 | Datamalli + puhdas laskentamoottori + yksikkötesti (kohdat 2, 5, 7) | ☑ tehty — ks. alla |
 | 2 | Johtajan näkymät: laskun luonti ja lähetys (kohdat 3A, 3C) | ☑ tehty — ks. alla |
-| 3 | Vastaanottajan näkymät + kokonaistilanne-sivu (kohdat 3B, 3D) | ☐ odottaa lupaa |
-| 4 | Lailliset vaatimukset: lukitus, laskumerkinnät, PDF, sähköposti (kohta 4) | ☐ |
+| 3 | Vastaanottajan näkymät + kokonaistilanne-sivu (kohdat 3B, 3D) | ☑ tehty — ks. alla |
+| 4 | Lailliset vaatimukset: lukitus, laskumerkinnät, PDF, sähköposti (kohta 4) | ☐ odottaa lupaa |
 | 5 | Bugikorjaus (kohta 6.1) + kokonaisvaltainen validointi (kohta 6) | ☐ |
 
 Yksityiskohtainen tekninen suunnitelma (mitä tiedostoja koskettaa, mitä
@@ -81,6 +81,71 @@ toteutusta verrataan. Päivitä yllä oleva taulukko jokaisen vaiheen jälkeen.
   kannassa. Kysyin käyttäjältä lupaa ajaa `db:push` (additiivinen, ei koske
   olemassa olevia tauluja) jotta vaiheen 2 ja 3 selainverifiointi olisi
   mahdollista — ks. vastaus keskustelussa / seuraava commit.
+
+### Vaihe 3 — valmis
+
+- **Kohta 3B (tekijän näkymä):** `server/routes.ts` uudet reitit
+  `POST /api/crew/:token/era-invoice/:invoiceId/send` ja `.../reject`
+  (lisätty PUBLIC_API-allowlistiin — tekijän tunnistus on polun token, kuten
+  muissakin crew-reiteissä). "Send" siirtää laskun `luonnos → hyväksytty`,
+  lukitsee sen (`sentAt`), antaa juoksevan laskunumeron (esim. `JAN-0001`,
+  count per laskuttaja) ja viitenumeron (`finnishRefWithCheckDigit(2_000_000 +
+  laskun id)` — id-pohjainen, joten ei voi törmätä johtajareitin viitteisiin).
+  "Reject" siirtää `luonnos → hylätty` (lopullinen; johtaja voi luoda uuden,
+  kohta 3B.4). Molemmat toimivat TASAN kerran: siirtymä sallitaan vain
+  luonnoksesta (`eraInvoiceRespondTransition`, shared/era-billing.ts) JA
+  UPDATE on ehdollinen `tila='luonnos'`-riviin → kilpailevista pyynnöistä vain
+  ensimmäinen voittaa, muut saavat 409. Vieras/väärä lasku → aina 404.
+  Harjoittelija ei voi lähettää (sama sääntö kuin payout-hyväksynnässä).
+- `workerView()` muutettiin async-muotoon ja se palauttaa nyt `eraInvoices`-
+  kentän (VAIN tekijän omat rivit, suodatus `senderId`). **Defensiivinen
+  try/catch:** jos `era_invoices`-taulua ei ole vielä kannassa (db:push
+  ajamatta), tekijän dashboard EI kaadu — lista on tyhjä. Tämän ansiosta tämä
+  koodi voidaan deployata ennen migraatiota turvallisesti.
+- Tekijän UI: `client/src/pages/worker.tsx` → `EraInvoiceSection` Maksut-
+  alanäkymän kärkeen: erittely (ikkunat × 20 € ± sovittu muutos − ennakko),
+  "Lähetä lasku" + "Hylkää" kaksivaiheisella vahvistuksella; lähetyksen
+  jälkeen lukittu kortti laskunumeroineen, painikkeet poissa. Kotinäkymän
+  "maksua hyväksyttävänä" -laskuri sisältää nyt myös erälaskuluonnokset.
+- **Kohta 3D (Maksut-kokonaistilanne):** uusi `maksut`-välilehti FR8-
+  projektinäkymään (`Navbar.tsx` `showMaksutTab`, vain johtajille) →
+  `client/src/components/fr8/MaksutView.tsx`: yhteenvetotiilet + kolme
+  osiota spekin mukaan (johtajien väliset laskut erittelyineen ja
+  sähköpostikopio-tiloineen; kaikki tekijöille lähetetyt maksut tilachipein;
+  tekijöiden kuittaamat laskunumeroineen). `GET /api/jobs/:id/era-invoices`
+  palauttaa nyt myös `emails`-lokin per lasku (rivit syntyvät vaiheessa 4 —
+  UI näyttää siihen asti "ei kopioita vielä") ja on rajattu johtajille
+  (`role === "host" || FOUNDER_IDS`) — koko keikan listaus sisältää kaikkien
+  tekijöiden maksut, joten staff-token saa 403.
+- **Vaiheen 2 virhe löydetty ja korjattu:** FounderEraInvoiceDialog oli
+  kiinnitetty crew.tsx:n host-riveille, mutta `/api/jobs/:id/crew` suodattaa
+  host-jäsenet pois → painike ei voinut KOSKAAN renderöityä (kuollutta
+  koodia; vaihe 2 ei voinut huomata tätä koska selain-E2E oli estynyt).
+  Siirretty projektinäkymän "Perustajien ansiot" -kortteihin
+  (`Dashboard.founderInvoiceSlot`, project.tsx) — spekin 3C.1 mukaisesti
+  painike on vain TOISEN johtajan kortilla, ei koskaan omalla (kriteeri 6.5).
+- Testit: 25/25 vihreää (6 uutta: tilasiirtymät + 3D-ryhmittely).
+  `npm run check`: sama 6 esiolemassaolevan virheen baseline, ei uusia.
+- **Täysi E2E-verifiointi TEHTY paikallista kertakäyttö-Postgresia vasten**
+  (kontissa pystytetty PG16 + `npm run db:push` + siemendata): 33 API-tason
+  tarkistusta ja 33 selaintarkistusta (Playwright) vihreinä — mm. kohdan 7
+  luvut täsmälleen selaimen esikatselussa ja tallennetussa laskussa (x 37,20;
+  kate 1511,40; M loppusumma 1667,10; ero 0), kertakäyttölukitus (409),
+  vieras lasku (404), itsensälaskutus (400), staff-rajaus (403), Maksut-
+  välilehti piilossa ei-johtajalta. `db:push` todettiin additiiviseksi
+  puhtaaseen kantaan — **tuotannon kantaan sitä EI edelleenkään ole ajettu**
+  (tässä ympäristössä ei ole tuotanto-DATABASE_URLia); aja se deployn
+  yhteydessä, koodi on turvallinen kummassakin järjestyksessä.
+- **HUOM jatkajalle:** (1) Milja on kovakoodattu harjoittelijaksi
+  (`shared/trainees.ts`) → hän ei näy Maksu-dialogissa eikä voi lähettää
+  laskua — spekin kohdan 7 testitapaus Miljan riveillä toimii silti
+  serverissä/testeissä. Jos Miljan pitää oikeasti laskuttaa, harjoittelija-
+  status pitää purkaa erikseen. (2) Johtajareitin viitenumerokaava
+  (`1_000_000 + jobId*100 + seq`) voi periaatteessa törmätä kahden eri
+  lähettäjän kesken — tekijäreitti käyttää jo id-pohjaista kaavaa; yhtenäistä
+  vaiheessa 5. (3) Kirjautumisen ensimmäinen oletussalasanakirjautuminen luo
+  users-rivin roolilla "staff" myös johtajille — kaikki johtaja-rajaukset
+  käyttävät siksi `role === "host" || FOUNDER_IDS.includes(sub)` -muotoa.
 
 ### Mitä koodikannasta löytyi ennen vaihetta 1 (tärkeä konteksti jatkajalle)
 

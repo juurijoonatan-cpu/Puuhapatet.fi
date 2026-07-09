@@ -38,6 +38,9 @@ export interface WorkerView {
     billing: { name: string | null; yTunnus: string | null; iban: string | null; address: string | null };
   };
   payouts: import("@shared/crew").CrewPayout[];
+  /** FR8 erälaskut, vain tämän tekijän omat (kohta 3B): "luonnos" odottaa
+   *  tekijän Lähetä lasku / Hylkää -vastausta; hyväksytty/hylätty on lukittu. */
+  eraInvoices: EraInvoiceClient[];
   building: ProjBuilding;
   pricePerWindow: number;          // the worker's OWN rate (not the gig price)
   marks: ProjMarksData;
@@ -104,6 +107,9 @@ export interface EraInvoiceClient {
   createdAt: string;
   sentAt: string | null;
   respondedAt: string | null;
+  /** Sähköposti_loki (kohta 3D) — rivejä syntyy vaiheesta 4 alkaen. Mukana vain
+   *  johtajien listauksessa (GET /era-invoices), ei tekijän omassa näkymässä. */
+  emails?: { recipients: string[]; success: boolean; sentAt: string }[];
 }
 
 /** Founder settlement for a fixed deal. The biller collects the full instalment;
@@ -999,6 +1005,17 @@ export const api = {
     expenses?: { id?: string; desc: string; amountCents: number; receiptDataUrl?: string }[],
   ) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/payout/${payoutId}/approve`, { billing, expenses }),
+
+  // FR8 erälasku (kohta 3B): tekijä hyväksyy ja LÄHETTÄÄ johtajan luonnosteleman
+  // laskun — toimii tasan kerran, lasku lukittuu ja saa laskunumeron + viitteen.
+  crewSendEraInvoice: (token: string, invoiceId: number) =>
+    request<{ ok: boolean; invoice: EraInvoiceClient; view: WorkerView }>(
+      "POST", `/api/crew/${token}/era-invoice/${invoiceId}/send`),
+
+  // FR8 erälasku: tekijä hylkää luonnoksen (lopullinen; johtaja voi lähettää uuden).
+  crewRejectEraInvoice: (token: string, invoiceId: number) =>
+    request<{ ok: boolean; invoice: EraInvoiceClient; view: WorkerView }>(
+      "POST", `/api/crew/${token}/era-invoice/${invoiceId}/reject`),
 
   // Worker logs an expense for the current job (own costs only — transport, materials, etc.).
   crewAddExpense: (token: string, data: { kind: string; desc: string; amountCents: number }) =>

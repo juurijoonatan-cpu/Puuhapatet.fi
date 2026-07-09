@@ -6,10 +6,11 @@ import bwipjs from "bwip-js";
 import PDFDocument from "pdfkit";
 import rateLimit from "express-rate-limit";
 import { db } from "./db";
-import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, founderSettlements, eraInvoices, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
+import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, founderSettlements, eraInvoices, eraInvoiceEmails, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 import {
   computeEraBilling, TEKIJA_HINTA_CENTS, eraRecipientFounderId, normalizeEraNumbers,
-  type EraInvoiceKind, type EraInvoiceTila,
+  eraInvoiceRespondTransition,
+  type EraInvoiceKind, type EraInvoiceTila, type EraInvoiceRespondAction,
 } from "@shared/era-billing";
 import { feeRateForWorker, effectiveJobTotal, FOUNDER_IDS, marketerCommissionCents, MARKETER_COMMISSION_RATE } from "@shared/team";
 import { randomUUID, createHash, createHmac, timingSafeEqual, scryptSync, randomBytes } from "crypto";
@@ -478,6 +479,9 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   { method: "POST", re: /^\/api\/crew\/[^/]+\/(auth|onboard|window|hours|note|map-note|shift|expense)$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/map-note\/(update|delete)$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/payout\/[^/]+\/approve$/ },
+  // FR8 erälaskutus, tekijän vastaus (kohta 3B): tekijä lähettää tai hylkää
+  // johtajan luonnostaman erälaskun omalla dashboard-tokenillaan.
+  { method: "POST", re: /^\/api\/crew\/[^/]+\/era-invoice\/\d+\/(send|reject)$/ },
   { method: "DELETE", re: /^\/api\/crew\/[^/]+\/expense\/[^/]+$/ },
 ];
 
@@ -1704,12 +1708,36 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     return { ...row, eraNumbers, rivit };
   }
 
+  // Koko keikan laskulista sisältää jokaisen tekijän maksutiedot, joten se on
+  // vain johtajille (tekijä näkee omat laskunsa /api/crew/:token -näkymässään).
   app.get("/api/jobs/:id/era-invoices", async (req, res) => {
     try {
+      const caller = (req as any).admin as AdminTokenPayload | undefined;
+      const sub = String(caller?.sub ?? "").toLowerCase();
+      if (caller?.role !== "host" && !FOUNDER_IDS.includes(sub)) {
+        return res.status(403).json({ error: "Vain johtajat voivat tarkastella erälaskuja." });
+      }
       const jobId = Number(req.params.id);
       const rows = await db.select().from(eraInvoices)
         .where(eq(eraInvoices.jobId, jobId)).orderBy(desc(eraInvoices.createdAt));
-      res.json({ ok: true, invoices: rows.map(toClientEraInvoice) });
+      // Sähköposti_loki per lasku (kohta 3D: kopiot kummankin johtajan
+      // sähköpostissa). Rivit syntyvät vasta vaiheessa 4 — siihen asti tyhjä.
+      const emailsByInvoice = new Map<number, { recipients: string[]; success: boolean; sentAt: Date }[]>();
+      if (rows.length > 0) {
+        const emailRows = await db.select().from(eraInvoiceEmails)
+          .where(inArray(eraInvoiceEmails.invoiceId, rows.map((r) => r.id)));
+        for (const e of emailRows) {
+          let recipients: string[] = [];
+          try { recipients = JSON.parse(e.recipients); } catch { /* jätä tyhjäksi */ }
+          const list = emailsByInvoice.get(e.invoiceId) ?? [];
+          list.push({ recipients, success: e.success, sentAt: e.sentAt });
+          emailsByInvoice.set(e.invoiceId, list);
+        }
+      }
+      res.json({
+        ok: true,
+        invoices: rows.map((r) => ({ ...toClientEraInvoice(r), emails: emailsByInvoice.get(r.id) ?? [] })),
+      });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -4889,8 +4917,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   }
 
   // Build the worker-facing view: floor map + their own progress, NO gig price.
-  function workerView(project: ProjectData, member: CrewMember) {
+  async function workerView(job: typeof jobs.$inferSelect, project: ProjectData, member: CrewMember) {
     const stats = crewMemberStats(project, member);
+    // FR8 erälaskut (kohta 3B): tekijän OMAT laskut — luonnokset odottamassa
+    // vastausta + jo käsitelty historia. Suodatus senderId:llä takaa ettei
+    // kukaan koskaan näe toisen tekijän rivejä. Defensiivinen try/catch: jos
+    // era_invoices-taulua ei ole vielä migratoitu kantaan (db:push ajamatta),
+    // koko dashboardin ei saa kaatua — silloin lista on tyhjä.
+    let workerEraInvoices: ReturnType<typeof toClientEraInvoice>[] = [];
+    try {
+      const rows = await db.select().from(eraInvoices).where(and(
+        eq(eraInvoices.jobId, job.id),
+        eq(eraInvoices.kind, "tekija" satisfies EraInvoiceKind),
+        eq(eraInvoices.senderId, member.id),
+      )).orderBy(desc(eraInvoices.createdAt));
+      workerEraInvoices = rows.map(toClientEraInvoice);
+    } catch { /* taulu puuttuu vielä — näytä tyhjä lista, älä kaada näkymää */ }
     const projectTotals = computeProjectTotals(project);
     // Paydate-progress counts: for a fixed deal (FR8) track the LIVE billable (red)
     // window count, so the milestone follows the actual dots on the map (e.g. 161 →
@@ -4970,6 +5012,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Puuhapatet -> worker payouts (newest-first). The worker sees and approves
       // these; the gig price/cap stays hidden as always.
       payouts: (member.payouts || []).slice().sort((a, b) => b.createdAt - a.createdAt),
+      // FR8 erälaskut, vain tekijän omat (kohta 3B) — luonnos = odottaa tekijän
+      // "Lähetä lasku" / "Hylkää" -vastausta, hyväksytty/hylätty = lukittu.
+      eraInvoices: workerEraInvoices,
       building: project.building,
       pricePerWindow: member.perWindowCents / 100, // worker's OWN rate, not the gig price
       marks: project.marks,
@@ -5010,7 +5055,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const found = await findJobByCrewToken(String(req.params.token));
       if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
-      res.json({ ok: true, view: workerView(found.project, found.member) });
+      res.json({ ok: true, view: await workerView(found.job, found.project, found.member) });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -5070,7 +5115,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       project.crew = (project.crew || []).map((m) => (m.id === member.id ? merged : m));
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
-      res.json({ ok: true, view: workerView(saved, savedMember) });
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -5120,7 +5165,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
-      res.json({ ok: true, view: workerView(saved, savedMember) });
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -5147,7 +5192,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       else project.observations[key] = { text, imageDataUrl: img, by: member.id, ts: Date.now() };
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
-      res.json({ ok: true, view: workerView(saved, savedMember) });
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -5190,7 +5235,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           (e) => console.warn("session summary email failed:", e?.message),
         );
       }
-      res.json({ ok: true, view: workerView(saved, savedMember) });
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -5208,7 +5253,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       project.hourLog = [{ worker: member.id, delta, ts: Date.now(), by: member.id }, ...(project.hourLog || [])].slice(0, 200);
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
-      res.json({ ok: true, view: workerView(saved, savedMember) });
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -5249,7 +5294,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           (e) => console.warn("manual session summary email failed:", e?.message),
         );
       }
-      res.json({ ok: true, view: workerView(saved, savedMember) });
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -5268,7 +5313,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       );
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
-      res.json({ ok: true, view: workerView(saved, savedMember) });
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -5296,7 +5341,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       notes[floor] = [...(notes[floor] || []), note].slice(0, 500);
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
-      res.json({ ok: true, key, view: workerView(saved, savedMember) });
+      res.json({ ok: true, key, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -5318,7 +5363,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       note.text = text || undefined;
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
-      res.json({ ok: true, view: workerView(saved, savedMember) });
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -5337,7 +5382,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       project.notes![floor] = list!.filter((n) => n.key !== key);
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
-      res.json({ ok: true, view: workerView(saved, savedMember) });
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -5395,11 +5440,75 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       project.crew = (project.crew || []).map((m) => (m.id === member.id ? { ...m, payouts: list } : m));
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
-      res.json({ ok: true, view: workerView(saved, savedMember) });
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
   });
+
+  // FR8 erälaskutus — tekijän vastaus johtajan luonnostamaan erälaskuun (kohta
+  // 3B). "send" = tekijä hyväksyy ja lähettää laskunsa: lasku lukittuu, saa
+  // juoksevan laskunumeron ja viitteen. "reject" = tekijä hylkää (lopullinen —
+  // johtaja voi aina luoda uuden ehdotuksen tilalle, kohta 3B.4). Molemmat
+  // toimivat TASAN kerran: siirtymä sallitaan vain "luonnos"-tilasta ja UPDATE
+  // on ehdollinen samaan tilaan, joten kilpailevista pyynnöistä vain
+  // ensimmäinen voittaa (kohta 3B.3 + kohdan 4 muuttumattomuus).
+  async function respondToEraInvoice(req: any, res: any, action: EraInvoiceRespondAction) {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const invoiceId = Number(req.params.invoiceId);
+      if (!Number.isFinite(invoiceId)) return res.status(404).json({ error: "Laskua ei löytynyt" });
+      const [invoice] = await db.select().from(eraInvoices).where(eq(eraInvoices.id, invoiceId));
+      // Vieras tai olematon lasku näyttää tekijälle aina samalta (404) — rivien
+      // olemassaoloa ei vuodeta tokenia arvaamalla.
+      if (!invoice || invoice.jobId !== job.id || invoice.kind !== ("tekija" satisfies EraInvoiceKind) || invoice.senderId !== member.id) {
+        return res.status(404).json({ error: "Laskua ei löytynyt" });
+      }
+      const nextTila = eraInvoiceRespondTransition(invoice.tila as EraInvoiceTila, action);
+      if (!nextTila) {
+        return res.status(409).json({ error: "Lasku on jo käsitelty — sitä ei voi lähettää tai hylätä uudelleen." });
+      }
+      // Sama defensiivinen sääntö kuin payout-hyväksynnässä: harjoittelija ei
+      // laskuta alihankkijana. Hylkäys sallitaan silti (siivoaa virheellisen rivin).
+      if (action === "send" && isCrewTrainee(member)) {
+        return res.status(400).json({ error: "Harjoittelija ei laskuta — maksu hoidetaan tiimin kautta." });
+      }
+
+      const now = new Date();
+      const patch: Partial<typeof eraInvoices.$inferInsert> & { sentAt?: Date; respondedAt?: Date } = {
+        tila: nextTila, respondedAt: now,
+      };
+      if (action === "send") {
+        // Juokseva laskunumero per laskuttaja — sama käytäntö kuin johtaja-
+        // välisissä laskuissa. Viite lasketaan laskun id:stä (2 000 000 + id):
+        // id on globaalisti uniikki, joten viite ei voi törmätä toisen
+        // laskuttajan viitteeseen samalla keikalla (johtajareitin jobId*100+seq
+        // -kaava voisi — huomioidaan vaiheen 5 validoinnissa).
+        const countRes = await db.select({ c: sql<number>`count(*)` }).from(eraInvoices)
+          .where(and(eq(eraInvoices.senderId, member.id), ne(eraInvoices.tila, "luonnos" satisfies EraInvoiceTila)));
+        const seq = Number((countRes[0] as any)?.c || 0) + 1;
+        patch.sentAt = now;
+        patch.invoiceNumber = invoice.invoiceNumber ?? `${member.id.toUpperCase().slice(0, 3)}-${String(seq).padStart(4, "0")}`;
+        patch.referenceNumber = invoice.referenceNumber ?? finnishRefWithCheckDigit(String(2_000_000 + invoice.id));
+      }
+
+      const [updated] = await db.update(eraInvoices).set(patch)
+        .where(and(eq(eraInvoices.id, invoice.id), eq(eraInvoices.tila, "luonnos" satisfies EraInvoiceTila)))
+        .returning();
+      if (!updated) {
+        return res.status(409).json({ error: "Lasku on jo käsitelty — sitä ei voi lähettää tai hylätä uudelleen." });
+      }
+
+      res.json({ ok: true, invoice: toClientEraInvoice(updated), view: await workerView(job, project, member) });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  }
+
+  app.post("/api/crew/:token/era-invoice/:invoiceId/send", (req, res) => respondToEraInvoice(req, res, "send"));
+  app.post("/api/crew/:token/era-invoice/:invoiceId/reject", (req, res) => respondToEraInvoice(req, res, "reject"));
 
   // Worker downloads their own subcontractor invoice (PDF) for a PAID payout.
   // Regenerated on demand from the payout's stored snapshot (tax/buyer/billing),

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   computeEraBilling, sumWindows, TEKIJA_HINTA_CENTS, normalizeEraNumbers, eraRecipientFounderId,
-  type JohtajaPesu, type TekijaPesu,
+  eraInvoiceRespondTransition, summarizeEraInvoices,
+  type JohtajaPesu, type TekijaPesu, type EraInvoiceSummaryRow,
 } from "./era-billing";
 
 // Speksin kohta 7 — käytä yksikkötestinä. Ks. docs/fr8-era-laskutus-plan.md.
@@ -149,5 +150,58 @@ describe("eraRecipientFounderId", () => {
   it("erät 1-3 -> joonatan, erä 4 -> matias", () => {
     expect(eraRecipientFounderId([1, 2, 3])).toBe("joonatan");
     expect(eraRecipientFounderId([4])).toBe("matias");
+  });
+});
+
+// Vaihe 3: tekijän vastaus (kohta 3B) — painike toimii tasan kerran, lasku
+// lukittuu; hylkäys on yhtä lailla lopullinen (korjaus = aina uusi lasku).
+describe("eraInvoiceRespondTransition", () => {
+  it("luonnos + send -> hyväksytty (tekijä lähettää laskun)", () => {
+    expect(eraInvoiceRespondTransition("luonnos", "send")).toBe("hyväksytty");
+  });
+
+  it("luonnos + reject -> hylätty", () => {
+    expect(eraInvoiceRespondTransition("luonnos", "reject")).toBe("hylätty");
+  });
+
+  it("lukittuun laskuun ei voi vastata uudelleen (kohta 3B.3 + kohta 4)", () => {
+    for (const tila of ["lähetetty", "hyväksytty", "hylätty"] as const) {
+      expect(eraInvoiceRespondTransition(tila, "send")).toBeNull();
+      expect(eraInvoiceRespondTransition(tila, "reject")).toBeNull();
+    }
+  });
+});
+
+// Vaihe 3: "Maksut"-kokonaistilannesivun ryhmittely (kohta 3D).
+describe("summarizeEraInvoices", () => {
+  const rows: EraInvoiceSummaryRow[] = [
+    { kind: "johtaja_valinen", tila: "lähetetty", totalCents: 125790 },
+    { kind: "johtaja_valinen", tila: "lähetetty", totalCents: 55500 },
+    { kind: "tekija", tila: "luonnos", totalCents: 24000 },
+    { kind: "tekija", tila: "hyväksytty", totalCents: 34000 },
+    { kind: "tekija", tila: "hyväksytty", totalCents: 22000 },
+    { kind: "tekija", tila: "hylätty", totalCents: 99900 },
+  ];
+  const s = summarizeEraInvoices(rows);
+
+  it("jakaa laskut kohdan 3D kolmeen ryhmään", () => {
+    expect(s.founderInvoices).toHaveLength(2);
+    expect(s.workerInvoices).toHaveLength(4);
+    expect(s.workerPending).toHaveLength(1);
+    expect(s.workerAccepted).toHaveLength(2);
+    expect(s.workerRejected).toHaveLength(1);
+  });
+
+  it("summat: hylättyjä ei lasketa mukaan", () => {
+    expect(s.founderSumCents).toBe(125790 + 55500);
+    expect(s.workerPendingSumCents).toBe(24000);
+    expect(s.workerAcceptedSumCents).toBe(34000 + 22000);
+  });
+
+  it("tyhjä lista tuottaa nollasummat eikä kaadu", () => {
+    const empty = summarizeEraInvoices([]);
+    expect(empty.founderInvoices).toHaveLength(0);
+    expect(empty.founderSumCents).toBe(0);
+    expect(empty.workerAcceptedSumCents).toBe(0);
   });
 });

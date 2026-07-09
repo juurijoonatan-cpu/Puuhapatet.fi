@@ -21,7 +21,7 @@
 | 2 | Johtajan näkymät: laskun luonti ja lähetys (kohdat 3A, 3C) | ☑ tehty — ks. alla |
 | 3 | Vastaanottajan näkymät + kokonaistilanne-sivu (kohdat 3B, 3D) | ☑ tehty — ks. alla |
 | 4 | Lailliset vaatimukset: lukitus, laskumerkinnät, PDF, sähköposti (kohta 4) | ☑ tehty — ks. alla |
-| 5 | Bugikorjaus (kohta 6.1) + kokonaisvaltainen validointi (kohta 6) | ☐ odottaa lupaa |
+| 5 | Bugikorjaus (kohta 6.1) + kokonaisvaltainen validointi (kohta 6) | ☑ tehty — ks. alla |
 
 Yksityiskohtainen tekninen suunnitelma (mitä tiedostoja koskettaa, mitä
 olemassa olevaa koodia hyödynnetään, poistumiskriteerit per vaihe) on kirjoitettu
@@ -250,6 +250,65 @@ ristiin-vahvistettuna suoralla koodin lukemisella. Löydöt ja korjaukset:
   → sähköposti saapuu (tai lokittuu best-effort jos RESEND_API_KEY puuttuu)
   → yritä muokata lukittua riviä suoraan kannasta ja vahvista ettei mikään
   reitti tarjoa tähän tapaa.
+
+**Sivuhuomio Vaihe 4:sta:** käyttäjä (Matias) vahvisti erikseen, että EI
+Puuhapatet (Joonatan/Matias) EIKÄ mikään FR8-tekijä ole ALV-rekisterissä —
+`vatStatus` pakotettu `"vahainen_toiminta"`-arvoon era-laskujen PDF:ssä ja
+tekijän omassa näkymässä (commit `a5493d7`), ei enää luettu tekijän
+`profile.answers`-itseilmoituksesta kuten tavallisessa alihankkijan payout-
+järjestelmässä. Ennakonpidätys on eri asia ja luetaan edelleen normaalisti.
+
+### Vaihe 5 — valmis (commit `a89f4b5`)
+
+- **Kohta 6.1 (ikkunamäärän off-by-one) — tutkittu perusteellisesti, ei
+  löytynyt aktiivista bugia:** kaksi riippumatonta läpikäyntiä (oma +
+  alitehtävän agentti) kävivät läpi `computeWorkerStats`, `computeProjectTotals`,
+  `computeEraDebts`, `Dashboard.tsx`, `crew.tsx` ja `project.tsx` — ei
+  löytynyt rivikohtaista pyöristystä ennen summausta missään. Todennäköinen
+  selitys: sukulaisbugi (kiinteä sopimusikkunamäärä `capCents/pricePerWindow`
+  näytettynä elävän punaisten pisteiden määrän sijaan) on JO korjattu
+  aiemmalla, jo mergatulla commitilla — sama korjaus jota vanha, mergaamaton
+  PR #273 yritti tehdä, mutta PR #273 on nyt vanhentunut/redundantti.
+  `Dashboard.tsx`:n "SOPIMUSIKKUNAT"-luku (`heroWashed`/`heroTotal`) tulee jo
+  `grp(deal.billablePriority)`:sta — sama pisteiden laskenta sekä osoittajalle
+  että nimittäjälle, ei voi rakenteellisesti heittää.
+- **Toteutettu korjauksen sijaan: elävä täsmäytystarkistus** (koska
+  kaavat olivat jo oikein, mutta "korjaa ja lisää regressiotesti" -pyyntö
+  ansaitsi silti konkreettisen vastineen): `shared/project.ts` →
+  `checkWindowAttribution()` vertaa tarkkaa pesty-pisteiden määrää tarkkaan
+  `computeWorkerStats().washed`-summaan (ilman pyöristystä). Paljastaisi
+  KUMMAN TAHANSA syyn — rivikohtaisen pyöristyksen TAI puuttuvan attribuution
+  (pesty ikkuna ilman `washedBy`:tä, joka putoaa pois jokaisesta per-tekijä-
+  summasta mutta lasketaan silti piste-kokonaismäärään). `shared/project.test.ts`
+  (uusi): täsmäävä tapaus (sis. 6 jaetun ikkunan 13,5/24,5-tyyppinen fixture)
+  + regressiotesti puuttuvalle attribuutiolle. `Dashboard.tsx`: tarkistus
+  ajetaan elävästi, näyttää hienovaraisen varoituksen johtajille jos joskus
+  heittää — ei vain yksikkötesti.
+- **Kohta 6 muut kriteerit — uudelleenvarmistettu suoraan koodista** (ei vain
+  aiempaa väitettä toistettu): x-pyöristys+jäännöskate+täsmäytys S:ään
+  (Vaihe 1 testit, koskematon); kertakäyttölukitus (Vaihe 3, atominen
+  ehdollinen UPDATE); rajaton uudelleenlähetys — `worker-batch`-reitti
+  luettu uudelleen, vahvistettu ettei mitään uniikkiusrajoitusta ole;
+  johtaja ei näe omaa Maksut-painiketta (`founderInvoiceSlot`-suoja);
+  erä-reititys + molemmat sähköpostikopiot (Vaihe 2/4); lukitun laskun
+  muuttumattomuus (Vaihe 4:n grep-audit jokaisesta `eraInvoices`-kirjoituksesta).
+- **Vanhan `EraKateDialog`/`FounderSettlementView`-UI:n kohtalo päätetty:**
+  jätetty paikalleen (poistaminen ei ollut pyydetty eikä toimivan koodin
+  poistaminen ilman pyyntöä ole hyvä oletus), mutta lisätty selkeä huomautus
+  dialogin yläreunaan: se on karkea pesujärjestykseen perustuva ennakkoarvio,
+  EI enää totuuden lähde varsinaiselle laskutukselle — viralliset laskut
+  lähetetään uudesta järjestelmästä ja näkyvät "Maksut"-välilehdellä.
+- `docs/fr8-tyo-logiikka.md` ja `docs/fr8-vero-ja-maksut.md` päivitetty
+  viittaamaan uuteen erälaskutusjärjestelmään ja dokumentoimaan ALV-säännön.
+- **HUOM ympäristöstä:** tämän vaiheen aikana Bash-työkalun turvaluokittelija
+  oli pidemmän aikaa poissa käytöstä (ei vaikuttanut lukuoperaatioihin, vain
+  kirjoitus/suoritustoimintoihin kuten commit/npm run) — kaikki muutokset
+  tehtiin ja tarkistettiin manuaalisesti koodia lukemalla ennen kuin commit
+  onnistui. Kun se onnistui: `npm run check` täsmälleen sama 6 virheen
+  baseline; `npm run test` **28/28 vihreää** (25 aiempaa + 3 uutta).
+- **Kaikki 5 vaihetta valmiit.** PR #357 valmis käyttäjän katselmoitavaksi ja
+  merge-päätökseen. `npm run db:push` on yhä ajamatta oikeaa tietokantaa
+  vastaan — tämä on viimeinen askel ennen tuotantokäyttöä.
 
 ### Mitä koodikannasta löytyi ennen vaihetta 1 (tärkeä konteksti jatkajalle)
 

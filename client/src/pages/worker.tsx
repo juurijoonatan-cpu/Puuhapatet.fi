@@ -1606,13 +1606,24 @@ function EraInvoiceSection({ token, view, setView }: { token: string; view: Work
           const sovittuMuutos = Number(input.sovittuMuutosCents) || 0;
           const ennakko = Number(input.ennakkoCents) || 0;
           const ansaittu = Number(computed.ansaittuCents) || 0;
+          // Sama vero-erittely kuin PayoutsTabissa (ja PDF:ssä, ks. kohta 4:
+          // server/routes.ts buildEraInvoicePdfParams) — vero lasketaan koko
+          // ansaitusta summasta, ennakko vähennetään sen jälkeen omana rivinään,
+          // jotta tekijä näkee saman lopullisen summan kuin laskun PDF:llä.
+          const tx = computeTax({
+            laborCents: ansaittu,
+            vatStatus: readVatStatus(view.worker.profile?.answers),
+            inPrepaymentRegister: readInPrepaymentRegister(view.worker.profile?.answers),
+            payeeType: readPayeeType(view.worker.profile?.answers),
+          });
+          const maksetaanTilille = tx.payableCents - ennakko;
           const confirming = confirm?.id === inv.id ? confirm.action : null;
           const busy = busyId === inv.id;
           return (
             <div key={inv.id} style={{ padding: 16, borderRadius: 14, background: "rgba(255,255,255,0.05)", border: `1px solid ${inv.tila === "luonnos" ? "rgba(224,168,0,0.35)" : "rgba(255,255,255,0.08)"}` }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                 <div>
-                  <p style={{ margin: 0, fontSize: 24, fontWeight: 800, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{fmtEurCents(inv.totalCents)}</p>
+                  <p style={{ margin: 0, fontSize: 24, fontWeight: 800, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{fmtEurCents(maksetaanTilille)}</p>
                   <p style={{ margin: "2px 0 0", fontSize: 12.5, color: "rgba(255,255,255,0.55)" }}>
                     {eraLabel(inv.eraNumbers)} · lasku {founderName(inv.recipientId)}lle
                   </p>
@@ -1620,11 +1631,14 @@ function EraInvoiceSection({ token, view, setView }: { token: string; view: Work
                 <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 600, color: st.color, background: st.bg, borderRadius: 999, padding: "5px 10px", whiteSpace: "nowrap" }}>{st.label}</span>
               </div>
 
-              {/* Erittely: mistä maksettava summa muodostuu (kohta 2, kaava 1). */}
+              {/* Erittely: mistä maksettava summa muodostuu (kohta 2, kaava 1) +
+                  vero (ALV/ennakonpidätys, sama malli kuin PayoutsTab ja PDF). */}
               <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 10, background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,0.06)", fontSize: 12.5 }}>
                 {([
                   [`Pestyt ikkunat ${ikkunat.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} × 20 €`, fmtEurCents(ansaittu - sovittuMuutos), "rgba(255,255,255,0.7)"],
                   ...(sovittuMuutos !== 0 ? [["Sovittu muutos", `${sovittuMuutos > 0 ? "+ " : "− "}${fmtEurCents(Math.abs(sovittuMuutos))}`, "rgba(255,255,255,0.7)"]] : []),
+                  ...(tx.vatRegistered ? [[`ALV ${fmtPct(tx.vatRate)}`, "+ " + fmtEurCents(tx.vatCents), "rgba(255,255,255,0.7)"]] : []),
+                  ...(tx.withheld ? [[`Ennakonpidätys ${fmtPct(tx.withholdingRate)}`, "− " + fmtEurCents(tx.withholdingCents), "#E0A800"]] : []),
                   ...(ennakko > 0 ? [["Ennakko / jo maksettu", "− " + fmtEurCents(ennakko), "#E0A800"]] : []),
                 ] as [string, string, string][]).map(([lbl, val, col]) => (
                   <div key={lbl} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: col }}>
@@ -1632,15 +1646,27 @@ function EraInvoiceSection({ token, view, setView }: { token: string; view: Work
                   </div>
                 ))}
                 <div style={{ display: "flex", justifyContent: "space-between", padding: "7px 0 0", marginTop: 4, borderTop: "1px solid rgba(255,255,255,0.1)", fontWeight: 700, color: "#7CE0A6" }}>
-                  <span>Laskutettava nyt</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtEurCents(inv.totalCents)}</span>
+                  <span>Maksetaan tilillesi</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtEurCents(maksetaanTilille)}</span>
                 </div>
+                {tx.withheld && (
+                  <p style={{ margin: "8px 0 0", fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
+                    Et ole ennakkoperintärekisterissä, joten pidätämme veron ja tilitämme sen Verolle. Rekisteröidy maksutta{" "}
+                    <a href="https://www.ytj.fi" target="_blank" rel="noreferrer" style={{ color: "#E0A800" }}>ytj.fi</a>ssä saadaksesi koko summan tilille.
+                  </p>
+                )}
               </div>
 
               {inv.tila === "hyväksytty" && (
-                <p style={{ margin: "10px 0 0", fontSize: 11.5, color: "rgba(255,255,255,0.45)" }}>
-                  Lähetetty {fiDate(inv.sentAt)}{inv.invoiceNumber ? ` · laskunumero ${inv.invoiceNumber}` : ""}{inv.referenceNumber ? ` · viite ${inv.referenceNumber}` : ""}.
-                  Lasku on lukittu — sitä ei voi lähettää uudelleen.
-                </p>
+                <>
+                  <p style={{ margin: "10px 0 0", fontSize: 11.5, color: "rgba(255,255,255,0.45)" }}>
+                    Lähetetty {fiDate(inv.sentAt)}{inv.invoiceNumber ? ` · laskunumero ${inv.invoiceNumber}` : ""}{inv.referenceNumber ? ` · viite ${inv.referenceNumber}` : ""}.
+                    Lasku on lukittu — sitä ei voi lähettää uudelleen.
+                  </p>
+                  <a href={api.crewEraInvoicePdfUrl(token, inv.id)} target="_blank" rel="noreferrer"
+                    style={{ display: "inline-block", marginTop: 8, fontSize: 12, fontWeight: 600, color: "#7CE0A6", textDecoration: "underline" }}>
+                    Lataa lasku (PDF)
+                  </a>
+                </>
               )}
               {inv.tila === "hylätty" && (
                 <p style={{ margin: "10px 0 0", fontSize: 11.5, color: "rgba(255,255,255,0.45)" }}>

@@ -14,7 +14,7 @@ import { api, type EraInvoiceClient } from "@/lib/api";
 import { summarizeEraInvoices } from "@shared/era-billing";
 import { fmtEurCents } from "@shared/tax";
 import { BRAND_BILLERS } from "@shared/billers";
-import { RefreshCw, Wallet, Users, CheckCircle2, Mail } from "lucide-react";
+import { RefreshCw, Wallet, Users, CheckCircle2, Mail, FileDown } from "lucide-react";
 
 const FONT = "var(--font-onest, system-ui, sans-serif)";
 const MONO = "var(--font-jetbrains-mono, monospace)";
@@ -74,8 +74,9 @@ function StatTile({ label, value, sub }: { label: string; value: string; sub?: s
 }
 
 /** Sähköpostikopioiden tila johtaja-väliselle laskulle (kohta 3D viimeinen
- *  luetelmakohta). Loki alkaa täyttyä vaiheessa 4 — siihen asti kerrotaan
- *  rehellisesti ettei kopioita ole vielä lähetetty. */
+ *  luetelmakohta). Lokitetaan lähetyksen yhteydessä (kohta 4); luonnostila
+ *  (esim. tekijän vielä käsittelemättä oleva luonnos) ei koskaan lähetä
+ *  sähköpostia, joten tyhjä loki on siihen asti odotettu, ei virhe. */
 function EmailCopies({ inv }: { inv: EraInvoiceClient }) {
   const emails = inv.emails || [];
   return (
@@ -83,7 +84,7 @@ function EmailCopies({ inv }: { inv: EraInvoiceClient }) {
       <Mail style={{ width: 12, height: 12, color: "rgba(255,255,255,0.35)", flexShrink: 0 }} />
       {emails.length === 0 ? (
         <span style={{ fontFamily: FONT, fontSize: 11.5, color: "rgba(255,255,255,0.4)" }}>
-          Ei sähköpostikopioita vielä — automaattinen lähetys molemmille johtajille tulee vaiheessa 4.
+          {inv.tila === "luonnos" ? "Ei vielä lähetetty — odottaa tekijää." : "Ei sähköpostikopioita (RESEND_API_KEY puuttuu tässä ympäristössä?)."}
         </span>
       ) : (
         <span style={{ fontFamily: FONT, fontSize: 11.5, color: "rgba(255,255,255,0.55)" }}>
@@ -96,6 +97,28 @@ function EmailCopies({ inv }: { inv: EraInvoiceClient }) {
         </span>
       )}
     </div>
+  );
+}
+
+/** PDF-lataus (kohta 4) — admin-Bearer-autentikoitu, joten haetaan blobina ja
+ *  avataan uuteen välilehteen sen sijaan että linkitettäisiin suoraan. */
+function DownloadPdfButton({ jobId, invoiceId }: { jobId: number; invoiceId: number }) {
+  const [busy, setBusy] = useState(false);
+  const download = async () => {
+    setBusy(true);
+    const res = await api.downloadEraInvoicePdf(jobId, invoiceId);
+    setBusy(false);
+    if (res.ok && res.blob) {
+      const url = URL.createObjectURL(res.blob);
+      window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    }
+  };
+  return (
+    <button onClick={download} disabled={busy}
+      style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 8, padding: "5px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.75)", fontFamily: FONT, fontSize: 11, fontWeight: 600, cursor: "pointer", opacity: busy ? 0.5 : 1 }}>
+      <FileDown style={{ width: 12, height: 12 }} /> {busy ? "Avataan…" : "Lataa PDF"}
+    </button>
   );
 }
 
@@ -196,6 +219,7 @@ export default function MaksutView({ jobId }: { jobId: number }) {
                       </div>
                     )}
                     <EmailCopies inv={inv} />
+                    <DownloadPdfButton jobId={jobId} invoiceId={inv.id} />
                   </div>
                 );
               })}
@@ -260,20 +284,23 @@ export default function MaksutView({ jobId }: { jobId: number }) {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {s.workerAccepted.map((inv) => (
-                <div key={inv.id} style={{ ...card, padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                  <div style={{ minWidth: 0 }}>
-                    <p style={{ margin: 0, fontFamily: FONT, fontSize: 13.5, fontWeight: 700, color: "#fff" }}>
-                      {inv.rivit?.input?.name || inv.senderId}
-                    </p>
-                    <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: 11.5, color: "rgba(255,255,255,0.5)" }}>
-                      {eraLabel(inv.eraNumbers)} · lähetetty {fiDate(inv.sentAt)}
-                      {inv.invoiceNumber ? <> · <span style={{ fontFamily: MONO }}>{inv.invoiceNumber}</span></> : null}
-                      {inv.referenceNumber ? <> · viite <span style={{ fontFamily: MONO }}>{inv.referenceNumber}</span></> : null}
-                    </p>
+                <div key={inv.id} style={{ ...card, padding: "12px 16px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                    <div style={{ minWidth: 0 }}>
+                      <p style={{ margin: 0, fontFamily: FONT, fontSize: 13.5, fontWeight: 700, color: "#fff" }}>
+                        {inv.rivit?.input?.name || inv.senderId}
+                      </p>
+                      <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: 11.5, color: "rgba(255,255,255,0.5)" }}>
+                        {eraLabel(inv.eraNumbers)} · lähetetty {fiDate(inv.sentAt)}
+                        {inv.invoiceNumber ? <> · <span style={{ fontFamily: MONO }}>{inv.invoiceNumber}</span></> : null}
+                        {inv.referenceNumber ? <> · viite <span style={{ fontFamily: MONO }}>{inv.referenceNumber}</span></> : null}
+                      </p>
+                    </div>
+                    <span style={{ fontFamily: FONT, fontSize: 16, fontWeight: 800, color: "#5fe08a", fontVariantNumeric: "tabular-nums" }}>
+                      {fmtEurCents(inv.totalCents)}
+                    </span>
                   </div>
-                  <span style={{ fontFamily: FONT, fontSize: 16, fontWeight: 800, color: "#5fe08a", fontVariantNumeric: "tabular-nums" }}>
-                    {fmtEurCents(inv.totalCents)}
-                  </span>
+                  <DownloadPdfButton jobId={jobId} invoiceId={inv.id} />
                 </div>
               ))}
             </div>

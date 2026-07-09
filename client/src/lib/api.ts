@@ -610,6 +610,22 @@ export const api = {
     eraNumbers: number[]; senderId: string; itsepestytIkkunat: number; kokonaisikkunat: number;
     totalCents: number; manualAdjustmentCents?: number;
   }) => request<{ ok: boolean; invoice: EraInvoiceClient }>("POST", `/api/jobs/${jobId}/era-invoice/founder`, data),
+  // Johtajan PDF-lataus (kohta 4) — admin-Bearer-autentikoitu reitti, joten ei
+  // kelpaa suoraan <a href>:ksi; haetaan blobina ja avataan/ladataan JS:llä.
+  downloadEraInvoicePdf: async (jobId: number, invoiceId: number): Promise<{ ok: boolean; blob?: Blob; error?: string }> => {
+    try {
+      const res = await fetch(`${API_BASE}/api/jobs/${jobId}/era-invoice/${invoiceId}/pdf`, { headers: authHeaders() });
+      if (res.status === 401) { handleUnauthorized(); return { ok: false, error: "Kirjautuminen vaaditaan" }; }
+      if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+      return { ok: true, blob: await res.blob() };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "Network error" };
+    }
+  },
+  // Tekijän oman laskun PDF-URL — token on jo itsessään autentikointi, joten
+  // kelpaa suoraan <a href>:ksi (sama malli kuin payout/:id/invoice.pdf).
+  crewEraInvoicePdfUrl: (token: string, invoiceId: number) =>
+    `${API_BASE}/api/crew/${token}/era-invoice/${invoiceId}/pdf`,
 
   markWorkerPaid: (workerId: string, amount: number) =>
     request<{ id: number }>("POST", `/api/workers/${workerId}/mark-paid`, { amount }),

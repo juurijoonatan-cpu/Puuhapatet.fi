@@ -35,7 +35,7 @@ import {
 import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED, requiredAgreementIdsForSet, resolveAgreementSet } from "@shared/worker-agreements";
 import {
   computeTax, readVatStatus, readInPrepaymentRegister, readPayeeType, WITHHOLDING_COMPANY,
-  WITHHOLDING_NATURAL_PERSON, VAT_SMALL_BUSINESS_LIMIT_EUR, fmtPct, type TaxBreakdown,
+  WITHHOLDING_NATURAL_PERSON, VAT_SMALL_BUSINESS_LIMIT_EUR, fmtPct, fmtEurCents, type TaxBreakdown,
 } from "@shared/tax";
 import {
   BRAND_BILLERS, DEFAULT_BILLER_ID, resolveBrandBiller, billerToBuyer,
@@ -482,6 +482,8 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   // FR8 erälaskutus, tekijän vastaus (kohta 3B): tekijä lähettää tai hylkää
   // johtajan luonnostaman erälaskun omalla dashboard-tokenillaan.
   { method: "POST", re: /^\/api\/crew\/[^/]+\/era-invoice\/\d+\/(send|reject)$/ },
+  // Tekijän oman erälaskun PDF-lataus (kohta 4).
+  { method: "GET",  re: /^\/api\/crew\/[^/]+\/era-invoice\/\d+\/pdf$/ },
   { method: "DELETE", re: /^\/api\/crew\/[^/]+\/expense\/[^/]+$/ },
 ];
 
@@ -874,6 +876,140 @@ function generateWorkerInvoicePdf(params: {
     }
     if (params.paidDate) {
       doc.fill("#3E7C59").font("Helvetica-Bold").fontSize(9).text(`Maksettu ${params.paidDate}.`, 48, y);
+    }
+
+    doc.end();
+  });
+}
+
+// ─── FR8 erälasku PDF (kohta 4) ────────────────────────────────────────────
+// Sama visuaalinen malli kuin generateWorkerInvoicePdf, mutta kattaa MOLEMMAT
+// erälaskutyypit yhdellä funktiolla: "tekija" (alihankkija → johtaja, vero-
+// erittelyllä samaan tapaan kuin tavallinen alihankkijan lasku — `tax`
+// annettuna) ja "johtaja_valinen" (johtaja → johtaja, ei ennakonpidätystä —
+// B2B-tilitys kahden oman Y-tunnuksen välillä, ei työkorvausta ennakkoperintä-
+// lain mielessä — `tax` puuttuu). Regeneroidaan aina deterministisesti
+// tallennetusta, muuttumattomasta era_invoices-rivistä (ei erillistä PDF-
+// tiedostotallennusta, ks. docs/fr8-era-laskutus-plan.md kohta 4).
+function generateEraInvoicePdf(params: {
+  invoiceNumber: string;
+  referenceNumber: string;
+  invoiceDate: string;   // pvm, fi-FI muodossa
+  dueDate: string;       // eräpäivä, fi-FI muodossa
+  seller: { name: string; yTunnus?: string; address?: string; iban?: string; email?: string };
+  buyer: { name: string; yTunnus?: string; address?: string; email?: string };
+  description: string;   // esim. "Ikkunanpesu, 31 ikkunaa — erä 1-3"
+  /** Työkorvauksen vero-erittely (vain "tekija"-tyyppi). Puuttuessaan
+   *  näytetään pelkkä ALV-vapaa loppusumma (johtaja-välinen tilitys). */
+  tax?: TaxBreakdown;
+  totalCents: number;
+}): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 48, size: "A4" });
+    const chunks: Buffer[] = [];
+    doc.on("data", (c: Buffer) => chunks.push(c));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    const INK = "#1A1A1A";
+    const GRAY = "#64748b";
+    const NAVY = "#1F3B57";
+    const fmtEur = (cents: number) =>
+      (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+    const pageW = doc.page.width - 96;
+
+    doc.rect(48, 48, pageW, 56).fill(NAVY);
+    doc.fill("#fff").font("Helvetica-Bold").fontSize(16).text("LASKU", 64, 62, { width: pageW - 32 });
+    doc.fill("#cdd9e6").font("Helvetica").fontSize(9)
+      .text(`Laskunumero ${params.invoiceNumber}  ·  ${params.invoiceDate}`, 64, 84, { width: pageW - 32 });
+
+    let y = 124;
+    const colW = (pageW - 16) / 2;
+
+    doc.fill(GRAY).font("Helvetica-Bold").fontSize(7).text("MYYJÄ", 48, y, { width: colW });
+    doc.text("OSTAJA", 48 + colW + 16, y, { width: colW });
+    y += 14;
+    doc.fill(INK).font("Helvetica-Bold").fontSize(10);
+    doc.text(params.seller.name, 48, y, { width: colW });
+    doc.text(params.buyer.name, 48 + colW + 16, y, { width: colW });
+    y += 14;
+    doc.fill(GRAY).font("Helvetica").fontSize(9);
+    const leftStartY = y;
+    if (params.seller.yTunnus) { doc.text(`Y-tunnus: ${params.seller.yTunnus}`, 48, y, { width: colW }); y += 12; }
+    if (params.seller.address) { doc.text(params.seller.address, 48, y, { width: colW }); y += 12; }
+    if (params.seller.iban) { doc.text(`IBAN: ${params.seller.iban}`, 48, y, { width: colW }); y += 12; }
+    let ry = leftStartY;
+    if (params.buyer.yTunnus) { doc.text(`Y-tunnus: ${params.buyer.yTunnus}`, 48 + colW + 16, ry, { width: colW }); ry += 12; }
+    if (params.buyer.address) { doc.text(params.buyer.address, 48 + colW + 16, ry, { width: colW }); ry += 12; }
+    if (params.buyer.email) { doc.text(params.buyer.email, 48 + colW + 16, ry, { width: colW }); ry += 12; }
+
+    y = Math.max(y, ry) + 10;
+    doc.fill(GRAY).font("Helvetica").fontSize(9)
+      .text(`Toimituspäivä: ${params.invoiceDate}   ·   Eräpäivä: ${params.dueDate}   ·   Viite: ${params.referenceNumber}`, 48, y, { width: pageW });
+    y += 20;
+
+    doc.rect(48, y, pageW, 26).fill("#F1F5F9");
+    doc.fill(GRAY).font("Helvetica-Bold").fontSize(8);
+    doc.text("KUVAUS", 60, y + 9, { width: pageW - 140 });
+    doc.text("VEROTON", 48 + pageW - 100, y + 9, { width: 88, align: "right" });
+    y += 26;
+
+    const laborCents = params.tax ? params.tax.laborCents : params.totalCents;
+    doc.fill(INK).font("Helvetica").fontSize(10).text(params.description, 60, y + 7, { width: pageW - 140 });
+    doc.fill(INK).font("Helvetica-Bold").fontSize(10).text(fmtEur(laborCents), 48 + pageW - 100, y + 7, { width: 88, align: "right" });
+    y += 34;
+    doc.moveTo(48, y).lineTo(48 + pageW, y).strokeColor("#E2E8F0").stroke();
+    y += 12;
+
+    const sumRow = (label: string, value: string, opts?: { bold?: boolean; color?: string; size?: number }) => {
+      const size = opts?.size ?? 9;
+      doc.fill(opts?.color ?? GRAY).font(opts?.bold ? "Helvetica-Bold" : "Helvetica").fontSize(size)
+        .text(label, 48 + pageW - 240, y, { width: 140, align: "right" });
+      doc.fill(opts?.color ?? INK).font(opts?.bold ? "Helvetica-Bold" : "Helvetica").fontSize(size)
+        .text(value, 48 + pageW - 100, y, { width: 88, align: "right" });
+      y += size + 7;
+    };
+
+    if (params.tax) {
+      const tax = params.tax;
+      sumRow("Veroton (työkorvaus)", fmtEur(tax.laborCents));
+      if (tax.vatRegistered) {
+        sumRow(`ALV ${fmtPct(tax.vatRate)}`, fmtEur(tax.vatCents));
+        sumRow("Laskun loppusumma", fmtEur(tax.invoiceTotalCents), { bold: true });
+      }
+      if (tax.withheld) {
+        y += 2;
+        sumRow(`Ennakonpidätys ${fmtPct(tax.withholdingRate)}`, "−" + fmtEur(tax.withholdingCents));
+      }
+      y += 4;
+      doc.fill(NAVY).font("Helvetica-Bold").fontSize(13)
+        .text(tax.withheld ? "Maksetaan tilille" : "Maksettavaa", 48 + pageW - 240, y, { width: 140, align: "right" });
+      doc.text(fmtEur(tax.payableCents), 48 + pageW - 100, y, { width: 88, align: "right" });
+      y += 30;
+      doc.fill(GRAY).font("Helvetica").fontSize(8);
+      for (const note of tax.notes) {
+        doc.text(note, 48, y, { width: pageW });
+        y += doc.heightOfString(note, { width: pageW }) + 4;
+      }
+    } else {
+      // Johtaja-välinen tilitys — ei ennakonpidätystä (ei työkorvausta
+      // ennakkoperintälain mielessä), oletuksena ALV-vapaa kunnes toisin
+      // vahvistetaan kirjanpitäjältä (ks. kohta 4 huomautus).
+      y += 4;
+      doc.fill(NAVY).font("Helvetica-Bold").fontSize(13)
+        .text("Maksettavaa", 48 + pageW - 240, y, { width: 140, align: "right" });
+      doc.text(fmtEur(params.totalCents), 48 + pageW - 100, y, { width: 88, align: "right" });
+      y += 30;
+      doc.fill(GRAY).font("Helvetica").fontSize(8)
+        .text("Arvonlisäveroton myynti, vähäinen toiminta. Vahvista lopullinen ALV-käsittely kirjanpitäjältä.", 48, y, { width: pageW });
+      y += 16;
+    }
+
+    if (params.seller.iban) {
+      y += 8;
+      doc.fill(INK).font("Helvetica-Bold").fontSize(9).text("Maksutiedot", 48, y); y += 14;
+      doc.fill(GRAY).font("Helvetica").fontSize(9).text(`Tilinumero (IBAN): ${params.seller.iban}`, 48, y); y += 12;
+      doc.text(`Viite: ${params.referenceNumber}`, 48, y); y += 12;
     }
 
     doc.end();
@@ -1746,6 +1882,123 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     return { ...row, eraNumbers, rivit };
   }
 
+  const eraLabelOf = (nums: number[]) => (nums.length === 1 ? `Erä ${nums[0]}` : `Erät ${nums[0]}–${nums[nums.length - 1]}`);
+
+  // Rakentaa generateEraInvoicePdf-parametrit tallennetusta, lukitusta
+  // erälaskurivistä (kohta 4: lasku regeneroidaan aina deterministisesti
+  // muuttumattomasta tietueesta, ei erillistä PDF-tallennusta). Tekijä-
+  // laskuille lasketaan sama ALV+ennakonpidätys-erittely kuin tavallisille
+  // alihankkijan laskuille (shared/tax.ts) — TÄRKEÄ tulkinta: vero lasketaan
+  // KOKO ansaitusta summasta (ei vain "maksettava nyt" -jäännöksestä), ja jo
+  // maksettu ennakko vähennetään VASTA verolaskennan jälkeen omana rivinään.
+  // Johtaja-välisille laskuille ei lasketa ennakonpidätystä (ei työkorvausta
+  // ennakkoperintälain mielessä) — vain ALV-vapaa-merkintä. Vahvista molemmat
+  // tulkinnat kirjanpitäjältä ennen tuotantokäyttöä (spekin oma huomautus).
+  function buildEraInvoicePdfParams(
+    row: typeof eraInvoices.$inferSelect,
+    project: ProjectData,
+  ): Parameters<typeof generateEraInvoicePdf>[0] {
+    const eraNumbers: number[] = JSON.parse(row.eraNumbers || "[]");
+    const rivit = JSON.parse(row.rivit || "{}");
+    const invoiceDate = new Date(row.sentAt || row.createdAt).toLocaleDateString("fi-FI");
+    // Eräpäivä: spekissä ei anneta maksuehtoa, joten oletetaan yleinen
+    // suomalainen käytäntö "14 vrk netto" laskun lähetyksestä. Vahvista/säädä
+    // kirjanpitäjän kanssa jos toinen maksuehto on tarpeen.
+    const dueDate = new Date((row.sentAt ? new Date(row.sentAt).getTime() : Date.now()) + 14 * 24 * 3600 * 1000)
+      .toLocaleDateString("fi-FI");
+    const invoiceNumber = row.invoiceNumber || "—";
+    const referenceNumber = row.referenceNumber || "—";
+
+    if (row.kind === "tekija") {
+      const input = rivit.input || {};
+      const computed = rivit.computed || {};
+      const member = (project.crew || []).find((m) => m.id === row.senderId);
+      const workerName = input.name || member?.name || row.senderId;
+      const answers = member?.profile?.answers;
+      const ansaittuCents = Math.round(Number(computed.ansaittuCents) || 0);
+      const ennakkoCents = Math.max(0, Math.round(Number(input.ennakkoCents) || 0));
+      const tax = computeTax({
+        laborCents: ansaittuCents,
+        vatStatus: readVatStatus(answers),
+        inPrepaymentRegister: readInPrepaymentRegister(answers),
+        payeeType: readPayeeType(answers),
+      });
+      if (ennakkoCents > 0) {
+        tax.payableCents -= ennakkoCents;
+        tax.notes = [...tax.notes, `Josta ennakkoa jo maksettu ${fmtEurCents(ennakkoCents)} — vähennetty yllä olevasta.`];
+      }
+      const buyer = resolveBuyer(row.recipientId);
+      const ikkunat = Number(input.pestytIkkunat) || 0;
+      return {
+        invoiceNumber, referenceNumber, invoiceDate, dueDate,
+        seller: {
+          name: workerName,
+          yTunnus: member?.profile?.yTunnus,
+          address: member?.profile?.city,
+          iban: member?.profile?.iban,
+        },
+        buyer: { name: buyer.name, yTunnus: buyer.yTunnus, address: buyer.address, email: buyer.email },
+        description: `Ikkunanpesu, ${ikkunat.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikkunaa — ${eraLabelOf(eraNumbers)}`,
+        tax,
+        totalCents: row.totalCents,
+      };
+    }
+
+    // "johtaja_valinen"
+    const seller = resolveBuyer(row.senderId);
+    const buyer = resolveBuyer(row.recipientId);
+    return {
+      invoiceNumber, referenceNumber, invoiceDate, dueDate,
+      seller: { name: seller.name, yTunnus: seller.yTunnus, address: seller.address, iban: BRAND_BILLERS.find((b) => b.id === row.senderId)?.iban },
+      buyer: { name: buyer.name, yTunnus: buyer.yTunnus, address: buyer.address, email: buyer.email },
+      description: `FR8-keikan tilitys, ${eraLabelOf(eraNumbers)}`,
+      totalCents: row.totalCents,
+    };
+  }
+
+  // Sähköpostikopio lukitusta erälaskusta liitteineen (kohta 4 + 3D). Best-
+  // effort: virhe ei saa koskaan kaataa kutsujan pyyntöä. Kohderyhmä:
+  // - "tekija": tekijän oma sähköposti (jos ilmoitettu) + molemmat johtajat.
+  // - "johtaja_valinen": molemmat johtajat AINA, riippumatta laskun suunnasta
+  //   (kohta 3C.4 — matiaspit88@gmail.com tulee INVOICE_BCC_EMAILS:stä).
+  async function sendEraInvoiceEmail(row: typeof eraInvoices.$inferSelect, project: ProjectData): Promise<void> {
+    if (!resend) return;
+    try {
+      const pdf = await generateEraInvoicePdf(buildEraInvoicePdfParams(row, project));
+      const recipients = new Set<string>([...WORKER_NOTIFICATION_EMAILS, ...INVOICE_BCC_EMAILS]);
+      if (row.kind === "tekija") {
+        const member = (project.crew || []).find((m) => m.id === row.senderId);
+        if (member?.profile?.email) recipients.add(member.profile.email);
+      }
+      const to = Array.from(recipients).filter(Boolean);
+      if (to.length === 0) return;
+      const eraNumbers: number[] = JSON.parse(row.eraNumbers || "[]");
+      const subject = `Lasku ${row.invoiceNumber || row.id} — ${eraLabelOf(eraNumbers)} · ${fmtEurCents(row.totalCents)}`;
+      const html = `<!DOCTYPE html><html lang="fi"><body style="margin:0;background:#F6F4EE;font-family:sans-serif">
+        <div style="max-width:520px;margin:24px auto;background:#fff;border:1px solid #E4E1D7;border-radius:14px;padding:24px 32px">
+          <p style="margin:0 0 8px;font-size:18px;font-weight:700;color:#1A1A1A">Lasku ${row.invoiceNumber || ""}</p>
+          <p style="margin:0 0 4px;color:#475569;font-size:13px">${eraLabelOf(eraNumbers)} · ${fmtEurCents(row.totalCents)}</p>
+          <p style="margin:12px 0 0;color:#475569;font-size:13px">Lasku liitteenä PDF-muodossa.</p>
+        </div></body></html>`;
+      let success = true;
+      let error: string | undefined;
+      try {
+        await resend.emails.send({
+          from: FROM_EMAIL, to, subject, html,
+          attachments: [{ filename: `lasku-${row.invoiceNumber || row.id}.pdf`, content: pdf.toString("base64") }],
+        });
+      } catch (sendErr: any) {
+        success = false;
+        error = sendErr?.message || String(sendErr);
+      }
+      await db.insert(eraInvoiceEmails).values({
+        invoiceId: row.id, recipients: JSON.stringify(to), success, error,
+      });
+    } catch (e: any) {
+      console.error("sendEraInvoiceEmail failed:", e?.message);
+    }
+  }
+
   // Koko keikan laskulista sisältää jokaisen tekijän maksutiedot, joten se on
   // vain johtajille (tekijä näkee omat laskunsa /api/crew/:token -näkymässään).
   app.get("/api/jobs/:id/era-invoices", async (req, res) => {
@@ -1785,6 +2038,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ok: true,
         invoices: rows.map((r) => ({ ...toClientEraInvoice(r), emails: emailsByInvoice.get(r.id) ?? [] })),
       });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Johtajan PDF-lataus mille tahansa keikan erälaskulle (kohta 4). Regeneroidaan
+  // aina tallennetusta rivistä — deterministinen, ei erillistä tiedostotallennusta.
+  app.get("/api/jobs/:id/era-invoice/:invoiceId/pdf", async (req, res) => {
+    try {
+      const caller = (req as any).admin as AdminTokenPayload | undefined;
+      const sub = String(caller?.sub ?? "").toLowerCase();
+      if (caller?.role !== "host" && !FOUNDER_IDS.includes(sub)) {
+        return res.status(403).json({ error: "Vain johtajat voivat ladata erälaskuja." });
+      }
+      const jobId = Number(req.params.id);
+      const loaded = await loadJobProject(jobId);
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const invoiceId = Number(req.params.invoiceId);
+      const [invoice] = await db.select().from(eraInvoices).where(eq(eraInvoices.id, invoiceId));
+      if (!invoice || invoice.jobId !== jobId) return res.status(404).json({ error: "Laskua ei löydy" });
+      const pdf = await generateEraInvoicePdf(buildEraInvoicePdfParams(invoice, loaded.project));
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="lasku-${invoice.invoiceNumber || invoice.id}.pdf"`);
+      res.send(pdf);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -1843,8 +2120,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/jobs/:id/era-invoice/founder", async (req, res) => {
     try {
       const jobId = Number(req.params.id);
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
-      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const loaded = await loadJobProject(jobId);
+      if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const { project } = loaded;
 
       const sub = String((req as any).admin?.sub ?? "").toLowerCase();
       const senderId = String(req.body?.senderId || "").toLowerCase();
@@ -1942,8 +2220,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return final;
       });
 
-      // HUOM: sähköpostikopiot (kummallekin johtajalle riippumatta suunnasta)
-      // ja PDF toteutetaan vaiheessa 4 (kohta 4) — tämä reitti vain tallentaa.
+      // Sähköpostikopiot kummallekin johtajalle riippumatta laskun suunnasta
+      // (kohta 3C.4) + PDF liitteenä (kohta 4). Best-effort — ei koskaan estä
+      // vastausta, koska lasku on jo tallessa ja lukittu tässä vaiheessa.
+      void sendEraInvoiceEmail(row, project);
       res.status(201).json({ ok: true, invoice: toClientEraInvoice(row) });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -5558,6 +5838,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(409).json({ error: "Lasku on jo käsitelty — sitä ei voi lähettää tai hylätä uudelleen." });
       }
 
+      // Sähköpostikopio + PDF vain kun lasku oikeasti lukittui ("send"), ei
+      // hylkäyksellä. Best-effort, ei koskaan estä vastausta.
+      if (action === "send") void sendEraInvoiceEmail(updated, project);
+
       // Näkymän uudelleenrakennus eristetty omaan try/catchiin: tilasiirtymä on
       // jo tallessa tähän mennessä, joten siihen liittymätön virhe workerView-
       // funktiossa ei saa raportoida onnistunutta lähetystä epäonnistuneena
@@ -5577,6 +5861,27 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.post("/api/crew/:token/era-invoice/:invoiceId/send", (req, res) => respondToEraInvoice(req, res, "send"));
   app.post("/api/crew/:token/era-invoice/:invoiceId/reject", (req, res) => respondToEraInvoice(req, res, "reject"));
+
+  // Tekijän oman erälaskun PDF-lataus (kohta 4) — vain omat rivit, sama
+  // senderId-suodatus kuin workerView():ssä ja respondToEraInvoice:ssa.
+  app.get("/api/crew/:token/era-invoice/:invoiceId/pdf", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const invoiceId = Number(req.params.invoiceId);
+      const [invoice] = await db.select().from(eraInvoices).where(eq(eraInvoices.id, invoiceId));
+      if (!invoice || invoice.jobId !== job.id || invoice.kind !== ("tekija" satisfies EraInvoiceKind) || invoice.senderId !== member.id) {
+        return res.status(404).json({ error: "Laskua ei löydy" });
+      }
+      const pdf = await generateEraInvoicePdf(buildEraInvoicePdfParams(invoice, project));
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="lasku-${invoice.invoiceNumber || invoice.id}.pdf"`);
+      res.send(pdf);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
 
   // Worker downloads their own subcontractor invoice (PDF) for a PAID payout.
   // Regenerated on demand from the payout's stored snapshot (tax/buyer/billing),

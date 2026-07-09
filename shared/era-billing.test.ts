@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { computeEraBilling, sumWindows, TEKIJA_HINTA_CENTS, type JohtajaPesu, type TekijaPesu } from "./era-billing";
+import {
+  computeEraBilling, sumWindows, TEKIJA_HINTA_CENTS, normalizeEraNumbers, eraRecipientFounderId,
+  type JohtajaPesu, type TekijaPesu,
+} from "./era-billing";
 
 // Speksin kohta 7 — käytä yksikkötestinä. Ks. docs/fr8-era-laskutus-plan.md.
 describe("computeEraBilling — kohdan 7 testitapaus (erät 1-3, S=4725€)", () => {
@@ -115,5 +118,36 @@ describe("computeEraBilling — reunatapaukset", () => {
     const founderSum = result.founders.reduce((s, f) => s + f.loppusummaCents, 0);
     expect(founderSum).toBe(result.totalCents);
     expect(result.tarkistusEroCents).toBe(0);
+  });
+});
+
+// Vaihe 2: reititys- ja erävalinta-apufunktiot (server/routes.ts + dialogit
+// käyttävät näitä molempia; kohta 1 + käyttäjän vahvistama "vapaa erävalinta,
+// mutta vain 1-3 yhdessä tai 4 yksin" -sääntö).
+describe("normalizeEraNumbers", () => {
+  it("hyväksyy erät 1-3 yhdessä, missä tahansa syötejärjestyksessä", () => {
+    expect(normalizeEraNumbers([3, 1, 2])).toEqual([1, 2, 3]);
+    expect(normalizeEraNumbers([1, 2, 3])).toEqual([1, 2, 3]);
+  });
+
+  it("hyväksyy erän 4 yksin", () => {
+    expect(normalizeEraNumbers([4])).toEqual([4]);
+  });
+
+  it("hylkää osajoukot, sekoitukset ja virheelliset syötteet", () => {
+    expect(normalizeEraNumbers([1, 2])).toBeNull();
+    expect(normalizeEraNumbers([1, 4])).toBeNull();
+    expect(normalizeEraNumbers([1, 2, 3, 4])).toBeNull();
+    expect(normalizeEraNumbers([5])).toBeNull();
+    expect(normalizeEraNumbers([])).toBeNull();
+    expect(normalizeEraNumbers("erä 1")).toBeNull();
+    expect(normalizeEraNumbers(null)).toBeNull();
+  });
+});
+
+describe("eraRecipientFounderId", () => {
+  it("erät 1-3 -> joonatan, erä 4 -> matias", () => {
+    expect(eraRecipientFounderId([1, 2, 3])).toBe("joonatan");
+    expect(eraRecipientFounderId([4])).toBe("matias");
   });
 });

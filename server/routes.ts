@@ -6,7 +6,11 @@ import bwipjs from "bwip-js";
 import PDFDocument from "pdfkit";
 import rateLimit from "express-rate-limit";
 import { db } from "./db";
-import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, founderSettlements, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
+import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, founderSettlements, eraInvoices, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
+import {
+  computeEraBilling, TEKIJA_HINTA_CENTS, eraRecipientFounderId, normalizeEraNumbers,
+  type EraInvoiceKind, type EraInvoiceTila,
+} from "@shared/era-billing";
 import { feeRateForWorker, effectiveJobTotal, FOUNDER_IDS, marketerCommissionCents, MARKETER_COMMISSION_RATE } from "@shared/team";
 import { randomUUID, createHash, createHmac, timingSafeEqual, scryptSync, randomBytes } from "crypto";
 import {
@@ -1680,6 +1684,189 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         .where(eq(founderSettlements.id, Number(req.params.id))).returning();
       if (!row) return res.status(404).json({ error: "Ei löydy" });
       res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── FR8 erälaskutus (Vaihe 2) ────────────────────────────────────────────
+  // Ks. docs/fr8-era-laskutus-plan.md ja shared/era-billing.ts. Kaksi laskutyyppiä:
+  //  - "tekija": johtaja luo ehdotuksen tekijän puolesta (esitäytetty), tallentuu
+  //    tilaan "luonnos" ja odottaa tekijän omaa hyväksyntää/hylkäystä (vaihe 3:n
+  //    tekijän näkymässä — EI lukita vielä tässä reitissä).
+  //  - "johtaja_valinen": lähettävä johtaja lähettää suoraan (ei erillistä
+  //    hyväksyntää toiselta osapuolelta), joten lukitaan heti.
+  function toClientEraInvoice(row: typeof eraInvoices.$inferSelect) {
+    let eraNumbers: number[] = [];
+    let rivit: any = null;
+    try { eraNumbers = JSON.parse(row.eraNumbers); } catch { /* jätä tyhjäksi */ }
+    try { rivit = JSON.parse(row.rivit); } catch { /* jätä nulliksi */ }
+    return { ...row, eraNumbers, rivit };
+  }
+
+  app.get("/api/jobs/:id/era-invoices", async (req, res) => {
+    try {
+      const jobId = Number(req.params.id);
+      const rows = await db.select().from(eraInvoices)
+        .where(eq(eraInvoices.jobId, jobId)).orderBy(desc(eraInvoices.createdAt));
+      res.json({ ok: true, invoices: rows.map(toClientEraInvoice) });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Johtaja luo tekijä-maksuehdotukset valitulle eräl(l)e — yksi rivi per
+  // tekijä. Kohta 3A: pestyt_ikkunat*20€ esitäytetty, sovittu_muutos ja ennakko
+  // erillisinä kenttinä. Reititys (kohta 1): erät 1-3 → Joonatan, erä 4 → Matias.
+  app.post("/api/jobs/:id/era-invoice/worker-batch", async (req, res) => {
+    try {
+      const jobId = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+
+      const eraNumbers = normalizeEraNumbers(req.body?.eraNumbers);
+      if (!eraNumbers) return res.status(400).json({ error: "Virheellinen erävalinta (1-3 tai 4)" });
+      const recipientId = eraRecipientFounderId(eraNumbers);
+
+      const rawWorkers = Array.isArray(req.body?.workers) ? req.body.workers : [];
+      if (rawWorkers.length === 0) return res.status(400).json({ error: "Tekijöitä puuttuu" });
+
+      const created: (typeof eraInvoices.$inferSelect)[] = [];
+      for (const w of rawWorkers) {
+        const workerId = String(w?.workerId || "").slice(0, 100);
+        if (!workerId) continue;
+        const name = String(w?.name || workerId).slice(0, 200);
+        const pestytIkkunat = Math.max(0, Number(w?.pestytIkkunat) || 0);
+        const sovittuMuutosCents = Math.round(Number(w?.sovittuMuutosCents) || 0);
+        const ennakkoCents = Math.max(0, Math.round(Number(w?.ennakkoCents) || 0));
+        const result = computeEraBilling(0, [{ workerId, name, pestytIkkunat, sovittuMuutosCents, ennakkoCents }], []);
+        const computed = result.workers[0];
+        const [row] = await db.insert(eraInvoices).values({
+          jobId,
+          kind: "tekija" satisfies EraInvoiceKind,
+          senderId: workerId,       // myyjä = tekijä (alihankkija laskuttaa omalla työllään)
+          recipientId,              // ostaja = erän mukaan valittu johtaja
+          eraNumbers: JSON.stringify(eraNumbers),
+          rivit: JSON.stringify({ input: { workerId, name, pestytIkkunat, sovittuMuutosCents, ennakkoCents }, computed }),
+          totalCents: computed.maksettavaCents,
+          tila: "luonnos" satisfies EraInvoiceTila,
+        }).returning();
+        created.push(row);
+      }
+      if (created.length === 0) return res.status(400).json({ error: "Ei luotu yhtään laskua" });
+      res.status(201).json({ ok: true, invoices: created.map(toClientEraInvoice) });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Johtaja-välinen ristiinlasku (kohta 3C). Lähettäjä laskuttaa AINA vain
+  // toista johtajaa — vastaanottaja määräytyy erän numerosta (1-3 → Joonatan,
+  // 4 → Matias), ei siitä minkä rivin painiketta klikattiin. Siksi tarkistetaan
+  // erikseen ettei lähettäjä pääty myös vastaanottajaksi (ei voi laskuttaa
+  // itseään) — käyttäjän vahvistama sääntö vapaalle erävalinnalle.
+  app.post("/api/jobs/:id/era-invoice/founder", async (req, res) => {
+    try {
+      const jobId = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+
+      const sub = String((req as any).admin?.sub ?? "").toLowerCase();
+      const senderId = String(req.body?.senderId || "").toLowerCase();
+      if (!FOUNDER_IDS.includes(senderId)) return res.status(400).json({ error: "Lähettäjän pitää olla johtaja" });
+      if (senderId !== sub) return res.status(403).json({ error: "Et voi lähettää laskua toisen puolesta" });
+
+      const eraNumbers = normalizeEraNumbers(req.body?.eraNumbers);
+      if (!eraNumbers) return res.status(400).json({ error: "Virheellinen erävalinta (1-3 tai 4)" });
+      const recipientId = eraRecipientFounderId(eraNumbers);
+      if (recipientId === senderId) {
+        return res.status(400).json({
+          error: "Et voi laskuttaa itseäsi tällä erällä — tämä erä laskutetaan toiselle johtajalle.",
+        });
+      }
+
+      const itsepestytIkkunat = Math.max(0, Number(req.body?.itsepestytIkkunat) || 0);
+      const kokonaisikkunat = Math.max(0, Number(req.body?.kokonaisikkunat) || 0);
+      const totalCents = Math.round(Number(req.body?.totalCents) || 0);
+      const manualAdjustmentCents = Math.round(Number(req.body?.manualAdjustmentCents) || 0);
+      if (totalCents <= 0) return res.status(400).json({ error: "Kokonaissumma puuttuu" });
+
+      // Tekijöiden ansaittu + ikkunat tälle erälle: summataan jo luoduista
+      // tekijä-laskuista (hylätyt eivät lasketa mukaan — luonnos/lähetetty/
+      // hyväksytty kylläkin, koska johtaja on jo sitoutunut näihin summiin).
+      const workerRows = await db.select().from(eraInvoices).where(and(
+        eq(eraInvoices.jobId, jobId), eq(eraInvoices.kind, "tekija" satisfies EraInvoiceKind), ne(eraInvoices.tila, "hylätty" satisfies EraInvoiceTila),
+      ));
+      const matchingWorkerRows = workerRows.filter((r) => {
+        try { const nums = JSON.parse(r.eraNumbers) as number[]; return nums.some((n) => eraNumbers.includes(n)); }
+        catch { return false; }
+      });
+      const tekijatIkkunatSum = matchingWorkerRows.reduce((s, r) => {
+        try { return s + (JSON.parse(r.rivit)?.input?.pestytIkkunat || 0); } catch { return s; }
+      }, 0);
+      const tekijatAnsaittuYhtCents = matchingWorkerRows.reduce((s, r) => {
+        try { return s + (JSON.parse(r.rivit)?.computed?.ansaittuCents || 0); } catch { return s; }
+      }, 0);
+
+      // Loput ikkunat kokonaismäärästä kuuluvat vastaanottajalle (kolme
+      // kategoriaa: tekijät + lähettäjä + vastaanottaja = kokonaisikkunat).
+      const recipientPestytIkkunat = kokonaisikkunat - tekijatIkkunatSum - itsepestytIkkunat;
+      if (recipientPestytIkkunat < -0.001) {
+        return res.status(400).json({
+          error: `Ikkunamäärä ei täsmää: kokonaisikkunat (${kokonaisikkunat}) on pienempi kuin tekijöiden ` +
+            `(${tekijatIkkunatSum}) + omat (${itsepestytIkkunat}) ikkunat yhteensä.`,
+        });
+      }
+
+      const senderName = BRAND_BILLERS.find((b) => b.id === senderId)?.name || senderId;
+      const recipientName = BRAND_BILLERS.find((b) => b.id === recipientId)?.name || recipientId;
+
+      // Synteettinen yhdistetty tekijärivi: säilyttää tarkan ansaittu-summan
+      // (sis. sovitut muutokset) ilman että jokainen alkuperäinen tekijä-lasku
+      // pitäisi purkaa takaisin yksittäisiksi pesty_ikkunat-riveiksi.
+      const syntheticWorkers = matchingWorkerRows.length > 0
+        ? [{
+            workerId: "_tekijat_yht", name: "Tekijät yhteensä", pestytIkkunat: tekijatIkkunatSum,
+            sovittuMuutosCents: tekijatAnsaittuYhtCents - Math.round(tekijatIkkunatSum * TEKIJA_HINTA_CENTS),
+            ennakkoCents: 0,
+          }]
+        : [];
+
+      const result = computeEraBilling(totalCents, syntheticWorkers, [
+        { founderId: senderId, name: senderName, pestytIkkunat: itsepestytIkkunat },
+        { founderId: recipientId, name: recipientName, pestytIkkunat: recipientPestytIkkunat },
+      ]);
+      const senderRow = result.founders.find((f) => f.founderId === senderId)!;
+      const finalCents = senderRow.loppusummaCents + manualAdjustmentCents;
+
+      const countRes = await db.select({ c: sql<number>`count(*)` }).from(eraInvoices)
+        .where(and(eq(eraInvoices.senderId, senderId), ne(eraInvoices.tila, "luonnos" satisfies EraInvoiceTila)));
+      const seq = Number((countRes[0] as any)?.c || 0) + 1;
+      const invoiceNumber = `${senderId.toUpperCase().slice(0, 3)}-${String(seq).padStart(4, "0")}`;
+      const referenceNumber = finnishRefWithCheckDigit(String(1_000_000 + jobId * 100 + seq));
+
+      const [row] = await db.insert(eraInvoices).values({
+        jobId,
+        kind: "johtaja_valinen" satisfies EraInvoiceKind,
+        senderId, recipientId,
+        eraNumbers: JSON.stringify(eraNumbers),
+        rivit: JSON.stringify({
+          input: { itsepestytIkkunat, kokonaisikkunat, recipientPestytIkkunat, tekijatIkkunatSum, tekijatAnsaittuYhtCents },
+          computed: result,
+        }),
+        totalCents: finalCents,
+        xCents: result.xCents,
+        kateCents: result.kateCents,
+        katePerJohtajaCents: senderRow.katePerJohtajaCents,
+        manualAdjustmentCents,
+        tila: "lähetetty" satisfies EraInvoiceTila,
+        invoiceNumber, referenceNumber,
+        sentAt: new Date(),
+      }).returning();
+
+      // HUOM: sähköpostikopiot (kummallekin johtajalle riippumatta suunnasta)
+      // ja PDF toteutetaan vaiheessa 4 (kohta 4) — tämä reitti vain tallentaa.
+      res.status(201).json({ ok: true, invoice: toClientEraInvoice(row) });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

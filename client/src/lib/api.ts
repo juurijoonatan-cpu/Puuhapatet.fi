@@ -7,6 +7,7 @@ import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark
 import type { MemberAgreementSignature } from "@shared/member-agreement";
 import type { CrewMember, CrewMemberStats, CrewProfile, CrewAgreementSignature } from "@shared/crew";
 import type { WorkerAgreement } from "@shared/worker-agreements";
+import type { EraInvoiceKind, EraInvoiceTila } from "@shared/era-billing";
 
 // Worker dashboard payload — the gig price/cap is intentionally absent.
 export interface WorkerView {
@@ -79,6 +80,30 @@ export interface HostCrewRow {
   member: CrewMember;
   stats: CrewMemberStats;
   onboarded: boolean;
+}
+
+/** Client-side shape of an `era_invoices` row — `eraNumbers`/`rivit` arrive as
+ *  JSON text from the DB but are parsed server-side before the response, ks.
+ *  shared/era-billing.ts + docs/fr8-era-laskutus-plan.md. */
+export interface EraInvoiceClient {
+  id: number;
+  jobId: number;
+  kind: EraInvoiceKind;
+  senderId: string;
+  recipientId: string;
+  eraNumbers: number[];
+  rivit: any;
+  totalCents: number;
+  xCents: number | null;
+  kateCents: number | null;
+  katePerJohtajaCents: number | null;
+  manualAdjustmentCents: number;
+  tila: EraInvoiceTila;
+  invoiceNumber: string | null;
+  referenceNumber: string | null;
+  createdAt: string;
+  sentAt: string | null;
+  respondedAt: string | null;
 }
 
 /** Founder settlement for a fixed deal. The biller collects the full instalment;
@@ -564,6 +589,21 @@ export const api = {
     request<{ ok: boolean }>("POST", "/api/admin/founder-settlement/issue-invoice", data),
   deleteFounderSettlement: (id: number) =>
     request<{ ok: boolean }>("DELETE", `/api/admin/founder-settlement/${id}`),
+
+  // ─── FR8 erälaskutus (docs/fr8-era-laskutus-plan.md) ─────────────────────
+  getEraInvoices: (jobId: number) =>
+    request<{ ok: boolean; invoices: EraInvoiceClient[] }>("GET", `/api/jobs/${jobId}/era-invoices`),
+  // Johtaja luo tekijä-maksuehdotukset valitulle erälle (§3A) — yksi rivi per
+  // tekijä; jää tilaan "luonnos" kunnes tekijä itse hyväksyy/hylkää (vaihe 3).
+  createWorkerEraInvoiceBatch: (jobId: number, data: {
+    eraNumbers: number[];
+    workers: { workerId: string; name: string; pestytIkkunat: number; sovittuMuutosCents: number; ennakkoCents: number }[];
+  }) => request<{ ok: boolean; invoices: EraInvoiceClient[] }>("POST", `/api/jobs/${jobId}/era-invoice/worker-batch`, data),
+  // Johtaja lähettää suoraan toiselle johtajalle ristiinlaskun (§3C) — lukittu heti.
+  sendFounderEraInvoice: (jobId: number, data: {
+    eraNumbers: number[]; senderId: string; itsepestytIkkunat: number; kokonaisikkunat: number;
+    totalCents: number; manualAdjustmentCents?: number;
+  }) => request<{ ok: boolean; invoice: EraInvoiceClient }>("POST", `/api/jobs/${jobId}/era-invoice/founder`, data),
 
   markWorkerPaid: (workerId: string, amount: number) =>
     request<{ id: number }>("POST", `/api/workers/${workerId}/mark-paid`, { amount }),

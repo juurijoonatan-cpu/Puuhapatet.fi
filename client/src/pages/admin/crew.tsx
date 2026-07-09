@@ -24,6 +24,7 @@ import { BRAND_BILLERS, DEFAULT_BILLER_ID } from "@shared/billers";
 import { traineeForUserId, traineeForName } from "@shared/trainees";
 import { getAdminProfile } from "@/lib/admin-profile";
 import { Input } from "@/components/ui/input";
+import FounderEraInvoiceDialog from "@/components/fr8/FounderEraInvoiceDialog";
 
 const PUBLIC_BASE = "https://puuhapatet.fi";
 const eur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
@@ -158,6 +159,26 @@ export default function AdminCrewPage() {
             {crew.map(({ member, stats, onboarded }) => (
               <div key={member.id} className="rounded-2xl border bg-card p-4">
                 <WorkerCardHeader member={member} stats={stats} onboarded={onboarded} copied={copied} onCopy={copyLink} onUpdate={update} onRemove={remove} />
+
+                {/* FR8 erälaskutus (kohta 3C): "Maksut" näkyy VAIN toisen
+                    johtajan rivillä — ei omalla — kun kirjautunut admin on
+                    itsekin johtaja. Vastaanottaja on aina tämä `member`. */}
+                {member.role === "host" && isFounder(member.id) && (() => {
+                  const myId = getAdminProfile()?.id || "";
+                  if (!isFounder(myId) || myId === member.id) return null;
+                  const myBiller = BRAND_BILLERS.find((b) => b.id === myId);
+                  return (
+                    <div className="mt-3">
+                      <FounderEraInvoiceDialog
+                        jobId={jobId}
+                        senderId={myId}
+                        senderName={myBiller?.name || myId}
+                        recipient={{ id: member.id, name: member.name }}
+                        onSent={load}
+                      />
+                    </div>
+                  );
+                })()}
 
                 {/* Yrittäjätiedot — founder can pre-fill/verify insurance, Y-tunnus,
                     ennakkoperintärekisteri, ALV & email on the worker's behalf. */}

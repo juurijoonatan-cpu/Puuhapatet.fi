@@ -12,6 +12,32 @@
 /** Tekijän kiinteä hinta, senttiä per ikkuna (20 €). */
 export const TEKIJA_HINTA_CENTS = 2000;
 
+/** Lasku tyyppi: tekijän johtajalle laskuttama työkorvaus, tai kahden johtajan
+ *  välinen ristiinlasku. */
+export const ERA_INVOICE_KINDS = ["tekija", "johtaja_valinen"] as const;
+export type EraInvoiceKind = (typeof ERA_INVOICE_KINDS)[number];
+
+/** Laskun tila — append-only: kun tila on muu kuin "luonnos", lasku on lukittu
+ *  eikä sitä saa enää muokata tai lähettää uudelleen (ks. speksin kohta 4). */
+export const ERA_INVOICE_TILAT = ["luonnos", "lähetetty", "hyväksytty", "hylätty"] as const;
+export type EraInvoiceTila = (typeof ERA_INVOICE_TILAT)[number];
+
+/** Erät 1–3 laskutetaan Joonatanille, erä 4 Matiakselle (kohta 1). */
+export function eraRecipientFounderId(eraNumbers: number[]): "joonatan" | "matias" {
+  return eraNumbers.includes(4) ? "matias" : "joonatan";
+}
+
+/** Ainoat sallitut erävalinnat: [1,2,3] yhdessä tai [4] yksin (kohta 3A.1: johtaja
+ *  valitsee "erät 1-3" tai "erä 4" — ei mielivaltaisia osajoukkoja). */
+export function normalizeEraNumbers(raw: unknown): number[] | null {
+  if (!Array.isArray(raw)) return null;
+  const nums = raw.map((n) => Math.round(Number(n))).filter((n) => Number.isFinite(n));
+  const sorted = Array.from(new Set(nums)).sort((a, b) => a - b);
+  if (sorted.length === 3 && sorted[0] === 1 && sorted[1] === 2 && sorted[2] === 3) return [1, 2, 3];
+  if (sorted.length === 1 && sorted[0] === 4) return [4];
+  return null;
+}
+
 export interface TekijaPesu {
   workerId: string;
   name: string;

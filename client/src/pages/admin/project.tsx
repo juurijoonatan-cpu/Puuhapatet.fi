@@ -20,6 +20,7 @@ import { FOUNDER_IDS } from "@shared/team";
 import { traineeForUserId, traineeForName } from "@shared/trainees";
 import { DEFAULT_WORKER_PER_WINDOW_CENTS } from "@shared/crew";
 import Dashboard from "@/components/fr8/Dashboard";
+import WorkerEraInvoiceDialog from "@/components/fr8/WorkerEraInvoiceDialog";
 import FloorView from "@/components/fr8/FloorView";
 import Section from "@/components/fr8/Section";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -640,6 +641,16 @@ export default function AdminProjectPage() {
               />
             }
           />
+        )}
+        {tab === "dashboard" && deal && (
+          <div style={{ position: "fixed", right: 16, bottom: 16, zIndex: 40 }}>
+            <WorkerEraInvoiceDialog
+              jobId={jobId}
+              workers={workerStats
+                .filter((s) => !isFounder(s.worker) && !isTrainee(s.worker))
+                .map((s) => ({ id: s.worker, name: resolveName(s.worker), washed: s.washed }))}
+            />
+          </div>
         )}
         {tab === "floor" && (
           <FloorView

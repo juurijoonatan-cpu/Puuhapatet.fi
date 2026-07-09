@@ -23,6 +23,12 @@ interface WorkerRowState {
   ennakkoCents: string;
 }
 
+/** Eräpäivän oletusehdotus: 14 vrk tästä hetkestä ("YYYY-MM-DD"). Johtaja voi
+ *  aina vaihtaa tämän — ei enää kiinteä oletus laskun lähetyshetkellä. */
+function defaultDueDate(): string {
+  return new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
 export default function WorkerEraInvoiceDialog({ jobId, workers, onSent }: {
   jobId: number;
   workers: { id: string; name: string; washed: number }[];
@@ -31,6 +37,7 @@ export default function WorkerEraInvoiceDialog({ jobId, workers, onSent }: {
   const [open, setOpen] = useState(false);
   const [era, setEra] = useState<"1-3" | "4">("1-3");
   const [rows, setRows] = useState<Record<string, WorkerRowState>>({});
+  const [dueDate, setDueDate] = useState(defaultDueDate);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sentCount, setSentCount] = useState<number | null>(null);
@@ -39,6 +46,7 @@ export default function WorkerEraInvoiceDialog({ jobId, workers, onSent }: {
     if (!open) return;
     setSentCount(null);
     setError(null);
+    setDueDate(defaultDueDate());
     setRows((prev) => {
       const next: Record<string, WorkerRowState> = {};
       for (const w of workers) {
@@ -76,7 +84,7 @@ export default function WorkerEraInvoiceDialog({ jobId, workers, onSent }: {
     if (activeWorkers.length === 0) { setError("Täytä ainakin yhden tekijän tiedot."); return; }
     setBusy(true);
     setError(null);
-    const res = await api.createWorkerEraInvoiceBatch(jobId, { eraNumbers, workers: activeWorkers });
+    const res = await api.createWorkerEraInvoiceBatch(jobId, { eraNumbers, workers: activeWorkers, dueDate });
     setBusy(false);
     if (res.ok && res.data) {
       setSentCount(res.data.invoices.length);
@@ -108,6 +116,11 @@ export default function WorkerEraInvoiceDialog({ jobId, workers, onSent }: {
             </button>
           ))}
         </div>
+
+        <label className="block text-[11px] text-muted-foreground mb-4">
+          Eräpäivä
+          <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="h-9 mt-0.5" />
+        </label>
 
         <div className="space-y-3">
           {workers.map((w) => {

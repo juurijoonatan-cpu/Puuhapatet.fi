@@ -171,6 +171,7 @@ export const eraInvoices = pgTable("era_invoices", {
   kateCents:              integer("kate_cents"),                 // vain johtaja_valinen
   katePerJohtajaCents:    integer("kate_per_johtaja_cents"),      // vain johtaja_valinen
   manualAdjustmentCents:  integer("manual_adjustment_cents").notNull().default(0), // vapaa muokkauskenttä
+  dueDate:                text("due_date"),                      // eräpäivä, johtajan valitsema (ISO "YYYY-MM-DD")
   tila:                   text("tila").notNull().default("luonnos"), // luonnos|lähetetty|hyväksytty|hylätty
   invoiceNumber:          text("invoice_number"),                // juokseva, per laskuttaja — asetetaan lähetettäessä
   referenceNumber:        text("reference_number"),              // viitenumero — asetetaan lähetettäessä

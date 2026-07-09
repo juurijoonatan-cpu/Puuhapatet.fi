@@ -101,6 +101,7 @@ export interface EraInvoiceClient {
   kateCents: number | null;
   katePerJohtajaCents: number | null;
   manualAdjustmentCents: number;
+  dueDate: string | null;
   tila: EraInvoiceTila;
   invoiceNumber: string | null;
   referenceNumber: string | null;
@@ -604,11 +605,13 @@ export const api = {
   createWorkerEraInvoiceBatch: (jobId: number, data: {
     eraNumbers: number[];
     workers: { workerId: string; name: string; pestytIkkunat: number; sovittuMuutosCents: number; ennakkoCents: number }[];
+    /** Eräpäivä, johtajan valitsema ("YYYY-MM-DD"). Puuttuessaan 14 vrk -oletus. */
+    dueDate?: string;
   }) => request<{ ok: boolean; invoices: EraInvoiceClient[] }>("POST", `/api/jobs/${jobId}/era-invoice/worker-batch`, data),
   // Johtaja lähettää suoraan toiselle johtajalle ristiinlaskun (§3C) — lukittu heti.
   sendFounderEraInvoice: (jobId: number, data: {
     eraNumbers: number[]; senderId: string; itsepestytIkkunat: number; kokonaisikkunat: number;
-    totalCents: number; manualAdjustmentCents?: number;
+    totalCents: number; manualAdjustmentCents?: number; dueDate?: string;
   }) => request<{ ok: boolean; invoice: EraInvoiceClient }>("POST", `/api/jobs/${jobId}/era-invoice/founder`, data),
   // Johtajan PDF-lataus (kohta 4) — admin-Bearer-autentikoitu reitti, joten ei
   // kelpaa suoraan <a href>:ksi; haetaan blobina ja avataan/ladataan JS:llä.

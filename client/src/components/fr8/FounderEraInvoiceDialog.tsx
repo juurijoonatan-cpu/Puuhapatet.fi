@@ -19,6 +19,12 @@ import { computeEraBilling, TEKIJA_HINTA_CENTS } from "@shared/era-billing";
 import { fmtEurCents } from "@shared/tax";
 import { Wallet, Check } from "lucide-react";
 
+/** Eräpäivän oletusehdotus: 14 vrk tästä hetkestä ("YYYY-MM-DD"). Johtaja voi
+ *  aina vaihtaa tämän — ei enää kiinteä oletus laskun lähetyshetkellä. */
+function defaultDueDate(): string {
+  return new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
 export default function FounderEraInvoiceDialog({ jobId, senderId, senderName, recipient, onSent }: {
   jobId: number;
   senderId: string;
@@ -31,6 +37,7 @@ export default function FounderEraInvoiceDialog({ jobId, senderId, senderName, r
   const [kokonaisikkunat, setKokonaisikkunat] = useState("");
   const [totalEur, setTotalEur] = useState("");
   const [manualEur, setManualEur] = useState("");
+  const [dueDate, setDueDate] = useState(defaultDueDate);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sentInvoice, setSentInvoice] = useState<EraInvoiceClient | null>(null);
@@ -43,6 +50,7 @@ export default function FounderEraInvoiceDialog({ jobId, senderId, senderName, r
     if (!open) return;
     setError(null);
     setSentInvoice(null);
+    setDueDate(defaultDueDate());
     void (async () => {
       const res = await api.getEraInvoices(jobId);
       if (!res.ok || !res.data) return;
@@ -85,7 +93,7 @@ export default function FounderEraInvoiceDialog({ jobId, senderId, senderName, r
     setError(null);
     const res = await api.sendFounderEraInvoice(jobId, {
       eraNumbers, senderId, itsepestytIkkunat: itsepestytN, kokonaisikkunat: kokonaisikkunatN,
-      totalCents, manualAdjustmentCents: manualAdjustmentCents || undefined,
+      totalCents, manualAdjustmentCents: manualAdjustmentCents || undefined, dueDate,
     });
     setBusy(false);
     if (res.ok && res.data) {
@@ -136,6 +144,10 @@ export default function FounderEraInvoiceDialog({ jobId, senderId, senderName, r
               <label className="block text-[11px] text-muted-foreground">
                 Vapaa muokkaus (€, +/-)
                 <Input type="text" inputMode="decimal" value={manualEur} onChange={(e) => setManualEur(e.target.value)} className="h-9 mt-0.5 tabular-nums" />
+              </label>
+              <label className="block text-[11px] text-muted-foreground">
+                Eräpäivä
+                <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="h-9 mt-0.5" />
               </label>
             </div>
 

@@ -539,6 +539,16 @@ function isMissingTableError(e: any): boolean {
   return e?.code === "42P01";
 }
 
+/** Eräpäivä (kohta 4): johtaja valitsee sen aina itse laskua tehdessä — ei
+ *  enää kiinteä oletus. Hyväksyy vain kelvollisen "YYYY-MM-DD"-muotoisen
+ *  päivämäärän; muuten null (PDF-generointi lankeaa 14 vrk -oletukseen). */
+function normalizeDueDate(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const s = raw.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  return Number.isNaN(new Date(s + "T12:00:00").getTime()) ? null : s;
+}
+
 function finnishRefWithCheckDigit(numericStr: string): string {
   const s = numericStr.replace(/\D/g, "") || "0";
   const weights = [7, 3, 1];
@@ -1901,11 +1911,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const eraNumbers: number[] = JSON.parse(row.eraNumbers || "[]");
     const rivit = JSON.parse(row.rivit || "{}");
     const invoiceDate = new Date(row.sentAt || row.createdAt).toLocaleDateString("fi-FI");
-    // Eräpäivä: spekissä ei anneta maksuehtoa, joten oletetaan yleinen
-    // suomalainen käytäntö "14 vrk netto" laskun lähetyksestä. Vahvista/säädä
-    // kirjanpitäjän kanssa jos toinen maksuehto on tarpeen.
-    const dueDate = new Date((row.sentAt ? new Date(row.sentAt).getTime() : Date.now()) + 14 * 24 * 3600 * 1000)
-      .toLocaleDateString("fi-FI");
+    // Eräpäivä: johtaja valitsee sen aina itse laskua tehdessä (tallennettu
+    // `row.dueDate`:en, "YYYY-MM-DD"). Jos syystä tai toisesta puuttuu (esim.
+    // ennen tätä muutosta luotu lasku), langetaan "14 vrk netto" -oletukseen.
+    const dueDate = row.dueDate
+      ? new Date(row.dueDate + "T12:00:00").toLocaleDateString("fi-FI")
+      : new Date((row.sentAt ? new Date(row.sentAt).getTime() : Date.now()) + 14 * 24 * 3600 * 1000)
+        .toLocaleDateString("fi-FI");
     const invoiceNumber = row.invoiceNumber || "—";
     const referenceNumber = row.referenceNumber || "—";
 
@@ -2084,6 +2096,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const eraNumbers = normalizeEraNumbers(req.body?.eraNumbers);
       if (!eraNumbers) return res.status(400).json({ error: "Virheellinen erävalinta (1-3 tai 4)" });
       const recipientId = eraRecipientFounderId(eraNumbers);
+      const dueDate = normalizeDueDate(req.body?.dueDate);
 
       const rawWorkers = Array.isArray(req.body?.workers) ? req.body.workers : [];
       if (rawWorkers.length === 0) return res.status(400).json({ error: "Tekijöitä puuttuu" });
@@ -2106,6 +2119,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           eraNumbers: JSON.stringify(eraNumbers),
           rivit: JSON.stringify({ input: { workerId, name, pestytIkkunat, sovittuMuutosCents, ennakkoCents }, computed }),
           totalCents: computed.maksettavaCents,
+          dueDate,
           tila: "luonnos" satisfies EraInvoiceTila,
         }).returning();
         created.push(row);
@@ -2147,6 +2161,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const kokonaisikkunat = Math.max(0, Number(req.body?.kokonaisikkunat) || 0);
       const totalCents = Math.round(Number(req.body?.totalCents) || 0);
       const manualAdjustmentCents = Math.round(Number(req.body?.manualAdjustmentCents) || 0);
+      const dueDate = normalizeDueDate(req.body?.dueDate);
       if (totalCents <= 0) return res.status(400).json({ error: "Kokonaissumma puuttuu" });
 
       // Tekijöiden ansaittu + ikkunat tälle erälle: summataan jo luoduista
@@ -2215,6 +2230,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           kateCents: result.kateCents,
           katePerJohtajaCents: senderRow.katePerJohtajaCents,
           manualAdjustmentCents,
+          dueDate,
           tila: "lähetetty" satisfies EraInvoiceTila,
           invoiceNumber,
           sentAt: new Date(),

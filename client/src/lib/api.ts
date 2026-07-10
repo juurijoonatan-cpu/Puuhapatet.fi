@@ -1130,6 +1130,16 @@ export const api = {
     request<{ ok: boolean; member: CrewMember; emailId?: string }>(
       "POST", `/api/jobs/${jobId}/crew/${memberId}/payout/${payoutId}/paid`, billerId ? { billerId } : undefined),
 
+  // ─── Kirjanpito → Sheets/Drive-synkka (ks. docs/kirjanpito-sheets-integraatio.md) ──
+  getSyncStatus: () =>
+    request<{
+      ok: boolean; enabled: boolean; successCount: number; failureCount: number;
+      recent: { id: number; recordType: string; recordId: string; jobId: number; memberId: string; success: boolean; error: string | null; syncedAt: string }[];
+    }>("GET", "/api/admin/sync-status"),
+
+  syncMissingPayouts: () =>
+    request<{ ok: boolean; attempted: number }>("POST", "/api/admin/sync-missing"),
+
   // Legacy compat stubs
   getJob: (_jobId: string): Promise<ApiResponse<{ ok: boolean; job?: unknown }>> =>
     Promise.resolve({ ok: false }),

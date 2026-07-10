@@ -305,4 +305,37 @@ export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ i
 export type ChatConversation = typeof chatConversations.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type InsertChatConversation = z.infer<typeof insertChatConversationSchema>;
+
+// ─── Kirjanpito → Google Sheets + Drive -synkka ───────────────────────────────
+// Ks. docs/kirjanpito-sheets-integraatio.md. Yksi Drive-kansio per tekijä
+// (ID välimuistitettu tähän, ettei jokainen lasku tee ylimääräistä Drive-hakua),
+// ja jokaisesta synkkayrityksestä (onnistunut tai ei) jää rivi lokiin — sama
+// idea kuin eraInvoiceEmails, mutta laskutyyppi-agnostinen (recordType).
+
+export const driveWorkerFolders = pgTable("drive_worker_folders", {
+  id:              serial("id").primaryKey(),
+  workerId:        text("worker_id").notNull().unique(),
+  folderId:        text("folder_id").notNull(),
+  sharedWithEmail: text("shared_with_email"),  // jos kansio on jaettu tekijän omalle Google-tilille
+  createdAt:       timestamp("created_at").defaultNow().notNull(),
+});
+
+export const externalSyncLog = pgTable("external_sync_log", {
+  id:         serial("id").primaryKey(),
+  recordType: text("record_type").notNull(),   // "payout" (vaihe 1); "era_invoice" myöhemmin
+  recordId:   text("record_id").notNull(),      // payout.id
+  jobId:      integer("job_id").notNull(),
+  memberId:   text("member_id").notNull(),
+  target:     text("target").notNull().default("sheets_drive"),
+  success:    boolean("success").notNull(),
+  error:      text("error"),
+  syncedAt:   timestamp("synced_at").defaultNow().notNull(),
+});
+
+export const insertDriveWorkerFolderSchema = createInsertSchema(driveWorkerFolders).omit({ id: true, createdAt: true });
+export const insertExternalSyncLogSchema = createInsertSchema(externalSyncLog).omit({ id: true, syncedAt: true });
+export type DriveWorkerFolder = typeof driveWorkerFolders.$inferSelect;
+export type ExternalSyncLog = typeof externalSyncLog.$inferSelect;
+export type InsertDriveWorkerFolder = z.infer<typeof insertDriveWorkerFolderSchema>;
+export type InsertExternalSyncLog = z.infer<typeof insertExternalSyncLogSchema>;
 export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;

@@ -39,6 +39,22 @@ export const VAT_SMALL_BUSINESS_LIMIT_EUR = 20000;
 export const WITHHOLDING_NATURAL_PERSON = 0.60; // luonnollinen henkilö / toiminimi, ei verokorttia
 export const WITHHOLDING_COMPANY = 0.13;        // oikeushenkilö (Oy, Ky, Ay…)
 
+/** Kotitalousvähennys (kotitalousvähennyslaki) — yksityisasiakkaan työn osuudesta
+ *  verotuksessa takaisin saama osuus, ja henkilökohtainen kattoraha vuodessa.
+ *  Aiemmin nämä luvut oli kirjoitettu käsin auki neljään eri paikkaan
+ *  (sähköpostit, PDF-tositteet) — tämä on nyt niiden yksi lähde. */
+export const HOUSEHOLD_DEDUCTION_RATE = 0.35;
+export const HOUSEHOLD_DEDUCTION_CAP_EUR = 2250;
+
+/** Lyhyt, uudelleenkäytettävä selkokielinen huomautus kotitalousvähennyksestä
+ *  asiakkaalle lähetettäviin sähköposteihin/tositteisiin. */
+export function householdDeductionNote(lang: "fi" | "en" = "fi"): string {
+  const pct = fmtPct(HOUSEHOLD_DEDUCTION_RATE);
+  return lang === "en"
+    ? `This service is typically eligible for the Finnish household tax deduction (~${pct} of the labour cost, up to €${HOUSEHOLD_DEDUCTION_CAP_EUR}/person/year). Confirm eligibility at vero.fi or with a tax adviser.`
+    : `Tämä palvelu on tyypillisesti kotitalousvähennyskelpoinen (~${pct} työn osuudesta, enintään ${HOUSEHOLD_DEDUCTION_CAP_EUR} € / henkilö / vuosi). Tarkista soveltuvuus osoitteessa vero.fi tai veroneuvojalta.`;
+}
+
 /** Alihankkijan oma ALV-asema (itse ilmoittama). */
 export type VatStatus =
   | "alv_rekisterissa"   // ALV-velvollinen → lisää 25,5 % laskuun

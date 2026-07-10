@@ -35,7 +35,8 @@ import {
 import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED, requiredAgreementIdsForSet, resolveAgreementSet } from "@shared/worker-agreements";
 import {
   computeTax, readVatStatus, readInPrepaymentRegister, readPayeeType, WITHHOLDING_COMPANY,
-  WITHHOLDING_NATURAL_PERSON, VAT_SMALL_BUSINESS_LIMIT_EUR, fmtPct, fmtEurCents, type TaxBreakdown,
+  WITHHOLDING_NATURAL_PERSON, VAT_SMALL_BUSINESS_LIMIT_EUR, ALV_RATE, fmtPct, fmtEurCents, type TaxBreakdown,
+  HOUSEHOLD_DEDUCTION_RATE, HOUSEHOLD_DEDUCTION_CAP_EUR,
 } from "@shared/tax";
 import {
   BRAND_BILLERS, DEFAULT_BILLER_ID, resolveBrandBiller, billerToBuyer, inferBillerId,
@@ -44,6 +45,7 @@ import {
 import { computePayProgress } from "@shared/payprogress";
 import { traineeForUserId, traineeForName, type TraineeInfo } from "@shared/trainees";
 import { computeBillerTurnover, computeFounderSettlement } from "./finance/settlement";
+import { getIncomeStatement, getBalanceSheet } from "./finance/reports";
 import { registerFinanceRoutes } from "./finance/routes";
 import { uploadPdf } from "./drive/upload";
 import { BRAND_BILLERS as DRIVE_BRAND_BILLERS } from "@shared/billers";
@@ -2405,8 +2407,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         <p style="margin:0 0 6px;font-weight:700;color:#065f46;font-size:13px">${isEn ? "HOUSEHOLD TAX DEDUCTION (KOTITALOUSVÄHENNYS)" : "MUISTA KOTITALOUSVÄHENNYS"}</p>
         <p style="margin:0;color:#047857;font-size:13px;line-height:1.6">
           ${isEn
-            ? `This service is typically eligible for the Finnish <strong>household tax deduction</strong>. You may reclaim approximately 35% of the labour cost in your taxes — up to €2,250 per person per year. This invoice serves as documentation, no separate receipt needed. Confirm eligibility at vero.fi or with a tax adviser.<br><br>More info: <a href="https://vero.fi/en/individuals/tax-cards-and-tax-returns/deductions/household-deduction/" style="color:#047857;font-weight:600">vero.fi (household deduction)</a>`
-            : `Tämä palvelu on tyypillisesti <strong>kotitalousvähennyskelpoinen</strong>. Voit hakea verotuksessa noin 35 % työn osuudesta takaisin — enintään 2 250 € / henkilö / vuosi. Lasku toimii dokumenttina, ei erillistä kuittia tarvita. Tarkista soveltuvuus osoitteessa vero.fi tai veroneuvojalta.<br><br>Lisätietoa: <a href="https://vero.fi/kotitalousvahennys" style="color:#047857;font-weight:600">vero.fi/kotitalousvähennys</a>`
+            ? `This service is typically eligible for the Finnish <strong>household tax deduction</strong>. You may reclaim approximately ${fmtPct(HOUSEHOLD_DEDUCTION_RATE)} of the labour cost in your taxes — up to €${HOUSEHOLD_DEDUCTION_CAP_EUR} per person per year. This invoice serves as documentation, no separate receipt needed. Confirm eligibility at vero.fi or with a tax adviser.<br><br>More info: <a href="https://vero.fi/en/individuals/tax-cards-and-tax-returns/deductions/household-deduction/" style="color:#047857;font-weight:600">vero.fi (household deduction)</a>`
+            : `Tämä palvelu on tyypillisesti <strong>kotitalousvähennyskelpoinen</strong>. Voit hakea verotuksessa noin ${fmtPct(HOUSEHOLD_DEDUCTION_RATE)} työn osuudesta takaisin — enintään ${HOUSEHOLD_DEDUCTION_CAP_EUR} € / henkilö / vuosi. Lasku toimii dokumenttina, ei erillistä kuittia tarvita. Tarkista soveltuvuus osoitteessa vero.fi tai veroneuvojalta.<br><br>Lisätietoa: <a href="https://vero.fi/kotitalousvahennys" style="color:#047857;font-weight:600">vero.fi/kotitalousvähennys</a>`
           }
         </p>
       </div>
@@ -2760,8 +2762,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           <p style="margin:0 0 4px;font-weight:600;color:#374151;font-size:12px">${isEn ? "HOUSEHOLD TAX DEDUCTION" : "KOTITALOUSVÄHENNYS"}</p>
           <p style="margin:0;color:#6b7280;font-size:12px;line-height:1.6">
             ${isEn
-              ? "This document may serve as proof for the Finnish household tax deduction (~35% of the labour cost, up to €2,250/person/year). Confirm eligibility at vero.fi or with a tax adviser. No separate receipt needed."
-              : "Tämä lasku voi toimia kotitalousvähennyksen dokumenttina (~35 % työn osuudesta, enintään 2 250 € / henkilö / vuosi). Tarkista soveltuvuus osoitteessa vero.fi tai veroneuvojalta. Erillistä kuittia ei tarvita."}
+              ? `This document may serve as proof for the Finnish household tax deduction (~${fmtPct(HOUSEHOLD_DEDUCTION_RATE)} of the labour cost, up to €${HOUSEHOLD_DEDUCTION_CAP_EUR}/person/year). Confirm eligibility at vero.fi or with a tax adviser. No separate receipt needed.`
+              : `Tämä lasku voi toimia kotitalousvähennyksen dokumenttina (~${fmtPct(HOUSEHOLD_DEDUCTION_RATE)} työn osuudesta, enintään ${HOUSEHOLD_DEDUCTION_CAP_EUR} € / henkilö / vuosi). Tarkista soveltuvuus osoitteessa vero.fi tai veroneuvojalta. Erillistä kuittia ei tarvita.`}
           </p>
         </div>` : "";
 
@@ -3258,8 +3260,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const vDays     = validDays || 14;
       const validUntil = new Date(Date.now() + vDays * 24 * 60 * 60 * 1000)
         .toLocaleDateString(isEn ? "en-GB" : "fi-FI");
-
-      const kotitalous = Math.round(Number(total) * 0.65);
 
       // ── Intro text ──────────────────────────────────────────────────────
       let defaultIntro: string;
@@ -7315,6 +7315,73 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             },
           },
         },
+        {
+          type: "function",
+          function: {
+            name: "get_income_statement",
+            description: "Hae jommankumman perustajan (Y-tunnuksen) VIRALLINEN tuloslaskelma kirjanpidosta (server/finance) — liikevaihto, kulut tileittäin, tilikauden tulos. Käytä tätä AINA kun kysytään 'mikä on tulos/voitto tänä vuonna', ei koskaan omaa arviota. Tämä EI ole sama luku kuin henkilön oma keikkaosuus-arvio — kerro tarvittaessa että tuloslaskelma kirjaa koko laskutetun summan laskuttaneen bossin kirjanpitoon.",
+            parameters: {
+              type: "object",
+              properties: {
+                ledger_id: { type: "string", enum: BRAND_BILLERS.map(b => b.id), description: "Kumman perustajan kirjanpito (Y-tunnus)" },
+                year: { type: "number", description: "Tilikausi (kalenterivuosi). Oletus kuluva vuosi jos ei annettu." },
+              },
+              required: ["ledger_id"],
+            },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "get_balance_sheet",
+            description: "Hae jommankumman perustajan taseen tämänhetkinen tilanne kirjanpidosta (vastaavaa/vastattavaa, kumulatiivinen tulos). Käytä kun kysytään esim. 'paljonko rahaa on kertynyt' tai 'mikä on oma pääoma'.",
+            parameters: {
+              type: "object",
+              properties: {
+                ledger_id: { type: "string", enum: BRAND_BILLERS.map(b => b.id), description: "Kumman perustajan kirjanpito (Y-tunnus)" },
+              },
+              required: ["ledger_id"],
+            },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "get_vat_status",
+            description: "Hae molempien perustajien ALV-vapauden (vähäisen toiminnan, AVL 3 §) tilanne: kuinka paljon kumpikin on laskuttanut kuluvana vuonna suhteessa 20 000 €/vuosi -rajaan. Käytä AINA kun kysytään ALV-rajasta, ALV-velvollisuudesta, tai 'paljonko voin vielä laskuttaa'.",
+            parameters: {
+              type: "object",
+              properties: {
+                year: { type: "number", description: "Kalenterivuosi. Oletus kuluva vuosi." },
+              },
+            },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "get_founder_settlement_status",
+            description: "Hae bossien keskinäisen tilityksen tämänhetkinen tilanne: kuka on kerännyt kenenkin osuuksia laskuttaessaan yhteisiä keikkoja, kuinka paljon on jo maksettu/kuitattu, ja paljonko on avoinna. Käytä kun kysytään 'paljonko olen velkaa toiselle' tai 'onko tasan'.",
+            parameters: { type: "object", properties: {} },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "explain_tax",
+            description: "Laske TARKKA ALV- ja ennakonpidätyserittely työkorvaukselle sovelluksen omilla verovakioilla (ei koskaan päästäsi/arvaamalla). Käytä kun kysytään esim. 'paljonko alihankkijalle jää käteen', 'kuinka paljon pidätetään' tai 'lisääkö tämä ALV:n'.",
+            parameters: {
+              type: "object",
+              properties: {
+                labor_amount_eur: { type: "number", description: "Työkorvaus ilman ALV:tä, euroina" },
+                vat_status: { type: "string", enum: ["alv_rekisterissa", "vahainen_toiminta", "ei_tiedossa"], description: "Onko laskuttaja ALV-rekisterissä" },
+                in_prepayment_register: { type: "boolean", description: "Onko maksunsaaja ennakkoperintärekisterissä (true = maksetaan bruttona, ei pidätystä)" },
+                payee_type: { type: "string", enum: ["individual", "company"], description: "Maksunsaajan muoto — vaikuttaa ennakonpidätys-%:iin jos ei rekisterissä. Oletus 'individual'." },
+              },
+              required: ["labor_amount_eur", "vat_status", "in_prepayment_register"],
+            },
+          },
+        },
       ] : [];
 
       const systemTurn: ChatTurn = { role: "system", content: adminSystemPrompt({ userName: userName || "tiimiläinen", role: effectiveRole, contextBlock }) };
@@ -7469,6 +7536,51 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
                 });
                 toolResult = `Ehdotus luotu (EI vielä tehty): liidi "${args.name}". Käyttäjä näkee ehdotuksen ja hyväksyy sen itse napilla. ÄLÄ väitä että liidi on jo lisätty.`;
               }
+            } else if (tc.function.name === "get_income_statement") {
+              const ledgerId = BRAND_BILLERS.some(b => b.id === args.ledger_id) ? args.ledger_id : BRAND_BILLERS[0].id;
+              const year = Number(args.year) || new Date().getFullYear();
+              const stmt = await getIncomeStatement(ledgerId, year);
+              const revLines = stmt.revenue.map(l => `${l.name} ${fmtEurCents(l.cents)}`).join(", ") || "ei kirjauksia";
+              const expLines = stmt.expenses.map(l => `${l.name} −${fmtEurCents(l.cents)}`).join(", ") || "ei kirjauksia";
+              toolResult = `Tuloslaskelma (${ledgerId}, ${year}) — kirjanpidosta, ei arvio: Liikevaihto yhteensä ${fmtEurCents(stmt.revenueTotal)} (${revLines}). Kulut yhteensä ${fmtEurCents(stmt.expensesTotal)} (${expLines}). Tilikauden tulos ${fmtEurCents(stmt.result)}.`;
+            } else if (tc.function.name === "get_balance_sheet") {
+              const ledgerId = BRAND_BILLERS.some(b => b.id === args.ledger_id) ? args.ledger_id : BRAND_BILLERS[0].id;
+              const sheet = await getBalanceSheet(ledgerId, new Date());
+              const balanced = sheet.assetsTotal === sheet.liabilitiesAndEquityTotal ? "täsmää" : "EI täsmää — tarkista kirjaukset";
+              toolResult = `Tase (${ledgerId}, tilanne ${new Date(sheet.asOf).toLocaleDateString("fi-FI")}) — kirjanpidosta: Vastaavaa yhteensä ${fmtEurCents(sheet.assetsTotal)}. Vastattavaa yhteensä ${fmtEurCents(sheet.liabilitiesAndEquityTotal)} (josta kumulatiivinen tulos ${fmtEurCents(sheet.cumulativeResultCents)}). Tase ${balanced}.`;
+            } else if (tc.function.name === "get_vat_status") {
+              const year = Number(args.year) || new Date().getFullYear();
+              const rows = await db.select().from(jobs);
+              const turnover = computeBillerTurnover(rows);
+              const yearMap = turnover.turnoverByYear[String(year)] || {};
+              const perBiller = turnover.billers.map(b => {
+                const cents = yearMap[b.id] ?? 0;
+                const pct = Math.round((cents / (turnover.limitEur * 100)) * 100);
+                return `${b.name}: ${fmtEurCents(cents)} / ${turnover.limitEur} € (${pct} %)`;
+              }).join("; ");
+              toolResult = `ALV-vapauden (vähäinen toiminta, AVL 3 §) raja on ${turnover.limitEur} €/kalenterivuosi/henkilö. Tilanne ${year}: ${perBiller}. Raja koskee henkilön KAIKKEA liiketoimintaa, ei vain Puuhapatetin kautta laskutettua — tämä luku on siis lattia, ei koko totuus.`;
+            } else if (tc.function.name === "get_founder_settlement_status") {
+              const rows = await db.select().from(jobs);
+              const customerRows = await db.select().from(customers);
+              const expenseRows = await db.select().from(expenses);
+              const settledRows = await db.select().from(founderSettlements);
+              const s = computeFounderSettlement(rows, customerRows, expenseRows, settledRows);
+              if (s.crossInvoices.length === 0) {
+                toolResult = `Bossien tilitys on tasan — kenenkään ei tarvitse maksaa toiselle juuri nyt.`;
+              } else {
+                toolResult = s.crossInvoices.map(c => `${c.fromName} maksaa ${c.toName}lle ${fmtEurCents(c.cents)}`).join("; ") +
+                  (s.unassignedEraCount ? ` (HUOM: ${s.unassignedEraCount} urakkaerää ilman laskuttajaa — velka ei ole täydellinen ennen kuin ne kohdistetaan)` : "");
+              }
+            } else if (tc.function.name === "explain_tax") {
+              const laborCents = Math.round(Number(args.labor_amount_eur || 0) * 100);
+              const vatStatus = ["alv_rekisterissa", "vahainen_toiminta", "ei_tiedossa"].includes(args.vat_status) ? args.vat_status : "ei_tiedossa";
+              const payeeType = args.payee_type === "company" ? "company" : "individual";
+              const tax = computeTax({
+                laborCents, vatStatus, inPrepaymentRegister: !!args.in_prepayment_register, payeeType,
+              });
+              toolResult = `Työkorvaus ${fmtEurCents(laborCents)}. ALV ${fmtPct(tax.vatRate)}: ${fmtEurCents(tax.vatCents)}. Laskun loppusumma ${fmtEurCents(tax.invoiceTotalCents)}. ` +
+                `Ennakonpidätys ${tax.withheld ? fmtPct(tax.withholdingRate) : "ei pidätystä"}: ${fmtEurCents(tax.withholdingCents)}. ` +
+                `Maksettava tilille: ${fmtEurCents(tax.payableCents)}. Perustelut: ${tax.notes.join(" ")}`;
             } else {
               toolResult = `Tuntematon työkalu: ${tc.function.name}`;
             }
@@ -7992,6 +8104,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const revenue = done.reduce((s, j) => s + (j.agreedPrice || 0), 0);
       lines.push(`\nTalous (vain perustajat): valmiita keikkoja ${done.length}, liikevaihto valmiista ${eur(revenue)}.`);
       lines.push(`Asiakkaita yhteensä: ${allCustomers.length}.`);
+
+      // ── Kirjanpito & verotus — kuluvan tilikauden tiivistelmä + omat vakiot ──
+      // Näin yleisiin kysymyksiin ("mikä on tämän vuoden tulos", "onko ALV-raja
+      // lähellä") voi vastata suoraan ilman erillistä työkalukutsua, ja tekoäly
+      // näkee sovelluksen OMAT vero-vakiot sen sijaan että nojaisi yleiseen,
+      // mahdollisesti vanhentuneeseen koulutustietoon.
+      try {
+        const thisYear = new Date().getFullYear();
+        const statements = await Promise.all(BRAND_BILLERS.map(b => getIncomeStatement(b.id, thisYear)));
+        const stmtLine = BRAND_BILLERS.map((b, i) => `${b.name}: tulos ${eur(statements[i].result)} (liikevaihto ${eur(statements[i].revenueTotal)} − kulut ${eur(statements[i].expensesTotal)})`).join("; ");
+        lines.push(`\nKirjanpito ${thisYear} (server/finance, virallinen — ei sama kuin henkilön oma keikkaosuus-arvio): ${stmtLine}.`);
+
+        const turnoverRows = await db.select().from(jobs);
+        const turnover = computeBillerTurnover(turnoverRows);
+        const yearMap = turnover.turnoverByYear[String(thisYear)] || {};
+        const turnoverLine = turnover.billers.map(b => `${b.name} ${eur(yearMap[b.id] ?? 0)}/${turnover.limitEur} €`).join(", ");
+        lines.push(`ALV-vapauden raja (vähäinen toiminta, AVL 3 §) ${thisYear}: ${turnoverLine}.`);
+      } catch (e: any) {
+        console.error("buildAdminContext: kirjanpito-yhteenveto epäonnistui:", e?.message || e);
+      }
+      lines.push(
+        `Puuhapatetin omat verovakiot (käytä AINA näitä, älä yleistä/vanhentunutta tietoa): ` +
+        `ALV ${fmtPct(ALV_RATE)} (voimassa 1.9.2024 alkaen), ALV-vapauden raja ${VAT_SMALL_BUSINESS_LIMIT_EUR} €/vuosi/henkilö (1.1.2025 alkaen), ` +
+        `ennakonpidätys ${fmtPct(WITHHOLDING_NATURAL_PERSON)} (luonnollinen henkilö/toiminimi ilman verokorttia) tai ${fmtPct(WITHHOLDING_COMPANY)} (oikeushenkilö), ` +
+        `kotitalousvähennys ${fmtPct(HOUSEHOLD_DEDUCTION_RATE)}, enintään ${HOUSEHOLD_DEDUCTION_CAP_EUR} €/henkilö/vuosi. ` +
+        `Tarkkaan verolaskuun (esim. paljonko alihankkijalle jää käteen) käytä explain_tax-työkalua äläkä laske päästäsi.`
+      );
 
       // Ovelta ovelle -myyjien keräämät liidit + maksettavat palkkiot.
       const marketerLeads = allJobs.filter(j => j.submittedBy);

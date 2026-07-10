@@ -6,7 +6,8 @@ import bwipjs from "bwip-js";
 import PDFDocument from "pdfkit";
 import rateLimit from "express-rate-limit";
 import { db } from "./db";
-import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, founderSettlements, eraInvoices, eraInvoiceEmails, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
+import { syncPayoutRecord, isSheetsSyncEnabled, getSyncStatus } from "./sheets-sync";
+import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, founderSettlements, eraInvoices, eraInvoiceEmails, driveWorkerFolders, externalSyncLog, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 import {
   computeEraBilling, TEKIJA_HINTA_CENTS, eraRecipientFounderId, normalizeEraNumbers,
   eraInvoiceRespondTransition,
@@ -6880,8 +6881,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Generate the worker's invoice PDF and email it to the team (best-effort).
       const fmtEur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
       let emailId: string | undefined;
+      let pdf: Buffer | undefined;
       try {
-        const pdf = await generateWorkerInvoicePdf({
+        pdf = await generateWorkerInvoicePdf({
           invoiceNo, workerName, workerYTunnus, workerAddress, workerIban,
           windows: payout.windows, amountCents: payout.amountCents,
           note: payout.note, invoiceDate, paidDate: invoiceDate, tax, buyer,
@@ -6973,11 +6975,97 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         console.error("Worker invoice email error:", e);
       }
 
+      // Kirjanpito → Sheets/Drive-synkka (best-effort, ei koskaan awaitata — riippumaton
+      // sähköpostista ja ei koskaan voi hidastaa/kaataa tätä pyyntöä). Ks.
+      // docs/kirjanpito-sheets-integraatio.md.
+      if (pdf) {
+        void syncPayoutRecord({
+          jobId: job.id, memberId: mid, payoutId: payout.id,
+          workerName, workerYTunnus, workerEmail: member.profile?.email,
+          invoiceNo, invoiceDate, windows: payout.windows, note: payout.note,
+          buyer, tax, pdfBuffer: pdf,
+        });
+      }
+
       res.json({ ok: true, member: (saved.crew || []).find((m) => m.id === mid), emailId });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
   });
+
+  // Kirjanpito → Sheets/Drive-synkan tila (viimeisimmät yritykset + laskurit),
+  // admin-UI:ta varten (tax-export.tsx). Ks. docs/kirjanpito-sheets-integraatio.md.
+  app.get("/api/admin/sync-status", async (req, res) => {
+    try {
+      const status = await getSyncStatus(30);
+      res.json({ ok: true, ...status });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Täsmäytysajo: käy läpi kaikki "maksettu"-tilaiset tekijän maksut ja yrittää
+  // uudelleen ne, joilla ei ole vielä onnistunutta synkkaa. Kutsuu samaa
+  // syncPayoutRecord-funktiota kuin /paid-reitti, regeneroiden PDF:n lukitusta
+  // payout-tilannekuvasta. Käytetään sekä admin-napista että ajastetusti alla.
+  async function reconcileMissingPayoutSyncs(): Promise<{ attempted: number }> {
+    if (!isSheetsSyncEnabled()) return { attempted: 0 };
+    const allJobs = await db.select().from(jobs);
+    let attempted = 0;
+    for (const job of allJobs) {
+      const project = parseProject(job.projectData ?? null);
+      if (!project) continue;
+      for (const member of project.crew || []) {
+        for (const payout of member.payouts || []) {
+          if (payout.status !== "maksettu" || !payout.tax || !payout.buyer || !payout.invoiceNo) continue;
+          const [logRow] = await db.select().from(externalSyncLog)
+            .where(and(eq(externalSyncLog.recordType, "payout"), eq(externalSyncLog.recordId, payout.id), eq(externalSyncLog.success, true)));
+          if (logRow) continue;
+          attempted++;
+          try {
+            const billing = payout.billing || {};
+            const workerName = billing.name || member.profile?.fullName || member.name;
+            const invoiceDate = payout.paidAt ? new Date(payout.paidAt).toLocaleDateString("fi-FI") : new Date().toLocaleDateString("fi-FI");
+            const pdf = await generateWorkerInvoicePdf({
+              invoiceNo: payout.invoiceNo, workerName, workerYTunnus: billing.yTunnus, workerAddress: billing.address, workerIban: billing.iban,
+              windows: payout.windows, amountCents: payout.amountCents, note: payout.note, invoiceDate, paidDate: invoiceDate,
+              tax: payout.tax, buyer: payout.buyer, acceptedAt: payout.approvedAt, expenses: payout.expenses,
+            });
+            await syncPayoutRecord({
+              jobId: job.id, memberId: member.id, payoutId: payout.id,
+              workerName, workerYTunnus: billing.yTunnus, workerEmail: member.profile?.email,
+              invoiceNo: payout.invoiceNo, invoiceDate, windows: payout.windows, note: payout.note,
+              buyer: payout.buyer, tax: payout.tax, pdfBuffer: pdf,
+            });
+          } catch (e) {
+            console.error("reconcileMissingPayoutSyncs: payout retry failed", payout.id, e);
+          }
+        }
+      }
+    }
+    return { attempted };
+  }
+
+  app.post("/api/admin/sync-missing", async (req, res) => {
+    try {
+      if (!isSheetsSyncEnabled()) {
+        return res.status(503).json({ error: "Sheets/Drive-synkka ei ole käytössä (ympäristömuuttujat puuttuvat)." });
+      }
+      const result = await reconcileMissingPayoutSyncs();
+      res.json({ ok: true, ...result });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Automaattinen täsmäytys taustalla 30 min välein — nappaa senkin, jos Sheets/
+  // Drive oli poikki pidempään kuin syncPayoutRecordin omat uusintayritykset.
+  // No-oppaa kokonaan jos synkka ei ole konfiguroitu (ei ympäristömuuttujia).
+  if (isSheetsSyncEnabled()) {
+    setInterval(() => {
+      reconcileMissingPayoutSyncs().catch((e) => console.error("Scheduled sync reconciliation failed:", e));
+    }, 30 * 60 * 1000);
+  }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // AI ASSISTANT — public chat bot, live admin handoff, and in-admin assistant

@@ -113,6 +113,10 @@ export default function TaxExportPage() {
     profile?.id && BRAND_BILLERS.some(b => b.id === profile.id) ? profile.id : BRAND_BILLERS[0].id
   );
   const [laskutFilter, setLaskutFilter] = useState<string>("kaikki");
+  // Kirjanpito → Sheets/Drive-synkan tila (ks. docs/kirjanpito-sheets-integraatio.md)
+  // — nyt osa Lisäasetuksia, ei enää oma dropdown.
+  const [syncStatus, setSyncStatus] = useState<Awaited<ReturnType<typeof api.getSyncStatus>>["data"] | null>(null);
+  const [syncBusy, setSyncBusy] = useState(false);
 
   const loadMoney = useCallback(() => {
     api.getJobs().then((res) => {
@@ -131,8 +135,17 @@ export default function TaxExportPage() {
       api.getGigInstalments().then((res) => { if (res.ok && res.data) setInstalments(res.data); });
       if (profile?.id) api.getWorker(profile.id).then((res) => { if (res.ok) setMyDetail(res.data ?? null); });
       if (otherFounder?.id) api.getWorker(otherFounder.id).then((res) => { if (res.ok) setOtherDetail(res.data ?? null); });
+      api.getSyncStatus().then((res) => { if (res.ok && res.data) setSyncStatus(res.data); });
     }
   }, [isHost, profile?.id, otherFounder?.id]);
+
+  const handleSyncMissing = async () => {
+    setSyncBusy(true);
+    await api.syncMissingPayouts();
+    const res = await api.getSyncStatus();
+    if (res.ok && res.data) setSyncStatus(res.data);
+    setSyncBusy(false);
+  };
 
   useEffect(() => { loadMoney(); }, []);
 
@@ -670,8 +683,8 @@ export default function TaxExportPage() {
               </TabsContent>
             </Tabs>
 
-            {/* ── Lisäasetukset: korjaustyökalut, piilossa oletuksena ───────── */}
-            {((instalments && instalments.instalments.length > 0) || (settlement && (settlement.perGig.length > 0 || settlement.smallJobs.length > 0 || (settlement.settled ?? []).length > 0))) && (
+            {/* ── Lisäasetukset: korjaus- ja ylläpitotyökalut, piilossa oletuksena ── */}
+            {((instalments && instalments.instalments.length > 0) || (settlement && (settlement.perGig.length > 0 || settlement.smallJobs.length > 0 || (settlement.settled ?? []).length > 0)) || syncStatus) && (
               <Disclosure
                 className="mt-2 print:hidden"
                 icon={<SlidersHorizontal className="w-4 h-4 text-muted-foreground" />}
@@ -691,6 +704,55 @@ export default function TaxExportPage() {
                     <div>
                       <p className="text-xs font-semibold text-foreground mb-2">Bossien maksuhistoria &amp; erittely</p>
                       <FounderDetails settlement={settlement} onChanged={loadMoney} />
+                    </div>
+                  )}
+                  {syncStatus && (
+                    <div>
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <p className="text-xs font-semibold text-foreground">Kirjanpito → Sheets/Drive</p>
+                        <span className="text-xs text-muted-foreground tabular-nums">
+                          {syncStatus.enabled
+                            ? `${syncStatus.successCount} ok${syncStatus.failureCount > 0 ? ` · ${syncStatus.failureCount} virhettä` : ""}`
+                            : "ei käytössä"}
+                        </span>
+                      </div>
+                      {!syncStatus.enabled ? (
+                        <p className="text-xs text-muted-foreground">
+                          Ei vielä konfiguroitu — aseta <code className="text-[11px]">GOOGLE_SERVICE_ACCOUNT_JSON</code>,{" "}
+                          <code className="text-[11px]">GOOGLE_SHEETS_LASKUTUS_ID</code> ja{" "}
+                          <code className="text-[11px]">GOOGLE_DRIVE_LASKUTUS_FOLDER_ID</code> (ks.{" "}
+                          docs/kirjanpito-sheets-integraatio.md).
+                        </p>
+                      ) : (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-xs text-muted-foreground">
+                              Tekijöiden laskut synkataan automaattisesti Sheetsiin + Driveen kun maksu merkitään maksetuksi.
+                            </p>
+                            <Button size="sm" variant="outline" onClick={handleSyncMissing} disabled={syncBusy} className="gap-1.5 shrink-0">
+                              {syncBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                              Synkkaa puuttuvat
+                            </Button>
+                          </div>
+                          {syncStatus.recent.length > 0 ? (
+                            <div className="space-y-1">
+                              {syncStatus.recent.slice(0, 8).map((r) => (
+                                <div
+                                  key={r.id}
+                                  className={`flex justify-between text-xs rounded-lg px-3 py-2 ${
+                                    r.success ? "bg-muted/30 text-foreground" : "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400"
+                                  }`}
+                                >
+                                  <span>{r.recordType} · {r.memberId} · keikka #{r.jobId}</span>
+                                  <span className="shrink-0 ml-2 truncate max-w-[50%]">{r.success ? "OK" : (r.error || "virhe")}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-muted-foreground italic">Ei vielä synkkayrityksiä.</p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

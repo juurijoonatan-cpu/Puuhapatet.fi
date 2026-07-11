@@ -195,19 +195,19 @@ export default function AdminLoginPage() {
         )}
 
         {mode === "login" && (<>
-        {/* Intro: explain the security upgrade so the team isn't surprised */}
+        {/* Intro: one starter code for everyone, then each person sets their own
+            single real password — no more guessing which of several old ones is current. */}
         <div className="mb-6 rounded-2xl border border-primary/20 bg-primary/5 p-4">
           <div className="flex items-start gap-3">
             <ShieldCheck className="w-5 h-5 text-primary mt-0.5 shrink-0" />
             <div className="text-sm leading-relaxed text-foreground/80">
-              <p className="font-medium text-foreground mb-1">Kirjautuminen päivitetty turvallisemmaksi</p>
+              <p className="font-medium text-foreground mb-1">Salasanat on nollattu</p>
               <p>
-                Asiakastiedot on nyt suojattu palvelimella. <strong>Kirjaudu samalla salasanalla kuin ennen</strong> —
-                jos olet jo vaihtanut oman salasanasi, käytä sitä uutta. Järjestelmä siirtää salasanasi
-                suojattuun muotoon automaattisesti, joten mitään ei tarvitse tehdä erikseen.
+                <strong>Kirjaudu koodilla 0000</strong> — järjestelmä pyytää sinua heti sen jälkeen
+                asettamaan oman salasanan. Se on ainoa, jota tarvitset jatkossa.
               </p>
               <p className="mt-1 text-muted-foreground">
-                Jos kirjautuminen ei onnistu, ole yhteydessä Joonataniin.
+                Jos 0000 ei toimi, ole yhteydessä Joonataniin.
               </p>
             </div>
           </div>

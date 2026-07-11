@@ -1230,23 +1230,29 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       let ok = false;
       let usedStarter = false;
-      if (stored) {
-        ok = verifyPassword(String(password), stored);
+      if (stored && verifyPassword(String(password), stored)) {
+        ok = true;
       } else if (ADMIN_DEFAULT_PASSWORD && String(password) === ADMIN_DEFAULT_PASSWORD) {
-        // Account has no password yet → the shared one-time default gets you in
-        // ONCE (everyone then sets their own). Gated to known people only: the
-        // founders/marketer, or a crew member who's actually finished onboarding
-        // + signed their agreements — typing an arbitrary new name no longer
-        // silently creates an account.
+        // The shared default code is a standing override, not just a one-time
+        // bootstrap — it works whether this account has never set a password,
+        // or has one nobody can remember anymore. Logging in with it forces an
+        // immediate personal-password change below, so it's always the person
+        // (or Joonatan, on their behalf) who ends up choosing the real one.
+        // Gated to known people only: the founders/marketer, or a crew member
+        // who's actually finished onboarding + signed their agreements —
+        // typing an arbitrary new name no longer silently creates an account.
         const id = String(userId).toLowerCase();
         const allowed = KNOWN_LOGIN_IDS.has(id) || (await loadOnboardedTeamRoster()).some((w) => w.id === id);
         if (allowed) { ok = true; usedStarter = true; }
       }
       if (!ok) return res.status(401).json({ error: "Virheellinen salasana." });
 
-      // Lazy upgrade: migrate legacy plaintext (or a freshly defaulted account)
-      // to a scrypt hash so it's stored safely from now on. Nobody is locked out.
-      if (!isHashed(stored)) {
+      // Lazy upgrade: migrate legacy plaintext, a freshly defaulted account, or
+      // an override login back to a scrypt hash of what was just typed, so it's
+      // stored safely and (for an override) the account is left holding the
+      // default code until the forced change below replaces it. Nobody is
+      // locked out, and a real password match never gets overwritten.
+      if (usedStarter || !isHashed(stored)) {
         const newHash = hashPassword(String(password));
         if (row) {
           await db.update(users).set({ passwordHash: newHash }).where(eq(users.username, String(userId)));
@@ -3761,10 +3767,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(403).json({ error: "Voit vaihtaa vain oman salasanasi." });
       }
       const [existing] = await db.select().from(users).where(eq(users.username, userId));
-      // Verify the current password (legacy plaintext, scrypt, or the one-time default).
+      // Verify the current password (legacy plaintext, scrypt, or the standing
+      // default-code override — same acceptance rules as /api/admin/login).
       const stored = existing?.passwordHash || "";
       const currentOk = stored
-        ? verifyPassword(String(currentPassword || ""), stored)
+        ? (verifyPassword(String(currentPassword || ""), stored) || (!!ADMIN_DEFAULT_PASSWORD && String(currentPassword || "") === ADMIN_DEFAULT_PASSWORD))
         : (!ADMIN_DEFAULT_PASSWORD || String(currentPassword || "") === ADMIN_DEFAULT_PASSWORD);
       if (!currentOk) {
         return res.status(401).json({ error: "Nykyinen salasana on väärin." });

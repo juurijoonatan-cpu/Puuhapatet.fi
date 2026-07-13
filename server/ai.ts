@@ -14,6 +14,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { HOUSEHOLD_DEDUCTION_RATE, fmtHouseholdCap, fmtPct } from "@shared/tax";
 
 export const AI_ENABLED = !!process.env.AI_API_KEY;
 const AI_BASE_URL = (process.env.AI_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/$/, "");
@@ -307,8 +308,8 @@ Nuottaniemi, Tapiola, Westend. Muutkin alueet onnistuvat — kannattaa kysyä.
 
 ## Maksu ja kotitalousvähennys
 - Maksutavat: MobilePay, tilisiirto, käteinen. Asiakas saa aina laskun.
-- Ikkunanpesu on kotitalousvähennyskelpoinen. Vähennys (n. 35 %) haetaan itse
-  OmaVerossa, enintään 2 250 € / henkilö / vuosi.
+- Ikkunanpesu on kotitalousvähennyskelpoinen. Vähennys (n. ${fmtPct(HOUSEHOLD_DEDUCTION_RATE)}) haetaan itse
+  OmaVerossa, enintään ${fmtHouseholdCap()} € / henkilö / vuosi.
 
 ## Käytännöt
 - Toimimme vastuuvakuutuksen alaisena, turvallisuus edellä.
@@ -396,6 +397,27 @@ RAHA-AVUSTAJA (talous & ansiot — ole läpinäkyvä ja todennettava):
   muu kuin käyttäjä itse. Näin käyttäjä voi tarkistaa onko merkintä oikein.
 - ÄLÄ ikinä laske summia päästäsi tai pyöristä arvaamalla. Käytä vain kontekstin
   valmiiksi laskettuja euroja ja ikkunamääriä. Jos tarkkaa tietoa ei ole, sano se.
+
+TALOUS & VEROTUS (${role === "HOST" ? "tuloslaskelma, tase, ALV-raja, verolaskenta" : "verolaskenta"}):
+- Kontekstidatassa on Puuhapatetin omat verovakiot (ALV-kanta, ALV-vapauden
+  raja, ennakonpidätysprosentit, kotitalousvähennys) — käytä NÄITÄ, älä yleistä
+  tai mahdollisesti vanhentunutta koulutustietoasi Suomen verotuksesta.
+${role === "HOST" ? `- Kontekstidatassa on myös kuluvan vuoden kirjanpidon tiivistelmä. Tarkempaan
+  tai toisen vuoden/tekijän dataan käytä työkaluja: get_income_statement
+  (tuloslaskelma), get_balance_sheet (tase), get_vat_status (ALV-raja),
+  get_founder_settlement_status (bossien keskinäinen velka), explain_tax
+  (tarkka ALV+ennakonpidätys-erittely tietylle summalle).
+- "Tulos"/"voitto" on kaksi eri tarkoituksellista lukua tässä sovelluksessa:
+  henkilön oma "Oma tulos" (keikkaosuus luetaan tuloksi heti laskutushetkellä)
+  vs. kirjanpidon tuloslaskelma (koko laskutettu erä kirjataan laskuttaneen
+  bossin kirjanpitoon, toisen osuus vasta tilityksen yhteydessä). Jos käyttäjä
+  kysyy pelkkää "tulosta" tarkentamatta kumpaa, käytä kirjanpidon tuloslaskelmaa
+  (get_income_statement) viralisena vastauksena, mutta mainitse lyhyesti että
+  henkilökohtainen arvio Talous-sivulla voi näyttää eri luvun ja miksi.` : `- Käytettävissäsi on explain_tax-työkalu (tarkka ALV+ennakonpidätys-erittely
+  tietylle summalle). Kirjanpito- ja tilitystyökalut ovat vain perustajilla —
+  jos niitä kysytään, ohjaa kysymään perustajalta.`}
+- ÄLÄ KOSKAAN laske ALV:tä, ennakonpidätystä tai kotitalousvähennystä päästäsi —
+  käytä aina explain_tax-työkalua tai kontekstin vakioita.
 
 PROSPEKTOINTI (uusasiakashankinta):
 - Voit ehdottaa uusia potentiaalisia kohteita (esim. Espoon rakennukset,

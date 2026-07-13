@@ -1,18 +1,19 @@
 /**
- * "Kirjanpito" — the NEW double-entry ledger views (Yhteenveto, Tuloslaskelma,
+ * "Kirjanpito" — the double-entry ledger tab content (Yhteenveto, Tuloslaskelma,
  * Tase, Tilit & pääkirja, Ennuste). Everything here is generated automatically
  * from jobs/expenses/investments/founderSettlements (server/finance/*.ts) —
  * nothing on this screen is hand-typed.
  *
- * This is intentionally a SEPARATE lens from the "Oma tulos" card above it on
- * the Talous-page: "Oma tulos" is the quick personal OmaVero filing figure
- * (unchanged, still the number to actually file), while this section is the
- * formal kahdenkertainen kirjanpito, built ahead of time for a future Oy. The
- * two numbers do not have to match today — see docs/talous-kirjanpito.md.
+ * These are plain tab-content components, not a self-contained card: the
+ * parent page (client/src/pages/admin/tax-export.tsx) owns ONE shared
+ * founder/ledger switcher and ONE shared year selector for the whole Talous
+ * page, and passes `ledgerId`/`year` down into whichever of these is active.
+ * (Previously this file rendered its own Card with its own separate founder
+ * switcher and year picker — that meant two "which year" controls on one
+ * page. Consolidated as part of the 2026-07 Talous redesign, see
+ * docs/talous-kirjanpito.md § Osa 3.)
  */
 import { useState, useEffect, useCallback } from "react";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Disclosure } from "@/components/ui/disclosure";
@@ -22,74 +23,36 @@ import {
   type FinanceAccount, type FinanceJournalEntry, type FinanceLedgerAccount,
   type FinanceIncomeStatement, type FinanceBalanceSheet, type FinanceSummary, type FinanceForecastEntry,
 } from "@/lib/api";
-import { BRAND_BILLERS } from "@shared/billers";
 
 const fmt = (cents: number) => (cents / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" });
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString("fi-FI");
-const firstName = (n: string) => n.trim().split(/\s+/)[0];
 
-export function KirjanpitoSection({ defaultLedgerId }: { defaultLedgerId: string }) {
-  const [ledgerId, setLedgerId] = useState(defaultLedgerId);
-  const thisYear = new Date().getFullYear();
-  const [year, setYear] = useState(thisYear);
-
+/** Tilin nimi edellä, tilinumero pienenä/himmeänä lisätietona perässä — ei
+ *  koodia edellä ilman selitystä. Sama esitys joka paikassa (tuloslaskelma,
+ *  tase, pääkirja), jotta tilikartan koodit eivät toistu eri tyyleillä. */
+function AccountLabel({ code, name }: { code: string; name: string }) {
   return (
-    <Card className="p-5 bg-card border-0 premium-shadow mb-4 print:hidden">
-      <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
-        <div>
-          <h2 className="text-sm font-bold">Kirjanpito</h2>
-          <p className="text-[11px] text-muted-foreground max-w-md">
-            Kahdenkertainen kirjanpito — muodostuu automaattisesti laskuista, kuluista ja
-            yrittäjien välisistä laskuista. Oma tilikartta, päiväkirja ja pääkirja per Y-tunnus.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="flex rounded-full border overflow-hidden text-xs">
-            {BRAND_BILLERS.map((b) => (
-              <button
-                key={b.id}
-                onClick={() => setLedgerId(b.id)}
-                className={`px-3 py-1.5 font-medium transition-colors ${ledgerId === b.id ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:text-foreground"}`}
-              >
-                {firstName(b.name)}
-              </button>
-            ))}
-          </div>
-          <select
-            value={year}
-            onChange={(e) => setYear(Number(e.target.value))}
-            className="h-8 rounded-md border bg-background px-2 text-xs"
-          >
-            {[thisYear + 1, thisYear, thisYear - 1, thisYear - 2].map((y) => (
-              <option key={y} value={y}>{y}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      <DriveBackupBar ledgerId={ledgerId} year={year} />
-
-      <Tabs defaultValue="yhteenveto">
-        <TabsList className="h-auto flex-wrap justify-start gap-1">
-          <TabsTrigger value="yhteenveto">Yhteenveto</TabsTrigger>
-          <TabsTrigger value="tuloslaskelma">Tuloslaskelma</TabsTrigger>
-          <TabsTrigger value="tase">Tase</TabsTrigger>
-          <TabsTrigger value="paakirja">Tilit &amp; pääkirja</TabsTrigger>
-          <TabsTrigger value="ennuste">Ennuste</TabsTrigger>
-        </TabsList>
-        <TabsContent value="yhteenveto"><SummaryTab ledgerId={ledgerId} year={year} /></TabsContent>
-        <TabsContent value="tuloslaskelma"><IncomeStatementTab ledgerId={ledgerId} year={year} /></TabsContent>
-        <TabsContent value="tase"><BalanceSheetTab ledgerId={ledgerId} /></TabsContent>
-        <TabsContent value="paakirja"><LedgerTab ledgerId={ledgerId} year={year} /></TabsContent>
-        <TabsContent value="ennuste"><ForecastTab ledgerId={ledgerId} /></TabsContent>
-      </Tabs>
-    </Card>
+    <span>
+      {name} <span className="text-[10px] text-muted-foreground/70 font-mono">{code}</span>
+    </span>
   );
 }
 
+// Avaimet sidottu tilikartan accountType-unioniin: uusi tilityyppi serverillä
+// kaatuu tässä käännösvirheeseen sen sijaan että tilit katoaisivat näkymästä.
+type AccountGroup = FinanceAccount["accountType"];
+const ACCOUNT_GROUP_LABEL: Record<AccountGroup, string> = {
+  asset: "Vastaavaa",
+  liability: "Vastattavaa — vieras pääoma",
+  equity: "Vastattavaa — oma pääoma",
+  revenue: "Tuotot",
+  expense: "Kulut",
+};
+const ACCOUNT_GROUP_ORDER: AccountGroup[] = ["asset", "liability", "equity", "revenue", "expense"];
+
 // ─── Yhteenveto ────────────────────────────────────────────────────────────────
 
-function SummaryTab({ ledgerId, year }: { ledgerId: string; year: number }) {
+export function SummaryTab({ ledgerId, year }: { ledgerId: string; year: number }) {
   const [data, setData] = useState<FinanceSummary | null>(null);
   useEffect(() => {
     setData(null);
@@ -118,7 +81,7 @@ function SummaryTab({ ledgerId, year }: { ledgerId: string; year: number }) {
 
 // ─── Tuloslaskelma ──────────────────────────────────────────────────────────────
 
-function IncomeStatementTab({ ledgerId, year }: { ledgerId: string; year: number }) {
+export function IncomeStatementTab({ ledgerId, year }: { ledgerId: string; year: number }) {
   const [data, setData] = useState<FinanceIncomeStatement | null>(null);
   useEffect(() => {
     setData(null);
@@ -132,7 +95,7 @@ function IncomeStatementTab({ ledgerId, year }: { ledgerId: string; year: number
       {data.revenue.length === 0 ? <p className="text-muted-foreground text-xs mb-2">Ei kirjauksia.</p> : (
         <div className="divide-y divide-border/50 mb-2">
           {data.revenue.map((l) => (
-            <div key={l.code} className="flex justify-between py-1.5"><span>{l.code} {l.name}</span><span className="tabular-nums">{fmt(l.cents)}</span></div>
+            <div key={l.code} className="flex justify-between py-1.5"><AccountLabel code={l.code} name={l.name} /><span className="tabular-nums">{fmt(l.cents)}</span></div>
           ))}
         </div>
       )}
@@ -142,7 +105,7 @@ function IncomeStatementTab({ ledgerId, year }: { ledgerId: string; year: number
       {data.expenses.length === 0 ? <p className="text-muted-foreground text-xs mb-2">Ei kirjauksia.</p> : (
         <div className="divide-y divide-border/50 mb-2">
           {data.expenses.map((l) => (
-            <div key={l.code} className="flex justify-between py-1.5"><span>{l.code} {l.name}</span><span className="tabular-nums">−{fmt(l.cents)}</span></div>
+            <div key={l.code} className="flex justify-between py-1.5"><AccountLabel code={l.code} name={l.name} /><span className="tabular-nums">−{fmt(l.cents)}</span></div>
           ))}
         </div>
       )}
@@ -158,7 +121,7 @@ function IncomeStatementTab({ ledgerId, year }: { ledgerId: string; year: number
 
 // ─── Tase ────────────────────────────────────────────────────────────────────────
 
-function BalanceSheetTab({ ledgerId }: { ledgerId: string }) {
+export function BalanceSheetTab({ ledgerId }: { ledgerId: string }) {
   const [data, setData] = useState<FinanceBalanceSheet | null>(null);
   useEffect(() => {
     setData(null);
@@ -176,7 +139,7 @@ function BalanceSheetTab({ ledgerId }: { ledgerId: string }) {
           {data.assets.length === 0 && <p className="text-muted-foreground text-xs">Ei kirjauksia.</p>}
           <div className="divide-y divide-border/50">
             {data.assets.map((l) => (
-              <div key={l.code} className="flex justify-between py-1.5"><span>{l.code} {l.name}</span><span className="tabular-nums">{fmt(l.cents)}</span></div>
+              <div key={l.code} className="flex justify-between py-1.5"><AccountLabel code={l.code} name={l.name} /><span className="tabular-nums">{fmt(l.cents)}</span></div>
             ))}
           </div>
           <div className="flex justify-between py-1.5 mt-1 font-semibold border-t border-border"><span>Vastaavaa yhteensä</span><span className="tabular-nums">{fmt(data.assetsTotal)}</span></div>
@@ -184,10 +147,10 @@ function BalanceSheetTab({ ledgerId }: { ledgerId: string }) {
         <div>
           <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1">Vastattavaa</p>
           {data.liabilities.map((l) => (
-            <div key={l.code} className="flex justify-between py-1.5"><span>{l.code} {l.name}</span><span className="tabular-nums">{fmt(l.cents)}</span></div>
+            <div key={l.code} className="flex justify-between py-1.5"><AccountLabel code={l.code} name={l.name} /><span className="tabular-nums">{fmt(l.cents)}</span></div>
           ))}
           {data.equity.map((l) => (
-            <div key={l.code} className="flex justify-between py-1.5"><span>{l.code} {l.name}</span><span className="tabular-nums">{fmt(l.cents)}</span></div>
+            <div key={l.code} className="flex justify-between py-1.5"><AccountLabel code={l.code} name={l.name} /><span className="tabular-nums">{fmt(l.cents)}</span></div>
           ))}
           <div className="flex justify-between py-1.5"><span>Kumulatiivinen tulos</span><span className="tabular-nums">{fmt(data.cumulativeResultCents)}</span></div>
           <div className="flex justify-between py-1.5 mt-1 font-semibold border-t border-border"><span>Vastattavaa yhteensä</span><span className="tabular-nums">{fmt(data.liabilitiesAndEquityTotal)}</span></div>
@@ -202,7 +165,7 @@ function BalanceSheetTab({ ledgerId }: { ledgerId: string }) {
 
 // ─── Tilit & pääkirja ───────────────────────────────────────────────────────────
 
-function LedgerTab({ ledgerId, year }: { ledgerId: string; year: number }) {
+export function LedgerTab({ ledgerId, year }: { ledgerId: string; year: number }) {
   const [accounts, setAccounts] = useState<FinanceLedgerAccount[] | null>(null);
   const [journal, setJournal] = useState<FinanceJournalEntry[] | null>(null);
   useEffect(() => {
@@ -218,31 +181,44 @@ function LedgerTab({ ledgerId, year }: { ledgerId: string; year: number }) {
         {!accounts ? <p className="text-sm text-muted-foreground py-2">Ladataan…</p> : accounts.length === 0 ? (
           <p className="text-sm text-muted-foreground py-2">Ei kirjauksia vuodelle {year}.</p>
         ) : (
-          <div className="space-y-1.5">
-            {accounts.map((a) => (
-              <Disclosure
-                key={a.account.id}
-                variant="inline"
-                title={`${a.account.code} ${a.account.name}`}
-                right={<span className="text-xs tabular-nums text-muted-foreground">{fmt(a.endBalanceCents)}</span>}
-              >
-                {a.rows.length === 0 ? (
-                  <p className="text-xs text-muted-foreground py-1">Ei vientejä tällä tilillä {year}.</p>
-                ) : (
-                  <div className="divide-y divide-border/40 text-xs">
-                    {a.rows.map((r, i) => (
-                      <div key={i} className="flex items-center justify-between gap-2 py-1.5">
-                        <span className="text-muted-foreground">{fmtDate(r.date)} · {r.description}</span>
-                        <span className="tabular-nums shrink-0">
-                          {r.debitCents > 0 ? `+${fmt(r.debitCents)}` : `−${fmt(r.creditCents)}`}
-                          <span className="text-muted-foreground"> · saldo {fmt(r.balanceCents)}</span>
-                        </span>
-                      </div>
+          <div className="space-y-4">
+            {ACCOUNT_GROUP_ORDER.map((group) => {
+              const inGroup = accounts.filter((a) => a.account.accountType === group);
+              if (inGroup.length === 0) return null;
+              return (
+                <div key={group}>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80 mb-1.5">
+                    {ACCOUNT_GROUP_LABEL[group]}
+                  </p>
+                  <div className="space-y-1.5">
+                    {inGroup.map((a) => (
+                      <Disclosure
+                        key={a.account.id}
+                        variant="inline"
+                        title={<AccountLabel code={a.account.code} name={a.account.name} />}
+                        right={<span className="text-xs tabular-nums text-muted-foreground">{fmt(a.endBalanceCents)}</span>}
+                      >
+                        {a.rows.length === 0 ? (
+                          <p className="text-xs text-muted-foreground py-1">Ei vientejä tällä tilillä {year}.</p>
+                        ) : (
+                          <div className="divide-y divide-border/40 text-xs">
+                            {a.rows.map((r, i) => (
+                              <div key={i} className="flex items-center justify-between gap-2 py-1.5">
+                                <span className="text-muted-foreground">{fmtDate(r.date)} · {r.description}</span>
+                                <span className="tabular-nums shrink-0">
+                                  {r.debitCents > 0 ? `+${fmt(r.debitCents)}` : `−${fmt(r.creditCents)}`}
+                                  <span className="text-muted-foreground"> · saldo {fmt(r.balanceCents)}</span>
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </Disclosure>
                     ))}
                   </div>
-                )}
-              </Disclosure>
-            ))}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -260,7 +236,7 @@ function LedgerTab({ ledgerId, year }: { ledgerId: string; year: number }) {
                 </div>
                 {e.lines.map((l, i) => (
                   <div key={i} className="flex items-center justify-between gap-2 text-muted-foreground pl-3">
-                    <span>{l.accountCode} {l.accountName}</span>
+                    <AccountLabel code={l.accountCode} name={l.accountName} />
                     <span className="tabular-nums">{l.debitCents > 0 ? `Debet ${fmt(l.debitCents)}` : `Kredit ${fmt(l.creditCents)}`}</span>
                   </div>
                 ))}
@@ -275,7 +251,7 @@ function LedgerTab({ ledgerId, year }: { ledgerId: string; year: number }) {
 
 // ─── Ennuste ────────────────────────────────────────────────────────────────────
 
-function ForecastTab({ ledgerId }: { ledgerId: string }) {
+export function ForecastTab({ ledgerId }: { ledgerId: string }) {
   const [entries, setEntries] = useState<FinanceForecastEntry[] | null>(null);
   const [months, setMonths] = useState<{ month: string; incomeCents: number; expenseCents: number; profitCents: number }[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -388,7 +364,7 @@ function ForecastTab({ ledgerId }: { ledgerId: string }) {
 
 // ─── Google Drive backup (Osa 2) ────────────────────────────────────────────
 
-function DriveBackupBar({ ledgerId, year }: { ledgerId: string; year: number }) {
+export function DriveBackupBar({ ledgerId, year }: { ledgerId: string; year: number }) {
   const [status, setStatus] = useState<Awaited<ReturnType<typeof api.financeBackupStatus>>["data"] | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);

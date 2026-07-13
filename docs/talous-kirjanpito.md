@@ -197,6 +197,8 @@ ks. `server/routes.ts` — laskutuserien hallinta). GET-reitit kutsuvat
 | `GET/POST /api/finance/forecast?ledgerId=` | Ennusterivit |
 | `PATCH/DELETE /api/finance/forecast/:id` | Muokkaa/poista ennusterivi |
 | `GET /api/finance/forecast/projection?ledgerId=&start=&end=` | Kuukausiprojektio |
+| `GET /api/finance/backup/status?ledgerId=&year=` | Google Drive -varmuuskopion tila (ks. Osa 2 alla) |
+| `POST /api/finance/backup` | Varmuuskopioi tilikartta/päiväkirja/pääkirja/tuloslaskelma/tase/ennuste Driveen |
 
 Client-puolen tyypitetyt kutsut: `client/src/lib/api.ts` (`api.finance*`).
 
@@ -205,10 +207,13 @@ Client-puolen tyypitetyt kutsut: `client/src/lib/api.ts` (`api.finance*`).
 - `client/src/pages/admin/tax-export.tsx` — pääsivu (reitit `/admin/talous`
   ja `/admin/tax-export`, jälkimmäinen alias). Ennallaan ylä- ja alaosa; uusi
   `<KirjanpitoSection>` upotettu "Oma tulos" + "Bossien velka" + "ALV-raja"
-  -korttien JÄLKEEN, ennen "Yksityiskohdat & dokumentit" -osiota.
+  -korttien JÄLKEEN, ennen "Yksityiskohdat & dokumentit" -osiota. **(Tämä
+  sivurakenne on uudistuksen kohteena, ks. "Osa 3" alla — säilytä tämä kuvaus
+  vain historiallisena kontekstina kunnes uudistus on viety läpi.)**
 - `client/src/pages/admin/talous/kirjanpito-section.tsx` — koko uusi
-  kirjanpito-UI: founder-valitsin, vuosivalitsin, ja 5 välilehteä
-  (Yhteenveto, Tuloslaskelma, Tase, Tilit & pääkirja, Ennuste).
+  kirjanpito-UI: founder-valitsin, vuosivalitsin, `<DriveBackupBar>`
+  (ks. Osa 2), ja 5 välilehteä (Yhteenveto, Tuloslaskelma, Tase,
+  Tilit & pääkirja, Ennuste).
 
 ## Migraatio / käyttöönotto
 
@@ -229,18 +234,48 @@ pääkirja tarkistettu käsin oikeiksi sekä selaimessa (Playwright) että API:s
 
 1. **Palvelumaksun (palvelumaksu/"brändin kassa") kirjanpitokohde** — päätä
    kuuluuko se founderien kirjanpitoon (ja millä jaolla), ja lisää postaus
-   `buildDraftEntries`-funktioon jos kyllä.
-2. **"Oma tulos" ↔ "Kirjanpito"-luvun yhdistäminen** — jos joskus halutaan
-   yksi totuus, päätä kumpi malli (kate-osuus vs. koko-erä-sitten-tilitys)
-   on se, jota käytetään molempiin, ja poista toinen.
+   `buildDraftEntries`-funktioon jos kyllä. (Ei vielä päätetty — ei osa Osa 3:a.)
+2. **"Oma tulos" ↔ "Kirjanpito"-luvun yhdistäminen** — **päätetty 10.7.2026:
+   EI yhdistetä.** Molemmat luvut säilyvät tarkoituksella erillisinä (kate-osuus
+   heti vs. koko-erä-sitten-tilitys palvelevat eri tarkoitusta), mutta Osa 3
+   (ks. alla) siivoaa pois sen, että "Oma tulos" -luku toistui 4 kertaa
+   samalla sivulla — jatkossa se näytetään kerran, selkeästi nimettynä, sen
+   viereen selittäen miksi se voi poiketa Kirjanpidon tuloksesta.
 3. **Tilikauden päätösvienti** — kun tilikausi halutaan virallisesti sulkea
    (`fiscal_years.isClosed = true`), lisää UI-toiminto sille + päätösvienti
    joka siirtää tilikauden tuloksen "Edellisten tilikausien voitto/tappio"
    -tilille (2020). Skeema tukee tätä jo (`isClosed`), toteutus puuttuu.
+   Ei kiireellinen niin kauan kuin molemmat ovat toiminimiä.
 4. **Oy-muutos** — lisää kolmas `ledgers`-rivi (`entityType: "oy"`), tarkista
    oma pääoma -tilien nimet (Osakepääoma vs. Yksityissijoitukset), harkitse
    ALV-tilien (2900) käyttöönottoa jos Oy rekisteröityy ALV-velvolliseksi,
    ja päätä miten vanhat toiminimi-ledgerit suhtautuvat uuteen Oy-ledgeriin
    (esim. apporttina, tai rinnakkain historian ajan).
-5. **Osa 2** (odottaa erillistä lupaa): Google Drive -integraatio kaikkien
-   näiden raporttien + laskujen automaattiseen varmuuskopiointiin.
+5. ~~**Osa 2** (odottaa erillistä lupaa): Google Drive -integraatio kaikkien
+   näiden raporttien + laskujen automaattiseen varmuuskopiointiin.~~ **VALMIS**
+   (`server/finance/backup.ts`, `/api/finance/backup*`, `<DriveBackupBar>`
+   — ks. `docs/google-drive-backup.md`). Tämä kohta jäi aiemmin merkitsemättä
+   valmiiksi vaikka toteutus oli jo tehty — korjattu 10.7.2026.
+
+## Osa 3 — käyttöliittymän uudistus kahdelle kevytyrittäjälle (2026-07-10 →)
+
+Käyttäjäpalaute: sivu on ammattimaisen kirjanpidon (yllä kuvattu) ympärillä
+edelleen liian sekava — 13 päällekkäistä osaa, sama tulos toistuu 4 kertaa,
+"kuka laskutti" on 4 erillistä kontrollia, ja admin-tekoälyllä ei ole
+pääsyä yhteenkään näistä luvuista. Uudistus (ei muuta yllä kuvattua
+kirjanpitomoottoria — vain sen ympärillä olevaa näkymää ja tekoälyn
+pääsyä siihen):
+
+- **Vaihe A** (tämä commit) — perusta: kotitalousvähennysvakiot koottu
+  `shared/tax.ts`:ään, kuollut koodi siivottu, tämä dokumentti päivitetty.
+- **Vaihe B** — Talous-sivu rakennetaan uudelleen 5 välilehden ympärille
+  (Yhteenveto / Laskut / Tuloslaskelma / Tase / Ennuste) + piilotettu
+  Lisäasetukset-osio ("Urakkaerien hallinta" ym. korjaustyökalut). Molemmat
+  founderit näkevät oletuksena toistensa laskutetut keikat.
+- **Vaihe C** — tilikartan ja pääkirjan esitys: tilin nimi edellä, koodi
+  pienenä/himmeänä lisätietona.
+- **Vaihe D** — admin-tekoäly saa uudet työkalut tuloslaskelman, taseen,
+  ALV-tilanteen ja verolaskurin lukemiseen samasta datasta kuin tämä sivu.
+
+Ks. myös haaran `claude/puuha-paten-accounting-redesign-iuokbj` PR-kuvaus
+tarkemmalle vaihe-erittelylle.

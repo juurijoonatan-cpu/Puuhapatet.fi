@@ -39,6 +39,19 @@ export const VAT_SMALL_BUSINESS_LIMIT_EUR = 20000;
 export const WITHHOLDING_NATURAL_PERSON = 0.60; // luonnollinen henkilö / toiminimi, ei verokorttia
 export const WITHHOLDING_COMPANY = 0.13;        // oikeushenkilö (Oy, Ky, Ay…)
 
+/** Kotitalousvähennys (TVL 127 a §) verovuosina 2025–2026: 35 % yrityksen laskun
+ *  työn osuudesta, enintään 1 600 €/henkilö/vuosi, omavastuu 150 €/vuosi.
+ *  (Vuoteen 2024 asti 40 % / 2 250 € / 100 €.) Kaikki asiakasviestintä ja
+ *  tekoälyn verokonteksti lukevat nämä täältä — päivitä lakimuutoksissa vain tämä. */
+export const HOUSEHOLD_DEDUCTION_RATE = 0.35;
+export const HOUSEHOLD_DEDUCTION_CAP_EUR = 1600;
+export const HOUSEHOLD_DEDUCTION_OMAVASTUU_EUR = 150;
+
+/** Kattoraha tuhaterottimella asiakasviestintään: "1 600" / "1,600". */
+export function fmtHouseholdCap(lang: "fi" | "en" = "fi"): string {
+  return HOUSEHOLD_DEDUCTION_CAP_EUR.toLocaleString(lang === "en" ? "en-US" : "fi-FI");
+}
+
 /** Alihankkijan oma ALV-asema (itse ilmoittama). */
 export type VatStatus =
   | "alv_rekisterissa"   // ALV-velvollinen → lisää 25,5 % laskuun

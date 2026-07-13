@@ -2,11 +2,11 @@
  * Worker dashboard — a custom-gig worker's private, link-gated view.
  *
  * Reached at /tyo/:token (the worker's private link). Flow:
- *   1. Optional PIN unlock (if the worker set one).
- *   2. InkReveal intro + onboarding gate: profile questionnaire + signing each
- *      required agreement (alihankkija etc.) + optional PIN — "the intro is the
- *      signing". Until done, the dashboard stays closed.
- *   3. Dashboard tabs: Kartta (mark your windows), Ansiot (live €), Tunnit
+ *   1. InkReveal intro + onboarding gate: profile questionnaire + signing each
+ *      required agreement (alihankkija etc.) — "the intro is the signing".
+ *      Until done, the dashboard stays closed. No PINs or extra codes: the
+ *      personal link is the only key.
+ *   2. Dashboard tabs: Kartta (mark your windows), Ansiot (live €), Tunnit
  *      (timer), Muistiinpanot (notes).
  *
  * Workers are paid €/window (their own rate) and NEVER see the gig price or cap.
@@ -45,7 +45,7 @@ export default function WorkerPage() {
   const [, params] = useRoute("/tyo/:token");
   const token = params?.token ?? "";
   const [view, setView] = useState<WorkerView | null>(null);
-  const [status, setStatus] = useState<"loading" | "ok" | "error" | "locked">("loading");
+  const [status, setStatus] = useState<"loading" | "ok" | "error">("loading");
   // Distinguishes a transient connection problem (worth retrying — the Render
   // free tier can take ~50s to wake) from a genuinely missing/expired link.
   const [loadErr, setLoadErr] = useState<string | null>(null);
@@ -89,10 +89,8 @@ export default function WorkerPage() {
     if (!res.ok) res = await api.getCrewView(token);
     clearTimeout(slowTimer);
     if (res.ok && res.data?.view) {
-      const v = res.data.view;
-      setView(v);
-      const unlocked = sessionStorage.getItem(`pp_crew_${token}`) === "1";
-      setStatus(v.worker.hasPin && !unlocked ? "locked" : "ok");
+      setView(res.data.view);
+      setStatus("ok");
     } else {
       setLoadErr(res.error ?? null);
       setStatus("error");
@@ -101,12 +99,10 @@ export default function WorkerPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Sign out — drop the unlock flag and either re-lock (if a PIN is set) or leave.
+  // Sign out — the link is personal, so leaving the page is all there is to it.
   const logout = useCallback(() => {
-    try { sessionStorage.removeItem(`pp_crew_${token}`); } catch {}
-    if (view?.worker.hasPin) setStatus("locked");
-    else window.location.href = "/";
-  }, [token, view]);
+    window.location.href = "/";
+  }, []);
 
   if (status === "loading") {
     return (
@@ -144,7 +140,6 @@ export default function WorkerPage() {
       </Centered>
     );
   }
-  if (status === "locked") return <PinGate token={token} view={view} onUnlock={() => { sessionStorage.setItem(`pp_crew_${token}`, "1"); setStatus("ok"); }} />;
   if (!view.worker.onboarded) {
     // Soft start (now): one-tap intro. Gated (later): the full sign flow.
     return view.agreementsGated
@@ -580,43 +575,9 @@ function QuickStart({ token, view, onDone }: { token: string; view: WorkerView; 
   );
 }
 
-// ─── PIN gate ───────────────────────────────────────────────────────────────
-
-function PinGate({ token, view, onUnlock }: { token: string; view: WorkerView; onUnlock: () => void }) {
-  const [pin, setPin] = useState("");
-  const [err, setErr] = useState("");
-  const [busy, setBusy] = useState(false);
-  const firstName = view.worker.name ? view.worker.name.split(" ")[0] : "";
-  const submit = async () => {
-    if (!pin) return;
-    setBusy(true); setErr("");
-    const res = await api.crewAuth(token, pin);
-    setBusy(false);
-    if (res.ok && res.data?.ok) onUnlock();
-    else setErr("Väärä salasana.");
-  };
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "radial-gradient(120% 120% at 50% 0%, #14223a 0%, #0a0a0c 60%)", fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
-      <div style={{ width: "100%", maxWidth: 340, textAlign: "center" }}>
-        <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 13, letterSpacing: "0.18em", textTransform: "uppercase" }}>Puuhapatet</p>
-        <h1 style={{ color: "#fff", fontSize: 26, fontWeight: 800, margin: "8px 0 4px" }}>Tervetuloa takaisin{firstName ? `, ${firstName}` : ""}</h1>
-        <p style={{ color: "rgba(255,255,255,0.6)", marginBottom: 22, fontSize: 14 }}>Syötä salasanasi avataksesi työpöydän.</p>
-        <input
-          value={pin} onChange={(e) => setPin(e.target.value)}
-          type="password" placeholder="Salasana" autoFocus autoComplete="current-password"
-          style={{ ...inputStyle, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", textAlign: "center", fontSize: 16 }}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
-        />
-        {err && <p style={{ color: "#FF9A9A", fontSize: 13, marginTop: 8 }}>{err}</p>}
-        <button onClick={submit} disabled={busy} style={{ ...primaryBtn, background: T.green, marginTop: 16, opacity: busy ? 0.6 : 1 }}>{busy ? "Avataan…" : "Avaa työpöytä →"}</button>
-      </div>
-    </div>
-  );
-}
-
 // ─── Onboarding (intro + profile + agreements) ─────────────────────────────────
 
-type Step = "intro" | "profile" | { agreementIndex: number } | "sign" | "pin" | "submitting";
+type Step = "intro" | "profile" | { agreementIndex: number } | "sign" | "submitting";
 
 function Onboarding({ token, view, onDone, resign }: { token: string; view: WorkerView; onDone: (v: WorkerView) => void; resign?: boolean }) {
   const required = ALL_AGREEMENTS.filter((a) => view.requiredAgreementIds.includes(a.id));
@@ -629,7 +590,7 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
     // worker already has one), so drop it from the generic question list here.
     : PROFILE_QUESTIONS.filter((q) => q.id !== "yTunnus");
   // resign = an already-entered worker completing the now-required info + signing.
-  // Start at the profile ("lisätiedot") step and skip the optional PIN step.
+  // Start straight at the profile ("lisätiedot") step.
   const [step, setStep] = useState<Step>(resign ? "profile" : "intro");
   const [answers, setAnswers] = useState<Record<string, string>>(() => {
     // An established entrepreneur (e.g. added with a Y-tunnus already on file) should
@@ -656,7 +617,6 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
   // applies to every agreement.
   const [accepts, setAccepts] = useState<Record<string, Record<string, boolean>>>({});
   const [signature, setSignature] = useState("");
-  const [pin, setPin] = useState("");
   const [err, setErr] = useState("");
   const [introReady, setIntroReady] = useState(false);
   const [photoDataUrl, setPhotoDataUrl] = useState(view.worker.profile?.photoDataUrl ?? "");
@@ -699,9 +659,9 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
       photoDataUrl: photoDataUrl || undefined,
       answers,
     };
-    const res = await api.crewOnboard(token, { profile, agreements, pin: pin || undefined });
+    const res = await api.crewOnboard(token, { profile, agreements });
     if (res.ok && res.data?.view) onDone(res.data.view);
-    else { setErr(res.error || "Tallennus epäonnistui"); setStep("pin"); }
+    else { setErr(res.error || "Tallennus epäonnistui"); setStep("sign"); }
   };
 
   // ── Intro ──
@@ -1004,14 +964,15 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
             Allekirjoituksellani hyväksyn kaikki yllä olevat sopimukset sitovasti.
           </p>
           <SignaturePad onChange={(d) => setSignature(d || "")} />
+          {err && <p style={{ color: "#D9472B", fontSize: 13, marginTop: 10 }}>{err}</p>}
           <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
             <button onClick={() => setStep({ agreementIndex: required.length - 1 })} style={secondaryBtn}>← Takaisin</button>
             <button
               disabled={!canSign}
-              onClick={() => (resign ? submit() : setStep("pin"))}
+              onClick={submit}
               style={{ ...primaryBtn, flex: 1, opacity: canSign ? 1 : 0.5, cursor: canSign ? "pointer" : "not-allowed" }}
             >
-              {resign ? "Vahvista ja allekirjoita →" : "Viimeistele →"}
+              {resign ? "Vahvista ja allekirjoita →" : "Avaa työpöytä →"}
             </button>
           </div>
         </Wrap>
@@ -1019,25 +980,10 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
     );
   }
 
-  // ── PIN + submit ──
-  // In resign mode we skip the PIN step entirely; the only way here is the brief
-  // "submitting" state after the worker confirms their signature.
-  if (resign) return <Centered>Tallennetaan…</Centered>;
-  return (
-    <Paper>
-      <Wrap>
-        <StepHeader title="Suojaa työpöytäsi" sub="Aseta halutessasi 4-numeroinen PIN. Linkkisi on henkilökohtainen — älä jaa sitä." n="Valmis" />
-        <label style={{ display: "block", marginBottom: 14 }}>
-          <span style={fieldLabel}>PIN-koodi (valinnainen)</span>
-          <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" type="password" placeholder="esim. 1234" style={inputStyle} />
-        </label>
-        {err && <p style={{ color: "#D9472B", fontSize: 13 }}>{err}</p>}
-        <button onClick={submit} disabled={step === "submitting"} style={primaryBtn}>
-          {step === "submitting" ? "Tallennetaan…" : "Avaa työpöytä →"}
-        </button>
-      </Wrap>
-    </Paper>
-  );
+  // ── Submitting ──
+  // Signing submits directly — no PIN or extra codes; the personal link is the
+  // only key to the dashboard.
+  return <Centered>Tallennetaan…</Centered>;
 }
 
 function AgreementBody({ ag }: { ag: WorkerAgreement }) {

@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
+import { HOUSEHOLD_DEDUCTION_RATE, fmtHouseholdCap, fmtPct } from "@shared/tax";
 
 type Language = "fi" | "en";
 
@@ -232,7 +233,7 @@ const translations: Record<Language, Record<string, string>> = {
     "laskuri.postal.title": "Missä asut?",
     "laskuri.postal.desc": "Postinumeron perusteella tarkennamme hinta-arviota alueellesi.",
     "laskuri.kv.question": "Kotitalousvähennys käytössä?",
-    "laskuri.kv.desc": "Ikkunanpesu on kotitalousvähennyskelpoista. Vähennys haetaan itse OmaVero-palvelussa — enintään 2 250 € / henkilö / vuosi.",
+    "laskuri.kv.desc": `Ikkunanpesu on kotitalousvähennyskelpoista. Vähennys haetaan itse OmaVero-palvelussa — enintään ${fmtHouseholdCap()} € / henkilö / vuosi.`,
     "laskuri.no": "Ei",
     "laskuri.yes.use": "Kyllä, käytän",
     "laskuri.skip": "Ohita",
@@ -245,7 +246,7 @@ const translations: Record<Language, Record<string, string>> = {
     "laskuri.kv.inactive": "Ei käytössä",
     "laskuri.houseType": "Talotyyppi",
     "laskuri.size": "Kohteen koko",
-    "laskuri.kv.note": "Kotitalousvähennyksellä (35 %) maksat vain noin kaksi kolmasosaa — vähennys haetaan itse OmaVero-palvelussa. Enintään 2 250 € / henkilö / vuosi.",
+    "laskuri.kv.note": `Kotitalousvähennyksellä (${fmtPct(HOUSEHOLD_DEDUCTION_RATE)}) maksat vain noin kaksi kolmasosaa — vähennys haetaan itse OmaVero-palvelussa. Enintään ${fmtHouseholdCap()} € / henkilö / vuosi.`,
     "laskuri.kv.norm": "norm.",
     "laskuri.service": "Palvelu",
     "laskuri.difficulty": "Vaikeustekijät",
@@ -279,7 +280,7 @@ const translations: Record<Language, Record<string, string>> = {
     "laskuri.summary.carDetailing": "Sisäfreesaus",
     "laskuri.summary.total": "Kaudessa yhteensä",
     "laskuri.priceAfterKv": "Maksat kotitalousväh. jälkeen",
-    "laskuri.priceAfterKv.hint": "Hae kotitalousvähennys OmaVerossa (max 2 250 € / hlö / v)",
+    "laskuri.priceAfterKv.hint": `Hae kotitalousvähennys OmaVerossa (max ${fmtHouseholdCap()} € / hlö / v)`,
     "laskuri.priceWithVat": "Hinta-arvio (sis. ALV)",
     "laskuri.priceNormal": "Normaali hinta (sis. ALV)",
     "laskuri.submit": "Lähetä vahvistettavaksi",
@@ -617,7 +618,7 @@ const translations: Record<Language, Record<string, string>> = {
     "laskuri.postal.title": "Where do you live?",
     "laskuri.postal.desc": "We use your postal code to refine the price estimate for your area.",
     "laskuri.kv.question": "Using the household deduction?",
-    "laskuri.kv.desc": "Window cleaning qualifies for the household tax deduction. You claim it yourself via OmaVero — up to €2,250 per person per year.",
+    "laskuri.kv.desc": `Window cleaning qualifies for the household tax deduction. You claim it yourself via OmaVero — up to €${fmtHouseholdCap("en")} per person per year.`,
     "laskuri.no": "No",
     "laskuri.yes.use": "Yes, I'll use it",
     "laskuri.skip": "Skip",
@@ -630,7 +631,7 @@ const translations: Record<Language, Record<string, string>> = {
     "laskuri.kv.inactive": "Not in use",
     "laskuri.houseType": "House type",
     "laskuri.size": "Property size",
-    "laskuri.kv.note": "With the household deduction (35%) you pay only about two-thirds — claimed yourself via OmaVero. Up to €2,250 per person per year.",
+    "laskuri.kv.note": `With the household deduction (${Math.round(HOUSEHOLD_DEDUCTION_RATE * 100)}%) you pay only about two-thirds — claimed yourself via OmaVero. Up to €${fmtHouseholdCap("en")} per person per year.`,
     "laskuri.kv.norm": "normally",
     "laskuri.service": "Service",
     "laskuri.difficulty": "Difficulty factors",
@@ -664,7 +665,7 @@ const translations: Record<Language, Record<string, string>> = {
     "laskuri.summary.carDetailing": "Car interior clean",
     "laskuri.summary.total": "Season total",
     "laskuri.priceAfterKv": "You pay after household deduction",
-    "laskuri.priceAfterKv.hint": "Claim the household deduction via OmaVero (max €2,250 / person / year)",
+    "laskuri.priceAfterKv.hint": `Claim the household deduction via OmaVero (max €${fmtHouseholdCap("en")} / person / year)`,
     "laskuri.priceWithVat": "Price estimate (incl. VAT)",
     "laskuri.priceNormal": "Normal price (incl. VAT)",
     "laskuri.submit": "Send for confirmation",

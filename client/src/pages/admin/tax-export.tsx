@@ -20,7 +20,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, Download, Printer, Percent, Info, Wallet, FileText, Loader2, SlidersHorizontal } from "lucide-react";
+import { ArrowLeft, Download, Printer, Percent, Info, Wallet, FileText, Loader2, SlidersHorizontal, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -71,6 +71,43 @@ const fmtDate = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString("fi-FI") : "—";
 const firstName = (n: string) => n.trim().split(/\s+/)[0];
 
+/** CSV-lataus BOM:lla (Excel avaa ääkköset oikein) — yksi toteutus, jottei
+ *  blob/URL/anchor-rituaali toistu joka exportissa. */
+const downloadCsv = (filename: string, rows: string[]) => {
+  const blob = new Blob(["﻿" + rows.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+/** Pyöreäkulmainen valitsinrivi (esim. laskuttaja-valinta) — sama ulkoasu
+ *  kaikkialla sivulla yhdestä paikasta. */
+function PillSwitcher({ options, value, onChange }: {
+  options: { id: string; label: string }[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  return (
+    <div className="flex rounded-full border overflow-hidden text-xs">
+      {options.map(o => (
+        <button
+          key={o.id}
+          onClick={() => onChange(o.id)}
+          className={`px-3 py-1.5 font-medium transition-colors ${
+            value === o.id ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:text-foreground"
+          }`}
+          data-testid={`pill-${o.id}`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** Mirror of the server's inferBillerId: explicit billedBy wins; otherwise a
  *  job whose workers contain EXACTLY ONE founder was billed by that founder. */
 function inferredBiller(job: JobRow["job"]): { id: string; name: string } | null {
@@ -83,6 +120,16 @@ function inferredBiller(job: JobRow["job"]): { id: string; name: string } | null
 interface LaskuRow {
   jobId: number; dateMs: number; name: string; ref?: string; amountCents: number;
   source: "keikka" | "era"; billerId: string; billerName: string;
+}
+
+interface BonusUsage {
+  id: number;
+  userId: string;
+  amount: number;
+  description: string;
+  category: string;
+  usedAt: string;
+  investmentId: number | null;
 }
 
 export default function TaxExportPage() {
@@ -106,6 +153,10 @@ export default function TaxExportPage() {
   // into the Laskut tab so each sees the other's invoiced work too.
   const [myDetail, setMyDetail] = useState<WorkerDetail | null>(null);
   const [otherDetail, setOtherDetail] = useState<WorkerDetail | null>(null);
+  // Aloitustuen käyttökirjaukset verovuosittain — säilyy näkyvissä täällä
+  // myös sen jälkeen kun tuki on kokonaan käytetty (Asetusten kortti piiloutuu
+  // silloin), koska veroilmoitusta tehdessä tieto tarvitaan juuri silloin.
+  const [allBonusUsages, setAllBonusUsages] = useState<BonusUsage[]>([]);
   // Which founder's books (Kirjanpito: Tuloslaskelma/Tase/Pääkirja/Ennuste) are
   // shown — ONE selector for the whole page instead of a separate one nested
   // inside the ledger card.
@@ -147,7 +198,14 @@ export default function TaxExportPage() {
     setSyncBusy(false);
   };
 
-  useEffect(() => { loadMoney(); }, []);
+  useEffect(() => {
+    loadMoney();
+    if (profile?.startupBonus && profile.startupBonus > 0) {
+      api.getStartupBonusUsages(profile.id).then((res) => {
+        if (res.ok && res.data) setAllBonusUsages(res.data as BonusUsage[]);
+      });
+    }
+  }, []);
 
   // HOST sets who billed a past job — the ALV turnover + founder cross-invoicing
   // reload so the money lands on the right person immediately.
@@ -204,13 +262,6 @@ export default function TaxExportPage() {
     : 0;
   const heroTotal = totals.net + fr8KateYear;
 
-  // Year options: hosts see every year across BOTH founders' jobs (the Laskut
-  // tab and Kirjanpito need this), everyone else sees just their own.
-  const availableYears = Array.from(
-    new Set((isHost ? jobs : myJobs).map(r => new Date(r.job.scheduledAt || r.job.createdAt).getFullYear()))
-  ).sort((a, b) => b - a);
-  const years = availableYears.length > 0 ? availableYears : [new Date().getFullYear()];
-
   // ── Laskut: combined invoice register for both founders ──────────────────
   const laskutAll: LaskuRow[] = isHost
     ? [
@@ -218,6 +269,18 @@ export default function TaxExportPage() {
         ...(otherDetail?.customerInvoices ?? []).map(inv => ({ ...inv, billerId: otherFounder.id, billerName: otherFounder.name })),
       ]
     : [];
+
+  // Year options: hosts see every year across BOTH founders' jobs (the Laskut
+  // tab and Kirjanpito need this), everyone else sees just their own. The
+  // running year is always offered even ilman valmiita keikkoja — muuten
+  // tammikuussa (tai laskutusvuonna ilman valmista keikkaa) kuluvan vuoden
+  // kirjanpito ja laskut jäisivät kokonaan valitsematta.
+  const availableYears = Array.from(new Set([
+    new Date().getFullYear(),
+    ...(isHost ? jobs : myJobs).map(r => new Date(r.job.scheduledAt || r.job.createdAt).getFullYear()),
+    ...laskutAll.map(r => new Date(r.dateMs).getFullYear()),
+  ])).sort((a, b) => b - a);
+  const years = availableYears;
   const laskutYear = laskutAll.filter(r => new Date(r.dateMs).getFullYear() === year);
   const laskutFiltered = (laskutFilter === "kaikki" ? laskutYear : laskutYear.filter(r => r.billerId === laskutFilter))
     .slice()
@@ -238,14 +301,7 @@ export default function TaxExportPage() {
         (r.net / 100).toFixed(2).replace(".", ","),
       ].join(";")
     );
-    const csv = [header, ...lines].join("\n");
-    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `puuhapatet_keikat_${year}_${profile?.id ?? "oma"}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadCsv(`puuhapatet_keikat_${year}_${profile?.id ?? "oma"}.csv`, [header, ...lines]);
   };
   const handleLaskutCsv = () => {
     const header = "Pvm;Asiakas;Laskuttaja;Tyyppi;Viite;Summa (EUR)";
@@ -257,18 +313,47 @@ export default function TaxExportPage() {
       r.ref ?? "",
       (r.amountCents / 100).toFixed(2).replace(".", ","),
     ].join(";"));
-    const csv = [header, ...lines, `Yhteensä;;;;;${(laskutSum / 100).toFixed(2).replace(".", ",")}`].join("\n");
-    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `puuhapatet_laskut_${year}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadCsv(`puuhapatet_laskut_${year}.csv`, [header, ...lines, `Yhteensä;;;;;${(laskutSum / 100).toFixed(2).replace(".", ",")}`]);
   };
 
   const multiWorkerRows = rows.filter(r => r.numWorkers > 1);
   const ledgerName = BRAND_BILLERS.find(b => b.id === ledgerId)?.name ?? ledgerId;
+
+  const yearBonusUsages = allBonusUsages.filter(u => new Date(u.usedAt).getFullYear() === year);
+  const yearBonusTotal = yearBonusUsages.reduce((s, u) => s + u.amount, 0);
+
+  // Aloitustuki / yritysseteli — veroilmoituksen kannalta olennainen muistutus
+  // (tuki on ilmoitettu tulorekisteriin) + verovuoden käyttökirjaukset.
+  const aloitustukiBlock = (profile?.startupBonus != null && profile.startupBonus > 0) ? (
+    <Disclosure
+      className="mt-2 print:hidden"
+      icon={<Sparkles className="w-4 h-4 text-yellow-600 dark:text-yellow-400" />}
+      title="Aloitustuki / yritysseteli"
+      right={<span className="text-xs text-muted-foreground tabular-nums">{fmt(profile.startupBonus)}</span>}
+    >
+      <p className="text-xs text-muted-foreground mb-3">
+        4H-yhdistys on ilmoittanut tuen tulorekisteriin — tarkista esitäytetty veroilmoitus.
+        {profile.hasYTunnus
+          ? " Y-tunnus: siirrä tuki elinkeinotoiminnan lomakkeeseen (lomake 5)."
+          : " Tarkista että tuki näkyy oikein esitäytetyssä veroilmoituksessa."}
+      </p>
+      {yearBonusUsages.length > 0 ? (
+        <div className="space-y-1.5">
+          <p className="text-xs font-semibold text-foreground">Käytetty {year}: {fmt(yearBonusTotal)}</p>
+          {yearBonusUsages.map(u => (
+            <div key={u.id} className="flex justify-between text-xs text-foreground bg-muted/30 rounded-lg px-3 py-2">
+              <span>{u.description}{u.investmentId ? " (investointi)" : ""}</span>
+              <span className="font-semibold shrink-0 ml-2">{fmt(u.amount)}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground italic">
+          Ei kirjattuja käyttöjä vuodelle {year}. Kirjaa käyttö Asetuksista tai Investoinneista.
+        </p>
+      )}
+    </Disclosure>
+  ) : null;
 
   // ── "Oma tulos" + "Keikkani": shown to EVERYONE (host or not) — this is
   // the personal OmaVero filing figure and its row-level backup detail. ──
@@ -424,17 +509,11 @@ export default function TaxExportPage() {
         {isHost && (
           <div className="flex items-center gap-2 mb-4 flex-wrap print:hidden">
             <span className="text-xs text-muted-foreground">Kirjanpito:</span>
-            <div className="flex rounded-full border overflow-hidden text-xs">
-              {BRAND_BILLERS.map((b) => (
-                <button
-                  key={b.id}
-                  onClick={() => setLedgerId(b.id)}
-                  className={`px-3 py-1.5 font-medium transition-colors ${ledgerId === b.id ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:text-foreground"}`}
-                >
-                  {firstName(b.name)}
-                </button>
-              ))}
-            </div>
+            <PillSwitcher
+              options={BRAND_BILLERS.map(b => ({ id: b.id, label: firstName(b.name) }))}
+              value={ledgerId}
+              onChange={setLedgerId}
+            />
             <DriveBackupBar ledgerId={ledgerId} year={year} />
           </div>
         )}
@@ -444,7 +523,8 @@ export default function TaxExportPage() {
         ) : !isHost ? (
           <>
             {omaTulosBlock}
-            {omaVeroNote(profile, totals)}
+            {aloitustukiBlock}
+            {omaVeroNote(profile, { net: totals.net, kate: fr8KateYear, hero: heroTotal })}
           </>
         ) : (
           <>
@@ -595,23 +675,11 @@ export default function TaxExportPage() {
                       </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <div className="flex rounded-full border overflow-hidden text-xs">
-                        <button
-                          onClick={() => setLaskutFilter("kaikki")}
-                          className={`px-3 py-1.5 font-medium transition-colors ${laskutFilter === "kaikki" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:text-foreground"}`}
-                        >
-                          Kaikki
-                        </button>
-                        {BRAND_BILLERS.map(b => (
-                          <button
-                            key={b.id}
-                            onClick={() => setLaskutFilter(b.id)}
-                            className={`px-3 py-1.5 font-medium transition-colors ${laskutFilter === b.id ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:text-foreground"}`}
-                          >
-                            {firstName(b.name)}
-                          </button>
-                        ))}
-                      </div>
+                      <PillSwitcher
+                        options={[{ id: "kaikki", label: "Kaikki" }, ...BRAND_BILLERS.map(b => ({ id: b.id, label: firstName(b.name) }))]}
+                        value={laskutFilter}
+                        onChange={setLaskutFilter}
+                      />
                       <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={handleLaskutCsv}>
                         <Download className="w-3.5 h-3.5" /> CSV
                       </Button>
@@ -640,7 +708,24 @@ export default function TaxExportPage() {
                                 <p className="font-medium text-foreground">{r.name}</p>
                                 {r.ref && <p className="text-xs text-muted-foreground">viite {r.ref}</p>}
                               </td>
-                              <td className="py-2 pr-3 text-foreground">{firstName(r.billerName)}</td>
+                              <td className="py-2 pr-3 text-foreground">
+                                {r.source === "keikka" ? (
+                                  /* Väärin kohdistetun keikan laskuttajan voi vaihtaa tästä —
+                                     ALV-kertymä, bossien tilitys ja tämä lista päivittyvät. */
+                                  <select
+                                    value={r.billerId}
+                                    onChange={(e) => setBilledBy(r.jobId, e.target.value)}
+                                    className="bg-transparent border border-border rounded px-1.5 py-0.5 text-xs text-foreground"
+                                    data-testid={`select-laskuttaja-${r.jobId}`}
+                                  >
+                                    {BRAND_BILLERS.map(b => (
+                                      <option key={b.id} value={b.id}>{firstName(b.name)}</option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <span title="Urakkaerän laskuttaja vaihdetaan Lisäasetuksista (Urakkaerien hallinta)">{firstName(r.billerName)}</span>
+                                )}
+                              </td>
                               <td className="py-2 pr-3 text-muted-foreground hidden sm:table-cell">{r.source === "era" ? "urakkaerä" : "keikka"}</td>
                               <td className="py-2 text-right font-semibold">{fmt(r.amountCents)}</td>
                             </tr>
@@ -759,7 +844,8 @@ export default function TaxExportPage() {
               </Disclosure>
             )}
 
-            {omaVeroNote(profile, totals)}
+            {aloitustukiBlock}
+            {omaVeroNote(profile, { net: totals.net, kate: fr8KateYear, hero: heroTotal })}
           </>
         )}
 
@@ -832,7 +918,10 @@ export default function TaxExportPage() {
  *  more specific (matkakulut, alle 18v, ALV — see Vaihe D). */
 function omaVeroNote(
   profile: ReturnType<typeof getAdminProfile>,
-  totals: { net: number },
+  // Sama luku kuin "Oma tulos" -herossa: keikkaosuudet + urakkakate. Jos tämä
+  // eriäisi herosta, sivu antaisi kaksi eri ilmoitussummaa (ja kate jäisi
+  // ilmoittamatta) — siksi erittely kuljetetaan tänne asti.
+  amounts: { net: number; kate: number; hero: number },
 ) {
   return (
     <Disclosure
@@ -842,9 +931,12 @@ function omaVeroNote(
     >
       <p className="text-xs text-foreground">
         {profile?.hasYTunnus ? (
-          <>Ilmoita <strong>{fmt(totals.net)}</strong> OmaVerossa kohdassa <strong>Elinkeinotoiminnan veroilmoitus (lomake 5)</strong>. Määräpäivä vaihtelee vuosittain — tarkista tarkka päivä OmaVerosta.</>
+          <>Ilmoita <strong>{fmt(amounts.hero)}</strong> OmaVerossa kohdassa <strong>Elinkeinotoiminnan veroilmoitus (lomake 5)</strong>. Määräpäivä vaihtelee vuosittain — tarkista tarkka päivä OmaVerosta.</>
         ) : (
-          <>Ilmoita <strong>{fmt(totals.net)}</strong> OmaVerossa kohdassa <strong>Muut ansiotulot</strong>.</>
+          <>Ilmoita <strong>{fmt(amounts.hero)}</strong> OmaVerossa kohdassa <strong>Muut ansiotulot</strong>.</>
+        )}
+        {amounts.kate > 0 && (
+          <> Summa = keikkaosuudet {fmt(amounts.net)} + urakkakate {fmt(amounts.kate)}.</>
         )}
       </p>
       {profile?.isUnder18 && (

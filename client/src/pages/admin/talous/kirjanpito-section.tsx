@@ -38,14 +38,17 @@ function AccountLabel({ code, name }: { code: string; name: string }) {
   );
 }
 
-const ACCOUNT_GROUP_LABEL: Record<string, string> = {
+// Avaimet sidottu tilikartan accountType-unioniin: uusi tilityyppi serverillä
+// kaatuu tässä käännösvirheeseen sen sijaan että tilit katoaisivat näkymästä.
+type AccountGroup = FinanceAccount["accountType"];
+const ACCOUNT_GROUP_LABEL: Record<AccountGroup, string> = {
   asset: "Vastaavaa",
   liability: "Vastattavaa — vieras pääoma",
   equity: "Vastattavaa — oma pääoma",
   revenue: "Tuotot",
   expense: "Kulut",
 };
-const ACCOUNT_GROUP_ORDER = ["asset", "liability", "equity", "revenue", "expense"];
+const ACCOUNT_GROUP_ORDER: AccountGroup[] = ["asset", "liability", "equity", "revenue", "expense"];
 
 // ─── Yhteenveto ────────────────────────────────────────────────────────────────
 

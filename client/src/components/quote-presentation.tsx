@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { X, ChevronLeft, ChevronRight, Send } from "lucide-react";
+import { HOUSEHOLD_DEDUCTION_RATE, fmtHouseholdCap, fmtPct } from "@shared/tax";
 
 interface ServiceItem {
   title: string;
@@ -47,7 +48,7 @@ export function QuotePresentation({
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const firstName = customerName.split(" ")[0] || customerName;
-  const kotitalous = Math.round(total * 0.6);
+  const kotitalous = Math.round(total * (1 - HOUSEHOLD_DEDUCTION_RATE));
   const savings = total - kotitalous;
   const savingsPct = total > 0 ? Math.round((savings / total) * 100) : 0;
 
@@ -264,7 +265,7 @@ export function QuotePresentation({
                 </div>
               </div>
               <p style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", marginTop: 12, textAlign: "center" }}>
-                Työn osuudesta 40 % verovähennys — enintään 2 250 € / hlö / vuosi
+                Työn osuudesta {fmtPct(HOUSEHOLD_DEDUCTION_RATE)} verovähennys — enintään {fmtHouseholdCap()} € / hlö / vuosi
               </p>
             </div>
           </div>
@@ -304,7 +305,7 @@ export function QuotePresentation({
               }}
             >
               {[
-                { icon: "✅", title: "Kotitalousvähennyskelpoinen", desc: "40 % työn osuudesta takaisin verotuksessa" },
+                { icon: "✅", title: "Kotitalousvähennyskelpoinen", desc: `${fmtPct(HOUSEHOLD_DEDUCTION_RATE)} työn osuudesta takaisin verotuksessa` },
                 { icon: "⭐", title: "Tyytyväisyystakuu", desc: "Jos et ole tyytyväinen, teemme työn uudelleen — ilmaiseksi" },
                 { icon: "🔒", title: "Vakuutettu", desc: "Kaikki työmme on vastuuvakuutettu — ei riskiä teille" },
                 { icon: "📋", title: "Selkeä hinta", desc: "Tarjouksen hinta on lopullinen. Ei yllätyksiä laskulla" },

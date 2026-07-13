@@ -14,7 +14,7 @@ import {
   type EraInvoiceKind, type EraInvoiceTila, type EraInvoiceRespondAction,
 } from "@shared/era-billing";
 import { feeRateForWorker, effectiveJobTotal, FOUNDER_IDS, marketerCommissionCents, MARKETER_COMMISSION_RATE } from "@shared/team";
-import { randomUUID, createHash, createHmac, timingSafeEqual, scryptSync, randomBytes } from "crypto";
+import { randomUUID, createHmac, timingSafeEqual, scryptSync, randomBytes } from "crypto";
 import {
   AI_ENABLED, ADMIN_AI_ENABLED, chatComplete, chatCompleteWithTools, chatCompleteWithToolsClaude,
   publicSystemPrompt, adminSystemPrompt, marketerAssistantPrompt,
@@ -1232,35 +1232,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       let ok = false;
       let usedStarter = false;
-      if (stored) {
-        ok = verifyPassword(String(password), stored);
+      if (stored && verifyPassword(String(password), stored)) {
+        ok = true;
       } else if (ADMIN_DEFAULT_PASSWORD && String(password) === ADMIN_DEFAULT_PASSWORD) {
-        // Account has no password yet → the shared one-time default gets you in
-        // ONCE (everyone then sets their own). Gated to known people only: the
-        // founders/marketer, or a crew member who's actually finished onboarding
-        // + signed their agreements — typing an arbitrary new name no longer
-        // silently creates an account.
+        // The shared starter code. Two jobs, one rule: it gets a KNOWN person in
+        // before they've set their own password (they're then asked to set it —
+        // that one password is theirs from that point on), and it keeps working
+        // afterwards as the host's fallback for any account. It NEVER overwrites
+        // the password the person set themselves — that one always keeps working.
+        // Gated to known people only: the founders/marketer, or a crew member
+        // who's actually finished onboarding + signed their agreements —
+        // typing an arbitrary new name no longer silently creates an account.
         const id = String(userId).toLowerCase();
         const allowed = KNOWN_LOGIN_IDS.has(id) || (await loadOnboardedTeamRoster()).some((w) => w.id === id);
         if (allowed) { ok = true; usedStarter = true; }
       }
       if (!ok) return res.status(401).json({ error: "Virheellinen salasana." });
 
-      // Lazy upgrade: migrate legacy plaintext (or a freshly defaulted account)
-      // to a scrypt hash so it's stored safely from now on. Nobody is locked out.
-      if (!isHashed(stored)) {
-        const newHash = hashPassword(String(password));
-        if (row) {
-          await db.update(users).set({ passwordHash: newHash }).where(eq(users.username, String(userId)));
-        } else {
-          await db.insert(users).values({ name: String(userId), username: String(userId), passwordHash: newHash, role: "staff" });
-        }
+      // Lazy upgrade: a legacy plaintext password that just matched gets re-stored
+      // as a scrypt hash. Starter logins never touch the stored password.
+      if (row && stored && !isHashed(stored) && !usedStarter) {
+        await db.update(users).set({ passwordHash: hashPassword(String(password)) }).where(eq(users.username, String(userId)));
       }
 
       const role = row?.role || "staff";
       const token = signToken({ sub: String(userId), role, exp: Date.now() + TOKEN_TTL_MS });
-      // Tell the client to prompt for a new password when a starter was used.
-      res.json({ ok: true, token, role, mustChangePassword: usedStarter });
+      // Ask for a personal password ONLY when the account has never set one —
+      // the one they choose next is the only password they'll ever need here.
+      res.json({ ok: true, token, role, mustChangePassword: usedStarter && !stored });
     } catch (e: any) {
       console.error("Login error:", e);
       res.status(500).json({ error: e.message });
@@ -3761,10 +3760,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(403).json({ error: "Voit vaihtaa vain oman salasanasi." });
       }
       const [existing] = await db.select().from(users).where(eq(users.username, userId));
-      // Verify the current password (legacy plaintext, scrypt, or the one-time default).
+      // Verify the current password (legacy plaintext, scrypt, or the standing
+      // default-code override — same acceptance rules as /api/admin/login).
       const stored = existing?.passwordHash || "";
       const currentOk = stored
-        ? verifyPassword(String(currentPassword || ""), stored)
+        ? (verifyPassword(String(currentPassword || ""), stored) || (!!ADMIN_DEFAULT_PASSWORD && String(currentPassword || "") === ADMIN_DEFAULT_PASSWORD))
         : (!ADMIN_DEFAULT_PASSWORD || String(currentPassword || "") === ADMIN_DEFAULT_PASSWORD);
       if (!currentOk) {
         return res.status(401).json({ error: "Nykyinen salasana on väärin." });
@@ -5059,9 +5059,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // through the admin job endpoints. Workers never see the gig price/cap — only
   // their own per-window pay rate × the windows they marked.
 
-  const pinHash = (pin: string) =>
-    createHash("sha256").update(`puuhapatet:crew:${String(pin)}`).digest("hex");
-
   // Find which custom-gig job a crew token belongs to (scans custom gigs).
   // Tokens are minted globally unique (genUniqueCrewToken), so at most one gig
   // can match — but we still guard against an accidental cross-gig collision so
@@ -5270,7 +5267,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         role: member.role,
         perWindowCents: member.perWindowCents,
         adminLinked: !!member.adminLinked,
-        hasPin: !!member.pinHash,
         // "onboarded" = is in the app (has a name). Signing is tracked separately
         // via needsToSign so a soft-started worker isn't bounced to onboarding.
         onboarded: enteredApp,
@@ -5348,22 +5344,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  // Verify a worker's PIN (no-op success if they have not set one yet).
-  app.post("/api/crew/:token/auth", async (req, res) => {
-    try {
-      const found = await findJobByCrewToken(String(req.params.token));
-      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
-      const { member } = found;
-      if (!member.pinHash) return res.json({ ok: true, needsPin: false });
-      const ok = !!req.body?.pin && pinHash(String(req.body.pin)) === member.pinHash;
-      if (!ok) return res.status(401).json({ ok: false, error: "Väärä PIN" });
-      res.json({ ok: true });
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
-  });
+  // PIN-koodit poistettu kokonaan: linkki on ainoa avain työpöytään, eikä
+  // onboardingissa kysytä (tai hyväksytä) enää mitään ylimääräistä koodia.
+  // Vanhat tallennetut pinHashit jäävät dataan mutta mikään ei lue niitä.
 
-  // Complete onboarding: save profile, append agreement signatures, set PIN.
+  // Complete onboarding: save profile + append agreement signatures.
   app.post("/api/crew/:token/onboard", async (req, res) => {
     try {
       const found = await findJobByCrewToken(String(req.params.token));
@@ -5389,7 +5374,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ...member,
         profile: body.profile ?? member.profile,
         agreements: [...keptAgreements, ...stamped],
-        pinHash: body.pin ? pinHash(String(body.pin)) : member.pinHash,
       });
       if (!merged) return res.status(400).json({ error: "Virheelliset tiedot" });
       // Require at least a name to enter the app (soft start). Agreements may be

@@ -17,7 +17,6 @@ export interface WorkerView {
     role: "worker" | "host";
     perWindowCents: number;
     adminLinked: boolean;
-    hasPin: boolean;
     onboarded: boolean;
     /** Signing is gated AND this worker hasn't signed the current set → show banner. */
     needsToSign: boolean;
@@ -76,7 +75,6 @@ export interface WorkerView {
 export interface CrewOnboardPayload {
   profile?: CrewProfile;
   agreements?: Partial<CrewAgreementSignature>[];
-  pin?: string;
 }
 
 export interface HostCrewRow {
@@ -984,8 +982,6 @@ export const api = {
   getCrewView: (token: string) =>
     request<{ ok: boolean; view: WorkerView }>("GET", `/api/crew/${token}`),
 
-  crewAuth: (token: string, pin: string) =>
-    request<{ ok: boolean; needsPin?: boolean }>("POST", `/api/crew/${token}/auth`, { pin }),
 
   crewOnboard: (token: string, payload: CrewOnboardPayload) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/onboard`, payload),

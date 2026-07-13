@@ -8,7 +8,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
-import { Eye, EyeOff, ShieldCheck, ChevronDown, Check, Search } from "lucide-react";
+import { Eye, EyeOff, ChevronDown, Check, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -18,6 +18,16 @@ import { api, getAdminToken, setAdminToken, clearAdminToken } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const LAST_USER_KEY = "puuhapatet_last_user";
+
+// Time-aware greeting — the login page's one line of personality. The emoji
+// lives outside the gradient span so background-clip: text can't blank it out.
+function greetingNow(): { text: string; emoji: string } {
+  const h = new Date().getHours();
+  if (h >= 5 && h < 10) return { text: "Huomenta", emoji: "☀️" };
+  if (h >= 10 && h < 17) return { text: "Hyvää päivää", emoji: "👋" };
+  if (h >= 17 && h < 23) return { text: "Hyvää iltaa", emoji: "🌆" };
+  return { text: "Myöhäistä vuoroa", emoji: "🌙" };
+}
 
 /** Small round avatar — photo if set, otherwise the initial. */
 function Avatar({ user, size = 36 }: { user: AdminProfile; size?: number }) {
@@ -66,7 +76,7 @@ export default function AdminLoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  // Forced password change for a worker who logged in with a starter password.
+  // First-login password setup — an account that has never set its own password.
   const [mode, setMode] = useState<"login" | "setpw">("login");
   const [starterPw, setStarterPw] = useState("");
   const [newPw, setNewPw] = useState("");
@@ -105,8 +115,14 @@ export default function AdminLoginPage() {
     if (newPw !== newPw2) { toast({ variant: "destructive", title: "Salasanat eivät täsmää" }); return; }
     setIsLoading(true);
     const r = await api.setUserPasswordRemote(selected.id, newPw, starterPw);
-    if (r.ok) { toast({ title: "Salasana tallennettu" }); await goToDashboard(); }
-    else { toast({ variant: "destructive", title: "Salasanan vaihto epäonnistui", description: r.error || "" }); setIsLoading(false); }
+    if (r.ok) {
+      toast({ title: "Salasana tallennettu", description: "Tämä on jatkossa ainoa salasanasi." });
+      if (selected.dashboardOnly) { await goToDashboard(); return; }
+      navigate("/admin/dashboard");
+    } else {
+      toast({ variant: "destructive", title: "Salasanan tallennus epäonnistui", description: r.error || "" });
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -124,9 +140,8 @@ export default function AdminLoginPage() {
     if (!selected) return;
     setIsLoading(true);
 
-    // Server verifies the password and issues a signed token. Your existing
-    // password keeps working — if you changed it earlier, that new one is what
-    // you type, and it's migrated to secure storage automatically on this login.
+    // Server verifies the password and issues a signed token. The password each
+    // person set themselves is THE password — it always keeps working.
     const res = await api.adminLogin(selected.id, password);
 
     if (res.ok && res.data?.token) {
@@ -134,15 +149,18 @@ export default function AdminLoginPage() {
       setAdminProfile(selected);
       try { localStorage.setItem(LAST_USER_KEY, selected.id); } catch {}
 
-      // Dashboard-only worker (e.g. Jani): never enters the admin. If they used a
-      // starter password, force a change first; then go straight to their dashboard.
+      // First-ever login (account has no own password yet): set it now, once.
+      // That one is the only password they'll ever need here.
+      if (res.data.mustChangePassword) {
+        setStarterPw(password);
+        setMode("setpw");
+        setIsLoading(false);
+        return;
+      }
+
+      // Dashboard-only worker (e.g. Jani): never enters the admin — go straight
+      // to their personal dashboard.
       if (selected.dashboardOnly) {
-        if (res.data.mustChangePassword) {
-          setStarterPw(password);
-          setMode("setpw");
-          setIsLoading(false);
-          return;
-        }
         await goToDashboard();
         return;
       }
@@ -195,23 +213,29 @@ export default function AdminLoginPage() {
         )}
 
         {mode === "login" && (<>
-        {/* Intro: explain the security upgrade so the team isn't surprised */}
-        <div className="mb-6 rounded-2xl border border-primary/20 bg-primary/5 p-4">
-          <div className="flex items-start gap-3">
-            <ShieldCheck className="w-5 h-5 text-primary mt-0.5 shrink-0" />
-            <div className="text-sm leading-relaxed text-foreground/80">
-              <p className="font-medium text-foreground mb-1">Kirjautuminen päivitetty turvallisemmaksi</p>
-              <p>
-                Asiakastiedot on nyt suojattu palvelimella. <strong>Kirjaudu samalla salasanalla kuin ennen</strong> —
-                jos olet jo vaihtanut oman salasanasi, käytä sitä uutta. Järjestelmä siirtää salasanasi
-                suojattuun muotoon automaattisesti, joten mitään ei tarvitse tehdä erikseen.
-              </p>
-              <p className="mt-1 text-muted-foreground">
-                Jos kirjautuminen ei onnistu, ole yhteydessä Joonataniin.
-              </p>
-            </div>
-          </div>
-        </div>
+        {/* One breathing line of welcome instead of a wall of instructions —
+            everyone just logs in with the password they set themselves. */}
+        <p className="mb-6 text-center text-sm font-medium">
+          <span className="pp-greeting">{greetingNow().text}</span>
+          <span className="ml-1.5">{greetingNow().emoji}</span>
+        </p>
+        <style>{`
+          .pp-greeting {
+            background: linear-gradient(90deg, hsl(var(--muted-foreground)) 0%, hsl(var(--muted-foreground)) 38%, hsl(var(--primary)) 50%, hsl(var(--muted-foreground)) 62%, hsl(var(--muted-foreground)) 100%);
+            background-size: 250% 100%;
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            animation: pp-greeting-sheen 3.6s ease-in-out infinite;
+          }
+          @keyframes pp-greeting-sheen {
+            0% { background-position: 125% 0; }
+            100% { background-position: -125% 0; }
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .pp-greeting { animation: none; color: hsl(var(--muted-foreground)); background: none; }
+          }
+        `}</style>
 
         {/* User selector — a clean dropdown that scales as more workers join */}
         <div className="relative mb-6">

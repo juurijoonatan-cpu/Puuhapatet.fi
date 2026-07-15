@@ -986,6 +986,9 @@ export const api = {
   crewOnboard: (token: string, payload: CrewOnboardPayload) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/onboard`, payload),
 
+  crewSetPassword: (token: string, password: string) =>
+    request<{ ok: boolean; username?: string }>("POST", `/api/crew/${token}/password`, { password }),
+
   crewMarkWindow: (token: string, key: string, status: WindowStatus, p?: 1 | 2) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/window`, { key, status, p }),
 

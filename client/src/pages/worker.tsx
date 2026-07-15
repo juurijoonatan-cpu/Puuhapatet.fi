@@ -1029,6 +1029,9 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
   const [sub, setSub] = useState<null | "payouts" | "notes">(null);
   const pwa = usePwaInstall();
   const [showInstall, setShowInstall] = useState(false);
+  // Oman kirjautumissalasanan asetus (myös "unohdin salasanani" -reitti):
+  // linkki on henkilökohtainen avain, joten vanhaa salasanaa ei kysytä.
+  const [showPassword, setShowPassword] = useState(false);
   // Toimintaa odottavat: perinteiset payoutit + FR8 erälaskuluonnokset (kohta 3B)
   // — molemmat aukeavat samasta "Maksut"-alanäkymästä.
   const pendingPayouts =
@@ -1091,13 +1094,23 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
         <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
           <p style={{ margin: 0, fontWeight: 700, fontSize: 15 }}>{view.worker.name || "Työntekijä"}</p>
           <p style={{ margin: 0, fontSize: 11.5, color: "rgba(255,255,255,0.5)" }}>{view.building.name || "Puuhapatet"}{view.building.address ? ` · ${view.building.address}` : ""}</p>
-          <button
-            onClick={onLogout}
-            style={{ marginTop: 3, alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.35)", fontSize: 10.5, fontFamily: FONT, padding: 0 }}
-          >
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
-            Kirjaudu ulos
-          </button>
+          <div style={{ marginTop: 3, display: "flex", alignItems: "center", gap: 12 }}>
+            <button
+              onClick={onLogout}
+              style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.35)", fontSize: 10.5, fontFamily: FONT, padding: 0 }}
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
+              Kirjaudu ulos
+            </button>
+            <button
+              onClick={() => setShowPassword(true)}
+              style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.35)", fontSize: 10.5, fontFamily: FONT, padding: 0 }}
+              data-testid="btn-open-password"
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4" /></svg>
+              Salasana
+            </button>
+          </div>
         </div>
         <div style={{ textAlign: "right" }}>
           <p style={{ margin: 0, fontSize: 20, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: "#7CE0A6" }}>{euro(view.stats.earnedCents)}</p>
@@ -1193,6 +1206,66 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
       </div>
 
       {showInstall && <InstallModal pwa={pwa} onClose={() => setShowInstall(false)} />}
+      {showPassword && <PasswordModal token={token} name={view.worker.name} onClose={() => setShowPassword(false)} />}
+    </div>
+  );
+}
+
+/** Set (or replace) the worker's puuhapatet.fi login password straight from
+ *  their personal link. The link IS the identity, so no old password is asked
+ *  — this doubles as the "unohdin salasanani" route. The new password replaces
+ *  every previous one; nothing else ever needs remembering. */
+function PasswordModal({ token, name, onClose }: { token: string; name: string; onClose: () => void }) {
+  const [pw1, setPw1] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState(false);
+  const firstName = name ? name.split(" ")[0] : "";
+  const darkInput: React.CSSProperties = {
+    width: "100%", boxSizing: "border-box", padding: "12px 14px", borderRadius: 12, fontSize: 15, fontFamily: FONT,
+    background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.18)", color: "#fff", outline: "none",
+  };
+  const save = async () => {
+    if (pw1.length < 4) { setErr("Vähintään 4 merkkiä."); return; }
+    if (pw1 !== pw2) { setErr("Salasanat eivät täsmää."); return; }
+    setBusy(true); setErr("");
+    const res = await api.crewSetPassword(token, pw1);
+    setBusy(false);
+    if (res.ok) setDone(true);
+    else setErr(res.error || "Tallennus epäonnistui — yritä uudelleen.");
+  };
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.72)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }} onClick={onClose}>
+      <div style={{ width: "100%", maxWidth: 340, background: "#141416", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 18, padding: 20 }} onClick={(e) => e.stopPropagation()}>
+        {done ? (
+          <>
+            <p style={{ margin: 0, fontWeight: 700, fontSize: 16 }}>Salasana tallennettu ✓</p>
+            <p style={{ margin: "8px 0 16px", fontSize: 13, color: "rgba(255,255,255,0.6)", lineHeight: 1.55 }}>
+              Kun kirjaudut puuhapatet.fi:ssä, valitse <b style={{ color: "#fff" }}>{firstName || "oma nimesi"}</b> ja
+              käytä tätä salasanaa. Vanhat salasanat eivät enää toimi — tämä on ainoa.
+            </p>
+            <button onClick={onClose} style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "none", cursor: "pointer", fontFamily: FONT, fontSize: 14.5, fontWeight: 700, background: T.green, color: "#fff" }}>Valmis</button>
+          </>
+        ) : (
+          <>
+            <p style={{ margin: 0, fontWeight: 700, fontSize: 16 }}>Aseta kirjautumissalasana</p>
+            <p style={{ margin: "6px 0 14px", fontSize: 12.5, color: "rgba(255,255,255,0.55)", lineHeight: 1.55 }}>
+              Tällä kirjaudut puuhapatet.fi:ssä omalla nimelläsi. Uusi salasana korvaa kaikki vanhat —
+              jos vanha on unohtunut, aseta tästä vain uusi.
+            </p>
+            <input type="password" value={pw1} onChange={(e) => setPw1(e.target.value)} placeholder="Uusi salasana (väh. 4 merkkiä)" autoComplete="new-password" autoFocus style={{ ...darkInput, marginBottom: 8 }} />
+            <input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="Uusi salasana uudelleen" autoComplete="new-password" style={darkInput} onKeyDown={(e) => e.key === "Enter" && save()} />
+            {err && <p style={{ color: "#FF9A9A", fontSize: 12.5, margin: "8px 0 0" }}>{err}</p>}
+            <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+              <button onClick={onClose} style={{ flex: 1, padding: "12px 14px", borderRadius: 12, cursor: "pointer", fontFamily: FONT, fontSize: 14.5, fontWeight: 600, background: "none", border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.75)" }}>Peruuta</button>
+              <button onClick={save} disabled={busy || !pw1 || !pw2} style={{ flex: 1.4, padding: "12px 14px", borderRadius: 12, border: "none", cursor: "pointer", fontFamily: FONT, fontSize: 14.5, fontWeight: 700, background: T.green, color: "#fff", opacity: busy || !pw1 || !pw2 ? 0.55 : 1 }} data-testid="btn-save-password">
+                {busy ? "Tallennetaan…" : "Tallenna"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

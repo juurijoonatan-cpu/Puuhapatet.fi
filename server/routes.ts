@@ -502,7 +502,7 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   { method: "GET",  re: /^\/api\/gig\/[^/]+$/ },
   { method: "POST", re: /^\/api\/gig\/[^/]+\/sign$/ },
   { method: "GET",  re: /^\/api\/crew\/[^/]+$/ },
-  { method: "POST", re: /^\/api\/crew\/[^/]+\/(auth|onboard|window|hours|note|map-note|shift|expense)$/ },
+  { method: "POST", re: /^\/api\/crew\/[^/]+\/(password|onboard|window|hours|note|map-note|shift|expense)$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/map-note\/(update|delete)$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/payout\/[^/]+\/approve$/ },
   // FR8 erälaskutus, tekijän vastaus (kohta 3B): tekijä lähettää tai hylkää
@@ -1201,6 +1201,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     message: { error: "Liian monta kirjautumisyritystä. Yritä hetken kuluttua." },
   });
   app.use("/api/admin/login", loginLimiter);
+  // Salasanan asetus tekijälinkistä kirjoittaa kirjautumissalasanan → sama
+  // brute-force-suoja kuin loginilla.
+  app.use("/api/crew/:token/password", loginLimiter);
 
   // ─── Admin auth gate (default-deny) ────────────────────────────────────────────
   // Runs before every route below. Public API routes pass through; everything
@@ -5347,6 +5350,36 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // PIN-koodit poistettu kokonaan: linkki on ainoa avain työpöytään, eikä
   // onboardingissa kysytä (tai hyväksytä) enää mitään ylimääräistä koodia.
   // Vanhat tallennetut pinHashit jäävät dataan mutta mikään ei lue niitä.
+
+  // Aseta oma kirjautumissalasana suoraan henkilökohtaisesta linkistä. Linkki
+  // on jo tekijän henkilökohtainen avain, joten vanhaa salasanaa ei kysytä —
+  // tämä on samalla "unohdin salasanani" -reitti: uusi salasana KORVAA kaikki
+  // vanhat, ja sillä kirjaudutaan jatkossa puuhapatet.fi:n kirjautumisessa.
+  app.post("/api/crew/:token/password", async (req, res) => {
+    try {
+      const { password } = req.body ?? {};
+      if (!password || String(password).length < 4) {
+        return res.status(400).json({ error: "Liian lyhyt salasana (väh. 4 merkkiä)." });
+      }
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const m = found.member;
+      // Sama tunnus jolla kirjautumisruutu tuntee tekijän: linkedUserId tai
+      // etunimi pienellä (ks. loadOnboardedTeamRoster).
+      const username = (m.linkedUserId || (m.name || "").trim().split(/\s+/)[0] || "").toLowerCase();
+      if (!username) return res.status(400).json({ error: "Tiliä ei voitu päätellä — pyydä Joonatania linkittämään tilisi." });
+      const newHash = hashPassword(String(password));
+      const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.username, username));
+      if (existing) {
+        await db.update(users).set({ passwordHash: newHash }).where(eq(users.username, username));
+      } else {
+        await db.insert(users).values({ name: m.name || username, username, passwordHash: newHash, role: "staff" });
+      }
+      res.json({ ok: true, username });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
 
   // Complete onboarding: save profile + append agreement signatures.
   app.post("/api/crew/:token/onboard", async (req, res) => {

@@ -35,8 +35,8 @@ import {
 } from "@shared/crew";
 import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED, requiredAgreementIdsForSet, resolveAgreementSet } from "@shared/worker-agreements";
 import {
-  computeTax, readVatStatus, readInPrepaymentRegister, readPayeeType, WITHHOLDING_COMPANY,
-  WITHHOLDING_NATURAL_PERSON, VAT_SMALL_BUSINESS_LIMIT_EUR, ALV_RATE, fmtPct, fmtEurCents, type TaxBreakdown,
+  computeTax, readVatStatus, readInPrepaymentRegister, readPayeeType,
+  VAT_SMALL_BUSINESS_LIMIT_EUR, ALV_RATE, fmtPct, fmtEurCents, type TaxBreakdown,
   HOUSEHOLD_DEDUCTION_RATE, HOUSEHOLD_DEDUCTION_CAP_EUR, HOUSEHOLD_DEDUCTION_OMAVASTUU_EUR, fmtHouseholdCap,
 } from "@shared/tax";
 import {
@@ -6890,22 +6890,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const now = Date.now();
       const invoiceDate = new Date(now).toLocaleDateString("fi-FI");
 
-      // Vero-erittely: ALV laskuttajan ALV-aseman mukaan + ennakonpidätys, jos
-      // laskuttaja ei ole ennakkoperintärekisterissä. amountCents on työkorvaus
-      // ilman ALV:tä (pestyt ikkunat × hinta). Admin voi antaa withholdingRate-
-      // ohituksen (esim. 0.13 oikeushenkilölle tai verokortin %).
+      // Vero-erittely: ALV laskuttajan ALV-aseman mukaan. Ei koskaan ennakonpidätystä
+      // (ks. shared/tax.ts). amountCents on työkorvaus ilman ALV:tä (pestyt ikkunat × hinta).
       const answers = member.profile?.answers;
-      const overrideRate = Number(req.body?.withholdingRate);
-      const hasOverride = Number.isFinite(overrideRate) && overrideRate >= 0 && overrideRate <= 1;
-      // Reuse the snapshot frozen at approval (what the worker actually approved),
-      // unless the admin explicitly overrides the withholding rate at payment.
-      const tax = (payout.tax && !hasOverride) ? payout.tax : computeTax({
-        laborCents: payout.amountCents,
-        vatStatus: readVatStatus(answers),
-        inPrepaymentRegister: readInPrepaymentRegister(answers),
-        payeeType: readPayeeType(answers),
-        withholdingRate: hasOverride ? overrideRate : undefined,
-      });
+      // Reuse the snapshot frozen at approval (what the worker actually approved).
+      const tax = payout.tax ?? computeTax({ laborCents: payout.amountCents, vatStatus: readVatStatus(answers) });
 
       // Buyer = the leader who billed the customer. Use the one chosen at creation;
       // allow an override at payment time (req.body.billerId), else keep/resolve.
@@ -7387,16 +7376,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         type: "function",
         function: {
           name: "explain_tax",
-          description: "Laske TARKKA ALV- ja ennakonpidätyserittely työkorvaukselle sovelluksen omilla verovakioilla (ei koskaan päästäsi/arvaamalla). Käytä kun kysytään esim. 'paljonko alihankkijalle jää käteen', 'kuinka paljon pidätetään' tai 'lisääkö tämä ALV:n'.",
+          description: "Laske TARKKA ALV-erittely työkorvaukselle sovelluksen omilla verovakioilla (ei koskaan päästäsi/arvaamalla). Puuhapatet ei koskaan pidätä ennakonpidätystä — maksettava tilille on aina työkorvaus + ALV. Käytä kun kysytään esim. 'paljonko alihankkijalle jää käteen' tai 'lisääkö tämä ALV:n'.",
           parameters: {
             type: "object",
             properties: {
               labor_amount_eur: { type: "number", description: "Työkorvaus ilman ALV:tä, euroina" },
               vat_status: { type: "string", enum: ["alv_rekisterissa", "vahainen_toiminta", "ei_tiedossa"], description: "Onko laskuttaja ALV-rekisterissä" },
-              in_prepayment_register: { type: "boolean", description: "Onko maksunsaaja ennakkoperintärekisterissä (true = maksetaan bruttona, ei pidätystä)" },
-              payee_type: { type: "string", enum: ["individual", "company"], description: "Maksunsaajan muoto — vaikuttaa ennakonpidätys-%:iin jos ei rekisterissä. Oletus 'individual'." },
             },
-            required: ["labor_amount_eur", "vat_status", "in_prepayment_register"],
+            required: ["labor_amount_eur", "vat_status"],
           },
         },
       };
@@ -7710,12 +7697,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             } else if (tc.function.name === "explain_tax") {
               const laborCents = Math.round(Number(args.labor_amount_eur || 0) * 100);
               const vatStatus = ["alv_rekisterissa", "vahainen_toiminta", "ei_tiedossa"].includes(args.vat_status) ? args.vat_status : "ei_tiedossa";
-              const payeeType = args.payee_type === "company" ? "company" : "individual";
-              const tax = computeTax({
-                laborCents, vatStatus, inPrepaymentRegister: !!args.in_prepayment_register, payeeType,
-              });
+              const tax = computeTax({ laborCents, vatStatus });
               toolResult = `Työkorvaus ${fmtEurCents(laborCents)}. ALV ${fmtPct(tax.vatRate)}: ${fmtEurCents(tax.vatCents)}. Laskun loppusumma ${fmtEurCents(tax.invoiceTotalCents)}. ` +
-                `Ennakonpidätys ${tax.withheld ? fmtPct(tax.withholdingRate) : "ei pidätystä"}: ${fmtEurCents(tax.withholdingCents)}. ` +
+                `Ei ennakonpidätystä (Puuhapatet ei koskaan pidätä). ` +
                 `Maksettava tilille: ${fmtEurCents(tax.payableCents)}. Perustelut: ${tax.notes.join(" ")}`;
             } else {
               toolResult = `Tuntematon työkalu: ${tc.function.name}`;
@@ -8274,7 +8258,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     lines.push(
       `\nPuuhapatetin omat verovakiot (käytä AINA näitä, älä yleistä/vanhentunutta tietoa): ` +
       `ALV ${fmtPct(ALV_RATE)} (voimassa 1.9.2024 alkaen), ALV-vapauden raja ${VAT_SMALL_BUSINESS_LIMIT_EUR} €/vuosi/henkilö (1.1.2025 alkaen), ` +
-      `ennakonpidätys ${fmtPct(WITHHOLDING_NATURAL_PERSON)} (luonnollinen henkilö/toiminimi ilman verokorttia) tai ${fmtPct(WITHHOLDING_COMPANY)} (oikeushenkilö), ` +
+      `EI ennakonpidätystä koskaan (Puuhapatet maksaa alihankkijalle aina täysimääräisenä/bruttona, riippumatta ennakkoperintärekisteristä), ` +
       `kotitalousvähennys ${fmtPct(HOUSEHOLD_DEDUCTION_RATE)} työn osuudesta, enintään ${fmtHouseholdCap()} €/henkilö/vuosi, omavastuu ${HOUSEHOLD_DEDUCTION_OMAVASTUU_EUR} €/vuosi (2025–). ` +
       `Tarkkaan verolaskuun (esim. paljonko alihankkijalle jää käteen) käytä explain_tax-työkalua äläkä laske päästäsi.`
     );

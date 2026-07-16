@@ -358,27 +358,26 @@ function ToggleRow({ label, value, onChange, options }: {
   );
 }
 
-/** Host-editable entrepreneur facts: insurance, ennakkoperintärekisteri, ALV,
- *  Y-tunnus and email. Lets the founder pre-fill or verify these on the worker's
- *  behalf (e.g. an experienced hire working before he onboards himself). The worker
- *  still confirms them when he signs. Writes to profile + profile.answers. */
+/** Host-editable entrepreneur facts: insurance, ALV, Y-tunnus and email. Lets
+ *  the founder pre-fill or verify these on the worker's behalf (e.g. an
+ *  experienced hire working before he onboards himself). The worker still
+ *  confirms them when he signs. Writes to profile + profile.answers. */
 function EntrepreneurPanel({ member, onUpdate }: {
   member: HostCrewRow["member"];
   onUpdate: (id: string, data: Parameters<typeof api.updateCrewMember>[2]) => Promise<void> | void;
 }) {
   const a = member.profile?.answers || {};
   const base = {
-    insurance: a.insuranceValid || "", register: a.prepaymentRegister || "", vat: a.vatStatus || "",
+    insurance: a.insuranceValid || "", vat: a.vatStatus || "",
     yTunnus: member.profile?.yTunnus || "", email: member.profile?.email || "",
   };
   const [insurance, setInsurance] = useState(base.insurance);
-  const [register, setRegister] = useState(base.register);
   const [vat, setVat] = useState(base.vat);
   const [yTunnus, setYTunnus] = useState(base.yTunnus);
   const [email, setEmail] = useState(base.email);
   const [busy, setBusy] = useState(false);
 
-  const dirty = insurance !== base.insurance || register !== base.register || vat !== base.vat
+  const dirty = insurance !== base.insurance || vat !== base.vat
     || yTunnus.trim() !== base.yTunnus || email.trim() !== base.email;
   const yTunnusOk = !yTunnus.trim() || isValidYTunnus(yTunnus.trim());
 
@@ -386,7 +385,6 @@ function EntrepreneurPanel({ member, onUpdate }: {
     setBusy(true);
     const answers: Record<string, string> = {};
     if (insurance) answers.insuranceValid = insurance;
-    if (register) answers.prepaymentRegister = register;
     if (vat) answers.vatStatus = vat;
     await onUpdate(member.id, { profile: { yTunnus: yTunnus.trim(), email: email.trim(), answers } });
     setBusy(false);
@@ -417,7 +415,6 @@ function EntrepreneurPanel({ member, onUpdate }: {
         </div>
         <p className="text-[11px] text-muted-foreground">Voit esitäyttää tai varmistaa nämä työntekijän puolesta. Hän vahvistaa ne allekirjoittaessaan.</p>
         <ToggleRow label="Vakuutukset voimassa" value={insurance} onChange={setInsurance} options={[["kylla", "Kyllä"], ["ei", "Ei vielä"]]} />
-        <ToggleRow label="Ennakkoperintärekisterissä" value={register} onChange={setRegister} options={[["kylla", "Kyllä"], ["ei", "Ei"]]} />
         <ToggleRow label="ALV-asema" value={vat} onChange={setVat} options={[["vahainen_toiminta", "Ei ALV:tä"], ["alv_rekisterissa", "ALV 25,5 %"]]} />
         <div className="flex gap-2">
           <label className="flex-1 text-[11px] text-muted-foreground">

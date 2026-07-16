@@ -44,6 +44,7 @@ import {
   type Biller, type BuyerSnapshot,
 } from "@shared/billers";
 import { computePayProgress } from "@shared/payprogress";
+import { isValidYTunnus } from "@shared/y-tunnus";
 import { traineeForUserId, traineeForName, type TraineeInfo } from "@shared/trainees";
 import { computeBillerTurnover, computeFounderSettlement } from "./finance/settlement";
 import { getIncomeStatement, getBalanceSheet } from "./finance/reports";
@@ -5713,11 +5714,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ error: "Harjoittelija ei laskuta — maksu hoidetaan tiimin kautta." });
       }
       const b = (req.body?.billing ?? {}) as Record<string, any>;
+      const resolvedYTunnus = String(b.yTunnus ?? member.profile?.yTunnus ?? "").slice(0, 40) || undefined;
+      // Laskumerkintöjen pakollinen tieto: myyjän Y-tunnus. Tämä hyväksyntä
+      // jäädyttää laskutussnapshotin (payout.billing), jota "paid"-vaihe käyttää
+      // sellaisenaan laskun PDF:ään — virhe on estettävä tässä, ei vasta maksun
+      // yhteydessä kun lasku jo lähetetään.
+      if (!isValidYTunnus(resolvedYTunnus)) {
+        return res.status(400).json({
+          error: "Y-tunnus puuttuu tai ei ole oikeassa muodossa (NNNNNNN-N) — täydennä se ennen maksun hyväksymistä.",
+        });
+      }
       payout.status = "hyvaksytty";
       payout.approvedAt = Date.now();
       payout.billing = {
         name: String(b.name ?? member.profile?.fullName ?? member.name).slice(0, 160) || undefined,
-        yTunnus: String(b.yTunnus ?? member.profile?.yTunnus ?? "").slice(0, 40) || undefined,
+        yTunnus: resolvedYTunnus,
         iban: String(b.iban ?? member.profile?.iban ?? "").slice(0, 40) || undefined,
         address: String(b.address ?? "").slice(0, 240) || undefined,
       };
@@ -5778,6 +5789,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // laskuta alihankkijana. Hylkäys sallitaan silti (siivoaa virheellisen rivin).
       if (action === "send" && isCrewTrainee(member)) {
         return res.status(400).json({ error: "Harjoittelija ei laskuta — maksu hoidetaan tiimin kautta." });
+      }
+      // Laskumerkintöjen pakollinen tieto (kohta 4, fr8-era-laskutus-plan.md):
+      // myyjän Y-tunnus. Lasku lukitaan tästä eteenpäin muuttumattomaksi, joten
+      // virheellinen/puuttuva Y-tunnus on estettävä TÄSSÄ — ei jälkikäteen enää
+      // korjattavissa ilman uutta laskua.
+      if (action === "send" && !isValidYTunnus(member.profile?.yTunnus)) {
+        return res.status(400).json({
+          error: "Y-tunnuksesi puuttuu tai ei ole oikeassa muodossa (NNNNNNN-N) — täydennä se profiiliisi ennen laskun lähettämistä.",
+        });
       }
 
       const now = new Date();
@@ -6857,6 +6877,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const workerYTunnus = billing.yTunnus || member.profile?.yTunnus || undefined;
       const workerIban = billing.iban || member.profile?.iban || undefined;
       const workerAddress = billing.address || member.profile?.city || undefined;
+      // Sama pakollisen laskumerkinnän tarkistus kuin hyväksynnässä — backstop
+      // vanhoille, ennen tätä muutosta hyväksytyille maksuille ja suorille API-
+      // kutsuille jotka ohittaisivat hyväksyntävaiheen tarkistuksen.
+      if (!isValidYTunnus(workerYTunnus)) {
+        return res.status(409).json({
+          error: "Työntekijän Y-tunnus puuttuu tai ei ole oikeassa muodossa (NNNNNNN-N) — korjaa se ennen maksun merkitsemistä maksetuksi.",
+        });
+      }
       const paidCount = payouts.filter((p) => p.status === "maksettu").length;
       const invoiceNo = `${member.id.toUpperCase().slice(0, 6)}-${String(paidCount + 1).padStart(2, "0")}`;
       const now = Date.now();
@@ -6941,10 +6969,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     </div>
   </div>
 </body></html>`;
-          // 1) Team copy (record-keeping).
+          // 1) Team copy (record-keeping). Sama vastaanottajajoukko kuin FR8-
+          // erälaskuilla ja asiakaslaskuilla — INVOICE_BCC_EMAILS mukaan, jotta
+          // esim. Matiaksen henkilökohtainen sähköposti saa kopion myös silloin
+          // kun se ei ole sama kuin matias@puuhapatet.fi.
           const result = await resend.emails.send({
             from: FROM_EMAIL,
-            to: WORKER_NOTIFICATION_EMAILS,
+            to: Array.from(new Set([...WORKER_NOTIFICATION_EMAILS, ...INVOICE_BCC_EMAILS])),
             subject: `Alihankkijan lasku ${invoiceNo} — ${workerName} → ${buyer.name} · ${fmtEur(tax.payableCents)}`,
             html,
             attachments: [{ filename: `lasku-${invoiceNo}.pdf`, content: pdf.toString("base64") }],

@@ -33,6 +33,7 @@ import {
 import { computePayProgress } from "@shared/payprogress";
 import { MAX_PHOTO_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN } from "@shared/crew";
 import { BRAND_BILLERS } from "@shared/billers";
+import { isValidYTunnus } from "@shared/y-tunnus";
 
 const T = { ink: "#1A1A1A", paper: "#F6F4EE", card: "#FFFFFF", hair: "#E4E1D7", muted: "#8C8A82", green: "#3E7C59", navy: "#1F3B57" };
 const FONT = "'Poppins', ui-sans-serif, system-ui, -apple-system, sans-serif";
@@ -725,8 +726,12 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
     // before the first invoice. (computeTax defaults: no VAT + withholding applied.)
     const ytStatus = answers[YTUNNUS_STATUS_KEY] || "tulossa";
     const hasYtunnus = ytStatus === "on";
+    // Vain muodon tarkistus jos jotain on kirjoitettu — tyhjänä saa yhä jatkaa
+    // (Y-tunnus voi tulla ennen ensimmäistä laskua), mutta väärää muotoa ei.
+    const ytunnusInput = (answers.yTunnus || "").trim();
+    const ytunnusOk = !ytunnusInput || isValidYTunnus(ytunnusInput);
     // Trainees skip the insurance/risk acknowledgement (their leader carries it).
-    const canContinue = missing.length === 0 && (isTrainee || (!!insurance && riskOk));
+    const canContinue = missing.length === 0 && (isTrainee || (!!insurance && riskOk)) && ytunnusOk;
     return (
       <Paper>
         <Wrap>
@@ -827,7 +832,17 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
               <>
                 <label style={{ display: "block", marginTop: 14 }}>
                   <span style={fieldLabel}>Y-tunnus</span>
-                  <input value={answers.yTunnus ?? ""} onChange={(e) => setAnswer("yTunnus", e.target.value)} placeholder="1234567-8" style={inputStyle} />
+                  <input
+                    value={answers.yTunnus ?? ""}
+                    onChange={(e) => setAnswer("yTunnus", e.target.value)}
+                    placeholder="1234567-8"
+                    style={{ ...inputStyle, ...(ytunnusInput && !ytunnusOk ? { borderColor: "#D9472B" } : {}) }}
+                  />
+                  {ytunnusInput && !ytunnusOk && (
+                    <span style={{ display: "block", marginTop: 4, fontSize: 12, color: "#D9472B" }}>
+                      Tarkista Y-tunnus — muoto on 1234567-8, eikä tämä täsmää.
+                    </span>
+                  )}
                 </label>
 
                 {/* Ennakkoperintärekisteri — ratkaisee, maksetaanko bruttona (ei

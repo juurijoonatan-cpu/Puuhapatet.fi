@@ -334,6 +334,47 @@ järjestelmässä. Ennakonpidätys on eri asia ja luetaan edelleen normaalisti.
   konfiguroitu (esim. tuotantoympäristö tai kehittäjän oma kone) —
   muutos on additiivinen (uusi nullable-sarake), ei riko olemassa olevaa dataa.
 
+### Jälkikäteinen lisäys: Y-tunnuksen muotovalidointi (2026-07-16)
+
+Käyttäjä kysyi, onko varmaa että jokaisen tekijän laskulla on oikeassa
+muodossa oleva Y-tunnus (esim. Oliverin `3636866-7`), ja muistutti että
+jokaisesta laskusta on aina lähdettävä kopio sekä Matiakselle että
+Joonatanille että laskun lähettäjälle. Koodista löytyi todellinen aukko:
+myyjän Y-tunnus (`member.profile.yTunnus`) oli aina pelkkää vapaata tekstiä
+— ei tarkistettu missään ennen kuin se päätyi lukittuun, lailliseen
+laskuun (kohta 4 vaatii sen pakollisena laskumerkintänä).
+
+Korjattu:
+- `shared/y-tunnus.ts` (uusi): `isValidYTunnus()` — Suomen Y-tunnuksen
+  mod‑11-tarkistusmerkkialgoritmi (painot `[7,9,10,5,8,4,2]`). Testattu
+  `shared/y-tunnus.test.ts`:ssä mm. BRAND_BILLERS-Y-tunnuksilla ja Oliverin
+  Y-tunnuksella — kaikki kolme läpäisevät tarkistuksen.
+- **Palvelin, pakottava lukko ennen laskun lukitusta:**
+  `respondToEraInvoice` (FR8-erälaskun "Lähetä lasku") ja tavallisen
+  alihankkijamaksun `.../payout/:payoutId/approve` (tekijän hyväksyntä,
+  jäädyttää laskutussnapshotin) hylkäävät pyynnön 400:lla jos Y-tunnus
+  puuttuu tai ei läpäise tarkistusta. `.../payout/:payoutId/paid` toistaa
+  saman tarkistuksen backstopina (vanhat jo-hyväksytyt maksut, suorat
+  API-kutsut).
+- **Käyttöliittymä (varhainen palaute, ei korvaa palvelintarkistusta):**
+  tekijän oma onboarding-lomake (`worker.tsx`) ja johtajan
+  "Yrittäjätiedot"-paneeli (`admin/crew.tsx`, EntrepreneurPanel — sama
+  paikka josta Matias/Joonatan voi täydentää esim. Oliverin Y-tunnuksen
+  suoraan) näyttävät punaisen virheen jos syötetty Y-tunnus ei täsmää;
+  tyhjän saa yhä jättää (Y-tunnus voi tulla myöhemmin ensimmäistä laskua
+  ennen), mutta väärää muotoa ei voi tallentaa/lähettää.
+- **Sähköpostikopio-epäjohdonmukaisuus korjattu:** tavallisen
+  alihankkijalaskun tiimikopio käytti vain `WORKER_NOTIFICATION_EMAILS`:ä
+  (joonatan@/matias@puuhapatet.fi) — FR8-erälaskut ja asiakaslaskut
+  sisälsivät jo `INVOICE_BCC_EMAILS`:n (`matiaspit88@gmail.com`).
+  Yhtenäistetty käyttämään molempia, kuten spekin kohta 3C.4 vaatii.
+- **HUOM:** tuotannon kannassa jo olevaa Oliverin (tai kenen tahansa
+  muun tekijän) Y-tunnusta ei voitu korjata tästä ajoympäristöstä (ei
+  `DATABASE_URL`:ia) — se täydennetään Admin → Tekijät → [nimi] →
+  "Yrittäjätiedot"-paneelista, joka nyt varoittaa heti jos arvo on väärä.
+- `npm run check`: sama 6 virheen esiolemassaoleva baseline (ei uusia).
+  `npm run test`: 33/33 vihreää (28 aiempaa + 5 uutta).
+
 ### Jälkikäteinen korjaus: ennakonpidätyksen oletus käännetty varovaiseksi (2026-07-09)
 
 Käyttäjä kysyi mitä PR:n avoimissa kohdissa mainittu "tekijä-laskujen

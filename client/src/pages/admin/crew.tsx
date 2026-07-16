@@ -22,6 +22,7 @@ import type { CrewPayout } from "@shared/crew";
 import { computeTax, readVatStatus, readInPrepaymentRegister, readPayeeType, fmtPct, fmtEurCents } from "@shared/tax";
 import { BRAND_BILLERS, DEFAULT_BILLER_ID } from "@shared/billers";
 import { traineeForUserId, traineeForName } from "@shared/trainees";
+import { isValidYTunnus } from "@shared/y-tunnus";
 import { getAdminProfile } from "@/lib/admin-profile";
 import { Input } from "@/components/ui/input";
 
@@ -379,6 +380,7 @@ function EntrepreneurPanel({ member, onUpdate }: {
 
   const dirty = insurance !== base.insurance || register !== base.register || vat !== base.vat
     || yTunnus.trim() !== base.yTunnus || email.trim() !== base.email;
+  const yTunnusOk = !yTunnus.trim() || isValidYTunnus(yTunnus.trim());
 
   const save = async () => {
     setBusy(true);
@@ -420,14 +422,20 @@ function EntrepreneurPanel({ member, onUpdate }: {
         <div className="flex gap-2">
           <label className="flex-1 text-[11px] text-muted-foreground">
             Y-tunnus
-            <Input value={yTunnus} onChange={(e) => setYTunnus(e.target.value)} placeholder="1234567-8" className="mt-1 h-9" />
+            <Input
+              value={yTunnus}
+              onChange={(e) => setYTunnus(e.target.value)}
+              placeholder="1234567-8"
+              className={`mt-1 h-9 ${!yTunnusOk ? "border-destructive focus-visible:ring-destructive" : ""}`}
+            />
+            {!yTunnusOk && <span className="mt-1 block text-[11px] text-destructive">Muoto on 1234567-8 — tarkista numerot.</span>}
           </label>
           <label className="flex-1 text-[11px] text-muted-foreground">
             Sähköposti (yhteenvedot)
             <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nimi@esimerkki.fi" className="mt-1 h-9" />
           </label>
         </div>
-        <button onClick={save} disabled={busy || !dirty}
+        <button onClick={save} disabled={busy || !dirty || !yTunnusOk}
           className="inline-flex items-center gap-1.5 rounded-lg bg-foreground px-3 py-1.5 text-xs font-semibold text-background disabled:opacity-40">
           {busy ? "Tallennetaan…" : "Tallenna yrittäjätiedot"}
         </button>

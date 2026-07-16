@@ -44,25 +44,23 @@ sairausajan palkkaa jne.). Tämä on kirjattu sitovasti
 
 ## Kaksi veroasiaa, jotka ratkaisevat maksun
 
-### 1. Ennakkoperintärekisteri → ennakonpidätys (tärkein!)
+### 1. Ennakkoperintärekisteri → ei ennakonpidätystä (käyttäjän päätös 2026-07-16)
 
-Ennakkoperintälain mukaan, kun yritys maksaa työkorvausta toiselle:
+> ⚠️ **Puuhapatet EI KOSKAAN pidätä ennakonpidätystä** — kaikki työkorvaukset
+> maksetaan aina täysimääräisenä (bruttona), riippumatta siitä onko maksunsaaja
+> ennakkoperintärekisterissä. Tämä on käyttäjän nimenomainen, tietoinen päätös.
+>
+> Ennakkoperintälain mukaan maksaja on lähtökohtaisesti vastuussa
+> pidättämättä jääneestä verosta, jos maksunsaaja ei tosiasiassa ole
+> ennakkoperintärekisterissä. **Tämä vastuu jää nyt Puuhapatetille** — päätös on
+> tehty tietoisena tästä riskistä eikä sitä ole muutettu ilman käyttäjän
+> nimenomaista pyyntöä. Tarkistuta tarvittaessa kirjanpitäjällä.
 
-| Saajan tila | Maksaja toimii näin |
-|---|---|
-| **ON ennakkoperintärekisterissä** | Maksaa **bruttona**, ei pidätä mitään. Saaja hoitaa verot itse. |
-| **EI OLE rekisterissä** (luonnollinen henkilö / toiminimi) | **Pidättää ennakonpidätyksen**: verokortin % tai **60 %** ilman korttia. |
-| **EI OLE rekisterissä** (Oy, Ky, Ay…) | Pidättää **13 %**. |
-
-**Miksi tämä on kriittistä:** jos Puuhapatet maksaa bruttona rekisteröimättömälle,
-**Puuhapatet on itse vastuussa pidättämättä jääneestä verosta.** Siksi
-oletuksena pidätetään 60 %, kunnes työntekijä ilmoittaa olevansa rekisterissä.
-
-Ennakonpidätys lasketaan **työkorvauksesta ilman ALV:tä**. ALV:stä ei koskaan pidätetä.
-Pidätetty määrä tilitetään Verolle ja luetaan työntekijän hyväksi hänen verotuksessaan.
-
-➡️ Tuote ohjaa jokaisen työntekijän rekisteröitymään maksutta osoitteessa **ytj.fi**
-— silloin hän saa koko summan tilille.
+Toteutus: `shared/tax.ts` → `computeTax()` palauttaa aina `withheld: false`,
+`withholdingCents: 0` — riippumatta työntekijän ilmoittamasta
+ennakkoperintärekisteritilasta. Onboarding- ja admin-lomakkeista on poistettu
+"Oletko ennakkoperintärekisterissä?" -kysymys, koska vastauksella ei enää ole
+vaikutusta maksuun.
 
 ### 2. Arvonlisävero (ALV)
 
@@ -77,24 +75,22 @@ ALV lisätään työkorvauksen **päälle**.
 
 ```
 laskun loppusumma = työkorvaus + ALV
-maksetaan tilille = työkorvaus + ALV − ennakonpidätys
+maksetaan tilille = työkorvaus + ALV   (ei koskaan ennakonpidätystä)
 ```
 
 Esimerkki: 11 ikkunaa × 20 € = **220 € työkorvaus**, työntekijä ei ALV-velvollinen
-eikä ennakkoperintärekisterissä → ennakonpidätys 60 % × 220 € = 132 €,
-**tilille 88 €**, ja 132 € tilitetään Verolle. Kun työntekijä rekisteröityy,
-tilille maksetaan koko 220 €.
+→ **tilille 220 €**, aina, riippumatta ennakkoperintärekisteristä.
 
 ## Miten tämä näkyy järjestelmässä
 
-- **Työntekijän työpöytä → Info → Verotiedot:** työntekijä ilmoittaa itse ALV-aseman
-  ja ennakkoperintärekisteritilan. Varovainen oletus: ei ALV:tä, ei rekisterissä.
+- **Työntekijän työpöytä → Info → Verotiedot:** työntekijä ilmoittaa itse ALV-aseman.
+  Varovainen oletus: ei ALV:tä.
 - **Työntekijän työpöytä → Maksut:** jokainen maksu näyttää erittelyn (työkorvaus,
-  ALV, ennakonpidätys, **maksetaan tilillesi**). Rekisteröitymiskehotus näkyy, jos pidätys osuu.
-- **Admin → tiimi → Maksut:** näyttää tilille maksettavan nettosumman ja erittelyn.
+  ALV, **maksetaan tilillesi** = aina koko summa).
+- **Admin → tiimi → Maksut:** näyttää tilille maksettavan summan ja erittelyn.
 - **Alihankkijan lasku (PDF):** muodostuu automaattisesti maksun yhteydessä oikein
-  — veroton rivi, ALV (tai verottomuuden peruste), ennakonpidätys, toimituspäivä,
-  ostajan (Puuhapatet) Y-tunnus. Erittely tallennetaan `payout.tax`-tilannekuvaan.
+  — veroton rivi, ALV (tai verottomuuden peruste), toimituspäivä, ostajan
+  (Puuhapatet) Y-tunnus. Erittely tallennetaan `payout.tax`-tilannekuvaan.
 
 ## Konfiguraatio
 
@@ -109,7 +105,6 @@ Ennen yhtiöitymistä ostaja on aina toinen johtajista (`shared/billers.ts`).
 ## Vakiot (`shared/tax.ts`)
 
 - `ALV_RATE = 0.255`
-- `WITHHOLDING_NATURAL_PERSON = 0.60`, `WITHHOLDING_COMPANY = 0.13`
 - `VAT_SMALL_BUSINESS_LIMIT_EUR = 20000` (voimassa 1.1.2025 alkaen; tarkista vero.fi)
 
 Päivitä nämä yhdestä paikasta, jos verokannat muuttuvat.
@@ -124,9 +119,7 @@ ALV-rekisterissä.** Tätä EI lueta tekijän `profile.answers`-itseilmoituksest
 pakotettu `"vahainen_toiminta"`-arvoon sekä laskun PDF:ssä
 (`server/routes.ts` → `buildEraInvoicePdfParams`) että tekijän omassa
 näkymässä (`client/src/pages/worker.tsx` → `EraInvoiceSection`).
-**Ennakonpidätys on eri asia** (ennakkoperintärekisteri, ei ALV-rekisteri) —
-sitä sovelletaan edelleen normaalisti tekijän ilmoittaman tilan mukaan.
 
-Johtaja-välisille (johtaja_valinen) laskuille ei koskaan lasketa
-ennakonpidätystä (ei työkorvausta ennakkoperintälain mielessä) eikä ALV:tä —
-vain "Arvonlisäveroton myynti, vähäinen toiminta" -merkintä.
+Johtaja-välisille (johtaja_valinen) laskuille ei koskaan lasketa ALV:tä —
+vain "Arvonlisäveroton myynti, vähäinen toiminta" -merkintä. Kummallekaan
+laskutyypille ei koskaan lasketa ennakonpidätystä (ks. yllä).

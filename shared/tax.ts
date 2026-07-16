@@ -2,30 +2,26 @@
  * FR8 — vero- ja maksulogiikka alihankkijan korvauksille (työkorvaus).
  *
  * Yksi totuuden lähde sille, miten Puuhapatet maksaa itsenäiselle alihankkijalle
- * ja miten alihankkijan lasku Puuhapatetille muodostuu — oikein Suomen lain
- * mukaan, mahdollisimman yksinkertaisesti.
+ * ja miten alihankkijan lasku Puuhapatetille muodostuu.
  *
- * KAKSI VEROASIAA, JOTKA RATKAISEVAT MAKSUN:
+ * PÄÄTÖS (2026-07-16, käyttäjän nimenomainen pyyntö): Puuhapatet EI KOSKAAN
+ * pidätä ennakonpidätystä alihankkijan laskulta — kaikki työkorvaukset
+ * maksetaan aina täysimääräisenä (bruttona), riippumatta siitä onko maksunsaaja
+ * ennakkoperintärekisterissä. `inPrepaymentRegister`/`payeeType`/
+ * `withholdingRate` säilyvät `TaxInputs`-rajapinnassa taaksepäinyhteensopivuuden
+ * vuoksi, mutta `computeTax` EI KÄYTÄ niitä laskentaan — `withheld` on aina
+ * `false`. (HUOM: tämä siirtää ennakonpidätysvastuun riskin — jos maksunsaaja
+ * ei tosiasiassa ole ennakkoperintärekisterissä, maksaja voi lain mukaan olla
+ * vastuussa pidättämättä jääneestä verosta. Käyttäjä on tehnyt tämän päätöksen
+ * tietoisena vaihtoehdosta; ks. docs/fr8-era-laskutus-plan.md.)
  *
- * 1) ENNAKKOPERINTÄREKISTERI (ennakkoperintälaki). Kun yritys maksaa TYÖKORVAUSTA
- *    (ei palkkaa) toiselle:
- *      • maksunsaaja ON ennakkoperintärekisterissä → maksetaan BRUTTONA, ei
- *        ennakonpidätystä. Maksunsaaja hoitaa verot itse.
- *      • maksunsaaja EI OLE rekisterissä → maksajan on LAIN MUKAAN toimitettava
- *        ennakonpidätys ennen maksua ja tilitettävä se Verolle:
- *          – luonnollinen henkilö / toiminimi ilman verokorttia: 60 %
- *          – oikeushenkilö (Oy, Ky, Ay…): 13 %
- *      Jos maksaja maksaa bruttona rekisteröimättömälle, maksaja on vastuussa
- *      pidättämättä jääneestä verosta. → Tämä on tärkein juridinen kohta.
+ * ARVONLISÄVERO (ALV) on erillinen asia eikä tätä koske: jos alihankkija on
+ * ALV-rekisterissä, hänen laskunsa Puuhapatetille lisää yleisen ALV-kannan
+ * 25,5 % (voimassa 1.9.2024 alkaen). Jos toiminta on vähäistä (AVL 3 §, alle
+ * 20 000 €/kalenterivuosi 1.1.2025 alkaen → tarkista vero.fi), ALV:tä ei
+ * lisätä ja laskuun merkitään verottomuuden peruste.
  *
- * 2) ARVONLISÄVERO (ALV). Jos alihankkija on ALV-rekisterissä, hänen laskunsa
- *    Puuhapatetille lisää yleisen ALV-kannan 25,5 % (voimassa 1.9.2024 alkaen).
- *    Jos toiminta on vähäistä (AVL 3 §, alle 20 000 €/kalenterivuosi 1.1.2025 alkaen
- *    → tarkista vero.fi), ALV:tä ei lisätä ja laskuun merkitään verottomuuden peruste.
- *
- * ALV lisätään työkorvauksen päälle; ennakonpidätys lasketaan työkorvauksesta
- * ILMAN ALV:tä (ALV:stä ei koskaan pidätetä). Lopullinen tilille maksettava:
- *   maksettava = työkorvaus + ALV − ennakonpidätys
+ * Lopullinen tilille maksettava: maksettava = työkorvaus + ALV.
  */
 
 /** Yleinen arvonlisäverokanta Suomessa 1.9.2024 alkaen. */
@@ -34,10 +30,6 @@ export const ALV_RATE = 0.255;
 /** Vähäisen toiminnan (AVL 3 §) liikevaihtoraja. Nousi 20 000 €:oon (kalenterivuosi)
  *  1.1.2025 alkaen; alarajahuojennus poistui samalla. Tarkista vero.fi. */
 export const VAT_SMALL_BUSINESS_LIMIT_EUR = 20000;
-
-/** Ennakonpidätys työkorvauksesta, kun saaja EI ole ennakkoperintärekisterissä. */
-export const WITHHOLDING_NATURAL_PERSON = 0.60; // luonnollinen henkilö / toiminimi, ei verokorttia
-export const WITHHOLDING_COMPANY = 0.13;        // oikeushenkilö (Oy, Ky, Ay…)
 
 /** Kotitalousvähennys (TVL 127 a §) verovuosina 2025–2026: 35 % yrityksen laskun
  *  työn osuudesta, enintään 1 600 €/henkilö/vuosi, omavastuu 150 €/vuosi.
@@ -73,13 +65,13 @@ export interface TaxInputs {
   /** Työkorvaus ilman ALV:tä, sentteinä (esim. pestyt ikkunat × hinta). */
   laborCents: number;
   vatStatus: VatStatus;
-  /** Onko saaja ennakkoperintärekisterissä? */
-  inPrepaymentRegister: boolean;
-  /** Maksunsaajan muoto. Ratkaisee oletus-ennakonpidätyksen, kun ei rekisterissä:
-   *  "company" → 13 %, muutoin (henkilö/toiminimi) → 60 %. Oletus "individual". */
+  /** @deprecated Ei enää käytössä laskentaan — Puuhapatet ei koskaan pidätä
+   *  ennakonpidätystä (ks. tiedoston yläreunan huomautus). Säilytetty
+   *  rajapinnassa vain kutsupaikkojen taaksepäinyhteensopivuuden vuoksi. */
+  inPrepaymentRegister?: boolean;
+  /** @deprecated Ei enää käytössä laskentaan, ks. `inPrepaymentRegister`. */
   payeeType?: PayeeType;
-  /** Ennakonpidätysprosentin nimenomainen ohitus (esim. verokortin %). Jos annettu,
-   *  käytetään tätä payeeType-oletuksen sijaan. */
+  /** @deprecated Ei enää käytössä laskentaan, ks. `inPrepaymentRegister`. */
   withholdingRate?: number;
 }
 
@@ -91,10 +83,13 @@ export interface TaxBreakdown {
   vatCents: number;         // ALV euroina (sentteinä)
   /** Laskun loppusumma (työkorvaus + ALV) — mitä alihankkija laskuttaa. */
   invoiceTotalCents: number;
-  withheld: boolean;        // toimitetaanko ennakonpidätys
-  withholdingRate: number;  // 0 jos rekisterissä
-  withholdingCents: number; // pidätetty vero (sentteinä)
-  /** Mitä Puuhapatet maksaa tilille = invoiceTotal − ennakonpidätys. */
+  /** Aina `false` — Puuhapatet ei koskaan pidätä ennakonpidätystä. Kenttä
+   *  säilytetty rajapinnassa kutsupaikkojen (PDF, sähköposti, admin-näkymät)
+   *  taaksepäinyhteensopivuuden vuoksi. */
+  withheld: boolean;
+  withholdingRate: number;  // aina 0
+  withholdingCents: number; // aina 0
+  /** Mitä Puuhapatet maksaa tilille = invoiceTotal (ei koskaan ennakonpidätystä). */
   payableCents: number;
   /** Selkokieliset perustelut (lakiviitteineen) laskua ja näkymiä varten. */
   notes: string[];
@@ -106,6 +101,7 @@ function round(cents: number): number {
 
 /**
  * Laskee koko maksuketjun verotuksen yhdellä kertaa. Pyöristää sentteihin.
+ * Ei koskaan pidätä ennakonpidätystä (käyttäjän päätös) — ks. tiedoston alku.
  */
 export function computeTax(input: TaxInputs): TaxBreakdown {
   const laborCents = Math.max(0, Math.round(input.laborCents || 0));
@@ -114,14 +110,12 @@ export function computeTax(input: TaxInputs): TaxBreakdown {
   const vatCents = round(laborCents * vatRate);
   const invoiceTotalCents = laborCents + vatCents;
 
-  const withheld = !input.inPrepaymentRegister;
-  // Default rate by payee type (60 % person / 13 % company), unless an explicit
-  // override (e.g. a verokortti rate) is given.
-  const defaultWithholdingRate = input.payeeType === "company" ? WITHHOLDING_COMPANY : WITHHOLDING_NATURAL_PERSON;
-  const withholdingRate = withheld ? (input.withholdingRate ?? defaultWithholdingRate) : 0;
-  // Ennakonpidätys lasketaan TYÖKORVAUKSESTA ilman ALV:tä; ALV:stä ei pidätetä.
-  const withholdingCents = withheld ? round(laborCents * withholdingRate) : 0;
-  const payableCents = invoiceTotalCents - withholdingCents;
+  // Ei koskaan ennakonpidätystä — maksetaan aina täysimääräisenä (bruttona),
+  // riippumatta ennakkoperintärekisteristä tai maksunsaajan muodosta.
+  const withheld = false;
+  const withholdingRate = 0;
+  const withholdingCents = 0;
+  const payableCents = invoiceTotalCents;
 
   const notes: string[] = [];
   if (vatRegistered) {
@@ -129,15 +123,7 @@ export function computeTax(input: TaxInputs): TaxBreakdown {
   } else {
     notes.push("Veroton myynti – ei arvonlisäveroa (AVL 3 §, vähäinen toiminta).");
   }
-  if (withheld) {
-    notes.push(
-      `Ennakonpidätys ${fmtPct(withholdingRate)} työkorvauksesta: laskuttaja ei ole ` +
-      "ennakkoperintärekisterissä, joten maksaja toimittaa ennakonpidätyksen ja tilittää sen Verolle " +
-      "(ennakkoperintälaki). Pidätetty määrä luetaan laskuttajan hyväksi verotuksessa.",
-    );
-  } else {
-    notes.push("Ei ennakonpidätystä: laskuttaja on ennakkoperintärekisterissä. Maksetaan bruttona.");
-  }
+  notes.push("Ei ennakonpidätystä: maksetaan aina täysimääräisenä (bruttona).");
   return {
     laborCents, vatRegistered, vatRate, vatCents, invoiceTotalCents,
     withheld, withholdingRate, withholdingCents, payableCents, notes,
@@ -150,18 +136,15 @@ export function readVatStatus(answers: Record<string, string> | undefined | null
   return v === "alv_rekisterissa" || v === "vahainen_toiminta" ? v : "ei_tiedossa";
 }
 
-/** Onko maksunsaaja ennakkoperintärekisterissä? Varovainen oletus: EI ole,
- *  ellei tekijä ole nimenomaisesti vahvistanut "kyllä" — jos Puuhapatet maksaa
- *  bruttona rekisteröimättömälle, se on itse vastuussa pidättämättä jääneestä
- *  verosta, joten oletusarvo ei saa olla "ei pidätystä". Palautetaan siis true
- *  (= ei pidätystä) vain kun tekijä on itse merkinnyt "kylla". */
+/** @deprecated Puhtaasti informatiivinen — ei vaikuta `computeTax`-laskentaan
+ *  (Puuhapatet ei koskaan pidätä ennakonpidätystä). Lukee vanhan/mahdollisen
+ *  profiilivastauksen näyttöä varten (esim. admin-työntekijänäkymä). */
 export function readInPrepaymentRegister(answers: Record<string, string> | undefined | null): boolean {
   return answers?.[PREPAYMENT_REGISTER_KEY] === "kylla";
 }
 
-/** Maksunsaajan muoto profiilin vastauksista. "yritys" → company, muu → individual
- *  (oletus, ja yleisin: toiminimi / kevytyrittäjä). Vaikuttaa vain ennakonpidätys-
- *  %:iin, ja vain jos saaja EI ole ennakkoperintärekisterissä. */
+/** @deprecated Puhtaasti informatiivinen — ei vaikuta `computeTax`-laskentaan,
+ *  ks. `readInPrepaymentRegister`. */
 export function readPayeeType(answers: Record<string, string> | undefined | null): PayeeType {
   return answers?.[PAYEE_TYPE_KEY] === "yritys" ? "company" : "individual";
 }

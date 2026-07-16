@@ -845,23 +845,6 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
                   )}
                 </label>
 
-                {/* Ennakkoperintärekisteri — ratkaisee, maksetaanko bruttona (ei
-                    ennakonpidätystä). Varovainen oletus "ei" (pidätys), kunnes
-                    tekijä itse vahvistaa olevansa rekisterissä. */}
-                <p style={{ ...fieldLabel, marginTop: 16, marginBottom: 8 }}>Oletko ennakkoperintärekisterissä?</p>
-                <div style={{ display: "flex", gap: 8 }}>
-                  {([["kylla", "Kyllä"], ["ei", "En / en tiedä"]] as [string, string][]).map(([val, lbl]) => {
-                    const active = (answers[PREPAYMENT_REGISTER_KEY] || "ei") === val;
-                    return (
-                      <button key={val} type="button" onClick={() => setAnswer(PREPAYMENT_REGISTER_KEY, val)}
-                        style={{ flex: 1, padding: "11px", borderRadius: 10, cursor: "pointer", fontFamily: FONT, fontSize: 14, fontWeight: 600,
-                          border: `1.5px solid ${active ? T.green : T.hair}`, background: active ? "rgba(62,124,89,0.10)" : "#fff", color: active ? T.green : T.ink }}>
-                        {active ? "✓ " : ""}{lbl}
-                      </button>
-                    );
-                  })}
-                </div>
-
                 {/* ALV-asema — lisätäänkö laskulle 25,5 % ALV. Oletuksena ei valittu
                     (ei ALV:tä); ALV-velvollinen yrittäjä valitsee "ALV-rekisterissä". */}
                 <p style={{ ...fieldLabel, marginTop: 16, marginBottom: 8 }}>Arvonlisävero (ALV)</p>
@@ -879,11 +862,9 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
                 </div>
 
                 <p style={{ fontSize: 11.5, color: T.muted, margin: "12px 0 0", lineHeight: 1.5 }}>
-                  Laskutat työsi omalla Y-tunnuksellasi ja hoidat verosi itse.
-                  {(answers[PREPAYMENT_REGISTER_KEY] || "ei") !== "ei"
-                    ? " Koska olet ennakkoperintärekisterissä, maksu tehdään ilman ennakonpidätystä — saat koko summan tilillesi."
-                    : " Koska et ole (vielä) ennakkoperintärekisterissä, maksusta toimitetaan ennakonpidätys ja tilitetään Verolle. Rekisteröitymällä (ytj.fi) saat koko summan."}
-                  {" "}Voit muuttaa näitä myöhemmin työpöydältä. Tarkista tarvittaessa vero.fi.
+                  Laskutat työsi omalla Y-tunnuksellasi ja hoidat verosi itse. Maksu tehdään aina
+                  täysimääräisenä (bruttona) — ei ennakonpidätystä. Voit muuttaa näitä myöhemmin
+                  työpöydältä. Tarkista tarvittaessa vero.fi.
                 </p>
               </>
             ) : (

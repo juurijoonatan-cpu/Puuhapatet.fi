@@ -375,6 +375,49 @@ Korjattu:
 - `npm run check`: sama 6 virheen esiolemassaoleva baseline (ei uusia).
   `npm run test`: 33/33 vihreää (28 aiempaa + 5 uutta).
 
+### Jälkikäteinen päätös: ennakonpidätys poistettu kokonaan käytöstä (2026-07-16)
+
+Käyttäjä pyysi suoraan ja nimenomaisesti: **"missään laskussa ei ole 60
+prossan ennakkopidätystä, ei mitään tommosta"**. Tämä kumoaa edellä (2026-07-09)
+tehdyn "varovainen oletus" -korjauksen kokonaan — silloin päädyttiin
+pidättämään 60 %/13 % oletuksena, nyt käyttäjä on tehnyt vastakkaisen,
+tietoisen liiketoimintapäätöksen: **ei koskaan ennakonpidätystä, riippumatta
+ennakkoperintärekisteristä.**
+
+- `shared/tax.ts`: `computeTax()` palauttaa nyt aina `withheld: false`,
+  `withholdingRate: 0`, `withholdingCents: 0` — `inPrepaymentRegister`/
+  `payeeType`/`withholdingRate`-syötteet jätetty rajapintaan
+  taaksepäinyhteensopivuuden vuoksi mutta merkitty `@deprecated`, eivät
+  vaikuta laskentaan. `WITHHOLDING_NATURAL_PERSON`/`WITHHOLDING_COMPANY`
+  (60 %/13 %) -vakiot poistettu kokonaan.
+- **Yksi totuuden lähde → vaikuttaa kaikkialle automaattisesti:** sekä
+  tavallinen alihankkijan payout-järjestelmä että FR8-erälaskut kutsuvat
+  samaa `computeTax()`-funktiota, joten yhden funktion korjaus takaa ettei
+  ennakonpidätystä näy YHDESSÄKÄÄN laskussa, PDF:ssä tai sähköpostissa —
+  ehdolliset `tax.withheld && …` -lohkot (PDF-rivit, sähköpostivaroitukset,
+  työntekijän oma näkymä) eivät enää koskaan renderöidy.
+- **Palvelin:** poistettu kuollut `withholdingRate`-admin-ohitus
+  `.../payout/:payoutId/paid`-reitiltä (oli jo hyödytön, koska `computeTax`
+  ei enää käytä sitä). Sisäisen AI-avustajan `explain_tax`-työkalu ja
+  vero-vakiokonteksti päivitetty vastaamaan: ei enää kysy/kerro
+  ennakkoperintärekisteristä, kertoo aina "ei ennakonpidätystä".
+- **Käyttöliittymä:** poistettu nyt-merkityksettömät "Oletko
+  ennakkoperintärekisterissä?" -kysymykset tekijän onboarding-lomakkeesta
+  (`worker.tsx`) ja johtajan "Yrittäjätiedot"-paneelista (`admin/crew.tsx`)
+  — niiden jättäminen olisi kertonut työntekijälle virheellistä tietoa
+  ("pidätämme veron, jos et ole rekisterissä"), mikä ei enää pidä paikkaansa.
+- **HUOM — todellinen riski, ei vain kosmeettinen:** ennakkoperintälain
+  mukaan maksaja on lähtökohtaisesti vastuussa pidättämättä jääneestä
+  verosta, jos maksunsaaja ei tosiasiassa ole ennakkoperintärekisterissä.
+  Tämä vastuu siirtyy nyt Puuhapatetille kaikista maksuista. Käyttäjä on
+  tehnyt tämän päätöksen selvästi ja toistuvasti pyytäen ("Poista myös
+  suoraan… Ei mitään tommosta!") — dokumentoitu tähän mahdollista
+  kirjanpitäjän tarkistusta varten, ei kyseenalaistettu tai pehmennetty.
+  `docs/fr8-vero-ja-maksut.md` päivitetty vastaamaan.
+- `npm run check`: sama 6 virheen esiolemassaoleva baseline (ei uusia).
+  `npm run test`: 33/33 vihreää (ei vaikuta olemassa oleviin testeihin,
+  koska mikään aiempi testi ei väittänyt ennakonpidätyksestä mitään).
+
 ### Jälkikäteinen korjaus: ennakonpidätyksen oletus käännetty varovaiseksi (2026-07-09)
 
 Käyttäjä kysyi mitä PR:n avoimissa kohdissa mainittu "tekijä-laskujen

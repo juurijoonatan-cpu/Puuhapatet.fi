@@ -16,6 +16,7 @@
 
 import type { ProjectData } from "./project";
 import { allPoints } from "./project";
+import { DEFAULT_P2_WORKER_SHARE_PCT, p2WorkerPayoutCents } from "./p2";
 import type { TaxBreakdown } from "./tax";
 import type { BuyerSnapshot } from "./billers";
 import type { WorkerAgreementSet } from "./worker-agreements";
@@ -230,30 +231,60 @@ export function findCrewById(project: ProjectData | null | undefined, id: string
 }
 
 export interface CrewMemberStats {
-  washed: number;               // windows attributed to this worker (pesty)
-  earnedCents: number;          // washed × perWindowCents
+  washed: number;               // windows attributed to this worker (pesty) — ALL priorities
+  earnedCents: number;          // total pay: P1 windows × perWindowCents + P2 shares
+  /** The P2 (keltaiset) part of earnedCents: Σ share × p2WorkerPayoutCents per
+   *  locked yellow window. 0 when the gig has no p2 pricing. */
+  p2EarnedCents: number;
   hours: number;                // logged hours
   windowsPerHour: number;
   eurPerHour: number;
 }
 
-/** A worker's own progress: windows they marked pesty × their pay rate. */
+/**
+ * A worker's own progress and pay.
+ *
+ * Without `project.p2` every pesty window pays the worker's own `perWindowCents`
+ * — exactly the historical behaviour. With P2 pricing active, a yellow (p=2)
+ * window instead pays a share of ITS locked price (shared/p2.ts), and an
+ * unlocked yellow pays nothing (washing them is gated server-side anyway).
+ * The `washed` COUNT always includes every attributed pesty window regardless
+ * of priority, so checkWindowAttribution keeps reconciling.
+ */
 export function crewMemberStats(project: ProjectData, member: CrewMember): CrewMemberStats {
   const pts = allPoints(project);
   const washedBy2 = project.washedBy2 || {};
-  // A window done together (50/50 split) counts as half for each washer.
-  const washed = pts.reduce((sum, p) => {
-    if (p.status !== "pesty") return sum;
+  const p2 = project.p2;
+  const sharePct = p2?.workerSharePct || DEFAULT_P2_WORKER_SHARE_PCT;
+  let washed = 0;
+  let earnedRaw = 0;
+  let p2EarnedRaw = 0;
+  for (const p of pts) {
+    if (p.status !== "pesty") continue;
+    // A window done together (50/50 split) counts as half for each washer.
     const second = washedBy2[p.key];
-    if (p.washedBy === member.id) return sum + (second ? 0.5 : 1);
-    if (second === member.id) return sum + 0.5;
-    return sum;
-  }, 0);
+    let share = 0;
+    if (p.washedBy === member.id) share = second ? 0.5 : 1;
+    else if (second === member.id) share = 0.5;
+    if (!share) continue;
+    washed += share;
+    if (p2 && p.p === 2) {
+      const offer = p2.offers[p.key];
+      const rate = offer?.status === "locked" && offer.lockedCents
+        ? p2WorkerPayoutCents(offer.lockedCents, sharePct)
+        : 0; // washed-before-lock anomaly: no pay, surfaced in admin
+      p2EarnedRaw += share * rate;
+      earnedRaw += share * rate;
+    } else {
+      earnedRaw += share * member.perWindowCents;
+    }
+  }
   const hours = Math.max(0, project.hours?.[member.id] || 0);
-  const earnedCents = Math.round(washed * member.perWindowCents);
+  const earnedCents = Math.round(earnedRaw);
   return {
     washed,
     earnedCents,
+    p2EarnedCents: Math.round(p2EarnedRaw),
     hours,
     windowsPerHour: hours > 0 ? washed / hours : 0,
     eurPerHour: hours > 0 ? earnedCents / 100 / hours : 0,

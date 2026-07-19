@@ -11,7 +11,7 @@ import { useRoute } from "wouter";
 import { api, type GigPublicView } from "@/lib/api";
 import { eur } from "@shared/gig";
 import GigContractSign from "@/components/GigContractSign";
-import CustomerFloorMap from "@/components/CustomerFloorMap";
+import CustomerFloorMap, { type P2CustomerActions } from "@/components/CustomerFloorMap";
 import { downloadGigContract } from "@/lib/gig-contract-doc";
 
 const T = {
@@ -30,6 +30,11 @@ export default function GigLivePage() {
   const token = params?.token ?? "";
   const [data, setData] = useState<GigPublicView | null>(null);
   const [status, setStatus] = useState<"loading" | "ok" | "error">("loading");
+  // P2 (lisäikkunat): kevyt ehtohyväksyntä ennen ensimmäistä hintatoimintoa.
+  const [termsOpen, setTermsOpen] = useState(false);
+  const [termsName, setTermsName] = useState("");
+  const [termsBusy, setTermsBusy] = useState(false);
+  const [termsError, setTermsError] = useState<string | null>(null);
 
   useEffect(() => {
     const id = "poppins-font-link";
@@ -92,6 +97,48 @@ export default function GigLivePage() {
   const updated = new Date(data.updatedAt).toLocaleString("fi-FI", {
     day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit",
   });
+
+  // ── P2 (lisäikkunat): asiakkaan neuvottelutoiminnot ─────────────────────────
+  const p2 = data.p2;
+  const p2Live = !!p2?.enabled;
+  const p2Actions: P2CustomerActions = {
+    accept: async (items) => {
+      const res = await api.p2Accept(token, items);
+      await reload();
+      if (!res.ok) return res.error ?? "Hyväksyntä epäonnistui — yritä uudelleen";
+      if (res.data && res.data.conflicts.length > 0 && res.data.locked.length === 0) {
+        return res.data.conflicts[0]?.error ?? "Hinta ehti muuttua — päivitä näkymä";
+      }
+      return null;
+    },
+    counter: async (key, counterCents, version) => {
+      const res = await api.p2Counter(token, key, counterCents, version);
+      await reload();
+      return res.ok ? null : (res.error ?? "Vastatarjous epäonnistui — yritä uudelleen");
+    },
+    decline: async (key, version) => {
+      const res = await api.p2Decline(token, key, version);
+      await reload();
+      return res.ok ? null : (res.error ?? "Toiminto epäonnistui — yritä uudelleen");
+    },
+    addPoint: async (floor, x, y) => {
+      const res = await api.p2AddPoint(token, floor, x, y);
+      await reload();
+      return res.ok ? null : (res.error ?? "Ikkunan lisäys epäonnistui — yritä uudelleen");
+    },
+    requireTerms: () => { setTermsError(null); setTermsOpen(true); },
+  };
+
+  const acceptTerms = async () => {
+    const name = termsName.trim();
+    if (!name) { setTermsError("Kirjoita nimesi (nimenselvennys)."); return; }
+    setTermsBusy(true); setTermsError(null);
+    const res = await api.p2AcceptTerms(token, name);
+    setTermsBusy(false);
+    if (!res.ok) { setTermsError(res.error ?? "Hyväksyntä epäonnistui — yritä uudelleen"); return; }
+    setTermsOpen(false);
+    await reload();
+  };
 
   return (
     <div style={{ minHeight: "100vh", background: T.paper, fontFamily: FONT, color: T.ink, padding: "calc(28px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(48px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left))" }}>
@@ -207,6 +254,45 @@ export default function GigLivePage() {
           );
         })}
 
+        {/* P2 — Lisäikkunat (2. vaihe): kasvava sovittu summa + avoimet ehdotukset */}
+        {p2Live && (
+          <Panel>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+              <p style={label}>Lisäikkunat — 2. vaihe</p>
+              {p2!.termsAccepted && (
+                <span style={{ fontSize: 11.5, color: T.muted }}>Ehdot hyväksytty · {p2!.termsAcceptorName}</span>
+              )}
+            </div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginTop: 6 }}>
+              <span style={{ fontSize: 34, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
+                {eur(p2!.billing.lockedSumCents)}
+              </span>
+              <span style={{ fontSize: 13, color: T.muted }}>
+                sovittua lisätyötä · {p2!.billing.lockedCount} ikkunaa
+              </span>
+            </div>
+            <p style={{ margin: "10px 0 0", fontSize: 13.5, lineHeight: 1.6 }}>
+              Pesty <strong style={{ fontVariantNumeric: "tabular-nums" }}>{p2!.billing.lockedWashedCount} / {p2!.billing.lockedCount}</strong> sovituista lisäikkunoista.
+              {p2!.billing.proposedCount > 0 && (
+                <> <strong style={{ color: T.navy }}>{p2!.billing.proposedCount} hintaehdotusta odottaa vastaustasi</strong> — napauta keltaista ikkunaa kartalla.</>
+              )}
+            </p>
+            <p style={{ margin: "8px 0 0", fontSize: 12.5, color: T.muted, lineHeight: 1.6 }}>
+              Toisin kuin 1. vaiheen kiinteä urakka, lisäikkunat hinnoitellaan ikkunakohtaisesti:
+              hyväksyt jokaisen hinnan erikseen (tai teet vastatarjouksen), ja summa kasvaa vain
+              hyväksymistäsi ikkunoista. Voit myös ehdottaa uusia ikkunoita mukaan kartalla.
+            </p>
+            {!p2!.termsAccepted && (
+              <button
+                onClick={() => { setTermsError(null); setTermsOpen(true); }}
+                style={{ marginTop: 12, padding: "10px 16px", borderRadius: 10, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}
+              >
+                Hyväksy tilausehdot ja aloita
+              </button>
+            )}
+          </Panel>
+        )}
+
         {/* Read-only floor-plan map — customer watches washed windows live. */}
         {data.map && (
           <Panel>
@@ -214,10 +300,11 @@ export default function GigLivePage() {
             <p style={{ margin: "0 0 16px", fontSize: 13, color: T.muted }}>
               Näet reaaliaikaisesti mitkä ikkunat on pesty. Kartta päivittyy työn edetessä.
             </p>
-            <CustomerFloorMap map={data.map} />
+            <CustomerFloorMap map={data.map} p2={p2} p2Actions={p2Live ? p2Actions : undefined} />
             <p style={{ margin: "14px 0 0", fontSize: 12, color: T.muted, lineHeight: 1.6 }}>
-              Keltaisella merkityt ikkunat eivät kuulu tähän sopimukseen — niiden tilanne
-              katsotaan seuraavassa sopimuksessa.
+              {p2Live
+                ? "Keltaisella merkityt ikkunat ovat lisätyötä: jokainen hinnoitellaan ikkunakohtaisesti. Napauta ikkunaa nähdäksesi hintaehdotuksen ja vastataksesi siihen."
+                : "Keltaisella merkityt ikkunat eivät kuulu tähän sopimukseen — niiden tilanne katsotaan seuraavassa sopimuksessa."}
             </p>
           </Panel>
         )}
@@ -278,6 +365,51 @@ export default function GigLivePage() {
           Viimeksi päivitetty {updated} · päivittyy automaattisesti · puuhapatet.fi
         </p>
       </div>
+
+      {/* P2 terms dialog — a lightweight click-to-accept (nimi + aikaleima).
+          Every price acceptance after this is logged per window, and together
+          they form the phase-2 agreement. */}
+      {termsOpen && (
+        <>
+          <div onClick={() => !termsBusy && setTermsOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 70, background: "rgba(26,26,26,0.45)" }} />
+          <div style={{ position: "fixed", left: "50%", top: "50%", transform: "translate(-50%,-50%)", zIndex: 71, width: "min(420px, calc(100vw - 32px))", background: T.card, borderRadius: 16, border: `1px solid ${T.hair}`, boxShadow: "0 24px 80px rgba(0,0,0,0.35)", padding: 22, fontFamily: FONT, maxHeight: "85vh", overflowY: "auto" }}>
+            <p style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>Lisäikkunoiden tilausehdot</p>
+            <p style={{ margin: "10px 0 0", fontSize: 13.5, lineHeight: 1.65 }}>
+              {p2?.termsText?.trim() || (
+                "Hyväksymällä ikkunakohtaisen hinnan tilaat kyseisen ikkunan pesun sovittuun " +
+                "hintaan. Hinta lukitaan, kun molemmat osapuolet ovat sen hyväksyneet, ja " +
+                "lukitut ikkunat laskutetaan toteutuneen työn mukaan erillään 1. vaiheen " +
+                "kiinteästä urakasta. Jokainen hyväksyntä kirjataan aikaleimalla."
+              )}
+            </p>
+            <p style={{ margin: "14px 0 6px", fontSize: 12, fontWeight: 600, color: T.muted }}>Nimenselvennys</p>
+            <input
+              value={termsName}
+              onChange={(e) => setTermsName(e.target.value)}
+              placeholder="Etunimi Sukunimi"
+              autoFocus
+              style={{ width: "100%", boxSizing: "border-box", padding: "11px 12px", borderRadius: 10, border: `1px solid ${T.hair}`, fontFamily: FONT, fontSize: 14 }}
+            />
+            {termsError && <p style={{ margin: "8px 0 0", fontSize: 12.5, color: "#B4231F" }}>{termsError}</p>}
+            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+              <button
+                disabled={termsBusy}
+                onClick={() => setTermsOpen(false)}
+                style={{ flex: 1, padding: "11px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, color: T.ink, fontFamily: FONT, fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}
+              >
+                Peruuta
+              </button>
+              <button
+                disabled={termsBusy}
+                onClick={() => void acceptTerms()}
+                style={{ flex: 2, padding: "11px", borderRadius: 10, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: "pointer", opacity: termsBusy ? 0.6 : 1 }}
+              >
+                {termsBusy ? "Hyväksytään…" : "Hyväksyn ehdot"}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

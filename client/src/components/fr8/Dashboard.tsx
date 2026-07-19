@@ -46,6 +46,9 @@ interface Props {
   /** Rendered <ExpensesView>, shown inside the collapsible KULUT section (no longer
    *  its own tab). Handlers/data stay owned by the project page. */
   expensesSlot?: React.ReactNode;
+  /** P2 (keltaiset ikkunat) — per-window pricing admin panel. Rendered as a slot
+   *  because only project.tsx owns the API handlers. */
+  p2Slot?: React.ReactNode;
 }
 
 function fmt(n: number) { return Math.round(n).toLocaleString("fi-FI"); }
@@ -82,7 +85,7 @@ const mono: React.CSSProperties = {
   color: "rgba(255,255,255,0.4)",
 };
 
-export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeInfo, traineeShareByLeader, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot, founderInvoiceSlot, workerInvoiceSlot }: Props) {
+export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeInfo, traineeShareByLeader, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot, founderInvoiceSlot, workerInvoiceSlot, p2Slot }: Props) {
   const m = useIsMobile();
   const [editId, setEditId] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
@@ -564,6 +567,9 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             </div>
           </Section>
         )}
+
+        {/* P2 — keltaisten ikkunoiden hinnoittelu & neuvottelu (lisätyö) */}
+        {p2Slot && <div className="anim-fadeUp-6">{p2Slot}</div>}
 
         {/* Row 3: floor breakdown + activity log */}
         <Section id="floors" label="KERROKSITTAIN" summary={`${washed}/${total}`} animClass="anim-fadeUp-6">

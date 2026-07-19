@@ -46,6 +46,10 @@ export interface GigPayment {
   /** Customer e-invoice address (verkkolaskuosoite/OVT) this instalment was
    *  directed to, when given — recorded for the customer's routing & our records. */
   eInvoice?: string;
+  /** Which pricing scope this payment belongs to: "p2" = keltaisten ikkunoiden
+   *  per-window billing (shared/p2.ts), kept apart from the fixed P1 instalments.
+   *  Absent = P1 (the historical default). */
+  scope?: "p1" | "p2";
 }
 
 export interface GigCompany {
@@ -289,6 +293,7 @@ export function sanitizeGigData(input: any): GigData {
           yTunnus: p.biller.yTunnus ? String(p.biller.yTunnus).slice(0, 40) : undefined,
         } : undefined,
         eInvoice: p?.eInvoice ? String(p.eInvoice).slice(0, 200) : undefined,
+        scope: p?.scope === "p2" ? "p2" as const : p?.scope === "p1" ? "p1" as const : undefined,
       }))
     : [];
   const str = (v: any, max: number) => (v == null ? undefined : String(v).slice(0, max));

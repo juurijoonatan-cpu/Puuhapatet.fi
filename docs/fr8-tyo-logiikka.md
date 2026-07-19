@@ -86,6 +86,12 @@ ansioita. Varmistettu:
 - Työntekijän ansiot näkyvät vain Ansiot-välilehdellä (oma rate × omat ikkunat).
 - Leaderboard näyttää vain ikkunamäärät, ei euroja.
 - **Älä koskaan** välitä `deal`-proppia tai keikan hintaa työntekijän komponenteille.
+- **P2 (keltaiset, ikkunakohtainen hinnoittelu, shared/p2.ts)**: tekijälle saa
+  lähettää VAIN hänen oman palkkionsa per lukittu ikkuna (`workerView` →
+  `p2.payoutByKey`) — se on sallittu samalla perusteella kuin oma
+  `perWindowCents`-taksa. Asiakashintaa (`lockedCents`) tai tekijän
+  prosenttiosuutta (`workerSharePct`) EI koskaan lähetetä tekijälle, joten
+  asiakashintaa ei voi rekonstruoida palkkiosta.
 
 ## Työaika / sessio
 

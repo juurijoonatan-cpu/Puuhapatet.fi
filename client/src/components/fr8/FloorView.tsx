@@ -652,8 +652,11 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
 
           {/* Edit / add controls — full editing for hosts (canEdit), notes-only for workers (canAddNotes) */}
           {(canEdit || canAddNotes) && <>
-          {/* P2 pricing mode — multi-select yellow windows, propose one price. */}
-          {canEdit && onP2Propose && p2 && (
+          {/* P2 pricing mode — multi-select yellow windows, propose one price.
+              Available already in the preparation phase (server auto-inits p2
+              on the first proposal), so pricing can be prepped before the
+              phase is opened to the customer. */}
+          {canEdit && onP2Propose && (
           <button onClick={toggleP2SelectMode} style={{ display: "flex", alignItems: "center", gap: "7px", padding: "8px 13px", borderRadius: "11px", cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12.5px", fontWeight: 600, transition: "all .16s", border: `1px solid ${p2SelectMode ? "transparent" : "rgba(255,205,40,0.35)"}`, background: p2SelectMode ? "rgb(255,205,40)" : "rgba(255,205,40,0.08)", color: p2SelectMode ? "#0a0a0c" : "rgba(255,220,110,0.95)" }}>
             € {p2SelectMode ? "Valmis" : "Hinnoittele"}
           </button>
@@ -875,6 +878,11 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
       {/* P2 pricing bar — shown in select mode: pick yellows, set one price. */}
       {p2SelectMode && (
         <div style={{ position: "fixed", left: "50%", bottom: "calc(14px + env(safe-area-inset-bottom))", transform: "translateX(-50%)", zIndex: 1150, display: "flex", alignItems: "center", gap: "9px", flexWrap: "wrap", justifyContent: "center", maxWidth: "calc(100vw - 24px)", padding: "10px 12px", background: "rgba(16,16,20,0.94)", border: "1px solid rgba(255,205,40,0.4)", borderRadius: "15px", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 18px 50px rgba(0,0,0,0.7)" }}>
+          {!p2?.enabled && (
+            <span title="Vaihe 2 ei ole vielä auki asiakkaalle — hinnat menevät jonoon odottamaan" style={{ fontSize: "9.5px", fontWeight: 700, letterSpacing: "0.06em", padding: "3px 7px", borderRadius: 999, border: "1px solid rgba(255,205,40,0.4)", background: "rgba(255,205,40,0.1)", color: "rgb(255,220,110)", whiteSpace: "nowrap" }}>
+              VALMISTELU
+            </span>
+          )}
           <span style={{ fontSize: "12.5px", fontWeight: 700, color: "#fff", whiteSpace: "nowrap" }}>
             {p2Selected.size} valittu
           </span>

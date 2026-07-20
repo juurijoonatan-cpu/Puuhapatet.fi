@@ -254,7 +254,10 @@ export interface CrewMemberStats {
 export function crewMemberStats(project: ProjectData, member: CrewMember): CrewMemberStats {
   const pts = allPoints(project);
   const washedBy2 = project.washedBy2 || {};
-  const p2 = project.p2;
+  // Valmisteluvaihe: niin kauan kuin vaihe 2 EI ole päällä, hinnoittelun
+  // valmistelu (offers, terms, …) ei saa vaikuttaa tekijöihin mitenkään —
+  // palkkio lasketaan täsmälleen kuten ennen. Vasta enabled kytkee P2-mallin.
+  const p2 = project.p2?.enabled ? project.p2 : undefined;
   const sharePct = p2?.workerSharePct || DEFAULT_P2_WORKER_SHARE_PCT;
   let washed = 0;
   let earnedRaw = 0;

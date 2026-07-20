@@ -27,6 +27,7 @@ import MaksutView from "@/components/fr8/MaksutView";
 import { BRAND_BILLERS } from "@shared/billers";
 import FloorView from "@/components/fr8/FloorView";
 import Section from "@/components/fr8/Section";
+import LoadingOrb from "@/components/LoadingOrb";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 const MARKS_URL = "/fr8/marks_data.json";
@@ -429,8 +430,8 @@ export default function AdminProjectPage() {
 
   if (loading || crewChecking) {
     return shell(
-      <div style={{ position: "relative", zIndex: 10, height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.45)", fontSize: "14px" }}>
-        Ladataan projektinäkymää…
+      <div style={{ position: "relative", zIndex: 10, height: "100%" }}>
+        <LoadingOrb label="Ladataan projektinäkymää" theme="dark" fullScreen={false} />
       </div>,
     );
   }
@@ -789,6 +790,8 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
   const [shareDraft, setShareDraft] = useState(String(p2?.workerSharePct ?? DEFAULT_P2_WORKER_SHARE_PCT));
   const [counterInputs, setCounterInputs] = useState<Record<string, string>>({});
   const [showLog, setShowLog] = useState(false);
+  const [showTerms, setShowTerms] = useState(false);
+  const [termsDraft, setTermsDraft] = useState(p2?.termsText ?? "");
 
   const deal = fixedDealFor(project);
   const p1Pct = deal ? computeDealBilling(project, deal).pct : 0;
@@ -852,6 +855,11 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
           >
             {p2?.enabled ? "Vaihe 2 päällä — sulje asiakkaalta" : "Avaa vaihe 2 asiakkaalle"}
           </button>
+          {!p2?.enabled && (
+            <span style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.06em", padding: "4px 9px", borderRadius: 999, border: "1px solid rgba(255,205,40,0.4)", background: "rgba(255,205,40,0.1)", color: "rgb(255,220,110)" }}>
+              VALMISTELU — ei näy asiakkaalle eikä tekijöille
+            </span>
+          )}
           {!!deal && p1Pct >= 100 && !p2?.enabled && (
             <span style={{ fontSize: "11.5px", color: "#9ff0bd" }}>P1 (punaiset) on valmis — aika siirtyä keltaisiin ✨</span>
           )}
@@ -936,19 +944,49 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
           </div>
         )}
 
-        {/* P2-laskutus + tapahtumaloki */}
+        {/* P2-laskutus + sopimusteksti + tapahtumaloki */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {canSend && b.earnedCents > 0 && (
             <button disabled={busy} onClick={() => void sendP2Invoice()} style={btn}>
               💶 Lähetä P2-lasku (kertymä {p2eur(b.earnedCents)})
             </button>
           )}
+          <button onClick={() => { setShowTerms((v) => !v); setTermsDraft(p2?.termsText ?? ""); }} style={btn}>
+            📄 Sopimusteksti{p2?.termsText?.trim() ? " ✓" : ""}
+          </button>
           {(p2?.events?.length ?? 0) > 0 && (
             <button onClick={() => setShowLog((v) => !v)} style={{ ...btn, marginLeft: "auto", background: "transparent", color: "rgba(255,255,255,0.5)" }}>
               {showLog ? "Piilota loki" : `Tapahtumaloki (${p2!.events.length})`}
             </button>
           )}
         </div>
+
+        {/* Sopimusteksti — näkyy asiakkaalle tilausehtojen hyväksynnässä.
+            Tänne liitetään valmis P2-soppari; tyhjänä asiakas näkee lyhyen
+            oletustekstin. */}
+        {showTerms && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <textarea
+              value={termsDraft}
+              onChange={(e) => setTermsDraft(e.target.value)}
+              rows={7}
+              placeholder="Liitä tähän P2-sopimuksen teksti — asiakas näkee sen hyväksyessään tilausehdot seurantalinkissä. Tyhjänä käytetään lyhyttä oletustekstiä."
+              style={{ width: "100%", boxSizing: "border-box", resize: "vertical", padding: "11px 13px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(0,0,0,0.35)", color: "#fff", fontSize: "12.5px", lineHeight: 1.6, outline: "none", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}
+            />
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button
+                disabled={busy || termsDraft === (p2?.termsText ?? "")}
+                onClick={() => void run(() => api.p2SetPhase(jobId, { termsText: termsDraft, by }), "Sopimusteksti tallennettu")}
+                style={{ ...btn, border: "none", background: "#fff", color: "#0a0a0c", fontWeight: 700, opacity: termsDraft === (p2?.termsText ?? "") ? 0.5 : 1 }}
+              >
+                Tallenna sopimusteksti
+              </button>
+              <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)" }}>
+                Asiakas hyväksyy tämän nimellä + aikaleimalla; jokainen hintalukitus kirjautuu lokiin.
+              </span>
+            </div>
+          </div>
+        )}
         {showLog && (
           <div style={{ display: "flex", flexDirection: "column", gap: 5, maxHeight: 260, overflowY: "auto" }}>
             {p2!.events.slice(0, 40).map((e, i) => (

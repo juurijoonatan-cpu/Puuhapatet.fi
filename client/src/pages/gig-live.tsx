@@ -12,6 +12,7 @@ import { api, type GigPublicView } from "@/lib/api";
 import { eur } from "@shared/gig";
 import GigContractSign from "@/components/GigContractSign";
 import CustomerFloorMap, { type P2CustomerActions } from "@/components/CustomerFloorMap";
+import LoadingOrb from "@/components/LoadingOrb";
 import { downloadGigContract } from "@/lib/gig-contract-doc";
 
 const T = {
@@ -35,6 +36,16 @@ export default function GigLivePage() {
   const [termsName, setTermsName] = useState("");
   const [termsBusy, setTermsBusy] = useState(false);
   const [termsError, setTermsError] = useState<string | null>(null);
+  // Vaihe 2 -kutsu: kun vaihe avataan, linkki on muuten ennallaan mutta
+  // asiakkaalle popuppaa kerran kutsu suunnitella keltaiset ikkunat + hinnat.
+  // Kuittaus muistetaan per linkki, ettei se ponnahda joka käynnillä.
+  const [p2InviteDismissed, setP2InviteDismissed] = useState(() => {
+    try { return localStorage.getItem(`pp.p2invite.${token}`) === "1"; } catch { return true; }
+  });
+  const dismissP2Invite = () => {
+    setP2InviteDismissed(true);
+    try { localStorage.setItem(`pp.p2invite.${token}`, "1"); } catch { /* private mode */ }
+  };
 
   useEffect(() => {
     const id = "poppins-font-link";
@@ -67,7 +78,7 @@ export default function GigLivePage() {
     return () => { active = false; clearInterval(iv); };
   }, [token]);
 
-  if (status === "loading") return <Centered>Ladataan…</Centered>;
+  if (status === "loading") return <LoadingOrb label="Ladataan seurantaa" theme="light" />;
   if (status === "error" || !data) return <Centered>Seurantaa ei löytynyt.</Centered>;
 
   // The intro is the signing: gate the live view until the contract is signed.
@@ -365,6 +376,44 @@ export default function GigLivePage() {
           Viimeksi päivitetty {updated} · päivittyy automaattisesti · puuhapatet.fi
         </p>
       </div>
+
+      {/* Vaihe 2 -kutsu: ponnahtaa kerran kun keltaisten suunnittelu avataan.
+          Muuten linkki toimii täsmälleen kuten ennen. */}
+      {p2Live && !p2!.termsAccepted && !p2InviteDismissed && !termsOpen && (
+        <>
+          <div onClick={dismissP2Invite} style={{ position: "fixed", inset: 0, zIndex: 68, background: "rgba(26,26,26,0.45)" }} />
+          <div style={{ position: "fixed", left: "50%", top: "50%", transform: "translate(-50%,-50%)", zIndex: 69, width: "min(440px, calc(100vw - 32px))", background: T.card, borderRadius: 18, border: `1px solid ${T.hair}`, boxShadow: "0 24px 80px rgba(0,0,0,0.35)", padding: 26, fontFamily: FONT, textAlign: "center" }}>
+            <div style={{ fontSize: 40, lineHeight: 1 }} aria-hidden>🟡</div>
+            <p style={{ margin: "12px 0 0", fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em" }}>
+              Toinen vaihe voi alkaa
+            </p>
+            <p style={{ margin: "10px 0 0", fontSize: 13.5, lineHeight: 1.7, color: T.ink, textAlign: "left" }}>
+              Punaiset ikkunat alkavat olla valmiit — seuraavaksi suunnitellaan
+              <strong> keltaisella merkityt lisäikkunat</strong>. Toisin kuin 1. vaiheen kiinteä
+              urakka, jokainen lisäikkuna hinnoitellaan erikseen:
+            </p>
+            <ul style={{ margin: "8px 0 0", padding: "0 0 0 20px", fontSize: 13, lineHeight: 1.8, color: T.muted, textAlign: "left" }}>
+              <li>Näet hintaehdotukset suoraan kartalla ikkuna kerrallaan</li>
+              <li>Hyväksyt hinnan tai teet vastatarjouksen — mikään ei tule työn alle ilman hyväksyntääsi</li>
+              <li>Voit myös ehdottaa uusia ikkunoita mukaan napauttamalla karttaa</li>
+            </ul>
+            <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
+              <button
+                onClick={dismissP2Invite}
+                style={{ flex: 1, padding: "12px", borderRadius: 11, border: `1px solid ${T.hair}`, background: T.paper, color: T.ink, fontFamily: FONT, fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}
+              >
+                Katselen ensin
+              </button>
+              <button
+                onClick={() => { dismissP2Invite(); setTermsError(null); setTermsOpen(true); }}
+                style={{ flex: 2, padding: "12px", borderRadius: 11, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}
+              >
+                Aloitetaan — näytä ehdot
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* P2 terms dialog — a lightweight click-to-accept (nimi + aikaleima).
           Every price acceptance after this is logged per window, and together

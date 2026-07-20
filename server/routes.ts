@@ -4372,7 +4372,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         map,
         // P2 (keltaiset ikkunat): per-ikkuna hintaneuvottelu. Vain hinnat +
         // tilat + kasvava summa — ei koskaan tekijätietoja tai tekijän osuutta.
-        p2: proj?.p2 ? {
+        // Valmisteluvaihe (enabled=false) ei näy asiakkaalle: linkki on täysin
+        // normaali kunnes vaihe 2 avataan administa.
+        p2: proj?.p2?.enabled ? {
           enabled: proj.p2.enabled,
           termsAccepted: !!proj.p2.terms,
           termsAcceptorName: proj.p2.terms?.acceptorName ?? null,
@@ -5757,8 +5759,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // P2 (keltaiset ikkunat): mitkä keltaiset ovat pestävissä (hinta lukittu)
       // ja tekijän OMA palkkio per ikkuna. Asiakashintaa tai tekijän
       // prosenttiosuutta ei lähetetä, joten hintaa ei voi rekonstruoida —
-      // sama rahansuojaustaso kuin oma perWindowCents-taksa.
-      p2: project.p2 ? {
+      // sama rahansuojaustaso kuin oma perWindowCents-taksa. Valmisteluvaihe
+      // (enabled=false) ei näy tekijälle lainkaan.
+      p2: project.p2?.enabled ? {
         enabled: project.p2.enabled,
         lockedKeys: Object.entries(project.p2.offers)
           .filter(([, o]) => o.status === "locked" && o.lockedCents)
@@ -5889,12 +5892,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const status = req.body?.status === "pesty" || req.body?.status === "kesken" ? req.body.status : "ei";
       if (!key) return res.status(400).json({ error: "key puuttuu" });
 
-      // P2-pesuportti: kun ikkunakohtainen hinnoittelu on käytössä, keltaisen
-      // ikkunan saa merkata vasta kun sen hinta on lukittu asiakkaan kanssa.
-      // Prioriteetti katsotaan AINA kartasta, ei clientin lähettämästä p:stä.
-      // Statuksen tyhjennys ("ei") sallitaan aina. Ilman p2:ta ei porttia.
+      // P2-pesuportti: kun ikkunakohtainen hinnoittelu on PÄÄLLÄ (enabled),
+      // keltaisen ikkunan saa merkata vasta kun sen hinta on lukittu asiakkaan
+      // kanssa. Prioriteetti katsotaan AINA kartasta, ei clientin lähettämästä
+      // p:stä. Statuksen tyhjennys ("ei") sallitaan aina. Valmisteluvaihe
+      // (p2 alustettu mutta ei päällä) EI vaikuta tekijöihin mitenkään.
       const mapPriority = pointPriority(project, key);
-      if (status !== "ei" && mapPriority === 2 && project.p2 && !isP2Washable(project, key)) {
+      if (status !== "ei" && mapPriority === 2 && project.p2?.enabled && !isP2Washable(project, key)) {
         return res.status(403).json({ error: "Tämä keltainen ikkuna ei ole vielä työn piirissä — hinta sovitaan ensin asiakkaan kanssa." });
       }
 

@@ -19,6 +19,7 @@ import { Disclosure } from "@/components/ui/disclosure";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import LoadingOrb from "@/components/LoadingOrb";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -354,7 +355,7 @@ export default function AdminGigTrackerPage() {
   };
 
   if (crewChecking) {
-    return <div className="min-h-screen bg-background pt-24 text-center text-muted-foreground">Ladataan…</div>;
+    return <div className="min-h-screen bg-background"><LoadingOrb label="Ladataan keikkaa" theme="light" /></div>;
   }
 
   // Admin-linked worker (e.g. Petrus): stay in the normal admin, but show a clean
@@ -403,7 +404,7 @@ export default function AdminGigTrackerPage() {
   }
 
   if (loading) {
-    return <div className="min-h-screen bg-background pt-24 text-center text-muted-foreground">Ladataan…</div>;
+    return <div className="min-h-screen bg-background"><LoadingOrb label="Ladataan keikkaa" theme="light" /></div>;
   }
   if (!gig) {
     return (

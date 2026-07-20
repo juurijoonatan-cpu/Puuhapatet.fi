@@ -282,6 +282,18 @@ describe("crewMemberStats — P2", () => {
     expect(s.p2EarnedCents ?? 0).toBe(0);
   });
 
+  it("VALMISTELUVAIHE (p2 alustettu, ei päällä): käytös täsmälleen kuin ilman p2:ta", () => {
+    const data = fixture();
+    data.p2 = emptyP2State(); // enabled = false — hinnoittelua valmistellaan
+    data.p2.offers["K#2"] = { status: "locked", priceCents: 3000, lockedCents: 3000, version: 2, updatedAt: 1 };
+    data.statuses["K#0"] = "pesty"; data.washedBy["K#0"] = "jani";  // punainen
+    data.statuses["K#2"] = "pesty"; data.washedBy["K#2"] = "jani";  // keltainen
+    const s = crewMemberStats(data, crewMember("jani"));
+    expect(s.washed).toBe(2);
+    expect(s.earnedCents).toBe(4000); // 2 × 2000 — kuten ennen P2:ta
+    expect(s.p2EarnedCents).toBe(0);
+  });
+
   it("p2:lla: punainen maksaa oman taksan, lukittu keltainen %-osuuden hinnasta, lukitsematon 0", () => {
     const data = fixture();
     data.p2 = emptyP2State();

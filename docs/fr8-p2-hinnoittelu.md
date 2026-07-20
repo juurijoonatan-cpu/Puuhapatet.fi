@@ -81,6 +81,21 @@ muuttua"), joten juuri muuttunutta hintaa ei voi hyväksyä vahingossa.
   (vain oma palkkio — ks. rahan yksityisyys `fr8-tyo-logiikka.md`), Ansioissa
   "sis. lisäikkunat (P2)" -erittely (`stats.p2EarnedCents`).
 
+## Valmisteluvaihe (enabled = false)
+
+Diili on greenlightattu, mutta hinnoittelua VALMISTELLAAN: Joonatan & Matias
+voivat hinnoitella keltaisia kartalla (server alustaa `p2`:n ensimmäisestä
+ehdotuksesta) ja liittää sopimustekstin — **mikään ei muutu kenellekään muulle**:
+
+- Asiakas: seurantalinkki toimii täsmälleen kuten ennen (`GET /api/gig/:token`
+  ei palauta p2:ta kun enabled=false).
+- Tekijät: eivät näe P2:ta, keltaisten merkkaus ja palkkio kuten ennen
+  (`crewMemberStats` ja pesuportti kytkeytyvät vasta enabled=true).
+
+Kun "Avaa vaihe 2 asiakkaalle" kytketään, asiakkaalle ponnahtaa samassa
+linkissä kertaluonteinen kutsu ("Toinen vaihe voi alkaa") suunnitteluun, ja
+tekijöille aukeavat lukitut keltaiset työjonoon.
+
 ## Yhteensopivuus
 
 `p2` on valinnainen kenttä: ilman sitä pesuportti, palkkio-, summa- ja UI-logiikka

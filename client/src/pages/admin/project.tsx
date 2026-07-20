@@ -837,7 +837,7 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
   return (
     <Section
       id="p2"
-      label="P2 — KELTAISET IKKUNAT (LISÄTYÖ)"
+      label="PRIORITY 2 — KELTAISET IKKUNAT"
       summary={
         <span style={{ fontVariantNumeric: "tabular-nums" }}>
           {p2?.enabled ? "🟢 " : ""}

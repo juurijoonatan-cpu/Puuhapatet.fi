@@ -189,9 +189,9 @@ export default function GigLivePage() {
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <span style={{ width: 40, height: 40, flexShrink: 0, borderRadius: 999, background: "#EAF6EE", border: "1px solid #BFE3CC", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }} aria-hidden>✓</span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ margin: 0, fontSize: 13.5, fontWeight: 700 }}>1. vaihe — kiinteä urakka</p>
+                <p style={{ margin: 0, fontSize: 13.5, fontWeight: 700 }}>Priority 1 — kiinteä urakka</p>
                 <p style={{ margin: "2px 0 0", fontSize: 12.5, color: T.muted, lineHeight: 1.5 }}>
-                  {pct >= 100 ? "Valmis 🎉 Kaikki sovitut ikkunat pesty." : `Käynnissä — ${pct} % valmis.`} Nyt suunnitellaan lisäikkunat alla.
+                  {pct >= 100 ? "Valmis 🎉 Kaikki sovitut ikkunat pesty." : `Käynnissä — ${pct} % valmis.`} Nyt suunnitellaan Priority 2 alla.
                 </p>
               </div>
             </div>
@@ -288,14 +288,14 @@ export default function GigLivePage() {
           );
         })}
 
-        {/* P2 — Lisäikkunat (2. vaihe): kasvava sovittu summa + avoimet ehdotukset */}
+        {/* Priority 2 -vaihe: kasvava sovittu summa + avoimet hintaehdotukset */}
         {p2Live && (
           <Panel>
             {/* Accent header makes phase 2 read as the current main focus */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10.5, fontWeight: 800, letterSpacing: "0.08em", color: "#8A6A00", background: "rgba(224,168,0,0.16)", border: "1px solid rgba(224,168,0,0.4)", borderRadius: 999, padding: "4px 10px" }}>
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#E0A800" }} />
-                2. VAIHE · LISÄIKKUNAT
+                PRIORITY 2
               </span>
               {p2!.termsAccepted && (
                 <span style={{ marginLeft: "auto", fontSize: 11.5, color: T.muted }}>Ehdot hyväksytty · {p2!.termsAcceptorName}</span>
@@ -306,19 +306,19 @@ export default function GigLivePage() {
                 {eur(p2!.billing.lockedSumCents)}
               </span>
               <span style={{ fontSize: 13, color: T.muted }}>
-                sovittua lisätyötä · {p2!.billing.lockedCount} ikkunaa
+                sovittu Priority 2 · {p2!.billing.lockedCount} ikkunaa
               </span>
             </div>
             <p style={{ margin: "10px 0 0", fontSize: 13.5, lineHeight: 1.6 }}>
-              Pesty <strong style={{ fontVariantNumeric: "tabular-nums" }}>{p2!.billing.lockedWashedCount} / {p2!.billing.lockedCount}</strong> sovituista lisäikkunoista.
+              Pesty <strong style={{ fontVariantNumeric: "tabular-nums" }}>{p2!.billing.lockedWashedCount} / {p2!.billing.lockedCount}</strong> sovituista Priority 2 -ikkunoista.
               {p2!.billing.proposedCount > 0 && (
                 <> <strong style={{ color: T.navy }}>{p2!.billing.proposedCount} hintaehdotusta odottaa vastaustasi</strong> — napauta keltaista ikkunaa kartalla.</>
               )}
             </p>
             <p style={{ margin: "8px 0 0", fontSize: 12.5, color: T.muted, lineHeight: 1.6 }}>
-              Toisin kuin 1. vaiheen kiinteä urakka, lisäikkunat hinnoitellaan ikkunakohtaisesti:
-              hyväksyt jokaisen hinnan erikseen (tai teet vastatarjouksen), ja summa kasvaa vain
-              hyväksymistäsi ikkunoista. Voit myös ehdottaa uusia ikkunoita mukaan kartalla.
+              Toisin kuin Priority 1 -urakan kiinteä hinta, Priority 2 -ikkunat hinnoitellaan
+              ikkunakohtaisesti: hyväksyt jokaisen hinnan erikseen (tai teet vastatarjouksen), ja
+              summa kasvaa vain hyväksymistäsi ikkunoista. Voit myös lisätä uusia ikkunoita kartalla.
             </p>
             {!p2!.termsAccepted && (
               <button
@@ -341,7 +341,7 @@ export default function GigLivePage() {
             <CustomerFloorMap map={data.map} p2={p2} p2Actions={p2Live ? p2Actions : undefined} />
             <p style={{ margin: "14px 0 0", fontSize: 12, color: T.muted, lineHeight: 1.6 }}>
               {p2Live
-                ? "Keltaisella merkityt ikkunat ovat lisätyötä: jokainen hinnoitellaan ikkunakohtaisesti. Napauta ikkunaa nähdäksesi hintaehdotuksen ja vastataksesi siihen."
+                ? "Keltaisella merkityt ovat Priority 2 -ikkunoita: jokainen hinnoitellaan ikkunakohtaisesti. Napauta ikkunaa nähdäksesi hintaehdotuksen ja vastataksesi siihen."
                 : "Keltaisella merkityt ikkunat eivät kuulu tähän sopimukseen — niiden tilanne katsotaan seuraavassa sopimuksessa."}
             </p>
           </Panel>
@@ -412,17 +412,17 @@ export default function GigLivePage() {
           <div style={{ position: "fixed", left: "50%", top: "50%", transform: "translate(-50%,-50%)", zIndex: 69, width: "min(440px, calc(100vw - 32px))", background: T.card, borderRadius: 18, border: `1px solid ${T.hair}`, boxShadow: "0 24px 80px rgba(0,0,0,0.35)", padding: 26, fontFamily: FONT, textAlign: "center" }}>
             <div style={{ fontSize: 40, lineHeight: 1 }} aria-hidden>🟡</div>
             <p style={{ margin: "12px 0 0", fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em" }}>
-              Toinen vaihe voi alkaa
+              Priority 2 voi alkaa
             </p>
             <p style={{ margin: "10px 0 0", fontSize: 13.5, lineHeight: 1.7, color: T.ink, textAlign: "left" }}>
-              Punaiset ikkunat alkavat olla valmiit — seuraavaksi suunnitellaan
-              <strong> keltaisella merkityt lisäikkunat</strong>. Toisin kuin 1. vaiheen kiinteä
-              urakka, jokainen lisäikkuna hinnoitellaan erikseen:
+              Priority 1 (punaiset) alkaa olla valmis — seuraavaksi suunnitellaan
+              <strong> keltaisella merkityt Priority 2 -ikkunat</strong>. Toisin kuin Priority 1 -urakan
+              kiinteä hinta, jokainen Priority 2 -ikkuna hinnoitellaan erikseen:
             </p>
             <ul style={{ margin: "8px 0 0", padding: "0 0 0 20px", fontSize: 13, lineHeight: 1.8, color: T.muted, textAlign: "left" }}>
               <li>Näet hintaehdotukset suoraan kartalla ikkuna kerrallaan</li>
               <li>Hyväksyt hinnan tai teet vastatarjouksen — mikään ei tule työn alle ilman hyväksyntääsi</li>
-              <li>Voit myös ehdottaa uusia ikkunoita mukaan napauttamalla karttaa</li>
+              <li>Voit lisätä uusia ikkunoita Priority 2:seen napauttamalla karttaa</li>
             </ul>
             <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
               <button
@@ -449,13 +449,13 @@ export default function GigLivePage() {
         <>
           <div onClick={() => !termsBusy && setTermsOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 70, background: "rgba(26,26,26,0.45)" }} />
           <div style={{ position: "fixed", left: "50%", top: "50%", transform: "translate(-50%,-50%)", zIndex: 71, width: "min(420px, calc(100vw - 32px))", background: T.card, borderRadius: 16, border: `1px solid ${T.hair}`, boxShadow: "0 24px 80px rgba(0,0,0,0.35)", padding: 22, fontFamily: FONT, maxHeight: "85vh", overflowY: "auto" }}>
-            <p style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>Lisäikkunoiden tilausehdot</p>
+            <p style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>Priority 2 -tilausehdot</p>
             <p style={{ margin: "10px 0 0", fontSize: 13.5, lineHeight: 1.65 }}>
               {p2?.termsText?.trim() || (
                 "Hyväksymällä ikkunakohtaisen hinnan tilaat kyseisen ikkunan pesun sovittuun " +
                 "hintaan. Hinta lukitaan, kun molemmat osapuolet ovat sen hyväksyneet, ja " +
-                "lukitut ikkunat laskutetaan toteutuneen työn mukaan erillään 1. vaiheen " +
-                "kiinteästä urakasta. Jokainen hyväksyntä kirjataan aikaleimalla."
+                "lukitut ikkunat laskutetaan toteutuneen työn mukaan erillään Priority 1 " +
+                "-urakan kiinteästä hinnasta. Jokainen hyväksyntä kirjataan aikaleimalla."
               )}
             </p>
             <p style={{ margin: "14px 0 6px", fontSize: 12, fontWeight: 600, color: T.muted }}>Nimenselvennys</p>

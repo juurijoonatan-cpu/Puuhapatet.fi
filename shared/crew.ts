@@ -317,6 +317,46 @@ export function hasEnteredApp(member: CrewMember): boolean {
   return !!member.onboardedAt;
 }
 
+/**
+ * Canonical legal full names for known people, keyed by crew id / linked admin
+ * login id / first name (same matching convention as DEFAULT_AGREEMENT_SETS in
+ * worker-agreements.ts and TRAINEES in trainees.ts).
+ *
+ * `CrewMember.name` is a free-text display name a host can set to anything —
+ * historically just a first name or nickname for some FR8 alihankkijat (e.g.
+ * "Doma" for Tomas Leinonen). Invoices and other tax/bookkeeping documents must
+ * show the person's real full name, so invoice generation resolves it from here
+ * FIRST, ahead of whatever short name/nickname is stored on the crew record.
+ */
+export const KNOWN_WORKER_LEGAL_NAMES: Record<string, string> = {
+  joonatan: "Joonatan Juuri",
+  matias: "Matias Pitkänen",
+  petrus: "Petrus Aalto",
+  jani: "Jani Ihalainen",
+  oliver: "Oliver Nieminen",
+  oona: "Oona Räätäri",
+  doma: "Tomas Leinonen",
+};
+
+/** Resolve a known person's legal full name from their crew id, linked login id,
+ *  or first name. Returns undefined for anyone not in the registry (their own
+ *  entered name/nickname is then used as-is — unchanged behaviour). */
+export function resolveWorkerLegalName(member: {
+  id?: string | null;
+  linkedUserId?: string | null;
+  name?: string | null;
+} | null | undefined): string | undefined {
+  if (!member) return undefined;
+  const keys = [member.id, member.linkedUserId, (member.name || "").trim().split(/\s+/)[0]]
+    .filter(Boolean)
+    .map((k) => String(k).toLowerCase());
+  for (const k of keys) {
+    const n = KNOWN_WORKER_LEGAL_NAMES[k];
+    if (n) return n;
+  }
+  return undefined;
+}
+
 // ─── Sanitisation (server-side validation) ─────────────────────────────────────
 
 function str(v: any, max: number): string | undefined {

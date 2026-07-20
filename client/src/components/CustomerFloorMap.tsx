@@ -77,7 +77,7 @@ const LEGEND_P2: { label: string; color: string }[] = [
   { label: "Pesemättä", color: "#F4A6C0" },
   { label: "Kesken", color: "#7C5CD6" },
   { label: "Pesty", color: "#E03B3B" },
-  { label: "Lisäikkuna — hinta sovitaan ikkunakohtaisesti", color: "#D9C97E" },
+  { label: "Priority 2 — hinta sovitaan ikkunakohtaisesti", color: "#D9C97E" },
 ];
 
 /** P2 offer pill colors by status. */
@@ -209,11 +209,11 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
           {p2On && yellowCount > 0 && (
             <button
               onClick={() => setOnlyYellow((v) => !v)}
-              title="Näytä kartalla vain lisäikkunat (keltaiset)"
+              title="Näytä kartalla vain Priority 2 -ikkunat (keltaiset)"
               style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 999, cursor: "pointer", fontFamily: FONT, fontSize: 12, fontWeight: 600, border: `1px solid ${onlyYellow ? "#E0A800" : T.hair}`, background: onlyYellow ? "rgba(224,168,0,0.14)" : T.card, color: onlyYellow ? "#8A6A00" : T.muted }}
             >
               <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#E0A800" }} />
-              {onlyYellow ? "Näytä kaikki" : "Vain lisäikkunat"}
+              {onlyYellow ? "Näytä kaikki" : "Vain Priority 2"}
             </button>
           )}
           <div style={{ fontSize: 13, color: T.muted }}>
@@ -268,7 +268,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
                     setShowCounterInput(false); setCounterInput(""); setP2Error(null);
                   } : undefined}
                   title={tappable
-                    ? (mine ? "Ehdottamasi ikkuna — napauta nähdäksesi tila" : "Lisäikkuna — napauta nähdäksesi hinnan")
+                    ? (mine ? "Ehdottamasi ikkuna — napauta nähdäksesi tila" : "Priority 2 — napauta nähdäksesi hinnan")
                     : `Ikkuna · ${done ? "Pesty" : status === "kesken" ? "Kesken" : "Pesemättä"}`}
                   style={{
                     position: "absolute",
@@ -413,16 +413,16 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
               onClick={() => setAddMode(false)}
               style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1.5px solid #3E7C59", background: "#EAF6EE", color: "#1F5B36", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}
             >
-              👆 Napauta kartalta kohta, johon haluat ikkunan — tai peru tästä
+              👆 Napauta kartalta ikkunan kohta — tai peru tästä
             </button>
           ) : (
             <div style={{ borderRadius: 12, border: `1.5px dashed ${T.navy}55`, background: "linear-gradient(160deg, rgba(31,59,87,0.05), rgba(224,168,0,0.06))", padding: 14 }}>
               <p style={{ margin: 0, fontSize: 13.5, fontWeight: 700, color: T.ink }}>
-                {anyYellowActivity ? "Haluatko vielä lisää puhtaita ikkunoita?" : "Toivotko lisää ikkunoita puhtaaksi?"}
+                Lisää ikkunoita Priority 2:seen
               </p>
               <p style={{ margin: "4px 0 10px", fontSize: 12.5, color: T.muted, lineHeight: 1.55 }}>
-                Napauta pohjapiirrosta ja merkitse ikkuna, jonka haluaisit mukaan — hinnoittelemme
-                sen sinulle, ja päätät itse otetaanko se. Lisää niin monta kuin haluat.
+                Napauta pohjapiirrosta ja merkitse ikkunat, jotka haluat mukaan Priority 2 -vaiheeseen.
+                Hinnoittelemme jokaisen erikseen, ja päätät itse mitkä otetaan. Voit lisätä niitä vapaasti.
               </p>
               <button
                 disabled={p2Busy}
@@ -433,7 +433,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
                 }}
                 style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 18px", borderRadius: 11, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 14, fontWeight: 700, cursor: "pointer", animation: anyYellowActivity ? undefined : "cfmAddNudge 2.4s ease-in-out infinite" }}
               >
-                <span style={{ fontSize: 17, lineHeight: 1 }}>➕</span> Ehdota lisättävää ikkunaa
+                <span style={{ fontSize: 17, lineHeight: 1 }}>➕</span> Lisää ikkuna Priority 2:seen
               </button>
             </div>
           )}
@@ -458,7 +458,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
           <div style={{ ...popupStyle(openOffer.rect, 270, 220), width: 270, background: T.card, border: `1px solid ${T.hair}`, borderRadius: 14, boxShadow: "0 14px 40px rgba(0,0,0,0.22)", padding: 16, fontFamily: FONT }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
               <span style={{ width: 11, height: 11, borderRadius: "50%", background: "#D9C97E", border: "2px solid #fff", boxShadow: `0 0 0 1px ${T.hair}`, flexShrink: 0 }} />
-              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: T.navy }}>{openOfferIsMine ? "Ehdottamasi ikkuna" : "Lisäikkuna"}</span>
+              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: T.navy }}>{openOfferIsMine ? "Ehdottamasi ikkuna" : "Priority 2 -ikkuna"}</span>
               <button onClick={closeOffer} aria-label="Sulje" style={{ marginLeft: "auto", width: 24, height: 24, borderRadius: "50%", border: "none", background: T.paper, color: T.muted, fontSize: 13, cursor: "pointer", lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
             </div>
 

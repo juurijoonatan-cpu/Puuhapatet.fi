@@ -935,7 +935,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
             <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "2px 4px 9px", borderBottom: "1px solid rgba(255,255,255,0.08)", marginBottom: "7px" }}>
               <span style={{ width: "9px", height: "9px", borderRadius: "50%", background: `rgb(${colorRgb(activePt.p, statuses[activeOrb] || "ei")})`, boxShadow: `0 0 7px rgba(${colorRgb(activePt.p, statuses[activeOrb] || "ei")},0.7)` }} />
               <span style={{ fontSize: "12px", fontWeight: 600 }}>Ikkuna {activeIdx + 1}</span>
-              <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9.5px", color: "rgba(255,255,255,0.4)", marginLeft: "auto" }}>{activePt.p === 2 && p2 ? "P2 · LISÄTYÖ" : deal && activePt.p === 2 ? "EI SOPIMUKSESSA" : `PRIORITEETTI ${activePt.p}`}</span>
+              <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9.5px", color: "rgba(255,255,255,0.4)", marginLeft: "auto" }}>{activePt.p === 2 && p2 ? "PRIORITY 2" : deal && activePt.p === 2 ? "EI SOPIMUKSESSA" : `PRIORITEETTI ${activePt.p}`}</span>
             </div>
 
             {/* P2 offer state (admin) — where the negotiation stands for this window. */}

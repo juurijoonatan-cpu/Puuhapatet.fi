@@ -1099,7 +1099,7 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
           <p style={{ margin: 0, fontSize: 20, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: "#7CE0A6" }}>{euro(view.stats.earnedCents)}</p>
           <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
             {view.stats.washed} ikkunaa · {euro(view.worker.perWindowCents)}/kpl
-            {(view.stats.p2EarnedCents ?? 0) > 0 ? ` · sis. lisäikkunat ${euro(view.stats.p2EarnedCents)}` : ""}
+            {(view.stats.p2EarnedCents ?? 0) > 0 ? ` · sis. Priority 2 ${euro(view.stats.p2EarnedCents)}` : ""}
           </p>
         </div>
       </div>
@@ -1322,7 +1322,7 @@ function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
           <p style={{ margin: "4px 0 0", fontSize: 26, fontWeight: 800, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(s.earnedCents)}</p>
           {(s.p2EarnedCents ?? 0) > 0 && (
             <p style={{ margin: "3px 0 0", fontSize: 11, color: "rgba(255,220,110,0.85)", fontVariantNumeric: "tabular-nums" }}>
-              sis. lisäikkunat (P2) {euro(s.p2EarnedCents)}
+              sis. Priority 2 {euro(s.p2EarnedCents)}
             </p>
           )}
         </div>

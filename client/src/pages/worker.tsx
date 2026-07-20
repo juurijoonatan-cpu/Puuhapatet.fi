@@ -26,6 +26,7 @@ import InkReveal from "@/components/InkReveal";
 import { Shine } from "@/components/animate-ui/primitives/effects/shine";
 import SignaturePad from "@/components/SignaturePad";
 import FloorView from "@/components/fr8/FloorView";
+import LoadingOrb from "@/components/LoadingOrb";
 import {
   computeTax, readVatStatus, readInPrepaymentRegister, readPayeeType, fmtPct, fmtEurCents,
   VAT_STATUS_KEY, PREPAYMENT_REGISTER_KEY, type VatStatus,
@@ -50,7 +51,6 @@ export default function WorkerPage() {
   // Distinguishes a transient connection problem (worth retrying — the Render
   // free tier can take ~50s to wake) from a genuinely missing/expired link.
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [slow, setSlow] = useState(false);
 
   // Wake the (possibly sleeping) backend the instant the page opens, so the
   // worker's first real request isn't the one paying the cold-start penalty —
@@ -80,15 +80,11 @@ export default function WorkerPage() {
     if (!token) return;
     setStatus("loading");
     setLoadErr(null);
-    setSlow(false);
-    // Show a "server is waking up" hint if the request is taking a while, so a
-    // cold start reads as progress instead of a frozen screen.
-    const slowTimer = setTimeout(() => setSlow(true), 6000);
     // One automatic retry: a cold start or a dropped mobile connection usually
     // recovers on the second try, so the worker rarely has to tap "retry".
+    // (LoadingOrb itself explains a slow cold start with staged copy.)
     let res = await api.getCrewView(token);
     if (!res.ok) res = await api.getCrewView(token);
-    clearTimeout(slowTimer);
     if (res.ok && res.data?.view) {
       setView(res.data.view);
       setStatus("ok");
@@ -106,16 +102,7 @@ export default function WorkerPage() {
   }, []);
 
   if (status === "loading") {
-    return (
-      <Centered>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
-          <Spinner />
-          <p style={{ margin: 0, fontSize: 14, color: T.muted }}>
-            {slow ? "Palvelin herää — hetki…" : "Ladataan…"}
-          </p>
-        </div>
-      </Centered>
-    );
+    return <LoadingOrb label="Ladataan työpöytää" theme="light" />;
   }
   if (status === "error" || !view) {
     // A timeout / network error is transient (offer retry); anything else is
@@ -1110,7 +1097,10 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
         </div>
         <div style={{ textAlign: "right" }}>
           <p style={{ margin: 0, fontSize: 20, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: "#7CE0A6" }}>{euro(view.stats.earnedCents)}</p>
-          <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>{view.stats.washed} ikkunaa · {euro(view.worker.perWindowCents)}/kpl</p>
+          <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+            {view.stats.washed} ikkunaa · {euro(view.worker.perWindowCents)}/kpl
+            {(view.stats.p2EarnedCents ?? 0) > 0 ? ` · sis. lisäikkunat ${euro(view.stats.p2EarnedCents)}` : ""}
+          </p>
         </div>
       </div>
 
@@ -1151,6 +1141,7 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
             canObserve
             onSetObservation={setObservation}
             activeZone={view.activeZone}
+            p2={view.p2 ? { enabled: view.p2.enabled, lockedKeys: view.p2.lockedKeys, payoutByKey: view.p2.payoutByKey } : null}
           />
         )}
         {!sub && tab === "home" && (
@@ -1329,6 +1320,11 @@ function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
         <div style={{ padding: 16, borderRadius: 14, background: "rgba(124,224,166,0.10)", border: "1px solid rgba(124,224,166,0.22)" }}>
           <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Sinun ansiosi</p>
           <p style={{ margin: "4px 0 0", fontSize: 26, fontWeight: 800, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(s.earnedCents)}</p>
+          {(s.p2EarnedCents ?? 0) > 0 && (
+            <p style={{ margin: "3px 0 0", fontSize: 11, color: "rgba(255,220,110,0.85)", fontVariantNumeric: "tabular-nums" }}>
+              sis. lisäikkunat (P2) {euro(s.p2EarnedCents)}
+            </p>
+          )}
         </div>
         <div style={{ padding: 16, borderRadius: 14, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
           <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Sinun ikkunasi</p>
@@ -2423,17 +2419,6 @@ function Wrap({ children }: { children: React.ReactNode }) {
 }
 function Centered({ children }: { children: React.ReactNode }) {
   return <div style={{ minHeight: "100vh", background: T.paper, fontFamily: FONT, color: T.muted, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center" }}>{children}</div>;
-}
-
-/** Lightweight inline spinner (no extra deps) — a clear "it's loading" cue so a
- *  slow/cold backend never reads as a frozen app. */
-function Spinner() {
-  return (
-    <>
-      <span style={{ width: 30, height: 30, borderRadius: "50%", border: "3px solid rgba(31,59,87,0.2)", borderTopColor: T.navy, display: "inline-block", animation: "pp-spin 0.8s linear infinite" }} />
-      <style>{"@keyframes pp-spin{to{transform:rotate(360deg)}}"}</style>
-    </>
-  );
 }
 
 const inputStyle: React.CSSProperties = {

@@ -9,8 +9,9 @@
  */
 
 import { useMemo, useState } from "react";
-import type { GigPublicView } from "@/lib/api";
+import type { GigPublicView, P2PublicOffer, P2PublicView } from "@/lib/api";
 import { NOTE_KINDS } from "@shared/project";
+import { eur } from "@shared/gig";
 
 /** Position a fixed popup near an on-screen anchor rect, flipping above/below and
  *  clamping to the viewport so it's never clipped (mobile-friendly). */
@@ -72,7 +73,40 @@ const LEGEND: { label: string; color: string }[] = [
   { label: "Ei tässä sopimuksessa", color: "#D9C97E" },
 ];
 
-export default function CustomerFloorMap({ map }: { map: MapData }) {
+const LEGEND_P2: { label: string; color: string }[] = [
+  { label: "Pesemättä", color: "#F4A6C0" },
+  { label: "Kesken", color: "#7C5CD6" },
+  { label: "Pesty", color: "#E03B3B" },
+  { label: "Lisäikkuna — hinta sovitaan ikkunakohtaisesti", color: "#D9C97E" },
+];
+
+/** P2 offer pill colors by status. */
+function p2PillStyle(status: P2PublicOffer["status"]): { bg: string; fg: string } {
+  switch (status) {
+    case "proposed":  return { bg: T.navy,    fg: "#fff" };
+    case "countered": return { bg: "#E0A800", fg: "#1A1A1A" };
+    case "locked":    return { bg: "#3E7C59", fg: "#fff" };
+    case "declined":  return { bg: "#C9C6BC", fg: "#5A584F" };
+  }
+}
+
+/** Actions the customer can take on P2 offers — wired to the API by the parent.
+ *  Each returns an error message to show inline, or null on success. */
+export interface P2CustomerActions {
+  accept: (items: { key: string; priceCents: number; version: number }[]) => Promise<string | null>;
+  counter: (key: string, counterCents: number, version: number) => Promise<string | null>;
+  decline: (key: string, version: number) => Promise<string | null>;
+  addPoint: (floor: string, x: number, y: number) => Promise<string | null>;
+  /** Terms not accepted yet → the parent opens the terms dialog. */
+  requireTerms: () => void;
+}
+
+export default function CustomerFloorMap({ map, p2, p2Actions }: {
+  map: MapData;
+  /** P2 negotiation state — pills + offer popups render only when enabled. */
+  p2?: P2PublicView | null;
+  p2Actions?: P2CustomerActions;
+}) {
   const floors = map.building.floors.length ? map.building.floors : ["1"];
   const activeZone = map.activeZone ?? null;
   // Open on the floor where work is happening now, if any.
@@ -88,6 +122,33 @@ export default function CustomerFloorMap({ map }: { map: MapData }) {
   const washed = points.filter((p) => map.statuses[p.key] === "pesty").length;
   const total = points.length;
   const pct = total > 0 ? Math.round((washed / total) * 100) : 0;
+
+  // ── P2 negotiation state ──────────────────────────────────────────────────
+  const p2On = !!(p2?.enabled && p2Actions);
+  const [openOffer, setOpenOffer] = useState<{ key: string; rect: DOMRect } | null>(null);
+  const [counterInput, setCounterInput] = useState("");
+  const [showCounterInput, setShowCounterInput] = useState(false);
+  const [p2Busy, setP2Busy] = useState(false);
+  const [p2Error, setP2Error] = useState<string | null>(null);
+  const [addMode, setAddMode] = useState(false);
+  const openOfferData = openOffer && p2 ? p2.offers[openOffer.key] ?? null : null;
+  // Open proposals on THIS floor (for the one-tap batch accept).
+  const floorProposed = p2On
+    ? points.filter((pt) => pt.p === 2 && p2!.offers[pt.key]?.status === "proposed")
+    : [];
+  const floorProposedSum = floorProposed.reduce((s, pt) => s + (p2!.offers[pt.key]?.priceCents ?? 0), 0);
+
+  const closeOffer = () => { setOpenOffer(null); setShowCounterInput(false); setCounterInput(""); setP2Error(null); };
+
+  async function runP2<A extends unknown[]>(fn: (...args: A) => Promise<string | null>, ...args: A) {
+    if (!p2Actions) return;
+    if (!p2?.termsAccepted) { p2Actions.requireTerms(); return; }
+    setP2Busy(true); setP2Error(null);
+    const err = await fn(...args);
+    setP2Busy(false);
+    if (err) setP2Error(err);
+    else closeOffer();
+  }
 
   return (
     <div style={{ fontFamily: FONT, color: T.ink }}>
@@ -142,15 +203,34 @@ export default function CustomerFloorMap({ map }: { map: MapData }) {
             style={{ display: "block", maxWidth: "100%", maxHeight: 560, width: "auto", height: "auto", userSelect: "none", clipPath: "inset(2%)", WebkitClipPath: "inset(2%)", filter: "invert(1)" } as React.CSSProperties}
             draggable={false}
           />
-          <div style={{ position: "absolute", inset: 0 }}>
+          <div
+            style={{ position: "absolute", inset: 0, cursor: p2On && addMode ? "crosshair" : undefined }}
+            onClick={p2On && addMode ? (e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+              const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+              setAddMode(false);
+              void runP2(p2Actions!.addPoint, floor, x, y);
+            } : undefined}
+          >
             {points.map((pt) => {
               const status = map.statuses[pt.key] || "ei";
               const color = dotColor(pt.p, status);
               const done = status === "pesty";
-              return (
+              const tappable = p2On && pt.p === 2 && !addMode;
+              const dot = (
                 <span
                   key={pt.key}
-                  title={`Ikkuna · ${done ? "Pesty" : status === "kesken" ? "Kesken" : "Pesemättä"}`}
+                  role={tappable ? "button" : undefined}
+                  onClick={tappable ? (e) => {
+                    e.stopPropagation();
+                    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                    setOpenOffer({ key: pt.key, rect: r });
+                    setShowCounterInput(false); setCounterInput(""); setP2Error(null);
+                  } : undefined}
+                  title={tappable
+                    ? "Lisäikkuna — napauta nähdäksesi hinnan"
+                    : `Ikkuna · ${done ? "Pesty" : status === "kesken" ? "Kesken" : "Pesemättä"}`}
                   style={{
                     position: "absolute",
                     left: `${pt.x}%`,
@@ -163,8 +243,45 @@ export default function CustomerFloorMap({ map }: { map: MapData }) {
                     border: "2px solid #fff",
                     boxShadow: done ? `0 0 0 1px ${color}, 0 1px 3px rgba(0,0,0,0.25)` : "0 1px 2px rgba(0,0,0,0.18)",
                     opacity: status === "ei" ? 0.8 : 1,
+                    cursor: tappable ? "pointer" : undefined,
                   }}
                 />
+              );
+              return dot;
+            })}
+
+            {/* P2 price pills — the negotiation state of each yellow window */}
+            {p2On && points.map((pt) => {
+              if (pt.p !== 2) return null;
+              const offer = p2!.offers[pt.key];
+              if (!offer || offer.status === "declined") return null;
+              const { bg, fg } = p2PillStyle(offer.status);
+              const text = offer.status === "locked"
+                ? `✓ ${eur(offer.lockedCents ?? offer.priceCents)}`
+                : offer.status === "countered"
+                  ? `sinun: ${eur(offer.counterCents ?? 0)}`
+                  : eur(offer.priceCents);
+              return (
+                <button
+                  key={`p2-${pt.key}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                    setOpenOffer({ key: pt.key, rect: r });
+                    setShowCounterInput(false); setCounterInput(""); setP2Error(null);
+                  }}
+                  title="Näytä hintaehdotus"
+                  style={{
+                    position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`,
+                    transform: "translate(-50%, 9px)",
+                    padding: "2px 7px", borderRadius: 999, border: "1.5px solid #fff",
+                    background: bg, color: fg, fontFamily: FONT, fontSize: 10, fontWeight: 700,
+                    lineHeight: 1.3, whiteSpace: "nowrap", cursor: "pointer",
+                    boxShadow: "0 1px 4px rgba(0,0,0,0.28)", zIndex: 5, fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {text}
+                </button>
               );
             })}
 
@@ -220,9 +337,38 @@ export default function CustomerFloorMap({ map }: { map: MapData }) {
         </div>
       </div>
 
+      {/* P2 quick actions: batch accept for this floor + propose a new window */}
+      {p2On && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+          {floorProposed.length > 0 && (
+            <button
+              disabled={p2Busy}
+              onClick={() => void runP2(p2Actions!.accept, floorProposed.map((pt) => ({
+                key: pt.key,
+                priceCents: p2!.offers[pt.key]!.priceCents,
+                version: p2!.offers[pt.key]!.version,
+              })))}
+              style={{ padding: "9px 14px", borderRadius: 10, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}
+            >
+              Hyväksy kaikki ehdotetut tällä kerroksella ({floorProposed.length} kpl · yht. {eur(floorProposedSum)})
+            </button>
+          )}
+          <button
+            disabled={p2Busy}
+            onClick={() => {
+              if (!p2?.termsAccepted) { p2Actions!.requireTerms(); return; }
+              setAddMode((v) => !v);
+            }}
+            style={{ padding: "9px 14px", borderRadius: 10, border: `1.5px ${addMode ? "solid #3E7C59" : `solid ${T.hair}`}`, background: addMode ? "#EAF6EE" : T.card, color: addMode ? "#1F5B36" : T.ink, fontFamily: FONT, fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+          >
+            {addMode ? "Napauta karttaa lisätäksesi ikkunan — tai peru tästä" : "➕ Ehdota lisättävää ikkunaa"}
+          </button>
+        </div>
+      )}
+
       {/* Legend */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 18px", marginTop: 14, alignItems: "center" }}>
-        {LEGEND.map((l) => (
+        {(p2On ? LEGEND_P2 : LEGEND).map((l) => (
           <span key={l.label} style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, color: T.muted }}>
             <span style={{ width: 11, height: 11, borderRadius: "50%", background: l.color, border: "2px solid #fff", boxShadow: `0 0 0 1px ${T.hair}` }} />
             {l.label}
@@ -230,6 +376,123 @@ export default function CustomerFloorMap({ map }: { map: MapData }) {
         ))}
         <span style={{ marginLeft: "auto", fontSize: 11.5, color: T.muted }}>Päivittyy automaattisesti</span>
       </div>
+
+      {/* P2 offer popup — the customer's accept / counter / decline actions */}
+      {p2On && openOffer && (
+        <>
+          <div onClick={closeOffer} style={{ position: "fixed", inset: 0, zIndex: 55 }} />
+          <div style={{ ...popupStyle(openOffer.rect, 270, 220), width: 270, background: T.card, border: `1px solid ${T.hair}`, borderRadius: 14, boxShadow: "0 14px 40px rgba(0,0,0,0.22)", padding: 16, fontFamily: FONT }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <span style={{ width: 11, height: 11, borderRadius: "50%", background: "#D9C97E", border: "2px solid #fff", boxShadow: `0 0 0 1px ${T.hair}`, flexShrink: 0 }} />
+              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: T.navy }}>Lisäikkuna</span>
+              <button onClick={closeOffer} aria-label="Sulje" style={{ marginLeft: "auto", width: 24, height: 24, borderRadius: "50%", border: "none", background: T.paper, color: T.muted, fontSize: 13, cursor: "pointer", lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+            </div>
+
+            {!openOfferData && (
+              <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: T.muted }}>
+                Ei vielä hinnoiteltu — saat hintaehdotuksen tähän ikkunaan pian.
+              </p>
+            )}
+
+            {openOfferData?.status === "locked" && (
+              <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>
+                Sovittu hinta <strong style={{ fontVariantNumeric: "tabular-nums" }}>{eur(openOfferData.lockedCents ?? openOfferData.priceCents)}</strong>
+                <span style={{ color: "#3E7C59", fontWeight: 700 }}> ✓</span><br />
+                <span style={{ fontSize: 12.5, color: T.muted }}>
+                  {map.statuses[openOffer.key] === "pesty" ? "Ikkuna on pesty." : "Ikkuna on työjonossa."}
+                </span>
+              </p>
+            )}
+
+            {openOfferData?.status === "declined" && (
+              <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: T.muted }}>
+                Ei tilattu. Jos muutat mieltäsi, laita meille viestiä — teemme uuden ehdotuksen.
+              </p>
+            )}
+
+            {openOfferData?.status === "countered" && (
+              <p style={{ margin: "0 0 10px", fontSize: 13.5, lineHeight: 1.6 }}>
+                Ehdotuksemme: <strong style={{ fontVariantNumeric: "tabular-nums" }}>{eur(openOfferData.priceCents)}</strong><br />
+                Sinun tarjouksesi: <strong style={{ fontVariantNumeric: "tabular-nums" }}>{eur(openOfferData.counterCents ?? 0)}</strong><br />
+                <span style={{ fontSize: 12.5, color: T.muted }}>Odottaa vastaustamme. Voit myös hyväksyä alkuperäisen hinnan tai muuttaa tarjoustasi.</span>
+              </p>
+            )}
+
+            {openOfferData?.status === "proposed" && (
+              <p style={{ margin: "0 0 10px", fontSize: 14, lineHeight: 1.5 }}>
+                Hintaehdotus: <strong style={{ fontSize: 17, fontVariantNumeric: "tabular-nums" }}>{eur(openOfferData.priceCents)}</strong>
+                <span style={{ fontSize: 12, color: T.muted }}> / ikkuna</span>
+              </p>
+            )}
+
+            {(openOfferData?.status === "proposed" || openOfferData?.status === "countered") && !p2!.termsAccepted && (
+              <button
+                onClick={() => { closeOffer(); p2Actions!.requireTerms(); }}
+                style={{ width: "100%", padding: "10px", borderRadius: 10, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}
+              >
+                Hyväksy ensin tilausehdot
+              </button>
+            )}
+
+            {(openOfferData?.status === "proposed" || openOfferData?.status === "countered") && p2!.termsAccepted && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {openOfferData.status === "proposed" && (
+                  <button
+                    disabled={p2Busy}
+                    onClick={() => void runP2(p2Actions!.accept, [{ key: openOffer.key, priceCents: openOfferData.priceCents, version: openOfferData.version }])}
+                    style={{ width: "100%", padding: "10px", borderRadius: 10, border: "none", background: "#3E7C59", color: "#fff", fontFamily: FONT, fontSize: 14, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}
+                  >
+                    Hyväksy {eur(openOfferData.priceCents)}
+                  </button>
+                )}
+                {!showCounterInput ? (
+                  <button
+                    disabled={p2Busy}
+                    onClick={() => { setShowCounterInput(true); setCounterInput(openOfferData.counterCents ? String(openOfferData.counterCents / 100) : ""); }}
+                    style={{ width: "100%", padding: "10px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, color: T.ink, fontFamily: FONT, fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}
+                  >
+                    {openOfferData.status === "countered" ? "Muuta tarjoustasi" : "Tee vastatarjous"}
+                  </button>
+                ) : (
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <input
+                      type="number" inputMode="decimal" min={1} step="0.5"
+                      value={counterInput}
+                      onChange={(e) => setCounterInput(e.target.value)}
+                      placeholder="€ / ikkuna"
+                      style={{ flex: 1, minWidth: 0, padding: "9px 10px", borderRadius: 10, border: `1px solid ${T.hair}`, fontFamily: FONT, fontSize: 14, fontVariantNumeric: "tabular-nums" }}
+                    />
+                    <button
+                      disabled={p2Busy || !(Number(counterInput.replace(",", ".")) > 0)}
+                      onClick={() => {
+                        const eurVal = Number(counterInput.replace(",", "."));
+                        if (!(eurVal > 0)) return;
+                        void runP2(p2Actions!.counter, openOffer.key, Math.round(eurVal * 100), openOfferData.version);
+                      }}
+                      style={{ padding: "9px 14px", borderRadius: 10, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}
+                    >
+                      Lähetä
+                    </button>
+                  </div>
+                )}
+                {openOfferData.status === "proposed" && (
+                  <button
+                    disabled={p2Busy}
+                    onClick={() => void runP2(p2Actions!.decline, openOffer.key, openOfferData.version)}
+                    style={{ width: "100%", padding: "8px", borderRadius: 10, border: "none", background: "transparent", color: T.muted, fontFamily: FONT, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}
+                  >
+                    Ei kiitos — jätä pois
+                  </button>
+                )}
+              </div>
+            )}
+
+            {p2Error && (
+              <p style={{ margin: "10px 0 0", fontSize: 12.5, color: "#B4231F", lineHeight: 1.5 }}>{p2Error}</p>
+            )}
+          </div>
+        </>
+      )}
 
       {/* Window observation popup — small, dismissible, anchored over the dot */}
       {openObs && openObservation && (

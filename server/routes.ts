@@ -28,6 +28,7 @@ import {
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, computeEraDebts, allPoints, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
+import { computeP2Billing, emptyP2State, isP2Washable, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, type P2Action, type P2State } from "@shared/p2";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN, MAX_CREW_DOC_LEN, totalPaidPayoutCents, retentionFromDate,
@@ -502,6 +503,9 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   { method: "POST", re: /^\/api\/quote\/[^/]+\/respond$/ },
   { method: "GET",  re: /^\/api\/gig\/[^/]+$/ },
   { method: "POST", re: /^\/api\/gig\/[^/]+\/sign$/ },
+  // P2 (keltaiset ikkunat): asiakkaan hintaneuvottelu seurantalinkistä. Token
+  // on avain; jokainen reitti validoi lisäksi vaiheen + allekirjoitusportin.
+  { method: "POST", re: /^\/api\/gig\/[^/]+\/p2\/(terms|accept|counter|decline|add-point)$/ },
   { method: "GET",  re: /^\/api\/crew\/[^/]+$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/(password|onboard|window|hours|note|map-note|shift|expense)$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/map-note\/(update|delete)$/ },
@@ -1192,6 +1196,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
   app.use("/api/chat",            chatLimiter);
   app.use("/api/admin/assistant", chatLimiter);
+
+  // P2-hintaneuvottelu: asiakas toimii pelkällä seurantatokenilla, joten
+  // torjutaan brute force / spämmäys per IP. Normaali käyttö (muutama
+  // hyväksyntä/vastatarjous minuutissa) mahtuu reilusti alle rajan.
+  const p2Limiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Liian monta pyyntöä. Hetki ja yritä uudelleen." },
+  });
+  app.use("/api/gig/:token/p2", p2Limiter);
 
   // Brute-force protection for the login endpoint.
   const loginLimiter = rateLimit({
@@ -4354,6 +4370,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         isFixedDeal: !!(proj && fixedDealFor(proj)),
         // Read-only floor-plan map (null if the gig has no plan).
         map,
+        // P2 (keltaiset ikkunat): per-ikkuna hintaneuvottelu. Vain hinnat +
+        // tilat + kasvava summa — ei koskaan tekijätietoja tai tekijän osuutta.
+        // Valmisteluvaihe (enabled=false) ei näy asiakkaalle: linkki on täysin
+        // normaali kunnes vaihe 2 avataan administa.
+        p2: proj?.p2?.enabled ? {
+          enabled: proj.p2.enabled,
+          termsAccepted: !!proj.p2.terms,
+          termsAcceptorName: proj.p2.terms?.acceptorName ?? null,
+          termsText: proj.p2.termsText ?? null,
+          offers: Object.fromEntries(Object.entries(proj.p2.offers).map(([k, o]) => [k, {
+            status: o.status,
+            priceCents: o.priceCents,
+            counterCents: o.counterCents ?? null,
+            version: o.version,
+            lockedCents: o.lockedCents ?? null,
+            lockedAt: o.lockedAt ?? null,
+          }])),
+          billing: (({ yellowTotal, proposedCount, counteredCount, lockedCount, lockedSumCents, lockedWashedCount, earnedCents }) =>
+            ({ yellowTotal, proposedCount, counteredCount, lockedCount, lockedSumCents, lockedWashedCount, earnedCents }))(computeP2Billing(proj)),
+        } : null,
         // Contract & signing gate — the live view opens only after the customer signs.
         contractText: gig.contractText ?? null,
         requireSignature: signatureRequired(gig),
@@ -4561,16 +4597,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ error: "Verkkolaskutusosoite puuttuu" });
       }
 
+      // P2-laskutus (keltaiset ikkunat): erillinen haara, joka EI koske P1:n
+      // erälaskentaan (invoicedThrough/sektorit/4 erän raja). Summa = pestyjen
+      // lukittujen ikkunoiden kertymä miinus jo laskutetut p2-maksut.
+      const isP2Scope = req.body?.scope === "p2";
+
       // For fixed-price deals (FR8 / kiinteähintainen sopimus) the installment is
       // always exactly 1/4 of the agreed total — never computed per window.
       const proj = parseProject(job.projectData ?? null);
-      const fixedDeal = proj ? fixedDealFor(proj) : null;
+      const fixedDeal = !isP2Scope && proj ? fixedDealFor(proj) : null;
       const installmentCents = fixedDeal ? Math.round(fixedDeal.capCents / 4) : null;
 
+      // P1:n eränumerointi ja 4 erän raja lasketaan VAIN P1-maksuista, jotta
+      // p2-scoped maksut eivät sotke kiinteän sopimuksen erälaskentaa.
+      const p1Payments = gig.payments.filter((p) => p.scope !== "p2");
+      const p2Payments = gig.payments.filter((p) => p.scope === "p2");
+
+      const p2b = proj ? computeP2Billing(proj) : null;
+      const p2InvoicedCents = p2Payments.reduce((s, p) => s + p.amountCents, 0);
+      const p2RemainingCents = Math.max(0, (p2b?.earnedCents ?? 0) - p2InvoicedCents);
+      const reqAmountCents = Math.floor(Number(req.body?.amountCents));
+      const p2AmountCents = isP2Scope
+        ? Math.min(p2RemainingCents, Number.isInteger(reqAmountCents) && reqAmountCents > 0 ? reqAmountCents : p2RemainingCents)
+        : 0;
+
       const totalsBefore = computeTotals(gig);
-      const amountCents = installmentCents ?? totalsBefore.uninvoicedCents;
+      const amountCents = isP2Scope ? p2AmountCents : (installmentCents ?? totalsBefore.uninvoicedCents);
       if (amountCents <= 0) return res.status(400).json({ error: "Ei laskutettavaa kertymää" });
-      if (fixedDeal && gig.payments.length >= 4) {
+      if (fixedDeal && p1Payments.length >= 4) {
         return res.status(400).json({ error: "Kaikki neljä maksuerää on jo lähetetty." });
       }
 
@@ -4578,13 +4632,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Which instalment this is. For fixed deals the admin can override the
       // number manually in the dialog (1–4); otherwise it follows the count sent.
       const reqPaymentNumber = Number(req.body?.paymentNumber);
-      const paymentNumber = (fixedDeal && Number.isInteger(reqPaymentNumber) && reqPaymentNumber >= 1 && reqPaymentNumber <= 4)
-        ? reqPaymentNumber
-        : gig.payments.length + 1;
+      const paymentNumber = isP2Scope
+        ? p2Payments.length + 1
+        : (fixedDeal && Number.isInteger(reqPaymentNumber) && reqPaymentNumber >= 1 && reqPaymentNumber <= 4)
+          ? reqPaymentNumber
+          : p1Payments.length + 1;
 
-      // For fixed-price contracts one clean instalment line; for standard gigs
-      // per-sector window counts as before.
-      const lineRows = fixedDeal
+      // P2: one clean line for the washed locked extra windows; for fixed-price
+      // contracts one clean instalment line; for standard gigs per-sector
+      // window counts as before.
+      const lineRows = isP2Scope
+        ? `<tr style="border-bottom:1px solid #E4E1D7">
+            <td style="padding:10px 0;color:#1A1A1A;font-size:14px">
+              Lisäikkunat (2. vaihe) — ikkunakohtaisesti sovitut hinnat<br>
+              <span style="color:#8C8A82;font-size:12px">${p2b?.lockedWashedCount ?? 0} pestyä ikkunaa · kertymä ${fmtEur(p2b?.earnedCents ?? 0)}${p2InvoicedCents > 0 ? ` · aiemmin laskutettu ${fmtEur(p2InvoicedCents)}` : ""}</span>
+            </td>
+            <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:#1A1A1A;font-variant-numeric:tabular-nums">${fmtEur(amountCents)}</td>
+          </tr>`
+        : fixedDeal
         ? `<tr style="border-bottom:1px solid #E4E1D7">
             <td style="padding:10px 0;color:#1A1A1A;font-size:14px">
               Maksuerä ${paymentNumber}/4 — kiinteähintainen sopimus<br>
@@ -4616,7 +4681,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ? await generateFinnishBarcodeHtml({ iban, amountCents, viitenumero: refNumeric, dueDateISO: dueDate, isEn: false })
         : "";
 
-      const invoiceNo = `${gig.contractId || "PT"}-${paymentNumber.toString().padStart(2, "0")}`;
+      const invoiceNo = isP2Scope
+        ? `${gig.contractId || "PT"}-P2-${paymentNumber.toString().padStart(2, "0")}`
+        : `${gig.contractId || "PT"}-${paymentNumber.toString().padStart(2, "0")}`;
       const invoiceDate = new Date().toLocaleDateString("fi-FI"); // laskun päivämäärä (AVL 209 e §)
       const accruedSoFar = totalsBefore.accruedCents;
       const previouslyInvoiced = totalsBefore.invoicedCents;
@@ -4671,7 +4738,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         <tbody>${lineRows}</tbody>
       </table>
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px">
-        ${fixedDeal
+        ${isP2Scope
+          ? `<tr><td style="padding:8px 0;color:#8C8A82;font-size:13px">Lisätöiden kertymä (pestyt sovitut ikkunat)</td><td style="padding:8px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">${fmtEur(p2b?.earnedCents ?? 0)}</td></tr>
+             ${p2InvoicedCents > 0 ? `<tr><td style="padding:4px 0;color:#8C8A82;font-size:13px">Aiemmin laskutettu</td><td style="padding:4px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">−${fmtEur(p2InvoicedCents)}</td></tr>` : ""}`
+          : fixedDeal
           ? `<tr><td style="padding:8px 0;color:#8C8A82;font-size:13px">Kokonaishinta (sovittu)</td><td style="padding:8px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">${fmtEur(fixedDeal.capCents)}</td></tr>
              <tr><td style="padding:4px 0;color:#8C8A82;font-size:13px">Tähän mennessä laskutettu</td><td style="padding:4px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">${fmtEur((paymentNumber - 1) * amountCents)}</td></tr>`
           : `<tr><td style="padding:8px 0;color:#8C8A82;font-size:13px">Kertymä yhteensä</td><td style="padding:8px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">${fmtEur(accruedSoFar)}</td></tr>
@@ -4710,19 +4780,32 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         from: FROM_EMAIL,
         to: recipientList.length === 1 ? recipientList[0] : recipientList,
         ...(bccArr.length ? { bcc: bccArr } : {}),
-        subject: fixedDeal
+        subject: isP2Scope
+          ? `Lisätyölasku (2. vaihe) · ${invoiceNo}${viaEInvoice ? " (verkkolaskuosoitteeseen)" : ` — ${fmtEur(amountCents)}`} · Puuhapatet`
+          : fixedDeal
           ? `Osalasku ${paymentNumber}/4 · ${invoiceNo}${viaEInvoice ? " (verkkolaskuosoitteeseen)" : ` — ${fmtEur(amountCents)}`} · Puuhapatet`
           : `${isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo}${viaEInvoice ? " (verkkolaskuosoitteeseen)" : ` — ${fmtEur(amountCents)}`} · Puuhapatet`,
         html,
       });
 
       // Advance per-sector invoiced markers, then refresh the summary fields.
-      gig.sectors.forEach((s) => { s.invoicedWashed = s.washed; });
+      // P2-lasku EI koske P1:n laskureihin: sektorit, invoicedThrough ja
+      // invoicedCents ovat P1-käsitteitä — p2-maksu vain kirjataan listaan
+      // scope-merkinnällä, ja P2:n laskutustilanne lasketaan maksuista.
+      if (!isP2Scope) {
+        gig.sectors.forEach((s) => { s.invoicedWashed = s.washed; });
+      }
       const totalsAfter = computeTotals(gig);
-      gig.invoicedThrough = totalsAfter.invoicedWashed;
+      if (!isP2Scope) {
+        gig.invoicedThrough = totalsAfter.invoicedWashed;
+      }
       gig.payments.push({
-        t: Date.now(), countThrough: totalsAfter.invoicedWashed, amountCents,
-        to: recipient, note: isFinal ? "Loppulasku" : "Osalasku", emailId: result.data?.id,
+        t: Date.now(),
+        countThrough: isP2Scope ? (p2b?.lockedWashedCount ?? 0) : totalsAfter.invoicedWashed,
+        amountCents,
+        to: recipient,
+        note: isP2Scope ? "Lisätyölasku (2. vaihe)" : isFinal ? "Loppulasku" : "Osalasku",
+        emailId: result.data?.id,
         // Record WHICH leader billed the customer — their Y-tunnus becomes the buyer
         // on the alihankkija invoices funded by this instalment.
         biller: (senderName || senderYTunnus || req.body?.billerId) ? {
@@ -4731,17 +4814,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           yTunnus: senderYTunnus ? String(senderYTunnus).slice(0, 40) : undefined,
         } : undefined,
         eInvoice: eInvoice ? String(eInvoice).slice(0, 200) : undefined,
+        ...(isP2Scope ? { scope: "p2" as const } : {}),
       });
       // For fixed-price contracts, invoicedCents = N completed instalments × fixed amount
       // (avoids mismatch between per-window accrual and agreed flat price).
-      gig.invoicedCents = fixedDeal
-        ? gig.payments.length * (installmentCents ?? 0)
-        : totalsAfter.invoicedCents;
+      // P2-maksut pidetään tämän ulkopuolella (vain P1-maksut lasketaan).
+      if (!isP2Scope) {
+        gig.invoicedCents = fixedDeal
+          ? gig.payments.filter((p) => p.scope !== "p2").length * (installmentCents ?? 0)
+          : totalsAfter.invoicedCents;
+      }
       gig.log.push({
         t: Date.now(),
         text: viaEInvoice
-          ? `${isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} lähetetty verkkolaskuosoitteeseen: ${fmtEur(amountCents)} → ${eInvoice} (vahvistus: ${recipient})`
-          : `${isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} lähetetty: ${fmtEur(amountCents)} → ${recipient}`,
+          ? `${isP2Scope ? "Lisätyölasku (2. vaihe)" : isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} lähetetty verkkolaskuosoitteeseen: ${fmtEur(amountCents)} → ${eInvoice} (vahvistus: ${recipient})`
+          : `${isP2Scope ? "Lisätyölasku (2. vaihe)" : isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} lähetetty: ${fmtEur(amountCents)} → ${recipient}`,
       });
       gig.updatedAt = Date.now();
       await db.update(jobs).set({ gigData: JSON.stringify(gig), updatedAt: new Date() }).where(eq(jobs.id, id));
@@ -4973,14 +5060,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const proj = parseProject(job.projectData ?? null);
       const fixedDeal = proj ? fixedDealFor(proj) : null;
       const installmentCents = fixedDeal ? Math.round(fixedDeal.capCents / 4) : null;
-      // Recompute invoiced totals from the remaining payments.
-      if (fixedDeal) {
-        gig.invoicedCents = gig.payments.length * (installmentCents ?? 0);
-      } else {
-        gig.invoicedCents = gig.payments.reduce((s, p) => s + p.amountCents, 0);
-        gig.invoicedThrough = gig.payments.length ? gig.payments[gig.payments.length - 1].countThrough : 0;
-        // Roll the per-sector invoiced markers back to what's still invoiced.
-        gig.sectors.forEach((s) => { s.invoicedWashed = Math.min(s.invoicedWashed || 0, gig.invoicedThrough); });
+      // Recompute invoiced totals from the remaining payments. P2-maksut eivät
+      // koskaan vaikuta P1:n laskureihin — ne suodatetaan laskuista pois, ja
+      // p2-maksun perumisessa riittää pelkkä listalta poisto (P2:n laskutettu
+      // summa lasketaan aina suoraan scope:"p2" -maksuista).
+      const p1Remaining = gig.payments.filter((p) => p.scope !== "p2");
+      if (removed.scope !== "p2") {
+        if (fixedDeal) {
+          gig.invoicedCents = p1Remaining.length * (installmentCents ?? 0);
+        } else {
+          gig.invoicedCents = p1Remaining.reduce((s, p) => s + p.amountCents, 0);
+          gig.invoicedThrough = p1Remaining.length ? p1Remaining[p1Remaining.length - 1].countThrough : 0;
+          // Roll the per-sector invoiced markers back to what's still invoiced.
+          gig.sectors.forEach((s) => { s.invoicedWashed = Math.min(s.invoicedWashed || 0, gig.invoicedThrough); });
+        }
       }
       const fmtEur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
       gig.log.push({ t: Date.now(), text: `Maksuerä peruttu seurannasta: ${fmtEur(removed.amountCents)}${removed.to ? ` (oli → ${removed.to})` : ""}` });
@@ -5013,6 +5106,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         project,
         totals: computeProjectTotals(project),
         workerStats: computeWorkerStats(project),
+        p2Billing: computeP2Billing(project),
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -5026,6 +5120,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const project = sanitizeProjectData(req.body?.projectData ?? req.body);
+      // P2-neuvottelutila on serverin omistama: geneerinen blob-tallennus ei
+      // voi KOSKAAN muuttaa sitä (asiakkaan juuri lukitsema hinta ei saa
+      // pyyhkiytyä adminin karttamuokkauksen alle). Kaikki p2-mutaatiot
+      // kulkevat dedikoitujen /p2-reittien kautta.
+      const storedP2 = parseProject(job.projectData ?? null)?.p2;
+      if (storedP2) project.p2 = storedP2; else delete project.p2;
       const totals = computeProjectTotals(project);
 
       // Auto-sync the gig's billing sectors from the toolkit (FR8 = source of
@@ -5038,7 +5138,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           syncGigSectorsFromProject(parseGig(job.gigData) ?? emptyGigData(), project),
         );
         extra.gigData = JSON.stringify(gig);
-        extra.agreedPrice = computeTotals(gig).capCents;
+        // Sopimusarvo = kiinteä P1-katto + lukitut P2-hinnat (kasvava summa).
+        extra.agreedPrice = computeTotals(gig).capCents + computeP2Billing(project).lockedSumCents;
         extra.isCustomGig = true;
       }
 
@@ -5050,7 +5151,327 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         project,
         totals,
         workerStats: computeWorkerStats(project),
+        p2Billing: computeP2Billing(project),
       });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // ─── P2 (keltaiset ikkunat) — per-ikkuna hinnoittelu + neuvottelu ─────────────
+  //
+  // Kaikki p2-mutaatiot kulkevat näiden reittien kautta (read-modify-write +
+  // per-tarjous versiotarkistus, shared/p2.ts). Geneeriset projektitallennukset
+  // eivät voi koskea p2:een, joten adminin karttamuokkaus ja asiakkaan
+  // hyväksyntä eivät voi pyyhkiä toisiaan.
+
+  /** Admin-toimijan id lokiin: eksplisiittinen by tai kirjautunut käyttäjä. */
+  function p2AdminActor(req: any): string {
+    const by = req.body?.by ? String(req.body.by).slice(0, 40) : "";
+    return by || String(req.admin?.sub ?? "admin").slice(0, 40);
+  }
+
+  function clientIp(req: any): string | undefined {
+    return (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim()
+      || req.socket?.remoteAddress || undefined;
+  }
+
+  // Vaihekytkin: alustaa p2:n ja avaa/sulkee neuvottelun asiakkaalle.
+  app.post("/api/jobs/:id/p2/phase", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const project = parseProject(job.projectData ?? null);
+      if (!project) return res.status(400).json({ error: "Keikalla ei ole projektidataa" });
+
+      if (!project.p2) project.p2 = emptyP2State();
+      if (req.body?.enabled !== undefined) project.p2.enabled = req.body.enabled === true;
+      if (req.body?.workerSharePct != null) {
+        const pct = Math.floor(Number(req.body.workerSharePct));
+        if (!Number.isInteger(pct) || pct < 1 || pct > 100) {
+          return res.status(400).json({ error: "Tekijän osuuden on oltava 1–100 %" });
+        }
+        project.p2.workerSharePct = pct;
+      }
+      if (req.body?.termsText !== undefined) {
+        project.p2.termsText = req.body.termsText ? String(req.body.termsText).slice(0, 60000) : undefined;
+      }
+      const saved = await saveProject(job, project, { p2Mutation: true });
+      res.json({ ok: true, p2: saved.p2, p2Billing: computeP2Billing(saved) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Bulk-hinnoittelu: sama hintaehdotus valituille keltaisille ikkunoille.
+  app.post("/api/jobs/:id/p2/propose", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const project = parseProject(job.projectData ?? null);
+      if (!project) return res.status(400).json({ error: "Keikalla ei ole projektidataa" });
+
+      const keys: string[] = Array.isArray(req.body?.keys)
+        ? Array.from(new Set(req.body.keys.map((k: any) => String(k).slice(0, 64)).filter(Boolean))) as string[]
+        : [];
+      if (!keys.length || keys.length > 500) return res.status(400).json({ error: "Valitse 1–500 ikkunaa" });
+      const priceCents = Math.floor(Number(req.body?.priceCents));
+      if (!Number.isInteger(priceCents) || priceCents <= 0 || priceCents > MAX_P2_PRICE_CENTS) {
+        return res.status(400).json({ error: "Virheellinen hinta" });
+      }
+
+      if (!project.p2) project.p2 = emptyP2State();
+      const actor = p2AdminActor(req);
+      const applied: string[] = [];
+      const skipped: { key: string; reason: string }[] = [];
+      for (const key of keys) {
+        if (pointPriority(project, key) !== 2) { skipped.push({ key, reason: "Ei keltainen ikkuna" }); continue; }
+        const prev = project.p2.offers[key];
+        const r = p2Transition(prev, "propose", { who: "admin", id: actor }, { priceCents });
+        if (!r.ok) { skipped.push({ key, reason: r.error }); continue; }
+        project.p2.offers[key] = r.offer;
+        pushP2Event(project.p2.events, {
+          ts: Date.now(), key, action: "propose", actor, priceCents,
+          prevPriceCents: prev?.priceCents, version: r.offer.version,
+        });
+        applied.push(key);
+      }
+      const saved = await saveProject(job, project, { p2Mutation: true });
+      res.json({ ok: true, applied, skipped, p2: saved.p2, p2Billing: computeP2Billing(saved) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Adminin vastaus yhteen tarjoukseen: hyväksy vastatarjous / peru / avaa lukitus.
+  // (Uusi hintaehdotus yhteen ikkunaan kulkee myös tästä action:"propose".)
+  app.post("/api/jobs/:id/p2/respond", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const project = parseProject(job.projectData ?? null);
+      if (!project?.p2) return res.status(400).json({ error: "Vaihe 2 ei ole alustettu" });
+
+      const key = String(req.body?.key ?? "").slice(0, 64);
+      const action = req.body?.action as P2Action;
+      if (!key || !["accept_counter", "cancel", "unlock", "propose"].includes(action)) {
+        return res.status(400).json({ error: "Virheellinen toiminto" });
+      }
+      if (pointPriority(project, key) !== 2) return res.status(404).json({ error: "Ikkunaa ei enää ole" });
+      // Pestyä ikkunaa ei voi avata uudelleen neuvotteluun — sen hinta on jo
+      // ansaittu. Tyhjennä status ensin, jos lukitus on aidosti purettava.
+      if (action === "unlock" && project.statuses[key] === "pesty") {
+        return res.status(409).json({ error: "Ikkuna on jo pesty — lukitusta ei voi avata" });
+      }
+
+      const actor = p2AdminActor(req);
+      const prev = project.p2.offers[key];
+      const r = p2Transition(prev, action as Exclude<P2Action, "add_point">, { who: "admin", id: actor }, {
+        priceCents: req.body?.priceCents != null ? Math.floor(Number(req.body.priceCents)) : undefined,
+        version: req.body?.version != null ? Number(req.body.version) : undefined,
+      });
+      if (!r.ok) return res.status(r.code).json({ error: r.error, offer: prev ?? null });
+      project.p2.offers[key] = r.offer;
+      pushP2Event(project.p2.events, {
+        ts: Date.now(), key, action, actor,
+        priceCents: r.offer.lockedCents ?? r.offer.priceCents,
+        prevPriceCents: prev?.priceCents, version: r.offer.version,
+      });
+      const saved = await saveProject(job, project, { p2Mutation: true });
+      res.json({ ok: true, offer: saved.p2?.offers[key] ?? null, p2: saved.p2, p2Billing: computeP2Billing(saved) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // ── Asiakkaan p2-reitit (token = avain, kuten GET /api/gig/:token) ────────────
+
+  /** Lataa keikka + projekti asiakkaan p2-toimintoa varten, samat portit kuin
+   *  live-näkymässä: custom gig, vaihe 2 päällä, sopimus allekirjoitettu jos
+   *  allekirjoitus vaaditaan. */
+  async function loadP2ForCustomer(token: string): Promise<
+    | { ok: true; job: typeof jobs.$inferSelect; project: ProjectData; p2: P2State }
+    | { ok: false; code: number; error: string }
+  > {
+    const [row] = await db.select({ job: jobs }).from(jobs).where(eq(jobs.quoteToken, token));
+    if (!row || !row.job.isCustomGig) return { ok: false, code: 404, error: "Seurantaa ei löydy" };
+    const gig = parseGig(row.job.gigData);
+    if (!gig) return { ok: false, code: 404, error: "Seurantaa ei löydy" };
+    if (signatureRequired(gig) && !gig.signature?.signedAt) {
+      return { ok: false, code: 403, error: "Allekirjoita sopimus ensin" };
+    }
+    const project = parseProject(row.job.projectData ?? null);
+    if (!project?.p2 || !project.p2.enabled) {
+      return { ok: false, code: 403, error: "Vaihe 2 ei ole aktiivinen" };
+    }
+    return { ok: true, job: row.job, project, p2: project.p2 };
+  }
+
+  /** Asiakkaalle palautettava p2-tila (vain hinnat, ei tekijätietoja). */
+  function publicP2(project: ProjectData) {
+    const p2 = project.p2!;
+    return {
+      enabled: p2.enabled,
+      termsAccepted: !!p2.terms,
+      termsAcceptorName: p2.terms?.acceptorName ?? null,
+      termsText: p2.termsText ?? null,
+      offers: Object.fromEntries(Object.entries(p2.offers).map(([k, o]) => [k, {
+        status: o.status, priceCents: o.priceCents, counterCents: o.counterCents ?? null,
+        version: o.version, lockedCents: o.lockedCents ?? null, lockedAt: o.lockedAt ?? null,
+      }])),
+      billing: (({ yellowTotal, proposedCount, counteredCount, lockedCount, lockedSumCents, lockedWashedCount, earnedCents }) =>
+        ({ yellowTotal, proposedCount, counteredCount, lockedCount, lockedSumCents, lockedWashedCount, earnedCents }))(computeP2Billing(project)),
+    };
+  }
+
+  // Kevyt ehtohyväksyntä (kerran): nimi + aikaleima + ip. Vaaditaan ennen
+  // ensimmäistä hyväksyntää/vastatarjousta — tämä + tapahtumaloki on P2-sopimus.
+  app.post("/api/gig/:token/p2/terms", async (req, res) => {
+    try {
+      const loaded = await loadP2ForCustomer(String(req.params.token));
+      if (!loaded.ok) return res.status(loaded.code).json({ error: loaded.error });
+      const { job, project, p2 } = loaded;
+      if (p2.terms) return res.json({ ok: true, alreadyAccepted: true, p2: publicP2(project) });
+      const acceptorName = String(req.body?.acceptorName ?? "").slice(0, 160).trim();
+      if (!acceptorName) return res.status(400).json({ error: "Nimenselvennys puuttuu" });
+      p2.terms = {
+        acceptedAt: Date.now(),
+        acceptorName,
+        ip: clientIp(req),
+        userAgent: req.headers["user-agent"] ? String(req.headers["user-agent"]).slice(0, 400) : undefined,
+      };
+      const saved = await saveProject(job, project, { p2Mutation: true });
+      res.json({ ok: true, p2: publicP2(saved) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Asiakas hyväksyy hintaehdotuksia (yksi tai valinta). Jokainen item viittaa
+  // TÄSMÄLLEEN nähtyyn hintaan + versioon — konflikti palautuu per ikkuna eikä
+  // kaada koko erää.
+  app.post("/api/gig/:token/p2/accept", async (req, res) => {
+    try {
+      const loaded = await loadP2ForCustomer(String(req.params.token));
+      if (!loaded.ok) return res.status(loaded.code).json({ error: loaded.error });
+      const { job, project, p2 } = loaded;
+      if (!p2.terms) return res.status(403).json({ error: "Hyväksy ensin tilausehdot" });
+      const items: { key: string; priceCents: number; version: number }[] = Array.isArray(req.body?.items)
+        ? req.body.items.slice(0, 500).map((i: any) => ({
+            key: String(i?.key ?? "").slice(0, 64),
+            priceCents: Math.floor(Number(i?.priceCents)),
+            version: Number(i?.version),
+          })).filter((i: any) => i.key)
+        : [];
+      if (!items.length) return res.status(400).json({ error: "Ei hyväksyttäviä ikkunoita" });
+
+      const ip = clientIp(req);
+      const locked: string[] = [];
+      const conflicts: { key: string; error: string; offer: unknown }[] = [];
+      for (const item of items) {
+        if (pointPriority(project, item.key) !== 2) {
+          conflicts.push({ key: item.key, error: "Ikkunaa ei enää ole", offer: null });
+          continue;
+        }
+        const prev = p2.offers[item.key];
+        const r = p2Transition(prev, "accept", { who: "customer" }, { priceCents: item.priceCents, version: item.version });
+        if (!r.ok) { conflicts.push({ key: item.key, error: r.error, offer: prev ?? null }); continue; }
+        p2.offers[item.key] = r.offer;
+        pushP2Event(p2.events, {
+          ts: Date.now(), key: item.key, action: "accept", actor: "customer",
+          priceCents: r.offer.lockedCents, version: r.offer.version, ip,
+        });
+        locked.push(item.key);
+      }
+      const saved = locked.length ? await saveProject(job, project, { p2Mutation: true }) : project;
+      res.json({ ok: true, locked, conflicts, p2: publicP2(saved) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Asiakkaan vastatarjous yhteen ikkunaan.
+  app.post("/api/gig/:token/p2/counter", async (req, res) => {
+    try {
+      const loaded = await loadP2ForCustomer(String(req.params.token));
+      if (!loaded.ok) return res.status(loaded.code).json({ error: loaded.error });
+      const { job, project, p2 } = loaded;
+      if (!p2.terms) return res.status(403).json({ error: "Hyväksy ensin tilausehdot" });
+      const key = String(req.body?.key ?? "").slice(0, 64);
+      if (!key || pointPriority(project, key) !== 2) return res.status(404).json({ error: "Ikkunaa ei enää ole" });
+      const prev = p2.offers[key];
+      const r = p2Transition(prev, "counter", { who: "customer" }, {
+        priceCents: Math.floor(Number(req.body?.counterCents)),
+        version: Number(req.body?.version),
+      });
+      if (!r.ok) return res.status(r.code).json({ error: r.error, offer: prev ?? null });
+      p2.offers[key] = r.offer;
+      pushP2Event(p2.events, {
+        ts: Date.now(), key, action: "counter", actor: "customer",
+        priceCents: r.offer.counterCents, prevPriceCents: r.offer.priceCents,
+        version: r.offer.version, ip: clientIp(req),
+      });
+      const saved = await saveProject(job, project, { p2Mutation: true });
+      res.json({ ok: true, p2: publicP2(saved) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Asiakas hylkää hintaehdotuksen.
+  app.post("/api/gig/:token/p2/decline", async (req, res) => {
+    try {
+      const loaded = await loadP2ForCustomer(String(req.params.token));
+      if (!loaded.ok) return res.status(loaded.code).json({ error: loaded.error });
+      const { job, project, p2 } = loaded;
+      if (!p2.terms) return res.status(403).json({ error: "Hyväksy ensin tilausehdot" });
+      const key = String(req.body?.key ?? "").slice(0, 64);
+      if (!key || pointPriority(project, key) !== 2) return res.status(404).json({ error: "Ikkunaa ei enää ole" });
+      const prev = p2.offers[key];
+      const r = p2Transition(prev, "decline", { who: "customer" }, { version: Number(req.body?.version) });
+      if (!r.ok) return res.status(r.code).json({ error: r.error, offer: prev ?? null });
+      p2.offers[key] = r.offer;
+      pushP2Event(p2.events, {
+        ts: Date.now(), key, action: "decline", actor: "customer",
+        priceCents: prev?.priceCents, version: r.offer.version, ip: clientIp(req),
+      });
+      const saved = await saveProject(job, project, { p2Mutation: true });
+      res.json({ ok: true, p2: publicP2(saved) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Asiakas ehdottaa uutta keltaista ikkunaa karttaan. Pisteestä EI synny
+  // offer-tietuetta ("ei hinnoiteltu") — admin hinnoittelee sen, ja vasta
+  // asiakkaan hyväksyntä tuo sen työn piiriin. add_point-tapahtumasta admin
+  // näkee, että piste on asiakkaan lisäämä.
+  app.post("/api/gig/:token/p2/add-point", async (req, res) => {
+    try {
+      const loaded = await loadP2ForCustomer(String(req.params.token));
+      if (!loaded.ok) return res.status(loaded.code).json({ error: loaded.error });
+      const { job, project, p2 } = loaded;
+      if (!p2.terms) return res.status(403).json({ error: "Hyväksy ensin tilausehdot" });
+      const floor = String(req.body?.floor ?? "").slice(0, 8);
+      if (!project.building.floors.includes(floor)) return res.status(400).json({ error: "Tuntematon kerros" });
+      const x = Math.max(0, Math.min(100, Number(req.body?.x)));
+      const y = Math.max(0, Math.min(100, Number(req.body?.y)));
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return res.status(400).json({ error: "Virheellinen sijainti" });
+      const customerAdded = p2.events.filter((e) => e.action === "add_point").length;
+      if (customerAdded >= MAX_P2_CUSTOMER_POINTS) {
+        return res.status(429).json({ error: "Liian monta ehdotettua ikkunaa — ota yhteyttä suoraan" });
+      }
+      // Sama avainformaatti kuin adminin lisäämillä pisteillä: "<kerros>#c<rand>".
+      const existing = new Set((project.customMarks[floor] || []).map((c) => c.key));
+      let key = "";
+      do { key = `${floor}#c${Math.random().toString(36).slice(2, 8)}`; } while (existing.has(key));
+      project.customMarks[floor] = [...(project.customMarks[floor] || []), { key, p: 2, x, y }];
+      pushP2Event(p2.events, { ts: Date.now(), key, action: "add_point", actor: "customer", version: 0, ip: clientIp(req) });
+      const saved = await saveProject(job, project, { p2Mutation: true });
+      res.json({ ok: true, key, p2: publicP2(saved) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -5180,8 +5601,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     return t;
   }
 
-  async function saveProject(job: typeof jobs.$inferSelect, project: ProjectData): Promise<ProjectData> {
+  async function saveProject(
+    job: typeof jobs.$inferSelect,
+    project: ProjectData,
+    opts?: { p2Mutation?: boolean },
+  ): Promise<ProjectData> {
     const clean = sanitizeProjectData(project);
+    // P2-neuvottelutila on serverin omistama. Ellei TÄMÄ tallennus ole
+    // dedikoidun /p2-reitin tarkoituksellinen mutaatio, luetaan kannan tuorein
+    // p2 juuri ennen kirjoitusta — niin tekijän ikkunamerkintä ei koskaan
+    // yliaja asiakkaan samaan aikaan lukitsemaa hintaa.
+    if (!opts?.p2Mutation) {
+      const [fresh] = await db.select({ projectData: jobs.projectData }).from(jobs).where(eq(jobs.id, job.id));
+      const storedP2 = fresh ? parseProject(fresh.projectData ?? null)?.p2 : clean.p2;
+      if (storedP2) clean.p2 = storedP2; else delete clean.p2;
+    }
     const totals = computeProjectTotals(clean);
     // Keep the customer's billing view (gig sectors) in sync with the map, just
     // like the admin project save does — so worker marks flow to /seuranta too.
@@ -5191,7 +5625,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         syncGigSectorsFromProject(parseGig(job.gigData) ?? emptyGigData(), clean),
       );
       extra.gigData = JSON.stringify(gig);
-      extra.agreedPrice = computeTotals(gig).capCents;
+      // Sopimusarvo = kiinteä P1-katto + lukitut P2-hinnat (kasvava summa).
+      extra.agreedPrice = computeTotals(gig).capCents + computeP2Billing(clean).lockedSumCents;
       extra.isCustomGig = true;
     }
     await db.update(jobs)
@@ -5321,6 +5756,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       deleted: project.deleted,
       hours: stats.hours,
       stats,
+      // P2 (keltaiset ikkunat): mitkä keltaiset ovat pestävissä (hinta lukittu)
+      // ja tekijän OMA palkkio per ikkuna. Asiakashintaa tai tekijän
+      // prosenttiosuutta ei lähetetä, joten hintaa ei voi rekonstruoida —
+      // sama rahansuojaustaso kuin oma perWindowCents-taksa. Valmisteluvaihe
+      // (enabled=false) ei näy tekijälle lainkaan.
+      p2: project.p2?.enabled ? {
+        enabled: project.p2.enabled,
+        lockedKeys: Object.entries(project.p2.offers)
+          .filter(([, o]) => o.status === "locked" && o.lockedCents)
+          .map(([k]) => k),
+        payoutByKey: Object.fromEntries(Object.entries(project.p2.offers)
+          .filter(([, o]) => o.status === "locked" && o.lockedCents)
+          .map(([k, o]) => [k, p2WorkerPayoutCents(o.lockedCents!, project.p2!.workerSharePct)])),
+      } : null,
       // Gig-wide window counts (team) for the shared "paydate progress" stat — NO
       // euros, so the worker still never sees the gig total/price/cap.
       windowsTotal,
@@ -5443,6 +5892,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const status = req.body?.status === "pesty" || req.body?.status === "kesken" ? req.body.status : "ei";
       if (!key) return res.status(400).json({ error: "key puuttuu" });
 
+      // P2-pesuportti: kun ikkunakohtainen hinnoittelu on PÄÄLLÄ (enabled),
+      // keltaisen ikkunan saa merkata vasta kun sen hinta on lukittu asiakkaan
+      // kanssa. Prioriteetti katsotaan AINA kartasta, ei clientin lähettämästä
+      // p:stä. Statuksen tyhjennys ("ei") sallitaan aina. Valmisteluvaihe
+      // (p2 alustettu mutta ei päällä) EI vaikuta tekijöihin mitenkään.
+      const mapPriority = pointPriority(project, key);
+      if (status !== "ei" && mapPriority === 2 && project.p2?.enabled && !isP2Washable(project, key)) {
+        return res.status(403).json({ error: "Tämä keltainen ikkuna ei ole vielä työn piirissä — hinta sovitaan ensin asiakkaan kanssa." });
+      }
+
       if (status === "ei") {
         // Only clear a window the worker owns (or that nobody owns).
         if (!project.washedBy[key] || project.washedBy[key] === member.id) {
@@ -5465,7 +5924,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
       }
       const floor = key.split("#")[0];
-      const p: 1 | 2 = req.body?.p === 2 ? 2 : 1;
+      // Lokin prioriteetti kartasta (luotettava); clientin p vain fallbackina.
+      const p: 1 | 2 = mapPriority ?? (req.body?.p === 2 ? 2 : 1);
       project.log = [{ floor, key, p, status, ts: Date.now(), by: member.id }, ...(project.log || [])].slice(0, 200);
 
       const saved = await saveProject(job, project);

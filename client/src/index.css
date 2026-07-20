@@ -551,6 +551,32 @@
   50%       { box-shadow: 0 0 0 10px rgba(95,224,138,0.04), 0 0 18px rgba(95,224,138,0.8); }
 }
 
+/* Luotettavat napautukset (fr8-nappien "ei painaudu" -bugi):
+   1) touch-action: manipulation poistaa iOS/Androidin tap-viiveen ja
+      tuplatap-zoom-tunnistuksen, joka ajoittain NIELAISEE napautuksen.
+   2) tap-highlight pois — harmaa välähdys sai napin näyttämään jumilta.
+   3) :active-kirkastus antaa välittömän visuaalisen kuittauksen jokaisesta
+      painalluksesta ilman layout-muutosta (turvallinen myös karttapisteille). */
+.fr8-root button,
+.fr8-root [role="button"],
+.fr8-root label,
+.fr8-root a {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.fr8-root button:active { filter: brightness(1.18); }
+
+/* Mobiilisuorituskyky: kymmenet backdrop-filter: blur() -kortit jumittavat
+   pääsäikeen puhelimella, jolloin napautuksia putoaa ("nappi ei painaudu").
+   Korttien taustat ovat lähes peittäviä, joten blurin pudotus ei juuri näy —
+   sulavuus voittaa. (!important voittaa inline-tyylin.) */
+@media (max-width: 767px), (pointer: coarse) {
+  .fr8-root [style*="backdrop-filter"] {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
 .fr8-root .anim-fadeUp-0 { animation: fr8-fadeUp 0.5s ease both; }
 .fr8-root .anim-fadeUp-1 { animation: fr8-fadeUp 0.5s ease 0.05s both; }
 .fr8-root .anim-fadeUp-2 { animation: fr8-fadeUp 0.5s ease 0.1s both; }

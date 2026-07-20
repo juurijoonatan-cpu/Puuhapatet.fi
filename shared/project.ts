@@ -15,6 +15,7 @@
 import type { GigData, GigSector } from "./gig";
 import { sanitizeCrew, type CrewMember } from "./crew";
 import { PAY_PERIODS, eraWindowCounts } from "./payprogress";
+import { sanitizeP2State, type P2State } from "./p2";
 
 // ─── Data shapes ───────────────────────────────────────────────────────────────
 
@@ -157,6 +158,10 @@ export interface ProjectData {
    *  e.g. [40,41,42,45]. Drives the per-erä kate on the crew/payroll page; absent
    *  → even split. Display/planning only — does NOT affect worker pay or earnings. */
   eraWindows?: number[];
+  /** Priority 2 (keltaiset ikkunat): per-window pricing + customer negotiation
+   *  (shared/p2.ts). Absent = the gig behaves exactly as before. Mutated ONLY via
+   *  the dedicated /p2 endpoints — generic blob saves keep the stored copy. */
+  p2?: P2State;
   updatedAt: number;                                // epoch ms
 }
 
@@ -908,6 +913,7 @@ export function sanitizeProjectData(input: any): ProjectData {
     crew: sanitizeCrew(input.crew),
     expenses,
     ...(eraWindows ? { eraWindows } : {}),
+    ...(input.p2 !== undefined ? (() => { const p2 = sanitizeP2State(input.p2); return p2 ? { p2 } : {}; })() : {}),
     updatedAt: Date.now(),
   };
 }

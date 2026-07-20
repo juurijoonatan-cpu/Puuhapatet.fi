@@ -7,6 +7,8 @@
 import { useState, useRef, useEffect } from "react";
 import type { ProjMarksData, WindowStatus, ProjCustomMark, ProjMapNote, ProjNoteKind, ProjActiveZone, ProjWindowObservation, FixedDeal } from "@shared/project";
 import { NOTE_KINDS } from "@shared/project";
+import type { P2Offer } from "@shared/p2";
+import { P2_PRICE_PRESETS_CENTS } from "@shared/p2";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 const CIRC_S = 2 * Math.PI * 17; // mini ring
@@ -75,6 +77,18 @@ interface Props {
   /** When set, the price is a locked, signed deal (no editing, billable priority
    *  + agreed cap drive the figures). FR8 = €37.50/red window, €6300 cap. */
   deal?: FixedDeal | null;
+  /** P2 (keltaiset ikkunat) — per-window pricing state. Admin view passes the
+   *  full offers map; the worker view passes only lockedKeys + its OWN
+   *  payoutByKey (customer prices never reach a worker). Null/absent = no P2. */
+  p2?: {
+    enabled: boolean;
+    offers?: Record<string, P2Offer>;
+    lockedKeys?: string[];
+    payoutByKey?: Record<string, number>;
+  } | null;
+  /** Admin: bulk price proposal for selected yellow windows — enables the
+   *  "€ Hinnoittele" multi-select mode. */
+  onP2Propose?: (keys: string[], priceCents: number) => void;
 }
 
 /** A minimal on-screen anchor (viewport coords) for positioning a fixed popover. */
@@ -172,7 +186,7 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, activeZone, onSetActiveZone, onClearActiveZone, deal }: Props) {
+export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose }: Props) {
   const [floor, setFloor] = useState(initialFloor);
   const [filter, setFilter] = useState<"all" | "unwashed" | "progress" | "done">("all");
   const [editMode, setEditMode] = useState(false);
@@ -192,6 +206,11 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   const [obsBusy, setObsBusy] = useState(false);
   const [obsOpen, setObsOpen] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  // P2 multi-select pricing (admin): tap yellow dots to select, then propose one
+  // price for the whole selection.
+  const [p2SelectMode, setP2SelectMode] = useState(false);
+  const [p2Selected, setP2Selected] = useState<Set<string>>(new Set());
+  const [p2Price, setP2Price] = useState("");
   const planRef = useRef<HTMLImageElement>(null);
   const notesCanEdit = !!onAddNote;
   const zoneCanEdit = !!onSetActiveZone;
@@ -269,6 +288,38 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   }
 
   const points = getPoints(floor, marks, posOverrides, customMarks, deleted);
+
+  // ── P2 (keltaiset ikkunat) helpers ──────────────────────────────────────────
+  const p2OfferFor = (key: string): P2Offer | undefined => p2?.offers?.[key];
+  /** Is this yellow window part of the locked P2 work scope? Admin resolves from
+   *  the offers map, the worker from its lockedKeys list. */
+  const p2LockedForWork = (key: string): boolean => {
+    if (!p2 || !p2.enabled) return false;
+    if (p2.offers) return p2.offers[key]?.status === "locked";
+    return (p2.lockedKeys || []).includes(key);
+  };
+  /** Worker view: yellow windows are gated (not washable) until locked. */
+  const p2WorkerGated = (pt: Point): boolean =>
+    !canEdit && !!p2 && pt.p === 2 && !p2LockedForWork(pt.key);
+  const floorYellowUnpriced = points.filter((pt) => pt.p === 2 && !p2OfferFor(pt.key));
+  const p2PriceCents = (() => {
+    const v = Number(p2Price.replace(",", "."));
+    return Number.isFinite(v) && v > 0 ? Math.round(v * 100) : null;
+  })();
+
+  function toggleP2Select(key: string) {
+    setP2Selected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+  function toggleP2SelectMode() {
+    setP2SelectMode((v) => !v);
+    setP2Selected(new Set());
+    setEditMode(false); setPlaceMode(null); setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null);
+  }
+
   // Floor revenue: with a signed deal only the billable priority (red) counts.
   const floorBillable = deal ? points.filter((p) => p.p === deal.billablePriority) : points;
   const floorWashed = floorBillable.filter((p) => (statuses[p.key] || "ei") === "pesty").length;
@@ -298,6 +349,9 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
     const delMode = editMode && placeMode === "del";
     const addMode = editMode && (placeMode === 1 || placeMode === 2);
     const dim = editMode ? false : !matchFilter(status);
+    // P2 select mode: red dots fade out, selected yellows get a white ring.
+    const p2Selectable = p2SelectMode && pt.p === 2;
+    const p2IsSelected = p2Selectable && p2Selected.has(pt.key);
     const size = editMode ? (washed ? 13 : 12) : (washed ? 10 : 9);
     const base: React.CSSProperties = {
       position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`,
@@ -324,6 +378,23 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
         ? `0 0 0 3px rgba(255,255,255,0.35), 0 0 14px rgba(${rgb},0.9)`
         : washed ? `0 0 6px rgba(${rgb},0.95), 0 0 13px rgba(${rgb},0.5)` : `0 0 5px rgba(${rgb},0.7), 0 0 11px rgba(${rgb},0.35)`;
     }
+    // P2 select mode overrides: fade the non-selectable reds, ring the selection.
+    if (p2SelectMode) {
+      if (pt.p !== 2) {
+        base.opacity = 0.12;
+        base.pointerEvents = "none";
+        base.animation = undefined;
+      } else if (p2IsSelected) {
+        base.boxShadow = `0 0 0 3.5px rgba(255,255,255,0.95), 0 0 14px rgba(${rgb},0.9)`;
+        base.animation = undefined;
+        base.zIndex = 12;
+      }
+    }
+    // Worker view: an unlocked yellow window is not in the work scope yet.
+    if (p2WorkerGated(pt)) {
+      base.opacity = Math.min(Number(base.opacity ?? 1), 0.35);
+      base.animation = undefined;
+    }
     return base;
   }
 
@@ -331,6 +402,14 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
     e.stopPropagation();
     // Ignore the click that ends a pan gesture (so panning never toggles a dot).
     if (pannedRef.current) { pannedRef.current = false; return; }
+    // P2 pricing mode: tapping a yellow dot toggles its selection (locked ones
+    // are skipped — a locked price is renegotiated via unlock, not re-propose).
+    if (p2SelectMode) {
+      if (pt.p !== 2) return;
+      if (p2OfferFor(pt.key)?.status === "locked") return;
+      toggleP2Select(pt.key);
+      return;
+    }
     if (editMode && placeMode === "del") { onDeleteMark(pt.key); return; }
     if (!editMode) {
       const next = activeOrb === pt.key ? null : pt.key;
@@ -573,6 +652,15 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
 
           {/* Edit / add controls — full editing for hosts (canEdit), notes-only for workers (canAddNotes) */}
           {(canEdit || canAddNotes) && <>
+          {/* P2 pricing mode — multi-select yellow windows, propose one price.
+              Available already in the preparation phase (server auto-inits p2
+              on the first proposal), so pricing can be prepped before the
+              phase is opened to the customer. */}
+          {canEdit && onP2Propose && (
+          <button onClick={toggleP2SelectMode} style={{ display: "flex", alignItems: "center", gap: "7px", padding: "8px 13px", borderRadius: "11px", cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12.5px", fontWeight: 600, transition: "all .16s", border: `1px solid ${p2SelectMode ? "transparent" : "rgba(255,205,40,0.35)"}`, background: p2SelectMode ? "rgb(255,205,40)" : "rgba(255,205,40,0.08)", color: p2SelectMode ? "#0a0a0c" : "rgba(255,220,110,0.95)" }}>
+            € {p2SelectMode ? "Valmis" : "Hinnoittele"}
+          </button>
+          )}
           {canEdit && (
           <button onClick={toggleEdit} style={{ display: "flex", alignItems: "center", gap: "7px", padding: "8px 13px", borderRadius: "11px", cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12.5px", fontWeight: 600, transition: "all .16s", border: `1px solid ${editMode ? "transparent" : "rgba(255,255,255,0.12)"}`, background: editMode ? "#fff" : "rgba(255,255,255,0.04)", color: editMode ? "#0a0a0c" : "rgba(255,255,255,0.7)" }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={editMode ? "#0a0a0c" : "rgba(255,255,255,0.55)"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
@@ -723,6 +811,36 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                 );
               })}
 
+              {/* P2 price badges (admin view): the negotiation state of each
+                  yellow window. Worker view shows a lock on gated yellows instead. */}
+              {p2?.offers && !editMode && points.map((pt) => {
+                if (pt.p !== 2) return null;
+                const offer = p2.offers![pt.key];
+                if (!offer || offer.status === "declined") return null;
+                const bg = offer.status === "locked" ? "rgba(95,224,138,0.92)"
+                  : offer.status === "countered" ? "rgba(255,205,40,0.95)"
+                  : "rgba(120,150,255,0.92)";
+                const text = offer.status === "locked"
+                  ? `✓ ${euroUnit((offer.lockedCents ?? offer.priceCents) / 100)}`
+                  : offer.status === "countered"
+                    ? `↩ ${euroUnit((offer.counterCents ?? 0) / 100)}`
+                    : euroUnit(offer.priceCents / 100);
+                return (
+                  <span key={`p2-${pt.key}`} aria-hidden
+                    style={{ position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`, transform: "translate(-50%, 7px)", pointerEvents: "none", padding: "1px 5px", borderRadius: "999px", background: bg, color: "#0a0a0c", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "7.5px", fontWeight: 700, lineHeight: 1.5, whiteSpace: "nowrap", zIndex: 5, boxShadow: "0 1px 4px rgba(0,0,0,0.5)" }}>
+                    {text}
+                  </span>
+                );
+              })}
+
+              {/* Worker view: lock marker on yellow windows not yet in scope. */}
+              {!canEdit && p2 && !editMode && points.map((pt) => p2WorkerGated(pt) ? (
+                <span key={`p2lock-${pt.key}`} aria-hidden
+                  style={{ position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`, transform: "translate(3px, 3px)", pointerEvents: "none", fontSize: "7px", lineHeight: 1, zIndex: 5, opacity: 0.85 }}>
+                  🔒
+                </span>
+              ) : null)}
+
               {/* Observation badges — a small marker on windows that carry a note */}
               {points.map((pt) => observations?.[pt.key] ? (
                 <span key={`obs-${pt.key}`} aria-hidden
@@ -757,6 +875,57 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
         )}
       </div>
 
+      {/* P2 pricing bar — shown in select mode: pick yellows, set one price. */}
+      {p2SelectMode && (
+        <div style={{ position: "fixed", left: "50%", bottom: "calc(14px + env(safe-area-inset-bottom))", transform: "translateX(-50%)", zIndex: 1150, display: "flex", alignItems: "center", gap: "9px", flexWrap: "wrap", justifyContent: "center", maxWidth: "calc(100vw - 24px)", padding: "10px 12px", background: "rgba(16,16,20,0.94)", border: "1px solid rgba(255,205,40,0.4)", borderRadius: "15px", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 18px 50px rgba(0,0,0,0.7)" }}>
+          {!p2?.enabled && (
+            <span title="Vaihe 2 ei ole vielä auki asiakkaalle — hinnat menevät jonoon odottamaan" style={{ fontSize: "9.5px", fontWeight: 700, letterSpacing: "0.06em", padding: "3px 7px", borderRadius: 999, border: "1px solid rgba(255,205,40,0.4)", background: "rgba(255,205,40,0.1)", color: "rgb(255,220,110)", whiteSpace: "nowrap" }}>
+              VALMISTELU
+            </span>
+          )}
+          <span style={{ fontSize: "12.5px", fontWeight: 700, color: "#fff", whiteSpace: "nowrap" }}>
+            {p2Selected.size} valittu
+          </span>
+          <button
+            onClick={() => setP2Selected((prev) => {
+              const next = new Set(prev);
+              floorYellowUnpriced.forEach((pt) => next.add(pt.key));
+              return next;
+            })}
+            disabled={floorYellowUnpriced.length === 0}
+            style={{ padding: "7px 11px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.8)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer", opacity: floorYellowUnpriced.length === 0 ? 0.4 : 1, whiteSpace: "nowrap" }}
+          >
+            + Kerroksen hinnoittelemattomat ({floorYellowUnpriced.length})
+          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+            {P2_PRICE_PRESETS_CENTS.map((c) => (
+              <button key={c} onClick={() => setP2Price(String(c / 100))}
+                style={{ padding: "7px 9px", borderRadius: "9px", border: `1px solid ${p2PriceCents === c ? "rgba(255,205,40,0.7)" : "rgba(255,255,255,0.14)"}`, background: p2PriceCents === c ? "rgba(255,205,40,0.16)" : "rgba(255,255,255,0.04)", color: "#fff", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
+                {euroUnit(c / 100)}
+              </button>
+            ))}
+            <input
+              type="number" inputMode="decimal" min={1} step="0.5"
+              value={p2Price}
+              onChange={(e) => setP2Price(e.target.value)}
+              placeholder="€ / ikkuna"
+              style={{ width: "84px", padding: "7px 9px", borderRadius: "9px", border: "1px solid rgba(255,255,255,0.16)", background: "rgba(0,0,0,0.4)", color: "#fff", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "12px", outline: "none" }}
+            />
+          </div>
+          <button
+            disabled={p2Selected.size === 0 || !p2PriceCents}
+            onClick={() => {
+              if (!p2PriceCents || p2Selected.size === 0) return;
+              onP2Propose?.(Array.from(p2Selected), p2PriceCents);
+              setP2Selected(new Set());
+            }}
+            style={{ padding: "8px 15px", borderRadius: "10px", border: "none", background: (p2Selected.size && p2PriceCents) ? "rgb(255,205,40)" : "rgba(255,255,255,0.12)", color: (p2Selected.size && p2PriceCents) ? "#0a0a0c" : "rgba(255,255,255,0.4)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12.5px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
+          >
+            Ehdota hintaa{p2Selected.size > 0 && p2PriceCents ? ` (${p2Selected.size} × ${euroUnit(p2PriceCents / 100)})` : ""}
+          </button>
+        </div>
+      )}
+
       {/* Status popover — rendered as a fixed overlay (outside the zoom/pan scene)
           so its buttons are NEVER clipped and stay tappable at any zoom or edge. */}
       {activeOrb && !editMode && activePt && (
@@ -766,9 +935,33 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
             <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "2px 4px 9px", borderBottom: "1px solid rgba(255,255,255,0.08)", marginBottom: "7px" }}>
               <span style={{ width: "9px", height: "9px", borderRadius: "50%", background: `rgb(${colorRgb(activePt.p, statuses[activeOrb] || "ei")})`, boxShadow: `0 0 7px rgba(${colorRgb(activePt.p, statuses[activeOrb] || "ei")},0.7)` }} />
               <span style={{ fontSize: "12px", fontWeight: 600 }}>Ikkuna {activeIdx + 1}</span>
-              <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9.5px", color: "rgba(255,255,255,0.4)", marginLeft: "auto" }}>{deal && activePt.p === 2 ? "EI SOPIMUKSESSA" : `PRIORITEETTI ${activePt.p}`}</span>
+              <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9.5px", color: "rgba(255,255,255,0.4)", marginLeft: "auto" }}>{activePt.p === 2 && p2 ? "P2 · LISÄTYÖ" : deal && activePt.p === 2 ? "EI SOPIMUKSESSA" : `PRIORITEETTI ${activePt.p}`}</span>
             </div>
-            {(["ei", "kesken", "pesty"] as WindowStatus[]).map((s) => {
+
+            {/* P2 offer state (admin) — where the negotiation stands for this window. */}
+            {canEdit && activePt.p === 2 && p2?.offers && (() => {
+              const offer = p2.offers[activeOrb];
+              if (!offer) return (
+                <div style={{ padding: "2px 4px 8px", fontSize: "11.5px", color: "rgba(255,220,110,0.9)" }}>
+                  Ei hinnoiteltu — käytä € Hinnoittele -tilaa.
+                </div>
+              );
+              return (
+                <div style={{ padding: "2px 4px 8px", fontSize: "11.5px", color: "rgba(255,255,255,0.75)", lineHeight: 1.5 }}>
+                  {offer.status === "locked" && <>Lukittu hinta <strong style={{ color: "#7CE0A6" }}>{euroUnit((offer.lockedCents ?? offer.priceCents) / 100)}</strong> ✓</>}
+                  {offer.status === "proposed" && <>Ehdotettu <strong>{euroUnit(offer.priceCents / 100)}</strong> — odottaa asiakasta</>}
+                  {offer.status === "countered" && <>Vastatarjous <strong style={{ color: "rgb(255,205,40)" }}>{euroUnit((offer.counterCents ?? 0) / 100)}</strong> (oma ehdotus {euroUnit(offer.priceCents / 100)}) — vastaa projektinäkymän P2-osiossa</>}
+                  {offer.status === "declined" && <>Asiakas hylkäsi / peruttu — voit ehdottaa uutta hintaa</>}
+                </div>
+              );
+            })()}
+
+            {/* Worker view: an unlocked yellow window is not washable yet. */}
+            {p2WorkerGated(activePt) ? (
+              <div style={{ padding: "6px 4px 4px", fontSize: "12px", color: "rgba(255,255,255,0.7)", lineHeight: 1.55 }}>
+                🔒 Ei vielä työn piirissä — tämän ikkunan hinta sovitaan ensin asiakkaan kanssa. Saat merkata sen, kun hinta on lukittu.
+              </div>
+            ) : (["ei", "kesken", "pesty"] as WindowStatus[]).map((s) => {
               const cur = statuses[activeOrb] || "ei";
               const isActive = cur === s;
               const rgb = colorRgb(activePt.p, s);
@@ -794,6 +987,15 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                 </button>
               );
             })}
+
+            {/* Worker's own payout for a locked P2 window (their share of ITS
+                agreed price — the customer price itself is never shown). */}
+            {!canEdit && activePt.p === 2 && p2?.payoutByKey?.[activeOrb] != null && p2LockedForWork(activeOrb) && (
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "6px", padding: "6px 4px 0", borderTop: "1px solid rgba(255,255,255,0.08)", fontSize: "11.5px", color: "rgba(255,255,255,0.7)" }}>
+                <span>Sinulle tästä ikkunasta:</span>
+                <strong style={{ color: "#7CE0A6", fontFamily: "var(--font-jetbrains-mono, monospace)" }}>{euroUnit((p2.payoutByKey[activeOrb]) / 100)}</strong>
+              </div>
+            )}
 
             {/* Washer attribution — shows WHO washed this window. Hosts can change
                 it via "Vaihda"; workers see it read-only. */}

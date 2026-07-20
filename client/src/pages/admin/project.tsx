@@ -12,9 +12,10 @@ import { api } from "@/lib/api";
 import { getAdminProfile, USERS, getPreferredWasher, setPreferredWasher } from "@/lib/admin-profile";
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import {
-  emptyProjectData, computeWorkerStats, isFr8Plans, fixedDealFor, allPoints,
+  emptyProjectData, computeWorkerStats, isFr8Plans, fixedDealFor, allPoints, computeDealBilling,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense,
 } from "@shared/project";
+import { computeP2Billing, DEFAULT_P2_WORKER_SHARE_PCT, type P2State } from "@shared/p2";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
 import { FOUNDER_IDS } from "@shared/team";
 import { traineeForUserId, traineeForName } from "@shared/trainees";
@@ -26,6 +27,7 @@ import MaksutView from "@/components/fr8/MaksutView";
 import { BRAND_BILLERS } from "@shared/billers";
 import FloorView from "@/components/fr8/FloorView";
 import Section from "@/components/fr8/Section";
+import LoadingOrb from "@/components/LoadingOrb";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 const MARKS_URL = "/fr8/marks_data.json";
@@ -428,8 +430,8 @@ export default function AdminProjectPage() {
 
   if (loading || crewChecking) {
     return shell(
-      <div style={{ position: "relative", zIndex: 10, height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.45)", fontSize: "14px" }}>
-        Ladataan projektinäkymää…
+      <div style={{ position: "relative", zIndex: 10, height: "100%" }}>
+        <LoadingOrb label="Ladataan projektinäkymää" theme="dark" fullScreen={false} />
       </div>,
     );
   }
@@ -594,6 +596,20 @@ export default function AdminProjectPage() {
       return next;
     });
   };
+  // ── P2 (keltaiset ikkunat) — per-window pricing handlers ────────────────────
+  // Dedikoidut /p2-reitit palauttavat tallennetun p2-tilan; se päivitetään
+  // paikalliseen projektiin sellaisenaan (geneerinen autosave ei koske p2:een —
+  // serveri liittää aina oman kopionsa takaisin, ks. server/routes.ts).
+  const applyP2 = useCallback((p2: P2State) => {
+    setProject((cur) => (cur ? { ...cur, p2 } : cur));
+    latest.current = latest.current ? { ...latest.current, p2 } : latest.current;
+  }, []);
+  const onP2Propose = useCallback(async (keys: string[], priceCents: number) => {
+    const res = await api.p2Propose(jobId, { keys, priceCents, by: currentWorker });
+    if (res.ok && res.data) applyP2(res.data.p2);
+    else setError(res.error || "Hinnoittelu epäonnistui");
+  }, [jobId, currentWorker, applyP2]);
+
   // Display-name map + this gig's pickable crew (used by both the "who washed"
   // and "default washer" pickers).
   const { workerNames, gigWorkers } = computeWorkerMaps(project);
@@ -633,6 +649,16 @@ export default function AdminProjectPage() {
       <main style={{ position: "relative", zIndex: 10, height: "calc(100% - 62px)" }}>
         {tab === "dashboard" && (
           <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} onSetEarnings={setWorkerEarnings} traineeInfo={traineeInfo} traineeShareByLeader={traineeShareByLeader} founderEarnings={founderEarnings} workerLaborCents={workerLaborCents} founderRateEur={internalKateCents / 100}
+            p2Slot={deal ? (
+              <P2AdminPanel
+                project={project}
+                jobId={jobId}
+                by={currentWorker}
+                onP2={applyP2}
+                onGoToFloor={onGoToFloor}
+                canSend={profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")}
+              />
+            ) : undefined}
             expensesTotalCents={(project.expenses || []).reduce((s, e) => s + e.amountCents, 0)}
             expensesSlot={
               <ExpensesView
@@ -725,10 +751,273 @@ export default function AdminProjectPage() {
             onSetActiveZone={onSetActiveZone}
             onClearActiveZone={onClearActiveZone}
             deal={deal}
+            p2={project.p2 ? { enabled: project.p2.enabled, offers: project.p2.offers } : null}
+            onP2Propose={onP2Propose}
           />
         )}
       </main>
     </>,
+  );
+}
+
+// ─── P2AdminPanel — keltaisten ikkunoiden hinnoittelu & neuvottelu ────────────
+
+const p2eur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+const P2_STATUS_LABEL: Record<string, string> = {
+  proposed: "odottaa asiakasta",
+  countered: "vastatarjous",
+  locked: "lukittu ✓",
+  declined: "hylätty",
+};
+
+/**
+ * Adminin P2-osio dashboardilla: vaihekytkin, tekijän %-osuus, tilannetiilet,
+ * neuvottelu-inbox (asiakkaan vastatarjoukset), anomaliavaroitukset ja
+ * tapahtumaloki. Hinnoittelu itsessään tapahtuu kartalla (€ Hinnoittele -tila).
+ */
+function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
+  project: ProjectData;
+  jobId: number;
+  by: string;
+  onP2: (p2: P2State) => void;
+  onGoToFloor: (floor: string) => void;
+  canSend: boolean;
+}) {
+  const p2 = project.p2;
+  const b = computeP2Billing(project);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [shareDraft, setShareDraft] = useState(String(p2?.workerSharePct ?? DEFAULT_P2_WORKER_SHARE_PCT));
+  const [counterInputs, setCounterInputs] = useState<Record<string, string>>({});
+  const [showLog, setShowLog] = useState(false);
+  const [showTerms, setShowTerms] = useState(false);
+  const [termsDraft, setTermsDraft] = useState(p2?.termsText ?? "");
+
+  const deal = fixedDealFor(project);
+  const p1Pct = deal ? computeDealBilling(project, deal).pct : 0;
+
+  async function run<T extends { ok: boolean; error?: string; data?: { p2: P2State } }>(fn: () => Promise<T>, okMsg?: string) {
+    setBusy(true); setMsg(null);
+    const res = await fn();
+    setBusy(false);
+    if (res.ok && res.data) { onP2(res.data.p2); if (okMsg) setMsg(okMsg); }
+    else setMsg(res.error || "Toiminto epäonnistui");
+  }
+
+  const setPhase = (enabled: boolean) => run(() => api.p2SetPhase(jobId, { enabled, by }), enabled ? "Vaihe 2 avattu asiakkaalle" : "Vaihe 2 suljettu");
+  const saveShare = () => {
+    const pct = Math.floor(Number(shareDraft));
+    if (!Number.isInteger(pct) || pct < 1 || pct > 100) { setMsg("Osuuden on oltava 1–100 %"); return; }
+    void run(() => api.p2SetPhase(jobId, { workerSharePct: pct, by }), "Tekijän osuus tallennettu");
+  };
+  const respond = (key: string, action: "accept_counter" | "cancel" | "unlock" | "propose", priceCents?: number, version?: number) =>
+    run(() => api.p2Respond(jobId, { key, action, priceCents, version, by }));
+
+  const sendP2Invoice = async () => {
+    if (!window.confirm(`Lähetetäänkö P2-lasku laskuttamattomasta kertymästä? (kertymä ${p2eur(b.earnedCents)})`)) return;
+    setBusy(true); setMsg(null);
+    const res = await api.sendGigInvoice(jobId, { scope: "p2", billerId: by });
+    setBusy(false);
+    setMsg(res.ok ? `P2-lasku lähetetty: ${p2eur(res.data?.amountCents ?? 0)}` : (res.error || "Laskun lähetys epäonnistui"));
+  };
+
+  // Asiakkaan vastatarjoukset (inbox) + kartalta puuttuvat lukot.
+  const countered = Object.entries(p2?.offers ?? {}).filter(([, o]) => o.status === "countered");
+  const customerAdded = (p2?.events ?? []).filter((e) => e.action === "add_point").length;
+  const sharePct = p2?.workerSharePct ?? DEFAULT_P2_WORKER_SHARE_PCT;
+
+  const tile: React.CSSProperties = { flex: "1 1 110px", minWidth: 100, padding: "10px 12px", borderRadius: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" };
+  const tileLabel: React.CSSProperties = { fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 };
+  const tileVal: React.CSSProperties = { fontSize: "15px", fontWeight: 700, color: "#fff", fontVariantNumeric: "tabular-nums" };
+  const btn: React.CSSProperties = { padding: "7px 12px", borderRadius: 9, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.85)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px", fontWeight: 600, cursor: "pointer" };
+
+  return (
+    <Section
+      id="p2"
+      label="P2 — KELTAISET IKKUNAT (LISÄTYÖ)"
+      summary={
+        <span style={{ fontVariantNumeric: "tabular-nums" }}>
+          {p2?.enabled ? "🟢 " : ""}
+          {b.lockedCount > 0 ? `${b.lockedCount} sovittu · ${p2eur(b.lockedSumCents)}` : `${b.yellowTotal} keltaista`}
+          {countered.length > 0 ? ` · ${countered.length} vastatarjousta` : ""}
+        </span>
+      }
+      defaultOpen={countered.length > 0}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+        {/* Vaihekytkin + tekijän osuus */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <button
+            disabled={busy}
+            onClick={() => void setPhase(!(p2?.enabled))}
+            style={{ ...btn, border: "none", background: p2?.enabled ? "rgba(95,224,138,0.9)" : "rgba(255,255,255,0.1)", color: p2?.enabled ? "#0a0a0c" : "#fff", fontWeight: 700 }}
+          >
+            {p2?.enabled ? "Vaihe 2 päällä — sulje asiakkaalta" : "Avaa vaihe 2 asiakkaalle"}
+          </button>
+          {!p2?.enabled && (
+            <span style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.06em", padding: "4px 9px", borderRadius: 999, border: "1px solid rgba(255,205,40,0.4)", background: "rgba(255,205,40,0.1)", color: "rgb(255,220,110)" }}>
+              VALMISTELU — ei näy asiakkaalle eikä tekijöille
+            </span>
+          )}
+          {!!deal && p1Pct >= 100 && !p2?.enabled && (
+            <span style={{ fontSize: "11.5px", color: "#9ff0bd" }}>P1 (punaiset) on valmis — aika siirtyä keltaisiin ✨</span>
+          )}
+          <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, fontSize: "12px", color: "rgba(255,255,255,0.6)" }}>
+            Tekijän osuus
+            <input
+              type="number" min={1} max={100}
+              value={shareDraft}
+              onChange={(e) => setShareDraft(e.target.value)}
+              style={{ width: 56, padding: "6px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.16)", background: "rgba(0,0,0,0.4)", color: "#fff", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "12px", outline: "none" }}
+            /> %
+            {Number(shareDraft) !== sharePct && (
+              <button disabled={busy} onClick={saveShare} style={{ ...btn, padding: "5px 9px", fontSize: "11px" }}>Tallenna</button>
+            )}
+          </span>
+        </div>
+        <div style={{ fontSize: "11.5px", color: "rgba(255,255,255,0.45)", marginTop: -8 }}>
+          Halvempi ikkuna → pienempi tekijäpalkkio: tekijä saa {sharePct} % ikkunan lukitusta hinnasta
+          (esim. 30 € ikkunasta {p2eur(Math.round(3000 * sharePct / 100))}). Hinnoittele ikkunat kartalla
+          <button onClick={() => onGoToFloor(project.building.floors[0] || "K")} style={{ background: "transparent", border: "none", color: "#9ff0bd", cursor: "pointer", fontSize: "11.5px", fontWeight: 600, padding: "0 2px", fontFamily: "inherit" }}>€ Hinnoittele -tilassa →</button>
+        </div>
+
+        {/* Tilannetiilet */}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div style={tile}><span style={tileLabel}>KELTAISIA</span><span style={tileVal}>{b.yellowTotal}</span></div>
+          <div style={tile}><span style={tileLabel}>ODOTTAA ASIAKASTA</span><span style={tileVal}>{b.proposedCount}</span></div>
+          <div style={tile}><span style={tileLabel}>VASTATARJOUKSIA</span><span style={{ ...tileVal, color: countered.length ? "rgb(255,205,40)" : "#fff" }}>{b.counteredCount}</span></div>
+          <div style={tile}><span style={tileLabel}>LUKITTU</span><span style={{ ...tileVal, color: "#7CE0A6" }}>{b.lockedCount} kpl · {p2eur(b.lockedSumCents)}</span></div>
+          <div style={tile}><span style={tileLabel}>PESTY & KERTYNYT</span><span style={tileVal}>{b.lockedWashedCount} kpl · {p2eur(b.earnedCents)}</span></div>
+          <div style={tile}><span style={tileLabel}>TEKIJÄKULU</span><span style={tileVal}>{p2eur(b.workerCostCents)}</span></div>
+          <div style={tile}><span style={tileLabel}>P2-KATE</span><span style={{ ...tileVal, color: "#9ff0bd" }}>{p2eur(b.marginCents)}</span></div>
+        </div>
+
+        {/* Anomalia: pesty ilman lukittua hintaa (legacy tai ohitus) */}
+        {b.washedUnlockedKeys.length > 0 && (
+          <div style={{ padding: "9px 12px", borderRadius: 11, background: "rgba(255,176,72,0.08)", border: "1px solid rgba(255,176,72,0.3)", fontSize: "12px", color: "rgba(255,220,160,0.95)", lineHeight: 1.55 }}>
+            ⚠️ {b.washedUnlockedKeys.length} keltaista ikkunaa on pesty ILMAN lukittua hintaa (palkkio 0 €):
+            {" "}{b.washedUnlockedKeys.slice(0, 8).join(", ")}{b.washedUnlockedKeys.length > 8 ? "…" : ""}.
+            Lukitse niille hinta tai tyhjennä status.
+          </div>
+        )}
+
+        {/* Asiakkaan lisäämät pisteet */}
+        {customerAdded > 0 && (
+          <div style={{ fontSize: "12px", color: "rgba(255,255,255,0.6)" }}>
+            💡 Asiakas on ehdottanut {customerAdded} uutta ikkunaa karttaan — ne näkyvät hinnoittelemattomina keltaisina pisteinä.
+          </div>
+        )}
+
+        {/* Neuvottelu-inbox: asiakkaan vastatarjoukset */}
+        {countered.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.12em", color: "rgba(255,205,40,0.8)" }}>VASTATARJOUKSET — VASTAA ASIAKKAALLE</span>
+            {countered.map(([key, offer]) => {
+              const floor = key.split("#")[0];
+              const draft = counterInputs[key] ?? "";
+              const draftCents = (() => { const v = Number(draft.replace(",", ".")); return Number.isFinite(v) && v > 0 ? Math.round(v * 100) : null; })();
+              return (
+                <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "9px 12px", borderRadius: 11, background: "rgba(255,205,40,0.05)", border: "1px solid rgba(255,205,40,0.2)" }}>
+                  <button onClick={() => onGoToFloor(floor)} style={{ background: "transparent", border: "none", color: "#fff", fontWeight: 700, fontSize: "12.5px", cursor: "pointer", fontFamily: "inherit", padding: 0 }} title="Näytä kartalla">
+                    krs {floor} · {key.split("#")[1]}
+                  </button>
+                  <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.6)", fontVariantNumeric: "tabular-nums" }}>
+                    oma {p2eur(offer.priceCents)} → asiakas <strong style={{ color: "rgb(255,205,40)" }}>{p2eur(offer.counterCents ?? 0)}</strong>
+                  </span>
+                  <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <button disabled={busy} onClick={() => void respond(key, "accept_counter", offer.counterCents, offer.version)} style={{ ...btn, border: "none", background: "rgba(95,224,138,0.85)", color: "#0a0a0c", fontWeight: 700 }}>
+                      Hyväksy {p2eur(offer.counterCents ?? 0)}
+                    </button>
+                    <input
+                      type="number" inputMode="decimal" min={1} step="0.5" placeholder="uusi €"
+                      value={draft}
+                      onChange={(e) => setCounterInputs((m) => ({ ...m, [key]: e.target.value }))}
+                      style={{ width: 70, padding: "6px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.16)", background: "rgba(0,0,0,0.4)", color: "#fff", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "12px", outline: "none" }}
+                    />
+                    <button disabled={busy || !draftCents} onClick={() => draftCents && void respond(key, "propose", draftCents)} style={btn}>Ehdota</button>
+                    <button disabled={busy} onClick={() => void respond(key, "cancel", undefined, offer.version)} style={{ ...btn, color: "rgba(255,155,155,0.9)" }}>Peru</button>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* P2-laskutus + sopimusteksti + tapahtumaloki */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {canSend && b.earnedCents > 0 && (
+            <button disabled={busy} onClick={() => void sendP2Invoice()} style={btn}>
+              💶 Lähetä P2-lasku (kertymä {p2eur(b.earnedCents)})
+            </button>
+          )}
+          <button onClick={() => { setShowTerms((v) => !v); setTermsDraft(p2?.termsText ?? ""); }} style={btn}>
+            📄 Sopimusteksti{p2?.termsText?.trim() ? " ✓" : ""}
+          </button>
+          {(p2?.events?.length ?? 0) > 0 && (
+            <button onClick={() => setShowLog((v) => !v)} style={{ ...btn, marginLeft: "auto", background: "transparent", color: "rgba(255,255,255,0.5)" }}>
+              {showLog ? "Piilota loki" : `Tapahtumaloki (${p2!.events.length})`}
+            </button>
+          )}
+        </div>
+
+        {/* Sopimusteksti — näkyy asiakkaalle tilausehtojen hyväksynnässä.
+            Tänne liitetään valmis P2-soppari; tyhjänä asiakas näkee lyhyen
+            oletustekstin. */}
+        {showTerms && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <textarea
+              value={termsDraft}
+              onChange={(e) => setTermsDraft(e.target.value)}
+              rows={7}
+              placeholder="Liitä tähän P2-sopimuksen teksti — asiakas näkee sen hyväksyessään tilausehdot seurantalinkissä. Tyhjänä käytetään lyhyttä oletustekstiä."
+              style={{ width: "100%", boxSizing: "border-box", resize: "vertical", padding: "11px 13px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(0,0,0,0.35)", color: "#fff", fontSize: "12.5px", lineHeight: 1.6, outline: "none", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}
+            />
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button
+                disabled={busy || termsDraft === (p2?.termsText ?? "")}
+                onClick={() => void run(() => api.p2SetPhase(jobId, { termsText: termsDraft, by }), "Sopimusteksti tallennettu")}
+                style={{ ...btn, border: "none", background: "#fff", color: "#0a0a0c", fontWeight: 700, opacity: termsDraft === (p2?.termsText ?? "") ? 0.5 : 1 }}
+              >
+                Tallenna sopimusteksti
+              </button>
+              <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)" }}>
+                Asiakas hyväksyy tämän nimellä + aikaleimalla; jokainen hintalukitus kirjautuu lokiin.
+              </span>
+            </div>
+          </div>
+        )}
+        {showLog && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 5, maxHeight: 260, overflowY: "auto" }}>
+            {p2!.events.slice(0, 40).map((e, i) => (
+              <div key={i} style={{ display: "flex", gap: 8, fontSize: "11.5px", color: "rgba(255,255,255,0.6)", fontVariantNumeric: "tabular-nums" }}>
+                <span style={{ flexShrink: 0, fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", color: "rgba(255,255,255,0.35)" }}>
+                  {new Date(e.ts).toLocaleString("fi-FI", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })}
+                </span>
+                <span style={{ fontWeight: 600, color: e.actor === "customer" ? "rgb(255,205,40)" : "#9ff0bd" }}>{e.actor === "customer" ? "asiakas" : e.actor}</span>
+                <span>
+                  {e.action === "propose" ? "ehdotti" : e.action === "accept" ? "hyväksyi" : e.action === "counter" ? "vastatarjosi" : e.action === "accept_counter" ? "hyväksyi vastatarjouksen" : e.action === "decline" ? "hylkäsi" : e.action === "cancel" ? "perui" : e.action === "unlock" ? "avasi lukituksen" : "lisäsi pisteen"}
+                  {" "}{e.key}{e.priceCents ? ` · ${p2eur(e.priceCents)}` : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Ehdotettujen/lukittujen yleiskuva pienenä listana */}
+        {b.pricedCount > 0 && (() => {
+          const byStatus: Record<string, number> = {};
+          for (const o of Object.values(p2?.offers ?? {})) byStatus[o.status] = (byStatus[o.status] || 0) + 1;
+          return (
+            <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)" }}>
+              Tilat: {Object.entries(byStatus).map(([s, n]) => `${P2_STATUS_LABEL[s] ?? s} ${n}`).join(" · ")}
+            </div>
+          );
+        })()}
+
+        {msg && <div style={{ fontSize: "12px", color: "rgba(255,220,160,0.95)" }}>{msg}</div>}
+      </div>
+    </Section>
   );
 }
 

@@ -196,6 +196,11 @@ export default function FloorSetupTool({ project, saving, onSave }: Props) {
                   🔒 Sovittu sopimuksessa: 37,50 € / punainen ikkuna, katto 6300 €. Ei muokattavissa.
                 </p>
               )}
+              {draft.p2?.enabled && (
+                <p style={{ fontSize: "10.5px", color: "rgba(255,220,110,0.75)", marginTop: "6px", lineHeight: 1.5 }}>
+                  P2: keltaiset ikkunat hinnoitellaan ikkunakohtaisesti projektinäkymässä (€ Hinnoittele).
+                </p>
+              )}
             </div>
             <div>
               <label style={labelStyle}>POHJAKUVAN POLKU (planBase)</label>

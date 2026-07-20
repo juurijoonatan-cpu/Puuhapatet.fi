@@ -8,6 +8,39 @@ import type { MemberAgreementSignature } from "@shared/member-agreement";
 import type { CrewMember, CrewMemberStats, CrewProfile, CrewAgreementSignature } from "@shared/crew";
 import type { WorkerAgreement } from "@shared/worker-agreements";
 import type { EraInvoiceKind, EraInvoiceTila } from "@shared/era-billing";
+import type { P2Billing, P2OfferStatus, P2State } from "@shared/p2";
+
+// ─── P2 (keltaiset ikkunat) — per-ikkuna hinnoittelu + neuvottelu ──────────────
+
+/** One yellow window's offer as exposed to the customer (prices only). */
+export interface P2PublicOffer {
+  status: P2OfferStatus;
+  priceCents: number;
+  counterCents: number | null;
+  version: number;
+  lockedCents: number | null;
+  lockedAt: number | null;
+}
+
+/** Customer-visible slice of computeP2Billing — no worker cost/margin. */
+export interface P2PublicBilling {
+  yellowTotal: number;
+  proposedCount: number;
+  counteredCount: number;
+  lockedCount: number;
+  lockedSumCents: number;
+  lockedWashedCount: number;
+  earnedCents: number;
+}
+
+export interface P2PublicView {
+  enabled: boolean;
+  termsAccepted: boolean;
+  termsAcceptorName: string | null;
+  termsText: string | null;
+  offers: Record<string, P2PublicOffer>;
+  billing: P2PublicBilling;
+}
 
 // Worker dashboard payload — the gig price/cap is intentionally absent.
 export interface WorkerView {
@@ -70,6 +103,13 @@ export interface WorkerView {
   leaderboard: { id: string; name: string; washed: number; windowsPerHour: number; hours: number; isMe: boolean }[];
   /** This worker's own logged expenses (other workers' costs never included). */
   expenses: import("@shared/project").ProjExpense[];
+  /** P2 (keltaiset ikkunat): washable locked keys + the worker's OWN payout per
+   *  window. Customer prices and the share % are never sent. Null = no P2. */
+  p2: {
+    enabled: boolean;
+    lockedKeys: string[];
+    payoutByKey: Record<string, number>;
+  } | null;
 }
 
 export interface CrewOnboardPayload {
@@ -294,6 +334,8 @@ export interface GigPublicView {
     contact: string | null;
     address: string | null;
   } | null;
+  /** P2 (keltaiset ikkunat): per-window price negotiation. Null until priced. */
+  p2: P2PublicView | null;
 }
 
 export interface GigSignPayload {
@@ -931,9 +973,45 @@ export const api = {
     eInvoice?: string;
     paymentNumber?: number;
     sendMethod?: "email" | "verkkolasku";
+    /** "p2" = lisäikkunoiden (keltaiset) lasku — ei koske P1:n eriin. */
+    scope?: "p2";
+    /** P2: eksplisiittinen summa (oletus: koko laskuttamaton P2-kertymä). */
+    amountCents?: number;
   }) => request<{ ok: boolean; id?: string; amountCents: number; gigData: GigData }>(
     "POST", `/api/jobs/${jobId}/gig/invoice`, data,
   ),
+
+  // ─── P2 (keltaiset ikkunat) — asiakkaan neuvottelu seurantalinkistä ─────────
+  p2AcceptTerms: (token: string, acceptorName: string) =>
+    request<{ ok: boolean; p2: P2PublicView }>("POST", `/api/gig/${token}/p2/terms`, { acceptorName }),
+
+  p2Accept: (token: string, items: { key: string; priceCents: number; version: number }[]) =>
+    request<{ ok: boolean; locked: string[]; conflicts: { key: string; error: string; offer: P2PublicOffer | null }[]; p2: P2PublicView }>(
+      "POST", `/api/gig/${token}/p2/accept`, { items },
+    ),
+
+  p2Counter: (token: string, key: string, counterCents: number, version: number) =>
+    request<{ ok: boolean; p2: P2PublicView }>("POST", `/api/gig/${token}/p2/counter`, { key, counterCents, version }),
+
+  p2Decline: (token: string, key: string, version: number) =>
+    request<{ ok: boolean; p2: P2PublicView }>("POST", `/api/gig/${token}/p2/decline`, { key, version }),
+
+  p2AddPoint: (token: string, floor: string, x: number, y: number) =>
+    request<{ ok: boolean; key: string; p2: P2PublicView }>("POST", `/api/gig/${token}/p2/add-point`, { floor, x, y }),
+
+  // ─── P2 — adminin hinnoittelu + neuvottelun hallinta ─────────────────────────
+  p2SetPhase: (jobId: number, data: { enabled?: boolean; workerSharePct?: number; termsText?: string; by?: string }) =>
+    request<{ ok: boolean; p2: P2State; p2Billing: P2Billing }>("POST", `/api/jobs/${jobId}/p2/phase`, data),
+
+  p2Propose: (jobId: number, data: { keys: string[]; priceCents: number; by?: string }) =>
+    request<{ ok: boolean; applied: string[]; skipped: { key: string; reason: string }[]; p2: P2State; p2Billing: P2Billing }>(
+      "POST", `/api/jobs/${jobId}/p2/propose`, data,
+    ),
+
+  p2Respond: (jobId: number, data: { key: string; action: "accept_counter" | "cancel" | "unlock" | "propose"; priceCents?: number; version?: number; by?: string }) =>
+    request<{ ok: boolean; offer: unknown; p2: P2State; p2Billing: P2Billing }>(
+      "POST", `/api/jobs/${jobId}/p2/respond`, data,
+    ),
 
   /** Email a comprehensive payment report (instalments + crew payouts + expenses
    *  + margin) for a gig to the founders. Manager-only summary, never the customer. */
@@ -947,12 +1025,12 @@ export const api = {
 
   // ─── Project / floor-plan window tool (FR8 projektinäkymä) ──────────────────
   getProject: (jobId: number) =>
-    request<{ ok: boolean; project: ProjectData | null; totals?: ProjTotals; workerStats?: WorkerStat[] }>(
+    request<{ ok: boolean; project: ProjectData | null; totals?: ProjTotals; workerStats?: WorkerStat[]; p2Billing?: P2Billing }>(
       "GET", `/api/jobs/${jobId}/project`,
     ),
 
   updateProject: (jobId: number, projectData: ProjectData) =>
-    request<{ ok: boolean; project: ProjectData; totals: ProjTotals; workerStats: WorkerStat[] }>(
+    request<{ ok: boolean; project: ProjectData; totals: ProjTotals; workerStats: WorkerStat[]; p2Billing?: P2Billing }>(
       "PATCH", `/api/jobs/${jobId}/project`, { projectData },
     ),
 

@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request } from "express";
 import { type Server } from "http";
 import { eq, desc, sql, ne, and, isNotNull, isNull, inArray } from "drizzle-orm";
 import { Resend } from "resend";
@@ -33,7 +33,7 @@ import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN, MAX_CREW_DOC_LEN, totalPaidPayoutCents, retentionFromDate,
   resolveWorkerLegalName,
-  type CrewMember, type CrewDocument,
+  type CrewMember, type CrewDocument, type CrewPayout,
 } from "@shared/crew";
 import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED, requiredAgreementIdsForSet, resolveAgreementSet } from "@shared/worker-agreements";
 import {
@@ -6373,6 +6373,40 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // Builds generateWorkerInvoicePdf's params for an already-PAID payout, from
+  // its frozen snapshot (tax/buyer/billing) — falling back to a fresh
+  // computation for older payouts that predate the snapshot. Shared by every
+  // place that (re)generates a paid payout's invoice PDF: the worker's own
+  // download, the reconciliation job, and the admin's free-form invoice email.
+  function payoutInvoicePdfParams(member: CrewMember, payout: CrewPayout): Parameters<typeof generateWorkerInvoicePdf>[0] {
+    const billing = payout.billing || {};
+    const answers = member.profile?.answers;
+    const tax = payout.tax ?? computeTax({
+      laborCents: payout.amountCents,
+      vatStatus: readVatStatus(answers),
+      inPrepaymentRegister: readInPrepaymentRegister(answers),
+      payeeType: readPayeeType(answers),
+    });
+    const buyer = payout.buyer ?? resolveBuyer(null);
+    const invoiceDate = new Date(payout.paidAt || payout.createdAt).toLocaleDateString("fi-FI");
+    return {
+      invoiceNo: payout.invoiceNo || `${member.id.toUpperCase().slice(0, 6)}-01`,
+      workerName: resolveWorkerLegalName(member) || billing.name || member.profile?.fullName || member.name,
+      workerYTunnus: billing.yTunnus || member.profile?.yTunnus || undefined,
+      workerAddress: billing.address || member.profile?.city || undefined,
+      workerIban: billing.iban || member.profile?.iban || undefined,
+      windows: payout.windows,
+      amountCents: payout.amountCents,
+      note: payout.note,
+      invoiceDate,
+      paidDate: invoiceDate,
+      tax,
+      buyer,
+      acceptedAt: payout.approvedAt,
+      expenses: payout.expenses,
+    };
+  }
+
   // Worker downloads their own subcontractor invoice (PDF) for a PAID payout.
   // Regenerated on demand from the payout's stored snapshot (tax/buyer/billing),
   // so the invoice the worker sees on their dashboard matches the emailed copy.
@@ -6384,33 +6418,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const payout = (member.payouts || []).find((p) => p.id === String(req.params.payoutId));
       if (!payout || payout.status !== "maksettu") return res.status(404).json({ error: "Laskua ei löytynyt" });
 
-      const billing = payout.billing || {};
-      const answers = member.profile?.answers;
-      // Prefer the snapshot captured at approval/payment; fall back to a fresh computation.
-      const tax = payout.tax ?? computeTax({
-        laborCents: payout.amountCents,
-        vatStatus: readVatStatus(answers),
-        inPrepaymentRegister: readInPrepaymentRegister(answers),
-        payeeType: readPayeeType(answers),
-      });
-      const buyer = payout.buyer ?? resolveBuyer(null);
-      const invoiceDate = new Date(payout.paidAt || payout.createdAt).toLocaleDateString("fi-FI");
-      const pdf = await generateWorkerInvoicePdf({
-        invoiceNo: payout.invoiceNo || `${member.id.toUpperCase().slice(0, 6)}-01`,
-        workerName: resolveWorkerLegalName(member) || billing.name || member.profile?.fullName || member.name,
-        workerYTunnus: billing.yTunnus || member.profile?.yTunnus || undefined,
-        workerAddress: billing.address || member.profile?.city || undefined,
-        workerIban: billing.iban || member.profile?.iban || undefined,
-        windows: payout.windows,
-        amountCents: payout.amountCents,
-        note: payout.note,
-        invoiceDate,
-        paidDate: invoiceDate,
-        tax,
-        buyer,
-        acceptedAt: payout.approvedAt,
-        expenses: payout.expenses,
-      });
+      const pdf = await generateWorkerInvoicePdf(payoutInvoicePdfParams(member, payout));
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", `inline; filename="lasku-${payout.invoiceNo || payout.id}.pdf"`);
       res.send(pdf);
@@ -7560,19 +7568,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           if (logRow) continue;
           attempted++;
           try {
-            const billing = payout.billing || {};
-            const workerName = resolveWorkerLegalName(member) || billing.name || member.profile?.fullName || member.name;
-            const invoiceDate = payout.paidAt ? new Date(payout.paidAt).toLocaleDateString("fi-FI") : new Date().toLocaleDateString("fi-FI");
-            const pdf = await generateWorkerInvoicePdf({
-              invoiceNo: payout.invoiceNo, workerName, workerYTunnus: billing.yTunnus, workerAddress: billing.address, workerIban: billing.iban,
-              windows: payout.windows, amountCents: payout.amountCents, note: payout.note, invoiceDate, paidDate: invoiceDate,
-              tax: payout.tax, buyer: payout.buyer, acceptedAt: payout.approvedAt, expenses: payout.expenses,
-            });
+            const params = payoutInvoicePdfParams(member, payout);
+            const pdf = await generateWorkerInvoicePdf(params);
             await syncPayoutRecord({
               jobId: job.id, memberId: member.id, payoutId: payout.id,
-              workerName, workerYTunnus: billing.yTunnus, workerEmail: member.profile?.email,
-              invoiceNo: payout.invoiceNo, invoiceDate, windows: payout.windows, note: payout.note,
-              buyer: payout.buyer, tax: payout.tax, pdfBuffer: pdf,
+              workerName: params.workerName, workerYTunnus: params.workerYTunnus, workerEmail: member.profile?.email,
+              invoiceNo: params.invoiceNo, invoiceDate: params.invoiceDate, windows: payout.windows, note: payout.note,
+              buyer: params.buyer, tax: params.tax, pdfBuffer: pdf,
             });
           } catch (e) {
             console.error("reconcileMissingPayoutSyncs: payout retry failed", payout.id, e);
@@ -7590,6 +7592,175 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
       const result = await reconcileMissingPayoutSyncs();
       res.json({ ok: true, ...result });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ─── Admin: browse + freely email ANY invoice PDF the system can produce ────
+  // A johtaja can pick any existing FR8-lasku (erälasku or a paid tekijän
+  // maksulasku, across every keikka) and re-send it — or send no PDF at all —
+  // as a custom email to any address. Founders always get a copy (same
+  // WORKER_NOTIFICATION_EMAILS + INVOICE_BCC_EMAILS convention every other
+  // invoice email in this app already uses).
+  function isFounderCaller(req: Request): boolean {
+    const caller = (req as any).admin as AdminTokenPayload | undefined;
+    const sub = String(caller?.sub ?? "").toLowerCase();
+    return caller?.role === "host" || FOUNDER_IDS.includes(sub);
+  }
+
+  interface InvoiceListItem {
+    ref: string;
+    type: "era" | "payout";
+    jobId: number;
+    jobLabel: string;
+    partyLabel: string;
+    invoiceNumber: string | null;
+    dateStr: string;
+    totalCents: number;
+    tila?: string;
+    sortTs: number;
+  }
+
+  // Lists every invoice PDF the system can regenerate: FR8 era invoices
+  // (any tila — a founder may want to (re)send a draft too) and paid worker
+  // payout invoices, across ALL keikat. Nothing is stored/rendered here —
+  // each PDF is only actually built when the founder picks it to send.
+  app.get("/api/admin/invoices", async (req, res) => {
+    if (!isFounderCaller(req)) return res.status(403).json({ error: "Vain johtajat voivat selata kaikkia laskuja." });
+    try {
+      const allJobs = await db.select().from(jobs);
+      const jobById = new Map(allJobs.map((j) => [j.id, j]));
+      const customerIds = Array.from(new Set(allJobs.map((j) => j.customerId)));
+      const custRows = customerIds.length ? await db.select().from(customers).where(inArray(customers.id, customerIds)) : [];
+      const custById = new Map(custRows.map((c) => [c.id, c]));
+      const jobLabel = (j: typeof jobs.$inferSelect) => {
+        const cust = custById.get(j.customerId);
+        return `${cust?.companyName || cust?.name || "Asiakas"} — ${j.description}`.slice(0, 160);
+      };
+
+      const items: InvoiceListItem[] = [];
+
+      const eraRows = await db.select().from(eraInvoices).orderBy(desc(eraInvoices.createdAt));
+      for (const row of eraRows) {
+        const job = jobById.get(row.jobId);
+        if (!job) continue;
+        const project = parseProject(job.projectData ?? null);
+        let partyLabel: string;
+        if (row.kind === "tekija") {
+          let rivit: any = {};
+          try { rivit = JSON.parse(row.rivit || "{}"); } catch { /* jätä tyhjäksi */ }
+          const member = (project?.crew || []).find((m) => m.id === row.senderId);
+          const name = resolveWorkerLegalName(member) || rivit?.input?.name || member?.name || row.senderId;
+          partyLabel = `${name} → ${resolveBuyer(row.recipientId).name}`;
+        } else {
+          partyLabel = `${resolveBuyer(row.senderId).name} → ${resolveBuyer(row.recipientId).name}`;
+        }
+        const ts = row.sentAt ? new Date(row.sentAt).getTime() : new Date(row.createdAt).getTime();
+        items.push({
+          ref: `era:${row.id}`, type: "era", jobId: row.jobId, jobLabel: jobLabel(job),
+          partyLabel, invoiceNumber: row.invoiceNumber, dateStr: new Date(ts).toLocaleDateString("fi-FI"),
+          totalCents: row.totalCents, tila: row.tila, sortTs: ts,
+        });
+      }
+
+      for (const job of allJobs) {
+        const project = parseProject(job.projectData ?? null);
+        if (!project) continue;
+        for (const member of project.crew || []) {
+          for (const payout of member.payouts || []) {
+            if (payout.status !== "maksettu") continue;
+            const name = resolveWorkerLegalName(member) || payout.billing?.name || member.profile?.fullName || member.name;
+            const ts = payout.paidAt || payout.createdAt;
+            items.push({
+              ref: `payout:${job.id}:${member.id}:${payout.id}`, type: "payout", jobId: job.id, jobLabel: jobLabel(job),
+              partyLabel: `${name} → ${payout.buyer?.name || "Puuhapatet"}`,
+              invoiceNumber: payout.invoiceNo || null, dateStr: new Date(ts).toLocaleDateString("fi-FI"),
+              totalCents: payout.tax?.payableCents ?? payout.amountCents, sortTs: ts,
+            });
+          }
+        }
+      }
+
+      items.sort((a, b) => b.sortTs - a.sortTs);
+      res.json({ ok: true, invoices: items });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Sends a free-text email to any address, optionally with one existing
+  // invoice PDF attached (regenerated on demand from `invoiceRef`, exactly
+  // like the download routes above — never a stale/stored file). Works with
+  // NO invoiceRef too (plain message, no attachment). Founders are CC'd always.
+  app.post("/api/admin/invoices/email", async (req, res) => {
+    if (!isFounderCaller(req)) return res.status(403).json({ error: "Vain johtajat voivat lähettää laskuja." });
+    if (!resend) return res.status(503).json({ error: "Sähköposti ei ole käytössä tässä ympäristössä (RESEND_API_KEY puuttuu)." });
+    try {
+      const toRaw: unknown[] = Array.isArray(req.body?.to) ? req.body.to : [];
+      const to = Array.from(new Set(
+        toRaw.map((e) => String(e).trim().toLowerCase()).filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)),
+      )).slice(0, 20);
+      if (to.length === 0) return res.status(400).json({ error: "Vähintään yksi kelvollinen vastaanottajan sähköposti vaaditaan." });
+      const message = String(req.body?.message ?? "").trim().slice(0, 10000);
+      if (!message) return res.status(400).json({ error: "Viesti ei voi olla tyhjä." });
+      const subjectInput = String(req.body?.subject ?? "").trim().slice(0, 200);
+      const ref = req.body?.invoiceRef ? String(req.body.invoiceRef).trim().slice(0, 80) : "";
+
+      let attachment: { filename: string; content: Buffer } | undefined;
+      let refLabel = "";
+
+      if (ref) {
+        const [kind, ...rest] = ref.split(":");
+        if (kind === "era") {
+          const invoiceId = Number(rest[0]);
+          const [row] = await db.select().from(eraInvoices).where(eq(eraInvoices.id, invoiceId));
+          if (!row) return res.status(404).json({ error: "Laskua ei löydy." });
+          const loaded = await loadJobProject(row.jobId);
+          if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy." });
+          const pdf = await generateEraInvoicePdf(buildEraInvoicePdfParams(row, loaded.project));
+          attachment = { filename: `lasku-${row.invoiceNumber || row.id}.pdf`, content: pdf };
+          refLabel = `Lasku ${row.invoiceNumber || row.id}`;
+        } else if (kind === "payout") {
+          const [jobIdStr, memberId, payoutId] = rest;
+          const loaded = await loadJobProject(Number(jobIdStr));
+          if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy." });
+          const member = (loaded.project.crew || []).find((m) => m.id === memberId);
+          const payout = member?.payouts?.find((p) => p.id === payoutId);
+          if (!member || !payout || payout.status !== "maksettu") return res.status(404).json({ error: "Laskua ei löydy." });
+          const params = payoutInvoicePdfParams(member, payout);
+          const pdf = await generateWorkerInvoicePdf(params);
+          attachment = { filename: `lasku-${params.invoiceNo}.pdf`, content: pdf };
+          refLabel = `Lasku ${params.invoiceNo}`;
+        } else {
+          return res.status(400).json({ error: "Tuntematon laskuviite." });
+        }
+      }
+
+      // Founders always get a copy, same as every other invoice email — but
+      // never duplicate an address the sender already typed into "to".
+      const founderCc = Array.from(new Set([...WORKER_NOTIFICATION_EMAILS, ...INVOICE_BCC_EMAILS]))
+        .filter((e) => e && !to.includes(e.toLowerCase()));
+
+      const subject = subjectInput || (refLabel ? `${refLabel} — Puuhapatet` : "Viesti — Puuhapatet");
+      const html = `<!DOCTYPE html><html lang="fi"><body style="margin:0;background:#F6F4EE;font-family:sans-serif">
+        <div style="max-width:560px;margin:24px auto;background:#fff;border:1px solid #E4E1D7;border-radius:14px;padding:28px 32px">
+          <p style="margin:0 0 4px;font-size:18px;font-weight:700;color:#1A1A1A">Puuhapatet</p>
+          <p style="white-space:pre-line;margin:18px 0 0;font-size:14px;color:#1A1A1A;line-height:1.7">${escapeHtml(message)}</p>
+          ${attachment ? `<p style="margin:20px 0 0;font-size:12.5px;color:#8C8A82">Liitteenä: ${escapeHtml(refLabel)} (PDF)</p>` : ""}
+        </div>
+      </body></html>`;
+
+      const result = await resend.emails.send({
+        from: FROM_EMAIL,
+        to,
+        ...(founderCc.length ? { cc: founderCc } : {}),
+        subject,
+        html,
+        ...(attachment ? { attachments: [{ filename: attachment.filename, content: attachment.content.toString("base64") }] } : {}),
+      });
+
+      res.json({ ok: true, emailId: result.data?.id });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

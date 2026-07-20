@@ -122,7 +122,7 @@ export const USERS: AdminProfile[] = [
     // kaikilla muillakin; kirjautuessa pyydetään vaihtamaan oma salasana. Crew-
     // linkitys: linkedUserId = "oliver" tai etunimimatch (Oliver → oliver).
     id: "oliver",
-    name: "Oliver",
+    name: "Oliver Nieminen",
     role: "STAFF",
     dashboardOnly: true,
   },
@@ -135,7 +135,7 @@ export const USERS: AdminProfile[] = [
     // kirjautuessa pyydetään vaihtamaan se. Crew-linkitys: linkedUserId = "oona"
     // tai etunimimatch (Oona → oona) hoituu automaattisesti.
     id: "oona",
-    name: "Oona",
+    name: "Oona Räätäri",
     role: "STAFF",
     photoUrl: "/fr8/oona.jpg",
     dashboardOnly: true,
@@ -150,7 +150,7 @@ export const USERS: AdminProfile[] = [
     // salasana. Crew-linkitys: linkedUserId = "doma" tai etunimimatch (Doma → doma)
     // hoituu automaattisesti.
     id: "doma",
-    name: "Doma",
+    name: "Tomas Leinonen",
     role: "STAFF",
     photoUrl: "/fr8/doma.jpg",
     dashboardOnly: true,

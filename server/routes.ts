@@ -32,6 +32,7 @@ import { computeP2Billing, customerAddedKeys, emptyP2State, isP2Washable, p2Tran
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN, MAX_CREW_DOC_LEN, totalPaidPayoutCents, retentionFromDate,
+  resolveWorkerLegalName,
   type CrewMember, type CrewDocument,
 } from "@shared/crew";
 import { WORKER_AGREEMENTS, REQUIRED_AGREEMENT_IDS, WORKER_AGREEMENT_VERSION, WORKER_AGREEMENTS_GATED, requiredAgreementIdsForSet, resolveAgreementSet } from "@shared/worker-agreements";
@@ -1870,7 +1871,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const input = rivit.input || {};
       const computed = rivit.computed || {};
       const member = (project.crew || []).find((m) => m.id === row.senderId);
-      const workerName = input.name || member?.name || row.senderId;
+      const workerName = resolveWorkerLegalName(member) || input.name || member?.name || row.senderId;
       const answers = member?.profile?.answers;
       const ansaittuCents = Math.round(Number(computed.ansaittuCents) || 0);
       const ennakkoCents = Math.max(0, Math.round(Number(input.ennakkoCents) || 0));
@@ -3867,7 +3868,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     joonatan: { name: process.env.WORKER_JOONATAN_NAME || "Joonatan Juuri",  email: process.env.WORKER_JOONATAN_EMAIL || "joonatan@puuhapatet.fi" },
     matias:   { name: process.env.WORKER_MATIAS_NAME  || "Matias Pitkänen", email: process.env.WORKER_MATIAS_EMAIL  || "matias@puuhapatet.fi" },
     petrus:   { name: "Petrus Aalto",      email: process.env.WORKER_PETRUS_EMAIL || "petrus.aalto@icloud.com" },
-    oona:     { name: "Oona",              email: process.env.WORKER_OONA_EMAIL   || null },
+    jani:     { name: "Jani Ihalainen",    email: process.env.WORKER_JANI_EMAIL   || null },
+    oliver:   { name: "Oliver Nieminen",   email: process.env.WORKER_OLIVER_EMAIL || null },
+    oona:     { name: "Oona Räätäri",      email: process.env.WORKER_OONA_EMAIL   || null },
+    doma:     { name: "Tomas Leinonen",    email: process.env.WORKER_DOMA_EMAIL   || null },
   };
 
   // POST /api/jobs/:id/invite — add a worker to pendingWorkers, send email invite
@@ -6393,7 +6397,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const invoiceDate = new Date(payout.paidAt || payout.createdAt).toLocaleDateString("fi-FI");
       const pdf = await generateWorkerInvoicePdf({
         invoiceNo: payout.invoiceNo || `${member.id.toUpperCase().slice(0, 6)}-01`,
-        workerName: billing.name || member.profile?.fullName || member.name,
+        workerName: resolveWorkerLegalName(member) || billing.name || member.profile?.fullName || member.name,
         workerYTunnus: billing.yTunnus || member.profile?.yTunnus || undefined,
         workerAddress: billing.address || member.profile?.city || undefined,
         workerIban: billing.iban || member.profile?.iban || undefined,
@@ -7369,7 +7373,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
 
       const billing = payout.billing || {};
-      const workerName = billing.name || member.profile?.fullName || member.name;
+      const workerName = resolveWorkerLegalName(member) || billing.name || member.profile?.fullName || member.name;
       const workerYTunnus = billing.yTunnus || member.profile?.yTunnus || undefined;
       const workerIban = billing.iban || member.profile?.iban || undefined;
       const workerAddress = billing.address || member.profile?.city || undefined;
@@ -7557,7 +7561,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           attempted++;
           try {
             const billing = payout.billing || {};
-            const workerName = billing.name || member.profile?.fullName || member.name;
+            const workerName = resolveWorkerLegalName(member) || billing.name || member.profile?.fullName || member.name;
             const invoiceDate = payout.paidAt ? new Date(payout.paidAt).toLocaleDateString("fi-FI") : new Date().toLocaleDateString("fi-FI");
             const pdf = await generateWorkerInvoicePdf({
               invoiceNo: payout.invoiceNo, workerName, workerYTunnus: billing.yTunnus, workerAddress: billing.address, workerIban: billing.iban,

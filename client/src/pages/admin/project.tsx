@@ -419,6 +419,22 @@ export default function AdminProjectPage() {
     }
   }, [jobId]);
 
+  // ── P2 (keltaiset ikkunat) — per-window pricing handlers ────────────────────
+  // Dedikoidut /p2-reitit palauttavat tallennetun p2-tilan; se päivitetään
+  // paikalliseen projektiin sellaisenaan (geneerinen autosave ei koske p2:een —
+  // serveri liittää aina oman kopionsa takaisin, ks. server/routes.ts).
+  // HUOM: nämä hookit PITÄÄ olla ennen alla olevia early returneja (loading/
+  // !project) — hookit eivät saa suorittua ehdollisesti (React #310).
+  const applyP2 = useCallback((p2: P2State) => {
+    setProject((cur) => (cur ? { ...cur, p2 } : cur));
+    latest.current = latest.current ? { ...latest.current, p2 } : latest.current;
+  }, []);
+  const onP2Propose = useCallback(async (keys: string[], priceCents: number) => {
+    const res = await api.p2Propose(jobId, { keys, priceCents, by: currentWorker });
+    if (res.ok && res.data) applyP2(res.data.p2);
+    else setError(res.error || "Hinnoittelu epäonnistui");
+  }, [jobId, currentWorker, applyP2]);
+
   // ── Render ──────────────────────────────────────────────────────────────────
   const shell = (children: React.ReactNode) => (
     <div className="fr8-root" style={{ position: "fixed", inset: 0, background: "#060607", color: "#fff", overflow: "hidden", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>
@@ -596,19 +612,6 @@ export default function AdminProjectPage() {
       return next;
     });
   };
-  // ── P2 (keltaiset ikkunat) — per-window pricing handlers ────────────────────
-  // Dedikoidut /p2-reitit palauttavat tallennetun p2-tilan; se päivitetään
-  // paikalliseen projektiin sellaisenaan (geneerinen autosave ei koske p2:een —
-  // serveri liittää aina oman kopionsa takaisin, ks. server/routes.ts).
-  const applyP2 = useCallback((p2: P2State) => {
-    setProject((cur) => (cur ? { ...cur, p2 } : cur));
-    latest.current = latest.current ? { ...latest.current, p2 } : latest.current;
-  }, []);
-  const onP2Propose = useCallback(async (keys: string[], priceCents: number) => {
-    const res = await api.p2Propose(jobId, { keys, priceCents, by: currentWorker });
-    if (res.ok && res.data) applyP2(res.data.p2);
-    else setError(res.error || "Hinnoittelu epäonnistui");
-  }, [jobId, currentWorker, applyP2]);
 
   // Display-name map + this gig's pickable crew (used by both the "who washed"
   // and "default washer" pickers).

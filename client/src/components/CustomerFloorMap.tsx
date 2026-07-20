@@ -97,6 +97,7 @@ export interface P2CustomerActions {
   counter: (key: string, counterCents: number, version: number) => Promise<string | null>;
   decline: (key: string, version: number) => Promise<string | null>;
   addPoint: (floor: string, x: number, y: number) => Promise<string | null>;
+  removePoint: (key: string) => Promise<string | null>;
   /** Terms not accepted yet → the parent opens the terms dialog. */
   requireTerms: () => void;
 }
@@ -131,12 +132,21 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
   const [p2Busy, setP2Busy] = useState(false);
   const [p2Error, setP2Error] = useState<string | null>(null);
   const [addMode, setAddMode] = useState(false);
+  // When planning phase-2, let the customer focus the map on just the extra
+  // (yellow) windows — the reds are done, so this keeps the negotiation clean.
+  const [onlyYellow, setOnlyYellow] = useState(false);
   const openOfferData = openOffer && p2 ? p2.offers[openOffer.key] ?? null : null;
+  const customerAdded = p2On ? new Set(p2!.customerAddedKeys) : new Set<string>();
+  const openOfferIsMine = openOffer ? customerAdded.has(openOffer.key) : false;
   // Open proposals on THIS floor (for the one-tap batch accept).
   const floorProposed = p2On
     ? points.filter((pt) => pt.p === 2 && p2!.offers[pt.key]?.status === "proposed")
     : [];
   const floorProposedSum = floorProposed.reduce((s, pt) => s + (p2!.offers[pt.key]?.priceCents ?? 0), 0);
+  // Has the customer engaged with phase-2 yet (any yellow priced or added)?
+  // Drives an inviting empty-state nudge that expects them to add windows.
+  const yellowCount = p2On ? points.filter((pt) => pt.p === 2).length : 0;
+  const anyYellowActivity = p2On && points.some((pt) => pt.p === 2 && p2!.offers[pt.key]);
 
   const closeOffer = () => { setOpenOffer(null); setShowCounterInput(false); setCounterInput(""); setP2Error(null); };
 
@@ -152,7 +162,16 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
 
   return (
     <div style={{ fontFamily: FONT, color: T.ink }}>
-      <style>{`@keyframes cfmZone{0%,100%{box-shadow:0 0 0 4px rgba(62,124,89,0.16)}50%{box-shadow:0 0 0 9px rgba(62,124,89,0.04)}}`}</style>
+      <style>{`
+        @keyframes cfmZone{0%,100%{box-shadow:0 0 0 4px rgba(62,124,89,0.16)}50%{box-shadow:0 0 0 9px rgba(62,124,89,0.04)}}
+        @keyframes cfmPillPop{0%{transform:translate(-50%,9px) scale(0.4);opacity:0}60%{transform:translate(-50%,9px) scale(1.18)}100%{transform:translate(-50%,9px) scale(1);opacity:1}}
+        @keyframes cfmLockPulse{0%{box-shadow:0 1px 4px rgba(0,0,0,0.28),0 0 0 0 rgba(62,124,89,0.5)}70%{box-shadow:0 1px 4px rgba(0,0,0,0.28),0 0 0 10px rgba(62,124,89,0)}100%{box-shadow:0 1px 4px rgba(0,0,0,0.28),0 0 0 0 rgba(62,124,89,0)}}
+        @keyframes cfmAddNudge{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
+        @keyframes cfmMineHalo{0%,100%{box-shadow:0 0 0 2px #fff,0 0 0 4px rgba(31,59,87,0.35)}50%{box-shadow:0 0 0 2px #fff,0 0 0 7px rgba(31,59,87,0.08)}}
+        @media (prefers-reduced-motion: reduce){
+          [data-cfm-anim]{animation:none !important}
+        }
+      `}</style>
 
       {/* "Work happening here now" banner */}
       {activeZone && (
@@ -186,8 +205,20 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
         </div>
         {/* Progress as a percentage only — the customer never sees raw window
             counts (those are internal; the agreed price is fixed regardless). */}
-        <div style={{ fontSize: 13, color: T.muted }}>
-          Pesty <strong style={{ color: T.ink, fontVariantNumeric: "tabular-nums" }}>{pct} %</strong> tästä kerroksesta
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          {p2On && yellowCount > 0 && (
+            <button
+              onClick={() => setOnlyYellow((v) => !v)}
+              title="Näytä kartalla vain lisäikkunat (keltaiset)"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 999, cursor: "pointer", fontFamily: FONT, fontSize: 12, fontWeight: 600, border: `1px solid ${onlyYellow ? "#E0A800" : T.hair}`, background: onlyYellow ? "rgba(224,168,0,0.14)" : T.card, color: onlyYellow ? "#8A6A00" : T.muted }}
+            >
+              <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#E0A800" }} />
+              {onlyYellow ? "Näytä kaikki" : "Vain lisäikkunat"}
+            </button>
+          )}
+          <div style={{ fontSize: 13, color: T.muted }}>
+            Pesty <strong style={{ color: T.ink, fontVariantNumeric: "tabular-nums" }}>{pct} %</strong> tästä kerroksesta
+          </div>
         </div>
       </div>
 
@@ -218,10 +249,18 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
               const color = dotColor(pt.p, status);
               const done = status === "pesty";
               const tappable = p2On && pt.p === 2 && !addMode;
+              // Phase-2 focus: the reds are done, so fade them right back and let
+              // the yellow extra windows carry the map. "Vain lisäikkunat" hides
+              // the reds entirely.
+              const isYellow = pt.p === 2;
+              if (p2On && onlyYellow && !isYellow) return null;
+              const mine = p2On && isYellow && customerAdded.has(pt.key);
+              const dimForFocus = p2On && !isYellow;
               const dot = (
                 <span
                   key={pt.key}
                   role={tappable ? "button" : undefined}
+                  data-cfm-anim={mine ? "" : undefined}
                   onClick={tappable ? (e) => {
                     e.stopPropagation();
                     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -229,21 +268,25 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
                     setShowCounterInput(false); setCounterInput(""); setP2Error(null);
                   } : undefined}
                   title={tappable
-                    ? "Lisäikkuna — napauta nähdäksesi hinnan"
+                    ? (mine ? "Ehdottamasi ikkuna — napauta nähdäksesi tila" : "Lisäikkuna — napauta nähdäksesi hinnan")
                     : `Ikkuna · ${done ? "Pesty" : status === "kesken" ? "Kesken" : "Pesemättä"}`}
                   style={{
                     position: "absolute",
                     left: `${pt.x}%`,
                     top: `${pt.y}%`,
                     transform: "translate(-50%, -50%)",
-                    width: 13,
-                    height: 13,
+                    width: isYellow && p2On ? 15 : 13,
+                    height: isYellow && p2On ? 15 : 13,
                     borderRadius: "50%",
                     background: color,
                     border: "2px solid #fff",
-                    boxShadow: done ? `0 0 0 1px ${color}, 0 1px 3px rgba(0,0,0,0.25)` : "0 1px 2px rgba(0,0,0,0.18)",
-                    opacity: status === "ei" ? 0.8 : 1,
+                    boxShadow: mine
+                      ? `0 0 0 2px #fff, 0 0 0 4px rgba(31,59,87,0.35)`
+                      : done ? `0 0 0 1px ${color}, 0 1px 3px rgba(0,0,0,0.25)` : "0 1px 2px rgba(0,0,0,0.18)",
+                    opacity: dimForFocus ? 0.32 : status === "ei" ? 0.8 : 1,
                     cursor: tappable ? "pointer" : undefined,
+                    animation: mine ? "cfmMineHalo 2.4s ease-in-out infinite" : undefined,
+                    transition: "opacity .3s",
                   }}
                 />
               );
@@ -271,6 +314,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
                     setShowCounterInput(false); setCounterInput(""); setP2Error(null);
                   }}
                   title="Näytä hintaehdotus"
+                  data-cfm-anim=""
                   style={{
                     position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`,
                     transform: "translate(-50%, 9px)",
@@ -278,6 +322,11 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
                     background: bg, color: fg, fontFamily: FONT, fontSize: 10, fontWeight: 700,
                     lineHeight: 1.3, whiteSpace: "nowrap", cursor: "pointer",
                     boxShadow: "0 1px 4px rgba(0,0,0,0.28)", zIndex: 5, fontVariantNumeric: "tabular-nums",
+                    // Locked windows get a one-shot celebratory pulse; fresh
+                    // proposals pop in so a new price never appears silently.
+                    animation: offer.status === "locked"
+                      ? "cfmLockPulse 1.2s ease-out"
+                      : "cfmPillPop 0.35s cubic-bezier(0.22,1,0.36,1)",
                   }}
                 >
                   {text}
@@ -337,9 +386,10 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
         </div>
       </div>
 
-      {/* P2 quick actions: batch accept for this floor + propose a new window */}
+      {/* P2 quick actions: batch accept + a prominent "add a window" nudge that
+          openly invites the customer to bring more windows into scope. */}
       {p2On && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+        <div style={{ marginTop: 12 }}>
           {floorProposed.length > 0 && (
             <button
               disabled={p2Busy}
@@ -348,21 +398,45 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
                 priceCents: p2!.offers[pt.key]!.priceCents,
                 version: p2!.offers[pt.key]!.version,
               })))}
-              style={{ padding: "9px 14px", borderRadius: 10, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}
+              style={{ width: "100%", padding: "11px 14px", borderRadius: 11, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1, marginBottom: 8 }}
             >
               Hyväksy kaikki ehdotetut tällä kerroksella ({floorProposed.length} kpl · yht. {eur(floorProposedSum)})
             </button>
           )}
-          <button
-            disabled={p2Busy}
-            onClick={() => {
-              if (!p2?.termsAccepted) { p2Actions!.requireTerms(); return; }
-              setAddMode((v) => !v);
-            }}
-            style={{ padding: "9px 14px", borderRadius: 10, border: `1.5px ${addMode ? "solid #3E7C59" : `solid ${T.hair}`}`, background: addMode ? "#EAF6EE" : T.card, color: addMode ? "#1F5B36" : T.ink, fontFamily: FONT, fontSize: 13, fontWeight: 600, cursor: "pointer" }}
-          >
-            {addMode ? "Napauta karttaa lisätäksesi ikkunan — tai peru tästä" : "➕ Ehdota lisättävää ikkunaa"}
-          </button>
+
+          {/* The add-window CTA: a warm, obvious invitation. When the customer
+              hasn't engaged at all yet, it grows into an empty-state that
+              actively expects them to add windows. */}
+          {addMode ? (
+            <button
+              disabled={p2Busy}
+              onClick={() => setAddMode(false)}
+              style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1.5px solid #3E7C59", background: "#EAF6EE", color: "#1F5B36", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}
+            >
+              👆 Napauta kartalta kohta, johon haluat ikkunan — tai peru tästä
+            </button>
+          ) : (
+            <div style={{ borderRadius: 12, border: `1.5px dashed ${T.navy}55`, background: "linear-gradient(160deg, rgba(31,59,87,0.05), rgba(224,168,0,0.06))", padding: 14 }}>
+              <p style={{ margin: 0, fontSize: 13.5, fontWeight: 700, color: T.ink }}>
+                {anyYellowActivity ? "Haluatko vielä lisää puhtaita ikkunoita?" : "Toivotko lisää ikkunoita puhtaaksi?"}
+              </p>
+              <p style={{ margin: "4px 0 10px", fontSize: 12.5, color: T.muted, lineHeight: 1.55 }}>
+                Napauta pohjapiirrosta ja merkitse ikkuna, jonka haluaisit mukaan — hinnoittelemme
+                sen sinulle, ja päätät itse otetaanko se. Lisää niin monta kuin haluat.
+              </p>
+              <button
+                disabled={p2Busy}
+                data-cfm-anim=""
+                onClick={() => {
+                  if (!p2?.termsAccepted) { p2Actions!.requireTerms(); return; }
+                  setAddMode(true);
+                }}
+                style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 18px", borderRadius: 11, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 14, fontWeight: 700, cursor: "pointer", animation: anyYellowActivity ? undefined : "cfmAddNudge 2.4s ease-in-out infinite" }}
+              >
+                <span style={{ fontSize: 17, lineHeight: 1 }}>➕</span> Ehdota lisättävää ikkunaa
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -384,14 +458,27 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
           <div style={{ ...popupStyle(openOffer.rect, 270, 220), width: 270, background: T.card, border: `1px solid ${T.hair}`, borderRadius: 14, boxShadow: "0 14px 40px rgba(0,0,0,0.22)", padding: 16, fontFamily: FONT }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
               <span style={{ width: 11, height: 11, borderRadius: "50%", background: "#D9C97E", border: "2px solid #fff", boxShadow: `0 0 0 1px ${T.hair}`, flexShrink: 0 }} />
-              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: T.navy }}>Lisäikkuna</span>
+              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: T.navy }}>{openOfferIsMine ? "Ehdottamasi ikkuna" : "Lisäikkuna"}</span>
               <button onClick={closeOffer} aria-label="Sulje" style={{ marginLeft: "auto", width: 24, height: 24, borderRadius: "50%", border: "none", background: T.paper, color: T.muted, fontSize: 13, cursor: "pointer", lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
             </div>
 
             {!openOfferData && (
-              <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: T.muted }}>
-                Ei vielä hinnoiteltu — saat hintaehdotuksen tähän ikkunaan pian.
-              </p>
+              <>
+                <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: T.muted }}>
+                  {openOfferIsMine
+                    ? "Kiitos ehdotuksesta! Hinnoittelemme tämän ikkunan pian — saat hintaehdotuksen tähän."
+                    : "Ei vielä hinnoiteltu — saat hintaehdotuksen tähän ikkunaan pian."}
+                </p>
+                {openOfferIsMine && (
+                  <button
+                    disabled={p2Busy}
+                    onClick={() => void runP2(p2Actions!.removePoint, openOffer.key)}
+                    style={{ marginTop: 10, width: "100%", padding: "9px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, color: T.muted, fontFamily: FONT, fontSize: 12.5, fontWeight: 600, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}
+                  >
+                    Poista ehdottamani ikkuna
+                  </button>
+                )}
+              </>
             )}
 
             {openOfferData?.status === "locked" && (

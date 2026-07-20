@@ -44,7 +44,10 @@ muuttua"), joten juuri muuttunutta hintaa ei voi hyväksyä vahingossa.
 - Kaikki p2-mutaatiot kulkevat dedikoitujen reittien kautta (read-modify-write):
   - Admin: `POST /api/jobs/:id/p2/phase | propose (bulk) | respond`
   - Asiakas (quoteToken, rate-limit 60/min/IP, vaatii `enabled` + allekirjoituksen
-    + terms): `POST /api/gig/:token/p2/terms | accept | counter | decline | add-point`
+    + terms): `POST /api/gig/:token/p2/terms | accept | counter | decline | add-point | remove-point`
+    (remove-point sallii vain asiakkaan ITSE lisäämän, hinnoittelemattoman/
+    ei-lukitun pisteen poiston; `customerAddedKeys` erottaa asiakkaan pisteet
+    auditlokista).
 
 ## Raha
 
@@ -71,11 +74,16 @@ muuttua"), joten juuri muuttunutta hintaa ei voi hyväksyä vahingossa.
   vaihekytkin, tekijän %-osuus, "€ Hinnoittele" -monivalinta kartalla
   (presetit 25/37,50/50 €), hintabadget, vastatarjous-inbox, anomaliavaroitus
   ("pesty ilman lukittua hintaa" → palkkio 0), auditloki, P2-laskun lähetys.
-- **Asiakas** (`gig-live.tsx` + `CustomerFloorMap.tsx`): "Lisäikkunat — 2. vaihe"
-  -paneeli (kasvava summa), hintapillerit keltaisissa, napautus → Hyväksy /
-  Vastatarjous / Ei kiitos, kerroskohtainen massahyväksyntä, "Ehdota lisättävää
-  ikkunaa" (piste syntyy hinnoittelemattomana — admin hinnoittelee), kevyt
-  ehtomodaali ennen ensimmäistä toimintoa.
+- **Asiakas** (`gig-live.tsx` + `CustomerFloorMap.tsx`): kun vaihe 2 on aktiivinen,
+  näkymä pivotoi keltaisiin — 1. vaihe (kiinteä urakka) tiivistyy "✓ valmis"
+  -kortiksi ja "2. VAIHE · LISÄIKKUNAT" -paneeli nousee pääfokukseksi (kasvava
+  summa). Kartalla punaiset himmennetään ja tarjolla on "Vain lisäikkunat"
+  -suodatin. Hintapillerit keltaisissa (pop-in-animaatio, lukituille
+  celebrate-pulse), napautus → Hyväksy / Vastatarjous / Ei kiitos, kerroskohtainen
+  massahyväksyntä. Näkyvä, "odottava" lisäys-nudge kutsuu asiakasta ehdottamaan
+  lisää ikkunoita; asiakkaan itse lisäämät pisteet saavat oman halo-merkin ja
+  hän voi poistaa ne ennen hinnoittelua. Kevyt ehtomodaali ennen ensimmäistä
+  toimintoa + kertaluonteinen vaihe-2-kutsupopup.
 - **Tekijä** (`worker.tsx`): lukitsemattomat keltaiset himmeinä + 🔒 (merkintä
   estetty myös serverillä), lukituista popoverissa "Sinulle tästä ikkunasta: X €"
   (vain oma palkkio — ks. rahan yksityisyys `fr8-tyo-logiikka.md`), Ansioissa

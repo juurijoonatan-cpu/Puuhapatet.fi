@@ -39,6 +39,9 @@ export interface P2PublicView {
   termsAcceptorName: string | null;
   termsText: string | null;
   offers: Record<string, P2PublicOffer>;
+  /** Window keys the customer added themselves (still live) — drives the
+   *  "your suggestion" marker + their own remove control. */
+  customerAddedKeys: string[];
   billing: P2PublicBilling;
 }
 
@@ -998,6 +1001,9 @@ export const api = {
 
   p2AddPoint: (token: string, floor: string, x: number, y: number) =>
     request<{ ok: boolean; key: string; p2: P2PublicView }>("POST", `/api/gig/${token}/p2/add-point`, { floor, x, y }),
+
+  p2RemovePoint: (token: string, key: string) =>
+    request<{ ok: boolean; p2: P2PublicView }>("POST", `/api/gig/${token}/p2/remove-point`, { key }),
 
   // ─── P2 — adminin hinnoittelu + neuvottelun hallinta ─────────────────────────
   p2SetPhase: (jobId: number, data: { enabled?: boolean; workerSharePct?: number; termsText?: string; by?: string }) =>

@@ -28,7 +28,7 @@ import {
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, computeEraDebts, allPoints, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
-import { computeP2Billing, emptyP2State, isP2Washable, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, type P2Action, type P2State } from "@shared/p2";
+import { computeP2Billing, customerAddedKeys, emptyP2State, isP2Washable, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, type P2Action, type P2State } from "@shared/p2";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN, MAX_CREW_DOC_LEN, totalPaidPayoutCents, retentionFromDate,
@@ -505,7 +505,7 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   { method: "POST", re: /^\/api\/gig\/[^/]+\/sign$/ },
   // P2 (keltaiset ikkunat): asiakkaan hintaneuvottelu seurantalinkistä. Token
   // on avain; jokainen reitti validoi lisäksi vaiheen + allekirjoitusportin.
-  { method: "POST", re: /^\/api\/gig\/[^/]+\/p2\/(terms|accept|counter|decline|add-point)$/ },
+  { method: "POST", re: /^\/api\/gig\/[^/]+\/p2\/(terms|accept|counter|decline|add-point|remove-point)$/ },
   { method: "GET",  re: /^\/api\/crew\/[^/]+$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/(password|onboard|window|hours|note|map-note|shift|expense)$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/map-note\/(update|delete)$/ },
@@ -4387,6 +4387,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             lockedCents: o.lockedCents ?? null,
             lockedAt: o.lockedAt ?? null,
           }])),
+          customerAddedKeys: customerAddedKeys(proj),
           billing: (({ yellowTotal, proposedCount, counteredCount, lockedCount, lockedSumCents, lockedWashedCount, earnedCents }) =>
             ({ yellowTotal, proposedCount, counteredCount, lockedCount, lockedSumCents, lockedWashedCount, earnedCents }))(computeP2Billing(proj)),
         } : null,
@@ -5269,7 +5270,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const actor = p2AdminActor(req);
       const prev = project.p2.offers[key];
-      const r = p2Transition(prev, action as Exclude<P2Action, "add_point">, { who: "admin", id: actor }, {
+      const r = p2Transition(prev, action as Exclude<P2Action, "add_point" | "remove_point">, { who: "admin", id: actor }, {
         priceCents: req.body?.priceCents != null ? Math.floor(Number(req.body.priceCents)) : undefined,
         version: req.body?.version != null ? Number(req.body.version) : undefined,
       });
@@ -5322,6 +5323,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         status: o.status, priceCents: o.priceCents, counterCents: o.counterCents ?? null,
         version: o.version, lockedCents: o.lockedCents ?? null, lockedAt: o.lockedAt ?? null,
       }])),
+      customerAddedKeys: customerAddedKeys(project),
       billing: (({ yellowTotal, proposedCount, counteredCount, lockedCount, lockedSumCents, lockedWashedCount, earnedCents }) =>
         ({ yellowTotal, proposedCount, counteredCount, lockedCount, lockedSumCents, lockedWashedCount, earnedCents }))(computeP2Billing(project)),
     };
@@ -5472,6 +5474,40 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       pushP2Event(p2.events, { ts: Date.now(), key, action: "add_point", actor: "customer", version: 0, ip: clientIp(req) });
       const saved = await saveProject(job, project, { p2Mutation: true });
       res.json({ ok: true, key, p2: publicP2(saved) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Asiakas poistaa ITSE lisäämänsä ikkunan (esim. "ei sittenkään tätä"). Sallittu
+  // vain jos: piste on asiakkaan lisäämä, elossa, EI lukittu eikä pesty. Adminin
+  // seedaamiin tai jo hinnoiteltuihin/lukittuihin ei kosketa.
+  app.post("/api/gig/:token/p2/remove-point", async (req, res) => {
+    try {
+      const loaded = await loadP2ForCustomer(String(req.params.token));
+      if (!loaded.ok) return res.status(loaded.code).json({ error: loaded.error });
+      const { job, project, p2 } = loaded;
+      if (!p2.terms) return res.status(403).json({ error: "Hyväksy ensin tilausehdot" });
+      const key = String(req.body?.key ?? "").slice(0, 64);
+      if (!key) return res.status(400).json({ error: "key puuttuu" });
+      if (!customerAddedKeys(project).includes(key)) {
+        return res.status(403).json({ error: "Voit poistaa vain itse lisäämiäsi ikkunoita" });
+      }
+      const offer = p2.offers[key];
+      if (offer?.status === "locked" || project.statuses[key] === "pesty") {
+        return res.status(409).json({ error: "Sovittua tai pestyä ikkunaa ei voi poistaa — ota yhteyttä" });
+      }
+      // Poista custom mark listalta ja siivoa mahdollinen (hinnoittelematon/
+      // ehdotettu) offer sekä status pois. deleted-merkki varmistaa ettei se
+      // palaa vaikka avain jäisi johonkin.
+      const floor = key.split("#")[0];
+      project.customMarks[floor] = (project.customMarks[floor] || []).filter((c) => c.key !== key);
+      project.deleted[key] = true;
+      delete p2.offers[key];
+      delete project.statuses[key];
+      pushP2Event(p2.events, { ts: Date.now(), key, action: "remove_point", actor: "customer", version: 0, ip: clientIp(req) });
+      const saved = await saveProject(job, project, { p2Mutation: true });
+      res.json({ ok: true, p2: publicP2(saved) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }

@@ -137,6 +137,11 @@ export default function GigLivePage() {
       await reload();
       return res.ok ? null : (res.error ?? "Ikkunan lisäys epäonnistui — yritä uudelleen");
     },
+    removePoint: async (key) => {
+      const res = await api.p2RemovePoint(token, key);
+      await reload();
+      return res.ok ? null : (res.error ?? "Poisto epäonnistui — yritä uudelleen");
+    },
     requireTerms: () => { setTermsError(null); setTermsOpen(true); },
   };
 
@@ -177,10 +182,27 @@ export default function GigLivePage() {
           </div>
         </div>
 
+        {/* Vaihe 2 aktiivinen: 1. vaihe (kiinteä urakka) tiivistyy valmis-kortiksi,
+            jotta keltaisten lisäikkunoiden suunnittelu on selkeä pääfokus. */}
+        {p2Live && (
+          <Panel>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ width: 40, height: 40, flexShrink: 0, borderRadius: 999, background: "#EAF6EE", border: "1px solid #BFE3CC", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }} aria-hidden>✓</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ margin: 0, fontSize: 13.5, fontWeight: 700 }}>1. vaihe — kiinteä urakka</p>
+                <p style={{ margin: "2px 0 0", fontSize: 12.5, color: T.muted, lineHeight: 1.5 }}>
+                  {pct >= 100 ? "Valmis 🎉 Kaikki sovitut ikkunat pesty." : `Käynnissä — ${pct} % valmis.`} Nyt suunnitellaan lisäikkunat alla.
+                </p>
+              </div>
+            </div>
+          </Panel>
+        )}
+
         {/* Hero: radial gauge + work progress. The customer sees ONLY progress —
             no euro figures and no total contract price. The agreed price lives in
             the signed contract (downloadable below); this live view is about how
             far the work has come and when the next billing milestone lands. */}
+        {!p2Live && (
         <Panel>
           <p style={{ margin: "0 0 4px", fontSize: 13, color: T.muted }}>{data.description}</p>
           <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap", marginTop: 8 }}>
@@ -234,6 +256,7 @@ export default function GigLivePage() {
             </div>
           )}
         </Panel>
+        )}
 
         {/* Sector cards — hidden for fixed-price deals (flat rate, no per-sector billing). */}
         {!data.isFixedDeal && data.sectors.map((s) => {
@@ -268,10 +291,14 @@ export default function GigLivePage() {
         {/* P2 — Lisäikkunat (2. vaihe): kasvava sovittu summa + avoimet ehdotukset */}
         {p2Live && (
           <Panel>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
-              <p style={label}>Lisäikkunat — 2. vaihe</p>
+            {/* Accent header makes phase 2 read as the current main focus */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10.5, fontWeight: 800, letterSpacing: "0.08em", color: "#8A6A00", background: "rgba(224,168,0,0.16)", border: "1px solid rgba(224,168,0,0.4)", borderRadius: 999, padding: "4px 10px" }}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#E0A800" }} />
+                2. VAIHE · LISÄIKKUNAT
+              </span>
               {p2!.termsAccepted && (
-                <span style={{ fontSize: 11.5, color: T.muted }}>Ehdot hyväksytty · {p2!.termsAcceptorName}</span>
+                <span style={{ marginLeft: "auto", fontSize: 11.5, color: T.muted }}>Ehdot hyväksytty · {p2!.termsAcceptorName}</span>
               )}
             </div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginTop: 6 }}>

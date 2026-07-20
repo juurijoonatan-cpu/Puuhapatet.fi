@@ -154,6 +154,21 @@ export interface EraInvoiceClient {
   emails?: { recipients: string[]; success: boolean; sentAt: string }[];
 }
 
+/** One entry in the system-wide "every invoice PDF we can regenerate" picker
+ *  (GET /api/admin/invoices) — used by the free-form "lähetä sähköpostilla"
+ *  dialog to attach an existing invoice to a custom email. */
+export interface InvoiceListItem {
+  ref: string;               // opaque — pass straight back as sendInvoiceEmail's invoiceRef
+  type: "era" | "payout";
+  jobId: number;
+  jobLabel: string;
+  partyLabel: string;
+  invoiceNumber: string | null;
+  dateStr: string;
+  totalCents: number;
+  tila?: string;
+}
+
 /** Founder settlement for a fixed deal. The biller collects the full instalment;
  *  the kate (instalment − palkat) is split equally as passive income; the biller
  *  pays the others their share. Computed over BILLED erät only. */
@@ -678,6 +693,18 @@ export const api = {
   // kelpaa suoraan <a href>:ksi (sama malli kuin payout/:id/invoice.pdf).
   crewEraInvoicePdfUrl: (token: string, invoiceId: number) =>
     `${API_BASE}/api/crew/${token}/era-invoice/${invoiceId}/pdf`,
+
+  // Kaikki laskut, joita järjestelmä osaa regeneroida (erälaskut + maksetut
+  // tekijän maksulaskut, joka keikalta) — vapaan sähköpostin lasku-valitsinta
+  // varten (ks. sendInvoiceEmail).
+  getAllInvoices: () =>
+    request<{ ok: boolean; invoices: InvoiceListItem[] }>("GET", "/api/admin/invoices"),
+  // Lähettää vapaan sähköpostin valinnaiseen osoitteeseen, valinnaisella
+  // olemassa olevalla lasku-PDF-liitteellä (regeneroidaan lennossa — ei tallenneta
+  // erikseen). Toimii myös ilman invoiceRef:ää (pelkkä viesti). Perustajat
+  // saavat aina kopion palvelimen puolella.
+  sendInvoiceEmail: (data: { to: string[]; message: string; subject?: string; invoiceRef?: string }) =>
+    request<{ ok: boolean; emailId?: string }>("POST", "/api/admin/invoices/email", data),
 
   markWorkerPaid: (workerId: string, amount: number) =>
     request<{ id: number }>("POST", `/api/workers/${workerId}/mark-paid`, { amount }),

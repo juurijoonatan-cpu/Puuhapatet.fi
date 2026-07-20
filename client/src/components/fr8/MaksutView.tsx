@@ -15,6 +15,7 @@ import { summarizeEraInvoices } from "@shared/era-billing";
 import { fmtEurCents } from "@shared/tax";
 import { BRAND_BILLERS } from "@shared/billers";
 import { RefreshCw, Wallet, Users, CheckCircle2, Mail, FileDown } from "lucide-react";
+import SendInvoiceEmailDialog from "./SendInvoiceEmailDialog";
 
 const FONT = "var(--font-onest, system-ui, sans-serif)";
 const MONO = "var(--font-jetbrains-mono, monospace)";
@@ -147,10 +148,13 @@ export default function MaksutView({ jobId }: { jobId: number }) {
             FR8-erälaskutus: johtajien väliset laskut ja tekijöille lähetetyt maksut tiloineen.
           </p>
         </div>
-        <button onClick={() => { setLoading(true); void load(); }} title="Päivitä"
-          style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, padding: "8px 12px", borderRadius: 10, cursor: "pointer", border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.75)", fontFamily: FONT, fontSize: 12, fontWeight: 600 }}>
-          <RefreshCw style={{ width: 13, height: 13 }} /> Päivitä
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          <SendInvoiceEmailDialog />
+          <button onClick={() => { setLoading(true); void load(); }} title="Päivitä"
+            style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, padding: "8px 12px", borderRadius: 10, cursor: "pointer", border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.75)", fontFamily: FONT, fontSize: 12, fontWeight: 600 }}>
+            <RefreshCw style={{ width: 13, height: 13 }} /> Päivitä
+          </button>
+        </div>
       </div>
 
       {loading && <p style={{ fontFamily: FONT, fontSize: 13, color: "rgba(255,255,255,0.5)", marginTop: 24 }}>Ladataan…</p>}

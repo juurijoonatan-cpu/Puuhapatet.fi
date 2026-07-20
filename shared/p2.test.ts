@@ -3,11 +3,13 @@ import { emptyProjectData, checkWindowAttribution, type ProjectData } from "./pr
 import { crewMemberStats, type CrewMember } from "./crew";
 import {
   computeP2Billing,
+  customerAddedKeys,
   emptyP2State,
   isP2Washable,
   p2Transition,
   p2WorkerPayoutCents,
   pointPriority,
+  pushP2Event,
   sanitizeP2State,
   MAX_P2_PRICE_CENTS,
   type P2Offer,
@@ -335,6 +337,28 @@ describe("crewMemberStats — P2", () => {
 });
 
 // ─── Sanitisation ──────────────────────────────────────────────────────────────
+
+describe("customerAddedKeys", () => {
+  it("palauttaa asiakkaan lisäämät elossa olevat pisteet; poisto kumoaa lisäyksen", () => {
+    const data = fixture();
+    data.p2 = emptyP2State();
+    // add A, add B, remove A → vain B jää
+    pushP2Event(data.p2.events, { ts: 1, key: "1#ca", action: "add_point", actor: "customer", version: 0 });
+    pushP2Event(data.p2.events, { ts: 2, key: "1#cb", action: "add_point", actor: "customer", version: 0 });
+    pushP2Event(data.p2.events, { ts: 3, key: "1#ca", action: "remove_point", actor: "customer", version: 0 });
+    expect(customerAddedKeys(data).sort()).toEqual(["1#cb"]);
+    // adminin lisäämä piste ei ole "asiakkaan lisäämä"
+    pushP2Event(data.p2.events, { ts: 4, key: "1#cx", action: "add_point", actor: "joonatan", version: 0 });
+    expect(customerAddedKeys(data)).toEqual(["1#cb"]);
+    // deleted-merkki pudottaa pois vaikka lisäystapahtuma olisi
+    data.deleted["1#cb"] = true;
+    expect(customerAddedKeys(data)).toEqual([]);
+  });
+
+  it("ilman p2:ta → tyhjä", () => {
+    expect(customerAddedKeys(fixture())).toEqual([]);
+  });
+});
 
 describe("sanitizeP2State", () => {
   it("puuttuva/ei-objekti → undefined (vanhat keikat round-trippaavat identtisesti)", () => {

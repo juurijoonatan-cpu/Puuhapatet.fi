@@ -61,7 +61,8 @@ export type P2Action =
   | "decline"          // customer: decline the offer
   | "cancel"           // admin: withdraw offer / drop from scope
   | "unlock"           // admin: reopen a locked (unwashed) window
-  | "add_point";       // customer added a yellow point (audit only)
+  | "add_point"        // customer added a yellow point (audit only)
+  | "remove_point";    // customer removed a point THEY added (audit only)
 
 export interface P2Event {
   ts: number;
@@ -131,7 +132,7 @@ function validPrice(n: unknown): n is number {
  */
 export function p2Transition(
   offer: P2Offer | undefined,
-  action: Exclude<P2Action, "add_point">,
+  action: Exclude<P2Action, "add_point" | "remove_point">,
   actor: P2Actor,
   payload: { priceCents?: number; version?: number },
   now: number = Date.now(),
@@ -362,7 +363,26 @@ function toOfferStatus(v: any): P2OfferStatus | null {
   return v === "proposed" || v === "countered" || v === "locked" || v === "declined" ? v : null;
 }
 
-const P2_ACTIONS: P2Action[] = ["propose", "accept", "counter", "accept_counter", "decline", "cancel", "unlock", "add_point"];
+const P2_ACTIONS: P2Action[] = ["propose", "accept", "counter", "accept_counter", "decline", "cancel", "unlock", "add_point", "remove_point"];
+
+/**
+ * Window keys the CUSTOMER added themselves (from the audit log), still live on
+ * the map. Drives the "your suggestion" marker + the customer's own remove
+ * control. A key that was added then removed is excluded.
+ */
+export function customerAddedKeys(data: ProjectData): string[] {
+  const p2 = data.p2;
+  if (!p2) return [];
+  const added = new Set<string>();
+  // Events are newest-first; walk oldest→newest so remove after add wins.
+  for (let i = p2.events.length - 1; i >= 0; i--) {
+    const e = p2.events[i];
+    if (e.actor !== "customer") continue;
+    if (e.action === "add_point") added.add(e.key);
+    else if (e.action === "remove_point") added.delete(e.key);
+  }
+  return Array.from(added).filter((k) => !data.deleted[k]);
+}
 
 /** Sanitize an incoming p2 state so a bad client/blob can't corrupt it. */
 export function sanitizeP2State(input: any): P2State | undefined {

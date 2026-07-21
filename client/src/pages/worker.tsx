@@ -14,7 +14,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRoute } from "wouter";
-import { api, warmBackend, type WorkerView } from "@/lib/api";
+import { api, warmBackend, type WorkerView, type GuidedWorkerView } from "@/lib/api";
 import type { WindowStatus } from "@shared/project";
 import {
   ALL_AGREEMENTS, PROFILE_QUESTIONS, PROFILE_REQUIRED_IDS, WORKER_AGREEMENT_VERSION,
@@ -1005,6 +1005,60 @@ function NavIcon({ name, color }: { name: Tab; color: string }) {
   }
 }
 
+/** Kerroksen selkokielinen nimi ("Kellari" / "3. kerros"). */
+function guidedFloorLabel(floor: string | null): string {
+  if (!floor) return "";
+  return floor === "K" ? "Kellari" : `${floor}. kerros`;
+}
+
+/**
+ * "Seuraavaksi" -ohjauskortti (admin assistant tekijälle): näyttää mille
+ * kerrokselle edetään, montako ikkunaa siellä on jäljellä, ja ohjaa napilla
+ * seuraavaan yksittäiseen ikkunaan. Sääntöpohjainen — ei arvaa mitään, vaan
+ * seuraa serverin johtamaa guided-tilaa (yks kerros kerrallaa, muut lukossa).
+ */
+function GuidedCard({ guided, guidedNote, onFocusNext }: {
+  guided: GuidedWorkerView; guidedNote: string; onFocusNext: () => void;
+}) {
+  const done = guided.allComplete;
+  const activeLabel = guidedFloorLabel(guided.activeFloor);
+  const lockedCount = guided.lockedFloors.length;
+  return (
+    <div style={{ position: "absolute", left: 0, right: 0, bottom: 12, display: "flex", justifyContent: "center", padding: "0 12px", pointerEvents: "none", zIndex: 20 }}>
+      <div style={{ pointerEvents: "auto", width: "100%", maxWidth: 440, background: "rgba(12,13,15,0.94)", border: "1px solid rgba(95,224,138,0.28)", borderRadius: 16, padding: "12px 14px", boxShadow: "0 10px 34px rgba(0,0,0,0.5)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: done ? 0 : 8 }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#5fe08a", boxShadow: "0 0 8px rgba(95,224,138,0.9)", flexShrink: 0 }} />
+          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "#9ff0bd" }}>
+            {done ? "Kaikki kerrokset valmiit 🎉" : "Seuraavaksi"}
+          </span>
+        </div>
+        {!done && (
+          <>
+            <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
+              <div style={{ lineHeight: 1.3 }}>
+                <div style={{ fontSize: 16, fontWeight: 800 }}>{activeLabel}</div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
+                  {guided.remainingOnActive} ikkuna{guided.remainingOnActive === 1 ? "" : "a"} jäljellä tällä kerroksella
+                  {lockedCount > 0 ? ` · ${lockedCount} kerros${lockedCount === 1 ? "" : "ta"} lukossa` : ""}
+                </div>
+              </div>
+              <button onClick={onFocusNext}
+                style={{ flexShrink: 0, padding: "9px 14px", borderRadius: 11, border: "none", background: "#5fe08a", color: "#062012", fontFamily: FONT, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                Näytä ikkuna
+              </button>
+            </div>
+          </>
+        )}
+        {guidedNote && (
+          <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 10, background: "rgba(255,205,40,0.12)", border: "1px solid rgba(255,205,40,0.35)", color: "#ffe08a", fontSize: 12, lineHeight: 1.4 }}>
+            {guidedNote}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Dashboard({ token, view, setView, reload, onLogout }: { token: string; view: WorkerView; setView: (v: WorkerView) => void; reload: () => void; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
   // Maksut + Info aren't bottom-nav tabs anymore — they open as sub-screens from
@@ -1015,6 +1069,11 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
   // Oman kirjautumissalasanan asetus (myös "unohdin salasanani" -reitti):
   // linkki on henkilökohtainen avain, joten vanhaa salasanaa ei kysytä.
   const [showPassword, setShowPassword] = useState(false);
+  // Ohjattu eteneminen: "Vie minut seuraavaan" -napin kohdennusnonce +
+  // hetkellinen ilmoitus kun serveri estää lukitun kerroksen merkinnän (403).
+  const [floorFocusNonce, setFloorFocusNonce] = useState(0);
+  const [guidedNote, setGuidedNote] = useState("");
+  const guided = view.guided;
   // Toimintaa odottavat: perinteiset payoutit + FR8 erälaskuluonnokset (kohta 3B)
   // — molemmat aukeavat samasta "Maksut"-alanäkymästä.
   const pendingPayouts =
@@ -1043,8 +1102,16 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
 
   const markWindow = useCallback(async (key: string, st: WindowStatus) => {
     const res = await api.crewMarkWindow(token, key, st);
-    if (res.ok && res.data?.view) setView(res.data.view);
+    if (res.ok && res.data?.view) { setView(res.data.view); setGuidedNote(""); }
+    else if (res.error) {
+      // Pesuportti (lukittu kerros / keltainen ei vielä työn piirissä) → näytä
+      // serverin selkokielinen syy hetken ajan sen sijaan että merkintä vain epäonnistuu.
+      setGuidedNote(res.error);
+      window.setTimeout(() => setGuidedNote(""), 4200);
+    }
   }, [token, setView]);
+
+  const focusNext = useCallback(() => setFloorFocusNonce((n) => n + 1), []);
 
   // Per-window observation (text + optional photo) the worker leaves on a window.
   const setObservation = useCallback(async (key: string, text: string, imageDataUrl?: string) => {
@@ -1142,7 +1209,15 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
             onSetObservation={setObservation}
             activeZone={view.activeZone}
             p2={view.p2 ? { enabled: view.p2.enabled, lockedKeys: view.p2.lockedKeys, payoutByKey: view.p2.payoutByKey } : null}
+            guided={guided ? { enabled: guided.enabled, activeFloor: guided.activeFloor, lockedFloors: guided.lockedFloors, nextKey: guided.nextKey } : null}
+            floorFocus={guided?.activeFloor ? { floor: guided.activeFloor, nonce: floorFocusNonce } : null}
           />
+        )}
+        {/* Ohjattu eteneminen: "Seuraavaksi" -ohjauskortti kartan päällä. Näyttää
+            aktiivisen kerroksen, seuraavan ikkunan ja ohjaa sinne. Vain kun
+            perustaja on kytkenyt guided-tilan päälle. */}
+        {!sub && tab === "map" && guided?.enabled && (
+          <GuidedCard guided={guided} guidedNote={guidedNote} onFocusNext={focusNext} />
         )}
         {!sub && tab === "home" && (
           <HomeTab

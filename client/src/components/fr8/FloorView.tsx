@@ -89,6 +89,18 @@ interface Props {
   /** Admin: bulk price proposal for selected yellow windows — enables the
    *  "€ Hinnoittele" multi-select mode. */
   onP2Propose?: (keys: string[], priceCents: number) => void;
+  /** Ohjattu eteneminen (guided): the open floor + which floors are locked + the
+   *  single next window to wash. Drives the locked-floor tabs and the pulsing
+   *  "next" ring. Null/absent = no guidance (map fully open). */
+  guided?: {
+    enabled: boolean;
+    activeFloor: string | null;
+    lockedFloors: string[];
+    nextKey: string | null;
+  } | null;
+  /** Bump `nonce` to programmatically jump the map to `floor` (e.g. the worker's
+   *  "Vie minut seuraavaan" button). */
+  floorFocus?: { floor: string; nonce: number } | null;
 }
 
 /** A minimal on-screen anchor (viewport coords) for positioning a fixed popover. */
@@ -186,7 +198,7 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose }: Props) {
+export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, guided, floorFocus }: Props) {
   const [floor, setFloor] = useState(initialFloor);
   const [filter, setFilter] = useState<"all" | "unwashed" | "progress" | "done">("all");
   const [editMode, setEditMode] = useState(false);
@@ -250,6 +262,16 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
 
   // Reset zoom/pan when switching floors.
   useEffect(() => { resetView(); }, [floor]);
+
+  // Ohjattu eteneminen: kun "Vie minut seuraavaan" -nappia painetaan (nonce
+  // kasvaa), hypätään aktiiviselle kerrokselle ja suljetaan avoin popover.
+  useEffect(() => {
+    if (floorFocus && floorFocus.floor && floors.includes(floorFocus.floor)) {
+      setFloor(floorFocus.floor);
+      setActiveOrb(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [floorFocus?.nonce]);
 
   function touchDist(t: React.TouchList) {
     const dx = t[0].clientX - t[1].clientX, dy = t[0].clientY - t[1].clientY;
@@ -580,9 +602,22 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
         {/* Floor selector */}
         <div style={{ display: "flex", alignItems: "center", gap: "7px", padding: "5px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: "13px" }}>
           <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.35)", padding: "0 6px 0 8px" }}>KRS</span>
-          {floors.map((f) => (
-            <button key={f} onClick={() => { setFloor(f); setActiveOrb(null); }} style={floorBtnStyle(f === floor)}>{f}</button>
-          ))}
+          {floors.map((f) => {
+            const gLocked = !!guided?.enabled && (guided.lockedFloors || []).includes(f);
+            const gActive = !!guided?.enabled && guided.activeFloor === f;
+            const st = floorBtnStyle(f === floor);
+            return (
+              <button key={f} onClick={() => { setFloor(f); setActiveOrb(null); }}
+                title={gLocked ? "Lukossa — ohjattu eteneminen: pese aktiivinen kerros ensin (voit silti katsoa)" : gActive ? "Aktiivinen kerros — pese tämä ensin" : undefined}
+                style={{
+                  ...st,
+                  ...(gActive && f !== floor ? { boxShadow: "inset 0 0 0 1.5px rgba(95,224,138,0.7)", color: "#9ff0bd" } : {}),
+                  ...(gLocked && f !== floor ? { opacity: 0.5 } : {}),
+                }}>
+                {gLocked ? `🔒${f}` : f}
+              </button>
+            );
+          })}
         </div>
 
         {/* Mini ring + stats */}
@@ -839,6 +874,14 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                   style={{ position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`, transform: "translate(3px, 3px)", pointerEvents: "none", fontSize: "7px", lineHeight: 1, zIndex: 5, opacity: 0.85 }}>
                   🔒
                 </span>
+              ) : null)}
+
+              {/* Ohjattu eteneminen: sykkivä rengas seuraavan pestävän ikkunan
+                  ympärillä ("mene tähän seuraavaksi"). Vain kun ikkuna on tällä
+                  (aktiivisella) kerroksella. Ei ota napautuksia — dotti hoitaa sen. */}
+              {guided?.enabled && guided.nextKey && !editMode && points.map((pt) => pt.key === guided.nextKey ? (
+                <span key={`guided-${pt.key}`} aria-hidden className="fr8-guided-next"
+                  style={{ position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`, width: "26px", height: "26px", borderRadius: "50%", border: "2px solid #5fe08a", background: "rgba(95,224,138,0.1)", boxShadow: "0 0 10px rgba(95,224,138,0.65)", pointerEvents: "none", zIndex: 4 }} />
               ) : null)}
 
               {/* Observation badges — a small marker on windows that carry a note */}

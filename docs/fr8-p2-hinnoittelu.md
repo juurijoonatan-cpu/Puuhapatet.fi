@@ -76,18 +76,41 @@ muuttua"), joten juuri muuttunutta hintaa ei voi hyväksyä vahingossa.
   ("pesty ilman lukittua hintaa" → palkkio 0), auditloki, P2-laskun lähetys.
 - **Asiakas** (`gig-live.tsx` + `CustomerFloorMap.tsx`): kun vaihe 2 on aktiivinen,
   näkymä pivotoi keltaisiin — 1. vaihe (kiinteä urakka) tiivistyy "✓ valmis"
-  -kortiksi ja "2. VAIHE · LISÄIKKUNAT" -paneeli nousee pääfokukseksi (kasvava
-  summa). Kartalla punaiset himmennetään ja tarjolla on "Vain lisäikkunat"
-  -suodatin. Hintapillerit keltaisissa (pop-in-animaatio, lukituille
-  celebrate-pulse), napautus → Hyväksy / Vastatarjous / Ei kiitos, kerroskohtainen
-  massahyväksyntä. Näkyvä, "odottava" lisäys-nudge kutsuu asiakasta ehdottamaan
-  lisää ikkunoita; asiakkaan itse lisäämät pisteet saavat oman halo-merkin ja
-  hän voi poistaa ne ennen hinnoittelua. Kevyt ehtomodaali ennen ensimmäistä
-  toimintoa + kertaluonteinen vaihe-2-kutsupopup.
+  -kortiksi ja **"Priority 2"** -paneeli nousee pääfokukseksi (kasvava summa).
+  Kartalla punaiset himmennetään ja tarjolla on "Vain Priority 2" -suodatin.
+  Hintapillerit keltaisissa (pop-in-animaatio, lukituille celebrate-pulse),
+  napautus → Hyväksy / Vastatarjous / Ei kiitos, kerroskohtainen massahyväksyntä.
+  Näkyvä, "odottava" lisäys-nudge ("Lisää ikkunoita Priority 2:seen") kutsuu
+  asiakasta ehdottamaan lisää ikkunoita; asiakkaan itse lisäämät pisteet saavat
+  oman halo-merkin ja hän voi poistaa ne ennen hinnoittelua. Kevyt ehtomodaali
+  ("Priority 2 -tilausehdot", josta löytyy **valmis sopimus PDF:nä**, ks. alla)
+  ennen ensimmäistä toimintoa + kertaluonteinen vaihe-2-kutsupopup.
 - **Tekijä** (`worker.tsx`): lukitsemattomat keltaiset himmeinä + 🔒 (merkintä
   estetty myös serverillä), lukituista popoverissa "Sinulle tästä ikkunasta: X €"
   (vain oma palkkio — ks. rahan yksityisyys `fr8-tyo-logiikka.md`), Ansioissa
-  "sis. lisäikkunat (P2)" -erittely (`stats.p2EarnedCents`).
+  "sis. Priority 2" -erittely (`stats.p2EarnedCents`).
+
+## Valmis sopimus (PDF)
+
+Valmis, viimeistelty Priority 2 -sopimus on bundlattu staattisena assetina:
+`client/public/fr8/priority2-sopimus-2026.pdf` → tarjoillaan osoitteesta
+`/fr8/priority2-sopimus-2026.pdf` (samaan tapaan kuin `/fr8/plans/*` ja
+`/fr8/marks_data.json`).
+
+- **Asiakas** näkee "Lue koko sopimus (PDF)" -linkin Priority 2 -tilausehtojen
+  modaalissa (`gig-live.tsx`, vakio `P2_CONTRACT_PDF_URL`).
+- **Perustaja** näkee "Avaa liitetty sopimus (PDF)" -linkin P2AdminPanelin
+  sopimusteksti-editorissa (`admin/project.tsx`).
+- `termsText` (vapaa liitetty teksti) ja PDF-linkki ovat rinnakkaiset: modaali
+  näyttää `termsText`in (tai lyhyen oletustekstin) JA aina PDF-linkin. Uuden
+  sopimusversion voi vaihtaa korvaamalla saman­nimisen PDF-tiedoston.
+
+## Ohjattu eteneminen (guided)
+
+Priority 2 kytkeytyy myös **ohjattuun etenemiseen** (yks kerros kerrallaa):
+lukittu keltainen tulee mukaan työn piiriin ja voi pitää kerroksen auki, kun taas
+hinnoittelematon/lukitsematon keltainen ei ole piirissä. Ks. oma dokumentti
+**`docs/fr8-ohjattu-eteneminen.md`**.
 
 ## Valmisteluvaihe (enabled = false)
 

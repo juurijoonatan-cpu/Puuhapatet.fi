@@ -550,6 +550,15 @@
   0%, 100% { box-shadow: 0 0 0 4px rgba(95,224,138,0.12), 0 0 10px rgba(95,224,138,0.5); }
   50%       { box-shadow: 0 0 0 10px rgba(95,224,138,0.04), 0 0 18px rgba(95,224,138,0.8); }
 }
+/* Ohjattu eteneminen: seuraavan ikkunan sykkivä rengas ("mene tähän seuraavaksi"). */
+@keyframes fr8-guidedPulse {
+  0%, 100% { transform: translate(-50%,-50%) scale(1);    opacity: 0.9; }
+  50%       { transform: translate(-50%,-50%) scale(1.28); opacity: 0.35; }
+}
+.fr8-guided-next { animation: fr8-guidedPulse 1.7s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .fr8-guided-next { animation: none !important; }
+}
 
 /* Luotettavat napautukset (fr8-nappien "ei painaudu" -bugi):
    1) touch-action: manipulation poistaa iOS/Androidin tap-viiveen ja

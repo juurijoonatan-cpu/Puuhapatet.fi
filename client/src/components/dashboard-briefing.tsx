@@ -1,8 +1,13 @@
 /**
- * Dashboard AI briefing — an on-demand "what should I focus on today" summary.
+ * Dashboard AI briefing — a tight "today at a glance" summary.
  *
- * On-demand (button) rather than auto-run, so it never burns the free model
- * quota on every dashboard load. Role-scoped server side like the assistant.
+ * Deliberately short and profit-first: it leads with what I earned TODAY and,
+ * at most, the one or two things that genuinely need attention today. No
+ * prospecting, no stale leads, no generic advice — that noise belongs in the
+ * assistant, not the daily glance.
+ *
+ * On-demand (button) rather than auto-run, so it never burns the model quota on
+ * every dashboard load. Role-scoped server side like the assistant.
  */
 
 import { useEffect, useState } from "react";
@@ -13,21 +18,24 @@ import { ChatMarkdown } from "@/components/chat-markdown";
 import { API_BASE, withAuth } from "@/lib/api";
 
 const PROMPT =
-  "Anna lyhyt päivän tilannekatsaus: tärkeimmät tämän viikon keikat, avoimet " +
-  "liidit/tarjoukset jotka kaipaavat toimenpiteitä, ja 1–3 konkreettista " +
-  "ehdotusta mihin kannattaa keskittyä tänään. Lisää loppuun lyhyt kohta " +
-  "\"Iso keikka\": kerro isojen keikkojen (esim. FR8) edistyminen — montako " +
-  "ikkunaa pesty, maksuerän tilanne ja paljonko seuraavaan maksuun — muotoiltuna " +
-  "niin että sen voi suoraan kertoa asiakkaan yhteyshenkilölle. Pidä tiiviinä ja käytä lyhyttä listaa. " +
-  "TÄRKEÄÄ: Jätä täysin pois kaikki tapahtumat tai liidit joiden muistiinpanoissa lukee " +
-  "\"[Prospekti — AI-ehdotus\" — ne ovat tekoälyn automaattisesti luomia testikohteita, " +
-  "ei oikeita asiakkaita. Älä mainitse niitä katsauksessa millään tavalla.";
+  "Tee minulle päivän katsaus. PIDÄ SE ERITTÄIN LYHYENÄ JA YTIMEKKÄÄNÄ — enintään 5 riviä, ei johdantoa eikä lopetusta.\n\n" +
+  "Rakenne tarkalleen näin:\n" +
+  "1. **Tänään tienattu:** kerro paljonko olen ansainnut tänään. Käytä kontekstin 'tänään yhteensä' -lukua (oma työ + passiivinen tuotto-osuus). Jos tälle päivälle ei ole kertymää, kirjoita lyhyesti esim. 'Ei kirjattuja ansioita vielä tänään.' Älä koskaan keksi lukua.\n" +
+  "2. **Vaatii huomiota:** enintään 1–2 asiaa jotka on oikeasti hoidettava juuri tänään (tälle päivälle sovittu keikka, erääntyvä lasku, tai liidi jolta odotetaan vastausta tänään). Jos mikään ei ole kiireellistä, kirjoita vain 'Ei kiireellisiä toimia.'\n\n" +
+  "EHDOTTOMAT SÄÄNNÖT:\n" +
+  "- ÄLÄ ehdota uusia prospekteja tai markkinointi-ideoita.\n" +
+  "- ÄLÄ listaa vanhoja, roikkuvia tai yleisluontoisia liidejä — vain se mikä on kiireellistä tänään.\n" +
+  "- Ei yleisiä vinkkejä, ei täytelauseita, ei kohteliaisuuksia, ei selittelyä. Pelkät faktat.\n" +
+  "- Käytä lyhyttä listaa ja lihavoi otsikot. Älä lisää erillistä 'Iso keikka' -osiota ellei siinä ole nimenomaan tämän päivän tapahtumaa.\n" +
+  "- Jätä täysin pois kaikki tapahtumat tai liidit joiden muistiinpanoissa lukee \"[Prospekti — AI-ehdotus\" — ne ovat tekoälyn luomia testikohteita, älä mainitse niitä millään tavalla.";
 
 export function DashboardBriefing() {
   const profile = typeof window !== "undefined" ? getAdminProfile() : null;
   const [aiEnabled, setAiEnabled] = useState<boolean | null>(null);
   const [text, setText] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const today = new Date().toLocaleDateString("fi-FI", { weekday: "long", day: "numeric", month: "long" });
 
   useEffect(() => {
     fetch(`${API_BASE}/api/ai-status`).then(r => r.json()).then(d => setAiEnabled(!!d.enabled)).catch(() => setAiEnabled(null));
@@ -54,20 +62,20 @@ export function DashboardBriefing() {
 
   return (
     <Card className="p-5 bg-card border-0 premium-shadow mb-8">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
             <Sparkles className="w-5 h-5 text-primary" />
           </div>
-          <div>
-            <p className="text-sm font-semibold text-foreground">Päivän katsaus</p>
-            <p className="text-xs text-muted-foreground">Tekoälyn tiivistys keikoista ja prioriteeteista</p>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-foreground leading-tight">Päivän katsaus</p>
+            <p className="text-xs text-muted-foreground capitalize truncate">{today}</p>
           </div>
         </div>
         <button
           onClick={generate}
           disabled={loading}
-          className="flex items-center gap-1.5 text-sm font-medium text-primary hover:underline disabled:opacity-50"
+          className="flex items-center gap-1.5 text-sm font-medium text-primary hover:underline disabled:opacity-50 shrink-0"
           data-testid="dashboard-briefing-generate"
         >
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : text ? <RefreshCw className="w-4 h-4" /> : <Sparkles className="w-4 h-4" />}
@@ -76,20 +84,20 @@ export function DashboardBriefing() {
       </div>
 
       {loading && !text && (
-        <div className="space-y-2 animate-pulse">
-          <div className="h-3 bg-muted rounded w-3/4" />
-          <div className="h-3 bg-muted rounded w-5/6" />
-          <div className="h-3 bg-muted rounded w-2/3" />
+        <div className="space-y-2 animate-pulse pt-1">
+          <div className="h-3 bg-muted rounded w-2/5" />
+          <div className="h-3 bg-muted rounded w-4/5" />
+          <div className="h-3 bg-muted rounded w-3/5" />
         </div>
       )}
       {text && (
-        <div className="text-sm text-foreground">
+        <div className="text-sm text-foreground leading-relaxed [&_p]:mb-2 [&_ul]:mt-1 [&_li]:mb-0.5">
           <ChatMarkdown content={text} />
         </div>
       )}
       {!text && !loading && (
         <p className="text-sm text-muted-foreground">
-          Pyydä tekoälyltä nopea yhteenveto siitä, mihin kannattaa keskittyä tänään.
+          Näe tämän päivän ansiot ja mikä vaatii huomiota — lyhyesti.
         </p>
       )}
     </Card>

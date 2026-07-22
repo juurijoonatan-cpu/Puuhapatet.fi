@@ -18,7 +18,7 @@ import InkReveal from "@/components/InkReveal";
 import { api } from "@/lib/api";
 import { getAdminProfile } from "@/lib/admin-profile";
 import { agreementForProfile, cacheSignature, getCachedSignature } from "@/lib/member-agreement";
-import { feePctForWorker } from "@shared/team";
+import { feePctForWorker, type TeamRole } from "@shared/team";
 import { AGREEMENT_VERSION, type MemberAgreementSignature } from "@shared/member-agreement";
 
 type Step = "welcome" | "agreement" | "policies" | "sign";
@@ -75,7 +75,7 @@ export default function AdminWelcomePage() {
       signerName: signerName.trim(),
       place: place.trim() || undefined,
       guardianName: profile.isUnder18 ? guardianName.trim() : undefined,
-      snapshot: { name: profile.name, role: profile.role, yTunnus: profile.yTunnus, feePct: feePctForWorker(profile.id) },
+      snapshot: { name: profile.name, role: profile.role as TeamRole, yTunnus: profile.yTunnus, feePct: feePctForWorker(profile.id) },
       acceptedPolicyIds: doc.policies.map((p) => p.id),
       signatureDataUrl,
     };

@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
+import { type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface TimelineItem {
   id: number;
   title: string;
   date: string;
-  icon: React.ComponentType<{ size?: number; className?: string }>;
+  icon: LucideIcon;
   status: "completed" | "in-progress" | "pending";
   energy: number;
   content: string;

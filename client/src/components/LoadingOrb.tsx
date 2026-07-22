@@ -1,12 +1,13 @@
 /**
- * LoadingOrb — the app-wide "we're waking up" loader.
+ * LoadingOrb — the app-wide "we're spinning up" loader.
  *
- * The backend runs on a free tier that cold-starts in tens of seconds, and a
- * bare "Ladataan…" makes people think the app is broken. This loader makes the
- * wait feel intentional: a breathing orb with an orbiting spark, a live elapsed
- * counter, and staged copy that after a few seconds EXPLAINS the wait ("palvelin
- * herää — ei rikki"). Used on every entry view (customer live link, worker
- * dashboard, admin project) in a light or dark variant.
+ * The backend can cold-start after an idle period (tens of seconds), and a bare
+ * "Ladataan…" makes people think the app is broken. This loader makes the wait
+ * feel intentional and premium: a breathing orb with an orbiting spark, a live
+ * elapsed counter, and staged copy that after a few seconds reassures the user
+ * the system is starting up (never that anything is wrong). Used on every entry
+ * view (customer live link, worker dashboard, admin project) in a light or dark
+ * variant.
  */
 import { useEffect, useState } from "react";
 
@@ -35,13 +36,14 @@ const THEMES = {
   },
 } as const;
 
-/** Staged copy: quick load shows only the label; a longer one explains the
- *  free-tier cold start so nobody refreshes out of the queue. */
+/** Staged copy: a quick load shows only the label; a longer wait reassures the
+ *  user the system is starting up (premium, confident — never apologetic, never
+ *  "it's the cheap server"), so nobody refreshes out of the queue. */
 function stageText(sec: number): string | null {
   if (sec < 4) return null;
-  if (sec < 12) return "Käynnistetään palvelinta…";
-  if (sec < 30) return "Palvelin herää unesta — tämä voi kestää hetken. Ei hätää, mikään ei ole rikki. 🙂";
-  return "Vielä hetki… ilmaisella palvelintasolla käynnistys voi kestää jopa minuutin. Kiitos kärsivällisyydestä!";
+  if (sec < 12) return "Käynnistetään Puuhapatet…";
+  if (sec < 30) return "Muodostetaan suojattua yhteyttä — vain hetki.";
+  return "Melkein valmista — kiitos hetkestä. Kaikki toimii normaalisti.";
 }
 
 export default function LoadingOrb({

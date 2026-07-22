@@ -29,6 +29,7 @@ import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigSta
 import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, computeEraDebts, allPoints, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeP2Billing, customerAddedKeys, emptyP2State, isP2Washable, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, type P2Action, type P2State } from "@shared/p2";
+import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN, MAX_CREW_DOC_LEN, totalPaidPayoutCents, retentionFromDate,
@@ -5112,6 +5113,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         totals: computeProjectTotals(project),
         workerStats: computeWorkerStats(project),
         p2Billing: computeP2Billing(project),
+        guidedState: computeGuided(project),
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -5129,8 +5131,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // voi KOSKAAN muuttaa sitä (asiakkaan juuri lukitsema hinta ei saa
       // pyyhkiytyä adminin karttamuokkauksen alle). Kaikki p2-mutaatiot
       // kulkevat dedikoitujen /p2-reittien kautta.
-      const storedP2 = parseProject(job.projectData ?? null)?.p2;
+      const stored = parseProject(job.projectData ?? null);
+      const storedP2 = stored?.p2;
       if (storedP2) project.p2 = storedP2; else delete project.p2;
+      // Ohjattu eteneminen (guided) on niin ikään serverin omistama: geneerinen
+      // karttatallennus säilyttää talletetun kytkimen + kerroksen ohituksen.
+      // Kaikki guided-mutaatiot kulkevat /guided-reitin kautta.
+      const storedGuided = stored?.guided;
+      if (storedGuided) project.guided = storedGuided; else delete project.guided;
       const totals = computeProjectTotals(project);
 
       // Auto-sync the gig's billing sectors from the toolkit (FR8 = source of
@@ -5157,6 +5165,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         totals,
         workerStats: computeWorkerStats(project),
         p2Billing: computeP2Billing(project),
+        guidedState: computeGuided(project),
       });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -5204,6 +5213,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
       const saved = await saveProject(job, project, { p2Mutation: true });
       res.json({ ok: true, p2: saved.p2, p2Billing: computeP2Billing(saved) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Ohjattu eteneminen (guided) — perustajan kytkin: yks kerros kerrallaa, muut
+  // lukossa + "seuraava ikkuna" -ohjaus. Oletuksena pois. Vain toggle + kerroksen
+  // ohitus talletetaan; aktiivinen kerros ja seuraava ikkuna JOHDETAAN kartasta.
+  app.post("/api/jobs/:id/guided", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const project = parseProject(job.projectData ?? null);
+      if (!project) return res.status(400).json({ error: "Keikalla ei ole projektidataa" });
+
+      if (!project.guided) project.guided = { enabled: false, activeFloorOverride: null };
+      if (req.body?.enabled !== undefined) project.guided.enabled = req.body.enabled === true;
+      if (req.body?.activeFloorOverride !== undefined) {
+        const raw = req.body.activeFloorOverride;
+        const floor = typeof raw === "string" && raw.trim() ? raw.slice(0, 8) : null;
+        // Only accept a real floor of this building (or null to clear the pin).
+        const floors = project.building.floors.length ? project.building.floors : [];
+        project.guided.activeFloorOverride = floor && floors.includes(floor) ? floor : null;
+      }
+      const saved = await saveProject(job, project, { guidedMutation: true });
+      res.json({ ok: true, guided: saved.guided, guidedState: computeGuided(saved) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -5644,17 +5680,25 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   async function saveProject(
     job: typeof jobs.$inferSelect,
     project: ProjectData,
-    opts?: { p2Mutation?: boolean },
+    opts?: { p2Mutation?: boolean; guidedMutation?: boolean },
   ): Promise<ProjectData> {
     const clean = sanitizeProjectData(project);
-    // P2-neuvottelutila on serverin omistama. Ellei TÄMÄ tallennus ole
-    // dedikoidun /p2-reitin tarkoituksellinen mutaatio, luetaan kannan tuorein
-    // p2 juuri ennen kirjoitusta — niin tekijän ikkunamerkintä ei koskaan
-    // yliaja asiakkaan samaan aikaan lukitsemaa hintaa.
-    if (!opts?.p2Mutation) {
+    // P2-neuvottelutila ja ohjattu eteneminen (guided) ovat serverin omistamia.
+    // Ellei TÄMÄ tallennus ole niiden dedikoidun reitin tarkoituksellinen
+    // mutaatio, luetaan kannan tuorein arvo juuri ennen kirjoitusta — niin
+    // tekijän ikkunamerkintä ei koskaan yliaja asiakkaan samaan aikaan lukitsemaa
+    // hintaa eikä perustajan ohjausasetusta.
+    if (!opts?.p2Mutation || !opts?.guidedMutation) {
       const [fresh] = await db.select({ projectData: jobs.projectData }).from(jobs).where(eq(jobs.id, job.id));
-      const storedP2 = fresh ? parseProject(fresh.projectData ?? null)?.p2 : clean.p2;
-      if (storedP2) clean.p2 = storedP2; else delete clean.p2;
+      const stored = fresh ? parseProject(fresh.projectData ?? null) : null;
+      if (!opts?.p2Mutation) {
+        const storedP2 = stored ? stored.p2 : clean.p2;
+        if (storedP2) clean.p2 = storedP2; else delete clean.p2;
+      }
+      if (!opts?.guidedMutation) {
+        const storedGuided = stored ? stored.guided : clean.guided;
+        if (storedGuided) clean.guided = storedGuided; else delete clean.guided;
+      }
     }
     const totals = computeProjectTotals(clean);
     // Keep the customer's billing view (gig sectors) in sync with the map, just
@@ -5810,6 +5854,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           .filter(([, o]) => o.status === "locked" && o.lockedCents)
           .map(([k, o]) => [k, p2WorkerPayoutCents(o.lockedCents!, project.p2!.workerSharePct)])),
       } : null,
+      // Ohjattu eteneminen (guided): kun perustaja on kytkenyt sen päälle, tekijä
+      // näkee vain aktiivisen kerroksen auki, muut lukossa, ja "Seuraavaksi"-kortti
+      // ohjaa täsmälleen seuraavaan pestävään ikkunaan. Puhtaasti johdettua tilaa
+      // (ei rahaa) — turvallista näyttää tekijälle. Pois päältä = null, ei muutosta.
+      guided: (() => {
+        const g = computeGuided(project);
+        if (!g.enabled) return null;
+        return {
+          enabled: true,
+          activeFloor: g.activeFloor,
+          lockedFloors: g.lockedFloors,
+          openKeys: g.openKeys,
+          nextKey: g.nextKey,
+          next: g.next,
+          remainingOnActive: g.remainingOnActive,
+          allComplete: g.allComplete,
+          floorProgress: g.floorProgress.map((f) => ({
+            floor: f.floor, remaining: f.remaining, inScope: f.inScope,
+            washed: f.washed, active: f.active, locked: f.locked, complete: f.complete,
+          })),
+        };
+      })(),
       // Gig-wide window counts (team) for the shared "paydate progress" stat — NO
       // euros, so the worker still never sees the gig total/price/cap.
       windowsTotal,
@@ -5940,6 +6006,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const mapPriority = pointPriority(project, key);
       if (status !== "ei" && mapPriority === 2 && project.p2?.enabled && !isP2Washable(project, key)) {
         return res.status(403).json({ error: "Tämä keltainen ikkuna ei ole vielä työn piirissä — hinta sovitaan ensin asiakkaan kanssa." });
+      }
+
+      // Ohjattu eteneminen (guided): kun perustaja on kytkenyt sen päälle, ikkunan
+      // saa merkata vain AKTIIVISELLA kerroksella — muut kerrokset ovat lukossa,
+      // jotta edetään yks kerros kerrallaa eikä poimita helppoja sieltä täältä.
+      // Tyhjennys ("ei") sallitaan aina, jotta virheen voi perua. Pois päältä /
+      // ei aktiivista kerrosta (kaikki valmis) = ei porttia.
+      if (status !== "ei" && isGuidedBlocked(project, key)) {
+        const g = computeGuided(project);
+        return res.status(403).json({ error: `Tämä kerros on vielä lukossa — ohjattu eteneminen: pese ensin ${g.activeFloor === "K" ? "kellari" : `${g.activeFloor}. kerros`} loppuun.` });
       }
 
       if (status === "ei") {

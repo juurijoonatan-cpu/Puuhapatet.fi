@@ -9,6 +9,7 @@ import type { CrewMember, CrewMemberStats, CrewProfile, CrewAgreementSignature }
 import type { WorkerAgreement } from "@shared/worker-agreements";
 import type { EraInvoiceKind, EraInvoiceTila } from "@shared/era-billing";
 import type { P2Billing, P2OfferStatus, P2State } from "@shared/p2";
+import type { GuidedState, GuidedWork } from "@shared/guided";
 
 // ─── P2 (keltaiset ikkunat) — per-ikkuna hinnoittelu + neuvottelu ──────────────
 
@@ -113,6 +114,26 @@ export interface WorkerView {
     lockedKeys: string[];
     payoutByKey: Record<string, number>;
   } | null;
+  /** Ohjattu eteneminen (guided): the open floor + the next window to guide to.
+   *  Null when the founder hasn't enabled it — then the map is fully open. */
+  guided: GuidedWorkerView | null;
+}
+
+/** Guided-progression view for a worker: which floor is open, what's locked, and
+ *  the single next window to wash. Pure guidance — carries no money. */
+export interface GuidedWorkerView {
+  enabled: boolean;
+  activeFloor: string | null;
+  lockedFloors: string[];
+  openKeys: string[];
+  nextKey: string | null;
+  next: { key: string; floor: string; p: 1 | 2; x: number; y: number; status: WindowStatus } | null;
+  remainingOnActive: number;
+  allComplete: boolean;
+  floorProgress: {
+    floor: string; remaining: number; inScope: number; washed: number;
+    active: boolean; locked: boolean; complete: boolean;
+  }[];
 }
 
 export interface CrewOnboardPayload {
@@ -1056,14 +1077,20 @@ export const api = {
   undoGigInstalment: (jobId: number) =>
     request<{ ok: boolean; gigData: GigData }>("POST", `/api/jobs/${jobId}/gig/invoice/undo`, {}),
 
+  // ─── Ohjattu eteneminen (guided) — perustajan kytkin + kerroksen ohitus ─────
+  guidedSet: (jobId: number, data: { enabled?: boolean; activeFloorOverride?: string | null }) =>
+    request<{ ok: boolean; guided: GuidedWork; guidedState: GuidedState }>(
+      "POST", `/api/jobs/${jobId}/guided`, data,
+    ),
+
   // ─── Project / floor-plan window tool (FR8 projektinäkymä) ──────────────────
   getProject: (jobId: number) =>
-    request<{ ok: boolean; project: ProjectData | null; totals?: ProjTotals; workerStats?: WorkerStat[]; p2Billing?: P2Billing }>(
+    request<{ ok: boolean; project: ProjectData | null; totals?: ProjTotals; workerStats?: WorkerStat[]; p2Billing?: P2Billing; guidedState?: GuidedState }>(
       "GET", `/api/jobs/${jobId}/project`,
     ),
 
   updateProject: (jobId: number, projectData: ProjectData) =>
-    request<{ ok: boolean; project: ProjectData; totals: ProjTotals; workerStats: WorkerStat[]; p2Billing?: P2Billing }>(
+    request<{ ok: boolean; project: ProjectData; totals: ProjTotals; workerStats: WorkerStat[]; p2Billing?: P2Billing; guidedState?: GuidedState }>(
       "PATCH", `/api/jobs/${jobId}/project`, { projectData },
     ),
 

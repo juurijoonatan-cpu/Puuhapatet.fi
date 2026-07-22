@@ -26,6 +26,10 @@ const T = {
 
 const FONT = "'Poppins', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif";
 
+/** Valmis Priority 2 -sopimus (FR8 FAFO Oy), bundlattu staattisena assetina.
+ *  Näytetään asiakkaalle tilausehtojen hyväksynnän yhteydessä. */
+const P2_CONTRACT_PDF_URL = "/fr8/priority2-sopimus-2026.pdf";
+
 export default function GigLivePage() {
   const [, params] = useRoute("/seuranta/:token");
   const token = params?.token ?? "";
@@ -458,6 +462,16 @@ export default function GigLivePage() {
                 "-urakan kiinteästä hinnasta. Jokainen hyväksyntä kirjataan aikaleimalla."
               )}
             </p>
+            {/* Valmis Priority 2 -sopimus (PDF) — luettavissa / ladattavissa ennen hyväksyntää. */}
+            <a
+              href={P2_CONTRACT_PDF_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ display: "inline-flex", alignItems: "center", gap: 7, marginTop: 12, padding: "9px 12px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, color: T.ink, fontFamily: FONT, fontSize: 12.5, fontWeight: 600, textDecoration: "none" }}
+            >
+              <span aria-hidden style={{ fontSize: 15 }}>📄</span>
+              Lue koko sopimus (PDF)
+            </a>
             <p style={{ margin: "14px 0 6px", fontSize: 12, fontWeight: 600, color: T.muted }}>Nimenselvennys</p>
             <input
               value={termsName}

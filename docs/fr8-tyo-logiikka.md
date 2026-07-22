@@ -4,6 +4,9 @@ Tämä dokumentti kuvaa FR8-keikan (ja yleisesti alihankkijakeikkojen) ansio-,
 työaika- ja näkymälogiikan, jotta kuka tahansa (ihminen tai agentti) voi jatkaa
 työtä ilman, että konteksti katoaa. Päivitä tätä kun logiikka muuttuu.
 
+> **Uusi täällä?** Lue ensin **`docs/fr8-jarjestelma-yleiskuva.md`** — koko FR8:n
+> yleiskuva, kriittiset invariantit ja dokumenttihakemisto.
+
 ## Osapuolet ja näkymät
 
 - **Työntekijä / alihankkija** (esim. Jani): yksityinen linkki `/tyo/:token`
@@ -93,6 +96,17 @@ ansioita. Varmistettu:
   prosenttiosuutta (`workerSharePct`) EI koskaan lähetetä tekijälle, joten
   asiakashintaa ei voi rekonstruoida palkkiosta.
 
+## Ohjattu eteneminen (guided) — työjärjestys
+
+Perustaja voi kytkeä keikalle **ohjatun etenemisen** (oletus pois): tekijät pesevät
+yks kerros kerrallaa (muut lukossa) ja dashboardin "Seuraavaksi"-kortti ohjaa
+seuraavaan yksittäiseen ikkunaan. Tämä on **työjärjestys, ei raha** — ansiomalli
+yllä ei muutu. Punainen on aina työn piirissä, keltainen vasta kun sen hinta on
+lukittu. Merkintä lukitulla (ei-aktiivisella) kerroksella estetään serverillä
+(403). Tekijän `workerView.guided` sisältää vain johdettua ohjaustietoa (aktiivinen
+kerros, seuraava ikkuna, lukitut kerrokset) — ei rahaa. Täysi speksi:
+**`docs/fr8-ohjattu-eteneminen.md`**.
+
 ## Työaika / sessio
 
 Worker-työpöydän Tunnit-välilehti (`HoursTab`):
@@ -124,6 +138,10 @@ best-effort (ei kaada vastausta jos sähköposti epäonnistuu / ei API-avainta).
 
 - `shared/crew.ts` — CrewMember (`perWindowCents`, `activeShiftAt`,
   `shiftStartWashed`, `sessions`, `linkedUserId`), `CrewSession`, sanitointi.
+- `shared/p2.ts` — Priority 2 (keltaisten ikkunakohtainen hinnoittelu). Tekijän
+  palkkio p2:sta = `p2WorkerPayoutCents`. Ks. `docs/fr8-p2-hinnoittelu.md`.
+- `shared/guided.ts` — ohjattu eteneminen (`computeGuided`, `isGuidedBlocked`).
+  Ks. `docs/fr8-ohjattu-eteneminen.md`.
 - `shared/worker-agreements.ts` — sopimukset (v2026-06), `WORKER_AGREEMENTS_GATED`.
 - `server/routes.ts` — crew-reitit: `/shift`, `/hours`, `/window`, `/map-note`,
   `workerView` (mitä työntekijälle lähetetään), `/api/admin/my-dashboard`.

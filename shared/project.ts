@@ -16,6 +16,7 @@ import type { GigData, GigSector } from "./gig";
 import { sanitizeCrew, type CrewMember } from "./crew";
 import { PAY_PERIODS, eraWindowCounts } from "./payprogress";
 import { sanitizeP2State, type P2State } from "./p2";
+import { sanitizeGuidedWork, type GuidedWork } from "./guided";
 
 // ─── Data shapes ───────────────────────────────────────────────────────────────
 
@@ -162,6 +163,11 @@ export interface ProjectData {
    *  (shared/p2.ts). Absent = the gig behaves exactly as before. Mutated ONLY via
    *  the dedicated /p2 endpoints — generic blob saves keep the stored copy. */
   p2?: P2State;
+  /** Guided progression (ohjattu eteneminen, shared/guided.ts): one-floor-at-a-time
+   *  fairness lock + "next window" guidance. Founder toggle, default OFF — absent or
+   *  disabled = no behavioural change. Only the toggle + override are persisted here;
+   *  the active floor / next window are DERIVED (computeGuided). */
+  guided?: GuidedWork;
   updatedAt: number;                                // epoch ms
 }
 
@@ -914,6 +920,7 @@ export function sanitizeProjectData(input: any): ProjectData {
     expenses,
     ...(eraWindows ? { eraWindows } : {}),
     ...(input.p2 !== undefined ? (() => { const p2 = sanitizeP2State(input.p2); return p2 ? { p2 } : {}; })() : {}),
+    ...(input.guided !== undefined ? (() => { const g = sanitizeGuidedWork(input.guided); return g ? { guided: g } : {}; })() : {}),
     updatedAt: Date.now(),
   };
 }

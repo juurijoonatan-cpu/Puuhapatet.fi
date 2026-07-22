@@ -16,6 +16,7 @@ import {
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense,
 } from "@shared/project";
 import { computeP2Billing, DEFAULT_P2_WORKER_SHARE_PCT, type P2State } from "@shared/p2";
+import { computeGuided, type GuidedWork } from "@shared/guided";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
 import { FOUNDER_IDS } from "@shared/team";
 import { traineeForUserId, traineeForName } from "@shared/trainees";
@@ -435,6 +436,21 @@ export default function AdminProjectPage() {
     else setError(res.error || "Hinnoittelu epäonnistui");
   }, [jobId, currentWorker, applyP2]);
 
+  // ── Ohjattu eteneminen (guided) — perustajan kytkin + kerroksen ohitus ──────
+  // Guided-tila on serverin omistama kuten p2 (geneerinen autosave ei koske
+  // siihen). /guided-reitti palauttaa tallennetun kytkimen; päivitetään paikalliseen
+  // projektiin. Johdettu tila (aktiivinen kerros, seuraava ikkuna) lasketaan
+  // clientissä `computeGuided`illä suoraan kartasta, joten se pysyy aina synkassa.
+  // HUOM: tämä hook on ennen early returneja (React #310).
+  const onGuidedSet = useCallback(async (data: { enabled?: boolean; activeFloorOverride?: string | null }) => {
+    const res = await api.guidedSet(jobId, data);
+    if (res.ok && res.data) {
+      const guided = res.data.guided;
+      setProject((cur) => (cur ? { ...cur, guided } : cur));
+      latest.current = latest.current ? { ...latest.current, guided } : latest.current;
+    } else setError(res.error || "Tallennus epäonnistui");
+  }, [jobId]);
+
   // ── Render ──────────────────────────────────────────────────────────────────
   const shell = (children: React.ReactNode) => (
     <div className="fr8-root" style={{ position: "fixed", inset: 0, background: "#060607", color: "#fff", overflow: "hidden", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>
@@ -653,14 +669,22 @@ export default function AdminProjectPage() {
         {tab === "dashboard" && (
           <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} onSetEarnings={setWorkerEarnings} traineeInfo={traineeInfo} traineeShareByLeader={traineeShareByLeader} founderEarnings={founderEarnings} workerLaborCents={workerLaborCents} founderRateEur={internalKateCents / 100}
             p2Slot={deal ? (
-              <P2AdminPanel
-                project={project}
-                jobId={jobId}
-                by={currentWorker}
-                onP2={applyP2}
-                onGoToFloor={onGoToFloor}
-                canSend={profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")}
-              />
+              <>
+                <P2AdminPanel
+                  project={project}
+                  jobId={jobId}
+                  by={currentWorker}
+                  onP2={applyP2}
+                  onGoToFloor={onGoToFloor}
+                  canSend={profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")}
+                />
+                <GuidedAdminPanel
+                  project={project}
+                  onGuidedSet={onGuidedSet}
+                  onGoToFloor={onGoToFloor}
+                  canSend={profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")}
+                />
+              </>
             ) : undefined}
             expensesTotalCents={(project.expenses || []).reduce((s, e) => s + e.amountCents, 0)}
             expensesSlot={
@@ -756,6 +780,7 @@ export default function AdminProjectPage() {
             deal={deal}
             p2={project.p2 ? { enabled: project.p2.enabled, offers: project.p2.offers } : null}
             onP2Propose={onP2Propose}
+            guided={project.guided?.enabled ? (() => { const g = computeGuided(project); return { enabled: true, activeFloor: g.activeFloor, lockedFloors: g.lockedFloors, nextKey: g.nextKey }; })() : null}
           />
         )}
       </main>
@@ -976,7 +1001,7 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
               placeholder="Liitä tähän P2-sopimuksen teksti — asiakas näkee sen hyväksyessään tilausehdot seurantalinkissä. Tyhjänä käytetään lyhyttä oletustekstiä."
               style={{ width: "100%", boxSizing: "border-box", resize: "vertical", padding: "11px 13px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(0,0,0,0.35)", color: "#fff", fontSize: "12.5px", lineHeight: 1.6, outline: "none", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}
             />
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <button
                 disabled={busy || termsDraft === (p2?.termsText ?? "")}
                 onClick={() => void run(() => api.p2SetPhase(jobId, { termsText: termsDraft, by }), "Sopimusteksti tallennettu")}
@@ -984,6 +1009,11 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
               >
                 Tallenna sopimusteksti
               </button>
+              {/* Bundlattu valmis P2-sopimus (PDF) — sama tiedosto jonka asiakas
+                  näkee tilausehdoissa. Tästä perustaja voi tarkistaa sen. */}
+              <a href="/fr8/priority2-sopimus-2026.pdf" target="_blank" rel="noopener noreferrer" style={{ ...btn, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                📄 Avaa liitetty sopimus (PDF)
+              </a>
               <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)" }}>
                 Asiakas hyväksyy tämän nimellä + aikaleimalla; jokainen hintalukitus kirjautuu lokiin.
               </span>
@@ -1019,6 +1049,121 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
         })()}
 
         {msg && <div style={{ fontSize: "12px", color: "rgba(255,220,160,0.95)" }}>{msg}</div>}
+      </div>
+    </Section>
+  );
+}
+
+// ─── GuidedAdminPanel — ohjattu eteneminen (yks kerros kerrallaa) ─────────────
+
+/** Kerroksen selkokielinen nimi ("Kellari" / "3. kerros"). */
+function guidedFloorName(floor: string | null): string {
+  if (!floor) return "—";
+  return floor === "K" ? "Kellari" : `${floor}. kerros`;
+}
+
+/**
+ * Perustajan kytkin ohjatulle etenemiselle: yks kerros kerrallaa, muut lukossa.
+ * Oletuksena pois. Kun päällä: tekijät voivat merkata vain aktiivisen kerroksen
+ * ikkunoita ja dashboard ohjaa heidät seuraavaan yksittäiseen ikkunaan. Ei
+ * vaikeustasoja — hinta kertoo vaikeuden. Aktiivinen kerros ja seuraava ikkuna
+ * lasketaan suoraan kartasta (computeGuided), joten näkymä on aina ajan tasalla.
+ */
+function GuidedAdminPanel({ project, onGuidedSet, onGoToFloor, canSend }: {
+  project: ProjectData;
+  onGuidedSet: (data: { enabled?: boolean; activeFloorOverride?: string | null }) => Promise<void>;
+  onGoToFloor: (floor: string) => void;
+  canSend: boolean;
+}) {
+  const g = computeGuided(project);
+  const enabled = project.guided?.enabled === true;
+  const override = project.guided?.activeFloorOverride ?? "";
+  const [busy, setBusy] = useState(false);
+
+  const toggle = async () => { setBusy(true); await onGuidedSet({ enabled: !enabled }); setBusy(false); };
+  const setOverride = async (floor: string) => { setBusy(true); await onGuidedSet({ activeFloorOverride: floor || null }); setBusy(false); };
+
+  const btn: React.CSSProperties = { padding: "7px 12px", borderRadius: 9, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.85)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px", fontWeight: 600, cursor: "pointer" };
+  const withScope = g.floorProgress.filter((f) => f.inScope > 0);
+
+  return (
+    <Section
+      id="guided"
+      label="OHJATTU ETENEMINEN — YKS KERROS KERRALLAA"
+      summary={
+        <span style={{ fontVariantNumeric: "tabular-nums" }}>
+          {enabled ? `🟢 ${guidedFloorName(g.activeFloor)}${g.lockedFloors.length ? ` · ${g.lockedFloors.length} lukossa` : ""}` : "pois päältä"}
+        </span>
+      }
+      defaultOpen={false}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <p style={{ margin: 0, fontSize: "12.5px", lineHeight: 1.5, color: "rgba(255,255,255,0.6)" }}>
+          Kun tämä on päällä, tekijät voivat merkata vain <b style={{ color: "#fff" }}>aktiivisen kerroksen</b> ikkunoita — muut kerrokset ovat lukossa. Dashboard ohjaa jokaisen seuraavaan yksittäiseen ikkkunaan, joten edetään järjestelmällisesti eikä poimita helppoja sieltä täältä. Punaiset ovat aina työn piirissä; keltainen tulee mukaan vasta kun sen hinta on lukittu. Vaikeustasoja ei ole — hinta kertoo vaikeuden.
+        </p>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <button
+            disabled={busy || !canSend}
+            onClick={() => void toggle()}
+            style={{ ...btn, border: "none", background: enabled ? "rgba(95,224,138,0.9)" : "rgba(255,255,255,0.1)", color: enabled ? "#0a0a0c" : "#fff", fontWeight: 700, opacity: canSend ? 1 : 0.5 }}
+          >
+            {enabled ? "Ohjaus päällä — kytke pois" : "Kytke ohjattu eteneminen päälle"}
+          </button>
+          {!enabled && (
+            <span style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.06em", padding: "4px 9px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.6)" }}>
+              OLETUS: POIS — kartta on täysin auki
+            </span>
+          )}
+        </div>
+
+        {enabled && (
+          <>
+            {/* Aktiivinen kerros + kerroksen ohitus */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ padding: "10px 12px", borderRadius: 12, background: "rgba(95,224,138,0.08)", border: "1px solid rgba(95,224,138,0.28)", minWidth: 150 }}>
+                <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.1em", color: "rgba(159,240,189,0.7)", display: "block", marginBottom: 4 }}>AKTIIVINEN KERROS</span>
+                <span style={{ fontSize: "16px", fontWeight: 800, color: "#9ff0bd" }}>{guidedFloorName(g.activeFloor)}</span>
+                {g.allComplete && <span style={{ marginLeft: 8, fontSize: "12px", color: "#9ff0bd" }}>kaikki valmiit 🎉</span>}
+              </div>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "12px", color: "rgba(255,255,255,0.6)" }}>
+                Pakota kerros
+                <select
+                  value={override}
+                  disabled={busy || !canSend}
+                  onChange={(e) => void setOverride(e.target.value)}
+                  style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.16)", background: "rgba(0,0,0,0.4)", color: "#fff", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px", outline: "none" }}
+                >
+                  <option value="">Automaattinen (suositus)</option>
+                  {project.building.floors.map((f) => (
+                    <option key={f} value={f}>{guidedFloorName(f)}</option>
+                  ))}
+                </select>
+              </label>
+              {g.overrideActive && (
+                <span style={{ fontSize: "11px", color: "rgb(255,220,110)" }}>Kerros pakotettu — automaattinen eteneminen ohitettu</span>
+              )}
+            </div>
+
+            {/* Kerrosten edistyminen */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {withScope.map((f) => (
+                <button key={f.floor} onClick={() => onGoToFloor(f.floor)}
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 11px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.08)", background: f.active ? "rgba(95,224,138,0.1)" : "rgba(255,255,255,0.03)", cursor: "pointer", textAlign: "left" }}>
+                  <span style={{ width: 20, fontSize: "13px" }}>{f.active ? "▶" : f.complete ? "✓" : f.locked ? "🔒" : ""}</span>
+                  <span style={{ flex: 1, fontSize: "13px", fontWeight: 600, color: f.active ? "#9ff0bd" : "#fff" }}>{guidedFloorName(f.floor)}</span>
+                  <span style={{ fontSize: "12px", fontVariantNumeric: "tabular-nums", color: "rgba(255,255,255,0.55)" }}>{f.washed}/{f.inScope}</span>
+                  <span style={{ width: 64, height: 5, borderRadius: 3, background: "rgba(255,255,255,0.1)", overflow: "hidden" }}>
+                    <span style={{ display: "block", height: "100%", width: `${f.inScope ? Math.round((f.washed / f.inScope) * 100) : 0}%`, background: f.complete ? "#5fe08a" : f.active ? "#9ff0bd" : "rgba(255,255,255,0.4)" }} />
+                  </span>
+                </button>
+              ))}
+              {withScope.length === 0 && (
+                <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.5)" }}>Ei työn piirissä olevia ikkunoita vielä (lukitse keltaisten hintoja tai lisää punaisia).</span>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </Section>
   );

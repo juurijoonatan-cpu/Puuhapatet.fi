@@ -9,7 +9,8 @@ import { LiquidGlassNav } from "@/components/liquid-glass-nav";
 import { ProtectedRoute } from "@/components/protected-route";
 import { ChatWidget } from "@/components/chat-widget";
 import { FreeAssessmentPrompt } from "@/components/free-assessment-prompt";
-import { useEffect, Component } from "react";
+import { PageLoadingSkeleton } from "@/components/loading-skeleton";
+import { useEffect, Component, lazy, Suspense } from "react";
 import type { ReactNode, ErrorInfo } from "react";
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -42,43 +43,48 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
   }
 }
 
-import LandingPage from "@/pages/landing";
-import ServicesPage from "@/pages/services";
-import FAQPage from "@/pages/faq";
-import AboutPage from "@/pages/about";
-import BookingPage from "@/pages/booking";
-import ConfirmationPage from "@/pages/confirmation";
-import EhdotPage from "@/pages/ehdot";
-import TietosuojaPage from "@/pages/tietosuoja";
-import LaskuriPage from "@/pages/laskuri";
-import AdminLoginPage from "@/pages/admin/login";
-import AdminDashboard from "@/pages/admin/dashboard";
-import AdminNewJobPage from "@/pages/admin/new-job";
-import AdminNewGigPage from "@/pages/admin/new-gig";
-import AdminWelcomePage from "@/pages/admin/welcome";
-import AdminGigTrackerPage from "@/pages/admin/gig-tracker";
-import AdminProjectPage from "@/pages/admin/project";
-import GigLivePage from "@/pages/gig-live";
-import WorkerPage from "@/pages/worker";
-import AdminCrewPage from "@/pages/admin/crew";
-import AdminCalendarPage from "@/pages/admin/calendar";
-import AdminJobsPage from "@/pages/admin/jobs";
-import AdminSellPage from "@/pages/admin/sell";
-import AdminLeadTriagePage from "@/pages/admin/lead-triage";
-import AdminPackagesPage from "@/pages/admin/packages";
-import AdminSettingsPage from "@/pages/admin/settings";
-import AdminCustomersPage from "@/pages/admin/customers";
-import AdminQuotesPage from "@/pages/admin/quotes";
-import AdminGuidePage from "@/pages/admin/guide";
-import AdminTaxExportPage from "@/pages/admin/tax-export";
-import AdminWorkerDetailPage from "@/pages/admin/worker-detail";
-import AdminInvestmentsPage from "@/pages/admin/investments";
-import AdminInboxPage from "@/pages/admin/inbox";
-import QuotePage from "@/pages/quote";
-import ITPage from "@/pages/it";
-import CVDemoPage from "@/pages/cv-demo";
-import RecruitmentPage from "@/pages/recruitment";
-import NotFound from "@/pages/not-found";
+// Routes are code-split (React.lazy): a visitor on the public site never
+// downloads the admin ERP bundle, and each heavy page loads on demand. This
+// keeps the initial paint fast and the app feeling instant. Suspense fallbacks
+// live below the nav (see layouts + ProtectedRoute) so navigation never flashes
+// the chrome.
+const LandingPage = lazy(() => import("@/pages/landing"));
+const ServicesPage = lazy(() => import("@/pages/services"));
+const FAQPage = lazy(() => import("@/pages/faq"));
+const AboutPage = lazy(() => import("@/pages/about"));
+const BookingPage = lazy(() => import("@/pages/booking"));
+const ConfirmationPage = lazy(() => import("@/pages/confirmation"));
+const EhdotPage = lazy(() => import("@/pages/ehdot"));
+const TietosuojaPage = lazy(() => import("@/pages/tietosuoja"));
+const LaskuriPage = lazy(() => import("@/pages/laskuri"));
+const AdminLoginPage = lazy(() => import("@/pages/admin/login"));
+const AdminDashboard = lazy(() => import("@/pages/admin/dashboard"));
+const AdminNewJobPage = lazy(() => import("@/pages/admin/new-job"));
+const AdminNewGigPage = lazy(() => import("@/pages/admin/new-gig"));
+const AdminWelcomePage = lazy(() => import("@/pages/admin/welcome"));
+const AdminGigTrackerPage = lazy(() => import("@/pages/admin/gig-tracker"));
+const AdminProjectPage = lazy(() => import("@/pages/admin/project"));
+const GigLivePage = lazy(() => import("@/pages/gig-live"));
+const WorkerPage = lazy(() => import("@/pages/worker"));
+const AdminCrewPage = lazy(() => import("@/pages/admin/crew"));
+const AdminCalendarPage = lazy(() => import("@/pages/admin/calendar"));
+const AdminJobsPage = lazy(() => import("@/pages/admin/jobs"));
+const AdminSellPage = lazy(() => import("@/pages/admin/sell"));
+const AdminLeadTriagePage = lazy(() => import("@/pages/admin/lead-triage"));
+const AdminPackagesPage = lazy(() => import("@/pages/admin/packages"));
+const AdminSettingsPage = lazy(() => import("@/pages/admin/settings"));
+const AdminCustomersPage = lazy(() => import("@/pages/admin/customers"));
+const AdminQuotesPage = lazy(() => import("@/pages/admin/quotes"));
+const AdminGuidePage = lazy(() => import("@/pages/admin/guide"));
+const AdminTaxExportPage = lazy(() => import("@/pages/admin/tax-export"));
+const AdminWorkerDetailPage = lazy(() => import("@/pages/admin/worker-detail"));
+const AdminInvestmentsPage = lazy(() => import("@/pages/admin/investments"));
+const AdminInboxPage = lazy(() => import("@/pages/admin/inbox"));
+const QuotePage = lazy(() => import("@/pages/quote"));
+const ITPage = lazy(() => import("@/pages/it"));
+const CVDemoPage = lazy(() => import("@/pages/cv-demo"));
+const RecruitmentPage = lazy(() => import("@/pages/recruitment"));
+const NotFound = lazy(() => import("@/pages/not-found"));
 
 function ScrollToTop() {
   const [location] = useLocation();
@@ -92,7 +98,8 @@ function PublicLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
       <LiquidGlassNav />
-      {children}
+      {/* Suspense sits below the nav so a lazy page load never flashes the chrome. */}
+      <Suspense fallback={<PageLoadingSkeleton />}>{children}</Suspense>
       <ChatWidget />
       <FreeAssessmentPrompt />
     </>
@@ -105,13 +112,17 @@ function RecruitmentLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
       <LiquidGlassNav />
-      {children}
+      <Suspense fallback={<PageLoadingSkeleton />}>{children}</Suspense>
     </>
   );
 }
 
 function Router() {
   return (
+    // Outer boundary catches the standalone routes below that render without a
+    // layout (they have no nav to flash). Layout- and admin-wrapped routes have
+    // their own inner Suspense so their chrome stays put during a lazy load.
+    <Suspense fallback={<PageLoadingSkeleton />}>
     <Switch>
       <Route path="/">
         <PublicLayout>
@@ -295,6 +306,7 @@ function Router() {
       
       <Route component={NotFound} />
     </Switch>
+    </Suspense>
   );
 }
 

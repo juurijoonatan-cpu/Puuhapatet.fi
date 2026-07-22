@@ -7,7 +7,7 @@
  * 3. Admin layout with nav
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useLocation } from "wouter";
 import { isAdminAuthenticated } from "@/pages/admin/login";
 import { getAdminProfile, isProfileComplete } from "@/lib/admin-profile";
@@ -106,13 +106,14 @@ export function ProtectedRoute({ children, requireProfile = true, bare = false, 
   }
 
   if (bare) {
-    return <>{children}</>;
+    return <Suspense fallback={<PageLoadingSkeleton />}>{children}</Suspense>;
   }
 
   return (
     <>
       <AdminNav />
-      {children}
+      {/* Suspense below the nav so a lazy admin page never flashes the chrome. */}
+      <Suspense fallback={<PageLoadingSkeleton />}>{children}</Suspense>
       <AdminAssistant />
     </>
   );

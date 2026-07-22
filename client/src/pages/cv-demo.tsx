@@ -6,6 +6,7 @@ import {
   Globe2, Cpu, Code2, Users, BarChart3, ChevronRight,
   ArrowUpRight, Sparkle, Figma, Framer, Palette, PenTool,
   Layers, Type, Aperture, Chrome, Camera, Brush, Box, Wand2,
+  type LucideIcon,
 } from "lucide-react";
 import { GlassFilter } from "@/components/ui/liquid-glass-button";
 import { cn } from "@/lib/utils";
@@ -266,12 +267,10 @@ function WidgetExperience() {
         Career
       </p>
       <ul className="space-y-3">
-        {[PERSON.current, ...PERSON.experience.map(e => ({
-          role:   e.role,
-          company: e.company,
-          period:  e.period,
-          detail: "",
-        }))].map((item, i) => (
+        {([
+          { role: PERSON.current.role, period: PERSON.current.period },
+          ...PERSON.experience.map(e => ({ role: e.role, company: e.company, period: e.period })),
+        ] as { role: string; company?: string; period: string }[]).map((item, i) => (
           <li key={i} className="flex items-start gap-2">
             <div className="mt-1.5 w-1 h-1 rounded-full bg-zinc-600 flex-shrink-0" />
             <div>
@@ -649,7 +648,7 @@ function VideoCard({
 function MarqueeRow({
   icons, direction,
 }: {
-  icons: React.ComponentType<{ strokeWidth?: number; className?: string }>[];
+  icons: LucideIcon[];
   direction: "left" | "right";
 }) {
   const doubled = [...icons, ...icons];

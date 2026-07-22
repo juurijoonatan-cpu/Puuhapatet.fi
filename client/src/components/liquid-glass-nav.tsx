@@ -2,6 +2,7 @@ import { Link, useLocation } from "wouter";
 import { Home, Grid3X3, HelpCircle, Users, Calculator } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { useHideOnScroll } from "@/hooks/use-hide-on-scroll";
 
 interface NavItem {
   icon: typeof Home;
@@ -20,6 +21,8 @@ const publicNavItems: NavItem[] = [
 export function LiquidGlassNav() {
   const [location] = useLocation();
   const { lang, toggleLang, t } = useI18n();
+  // Floating bottom bar slides away on scroll-down so it never covers content.
+  const navHidden = useHideOnScroll();
 
   return (
     <>
@@ -33,8 +36,12 @@ export function LiquidGlassNav() {
         </div>
       </header>
 
-      <nav 
-        className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 glass-nav rounded-[20px] px-2 py-2 md:hidden"
+      <nav
+        className="fixed bottom-4 left-1/2 z-50 glass-nav rounded-[20px] px-2 py-2 md:hidden"
+        style={{
+          transform: `translateX(-50%) translateY(${navHidden ? "200%" : "0"})`,
+          transition: "transform 0.32s cubic-bezier(0.22, 1, 0.36, 1)",
+        }}
         role="navigation"
         aria-label="Päävalikko"
       >

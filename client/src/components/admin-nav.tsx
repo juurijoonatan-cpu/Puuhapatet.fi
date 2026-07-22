@@ -13,6 +13,7 @@ import { clearAdminSession } from "@/pages/admin/login";
 import { clearAdminProfile, getAdminProfile, canApproveLeads } from "@/lib/admin-profile";
 import { API_BASE, withAuth } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useHideOnScroll } from "@/hooks/use-hide-on-scroll";
 
 interface NavItem {
   icon: typeof LayoutDashboard;
@@ -24,6 +25,9 @@ interface NavItem {
 export function AdminNav() {
   const [location, navigate] = useLocation();
   const { theme, toggleTheme } = useTheme();
+  // Slide the floating bottom bar away while scrolling down so it never traps
+  // the content behind it; it returns the instant the user scrolls up.
+  const navHidden = useHideOnScroll();
 
   const currentPath = location || "";
   const profile = typeof window !== "undefined" ? getAdminProfile() : null;
@@ -92,8 +96,12 @@ export function AdminNav() {
       </header>
 
       <nav
-        className="fixed left-1/2 -translate-x-1/2 z-50 glass-nav rounded-[20px] px-2 py-2 md:hidden"
-        style={{ bottom: "calc(1rem + env(safe-area-inset-bottom))" }}
+        className="fixed left-1/2 z-50 glass-nav rounded-[20px] px-2 py-2 md:hidden"
+        style={{
+          bottom: "calc(1rem + env(safe-area-inset-bottom))",
+          transform: `translateX(-50%) translateY(${navHidden ? "200%" : "0"})`,
+          transition: "transform 0.32s cubic-bezier(0.22, 1, 0.36, 1)",
+        }}
         role="navigation"
         aria-label="Admin-valikko"
       >

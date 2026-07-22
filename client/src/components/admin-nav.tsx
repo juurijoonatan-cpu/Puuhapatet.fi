@@ -103,23 +103,26 @@ export function AdminNav() {
             const Icon = item.icon;
 
             return (
-              <Link key={item.href} href={item.href}>
-                <button
-                  className={cn(
-                    "relative flex items-center justify-center w-12 h-12 rounded-2xl transition-all duration-200",
-                    active
-                      ? "text-primary scale-105"
-                      : "text-muted-foreground"
-                  )}
-                  aria-label={item.label}
-                  aria-current={active ? "page" : undefined}
-                  data-testid={`admin-nav-${item.label.toLowerCase()}`}
-                >
-                  <Icon className="w-6 h-6" strokeWidth={active ? 2.5 : 2} />
-                  {(item.badge ?? 0) > 0 && (
-                    <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center">{item.badge}</span>
-                  )}
-                </button>
+              // Single anchor IS the tap target — no nested <button> inside the
+              // <a> (invalid nesting made iOS route taps to a thin box → "tap
+              // above"). The whole 48×48 area now navigates.
+              <Link
+                key={item.href}
+                href={item.href}
+                className={cn(
+                  "relative flex items-center justify-center w-12 h-12 rounded-2xl transition-all duration-200 cursor-pointer",
+                  active
+                    ? "text-primary scale-105"
+                    : "text-muted-foreground"
+                )}
+                aria-label={item.label}
+                aria-current={active ? "page" : undefined}
+                data-testid={`admin-nav-${item.label.toLowerCase()}`}
+              >
+                <Icon className="w-6 h-6" strokeWidth={active ? 2.5 : 2} />
+                {(item.badge ?? 0) > 0 && (
+                  <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center">{item.badge}</span>
+                )}
               </Link>
             );
           })}
@@ -140,22 +143,23 @@ export function AdminNav() {
               const Icon = item.icon;
 
               return (
-                <Link key={item.href} href={item.href}>
-                  <button
-                    className={cn(
-                      "relative flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-200",
-                      active
-                        ? "text-primary bg-primary/5"
-                        : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                    )}
-                    data-testid={`admin-nav-desktop-${item.label.toLowerCase()}`}
-                  >
-                    <Icon className="w-4 h-4" />
-                    <span className="text-sm font-medium">{item.label}</span>
-                    {(item.badge ?? 0) > 0 && (
-                      <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center">{item.badge}</span>
-                    )}
-                  </button>
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    "relative flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-200 cursor-pointer",
+                    active
+                      ? "text-primary bg-primary/5"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                  )}
+                  aria-current={active ? "page" : undefined}
+                  data-testid={`admin-nav-desktop-${item.label.toLowerCase()}`}
+                >
+                  <Icon className="w-4 h-4" />
+                  <span className="text-sm font-medium">{item.label}</span>
+                  {(item.badge ?? 0) > 0 && (
+                    <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center">{item.badge}</span>
+                  )}
                 </Link>
               );
             })}

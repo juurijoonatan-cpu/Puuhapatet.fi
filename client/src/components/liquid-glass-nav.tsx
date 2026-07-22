@@ -45,20 +45,22 @@ export function LiquidGlassNav() {
             const Icon = item.icon;
             
             return (
-              <Link key={item.href} href={item.href}>
-                <button
-                  className={cn(
-                    "flex items-center justify-center w-12 h-12 rounded-2xl transition-all duration-200",
-                    isActive 
-                      ? "text-primary scale-105" 
-                      : "text-muted-foreground"
-                  )}
-                  aria-label={t(item.labelKey)}
-                  aria-current={isActive ? "page" : undefined}
-                  data-testid={`nav-${item.labelKey}`}
-                >
-                  <Icon className="w-6 h-6" strokeWidth={isActive ? 2.5 : 2} />
-                </button>
+              // Single anchor is the full 48×48 tap target (no nested <button>
+              // inside the <a>, which mis-routes taps on iOS).
+              <Link
+                key={item.href}
+                href={item.href}
+                className={cn(
+                  "flex items-center justify-center w-12 h-12 rounded-2xl transition-all duration-200 cursor-pointer",
+                  isActive
+                    ? "text-primary scale-105"
+                    : "text-muted-foreground"
+                )}
+                aria-label={t(item.labelKey)}
+                aria-current={isActive ? "page" : undefined}
+                data-testid={`nav-${item.labelKey}`}
+              >
+                <Icon className="w-6 h-6" strokeWidth={isActive ? 2.5 : 2} />
               </Link>
             );
           })}
@@ -89,19 +91,20 @@ export function LiquidGlassNav() {
               const Icon = item.icon;
               
               return (
-                <Link key={item.href} href={item.href}>
-                  <button
-                    className={cn(
-                      "flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-200",
-                      isActive 
-                        ? "text-primary bg-primary/5" 
-                        : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                    )}
-                    data-testid={`nav-desktop-${item.labelKey}`}
-                  >
-                    <Icon className="w-4 h-4" />
-                    <span className="text-sm font-medium">{t(item.labelKey)}</span>
-                  </button>
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    "flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-200 cursor-pointer",
+                    isActive
+                      ? "text-primary bg-primary/5"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                  )}
+                  aria-current={isActive ? "page" : undefined}
+                  data-testid={`nav-desktop-${item.labelKey}`}
+                >
+                  <Icon className="w-4 h-4" />
+                  <span className="text-sm font-medium">{t(item.labelKey)}</span>
                 </Link>
               );
             })}

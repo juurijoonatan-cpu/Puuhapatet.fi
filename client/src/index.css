@@ -219,19 +219,23 @@
     box-shadow: var(--glass-shadow);
   }
 
-  /* Admin page wrapper: clears the fixed top header + bottom nav AND respects
-     the device safe areas (notch / Dynamic Island / home indicator) so content
-     is never hidden under them in a standalone PWA. Replaces pt-20/md:pt-24/pb-28. */
+  /* Admin page wrapper: clears the fixed top header + the floating bottom nav
+     AND respects the device safe areas (notch / Dynamic Island / home
+     indicator) so content is never hidden under them in a standalone PWA.
+     The floating pill nav sits ~1rem from the bottom and is ~4rem tall, so the
+     bottom pad must clear its full footprint plus a comfortable gap — otherwise
+     content (e.g. a CTA card) ends up under it and can't be tapped. */
   .admin-shell-pad {
     padding-top: calc(5rem + env(safe-area-inset-top));
-    padding-bottom: calc(7rem + env(safe-area-inset-bottom));
+    padding-bottom: calc(8.5rem + env(safe-area-inset-bottom));
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
   }
   @media (min-width: 768px) {
     .admin-shell-pad {
+      /* Desktop has a top nav only (no bottom bar) — less bottom pad needed. */
       padding-top: 6rem;
-      padding-bottom: 7rem;
+      padding-bottom: 5rem;
     }
   }
   

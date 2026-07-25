@@ -90,6 +90,63 @@ muuttua"), joten juuri muuttunutta hintaa ei voi hyväksyä vahingossa.
   (vain oma palkkio — ks. rahan yksityisyys `fr8-tyo-logiikka.md`), Ansioissa
   "sis. Priority 2" -erittely (`stats.p2EarnedCents`).
 
+## Tekijöiden hinta-arviot (hinnoittelun apu)
+
+Perustaja hinnoittelee keltaisia **pohjakuvasta**; tekijä seisoo talossa ja
+**näkee** ikkunan. Siksi loput hinnoittelemattomat kysytään heiltä: työpöydälle
+ilmestyy popup, jossa käydään keltaisia läpi yksi kerrallaan.
+
+- **Ei vielä hinnoiteltu** → "Paljonko haluaisit saada tästä ikkunasta?"
+  (presetit vertailutason ympäriltä + oma summa). Vastaus on tekijän OMA
+  palkkiotoive, ei asiakashinta.
+- **Jo hinnoiteltu** → "Tämä ikkuna on jo hinnoiteltu. Sinulle tästä: X €.
+  Sopiiko?" → **Kyllä / Ei**; "Ei" saa kantaa mukanaan summan ("mikä olisi
+  reilu"). Hylätty (`declined`) tarjous = takaisin hinnoittelemattomiin.
+
+**Realismi on rakennettu sisään.** Jokainen summa mitataan keikan omaa tasoa
+vasten: `p2EstimateReferenceCents` = lukittujen keltaisten mediaanipalkkio, tai
+ennen ensimmäistä lukitusta tekijän oma €/ikkuna-taksa (viimeinen fallback 20 €).
+Yli **2 × vertailutaso** → `flagged`: tekijä näkee varoituksen jo ennen lähetystä
+(sama raja clientissä ja serverillä) ja perustaja näkee merkinnän heti
+P2-paneelissa. Popupin pelisäännöt sanovat tämän suoraan: arvio on lupaus hinnasta
+jolla työ oikeasti tehdään, ja ylihinnoittelu näkyy meille välittömästi.
+
+Datamalli (`shared/p2.ts`, `P2State`):
+
+- `askEstimates?: boolean` — perustajan kytkin. **Erillinen `enabled`istä**:
+  arviot kerätään nimenomaan valmisteluvaiheessa, ennen kuin mitään menee
+  asiakkaalle.
+- `estimates?: Record<key, Record<memberId, P2Estimate>>` — yksi tietue per
+  (ikkuna, tekijä), uusi vastaus korvaa vanhan.
+  `P2Estimate { memberId, payoutCents?, vote?, note?, ts, flagged? }`.
+- Arviot EIVÄT mene `events`-auditlokiin: se on asiakassopimuksen loki (katto 500),
+  eivätkä tekijöiden mielipiteet saa työntää neuvottelutapahtumia sieltä ulos.
+
+Laskenta: `p2EstimateSummary` / `p2EstimateSummaries` (hinnoittelemattomat ensin,
+sitten vastausmäärä) antavat per ikkuna mediaanin/hajonnan, kyllä-ei-jakauman,
+flagged-määrän ja `suggestedPriceCents` = `impliedP2PriceCents(mediaani, share%)`
+— eli **tekijöiden mediaanitoiveesta johdettu asiakashinta**, jonka perustaja voi
+ehdottaa yhdellä napilla ("Ehdota X €", pyöristys 0,50 €).
+
+Reitit:
+
+- Perustaja: `POST /api/jobs/:id/p2/phase { askEstimates }` (kytkin).
+- Tekijä: `POST /api/crew/:token/p2/estimate { key, payoutCents?, vote?, note? }`
+  — vaatii `askEstimates`, keltaisen pisteen kartasta (`pointPriority`), ja
+  sopimusportti kuten muillakin crew-kirjoituksilla. Hinnoiteltu ikkuna vaatii
+  `vote`n, hinnoittelematon summan. Kirjoitus lukee **tuoreimman p2:n juuri ennen
+  tallennusta** ja lisää siihen vain oman arvionsa, joten arvio ei voi yliajaa
+  asiakkaan samaan aikaan lukitsemaa hintaa.
+
+**Rahan yksityisyys säilyy:** `workerView.p2Ask` lähettää hinnoitellusta ikkunasta
+VAIN tekijän oman palkkion (`p2WorkerPayoutCents`) — ei `lockedCents`ia,
+`priceCents`iä eikä `workerSharePct`:tä. Asiakashintaa ei voi rekonstruoida.
+
+Näkymät: tekijä `client/src/components/fr8/P2EstimateModal.tsx` (+ nudge ja
+kerran/vrk aukeava popup `worker.tsx`:ssä, "Näytä kartalla" vie kerrokselle);
+perustaja P2AdminPanelin **"Kysy tekijöiltä hinta-arviot"** -kytkin ja
+arviolista erittelyineen (kuka ehdotti mitä, milloin, flagged).
+
 ## Valmis sopimus (PDF)
 
 Valmis, viimeistelty Priority 2 -sopimus on bundlattu staattisena assetina:

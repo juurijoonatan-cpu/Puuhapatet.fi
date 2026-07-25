@@ -114,9 +114,38 @@ export interface WorkerView {
     lockedKeys: string[];
     payoutByKey: Record<string, number>;
   } | null;
+  /** Hinta-arviokysely (P2): the founders are asking the crew on site what each
+   *  yellow window should pay. Money privacy: `payoutCents` is the worker's OWN
+   *  payout for an already-priced window — never the customer price. Null = off. */
+  p2Ask: P2AskView | null;
   /** Ohjattu eteneminen (guided): the open floor + the next window to guide to.
    *  Null when the founder hasn't enabled it — then the map is fully open. */
   guided: GuidedWorkerView | null;
+}
+
+/** One yellow window in the worker's price-estimate queue. */
+export interface P2AskItem {
+  key: string;
+  floor: string;
+  /** Already has a price on the table → the worker only votes yes/no on it. */
+  priced: boolean;
+  /** The worker's OWN payout for that price (null when not priced yet). */
+  payoutCents: number | null;
+  washed: boolean;
+  /** This worker's own earlier answer, if any. */
+  mine: { payoutCents: number | null; vote: "yes" | "no" | null; ts: number; flagged: boolean } | null;
+}
+
+/** The price-estimate ask shown to a worker on site. */
+export interface P2AskView {
+  enabled: boolean;
+  /** What a window normally pays on this gig — every estimate is measured against it. */
+  referenceCents: number;
+  maxCents: number;
+  items: P2AskItem[];
+  answered: number;
+  /** Unpriced windows this worker hasn't answered yet — what the founders wait on. */
+  pendingUnpriced: number;
 }
 
 /** Guided-progression view for a worker: which floor is open, what's locked, and
@@ -1054,7 +1083,7 @@ export const api = {
     request<{ ok: boolean; p2: P2PublicView }>("POST", `/api/gig/${token}/p2/remove-point`, { key }),
 
   // ─── P2 — adminin hinnoittelu + neuvottelun hallinta ─────────────────────────
-  p2SetPhase: (jobId: number, data: { enabled?: boolean; workerSharePct?: number; termsText?: string; by?: string }) =>
+  p2SetPhase: (jobId: number, data: { enabled?: boolean; workerSharePct?: number; termsText?: string; askEstimates?: boolean; by?: string }) =>
     request<{ ok: boolean; p2: P2State; p2Billing: P2Billing }>("POST", `/api/jobs/${jobId}/p2/phase`, data),
 
   p2Propose: (jobId: number, data: { keys: string[]; priceCents: number; by?: string }) =>
@@ -1144,6 +1173,13 @@ export const api = {
 
   crewAddNote: (token: string, text: string) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/note`, { text }),
+
+  // Tekijän hinta-arvio yhdestä keltaisesta ikkunasta (P2). Hinnoittelemattomasta
+  // annetaan payoutCents ("paljonko haluaisit tästä"), jo hinnoitellusta vote.
+  crewSubmitP2Estimate: (token: string, data: { key: string; payoutCents?: number; vote?: "yes" | "no"; note?: string }) =>
+    request<{ ok: boolean; flagged: boolean; referenceCents: number; view: WorkerView }>(
+      "POST", `/api/crew/${token}/p2/estimate`, data,
+    ),
 
   // Per-window observation (text + optional photo). Empty text + no image clears it.
   crewSetWindowObservation: (token: string, key: string, text: string, imageDataUrl?: string) =>

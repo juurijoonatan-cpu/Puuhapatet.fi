@@ -15,7 +15,7 @@ import {
   emptyProjectData, computeWorkerStats, isFr8Plans, fixedDealFor, allPoints, computeDealBilling,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense,
 } from "@shared/project";
-import { computeP2Billing, DEFAULT_P2_WORKER_SHARE_PCT, type P2State } from "@shared/p2";
+import { computeP2Billing, p2EstimateSummaries, p2EstimateReferenceCents, DEFAULT_P2_WORKER_SHARE_PCT, type P2State } from "@shared/p2";
 import { computeGuided, type GuidedWork } from "@shared/guided";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
 import { FOUNDER_IDS } from "@shared/team";
@@ -820,6 +820,7 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
   const [showLog, setShowLog] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
   const [termsDraft, setTermsDraft] = useState(p2?.termsText ?? "");
+  const [openEstimate, setOpenEstimate] = useState<string | null>(null);
 
   const deal = fixedDealFor(project);
   const p1Pct = deal ? computeDealBilling(project, deal).pct : 0;
@@ -854,6 +855,18 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
   const customerAdded = (p2?.events ?? []).filter((e) => e.action === "add_point").length;
   const sharePct = p2?.workerSharePct ?? DEFAULT_P2_WORKER_SHARE_PCT;
 
+  // Tekijöiden hinta-arviot: he seisovat talossa ja näkevät ikkunan, jota me
+  // hinnoittelemme pohjakuvasta. Hinnoittelemattomat ensin — ne odottavat meitä.
+  const estimates = p2EstimateSummaries(project);
+  const estimateRef = p2EstimateReferenceCents(project);
+  const flaggedTotal = estimates.reduce((n, s) => n + s.flagged, 0);
+  const crewName = (id: string) => (project.crew || []).find((c) => c.id === id)?.name || id;
+  const round50 = (cents: number) => Math.max(50, Math.round(cents / 50) * 50);
+  const toggleAsk = () => run(
+    () => api.p2SetPhase(jobId, { askEstimates: !p2?.askEstimates, by }),
+    p2?.askEstimates ? "Hinta-arviokysely suljettu" : "Hinta-arviokysely avattu tekijöille",
+  );
+
   const tile: React.CSSProperties = { flex: "1 1 110px", minWidth: 100, padding: "10px 12px", borderRadius: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" };
   const tileLabel: React.CSSProperties = { fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 };
   const tileVal: React.CSSProperties = { fontSize: "15px", fontWeight: 700, color: "#fff", fontVariantNumeric: "tabular-nums" };
@@ -868,6 +881,7 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
           {p2?.enabled ? "🟢 " : ""}
           {b.lockedCount > 0 ? `${b.lockedCount} sovittu · ${p2eur(b.lockedSumCents)}` : `${b.yellowTotal} keltaista`}
           {countered.length > 0 ? ` · ${countered.length} vastatarjousta` : ""}
+          {estimates.length > 0 ? ` · ${estimates.length} tekijäarviota` : ""}
         </span>
       }
       defaultOpen={countered.length > 0}
@@ -936,6 +950,115 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
             💡 Asiakas on ehdottanut {customerAdded} uutta ikkunaa karttaan — ne näkyvät hinnoittelemattomina keltaisina pisteinä.
           </div>
         )}
+
+        {/* ── Tekijöiden hinta-arviot ────────────────────────────────────────
+            Kytkin avaa tekijöiden työpöydälle popupin: "paljonko haluaisit
+            saada tästä ikkunasta?" (hinnoittelemattomat) / "tämä on jo
+            hinnoiteltu — kyllä vai ei?". Vastaus on tekijän OMA palkkiotoive;
+            asiakashinta johdetaan siitä osuusprosentilla. */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "11px 12px", borderRadius: 12, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <button
+              disabled={busy || !canSend}
+              onClick={() => void toggleAsk()}
+              style={{ ...btn, border: "none", background: p2?.askEstimates ? "rgb(255,205,40)" : "rgba(255,255,255,0.1)", color: p2?.askEstimates ? "#0a0a0c" : "#fff", fontWeight: 700, opacity: canSend ? 1 : 0.5 }}
+            >
+              {p2?.askEstimates ? "Hinta-arviokysely päällä — sulje" : "Kysy tekijöiltä hinta-arviot"}
+            </button>
+            <span style={{ fontSize: "11.5px", color: "rgba(255,255,255,0.5)", flex: "1 1 240px", lineHeight: 1.5 }}>
+              Tekijät ovat paikan päällä ja näkevät ikkunat. Kysely näkyy heidän työpöydällään
+              hinnoittelemattomista keltaisista ("paljonko haluaisit tästä?") ja jo hinnoitelluista
+              ("kyllä / ei"). He näkevät vain oman palkkionsa — eivät asiakashintaa.
+            </span>
+            {estimates.length > 0 && (
+              <span style={{ fontSize: "11.5px", color: "rgba(255,255,255,0.45)", fontVariantNumeric: "tabular-nums" }}>
+                vertailutaso {p2eur(estimateRef)} / ikkuna
+              </span>
+            )}
+          </div>
+
+          {flaggedTotal > 0 && (
+            <div style={{ padding: "8px 11px", borderRadius: 10, background: "rgba(255,120,120,0.08)", border: "1px solid rgba(255,120,120,0.28)", fontSize: "12px", color: "rgba(255,190,190,0.95)" }}>
+              ⚠️ {flaggedTotal} arviota on yli kaksinkertainen vertailutasoon nähden — merkitty epärealistiseksi.
+            </div>
+          )}
+
+          {estimates.length === 0 ? (
+            <span style={{ fontSize: "11.5px", color: "rgba(255,255,255,0.35)" }}>
+              {p2?.askEstimates ? "Ei vielä arvioita — tekijät vastaavat työpöydältään." : "Kysely on pois päältä."}
+            </span>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 340, overflowY: "auto" }}>
+              {estimates.map((s) => {
+                const offer = p2?.offers[s.key];
+                const locked = offer?.status === "locked";
+                const suggest = s.suggestedPriceCents != null ? round50(s.suggestedPriceCents) : null;
+                const open = openEstimate === s.key;
+                const answers = Object.values(p2?.estimates?.[s.key] ?? {});
+                return (
+                  <div key={s.key} style={{ padding: "8px 11px", borderRadius: 10, background: s.priced ? "rgba(255,255,255,0.03)" : "rgba(255,205,40,0.06)", border: `1px solid ${s.priced ? "rgba(255,255,255,0.08)" : "rgba(255,205,40,0.22)"}` }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <button onClick={() => onGoToFloor(s.floor)} style={{ background: "transparent", border: "none", color: "#fff", fontWeight: 700, fontSize: "12.5px", cursor: "pointer", fontFamily: "inherit", padding: 0 }} title="Näytä kartalla">
+                        krs {s.floor} · {s.key.split("#")[1]}
+                      </button>
+                      {s.priced ? (
+                        <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.6)" }}>
+                          {P2_STATUS_LABEL[offer?.status ?? ""] ?? "hinnoiteltu"} · 👍 {s.yes} / 👎 {s.no}
+                          {s.no > s.yes && <b style={{ color: "rgb(255,180,120)" }}> — tekijät eivät pidä hintaa reiluna</b>}
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.7)", fontVariantNumeric: "tabular-nums" }}>
+                          {s.count} arvio{s.count === 1 ? "" : "ta"} · palkkiotoive mediaani{" "}
+                          <b style={{ color: "rgb(255,205,40)" }}>{s.medianPayoutCents != null ? p2eur(s.medianPayoutCents) : "—"}</b>
+                          {s.minPayoutCents != null && s.minPayoutCents !== s.maxPayoutCents
+                            ? ` (${p2eur(s.minPayoutCents)}–${p2eur(s.maxPayoutCents!)})` : ""}
+                        </span>
+                      )}
+                      {s.flagged > 0 && (
+                        <span style={{ fontSize: "10.5px", fontWeight: 700, padding: "2px 7px", borderRadius: 999, background: "rgba(255,120,120,0.15)", color: "rgba(255,180,180,0.95)" }}>
+                          ⚠ {s.flagged} epärealistinen
+                        </span>
+                      )}
+                      <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        {suggest != null && !locked && (
+                          <button
+                            disabled={busy}
+                            onClick={() => void respond(s.key, "propose", suggest)}
+                            style={{ ...btn, border: "none", background: "rgba(95,224,138,0.85)", color: "#0a0a0c", fontWeight: 700 }}
+                            title={`Tekijöiden mediaanitoive ${p2eur(s.medianPayoutCents ?? 0)} → asiakashinta ${sharePct} %:n osuudella`}
+                          >
+                            Ehdota {p2eur(suggest)}
+                          </button>
+                        )}
+                        <button onClick={() => setOpenEstimate(open ? null : s.key)} style={{ ...btn, padding: "5px 9px", fontSize: "11px", background: "transparent", color: "rgba(255,255,255,0.5)" }}>
+                          {open ? "Piilota" : "Erittely"}
+                        </button>
+                      </span>
+                    </div>
+                    {open && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 7, paddingTop: 7, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+                        {answers.sort((a, b) => b.ts - a.ts).map((e) => (
+                          <div key={e.memberId} style={{ display: "flex", gap: 8, fontSize: "11.5px", color: "rgba(255,255,255,0.6)", fontVariantNumeric: "tabular-nums" }}>
+                            <span style={{ fontWeight: 600, color: e.flagged ? "rgba(255,170,170,0.95)" : "rgba(255,255,255,0.85)" }}>{crewName(e.memberId)}</span>
+                            <span>
+                              {e.vote === "yes" ? "hinta sopii 👍" : e.vote === "no" ? "ei sovi 👎" : "toive"}
+                              {e.payoutCents != null ? ` · ${p2eur(e.payoutCents)}` : ""}
+                              {e.flagged ? " · ⚠ epärealistinen" : ""}
+                            </span>
+                            {e.note && <span style={{ color: "rgba(255,255,255,0.45)" }}>"{e.note}"</span>}
+                            <span style={{ marginLeft: "auto", color: "rgba(255,255,255,0.3)" }}>
+                              {new Date(e.ts).toLocaleString("fi-FI", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         {/* Neuvottelu-inbox: asiakkaan vastatarjoukset */}
         {countered.length > 0 && (

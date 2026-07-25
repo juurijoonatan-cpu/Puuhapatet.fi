@@ -5,13 +5,22 @@ import {
   computeP2Billing,
   customerAddedKeys,
   emptyP2State,
+  impliedP2PriceCents,
+  isP2EstimateUnrealistic,
   isP2Washable,
+  p2CurrentPriceCents,
+  p2EstimateReferenceCents,
+  p2EstimateSummaries,
+  p2EstimateSummary,
+  p2HasPrice,
   p2Transition,
   p2WorkerPayoutCents,
   pointPriority,
   pushP2Event,
   sanitizeP2State,
+  MAX_P2_ESTIMATE_CENTS,
   MAX_P2_PRICE_CENTS,
+  P2_ESTIMATE_FALLBACK_REFERENCE_CENTS,
   type P2Offer,
 } from "./p2";
 
@@ -360,6 +369,115 @@ describe("customerAddedKeys", () => {
   });
 });
 
+// ─── Tekijöiden hinta-arviot ───────────────────────────────────────────────────
+
+describe("p2HasPrice / p2CurrentPriceCents", () => {
+  it("proposed, countered ja locked ovat hinnoiteltuja; declined ei", () => {
+    expect(p2HasPrice(undefined)).toBe(false);
+    expect(p2HasPrice(proposedOffer())).toBe(true);
+    expect(p2HasPrice({ status: "countered", priceCents: 3000, counterCents: 2000, version: 2, updatedAt: 1 })).toBe(true);
+    expect(p2HasPrice({ status: "locked", priceCents: 3000, lockedCents: 3000, version: 2, updatedAt: 1 })).toBe(true);
+    // Hylätty = takaisin pöydälle → tekijä saa taas arvioida sen.
+    expect(p2HasPrice({ status: "declined", priceCents: 3000, version: 3, updatedAt: 1 })).toBe(false);
+  });
+
+  it("lukittu hinta voittaa ehdotetun", () => {
+    expect(p2CurrentPriceCents(proposedOffer(3000))).toBe(3000);
+    expect(p2CurrentPriceCents({ status: "locked", priceCents: 3000, lockedCents: 2500, version: 3, updatedAt: 1 })).toBe(2500);
+    expect(p2CurrentPriceCents(undefined)).toBeNull();
+  });
+});
+
+describe("impliedP2PriceCents", () => {
+  it("on p2WorkerPayoutCentsin käänteisluku", () => {
+    expect(impliedP2PriceCents(2000, 50)).toBe(4000);
+    expect(impliedP2PriceCents(p2WorkerPayoutCents(3750, 53), 53)).toBeCloseTo(3750, -2);
+  });
+
+  it("clampaa osuuden ja katon", () => {
+    expect(impliedP2PriceCents(2000, 0)).toBe(impliedP2PriceCents(2000, 53)); // 0 → oletus
+    expect(impliedP2PriceCents(MAX_P2_ESTIMATE_CENTS, 1)).toBe(MAX_P2_PRICE_CENTS);
+  });
+});
+
+describe("p2EstimateReferenceCents / isP2EstimateUnrealistic", () => {
+  it("käyttää lukittujen ikkunoiden mediaanipalkkiota", () => {
+    const data = fixture();
+    data.p2 = { ...emptyP2State(), workerSharePct: 50 };
+    // Lukitut 20 € / 40 € / 60 € → palkkiot 10 / 20 / 30 € → mediaani 20 €.
+    for (const [key, cents] of [["K#2", 2000], ["K#3", 4000], ["K#4", 6000]] as const) {
+      data.p2.offers[key] = { status: "locked", priceCents: cents, lockedCents: cents, version: 2, updatedAt: 1 };
+    }
+    expect(p2EstimateReferenceCents(data, 500)).toBe(2000);
+  });
+
+  it("ilman lukittuja putoaa tekijän omaan taksaan, sitten vakioon", () => {
+    const data = fixture();
+    expect(p2EstimateReferenceCents(data, 2500)).toBe(2500);
+    expect(p2EstimateReferenceCents(data)).toBe(P2_ESTIMATE_FALLBACK_REFERENCE_CENTS);
+  });
+
+  it("yli kaksinkertainen vertailutasoon nähden on epärealistinen", () => {
+    expect(isP2EstimateUnrealistic(4000, 2000)).toBe(false); // täsmälleen 2× kelpaa
+    expect(isP2EstimateUnrealistic(4001, 2000)).toBe(true);
+    expect(isP2EstimateUnrealistic(1000, 2000)).toBe(false);
+  });
+});
+
+describe("p2EstimateSummary", () => {
+  function withEstimates() {
+    const data = fixture();
+    data.p2 = { ...emptyP2State(), workerSharePct: 50 };
+    // K#2 hinnoiteltu → mielipiteet; K#3 hinnoittelematon → palkkiotoiveet.
+    data.p2.offers["K#2"] = proposedOffer(3000);
+    data.p2.estimates = {
+      "K#2": {
+        jani: { memberId: "jani", vote: "no", payoutCents: 2500, ts: 20 },
+        oona: { memberId: "oona", vote: "yes", ts: 10 },
+      },
+      "K#3": {
+        jani: { memberId: "jani", payoutCents: 2000, ts: 30 },
+        oona: { memberId: "oona", payoutCents: 3000, ts: 31 },
+        doma: { memberId: "doma", payoutCents: 9000, ts: 32, flagged: true },
+      },
+    };
+    return data;
+  }
+
+  it("laskee mediaanin, hajonnan ja johdetun asiakashinnan", () => {
+    const s = p2EstimateSummary(withEstimates(), "K#3")!;
+    expect(s.priced).toBe(false);
+    expect(s.count).toBe(3);
+    expect(s.medianPayoutCents).toBe(3000);
+    expect(s.minPayoutCents).toBe(2000);
+    expect(s.maxPayoutCents).toBe(9000);
+    expect(s.flagged).toBe(1);
+    // 30 € palkkiotoive 50 %:n osuudella → 60 € asiakashinta.
+    expect(s.suggestedPriceCents).toBe(6000);
+  });
+
+  it("hinnoitellusta kerätään kyllä/ei-mielipiteet", () => {
+    const s = p2EstimateSummary(withEstimates(), "K#2")!;
+    expect(s.priced).toBe(true);
+    expect(s.yes).toBe(1);
+    expect(s.no).toBe(1);
+    expect(s.medianPayoutCents).toBe(2500); // "ei sovi" -vastauksen reilu hinta
+    expect(s.newestTs).toBe(20);
+  });
+
+  it("ilman vastauksia → null", () => {
+    expect(p2EstimateSummary(withEstimates(), "K#4")).toBeNull();
+    expect(p2EstimateSummary(fixture(), "K#3")).toBeNull();
+  });
+
+  it("listaa hinnoittelemattomat ensin ja pudottaa poistetut pisteet", () => {
+    const data = withEstimates();
+    expect(p2EstimateSummaries(data).map((s) => s.key)).toEqual(["K#3", "K#2"]);
+    data.deleted["K#3"] = true;
+    expect(p2EstimateSummaries(data).map((s) => s.key)).toEqual(["K#2"]);
+  });
+});
+
 describe("sanitizeP2State", () => {
   it("puuttuva/ei-objekti → undefined (vanhat keikat round-trippaavat identtisesti)", () => {
     expect(sanitizeP2State(undefined)).toBeUndefined();
@@ -388,5 +506,32 @@ describe("sanitizeP2State", () => {
     expect(s!.offers.badLock.status).toBe("proposed"); // korruptoitunut lukko avattu
     expect(s!.events).toHaveLength(1);
     expect(s!.terms?.acceptorName).toBe("Testi Oy");
+  });
+
+  it("siivoaa tekijöiden arviot ja pudottaa tyhjät mielipiteet", () => {
+    const s = sanitizeP2State({
+      askEstimates: true,
+      estimates: {
+        "K#3": {
+          jani: { payoutCents: 2000, ts: 5, note: "x".repeat(400) },
+          oona: { vote: "yes", ts: 6 },
+          doma: { payoutCents: MAX_P2_ESTIMATE_CENTS + 1 },  // yli katon → ei summaa
+          selma: { vote: "maybe" },                          // ei summaa eikä ääntä
+        },
+        "": { jani: { payoutCents: 1000 } },                 // tyhjä avain
+      },
+    })!;
+    expect(s.askEstimates).toBe(true);
+    expect(Object.keys(s.estimates!)).toEqual(["K#3"]);
+    expect(Object.keys(s.estimates!["K#3"]).sort()).toEqual(["jani", "oona"]);
+    expect(s.estimates!["K#3"].jani.payoutCents).toBe(2000);
+    expect(s.estimates!["K#3"].jani.note).toHaveLength(240);
+    expect(s.estimates!["K#3"].oona.vote).toBe("yes");
+  });
+
+  it("ilman arvioita kentät jäävät pois (vanhat keikat ennallaan)", () => {
+    const s = sanitizeP2State({ enabled: true })!;
+    expect(s.askEstimates).toBeUndefined();
+    expect(s.estimates).toBeUndefined();
   });
 });

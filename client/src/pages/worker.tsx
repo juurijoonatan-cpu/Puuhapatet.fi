@@ -26,6 +26,7 @@ import InkReveal from "@/components/InkReveal";
 import { Shine } from "@/components/animate-ui/primitives/effects/shine";
 import SignaturePad from "@/components/SignaturePad";
 import FloorView from "@/components/fr8/FloorView";
+import P2EstimateModal from "@/components/fr8/P2EstimateModal";
 import LoadingOrb from "@/components/LoadingOrb";
 import {
   computeTax, readVatStatus, readInPrepaymentRegister, readPayeeType, fmtPct, fmtEurCents,
@@ -1074,6 +1075,33 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
   const [floorFocusNonce, setFloorFocusNonce] = useState(0);
   const [guidedNote, setGuidedNote] = useState("");
   const guided = view.guided;
+  // P2 hinta-arviokysely: popup jossa tekijä kertoo paikan päältä, paljonko
+  // haluaisi saada vielä hinnoittelemattomasta keltaisesta ikkunasta (ja antaa
+  // mielipiteen jo hinnoitelluista). Aukeaa itsestään kerran päivässä niin kauan
+  // kuin hinnoittelemattomia on jäljellä; muuten työpöydän nudgesta.
+  const ask = view.p2Ask;
+  const [showEstimate, setShowEstimate] = useState(false);
+  // "Näytä kartalla" -kohdennus arviopopupista (ohjatun etenemisen kohdennuksen
+  // rinnalla — kumpi tahansa vie kartan oikealle kerrokselle).
+  const [mapFocus, setMapFocus] = useState<{ floor: string; nonce: number } | null>(null);
+
+  const estimateSeenKey = `p2ask:${view.worker.id}`;
+  useEffect(() => {
+    if (!ask?.enabled || ask.pendingUnpriced <= 0) return;
+    const today = new Date().toDateString();
+    let seen: string | null = null;
+    try { seen = window.localStorage.getItem(estimateSeenKey); } catch { /* private mode */ }
+    if (seen === today) return;
+    try { window.localStorage.setItem(estimateSeenKey, today); } catch { /* ignore */ }
+    setShowEstimate(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ask?.enabled, ask?.pendingUnpriced]);
+
+  const submitEstimate = useCallback(async (data: { key: string; payoutCents?: number; vote?: "yes" | "no" }) => {
+    const res = await api.crewSubmitP2Estimate(token, data);
+    if (res.ok && res.data?.view) { setView(res.data.view); return { ok: true }; }
+    return { ok: false, error: res.error ?? undefined };
+  }, [token, setView]);
   // Toimintaa odottavat: perinteiset payoutit + FR8 erälaskuluonnokset (kohta 3B)
   // — molemmat aukeavat samasta "Maksut"-alanäkymästä.
   const pendingPayouts =
@@ -1111,7 +1139,8 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
     }
   }, [token, setView]);
 
-  const focusNext = useCallback(() => setFloorFocusNonce((n) => n + 1), []);
+  // Ohjatun etenemisen kohdennus voittaa arviopopupin kerrosvalinnan.
+  const focusNext = useCallback(() => { setMapFocus(null); setFloorFocusNonce((n) => n + 1); }, []);
 
   // Per-window observation (text + optional photo) the worker leaves on a window.
   const setObservation = useCallback(async (key: string, text: string, imageDataUrl?: string) => {
@@ -1174,6 +1203,45 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
       {/* Install nudge — only when not yet running as an installed app */}
       <InstallBanner pwa={pwa} onOpen={() => setShowInstall(true)} />
 
+      {/* P2 hinta-arvio -nudge: näkyy kunnes tekijä on sanonut sanansa jokaisesta
+          keltaisesta ikkunasta. Popup aukeaa myös itsestään kerran päivässä. */}
+      {ask?.enabled && !showEstimate && ask.items.some((i) => !i.mine) && (
+        <button
+          onClick={() => setShowEstimate(true)}
+          data-testid="btn-open-p2-estimate"
+          style={{
+            flexShrink: 0, display: "flex", alignItems: "center", gap: 9, width: "100%",
+            padding: "10px max(16px, env(safe-area-inset-right)) 10px max(16px, env(safe-area-inset-left))",
+            background: "rgba(255,205,40,0.1)", border: "none",
+            borderBottom: "1px solid rgba(255,205,40,0.25)",
+            color: "rgb(255,220,110)", fontFamily: FONT, fontSize: 12.5, fontWeight: 600,
+            textAlign: "left", cursor: "pointer",
+          }}
+        >
+          <span style={{ fontSize: 15 }}>€</span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            {ask.pendingUnpriced > 0
+              ? `${ask.pendingUnpriced} hinnoittelematonta ikkunaa — paljonko haluaisit niistä?`
+              : "Kerro mielipiteesi keltaisten ikkunoiden hinnoista"}
+          </span>
+          <span style={{ opacity: 0.7 }}>›</span>
+        </button>
+      )}
+
+      {ask?.enabled && showEstimate && (
+        <P2EstimateModal
+          ask={ask}
+          onSubmit={submitEstimate}
+          onClose={() => setShowEstimate(false)}
+          onShowOnMap={(floor) => {
+            setShowEstimate(false);
+            setSub(null);
+            setTab("map");
+            setMapFocus({ floor, nonce: Date.now() });
+          }}
+        />
+      )}
+
       {/* Content */}
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
         {!sub && tab === "map" && (
@@ -1210,7 +1278,7 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
             activeZone={view.activeZone}
             p2={view.p2 ? { enabled: view.p2.enabled, lockedKeys: view.p2.lockedKeys, payoutByKey: view.p2.payoutByKey } : null}
             guided={guided ? { enabled: guided.enabled, activeFloor: guided.activeFloor, lockedFloors: guided.lockedFloors, nextKey: guided.nextKey } : null}
-            floorFocus={guided?.activeFloor ? { floor: guided.activeFloor, nonce: floorFocusNonce } : null}
+            floorFocus={mapFocus ?? (guided?.activeFloor ? { floor: guided.activeFloor, nonce: floorFocusNonce } : null)}
           />
         )}
         {/* Ohjattu eteneminen: "Seuraavaksi" -ohjauskortti kartan päällä. Näyttää

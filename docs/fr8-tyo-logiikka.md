@@ -94,7 +94,9 @@ ansioita. Varmistettu:
   `p2.payoutByKey`) — se on sallittu samalla perusteella kuin oma
   `perWindowCents`-taksa. Asiakashintaa (`lockedCents`) tai tekijän
   prosenttiosuutta (`workerSharePct`) EI koskaan lähetetä tekijälle, joten
-  asiakashintaa ei voi rekonstruoida palkkiosta.
+  asiakashintaa ei voi rekonstruoida palkkiosta. Sama koskee **hinta-arviokyselyä**
+  (`workerView` → `p2Ask`, `POST /api/crew/:token/p2/estimate`): tekijä kertoo oman
+  palkkiotoiveensa ja näkee jo hinnoitellusta ikkunasta vain oman palkkionsa.
 
 ## Ohjattu eteneminen (guided) — työjärjestys
 

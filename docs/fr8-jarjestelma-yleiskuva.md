@@ -36,7 +36,7 @@ Osapuolet ja pääsy:
 | Moduuli | Vastuu |
 |---|---|
 | `project.ts` | `ProjectData`, kartta/pisteet (`allPoints`), kiinteä diili (`fixedDealFor`, `computeDealBilling`), erä-attribuutio, sanitointi. |
-| `p2.ts` | Priority 2 -moottori: tilakone (`p2Transition`), raha (`computeP2Billing`, `p2WorkerPayoutCents`), `pointPriority`, `isP2Washable`, sanitointi. |
+| `p2.ts` | Priority 2 -moottori: tilakone (`p2Transition`), raha (`computeP2Billing`, `p2WorkerPayoutCents`), tekijöiden hinta-arviot (`p2EstimateSummaries`, `impliedP2PriceCents`), `pointPriority`, `isP2Washable`, sanitointi. |
 | `guided.ts` | Ohjattu eteneminen: `computeGuided`, `isGuidedBlocked`, sanitointi. |
 | `crew.ts` | `CrewMember`, `crewMemberStats` (p2-tietoinen), sessiot, sanitointi. |
 | `gig.ts` | `GigData`/`GigSector`/`GigPayment` (`scope?: "p1"|"p2"`), julkisen näkymän totalsit. |
@@ -68,7 +68,10 @@ keltaiset eivät koskaan vaikuta siihen. **Tätä ei muuteta.**
 
 Hinta **per ikkuna**, neuvotellaan asiakkaan kanssa seurantalinkissä (proposed →
 accept/counter → locked). Asiakkaan summa kasvaa lukituista hinnoista. Tekijän
-palkkio = %-osuus ikkunan lukitusta hinnasta. **Täysi speksi:
+palkkio = %-osuus ikkunan lukitusta hinnasta. Hinnoittelun apuna **tekijöiden
+hinta-arviot** (`p2.askEstimates` + `estimates`): paikan päällä oleva tekijä
+kertoo työpöydän popupista, paljonko haluaisi hinnoittelemattomasta ikkunasta —
+epärealistinen pyyntö merkitään heti. **Täysi speksi:
 `docs/fr8-p2-hinnoittelu.md`.**
 
 ### 3. Ohjattu eteneminen (guided) — työjärjestys, ei raha
@@ -86,7 +89,8 @@ Erälaskutus (varsinainen lähetettävä laskutus) on neljäs, erillinen järjes
 **Admin** (`/api/jobs/:id/*`, admin-auth):
 - `GET|PATCH /project` — karttablobin luku/tallennus. Vastaus sisältää `totals`,
   `workerStats`, `p2Billing`, `guidedState`.
-- `POST /p2/phase | propose | respond` — P2-vaihe/hinnoittelu/neuvottelu.
+- `POST /p2/phase | propose | respond` — P2-vaihe/hinnoittelu/neuvottelu
+  (`phase` myös `askEstimates` = tekijöiden hinta-arviokysely päälle/pois).
 - `POST /guided` — ohjatun etenemisen kytkin + kerroksen ohitus.
 - `POST /gig/invoice` (`scope:"p1"|"p2"`), era-laskutus­reitit, `/gig/report` ym.
 
@@ -100,6 +104,8 @@ Erälaskutus (varsinainen lähetettävä laskutus) on neljäs, erillinen järjes
   `p2` = vain omat palkkiot; `guided` = ohjaustila).
 - `POST /window` — merkintä; **kaksi pesuporttia** (P2-lukko + guided-kerroslukko),
   prioriteetti kartasta.
+- `POST /p2/estimate` — tekijän hinta-arvio keltaisesta ikkunasta (oma
+  palkkiotoive / kyllä-ei jo hinnoitellusta; ei koskaan asiakashintaa).
 - `POST /shift | hours | note | map-note | window-observation | expense | …`.
 
 ## Kolme näkymää (client)

@@ -28,7 +28,7 @@ import {
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, computeEraDebts, allPoints, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
-import { computeP2Billing, customerAddedKeys, emptyP2State, isP2Washable, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, type P2Action, type P2State } from "@shared/p2";
+import { computeP2Billing, customerAddedKeys, emptyP2State, isP2Washable, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, p2HasPrice, p2CurrentPriceCents, p2EstimateReferenceCents, isP2EstimateUnrealistic, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_ESTIMATE_CENTS, MAX_P2_ESTIMATE_NOTE_LEN, type P2Action, type P2Estimate, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
@@ -5211,6 +5211,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (req.body?.termsText !== undefined) {
         project.p2.termsText = req.body.termsText ? String(req.body.termsText).slice(0, 60000) : undefined;
       }
+      // Hinta-arviokysely tekijöille. Erillinen kytkin `enabled`istä: arviot
+      // kerätään nimenomaan VALMISTELUVAIHEESSA, ennen kuin mitään menee
+      // asiakkaalle. Ei paljasta tekijöille asiakashintoja (ks. crew-reitti).
+      if (req.body?.askEstimates !== undefined) {
+        project.p2.askEstimates = req.body.askEstimates === true ? true : undefined;
+      }
       const saved = await saveProject(job, project, { p2Mutation: true });
       res.json({ ok: true, p2: saved.p2, p2Billing: computeP2Billing(saved) });
     } catch (e: any) {
@@ -5854,6 +5860,44 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           .filter(([, o]) => o.status === "locked" && o.lockedCents)
           .map(([k, o]) => [k, p2WorkerPayoutCents(o.lockedCents!, project.p2!.workerSharePct)])),
       } : null,
+      // Hinta-arviokysely: tekijä on paikan päällä ja näkee ikkunan, jota
+      // perustaja yrittää hinnoitella pohjakuvasta — joten kysytään häneltä.
+      // Toimii myös valmisteluvaiheessa (enabled=false), koska juuri silloin
+      // hinnat päätetään. RAHAN YKSITYISYYS: hinnoitellusta ikkunasta lähetetään
+      // VAIN tekijän oma palkkio (kuten payoutByKey), ei koskaan asiakashintaa
+      // eikä workerSharePct:tä — asiakashintaa ei voi laskea takaisin.
+      p2Ask: (() => {
+        const p2 = project.p2;
+        if (!p2?.askEstimates) return null;
+        const sharePct = p2.workerSharePct || DEFAULT_P2_WORKER_SHARE_PCT;
+        const items = allPoints(project)
+          .filter((pt) => pt.p === 2)
+          .slice(0, 400)
+          .map((pt) => {
+            const priceCents = p2CurrentPriceCents(p2.offers[pt.key]);
+            const mine = p2.estimates?.[pt.key]?.[member.id];
+            return {
+              key: pt.key,
+              floor: pt.floor,
+              priced: priceCents != null,
+              payoutCents: priceCents != null ? p2WorkerPayoutCents(priceCents, sharePct) : null,
+              washed: pt.status === "pesty",
+              mine: mine
+                ? { payoutCents: mine.payoutCents ?? null, vote: mine.vote ?? null, ts: mine.ts, flagged: !!mine.flagged }
+                : null,
+            };
+          });
+        return {
+          enabled: true,
+          // Mihin arviota verrataan: jo sovittujen keltaisten mediaanipalkkio,
+          // tai ennen ensimmäistä lukitusta tekijän oma €/ikkuna-taksa.
+          referenceCents: p2EstimateReferenceCents(project, member.perWindowCents),
+          maxCents: MAX_P2_ESTIMATE_CENTS,
+          items,
+          answered: items.filter((i) => i.mine).length,
+          pendingUnpriced: items.filter((i) => !i.priced && !i.mine).length,
+        };
+      })(),
       // Ohjattu eteneminen (guided): kun perustaja on kytkenyt sen päälle, tekijä
       // näkee vain aktiivisen kerroksen auki, muut lukossa, ja "Seuraavaksi"-kortti
       // ohjaa täsmälleen seuraavaan pestävään ikkunaan. Puhtaasti johdettua tilaa
@@ -6074,6 +6118,76 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
       res.json({ ok: true, view: await workerView(job, saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Tekijän HINTA-ARVIO yhdestä keltaisesta ikkunasta (P2). Tekijä on paikan
+  // päällä ja näkee ikkunan; perustaja hinnoittelee sitä pohjakuvasta. Kaksi
+  // muotoa, ikkunan tilan mukaan:
+  //   • ei vielä hinnoiteltu → payoutCents: "paljonko haluaisit tästä saada"
+  //   • jo hinnoiteltu       → vote "yes"/"no": onko oma palkkio tästä reilu
+  //     ("no" saa kantaa mukanaan payoutCentsin = mikä olisi reilu).
+  // Yksi tietue per (ikkuna, tekijä) — uusi vastaus korvaa vanhan. Epärealistisen
+  // korkea pyyntö merkitään heti `flagged`iksi ja se näkyy sekä tekijälle että
+  // perustajille. HUOM: tämä reitti EI koskaan lue eikä palauta asiakashintaa.
+  app.post("/api/crew/:token/p2/estimate", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      if (!isCrewTrainee(member) && WORKER_AGREEMENTS_GATED && !hasSignedAllAgreements(member, requiredAgreementIdsForSet(resolveAgreementSet(member)), WORKER_AGREEMENT_VERSION)) {
+        return res.status(403).json({ error: "Lue lisätiedot ja allekirjoita sopimukset ensin" });
+      }
+      if (!project.p2?.askEstimates) {
+        return res.status(403).json({ error: "Hinta-arvioita ei juuri nyt kerätä" });
+      }
+      const key = String(req.body?.key ?? "").slice(0, 64);
+      if (!key) return res.status(400).json({ error: "key puuttuu" });
+      if (pointPriority(project, key) !== 2) {
+        return res.status(400).json({ error: "Vain keltaisia ikkunoita arvioidaan" });
+      }
+
+      const priced = p2HasPrice(project.p2.offers[key]);
+      const vote = req.body?.vote === "yes" || req.body?.vote === "no" ? req.body.vote : undefined;
+      const rawAsk = Math.floor(Number(req.body?.payoutCents));
+      const hasAsk = Number.isInteger(rawAsk) && rawAsk > 0;
+      if (hasAsk && rawAsk > MAX_P2_ESTIMATE_CENTS) {
+        return res.status(400).json({ error: `Enimmäisarvio on ${MAX_P2_ESTIMATE_CENTS / 100} € / ikkuna` });
+      }
+      if (priced && !vote) {
+        return res.status(400).json({ error: "Tämä ikkuna on jo hinnoiteltu — vastaa kyllä tai ei" });
+      }
+      if (!priced && !hasAsk) {
+        return res.status(400).json({ error: "Anna arvio siitä, paljonko haluaisit tästä ikkunasta" });
+      }
+      // Hinnoitellulla ikkunalla summa on mielekäs vain "ei sovi" -vastauksen
+      // kanssa ("mikä olisi reilu") — "kyllä" tarkoittaa jo, että hinta käy.
+      const payoutCents = hasAsk && (!priced || vote === "no") ? rawAsk : undefined;
+
+      const referenceCents = p2EstimateReferenceCents(project, member.perWindowCents);
+      const flagged = payoutCents !== undefined && isP2EstimateUnrealistic(payoutCents, referenceCents);
+      const estimate: P2Estimate = {
+        memberId: member.id,
+        payoutCents,
+        vote,
+        note: req.body?.note ? String(req.body.note).slice(0, MAX_P2_ESTIMATE_NOTE_LEN).trim() || undefined : undefined,
+        ts: Date.now(),
+        flagged: flagged || undefined,
+      };
+      // p2 on serverin omistama: luetaan tuorein tila juuri ennen kirjoitusta ja
+      // lisätään siihen VAIN tämä arvio, jottei tekijän arvio voi yliajaa
+      // asiakkaan samaan aikaan lukitsemaa hintaa (arvio ei koske tarjouksiin).
+      const [fresh] = await db.select({ projectData: jobs.projectData }).from(jobs).where(eq(jobs.id, job.id));
+      const freshP2 = fresh ? parseProject(fresh.projectData ?? null)?.p2 : null;
+      if (freshP2) project.p2 = freshP2;
+      project.p2.estimates = project.p2.estimates ?? {};
+      project.p2.estimates[key] = { ...(project.p2.estimates[key] ?? {}), [member.id]: estimate };
+
+      const saved = await saveProject(job, project, { p2Mutation: true });
+      const savedMember = findCrewByToken(saved, member.token)!;
+      res.json({ ok: true, flagged, referenceCents, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }

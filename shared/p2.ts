@@ -33,6 +33,18 @@ export const MAX_P2_CUSTOMER_POINTS = 300;        // cap on customer-added yello
 /** Quick admin price presets (cents) shown in the pricing UI. */
 export const P2_PRICE_PRESETS_CENTS = [2500, 3750, 5000];
 
+// ─── Worker price estimates (tekijöiden hinta-arviot) ──────────────────────────
+
+/** Hard cap on what a worker may ask for ONE window (500 €). */
+export const MAX_P2_ESTIMATE_CENTS = 50_000;
+/** Over reference × this, the estimate is flagged as unrealistic (both sides see it). */
+export const P2_ESTIMATE_REALISM_MULTIPLIER = 2;
+/** Fallback reference payout (20 €) when the gig has neither locked prices nor a rate. */
+export const P2_ESTIMATE_FALLBACK_REFERENCE_CENTS = 2000;
+export const MAX_P2_ESTIMATE_NOTE_LEN = 240;
+/** Cap on stored estimates per window (one per worker; guards a corrupt blob). */
+export const MAX_P2_ESTIMATORS_PER_WINDOW = 60;
+
 // ─── Data shapes ───────────────────────────────────────────────────────────────
 
 export type P2OfferStatus =
@@ -75,6 +87,29 @@ export interface P2Event {
   ip?: string;                  // customer actions: filled server-side
 }
 
+/**
+ * A worker's OPINION on one yellow window's price — collected on site, where they
+ * can actually see the window. Two shapes, decided by whether the window already
+ * has a price:
+ *
+ *  - NOT priced yet  → `payoutCents`: "how much would you want to be paid to do
+ *    this window?" (their pay, not the customer price — a worker never sees that).
+ *  - Already priced  → `vote`: does the pay they'd get for it feel fair, yes/no.
+ *    A "no" may carry `payoutCents` as the amount they'd consider fair instead.
+ *
+ * One record per worker per window; re-submitting replaces it. `flagged` is set
+ * server-side when the asked amount is far above the gig's realistic level — we
+ * see an inflated guess the moment it lands, and so does the worker.
+ */
+export interface P2Estimate {
+  memberId: string;
+  payoutCents?: number;         // what the worker wants to be paid for this window
+  vote?: "yes" | "no";          // opinion on an already-priced window
+  note?: string;                // optional one-liner ("kolmas kerros, tikkaat")
+  ts: number;                   // epoch ms
+  flagged?: boolean;            // asked amount is unrealistically high
+}
+
 /** Customer's one-time lightweight terms acceptance (nimi + aikaleima). */
 export interface P2Terms {
   acceptedAt: number;
@@ -92,6 +127,12 @@ export interface P2State {
   /** Optional P2 contract/terms text shown to the customer in the terms dialog.
    *  The founders can paste the finished sopimus here later. */
   termsText?: string;
+  /** Founder switch: ask the crew on site for their price opinion (worker popup).
+   *  Independent of `enabled` — the whole point is to collect estimates while the
+   *  pricing is still being PREPARED, before anything goes to the customer. */
+  askEstimates?: boolean;
+  /** window key → memberId → the worker's estimate/opinion for that window. */
+  estimates?: Record<string, Record<string, P2Estimate>>;
 }
 
 export function emptyP2State(): P2State {
@@ -283,6 +324,20 @@ export function pointPriority(data: ProjectData, key: string): 1 | 2 | null {
   return mk ? mk.p : null;
 }
 
+/**
+ * Does this window carry a live price? "declined" and a missing offer both mean
+ * "ei hinnoiteltu" — the window is back on the table and can still be estimated.
+ */
+export function p2HasPrice(offer: P2Offer | undefined): boolean {
+  return offer?.status === "proposed" || offer?.status === "countered" || offer?.status === "locked";
+}
+
+/** The price currently on the table for a window (locked wins), or null. */
+export function p2CurrentPriceCents(offer: P2Offer | undefined): number | null {
+  if (!p2HasPrice(offer)) return null;
+  return offer!.lockedCents ?? offer!.priceCents;
+}
+
 /** Is this yellow window part of the P2 work scope (locked price, phase on)? */
 export function isP2Washable(data: ProjectData, key: string): boolean {
   const p2 = data.p2;
@@ -351,6 +406,121 @@ export function computeP2Billing(data: ProjectData): P2Billing {
   out.remainingLockedCents = out.lockedSumCents - out.earnedCents;
   out.marginCents = out.earnedCents - out.workerCostCents;
   return out;
+}
+
+// ─── Worker price estimates ────────────────────────────────────────────────────
+//
+// The crew is standing in the building; they can see the window a founder is
+// trying to price from a floor plan. So we ask them — "how much would you want
+// to be paid for this one?" — and turn the answer back into a customer price.
+// Everything here works on the WORKER'S PAY side of the equation: a worker never
+// sees a customer price, and none of these functions ever reveals one.
+
+/** Customer price implied by a worker's asking pay: payout is `sharePct` of it. */
+export function impliedP2PriceCents(payoutCents: number, workerSharePct: number): number {
+  const pct = Math.max(1, Math.min(100, Math.round(Number(workerSharePct) || 0) || DEFAULT_P2_WORKER_SHARE_PCT));
+  return Math.min(MAX_P2_PRICE_CENTS, Math.round(Math.max(0, payoutCents) * 100 / pct));
+}
+
+/** Median of a numeric list (even count → average of the two middle values). */
+function median(values: number[]): number | null {
+  if (!values.length) return null;
+  const s = [...values].sort((a, b) => a - b);
+  const mid = s.length >> 1;
+  return s.length % 2 ? s[mid] : Math.round((s[mid - 1] + s[mid]) / 2);
+}
+
+/** Worker payouts of every LOCKED yellow window — the gig's proven pay level. */
+export function p2LockedPayoutsCents(data: ProjectData): number[] {
+  const p2 = data.p2;
+  if (!p2) return [];
+  const sharePct = p2.workerSharePct || DEFAULT_P2_WORKER_SHARE_PCT;
+  const out: number[] = [];
+  for (const pt of allPoints(data)) {
+    if (pt.p !== 2) continue;
+    const o = p2.offers[pt.key];
+    if (o?.status === "locked" && o.lockedCents) out.push(p2WorkerPayoutCents(o.lockedCents, sharePct));
+  }
+  return out;
+}
+
+/**
+ * The "this is what a window normally pays" anchor an estimate is judged against:
+ * the median payout of the already-agreed yellow windows, or — before anything is
+ * locked — the worker's own per-window rate. This is what makes "we'll know
+ * instantly" true: every guess is measured against the prices we already agreed.
+ */
+export function p2EstimateReferenceCents(data: ProjectData, ownRateCents?: number): number {
+  const lockedMedian = median(p2LockedPayoutsCents(data));
+  if (lockedMedian && lockedMedian > 0) return lockedMedian;
+  if (ownRateCents && ownRateCents > 0) return Math.round(ownRateCents);
+  return P2_ESTIMATE_FALLBACK_REFERENCE_CENTS;
+}
+
+/** Is this asking amount out of line with what the gig actually pays? */
+export function isP2EstimateUnrealistic(payoutCents: number, referenceCents: number): boolean {
+  const ref = referenceCents > 0 ? referenceCents : P2_ESTIMATE_FALLBACK_REFERENCE_CENTS;
+  return payoutCents > ref * P2_ESTIMATE_REALISM_MULTIPLIER;
+}
+
+export interface P2EstimateSummary {
+  key: string;
+  floor: string;
+  /** Does the window already have a price on the table? */
+  priced: boolean;
+  count: number;                      // workers who answered anything
+  askCount: number;                   // workers who named an amount
+  medianPayoutCents: number | null;   // median asking pay
+  minPayoutCents: number | null;
+  maxPayoutCents: number | null;
+  /** Customer price implied by the median asking pay — the founders' starting point. */
+  suggestedPriceCents: number | null;
+  yes: number;                        // "the price is fair"
+  no: number;                         // "it isn't"
+  flagged: number;                    // estimates the realism check tripped
+  newestTs: number;
+}
+
+/** Roll up one window's estimates. Returns null when nobody has answered. */
+export function p2EstimateSummary(data: ProjectData, key: string): P2EstimateSummary | null {
+  const p2 = data.p2;
+  const byMember = p2?.estimates?.[key];
+  if (!p2 || !byMember) return null;
+  const list = Object.values(byMember);
+  if (!list.length) return null;
+  const asks = list.map((e) => e.payoutCents).filter((n): n is number => typeof n === "number" && n > 0);
+  const med = median(asks);
+  return {
+    key,
+    floor: key.split("#")[0] ?? "",
+    priced: p2HasPrice(p2.offers[key]),
+    count: list.length,
+    askCount: asks.length,
+    medianPayoutCents: med,
+    minPayoutCents: asks.length ? Math.min(...asks) : null,
+    maxPayoutCents: asks.length ? Math.max(...asks) : null,
+    suggestedPriceCents: med != null ? impliedP2PriceCents(med, p2.workerSharePct || DEFAULT_P2_WORKER_SHARE_PCT) : null,
+    yes: list.filter((e) => e.vote === "yes").length,
+    no: list.filter((e) => e.vote === "no").length,
+    flagged: list.filter((e) => e.flagged).length,
+    newestTs: list.reduce((t, e) => Math.max(t, e.ts || 0), 0),
+  };
+}
+
+/**
+ * Every LIVE yellow window that has estimates, unpriced first (those are the ones
+ * the founders are still waiting on), then most-answered, then newest.
+ */
+export function p2EstimateSummaries(data: ProjectData): P2EstimateSummary[] {
+  if (!data.p2?.estimates) return [];
+  const out: P2EstimateSummary[] = [];
+  for (const pt of allPoints(data)) {
+    if (pt.p !== 2) continue;
+    const s = p2EstimateSummary(data, pt.key);
+    if (s) out.push(s);
+  }
+  return out.sort((a, b) =>
+    Number(a.priced) - Number(b.priced) || b.count - a.count || b.newestTs - a.newestTs);
 }
 
 // ─── Sanitisation (server-side validation) ─────────────────────────────────────
@@ -448,6 +618,38 @@ export function sanitizeP2State(input: any): P2State | undefined {
     }
   }
 
+  // Worker estimates: one record per (window, worker). Anything without a usable
+  // amount OR vote is dropped — an empty opinion is not an opinion.
+  let estimates: Record<string, Record<string, P2Estimate>> | undefined;
+  if (input.estimates && typeof input.estimates === "object") {
+    estimates = {};
+    for (const k of Object.keys(input.estimates).slice(0, 10000)) {
+      const key = cleanKey(k);
+      const byMember = input.estimates[k];
+      if (!key || !byMember || typeof byMember !== "object") continue;
+      const clean: Record<string, P2Estimate> = {};
+      for (const m of Object.keys(byMember).slice(0, MAX_P2_ESTIMATORS_PER_WINDOW)) {
+        const e = byMember[m];
+        const memberId = String(m).slice(0, 40);
+        if (!memberId || !e || typeof e !== "object") continue;
+        const raw = Math.floor(Number(e.payoutCents));
+        const payoutCents = Number.isFinite(raw) && raw > 0 && raw <= MAX_P2_ESTIMATE_CENTS ? raw : undefined;
+        const vote = e.vote === "yes" || e.vote === "no" ? e.vote : undefined;
+        if (payoutCents === undefined && vote === undefined) continue;
+        clean[memberId] = {
+          memberId,
+          payoutCents,
+          vote,
+          note: e.note ? String(e.note).slice(0, MAX_P2_ESTIMATE_NOTE_LEN) : undefined,
+          ts: Number(e.ts) || Date.now(),
+          flagged: e.flagged === true ? true : undefined,
+        };
+      }
+      if (Object.keys(clean).length) estimates[key] = clean;
+    }
+    if (!Object.keys(estimates).length) estimates = undefined;
+  }
+
   const sharePct = Math.floor(Number(input.workerSharePct));
   return {
     enabled: input.enabled === true,
@@ -456,5 +658,7 @@ export function sanitizeP2State(input: any): P2State | undefined {
     events,
     terms,
     termsText: input.termsText ? String(input.termsText).slice(0, 60000) : undefined,
+    askEstimates: input.askEstimates === true ? true : undefined,
+    estimates,
   };
 }

@@ -8,7 +8,7 @@
  * dot coordinate scheme as FloorView so the markers line up identically.
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { GigPublicView, P2PublicOffer, P2PublicView } from "@/lib/api";
 import { NOTE_KINDS } from "@shared/project";
 import { eur } from "@shared/gig";
@@ -37,6 +37,9 @@ const T = {
   navy: "#1F3B57",
 };
 const FONT = "'Poppins', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif";
+
+const MIN_SCALE = 1, MAX_SCALE = 5;
+const clampScale = (s: number) => Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
 
 type WindowStatus = "ei" | "kesken" | "pesty";
 interface Point { key: string; p: 1 | 2; x: number; y: number; }
@@ -143,6 +146,72 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
   const listRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const [hiRow, setHiRow] = useState<string | null>(null);
+
+  // ── Map zoom + pan ─────────────────────────────────────────────────────────
+  // The building has a lot of windows; on a desktop especially the customer
+  // needs to zoom into a wing and pan around. Pinch (touch), wheel (mouse) and
+  // +/−/reset buttons all drive one transform on the plan layer.
+  const [view, setView] = useState({ s: 1, x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const ptrs = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinch = useRef<{ startDist: number; startS: number } | null>(null);
+  const pan = useRef<{ x0: number; y0: number; ox: number; oy: number; id: number; active: boolean } | null>(null);
+  const zoomed = view.s > 1.01 || Math.abs(view.x) > 1 || Math.abs(view.y) > 1;
+  const resetView = () => setView({ s: 1, x: 0, y: 0 });
+  const zoomBy = (f: number) => setView((v) => ({ ...v, s: clampScale(v.s * f) }));
+  // Reset the view whenever the floor changes so a new plan opens fitted.
+  useEffect(() => { setView({ s: 1, x: 0, y: 0 }); }, [floor]);
+  // Wheel zoom needs a non-passive native listener to call preventDefault.
+  useEffect(() => {
+    const el = mapRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (addMode) return;
+      e.preventDefault();
+      setView((v) => ({ ...v, s: clampScale(v.s * (e.deltaY < 0 ? 1.12 : 0.89)) }));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [addMode]);
+
+  function onPtrDown(e: React.PointerEvent) {
+    if (addMode) return;
+    ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (ptrs.current.size === 2) {
+      const [a, b] = Array.from(ptrs.current.values());
+      pinch.current = { startDist: Math.hypot(a.x - b.x, a.y - b.y) || 1, startS: view.s };
+      pan.current = null;
+    } else if (ptrs.current.size === 1) {
+      pan.current = { x0: e.clientX, y0: e.clientY, ox: view.x, oy: view.y, id: e.pointerId, active: false };
+    }
+  }
+  function onPtrMove(e: React.PointerEvent) {
+    if (!ptrs.current.has(e.pointerId)) return;
+    ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (ptrs.current.size >= 2 && pinch.current) {
+      const [a, b] = Array.from(ptrs.current.values());
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      setView((v) => ({ ...v, s: clampScale(pinch.current!.startS * (d / pinch.current!.startDist)) }));
+      return;
+    }
+    const p = pan.current;
+    if (p && p.id === e.pointerId) {
+      const dx = e.clientX - p.x0, dy = e.clientY - p.y0;
+      if (!p.active) {
+        if (Math.hypot(dx, dy) < 5) return; // a tap, not a drag → let badge clicks through
+        p.active = true;
+        setDragging(true);
+        (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+      }
+      setView((v) => ({ ...v, x: p.ox + dx, y: p.oy + dy }));
+    }
+  }
+  function onPtrUp(e: React.PointerEvent) {
+    ptrs.current.delete(e.pointerId);
+    if (ptrs.current.size < 2) pinch.current = null;
+    if (pan.current && pan.current.id === e.pointerId) pan.current = null;
+    if (ptrs.current.size === 0) setDragging(false);
+  }
   const openOfferData = openOffer && p2 ? p2.offers[openOffer.key] ?? null : null;
   const customerAdded = p2On ? new Set(p2!.customerAddedKeys) : new Set<string>();
   const openOfferIsMine = openOffer ? customerAdded.has(openOffer.key) : false;
@@ -172,6 +241,11 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
   const allProposedSum = proposedList.reduce((s, o) => s + o.offer.priceCents, 0);
   const lockedSum = lockedList.reduce((s, o) => s + (o.offer.lockedCents ?? o.offer.priceCents), 0);
   const floorLabel = (f: string) => (f === "K" ? "Kellari" : `${f}. kerros`);
+  // Group the open proposals BY FLOOR so the customer can review and accept
+  // floor by floor (a whole floor's price at once), not scroll one flat list.
+  const proposedFloors = floors
+    .map((f) => ({ floor: f, items: proposedList.filter((o) => o.floor === f) }))
+    .filter((g) => g.items.length > 0);
   // Stable per-floor Priority 2 numbering so the map badges and the list rows
   // always agree ("ikkuna 10" on the map = "ikkuna 10" in the list).
   const p2Number = useMemo(() => {
@@ -194,6 +268,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
   function jumpToMap(key: string, f: string) {
     setFloor(f);
     setOnlyYellow(true);
+    resetView();
     closeOffer();
     setFocusKey(key);
     requestAnimationFrame(() => mapRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
@@ -225,6 +300,40 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
     if (err) setP2Error(err);
     else closeOffer();
   }
+
+  // One open-proposal row (accept / counter / decline). Extracted so the floor
+  // groups below stay readable.
+  const renderProposedRow = (o: { key: string; floor: string; idx: number; offer: P2PublicOffer }) => (
+    <div key={o.key} ref={(el) => { listRowRefs.current[o.key] = el; }} style={{ padding: "10px 12px", borderRadius: 11, background: hiRow === o.key ? "rgba(224,168,0,0.16)" : T.paper, border: `1px solid ${hiRow === o.key ? "#E0A800" : T.hair}`, transition: "background .4s, border-color .4s", scrollMarginTop: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ width: 26, height: 26, flexShrink: 0, borderRadius: "50%", background: T.navy, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{p2Number[o.key] ?? o.idx + 1}</span>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Ikkuna {p2Number[o.key] ?? o.idx + 1}{customerAdded.has(o.key) ? " · sinun" : ""}</div>
+          <div style={{ fontSize: 15, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{eur(o.offer.priceCents)}<span style={{ fontSize: 11.5, color: T.muted, fontWeight: 500 }}> / ikkuna</span></div>
+        </div>
+        <button onClick={() => jumpToMap(o.key, o.floor)} title="Näytä kartalla" style={{ marginLeft: "auto", padding: "6px 10px", borderRadius: 9, border: `1px solid ${T.hair}`, background: T.card, color: T.navy, fontFamily: FONT, fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>Kartalla</button>
+      </div>
+      {listCounterKey === o.key ? (
+        <div style={{ display: "flex", gap: 6, marginTop: 9 }}>
+          <input type="number" inputMode="decimal" min={1} step="0.5" autoFocus value={listCounterVal} onChange={(e) => setListCounterVal(e.target.value)} placeholder="€ / ikkuna"
+            style={{ flex: 1, minWidth: 0, padding: "9px 10px", borderRadius: 9, border: `1px solid ${T.hair}`, fontFamily: FONT, fontSize: 14, fontVariantNumeric: "tabular-nums" }} />
+          <button disabled={p2Busy || !(Number(listCounterVal.replace(",", ".")) > 0)}
+            onClick={() => { const v = Number(listCounterVal.replace(",", ".")); if (!(v > 0)) return; void runP2(p2Actions!.counter, o.key, Math.round(v * 100), o.offer.version).then(() => { setListCounterKey(null); setListCounterVal(""); }); }}
+            style={{ padding: "9px 13px", borderRadius: 9, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}>Lähetä</button>
+          <button disabled={p2Busy} onClick={() => { setListCounterKey(null); setListCounterVal(""); }} style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${T.hair}`, background: T.card, color: T.muted, fontFamily: FONT, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>✕</button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 6, marginTop: 9 }}>
+          <button disabled={p2Busy} onClick={() => void runP2(p2Actions!.accept, [{ key: o.key, priceCents: o.offer.priceCents, version: o.offer.version }])}
+            style={{ flex: 2, padding: "9px", borderRadius: 9, border: "none", background: "#3E7C59", color: "#fff", fontFamily: FONT, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}>Hyväksy</button>
+          <button disabled={p2Busy} onClick={() => { if (!p2!.termsAccepted) { p2Actions!.requireTerms(); return; } setListCounterKey(o.key); setListCounterVal(""); }}
+            style={{ flex: 1, padding: "9px", borderRadius: 9, border: `1px solid ${T.hair}`, background: T.card, color: T.ink, fontFamily: FONT, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Vastatarjous</button>
+          <button disabled={p2Busy} onClick={() => void runP2Free(p2Actions!.decline, o.key, o.offer.version)}
+            style={{ padding: "9px 11px", borderRadius: 9, border: "none", background: "transparent", color: T.muted, fontFamily: FONT, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Ei</button>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div style={{ fontFamily: FONT, color: T.ink }}>
@@ -295,12 +404,27 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
           line drawing on a transparent background (built to read on the dark
           worker view), so on this light view we invert it to draw the walls in
           black on white for clear contrast. */}
-      <div ref={mapRef} style={{ position: "relative", borderRadius: 12, border: `1px solid ${T.hair}`, background: "#FFFFFF", padding: 12, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", scrollMarginTop: 12 }}>
-        <div style={{ position: "relative", display: "inline-block", lineHeight: 0, maxWidth: "100%" }}>
+      <div
+        ref={mapRef}
+        onPointerDown={onPtrDown}
+        onPointerMove={onPtrMove}
+        onPointerUp={onPtrUp}
+        onPointerCancel={onPtrUp}
+        style={{ position: "relative", borderRadius: 12, border: `1px solid ${T.hair}`, background: "#FFFFFF", padding: 12, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", scrollMarginTop: 12, touchAction: addMode ? "auto" : "none", cursor: addMode ? undefined : dragging ? "grabbing" : "grab" }}
+      >
+        {/* Zoom controls — pinch/wheel also work; these are the always-visible fallback. */}
+        <div style={{ position: "absolute", top: 10, right: 10, zIndex: 20, display: "flex", flexDirection: "column", gap: 6 }}>
+          <button onClick={() => zoomBy(1.35)} aria-label="Lähennä" title="Lähennä" style={{ width: 34, height: 34, borderRadius: 9, border: `1px solid ${T.hair}`, background: "rgba(255,255,255,0.95)", color: T.ink, fontSize: 19, fontWeight: 700, cursor: "pointer", lineHeight: 1, boxShadow: "0 1px 4px rgba(0,0,0,0.12)" }}>+</button>
+          <button onClick={() => zoomBy(1 / 1.35)} aria-label="Loitonna" title="Loitonna" style={{ width: 34, height: 34, borderRadius: 9, border: `1px solid ${T.hair}`, background: "rgba(255,255,255,0.95)", color: T.ink, fontSize: 19, fontWeight: 700, cursor: "pointer", lineHeight: 1, boxShadow: "0 1px 4px rgba(0,0,0,0.12)" }}>−</button>
+          {zoomed && (
+            <button onClick={resetView} aria-label="Palauta" title="Palauta näkymä" style={{ width: 34, height: 34, borderRadius: 9, border: `1px solid ${T.hair}`, background: "rgba(255,255,255,0.95)", color: T.muted, fontSize: 15, cursor: "pointer", lineHeight: 1, boxShadow: "0 1px 4px rgba(0,0,0,0.12)" }}>⟲</button>
+          )}
+        </div>
+        <div style={{ position: "relative", display: "inline-block", lineHeight: 0, maxWidth: "100%", transform: `translate(${view.x}px, ${view.y}px) scale(${view.s})`, transformOrigin: "center center", transition: dragging ? "none" : "transform .15s ease-out", willChange: "transform" }}>
           <img
             src={`${map.building.planBase}${floor}.png`}
             alt={`Pohjapiirros, kerros ${floor}`}
-            style={{ display: "block", maxWidth: "100%", maxHeight: 560, width: "auto", height: "auto", userSelect: "none", clipPath: "inset(2%)", WebkitClipPath: "inset(2%)", filter: "invert(1)" } as React.CSSProperties}
+            style={{ display: "block", maxWidth: "100%", maxHeight: 560, width: "auto", height: "auto", userSelect: "none", clipPath: "inset(2%)", WebkitClipPath: "inset(2%)", filter: "invert(1)", pointerEvents: "none" } as React.CSSProperties}
             draggable={false}
           />
           <div
@@ -383,8 +507,10 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
               );
             })}
 
-            {/* Observation badges — tappable marker on windows the crew noted */}
-            {points.map((pt) => observations[pt.key] ? (
+            {/* Observation badges — tappable marker on windows the crew noted.
+                Hidden during Priority 2 planning: these are washing notes, not
+                relevant while the customer is planning/pricing the extra windows. */}
+            {!p2On && points.map((pt) => observations[pt.key] ? (
               <button
                 key={`obs-${pt.key}`}
                 onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setOpenObs({ key: pt.key, rect: r }); }}
@@ -402,8 +528,9 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
               </button>
             ) : null)}
 
-            {/* Navigation markers / notes (ladders, entrances, hazards, …) */}
-            {floorNotes.map((n) => (
+            {/* Navigation markers / notes (ladders, entrances, hazards, …) —
+                also hidden in Priority 2 planning to keep the map uncluttered. */}
+            {!p2On && floorNotes.map((n) => (
               <span
                 key={n.key}
                 title={`${NOTE_KINDS[n.kind].label}${n.text ? " — " + n.text : ""}`}
@@ -448,56 +575,50 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
             )}
           </div>
 
-          {/* Odottaa sinua — avoimet hintaehdotukset (kaikki kerrokset) */}
+          {/* Odottaa sinua — avoimet hintaehdotukset, RYHMITELTY KERROKSITTAIN.
+              Asiakas voi hyväksyä kerroksen kerrallaan (kerroskohtainen nappi)
+              tai kaikki yhdellä. */}
           {proposedList.length > 0 && (
             <div style={{ padding: "12px 15px", borderBottom: (counteredList.length || lockedList.length) ? `1px solid ${T.hair}` : "none" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: T.navy }}>
                   <span style={{ width: 8, height: 8, borderRadius: "50%", background: T.navy }} /> Odottaa sinua · {proposedList.length}
                 </span>
-                {proposedList.length > 1 && (
+                {proposedFloors.length > 1 && (
                   <button
                     disabled={p2Busy}
                     onClick={() => void runP2(p2Actions!.accept, proposedList.map((o) => ({ key: o.key, priceCents: o.offer.priceCents, version: o.offer.version })))}
-                    style={{ marginLeft: "auto", padding: "7px 12px", borderRadius: 9, border: "none", background: "#3E7C59", color: "#fff", fontFamily: FONT, fontSize: 12.5, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}
+                    style={{ marginLeft: "auto", padding: "7px 12px", borderRadius: 9, border: `1px solid ${T.hair}`, background: T.card, color: "#3E7C59", fontFamily: FONT, fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}
                   >
                     Hyväksy kaikki ({proposedList.length} · {eur(allProposedSum)})
                   </button>
                 )}
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {proposedList.map((o) => (
-                  <div key={o.key} ref={(el) => { listRowRefs.current[o.key] = el; }} style={{ padding: "10px 12px", borderRadius: 11, background: hiRow === o.key ? "rgba(224,168,0,0.16)" : T.paper, border: `1px solid ${hiRow === o.key ? "#E0A800" : T.hair}`, transition: "background .4s, border-color .4s", scrollMarginTop: 12 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                      <span style={{ width: 26, height: 26, flexShrink: 0, borderRadius: "50%", background: T.navy, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{p2Number[o.key] ?? o.idx + 1}</span>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600 }}>{floorLabel(o.floor)} · ikkuna {p2Number[o.key] ?? o.idx + 1}{customerAdded.has(o.key) ? " · sinun" : ""}</div>
-                        <div style={{ fontSize: 15, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{eur(o.offer.priceCents)}<span style={{ fontSize: 11.5, color: T.muted, fontWeight: 500 }}> / ikkuna</span></div>
-                      </div>
-                      <button onClick={() => jumpToMap(o.key, o.floor)} title="Näytä kartalla" style={{ marginLeft: "auto", padding: "6px 10px", borderRadius: 9, border: `1px solid ${T.hair}`, background: T.card, color: T.navy, fontFamily: FONT, fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>Kartalla</button>
+
+              {proposedFloors.map((g) => {
+                const floorSum = g.items.reduce((s, o) => s + o.offer.priceCents, 0);
+                return (
+                  <div key={g.floor} style={{ marginBottom: 14 }}>
+                    {/* Kerroksen otsikko + "Hyväksy kerros" */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: T.ink }}>
+                        <span style={{ minWidth: 30, height: 22, padding: "0 7px", borderRadius: 7, background: T.paper, border: `1px solid ${T.hair}`, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: T.navy }}>{g.floor}</span>
+                        {floorLabel(g.floor)} · {g.items.length} ikkunaa
+                      </span>
+                      <button
+                        disabled={p2Busy}
+                        onClick={() => void runP2(p2Actions!.accept, g.items.map((o) => ({ key: o.key, priceCents: o.offer.priceCents, version: o.offer.version })))}
+                        style={{ marginLeft: "auto", padding: "7px 12px", borderRadius: 9, border: "none", background: "#3E7C59", color: "#fff", fontFamily: FONT, fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}
+                      >
+                        Hyväksy kerros ({g.items.length} · {eur(floorSum)})
+                      </button>
                     </div>
-                    {listCounterKey === o.key ? (
-                      <div style={{ display: "flex", gap: 6, marginTop: 9 }}>
-                        <input type="number" inputMode="decimal" min={1} step="0.5" autoFocus value={listCounterVal} onChange={(e) => setListCounterVal(e.target.value)} placeholder="€ / ikkuna"
-                          style={{ flex: 1, minWidth: 0, padding: "9px 10px", borderRadius: 9, border: `1px solid ${T.hair}`, fontFamily: FONT, fontSize: 14, fontVariantNumeric: "tabular-nums" }} />
-                        <button disabled={p2Busy || !(Number(listCounterVal.replace(",", ".")) > 0)}
-                          onClick={() => { const v = Number(listCounterVal.replace(",", ".")); if (!(v > 0)) return; void runP2(p2Actions!.counter, o.key, Math.round(v * 100), o.offer.version).then(() => { setListCounterKey(null); setListCounterVal(""); }); }}
-                          style={{ padding: "9px 13px", borderRadius: 9, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}>Lähetä</button>
-                        <button disabled={p2Busy} onClick={() => { setListCounterKey(null); setListCounterVal(""); }} style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${T.hair}`, background: T.card, color: T.muted, fontFamily: FONT, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>✕</button>
-                      </div>
-                    ) : (
-                      <div style={{ display: "flex", gap: 6, marginTop: 9 }}>
-                        <button disabled={p2Busy} onClick={() => void runP2(p2Actions!.accept, [{ key: o.key, priceCents: o.offer.priceCents, version: o.offer.version }])}
-                          style={{ flex: 2, padding: "9px", borderRadius: 9, border: "none", background: "#3E7C59", color: "#fff", fontFamily: FONT, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}>Hyväksy</button>
-                        <button disabled={p2Busy} onClick={() => { if (!p2!.termsAccepted) { p2Actions!.requireTerms(); return; } setListCounterKey(o.key); setListCounterVal(""); }}
-                          style={{ flex: 1, padding: "9px", borderRadius: 9, border: `1px solid ${T.hair}`, background: T.card, color: T.ink, fontFamily: FONT, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Vastatarjous</button>
-                        <button disabled={p2Busy} onClick={() => void runP2Free(p2Actions!.decline, o.key, o.offer.version)}
-                          style={{ padding: "9px 11px", borderRadius: 9, border: "none", background: "transparent", color: T.muted, fontFamily: FONT, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Ei</button>
-                      </div>
-                    )}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {g.items.map(renderProposedRow)}
+                    </div>
                   </div>
-                ))}
-              </div>
+                );
+              })}
             </div>
           )}
 

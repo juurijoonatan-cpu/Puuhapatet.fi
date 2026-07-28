@@ -94,22 +94,34 @@ function buildGigReportHtml(job: { id: number; description: string | null }, gig
   const esc = (s: string) => String(s).replace(/</g, "&lt;");
   const deal = project ? fixedDealFor(project) : null;
 
-  const invoicedCents = gig.payments.reduce((s, p) => s + p.amountCents, 0);
+  // Erottele P1 (kiinteä urakka) ja P2 (keltaiset, scope:"p2") -laskutus, ettei
+  // sisäinen raportti sekoita punaista €6300-katsausta lisätyön laskutukseen.
+  const p1Payments = gig.payments.filter((p) => p.scope !== "p2");
+  const p2Payments = gig.payments.filter((p) => p.scope === "p2");
+  const p1InvoicedCents = p1Payments.reduce((s, p) => s + p.amountCents, 0);
+  const p2InvoicedCents = p2Payments.reduce((s, p) => s + p.amountCents, 0);
+  const invoicedCents = p1InvoicedCents + p2InvoicedCents;   // total, for margin
   const contractCents = deal ? deal.capCents : Math.max(invoicedCents, gig.invoicedCents || 0);
-  const remainingCents = Math.max(0, contractCents - invoicedCents);
+  const remainingCents = Math.max(0, contractCents - p1InvoicedCents);   // red only
 
   // Crew name lookup (for resolving who logged an expense / who got paid).
   const crew = project?.crew || [];
   const nameOf = (id: string) => crew.find((m) => m.id === id)?.name || id;
 
-  // 1) Instalments billed to the customer.
+  // 1) Instalments billed to the customer. P1 red instalments are numbered
+  //    sequentially; P2 (lisätyö) payments are labelled distinctly so a P2
+  //    invoice never reads as "5. erä" of the fixed 4-instalment red deal.
+  let p1Seq = 0;
   const instalmentRows = gig.payments.length
-    ? gig.payments.map((p, i) => `
+    ? gig.payments.map((p) => {
+        const label = p.scope === "p2" ? "Priority 2" : `${++p1Seq}. erä`;
+        return `
         <tr style="border-bottom:1px solid #E4E1D7">
-          <td style="padding:8px 0;font-size:13px;color:#1A1A1A">${i + 1}. erä · ${dt(p.t)}</td>
+          <td style="padding:8px 0;font-size:13px;color:#1A1A1A">${label} · ${dt(p.t)}</td>
           <td style="padding:8px 0;font-size:13px;color:#8C8A82">${p.biller?.name ? esc(p.biller.name) : "—"}</td>
           <td style="padding:8px 0;text-align:right;font-size:13px;font-weight:600;color:#1A1A1A;font-variant-numeric:tabular-nums">${eur(p.amountCents)}</td>
-        </tr>`).join("")
+        </tr>`;
+      }).join("")
     : `<tr><td colspan="3" style="padding:8px 0;font-size:13px;color:#8C8A82">Ei vielä lähetettyjä eriä.</td></tr>`;
 
   // 2) Alihankkija payouts (paid vs still pending).
@@ -161,9 +173,10 @@ function buildGigReportHtml(job: { id: number; description: string | null }, gig
     <div style="padding:20px 32px">
       <p style="margin:0 0 6px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Sopimus & laskutus</p>
       <table width="100%" cellpadding="0" cellspacing="0">
-        ${sumRow("Sopimuksen kokonaisarvo", eur(contractCents))}
-        ${sumRow(`Laskutettu asiakkaalta (${gig.payments.length} erää)`, eur(invoicedCents))}
+        ${sumRow(deal ? "Priority 1 -urakka (kiinteä)" : "Sopimuksen kokonaisarvo", eur(contractCents))}
+        ${sumRow(`Laskutettu asiakkaalta (${p1Payments.length}${deal ? "/4" : ""} erää)`, eur(p1InvoicedCents))}
         ${sumRow("Laskuttamatta jäljellä", eur(remainingCents))}
+        ${p2Payments.length ? sumRow(`Priority 2 (lisätyö) laskutettu (${p2Payments.length} kpl)`, eur(p2InvoicedCents)) : ""}
       </table>
 
       <p style="margin:22px 0 6px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Lähetetyt maksuerät</p>
@@ -5211,6 +5224,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (req.body?.termsText !== undefined) {
         project.p2.termsText = req.body.termsText ? String(req.body.termsText).slice(0, 60000) : undefined;
       }
+      // Tekijän palkkiotaulukko (hinta → kiinteä palkkio). Sanitointi hoituu
+      // sanitizeP2State:ssa; tyhjä lista poistaa taulukon (→ oletusaikataulu).
+      if (req.body?.payoutSchedule !== undefined) {
+        project.p2.payoutSchedule = Array.isArray(req.body.payoutSchedule) && req.body.payoutSchedule.length
+          ? req.body.payoutSchedule.map((r: any) => ({ priceCents: Math.floor(Number(r?.priceCents)), payoutCents: Math.floor(Number(r?.payoutCents)) }))
+          : undefined;
+      }
       const saved = await saveProject(job, project, { p2Mutation: true });
       res.json({ ok: true, p2: saved.p2, p2Billing: computeP2Billing(saved) });
     } catch (e: any) {
@@ -5852,7 +5872,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           .map(([k]) => k),
         payoutByKey: Object.fromEntries(Object.entries(project.p2.offers)
           .filter(([, o]) => o.status === "locked" && o.lockedCents)
-          .map(([k, o]) => [k, p2WorkerPayoutCents(o.lockedCents!, project.p2!.workerSharePct)])),
+          .map(([k, o]) => [k, p2WorkerPayoutCents(o.lockedCents!, project.p2!.workerSharePct, project.p2!.payoutSchedule)])),
       } : null,
       // Ohjattu eteneminen (guided): kun perustaja on kytkenyt sen päälle, tekijä
       // näkee vain aktiivisen kerroksen auki, muut lukossa, ja "Seuraavaksi"-kortti
@@ -7082,7 +7102,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const fixedDeal = proj ? fixedDealFor(proj) : null;
     if (fixedDeal) {
       const installmentCents = Math.round(fixedDeal.capCents / 4);
-      gig.invoicedCents = gig.payments.length * installmentCents;
+      // Only the P1 (red) instalments count toward the fixed €6300 invoiced total.
+      // P2 (keltaiset, scope:"p2") laskutetaan erikseen eikä saa kasvattaa
+      // kiinteän diilin invoicedCentsiä — sama scope!=="p2"-suodatus kuin luonti-
+      // ja peruutuspoluilla, jotta maksun poisto ei ylilaske punaista summaa.
+      const p1Count = gig.payments.filter((p) => p.scope !== "p2").length;
+      gig.invoicedCents = p1Count * installmentCents;
     } else {
       gig.invoicedCents = gig.payments.reduce((s, p) => s + p.amountCents, 0);
       gig.invoicedThrough = gig.payments.length ? gig.payments[gig.payments.length - 1].countThrough : 0;

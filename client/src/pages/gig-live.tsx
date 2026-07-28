@@ -38,8 +38,16 @@ export default function GigLivePage() {
   // P2 (lisäikkunat): kevyt ehtohyväksyntä ennen ensimmäistä hintatoimintoa.
   const [termsOpen, setTermsOpen] = useState(false);
   const [termsName, setTermsName] = useState("");
+  const [termsChecked, setTermsChecked] = useState(false);
   const [termsBusy, setTermsBusy] = useState(false);
   const [termsError, setTermsError] = useState<string | null>(null);
+  // Sulje ehto-/kutsumodaali Escapella (a11y + tuttu käyttötapa).
+  useEffect(() => {
+    if (!termsOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !termsBusy) setTermsOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [termsOpen, termsBusy]);
   // Vaihe 2 -kutsu: kun vaihe avataan, linkki on muuten ennallaan mutta
   // asiakkaalle popuppaa kerran kutsu suunnitella keltaiset ikkunat + hinnat.
   // Kuittaus muistetaan per linkki, ettei se ponnahda joka käynnillä.
@@ -152,6 +160,7 @@ export default function GigLivePage() {
   const acceptTerms = async () => {
     const name = termsName.trim();
     if (!name) { setTermsError("Kirjoita nimesi (nimenselvennys)."); return; }
+    if (!termsChecked) { setTermsError("Vahvista, että olet lukenut ja hyväksyt tilausehdot."); return; }
     setTermsBusy(true); setTermsError(null);
     const res = await api.p2AcceptTerms(token, name);
     setTermsBusy(false);
@@ -316,7 +325,7 @@ export default function GigLivePage() {
             <p style={{ margin: "10px 0 0", fontSize: 13.5, lineHeight: 1.6 }}>
               Pesty <strong style={{ fontVariantNumeric: "tabular-nums" }}>{p2!.billing.lockedWashedCount} / {p2!.billing.lockedCount}</strong> sovituista Priority 2 -ikkunoista.
               {p2!.billing.proposedCount > 0 && (
-                <> <strong style={{ color: T.navy }}>{p2!.billing.proposedCount} hintaehdotusta odottaa vastaustasi</strong> — napauta keltaista ikkunaa kartalla.</>
+                <> <strong style={{ color: T.navy }}>{p2!.billing.proposedCount} hintaehdotusta odottaa vastaustasi</strong> — vastaa niihin alla olevasta listasta tai kartalta.</>
               )}
             </p>
             <p style={{ margin: "8px 0 0", fontSize: 12.5, color: T.muted, lineHeight: 1.6 }}>
@@ -345,7 +354,7 @@ export default function GigLivePage() {
             <CustomerFloorMap map={data.map} p2={p2} p2Actions={p2Live ? p2Actions : undefined} />
             <p style={{ margin: "14px 0 0", fontSize: 12, color: T.muted, lineHeight: 1.6 }}>
               {p2Live
-                ? "Keltaisella merkityt ovat Priority 2 -ikkunoita: jokainen hinnoitellaan ikkunakohtaisesti. Napauta ikkunaa nähdäksesi hintaehdotuksen ja vastataksesi siihen."
+                ? "Keltaisella merkityt ovat Priority 2 -ikkunoita: jokainen hinnoitellaan ikkunakohtaisesti. Vastaa ehdotuksiin alla olevasta listasta — tai napauta ikkunaa suoraan kartalta."
                 : "Keltaisella merkityt ikkunat eivät kuulu tähän sopimukseen — niiden tilanne katsotaan seuraavassa sopimuksessa."}
             </p>
           </Panel>
@@ -413,18 +422,21 @@ export default function GigLivePage() {
       {p2Live && !p2!.termsAccepted && !p2InviteDismissed && !termsOpen && (
         <>
           <div onClick={dismissP2Invite} style={{ position: "fixed", inset: 0, zIndex: 68, background: "rgba(26,26,26,0.45)" }} />
-          <div style={{ position: "fixed", left: "50%", top: "50%", transform: "translate(-50%,-50%)", zIndex: 69, width: "min(440px, calc(100vw - 32px))", background: T.card, borderRadius: 18, border: `1px solid ${T.hair}`, boxShadow: "0 24px 80px rgba(0,0,0,0.35)", padding: 26, fontFamily: FONT, textAlign: "center" }}>
-            <div style={{ fontSize: 40, lineHeight: 1 }} aria-hidden>🟡</div>
-            <p style={{ margin: "12px 0 0", fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em" }}>
+          <div role="dialog" aria-modal="true" aria-label="Priority 2 voi alkaa" style={{ position: "fixed", left: "50%", top: "50%", transform: "translate(-50%,-50%)", zIndex: 69, width: "min(440px, calc(100vw - 32px))", background: T.card, borderRadius: 16, border: `1px solid ${T.hair}`, boxShadow: "0 24px 80px rgba(0,0,0,0.35)", padding: 26, fontFamily: FONT }}>
+            <button onClick={dismissP2Invite} aria-label="Sulje" style={{ position: "absolute", top: 14, right: 14, width: 28, height: 28, borderRadius: "50%", border: "none", background: T.paper, color: T.muted, fontSize: 14, cursor: "pointer", lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", color: "#8A6A00", background: "rgba(224,168,0,0.16)", border: "1px solid rgba(224,168,0,0.4)", borderRadius: 999, padding: "5px 11px" }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#E0A800" }} /> PRIORITY 2
+            </span>
+            <p style={{ margin: "14px 0 0", fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em" }}>
               Priority 2 voi alkaa
             </p>
-            <p style={{ margin: "10px 0 0", fontSize: 13.5, lineHeight: 1.7, color: T.ink, textAlign: "left" }}>
+            <p style={{ margin: "10px 0 0", fontSize: 13.5, lineHeight: 1.7, color: T.ink }}>
               Priority 1 (punaiset) alkaa olla valmis — seuraavaksi suunnitellaan
               <strong> keltaisella merkityt Priority 2 -ikkunat</strong>. Toisin kuin Priority 1 -urakan
               kiinteä hinta, jokainen Priority 2 -ikkuna hinnoitellaan erikseen:
             </p>
-            <ul style={{ margin: "8px 0 0", padding: "0 0 0 20px", fontSize: 13, lineHeight: 1.8, color: T.muted, textAlign: "left" }}>
-              <li>Näet hintaehdotukset suoraan kartalla ikkuna kerrallaan</li>
+            <ul style={{ margin: "8px 0 0", padding: "0 0 0 20px", fontSize: 13, lineHeight: 1.8, color: T.muted }}>
+              <li>Näet hintaehdotukset selkeänä listana ja kartalla — ikkuna kerrallaan</li>
               <li>Hyväksyt hinnan tai teet vastatarjouksen — mikään ei tule työn alle ilman hyväksyntääsi</li>
               <li>Voit lisätä uusia ikkunoita Priority 2:seen napauttamalla karttaa</li>
             </ul>
@@ -452,36 +464,61 @@ export default function GigLivePage() {
       {termsOpen && (
         <>
           <div onClick={() => !termsBusy && setTermsOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 70, background: "rgba(26,26,26,0.45)" }} />
-          <div style={{ position: "fixed", left: "50%", top: "50%", transform: "translate(-50%,-50%)", zIndex: 71, width: "min(420px, calc(100vw - 32px))", background: T.card, borderRadius: 16, border: `1px solid ${T.hair}`, boxShadow: "0 24px 80px rgba(0,0,0,0.35)", padding: 22, fontFamily: FONT, maxHeight: "85vh", overflowY: "auto" }}>
-            <p style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>Priority 2 -tilausehdot</p>
-            <p style={{ margin: "10px 0 0", fontSize: 13.5, lineHeight: 1.65 }}>
-              {p2?.termsText?.trim() || (
-                "Hyväksymällä ikkunakohtaisen hinnan tilaat kyseisen ikkunan pesun sovittuun " +
-                "hintaan. Hinta lukitaan, kun molemmat osapuolet ovat sen hyväksyneet, ja " +
-                "lukitut ikkunat laskutetaan toteutuneen työn mukaan erillään Priority 1 " +
-                "-urakan kiinteästä hinnasta. Jokainen hyväksyntä kirjataan aikaleimalla."
-              )}
-            </p>
-            {/* Valmis Priority 2 -sopimus (PDF) — luettavissa / ladattavissa ennen hyväksyntää. */}
+          {/* Yksi vierityskehys: otsikko + toiminnot pysyvät, vain sopimusteksti
+              vierittyy (ei kahta päällekkäistä vierityspalkkia). */}
+          <div role="dialog" aria-modal="true" aria-label="Priority 2 -tilausehdot" style={{ position: "fixed", left: "50%", top: "50%", transform: "translate(-50%,-50%)", zIndex: 71, width: "min(440px, calc(100vw - 32px))", maxHeight: "88vh", display: "flex", flexDirection: "column", background: T.card, borderRadius: 16, border: `1px solid ${T.hair}`, boxShadow: "0 24px 80px rgba(0,0,0,0.35)", padding: 22, fontFamily: FONT }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10.5, fontWeight: 800, letterSpacing: "0.08em", color: "#8A6A00", background: "rgba(224,168,0,0.16)", border: "1px solid rgba(224,168,0,0.4)", borderRadius: 999, padding: "4px 9px" }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#E0A800" }} /> PRIORITY 2
+              </span>
+              <p style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>Tilausehdot</p>
+              <button onClick={() => !termsBusy && setTermsOpen(false)} aria-label="Sulje" style={{ marginLeft: "auto", width: 26, height: 26, borderRadius: "50%", border: "none", background: T.paper, color: T.muted, fontSize: 13, cursor: "pointer", lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>✕</button>
+            </div>
+
+            {/* Liitetty sopimusteksti pre-wrap -tyylillä: monirivinen soppari
+                säilyttää kappaleet ja rivinvaihdot. Ainoa vierittyvä alue. */}
+            {p2?.termsText?.trim() ? (
+              <div style={{ margin: "12px 0 0", flex: "1 1 auto", minHeight: 60, overflowY: "auto", padding: "12px 14px", borderRadius: 12, background: T.paper, border: `1px solid ${T.hair}`, fontSize: 13.5, lineHeight: 1.65, color: T.ink, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                {p2.termsText.trim()}
+              </div>
+            ) : (
+              <p style={{ margin: "12px 0 0", fontSize: 13.5, lineHeight: 1.65, flexShrink: 0 }}>
+                Hyväksymällä ikkunakohtaisen hinnan tilaat kyseisen ikkunan pesun sovittuun
+                hintaan. Hinta lukitaan, kun molemmat osapuolet ovat sen hyväksyneet, ja
+                lukitut ikkunat laskutetaan toteutuneen työn mukaan erillään Priority 1
+                -urakan kiinteästä hinnasta. Jokainen hyväksyntä kirjataan aikaleimalla.
+              </p>
+            )}
+
+            {/* Valmis Priority 2 -sopimus (PDF) — luettavissa ennen hyväksyntää. */}
             <a
               href={P2_CONTRACT_PDF_URL}
               target="_blank"
               rel="noopener noreferrer"
-              style={{ display: "inline-flex", alignItems: "center", gap: 7, marginTop: 12, padding: "9px 12px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, color: T.ink, fontFamily: FONT, fontSize: 12.5, fontWeight: 600, textDecoration: "none" }}
+              style={{ display: "inline-flex", alignItems: "center", gap: 7, marginTop: 12, padding: "9px 12px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, color: T.ink, fontFamily: FONT, fontSize: 12.5, fontWeight: 600, textDecoration: "none", flexShrink: 0 }}
             >
               <span aria-hidden style={{ fontSize: 15 }}>📄</span>
-              Lue koko sopimus (PDF)
+              Lue koko sopimus (PDF) <span style={{ color: T.muted, fontWeight: 500 }}>· avautuu uuteen välilehteen</span>
             </a>
-            <p style={{ margin: "14px 0 6px", fontSize: 12, fontWeight: 600, color: T.muted }}>Nimenselvennys</p>
+
+            <label htmlFor="p2-terms-name" style={{ display: "block", margin: "14px 0 6px", fontSize: 12, fontWeight: 600, color: T.muted, flexShrink: 0 }}>Nimenselvennys</label>
             <input
+              id="p2-terms-name"
               value={termsName}
               onChange={(e) => setTermsName(e.target.value)}
               placeholder="Etunimi Sukunimi"
               autoFocus
-              style={{ width: "100%", boxSizing: "border-box", padding: "11px 12px", borderRadius: 10, border: `1px solid ${T.hair}`, fontFamily: FONT, fontSize: 14 }}
+              style={{ width: "100%", boxSizing: "border-box", padding: "11px 12px", borderRadius: 10, border: `1px solid ${T.hair}`, fontFamily: FONT, fontSize: 14, flexShrink: 0 }}
             />
-            {termsError && <p style={{ margin: "8px 0 0", fontSize: 12.5, color: "#B4231F" }}>{termsError}</p>}
-            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+
+            {/* Selkeä suostumus: rasti + selite että hyväksyntä kirjataan. */}
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 9, marginTop: 12, fontSize: 12.5, lineHeight: 1.5, color: T.ink, cursor: "pointer", flexShrink: 0 }}>
+              <input type="checkbox" checked={termsChecked} onChange={(e) => setTermsChecked(e.target.checked)} style={{ width: 17, height: 17, marginTop: 1, accentColor: T.navy, flexShrink: 0, cursor: "pointer" }} />
+              <span>Olen lukenut ja hyväksyn Priority 2 -tilausehdot. Hyväksyntä kirjataan nimelläni ja aikaleimalla.</span>
+            </label>
+
+            {termsError && <p style={{ margin: "10px 0 0", fontSize: 12.5, color: "#B4231F", flexShrink: 0 }}>{termsError}</p>}
+            <div style={{ display: "flex", gap: 8, marginTop: 16, flexShrink: 0 }}>
               <button
                 disabled={termsBusy}
                 onClick={() => setTermsOpen(false)}
@@ -490,9 +527,9 @@ export default function GigLivePage() {
                 Peruuta
               </button>
               <button
-                disabled={termsBusy}
+                disabled={termsBusy || !termsName.trim() || !termsChecked}
                 onClick={() => void acceptTerms()}
-                style={{ flex: 2, padding: "11px", borderRadius: 10, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: "pointer", opacity: termsBusy ? 0.6 : 1 }}
+                style={{ flex: 2, padding: "11px", borderRadius: 10, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: (termsBusy || !termsName.trim() || !termsChecked) ? "not-allowed" : "pointer", opacity: (termsBusy || !termsName.trim() || !termsChecked) ? 0.5 : 1 }}
               >
                 {termsBusy ? "Hyväksytään…" : "Hyväksyn ehdot"}
               </button>

@@ -29,9 +29,28 @@ export const MAX_P2_PRICE_CENTS = 100_000;        // 1000 € / ikkuna hard cap
 export const DEFAULT_P2_WORKER_SHARE_PCT = 53;    // ≈ existing 20 € / 37,50 € economics
 export const MAX_P2_EVENTS = 500;                 // audit log cap (newest kept)
 export const MAX_P2_CUSTOMER_POINTS = 300;        // cap on customer-added yellow dots
+export const MAX_P2_PAYOUT_RULES = 20;            // cap on the payout-schedule size
 
-/** Quick admin price presets (cents) shown in the pricing UI. */
-export const P2_PRICE_PRESETS_CENTS = [2500, 3750, 5000];
+/** Quick admin price presets (cents) shown in the pricing UI — the two agreed
+ *  FR8 yellow sizes (34,00 € / 37,50 €) plus a larger option. */
+export const P2_PRICE_PRESETS_CENTS = [3400, 3750, 5000];
+
+/**
+ * A fixed worker payout for an EXACT locked price. The founder pays a flat euro
+ * amount per window size rather than a percentage: a 34,00 € window pays the
+ * worker 18,00 €, a 37,50 € window pays 20,00 €. Any locked price WITHOUT a rule
+ * falls back to the percentage share (`workerSharePct`).
+ */
+export interface P2PayoutRule {
+  priceCents: number;    // the exact locked price this rule matches
+  payoutCents: number;   // what the worker is paid for that window
+}
+
+/** Default FR8 payout schedule: 34 € → 18 €, 37,50 € → 20 €. */
+export const DEFAULT_P2_PAYOUT_SCHEDULE: P2PayoutRule[] = [
+  { priceCents: 3400, payoutCents: 1800 },
+  { priceCents: 3750, payoutCents: 2000 },
+];
 
 // ─── Data shapes ───────────────────────────────────────────────────────────────
 
@@ -85,13 +104,18 @@ export interface P2Terms {
 
 export interface P2State {
   enabled: boolean;             // phase switch: is the negotiation UI live for the customer
-  workerSharePct: number;       // worker's share of a locked price, 1..100
+  workerSharePct: number;       // worker's share of a locked price, 1..100 (FALLBACK)
   offers: Record<string, P2Offer>;   // window key → offer
   events: P2Event[];            // newest-first, capped at MAX_P2_EVENTS
   terms?: P2Terms | null;
   /** Optional P2 contract/terms text shown to the customer in the terms dialog.
    *  The founders can paste the finished sopimus here later. */
   termsText?: string;
+  /** Fixed worker payout per exact locked price (34 € → 18 €, 37,50 € → 20 €).
+   *  A locked price NOT in the schedule falls back to `workerSharePct`. Absent =
+   *  DEFAULT_P2_PAYOUT_SCHEDULE. Drives worker pay for every locked yellow window,
+   *  so editing it re-values already-washed yellows too (pay is computed live). */
+  payoutSchedule?: P2PayoutRule[];
 }
 
 export function emptyP2State(): P2State {
@@ -292,10 +316,23 @@ export function isP2Washable(data: ProjectData, key: string): boolean {
 
 // ─── Money ─────────────────────────────────────────────────────────────────────
 
-/** Worker's payout for one locked yellow window (share of ITS locked price). */
-export function p2WorkerPayoutCents(lockedCents: number, workerSharePct: number): number {
+/**
+ * Worker's payout for one locked yellow window. A fixed rule for the exact
+ * locked price wins (34 € → 18 €, 37,50 € → 20 €); otherwise a percentage share
+ * of the locked price. `schedule` absent → DEFAULT_P2_PAYOUT_SCHEDULE, so the two
+ * agreed FR8 sizes always pay their flat amount without any per-gig config.
+ */
+export function p2WorkerPayoutCents(
+  lockedCents: number,
+  workerSharePct: number,
+  schedule?: P2PayoutRule[] | null,
+): number {
+  const cents = Math.max(0, Math.round(Number(lockedCents) || 0));
+  const rules = schedule && schedule.length ? schedule : DEFAULT_P2_PAYOUT_SCHEDULE;
+  const rule = rules.find((r) => r.priceCents === cents);
+  if (rule) return Math.max(0, Math.round(rule.payoutCents));
   const pct = Math.max(1, Math.min(100, Math.round(Number(workerSharePct) || 0)));
-  return Math.round(Math.max(0, lockedCents) * pct / 100);
+  return Math.round(cents * pct / 100);
 }
 
 export interface P2Billing {
@@ -331,6 +368,7 @@ export function computeP2Billing(data: ProjectData): P2Billing {
   out.yellowTotal = yellows.length;
   if (!p2) return out;
   const sharePct = p2.workerSharePct || DEFAULT_P2_WORKER_SHARE_PCT;
+  const schedule = p2.payoutSchedule;
   for (const pt of yellows) {
     const offer = p2.offers[pt.key];
     if (offer) out.pricedCount += 1;
@@ -342,7 +380,7 @@ export function computeP2Billing(data: ProjectData): P2Billing {
       if (pt.status === "pesty") {
         out.lockedWashedCount += 1;
         out.earnedCents += offer.lockedCents;
-        out.workerCostCents += p2WorkerPayoutCents(offer.lockedCents, sharePct);
+        out.workerCostCents += p2WorkerPayoutCents(offer.lockedCents, sharePct, schedule);
       }
     } else if (pt.status === "pesty") {
       out.washedUnlockedKeys.push(pt.key);
@@ -448,6 +486,25 @@ export function sanitizeP2State(input: any): P2State | undefined {
     }
   }
 
+  // Payout schedule: exact price → flat worker pay. Keep only well-formed,
+  // positive, de-duplicated rules within the price cap. Absent/empty stays
+  // undefined so the DEFAULT_P2_PAYOUT_SCHEDULE applies.
+  let payoutSchedule: P2PayoutRule[] | undefined;
+  if (Array.isArray(input.payoutSchedule)) {
+    const seen = new Set<number>();
+    const rules: P2PayoutRule[] = [];
+    for (const r of input.payoutSchedule.slice(0, MAX_P2_PAYOUT_RULES)) {
+      const priceCents = Math.floor(Number(r?.priceCents));
+      const payoutCents = Math.floor(Number(r?.payoutCents));
+      if (!Number.isFinite(priceCents) || priceCents <= 0 || priceCents > MAX_P2_PRICE_CENTS) continue;
+      if (!Number.isFinite(payoutCents) || payoutCents < 0 || payoutCents > MAX_P2_PRICE_CENTS) continue;
+      if (seen.has(priceCents)) continue;
+      seen.add(priceCents);
+      rules.push({ priceCents, payoutCents });
+    }
+    if (rules.length) payoutSchedule = rules.sort((a, b) => a.priceCents - b.priceCents);
+  }
+
   const sharePct = Math.floor(Number(input.workerSharePct));
   return {
     enabled: input.enabled === true,
@@ -456,5 +513,6 @@ export function sanitizeP2State(input: any): P2State | undefined {
     events,
     terms,
     termsText: input.termsText ? String(input.termsText).slice(0, 60000) : undefined,
+    ...(payoutSchedule ? { payoutSchedule } : {}),
   };
 }

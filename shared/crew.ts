@@ -259,6 +259,7 @@ export function crewMemberStats(project: ProjectData, member: CrewMember): CrewM
   // palkkio lasketaan täsmälleen kuten ennen. Vasta enabled kytkee P2-mallin.
   const p2 = project.p2?.enabled ? project.p2 : undefined;
   const sharePct = p2?.workerSharePct || DEFAULT_P2_WORKER_SHARE_PCT;
+  const payoutSchedule = p2?.payoutSchedule;
   let washed = 0;
   let earnedRaw = 0;
   let p2EarnedRaw = 0;
@@ -274,7 +275,7 @@ export function crewMemberStats(project: ProjectData, member: CrewMember): CrewM
     if (p2 && p.p === 2) {
       const offer = p2.offers[p.key];
       const rate = offer?.status === "locked" && offer.lockedCents
-        ? p2WorkerPayoutCents(offer.lockedCents, sharePct)
+        ? p2WorkerPayoutCents(offer.lockedCents, sharePct, payoutSchedule)
         : 0; // washed-before-lock anomaly: no pay, surfaced in admin
       p2EarnedRaw += share * rate;
       earnedRaw += share * rate;

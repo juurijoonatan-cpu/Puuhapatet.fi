@@ -69,15 +69,21 @@ interface GuidedState {
   kerroksen jolla on pesemätöntä piirissä olevaa työtä; muuten palataan
   automaattiseen valintaan (esim. jos pakotettu kerros on jo valmis).
 
-### Seuraava ikkuna (sweep-järjestys)
+### Seuraava ikkuna (lähin ikkuna, nearest-neighbor)
 
-`nextKey` = aktiivisen kerroksen pesemättömistä piirissä olevista ikkunoista
-ensimmäinen tässä vakaassa järjestyksessä:
+`nextKey` ohjaa **fyysisesti lähimpään** pesemättömään ikkunaan — ei kartan
+toiselle laidalle — jotta tekijä siirtyy viereiseen ikkunaan tehokkaasti:
 
 1. **kesken ennen ei-aloitettua** — aloitettua ikkunaa ei jätetä roikkumaan,
-2. **ylhäältä alas** (`y` nouseva),
-3. **vasemmalta oikealle** (`x` nouseva),
-4. avain (`key`) tasapelin ratkaisijana → sama kartta antaa aina saman jonon.
+2. **lähin juuri pestyyn** — pienin neliöetäisyys (`dx²+dy²`) *ankkuriin*, joka on
+   aktiivisen kerroksen viimeksi pesty piirissä oleva ikkuna (aktiviteettilokista
+   `data.log`, uusin ensin, `lastWashedAnchor`),
+3. tasapeli `sweepOrder`illa (ylhäältä-alas `y`, vasemmalta-oikealle `x`, `key`).
+
+Kun kerroksella ei ole vielä yhtään pesua (ankkuri = null), aloitetaan vasemmasta
+yläkulmasta (`sweepOrder`), ja jokainen pesu vetää seuraavan valinnan itseään kohti.
+Sama tasapeli (`sweepOrder`) takaa determinismin sekä serverillä (`workerView`)
+että clientissä (admin `computeGuided`), joten pesuportti ja UI eivät voi erota.
 
 ## Pesuportti (server)
 

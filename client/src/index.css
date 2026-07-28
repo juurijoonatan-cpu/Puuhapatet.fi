@@ -564,6 +564,15 @@
   .fr8-guided-next { animation: none !important; }
 }
 
+/* "Uusi luku" -juhla: serpentiinit putoavat pyörien ruudun poikki. */
+@keyframes fr8-confetti-fall {
+  0%   { transform: translateY(0)     rotateZ(0deg);   opacity: 1; }
+  100% { transform: translateY(112vh) rotateZ(720deg); opacity: 0.85; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fr8-confetti span { animation: none !important; opacity: 0 !important; }
+}
+
 /* Luotettavat napautukset (fr8-nappien "ei painaudu" -bugi):
    1) touch-action: manipulation poistaa iOS/Androidin tap-viiveen ja
       tuplatap-zoom-tunnistuksen, joka ajoittain NIELAISEE napautuksen.

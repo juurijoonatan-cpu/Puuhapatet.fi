@@ -1086,7 +1086,7 @@ export const api = {
 
   // ─── Project / floor-plan window tool (FR8 projektinäkymä) ──────────────────
   getProject: (jobId: number) =>
-    request<{ ok: boolean; project: ProjectData | null; totals?: ProjTotals; workerStats?: WorkerStat[]; p2Billing?: P2Billing; guidedState?: GuidedState }>(
+    request<{ ok: boolean; project: ProjectData | null; totals?: ProjTotals; workerStats?: WorkerStat[]; p2Billing?: P2Billing; p2InvoicedCents?: number; guidedState?: GuidedState }>(
       "GET", `/api/jobs/${jobId}/project`,
     ),
 

@@ -27,7 +27,7 @@ import {
 } from "@shared/pricing";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, computeEraDebts, allPoints, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeP2Billing, customerAddedKeys, emptyP2State, isP2Washable, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import {
@@ -101,7 +101,8 @@ function buildGigReportHtml(job: { id: number; description: string | null }, gig
   const p1InvoicedCents = p1Payments.reduce((s, p) => s + p.amountCents, 0);
   const p2InvoicedCents = p2Payments.reduce((s, p) => s + p.amountCents, 0);
   const invoicedCents = p1InvoicedCents + p2InvoicedCents;   // total, for margin
-  const contractCents = deal ? deal.capCents : Math.max(invoicedCents, gig.invoicedCents || 0);
+  // Effective agreed red total — reduced if red windows were removed below scope.
+  const contractCents = deal ? dealAgreedTotalCents(project!, deal) : Math.max(invoicedCents, gig.invoicedCents || 0);
   const remainingCents = Math.max(0, contractCents - p1InvoicedCents);   // red only
 
   // Crew name lookup (for resolving who logged an expense / who got paid).
@@ -4621,16 +4622,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // lukittujen ikkunoiden kertymä miinus jo laskutetut p2-maksut.
       const isP2Scope = req.body?.scope === "p2";
 
-      // For fixed-price deals (FR8 / kiinteähintainen sopimus) the installment is
-      // always exactly 1/4 of the agreed total — never computed per window.
+      // For fixed-price deals (FR8) each erä is a fixed 25 % of the agreed total,
+      // EXCEPT the final (4th) erä which bills the REMAINDER of the effective
+      // agreed total. So if red windows were removed, the reduction (37,50 €/ikkuna)
+      // lands entirely on the last invoice — the earlier erät stay at 25 %.
       const proj = parseProject(job.projectData ?? null);
       const fixedDeal = !isP2Scope && proj ? fixedDealFor(proj) : null;
-      const installmentCents = fixedDeal ? Math.round(fixedDeal.capCents / 4) : null;
+      const rawInstalmentCents = fixedDeal ? Math.round(fixedDeal.capCents / 4) : null;
+      const agreedTotalCents = fixedDeal && proj ? dealAgreedTotalCents(proj, fixedDeal) : null;
 
       // P1:n eränumerointi ja 4 erän raja lasketaan VAIN P1-maksuista, jotta
       // p2-scoped maksut eivät sotke kiinteän sopimuksen erälaskentaa.
       const p1Payments = gig.payments.filter((p) => p.scope !== "p2");
       const p2Payments = gig.payments.filter((p) => p.scope === "p2");
+      const p1InvoicedBeforeCents = p1Payments.reduce((s, p) => s + p.amountCents, 0);
 
       const p2b = proj ? computeP2Billing(proj) : null;
       const p2InvoicedCents = p2Payments.reduce((s, p) => s + p.amountCents, 0);
@@ -4640,14 +4645,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ? Math.min(p2RemainingCents, Number.isInteger(reqAmountCents) && reqAmountCents > 0 ? reqAmountCents : p2RemainingCents)
         : 0;
 
-      const totalsBefore = computeTotals(gig);
-      const amountCents = isP2Scope ? p2AmountCents : (installmentCents ?? totalsBefore.uninvoicedCents);
-      if (amountCents <= 0) return res.status(400).json({ error: "Ei laskutettavaa kertymää" });
-      if (fixedDeal && p1Payments.length >= 4) {
-        return res.status(400).json({ error: "Kaikki neljä maksuerää on jo lähetetty." });
-      }
-
-      const fmtEur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
       // Which instalment this is. For fixed deals the admin can override the
       // number manually in the dialog (1–4); otherwise it follows the count sent.
       const reqPaymentNumber = Number(req.body?.paymentNumber);
@@ -4656,6 +4653,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         : (fixedDeal && Number.isInteger(reqPaymentNumber) && reqPaymentNumber >= 1 && reqPaymentNumber <= 4)
           ? reqPaymentNumber
           : p1Payments.length + 1;
+
+      // Final (4th) erä = effective agreed total − what P1 has already been billed,
+      // so removed windows come off the last invoice; earlier erät = fixed 25 %.
+      const isFinalEra = !!fixedDeal && paymentNumber >= 4;
+      const installmentCents = fixedDeal
+        ? (isFinalEra
+            ? Math.max(0, (agreedTotalCents ?? fixedDeal.capCents) - p1InvoicedBeforeCents)
+            : rawInstalmentCents!)
+        : null;
+
+      const totalsBefore = computeTotals(gig);
+      const amountCents = isP2Scope ? p2AmountCents : (installmentCents ?? totalsBefore.uninvoicedCents);
+      if (amountCents <= 0) return res.status(400).json({ error: "Ei laskutettavaa kertymää" });
+      if (fixedDeal && p1Payments.length >= 4) {
+        return res.status(400).json({ error: "Kaikki neljä maksuerää on jo lähetetty." });
+      }
+
+      const fmtEur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
 
       // P2: one clean line for the washed locked extra windows; for fixed-price
       // contracts one clean instalment line; for standard gigs per-sector
@@ -4672,7 +4687,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ? `<tr style="border-bottom:1px solid #E4E1D7">
             <td style="padding:10px 0;color:#1A1A1A;font-size:14px">
               Maksuerä ${paymentNumber}/4 — kiinteähintainen sopimus<br>
-              <span style="color:#8C8A82;font-size:12px">25 % sovitusta kokonaishinnasta ${fmtEur(fixedDeal.capCents)}</span>
+              <span style="color:#8C8A82;font-size:12px">${isFinalEra ? "Loppuerä" : "25 %"} · sovittu kokonaishinta ${fmtEur(agreedTotalCents ?? fixedDeal.capCents)}</span>
             </td>
             <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:#1A1A1A;font-variant-numeric:tabular-nums">${fmtEur(amountCents)}</td>
           </tr>`
@@ -4761,8 +4776,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           ? `<tr><td style="padding:8px 0;color:#8C8A82;font-size:13px">Lisätöiden kertymä (pestyt sovitut ikkunat)</td><td style="padding:8px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">${fmtEur(p2b?.earnedCents ?? 0)}</td></tr>
              ${p2InvoicedCents > 0 ? `<tr><td style="padding:4px 0;color:#8C8A82;font-size:13px">Aiemmin laskutettu</td><td style="padding:4px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">−${fmtEur(p2InvoicedCents)}</td></tr>` : ""}`
           : fixedDeal
-          ? `<tr><td style="padding:8px 0;color:#8C8A82;font-size:13px">Kokonaishinta (sovittu)</td><td style="padding:8px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">${fmtEur(fixedDeal.capCents)}</td></tr>
-             <tr><td style="padding:4px 0;color:#8C8A82;font-size:13px">Tähän mennessä laskutettu</td><td style="padding:4px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">${fmtEur((paymentNumber - 1) * amountCents)}</td></tr>`
+          ? `<tr><td style="padding:8px 0;color:#8C8A82;font-size:13px">Kokonaishinta (sovittu)</td><td style="padding:8px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">${fmtEur(agreedTotalCents ?? fixedDeal.capCents)}</td></tr>
+             <tr><td style="padding:4px 0;color:#8C8A82;font-size:13px">Tähän mennessä laskutettu</td><td style="padding:4px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">${fmtEur(p1InvoicedBeforeCents)}</td></tr>`
           : `<tr><td style="padding:8px 0;color:#8C8A82;font-size:13px">Kertymä yhteensä</td><td style="padding:8px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">${fmtEur(accruedSoFar)}</td></tr>
              ${previouslyInvoiced > 0 ? `<tr><td style="padding:4px 0;color:#8C8A82;font-size:13px">Aiemmin laskutettu</td><td style="padding:4px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">−${fmtEur(previouslyInvoiced)}</td></tr>` : ""}`
         }
@@ -7106,13 +7121,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const proj = parseProject(job.projectData ?? null);
     const fixedDeal = proj ? fixedDealFor(proj) : null;
     if (fixedDeal) {
-      const installmentCents = Math.round(fixedDeal.capCents / 4);
-      // Only the P1 (red) instalments count toward the fixed €6300 invoiced total.
-      // P2 (keltaiset, scope:"p2") laskutetaan erikseen eikä saa kasvattaa
-      // kiinteän diilin invoicedCentsiä — sama scope!=="p2"-suodatus kuin luonti-
-      // ja peruutuspoluilla, jotta maksun poisto ei ylilaske punaista summaa.
-      const p1Count = gig.payments.filter((p) => p.scope !== "p2").length;
-      gig.invoicedCents = p1Count * installmentCents;
+      // Sum the ACTUAL P1 (red) instalment amounts — the final erä may be smaller
+      // than 1/4 if red windows were removed (the reduction lands on the last
+      // invoice), so counting erät × fixed instalment would overstate the total.
+      // Only P1 counts toward the fixed deal; P2 (scope:"p2") is billed separately.
+      gig.invoicedCents = gig.payments
+        .filter((p) => p.scope !== "p2")
+        .reduce((s, p) => s + p.amountCents, 0);
     } else {
       gig.invoicedCents = gig.payments.reduce((s, p) => s + p.amountCents, 0);
       gig.invoicedThrough = gig.payments.length ? gig.payments[gig.payments.length - 1].countThrough : 0;

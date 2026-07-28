@@ -436,8 +436,9 @@ export default function AdminGigTrackerPage() {
     ? (isFinalEra ? Math.max(0, agreedTotalCents - p1InvoicedCents) : Math.round(deal.capCents / 4))
     : 0;
   const perQuarter = dealBilling ? dealBilling.billableTotal / 4 : 0;
-  const nextQuarterNeeded = dealBilling ? perQuarter * (gig.payments.length + 1) : 0;
-  const fixedDue = !!(dealBilling && dealBilling.billableWashed >= nextQuarterNeeded && gig.payments.length < 4);
+  // Use p1PayCount (red erät only) — P2 payments must never perturb P1 progression.
+  const nextQuarterNeeded = dealBilling ? perQuarter * (p1PayCount + 1) : 0;
+  const fixedDue = !!(dealBilling && dealBilling.billableWashed >= nextQuarterNeeded && p1PayCount < 4);
 
   const due = deal ? fixedDue : invoiceDue(gig);
   const nextThr = nextInvoiceThreshold(gig);
@@ -785,12 +786,27 @@ export default function AdminGigTrackerPage() {
               <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
               <p className="text-sm text-amber-800 dark:text-amber-300">
                 {deal && dealBilling
-                  ? `${gig.payments.length + 1}. maksuerä valmis — ${Math.round(dealBilling.pct)} % ikkunoista pesty.`
+                  ? `${p1PayCount + 1}. maksuerä valmis — ${Math.round(dealBilling.pct)} % ikkunoista pesty.`
                   : `Laskutusraja ylittynyt (${totals.washedTotal} ≥ ${nextThr}). Muodosta osalasku kertyneestä summasta.`}
               </p>
             </div>
           )}
           {deal && dealBilling ? (
+            p1PayCount >= 4 ? (
+              /* Kaikki neljä erää lähetetty — sopimus laskutettu. Ei haamu-
+                 "seuraava erä 1575 €" eikä kuollutta lähetysnappia. */
+              <>
+                <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/30 p-3 text-center mb-3">
+                  <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">Sopimus laskutettu ✓</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Kaikki 4/4 maksuerää lähetetty. Punainen urakka valmis.</p>
+                </div>
+                {gig.payments.length > 0 && (
+                  <Button variant="ghost" size="sm" className="w-full text-xs text-muted-foreground" onClick={undoInstalment}>
+                    Peruuta viimeisin erä (nollaa laskuri)
+                  </Button>
+                )}
+              </>
+            ) : (
             <>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm text-muted-foreground">Seuraava maksuerä</span>
@@ -805,15 +821,15 @@ export default function AdminGigTrackerPage() {
               </div>
               <div className="flex items-center justify-between mb-3">
                 <span className="text-sm text-muted-foreground">Laskuja lähetetty</span>
-                <span className="text-sm font-semibold text-foreground tabular-nums">{gig.payments.length}/4 erää</span>
+                <span className="text-sm font-semibold text-foreground tabular-nums">{p1PayCount}/4 erää</span>
               </div>
               {dealBilling.billableTotal > 0 && (
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-sm text-muted-foreground">Ikkunoita pesty</span>
                   <span className="text-sm text-muted-foreground tabular-nums">
                     {dealBilling.billableWashed} / {dealBilling.billableTotal} kpl
-                    {!due && gig.payments.length < 4 && (
-                      <span className="ml-1">(vielä {Math.ceil(nextQuarterNeeded - dealBilling.billableWashed)} ennen {gig.payments.length + 1}. erää)</span>
+                    {!due && p1PayCount < 4 && (
+                      <span className="ml-1">(vielä {Math.ceil(nextQuarterNeeded - dealBilling.billableWashed)} ennen {p1PayCount + 1}. erää)</span>
                     )}
                   </span>
                 </div>
@@ -831,6 +847,7 @@ export default function AdminGigTrackerPage() {
                 </Button>
               )}
             </>
+            )
           ) : (
             <>
               <div className="flex items-center justify-between mb-3">

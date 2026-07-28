@@ -34,6 +34,7 @@ import {
 import { computePayProgress } from "@shared/payprogress";
 import { MAX_PHOTO_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN } from "@shared/crew";
 import { BRAND_BILLERS } from "@shared/billers";
+import { FOUNDER_IDS } from "@shared/team";
 import { isValidYTunnus } from "@shared/y-tunnus";
 
 const T = { ink: "#1A1A1A", paper: "#F6F4EE", card: "#FFFFFF", hair: "#E4E1D7", muted: "#8C8A82", green: "#3E7C59", navy: "#1F3B57" };
@@ -1021,7 +1022,15 @@ function GuidedCard({ guided, guidedNote, onFocusNext }: {
   guided: GuidedWorkerView; guidedNote: string; onFocusNext: () => void;
 }) {
   const done = guided.allComplete;
-  const activeLabel = guidedFloorLabel(guided.activeFloor);
+  // All floors the founder has opened (multi mode), falling back to the single
+  // guide floor. Shown so the worker sees EVERY open floor, not just one.
+  const openFloors = (guided.activeFloors && guided.activeFloors.length)
+    ? guided.activeFloors
+    : (guided.activeFloor ? [guided.activeFloor] : []);
+  const multi = openFloors.length > 1;
+  const activeLabel = multi
+    ? `Auki: ${openFloors.map(guidedFloorLabel).join(", ")}`
+    : guidedFloorLabel(guided.activeFloor);
   const lockedCount = guided.lockedFloors.length;
   return (
     <div style={{ position: "absolute", left: 0, right: 0, bottom: 12, display: "flex", justifyContent: "center", padding: "0 12px", pointerEvents: "none", zIndex: 20 }}>
@@ -1038,7 +1047,7 @@ function GuidedCard({ guided, guidedNote, onFocusNext }: {
               <div style={{ lineHeight: 1.3 }}>
                 <div style={{ fontSize: 16, fontWeight: 800 }}>{activeLabel}</div>
                 <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
-                  {guided.remainingOnActive} ikkuna{guided.remainingOnActive === 1 ? "" : "a"} jäljellä tällä kerroksella
+                  {guided.remainingOnActive} ikkuna{guided.remainingOnActive === 1 ? "" : "a"} jäljellä{multi ? `: ${guidedFloorLabel(guided.activeFloor)}` : " tällä kerroksella"}
                   {lockedCount > 0 ? ` · ${lockedCount} kerros${lockedCount === 1 ? "" : "ta"} lukossa` : ""}
                 </div>
               </div>
@@ -1211,6 +1220,16 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
             p2={view.p2 ? { enabled: view.p2.enabled, lockedKeys: view.p2.lockedKeys, payoutByKey: view.p2.payoutByKey } : null}
             guided={guided ? { enabled: guided.enabled, activeFloor: guided.activeFloor, activeFloors: guided.activeFloors, lockedFloors: guided.lockedFloors, nextKey: guided.nextKey } : null}
             floorFocus={guided?.activeFloor ? { floor: guided.activeFloor, nonce: floorFocusNonce } : null}
+            /* Discreet map: regular workers see ONLY the opened floors; founders
+               (role "host") see every floor. Falls back to the single guide floor
+               for older payloads without activeFloors. */
+            restrictFloors={
+              guided?.enabled && view.worker.role !== "host" && !FOUNDER_IDS.includes(view.worker.id)
+                ? (guided.activeFloors && guided.activeFloors.length
+                    ? guided.activeFloors
+                    : (guided.activeFloor ? [guided.activeFloor] : null))
+                : null
+            }
           />
         )}
         {/* Ohjattu eteneminen: "Seuraavaksi" -ohjauskortti kartan päällä. Näyttää

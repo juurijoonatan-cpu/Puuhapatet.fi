@@ -5135,12 +5135,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const project = parseProject(job.projectData ?? null);
       if (!project) return res.json({ ok: true, project: null });
+      // How much P2 (keltaiset) on jo laskutettu — summataan scope:"p2"-maksut
+      // (sama laskenta kuin laskureitillä), jotta dashboard voi näyttää
+      // "laskuttamatta = kertymä − jo laskutettu" eikä pelkkää bruttokertymää.
+      const gigForP2 = parseGig(job.gigData);
+      const p2InvoicedCents = (gigForP2?.payments ?? [])
+        .filter((p) => p.scope === "p2")
+        .reduce((s, p) => s + p.amountCents, 0);
       res.json({
         ok: true,
         project,
         totals: computeProjectTotals(project),
         workerStats: computeWorkerStats(project),
         p2Billing: computeP2Billing(project),
+        p2InvoicedCents,
         guidedState: computeGuided(project),
       });
     } catch (e: any) {
@@ -5911,6 +5919,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return {
           enabled: true,
           activeFloor: g.activeFloor,
+          activeFloors: g.activeFloors,
           lockedFloors: g.lockedFloors,
           openKeys: g.openKeys,
           nextKey: g.nextKey,
@@ -6060,9 +6069,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // jotta edetään yks kerros kerrallaa eikä poimita helppoja sieltä täältä.
       // Tyhjennys ("ei") sallitaan aina, jotta virheen voi perua. Pois päältä /
       // ei aktiivista kerrosta (kaikki valmis) = ei porttia.
-      if (status !== "ei" && isGuidedBlocked(project, key)) {
+      // Perustajat (role "host", esim. Joonatan & Matias) OHITTAVAT lukon: he
+      // voivat pestä minkä tahansa kerroksen ikkunoita (myös tekijöiltä suljettuja,
+      // esim. 5. kerros) ja pesu kirjautuu normaalisti. Vain tavalliset tekijät
+      // rajataan avoimiin kerroksiin.
+      const memberIsFounder = member.role === "host" || FOUNDER_IDS.includes(member.id);
+      if (status !== "ei" && !memberIsFounder && isGuidedBlocked(project, key)) {
         const g = computeGuided(project);
-        return res.status(403).json({ error: `Tämä kerros on vielä lukossa — ohjattu eteneminen: pese ensin ${g.activeFloor === "K" ? "kellari" : `${g.activeFloor}. kerros`} loppuun.` });
+        const openLabel = g.activeFloors.length
+          ? g.activeFloors.map((f) => (f === "K" ? "kellari" : `${f}. krs`)).join(", ")
+          : (g.activeFloor === "K" ? "kellari" : `${g.activeFloor}. kerros`);
+        return res.status(403).json({ error: `Tämä kerros on vielä lukossa — avoinna: ${openLabel}.` });
       }
 
       if (status === "ei") {

@@ -106,6 +106,13 @@ export default function AdminProjectPage() {
   const [defaultWasher, setDefaultWasher] = useState<string>(currentWorker);
   const washerInit = useRef(false);
   const [project, setProject] = useState<ProjectData | null>(null);
+  // How much P2 (keltaiset) is already invoiced (server sums scope:"p2" payments)
+  // — lets the P2 panel show "laskuttamatta = kertymä − laskutettu".
+  const [p2Invoiced, setP2Invoiced] = useState(0);
+  const refreshP2Invoiced = useCallback(async () => {
+    const r = await api.getProject(jobId);
+    if (r.ok && r.data) setP2Invoiced(r.data.p2InvoicedCents ?? 0);
+  }, [jobId]);
   const [gigName, setGigName] = useState("");   // gig/company name for a neutral header
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -158,6 +165,7 @@ export default function AdminProjectPage() {
       // Backend reachable and a project already exists.
       if (projRes.ok && projRes.data?.project) {
         const p = projRes.data.project;
+        setP2Invoiced(projRes.data.p2InvoicedCents ?? 0);
         // Make sure every assigned worker shows up in the hours view.
         const mergedWorkers = Array.from(new Set([...(p.workers || []), ...workers]));
         // Heal the original FR8 gig if it was ever saved without its bundled
@@ -483,6 +491,21 @@ export default function AdminProjectPage() {
   const deal = fixedDealFor(project);
   const effectivePrice = deal ? deal.pricePerWindow : project.pricePerWindow;
 
+  // ── "Uusi luku" -juhla ────────────────────────────────────────────────────
+  // Kun asiakas on hyväksynyt KAIKEN: P2 päällä, ainakin yksi ikkuna lukittu,
+  // eikä yhtään avointa ehdotusta (asiakkaan inbox) tai vastatarjousta (meidän
+  // inbox) — ja jokainen keltainen on hinnoiteltu (ei roikkuvia asiakasehdotuksia).
+  // Näytetään VAIN perustajille (Joonatan & Matias), kerran per keikka/selain.
+  const isFounderView = profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "");
+  const cb = computeP2Billing(project);
+  const p2AllApproved =
+    !!project.p2?.enabled &&
+    cb.lockedCount > 0 &&
+    cb.proposedCount === 0 &&
+    cb.counteredCount === 0 &&
+    cb.pricedCount === cb.yellowTotal;
+  const celebrateMilestone = !!deal && p2AllApproved;
+
   // ── Ansiomalli ──────────────────────────────────────────────────────────────
   // • Työntekijä: pestyt × oma €/ikkuna (esim. Jani 20 €).
   // • Perustaja (Joonatan/Matias): sisäinen kate × itse pesemät ikkunat
@@ -651,6 +674,9 @@ export default function AdminProjectPage() {
         onChangeDefaultWasher={changeDefaultWasher}
         showMaksutTab={!!deal && (profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || ""))}
       />
+      {isFounderView && celebrateMilestone && (
+        <FounderCelebration jobId={jobId} />
+      )}
       {error && (
         <div
           style={{
@@ -677,6 +703,8 @@ export default function AdminProjectPage() {
                   onP2={applyP2}
                   onGoToFloor={onGoToFloor}
                   canSend={profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")}
+                  p2InvoicedCents={p2Invoiced}
+                  onInvoiced={refreshP2Invoiced}
                 />
                 <GuidedAdminPanel
                   project={project}
@@ -788,6 +816,69 @@ export default function AdminProjectPage() {
   );
 }
 
+// ─── FounderCelebration — "uusi luku" -juhla (vain perustajille) ──────────────
+
+/**
+ * Kertaluontoinen (per keikka/selain) juhlaoverlay perustajille kun asiakas on
+ * hyväksynyt kaikki lisäikkunat. Itsenäinen: CSS-serpentiinit (index.css:
+ * fr8-confetti-fall) + kortti. prefers-reduced-motion pysäyttää animaation.
+ */
+function FounderCelebration({ jobId }: { jobId: number }) {
+  const seenKey = `fr8-celebrate-${jobId}`;
+  const [show, setShow] = useState(() => {
+    try { return localStorage.getItem(seenKey) !== "1"; } catch { return true; }
+  });
+  const strips = useState(() => {
+    const colors = ["255,72,72", "255,205,40", "95,224,138", "255,255,255", "124,180,255"];
+    return Array.from({ length: 48 }, (_, i) => ({
+      left: Math.round(Math.random() * 100),
+      color: colors[i % colors.length],
+      delay: Math.round(Math.random() * 2200) / 1000,
+      dur: 2.6 + Math.round(Math.random() * 2200) / 1000,
+      w: i % 3 === 0 ? 6 : 3,
+      h: 12 + (i % 5) * 4,
+    }));
+  })[0];
+  useEffect(() => {
+    if (!show) return;
+    try { localStorage.setItem(seenKey, "1"); } catch { /* ignore */ }
+    const t = window.setTimeout(() => setShow(false), 6500);
+    return () => window.clearTimeout(t);
+  }, [show, seenKey]);
+  if (!show) return null;
+  return (
+    <div
+      className="fr8-confetti"
+      onClick={() => setShow(false)}
+      style={{ position: "fixed", inset: 0, zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(4,4,6,0.55)", backdropFilter: "blur(3px)", WebkitBackdropFilter: "blur(3px)", cursor: "pointer" }}
+    >
+      <div style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}>
+        {strips.map((s, i) => (
+          <span key={i} style={{
+            position: "absolute", top: -30, left: `${s.left}%`, width: s.w, height: s.h,
+            borderRadius: 2, background: `rgb(${s.color})`,
+            animation: `fr8-confetti-fall ${s.dur}s linear ${s.delay}s infinite`,
+          }} />
+        ))}
+      </div>
+      <div style={{ position: "relative", maxWidth: 420, margin: "0 20px", padding: "26px 28px", borderRadius: 20, background: "linear-gradient(160deg, rgba(20,22,26,0.98), rgba(12,13,16,0.98))", border: "1px solid rgba(95,224,138,0.35)", boxShadow: "0 24px 70px rgba(0,0,0,0.6)", textAlign: "center" }}>
+        <div style={{ fontSize: 42, marginBottom: 6 }}>🎉</div>
+        <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.16em", textTransform: "uppercase", color: "#9ff0bd", marginBottom: 8 }}>Uusi luku alkaa</div>
+        <div style={{ fontSize: 19, fontWeight: 800, color: "#fff", lineHeight: 1.35, marginBottom: 8 }}>
+          Asiakas hyväksyi kaikki lisäikkunat! 🟢
+        </div>
+        <p style={{ margin: "0 0 16px", fontSize: 13.5, lineHeight: 1.6, color: "rgba(255,255,255,0.72)" }}>
+          Priority 2 on kokonaan sovittu. Hienoa työtä, Joonatan &amp; Matias — nyt pestään ja laskutetaan. 💪
+        </p>
+        <button onClick={() => setShow(false)}
+          style={{ padding: "10px 22px", borderRadius: 12, border: "none", background: "#5fe08a", color: "#062012", fontFamily: "inherit", fontSize: 14, fontWeight: 800, cursor: "pointer" }}>
+          Jatketaan 🚀
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── P2AdminPanel — keltaisten ikkunoiden hinnoittelu & neuvottelu ────────────
 
 const p2eur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
@@ -803,16 +894,22 @@ const P2_STATUS_LABEL: Record<string, string> = {
  * neuvottelu-inbox (asiakkaan vastatarjoukset), anomaliavaroitukset ja
  * tapahtumaloki. Hinnoittelu itsessään tapahtuu kartalla (€ Hinnoittele -tila).
  */
-function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
+function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2InvoicedCents = 0, onInvoiced }: {
   project: ProjectData;
   jobId: number;
   by: string;
   onP2: (p2: P2State) => void;
   onGoToFloor: (floor: string) => void;
   canSend: boolean;
+  /** €-cents of P2 already invoiced (scope:"p2" payments) — from the server. */
+  p2InvoicedCents?: number;
+  /** Called after a P2 invoice is sent so the parent refreshes the invoiced sum. */
+  onInvoiced?: () => void;
 }) {
   const p2 = project.p2;
   const b = computeP2Billing(project);
+  // Laskuttamatta = pesty+lukittu kertymä − jo laskutetut P2-maksut.
+  const p2Remaining = Math.max(0, b.earnedCents - p2InvoicedCents);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [shareDraft, setShareDraft] = useState(String(p2?.workerSharePct ?? DEFAULT_P2_WORKER_SHARE_PCT));
@@ -858,11 +955,12 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
     run(() => api.p2Respond(jobId, { key, action, priceCents, version, by }));
 
   const sendP2Invoice = async () => {
-    if (!window.confirm(`Lähetetäänkö P2-lasku laskuttamattomasta kertymästä? (kertymä ${p2eur(b.earnedCents)})`)) return;
+    if (!window.confirm(`Lähetetäänkö P2-lasku laskuttamattomasta kertymästä? (laskuttamatta ${p2eur(p2Remaining)})`)) return;
     setBusy(true); setMsg(null);
     const res = await api.sendGigInvoice(jobId, { scope: "p2", billerId: by });
     setBusy(false);
-    setMsg(res.ok ? `P2-lasku lähetetty: ${p2eur(res.data?.amountCents ?? 0)}` : (res.error || "Laskun lähetys epäonnistui"));
+    if (res.ok) { setMsg(`P2-lasku lähetetty: ${p2eur(res.data?.amountCents ?? 0)}`); onInvoiced?.(); }
+    else setMsg(res.error || "Laskun lähetys epäonnistui");
   };
 
   // Asiakkaan vastatarjoukset (inbox) + kartalta puuttuvat lukot.
@@ -979,6 +1077,15 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
             <span style={{ ...tileVal, color: "#9ff0bd" }}>{p2eur(b.marginCents)}</span>
             <span style={{ fontSize: "10px", color: "rgba(255,255,255,0.4)", display: "block", marginTop: 2 }}>tekijäkulu {p2eur(b.workerCostCents)}</span>
           </div>
+          {(p2InvoicedCents > 0 || p2Remaining > 0) && (
+            <div style={tile}>
+              <span style={tileLabel}>LASKUTUS (P2)</span>
+              <span style={tileVal}>{p2eur(p2InvoicedCents)} laskutettu</span>
+              <span style={{ fontSize: "10px", color: p2Remaining > 0 ? "rgb(255,205,40)" : "rgba(255,255,255,0.4)", display: "block", marginTop: 2 }}>
+                {p2Remaining > 0 ? `laskuttamatta ${p2eur(p2Remaining)}` : "kaikki laskutettu ✓"}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Anomalia: pesty ilman lukittua hintaa (legacy tai ohitus) */}
@@ -1034,9 +1141,9 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
 
         {/* P2-laskutus + sopimusteksti + tapahtumaloki */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          {canSend && b.earnedCents > 0 && (
+          {canSend && p2Remaining > 0 && (
             <button disabled={busy} onClick={() => void sendP2Invoice()} style={btn}>
-              💶 Lähetä P2-lasku (kertymä {p2eur(b.earnedCents)})
+              💶 Lähetä P2-lasku (laskuttamatta {p2eur(p2Remaining)})
             </button>
           )}
           <button onClick={() => { setShowTerms((v) => !v); setTermsDraft(p2?.termsText ?? ""); }} style={btn}>

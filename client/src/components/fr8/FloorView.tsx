@@ -102,6 +102,10 @@ interface Props {
   /** Bump `nonce` to programmatically jump the map to `floor` (e.g. the worker's
    *  "Vie minut seuraavaan" button). */
   floorFocus?: { floor: string; nonce: number } | null;
+  /** When set (non-empty), the floor selector shows ONLY these floors and hides
+   *  the rest entirely — a discreet worker map that reveals just the opened
+   *  floors. Founders pass null/undefined to see every floor. */
+  restrictFloors?: string[] | null;
 }
 
 /** A minimal on-screen anchor (viewport coords) for positioning a fixed popover. */
@@ -199,8 +203,17 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, guided, floorFocus }: Props) {
-  const [floor, setFloor] = useState(initialFloor);
+export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, guided, floorFocus, restrictFloors }: Props) {
+  // Discreet worker map: when restrictFloors is set, show ONLY those floors and
+  // hide the rest, so a regular worker sees exactly the opened floors and nothing
+  // else. Founders (restrictFloors null) always see every floor.
+  const shownFloors = (restrictFloors && restrictFloors.length)
+    ? floors.filter((f) => restrictFloors.includes(f))
+    : floors;
+  const [floor, setFloor] = useState(() =>
+    (restrictFloors && restrictFloors.length && !restrictFloors.includes(initialFloor))
+      ? (floors.find((f) => restrictFloors.includes(f)) ?? initialFloor)
+      : initialFloor);
   const [filter, setFilter] = useState<"all" | "unwashed" | "progress" | "done">("all");
   const [editMode, setEditMode] = useState(false);
   const [placeMode, setPlaceMode] = useState<1 | 2 | "del" | "note" | "zone" | null>(null);
@@ -263,6 +276,16 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
 
   // Reset zoom/pan when switching floors.
   useEffect(() => { resetView(); }, [floor]);
+
+  // Keep the viewed floor within the opened set for a restricted (worker) map —
+  // if the founder changes which floors are open, snap to the first open floor.
+  useEffect(() => {
+    if (restrictFloors && restrictFloors.length && !restrictFloors.includes(floor)) {
+      const first = floors.find((f) => restrictFloors.includes(f));
+      if (first) setFloor(first);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restrictFloors?.join(",")]);
 
   // Ohjattu eteneminen: kun "Vie minut seuraavaan" -nappia painetaan (nonce
   // kasvaa), hypätään aktiiviselle kerrokselle ja suljetaan avoin popover.
@@ -603,7 +626,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
         {/* Floor selector */}
         <div style={{ display: "flex", alignItems: "center", gap: "7px", padding: "5px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: "13px" }}>
           <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.35)", padding: "0 6px 0 8px" }}>KRS</span>
-          {floors.map((f) => {
+          {shownFloors.map((f) => {
             const gLocked = !!guided?.enabled && (guided.lockedFloors || []).includes(f);
             const gActive = !!guided?.enabled && (
               guided.activeFloors?.length ? guided.activeFloors.includes(f) : guided.activeFloor === f

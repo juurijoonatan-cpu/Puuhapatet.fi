@@ -264,9 +264,10 @@ describe("p2WorkerPayoutCents", () => {
     expect(p2WorkerPayoutCents(3000, 200)).toBe(3000); // clamp → 100 %
   });
 
-  it("oletustaulukko: 34 € → 18 €, 37,50 € → 20 € (osuudesta riippumatta)", () => {
+  it("oletustaulukko: 34 € → 18 €, 37,50 € → 20 €, 50 € → 27 € (osuudesta riippumatta)", () => {
     expect(p2WorkerPayoutCents(3400, 53)).toBe(1800);
     expect(p2WorkerPayoutCents(3750, 53)).toBe(2000);
+    expect(p2WorkerPayoutCents(5000, 53)).toBe(2700);
     // Osuus ei vaikuta taulukkohintoihin.
     expect(p2WorkerPayoutCents(3400, 90)).toBe(1800);
     expect(p2WorkerPayoutCents(3750, 10)).toBe(2000);

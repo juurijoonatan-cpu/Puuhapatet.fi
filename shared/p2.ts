@@ -46,10 +46,12 @@ export interface P2PayoutRule {
   payoutCents: number;   // what the worker is paid for that window
 }
 
-/** Default FR8 payout schedule: 34 € → 18 €, 37,50 € → 20 €. */
+/** Default FR8 payout schedule for the three window sizes — worker keeps ≈53 %:
+ *  34 € → 18 €, 37,50 € → 20 €, 50 € → 27 €. Prices not listed fall back to %. */
 export const DEFAULT_P2_PAYOUT_SCHEDULE: P2PayoutRule[] = [
   { priceCents: 3400, payoutCents: 1800 },
   { priceCents: 3750, payoutCents: 2000 },
+  { priceCents: 5000, payoutCents: 2700 },
 ];
 
 // ─── Data shapes ───────────────────────────────────────────────────────────────

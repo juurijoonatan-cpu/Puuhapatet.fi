@@ -907,21 +907,10 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
           {!!deal && p1Pct >= 100 && !p2?.enabled && (
             <span style={{ fontSize: "11.5px", color: "#9ff0bd" }}>P1 (punaiset) on valmis — aika siirtyä keltaisiin ✨</span>
           )}
-          <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, fontSize: "12px", color: "rgba(255,255,255,0.6)" }}>
-            Tekijän osuus
-            <input
-              type="number" min={1} max={100}
-              value={shareDraft}
-              onChange={(e) => setShareDraft(e.target.value)}
-              style={{ width: 56, padding: "6px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.16)", background: "rgba(0,0,0,0.4)", color: "#fff", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "12px", outline: "none" }}
-            /> %
-            {Number(shareDraft) !== sharePct && (
-              <button disabled={busy} onClick={saveShare} style={{ ...btn, padding: "5px 9px", fontSize: "11px" }}>Tallenna</button>
-            )}
-          </span>
         </div>
-        {/* Tekijän palkkiotaulukko: kiinteä palkkio per ikkunan hinta
-            (34 € → 18 €, 37,50 € → 20 €). Muut hinnat käyttävät %-osuutta. */}
+        {/* Tekijän palkkiotaulukko on ENSISIJAINEN: kiinteä palkkio per ikkunan
+            hinta (34→18, 37,50→20, 50→27). %-osuus on vain fallback muille
+            hinnoille, ja se on siirretty muokkaimen sisään pois pääpaikalta. */}
         <div style={{ marginTop: -6, padding: "10px 12px", borderRadius: 12, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontSize: "11.5px", fontWeight: 700, color: "rgba(255,255,255,0.75)" }}>Tekijän palkkio per ikkuna</span>
@@ -953,8 +942,18 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
                 <button onClick={() => setPayoutRows(DEFAULT_P2_PAYOUT_SCHEDULE.map((r) => ({ price: String(r.priceCents / 100), pay: String(r.payoutCents / 100) })))} style={{ ...btn, padding: "6px 11px", fontSize: "11.5px" }}>Palauta oletukset</button>
                 <button disabled={busy} onClick={savePayout} style={{ ...btn, border: "none", background: "#fff", color: "#0a0a0c", fontWeight: 700, padding: "6px 13px", fontSize: "11.5px" }}>Tallenna palkkiotaulukko</button>
               </div>
+              {/* Fallback-%: koskee vain hintoja jotka eivät ole taulukossa. */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+                <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)" }}>Muille hinnoille (fallback)</span>
+                <input type="number" min={1} max={100} value={shareDraft} onChange={(e) => setShareDraft(e.target.value)}
+                  style={{ width: 52, padding: "6px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.16)", background: "rgba(0,0,0,0.4)", color: "#fff", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "12px", outline: "none" }} />
+                <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.4)" }}>%</span>
+                {Number(shareDraft) !== sharePct && (
+                  <button disabled={busy} onClick={saveShare} style={{ ...btn, padding: "5px 9px", fontSize: "11px" }}>Tallenna %</button>
+                )}
+              </div>
               <span style={{ fontSize: "10.5px", color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
-                Hinnat jotka eivät ole taulukossa maksavat tekijälle {sharePct} % lukitusta hinnasta. Muutos vaikuttaa myös jo pestyihin keltaisiin — palkkio lasketaan aina reaaliaikaisesti.
+                Taulukon hinnat maksavat kiinteän palkkion; muut hinnat käyttävät fallback-%:ia. Muutos vaikuttaa myös jo pestyihin keltaisiin — palkkio lasketaan aina reaaliaikaisesti.
               </span>
             </div>
           )}
@@ -965,15 +964,21 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
           </div>
         </div>
 
-        {/* Tilannetiilet */}
+        {/* Neuvottelun tila yhtenä rivinä (ei seitsemää erillistä tiiltä) */}
+        <div style={{ fontSize: "12.5px", color: "rgba(255,255,255,0.65)", lineHeight: 1.5 }}>
+          <strong style={{ color: "#fff" }}>{b.yellowTotal}</strong> keltaista
+          {" · "}<strong style={{ color: "#fff" }}>{b.proposedCount}</strong> odottaa asiakasta
+          {b.counteredCount > 0 && <>{" · "}<strong style={{ color: "rgb(255,205,40)" }}>{b.counteredCount}</strong> vastatarjousta</>}
+        </div>
+        {/* Raha — vain olennaiset: sovittu, kertynyt, kate (tekijäkulu katteen alla) */}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <div style={tile}><span style={tileLabel}>KELTAISIA</span><span style={tileVal}>{b.yellowTotal}</span></div>
-          <div style={tile}><span style={tileLabel}>ODOTTAA ASIAKASTA</span><span style={tileVal}>{b.proposedCount}</span></div>
-          <div style={tile}><span style={tileLabel}>VASTATARJOUKSIA</span><span style={{ ...tileVal, color: countered.length ? "rgb(255,205,40)" : "#fff" }}>{b.counteredCount}</span></div>
-          <div style={tile}><span style={tileLabel}>LUKITTU</span><span style={{ ...tileVal, color: "#7CE0A6" }}>{b.lockedCount} kpl · {p2eur(b.lockedSumCents)}</span></div>
-          <div style={tile}><span style={tileLabel}>PESTY & KERTYNYT</span><span style={tileVal}>{b.lockedWashedCount} kpl · {p2eur(b.earnedCents)}</span></div>
-          <div style={tile}><span style={tileLabel}>TEKIJÄKULU</span><span style={tileVal}>{p2eur(b.workerCostCents)}</span></div>
-          <div style={tile}><span style={tileLabel}>P2-KATE</span><span style={{ ...tileVal, color: "#9ff0bd" }}>{p2eur(b.marginCents)}</span></div>
+          <div style={tile}><span style={tileLabel}>SOVITTU (LUKITTU)</span><span style={{ ...tileVal, color: "#7CE0A6" }}>{b.lockedCount} kpl · {p2eur(b.lockedSumCents)}</span></div>
+          <div style={tile}><span style={tileLabel}>KERTYNYT (PESTY)</span><span style={tileVal}>{b.lockedWashedCount} kpl · {p2eur(b.earnedCents)}</span></div>
+          <div style={tile}>
+            <span style={tileLabel}>P2-KATE</span>
+            <span style={{ ...tileVal, color: "#9ff0bd" }}>{p2eur(b.marginCents)}</span>
+            <span style={{ fontSize: "10px", color: "rgba(255,255,255,0.4)", display: "block", marginTop: 2 }}>tekijäkulu {p2eur(b.workerCostCents)}</span>
+          </div>
         </div>
 
         {/* Anomalia: pesty ilman lukittua hintaa (legacy tai ohitus) */}
@@ -1154,7 +1159,7 @@ function GuidedAdminPanel({ project, onGuidedSet, onGoToFloor, canSend }: {
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <p style={{ margin: 0, fontSize: "12.5px", lineHeight: 1.5, color: "rgba(255,255,255,0.6)" }}>
-          Kun tämä on päällä, tekijät voivat merkata vain <b style={{ color: "#fff" }}>aktiivisen kerroksen</b> ikkunoita — muut kerrokset ovat lukossa. Dashboard ohjaa jokaisen seuraavaan yksittäiseen ikkkunaan, joten edetään järjestelmällisesti eikä poimita helppoja sieltä täältä. Punaiset ovat aina työn piirissä; keltainen tulee mukaan vasta kun sen hinta on lukittu. Vaikeustasoja ei ole — hinta kertoo vaikeuden.
+          Kun tämä on päällä, tekijät voivat merkata vain <b style={{ color: "#fff" }}>aktiivisen kerroksen</b> ikkunoita — muut kerrokset ovat lukossa, ja aktiivinen kerros etenee automaattisesti kun edellinen valmistuu. Dashboard ohjaa jokaisen <b style={{ color: "#fff" }}>lähimpään</b> pesemättömään ikkunaan (viereiseen, ei kartan toiselle laidalle), joten edetään järjestelmällisesti eikä poimita helppoja sieltä täältä. Punaiset ovat aina työn piirissä; keltainen tulee mukaan vasta kun sen hinta on lukittu. Vaikeustasoja ei ole — hinta kertoo vaikeuden.
         </p>
 
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>

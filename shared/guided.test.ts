@@ -246,6 +246,25 @@ describe("computeGuided — lähin ikkuna (nearest-neighbor)", () => {
     // Even though K#1 is nearer, the started K#2 wins (finish it first).
     expect(computeGuided(data).nextKey).toBe("K#2");
   });
+
+  it("per-worker ankkuri: kukin tekijä jatkaa OMASTA viimeisestä pesustaan", () => {
+    const data = emptyProjectData();
+    data.building.floors = ["K"];
+    data.marks = { K: { marks: [
+      { p: 1, x: 0, y: 0 },    // K#0 top-left
+      { p: 1, x: 10, y: 0 },   // K#1 beside K#0
+      { p: 1, x: 90, y: 90 },  // K#2 bottom-right
+      { p: 1, x: 80, y: 90 },  // K#3 beside K#2
+    ] } };
+    enable(data);
+    washLogged(data, "K#0", 1000); data.washedBy["K#0"] = "A"; // A works top-left
+    washLogged(data, "K#2", 2000); data.washedBy["K#2"] = "B"; // B works bottom-right
+    // Each worker is guided to the window beside THEIR own last wash.
+    expect(computeGuided(data, { anchorWorkerId: "A" }).nextKey).toBe("K#1");
+    expect(computeGuided(data, { anchorWorkerId: "B" }).nextKey).toBe("K#3");
+    // No worker id → global newest wash (K#2) → its neighbour K#3.
+    expect(computeGuided(data).nextKey).toBe("K#3");
+  });
 });
 
 // ─── Founder override ─────────────────────────────────────────────────────────

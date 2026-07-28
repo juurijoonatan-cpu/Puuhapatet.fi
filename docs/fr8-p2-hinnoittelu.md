@@ -43,11 +43,15 @@ muuttua"), joten juuri muuttunutta hintaa ei voi hyväksyä vahingossa.
   hyväksyntää.
 - Kaikki p2-mutaatiot kulkevat dedikoitujen reittien kautta (read-modify-write):
   - Admin: `POST /api/jobs/:id/p2/phase | propose (bulk) | respond`
-  - Asiakas (quoteToken, rate-limit 60/min/IP, vaatii `enabled` + allekirjoituksen
-    + terms): `POST /api/gig/:token/p2/terms | accept | counter | decline | add-point | remove-point`
-    (remove-point sallii vain asiakkaan ITSE lisäämän, hinnoittelemattoman/
-    ei-lukitun pisteen poiston; `customerAddedKeys` erottaa asiakkaan pisteet
-    auditlokista).
+  - Asiakas (quoteToken, rate-limit 60/min/IP, vaatii `enabled` + allekirjoituksen):
+    `POST /api/gig/:token/p2/terms | accept | counter | decline | add-point | remove-point`.
+    **Tilausehdot (terms) vaaditaan vain HINTASITOUMUKSISSA** — `accept` ja `counter`.
+    **Suunnittelu on vapaata ilman ehtoja**: `add-point`, `remove-point` ja `decline`
+    eivät vaadi termsiä, joten asiakas voi ensin tutkia ja valmistella karttaa
+    (lisätä/poistaa ehdottamiaan ikkunoita, karsia ehdotuksia) ennen mitään
+    sopimuksen tekoa. Client peilaa saman jaon: `runP2` (terms-portti) vs
+    `runP2Free` (suunnittelu). (remove-point sallii vain asiakkaan ITSE lisäämän,
+    ei-lukitun pisteen poiston; `customerAddedKeys` erottaa asiakkaan pisteet auditlokista.)
 
 ## Raha
 
@@ -56,7 +60,7 @@ muuttua"), joten juuri muuttunutta hintaa ei voi hyväksyä vahingossa.
   kaikki nollia (vanhat keikat ennallaan).
 - **Tekijän palkkio**: `p2WorkerPayoutCents(lockedCents, workerSharePct, schedule?)` —
   **kiinteä palkkiotaulukko** voittaa: `DEFAULT_P2_PAYOUT_SCHEDULE` = 34 € → 18 €,
-  37,50 € → 20 € (per ikkunan lukittu hinta). Hinta jota EI ole taulukossa käyttää
+  37,50 € → 20 €, 50 € → 27 € (per ikkunan lukittu hinta). Hinta jota EI ole taulukossa käyttää
   `workerSharePct`-osuutta (oletus 53 %). Taulukko on säädettävissä per keikka
   (`P2State.payoutSchedule`, admin-paneelissa "Tekijän palkkio per ikkuna"). Palkkio
   lasketaan AINA reaaliaikaisesti, joten taulukon muutos re-arvottaa myös jo pestyt

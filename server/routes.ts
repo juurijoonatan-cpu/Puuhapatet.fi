@@ -5483,13 +5483,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  // Asiakas hylkää hintaehdotuksen.
+  // Asiakas hylkää hintaehdotuksen. EI vaadi tilausehtoja — hylkääminen on
+  // "ei kiitos", ei sitoumus, joten asiakas voi karsia ehdotuksia vapaasti jo
+  // suunnitteluvaiheessa ennen ehtojen hyväksyntää.
   app.post("/api/gig/:token/p2/decline", async (req, res) => {
     try {
       const loaded = await loadP2ForCustomer(String(req.params.token));
       if (!loaded.ok) return res.status(loaded.code).json({ error: loaded.error });
       const { job, project, p2 } = loaded;
-      if (!p2.terms) return res.status(403).json({ error: "Hyväksy ensin tilausehdot" });
       const key = String(req.body?.key ?? "").slice(0, 64);
       if (!key || pointPriority(project, key) !== 2) return res.status(404).json({ error: "Ikkunaa ei enää ole" });
       const prev = p2.offers[key];
@@ -5516,7 +5517,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const loaded = await loadP2ForCustomer(String(req.params.token));
       if (!loaded.ok) return res.status(loaded.code).json({ error: loaded.error });
       const { job, project, p2 } = loaded;
-      if (!p2.terms) return res.status(403).json({ error: "Hyväksy ensin tilausehdot" });
+      // EI vaadi tilausehtoja: ikkunoiden ehdottaminen on suunnittelua, ei
+      // sitoumus. Asiakas saa valmistella karttaa vapaasti ennen ehtojen
+      // hyväksyntää; ehdot vaaditaan vasta hintaa hyväksyttäessä/vastatarjottaessa.
       const floor = String(req.body?.floor ?? "").slice(0, 8);
       if (!project.building.floors.includes(floor)) return res.status(400).json({ error: "Tuntematon kerros" });
       const x = Math.max(0, Math.min(100, Number(req.body?.x)));
@@ -5547,7 +5550,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const loaded = await loadP2ForCustomer(String(req.params.token));
       if (!loaded.ok) return res.status(loaded.code).json({ error: loaded.error });
       const { job, project, p2 } = loaded;
-      if (!p2.terms) return res.status(403).json({ error: "Hyväksy ensin tilausehdot" });
+      // EI vaadi tilausehtoja: oman ehdotuksen peruminen on osa suunnittelua.
       const key = String(req.body?.key ?? "").slice(0, 64);
       if (!key) return res.status(400).json({ error: "key puuttuu" });
       if (!customerAddedKeys(project).includes(key)) {
@@ -5879,7 +5882,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // ohjaa täsmälleen seuraavaan pestävään ikkunaan. Puhtaasti johdettua tilaa
       // (ei rahaa) — turvallista näyttää tekijälle. Pois päältä = null, ei muutosta.
       guided: (() => {
-        const g = computeGuided(project);
+        // Per-worker anchor: this worker's "next window" continues from where
+        // THEY last washed on the active floor, so several workers spread out.
+        const g = computeGuided(project, { anchorWorkerId: member.id });
         if (!g.enabled) return null;
         return {
           enabled: true,

@@ -123,7 +123,8 @@ function inScopePoints(data: ProjectData): ScopePoint[] {
 
 /** Stable systematic sweep: unfinished-started (kesken) first, then top→bottom,
  *  then left→right, then key — so guidance never leaves half-done windows behind
- *  and is fully deterministic for identical maps. */
+ *  and is fully deterministic for identical maps. Used as the START-OF-FLOOR order
+ *  (before anything is washed) and as the tiebreak inside nearest-neighbor. */
 function sweepOrder(a: ScopePoint, b: ScopePoint): number {
   const ak = a.status === "kesken" ? 0 : 1;
   const bk = b.status === "kesken" ? 0 : 1;
@@ -131,6 +132,42 @@ function sweepOrder(a: ScopePoint, b: ScopePoint): number {
   if (a.y !== b.y) return a.y - b.y;
   if (a.x !== b.x) return a.x - b.x;
   return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+}
+
+function dist2(ax: number, ay: number, bx: number, by: number): number {
+  const dx = ax - bx, dy = ay - by;
+  return dx * dx + dy * dy;
+}
+
+/**
+ * Position of the window the worker most recently FINISHED on `floor` — the
+ * anchor for nearest-neighbor guidance. Read from the activity log (newest-first
+ * "pesty" events), matched to a live in-scope point on the floor that is still
+ * washed. Null when nothing has been washed on the floor yet (→ start at the
+ * top-left corner via sweepOrder).
+ */
+function lastWashedAnchor(data: ProjectData, floor: string, scope: ScopePoint[]): { x: number; y: number } | null {
+  const onFloor = new Map<string, ScopePoint>();
+  for (const p of scope) if (p.floor === floor) onFloor.set(p.key, p);
+  for (const l of data.log) {
+    if (l.status !== "pesty") continue;
+    const p = onFloor.get(l.key);
+    if (p && p.status === "pesty") return { x: p.x, y: p.y };
+  }
+  return null;
+}
+
+/** Nearest-neighbor order from an anchor: kesken-first (never abandon a started
+ *  window), then nearest by squared distance, then a stable y/x/key tiebreak —
+ *  so the worker is sent to the adjacent window, not across the building. */
+function nearestOrder(a: ScopePoint, b: ScopePoint, anchor: { x: number; y: number }): number {
+  const ak = a.status === "kesken" ? 0 : 1;
+  const bk = b.status === "kesken" ? 0 : 1;
+  if (ak !== bk) return ak - bk;
+  const da = dist2(a.x, a.y, anchor.x, anchor.y);
+  const db = dist2(b.x, b.y, anchor.x, anchor.y);
+  if (da !== db) return da - db;
+  return sweepOrder(a, b);
 }
 
 /**
@@ -191,15 +228,23 @@ export function computeGuided(data: ProjectData): GuidedState {
   const lockedFloors = floorProgress.filter((fp) => fp.locked).map((fp) => fp.floor);
 
   // Open keys + the single next window, from the active floor's unwashed windows.
+  // Efficiency: guide to the window PHYSICALLY NEAREST the one the worker just
+  // finished on this floor — not the top-left corner — so they move to the
+  // adjacent window instead of being thrown across the building. The anchor is
+  // the most recently washed in-scope window on the active floor; with nothing
+  // washed yet we start at the top-left corner (sweepOrder) and each subsequent
+  // wash pulls the next pick toward it. Started (kesken) windows always win.
   let openKeys: string[] = [];
   let next: GuidedNext | null = null;
   if (enabled && activeFloor) {
-    const onActive = pts
-      .filter((p) => p.floor === activeFloor && p.status !== "pesty")
-      .sort(sweepOrder);
-    openKeys = onActive.map((p) => p.key);
-    if (onActive.length) {
-      const n = onActive[0];
+    const onActive = pts.filter((p) => p.floor === activeFloor && p.status !== "pesty");
+    const anchor = lastWashedAnchor(data, activeFloor, pts);
+    const ordered = anchor
+      ? onActive.slice().sort((a, b) => nearestOrder(a, b, anchor))
+      : onActive.slice().sort(sweepOrder);
+    openKeys = ordered.map((p) => p.key);
+    if (ordered.length) {
+      const n = ordered[0];
       next = { key: n.key, floor: n.floor, p: n.p, x: n.x, y: n.y, status: n.status };
     }
   }

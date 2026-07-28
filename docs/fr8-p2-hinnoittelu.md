@@ -54,11 +54,16 @@ muuttua"), joten juuri muuttunutta hintaa ei voi hyväksyä vahingossa.
 - `computeP2Billing(project)` (`shared/p2.ts`): lukitut/pestyt/kertymä/tekijäkulu/
   kate — join eläviin `p===2`-pisteisiin, poistetut putoavat pois. `p2` puuttuu →
   kaikki nollia (vanhat keikat ennallaan).
-- **Tekijän palkkio**: `p2WorkerPayoutCents(lockedCents, workerSharePct)` —
-  osuus (oletus 53 % ≈ 20 €/37,50 €) IKKUNAN lukitusta hinnasta. Halvempi ikkuna
-  → pienempi palkkio. `crewMemberStats` (`shared/crew.ts`) maksaa p1:stä oman
-  taksan ja p2:sta osuuden; `washed`-LUKUMÄÄRÄ laskee silti kaikki pestyt, joten
-  `checkWindowAttribution` täsmää.
+- **Tekijän palkkio**: `p2WorkerPayoutCents(lockedCents, workerSharePct, schedule?)` —
+  **kiinteä palkkiotaulukko** voittaa: `DEFAULT_P2_PAYOUT_SCHEDULE` = 34 € → 18 €,
+  37,50 € → 20 € (per ikkunan lukittu hinta). Hinta jota EI ole taulukossa käyttää
+  `workerSharePct`-osuutta (oletus 53 %). Taulukko on säädettävissä per keikka
+  (`P2State.payoutSchedule`, admin-paneelissa "Tekijän palkkio per ikkuna"). Palkkio
+  lasketaan AINA reaaliaikaisesti, joten taulukon muutos re-arvottaa myös jo pestyt
+  keltaiset (ei backfilliä). `crewMemberStats` (`shared/crew.ts`) maksaa p1:stä oman
+  taksan ja p2:sta taulukon/osuuden; `washed`-LUKUMÄÄRÄ laskee silti kaikki pestyt,
+  joten `checkWindowAttribution` täsmää. Pikahinnat `P2_PRICE_PRESETS_CENTS`
+  = 34 / 37,50 / 50 €.
 - **Pesuportti**: `POST /api/crew/:token/window` estää (403) keltaisen
   merkkaamisen, jos hintaa ei ole lukittu (prioriteetti katsotaan AINA kartasta
   `pointPriority`llä, ei clientin `p`:stä). Ilman `p2`:ta ei porttia.
@@ -67,24 +72,40 @@ muuttua"), joten juuri muuttunutta hintaa ei voi hyväksyä vahingossa.
   + `scope:"p2"` — ei koske `invoicedThrough`/sektoreihin/4 erän rajaan (ne
   lasketaan vain maksuista joilla `scope !== "p2"`). Maksu kirjataan
   `GigPayment { scope:"p2" }`; P2 laskuttamatta = kertymä − Σ p2-maksut.
+  **TÄRKEÄ invariantti**: jokainen P2-maksu KIRJATAAN `scope:"p2"`:lla — muuten se
+  laskettaisiin punaiseksi eräksi ja estäisi kiinteän diilin 4. erän (`p1Payments =
+  payments.filter(p => p.scope !== "p2")`; portti `p1Payments.length >= 4`). Sama
+  `scope !== "p2"` -suodatus on kaikissa kolmessa `invoicedCents`-laskennassa
+  (luonti, undo, `recomputeGigInvoiced`) ja sisäisessä maksuraportissa
+  (`buildGigReportHtml` erittelee P1/P2), jotta maksun poisto tai P2-lasku ei
+  koskaan korruptoi punaista €6300-summaa.
 
 ## Näkymät
 
 - **Admin** (`admin/project.tsx` P2AdminPanel + `fr8/FloorView.tsx`):
-  vaihekytkin, tekijän %-osuus, "€ Hinnoittele" -monivalinta kartalla
-  (presetit 25/37,50/50 €), hintabadget, vastatarjous-inbox, anomaliavaroitus
+  vaihekytkin, tekijän %-osuus + **palkkiotaulukon muokkain** (hinta → kiinteä
+  palkkio, oletus 34→18 / 37,50→20), "€ Hinnoittele" -monivalinta kartalla
+  (presetit 34/37,50/50 €), hintabadget, vastatarjous-inbox, anomaliavaroitus
   ("pesty ilman lukittua hintaa" → palkkio 0), auditloki, P2-laskun lähetys.
 - **Asiakas** (`gig-live.tsx` + `CustomerFloorMap.tsx`): kun vaihe 2 on aktiivinen,
   näkymä pivotoi keltaisiin — 1. vaihe (kiinteä urakka) tiivistyy "✓ valmis"
   -kortiksi ja **"Priority 2"** -paneeli nousee pääfokukseksi (kasvava summa).
+  Siisti kaksirivinen työkalupalkki (kerrosvalitsin vieritettävänä rivinä +
+  suodatin/edistyminen omalla rivillään) pysyy linjassa myös mobiilissa.
   Kartalla punaiset himmennetään ja tarjolla on "Vain Priority 2" -suodatin.
-  Hintapillerit keltaisissa (pop-in-animaatio, lukituille celebrate-pulse),
-  napautus → Hyväksy / Vastatarjous / Ei kiitos, kerroskohtainen massahyväksyntä.
-  Näkyvä, "odottava" lisäys-nudge ("Lisää ikkunoita Priority 2:seen") kutsuu
-  asiakasta ehdottamaan lisää ikkunoita; asiakkaan itse lisäämät pisteet saavat
-  oman halo-merkin ja hän voi poistaa ne ennen hinnoittelua. Kevyt ehtomodaali
-  ("Priority 2 -tilausehdot", josta löytyy **valmis sopimus PDF:nä**, ks. alla)
-  ennen ensimmäistä toimintoa + kertaluonteinen vaihe-2-kutsupopup.
+  Kun kaikki keltaiset on hinnoiteltu, kartta ei sotkeennu: **lukitut näyttävät
+  vain pienen ✓-merkin** (hinta löytyy listasta), avoimet pitävät luettavan
+  pillerin. Kartan alla **organisoitu ehdotuslista KAIKISTA kerroksista** ryhmiteltynä
+  ("Odottaa sinua" / "Vastatarjouksesi" / "Sovitut"): jokaisella rivillä ikkunan
+  sijainti + hinta + Hyväksy / Vastatarjous / Ei, plus "Hyväksy kaikki (n · X €)".
+  Kartan napautus toimii yhä (popup). Näkyvä "odottava" lisäys-nudge ("Lisää
+  ikkunoita Priority 2:seen") kutsuu asiakasta ehdottamaan lisää ikkunoita;
+  asiakkaan itse lisäämät pisteet saavat oman halo-merkin ja hän voi poistaa ne
+  ennen hinnoittelua. Ammattimainen ehtomodaali ("Priority 2 -tilausehdot"): yksi
+  vieritysalue (liitetty soppari `pre-wrap`-tyylillä säilyttää kappaleet + **valmis
+  sopimus PDF:nä**), pakollinen suostumusrasti + "hyväksyntä kirjataan nimelläni ja
+  aikaleimalla", nimi + Escape-sulku; "Hyväksyn ehdot" aktivoituu vasta kun nimi ja
+  rasti on täytetty. Kertaluonteinen, brändätty vaihe-2-kutsupopup (X-sulku).
 - **Tekijä** (`worker.tsx`): lukitsemattomat keltaiset himmeinä + 🔒 (merkintä
   estetty myös serverillä), lukituista popoverissa "Sinulle tästä ikkunasta: X €"
   (vain oma palkkio — ks. rahan yksityisyys `fr8-tyo-logiikka.md`), Ansioissa

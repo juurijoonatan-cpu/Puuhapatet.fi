@@ -15,7 +15,7 @@ import {
   emptyProjectData, computeWorkerStats, isFr8Plans, fixedDealFor, allPoints, computeDealBilling,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense,
 } from "@shared/project";
-import { computeP2Billing, DEFAULT_P2_WORKER_SHARE_PCT, type P2State } from "@shared/p2";
+import { computeP2Billing, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule } from "@shared/p2";
 import { computeGuided, type GuidedWork } from "@shared/guided";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
 import { FOUNDER_IDS } from "@shared/team";
@@ -820,6 +820,22 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
   const [showLog, setShowLog] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
   const [termsDraft, setTermsDraft] = useState(p2?.termsText ?? "");
+  // Tekijän palkkiotaulukko (hinta → kiinteä palkkio). Muokataan euroina.
+  const activeSchedule: P2PayoutRule[] = p2?.payoutSchedule ?? DEFAULT_P2_PAYOUT_SCHEDULE;
+  const [showPayout, setShowPayout] = useState(false);
+  const [payoutRows, setPayoutRows] = useState<{ price: string; pay: string }[]>(
+    activeSchedule.map((r) => ({ price: String(r.priceCents / 100), pay: String(r.payoutCents / 100) })),
+  );
+  const parseEuro = (s: string) => { const v = Number(String(s).replace(",", ".")); return Number.isFinite(v) ? Math.round(v * 100) : NaN; };
+  const savePayout = () => {
+    const rules: P2PayoutRule[] = [];
+    for (const row of payoutRows) {
+      const priceCents = parseEuro(row.price), payoutCents = parseEuro(row.pay);
+      if (!(priceCents > 0) || !(payoutCents >= 0)) continue;
+      rules.push({ priceCents, payoutCents });
+    }
+    void run(() => api.p2SetPhase(jobId, { payoutSchedule: rules, by }), "Palkkiotaulukko tallennettu");
+  };
 
   const deal = fixedDealFor(project);
   const p1Pct = deal ? computeDealBilling(project, deal).pct : 0;
@@ -904,10 +920,49 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend }: {
             )}
           </span>
         </div>
-        <div style={{ fontSize: "11.5px", color: "rgba(255,255,255,0.45)", marginTop: -8 }}>
-          Halvempi ikkuna → pienempi tekijäpalkkio: tekijä saa {sharePct} % ikkunan lukitusta hinnasta
-          (esim. 30 € ikkunasta {p2eur(Math.round(3000 * sharePct / 100))}). Hinnoittele ikkunat kartalla
-          <button onClick={() => onGoToFloor(project.building.floors[0] || "K")} style={{ background: "transparent", border: "none", color: "#9ff0bd", cursor: "pointer", fontSize: "11.5px", fontWeight: 600, padding: "0 2px", fontFamily: "inherit" }}>€ Hinnoittele -tilassa →</button>
+        {/* Tekijän palkkiotaulukko: kiinteä palkkio per ikkunan hinta
+            (34 € → 18 €, 37,50 € → 20 €). Muut hinnat käyttävät %-osuutta. */}
+        <div style={{ marginTop: -6, padding: "10px 12px", borderRadius: 12, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: "11.5px", fontWeight: 700, color: "rgba(255,255,255,0.75)" }}>Tekijän palkkio per ikkuna</span>
+            <span style={{ fontSize: "11.5px", color: "rgba(255,255,255,0.5)", fontVariantNumeric: "tabular-nums" }}>
+              {activeSchedule.map((r) => `${p2eur(r.priceCents)} → ${p2eur(r.payoutCents)}`).join("  ·  ")}
+              {"  ·  muut: "}{sharePct} %
+            </span>
+            <button onClick={() => { setShowPayout((v) => !v); setPayoutRows(activeSchedule.map((r) => ({ price: String(r.priceCents / 100), pay: String(r.payoutCents / 100) }))); }} style={{ ...btn, marginLeft: "auto", padding: "5px 10px", fontSize: "11px" }}>
+              {showPayout ? "Sulje" : "Muokkaa"}
+            </button>
+          </div>
+          {showPayout && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+              {payoutRows.map((row, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)" }}>Hinta</span>
+                  <input value={row.price} inputMode="decimal" onChange={(e) => setPayoutRows((rs) => rs.map((r, j) => j === i ? { ...r, price: e.target.value } : r))}
+                    style={{ width: 66, padding: "6px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.16)", background: "rgba(0,0,0,0.4)", color: "#fff", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "12px", outline: "none" }} />
+                  <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.4)" }}>€ →</span>
+                  <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)" }}>palkkio</span>
+                  <input value={row.pay} inputMode="decimal" onChange={(e) => setPayoutRows((rs) => rs.map((r, j) => j === i ? { ...r, pay: e.target.value } : r))}
+                    style={{ width: 66, padding: "6px 8px", borderRadius: 8, border: "1px solid rgba(124,224,166,0.3)", background: "rgba(0,0,0,0.4)", color: "#7CE0A6", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "12px", outline: "none" }} />
+                  <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.4)" }}>€</span>
+                  <button onClick={() => setPayoutRows((rs) => rs.filter((_, j) => j !== i))} aria-label="Poista rivi" style={{ ...btn, padding: "4px 9px", fontSize: "13px", lineHeight: 1 }}>✕</button>
+                </div>
+              ))}
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <button onClick={() => setPayoutRows((rs) => [...rs, { price: "", pay: "" }])} style={{ ...btn, padding: "6px 11px", fontSize: "11.5px" }}>+ Lisää rivi</button>
+                <button onClick={() => setPayoutRows(DEFAULT_P2_PAYOUT_SCHEDULE.map((r) => ({ price: String(r.priceCents / 100), pay: String(r.payoutCents / 100) })))} style={{ ...btn, padding: "6px 11px", fontSize: "11.5px" }}>Palauta oletukset</button>
+                <button disabled={busy} onClick={savePayout} style={{ ...btn, border: "none", background: "#fff", color: "#0a0a0c", fontWeight: 700, padding: "6px 13px", fontSize: "11.5px" }}>Tallenna palkkiotaulukko</button>
+              </div>
+              <span style={{ fontSize: "10.5px", color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
+                Hinnat jotka eivät ole taulukossa maksavat tekijälle {sharePct} % lukitusta hinnasta. Muutos vaikuttaa myös jo pestyihin keltaisiin — palkkio lasketaan aina reaaliaikaisesti.
+              </span>
+            </div>
+          )}
+          <div style={{ fontSize: "10.5px", color: "rgba(255,255,255,0.4)", marginTop: 8 }}>
+            Hinnoittele ikkunat kartalla
+            <button onClick={() => onGoToFloor(project.building.floors[0] || "K")} style={{ background: "transparent", border: "none", color: "#9ff0bd", cursor: "pointer", fontSize: "10.5px", fontWeight: 600, padding: "0 2px", fontFamily: "inherit" }}>€ Hinnoittele -tilassa →</button>
+            (pikahinnat {P2_PRICE_PRESETS_CENTS.map((c) => p2eur(c)).join(" / ")}).
+          </div>
         </div>
 
         {/* Tilannetiilet */}

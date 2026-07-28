@@ -68,6 +68,14 @@ function wash(data: ProjectData, key: string): void {
   data.statuses[key] = "pesty";
 }
 
+/** Wash a window AND append a pesty log entry (so it can serve as the
+ *  nearest-neighbor anchor). ts orders the log (newest-first). */
+function washLogged(data: ProjectData, key: string, ts: number): void {
+  data.statuses[key] = "pesty";
+  const floor = key.split("#")[0];
+  data.log.unshift({ floor, key, p: 1, status: "pesty", ts });
+}
+
 // ─── Disabled / absent ──────────────────────────────────────────────────────────
 
 describe("computeGuided — pois päältä", () => {
@@ -183,6 +191,60 @@ describe("computeGuided — seuraava ikkuna", () => {
     const data = enable(fixture());
     wash(data, "K#1");
     expect(computeGuided(data).nextKey).toBe("K#0");
+  });
+});
+
+// ─── Nearest-neighbor (efficiency: seuraava ikkuna vierestä) ───────────────────
+
+/** Single floor "K" with a clear geometry to separate nearest-neighbor from the
+ *  top-left sweep: a center window, one right beside it, and a far corner one. */
+function geoFixture(): ProjectData {
+  const data = emptyProjectData();
+  data.building.floors = ["K"];
+  data.marks = {
+    K: {
+      marks: [
+        { p: 1, x: 50, y: 50 }, // K#0 center
+        { p: 1, x: 50, y: 40 }, // K#1 just above center (NEAR)
+        { p: 1, x: 0, y: 0 },   // K#2 top-left corner (FAR, but sweep-first)
+      ],
+    },
+  };
+  return enable(data);
+}
+
+describe("computeGuided — lähin ikkuna (nearest-neighbor)", () => {
+  it("ohjaa juuri pestyn ikkunan VIEREEN, ei kartan toiselle laidalle", () => {
+    const data = geoFixture();
+    washLogged(data, "K#0", 1000); // finished the center window
+    const g = computeGuided(data);
+    // Nearest to center (50,50) is K#1 (50,40), NOT the top-left corner K#2 —
+    // even though the old top→bottom sweep would have sent them to K#2 (y0).
+    expect(g.nextKey).toBe("K#1");
+    // openKeys ordered by proximity: nearest first, far corner last.
+    expect(g.openKeys).toEqual(["K#1", "K#2"]);
+  });
+
+  it("ilman pesuja aloittaa vasemmasta yläkulmasta (sweep)", () => {
+    const g = computeGuided(geoFixture());
+    // Nothing washed → no anchor → top-left corner K#2 (y0) starts the sweep.
+    expect(g.nextKey).toBe("K#2");
+  });
+
+  it("ankkuri seuraa uusinta pesua (log newest-first)", () => {
+    const data = geoFixture();
+    washLogged(data, "K#2", 1000); // washed the corner first
+    washLogged(data, "K#0", 2000); // then the center (newest)
+    // Anchor = newest wash = center (50,50) → nearest unwashed is K#1.
+    expect(computeGuided(data).nextKey).toBe("K#1");
+  });
+
+  it("kesken voittaa etäisyyden (aloitettua ei jätetä kesken)", () => {
+    const data = geoFixture();
+    washLogged(data, "K#0", 1000);      // anchor at center
+    data.statuses["K#2"] = "kesken";     // far corner is started
+    // Even though K#1 is nearer, the started K#2 wins (finish it first).
+    expect(computeGuided(data).nextKey).toBe("K#2");
   });
 });
 

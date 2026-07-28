@@ -256,11 +256,26 @@ describe("computeP2Billing", () => {
 });
 
 describe("p2WorkerPayoutCents", () => {
-  it("pyöristää senttiin ja clampaa osuuden 1..100", () => {
+  it("pyöristää senttiin ja clampaa osuuden 1..100 (%-fallback ei-taulukkohinnoille)", () => {
+    // 3000 ja 2500 EIVÄT ole oletustaulukossa → %-osuus.
     expect(p2WorkerPayoutCents(3000, 53)).toBe(1590);
     expect(p2WorkerPayoutCents(2500, 53)).toBe(1325);
     expect(p2WorkerPayoutCents(3000, 0)).toBe(30);     // clamp → 1 %
     expect(p2WorkerPayoutCents(3000, 200)).toBe(3000); // clamp → 100 %
+  });
+
+  it("oletustaulukko: 34 € → 18 €, 37,50 € → 20 € (osuudesta riippumatta)", () => {
+    expect(p2WorkerPayoutCents(3400, 53)).toBe(1800);
+    expect(p2WorkerPayoutCents(3750, 53)).toBe(2000);
+    // Osuus ei vaikuta taulukkohintoihin.
+    expect(p2WorkerPayoutCents(3400, 90)).toBe(1800);
+    expect(p2WorkerPayoutCents(3750, 10)).toBe(2000);
+  });
+
+  it("eksplisiittinen taulukko voittaa; muut hinnat käyttävät osuutta", () => {
+    const sched = [{ priceCents: 5000, payoutCents: 2500 }];
+    expect(p2WorkerPayoutCents(5000, 53, sched)).toBe(2500);   // rule
+    expect(p2WorkerPayoutCents(3400, 53, sched)).toBe(Math.round(3400 * 53 / 100)); // no rule → %
   });
 });
 
@@ -388,5 +403,29 @@ describe("sanitizeP2State", () => {
     expect(s!.offers.badLock.status).toBe("proposed"); // korruptoitunut lukko avattu
     expect(s!.events).toHaveLength(1);
     expect(s!.terms?.acceptorName).toBe("Testi Oy");
+  });
+
+  it("payoutSchedule: pitää kelvolliset, pudottaa roskan, dedupaa ja järjestää", () => {
+    const s = sanitizeP2State({
+      enabled: true,
+      offers: {},
+      payoutSchedule: [
+        { priceCents: 3750, payoutCents: 2000 },
+        { priceCents: 3400, payoutCents: 1800 },
+        { priceCents: 3400, payoutCents: 9999 },     // duplikaatti hinta → pudotetaan
+        { priceCents: 0, payoutCents: 100 },          // virheellinen hinta
+        { priceCents: 5000, payoutCents: -5 },        // negatiivinen palkkio
+        { priceCents: MAX_P2_PRICE_CENTS + 1, payoutCents: 10 },
+      ],
+    });
+    expect(s!.payoutSchedule).toEqual([
+      { priceCents: 3400, payoutCents: 1800 },
+      { priceCents: 3750, payoutCents: 2000 },
+    ]);
+  });
+
+  it("payoutSchedule tyhjä/puuttuva → undefined (käytetään oletustaulukkoa)", () => {
+    expect(sanitizeP2State({ enabled: true, offers: {} })!.payoutSchedule).toBeUndefined();
+    expect(sanitizeP2State({ enabled: true, offers: {}, payoutSchedule: [] })!.payoutSchedule).toBeUndefined();
   });
 });

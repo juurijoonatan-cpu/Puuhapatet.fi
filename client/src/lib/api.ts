@@ -1054,7 +1054,7 @@ export const api = {
     request<{ ok: boolean; p2: P2PublicView }>("POST", `/api/gig/${token}/p2/remove-point`, { key }),
 
   // ─── P2 — adminin hinnoittelu + neuvottelun hallinta ─────────────────────────
-  p2SetPhase: (jobId: number, data: { enabled?: boolean; workerSharePct?: number; termsText?: string; by?: string }) =>
+  p2SetPhase: (jobId: number, data: { enabled?: boolean; workerSharePct?: number; termsText?: string; payoutSchedule?: { priceCents: number; payoutCents: number }[]; by?: string }) =>
     request<{ ok: boolean; p2: P2State; p2Billing: P2Billing }>("POST", `/api/jobs/${jobId}/p2/phase`, data),
 
   p2Propose: (jobId: number, data: { keys: string[]; priceCents: number; by?: string }) =>

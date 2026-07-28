@@ -32,7 +32,7 @@ import {
   emptyGigData, computeTotals, nextInvoiceThreshold, invoiceDue, eur, eur2,
   sanitizeGigData, gigStatus, signatureRequired, type GigData, type GigCompany,
 } from "@shared/gig";
-import { computeProjectTotals, fixedDealFor, computeDealBilling, eurFromCents, type ProjectData } from "@shared/project";
+import { computeProjectTotals, fixedDealFor, computeDealBilling, dealAgreedTotalCents, eurFromCents, type ProjectData } from "@shared/project";
 import { downloadGigContract, openGigContractForPrint } from "@/lib/gig-contract-doc";
 
 const PUBLIC_BASE = "https://puuhapatet.fi";
@@ -426,7 +426,15 @@ export default function AdminGigTrackerPage() {
 
   // For fixed-price deals: invoice is available when the next quarter of windows is done.
   // Quarter size = billableTotal / 4 and scales dynamically if dots are added to the map.
-  const fixedInstallmentCents = deal ? Math.round(deal.capCents / 4) : 0;
+  // Each erä is a fixed 25 %, EXCEPT the final (4th) which bills the remainder of the
+  // effective agreed total — so removed red windows come off the last invoice.
+  const p1PayCount = gig.payments.filter((p) => p.scope !== "p2").length;
+  const p1InvoicedCents = gig.payments.filter((p) => p.scope !== "p2").reduce((s, p) => s + p.amountCents, 0);
+  const agreedTotalCents = (deal && project) ? dealAgreedTotalCents(project, deal) : 0;
+  const isFinalEra = !!deal && p1PayCount === 3;
+  const fixedInstallmentCents = deal
+    ? (isFinalEra ? Math.max(0, agreedTotalCents - p1InvoicedCents) : Math.round(deal.capCents / 4))
+    : 0;
   const perQuarter = dealBilling ? dealBilling.billableTotal / 4 : 0;
   const nextQuarterNeeded = dealBilling ? perQuarter * (gig.payments.length + 1) : 0;
   const fixedDue = !!(dealBilling && dealBilling.billableWashed >= nextQuarterNeeded && gig.payments.length < 4);

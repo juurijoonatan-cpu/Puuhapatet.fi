@@ -210,6 +210,28 @@ export function fixedDealFor(data: ProjectData): FixedDeal | null {
   };
 }
 
+/**
+ * The EFFECTIVE billable scope of a fixed deal: the signed agreed count
+ * (e.g. 168 red windows = €6300), but reduced if fewer red windows actually
+ * exist on the map. Removing a red window genuinely shrinks the deal — its
+ * per-window price (37,50 €) comes off the agreed total — while adding windows
+ * never pushes the deal above the agreed cap. Never negative.
+ */
+export function dealBillableScope(data: ProjectData, deal: FixedDeal): number {
+  const redCount = allPoints(data).filter((p) => p.p === deal.billablePriority).length;
+  const unit = Math.round(deal.pricePerWindow * 100);
+  const agreedCount = unit > 0 ? Math.round(deal.capCents / unit) : 0; // 168 for FR8
+  return Math.max(0, Math.min(agreedCount, redCount));
+}
+
+/** Effective agreed total in cents = scope × unit price (never above the cap).
+ *  When every agreed window exists this equals the signed cap (€6300); each
+ *  removed window below the agreed scope lowers it by one unit price. */
+export function dealAgreedTotalCents(data: ProjectData, deal: FixedDeal): number {
+  const unit = Math.round(deal.pricePerWindow * 100);
+  return Math.min(deal.capCents, dealBillableScope(data, deal) * unit);
+}
+
 export interface DealBilling {
   billableTotal: number;   // billable (e.g. red) windows on the whole job
   billableWashed: number;  // billable windows marked "pesty"
@@ -230,12 +252,16 @@ export function computeDealBilling(data: ProjectData, deal: FixedDeal): DealBill
   const billableTotal = pts.length;
   const billableWashed = pts.filter((p) => p.status === "pesty").length;
   const frac = billableTotal > 0 ? billableWashed / billableTotal : 0;
-  const accruedCents = Math.min(Math.round(frac * deal.capCents), deal.capCents);
+  // Effective agreed total shrinks below the cap when fewer than the agreed
+  // number of red windows exist (removed windows come off the price); accrued
+  // tracks completion toward THIS total, reaching it when every live red is washed.
+  const agreedCents = dealAgreedTotalCents(data, deal);
+  const accruedCents = Math.min(Math.round(frac * agreedCents), agreedCents);
   return {
     billableTotal,
     billableWashed,
     accruedCents,
-    capCents: deal.capCents,
+    capCents: agreedCents,
     pct: frac * 100,
   };
 }
@@ -484,8 +510,12 @@ export function computeEraDebts(
 
   const rateOf = (id: string) => crew.find((m) => m.id === id)?.perWindowCents ?? 0;
   const nameOf = (id: string) => crew.find((m) => m.id === id)?.name ?? id;
-  // The fixed instalment each erä is billed at (e.g. 6300 € ÷ 4 = 1575 €).
-  const instalmentCents = Math.round(deal.capCents / PAY_PERIODS);
+  // Each erä is billed at a fixed 25 % of the agreed total (6300 € ÷ 4 = 1575 €).
+  // The LAST erä absorbs any deal reduction: if red windows were removed, the
+  // final instalment = effective agreed total − the earlier fixed instalments,
+  // so the whole reduction lands on the last invoice (earlier erät stay at 25 %).
+  const rawInstalmentCents = Math.round(deal.capCents / PAY_PERIODS);
+  const agreedCents = dealAgreedTotalCents(data, deal);
 
   const out: EraDebtBreakdown[] = [];
   let cursor = 0;
@@ -509,6 +539,10 @@ export function computeEraDebts(
       }))
       .sort((a, b) => b.windows - a.windows);
     const earnedCents = workers.reduce((s, w) => s + w.earnedCents, 0);
+    const isLast = i === sizes.length - 1;
+    const instalmentCents = isLast
+      ? Math.max(0, agreedCents - rawInstalmentCents * (sizes.length - 1))
+      : rawInstalmentCents;
     out.push({
       era: i + 1,
       size,
@@ -646,11 +680,11 @@ export function syncGigSectorsFromProject(gig: GigData, project: ProjectData): G
     const red = allPoints(project).filter((p) => p.p === deal.billablePriority);
     const redTotal = red.length;
     const redWashed = red.filter((p) => p.status === "pesty").length;
-    // FLAT-TOTAL contract: the agreed price is fixed (€6300), NOT count × unit.
-    // Represent it with the agreed scope so total × unit == the fixed total always
-    // (the cap never drifts when red dots are added/removed), and scale "washed" to
-    // that scope so the accrued amount tracks completion toward the fixed total.
-    const total = FR8_DEAL_RED_WINDOWS;                         // 168 × 37,50 € = 6300 € (locked)
+    // Agreed scope = the signed count (168), but reduced if fewer red windows
+    // actually exist (removed windows come off the price at 37,50 € each); adding
+    // windows never pushes it above the cap. total × unit == the effective agreed
+    // total, and "washed" is scaled to that scope so accrued tracks completion.
+    const total = dealBillableScope(project, deal);            // ≤ 168 (= €6300 cap)
     const frac = redTotal > 0 ? redWashed / redTotal : 0;
     const washed = Math.min(total, Math.round(frac * total));
     const id = "deal:red";

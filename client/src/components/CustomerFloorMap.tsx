@@ -171,9 +171,17 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
 
   const closeOffer = () => { setOpenOffer(null); setShowCounterInput(false); setCounterInput(""); setP2Error(null); };
 
+  // Terms-gated actions = PRICE COMMITMENTS (accept / counter). These lock or
+  // negotiate an order, so the customer accepts the light terms first.
   async function runP2<A extends unknown[]>(fn: (...args: A) => Promise<string | null>, ...args: A) {
     if (!p2Actions) return;
     if (!p2?.termsAccepted) { p2Actions.requireTerms(); return; }
+    await runP2Free(fn, ...args);
+  }
+  // Free actions = PLANNING (add / remove own window, decline). No commitment, so
+  // the customer can explore and prepare the map before any terms — a logical order.
+  async function runP2Free<A extends unknown[]>(fn: (...args: A) => Promise<string | null>, ...args: A) {
+    if (!p2Actions) return;
     setP2Busy(true); setP2Error(null);
     const err = await fn(...args);
     setP2Busy(false);
@@ -264,7 +272,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
               const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
               const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
               setAddMode(false);
-              void runP2(p2Actions!.addPoint, floor, x, y);
+              void runP2Free(p2Actions!.addPoint, floor, x, y);
             } : undefined}
           >
             {points.map((pt) => {
@@ -468,7 +476,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
                           style={{ flex: 2, padding: "9px", borderRadius: 9, border: "none", background: "#3E7C59", color: "#fff", fontFamily: FONT, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}>Hyväksy</button>
                         <button disabled={p2Busy} onClick={() => { if (!p2!.termsAccepted) { p2Actions!.requireTerms(); return; } setListCounterKey(o.key); setListCounterVal(""); }}
                           style={{ flex: 1, padding: "9px", borderRadius: 9, border: `1px solid ${T.hair}`, background: T.card, color: T.ink, fontFamily: FONT, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Vastatarjous</button>
-                        <button disabled={p2Busy} onClick={() => void runP2(p2Actions!.decline, o.key, o.offer.version)}
+                        <button disabled={p2Busy} onClick={() => void runP2Free(p2Actions!.decline, o.key, o.offer.version)}
                           style={{ padding: "9px 11px", borderRadius: 9, border: "none", background: "transparent", color: T.muted, fontFamily: FONT, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Ei</button>
                       </div>
                     )}
@@ -542,10 +550,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
               <button
                 disabled={p2Busy}
                 data-cfm-anim=""
-                onClick={() => {
-                  if (!p2?.termsAccepted) { p2Actions!.requireTerms(); return; }
-                  setAddMode(true);
-                }}
+                onClick={() => setAddMode(true)}
                 style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 18px", borderRadius: 11, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 14, fontWeight: 700, cursor: "pointer", animation: anyYellowActivity ? undefined : "cfmAddNudge 2.4s ease-in-out infinite" }}
               >
                 <span style={{ fontSize: 17, lineHeight: 1 }}>➕</span> Lisää ikkuna Priority 2:seen
@@ -587,7 +592,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
                 {openOfferIsMine && (
                   <button
                     disabled={p2Busy}
-                    onClick={() => void runP2(p2Actions!.removePoint, openOffer.key)}
+                    onClick={() => void runP2Free(p2Actions!.removePoint, openOffer.key)}
                     style={{ marginTop: 10, width: "100%", padding: "9px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, color: T.muted, fontFamily: FONT, fontSize: 12.5, fontWeight: 600, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}
                   >
                     Poista ehdottamani ikkuna
@@ -680,7 +685,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
                 {openOfferData.status === "proposed" && (
                   <button
                     disabled={p2Busy}
-                    onClick={() => void runP2(p2Actions!.decline, openOffer.key, openOfferData.version)}
+                    onClick={() => void runP2Free(p2Actions!.decline, openOffer.key, openOfferData.version)}
                     style={{ width: "100%", padding: "8px", borderRadius: 10, border: "none", background: "transparent", color: T.muted, fontFamily: FONT, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}
                   >
                     Ei kiitos — jätä pois

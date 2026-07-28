@@ -140,21 +140,37 @@ function dist2(ax: number, ay: number, bx: number, by: number): number {
 }
 
 /**
- * Position of the window the worker most recently FINISHED on `floor` — the
- * anchor for nearest-neighbor guidance. Read from the activity log (newest-first
- * "pesty" events), matched to a live in-scope point on the floor that is still
- * washed. Null when nothing has been washed on the floor yet (→ start at the
- * top-left corner via sweepOrder).
+ * Position of the window most recently FINISHED on `floor` — the anchor for
+ * nearest-neighbor guidance. Read from the activity log (newest-first "pesty"
+ * events), matched to a live in-scope point on the floor that is still washed.
+ *
+ * When `workerId` is given, PREFER that worker's own most-recent wash on the
+ * floor, so several workers on the same floor each continue from THEIR own spot
+ * and spread out to different areas instead of all being sent to one window; if
+ * they haven't washed here yet, fall back to the floor's global last wash. Null
+ * when nothing has been washed on the floor yet (→ start at the top-left corner).
  */
-function lastWashedAnchor(data: ProjectData, floor: string, scope: ScopePoint[]): { x: number; y: number } | null {
+function lastWashedAnchor(
+  data: ProjectData,
+  floor: string,
+  scope: ScopePoint[],
+  workerId?: string | null,
+): { x: number; y: number } | null {
   const onFloor = new Map<string, ScopePoint>();
   for (const p of scope) if (p.floor === floor) onFloor.set(p.key, p);
-  for (const l of data.log) {
-    if (l.status !== "pesty") continue;
-    const p = onFloor.get(l.key);
-    if (p && p.status === "pesty") return { x: p.x, y: p.y };
-  }
-  return null;
+  const washedBy = data.washedBy || {};
+  const scan = (ownerOnly: boolean): { x: number; y: number } | null => {
+    for (const l of data.log) {
+      if (l.status !== "pesty") continue;
+      const p = onFloor.get(l.key);
+      if (!p || p.status !== "pesty") continue;
+      if (ownerOnly && washedBy[l.key] !== workerId) continue;
+      return { x: p.x, y: p.y };
+    }
+    return null;
+  };
+  if (workerId) { const own = scan(true); if (own) return own; }
+  return scan(false);
 }
 
 /** Nearest-neighbor order from an anchor: kesken-first (never abandon a started
@@ -175,7 +191,7 @@ function nearestOrder(a: ScopePoint, b: ScopePoint, anchor: { x: number; y: numb
  * to call per request. With `guided` absent or disabled the result is a disabled
  * state (activeFloor null, nothing locked) and the washing gate stays open.
  */
-export function computeGuided(data: ProjectData): GuidedState {
+export function computeGuided(data: ProjectData, opts?: { anchorWorkerId?: string | null }): GuidedState {
   const enabled = data.guided?.enabled === true;
   const floors = data.building.floors.length ? data.building.floors : DEFAULT_FLOORS;
   const pts = inScopePoints(data);
@@ -238,7 +254,7 @@ export function computeGuided(data: ProjectData): GuidedState {
   let next: GuidedNext | null = null;
   if (enabled && activeFloor) {
     const onActive = pts.filter((p) => p.floor === activeFloor && p.status !== "pesty");
-    const anchor = lastWashedAnchor(data, activeFloor, pts);
+    const anchor = lastWashedAnchor(data, activeFloor, pts, opts?.anchorWorkerId);
     const ordered = anchor
       ? onActive.slice().sort((a, b) => nearestOrder(a, b, anchor))
       : onActive.slice().sort(sweepOrder);

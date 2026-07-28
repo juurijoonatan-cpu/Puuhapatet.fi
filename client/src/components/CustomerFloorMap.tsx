@@ -8,7 +8,7 @@
  * dot coordinate scheme as FloorView so the markers line up identically.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { GigPublicView, P2PublicOffer, P2PublicView } from "@/lib/api";
 import { NOTE_KINDS } from "@shared/project";
 import { eur } from "@shared/gig";
@@ -73,20 +73,24 @@ const LEGEND: { label: string; color: string }[] = [
   { label: "Ei tässä sopimuksessa", color: "#D9C97E" },
 ];
 
+// Phase-2 legend describes the NUMBERED badge colours (map shows numbers, not
+// prices — the euros live in the list below).
 const LEGEND_P2: { label: string; color: string }[] = [
-  { label: "Pesemättä", color: "#F4A6C0" },
-  { label: "Kesken", color: "#7C5CD6" },
-  { label: "Pesty", color: "#E03B3B" },
-  { label: "Priority 2 — hinta sovitaan ikkunakohtaisesti", color: "#D9C97E" },
+  { label: "Hintaehdotus odottaa sinua", color: "#1F3B57" },
+  { label: "Vastatarjouksesi", color: "#E0A800" },
+  { label: "Sovittu ✓", color: "#3E7C59" },
+  { label: "Ehdottamasi (odottaa hintaa)", color: "#FFFFFF" },
 ];
 
-/** P2 offer pill colors by status. */
-function p2PillStyle(status: P2PublicOffer["status"]): { bg: string; fg: string } {
-  switch (status) {
-    case "proposed":  return { bg: T.navy,    fg: "#fff" };
-    case "countered": return { bg: "#E0A800", fg: "#1A1A1A" };
-    case "locked":    return { bg: "#3E7C59", fg: "#fff" };
-    case "declined":  return { bg: "#C9C6BC", fg: "#5A584F" };
+/** P2 numbered-badge colors by negotiation state ("none" = priced not yet). */
+type P2BadgeState = P2PublicOffer["status"] | "none";
+function p2BadgeStyle(state: P2BadgeState): { bg: string; fg: string; border: string } {
+  switch (state) {
+    case "proposed":  return { bg: T.navy,    fg: "#fff",     border: "#fff" };
+    case "countered": return { bg: "#E0A800", fg: "#1A1A1A",  border: "#fff" };
+    case "locked":    return { bg: "#3E7C59", fg: "#fff",     border: "#fff" };
+    case "declined":  return { bg: "#EDEBE4", fg: "#9A988F",  border: "#fff" };
+    default:          return { bg: "#FFFFFF", fg: T.navy,     border: T.navy }; // not priced yet
   }
 }
 
@@ -127,14 +131,18 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
   // ── P2 negotiation state ──────────────────────────────────────────────────
   const p2On = !!(p2?.enabled && p2Actions);
   const [openOffer, setOpenOffer] = useState<{ key: string; rect: DOMRect } | null>(null);
-  const [counterInput, setCounterInput] = useState("");
-  const [showCounterInput, setShowCounterInput] = useState(false);
   const [p2Busy, setP2Busy] = useState(false);
   const [p2Error, setP2Error] = useState<string | null>(null);
   const [addMode, setAddMode] = useState(false);
-  // When planning phase-2, let the customer focus the map on just the extra
-  // (yellow) windows — the reds are done, so this keeps the negotiation clean.
-  const [onlyYellow, setOnlyYellow] = useState(false);
+  // Phase-2 opens focused on just the extra (yellow) windows — the reds are done,
+  // so the map starts clean and only the numbered Priority 2 points carry it.
+  const [onlyYellow, setOnlyYellow] = useState(p2On);
+  // Map ↔ list bridge: scroll the map into view / pulse a badge ("Kartalla"),
+  // and scroll a list row into view / pulse it ("Näytä listassa").
+  const mapRef = useRef<HTMLDivElement | null>(null);
+  const listRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const [focusKey, setFocusKey] = useState<string | null>(null);
+  const [hiRow, setHiRow] = useState<string | null>(null);
   const openOfferData = openOffer && p2 ? p2.offers[openOffer.key] ?? null : null;
   const customerAdded = p2On ? new Set(p2!.customerAddedKeys) : new Set<string>();
   const openOfferIsMine = openOffer ? customerAdded.has(openOffer.key) : false;
@@ -164,12 +172,41 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
   const allProposedSum = proposedList.reduce((s, o) => s + o.offer.priceCents, 0);
   const lockedSum = lockedList.reduce((s, o) => s + (o.offer.lockedCents ?? o.offer.priceCents), 0);
   const floorLabel = (f: string) => (f === "K" ? "Kellari" : `${f}. kerros`);
+  // Stable per-floor Priority 2 numbering so the map badges and the list rows
+  // always agree ("ikkuna 10" on the map = "ikkuna 10" in the list).
+  const p2Number = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const f of floors) {
+      let n = 0;
+      getPoints(f, map).forEach((pt) => { if (pt.p === 2) { n += 1; m[pt.key] = n; } });
+    }
+    return m;
+  }, [floors, map]);
   // Has the customer engaged with phase-2 yet (any yellow priced or added)?
   // Drives an inviting empty-state nudge that expects them to add windows.
   const yellowCount = p2On ? points.filter((pt) => pt.p === 2).length : 0;
   const anyYellowActivity = p2On && points.some((pt) => pt.p === 2 && p2!.offers[pt.key]);
 
-  const closeOffer = () => { setOpenOffer(null); setShowCounterInput(false); setCounterInput(""); setP2Error(null); };
+  const closeOffer = () => { setOpenOffer(null); setP2Error(null); };
+
+  // "Kartalla" → jump to the window's floor, scroll the map into view and pulse
+  // its numbered badge so the customer can locate it among many.
+  function jumpToMap(key: string, f: string) {
+    setFloor(f);
+    setOnlyYellow(true);
+    closeOffer();
+    setFocusKey(key);
+    requestAnimationFrame(() => mapRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
+    window.setTimeout(() => setFocusKey((k) => (k === key ? null : k)), 2600);
+  }
+  // Map badge popup → scroll down to that window's row in the decision list,
+  // where accept / counter / decline live (the map itself stays planning-only).
+  function jumpToList(key: string) {
+    closeOffer();
+    setHiRow(key);
+    requestAnimationFrame(() => listRowRefs.current[key]?.scrollIntoView({ behavior: "smooth", block: "center" }));
+    window.setTimeout(() => setHiRow((k) => (k === key ? null : k)), 2600);
+  }
 
   // Terms-gated actions = PRICE COMMITMENTS (accept / counter). These lock or
   // negotiate an order, so the customer accepts the light terms first.
@@ -197,6 +234,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
         @keyframes cfmLockPulse{0%{box-shadow:0 1px 4px rgba(0,0,0,0.28),0 0 0 0 rgba(62,124,89,0.5)}70%{box-shadow:0 1px 4px rgba(0,0,0,0.28),0 0 0 10px rgba(62,124,89,0)}100%{box-shadow:0 1px 4px rgba(0,0,0,0.28),0 0 0 0 rgba(62,124,89,0)}}
         @keyframes cfmAddNudge{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
         @keyframes cfmMineHalo{0%,100%{box-shadow:0 0 0 2px #fff,0 0 0 4px rgba(31,59,87,0.35)}50%{box-shadow:0 0 0 2px #fff,0 0 0 7px rgba(31,59,87,0.08)}}
+        @keyframes cfmFocus{0%{box-shadow:0 0 0 2px #fff,0 0 0 4px rgba(31,59,87,0.9)}70%{box-shadow:0 0 0 2px #fff,0 0 0 15px rgba(31,59,87,0)}100%{box-shadow:0 0 0 2px #fff,0 0 0 0 rgba(31,59,87,0)}}
         @media (prefers-reduced-motion: reduce){
           [data-cfm-anim]{animation:none !important}
         }
@@ -257,7 +295,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
           line drawing on a transparent background (built to read on the dark
           worker view), so on this light view we invert it to draw the walls in
           black on white for clear contrast. */}
-      <div style={{ position: "relative", borderRadius: 12, border: `1px solid ${T.hair}`, background: "#FFFFFF", padding: 12, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+      <div ref={mapRef} style={{ position: "relative", borderRadius: 12, border: `1px solid ${T.hair}`, background: "#FFFFFF", padding: 12, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", scrollMarginTop: 12 }}>
         <div style={{ position: "relative", display: "inline-block", lineHeight: 0, maxWidth: "100%" }}>
           <img
             src={`${map.building.planBase}${floor}.png`}
@@ -277,95 +315,71 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
           >
             {points.map((pt) => {
               const status = map.statuses[pt.key] || "ei";
-              const color = dotColor(pt.p, status);
-              const done = status === "pesty";
-              const tappable = p2On && pt.p === 2 && !addMode;
-              // Phase-2 focus: the reds are done, so fade them right back and let
-              // the yellow extra windows carry the map. "Vain lisäikkunat" hides
-              // the reds entirely.
               const isYellow = pt.p === 2;
               if (p2On && onlyYellow && !isYellow) return null;
-              const mine = p2On && isYellow && customerAdded.has(pt.key);
-              const dimForFocus = p2On && !isYellow;
-              const dot = (
+
+              // ── Priority 2 windows in phase-2: a clean NUMBERED badge, colour-
+              //    coded by negotiation state. No price pills — the euro amounts
+              //    live in the decision list below (the map just locates a window
+              //    by its number and shows its state at a glance).
+              if (p2On && isYellow && !addMode) {
+                const offer = p2!.offers[pt.key];
+                const state: P2BadgeState = offer && offer.status !== "declined"
+                  ? offer.status
+                  : offer ? "declined" : "none";
+                const num = p2Number[pt.key];
+                const mine = customerAdded.has(pt.key);
+                const { bg, fg, border } = p2BadgeStyle(state);
+                const focused = focusKey === pt.key;
+                return (
+                  <button
+                    key={pt.key}
+                    data-cfm-anim={focused || (mine && state === "none") ? "" : undefined}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                      setOpenOffer({ key: pt.key, rect: r });
+                      setP2Error(null);
+                    }}
+                    title={`Ikkuna ${num}${mine ? " · ehdottamasi" : ""} — napauta`}
+                    style={{
+                      position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`,
+                      transform: "translate(-50%, -50%)",
+                      minWidth: 20, height: 20, padding: "0 4px", borderRadius: 999,
+                      background: bg, color: fg, border: `2px solid ${border}`,
+                      fontFamily: FONT, fontSize: 11, fontWeight: 800, lineHeight: 1,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      cursor: "pointer", fontVariantNumeric: "tabular-nums",
+                      boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
+                      zIndex: focused ? 9 : state === "locked" ? 4 : 6,
+                      animation: focused
+                        ? "cfmFocus 1.3s ease-out 2"
+                        : mine && state === "none" ? "cfmMineHalo 2.4s ease-in-out infinite" : undefined,
+                    }}
+                  >
+                    {state === "locked" ? "✓" : num}
+                  </button>
+                );
+              }
+
+              // ── Priority 1 (red) windows — plain status dot; faded right back
+              //    during phase-2 so the numbered extra windows carry the map.
+              const color = dotColor(pt.p, status);
+              const done = status === "pesty";
+              return (
                 <span
                   key={pt.key}
-                  role={tappable ? "button" : undefined}
-                  data-cfm-anim={mine ? "" : undefined}
-                  onClick={tappable ? (e) => {
-                    e.stopPropagation();
-                    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                    setOpenOffer({ key: pt.key, rect: r });
-                    setShowCounterInput(false); setCounterInput(""); setP2Error(null);
-                  } : undefined}
-                  title={tappable
-                    ? (mine ? "Ehdottamasi ikkuna — napauta nähdäksesi tila" : "Priority 2 — napauta nähdäksesi hinnan")
-                    : `Ikkuna · ${done ? "Pesty" : status === "kesken" ? "Kesken" : "Pesemättä"}`}
+                  title={`Ikkuna · ${done ? "Pesty" : status === "kesken" ? "Kesken" : "Pesemättä"}`}
                   style={{
-                    position: "absolute",
-                    left: `${pt.x}%`,
-                    top: `${pt.y}%`,
+                    position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`,
                     transform: "translate(-50%, -50%)",
-                    width: isYellow && p2On ? 15 : 13,
-                    height: isYellow && p2On ? 15 : 13,
-                    borderRadius: "50%",
-                    background: color,
+                    width: 13, height: 13, borderRadius: "50%", background: color,
                     border: "2px solid #fff",
-                    boxShadow: mine
-                      ? `0 0 0 2px #fff, 0 0 0 4px rgba(31,59,87,0.35)`
-                      : done ? `0 0 0 1px ${color}, 0 1px 3px rgba(0,0,0,0.25)` : "0 1px 2px rgba(0,0,0,0.18)",
-                    opacity: dimForFocus ? 0.32 : status === "ei" ? 0.8 : 1,
-                    cursor: tappable ? "pointer" : undefined,
-                    animation: mine ? "cfmMineHalo 2.4s ease-in-out infinite" : undefined,
+                    boxShadow: done ? `0 0 0 1px ${color}, 0 1px 3px rgba(0,0,0,0.25)` : "0 1px 2px rgba(0,0,0,0.18)",
+                    opacity: p2On ? 0.3 : status === "ei" ? 0.8 : 1,
                     transition: "opacity .3s",
                   }}
                 />
-              );
-              return dot;
-            })}
-
-            {/* P2 price pills — the negotiation state of each yellow window.
-                LOCKED (agreed) windows get a tiny ✓ badge only (their price lives
-                in the organized list below), so once many windows lock the map
-                stays clean; windows still needing an answer keep a readable pill. */}
-            {p2On && points.map((pt) => {
-              if (pt.p !== 2) return null;
-              const offer = p2!.offers[pt.key];
-              if (!offer || offer.status === "declined") return null;
-              const { bg, fg } = p2PillStyle(offer.status);
-              const locked = offer.status === "locked";
-              const text = locked
-                ? "✓"
-                : offer.status === "countered"
-                  ? `sinun: ${eur(offer.counterCents ?? 0)}`
-                  : eur(offer.priceCents);
-              return (
-                <button
-                  key={`p2-${pt.key}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                    setOpenOffer({ key: pt.key, rect: r });
-                    setShowCounterInput(false); setCounterInput(""); setP2Error(null);
-                  }}
-                  title={locked ? `Sovittu ${eur(offer.lockedCents ?? offer.priceCents)}` : "Näytä hintaehdotus"}
-                  data-cfm-anim=""
-                  style={{
-                    position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`,
-                    transform: "translate(-50%, 9px)",
-                    padding: locked ? "1px 5px" : "2px 7px", borderRadius: 999, border: "1.5px solid #fff",
-                    background: bg, color: fg, fontFamily: FONT, fontSize: locked ? 9 : 10, fontWeight: 700,
-                    lineHeight: 1.3, whiteSpace: "nowrap", cursor: "pointer",
-                    boxShadow: "0 1px 4px rgba(0,0,0,0.28)", zIndex: 5, fontVariantNumeric: "tabular-nums",
-                    // Locked windows get a one-shot celebratory pulse; fresh
-                    // proposals pop in so a new price never appears silently.
-                    animation: locked
-                      ? "cfmLockPulse 1.2s ease-out"
-                      : "cfmPillPop 0.35s cubic-bezier(0.22,1,0.36,1)",
-                  }}
-                >
-                  {text}
-                </button>
               );
             })}
 
@@ -453,13 +467,14 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {proposedList.map((o) => (
-                  <div key={o.key} style={{ padding: "10px 12px", borderRadius: 11, background: T.paper, border: `1px solid ${T.hair}` }}>
+                  <div key={o.key} ref={(el) => { listRowRefs.current[o.key] = el; }} style={{ padding: "10px 12px", borderRadius: 11, background: hiRow === o.key ? "rgba(224,168,0,0.16)" : T.paper, border: `1px solid ${hiRow === o.key ? "#E0A800" : T.hair}`, transition: "background .4s, border-color .4s", scrollMarginTop: 12 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                      <span style={{ width: 26, height: 26, flexShrink: 0, borderRadius: "50%", background: T.navy, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{p2Number[o.key] ?? o.idx + 1}</span>
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600 }}>{floorLabel(o.floor)} · ikkuna {o.idx + 1}{customerAdded.has(o.key) ? " · sinun" : ""}</div>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{floorLabel(o.floor)} · ikkuna {p2Number[o.key] ?? o.idx + 1}{customerAdded.has(o.key) ? " · sinun" : ""}</div>
                         <div style={{ fontSize: 15, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{eur(o.offer.priceCents)}<span style={{ fontSize: 11.5, color: T.muted, fontWeight: 500 }}> / ikkuna</span></div>
                       </div>
-                      <button onClick={() => setFloor(o.floor)} title="Näytä kartalla" style={{ marginLeft: "auto", padding: "6px 10px", borderRadius: 9, border: `1px solid ${T.hair}`, background: T.card, color: T.muted, fontFamily: FONT, fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>Kartalla</button>
+                      <button onClick={() => jumpToMap(o.key, o.floor)} title="Näytä kartalla" style={{ marginLeft: "auto", padding: "6px 10px", borderRadius: 9, border: `1px solid ${T.hair}`, background: T.card, color: T.navy, fontFamily: FONT, fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>Kartalla</button>
                     </div>
                     {listCounterKey === o.key ? (
                       <div style={{ display: "flex", gap: 6, marginTop: 9 }}>
@@ -494,12 +509,13 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
               </span>
               <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
                 {counteredList.map((o) => (
-                  <div key={o.key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 11, background: T.paper, border: `1px solid ${T.hair}`, flexWrap: "wrap" }}>
+                  <div key={o.key} ref={(el) => { listRowRefs.current[o.key] = el; }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 11, background: hiRow === o.key ? "rgba(224,168,0,0.16)" : T.paper, border: `1px solid ${hiRow === o.key ? "#E0A800" : T.hair}`, flexWrap: "wrap", transition: "background .4s, border-color .4s", scrollMarginTop: 12 }}>
+                    <span style={{ width: 26, height: 26, flexShrink: 0, borderRadius: "50%", background: "#E0A800", color: "#1A1A1A", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{p2Number[o.key] ?? o.idx + 1}</span>
                     <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600 }}>{floorLabel(o.floor)} · ikkuna {o.idx + 1}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{floorLabel(o.floor)} · ikkuna {p2Number[o.key] ?? o.idx + 1}</div>
                       <div style={{ fontSize: 12.5, color: T.muted, fontVariantNumeric: "tabular-nums" }}>Ehdotus {eur(o.offer.priceCents)} · sinun {eur(o.offer.counterCents ?? 0)}</div>
                     </div>
-                    <span style={{ marginLeft: "auto", fontSize: 12, color: T.muted }}>Odottaa vastaustamme</span>
+                    <button onClick={() => jumpToMap(o.key, o.floor)} title="Näytä kartalla" style={{ marginLeft: "auto", padding: "6px 10px", borderRadius: 9, border: `1px solid ${T.hair}`, background: T.card, color: T.navy, fontFamily: FONT, fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>Kartalla</button>
                   </div>
                 ))}
               </div>
@@ -571,14 +587,17 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
         <span style={{ marginLeft: "auto", fontSize: 11.5, color: T.muted }}>Päivittyy automaattisesti</span>
       </div>
 
-      {/* P2 offer popup — the customer's accept / counter / decline actions */}
+      {/* P2 window popup — PLANNING ONLY. Tapping a numbered badge tells you which
+          window it is and its current state; the actual price decisions (accept /
+          counter / decline) live in the list below, reached via "Näytä listassa".
+          This keeps the map a clean planning surface. */}
       {p2On && openOffer && (
         <>
           <div onClick={closeOffer} style={{ position: "fixed", inset: 0, zIndex: 55 }} />
-          <div style={{ ...popupStyle(openOffer.rect, 270, 220), width: 270, background: T.card, border: `1px solid ${T.hair}`, borderRadius: 14, boxShadow: "0 14px 40px rgba(0,0,0,0.22)", padding: 16, fontFamily: FONT }}>
+          <div style={{ ...popupStyle(openOffer.rect, 260, 170), width: 260, background: T.card, border: `1px solid ${T.hair}`, borderRadius: 14, boxShadow: "0 14px 40px rgba(0,0,0,0.22)", padding: 16, fontFamily: FONT }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-              <span style={{ width: 11, height: 11, borderRadius: "50%", background: "#D9C97E", border: "2px solid #fff", boxShadow: `0 0 0 1px ${T.hair}`, flexShrink: 0 }} />
-              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: T.navy }}>{openOfferIsMine ? "Ehdottamasi ikkuna" : "Priority 2 -ikkuna"}</span>
+              <span style={{ width: 22, height: 22, borderRadius: "50%", background: T.navy, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{p2Number[openOffer.key] ?? "?"}</span>
+              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: T.navy }}>{floorLabel(openOffer.key.split("#")[0])} · ikkuna {p2Number[openOffer.key] ?? "?"}</span>
               <button onClick={closeOffer} aria-label="Sulje" style={{ marginLeft: "auto", width: 24, height: 24, borderRadius: "50%", border: "none", background: T.paper, color: T.muted, fontSize: 13, cursor: "pointer", lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
             </div>
 
@@ -618,80 +637,35 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
             )}
 
             {openOfferData?.status === "countered" && (
-              <p style={{ margin: "0 0 10px", fontSize: 13.5, lineHeight: 1.6 }}>
-                Ehdotuksemme: <strong style={{ fontVariantNumeric: "tabular-nums" }}>{eur(openOfferData.priceCents)}</strong><br />
-                Sinun tarjouksesi: <strong style={{ fontVariantNumeric: "tabular-nums" }}>{eur(openOfferData.counterCents ?? 0)}</strong><br />
-                <span style={{ fontSize: 12.5, color: T.muted }}>Odottaa vastaustamme. Voit myös hyväksyä alkuperäisen hinnan tai muuttaa tarjoustasi.</span>
-              </p>
+              <>
+                <p style={{ margin: "0 0 10px", fontSize: 13.5, lineHeight: 1.6 }}>
+                  Ehdotuksemme: <strong style={{ fontVariantNumeric: "tabular-nums" }}>{eur(openOfferData.priceCents)}</strong><br />
+                  Sinun tarjouksesi: <strong style={{ fontVariantNumeric: "tabular-nums" }}>{eur(openOfferData.counterCents ?? 0)}</strong><br />
+                  <span style={{ fontSize: 12.5, color: T.muted }}>Odottaa vastaustamme.</span>
+                </p>
+                <button
+                  onClick={() => jumpToList(openOffer.key)}
+                  style={{ width: "100%", padding: "10px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, color: T.navy, fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}
+                >
+                  Näytä listassa ↓
+                </button>
+              </>
             )}
 
             {openOfferData?.status === "proposed" && (
-              <p style={{ margin: "0 0 10px", fontSize: 14, lineHeight: 1.5 }}>
-                Hintaehdotus: <strong style={{ fontSize: 17, fontVariantNumeric: "tabular-nums" }}>{eur(openOfferData.priceCents)}</strong>
-                <span style={{ fontSize: 12, color: T.muted }}> / ikkuna</span>
-              </p>
-            )}
-
-            {(openOfferData?.status === "proposed" || openOfferData?.status === "countered") && !p2!.termsAccepted && (
-              <button
-                onClick={() => { closeOffer(); p2Actions!.requireTerms(); }}
-                style={{ width: "100%", padding: "10px", borderRadius: 10, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}
-              >
-                Hyväksy ensin tilausehdot
-              </button>
-            )}
-
-            {(openOfferData?.status === "proposed" || openOfferData?.status === "countered") && p2!.termsAccepted && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {openOfferData.status === "proposed" && (
-                  <button
-                    disabled={p2Busy}
-                    onClick={() => void runP2(p2Actions!.accept, [{ key: openOffer.key, priceCents: openOfferData.priceCents, version: openOfferData.version }])}
-                    style={{ width: "100%", padding: "10px", borderRadius: 10, border: "none", background: "#3E7C59", color: "#fff", fontFamily: FONT, fontSize: 14, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}
-                  >
-                    Hyväksy {eur(openOfferData.priceCents)}
-                  </button>
-                )}
-                {!showCounterInput ? (
-                  <button
-                    disabled={p2Busy}
-                    onClick={() => { setShowCounterInput(true); setCounterInput(openOfferData.counterCents ? String(openOfferData.counterCents / 100) : ""); }}
-                    style={{ width: "100%", padding: "10px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, color: T.ink, fontFamily: FONT, fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}
-                  >
-                    {openOfferData.status === "countered" ? "Muuta tarjoustasi" : "Tee vastatarjous"}
-                  </button>
-                ) : (
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <input
-                      type="number" inputMode="decimal" min={1} step="0.5"
-                      value={counterInput}
-                      onChange={(e) => setCounterInput(e.target.value)}
-                      placeholder="€ / ikkuna"
-                      style={{ flex: 1, minWidth: 0, padding: "9px 10px", borderRadius: 10, border: `1px solid ${T.hair}`, fontFamily: FONT, fontSize: 14, fontVariantNumeric: "tabular-nums" }}
-                    />
-                    <button
-                      disabled={p2Busy || !(Number(counterInput.replace(",", ".")) > 0)}
-                      onClick={() => {
-                        const eurVal = Number(counterInput.replace(",", "."));
-                        if (!(eurVal > 0)) return;
-                        void runP2(p2Actions!.counter, openOffer.key, Math.round(eurVal * 100), openOfferData.version);
-                      }}
-                      style={{ padding: "9px 14px", borderRadius: 10, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}
-                    >
-                      Lähetä
-                    </button>
-                  </div>
-                )}
-                {openOfferData.status === "proposed" && (
-                  <button
-                    disabled={p2Busy}
-                    onClick={() => void runP2Free(p2Actions!.decline, openOffer.key, openOfferData.version)}
-                    style={{ width: "100%", padding: "8px", borderRadius: 10, border: "none", background: "transparent", color: T.muted, fontFamily: FONT, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}
-                  >
-                    Ei kiitos — jätä pois
-                  </button>
-                )}
-              </div>
+              <>
+                <p style={{ margin: "0 0 10px", fontSize: 14, lineHeight: 1.5 }}>
+                  Hintaehdotus: <strong style={{ fontSize: 17, fontVariantNumeric: "tabular-nums" }}>{eur(openOfferData.priceCents)}</strong>
+                  <span style={{ fontSize: 12, color: T.muted }}> / ikkuna</span><br />
+                  <span style={{ fontSize: 12.5, color: T.muted }}>Voit hyväksyä tai tehdä vastatarjouksen listassa.</span>
+                </p>
+                <button
+                  onClick={() => jumpToList(openOffer.key)}
+                  style={{ width: "100%", padding: "11px", borderRadius: 10, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}
+                >
+                  Näytä listassa ↓
+                </button>
+              </>
             )}
 
             {p2Error && (

@@ -5264,14 +5264,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const project = parseProject(job.projectData ?? null);
       if (!project) return res.status(400).json({ error: "Keikalla ei ole projektidataa" });
 
-      if (!project.guided) project.guided = { enabled: false, activeFloorOverride: null };
+      if (!project.guided) project.guided = { enabled: false, activeFloorOverride: null, openFloors: [] };
+      const floors = project.building.floors.length ? project.building.floors : [];
       if (req.body?.enabled !== undefined) project.guided.enabled = req.body.enabled === true;
       if (req.body?.activeFloorOverride !== undefined) {
         const raw = req.body.activeFloorOverride;
         const floor = typeof raw === "string" && raw.trim() ? raw.slice(0, 8) : null;
         // Only accept a real floor of this building (or null to clear the pin).
-        const floors = project.building.floors.length ? project.building.floors : [];
         project.guided.activeFloorOverride = floor && floors.includes(floor) ? floor : null;
+      }
+      if (req.body?.openFloors !== undefined) {
+        // The founder-opened floor set (multi mode). Keep only real floors of this
+        // building, in building order, de-duplicated. Empty = legacy auto mode.
+        const raw = Array.isArray(req.body.openFloors) ? req.body.openFloors : [];
+        const want = new Set(raw.filter((f: any) => typeof f === "string").map((f: string) => f.slice(0, 8)));
+        project.guided.openFloors = floors.filter((f) => want.has(f));
       }
       const saved = await saveProject(job, project, { guidedMutation: true });
       res.json({ ok: true, guided: saved.guided, guidedState: computeGuided(saved) });

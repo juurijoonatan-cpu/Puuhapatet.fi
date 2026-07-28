@@ -442,7 +442,7 @@ export default function AdminProjectPage() {
   // projektiin. Johdettu tila (aktiivinen kerros, seuraava ikkuna) lasketaan
   // clientissä `computeGuided`illä suoraan kartasta, joten se pysyy aina synkassa.
   // HUOM: tämä hook on ennen early returneja (React #310).
-  const onGuidedSet = useCallback(async (data: { enabled?: boolean; activeFloorOverride?: string | null }) => {
+  const onGuidedSet = useCallback(async (data: { enabled?: boolean; activeFloorOverride?: string | null; openFloors?: string[] }) => {
     const res = await api.guidedSet(jobId, data);
     if (res.ok && res.data) {
       const guided = res.data.guided;
@@ -780,7 +780,7 @@ export default function AdminProjectPage() {
             deal={deal}
             p2={project.p2 ? { enabled: project.p2.enabled, offers: project.p2.offers } : null}
             onP2Propose={onP2Propose}
-            guided={project.guided?.enabled ? (() => { const g = computeGuided(project); return { enabled: true, activeFloor: g.activeFloor, lockedFloors: g.lockedFloors, nextKey: g.nextKey }; })() : null}
+            guided={project.guided?.enabled ? (() => { const g = computeGuided(project); return { enabled: true, activeFloor: g.activeFloor, activeFloors: g.activeFloors, lockedFloors: g.lockedFloors, nextKey: g.nextKey }; })() : null}
           />
         )}
       </main>
@@ -1131,17 +1131,26 @@ function guidedFloorName(floor: string | null): string {
  */
 function GuidedAdminPanel({ project, onGuidedSet, onGoToFloor, canSend }: {
   project: ProjectData;
-  onGuidedSet: (data: { enabled?: boolean; activeFloorOverride?: string | null }) => Promise<void>;
+  onGuidedSet: (data: { enabled?: boolean; activeFloorOverride?: string | null; openFloors?: string[] }) => Promise<void>;
   onGoToFloor: (floor: string) => void;
   canSend: boolean;
 }) {
   const g = computeGuided(project);
   const enabled = project.guided?.enabled === true;
   const override = project.guided?.activeFloorOverride ?? "";
+  const openFloors = project.guided?.openFloors ?? [];
+  const manualOpen = openFloors.length > 0;   // founder is driving the open set
   const [busy, setBusy] = useState(false);
 
   const toggle = async () => { setBusy(true); await onGuidedSet({ enabled: !enabled }); setBusy(false); };
   const setOverride = async (floor: string) => { setBusy(true); await onGuidedSet({ activeFloorOverride: floor || null }); setBusy(false); };
+  // Toggle a floor in/out of the founder-opened set. Opening any floor switches
+  // to manual multi-floor mode; clearing them all returns to automatic mode.
+  const toggleOpenFloor = async (floor: string) => {
+    const next = openFloors.includes(floor) ? openFloors.filter((f) => f !== floor) : [...openFloors, floor];
+    setBusy(true); await onGuidedSet({ openFloors: next }); setBusy(false);
+  };
+  const clearOpen = async () => { setBusy(true); await onGuidedSet({ openFloors: [] }); setBusy(false); };
 
   const btn: React.CSSProperties = { padding: "7px 12px", borderRadius: 9, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.85)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px", fontWeight: 600, cursor: "pointer" };
   const withScope = g.floorProgress.filter((f) => f.inScope > 0);
@@ -1152,7 +1161,11 @@ function GuidedAdminPanel({ project, onGuidedSet, onGoToFloor, canSend }: {
       label="OHJATTU ETENEMINEN — YKS KERROS KERRALLAA"
       summary={
         <span style={{ fontVariantNumeric: "tabular-nums" }}>
-          {enabled ? `🟢 ${guidedFloorName(g.activeFloor)}${g.lockedFloors.length ? ` · ${g.lockedFloors.length} lukossa` : ""}` : "pois päältä"}
+          {!enabled
+            ? "pois päältä"
+            : manualOpen
+              ? `🟢 auki: ${openFloors.map(guidedFloorName).join(", ")}`
+              : `🟢 ${guidedFloorName(g.activeFloor)}${g.lockedFloors.length ? ` · ${g.lockedFloors.length} lukossa` : ""}`}
         </span>
       }
       defaultOpen={false}
@@ -1179,7 +1192,36 @@ function GuidedAdminPanel({ project, onGuidedSet, onGoToFloor, canSend }: {
 
         {enabled && (
           <>
-            {/* Aktiivinen kerros + kerroksen ohitus */}
+            {/* Avaa kerroksia (manuaalinen monivalinta). Kun avoinna ≥1 kerros,
+                juuri ne ovat auki ja muut lukossa — ei automaattista etenemistä. */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "12px", borderRadius: 12, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
+              <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.1em", color: "rgba(255,255,255,0.5)" }}>AVAA KERROKSIA (valitse mitkä ovat auki)</span>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {project.building.floors.map((f) => {
+                  const on = openFloors.includes(f);
+                  return (
+                    <button key={f} disabled={busy || !canSend} onClick={() => void toggleOpenFloor(f)}
+                      style={{ minWidth: 40, padding: "8px 12px", borderRadius: 9, border: on ? "1px solid rgba(95,224,138,0.6)" : "1px solid rgba(255,255,255,0.14)", background: on ? "rgba(95,224,138,0.18)" : "rgba(255,255,255,0.04)", color: on ? "#9ff0bd" : "rgba(255,255,255,0.75)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "13px", fontWeight: 700, cursor: "pointer", opacity: canSend ? 1 : 0.5 }}>
+                      {on ? "✓ " : ""}{f}
+                    </button>
+                  );
+                })}
+              </div>
+              <span style={{ fontSize: "11.5px", lineHeight: 1.5, color: "rgba(255,255,255,0.55)" }}>
+                {manualOpen
+                  ? <>Auki: <b style={{ color: "#9ff0bd" }}>{openFloors.map(guidedFloorName).join(", ")}</b>. Tekijät voivat pestä vain näitä kerroksia; muut lukossa. Kunkin tekijän dashboard ohjaa lähimpään ikkunaan avoimella kerroksella.</>
+                  : <>Ei valittuja kerroksia → <b style={{ color: "#fff" }}>automaattinen</b> tila (yks kerros kerrallaa, etenee itsestään). Valitse yllä esim. kerrokset 2 ja 3 avataksesi ne kokonaan.</>}
+              </span>
+              {manualOpen && (
+                <button disabled={busy || !canSend} onClick={() => void clearOpen()}
+                  style={{ alignSelf: "flex-start", padding: "6px 11px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.16)", background: "transparent", color: "rgba(255,255,255,0.7)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>
+                  Tyhjennä → automaattinen tila
+                </button>
+              )}
+            </div>
+
+            {/* Aktiivinen kerros + kerroksen ohitus (automaattitilan hienosäätö) */}
+            {!manualOpen && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <div style={{ padding: "10px 12px", borderRadius: 12, background: "rgba(95,224,138,0.08)", border: "1px solid rgba(95,224,138,0.28)", minWidth: 150 }}>
                 <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.1em", color: "rgba(159,240,189,0.7)", display: "block", marginBottom: 4 }}>AKTIIVINEN KERROS</span>
@@ -1204,6 +1246,7 @@ function GuidedAdminPanel({ project, onGuidedSet, onGoToFloor, canSend }: {
                 <span style={{ fontSize: "11px", color: "rgb(255,220,110)" }}>Kerros pakotettu — automaattinen eteneminen ohitettu</span>
               )}
             </div>
+            )}
 
             {/* Kerrosten edistyminen */}
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

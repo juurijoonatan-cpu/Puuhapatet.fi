@@ -1209,7 +1209,7 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
             onSetObservation={setObservation}
             activeZone={view.activeZone}
             p2={view.p2 ? { enabled: view.p2.enabled, lockedKeys: view.p2.lockedKeys, payoutByKey: view.p2.payoutByKey } : null}
-            guided={guided ? { enabled: guided.enabled, activeFloor: guided.activeFloor, lockedFloors: guided.lockedFloors, nextKey: guided.nextKey } : null}
+            guided={guided ? { enabled: guided.enabled, activeFloor: guided.activeFloor, activeFloors: guided.activeFloors, lockedFloors: guided.lockedFloors, nextKey: guided.nextKey } : null}
             floorFocus={guided?.activeFloor ? { floor: guided.activeFloor, nonce: floorFocusNonce } : null}
           />
         )}

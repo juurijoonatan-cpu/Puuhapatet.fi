@@ -95,6 +95,7 @@ interface Props {
   guided?: {
     enabled: boolean;
     activeFloor: string | null;
+    activeFloors?: string[];
     lockedFloors: string[];
     nextKey: string | null;
   } | null;
@@ -604,7 +605,9 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
           <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.35)", padding: "0 6px 0 8px" }}>KRS</span>
           {floors.map((f) => {
             const gLocked = !!guided?.enabled && (guided.lockedFloors || []).includes(f);
-            const gActive = !!guided?.enabled && guided.activeFloor === f;
+            const gActive = !!guided?.enabled && (
+              guided.activeFloors?.length ? guided.activeFloors.includes(f) : guided.activeFloor === f
+            );
             const st = floorBtnStyle(f === floor);
             return (
               <button key={f} onClick={() => { setFloor(f); setActiveOrb(null); }}

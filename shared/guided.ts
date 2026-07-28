@@ -35,13 +35,19 @@ export interface GuidedWork {
   /** Founder toggle. Default OFF — when off, `computeGuided` returns a disabled
    *  state and the washing gate never blocks (the gig behaves exactly as before). */
   enabled: boolean;
-  /** Founder-pinned active floor. Honoured only while that floor still has unwashed
-   *  in-scope work; otherwise the active floor auto-advances. Null/absent = auto. */
+  /** Founder-pinned active floor (LEGACY single-floor mode). Honoured only while
+   *  that floor still has unwashed in-scope work; otherwise the active floor
+   *  auto-advances. Null/absent = auto. Ignored when `openFloors` is non-empty. */
   activeFloorOverride?: string | null;
+  /** Founder-opened floors (MULTI mode). When non-empty, EXACTLY these floors are
+   *  open for washing and every other floor is locked — a simple manual "open
+   *  floors 2 and 3" control. Empty/absent = legacy single-floor auto mode.
+   *  Within the open floors each worker is still guided nearest-neighbour. */
+  openFloors?: string[];
 }
 
 export function emptyGuidedWork(): GuidedWork {
-  return { enabled: false, activeFloorOverride: null };
+  return { enabled: false, activeFloorOverride: null, openFloors: [] };
 }
 
 // ─── Derived state ───────────────────────────────────────────────────────────
@@ -67,8 +73,12 @@ export interface GuidedNext {
 
 export interface GuidedState {
   enabled: boolean;
-  /** The single open floor, or null when nothing is in scope / everything is done. */
+  /** The floor THIS request is being guided to (the worker's own floor within the
+   *  open set), or null when nothing is in scope / everything open is done. */
   activeFloor: string | null;
+  /** ALL floors currently open for washing. One in legacy single-floor mode; the
+   *  founder-selected set in multi mode. The washing gate allows any of these. */
+  activeFloors: string[];
   /** True when `activeFloor` was pinned by the founder (a live override). */
   overrideActive: boolean;
   /** Floors AFTER-or-elsewhere that still have in-scope work and are locked shut. */
@@ -173,6 +183,24 @@ function lastWashedAnchor(
   return scan(false);
 }
 
+/** The floor of a worker's most recent wash among the given candidate floors, or
+ *  null. Used in multi-floor open mode to keep each worker on the floor they were
+ *  already working, so several workers spread across the open floors instead of
+ *  all being pulled to the same one. */
+function workerFloor(data: ProjectData, workerId: string, candidates: string[]): string | null {
+  const washedBy = data.washedBy || {};
+  const set = new Set(candidates);
+  for (const l of data.log) {
+    if (l.status !== "pesty") continue;
+    if (washedBy[l.key] !== workerId) continue;
+    const hash = l.key.indexOf("#");
+    if (hash <= 0) continue;
+    const f = l.key.slice(0, hash);
+    if (set.has(f)) return f;
+  }
+  return null;
+}
+
 /** Nearest-neighbor order from an anchor: kesken-first (never abandon a started
  *  window), then nearest by squared distance, then a stable y/x/key tiebreak —
  *  so the worker is sent to the adjacent window, not across the building. */
@@ -216,20 +244,36 @@ export function computeGuided(data: ProjectData, opts?: { anchorWorkerId?: strin
     return t.inScope > 0 && t.washed < t.inScope;
   }) ?? null;
 
-  // Founder override wins only while it names a real floor that still has work.
-  const override = data.guided?.activeFloorOverride ?? null;
-  const overrideValid =
-    !!override &&
-    floors.includes(override) &&
-    (() => { const t = byFloor.get(override); return !!t && t.inScope > 0 && t.washed < t.inScope; })();
-
-  const activeFloor = !enabled ? null : (overrideValid ? override! : firstIncomplete);
-  const overrideActive = enabled && overrideValid;
+  // ── The OPEN SET of floors ──────────────────────────────────────────────────
+  // MULTI mode: the founder has explicitly opened one or more floors → EXACTLY
+  // those are open, everything else locked, no auto-advance (the founder opens
+  // the next floors when ready). LEGACY mode (openFloors empty): a single active
+  // floor that auto-advances, optionally pinned by activeFloorOverride.
+  const openSel = Array.isArray(data.guided?.openFloors)
+    ? floors.filter((f) => data.guided!.openFloors!.includes(f))   // building order, valid only
+    : [];
+  let activeFloors: string[];
+  let overrideActive = false;
+  if (!enabled) {
+    activeFloors = [];
+  } else if (openSel.length) {
+    activeFloors = openSel;
+  } else {
+    const override = data.guided?.activeFloorOverride ?? null;
+    const overrideValid =
+      !!override &&
+      floors.includes(override) &&
+      (() => { const t = byFloor.get(override); return !!t && t.inScope > 0 && t.washed < t.inScope; })();
+    overrideActive = overrideValid;
+    const single = overrideValid ? override! : firstIncomplete;
+    activeFloors = single ? [single] : [];
+  }
+  const activeSet = new Set(activeFloors);
 
   const floorProgress: GuidedFloorProgress[] = floors.map((f) => {
     const t = byFloor.get(f)!;
     const remaining = t.inScope - t.washed;
-    const active = enabled && activeFloor === f;
+    const active = enabled && activeSet.has(f);
     return {
       floor: f,
       inScope: t.inScope,
@@ -243,18 +287,32 @@ export function computeGuided(data: ProjectData, opts?: { anchorWorkerId?: strin
 
   const lockedFloors = floorProgress.filter((fp) => fp.locked).map((fp) => fp.floor);
 
-  // Open keys + the single next window, from the active floor's unwashed windows.
+  // The floor THIS worker is guided to: an open floor that still has work,
+  // preferring the worker's own most-recent wash floor so several workers on
+  // different open floors each stay in their area (and one worker finishes a
+  // floor before moving to the next open one).
+  const openWithWork = activeFloors.filter((f) => {
+    const t = byFloor.get(f)!;
+    return t.inScope - t.washed > 0;
+  });
+  let guideFloor: string | null = null;
+  if (enabled && openWithWork.length) {
+    const wf = opts?.anchorWorkerId ? workerFloor(data, opts.anchorWorkerId, openWithWork) : null;
+    guideFloor = wf ?? openWithWork[0];
+  }
+  const activeFloor = guideFloor;
+
+  // Open keys + the next window, from the guide floor's unwashed windows.
   // Efficiency: guide to the window PHYSICALLY NEAREST the one the worker just
   // finished on this floor — not the top-left corner — so they move to the
   // adjacent window instead of being thrown across the building. The anchor is
-  // the most recently washed in-scope window on the active floor; with nothing
-  // washed yet we start at the top-left corner (sweepOrder) and each subsequent
-  // wash pulls the next pick toward it. Started (kesken) windows always win.
+  // the most recently washed in-scope window on the floor; with nothing washed
+  // yet we start at the top-left corner (sweepOrder). Started (kesken) win.
   let openKeys: string[] = [];
   let next: GuidedNext | null = null;
-  if (enabled && activeFloor) {
-    const onActive = pts.filter((p) => p.floor === activeFloor && p.status !== "pesty");
-    const anchor = lastWashedAnchor(data, activeFloor, pts, opts?.anchorWorkerId);
+  if (enabled && guideFloor) {
+    const onActive = pts.filter((p) => p.floor === guideFloor && p.status !== "pesty");
+    const anchor = lastWashedAnchor(data, guideFloor, pts, opts?.anchorWorkerId);
     const ordered = anchor
       ? onActive.slice().sort((a, b) => nearestOrder(a, b, anchor))
       : onActive.slice().sort(sweepOrder);
@@ -265,11 +323,12 @@ export function computeGuided(data: ProjectData, opts?: { anchorWorkerId?: strin
     }
   }
 
-  const remainingOnActive = activeFloor ? (byFloor.get(activeFloor)!.inScope - byFloor.get(activeFloor)!.washed) : 0;
+  const remainingOnActive = guideFloor ? (byFloor.get(guideFloor)!.inScope - byFloor.get(guideFloor)!.washed) : 0;
 
   return {
     enabled,
     activeFloor,
+    activeFloors,
     overrideActive,
     lockedFloors,
     openKeys,
@@ -295,11 +354,11 @@ export function computeGuided(data: ProjectData, opts?: { anchorWorkerId?: strin
 export function isGuidedBlocked(data: ProjectData, key: string): boolean {
   if (data.guided?.enabled !== true) return false;
   const g = computeGuided(data);
-  if (!g.activeFloor) return false;
+  if (!g.activeFloors.length) return false;   // nothing open / all in-scope done
   const hash = key.indexOf("#");
   if (hash <= 0) return false;
   const floor = key.slice(0, hash);
-  return floor !== g.activeFloor;
+  return !g.activeFloors.includes(floor);      // washable only on an OPEN floor
 }
 
 // ─── Sanitisation (server-side validation) ─────────────────────────────────────
@@ -308,9 +367,16 @@ export function isGuidedBlocked(data: ProjectData, key: string): boolean {
 export function sanitizeGuidedWork(input: any): GuidedWork | undefined {
   if (!input || typeof input !== "object") return undefined;
   const override = input.activeFloorOverride;
+  const rawOpen = input.openFloors;
+  const openFloors = Array.isArray(rawOpen)
+    ? Array.from(new Set(
+        rawOpen.filter((f: any) => typeof f === "string" && f.trim()).map((f: string) => f.slice(0, 8)),
+      )).slice(0, 32)
+    : [];
   return {
     enabled: input.enabled === true,
     activeFloorOverride:
       typeof override === "string" && override.trim() ? override.slice(0, 8) : null,
+    openFloors,
   };
 }

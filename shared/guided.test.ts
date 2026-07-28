@@ -332,11 +332,11 @@ describe("sanitizeGuidedWork", () => {
 
   it("normalisoi enabled + override", () => {
     expect(sanitizeGuidedWork({ enabled: true, activeFloorOverride: "3" }))
-      .toEqual({ enabled: true, activeFloorOverride: "3" });
+      .toEqual({ enabled: true, activeFloorOverride: "3", openFloors: [] });
     expect(sanitizeGuidedWork({ enabled: "yes" }))
-      .toEqual({ enabled: false, activeFloorOverride: null });
+      .toEqual({ enabled: false, activeFloorOverride: null, openFloors: [] });
     expect(sanitizeGuidedWork({ enabled: true, activeFloorOverride: "" }))
-      .toEqual({ enabled: true, activeFloorOverride: null });
+      .toEqual({ enabled: true, activeFloorOverride: null, openFloors: [] });
   });
 
   it("leikkaa liian pitkän override-arvon", () => {
@@ -344,7 +344,78 @@ describe("sanitizeGuidedWork", () => {
     expect(g.activeFloorOverride!.length).toBe(8);
   });
 
+  it("normalisoi openFloors: dedup, suodattaa roskan, leikkaa pituuden", () => {
+    const g = sanitizeGuidedWork({ enabled: true, openFloors: ["1", "2", "2", "", 123, "toolongfloorname"] })!;
+    expect(g.openFloors).toEqual(["1", "2", "toolongf"]);
+  });
+
   it("emptyGuidedWork on disabloitu", () => {
-    expect(emptyGuidedWork()).toEqual({ enabled: false, activeFloorOverride: null });
+    expect(emptyGuidedWork()).toEqual({ enabled: false, activeFloorOverride: null, openFloors: [] });
+  });
+});
+
+// ─── Monivalinta: avaa useita kerroksia (multi-floor open) ──────────────────────
+
+/** 2 floors, 2 red windows each — clean fixture for multi-open guidance. */
+function twoFloorFixture(): ProjectData {
+  const d = emptyProjectData();
+  d.building.floors = ["1", "2"];
+  d.marks = {
+    "1": { marks: [{ p: 1, x: 10, y: 10 }, { p: 1, x: 90, y: 90 }] }, // 1#0, 1#1
+    "2": { marks: [{ p: 1, x: 10, y: 10 }, { p: 1, x: 90, y: 90 }] }, // 2#0, 2#1
+  };
+  d.guided = { enabled: true, activeFloorOverride: null, openFloors: ["1", "2"] };
+  return d;
+}
+
+describe("computeGuided — avaa useita kerroksia (openFloors)", () => {
+  it("vain valitut kerrokset ovat auki, muut lukossa", () => {
+    const d = fixture();
+    d.guided = { enabled: true, activeFloorOverride: null, openFloors: ["1", "2"] };
+    const g = computeGuided(d);
+    expect(g.activeFloors).toEqual(["1", "2"]);
+    expect(isGuidedBlocked(d, "K#0")).toBe(true);  // K ei ole auki
+    expect(isGuidedBlocked(d, "1#0")).toBe(false);
+    expect(isGuidedBlocked(d, "2#0")).toBe(false);
+    const kProg = g.floorProgress.find((f) => f.floor === "K")!;
+    expect(kProg.locked).toBe(true);
+    expect(kProg.active).toBe(false);
+  });
+
+  it("monivalinta ohittaa automaattisen rakennusjärjestyksen", () => {
+    const d = fixture();
+    d.guided = { enabled: true, activeFloorOverride: null, openFloors: ["2"] };
+    // Auto valitsisi K:n (ensimmäinen kesken), mutta founder avasi vain 2:n.
+    expect(isGuidedBlocked(d, "K#0")).toBe(true);
+    expect(isGuidedBlocked(d, "1#0")).toBe(true);
+    expect(isGuidedBlocked(d, "2#0")).toBe(false);
+    expect(computeGuided(d).activeFloors).toEqual(["2"]);
+  });
+
+  it("per-tekijä ohjaus: kukin jatkaa OMALLA avoimella kerroksellaan", () => {
+    const d = twoFloorFixture();
+    // A pesi 1#0, B pesi 2#0 (logi + washedBy).
+    d.statuses["1#0"] = "pesty"; d.washedBy["1#0"] = "A";
+    d.log.unshift({ floor: "1", key: "1#0", p: 1, status: "pesty", ts: 2 });
+    d.statuses["2#0"] = "pesty"; d.washedBy["2#0"] = "B";
+    d.log.unshift({ floor: "2", key: "2#0", p: 1, status: "pesty", ts: 3 });
+
+    const ga = computeGuided(d, { anchorWorkerId: "A" });
+    expect(ga.activeFloors).toEqual(["1", "2"]); // molemmat auki portille
+    expect(ga.activeFloor).toBe("1");            // A:ta ohjataan omalle kerrokselle
+    expect(ga.nextKey).toBe("1#1");
+
+    const gb = computeGuided(d, { anchorWorkerId: "B" });
+    expect(gb.activeFloor).toBe("2");
+    expect(gb.nextKey).toBe("2#1");
+  });
+
+  it("tyhjä openFloors → automaattinen (legacy) tila ennallaan", () => {
+    const d = fixture();
+    d.guided = { enabled: true, activeFloorOverride: null, openFloors: [] };
+    const g = computeGuided(d);
+    expect(g.activeFloor).toBe("K");            // auto: ensimmäinen kesken
+    expect(g.activeFloors).toEqual(["K"]);
+    expect(isGuidedBlocked(d, "1#0")).toBe(true);
   });
 });

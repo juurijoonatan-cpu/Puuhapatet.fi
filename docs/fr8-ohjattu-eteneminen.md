@@ -27,9 +27,20 @@ Vain kytkin + kerroksen ohitus talletetaan; kaikki muu JOHDETAAN kartasta.
 ```ts
 interface GuidedWork {
   enabled: boolean;                    // founder-kytkin, oletus false
-  activeFloorOverride?: string | null; // pakotettu kerros; voimassa vain jos siellä on työtä
+  activeFloorOverride?: string | null; // (legacy) pakotettu kerros automaattitilassa
+  openFloors?: string[];               // MONIVALINTA: kun ≥1, VAIN nämä auki, muut lukossa
 }
 ```
+
+**Kaksi tilaa:**
+- **Automaattinen** (`openFloors` tyhjä/puuttuu): yksi kerros kerrallaa, etenee
+  itsestään rakennusjärjestyksessä; `activeFloorOverride` voi pakottaa yhden.
+- **Manuaalinen monivalinta** (`openFloors` ≥ 1): founder avaa tasan valitsemansa
+  kerrokset (esim. `["2","3"]`) — juuri ne ovat auki, kaikki muut lukossa, EI
+  automaattista etenemistä. Portti sallii minkä tahansa avoimen kerroksen; kunkin
+  tekijän "Seuraavaksi" ohjaa lähimpään ikkunaan **omalla** avoimella kerroksellaan
+  (`workerFloor` → tekijän viimeisin pesu avoimista kerroksista), joten usea tekijä
+  hajaantuu eri avoimille kerroksille.
 
 Johdettu tila (`computeGuided(data): GuidedState`) on **puhdas funktio** kartan +
 p2-tilan yli — mitään ei tallenneta:
@@ -37,9 +48,10 @@ p2-tilan yli — mitään ei tallenneta:
 ```ts
 interface GuidedState {
   enabled: boolean;
-  activeFloor: string | null;   // ainoa auki oleva kerros (null = ei työtä / kaikki valmis)
+  activeFloor: string | null;   // TÄMÄN tekijän ohjauskerros (null = ei työtä / kaikki valmis)
+  activeFloors: string[];       // KAIKKI auki olevat kerrokset (portti sallii nämä)
   overrideActive: boolean;      // aktiivinen kerros tuli founderin pakotuksesta
-  lockedFloors: string[];       // kerrokset joilla on työtä mutta jotka eivät ole aktiivisia
+  lockedFloors: string[];       // kerrokset joilla on työtä mutta jotka eivät ole auki
   openKeys: string[];           // piirissä + aktiivisella kerroksella + pesemättä
   nextKey: string | null;       // yksi seuraava ikkuna ("Seuraavaksi"-kortti)
   next: GuidedNext | null;      // {key,floor,p,x,y,status}
@@ -88,9 +100,10 @@ että clientissä (admin `computeGuided`), joten pesuportti ja UI eivät voi ero
 ## Pesuportti (server)
 
 `POST /api/crew/:token/window` (server/routes.ts): kun `guided.enabled` ja ikkunan
-kerros **ei ole aktiivinen kerros**, merkintä (`pesty`/`kesken`) estetään
-**403**:lla selkokielisellä viestillä ("Tämä kerros on vielä lukossa…"). Portti
-tulee P2-pesuportin JÄLKEEN, joten molemmat pätevät. Rajat:
+kerros **ei ole avoin** (`!activeFloors.includes(floor)` — yksi kerros automaatti-
+tilassa, tai founderin avaama joukko monivalintatilassa), merkintä
+(`pesty`/`kesken`) estetään **403**:lla selkokielisellä viestillä ("Tämä kerros on
+vielä lukossa…"). Portti tulee P2-pesuportin JÄLKEEN, joten molemmat pätevät. Rajat:
 
 - **Tyhjennys (`"ei"`) sallitaan aina** — virheen voi perua. Tyhjennys aiemmalta
   kerrokselta tekee siitä taas aktiivisen (auto-eteneminen), jolloin sen voi pestä
@@ -106,9 +119,9 @@ palauttaa `false` aina kun guided on pois tai aktiivista kerrosta ei ole.
 Kuten p2, `guided` on serverin omistama: geneeriset tallennukset
 (`PATCH /api/jobs/:id/project`, `saveProject`) EIVÄT ota `guided`ia clientiltä —
 serveri liittää talletetun kopion takaisin. Ainoa mutaatioreitti on
-**`POST /api/jobs/:id/guided`** `{enabled?, activeFloorOverride?}` (admin-suojattu,
-override validoidaan rakennuksen kerroksia vasten). Näin karttamuokkaus tai
-tekijän merkintä ei voi vahingossa muuttaa ohjausasetusta.
+**`POST /api/jobs/:id/guided`** `{enabled?, activeFloorOverride?, openFloors?}`
+(admin-suojattu; override JA openFloors validoidaan rakennuksen kerroksia vasten).
+Näin karttamuokkaus tai tekijän merkintä ei voi vahingossa muuttaa ohjausasetusta.
 
 ## Näkymät
 

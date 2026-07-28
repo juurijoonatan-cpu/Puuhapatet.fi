@@ -124,6 +124,7 @@ export interface WorkerView {
 export interface GuidedWorkerView {
   enabled: boolean;
   activeFloor: string | null;
+  activeFloors: string[];
   lockedFloors: string[];
   openKeys: string[];
   nextKey: string | null;
@@ -1078,7 +1079,7 @@ export const api = {
     request<{ ok: boolean; gigData: GigData }>("POST", `/api/jobs/${jobId}/gig/invoice/undo`, {}),
 
   // ─── Ohjattu eteneminen (guided) — perustajan kytkin + kerroksen ohitus ─────
-  guidedSet: (jobId: number, data: { enabled?: boolean; activeFloorOverride?: string | null }) =>
+  guidedSet: (jobId: number, data: { enabled?: boolean; activeFloorOverride?: string | null; openFloors?: string[] }) =>
     request<{ ok: boolean; guided: GuidedWork; guidedState: GuidedState }>(
       "POST", `/api/jobs/${jobId}/guided`, data,
     ),

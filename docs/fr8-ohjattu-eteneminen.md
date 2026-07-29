@@ -141,8 +141,12 @@ Näin karttamuokkaus tai tekijän merkintä ei voi vahingossa muuttaa ohjausaset
   -napin (hyppää kerrokselle ja korostaa seuraavan ikkunan sykkivällä renkaalla).
   **Diskreetti kartta**: tavallinen tekijä näkee floor-selectorissa VAIN avoimet
   kerrokset (`FloorView restrictFloors = activeFloors`); muut piilotettu kokonaan,
-  jottei näy "kaikki vapaana". Monivalintatilassa "Auki: 2. ja 3. kerros". Perustajat
-  (`role "host"` / `FOUNDER_IDS`) näkevät ja pesevät kaikki kerrokset (`restrictFloors=null`).
+  jottei näy "kaikki vapaana". Monivalintatilassa "Auki: 2. ja 3. kerros". `GuidedCard`
+  myös **nimeää lukitut kerrokset** ("🔒 Lukossa: 1., 4. kerros — avautuvat kun avoimet
+  pesty / perustaja avaa"), jottei tekijä ihmettele minne kerrokset katosivat.
+  Perustajat (`role "host"` / `FOUNDER_IDS`) näkevät ja pesevät kaikki kerrokset
+  (`restrictFloors=null`). Tekijä näkyy aina itse "Tiimin kärki" -listassa (oma rivi
+  kiinnitetään, vaikka sijoitus olisi top-8:n ulkopuolella).
 - Data tekijälle: `workerView.guided` (server) = `{enabled, activeFloor,
   lockedFloors, openKeys, nextKey, next, remainingOnActive, allComplete,
   floorProgress}`. Puhtaasti johdettua ohjaustietoa — **ei rahaa** (turvallista

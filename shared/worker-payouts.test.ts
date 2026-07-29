@@ -164,6 +164,22 @@ describe("computeWorkerSettlements — punaiset ja keltaiset erillään", () => 
     expect(withT.find((r) => r.workerId === "milja")?.trainee).toBe(true);
   });
 
+  it("harjoittelijan palkka on hänen omansa, ei vastuujohtajan", () => {
+    // Milja 20 punaista × 20 € = 400 €. Se on HÄNEN palkkansa; Matiaksen luvut
+    // eivät sisällä sitä (project.tsx earningsFor laskee vain oman washedP1:n).
+    // Maksulistalla häntä ei ole, koska vastuujohtaja tilittää.
+    const p = projectWith({
+      workerId: "milja", red: 20, yellow: 0,
+      crew: [member({ id: "milja", name: "Milja Pitkänen" }), member({ id: "matias", role: "host" })],
+    });
+    const [row] = computeWorkerSettlements(p, { includeTrainees: true });
+    expect(row.workerId).toBe("milja");
+    expect(row.p1EarnedCents).toBe(400_00);
+    expect(row.trainee).toBe(true);
+    // Matias ei ole tekijälistalla lainkaan (perustaja).
+    expect(computeWorkerSettlements(p, { includeTrainees: true }).map((r) => r.workerId)).toEqual(["milja"]);
+  });
+
   it("harjoittelijalle jo maksettu näkyy kirjattuna, ei avoimena velkana", () => {
     // Milja: 20 punaista × 20 € = 400 €, joka on jo maksettu ja kirjattu.
     // Hän ei ole maksulistalla lainkaan; kirjaus on kirjanpitoa varten ja se

@@ -863,6 +863,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                 const isDragging = dragging === pt.key;
                 return (
                   <button key={pt.key}
+                    data-fr8-dot
                     style={orbStyle(pt, status, isDragging)}
                     onClick={(e) => onOrbClick(pt, e)}
                     onPointerDown={(e) => onOrbPointerDown(pt, e)}

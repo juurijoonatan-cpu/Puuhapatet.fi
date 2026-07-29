@@ -548,10 +548,14 @@
 
 /* Osumakoko: dashin napit olivat 28–34 px korkeita, mikä on alle Applen ja
    Googlen 44 px minimin — kapea nappi + sormen kosketusalue = "ei osu".
-   Tämä nostaa kaikki fr8-napit vähintään osumakelpoisiksi ilman että ulkoasu
-   muuttuu (padding ei kasva, vain minimikorkeus). Karttapisteet ja pienet
-   ikonikahvat rajataan ulos: niissä tarkkuus on tarkoituksellinen. */
-.fr8-root button:not([data-fr8-dot]):not([aria-label="Sulje"]) {
+   Tämä nostaa fr8-napit osumakelpoisiksi ilman että ulkoasu muuttuu (padding ei
+   kasva, vain minimikorkeus).
+   TÄRKEÄ RAJAUS: sääntö koskee VAIN dashin ja Maksut-välilehden nappeja
+   (data-fr8-pane). Aiemmin se osui myös kartan pisteisiin, jotka ovat 9–13 px
+   pyöreitä <button>eja — min-height venytti ne kapseleiksi ("napit näyttää
+   lieriöiltä"). Kartta jää kokonaan sääntöjen ulkopuolelle: siellä tarkkuus on
+   tarkoituksellinen, ja pisteillä on oma kosketusalue. */
+[data-fr8-pane] button:not([data-fr8-dot]) {
   min-height: 40px;
 }
 
@@ -635,13 +639,43 @@
 .fr8-root .anim-fadeUp-7 { animation: fr8-fadeUp 0.5s ease 0.35s both; }
 .fr8-root .anim-fadeUp-8 { animation: fr8-fadeUp 0.5s ease 0.4s both; }
 .fr8-root .anim-drift    { animation: fr8-drift 14s ease-in-out infinite; }
-/* fr8-fadeUp käyttää `both`-täyttöä, joten ENNEN animaation alkua (0,05–0,4 s
-   viive) elementti on translateY(12px):ssä. Jos animaatiot ovat pois päältä tai
-   eivät käynnisty, se jää sinne pysyvästi — sisältö näkyy alempana kuin sen
-   osumaruutu. Reduced-motionilla ei siis animoida lainkaan. */
-@media (prefers-reduced-motion: reduce) {
-  .fr8-root [class*="anim-fadeUp-"] { animation: none !important; transform: none !important; opacity: 1 !important; }
+/* NAPPI EI OSU -BUGIN JUURISYY (sisääntuloanimaatio).
+
+   `fr8-fadeUp` on `translateY(12px) → 0` ja käyttää `animation-fill-mode: both`
+   0,05–0,4 s viiveellä. Ennen animaation alkua — ja PYSYVÄSTI jos animaatio ei
+   koskaan käynnisty tai kompositori luovuttaa (iOS tekee näin raskaassa
+   fixed+blur-puussa) — elementti jää `translateY(12px)`:ään. Silloin nappi
+   PIIRRETÄÄN 12 px alempana kuin sen osumaruutu on, ja koska animoituja tasoja
+   on sisäkkäin (Section + sisäkortti + rivi), siirtymä kertyy ~36 px:ään eli
+   noin senttiin: "pitää painaa 1 cm napin yläpuolelta".
+
+   Puhelimessa ja reduced-motionilla animaatio jätetään siis kokonaan pois.
+   Se on pelkkä koriste; toimiva nappi voittaa. Työpöydällä (hover + fine
+   pointer) animaatio jää, koska siellä se toimii luotettavasti. */
+@media (prefers-reduced-motion: reduce), (max-width: 767px), (pointer: coarse) {
+  .fr8-root [class*="anim-fadeUp-"] {
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
   .fr8-root .anim-drift { animation: none !important; }
+}
+
+/* NAPPI EI OSU -BUGIN TOINEN MEKANISMI (fixed-kuori + sivun vieritys).
+
+   iOS Safari piirtää `position: fixed` -elementit visuaalisen viewportin mukaan
+   mutta osumatestaa layout-viewportin mukaan. Heti kun dokumentti on vierittynyt
+   (myös pelkästä osoitepalkin piilottamisesta tai kumiefektistä), nämä kaksi
+   eroavat toisistaan juuri vierityksen verran — sama oire.
+
+   `fr8-lock` lukitaan <html>-tagiin niin kauan kuin musta kuori on auki: kun
+   dokumentti ei voi vierittyä, scrollY pysyy nollassa ja koordinaatistot ovat
+   samat. Sisäinen vieritys tapahtuu .fr8-rootin sisällä, joten mitään ei menetetä. */
+html.fr8-lock,
+html.fr8-lock body {
+  overflow: hidden !important;
+  height: 100%;
+  overscroll-behavior: none;
 }
 
 .fr8-root .floor-row-btn {

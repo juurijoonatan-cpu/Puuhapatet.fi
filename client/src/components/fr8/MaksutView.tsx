@@ -189,7 +189,7 @@ export default function MaksutView({ jobId, project, billing, onOpenGig }: {
   const totals = useMemo(() => sumWorkerSettlements(payable), [payable]);
 
   return (
-    <div style={{ height: "100%", overflowY: "auto", padding: "20px 16px 40px", maxWidth: 860, margin: "0 auto", width: "100%" }}>
+    <div data-fr8-pane style={{ height: "100%", overflowY: "auto", padding: "20px 16px 40px", maxWidth: 860, margin: "0 auto", width: "100%" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <div>
           <h1 style={{ margin: 0, fontFamily: FONT, fontSize: 20, fontWeight: 800, color: "#fff" }}>Maksut</h1>

@@ -4397,6 +4397,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           enabled: proj.p2.enabled,
           termsAccepted: !!proj.p2.terms,
           termsAcceptorName: proj.p2.terms?.acceptorName ?? null,
+          termsAcceptedAt: proj.p2.terms?.acceptedAt ?? null,
           termsText: proj.p2.termsText ?? null,
           offers: Object.fromEntries(Object.entries(proj.p2.offers).map(([k, o]) => [k, {
             status: o.status,
@@ -5408,6 +5409,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       enabled: p2.enabled,
       termsAccepted: !!p2.terms,
       termsAcceptorName: p2.terms?.acceptorName ?? null,
+      termsAcceptedAt: p2.terms?.acceptedAt ?? null,
       termsText: p2.termsText ?? null,
       offers: Object.fromEntries(Object.entries(p2.offers).map(([k, o]) => [k, {
         status: o.status, priceCents: o.priceCents, counterCents: o.counterCents ?? null,

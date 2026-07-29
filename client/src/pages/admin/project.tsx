@@ -1006,6 +1006,16 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
             <span style={{ fontSize: "11.5px", color: "#9ff0bd" }}>P1 (punaiset) on valmis — aika siirtyä keltaisiin ✨</span>
           )}
         </div>
+        {/* Tilausehtojen hyväksyntä: onko asiakas allekirjoittanut keltaisten
+            sopimusehdot (kertaluontoinen). Näkyy perustajalle täällä, ettei
+            tarvitse avata asiakaslinkkiä tarkistaakseen. */}
+        {p2?.enabled && (
+          <div style={{ fontSize: "12px", lineHeight: 1.5, color: p2?.terms ? "#9ff0bd" : "rgba(255,255,255,0.55)" }}>
+            {p2?.terms
+              ? `✓ Asiakas on hyväksynyt tilausehdot — ${p2.terms.acceptorName}${p2.terms.acceptedAt ? `, ${new Date(p2.terms.acceptedAt).toLocaleDateString("fi-FI")}` : ""}. Yksittäiset ikkunahyväksynnät kirjautuvat lisäksi lokiin.`
+              : "Asiakas ei ole vielä hyväksynyt tilausehtoja — hän tekee sen kerran ennen ensimmäistä hinnan hyväksyntää (sen jälkeen ehtoja ei kysytä uudelleen)."}
+          </div>
+        )}
         {/* Tekijän palkkiotaulukko on ENSISIJAINEN: kiinteä palkkio per ikkunan
             hinta (34→18, 37,50→20, 50→27). %-osuus on vain fallback muille
             hinnoille, ja se on siirretty muokkaimen sisään pois pääpaikalta. */}

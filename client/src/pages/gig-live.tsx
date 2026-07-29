@@ -311,7 +311,14 @@ export default function GigLivePage() {
                 PRIORITY 2
               </span>
               {p2!.termsAccepted && (
-                <span style={{ marginLeft: "auto", fontSize: 11.5, color: T.muted }}>Ehdot hyväksytty · {p2!.termsAcceptorName}</span>
+                <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 700, color: "#3E7C59", background: "rgba(62,124,89,0.1)", border: "1px solid rgba(62,124,89,0.3)", borderRadius: 999, padding: "3px 9px" }}>
+                    ✓ Ehdot hyväksytty{p2!.termsAcceptorName ? ` · ${p2!.termsAcceptorName}` : ""}{p2!.termsAcceptedAt ? ` · ${fmtDate(p2!.termsAcceptedAt)}` : ""}
+                  </span>
+                  <button onClick={() => { setTermsError(null); setTermsOpen(true); }} style={{ border: "none", background: "transparent", color: T.navy, fontFamily: FONT, fontSize: 11.5, fontWeight: 700, cursor: "pointer", textDecoration: "underline", padding: 0 }}>
+                    Näytä sopimusehdot
+                  </button>
+                </span>
               )}
             </div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginTop: 6 }}>
@@ -501,39 +508,57 @@ export default function GigLivePage() {
               Lue koko sopimus (PDF) <span style={{ color: T.muted, fontWeight: 500 }}>· avautuu uuteen välilehteen</span>
             </a>
 
-            <label htmlFor="p2-terms-name" style={{ display: "block", margin: "14px 0 6px", fontSize: 12, fontWeight: 600, color: T.muted, flexShrink: 0 }}>Nimenselvennys</label>
-            <input
-              id="p2-terms-name"
-              value={termsName}
-              onChange={(e) => setTermsName(e.target.value)}
-              placeholder="Etunimi Sukunimi"
-              autoFocus
-              style={{ width: "100%", boxSizing: "border-box", padding: "11px 12px", borderRadius: 10, border: `1px solid ${T.hair}`, fontFamily: FONT, fontSize: 14, flexShrink: 0 }}
-            />
+            {/* Jos ehdot on jo hyväksytty, dialogi on VAIN katselua varten: näytä
+                hyväksynnän leima (nimi + aikaleima) eikä uutta lomaketta. */}
+            {p2?.termsAccepted ? (
+              <>
+                <div style={{ margin: "14px 0 0", padding: "11px 13px", borderRadius: 10, background: "rgba(62,124,89,0.08)", border: "1px solid rgba(62,124,89,0.28)", fontSize: 13, color: "#2f6a45", lineHeight: 1.55, flexShrink: 0 }}>
+                  ✓ Tilausehdot hyväksytty{p2.termsAcceptorName ? ` — ${p2.termsAcceptorName}` : ""}{p2.termsAcceptedAt ? `, ${fmtDate(p2.termsAcceptedAt)}` : ""}. Jokainen ikkunakohtainen hinnan hyväksyntä kirjataan lisäksi erikseen.
+                </div>
+                <button
+                  onClick={() => setTermsOpen(false)}
+                  style={{ marginTop: 14, width: "100%", padding: "11px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, color: T.ink, fontFamily: FONT, fontSize: 13.5, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}
+                >
+                  Sulje
+                </button>
+              </>
+            ) : (
+              <>
+                <label htmlFor="p2-terms-name" style={{ display: "block", margin: "14px 0 6px", fontSize: 12, fontWeight: 600, color: T.muted, flexShrink: 0 }}>Nimenselvennys</label>
+                <input
+                  id="p2-terms-name"
+                  value={termsName}
+                  onChange={(e) => setTermsName(e.target.value)}
+                  placeholder="Etunimi Sukunimi"
+                  autoFocus
+                  style={{ width: "100%", boxSizing: "border-box", padding: "11px 12px", borderRadius: 10, border: `1px solid ${T.hair}`, fontFamily: FONT, fontSize: 14, flexShrink: 0 }}
+                />
 
-            {/* Selkeä suostumus: rasti + selite että hyväksyntä kirjataan. */}
-            <label style={{ display: "flex", alignItems: "flex-start", gap: 9, marginTop: 12, fontSize: 12.5, lineHeight: 1.5, color: T.ink, cursor: "pointer", flexShrink: 0 }}>
-              <input type="checkbox" checked={termsChecked} onChange={(e) => setTermsChecked(e.target.checked)} style={{ width: 17, height: 17, marginTop: 1, accentColor: T.navy, flexShrink: 0, cursor: "pointer" }} />
-              <span>Olen lukenut ja hyväksyn Priority 2 -tilausehdot. Hyväksyntä kirjataan nimelläni ja aikaleimalla.</span>
-            </label>
+                {/* Selkeä suostumus: rasti + selite että hyväksyntä kirjataan. */}
+                <label style={{ display: "flex", alignItems: "flex-start", gap: 9, marginTop: 12, fontSize: 12.5, lineHeight: 1.5, color: T.ink, cursor: "pointer", flexShrink: 0 }}>
+                  <input type="checkbox" checked={termsChecked} onChange={(e) => setTermsChecked(e.target.checked)} style={{ width: 17, height: 17, marginTop: 1, accentColor: T.navy, flexShrink: 0, cursor: "pointer" }} />
+                  <span>Olen lukenut ja hyväksyn Priority 2 -tilausehdot. Hyväksyntä kirjataan nimelläni ja aikaleimalla.</span>
+                </label>
 
-            {termsError && <p style={{ margin: "10px 0 0", fontSize: 12.5, color: "#B4231F", flexShrink: 0 }}>{termsError}</p>}
-            <div style={{ display: "flex", gap: 8, marginTop: 16, flexShrink: 0 }}>
-              <button
-                disabled={termsBusy}
-                onClick={() => setTermsOpen(false)}
-                style={{ flex: 1, padding: "11px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, color: T.ink, fontFamily: FONT, fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}
-              >
-                Peruuta
-              </button>
-              <button
-                disabled={termsBusy || !termsName.trim() || !termsChecked}
-                onClick={() => void acceptTerms()}
-                style={{ flex: 2, padding: "11px", borderRadius: 10, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: (termsBusy || !termsName.trim() || !termsChecked) ? "not-allowed" : "pointer", opacity: (termsBusy || !termsName.trim() || !termsChecked) ? 0.5 : 1 }}
-              >
-                {termsBusy ? "Hyväksytään…" : "Hyväksyn ehdot"}
-              </button>
-            </div>
+                {termsError && <p style={{ margin: "10px 0 0", fontSize: 12.5, color: "#B4231F", flexShrink: 0 }}>{termsError}</p>}
+                <div style={{ display: "flex", gap: 8, marginTop: 16, flexShrink: 0 }}>
+                  <button
+                    disabled={termsBusy}
+                    onClick={() => setTermsOpen(false)}
+                    style={{ flex: 1, padding: "11px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, color: T.ink, fontFamily: FONT, fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}
+                  >
+                    Peruuta
+                  </button>
+                  <button
+                    disabled={termsBusy || !termsName.trim() || !termsChecked}
+                    onClick={() => void acceptTerms()}
+                    style={{ flex: 2, padding: "11px", borderRadius: 10, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: (termsBusy || !termsName.trim() || !termsChecked) ? "not-allowed" : "pointer", opacity: (termsBusy || !termsName.trim() || !termsChecked) ? 0.5 : 1 }}
+                  >
+                    {termsBusy ? "Hyväksytään…" : "Hyväksyn ehdot"}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </>
       )}

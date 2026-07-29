@@ -3,6 +3,8 @@
  * Adds a per-worker "TEKIJÄT" strip (window counts + €/h optimisation).
  */
 import { allPoints, computeDealBilling, checkWindowAttribution, type ProjectData, type WindowStatus, type WorkerStat, type FixedDeal } from "@shared/project";
+import { computeP2Billing } from "@shared/p2";
+import type { GigBillingState } from "@/lib/api";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useState, useEffect } from "react";
 import Section from "./Section";
@@ -26,18 +28,25 @@ interface Props {
   traineeShareByLeader?: Record<string, { name: string; washed: number; cents: number }[]>;
   /** Per-founder (boss) earnings breakdown — own work + profit share from the
    *  workers' windows. Only set for a signed deal; drives the "bossien ansiot" card. */
-  founderEarnings?: { id: string; name: string; ownWashed: number; ownCents: number; shareCents: number; totalCents: number; manual: boolean; hours: number }[];
-  /** Total paid to the real workers (labour cost) — the other side of the margin. */
+  founderEarnings?: { id: string; name: string; ownWashed: number; ownCents: number; shareCents: number; p2Cents?: number; p2Washed?: number; totalCents: number; manual: boolean; hours: number }[];
+  /** Total paid to the real workers for RED windows (labour cost) — the other side
+   *  of the red contract margin. Keltaisten tekijäkulu on erikseen alla. */
   workerLaborCents?: number;
+  /** Työntekijöiden KELTAISISTA (2. vaihe) kertynyt palkkio — oma rahansa, ei osa
+   *  punaisten sopimushinnan jakoa. */
+  workerLaborP2Cents?: number;
   /** FR8 erälaskutus (kohta 3C.1): renderöi "Maksut"-toiminnon TOISEN johtajan
    *  kortille perustajien osiossa — omalle kortille palautetaan null. Slotina,
    *  koska vain project.tsx tietää kuka katsoo (getAdminProfile). */
   founderInvoiceSlot?: (founderId: string) => React.ReactNode;
-  /** FR8 erälaskutus (kohta 3A): renderöi tekijöiden "Maksu"-painikkeen
-   *  (WorkerEraInvoiceDialog) klikattavaksi alaotsikoksi KERROKSITTAIN- ja
-   *  VIIMEISIN TOIMINTA -palkkien väliin, samaan tyyliin kuin muut osiot —
-   *  ei enää kelluva nappi. Slotina samasta syystä kuin founderInvoiceSlot. */
-  workerInvoiceSlot?: () => React.ReactNode;
+  /** Asiakaslaskutuksen tila (punaisten 4 erää + keltaiset) serveriltä. Ajaa
+   *  LASKUTUS & MAKSUT -statsipalkin. Ei toimintoja täällä — lasku lähetetään
+   *  keikkanäkymästä ja tekijöille maksetaan Maksut-välilehdeltä. */
+  gigBilling?: GigBillingState | null;
+  /** Paljonko tekijöille on PUNAISISTA vielä siirtämättä (shared/worker-payouts). */
+  workerOpenP1Cents?: number;
+  /** Hyppy Maksut-välilehdelle, jossa tekijöille maksetaan. */
+  onGoToMaksut?: () => void;
   /** Dynamic per-window rate for founders (sisäinen kate = capCents / totalRedWindows).
    *  Replaces the nominal deal.pricePerWindow in the footer explanation text. */
   founderRateEur?: number;
@@ -85,7 +94,7 @@ const mono: React.CSSProperties = {
   color: "rgba(255,255,255,0.4)",
 };
 
-export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeInfo, traineeShareByLeader, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot, founderInvoiceSlot, workerInvoiceSlot, p2Slot }: Props) {
+export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeInfo, traineeShareByLeader, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot, founderInvoiceSlot, gigBilling, workerLaborP2Cents, workerOpenP1Cents, onGoToMaksut, p2Slot }: Props) {
   const m = useIsMobile();
   const [editId, setEditId] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
@@ -134,18 +143,41 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   };
   const p1 = grp(1), p2 = grp(2);
 
+  // ── P2 (keltaiset) ────────────────────────────────────────────────────────────
+  // Lukitut keltaiset = asiakkaan hyväksymät hinnat → ne KUULUVAT työn piiriin
+  // aivan kuten punaiset. Sen takia ne lasketaan mukaan edistymiseen alla.
+  const p2On = !!project.p2?.enabled;
+  const p2b = computeP2Billing(project);
+  const lockedYellowKeys = new Set<string>(
+    p2On
+      ? Object.entries(project.p2?.offers ?? {})
+          .filter(([, o]) => o.status === "locked" && !!o.lockedCents)
+          .map(([k]) => k)
+      : [],
+  );
+
   // ── Hero scope ────────────────────────────────────────────────────────────────
-  // For a signed deal (FR8) the first view is about the CONTRACT (red) windows, not
-  // the full dot count on the map. So the ring, the big number and the paydate bar
-  // all track the billable priority (e.g. 161 red windows), while the full map total
-  // is kept as a small secondary figure. Open gigs keep the all-windows view.
+  // For a signed deal (FR8) the first view is about the CONTRACT windows, not the
+  // full dot count on the map. Alkuperäisessä mallissa se tarkoitti VAIN punaisia
+  // — mutta kun 2. vaihe on avattu ja asiakas on hyväksynyt keltaisia hintoja, ne
+  // ovat osa sovittua työtä. Siksi piiri on nyt **punaiset + lukitut keltaiset**:
+  // prosentti ei enää näytä 100 % silloin kun sovittuja keltaisia on pesemättä.
+  // Hinnoittelemattomat/lukitsemattomat keltaiset EIVÄT ole piirissä (niistä ei
+  // ole sovittu mitään), joten ne eivät voi jumittaa lukua alas.
+  const inScope = deal
+    ? all.filter((a) => a.p === deal.billablePriority || lockedYellowKeys.has(a.key))
+    : all;
+  const scopeWashed = inScope.filter((a) => a.status === "pesty").length;
+  const scopeKesken = inScope.filter((a) => a.status === "kesken").length;
   const billGrp = deal ? grp(deal.billablePriority) : null;
-  const heroTotal = billGrp ? billGrp.total : total;
-  const heroWashed = billGrp ? billGrp.washed : washed;
-  const heroKesken = billGrp ? billGrp.kesken : kesken;
+  const heroTotal = deal ? inScope.length : total;
+  const heroWashed = deal ? scopeWashed : washed;
+  const heroKesken = deal ? scopeKesken : kesken;
   const heroUnwashed = heroTotal - heroWashed - heroKesken;
   const heroPct = heroTotal > 0 ? (heroWashed / heroTotal) * 100 : 0;
   const heroPctStr = Math.round(heroPct) + " %";
+  // Onko piirissä keltaisia? Ohjaa otsikkoa ja erittelyriviä.
+  const scopeHasYellow = p2b.lockedCount > 0 && p2On;
   // Internal per-window margin for the bosses: the FIXED agreed total spread over the
   // live billable windows. Deleting red dots raises this (fewer windows for the same
   // €6300), while the worker's own €/window rate is unchanged. Never shown to workers
@@ -154,7 +186,8 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
 
   const startToday = new Date(); startToday.setHours(0, 0, 0, 0);
   const todaySet = new Set<string>();
-  log.forEach((l) => { if (l.status === "pesty" && l.ts >= startToday.getTime() && (!deal || l.p === deal.billablePriority)) todaySet.add(l.key); });
+  const inScopeKeys = new Set(inScope.map((a) => a.key));
+  log.forEach((l) => { if (l.status === "pesty" && l.ts >= startToday.getTime() && (!deal || inScopeKeys.has(l.key))) todaySet.add(l.key); });
   const todayWindows = todaySet.size;
   // Remaining + day estimate track the SAME scope as the hero, "today" and the
   // pay-progress: for a signed deal that's the billable (red) set, otherwise all
@@ -175,10 +208,15 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   // Full crew for the strip: every worker with stats PLUS any assigned crew member
   // who hasn't done anything yet (e.g. Oona) so they're visible from day one. The
   // "Vain aktiiviset" toggle narrows this to people with windows/hours.
+  //
+  // Admin-linkitetyt tekijät (esim. Petrus Aalto, joka on myös Puuhapatet-admin)
+  // kuuluvat listaan siinä missä muutkin — heidät jätettiin aiemmin pois, joten
+  // Petrus katosi rankingista kokonaan jos hänellä ei vielä ollut pesyjä ikkunoita.
+  // Sama joukko kuin Tiimi-sivulla (/api/jobs/:id/crew näyttää admin-linkitetyt).
   const statIds = new Set(workerStats.map((s) => s.worker));
   const zeroStats = (project.crew || [])
-    .filter((c) => c.active !== false && c.role === "worker" && !c.adminLinked && !statIds.has(c.id))
-    .map((c) => ({ worker: c.id, washed: 0, revenueCents: 0, hours: 0, windowsPerHour: 0, eurPerHour: 0 }));
+    .filter((c) => c.active !== false && c.role === "worker" && !statIds.has(c.id))
+    .map((c) => ({ worker: c.id, washed: 0, washedP1: 0, washedP2: 0, revenueCents: 0, hours: 0, windowsPerHour: 0, eurPerHour: 0 }));
   const allWorkers = [...workerStats, ...zeroStats].sort((a, b) => b.washed - a.washed);
   const activeWorkers = allWorkers.filter((s) => s.washed > 0 || s.hours > 0);
   const shownWorkers = showActiveOnly ? activeWorkers : allWorkers;
@@ -186,6 +224,11 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   // Founders' combined earnings — shown as the collapsed summary on the
   // "PERUSTAJIEN ANSIOT" bar so the headline figure is glanceable while folded.
   const foundersTotalCents = (founderEarnings ?? []).reduce((s, f) => s + f.totalCents, 0);
+  // Kolmen tiilen rivi (Sopimushinta / Työntekijöille / Perustajille) on PUNAISTEN
+  // jako, joten perustajien luvusta erotetaan heidän keltainen palkkionsa. Keltaiset
+  // näytetään omana rivinä tiilien alla.
+  const foundersP2Cents = (founderEarnings ?? []).reduce((s, f) => s + (f.p2Cents ?? 0), 0);
+  const foundersRedCents = foundersTotalCents - foundersP2Cents;
   const laborCents = workerLaborCents ?? 0;
 
   // Crew on the clock right now — drives the "KÄYNNISSÄ NYT" strip pinned under the
@@ -196,7 +239,6 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
     .map((c) => ({ id: c.id, name: workerName(c.id), since: c.activeShiftAt as number }))
     .sort((a, b) => a.since - b.since);
 
-  const workerSlot = workerInvoiceSlot?.();
 
   return (
     <div style={{ height: "100%", overflowY: "auto", overflowX: "hidden", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch", boxSizing: "border-box", padding: m ? "16px 12px calc(96px + env(safe-area-inset-bottom))" : "26px 30px 40px" }}>
@@ -210,7 +252,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
           </div>
           <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: m ? "10px" : "11px", color: "rgba(255,255,255,0.4)", letterSpacing: "0.06em", textAlign: "right", flexShrink: 0 }}>
             {deal
-              ? <>{FLOORS.length} KERROSTA · {heroTotal > 0 ? heroTotal : "…"} SOPIMUSIKKUNAA</>
+              ? <>{FLOORS.length} KERROSTA · {heroTotal > 0 ? heroTotal : "…"} SOVITTUA IKKUNAA{scopeHasYellow ? ` (${billGrp?.total ?? 0} + ${p2b.lockedCount} KELT.)` : ""}</>
               : <>{FLOORS.length} KERROSTA · {total > 0 ? total : "…"} IKKUNAA</>}
           </div>
         </div>
@@ -231,13 +273,32 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
               </div>
             </div>
             <div style={{ flex: 1, width: m ? "100%" : undefined, textAlign: m ? "center" : "left" }}>
-              <div style={{ ...mono, marginBottom: "10px" }}>{deal ? "SOPIMUSIKKUNAT (PUNAISET)" : "KOKONAISEDISTYMINEN"}</div>
+              <div style={{ ...mono, marginBottom: "10px" }}>
+                {deal ? (scopeHasYellow ? "SOVITTU TYÖ · PUNAISET + KELTAISET" : "SOPIMUSIKKUNAT (PUNAISET)") : "KOKONAISEDISTYMINEN"}
+              </div>
               <div style={{ fontSize: "34px", fontWeight: 700, letterSpacing: "-0.01em", marginBottom: "2px" }}>
                 {heroWashed} <span style={{ color: "rgba(255,255,255,0.35)", fontWeight: 500 }}>/ {heroTotal}</span>
               </div>
-              <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.5)", marginBottom: "20px" }}>
-                {deal ? "punaista ikkunaa pesty" : "ikkunaa pesty"}
+              <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.5)", marginBottom: scopeHasYellow ? "10px" : "20px" }}>
+                {deal ? (scopeHasYellow ? "sovittua ikkunaa pesty" : "punaista ikkunaa pesty") : "ikkunaa pesty"}
               </div>
+              {/* Erittely: kun keltaiset ovat mukana piirissä, kokonaisprosentti ei
+                  enää kerro yksin missä mennään — punaiset voivat olla valmiit
+                  vaikka keltaisia on kesken. Näytetään molemmat rinnakkain. */}
+              {deal && scopeHasYellow && billGrp && (
+                <div style={{ display: "flex", gap: "14px", flexWrap: "wrap", justifyContent: m ? "center" : "flex-start", marginBottom: "18px" }}>
+                  {([
+                    ["Punaiset", "rgb(255,72,72)", billGrp.washed, billGrp.total],
+                    ["Keltaiset (sovitut)", "rgb(255,205,40)", p2b.lockedWashedCount, p2b.lockedCount],
+                  ] as [string, string, number, number][]).map(([label, color, w, t]) => (
+                    <span key={label} style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: "12px", color: "rgba(255,255,255,0.6)" }}>
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, boxShadow: `0 0 7px ${color}`, flexShrink: 0 }} />
+                      {label} <b style={{ color: "#fff", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{w}/{t}</b>
+                      <span style={{ color: "rgba(255,255,255,0.4)" }}>{t > 0 ? Math.round((w / t) * 100) : 0} %</span>
+                    </span>
+                  ))}
+                </div>
+              )}
               {!attributionCheck.matches && (
                 <div style={{ marginBottom: "16px", padding: "9px 12px", borderRadius: "10px", background: "rgba(224,168,0,0.12)", border: "1px solid rgba(224,168,0,0.3)", fontSize: "11.5px", color: "rgba(255,206,80,0.9)" }}>
                   Ikkunamäärä ei täsmää: {attributionCheck.dotCount} pestyä ikkunaa, mutta tekijöiden/johtajien summa on {attributionCheck.attributedSum}
@@ -258,15 +319,79 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             </div>
           </div>
 
-          {/* Money card — one clean figure: the accumulated internal margin
-              (washed red × sisäinen kate). No instalments, no contract bubble. */}
+          {/* Money card — the accumulated internal margin. PUNAISET lasketaan
+              sisäisellä katteella (pesty punainen × kate/ikkuna) ja KELTAISET
+              omalla P2-katteellaan (computeP2Billing.marginCents) — keltaista
+              ikkunaa ei saa koskaan arvottaa punaisten taksalla. */}
           <div className="anim-fadeUp-1" style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: "10px", padding: m ? "24px 22px" : "30px", background: "linear-gradient(155deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))", border: "1px solid rgba(255,255,255,0.09)", borderRadius: "22px", backdropFilter: "blur(22px)", WebkitBackdropFilter: "blur(22px)" }}>
             <div style={{ ...mono }}>{deal ? "KERTYNYT · VAIN PERUSTAJILLE" : "LIIKEVAIHTO"}</div>
             <div style={{ fontSize: m ? "44px" : "52px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>
-              {euro(deal ? heroWashed * internalPerWindowEur : washed * PRICE)}
+              {euro(deal ? (billGrp ? billGrp.washed : 0) * internalPerWindowEur + p2b.marginCents / 100 : washed * PRICE)}
             </div>
+            {deal && p2b.marginCents > 0 && (
+              <div style={{ fontSize: "11.5px", color: "rgba(255,255,255,0.5)", lineHeight: 1.5 }}>
+                punaiset {euro((billGrp ? billGrp.washed : 0) * internalPerWindowEur)} · keltaisten kate {euro(p2b.marginCents / 100)}
+              </div>
+            )}
           </div>
         </div>
+
+        {/* LASKUTUS & MAKSUT — rahan tilannekuva heti heron alla, koska tämä on se
+            mitä perustaja tulee dashiin katsomaan. Pelkkiä lukuja: laskun lähetys
+            tapahtuu keikkanäkymässä ja tekijöille maksetaan Maksut-välilehdellä,
+            joten samaa toimintoa ei ole kahdessa paikassa. */}
+        {deal && gigBilling && (
+          <div className="anim-fadeUp-2" style={{ ...card, padding: m ? "14px" : "16px 18px", marginBottom: "14px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: "12px", flexWrap: "wrap" }}>
+              <span style={{ ...mono }}>LASKUTUS &amp; MAKSUT</span>
+              {onGoToMaksut && (
+                <button
+                  type="button"
+                  onClick={onGoToMaksut}
+                  style={{ marginLeft: "auto", padding: "5px 11px", borderRadius: 9, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.75)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer" }}
+                >
+                  Avaa Maksut →
+                </button>
+              )}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: m ? "1fr 1fr" : "repeat(4, 1fr)", gap: m ? "8px" : "12px" }}>
+              {([
+                {
+                  label: "PUNAISET LASKUTETTU",
+                  val: euro(gigBilling.p1InvoicedCents / 100),
+                  sub: `${Math.min(4, gigBilling.p1PayCount)}/4 erää · sopimus ${euro(gigBilling.agreedTotalCents / 100)}`,
+                  tone: "#9ff0bd",
+                },
+                {
+                  label: "PUNAISIA JÄLJELLÄ",
+                  val: euro(Math.max(0, gigBilling.agreedTotalCents - gigBilling.p1InvoicedCents) / 100),
+                  sub: gigBilling.p1PayCount >= 4 ? "kaikki erät lähetetty ✓" : `seuraava erä ${euro(gigBilling.nextInstalmentCents / 100)}`,
+                  tone: "rgba(255,255,255,0.9)",
+                },
+                {
+                  label: "KELTAISET",
+                  val: euro(gigBilling.p2InvoicedCents / 100),
+                  sub: gigBilling.p2RemainingCents > 0
+                    ? `laskuttamatta ${euro(gigBilling.p2RemainingCents / 100)}`
+                    : p2b.lockedCount > 0 ? "ei laskuttamatonta" : "ei sovittuja vielä",
+                  tone: gigBilling.p2RemainingCents > 0 ? "rgb(255,205,40)" : "rgba(255,255,255,0.9)",
+                },
+                {
+                  label: "TEKIJÖILLE (PUNAISET)",
+                  val: euro((workerOpenP1Cents ?? 0) / 100),
+                  sub: (workerOpenP1Cents ?? 0) > 0 ? "siirrettävä tekijöille" : "kaikki maksettu ✓",
+                  tone: (workerOpenP1Cents ?? 0) > 0 ? "rgb(255,205,40)" : "rgba(255,255,255,0.9)",
+                },
+              ]).map((t) => (
+                <div key={t.label} style={{ padding: "11px 13px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "13px", minWidth: 0 }}>
+                  <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)", marginBottom: "6px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.label}</div>
+                  <div style={{ fontSize: m ? "16px" : "19px", fontWeight: 700, color: t.tone, fontVariantNumeric: "tabular-nums" }}>{t.val}</div>
+                  <div style={{ fontSize: "10.5px", color: "rgba(255,255,255,0.45)", marginTop: 3, lineHeight: 1.4 }}>{t.sub}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* KÄYNNISSÄ NYT — live shift strip, pinned under the hero ONLY while someone
             is on the clock (otherwise the top stays minimal). */}
@@ -296,11 +421,13 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             <Section id="founders" label="PERUSTAJIEN ANSIOT · VAIN PERUSTAJILLE" summary={euro(foundersTotalCents / 100)} animClass="anim-fadeUp-1">
 
               {/* Gig money split: contract value → workers' labour vs founders' share. */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: m ? "8px" : "12px", marginBottom: "16px" }}>
+              {/* Kolme lukua mahtuu työpöydällä rinnakkain; puhelimessa kaksi + yksi,
+                  ettei 19px euro murru kolmeen riviin kapealla näytöllä. */}
+              <div style={{ display: "grid", gridTemplateColumns: m ? "1fr 1fr" : "1fr 1fr 1fr", gap: m ? "8px" : "12px", marginBottom: "16px" }}>
                 {[
                   { label: "Sopimushinta", val: euro(capEur), tone: "rgba(255,255,255,0.9)" },
                   { label: "Työntekijöille", val: euro(laborCents / 100), tone: "rgba(255,255,255,0.7)" },
-                  { label: "Perustajille yht.", val: euro(foundersTotalCents / 100), tone: "#9ff0bd" },
+                  { label: "Perustajille yht.", val: euro(foundersRedCents / 100), tone: "#9ff0bd" },
                 ].map((b) => (
                   <div key={b.label} style={{ padding: "12px 14px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "13px" }}>
                     <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9.5px", letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)", marginBottom: "6px" }}>{b.label.toUpperCase()}</div>
@@ -358,6 +485,14 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                           <span>Tuotto-osuus työntekijöistä</span>
                           <b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(f.shareCents / 100)}</b>
                         </div>
+                        {/* Keltaiset (2. vaihe) ovat oma palkkionsa palkkiotaulukosta,
+                            eivät osa punaisten sisäistä katetta — siksi oma rivi. */}
+                        {!!f.p2Cents && (
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "rgb(255,205,40)" }}>
+                            <span>Keltaiset · {(f.p2Washed ?? 0).toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikkunaa</span>
+                            <b style={{ fontWeight: 600 }}>{euro(f.p2Cents / 100)}</b>
+                          </div>
+                        )}
                       </div>
                     )}
                     {/* Johtaja-välinen erälasku (kohta 3C.1) — vain toisen johtajan kortilla. */}
@@ -369,19 +504,52 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                   );
                 })}
               </div>
+              {/* Keltaiset (2. vaihe) ovat oma rahansa: ne EIVÄT kuulu yllä olevaan
+                  punaisten sopimushinnan jakoon, joten ne eritellään omalle riville. */}
+              {p2On && (p2b.earnedCents > 0 || (workerLaborP2Cents ?? 0) > 0 || foundersP2Cents > 0) && (
+                <div style={{ marginTop: "14px", padding: "11px 13px", borderRadius: 13, background: "rgba(255,205,40,0.06)", border: "1px solid rgba(255,205,40,0.22)" }}>
+                  <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9.5px", letterSpacing: "0.1em", color: "rgba(255,220,140,0.8)", marginBottom: 6 }}>
+                    KELTAISET · 2. VAIHE (EI SOPIMUSHINNASSA)
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 18px", fontSize: "11.5px", color: "rgba(255,255,255,0.6)" }}>
+                    {([
+                      ["Kertymä (pesty)", euro(p2b.earnedCents / 100)],
+                      ["Työntekijöille", euro((workerLaborP2Cents ?? 0) / 100)],
+                      ["Perustajille", euro(foundersP2Cents / 100)],
+                      ["Kate", euro(p2b.marginCents / 100)],
+                    ] as [string, string][]).map(([lbl, val]) => (
+                      <span key={lbl}>
+                        {lbl}: <b style={{ color: "rgba(255,255,255,0.9)", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{val}</b>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
               <p style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)", marginTop: "12px", lineHeight: 1.5 }}>
-                Perustaja ansaitsee {euroUnit(founderRateEur ?? PRICE)} / ikkuna (sisäinen kate = sopimushinta ÷ punaiset ikkunat yhteensä) + osuuden katteesta jokaisesta työntekijän ikkunasta. Päivittyy pesujen myötä.
+                Perustaja ansaitsee {euroUnit(founderRateEur ?? PRICE)} / ikkuna (sisäinen kate = efektiivinen sopimussumma ÷ punaiset ikkunat yhteensä) + osuuden katteesta jokaisesta työntekijän punaisesta ikkunasta. Keltaiset maksavat palkkiotaulukon mukaan erikseen. Päivittyy pesujen myötä.
               </p>
             </Section>
         )}
 
         {/* Row 2: P1 + P2 + mini cards */}
-        <Section id="priority" label="PRIORITEETIT & TAHTI" summary={`P1 ${p1.pctStr} · tänään ${todayWindows}`} animClass="anim-fadeUp-3">
+        <Section
+          id="priority"
+          label="PRIORITEETIT & TAHTI"
+          summary={scopeHasYellow
+            ? `P1 ${p1.pctStr} · P2 ${p2b.lockedCount > 0 ? Math.round((p2b.lockedWashedCount / p2b.lockedCount) * 100) : 0} % · tänään ${todayWindows}`
+            : `P1 ${p1.pctStr} · tänään ${todayWindows}`}
+          animClass="anim-fadeUp-3"
+          defaultOpen
+        >
           <div style={{ display: "grid", gridTemplateColumns: m ? "1fr 1fr" : "1fr 1fr 1fr", gap: m ? "10px" : "16px" }}>
           {[{ label: "Prioriteetti 1", rgb: "255,72,72", data: p1, p: 1 }, { label: "Prioriteetti 2", rgb: "255,205,40", data: p2, p: 2 }].map((g, gi) => {
-            // With a signed deal, only the billable priority (red) earns money;
-            // the other priority is mapped for future work, not billed now.
-            const outOfDeal = !!deal && g.p !== deal.billablePriority;
+            // Punaiset kuuluvat kiinteään urakkaan. Keltaiset EIVÄT kuulu siihen —
+            // mutta kun 2. vaihe on avattu, ne laskutetaan ikkunakohtaisesti sovitulla
+            // hinnalla. Aiemmin tämä kortti sanoi keltaisista "— ei laskuteta" myös
+            // silloin kun niistä oli jo sovittu tuhansia euroja; nyt keltaisen kortin
+            // luvut tulevat P2-moottorista (sovitut/pestyt/kertymä).
+            const isYellowPriced = g.p === 2 && p2On;
+            const outOfDeal = !!deal && g.p !== deal.billablePriority && !isYellowPriced;
             return (
             <div key={g.label} className={`anim-fadeUp-${gi + 2}`} style={{ ...card, padding: "22px", opacity: outOfDeal ? 0.72 : 1 }}>
               <div style={{ marginBottom: "16px" }}>
@@ -390,20 +558,41 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                     <span style={{ width: "11px", height: "11px", borderRadius: "50%", flexShrink: 0, background: `rgb(${g.rgb})`, boxShadow: `0 0 10px rgba(${g.rgb},0.8)` }} />
                     <span style={{ fontSize: "14px", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{g.label}</span>
                   </div>
-                  <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>{g.data.pctStr}</span>
+                  <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
+                    {isYellowPriced
+                      ? `${p2b.lockedCount > 0 ? Math.round((p2b.lockedWashedCount / p2b.lockedCount) * 100) : 0} %`
+                      : g.data.pctStr}
+                  </span>
                 </div>
                 {outOfDeal && <span style={{ display: "inline-block", marginTop: 7, fontSize: "9.5px", fontWeight: 600, color: "rgba(255,255,255,0.5)", padding: "2px 7px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.14)" }}>ei sopimuksessa</span>}
-                {!!deal && !outOfDeal && <span style={{ display: "inline-block", marginTop: 7, fontSize: "9.5px", fontWeight: 600, color: "#9ff0bd", padding: "2px 7px", borderRadius: 6, border: "1px solid rgba(95,224,138,0.3)", background: "rgba(95,224,138,0.1)" }}>sopimus</span>}
+                {isYellowPriced && <span style={{ display: "inline-block", marginTop: 7, fontSize: "9.5px", fontWeight: 600, color: "rgb(255,220,110)", padding: "2px 7px", borderRadius: 6, border: "1px solid rgba(255,205,40,0.35)", background: "rgba(255,205,40,0.1)" }}>2. vaihe · ikkunakohtainen</span>}
+                {!!deal && !outOfDeal && !isYellowPriced && <span style={{ display: "inline-block", marginTop: 7, fontSize: "9.5px", fontWeight: 600, color: "#9ff0bd", padding: "2px 7px", borderRadius: 6, border: "1px solid rgba(95,224,138,0.3)", background: "rgba(95,224,138,0.1)" }}>sopimus</span>}
               </div>
+              {/* Keltaisen kortin luvut ovat SOVITUT (lukitut) ikkunat, ei kaikki
+                  kartan keltaiset — hinnoittelemattomasta ei ole sovittu mitään,
+                  joten se ei kuulu edistymisen nimittäjään. */}
               <div style={{ fontSize: "28px", fontWeight: 700, marginBottom: "3px" }}>
-                {g.data.washed} <span style={{ color: "rgba(255,255,255,0.32)", fontWeight: 500, fontSize: "22px" }}>/ {g.data.total}</span>
+                {isYellowPriced ? p2b.lockedWashedCount : g.data.washed}
+                <span style={{ color: "rgba(255,255,255,0.32)", fontWeight: 500, fontSize: "22px" }}> / {isYellowPriced ? p2b.lockedCount : g.data.total}</span>
               </div>
-              <div style={{ height: "6px", borderRadius: "5px", background: "rgba(255,255,255,0.08)", overflow: "hidden", margin: "13px 0 14px" }}>
-                <div style={{ width: `${g.data.pct.toFixed(1)}%`, height: "100%", borderRadius: "5px", background: `rgb(${g.rgb})`, boxShadow: `0 0 10px rgba(${g.rgb},0.6)`, transition: "width .6s" }} />
-              </div>
+              {isYellowPriced && (
+                <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.45)" }}>
+                  sovittua ikkunaa pesty · {p2b.yellowTotal} keltaista kartalla, {p2b.proposedCount} odottaa asiakasta
+                </div>
+              )}
+              {(() => {
+                const pct = isYellowPriced
+                  ? (p2b.lockedCount > 0 ? (p2b.lockedWashedCount / p2b.lockedCount) * 100 : 0)
+                  : g.data.pct;
+                return (
+                  <div style={{ height: "6px", borderRadius: "5px", background: "rgba(255,255,255,0.08)", overflow: "hidden", margin: "13px 0 14px" }}>
+                    <div style={{ width: `${pct.toFixed(1)}%`, height: "100%", borderRadius: "5px", background: `rgb(${g.rgb})`, boxShadow: `0 0 10px rgba(${g.rgb},0.6)`, transition: "width .6s" }} />
+                  </div>
+                );
+              })()}
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "rgba(255,255,255,0.5)" }}>
                 <span>Kesken <b style={{ color: "#fff", fontWeight: 600 }}>{g.data.kesken}</b></span>
-                <span>{outOfDeal ? "— ei laskuteta" : g.data.revStr}</span>
+                <span>{isYellowPriced ? euro(p2b.earnedCents / 100) : outOfDeal ? "— ei laskuteta" : g.data.revStr}</span>
               </div>
             </div>
             );
@@ -425,7 +614,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
 
         {/* Workers strip — per-worker window counts & €/h optimisation */}
         {allWorkers.length > 0 && (
-          <Section id="workers" label="TEKIJÄT" summary={`${shownWorkers.length} tekijää`} animClass="anim-fadeUp-5">
+          <Section id="workers" label="TEKIJÄT" summary={`${shownWorkers.length} tekijää`} animClass="anim-fadeUp-5" defaultOpen>
             {/* Controls: show-all-vs-active + reveal €/h teho */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "18px", marginBottom: "14px", flexWrap: "wrap" }}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: "10px" }}>
@@ -594,7 +783,6 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             </div>
           </Section>
 
-          {workerSlot && <div className="anim-fadeUp-7">{workerSlot}</div>}
 
           {activity.length > 0 && (
             <Section id="activity" label="VIIMEISIN TOIMINTA" summary={activity[0]?.time} animClass="anim-fadeUp-8">

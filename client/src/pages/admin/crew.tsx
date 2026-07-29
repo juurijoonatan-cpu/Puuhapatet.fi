@@ -14,6 +14,7 @@ import type { ProjBuilding, FixedDeal, EraDebtBreakdown } from "@shared/project"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Disclosure } from "@/components/ui/disclosure";
 import { PAY_PERIODS, eraWindowCounts, computePayProgress } from "@shared/payprogress";
+import { settleWorker, eraMapsFor, sumWorkerSettlements } from "@shared/worker-payouts";
 import { WORKER_AGREEMENTS, PROFILE_QUESTIONS, resolveAgreementSet } from "@shared/worker-agreements";
 import { downloadWorkerContract, openWorkerContractForPrint, downloadSignatureImage } from "@/lib/worker-contract-doc";
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
@@ -28,6 +29,9 @@ import { Input } from "@/components/ui/input";
 
 const PUBLIC_BASE = "https://puuhapatet.fi";
 const eur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+/** Ikkunamäärä — jaettu ikkuna on 0,5, joten yksi desimaali riittää. */
+const fmtWindows = (n: number) => n.toLocaleString("fi-FI", { maximumFractionDigits: 1 });
+const round1 = (n: number) => Math.round(n * 10) / 10;
 const agreementTitle = (id: string) => WORKER_AGREEMENTS.find((a) => a.id === id)?.title ?? id;
 // Friendly labels/values for the internal onboarding keys (not in PROFILE_QUESTIONS),
 // so the host's worker summary reads cleanly instead of showing raw keys.
@@ -64,6 +68,8 @@ export default function AdminCrewPage() {
   // Tekijöiden erälaskut (Maksut-puoli): kun tekijälle on lähetetty/hyväksytty
   // erälasku, se on "hoidettu" eikä saa näkyä palkkayhteenvedossa "Avoinna"na.
   const [eraInvoices, setEraInvoices] = useState<EraInvoiceClient[]>([]);
+  // Onko vaihe 2 (keltaiset) päällä — ohjaa palkkayhteenvedon punainen/keltainen-jakoa.
+  const [p2Enabled, setP2Enabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -74,21 +80,37 @@ export default function AdminCrewPage() {
       api.getHostCrew(jobId),
       api.getEraInvoices(jobId),
     ]);
-    if (res.ok && res.data) {
-      setCrew(res.data.crew); setBuilding(res.data.building);
-      setDeal(res.data.deal); setTotalBillable(res.data.totalBillable);
-      setBillableWashed(res.data.billableWashed); setEraWindowsState(res.data.eraWindows);
-      setEraBreakdown(res.data.eraBreakdown || []);
+    // Puolustava luku: 2xx ei takaa runkoa (proxy-vastaus, vanha buildi,
+    // osittainen payload). Ilman Array-tarkistusta `crew.map` alempana
+    // valkoisti koko Tiimi-sivun. Nyt näytetään virhe ja tyhjä lista.
+    if (res.ok && res.data && Array.isArray(res.data.crew)) {
+      setCrew(res.data.crew); setBuilding(res.data.building ?? null);
+      setDeal(res.data.deal ?? null); setTotalBillable(Number(res.data.totalBillable) || 0);
+      setBillableWashed(Number(res.data.billableWashed) || 0);
+      setEraWindowsState(Array.isArray(res.data.eraWindows) ? res.data.eraWindows : null);
+      setEraBreakdown(Array.isArray(res.data.eraBreakdown) ? res.data.eraBreakdown : []);
       setFounderSettlement(res.data.founderSettlement || null);
+      setP2Enabled(!!res.data.p2Enabled);
       setErr(null);
+    } else if (res.ok) {
+      setCrew([]);
+      setErr("Tiimilistaa ei voitu lukea (odottamaton vastaus palvelimelta).");
+    } else {
+      setErr(res.error || "Lataus epäonnistui");
     }
-    else setErr(res.error || "Lataus epäonnistui");
     // Era invoices are FR8-only; a non-FR8 gig simply returns none.
-    setEraInvoices(eraRes.ok && eraRes.data ? eraRes.data.invoices : []);
+    setEraInvoices(eraRes.ok && Array.isArray(eraRes.data?.invoices) ? eraRes.data.invoices : []);
     setLoading(false);
   }, [jobId]);
 
-  useEffect(() => { if (jobId) load(); }, [jobId, load]);
+  useEffect(() => {
+    // Virheellinen/puuttuva :id (esim. /admin/gig/abc/tiimi) jätti sivun
+    // ikuisesti "Ladataan…"-tilaan, koska load() ei koskaan ajanut eikä
+    // setLoading(false) tapahtunut.
+    if (Number.isFinite(jobId) && jobId > 0) { void load(); return; }
+    setErr("Virheellinen keikkatunnus.");
+    setLoading(false);
+  }, [jobId, load]);
 
   const seed = async () => { setBusy(true); await api.seedCrew(jobId); await load(); setBusy(false); };
   const addWorker = async () => { setBusy(true); await api.addCrewMember(jobId, {}); await load(); setBusy(false); };
@@ -138,17 +160,7 @@ export default function AdminCrewPage() {
         {/* Payroll overview — every worker's pay at a glance: earned, paid and
             still open, plus the gig's total labour cost. Detailed per-worker
             payout actions stay in each worker's card below. */}
-        {crew.length > 0 && <PayrollSummary crew={crew} eraSentByWorker={(() => {
-          // Tekijän erälaskut jotka on lähetetty/hyväksytty = tekijälle hoidettu
-          // summa (senderId = tekijän id). Luonnos/hylätty ei lasketa.
-          const m: Record<string, number> = {};
-          for (const inv of eraInvoices) {
-            if (inv.kind !== "tekija") continue;
-            if (inv.tila !== "lähetetty" && inv.tila !== "hyväksytty") continue;
-            m[inv.senderId] = (m[inv.senderId] || 0) + inv.totalCents;
-          }
-          return m;
-        })()} />}
+        {crew.length > 0 && <PayrollSummary crew={crew} eraInvoices={eraInvoices} p2Enabled={p2Enabled} />}
 
         {/* Maksuerät & kate — tucked behind a button so it doesn't crowd the page.
             The popup holds the per-erä window editor + the per-erä kate AND the
@@ -274,13 +286,20 @@ export default function AdminCrewPage() {
                     — what this worker has done since the last payout — so each payout
                     covers just the current billed period, never the cumulative total. */}
                 {(() => {
-                  const claimedCents = (member.payouts || []).reduce((s, p) => s + p.amountCents, 0);
+                  // Ehdotus = PUNAISISTA maksamatta oleva osuus (sama jaettu laskenta
+                  // kuin palkkayhteenvedossa ja Maksut-välilehdellä). Aiemmin tässä oli
+                  // `stats.earnedCents − maksut`, joka sisälsi keltaiset ja ohitti
+                  // erälaskuilla jo hoidetut summat → ehdotus oli liian suuri.
+                  const settled = settleWorker({
+                    id: member.id, name: member.name, active: true, founder: false,
+                    stats, payouts: member.payouts || [], p2Enabled, era: eraMapsFor(eraInvoices),
+                  });
                   const claimedWindows = (member.payouts || []).reduce((s, p) => s + (p.windows || 0), 0);
                   return (
                     <PayoutPanel
                       member={member}
-                      suggestedCents={Math.max(0, stats.earnedCents - claimedCents)}
-                      suggestedWindows={Math.max(0, stats.washed - claimedWindows)}
+                      suggestedCents={settled.openP1Cents}
+                      suggestedWindows={Math.max(0, round1(settled.openP1Windows - claimedWindows))}
                       onCreate={createPayout}
                       onMarkPaid={markPaid}
                       onDelete={deletePayout}
@@ -719,7 +738,15 @@ function EraKateDialog({ deal, totalBillable, billableWashed, eraWindows, eraBre
 }) {
   const [open, setOpen] = useState(false);
   const periods = PAY_PERIODS;
-  const instalmentCents = Math.round(deal.capCents / periods);
+  // TODELLINEN sopimussumma ja erien todelliset summat tulevat serverin
+  // `eraBreakdown`ista (`computeEraDebts`), jossa viimeinen erä imee poistettujen
+  // punaisten vähennyksen. Aiemmin tämä dialogi jakoi raa'an 6300 € katon neljään
+  // ja näytti siis erälle 4 eri summan kuin sen oma lista pari riviä alempana.
+  const agreedTotalCents = eraBreakdown.length > 0
+    ? eraBreakdown.reduce((s, e) => s + e.instalmentCents, 0)
+    : deal.capCents;
+  const rawInstalmentCents = Math.round(deal.capCents / periods);
+  const reduced = agreedTotalCents < deal.capCents;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -727,16 +754,23 @@ function EraKateDialog({ deal, totalBillable, billableWashed, eraWindows, eraBre
         <button className="w-full flex items-center gap-2 rounded-2xl border bg-card px-4 py-3 mb-5 text-left hover:bg-muted/40 transition-colors">
           <Wallet className="h-4 w-4 shrink-0" />
           <span className="text-sm font-bold">Maksuerät &amp; kate</span>
-          <span className="ml-auto text-[11px] text-muted-foreground tabular-nums">{eur(deal.capCents)} · {periods} erää ›</span>
+          <span className="ml-auto text-[11px] text-muted-foreground tabular-nums">{eur(agreedTotalCents)} · {periods} erää ›</span>
         </button>
       </DialogTrigger>
       <DialogContent className="max-w-lg max-h-[88vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-1.5"><Wallet className="h-4 w-4" /> Maksuerät &amp; kate</DialogTitle>
           <DialogDescription className="tabular-nums">
-            {eur(deal.capCents)} · {periods} erää · {eur(instalmentCents)}/erä
+            {eur(agreedTotalCents)} · {periods} erää · erät 1–{periods - 1} {eur(rawInstalmentCents)}
+            {reduced ? ` · erä ${periods} ${eur(Math.max(0, agreedTotalCents - rawInstalmentCents * (periods - 1)))} (loppuerä)` : ""}
           </DialogDescription>
         </DialogHeader>
+        {reduced && (
+          <p className="text-[11px] text-amber-600 dark:text-amber-400 -mt-2">
+            Sopimussumma on pienentynyt katosta {eur(deal.capCents)}, koska punaisia ikkunoita on poistettu
+            (37,50 € / ikkuna). Vähennys osuu kokonaan viimeiseen erään.
+          </p>
+        )}
         <p className="text-[11px] text-muted-foreground -mt-2 mb-3 rounded-lg bg-muted/30 px-3 py-2">
           Karkea ennakkoarvio pesujärjestyksen perusteella — ei lähetettäviä laskuja.
           Viralliset erälaskut lähetetään projektinäkymän "Maksu"-toiminnosta ja
@@ -748,6 +782,7 @@ function EraKateDialog({ deal, totalBillable, billableWashed, eraWindows, eraBre
           totalBillable={totalBillable}
           billableWashed={billableWashed}
           eraWindows={eraWindows}
+          eraBreakdown={eraBreakdown}
           onSave={onSave}
         />
 
@@ -840,22 +875,34 @@ function FounderSettlementView({ settlement }: { settlement: FounderSettlement |
 
 /** The per-erä window-count editor: founders set each erä's window count, the
  *  per-erä kate (€1575 ÷ erän ikkunat) follows. Lives inside EraKateDialog. */
-function EraKatePanel({ deal, totalBillable, billableWashed, eraWindows, onSave }: {
+function EraKatePanel({ deal, totalBillable, billableWashed, eraWindows, eraBreakdown, onSave }: {
   deal: FixedDeal;
   totalBillable: number;
   billableWashed: number;
   eraWindows: number[] | null;
+  /** Serverin laskemat erät — antaa jokaisen erän TODELLISEN summan (viimeinen erä
+   *  pienentyy poistetuista punaisista). Tyhjänä palataan tasajakoon. */
+  eraBreakdown: EraDebtBreakdown[];
   onSave: (windows: number[]) => Promise<boolean>;
 }) {
   const periods = PAY_PERIODS;
-  const instalmentCents = Math.round(deal.capCents / periods);
+  const rawInstalmentCents = Math.round(deal.capCents / periods);
+  const instalmentAt = (i: number) => eraBreakdown[i]?.instalmentCents ?? rawInstalmentCents;
   const canonical = eraWindowCounts(totalBillable, periods, eraWindows);
   const [counts, setCounts] = useState<number[]>(canonical);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  // Re-sync when the server data changes (initial load / after save).
-  useEffect(() => { setCounts(eraWindowCounts(totalBillable, periods, eraWindows)); setSaved(false); }, [totalBillable, eraWindows, periods]);
+  // Re-sync when the server data changes (initial load / after save). Riippuvuutena
+  // on eraWindowsin SISÄLTÖ, ei taulukon identiteetti: `load()` luo uuden taulukon
+  // joka vastauksella, joten identiteettiriippuvuus (a) pyyhki johtajan kesken
+  // olevat erämuokkaukset aina kun sivulla tehtiin mitä tahansa muuta ja
+  // (b) nollasi `saved`in heti tallennuksen jälkeen → "Tallennettu" ei ehtinyt
+  // koskaan näkyä.
+  const eraWindowsKey = JSON.stringify(eraWindows);
+  useEffect(() => { setCounts(eraWindowCounts(totalBillable, periods, eraWindows)); setSaved(false); },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [totalBillable, eraWindowsKey, periods]);
 
   const sum = counts.reduce((s, n) => s + n, 0);
   const prog = computePayProgress(0, billableWashed, periods, counts);
@@ -873,7 +920,8 @@ function EraKatePanel({ deal, totalBillable, billableWashed, eraWindows, onSave 
       <div className="space-y-2">
         {counts.map((n, i) => {
           const current = prog.currentPeriod === i + 1 && !prog.done && billableWashed > 0;
-          const kateCents = n > 0 ? Math.round(instalmentCents / n) : 0;
+          const eraCents = instalmentAt(i);
+          const kateCents = n > 0 ? Math.round(eraCents / n) : 0;
           return (
             <div key={i} className={`flex items-center gap-3 rounded-xl border px-3 py-2 ${current ? "border-primary/50 bg-primary/5" : "border-border"}`}>
               <span className="text-xs font-semibold w-16 shrink-0">Erä {i + 1}{current ? " ·nyt" : ""}</span>
@@ -887,6 +935,7 @@ function EraKatePanel({ deal, totalBillable, billableWashed, eraWindows, onSave 
               <span className="ml-auto text-right whitespace-nowrap">
                 <span className="text-sm font-bold tabular-nums">{eur(kateCents)}</span>
                 <span className="text-[10px] text-muted-foreground"> /ikkuna</span>
+                <span className="block text-[10px] text-muted-foreground tabular-nums">erä {eur(eraCents)}</span>
               </span>
             </div>
           );
@@ -912,7 +961,6 @@ function EraKatePanel({ deal, totalBillable, billableWashed, eraWindows, onSave 
  *  ikkunaa ja kuinka monta kukin". Reads server-computed attribution. */
 function EraDebtList({ eraBreakdown }: { eraBreakdown: EraDebtBreakdown[] }) {
   if (!eraBreakdown || eraBreakdown.length === 0) return null;
-  const fmtWindows = (n: number) => n.toLocaleString("fi-FI", { maximumFractionDigits: 1 });
   const anyWashed = eraBreakdown.some((e) => e.washed > 0);
 
   return (
@@ -940,14 +988,18 @@ function EraDebtList({ eraBreakdown }: { eraBreakdown: EraDebtBreakdown[] }) {
                 <span className="font-semibold text-emerald-600">kate {eur(e.marginCents)}</span>
               </div>
               {(() => {
-                // Real workers (paid per window) vs founders (wash at no palkka —
-                // their work just lifts the kate, so show them cleanly, not as 0 € rows).
-                const paid = e.workers.filter((w) => !isFounder(w.workerId));
-                const bosses = e.workers.filter((w) => isFounder(w.workerId));
-                if (e.workers.length === 0) return <p className="text-[11px] text-muted-foreground">Ei vielä pesty.</p>;
+                // `e.workers` sisältää nyt VAIN palkkaa saavat tekijät — perustajien
+                // omat ikkunat tulevat erikseen `founderWindows`ina, koska ne eivät
+                // maksa palkkaa vaan nostavat katetta. (Aiemmin perustajat olivat
+                // mukana `workers`issa ja siten myös `earnedCents`issa, jolloin tämä
+                // lista sanoi "ei palkkaa" samalla kun kate oli laskettu heidän
+                // ikkunoistaan 20 €/kpl vähennettynä.)
+                if (e.workers.length === 0 && !e.founderWindows) {
+                  return <p className="text-[11px] text-muted-foreground">Ei vielä pesty.</p>;
+                }
                 return (
                   <div className="space-y-1 pt-1 border-t border-border/60">
-                    {paid.map((w) => (
+                    {e.workers.map((w) => (
                       <div key={w.workerId} className="flex items-center justify-between gap-2 text-xs">
                         <span className="truncate">{w.name}</span>
                         <span className="shrink-0 text-muted-foreground tabular-nums">
@@ -955,12 +1007,12 @@ function EraDebtList({ eraBreakdown }: { eraBreakdown: EraDebtBreakdown[] }) {
                         </span>
                       </div>
                     ))}
-                    {bosses.length > 0 && (
+                    {e.founderWindows > 0 && (
                       <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground pt-0.5">
                         <span className="truncate italic">
-                          Bossien omat ikkunat: {bosses.map((b) => `${b.name.trim().split(/\s+/)[0]} ${fmtWindows(b.windows)}`).join(" · ")}
+                          Bossien omat ikkunat: {fmtWindows(e.founderWindows)} kpl
                         </span>
-                        <span className="shrink-0">ei palkkaa</span>
+                        <span className="shrink-0">ei palkkaa — nostaa katetta</span>
                       </div>
                     )}
                   </div>
@@ -974,75 +1026,99 @@ function EraDebtList({ eraBreakdown }: { eraBreakdown: EraDebtBreakdown[] }) {
   );
 }
 
-/** Consolidated payroll overview for the whole gig — what each worker has
- *  earned, what's been paid out, and what's still open. This is the "see how
- *  much money for each worker" view; it reads the same crew/payout data the
- *  per-worker cards use, so it's always in sync. */
-function PayrollSummary({ crew, eraSentByWorker = {} }: { crew: HostCrewRow[]; eraSentByWorker?: Record<string, number> }) {
+/**
+ * Consolidated payroll overview for the whole gig — what each worker has earned,
+ * what's been settled, and what's still open.
+ *
+ * PUNAISET ja KELTAISET erikseen: keltaisia ei ole vielä laskutettu asiakkaalta,
+ * joten niitä ei myöskään makseta tekijöille. Aiemmin "Avoinna" oli
+ * `earnedCents − maksettu`, jossa `earnedCents` sisälsi keltaiset — johtaja näki
+ * siis maksettavaa jota ei kuulunut vielä maksaa. Laskenta tulee jaetusta
+ * `settleWorker`ista, sama sääntö kuin Maksut-välilehdellä ja maksudialogissa.
+ */
+function PayrollSummary({ crew, eraInvoices, p2Enabled }: {
+  crew: HostCrewRow[];
+  eraInvoices: EraInvoiceClient[];
+  p2Enabled: boolean;
+}) {
+  const eraMaps = eraMapsFor(eraInvoices);
   const rows = crew
     .filter((c) => c.member.active)
-    .map(({ member, stats }) => {
-      const payouts = member.payouts || [];
-      // "Hoidettu" = tekijälle joko maksettu (CrewPayout "maksettu") TAI lähetetty
-      // erälasku (Maksut-puoli). Aiemmin vain maksut laskettiin, joten erälaskulla
-      // maksetut näkyivät virheellisesti "Avoinna"na. Nyt molemmat lasketaan.
-      const paidCents = payouts.filter((p) => p.status === "maksettu").reduce((s, p) => s + p.amountCents, 0);
-      const eraSentCents = eraSentByWorker[member.id] || 0;
-      const settledCents = paidCents + eraSentCents;
-      const openCents = Math.max(0, stats.earnedCents - settledCents);
-      return { id: member.id, name: member.name, washed: stats.washed, earnedCents: stats.earnedCents, paidCents, eraSentCents, settledCents, openCents };
-    })
+    .map(({ member, stats }) => settleWorker({
+      id: member.id,
+      name: member.name,
+      active: true,
+      founder: false,
+      stats,
+      payouts: member.payouts || [],
+      p2Enabled,
+      era: eraMaps,
+    }))
     .filter((r) => r.earnedCents > 0 || r.washed > 0)
-    .sort((a, b) => b.earnedCents - a.earnedCents);
+    .sort((a, b) => b.openP1Cents - a.openP1Cents || b.p1EarnedCents - a.p1EarnedCents);
 
   if (rows.length === 0) return null;
 
-  const totalEarned = rows.reduce((s, r) => s + r.earnedCents, 0);
-  const totalPaid = rows.reduce((s, r) => s + r.settledCents, 0);
-  const totalOpen = rows.reduce((s, r) => s + r.openCents, 0);
-  const totalWashed = rows.reduce((s, r) => s + r.washed, 0);
-  const anyEra = rows.some((r) => r.eraSentCents > 0);
+  const t = sumWorkerSettlements(rows);
+  const anyEra = rows.some((r) => r.eraSentCents > 0 || r.eraPendingCents > 0);
 
   return (
     <div className="rounded-2xl border bg-card p-4 mb-5">
       <div className="flex items-center justify-between mb-3">
         <h2 className="flex items-center gap-1.5 text-sm font-bold"><Wallet className="h-4 w-4" /> Palkkayhteenveto</h2>
-        <span className="text-[11px] text-muted-foreground">{totalWashed} ikkunaa · {rows.length} tekijää</span>
+        <span className="text-[11px] text-muted-foreground">
+          {fmtWindows(t.p1Washed)} punaista{t.p2Washed > 0 ? ` · ${fmtWindows(t.p2Washed)} keltaista` : ""} · {rows.length} tekijää
+        </span>
       </div>
 
-      {/* Totals strip — the gig's total labour cost, paid out and still owed. */}
+      {/* Totals strip — punaisten palkat, hoidettu ja vielä siirrettävä. */}
       <div className="grid grid-cols-3 gap-2 mb-3 text-center">
         <div className="rounded-xl bg-muted/40 py-2">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Palkat yhteensä</p>
-          <p className="text-sm font-bold tabular-nums">{eur(totalEarned)}</p>
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Punaisten palkat</p>
+          <p className="text-sm font-bold tabular-nums">{eur(t.p1EarnedCents)}</p>
         </div>
         <div className="rounded-xl bg-muted/40 py-2">
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{anyEra ? "Maksettu / laskutettu" : "Maksettu"}</p>
-          <p className="text-sm font-bold tabular-nums text-green-600">{eur(totalPaid)}</p>
+          <p className="text-sm font-bold tabular-nums text-green-600">{eur(t.settledCents)}</p>
         </div>
         <div className="rounded-xl bg-muted/40 py-2">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Avoinna</p>
-          <p className="text-sm font-bold tabular-nums text-amber-600">{eur(totalOpen)}</p>
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Siirrettävä</p>
+          <p className={`text-sm font-bold tabular-nums ${t.openP1Cents > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{eur(t.openP1Cents)}</p>
         </div>
       </div>
-      {anyEra && (
+      {/* Keltaiset omana, korostettuna rivinä — EI mukana "Siirrettävä"ssä. */}
+      {t.openP2Cents > 0 && (
+        <p className="-mt-1 mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] leading-snug text-amber-700 dark:text-amber-400">
+          Keltaisista (2. vaihe) on kertynyt lisäksi <strong>{eur(t.openP2Cents)}</strong> — ei makseta vielä, vaan sen
+          jälkeen kun asiakas on maksanut keltaisten laskun. "Siirrettävä" sisältää vain punaiset.
+        </p>
+      )}
+      {t.eraPendingCents > 0 && (
         <p className="-mt-1 mb-3 text-[11px] leading-snug text-muted-foreground">
-          Sisältää tekijöille lähetetyt erälaskut (Maksut-puoli) — ne lasketaan hoidetuiksi, joten ne eivät näy enää "Avoinna".
+          {eur(t.eraPendingCents)} on jo luotu erälaskuiksi ja odottaa tekijöiden kuittausta — ne eivät näy enää
+          siirrettävänä, joten samaa maksua ei tule tehtyä kahdesti.
         </p>
       )}
 
       {/* Per-worker rows */}
       <div className="divide-y divide-border">
         {rows.map((r) => (
-          <div key={r.id} className="flex items-center justify-between gap-3 py-2">
+          <div key={r.workerId} className="flex items-center justify-between gap-3 py-2">
             <div className="min-w-0">
               <p className="text-sm font-medium truncate">{r.name}</p>
-              <p className="text-[11px] text-muted-foreground">{r.washed} ikkunaa</p>
+              <p className="text-[11px] text-muted-foreground">
+                {fmtWindows(r.p1Washed)} punaista
+                {r.p2Washed > 0 ? ` · ${fmtWindows(r.p2Washed)} keltaista` : ""}
+                {r.settledEras.length > 0 ? ` · erät ${r.settledEras.join(", ")}` : ""}
+              </p>
+              {r.openP2Cents > 0 && (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400">keltaisista {eur(r.openP2Cents)} odottaa</p>
+              )}
             </div>
             <div className="flex items-center gap-4 text-right shrink-0">
               <div className="hidden sm:block">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Ansaittu</p>
-                <p className="text-sm font-semibold tabular-nums">{eur(r.earnedCents)}</p>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Punaisista</p>
+                <p className="text-sm font-semibold tabular-nums">{eur(r.p1EarnedCents)}</p>
               </div>
               {/* Näkyy myös puhelimessa: paljonko tekijälle on hoidettu (maksettu
                   tai lähetetty erälaskulla) — ettei kaikki näytä pelkältä Avoinna. */}
@@ -1051,8 +1127,8 @@ function PayrollSummary({ crew, eraSentByWorker = {} }: { crew: HostCrewRow[]; e
                 <p className="text-sm font-semibold tabular-nums text-green-600">{eur(r.settledCents)}</p>
               </div>
               <div>
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Avoinna</p>
-                <p className={`text-sm font-bold tabular-nums ${r.openCents > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{eur(r.openCents)}</p>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Siirrettävä</p>
+                <p className={`text-sm font-bold tabular-nums ${r.openP1Cents > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{eur(r.openP1Cents)}</p>
               </div>
             </div>
           </div>

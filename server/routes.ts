@@ -30,6 +30,7 @@ import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeP2Billing, customerAddedKeys, emptyP2State, isP2Washable, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
+import { p2InvoiceState, computeWorkerSettlements, eraSettlementByWorker, sumWorkerSettlements } from "@shared/worker-payouts";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN, MAX_CREW_DOC_LEN, totalPaidPayoutCents, retentionFromDate,
@@ -2062,10 +2063,36 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const rawWorkers = Array.isArray(req.body?.workers) ? req.body.workers : [];
       if (rawWorkers.length === 0) return res.status(400).json({ error: "Tekijöitä puuttuu" });
 
+      // Kaksoiskappalesuoja: samalle tekijälle ei saa syntyä toista laskua samasta
+      // erästä. Ilman tätä johtaja, joka ei nähnyt luonnosta "hoidettuna", loi
+      // erän uudelleen ja tekijä sai kaksi laskua samasta työstä. `force`-lipulla
+      // (tarkoituksellinen korjauslasku) voi ohittaa.
+      const force = req.body?.force === true;
+      const eraKey = JSON.stringify(eraNumbers);
+      let existingSenderIds = new Set<string>();
+      if (!force) {
+        try {
+          const existing = await db.select().from(eraInvoices).where(and(
+            eq(eraInvoices.jobId, jobId),
+            eq(eraInvoices.kind, "tekija" satisfies EraInvoiceKind),
+            eq(eraInvoices.eraNumbers, eraKey),
+            ne(eraInvoices.tila, "hylätty" satisfies EraInvoiceTila),
+          ));
+          existingSenderIds = new Set(existing.map((r) => r.senderId));
+        } catch (e: any) {
+          if (!isMissingTableError(e)) throw e;
+        }
+      }
+
       const created: (typeof eraInvoices.$inferSelect)[] = [];
+      const skipped: string[] = [];
       for (const w of rawWorkers) {
         const workerId = String(w?.workerId || "").slice(0, 100);
         if (!workerId) continue;
+        if (existingSenderIds.has(workerId)) {
+          skipped.push(String(w?.name || workerId));
+          continue;
+        }
         const name = String(w?.name || workerId).slice(0, 200);
         const pestytIkkunat = Math.max(0, Number(w?.pestytIkkunat) || 0);
         const sovittuMuutosCents = Math.round(Number(w?.sovittuMuutosCents) || 0);
@@ -2085,8 +2112,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }).returning();
         created.push(row);
       }
-      if (created.length === 0) return res.status(400).json({ error: "Ei luotu yhtään laskua" });
-      res.status(201).json({ ok: true, invoices: created.map(toClientEraInvoice) });
+      if (created.length === 0) {
+        return res.status(400).json({
+          error: skipped.length > 0
+            ? `Näille tekijöille on jo tehty tämän erän maksu: ${skipped.join(", ")}. Tarkista Maksut-välilehdeltä.`
+            : "Ei luotu yhtään laskua",
+        });
+      }
+      res.status(201).json({ ok: true, invoices: created.map(toClientEraInvoice), skipped });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -4633,14 +4666,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const agreedTotalCents = fixedDeal && proj ? dealAgreedTotalCents(proj, fixedDeal) : null;
 
       // P1:n eränumerointi ja 4 erän raja lasketaan VAIN P1-maksuista, jotta
-      // p2-scoped maksut eivät sotke kiinteän sopimuksen erälaskentaa.
-      const p1Payments = gig.payments.filter((p) => p.scope !== "p2");
-      const p2Payments = gig.payments.filter((p) => p.scope === "p2");
-      const p1InvoicedBeforeCents = p1Payments.reduce((s, p) => s + p.amountCents, 0);
-
+      // p2-scoped maksut eivät sotke kiinteän sopimuksen erälaskentaa. Suodatus
+      // tulee jaetusta `p2InvoiceState`sta — sama funktio kuin clientillä.
       const p2b = proj ? computeP2Billing(proj) : null;
-      const p2InvoicedCents = p2Payments.reduce((s, p) => s + p.amountCents, 0);
-      const p2RemainingCents = Math.max(0, (p2b?.earnedCents ?? 0) - p2InvoicedCents);
+      const invState = p2InvoiceState(p2b?.earnedCents ?? 0, gig.payments);
+      const p1InvoicedBeforeCents = invState.p1InvoicedCents;
+      const p1PaymentCount = invState.p1Payments;
+      const p2InvoicedCents = invState.invoicedCents;
+      const p2RemainingCents = invState.remainingCents;
       const reqAmountCents = Math.floor(Number(req.body?.amountCents));
       const p2AmountCents = isP2Scope
         ? Math.min(p2RemainingCents, Number.isInteger(reqAmountCents) && reqAmountCents > 0 ? reqAmountCents : p2RemainingCents)
@@ -4650,10 +4683,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // number manually in the dialog (1–4); otherwise it follows the count sent.
       const reqPaymentNumber = Number(req.body?.paymentNumber);
       const paymentNumber = isP2Scope
-        ? p2Payments.length + 1
+        ? invState.payments + 1
         : (fixedDeal && Number.isInteger(reqPaymentNumber) && reqPaymentNumber >= 1 && reqPaymentNumber <= 4)
           ? reqPaymentNumber
-          : p1Payments.length + 1;
+          : p1PaymentCount + 1;
 
       // Final (4th) erä = effective agreed total − what P1 has already been billed,
       // so removed windows come off the last invoice; earlier erät = fixed 25 %.
@@ -4667,7 +4700,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const totalsBefore = computeTotals(gig);
       const amountCents = isP2Scope ? p2AmountCents : (installmentCents ?? totalsBefore.uninvoicedCents);
       if (amountCents <= 0) return res.status(400).json({ error: "Ei laskutettavaa kertymää" });
-      if (fixedDeal && p1Payments.length >= 4) {
+      if (fixedDeal && p1PaymentCount >= 4) {
         return res.status(400).json({ error: "Kaikki neljä maksuerää on jo lähetetty." });
       }
 
@@ -5140,16 +5173,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // (sama laskenta kuin laskureitillä), jotta dashboard voi näyttää
       // "laskuttamatta = kertymä − jo laskutettu" eikä pelkkää bruttokertymää.
       const gigForP2 = parseGig(job.gigData);
-      const p2InvoicedCents = (gigForP2?.payments ?? [])
-        .filter((p) => p.scope === "p2")
-        .reduce((s, p) => s + p.amountCents, 0);
+      const p2b = computeP2Billing(project);
+      const payments = gigForP2?.payments ?? [];
+      const p2State = p2InvoiceState(p2b.earnedCents, payments);
+      // Asiakaslaskutuksen tila samasta jaetusta laskennasta kuin laskureitillä,
+      // jotta musta dash näyttää oikeat erä-statsit ilman omaa kaavaa.
+      const projDeal = fixedDealFor(project);
+      const agreedTotalCents = projDeal ? dealAgreedTotalCents(project, projDeal) : 0;
+      const rawInstalmentCents = projDeal ? Math.round(projDeal.capCents / 4) : 0;
+      const nextIsFinal = !!projDeal && p2State.p1Payments === 3;
       res.json({
         ok: true,
         project,
         totals: computeProjectTotals(project),
         workerStats: computeWorkerStats(project),
-        p2Billing: computeP2Billing(project),
-        p2InvoicedCents,
+        p2Billing: p2b,
+        p2InvoicedCents: p2State.invoicedCents,
+        /** Asiakaslaskutus yhtenä objektina — musta dash näyttää tämän statseina. */
+        billing: {
+          p1PayCount: p2State.p1Payments,
+          p1InvoicedCents: p2State.p1InvoicedCents,
+          p2InvoicedCents: p2State.invoicedCents,
+          p2RemainingCents: p2State.remainingCents,
+          agreedTotalCents,
+          nextInstalmentCents: projDeal
+            ? (nextIsFinal ? Math.max(0, agreedTotalCents - p2State.p1InvoicedCents) : rawInstalmentCents)
+            : 0,
+        },
         guidedState: computeGuided(project),
       });
     } catch (e: any) {
@@ -6759,6 +6809,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json({
         ok: true, crew, building: project.building, version: WORKER_AGREEMENT_VERSION,
         deal, totalBillable, billableWashed, eraWindows: project.eraWindows ?? null, eraBreakdown, founderSettlement,
+        // Onko vaihe 2 (keltaiset) päällä? Palkkayhteenveto erottelee punaisten ja
+        // keltaisten palkat sen mukaan — keltaisia ei makseta ennen kuin asiakas
+        // on maksanut niiden laskun.
+        p2Enabled: !!project.p2?.enabled,
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

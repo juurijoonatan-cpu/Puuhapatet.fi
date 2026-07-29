@@ -34,6 +34,7 @@ import {
 } from "@shared/gig";
 import { computeProjectTotals, fixedDealFor, computeDealBilling, dealAgreedTotalCents, eurFromCents, type ProjectData } from "@shared/project";
 import { computeP2Billing } from "@shared/p2";
+import { p2InvoiceState } from "@shared/worker-payouts";
 import { downloadGigContract, openGigContractForPrint } from "@/lib/gig-contract-doc";
 
 const PUBLIC_BASE = "https://puuhapatet.fi";
@@ -447,22 +448,26 @@ export default function AdminGigTrackerPage() {
   // Quarter size = billableTotal / 4 and scales dynamically if dots are added to the map.
   // Each erä is a fixed 25 %, EXCEPT the final (4th) which bills the remainder of the
   // effective agreed total — so removed red windows come off the last invoice.
-  const p1PayCount = gig.payments.filter((p) => p.scope !== "p2").length;
-  const p1InvoicedCents = gig.payments.filter((p) => p.scope !== "p2").reduce((s, p) => s + p.amountCents, 0);
+  // P2 (keltaiset) — lisätyön laskutus asuu SAMASSA Laskutus-kortissa kuin
+  // punaiset (jatkona niiden päälle), ei enää omassa dropdownissa. Locked sum
+  // kasvattaa myös sopimuksen kokonaissummaa.
+  const p2 = project?.p2;
+  const p2On = !!p2?.enabled;
+  const p2b = project ? computeP2Billing(project) : null;
+  const p2Locked = p2b?.lockedSumCents ?? 0;
+  // P1/P2-maksujen erottelu tulee YHDESTÄ jaetusta funktiosta (shared/worker-payouts.ts)
+  // — sama laskenta kuin mustassa dashissa ja serverillä, ei kolmea kopiota
+  // erilaisia scope-suodatuksia.
+  const invState = p2InvoiceState(p2b?.earnedCents ?? 0, gig.payments);
+  const p1PayCount = invState.p1Payments;
+  const p1InvoicedCents = invState.p1InvoicedCents;
+  const p2InvoicedCents = invState.invoicedCents;
+  const p2RemainingCents = invState.remainingCents;
   const agreedTotalCents = (deal && project) ? dealAgreedTotalCents(project, deal) : 0;
   const isFinalEra = !!deal && p1PayCount === 3;
   const fixedInstallmentCents = deal
     ? (isFinalEra ? Math.max(0, agreedTotalCents - p1InvoicedCents) : Math.round(deal.capCents / 4))
     : 0;
-  // P2 (keltaiset) — koko lisätyön laskutus + sopimus myös TÄSSÄ näkymässä (mustan
-  // dashin ulkopuolella), jotta perustaja näkee ja laskuttaa keltaiset samasta
-  // paikasta kuin punaiset. Locked sum kasvattaa myös sopimuksen kokonaissummaa.
-  const p2 = project?.p2;
-  const p2On = !!p2?.enabled;
-  const p2b = project ? computeP2Billing(project) : null;
-  const p2Locked = p2b?.lockedSumCents ?? 0;
-  const p2InvoicedCents = gig.payments.filter((p) => p.scope === "p2").reduce((s, p) => s + p.amountCents, 0);
-  const p2RemainingCents = Math.max(0, (p2b?.earnedCents ?? 0) - p2InvoicedCents);
   // The reduced final (4th) erä = effective agreed total − the three fixed 25 %
   // instalments (e.g. 6150 − 3×1575 = 1425 when red windows were removed).
   const rawInstalmentCents = deal ? Math.round(deal.capCents / 4) : 0;
@@ -727,6 +732,35 @@ export default function AdminGigTrackerPage() {
                   </p>
                 )}
 
+                {/* Keltaisten (2. vaihe) tilausehdot kuuluvat SAMAAN sopimusosioon
+                    kuin punaisten allekirjoitus — kaksi vaihetta, yksi sopimustila.
+                    Aiemmin tämä oli omassa dropdownissaan, jossa se jäi piiloon. */}
+                {p2On && (
+                  <div className="rounded-xl border border-border p-3 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-medium text-muted-foreground">2. vaihe — keltaisten tilausehdot</p>
+                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${p2?.terms ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300" : "bg-muted text-muted-foreground"}`}>
+                        {p2?.terms ? <Check className="w-3 h-3" /> : <Clock className="w-3 h-3" />}
+                        {p2?.terms ? "Hyväksytty" : "Odottaa"}
+                      </span>
+                    </div>
+                    {p2?.terms ? (
+                      <p className="text-sm text-emerald-700 dark:text-emerald-400">
+                        {p2.terms.acceptorName}
+                        {p2.terms.acceptedAt ? ` · ${new Date(p2.terms.acceptedAt).toLocaleDateString("fi-FI")}` : ""}
+                        {p2b && p2b.lockedCount > 0 ? ` · ${p2b.lockedCount} ikkunaa sovittu (${eur(p2b.lockedSumCents)})` : ""}
+                      </p>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        Asiakas hyväksyy ehdot kertaalleen seurantalinkissä ennen ensimmäistä hinnan hyväksyntää.
+                      </p>
+                    )}
+                    <a href="/fr8/priority2-sopimus-2026.pdf" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground underline">
+                      <FileText className="w-3.5 h-3.5" /> Lue 2. vaiheen sopimus (PDF)
+                    </a>
+                  </div>
+                )}
+
                 {/* Customer live-link — signing page before signature, live tracker after. */}
                 <div className="space-y-1.5 pt-1 border-t border-border">
                   <Label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
@@ -826,12 +860,25 @@ export default function AdminGigTrackerPage() {
           );
         })()}
 
-        {/* Invoicing */}
+        {/* Laskutus — YKSI kortti, joka kattaa koko asiakaslaskutuksen:
+            punaiset (kiinteät 4 erää) ja niiden JATKONA keltaiset (2. vaihe).
+            Aiemmin keltaiset olivat omassa dropdownissaan, mikä hajotti saman
+            asian kahteen paikkaan; nyt sama kortti jatkuu punaisista keltaisiin. */}
         <Card className="p-5 bg-card border-0 premium-shadow mb-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Receipt className="w-4 h-4 text-muted-foreground" />
-            <h2 className="font-semibold text-foreground">Laskutus</h2>
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <Receipt className="w-4 h-4 text-muted-foreground shrink-0" />
+              <h2 className="font-semibold text-foreground">Laskutus</h2>
+            </div>
+            <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+              laskutettu {eur(p1InvoicedCents + p2InvoicedCents)}
+            </span>
           </div>
+          {deal && (
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+              Punaiset · kiinteä urakka
+            </p>
+          )}
           {due && (
             <div className="flex items-start gap-2 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3 mb-3">
               <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
@@ -913,60 +960,73 @@ export default function AdminGigTrackerPage() {
               </Button>
             </>
           )}
+
+          {/* ── KELTAISET (2. vaihe) — samaa laskutusta, jatkona punaisten päälle.
+                Näkyy vasta kun vaihe 2 on avattu asiakkaalle, ettei tyhjä osio
+                roiku näkymässä valmistelun aikana. */}
+          {deal && p2On && p2b && (
+            <div className="mt-4 pt-4 border-t border-border">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                  Keltaiset · 2. vaihe (lisätyö)
+                </p>
+                <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+                  sovittu {eur(p2b.lockedSumCents)}
+                </span>
+              </div>
+              {p2b.lockedCount === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Asiakas ei ole vielä hyväksynyt yhtään keltaista hintaa — laskutettavaa ei siis ole.
+                  Hinnoittele keltaiset projektinäkymän kartalla.
+                </p>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm text-muted-foreground">Sovittu (lukittu)</span>
+                    <span className="text-sm font-semibold text-foreground tabular-nums">{p2b.lockedCount} kpl · {eur(p2b.lockedSumCents)}</span>
+                  </div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm text-muted-foreground">Kertynyt (pesty)</span>
+                    <span className="text-sm font-semibold text-foreground tabular-nums">{p2b.lockedWashedCount} kpl · {eur(p2b.earnedCents)}</span>
+                  </div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm text-muted-foreground">Laskutettu</span>
+                    <span className="text-sm font-semibold text-green-600 tabular-nums">{eur(p2InvoicedCents)}</span>
+                  </div>
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-sm text-muted-foreground">Laskuttamatta</span>
+                    <span className={`text-lg font-bold tabular-nums ${p2RemainingCents > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{eur(p2RemainingCents)}</span>
+                  </div>
+                  <Button className="w-full" disabled={p2Sending || p2RemainingCents <= 0} onClick={sendP2}>
+                    <Send className="w-4 h-4 mr-2" />
+                    {p2Sending ? "Lähetetään…" : p2RemainingCents > 0 ? `Lähetä keltaisten lasku (${eur(p2RemainingCents)})` : "Kaikki keltaiset laskutettu ✓"}
+                  </Button>
+                  <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+                    Keltaisten lasku on erillinen punaisten neljästä erästä — se ei kuluta erälaskuria eikä
+                    muuta kiinteää urakkasummaa. Laskutetaan vain pestyistä, sovituista ikkunoista.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+
           {/* Comprehensive internal report — instalments + crew payouts + expenses
               + margin — emailed to the founders, never the customer. */}
-          <Button variant="outline" className="w-full mt-2" disabled={reporting} onClick={sendReport}>
+          <Button variant="outline" className="w-full mt-4" disabled={reporting} onClick={sendReport}>
             {reporting ? "Lähetetään…" : "Lähetä maksuraportti johtajille"}
           </Button>
+          {/* Tekijöille maksettavat asuvat projektinäkymän Maksut-välilehdellä —
+              linkki tänne, ettei samaa osiota tarvitse toistaa tässä näkymässä. */}
+          {deal && (
+            <button
+              type="button"
+              onClick={() => navigate(`/admin/gig/${jobId}/projekti?tab=maksut`)}
+              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Tekijöiden maksut &amp; erälaskut <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          )}
         </Card>
-
-        {/* Priority 2 (keltaiset) — lisätyön SOPIMUS + LASKUTUS samassa näkymässä
-            kuin punaiset, ettei tarvitse avata mustaa projektinäkymää. */}
-        {deal && p2On && p2b && (
-          <Disclosure
-            icon={<Receipt className="w-4 h-4 text-muted-foreground" />}
-            title="Priority 2 — keltaiset (sopimus & laskutus)"
-            right={<span className="text-sm font-bold text-amber-600 dark:text-amber-400 tabular-nums">{eur(p2b.lockedSumCents)}</span>}
-          >
-            <div className="space-y-4">
-              {/* Sopimus / tilausehdot */}
-              <div className="rounded-xl border border-border p-3 text-sm space-y-1.5">
-                <p className="text-xs font-medium text-muted-foreground">Tilausehdot (keltaiset)</p>
-                {p2?.terms ? (
-                  <p className="text-emerald-700 dark:text-emerald-400">✓ Asiakas hyväksynyt — {p2.terms.acceptorName}{p2.terms.acceptedAt ? `, ${new Date(p2.terms.acceptedAt).toLocaleDateString("fi-FI")}` : ""}</p>
-                ) : (
-                  <p className="text-muted-foreground">Asiakas ei ole vielä hyväksynyt tilausehtoja.</p>
-                )}
-                <a href="/fr8/priority2-sopimus-2026.pdf" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground underline">
-                  <FileText className="w-3.5 h-3.5" /> Lue Priority 2 -sopimus (PDF)
-                </a>
-              </div>
-
-              {/* Laskutus */}
-              <div className="grid grid-cols-2 gap-2">
-                <div className="rounded-xl bg-muted/40 p-2.5">
-                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Sovittu (lukittu)</p>
-                  <p className="text-sm font-bold tabular-nums">{p2b.lockedCount} kpl · {eur(p2b.lockedSumCents)}</p>
-                </div>
-                <div className="rounded-xl bg-muted/40 p-2.5">
-                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Kertynyt (pesty)</p>
-                  <p className="text-sm font-bold tabular-nums">{p2b.lockedWashedCount} kpl · {eur(p2b.earnedCents)}</p>
-                </div>
-                <div className="rounded-xl bg-muted/40 p-2.5">
-                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Laskutettu</p>
-                  <p className="text-sm font-bold tabular-nums text-green-600">{eur(p2InvoicedCents)}</p>
-                </div>
-                <div className="rounded-xl bg-muted/40 p-2.5">
-                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Laskuttamatta</p>
-                  <p className={`text-sm font-bold tabular-nums ${p2RemainingCents > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{eur(p2RemainingCents)}</p>
-                </div>
-              </div>
-              <Button className="w-full" disabled={p2Sending || p2RemainingCents <= 0} onClick={sendP2}>
-                <Send className="w-4 h-4 mr-2" /> {p2Sending ? "Lähetetään…" : p2RemainingCents > 0 ? `Lähetä P2-lasku (${eur(p2RemainingCents)})` : "Ei laskuttamatonta P2-kertymää"}
-              </Button>
-            </div>
-          </Disclosure>
-        )}
 
       </div>
 

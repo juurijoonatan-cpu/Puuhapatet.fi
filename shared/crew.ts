@@ -236,6 +236,15 @@ export interface CrewMemberStats {
   /** The P2 (keltaiset) part of earnedCents: Σ share × p2WorkerPayoutCents per
    *  locked yellow window. 0 when the gig has no p2 pricing. */
   p2EarnedCents: number;
+  /** The P1 (punaiset) part of earnedCents = earnedCents − p2EarnedCents. This is
+   *  the ONLY money the 4-erä contract pays out, so every payout/settlement view
+   *  must split on it instead of the combined total. */
+  p1EarnedCents: number;
+  /** Windows split by priority (same 0.5 sharing rule as `washed`). Yellow windows
+   *  must never be billed at the red €/ikkuna rate — the erä payment prefill uses
+   *  `p1Washed`. */
+  p1Washed: number;
+  p2Washed: number;
   hours: number;                // logged hours
   windowsPerHour: number;
   eurPerHour: number;
@@ -261,6 +270,8 @@ export function crewMemberStats(project: ProjectData, member: CrewMember): CrewM
   const sharePct = p2?.workerSharePct || DEFAULT_P2_WORKER_SHARE_PCT;
   const payoutSchedule = p2?.payoutSchedule;
   let washed = 0;
+  let p1Washed = 0;
+  let p2Washed = 0;
   let earnedRaw = 0;
   let p2EarnedRaw = 0;
   for (const p of pts) {
@@ -272,6 +283,7 @@ export function crewMemberStats(project: ProjectData, member: CrewMember): CrewM
     else if (second === member.id) share = 0.5;
     if (!share) continue;
     washed += share;
+    if (p.p === 2) p2Washed += share; else p1Washed += share;
     if (p2 && p.p === 2) {
       const offer = p2.offers[p.key];
       const rate = offer?.status === "locked" && offer.lockedCents
@@ -285,10 +297,17 @@ export function crewMemberStats(project: ProjectData, member: CrewMember): CrewM
   }
   const hours = Math.max(0, project.hours?.[member.id] || 0);
   const earnedCents = Math.round(earnedRaw);
+  const p2EarnedCents = Math.round(p2EarnedRaw);
   return {
     washed,
     earnedCents,
-    p2EarnedCents: Math.round(p2EarnedRaw),
+    p2EarnedCents,
+    // NOTE: with p2 OFF a yellow window still pays the normal €/ikkuna rate
+    // (legacy behaviour, see the doc comment above), so that money lands here —
+    // which is correct: without a P2 contract there is no separate yellow pot.
+    p1EarnedCents: earnedCents - p2EarnedCents,
+    p1Washed,
+    p2Washed,
     hours,
     windowsPerHour: hours > 0 ? washed / hours : 0,
     eurPerHour: hours > 0 ? earnedCents / 100 / hours : 0,

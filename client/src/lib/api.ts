@@ -192,6 +192,18 @@ export interface InvoiceListItem {
   tila?: string;
 }
 
+/** Asiakaslaskutuksen tila keikalla — punaisten kiinteät 4 erää + keltaisten
+ *  erillinen (scope:"p2") laskutus. Lasketaan serverillä samasta jaetusta
+ *  `p2InvoiceState`sta kuin laskureitti, jotta näkymät eivät voi eriytyä. */
+export interface GigBillingState {
+  p1PayCount: number;
+  p1InvoicedCents: number;
+  p2InvoicedCents: number;
+  p2RemainingCents: number;
+  agreedTotalCents: number;
+  nextInstalmentCents: number;
+}
+
 /** Founder settlement for a fixed deal. The biller collects the full instalment;
  *  the kate (instalment − palkat) is split equally as passive income; the biller
  *  pays the others their share. Computed over BILLED erät only. */
@@ -694,7 +706,9 @@ export const api = {
     workers: { workerId: string; name: string; pestytIkkunat: number; sovittuMuutosCents: number; ennakkoCents: number }[];
     /** Eräpäivä, johtajan valitsema ("YYYY-MM-DD"). Puuttuessaan 14 vrk -oletus. */
     dueDate?: string;
-  }) => request<{ ok: boolean; invoices: EraInvoiceClient[] }>("POST", `/api/jobs/${jobId}/era-invoice/worker-batch`, data),
+    /** Ohita kaksoiskappalesuoja (tarkoituksellinen korjauslasku samasta erästä). */
+    force?: boolean;
+  }) => request<{ ok: boolean; invoices: EraInvoiceClient[]; skipped?: string[] }>("POST", `/api/jobs/${jobId}/era-invoice/worker-batch`, data),
   // Johtaja lähettää suoraan toiselle johtajalle ristiinlaskun (§3C) — lukittu heti.
   sendFounderEraInvoice: (jobId: number, data: {
     eraNumbers: number[]; senderId: string; itsepestytIkkunat: number; kokonaisikkunat: number;
@@ -1087,7 +1101,12 @@ export const api = {
 
   // ─── Project / floor-plan window tool (FR8 projektinäkymä) ──────────────────
   getProject: (jobId: number) =>
-    request<{ ok: boolean; project: ProjectData | null; totals?: ProjTotals; workerStats?: WorkerStat[]; p2Billing?: P2Billing; p2InvoicedCents?: number; guidedState?: GuidedState }>(
+    request<{
+      ok: boolean; project: ProjectData | null; totals?: ProjTotals; workerStats?: WorkerStat[];
+      p2Billing?: P2Billing; p2InvoicedCents?: number; guidedState?: GuidedState;
+      /** Asiakaslaskutuksen tila (punaisten 4 erää + keltaiset) — yksi laskenta serverillä. */
+      billing?: GigBillingState;
+    }>(
       "GET", `/api/jobs/${jobId}/project`,
     ),
 
@@ -1205,7 +1224,7 @@ export const api = {
 
   // ─── Host crew management ───────────────────────────────────────────────────
   getHostCrew: (jobId: number) =>
-    request<{ ok: boolean; crew: HostCrewRow[]; building: ProjBuilding; version: string; deal: FixedDeal | null; totalBillable: number; billableWashed: number; eraWindows: number[] | null; eraBreakdown: EraDebtBreakdown[]; founderSettlement: FounderSettlement }>(
+    request<{ ok: boolean; crew: HostCrewRow[]; building: ProjBuilding; version: string; deal: FixedDeal | null; totalBillable: number; billableWashed: number; eraWindows: number[] | null; eraBreakdown: EraDebtBreakdown[]; founderSettlement: FounderSettlement; p2Enabled?: boolean }>(
       "GET", `/api/jobs/${jobId}/crew`),
 
   // Founders' editable per-erä (instalment) window counts for the fixed deal.

@@ -13,18 +13,20 @@ import { getAdminProfile, USERS, getPreferredWasher, setPreferredWasher } from "
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import {
   emptyProjectData, computeWorkerStats, isFr8Plans, fixedDealFor, allPoints, computeDealBilling,
+  dealInternalRateCents,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense,
 } from "@shared/project";
-import { computeP2Billing, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule } from "@shared/p2";
+import { computeP2Billing, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule } from "@shared/p2";
 import { computeGuided, type GuidedWork } from "@shared/guided";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
 import { FOUNDER_IDS } from "@shared/team";
 import { traineeForUserId, traineeForName } from "@shared/trainees";
 import { DEFAULT_WORKER_PER_WINDOW_CENTS } from "@shared/crew";
 import Dashboard from "@/components/fr8/Dashboard";
-import WorkerEraInvoiceDialog from "@/components/fr8/WorkerEraInvoiceDialog";
 import FounderEraInvoiceDialog from "@/components/fr8/FounderEraInvoiceDialog";
 import MaksutView from "@/components/fr8/MaksutView";
+import type { GigBillingState, EraInvoiceClient } from "@/lib/api";
+import { computeWorkerSettlements, eraSettlementByWorker, sumWorkerSettlements } from "@shared/worker-payouts";
 import { BRAND_BILLERS } from "@shared/billers";
 import FloorView from "@/components/fr8/FloorView";
 import Section from "@/components/fr8/Section";
@@ -98,7 +100,13 @@ export default function AdminProjectPage() {
   const currentWorker = profile?.id || "joonatan";
   const { checking: crewChecking } = useCrewWorkerRedirect(jobId);
 
-  const [tab, setTab] = useState<Fr8Tab>("dashboard");
+  // Syvälinkki `?tab=maksut` — keikkanäkymän "Tekijöiden maksut" hyppää suoraan
+  // Maksut-välilehdelle, ettei samaa osiota tarvitse toistaa kahdessa näkymässä.
+  const [tab, setTab] = useState<Fr8Tab>(() => {
+    if (typeof window === "undefined") return "dashboard";
+    const t = new URLSearchParams(window.location.search).get("tab");
+    return t === "maksut" || t === "floor" ? t : "dashboard";
+  });
   const [activeFloor, setActiveFloor] = useState("K");
   // Who new "pesty" markings are attributed to by default. Defaults to the
   // logged-in admin, but each admin can pick a preferred default washer per gig
@@ -109,9 +117,30 @@ export default function AdminProjectPage() {
   // How much P2 (keltaiset) is already invoiced (server sums scope:"p2" payments)
   // — lets the P2 panel show "laskuttamatta = kertymä − laskutettu".
   const [p2Invoiced, setP2Invoiced] = useState(0);
-  const refreshP2Invoiced = useCallback(async () => {
+  // Asiakaslaskutuksen tila serveriltä (punaisten 4 erää + keltaiset). Yksi
+  // laskenta serverillä → dash ja Maksut näyttävät samat luvut kuin laskureitti.
+  const [billing, setBilling] = useState<GigBillingState | null>(null);
+  /** Päivitä keltaisten laskutustila + asiakaslaskutuksen erä-statsit serveriltä.
+   *  Kutsutaan kun P2-tila muuttuu (hinta lukittuu → kertymä kasvaa). */
+  const refreshBilling = useCallback(async () => {
     const r = await api.getProject(jobId);
-    if (r.ok && r.data) setP2Invoiced(r.data.p2InvoicedCents ?? 0);
+    if (r.ok && r.data) {
+      setP2Invoiced(r.data.p2InvoicedCents ?? 0);
+      setBilling(r.data.billing ?? null);
+    }
+  }, [jobId]);
+  // Tekijöiden erälaskut — tarvitaan dashin "tekijöille maksettavaa" -statsiin.
+  // Reitti on johtajarajattu ja palauttaa tyhjän listan ei-FR8-keikalla, joten
+  // epäonnistuminen ei ole virhe: silloin stats jää pois.
+  const [eraInvoices, setEraInvoices] = useState<EraInvoiceClient[]>([]);
+  useEffect(() => {
+    if (!jobId) return;
+    let cancelled = false;
+    void api.getEraInvoices(jobId).then((r) => {
+      if (cancelled) return;
+      setEraInvoices(r.ok && Array.isArray(r.data?.invoices) ? r.data.invoices : []);
+    });
+    return () => { cancelled = true; };
   }, [jobId]);
   const [gigName, setGigName] = useState("");   // gig/company name for a neutral header
   const [loading, setLoading] = useState(true);
@@ -166,6 +195,7 @@ export default function AdminProjectPage() {
       if (projRes.ok && projRes.data?.project) {
         const p = projRes.data.project;
         setP2Invoiced(projRes.data.p2InvoicedCents ?? 0);
+        setBilling(projRes.data.billing ?? null);
         // Make sure every assigned worker shows up in the hours view.
         const mergedWorkers = Array.from(new Set([...(p.workers || []), ...workers]));
         // Heal the original FR8 gig if it was ever saved without its bundled
@@ -437,7 +467,10 @@ export default function AdminProjectPage() {
   const applyP2 = useCallback((p2: P2State) => {
     setProject((cur) => (cur ? { ...cur, p2 } : cur));
     latest.current = latest.current ? { ...latest.current, p2 } : latest.current;
-  }, []);
+    // Hinnan lukitus/avaus muuttaa keltaisten kertymää → laskutustiili ja dashin
+    // LASKUTUS & MAKSUT -statsit haetaan uudelleen serverin laskennasta.
+    void refreshBilling();
+  }, [refreshBilling]);
   const onP2Propose = useCallback(async (keys: string[], priceCents: number) => {
     const res = await api.p2Propose(jobId, { keys, priceCents, by: currentWorker });
     if (res.ok && res.data) applyP2(res.data.p2);
@@ -517,14 +550,16 @@ export default function AdminProjectPage() {
   const crew = project.crew ?? [];
   const isFounder = (id: string, role?: string) => role === "host" || FOUNDER_IDS.includes(id);
   const dealTotalCents = Math.round(effectivePrice * 100);
-  // Sisäinen kate: sopimushinta jaettuna todellisella punaisella ikkunamäärällä.
-  // Tämä on perustajien oman työn oikea ansio per ikkuna (ei sama kuin nimellinen
-  // 37,50 €, joka on laskettu sopimuksen 168 ikkunan mukaan eikä välttämättä vastaa
-  // todellista ikkunamäärää). Käytetään myös tuottolaskelmassa workers vs. founders.
+  // Sisäinen kate: EFEKTIIVINEN sopimussumma jaettuna todellisella punaisella
+  // ikkunamäärällä (`dealInternalRateCents`). Tämä on perustajien oman työn oikea
+  // ansio per ikkuna — ei nimellinen 37,50 € (laskettu sopimuksen 168 ikkunan
+  // mukaan) eikä raaka 6300 € / ikkunamäärä.
+  //
+  // HUOM: tämä laskettiin aiemmin täällä raa'asta `deal.capCents`ista, kun
+  // Dashboard laski saman luvun efektiivisestä summasta — perustajien osio
+  // jakoi siis enemmän kuin keikan kertymä näytti. Nyt yksi jaettu funktio.
   const totalBillable = deal ? allPoints(project).filter((p) => p.p === deal.billablePriority).length : 0;
-  const internalKateCents = deal && totalBillable > 0
-    ? Math.round(deal.capCents / totalBillable)
-    : dealTotalCents;
+  const internalKateCents = deal ? dealInternalRateCents(project, deal) : dealTotalCents;
   const founderCount = Math.max(1, crew.filter((c) => isFounder(c.id, c.role)).length || FOUNDER_IDS.length);
   // A trainee (e.g. Milja) is credited to their responsible leader (Matias):
   // their washed windows + hours fold into the leader, and the trainee is NOT a
@@ -544,39 +579,80 @@ export default function AdminProjectPage() {
   // founder earns the full rate per trainee window), but the trainee never shows a
   // euro figure of their own — their pay stays combined with the leader.
   const baseStats = baseStatsRaw.map((st) => ({ ...st }));
-  // A trainee's washed windows, credited to their responsible leader FOR PAY ONLY.
+  // A trainee's washed RED windows, credited to their responsible leader FOR PAY
+  // ONLY. Keltaiset lasketaan erikseen palkkiotaulukolla (`p2EarnedFor`), joten
+  // niitä ei saa summata tähän punaisten taksalla laskettavaan määrään.
   const traineeWashedByLeader: Record<string, number> = {};
   for (const st of baseStatsRaw) {
     const lead = leaderOf(st.worker);
-    if (lead) traineeWashedByLeader[lead] = (traineeWashedByLeader[lead] || 0) + st.washed;
+    if (lead) traineeWashedByLeader[lead] = (traineeWashedByLeader[lead] || 0) + st.washedP1;
   }
+  /** Harjoittelijan KELTAISET palkkiot, hyvitetään samoin johtajalle (hän tilittää
+   *  ne eteenpäin). Ilman tätä johtajan kortin erittely (oma työ + harjoittelija +
+   *  tuotto-osuus + keltaiset) ei summautuisi kortin loppusummaan. */
+  const traineeP2CentsByLeader: Record<string, number> = {};
   // Hours are shown per person (no folding) so a trainee's specific hours stay
   // separate from their leader's.
   const managerHours: Record<string, number> = {};
   for (const [id, h] of Object.entries(project.hours || {})) {
     managerHours[id] = (managerHours[id] || 0) + (h || 0);
   }
+  // Tekijän oma €/ikkuna. YKSI fallback kaikkialla (aiemmin sama tapaus käytti
+  // kolmea eri arvoa: 37,50 € täällä, 20 € tuottopotissa ja 0 € erälaskennassa —
+  // poistetun tekijän haamu-ikkunat maksoivat siis eri verran joka näkymässä).
+  const rateOf = (id: string): number => crew.find((c) => c.id === id)?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS;
+  // Keltaisen (P2) ikkunan palkkio tekijälle — palkkiotaulukko, ei punaisten taksa.
+  const p2Enabled = !!project.p2?.enabled;
+  const p2SharePct = project.p2?.workerSharePct ?? DEFAULT_P2_WORKER_SHARE_PCT;
+  const p2Schedule = project.p2?.payoutSchedule;
+  // Keltaisten palkkiot per tekijä YHDELLÄ kartan läpikäynnillä (aiempi per-tekijä
+  // -haku olisi käynyt koko pistelistan jokaiselle tekijälle joka renderillä).
+  const p2CentsByWorker: Record<string, number> = {};
+  if (p2Enabled) {
+    const offers = project.p2?.offers ?? {};
+    const by2 = project.washedBy2 || {};
+    for (const pt of allPoints(project)) {
+      if (pt.p !== 2 || pt.status !== "pesty") continue;
+      const offer = offers[pt.key];
+      if (offer?.status !== "locked" || !offer.lockedCents) continue;
+      const payout = p2WorkerPayoutCents(offer.lockedCents, p2SharePct, p2Schedule);
+      const second = by2[pt.key];
+      if (pt.washedBy) p2CentsByWorker[pt.washedBy] = (p2CentsByWorker[pt.washedBy] || 0) + (second ? payout / 2 : payout);
+      if (second) p2CentsByWorker[second] = (p2CentsByWorker[second] || 0) + payout / 2;
+    }
+  }
+  /** Yhden tekijän keltaisista kertynyt palkkio (0 kun vaihe 2 ei ole päällä). */
+  const p2EarnedFor = (workerId: string): number => Math.round(p2CentsByWorker[workerId] || 0);
   // Profit pool = Σ over real workers (NOT founders, NOT trainees) of
-  // (sisäinen kate − that worker's rate) per worker-washed window.
+  // (sisäinen kate − that worker's rate) per worker-washed RED window. Keltaiset
+  // eivät kuulu tähän: niissä kate lasketaan omalla logiikallaan (computeP2Billing
+  // marginCents) eikä punaisten sisäisellä katteella. Aiemmin tässä käytettiin
+  // `st.washed`ia, joka sisälsi keltaiset → haamukatetta perustajille.
   let profitPoolCents = 0;
   for (const st of baseStatsRaw) {
     const mm = crew.find((c) => c.id === st.worker);
     if (!isFounder(st.worker, mm?.role) && !isTrainee(st.worker)) {
-      profitPoolCents += st.washed * Math.max(0, internalKateCents - (mm?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS));
+      profitPoolCents += st.washedP1 * Math.max(0, internalKateCents - rateOf(st.worker));
     }
   }
   const founderProfitEachCents = Math.round(profitPoolCents / founderCount);
-  const earningsFor = (st: { worker: string; washed: number }): number => {
+  const earningsFor = (st: { worker: string; washed: number; washedP1: number }): number => {
     const mm = crew.find((c) => c.id === st.worker);
     if (mm?.manualEarningsCents != null) return mm.manualEarningsCents;
     // washed can be fractional (50/50 split windows count as 0.5) — round cents.
-    // Trainee windows earn the worker rate (not the full deal rate) — the rest stays
-    // as margin, not extra pay. Founder's own windows still earn the full deal rate.
+    // PUNAISET maksavat oman taksan (perustajille sisäinen kate), KELTAISET
+    // palkkiotaulukon mukaan — sama malli kuin crewMemberStats, joka ajaa
+    // tekijän omaa näkymää ja Tiimi-sivua. Aiemmin täällä kaikki ikkunat
+    // (myös keltaiset) laskettiin punaisten taksalla → dash ja Tiimi eri mieltä.
+    const p2Cents = p2EarnedFor(st.worker);
     if (isFounder(st.worker, mm?.role)) {
       const traineeWashed = traineeWashedByLeader[st.worker] || 0;
-      return Math.round((st.washed + traineeWashed) * internalKateCents) + founderProfitEachCents;
+      return Math.round((st.washedP1 + traineeWashed) * internalKateCents)
+        + (traineeP2CentsByLeader[st.worker] || 0)
+        + founderProfitEachCents
+        + p2Cents;
     }
-    return Math.round(st.washed * (mm?.perWindowCents ?? dealTotalCents));
+    return Math.round(st.washedP1 * rateOf(st.worker)) + p2Cents;
   };
   const resolveName = (id: string): string => {
     const m = crew.find((c) => c.id === id);
@@ -596,14 +672,20 @@ export default function AdminProjectPage() {
     const lead = leaderOf(st.worker);
     if (lead) {
       traineeInfo[st.worker] = { leaderName: resolveName(lead) };
-      if (st.washed > 0) (traineeShareByLeader[lead] ||= []).push({ name: resolveName(st.worker), washed: st.washed, cents: Math.round(st.washed * internalKateCents) });
+      const traineeP2 = p2EarnedFor(st.worker);
+      traineeP2CentsByLeader[lead] = (traineeP2CentsByLeader[lead] || 0) + traineeP2;
+      if (st.washed > 0) (traineeShareByLeader[lead] ||= []).push({
+        name: resolveName(st.worker),
+        washed: st.washed,
+        cents: Math.round(st.washedP1 * internalKateCents) + traineeP2,
+      });
     }
   }
 
   // Founders appear even with 0 own windows — they still earn the profit share.
   const statIds = new Set(baseStats.map((s) => s.worker));
   for (const f of crew.filter((c) => isFounder(c.id, c.role))) {
-    if (!statIds.has(f.id)) baseStats.push({ worker: f.id, washed: 0, revenueCents: 0, hours: Math.max(0, managerHours[f.id] || 0), windowsPerHour: 0, eurPerHour: 0 });
+    if (!statIds.has(f.id)) baseStats.push({ worker: f.id, washed: 0, washedP1: 0, washedP2: 0, revenueCents: 0, hours: Math.max(0, managerHours[f.id] || 0), windowsPerHour: 0, eurPerHour: 0 });
   }
   const workerStats = baseStats.map((s) => {
     // Trainees show no euro of their own — their pay is folded into their leader.
@@ -616,31 +698,39 @@ export default function AdminProjectPage() {
     };
   });
   // ── Perustajien (bossien) ansioerittely dashboardille ───────────────────────
-  // Jokaisen perustajan ansio = oma työ (omat ikkunat × 37,50) + harjoittelijan osuus
-  // (harjoittelijan ikkunat × 20 €/ikkuna — tilitä harjoittelijalle) + tuotto-osuus.
+  // Perustajan ansio = oma PUNAINEN työ × sisäinen kate + harjoittelijan osuus
+  // + tuotto-osuus työntekijöiden punaisista + oma keltainen palkkio.
   const founderEarnings = workerStats
     .filter((s) => isFounder(s.worker, crew.find((c) => c.id === s.worker)?.role))
     .map((s) => {
       const mm = crew.find((c) => c.id === s.worker);
-      const ownWashed = s.washed; // only the founder's own windows — trainee shown separately
+      const ownWashed = s.washedP1; // omat PUNAISET — keltaiset erikseen, harjoittelija erikseen
       const manual = mm?.manualEarningsCents != null;
+      const p2Cents = p2EarnedFor(s.worker);
       return {
         id: s.worker,
         name: resolveName(s.worker),
         ownWashed,
         ownCents: Math.round(ownWashed * internalKateCents),
         shareCents: founderProfitEachCents,
+        p2Cents,
+        p2Washed: s.washedP2,
         totalCents: s.revenueCents, // respects manual override
         manual,
         hours: s.hours,
       };
     })
     .sort((a, b) => b.totalCents - a.totalCents);
-  // What all real workers (not founders, not trainees) earn in total — the labour
-  // cost side of the gig, so the margin to the founders is obvious.
-  const workerLaborCents = workerStats
-    .filter((s) => { const mm = crew.find((c) => c.id === s.worker); return !isFounder(s.worker, mm?.role) && !isTrainee(s.worker); })
-    .reduce((sum, s) => sum + s.revenueCents, 0);
+  // What all real workers (not founders, not trainees) earn — the labour cost side
+  // of the gig. PUNAISTEN osuus erikseen, koska "Sopimushinta"-tiili sen vieressä
+  // on punaisten efektiivinen sopimussumma: jos keltaiset laskettaisiin samaan
+  // lukuun, kolmen tiilen rivi ei enää täsmäisi (sopimus ≠ työntekijät + perustajat).
+  const realWorkerStats = workerStats.filter((s) => {
+    const mm = crew.find((c) => c.id === s.worker);
+    return !isFounder(s.worker, mm?.role) && !isTrainee(s.worker);
+  });
+  const workerLaborP2Cents = realWorkerStats.reduce((sum, s) => sum + p2EarnedFor(s.worker), 0);
+  const workerLaborCents = realWorkerStats.reduce((sum, s) => sum + s.revenueCents, 0) - workerLaborP2Cents;
 
   // Founders can manually set their own day/session earnings (e.g. split 50/50).
   const setWorkerEarnings = (id: string, cents: number | null) => {
@@ -651,6 +741,11 @@ export default function AdminProjectPage() {
       return next;
     });
   };
+
+  // Paljonko tekijöille on punaisista vielä siirtämättä — sama jaettu laskenta
+  // kuin Maksut-välilehdellä ja Tiimi-sivulla, jotta dashin stats ei voi eriytyä.
+  const dashPayable = computeWorkerSettlements(project, { era: eraSettlementByWorker(eraInvoices) });
+  const dashOpenP1Cents = sumWorkerSettlements(dashPayable).openP1Cents;
 
   // Display-name map + this gig's pickable crew (used by both the "who washed"
   // and "default washer" pickers).
@@ -693,7 +788,7 @@ export default function AdminProjectPage() {
       )}
       <main style={{ position: "relative", zIndex: 10, height: "calc(100% - 62px)" }}>
         {tab === "dashboard" && (
-          <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} onSetEarnings={setWorkerEarnings} traineeInfo={traineeInfo} traineeShareByLeader={traineeShareByLeader} founderEarnings={founderEarnings} workerLaborCents={workerLaborCents} founderRateEur={internalKateCents / 100}
+          <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} onSetEarnings={setWorkerEarnings} traineeInfo={traineeInfo} traineeShareByLeader={traineeShareByLeader} founderEarnings={founderEarnings} workerLaborCents={workerLaborCents} workerLaborP2Cents={workerLaborP2Cents} founderRateEur={internalKateCents / 100}
             p2Slot={deal ? (
               <>
                 <P2AdminPanel
@@ -704,7 +799,6 @@ export default function AdminProjectPage() {
                   onGoToFloor={onGoToFloor}
                   canSend={profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")}
                   p2InvoicedCents={p2Invoiced}
-                  onInvoiced={refreshP2Invoiced}
                 />
                 <GuidedAdminPanel
                   project={project}
@@ -742,34 +836,20 @@ export default function AdminProjectPage() {
                 />
               );
             }}
-            workerInvoiceSlot={() => {
-              if (!deal) return null;
-              // Sisällytä myös tekijät, joilla ei vielä ole yhtään pesyä ikkunaa
-              // (esim. juuri liittynyt), jotta heidät voi silti vapaasti lisätä
-              // maksuun — sama unioni kuin Dashboardin oma TEKIJÄT-lista tekee
-              // (workerStats yksin näyttäisi vain jo aktiiviset).
-              const statIds = new Set(workerStats.map((s) => s.worker));
-              const zeroActivity = (project.crew || [])
-                .filter((c) => c.active !== false && c.role === "worker" && !c.adminLinked && !isTrainee(c.id) && !statIds.has(c.id))
-                .map((c) => ({ id: c.id, name: resolveName(c.id), washed: 0 }));
-              return (
-                <WorkerEraInvoiceDialog
-                  jobId={jobId}
-                  workers={[
-                    ...workerStats
-                      .filter((s) => !isFounder(s.worker) && !isTrainee(s.worker))
-                      .map((s) => ({ id: s.worker, name: resolveName(s.worker), washed: s.washed })),
-                    ...zeroActivity,
-                  ]}
-                />
-              );
-            }}
+            /* Tekijöiden maksu EI ole enää täällä: se asuu Maksut-välilehdellä
+               per-tekijä-maksettavan vieressä, jossa summat ovat näkyvissä.
+               Aiemmin nappi oli kesken KERROKSITTAIN- ja VIIMEISIN TOIMINTA
+               -palkkeja ilman mitään tietoa siitä paljonko kuuluu maksaa. */
+            gigBilling={billing}
+            workerOpenP1Cents={dashOpenP1Cents}
+            onGoToMaksut={() => setTab("maksut")}
           />
         )}
-        {/* Maksut — erälaskutuksen kokonaistilanne (kohta 3D), vain FR8 + johtajat.
-            Navbar näyttää välilehden vain johtajille; tämä ehto on sama tuplavarmistus. */}
+        {/* Maksut — koko rahaliikenne (asiakaslaskutus + tekijöiden maksettava),
+            vain FR8 + johtajat. Navbar näyttää välilehden vain johtajille; tämä
+            ehto on sama tuplavarmistus. */}
         {tab === "maksut" && deal && (profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")) && (
-          <MaksutView jobId={jobId} />
+          <MaksutView jobId={jobId} project={project} billing={billing} onOpenGig={backToGig} />
         )}
         {tab === "floor" && (
           <FloorView
@@ -894,7 +974,7 @@ const P2_STATUS_LABEL: Record<string, string> = {
  * neuvottelu-inbox (asiakkaan vastatarjoukset), anomaliavaroitukset ja
  * tapahtumaloki. Hinnoittelu itsessään tapahtuu kartalla (€ Hinnoittele -tila).
  */
-function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2InvoicedCents = 0, onInvoiced }: {
+function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2InvoicedCents = 0 }: {
   project: ProjectData;
   jobId: number;
   by: string;
@@ -903,8 +983,6 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
   canSend: boolean;
   /** €-cents of P2 already invoiced (scope:"p2" payments) — from the server. */
   p2InvoicedCents?: number;
-  /** Called after a P2 invoice is sent so the parent refreshes the invoiced sum. */
-  onInvoiced?: () => void;
 }) {
   const p2 = project.p2;
   const b = computeP2Billing(project);
@@ -953,15 +1031,6 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
   };
   const respond = (key: string, action: "accept_counter" | "cancel" | "unlock" | "propose", priceCents?: number, version?: number) =>
     run(() => api.p2Respond(jobId, { key, action, priceCents, version, by }));
-
-  const sendP2Invoice = async () => {
-    if (!window.confirm(`Lähetetäänkö P2-lasku laskuttamattomasta kertymästä? (laskuttamatta ${p2eur(p2Remaining)})`)) return;
-    setBusy(true); setMsg(null);
-    const res = await api.sendGigInvoice(jobId, { scope: "p2", billerId: by });
-    setBusy(false);
-    if (res.ok) { setMsg(`P2-lasku lähetetty: ${p2eur(res.data?.amountCents ?? 0)}`); onInvoiced?.(); }
-    else setMsg(res.error || "Laskun lähetys epäonnistui");
-  };
 
   // Asiakkaan vastatarjoukset (inbox) + kartalta puuttuvat lukot.
   const countered = Object.entries(p2?.offers ?? {}).filter(([, o]) => o.status === "countered");
@@ -1149,12 +1218,17 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
           </div>
         )}
 
-        {/* P2-laskutus + sopimusteksti + tapahtumaloki */}
+        {/* Sopimusteksti + tapahtumaloki. HUOM: keltaisten laskun LÄHETYS ei ole
+            täällä. Asiakaslaskutus (punaiset erät + keltaiset) tapahtuu yhdessä
+            paikassa — keikkanäkymän Laskutus-kortissa — ettei sama toiminto ole
+            kahdessa näkymässä eri painikkeilla. Tämä paneeli on hinnoittelun ja
+            neuvottelun ohjaamo; rahan tilannekuva on dashin LASKUTUS & MAKSUT
+            -statseissa ja Maksut-välilehdellä. */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {canSend && p2Remaining > 0 && (
-            <button disabled={busy} onClick={() => void sendP2Invoice()} style={btn}>
-              💶 Lähetä P2-lasku (laskuttamatta {p2eur(p2Remaining)})
-            </button>
+            <span style={{ fontSize: "11.5px", color: "rgb(255,205,40)", lineHeight: 1.5 }}>
+              Laskuttamatta {p2eur(p2Remaining)} — lähetä keikkanäkymän Laskutus-kortista.
+            </span>
           )}
           <button onClick={() => { setShowTerms((v) => !v); setTermsDraft(p2?.termsText ?? ""); }} style={btn}>
             📄 Sopimusteksti{p2?.termsText?.trim() ? " ✓" : ""}

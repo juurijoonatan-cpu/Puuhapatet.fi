@@ -164,6 +164,23 @@ describe("computeWorkerSettlements — punaiset ja keltaiset erillään", () => 
     expect(withT.find((r) => r.workerId === "milja")?.trainee).toBe(true);
   });
 
+  it("harjoittelijalle jo maksettu näkyy kirjattuna, ei avoimena velkana", () => {
+    // Milja: 20 punaista × 20 € = 400 €, joka on jo maksettu ja kirjattu.
+    // Hän ei ole maksulistalla lainkaan; kirjaus on kirjanpitoa varten ja se
+    // vähennetään vastuujohtajan ansioista (project.tsx traineePaidCentsByLeader).
+    const p = projectWith({
+      workerId: "milja", red: 20, yellow: 0,
+      crew: [member({
+        id: "milja", name: "Milja Pitkänen",
+        payouts: [{ id: "pay1", amountCents: 400_00, windows: 20, status: "maksettu", createdAt: 1, paidAt: 2 } as any],
+      })],
+    });
+    expect(computeWorkerSettlements(p)).toEqual([]);          // ei maksulistalla
+    const [row] = computeWorkerSettlements(p, { includeTrainees: true });
+    expect(row.paidCents).toBe(400_00);                       // kirjaus näkyy
+    expect(row.openP1Cents).toBe(0);                          // ei avointa velkaa
+  });
+
   it("deaktivoitu tekijä putoaa maksulistalta (mutta saa palata togglella)", () => {
     const p = projectWith({
       workerId: "selma", red: 6, yellow: 0,

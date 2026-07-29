@@ -21,7 +21,7 @@ interface Props {
   onSetEarnings?: (id: string, cents: number | null) => void;
   /** Per-founder (boss) earnings breakdown — own work + profit share from the
    *  workers' windows. Only set for a signed deal; drives the "bossien ansiot" card. */
-  founderEarnings?: { id: string; name: string; ownWashed: number; ownCents: number; shareCents: number; p2Cents?: number; p2Washed?: number; totalCents: number; manual: boolean; hours: number }[];
+  founderEarnings?: { id: string; name: string; ownWashed: number; ownCents: number; shareCents: number; p2Cents?: number; p2Washed?: number; traineePaidCents?: number; totalCents: number; manual: boolean; hours: number }[];
   /** Total paid to the real workers for RED windows (labour cost) — the other side
    *  of the red contract margin. Keltaisten tekijäkulu on erikseen alla. */
   workerLaborCents?: number;
@@ -459,6 +459,14 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "rgb(255,205,40)" }}>
                             <span>Keltaiset · {(f.p2Washed ?? 0).toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikkunaa</span>
                             <b style={{ fontWeight: 600 }}>{euro(f.p2Cents / 100)}</b>
+                          </div>
+                        )}
+                        {/* Harjoittelijalle jo tilitetty raha vähennetään: johtaja keräsi
+                            sen, mutta se on jo siirretty eteenpäin. */}
+                        {!!f.traineePaidCents && (
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "rgba(255,255,255,0.5)" }}>
+                            <span>Maksettu harjoittelijalle</span>
+                            <b style={{ fontWeight: 600 }}>− {euro(f.traineePaidCents / 100)}</b>
                           </div>
                         )}
                       </div>

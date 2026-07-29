@@ -157,6 +157,14 @@ liikkuvat eri aikaan, ja kaikki laskenta erottelee ne. Yksi totuuden lähde:
    (Milja) palkan tilittää vastuujohtaja, ja hänen työnsä lasketaan johtajan omaan
    työhön kortilla — ei erillistä "sis. Milja" -riviä. Deaktivoitu tekijä katoaa
    dashista ja maksuista, ja palaa Tiimi-sivun Aktiivinen-kytkimestä.
+8. **Harjoittelijalle jo maksettu raha vähennetään johtajan ansioista.**
+   Harjoittelijan ikkunat kertyvät johtajan ansioihin (hän kerää rahan ja tilittää
+   sen eteenpäin), joten kun maksu on tehty, se ei ole enää hänen. Tavallisen
+   tekijän palkka vähenee jo katteesta (`workerLaborCents`), mutta harjoittelijan
+   palkka ei kulje sitä kautta — siksi `traineePaidCentsByLeader` (kirjatut,
+   "maksettu"-tilaiset payoutit) vähennetään johtajan totaalista ja näkyy kortilla
+   rivinä "Maksettu harjoittelijalle − X €". **Kirjaa siis jo tehty tilitys
+   Tiimi-sivun Maksut-osiosta** — muuten kortti näyttää pysyvästi liikaa.
 
 ### Missä mikä toiminto asuu (ei duplikaatteja)
 

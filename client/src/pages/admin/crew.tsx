@@ -8,7 +8,7 @@
  */
 import { useEffect, useState, useCallback } from "react";
 import { useRoute, useLocation, Link } from "wouter";
-import { api, type HostCrewRow, type FounderSettlement } from "@/lib/api";
+import { api, type HostCrewRow, type FounderSettlement, type EraInvoiceClient } from "@/lib/api";
 import { isFounder } from "@shared/team";
 import type { ProjBuilding, FixedDeal, EraDebtBreakdown } from "@shared/project";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -61,13 +61,19 @@ export default function AdminCrewPage() {
   const [eraWindows, setEraWindowsState] = useState<number[] | null>(null);
   const [eraBreakdown, setEraBreakdown] = useState<EraDebtBreakdown[]>([]);
   const [founderSettlement, setFounderSettlement] = useState<FounderSettlement | null>(null);
+  // Tekijöiden erälaskut (Maksut-puoli): kun tekijälle on lähetetty/hyväksytty
+  // erälasku, se on "hoidettu" eikä saa näkyä palkkayhteenvedossa "Avoinna"na.
+  const [eraInvoices, setEraInvoices] = useState<EraInvoiceClient[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const res = await api.getHostCrew(jobId);
+    const [res, eraRes] = await Promise.all([
+      api.getHostCrew(jobId),
+      api.getEraInvoices(jobId),
+    ]);
     if (res.ok && res.data) {
       setCrew(res.data.crew); setBuilding(res.data.building);
       setDeal(res.data.deal); setTotalBillable(res.data.totalBillable);
@@ -77,6 +83,8 @@ export default function AdminCrewPage() {
       setErr(null);
     }
     else setErr(res.error || "Lataus epäonnistui");
+    // Era invoices are FR8-only; a non-FR8 gig simply returns none.
+    setEraInvoices(eraRes.ok && eraRes.data ? eraRes.data.invoices : []);
     setLoading(false);
   }, [jobId]);
 
@@ -130,7 +138,17 @@ export default function AdminCrewPage() {
         {/* Payroll overview — every worker's pay at a glance: earned, paid and
             still open, plus the gig's total labour cost. Detailed per-worker
             payout actions stay in each worker's card below. */}
-        {crew.length > 0 && <PayrollSummary crew={crew} />}
+        {crew.length > 0 && <PayrollSummary crew={crew} eraSentByWorker={(() => {
+          // Tekijän erälaskut jotka on lähetetty/hyväksytty = tekijälle hoidettu
+          // summa (senderId = tekijän id). Luonnos/hylätty ei lasketa.
+          const m: Record<string, number> = {};
+          for (const inv of eraInvoices) {
+            if (inv.kind !== "tekija") continue;
+            if (inv.tila !== "lähetetty" && inv.tila !== "hyväksytty") continue;
+            m[inv.senderId] = (m[inv.senderId] || 0) + inv.totalCents;
+          }
+          return m;
+        })()} />}
 
         {/* Maksuerät & kate — tucked behind a button so it doesn't crowd the page.
             The popup holds the per-erä window editor + the per-erä kate AND the
@@ -960,16 +978,19 @@ function EraDebtList({ eraBreakdown }: { eraBreakdown: EraDebtBreakdown[] }) {
  *  earned, what's been paid out, and what's still open. This is the "see how
  *  much money for each worker" view; it reads the same crew/payout data the
  *  per-worker cards use, so it's always in sync. */
-function PayrollSummary({ crew }: { crew: HostCrewRow[] }) {
+function PayrollSummary({ crew, eraSentByWorker = {} }: { crew: HostCrewRow[]; eraSentByWorker?: Record<string, number> }) {
   const rows = crew
     .filter((c) => c.member.active)
     .map(({ member, stats }) => {
       const payouts = member.payouts || [];
+      // "Hoidettu" = tekijälle joko maksettu (CrewPayout "maksettu") TAI lähetetty
+      // erälasku (Maksut-puoli). Aiemmin vain maksut laskettiin, joten erälaskulla
+      // maksetut näkyivät virheellisesti "Avoinna"na. Nyt molemmat lasketaan.
       const paidCents = payouts.filter((p) => p.status === "maksettu").reduce((s, p) => s + p.amountCents, 0);
-      // "Open" = work earned that hasn't actually been paid out yet (covers both
-      // not-yet-created payouts and created-but-unpaid ones).
-      const openCents = Math.max(0, stats.earnedCents - paidCents);
-      return { id: member.id, name: member.name, washed: stats.washed, earnedCents: stats.earnedCents, paidCents, openCents };
+      const eraSentCents = eraSentByWorker[member.id] || 0;
+      const settledCents = paidCents + eraSentCents;
+      const openCents = Math.max(0, stats.earnedCents - settledCents);
+      return { id: member.id, name: member.name, washed: stats.washed, earnedCents: stats.earnedCents, paidCents, eraSentCents, settledCents, openCents };
     })
     .filter((r) => r.earnedCents > 0 || r.washed > 0)
     .sort((a, b) => b.earnedCents - a.earnedCents);
@@ -977,9 +998,10 @@ function PayrollSummary({ crew }: { crew: HostCrewRow[] }) {
   if (rows.length === 0) return null;
 
   const totalEarned = rows.reduce((s, r) => s + r.earnedCents, 0);
-  const totalPaid = rows.reduce((s, r) => s + r.paidCents, 0);
+  const totalPaid = rows.reduce((s, r) => s + r.settledCents, 0);
   const totalOpen = rows.reduce((s, r) => s + r.openCents, 0);
   const totalWashed = rows.reduce((s, r) => s + r.washed, 0);
+  const anyEra = rows.some((r) => r.eraSentCents > 0);
 
   return (
     <div className="rounded-2xl border bg-card p-4 mb-5">
@@ -995,7 +1017,7 @@ function PayrollSummary({ crew }: { crew: HostCrewRow[] }) {
           <p className="text-sm font-bold tabular-nums">{eur(totalEarned)}</p>
         </div>
         <div className="rounded-xl bg-muted/40 py-2">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Maksettu</p>
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{anyEra ? "Maksettu / laskutettu" : "Maksettu"}</p>
           <p className="text-sm font-bold tabular-nums text-green-600">{eur(totalPaid)}</p>
         </div>
         <div className="rounded-xl bg-muted/40 py-2">
@@ -1003,6 +1025,11 @@ function PayrollSummary({ crew }: { crew: HostCrewRow[] }) {
           <p className="text-sm font-bold tabular-nums text-amber-600">{eur(totalOpen)}</p>
         </div>
       </div>
+      {anyEra && (
+        <p className="-mt-1 mb-3 text-[11px] leading-snug text-muted-foreground">
+          Sisältää tekijöille lähetetyt erälaskut (Maksut-puoli) — ne lasketaan hoidetuiksi, joten ne eivät näy enää "Avoinna".
+        </p>
+      )}
 
       {/* Per-worker rows */}
       <div className="divide-y divide-border">
@@ -1017,9 +1044,11 @@ function PayrollSummary({ crew }: { crew: HostCrewRow[] }) {
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Ansaittu</p>
                 <p className="text-sm font-semibold tabular-nums">{eur(r.earnedCents)}</p>
               </div>
-              <div className="hidden sm:block">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Maksettu</p>
-                <p className="text-sm font-semibold tabular-nums text-green-600">{eur(r.paidCents)}</p>
+              {/* Näkyy myös puhelimessa: paljonko tekijälle on hoidettu (maksettu
+                  tai lähetetty erälaskulla) — ettei kaikki näytä pelkältä Avoinna. */}
+              <div>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{r.eraSentCents > 0 ? "Hoidettu" : "Maksettu"}</p>
+                <p className="text-sm font-semibold tabular-nums text-green-600">{eur(r.settledCents)}</p>
               </div>
               <div>
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Avoinna</p>

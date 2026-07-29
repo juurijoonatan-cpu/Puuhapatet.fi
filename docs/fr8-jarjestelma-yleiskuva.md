@@ -35,9 +35,9 @@ Osapuolet ja pääsy:
 
 | Moduuli | Vastuu |
 |---|---|
-| `project.ts` | `ProjectData`, kartta/pisteet (`allPoints`), kiinteä diili (`fixedDealFor`, `computeDealBilling`), erä-attribuutio, sanitointi. |
-| `p2.ts` | Priority 2 -moottori: tilakone (`p2Transition`), raha (`computeP2Billing`, `p2WorkerPayoutCents`), `pointPriority`, `isP2Washable`, sanitointi. |
-| `guided.ts` | Ohjattu eteneminen: `computeGuided`, `isGuidedBlocked`, sanitointi. |
+| `project.ts` | `ProjectData`, kartta/pisteet (`allPoints`), kiinteä diili (`fixedDealFor`, `computeDealBilling`, `dealBillableScope`, `dealAgreedTotalCents`), erä-attribuutio, sanitointi. |
+| `p2.ts` | Priority 2 -moottori: tilakone (`p2Transition`), raha (`computeP2Billing`, `p2WorkerPayoutCents` + palkkiotaulukko), `pointPriority`, `isP2Washable`, sanitointi. |
+| `guided.ts` | Ohjattu eteneminen: `computeGuided` (mm. `activeFloors`, per-tekijä lähin ikkuna), `isGuidedBlocked`, `openFloors`-monivalinta, sanitointi. |
 | `crew.ts` | `CrewMember`, `crewMemberStats` (p2-tietoinen), sessiot, sanitointi. |
 | `gig.ts` | `GigData`/`GigSector`/`GigPayment` (`scope?: "p1"|"p2"`), julkisen näkymän totalsit. |
 | `era-billing.ts` | Erälaskutuksen (arvomääräiset maksuerät) laskentamoottori. |
@@ -58,24 +58,33 @@ niitä.**
 
 ### 1. Priority 1 (punaiset) — kiinteä urakka
 
-Allekirjoitettu **FLAT-TOTAL €6300** (ei count × unit). `fixedDealFor` +
-`computeDealBilling` (`project.ts`): kertymä = valmistumis­osuus × kiinteä katto.
-4 × 1575 € **erälaskutus** on oma järjestelmänsä (`era-billing.ts`,
+Allekirjoitettu **37,50 €/punainen ikkuna, katto €6300** (= 168 ikkunaa).
+Efektiivinen sopimussumma = `min(6300 €, punaisten määrä × 37,50 €)`
+(`dealAgreedTotalCents`): kun punaisia on **vähemmän kuin sovitut 168**, jokainen
+poistettu ikkuna vähentää 37,50 € summasta; lisäys ei ylitä kattoa. `computeDealBilling`:
+kertymä seuraa tätä efektiivistä summaa. **Erälaskutuksessa vähennys osuu VIIMEISEEN
+erään** (erät 1–3 = 1575 €, erä 4 = efektiivinen summa − aiemmat) — `computeEraDebts`
+ja laskureitti. 4 × ~1575 € erälaskutus on oma järjestelmänsä (`era-billing.ts`,
 `docs/fr8-era-laskutus-plan.md`). Kaikki P1-matikka suodattaa `p === 1`, joten
-keltaiset eivät koskaan vaikuta siihen. **Tätä ei muuteta.**
+keltaiset eivät koskaan vaikuta siihen.
 
 ### 2. Priority 2 (keltaiset) — ikkunakohtainen hinnoittelu + neuvottelu
 
 Hinta **per ikkuna**, neuvotellaan asiakkaan kanssa seurantalinkissä (proposed →
 accept/counter → locked). Asiakkaan summa kasvaa lukituista hinnoista. Tekijän
-palkkio = %-osuus ikkunan lukitusta hinnasta. **Täysi speksi:
-`docs/fr8-p2-hinnoittelu.md`.**
+palkkio = **palkkiotaulukko** (34 €→18, 37,50 €→20, 50 €→27), %-osuus varakäytäntönä.
+Laskutus erikseen `scope:"p2"`; dashboard näyttää sovittu/kertynyt/laskutettu/
+laskuttamatta. **Täysi speksi: `docs/fr8-p2-hinnoittelu.md`.**
 
 ### 3. Ohjattu eteneminen (guided) — työjärjestys, ei raha
 
-Opt-in per keikka (oletus pois): yks kerros kerrallaa, muut lukossa, dashboard
-ohjaa seuraavaan ikkunaan. Ei rahaa — pelkkä reiluuttava työjärjestys. **Täysi
-speksi: `docs/fr8-ohjattu-eteneminen.md`.**
+Opt-in per keikka (oletus pois): kerros(kset) auki, muut lukossa, dashboard ohjaa
+lähimpään ikkunaan. **Kaksi tilaa:** automaattinen (yks kerros kerrallaa, etenee
+itse) tai manuaalinen **`openFloors`-monivalinta** (founder avaa esim. 2 & 3). Ei
+rahaa — pelkkä reiluuttava työjärjestys. **Tavalliset tekijät näkevät kartalla vain
+avoimet kerrokset** (`restrictFloors`), muut piilossa; **perustajat (role `host` /
+`FOUNDER_IDS`) ohittavat lukon** ja pesevät minkä tahansa kerroksen (kirjautuu
+normaalisti). **Täysi speksi: `docs/fr8-ohjattu-eteneminen.md`.**
 
 Erälaskutus (varsinainen lähetettävä laskutus) on neljäs, erillinen järjestelmä:
 `docs/fr8-era-laskutus-plan.md`. Ansio-/työaikamalli (dashboard-arviot):
@@ -99,7 +108,8 @@ Erälaskutus (varsinainen lähetettävä laskutus) on neljäs, erillinen järjes
 - `GET /api/crew/:token` — `workerView` (kartta + omat tiedot, EI keikan hintaa;
   `p2` = vain omat palkkiot; `guided` = ohjaustila).
 - `POST /window` — merkintä; **kaksi pesuporttia** (P2-lukko + guided-kerroslukko),
-  prioriteetti kartasta.
+  prioriteetti kartasta. **Perustajat (role `host` / `FOUNDER_IDS`) ohittavat
+  guided-kerroslukon.** `workerView.guided` sisältää `activeFloors` (kaikki auki).
 - `POST /shift | hours | note | map-note | window-observation | expense | …`.
 
 ## Kolme näkymää (client)
@@ -113,7 +123,12 @@ Erälaskutus (varsinainen lähetettävä laskutus) on neljäs, erillinen järjes
   jaettu `FloorView` (`hideMoney`, `canEdit=false`).
 
 `FloorView` on jaettu admin/tekijä välillä; propsit `canEdit`/`hideMoney`/`p2`/
-`guided`/`deal` ohjaavat mitä milläkin näkyy.
+`guided`/`deal`/`restrictFloors` ohjaavat mitä milläkin näkyy. `restrictFloors`
+(vain tavallisella tekijällä) piilottaa muut kuin avoimet kerrokset → diskreetti
+kartta. Asiakaskartta (`CustomerFloorMap`) on numeroidut pisteet + zoom/pan +
+kerroskohtainen lista; hinnat vain listassa, kartan popup on suunnittelua.
+Perustajien "uusi luku" -juhla (`FounderCelebration`, project.tsx) laukeaa kerran
+kun asiakas on hyväksynyt kaikki keltaiset.
 
 ## KRIITTISET INVARIANTIT (älä riko)
 
@@ -157,13 +172,14 @@ Repossa EI ole CI:tä — aja nämä käsin ennen PR:ää.
 ## Sanasto (FI)
 
 - **Punainen / keltainen** = prioriteetti 1 / 2 (P1 / P2).
-- **Urakka / kiinteä diili** = P1:n allekirjoitettu €6300 flat-total.
-- **Erä (erälaskutus)** = arvomääräinen maksuerä (4 × 1575 €), oma järjestelmä.
+- **Urakka / kiinteä diili** = P1: 37,50 €/ikkuna, katto €6300 (poisto scopen alle vähentää).
+- **Erä (erälaskutus)** = arvomääräinen maksuerä (4 × ~1575 €, viimeinen imee vähennyksen), oma järjestelmä.
+- **Avoin kerros** = guided-tilassa pestävissä oleva kerros; tavallinen tekijä näkee vain avoimet.
 - **Lukittu (locked)** = P2-hinta jonka molemmat hyväksyivät — kuuluu työn piiriin.
 - **Piirissä (in-scope)** = pestävissä: P1 aina, P2 vain lukittuna.
 - **Vaihe / phase** = `p2.enabled` (näkyykö P2-neuvottelu asiakkaalle).
 - **Ohjattu eteneminen** = guided (yks kerros kerrallaa).
-- **Aktiivinen kerros** = ainoa auki oleva kerros guided-tilassa.
+- **Aktiivinen kerros** = tekijän ohjauskerros; `activeFloors` = kaikki avoimet.
 - **Valmistelu (prep)** = kytkin pois; perustajat valmistelevat, muut eivät näe.
 - **Attribuutio** = kuka pesi (`washedBy`/`washedBy2`), ajaa ansiot + erät.
 

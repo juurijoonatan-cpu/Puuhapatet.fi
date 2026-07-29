@@ -110,9 +110,14 @@ vielä lukossa…"). Portti tulee P2-pesuportin JÄLKEEN, joten molemmat pätev�
   uudelleen.
 - **Ei aktiivista kerrosta** (kaikki valmis / ei työtä) → portti ei estä mitään.
 - **Guided pois** → portti ei estä mitään (nykyinen käytös).
+- **Perustajat ohittavat lukon**: `member.role === "host" || FOUNDER_IDS.includes(member.id)`
+  → portti ei estä. Perustaja (Joonatan/Matias) voi pestä minkä tahansa kerroksen
+  (myös tekijöiltä suljetut, esim. 5.); pesu kirjautuu normaalisti. Vain tavalliset
+  tekijät rajataan avoimiin kerroksiin.
 
 `isGuidedBlocked(data, key)` (shared/guided.ts) on tämän portin puhdas ydin — se
-palauttaa `false` aina kun guided on pois tai aktiivista kerrosta ei ole.
+palauttaa `false` aina kun guided on pois tai avointa kerrosta ei ole; perustaja-
+ohitus tehdään reitillä (ei moottorissa, koska se ei tiedä jäsentä).
 
 ## Samanaikaisuus — guided on serverin omistama
 
@@ -134,9 +139,10 @@ Näin karttamuokkaus tai tekijän merkintä ei voi vahingossa muuttaa ohjausaset
 - **Tekijä** (`worker.tsx` → `GuidedCard` kartan päällä + `FloorView`): "Seuraavaksi"
   -kortti näyttää aktiivisen kerroksen, montako ikkunaa jäljellä ja "Näytä ikkuna"
   -napin (hyppää kerrokselle ja korostaa seuraavan ikkunan sykkivällä renkaalla).
-  Lukitut kerrokset floor-selectorissa harmaana 🔒-merkillä (katsominen sallittu,
-  merkintä ei). Jos tekijä yrittää merkata lukittua kerrosta, serverin 403-viesti
-  näkyy kortissa hetken.
+  **Diskreetti kartta**: tavallinen tekijä näkee floor-selectorissa VAIN avoimet
+  kerrokset (`FloorView restrictFloors = activeFloors`); muut piilotettu kokonaan,
+  jottei näy "kaikki vapaana". Monivalintatilassa "Auki: 2. ja 3. kerros". Perustajat
+  (`role "host"` / `FOUNDER_IDS`) näkevät ja pesevät kaikki kerrokset (`restrictFloors=null`).
 - Data tekijälle: `workerView.guided` (server) = `{enabled, activeFloor,
   lockedFloors, openKeys, nextKey, next, remainingOnActive, allComplete,
   floorProgress}`. Puhtaasti johdettua ohjaustietoa — **ei rahaa** (turvallista

@@ -1032,6 +1032,9 @@ function GuidedCard({ guided, guidedNote, onFocusNext }: {
     ? `Auki: ${openFloors.map(guidedFloorLabel).join(", ")}`
     : guidedFloorLabel(guided.activeFloor);
   const lockedCount = guided.lockedFloors.length;
+  // NAME the locked floors so a worker sees exactly which floors are still closed
+  // (and that they open later) — not just a bare "N kerrosta lukossa".
+  const lockedLabels = guided.lockedFloors.map(guidedFloorLabel).join(", ");
   return (
     <div style={{ position: "absolute", left: 0, right: 0, bottom: 12, display: "flex", justifyContent: "center", padding: "0 12px", pointerEvents: "none", zIndex: 20 }}>
       <div style={{ pointerEvents: "auto", width: "100%", maxWidth: 440, background: "rgba(12,13,15,0.94)", border: "1px solid rgba(95,224,138,0.28)", borderRadius: 16, padding: "12px 14px", boxShadow: "0 10px 34px rgba(0,0,0,0.5)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" }}>
@@ -1048,7 +1051,6 @@ function GuidedCard({ guided, guidedNote, onFocusNext }: {
                 <div style={{ fontSize: 16, fontWeight: 800 }}>{activeLabel}</div>
                 <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
                   {guided.remainingOnActive} ikkuna{guided.remainingOnActive === 1 ? "" : "a"} jäljellä{multi ? `: ${guidedFloorLabel(guided.activeFloor)}` : " tällä kerroksella"}
-                  {lockedCount > 0 ? ` · ${lockedCount} kerros${lockedCount === 1 ? "" : "ta"} lukossa` : ""}
                 </div>
               </div>
               <button onClick={onFocusNext}
@@ -1056,6 +1058,14 @@ function GuidedCard({ guided, guidedNote, onFocusNext }: {
                 Näytä ikkuna
               </button>
             </div>
+            {lockedCount > 0 && (
+              <div style={{ marginTop: 9, display: "flex", alignItems: "flex-start", gap: 7, padding: "7px 10px", borderRadius: 10, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.09)" }}>
+                <span style={{ fontSize: 12, lineHeight: 1.4 }}>🔒</span>
+                <span style={{ fontSize: 11.5, lineHeight: 1.45, color: "rgba(255,255,255,0.6)" }}>
+                  <strong style={{ color: "rgba(255,255,255,0.8)" }}>Lukossa: {lockedLabels}.</strong> Nämä avautuvat kun avoimet kerrokset on pesty (tai perustaja avaa ne) — keskity nyt yllä oleviin.
+                </span>
+              </div>
+            )}
           </>
         )}
         {guidedNote && (
@@ -1621,21 +1631,30 @@ function Leaderboard({ view }: { view: WorkerView }) {
         <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>pestyt ikkunat</span>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {board.slice(0, 8).map((b, i) => {
-          const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
-          const pct = (b.washed / maxWashed) * 100;
-          return (
-            <div key={b.id} style={{ position: "relative", display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 12, overflow: "hidden", background: b.isMe ? "rgba(124,224,166,0.12)" : "rgba(255,255,255,0.05)", border: `1px solid ${b.isMe ? "rgba(124,224,166,0.35)" : "rgba(255,255,255,0.08)"}` }}>
-              <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${pct}%`, background: b.isMe ? "rgba(124,224,166,0.10)" : "rgba(255,255,255,0.04)" }} />
-              <span style={{ position: "relative", width: 22, textAlign: "center", fontSize: i < 3 ? 16 : 12, fontWeight: 700, color: "rgba(255,255,255,0.6)" }}>{medal}</span>
-              <span style={{ position: "relative", flex: 1, fontSize: 14, fontWeight: b.isMe ? 700 : 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {b.isMe ? "Sinä" : firstName(b.name)}
-                {b.id === effLeaderId && <span title="Tehokkain (ikkunaa/tunti)" style={{ marginLeft: 6, fontSize: 12 }}>⚡</span>}
-              </span>
-              <span style={{ position: "relative", fontSize: 15, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{b.washed}</span>
-            </div>
-          );
-        })}
+        {(() => {
+          const meIdx = board.findIndex((b) => b.isMe);
+          // Always show the current worker, even if ranked outside the top 8, so a
+          // worker never "disappears" from the standings — pin their own row below.
+          const rows = board.slice(0, 8).map((b) => ({ b, rank: board.indexOf(b) }));
+          const showMeBelow = meIdx >= 8;
+          const rendered = showMeBelow ? [...rows, { b: board[meIdx], rank: meIdx }] : rows;
+          return rendered.map(({ b, rank }, pos) => {
+            const medal = rank === 0 ? "🥇" : rank === 1 ? "🥈" : rank === 2 ? "🥉" : `${rank + 1}.`;
+            const pct = (b.washed / maxWashed) * 100;
+            const gap = showMeBelow && pos === rendered.length - 1;
+            return (
+              <div key={b.id} style={{ position: "relative", display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 12, overflow: "hidden", marginTop: gap ? 4 : 0, background: b.isMe ? "rgba(124,224,166,0.12)" : "rgba(255,255,255,0.05)", border: `1px solid ${b.isMe ? "rgba(124,224,166,0.35)" : "rgba(255,255,255,0.08)"}` }}>
+                <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${pct}%`, background: b.isMe ? "rgba(124,224,166,0.10)" : "rgba(255,255,255,0.04)" }} />
+                <span style={{ position: "relative", width: 22, textAlign: "center", fontSize: rank < 3 ? 16 : 12, fontWeight: 700, color: "rgba(255,255,255,0.6)" }}>{medal}</span>
+                <span style={{ position: "relative", flex: 1, fontSize: 14, fontWeight: b.isMe ? 700 : 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {b.isMe ? "Sinä" : firstName(b.name)}
+                  {b.id === effLeaderId && <span title="Tehokkain (ikkunaa/tunti)" style={{ marginLeft: 6, fontSize: 12 }}>⚡</span>}
+                </span>
+                <span style={{ position: "relative", fontSize: 15, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{b.washed}</span>
+              </div>
+            );
+          });
+        })()}
       </div>
       {board[0] && board[0].washed > 0 && (
         <p style={{ marginTop: 10, fontSize: 12, color: "rgba(255,255,255,0.5)", textAlign: "center" }}>

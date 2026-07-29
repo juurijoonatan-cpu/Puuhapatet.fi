@@ -38,6 +38,7 @@ export interface P2PublicView {
   enabled: boolean;
   termsAccepted: boolean;
   termsAcceptorName: string | null;
+  termsAcceptedAt: number | null;
   termsText: string | null;
   offers: Record<string, P2PublicOffer>;
   /** Window keys the customer added themselves (still live) — drives the

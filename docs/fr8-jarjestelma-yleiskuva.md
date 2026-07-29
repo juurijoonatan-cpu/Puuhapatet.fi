@@ -41,6 +41,7 @@ Osapuolet ja pääsy:
 | `crew.ts` | `CrewMember`, `crewMemberStats` (p2-tietoinen), sessiot, sanitointi. |
 | `gig.ts` | `GigData`/`GigSector`/`GigPayment` (`scope?: "p1"|"p2"`), julkisen näkymän totalsit. |
 | `era-billing.ts` | Erälaskutuksen (arvomääräiset maksuerät) laskentamoottori. |
+| `worker-payouts.ts` | **Tekijöiden maksettava — yksi totuuden lähde.** `computeWorkerSettlements`/`settleWorker` (punaiset vs. keltaiset erikseen), `eraSettlementByWorker`, `p2InvoiceState`. Ks. "Rahan kaksi virtaa" alla. |
 | `payprogress.ts`, `tax.ts`, `team.ts`, `trainees.ts`, `billers.ts` | Paydate/verot/tiimi/harjoittelijat/laskuttajat. |
 
 ## Ikkunan identiteetti (window key)
@@ -89,6 +90,63 @@ normaalisti). **Täysi speksi: `docs/fr8-ohjattu-eteneminen.md`.**
 Erälaskutus (varsinainen lähetettävä laskutus) on neljäs, erillinen järjestelmä:
 `docs/fr8-era-laskutus-plan.md`. Ansio-/työaikamalli (dashboard-arviot):
 `docs/fr8-tyo-logiikka.md`.
+
+## Rahan kaksi virtaa — MITÄ EI SAA SEKOITTAA
+
+Tämä on koko FR8:n herkin kohta. Punaiset ja keltaiset ovat kaksi eri rahaa, jotka
+liikkuvat eri aikaan, ja kaikki laskenta erottelee ne. Yksi totuuden lähde:
+**`shared/worker-payouts.ts`**.
+
+| | PUNAISET (P1) | KELTAISET (P2) |
+|---|---|---|
+| Asiakkaalta | 4 arvomääräistä erää (`gig.payments`, `scope !== "p2"`) | erillinen lasku (`scope: "p2"`), ei kuluta erälaskuria |
+| Tekijälle | tekijän oma €/ikkuna, maksetaan erämaksuina (`era_invoices`) | palkkiotaulukko, maksetaan **vasta kun asiakas on maksanut keltaisten laskun** |
+| Perustajalle | sisäinen kate (`dealInternalRateCents`) + tuotto-osuus | `computeP2Billing().marginCents` |
+
+### Jaetut funktiot (käytä näitä, älä kirjoita kaavaa uudelleen)
+
+| Funktio | Vastaa kysymykseen |
+|---|---|
+| `computeWorkerSettlements(project, {era})` | paljonko kullekin tekijälle on punaisista vielä siirtämättä (`openP1Cents` / `openP1Windows`) ja paljonko keltaisista odottaa (`openP2Cents`) |
+| `settleWorker({stats, payouts, era, p2Enabled})` | sama yhdelle tekijälle, kun kutsujalla on valmiit `crewMemberStats` (Tiimi-sivu) |
+| `eraSettlementByWorker` / `eraMapsFor` | mitä erälaskuilla on jo hoidettu (lähetetty/hyväksytty) ja mikä odottaa kuittausta (luonnos) |
+| `p2InvoiceState(earnedCents, payments)` | keltaisten laskutettu / laskuttamatta + P1-maksujen määrä samasta suodatuksesta |
+| `dealInternalRateCents(data, deal)` | perustajan sisäinen kate €/ikkuna (EFEKTIIVINEN sopimussumma ÷ punaiset) |
+
+### Säännöt
+
+1. **Keltainen ikkuna ei koskaan päädy punaisten erämaksuun.** Maksun esitäyttö on
+   `openP1Windows` = punaiset pestyt − erälaskuilla katetut. `crewMemberStats`
+   ja `computeWorkerStats` antavat `p1Washed`/`p2Washed` erikseen juuri tähän.
+2. **Luonnos varaa velan.** Luotu mutta kuittaamaton erälasku vähentää
+   maksettavaa, ettei sama maksu synny kahdesti. Server torjuu duplikaatin
+   (sama tekijä + sama erä) — ohitus vain `force: true`.
+3. **Velan kuittaus käyttää BRUTTO ansiota** (`rivit.computed.ansaittuCents`), ei
+   `totalCents`iä (= ansaittu − ennakko), muuten ennakko jättäisi velkaa auki.
+4. **Perustajan oma ikkuna ei maksa palkkaa** — `computeEraDebts` raportoi ne
+   `founderWindows`ina eikä laske niitä `earnedCents`iin (ne ovat katetta).
+5. **Tuntemattoman pesijän fallback on `DEFAULT_WORKER_PER_WINDOW_CENTS`** (20 €)
+   kaikkialla. Aiemmin sama tapaus maksoi 37,50 € dashissa, 20 € tuottopotissa ja
+   0 € erälaskennassa.
+
+### Missä mikä toiminto asuu (ei duplikaatteja)
+
+| Toiminto | Ainoa paikka |
+|---|---|
+| Asiakaslaskun lähetys (punaiset erät JA keltaiset) | `admin/gig-tracker.tsx` → **Laskutus**-kortti (punaiset ylhäällä, keltaiset jatkona) |
+| Keltaisten tilausehtojen tila + sopimus-PDF | `admin/gig-tracker.tsx` → **Sopimus & asiakasnäkymä** -dropdown |
+| Keltaisten hinnoittelu & neuvottelu | mustan dashin `P2AdminPanel` (ei laskun lähetystä) |
+| Tekijöiden maksu (erämaksun luonti) | projektinäkymän **Maksut**-välilehti (`MaksutView`) |
+| Johtaja-välinen ristiinlasku | mustan dashin PERUSTAJIEN ANSIOT → toisen johtajan kortti |
+| Rahan tilannekuva | mustan dashin **LASKUTUS & MAKSUT** -statsit + Maksut-välilehti |
+
+### Edistymisprosentti
+
+Kun vaihe 2 on päällä, dashin hero-prosentti laskee **punaiset + LUKITUT
+keltaiset** (`inScope`) — ei siis näytä 100 % silloin kun sovittuja keltaisia on
+pesemättä. Hinnoittelemattomat keltaiset eivät ole piirissä, joten ne eivät voi
+jumittaa lukua alas. Punaisten ja keltaisten omat prosentit näkyvät erittelynä
+heron sisällä ja PRIORITEETIT-osiossa.
 
 ## Reittikartta (server/routes.ts)
 

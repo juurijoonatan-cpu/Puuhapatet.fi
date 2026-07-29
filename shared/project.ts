@@ -13,7 +13,7 @@
  */
 
 import type { GigData, GigSector } from "./gig";
-import { sanitizeCrew, type CrewMember } from "./crew";
+import { sanitizeCrew, DEFAULT_WORKER_PER_WINDOW_CENTS, type CrewMember } from "./crew";
 import { PAY_PERIODS, eraWindowCounts } from "./payprogress";
 import { sanitizeP2State, type P2State } from "./p2";
 import { sanitizeGuidedWork, type GuidedWork } from "./guided";
@@ -232,6 +232,23 @@ export function dealAgreedTotalCents(data: ProjectData, deal: FixedDeal): number
   return Math.min(deal.capCents, dealBillableScope(data, deal) * unit);
 }
 
+/**
+ * Perustajan SISÄINEN kate per ikkuna (senttiä) = efektiivinen sopimussumma ÷
+ * punaisten ikkunoiden määrä. Tämä on perustajan oman työn todellinen ansio per
+ * ikkuna, EI nimellinen 37,50 € (joka on laskettu sopimuksen 168 ikkunan mukaan).
+ *
+ * Miksi tämä on oma funktio: sama luku laskettiin aiemmin KAHDELLA eri kaavalla —
+ * `project.tsx` käytti raakaa `deal.capCents` (630000) ja `Dashboard.tsx`
+ * efektiivistä `computeDealBilling().capCents` (joka pienenee poistetuista
+ * punaisista). Ero jakoi perustajille + tekijöille enemmän kuin keikka kertyi.
+ * Nyt yksi kaava, efektiivinen summa, molemmissa.
+ */
+export function dealInternalRateCents(data: ProjectData, deal: FixedDeal): number {
+  const redCount = allPoints(data).filter((p) => p.p === deal.billablePriority).length;
+  if (redCount <= 0) return dealAgreedTotalCents(data, deal);
+  return Math.round(dealAgreedTotalCents(data, deal) / redCount);
+}
+
 export interface DealBilling {
   billableTotal: number;   // billable (e.g. red) windows on the whole job
   billableWashed: number;  // billable windows marked "pesty"
@@ -360,7 +377,12 @@ export function computeProjectTotals(data: ProjectData): ProjTotals {
 
 export interface WorkerStat {
   worker: string;
-  washed: number;          // windows washed (attributed)
+  washed: number;          // windows washed (attributed) — ALL priorities
+  /** Split by priority. The red contract and the yellow (P2) extra work are paid
+   *  from different money at different times, so anything that turns windows into
+   *  euros MUST pick the right one instead of using the combined `washed`. */
+  washedP1: number;
+  washedP2: number;
   revenueCents: number;    // washed × price
   hours: number;           // logged hours
   windowsPerHour: number;  // washed / hours (0 if no hours)
@@ -385,19 +407,26 @@ export function computeWorkerStats(data: ProjectData): WorkerStat[] {
   return Array.from(ids).map((worker) => {
     // A window done together (washedBy2 set) splits its credit 50/50, so each of
     // the two washers earns half a window; a solo window earns the full one.
-    const washed = pts.reduce((sum, p) => {
-      if (p.status !== "pesty") return sum;
+    let washed = 0;
+    let washedP1 = 0;
+    let washedP2 = 0;
+    for (const p of pts) {
+      if (p.status !== "pesty") continue;
       const second = washedBy2[p.key];
-      const share = second ? 0.5 : 1;
-      if (p.washedBy === worker) return sum + share;
-      if (second === worker) return sum + 0.5;
-      return sum;
-    }, 0);
+      let share = 0;
+      if (p.washedBy === worker) share = second ? 0.5 : 1;
+      else if (second === worker) share = 0.5;
+      if (!share) continue;
+      washed += share;
+      if (p.p === 2) washedP2 += share; else washedP1 += share;
+    }
     const hours = Math.max(0, data.hours?.[worker] || 0);
     const revenueCents = Math.round(washed * price * 100);
     return {
       worker,
       washed,
+      washedP1,
+      washedP2,
       revenueCents,
       hours,
       windowsPerHour: hours > 0 ? washed / hours : 0,
@@ -456,6 +485,10 @@ export interface EraDebtBreakdown {
   washed: number;           // windows of this erä actually washed so far
   complete: boolean;        // the whole erä has been washed
   earnedCents: number;      // total palkka owed for this erä's washed windows (labour)
+  /** Windows of this erä the FOUNDERS washed themselves. They cost no palkka —
+   *  a founder's own window is pure margin — so they are excluded from `workers`
+   *  and `earnedCents` and reported separately here. */
+  founderWindows: number;
   /** The fixed instalment this erä is billed at (capCents ÷ erät, e.g. 1575 €). */
   instalmentCents: number;
   /** Founders' passive income for this erä = instalment − labour for its washed
@@ -508,8 +541,15 @@ export function computeEraDebts(
       return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
     });
 
-  const rateOf = (id: string) => crew.find((m) => m.id === id)?.perWindowCents ?? 0;
-  const nameOf = (id: string) => crew.find((m) => m.id === id)?.name ?? id;
+  const memberOf = (id: string) => crew.find((m) => m.id === id);
+  const rateOf = (id: string) => memberOf(id)?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS;
+  const nameOf = (id: string) => memberOf(id)?.name ?? id;
+  // A founder (role "host") washing a window costs the gig NO palkka — that
+  // window is pure margin for the founders. Previously they were credited at
+  // their crew row's 20 €/ikkuna (the seeder gives hosts the worker default),
+  // which silently ate ~20 € of every erä's kate and skewed the founder
+  // settlement. Their windows are now reported separately.
+  const isFounderId = (id: string) => memberOf(id)?.role === "host";
   // Each erä is billed at a fixed 25 % of the agreed total (6300 € ÷ 4 = 1575 €).
   // The LAST erä absorbs any deal reduction: if red windows were removed, the
   // final instalment = effective agreed total − the earlier fixed instalments,
@@ -530,14 +570,18 @@ export function computeEraDebts(
       if (p.washedBy) credit.set(p.washedBy, (credit.get(p.washedBy) || 0) + (second ? 0.5 : 1));
       if (second) credit.set(second, (credit.get(second) || 0) + 0.5);
     }
-    const workers: EraWorkerShare[] = Array.from(credit.entries())
-      .map(([workerId, windows]) => ({
+    let founderWindows = 0;
+    const workers: EraWorkerShare[] = [];
+    for (const [workerId, windows] of Array.from(credit.entries())) {
+      if (isFounderId(workerId)) { founderWindows += windows; continue; }
+      workers.push({
         workerId,
         name: nameOf(workerId),
         windows,
         earnedCents: Math.round(windows * rateOf(workerId)),
-      }))
-      .sort((a, b) => b.windows - a.windows);
+      });
+    }
+    workers.sort((a, b) => b.windows - a.windows);
     const earnedCents = workers.reduce((s, w) => s + w.earnedCents, 0);
     const isLast = i === sizes.length - 1;
     const instalmentCents = isLast
@@ -549,6 +593,7 @@ export function computeEraDebts(
       washed: slice.length,
       complete: size > 0 && slice.length >= size,
       earnedCents,
+      founderWindows,
       instalmentCents,
       marginCents: instalmentCents - earnedCents,
       biller: null,

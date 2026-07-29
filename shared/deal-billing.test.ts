@@ -6,6 +6,7 @@ import {
   dealAgreedTotalCents,
   computeDealBilling,
   computeEraDebts,
+  dealInternalRateCents,
   syncGigSectorsFromProject,
   type ProjectData,
 } from "./project";
@@ -87,6 +88,59 @@ describe("computeEraDebts — viimeinen erä imee vähennyksen", () => {
     const eras = computeEraDebts(data, fixedDealFor(data)!, [], null);
     expect(eras.map((e) => e.instalmentCents)).toEqual([157_500, 157_500, 157_500, 157_500]);
     expect(eras.reduce((s, e) => s + e.instalmentCents, 0)).toBe(CAP);
+  });
+});
+
+describe("computeEraDebts — perustajan oma ikkuna ei maksa palkkaa", () => {
+  // Perustajilla on crew-rivi 20 €/ikkuna (seeder antaa tekijöiden oletuksen),
+  // joten heidän omat pesunsa vähensivät aiemmin 20 € jokaisen erän katteesta.
+  // Perustajan oma ikkuna on puhdasta katetta → ei palkkariviä.
+  const crew = [
+    { id: "joonatan", name: "Joonatan", role: "host", perWindowCents: 2000, active: true, token: "t1", agreements: [], payouts: [] },
+    { id: "jani", name: "Jani", role: "worker", perWindowCents: 2000, active: true, token: "t2", agreements: [], payouts: [] },
+  ] as any;
+
+  it("perustajan ikkunat raportoidaan erikseen eikä palkoissa", () => {
+    const data = fr8Project(AGREED, 8);
+    // 5 ensimmäistä Joonatanille (perustaja), 3 seuraavaa Janille (tekijä).
+    for (let i = 0; i < 5; i++) data.washedBy[`K#${i}`] = "joonatan";
+    for (let i = 5; i < 8; i++) data.washedBy[`K#${i}`] = "jani";
+    const [era1] = computeEraDebts(data, fixedDealFor(data)!, crew, null);
+    expect(era1.founderWindows).toBe(5);
+    expect(era1.workers.map((w) => w.workerId)).toEqual(["jani"]);
+    expect(era1.earnedCents).toBe(60_00);                    // vain Janin 3 × 20 €
+    expect(era1.marginCents).toBe(157_500 - 60_00);          // perustaja ei syö katetta
+  });
+
+  it("tuntematon pesijä (poistettu crew-rivi) maksaa tekijöiden oletustaksan", () => {
+    const data = fr8Project(AGREED, 2);
+    data.washedBy["K#0"] = "haamu";
+    data.washedBy["K#1"] = "haamu";
+    const [era1] = computeEraDebts(data, fixedDealFor(data)!, crew, null);
+    // Aiemmin fallback oli 0 € täällä ja 37,50 € dashissa — nyt 20 € molemmissa.
+    expect(era1.earnedCents).toBe(40_00);
+  });
+});
+
+describe("dealInternalRateCents — yksi kaava perustajan sisäiselle katteelle", () => {
+  it("täysi sopimus 168 punaista → 6300 € / 168 = 37,50 €/ikkuna", () => {
+    const data = fr8Project(AGREED);
+    expect(dealInternalRateCents(data, fixedDealFor(data)!)).toBe(3750);
+  });
+
+  it("163 punaista → EFEKTIIVINEN 6112,50 € / 163 = 37,50 €/ikkuna (ei 6300/163)", () => {
+    const data = fr8Project(AGREED - 5);
+    const deal = fixedDealFor(data)!;
+    // Raaka katto olisi antanut 630000/163 = 3865 c → perustajien osio jakoi
+    // enemmän kuin keikka kertyi. Efektiivinen summa antaa saman 37,50 €.
+    expect(dealInternalRateCents(data, deal)).toBe(3750);
+    expect(dealInternalRateCents(data, deal) * 163).toBe(dealAgreedTotalCents(data, deal));
+  });
+
+  it("yli 168 punaista → katto jakautuu useammalle ikkunalle (kate/ikkuna laskee)", () => {
+    const data = fr8Project(AGREED + 12); // 180 punaista, katto 6300 €
+    const deal = fixedDealFor(data)!;
+    expect(dealInternalRateCents(data, deal)).toBe(Math.round(CAP / 180)); // 3500
   });
 });
 

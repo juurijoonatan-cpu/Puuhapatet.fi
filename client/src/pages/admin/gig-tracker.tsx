@@ -86,6 +86,7 @@ export default function AdminGigTrackerPage() {
   // Invoice dialog state
   const [invoiceOpen, setInvoiceOpen] = useState(false);
   const [sending, setSending] = useState(false);
+  const [p2Sending, setP2Sending] = useState(false);
   const [reporting, setReporting] = useState(false);
   // billerId = which leader (Joonatan/Matias) is the laskuttaja for THIS instalment.
   // Defaults to the logged-in leader when they are a brand biller, else Joonatan.
@@ -326,6 +327,23 @@ export default function AdminGigTrackerPage() {
     }
   };
 
+  // Priority 2 (keltaiset) -lasku — erillinen scope:"p2"-haara, ei koske P1:n
+  // eriin. Summa = laskuttamaton P2-kertymä. Sama kevyt lähetys kuin mustassa
+  // dashissa (billerId = kirjautunut perustaja).
+  const sendP2 = async () => {
+    if (p2RemainingCents <= 0) return;
+    if (!confirm(`Lähetetäänkö P2-lasku laskuttamattomasta kertymästä? (${eur(p2RemainingCents)})`)) return;
+    setP2Sending(true);
+    const res = await api.sendGigInvoice(jobId, { scope: "p2", billerId: profile?.id });
+    setP2Sending(false);
+    if (res.ok && res.data) {
+      setGig(res.data.gigData);
+      toast({ title: "P2-lasku lähetetty", description: eur(res.data.amountCents) });
+    } else {
+      toast({ variant: "destructive", title: "P2-laskun lähetys epäonnistui", description: res.error });
+    }
+  };
+
   const sendReport = async () => {
     setReporting(true);
     const res = await api.sendGigReport(jobId);
@@ -436,8 +454,15 @@ export default function AdminGigTrackerPage() {
   const fixedInstallmentCents = deal
     ? (isFinalEra ? Math.max(0, agreedTotalCents - p1InvoicedCents) : Math.round(deal.capCents / 4))
     : 0;
-  // P2 (keltaiset) locked sum — grows the contract total on top of the fixed P1.
-  const p2Locked = project ? computeP2Billing(project).lockedSumCents : 0;
+  // P2 (keltaiset) — koko lisätyön laskutus + sopimus myös TÄSSÄ näkymässä (mustan
+  // dashin ulkopuolella), jotta perustaja näkee ja laskuttaa keltaiset samasta
+  // paikasta kuin punaiset. Locked sum kasvattaa myös sopimuksen kokonaissummaa.
+  const p2 = project?.p2;
+  const p2On = !!p2?.enabled;
+  const p2b = project ? computeP2Billing(project) : null;
+  const p2Locked = p2b?.lockedSumCents ?? 0;
+  const p2InvoicedCents = gig.payments.filter((p) => p.scope === "p2").reduce((s, p) => s + p.amountCents, 0);
+  const p2RemainingCents = Math.max(0, (p2b?.earnedCents ?? 0) - p2InvoicedCents);
   // The reduced final (4th) erä = effective agreed total − the three fixed 25 %
   // instalments (e.g. 6150 − 3×1575 = 1425 when red windows were removed).
   const rawInstalmentCents = deal ? Math.round(deal.capCents / 4) : 0;
@@ -894,6 +919,54 @@ export default function AdminGigTrackerPage() {
             {reporting ? "Lähetetään…" : "Lähetä maksuraportti johtajille"}
           </Button>
         </Card>
+
+        {/* Priority 2 (keltaiset) — lisätyön SOPIMUS + LASKUTUS samassa näkymässä
+            kuin punaiset, ettei tarvitse avata mustaa projektinäkymää. */}
+        {deal && p2On && p2b && (
+          <Disclosure
+            icon={<Receipt className="w-4 h-4 text-muted-foreground" />}
+            title="Priority 2 — keltaiset (sopimus & laskutus)"
+            right={<span className="text-sm font-bold text-amber-600 dark:text-amber-400 tabular-nums">{eur(p2b.lockedSumCents)}</span>}
+          >
+            <div className="space-y-4">
+              {/* Sopimus / tilausehdot */}
+              <div className="rounded-xl border border-border p-3 text-sm space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground">Tilausehdot (keltaiset)</p>
+                {p2?.terms ? (
+                  <p className="text-emerald-700 dark:text-emerald-400">✓ Asiakas hyväksynyt — {p2.terms.acceptorName}{p2.terms.acceptedAt ? `, ${new Date(p2.terms.acceptedAt).toLocaleDateString("fi-FI")}` : ""}</p>
+                ) : (
+                  <p className="text-muted-foreground">Asiakas ei ole vielä hyväksynyt tilausehtoja.</p>
+                )}
+                <a href="/fr8/priority2-sopimus-2026.pdf" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground underline">
+                  <FileText className="w-3.5 h-3.5" /> Lue Priority 2 -sopimus (PDF)
+                </a>
+              </div>
+
+              {/* Laskutus */}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-xl bg-muted/40 p-2.5">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Sovittu (lukittu)</p>
+                  <p className="text-sm font-bold tabular-nums">{p2b.lockedCount} kpl · {eur(p2b.lockedSumCents)}</p>
+                </div>
+                <div className="rounded-xl bg-muted/40 p-2.5">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Kertynyt (pesty)</p>
+                  <p className="text-sm font-bold tabular-nums">{p2b.lockedWashedCount} kpl · {eur(p2b.earnedCents)}</p>
+                </div>
+                <div className="rounded-xl bg-muted/40 p-2.5">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Laskutettu</p>
+                  <p className="text-sm font-bold tabular-nums text-green-600">{eur(p2InvoicedCents)}</p>
+                </div>
+                <div className="rounded-xl bg-muted/40 p-2.5">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Laskuttamatta</p>
+                  <p className={`text-sm font-bold tabular-nums ${p2RemainingCents > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{eur(p2RemainingCents)}</p>
+                </div>
+              </div>
+              <Button className="w-full" disabled={p2Sending || p2RemainingCents <= 0} onClick={sendP2}>
+                <Send className="w-4 h-4 mr-2" /> {p2Sending ? "Lähetetään…" : p2RemainingCents > 0 ? `Lähetä P2-lasku (${eur(p2RemainingCents)})` : "Ei laskuttamatonta P2-kertymää"}
+              </Button>
+            </div>
+          </Disclosure>
+        )}
 
       </div>
 

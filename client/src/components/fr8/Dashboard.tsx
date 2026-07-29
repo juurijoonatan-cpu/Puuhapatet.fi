@@ -19,13 +19,6 @@ interface Props {
   deal?: FixedDeal | null;
   /** Manually set/clear a person's earnings (founders' agreed split). */
   onSetEarnings?: (id: string, cents: number | null) => void;
-  /** trainee id → their leader's name (e.g. Milja → "Matias"). A trainee gets their
-   *  OWN windows/hours card here, but no euro: their pay stays combined with the
-   *  leader, so we only show a "palkka <leader>" note instead of earnings. */
-  traineeInfo?: Record<string, { leaderName: string }>;
-  /** leader id → the trainee slices folded into their COMBINED pay, so the leader's
-   *  card can break the total down ("sis. Milja 6 ikk · 225 €"). */
-  traineeShareByLeader?: Record<string, { name: string; washed: number; cents: number }[]>;
   /** Per-founder (boss) earnings breakdown — own work + profit share from the
    *  workers' windows. Only set for a signed deal; drives the "bossien ansiot" card. */
   founderEarnings?: { id: string; name: string; ownWashed: number; ownCents: number; shareCents: number; p2Cents?: number; p2Washed?: number; totalCents: number; manual: boolean; hours: number }[];
@@ -58,6 +51,8 @@ interface Props {
   /** P2 (keltaiset ikkunat) — per-window pricing admin panel. Rendered as a slot
    *  because only project.tsx owns the API handlers. */
   p2Slot?: React.ReactNode;
+  /** Apuasetukset (kerrosten lukitus) — dashin alalaitaan, pois päänäkymästä. */
+  settingsSlot?: React.ReactNode;
 }
 
 function fmt(n: number) { return Math.round(n).toLocaleString("fi-FI"); }
@@ -94,7 +89,7 @@ const mono: React.CSSProperties = {
   color: "rgba(255,255,255,0.4)",
 };
 
-export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, traineeInfo, traineeShareByLeader, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot, founderInvoiceSlot, gigBilling, workerLaborP2Cents, workerOpenP1Cents, onGoToMaksut, p2Slot }: Props) {
+export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot, founderInvoiceSlot, gigBilling, workerLaborP2Cents, workerOpenP1Cents, onGoToMaksut, p2Slot, settingsSlot }: Props) {
   const m = useIsMobile();
   const [editId, setEditId] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
@@ -241,7 +236,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
 
 
   return (
-    <div style={{ height: "100%", overflowY: "auto", overflowX: "hidden", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch", boxSizing: "border-box", padding: m ? "16px 12px calc(96px + env(safe-area-inset-bottom))" : "26px 30px 40px" }}>
+    <div style={{ height: "100%", overflowY: "auto", overflowX: "hidden", overscrollBehavior: "contain", boxSizing: "border-box", padding: m ? "16px 12px calc(96px + env(safe-area-inset-bottom))" : "26px 30px 40px" }}>
       <div style={{ maxWidth: "1400px", margin: "0 auto", width: "100%", boxSizing: "border-box" }}>
 
         {/* Header */}
@@ -439,48 +434,21 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
               {/* Per-founder breakdown: own work + profit share = total. */}
               <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : `repeat(${Math.min(founderEarnings.length, 2)}, 1fr)`, gap: m ? "10px" : "12px" }}>
                 {founderEarnings.map((f) => {
-                  // A founder who leads a trainee (e.g. Matias → Milja). The
-                  // trainee's windows are tracked under the trainee's OWN id in
-                  // computeWorkerStats, so f.ownWashed is the founder's own work
-                  // ONLY — it does NOT include the trainee's windows (the two are
-                  // disjoint). The trainee's slice is added on top in f.totalCents
-                  // (the money owed to the trainee, which the founder settles).
-                  // Show the founder's own count as-is and list the trainee slices
-                  // separately; own + trainee slices + profit share == f.totalCents.
-                  // (Previously this SUBTRACTED the trainee windows from ownWashed,
-                  // which understated "Oma työ" — e.g. 15,5 shown as 9,5 — and broke
-                  // the breakdown↔total reconciliation.)
-                  const slices = traineeShareByLeader?.[f.id] ?? [];
-                  const selfWashed = f.ownWashed;
-                  const selfCents = f.ownCents;
                   return (
                   <div key={f.id} style={{ padding: "16px 18px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "15px" }}>
                     <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, marginBottom: "8px" }}>
                       <span style={{ fontSize: "15px", fontWeight: 600 }}>{f.name}</span>
                       <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", color: "rgba(255,255,255,0.4)" }}>PERUSTAJA</span>
                     </div>
-                    <div style={{ fontSize: "28px", fontWeight: 700, lineHeight: 1, marginBottom: slices.length ? "4px" : "10px" }}>{euro(f.totalCents / 100)}</div>
-                    {/* Trainee-aware total note: how much of this founder's total is
-                        actually the trainee's pay (to be passed on, not kept). */}
-                    {!f.manual && slices.length > 0 && (
-                      <div style={{ fontSize: "11px", color: "#9cc1ff", marginBottom: "10px", lineHeight: 1.4 }}>
-                        sis. {slices.map((t) => `${t.name} ${euro(t.cents / 100)}`).join(" · ")} — tilitä harjoittelijalle, älä pidä itselläsi
-                      </div>
-                    )}
+                    <div style={{ fontSize: "28px", fontWeight: 700, lineHeight: 1, marginBottom: "10px" }}>{euro(f.totalCents / 100)}</div>
                     {f.manual ? (
                       <div style={{ fontSize: "12px", color: "#9ff0bd" }}>Käsin asetettu ansio</div>
                     ) : (
                       <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                          <span>Oma työ · {selfWashed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikkunaa</span>
-                          <b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(selfCents / 100)}</b>
+                          <span>Oma työ · {f.ownWashed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikkunaa</span>
+                          <b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(f.ownCents / 100)}</b>
                         </div>
-                        {slices.map((t) => (
-                          <div key={t.name} style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "#9cc1ff" }}>
-                            <span>↳ {t.name} (harjoittelija) · {t.washed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikkunaa</span>
-                            <b style={{ fontWeight: 600 }}>{euro(t.cents / 100)}</b>
-                          </div>
-                        ))}
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                           <span>Tuotto-osuus työntekijöistä</span>
                           <b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(f.shareCents / 100)}</b>
@@ -632,8 +600,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                 const rate = s.washed > 0 ? s.revenueCents / s.washed / 100 : 0; // €/ikkuna (personal pay)
                 const shiftStart = shiftStartFor(s.worker);
                 const cm = crewMemberOf(s.worker);
-                const trainee = traineeInfo?.[s.worker]; // e.g. Milja → pay folded into Matias, windows/hours shown on their own
-                const canEditPay = !!onSetEarnings && cm?.role === "host" && !trainee; // founders adjust own split
+                const canEditPay = !!onSetEarnings && cm?.role === "host"; // founders adjust own split
                 const overridden = cm?.manualEarningsCents != null;
                 const editing = editId === s.worker;
                 return (
@@ -641,7 +608,6 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px", gap: 8 }}>
                       <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                         <span style={{ fontSize: "15px", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{workerName(s.worker)}</span>
-                        {trainee && <span style={{ flexShrink: 0, fontSize: "9px", fontWeight: 700, letterSpacing: "0.06em", color: "#9cc1ff", padding: "2px 6px", borderRadius: 6, border: "1px solid rgba(124,180,255,0.35)", background: "rgba(124,180,255,0.12)" }}>HARJOITTELIJA</span>}
                       </span>
                       <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.45)", flexShrink: 0 }}>{Math.round(share)} %</span>
                     </div>
@@ -657,24 +623,6 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                     <div style={{ height: "6px", borderRadius: "5px", background: "rgba(255,255,255,0.08)", overflow: "hidden", margin: "12px 0" }}>
                       <div style={{ width: `${share.toFixed(1)}%`, height: "100%", borderRadius: "5px", background: "linear-gradient(90deg,rgba(255,255,255,0.5),#fff)", transition: "width .6s" }} />
                     </div>
-                    {trainee ? (
-                      // A trainee shows only their own windows + hours; the euro (pay) stays
-                      // combined with their leader, so we show "palkka <leader>" instead.
-                      // Each metric on its own full-width row → no number collision on mobile.
-                      <div style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                          <span>Palkka</span>
-                          <span style={{ color: "#9cc1ff", textAlign: "right" }}>→ {trainee.leaderName}</span>
-                        </div>
-                        {showTeho && (
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                            <span>Tunnit</span>
-                            <span style={{ color: "rgba(255,255,255,0.85)", textAlign: "right" }}>{s.hours > 0 ? `${s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} h` : "0 h"}</span>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                    <>
                     {/* Stacked label/value rows so the euro, rate and €/h figures never
                         overlap each other when they wrap on a narrow card. */}
                     <div style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>
@@ -703,15 +651,6 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                         </div>
                       )}
                     </div>
-                    {/* Breakdown of the COMBINED sum: how much of this leader's total is a
-                        trainee's work (e.g. "sis. Milja 6 ikk · 225 €"). */}
-                    {(traineeShareByLeader?.[s.worker]?.length ?? 0) > 0 && (
-                      <div style={{ marginTop: 7, fontSize: "11px", color: "rgba(156,193,255,0.95)", lineHeight: 1.5 }}>
-                        {traineeShareByLeader![s.worker].map((t) => `sis. ${t.name} ${t.washed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikk · ${euro(t.cents / 100)}`).join(" · ")}
-                      </div>
-                    )}
-                    </>
-                    )}
                     {canEditPay && !editing && (
                       <button onClick={() => { setEditId(s.worker); setEditVal(overridden ? String(Math.round((cm!.manualEarningsCents! / 100))) : String(Math.round(s.revenueCents / 100))); }}
                         style={{ marginTop: 10, width: "100%", padding: "7px", borderRadius: 9, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.7)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>
@@ -743,7 +682,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                             {[...cm!.sessions!].reverse().slice(0, 10).map(( se, i) => (
                               <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11.5px", color: "rgba(255,255,255,0.6)", padding: "5px 8px", background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>
                                 <span>{new Date(se.end).toLocaleDateString("fi-FI", { day: "numeric", month: "numeric" })} · {se.windows} ikk · {fmtDur(se.minutes * 60000)}</span>
-                                {!trainee && <span style={{ fontWeight: 700, color: "rgba(255,255,255,0.8)" }}>{euro(se.earnedCents / 100)}</span>}
+                                <span style={{ fontWeight: 700, color: "rgba(255,255,255,0.8)" }}>{euro(se.earnedCents / 100)}</span>
                               </div>
                             ))}
                           </div>
@@ -800,6 +739,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                 </div>
             </Section>
           )}
+          {settingsSlot && <div className="anim-fadeUp-8">{settingsSlot}</div>}
         </div>
 
         {/* Kulut — tucked away off the main view. A quiet link opens the expense

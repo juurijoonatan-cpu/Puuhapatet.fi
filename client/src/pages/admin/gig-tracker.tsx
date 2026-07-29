@@ -82,6 +82,12 @@ export default function AdminGigTrackerPage() {
   const [sigOpen, setSigOpen] = useState(false);
   const [savingContract, setSavingContract] = useState(false);
   const [savingPrices, setSavingPrices] = useState(false);
+  // Keltaisten (2. vaihe) sopimusteksti — asiakas näkee tämän hyväksyessään
+  // tilausehdot. Asuu TÄÄLLÄ sopimusosiossa, ei mustan dashin P2-paneelissa:
+  // sopimusteksti on sopimusasia, ei hinnoittelutyökalu.
+  const [p2Terms, setP2Terms] = useState("");
+  const [p2TermsOpen, setP2TermsOpen] = useState(false);
+  const [savingP2Terms, setSavingP2Terms] = useState(false);
   const [draft, setDraft] = useState({ contractId: "", contractText: "", customerNote: "", vatNote: "", requireSignature: true });
 
   // Invoice dialog state
@@ -141,7 +147,10 @@ export default function AdminGigTrackerPage() {
       } else {
         toast({ variant: "destructive", title: "Virhe", description: res.error || "Keikkaa ei löytynyt" });
       }
-      if (projRes.ok && projRes.data?.project) setProject(projRes.data.project);
+      if (projRes.ok && projRes.data?.project) {
+        setProject(projRes.data.project);
+        setP2Terms(projRes.data.project.p2?.termsText ?? "");
+      }
       setLoading(false);
     });
   }, [jobId]);
@@ -345,6 +354,18 @@ export default function AdminGigTrackerPage() {
     }
   };
 
+  const saveP2Terms = async () => {
+    setSavingP2Terms(true);
+    const res = await api.p2SetPhase(jobId, { termsText: p2Terms, by: profile?.id });
+    setSavingP2Terms(false);
+    if (res.ok && res.data) {
+      setProject((cur) => (cur ? { ...cur, p2: res.data!.p2 } : cur));
+      toast({ title: "2. vaiheen sopimusteksti tallennettu" });
+    } else {
+      toast({ variant: "destructive", title: "Tallennus epäonnistui", description: res.error });
+    }
+  };
+
   const sendReport = async () => {
     setReporting(true);
     const res = await api.sendGigReport(jobId);
@@ -530,6 +551,16 @@ export default function AdminGigTrackerPage() {
               <div>
                 <Label className="text-xs">Osoite</Label>
                 <Input value={companyDraft.address ?? ""} onChange={e => setCompanyDraft(d => ({ ...d, address: e.target.value }))} className="text-sm" />
+              </div>
+              {/* Sisäinen listanimi — ei osa sopimusta, joten se ei kuulu sopimusosioon. */}
+              <div>
+                <Label className="text-xs">Kuvaus (näkyy keikkalistassa)</Label>
+                <div className="flex gap-2">
+                  <Input value={jobDescription} onChange={(e) => setJobDescription(e.target.value)} placeholder="Esim. FR8 - Ikkunoiden pesu" className="text-sm" />
+                  <Button size="sm" variant="outline" disabled={savingDescription} onClick={saveDescription} className="shrink-0">
+                    {savingDescription ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  </Button>
+                </div>
               </div>
               <div className="flex gap-2 pt-1">
                 <Button onClick={saveCompany} disabled={savingCompany} className="flex-1">
@@ -755,9 +786,24 @@ export default function AdminGigTrackerPage() {
                         Asiakas hyväksyy ehdot kertaalleen seurantalinkissä ennen ensimmäistä hinnan hyväksyntää.
                       </p>
                     )}
-                    <a href="/fr8/priority2-sopimus-2026.pdf" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground underline">
-                      <FileText className="w-3.5 h-3.5" /> Lue 2. vaiheen sopimus (PDF)
-                    </a>
+                    <div className="flex flex-wrap items-center gap-3 pt-0.5">
+                      <a href="/fr8/priority2-sopimus-2026.pdf" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground underline">
+                        <FileText className="w-3.5 h-3.5" /> Sopimus (PDF)
+                      </a>
+                      <button type="button" onClick={() => { setP2TermsOpen((v) => !v); setP2Terms(project?.p2?.termsText ?? ""); }}
+                        className="text-xs font-medium text-muted-foreground underline underline-offset-2">
+                        {p2TermsOpen ? "Sulje teksti" : `Muokkaa tekstiä${project?.p2?.termsText?.trim() ? " ✓" : ""}`}
+                      </button>
+                    </div>
+                    {p2TermsOpen && (
+                      <div className="space-y-2 pt-1">
+                        <Textarea rows={7} value={p2Terms} onChange={(e) => setP2Terms(e.target.value)}
+                          className="text-xs" placeholder="Liitä 2. vaiheen sopimusteksti — asiakas näkee sen hyväksyessään tilausehdot." />
+                        <Button size="sm" className="w-full" disabled={savingP2Terms || p2Terms === (project?.p2?.termsText ?? "")} onClick={saveP2Terms}>
+                          <Save className="w-4 h-4 mr-2" /> {savingP2Terms ? "Tallennetaan…" : "Tallenna teksti"}
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -778,17 +824,6 @@ export default function AdminGigTrackerPage() {
                         </Button>
                       </a>
                     )}
-                  </div>
-                </div>
-
-                {/* Internal list label — not part of the signed agreement, always editable. */}
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium text-muted-foreground">Kuvaus (näkyy keikkalistassa)</Label>
-                  <div className="flex gap-2">
-                    <Input value={jobDescription} onChange={(e) => setJobDescription(e.target.value)} placeholder="Esim. FR8 - Ikkunoiden pesu" className="text-sm" />
-                    <Button size="sm" disabled={savingDescription} onClick={saveDescription} className="shrink-0">
-                      {savingDescription ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                    </Button>
                   </div>
                 </div>
 
@@ -894,14 +929,16 @@ export default function AdminGigTrackerPage() {
               /* Kaikki neljä erää lähetetty — sopimus laskutettu. Ei haamu-
                  "seuraava erä 1575 €" eikä kuollutta lähetysnappia. */
               <>
-                <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/30 p-3 text-center mb-3">
-                  <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">Sopimus laskutettu ✓</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Kaikki 4/4 maksuerää lähetetty. Punainen urakka valmis.</p>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700 dark:text-emerald-400">
+                    <Check className="w-4 h-4 shrink-0" /> 4 laskua lähetetty
+                  </span>
+                  <span className="text-sm font-semibold text-foreground tabular-nums shrink-0">{eur(p1InvoicedCents)}</span>
                 </div>
                 {gig.payments.length > 0 && (
-                  <Button variant="ghost" size="sm" className="w-full text-xs text-muted-foreground" onClick={undoInstalment}>
-                    Peruuta viimeisin erä (nollaa laskuri)
-                  </Button>
+                  <button type="button" className="mt-1 text-[11px] text-muted-foreground underline underline-offset-2" onClick={undoInstalment}>
+                    Peruuta viimeisin erä
+                  </button>
                 )}
               </>
             ) : (
@@ -997,14 +1034,31 @@ export default function AdminGigTrackerPage() {
                     <span className="text-sm text-muted-foreground">Laskuttamatta</span>
                     <span className={`text-lg font-bold tabular-nums ${p2RemainingCents > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{eur(p2RemainingCents)}</span>
                   </div>
+                  {/* Mihin kertymä jakautuu. Ilman tätä riviä "asiakkaalta 408 €" ja
+                      "tekijöille 216 €" näyttivät ristiriidalta — ero on teidän kate. */}
+                  {p2b.earnedCents > 0 && (
+                    <div className="mb-3 grid grid-cols-3 gap-2 rounded-xl bg-muted/40 p-2.5 text-center">
+                      {([
+                        ["Asiakkaalta", eur(p2b.earnedCents), "text-foreground"],
+                        ["Tekijöille", eur(p2b.workerCostCents), "text-foreground"],
+                        ["Teille", eur(p2b.marginCents), "text-green-600"],
+                      ] as [string, string, string][]).map(([l, v, tone]) => (
+                        <div key={l}>
+                          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{l}</p>
+                          <p className={`text-sm font-bold tabular-nums ${tone}`}>{v}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {p2b.pendingWashedCount > 0 && (
+                    <p className="mb-3 text-[11px] leading-snug text-blue-600 dark:text-blue-400">
+                      {p2b.pendingWashedCount} pestyä ikkunaa odottaa asiakkaan hyväksyntää ({eur(p2b.pendingEarnedCents)}) — ei vielä laskussa.
+                    </p>
+                  )}
                   <Button className="w-full" disabled={p2Sending || p2RemainingCents <= 0} onClick={sendP2}>
                     <Send className="w-4 h-4 mr-2" />
                     {p2Sending ? "Lähetetään…" : p2RemainingCents > 0 ? `Lähetä keltaisten lasku (${eur(p2RemainingCents)})` : "Kaikki keltaiset laskutettu ✓"}
                   </Button>
-                  <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
-                    Keltaisten lasku on erillinen punaisten neljästä erästä — se ei kuluta erälaskuria eikä
-                    muuta kiinteää urakkasummaa. Laskutetaan vain pestyistä, sovituista ikkunoista.
-                  </p>
                 </>
               )}
             </div>

@@ -5,7 +5,8 @@ import {
   computeP2Billing,
   customerAddedKeys,
   emptyP2State,
-  isP2Washable,
+  isP2Priced,
+  p2PendingPriceCents,
   p2Transition,
   p2WorkerPayoutCents,
   pointPriority,
@@ -173,7 +174,7 @@ describe("p2Transition — tilakone", () => {
 
 // ─── Point helpers ─────────────────────────────────────────────────────────────
 
-describe("pointPriority / isP2Washable", () => {
+describe("pointPriority / isP2Priced", () => {
   it("resolvaa prioriteetin kartasta (seeded + custom), ei koskaan clientiltä", () => {
     const data = fixture();
     expect(pointPriority(data, "K#0")).toBe(1);
@@ -189,16 +190,24 @@ describe("pointPriority / isP2Washable", () => {
     expect(pointPriority(data, "K#2")).toBe(null);
   });
 
-  it("isP2Washable vain kun vaihe päällä JA hinta lukittu", () => {
+  it("isP2Priced vain kun vaihe päällä JA hinta lukittu (ei enää pesuportti)", () => {
     const data = fixture();
-    expect(isP2Washable(data, "K#2")).toBe(false); // ei p2:ta
+    expect(isP2Priced(data, "K#2")).toBe(false); // ei p2:ta
     data.p2 = emptyP2State();
     data.p2.offers["K#2"] = { status: "locked", priceCents: 3000, lockedCents: 3000, version: 2, updatedAt: 1 };
-    expect(isP2Washable(data, "K#2")).toBe(false); // vaihe pois päältä
+    expect(isP2Priced(data, "K#2")).toBe(false); // vaihe pois päältä
     data.p2.enabled = true;
-    expect(isP2Washable(data, "K#2")).toBe(true);
+    expect(isP2Priced(data, "K#2")).toBe(true);
     data.p2.offers["K#3"] = proposedOffer();
-    expect(isP2Washable(data, "K#3")).toBe(false); // vain ehdotettu
+    expect(isP2Priced(data, "K#3")).toBe(false); // vain ehdotettu
+  });
+
+  it("p2PendingPriceCents: vastatarjous voittaa ehdotuksen, lukittu/hylätty → null", () => {
+    expect(p2PendingPriceCents(undefined)).toBe(null);
+    expect(p2PendingPriceCents(proposedOffer(4000))).toBe(4000);
+    expect(p2PendingPriceCents({ status: "countered", priceCents: 4000, counterCents: 2500, version: 2, updatedAt: 1 })).toBe(2500);
+    expect(p2PendingPriceCents({ status: "locked", priceCents: 3000, lockedCents: 3000, version: 2, updatedAt: 1 })).toBe(null);
+    expect(p2PendingPriceCents({ status: "declined", priceCents: 3000, version: 2, updatedAt: 1 })).toBe(null);
   });
 });
 
@@ -244,14 +253,41 @@ describe("computeP2Billing", () => {
     expect(b.lockedSumCents).toBe(3000);
   });
 
-  it("pesty keltainen ILMAN lukkoa listataan anomaliana", () => {
+  it("pesty keltainen ILMAN hintaa = hinnoittelematon (perustajan tehtävälista)", () => {
     const data = fixture();
     data.p2 = emptyP2State();
     data.statuses["K#4"] = "pesty";
     data.washedBy["K#4"] = "jani";
     const b = computeP2Billing(data);
     expect(b.washedUnlockedKeys).toEqual(["K#4"]);
+    expect(b.unpricedWashedCount).toBe(1);
+    expect(b.pendingWashedCount).toBe(0);
     expect(b.earnedCents).toBe(0);
+  });
+
+  it("pesty keltainen jolla hinta ODOTTAA asiakkaan hyväksyntää ei katoa", () => {
+    // Tekijä pesi ikkunan ennen kuin Niilo hyväksyi hinnan: työ on tehty, joten
+    // se näkyy odottavana — mutta ei laskutettavana eikä maksettavana.
+    const data = fixture();
+    data.p2 = emptyP2State();
+    data.p2.enabled = true;
+    data.p2.workerSharePct = 50;
+    data.p2.offers["K#4"] = proposedOffer(4000);
+    data.p2.offers["1#cabc"] = { status: "countered", priceCents: 4000, counterCents: 3000, version: 2, updatedAt: 1 };
+    data.statuses["K#4"] = "pesty";
+    data.washedBy["K#4"] = "jani";
+    data.statuses["1#cabc"] = "pesty";
+    data.washedBy["1#cabc"] = "jani";
+
+    const b = computeP2Billing(data);
+    expect(b.pendingWashedCount).toBe(2);
+    expect(b.pendingEarnedCents).toBe(7000);        // 4000 ehdotus + 3000 vastatarjous
+    expect(b.pendingWorkerCostCents).toBe(3500);    // 50 % kumpikin
+    expect(b.unpricedWashedCount).toBe(0);
+    // EI mukana varmoissa luvuissa.
+    expect(b.earnedCents).toBe(0);
+    expect(b.workerCostCents).toBe(0);
+    expect(b.lockedWashedCount).toBe(0);
   });
 });
 

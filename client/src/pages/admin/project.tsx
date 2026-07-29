@@ -494,7 +494,7 @@ export default function AdminProjectPage() {
 
   // ── Render ──────────────────────────────────────────────────────────────────
   const shell = (children: React.ReactNode) => (
-    <div className="fr8-root" style={{ position: "fixed", inset: 0, background: "#060607", color: "#fff", overflow: "hidden", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>
+    <div className="fr8-root" style={{ position: "fixed", top: 0, left: 0, right: 0, background: "#060607", color: "#fff", overflow: "hidden", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>
       {/* Single, very subtle top glow — kept faint so the dashboard reads clean */}
       <div style={{ position: "absolute", top: "-35%", left: "50%", transform: "translateX(-50%)", width: "1000px", height: "620px", background: "radial-gradient(ellipse at center, rgba(120,124,150,0.05), transparent 68%)", pointerEvents: "none" }} />
       {children}
@@ -687,7 +687,11 @@ export default function AdminProjectPage() {
   for (const f of crew.filter((c) => isFounder(c.id, c.role))) {
     if (!statIds.has(f.id)) baseStats.push({ worker: f.id, washed: 0, washedP1: 0, washedP2: 0, revenueCents: 0, hours: Math.max(0, managerHours[f.id] || 0), windowsPerHour: 0, eurPerHour: 0 });
   }
-  const workerStats = baseStats.map((s) => {
+  // Deaktivoitu tekijä (esim. Milja, jolle on maksettu ja joka on poistettu
+  // rosterista) ei näy dashissa lainkaan. Palaa näkyviin heti kun hänet
+  // aktivoidaan Tiimi-sivun kytkimestä.
+  const inactiveIds = new Set(crew.filter((c) => c.active === false).map((c) => c.id));
+  const workerStats = baseStats.filter((s) => !inactiveIds.has(s.worker)).map((s) => {
     // Trainees show no euro of their own — their pay is folded into their leader.
     const cents = isTrainee(s.worker) ? 0 : earningsFor(s);
     return {
@@ -704,9 +708,13 @@ export default function AdminProjectPage() {
     .filter((s) => isFounder(s.worker, crew.find((c) => c.id === s.worker)?.role))
     .map((s) => {
       const mm = crew.find((c) => c.id === s.worker);
-      const ownWashed = s.washedP1; // omat PUNAISET — keltaiset erikseen, harjoittelija erikseen
+      // Vastuullaan tehty PUNAINEN työ = omat + harjoittelijan ikkunat. Harjoittelija
+      // ei ole enää oma rivi kortilla (hänelle on maksettu ja hän on deaktivoitu),
+      // joten hänen työnsä lasketaan johtajan omaan työhön — näin kortin erittely
+      // (oma työ + tuotto-osuus + keltaiset) summautuu tarkalleen loppusummaan.
+      const ownWashed = s.washedP1 + (traineeWashedByLeader[s.worker] || 0);
       const manual = mm?.manualEarningsCents != null;
-      const p2Cents = p2EarnedFor(s.worker);
+      const p2Cents = p2EarnedFor(s.worker) + (traineeP2CentsByLeader[s.worker] || 0);
       return {
         id: s.worker,
         name: resolveName(s.worker),
@@ -744,7 +752,10 @@ export default function AdminProjectPage() {
 
   // Paljonko tekijöille on punaisista vielä siirtämättä — sama jaettu laskenta
   // kuin Maksut-välilehdellä ja Tiimi-sivulla, jotta dashin stats ei voi eriytyä.
-  const dashPayable = computeWorkerSettlements(project, { era: eraSettlementByWorker(eraInvoices) });
+  const dashPayable = computeWorkerSettlements(project, {
+    era: eraSettlementByWorker(eraInvoices, "p1"),
+    p2Era: eraSettlementByWorker(eraInvoices, "p2"),
+  });
   const dashOpenP1Cents = sumWorkerSettlements(dashPayable).openP1Cents;
 
   // Display-name map + this gig's pickable crew (used by both the "who washed"
@@ -786,28 +797,29 @@ export default function AdminProjectPage() {
           {error}
         </div>
       )}
-      <main style={{ position: "relative", zIndex: 10, height: "calc(100% - 62px)" }}>
+      <main style={{ position: "relative", zIndex: 10, minHeight: 0 }}>
         {tab === "dashboard" && (
-          <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} onSetEarnings={setWorkerEarnings} traineeInfo={traineeInfo} traineeShareByLeader={traineeShareByLeader} founderEarnings={founderEarnings} workerLaborCents={workerLaborCents} workerLaborP2Cents={workerLaborP2Cents} founderRateEur={internalKateCents / 100}
+          <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} onSetEarnings={setWorkerEarnings} founderEarnings={founderEarnings} workerLaborCents={workerLaborCents} workerLaborP2Cents={workerLaborP2Cents} founderRateEur={internalKateCents / 100}
             p2Slot={deal ? (
-              <>
-                <P2AdminPanel
-                  project={project}
-                  jobId={jobId}
-                  by={currentWorker}
-                  onP2={applyP2}
-                  onGoToFloor={onGoToFloor}
-                  canSend={profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")}
-                  p2InvoicedCents={p2Invoiced}
-                />
-                <GuidedAdminPanel
-                  project={project}
-                  onGuidedSet={onGuidedSet}
-                  onGoToFloor={onGoToFloor}
-                  canSend={profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")}
-                />
-              </>
+              <P2AdminPanel
+                project={project}
+                jobId={jobId}
+                by={currentWorker}
+                onP2={applyP2}
+                onGoToFloor={onGoToFloor}
+                canSend={profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")}
+                p2InvoicedCents={p2Invoiced}
+              />
             ) : undefined}
+            /* Kerrosten lukitus on apuasetus, ei päänäkymän asia — se renderöidään
+               dashin alalaitaan omana slotina. */
+            settingsSlot={
+              <FloorLockPanel
+                project={project}
+                onGuidedSet={onGuidedSet}
+                canSend={profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")}
+              />
+            }
             expensesTotalCents={(project.expenses || []).reduce((s, e) => s + e.amountCents, 0)}
             expensesSlot={
               <ExpensesView
@@ -888,7 +900,9 @@ export default function AdminProjectPage() {
             deal={deal}
             p2={project.p2 ? { enabled: project.p2.enabled, offers: project.p2.offers } : null}
             onP2Propose={onP2Propose}
-            guided={project.guided?.enabled ? (() => { const g = computeGuided(project); return { enabled: true, activeFloor: g.activeFloor, activeFloors: g.activeFloors, lockedFloors: g.lockedFloors, nextKey: g.nextKey }; })() : null}
+            /* Kartta tarvitsee vain tiedon avoimista kerroksista — "seuraava ikkuna"
+               -ohjaus on poistettu. */
+            guided={project.guided?.enabled ? (() => { const g = computeGuided(project); return { enabled: true, activeFloor: g.activeFloor, activeFloors: g.activeFloors, lockedFloors: g.lockedFloors, nextKey: null }; })() : null}
           />
         )}
       </main>
@@ -986,22 +1000,19 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
 }) {
   const p2 = project.p2;
   const b = computeP2Billing(project);
-  // Laskuttamatta = pesty+lukittu kertymä − jo laskutetut P2-maksut.
   const p2Remaining = Math.max(0, b.earnedCents - p2InvoicedCents);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [shareDraft, setShareDraft] = useState(String(p2?.workerSharePct ?? DEFAULT_P2_WORKER_SHARE_PCT));
   const [counterInputs, setCounterInputs] = useState<Record<string, string>>({});
   const [showLog, setShowLog] = useState(false);
-  const [showTerms, setShowTerms] = useState(false);
-  const [termsDraft, setTermsDraft] = useState(p2?.termsText ?? "");
   // Tekijän palkkiotaulukko (hinta → kiinteä palkkio). Muokataan euroina.
   const activeSchedule: P2PayoutRule[] = p2?.payoutSchedule ?? DEFAULT_P2_PAYOUT_SCHEDULE;
   const [showPayout, setShowPayout] = useState(false);
   const [payoutRows, setPayoutRows] = useState<{ price: string; pay: string }[]>(
     activeSchedule.map((r) => ({ price: String(r.priceCents / 100), pay: String(r.payoutCents / 100) })),
   );
-  const parseEuro = (s: string) => { const v = Number(String(s).replace(",", ".")); return Number.isFinite(v) ? Math.round(v * 100) : NaN; };
+  const parseEuro = (str: string) => { const v = Number(String(str).replace(",", ".")); return Number.isFinite(v) ? Math.round(v * 100) : NaN; };
   const savePayout = () => {
     const rules: P2PayoutRule[] = [];
     for (const row of payoutRows) {
@@ -1012,9 +1023,6 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
     void run(() => api.p2SetPhase(jobId, { payoutSchedule: rules, by }), "Palkkiotaulukko tallennettu");
   };
 
-  const deal = fixedDealFor(project);
-  const p1Pct = deal ? computeDealBilling(project, deal).pct : 0;
-
   async function run<T extends { ok: boolean; error?: string; data?: { p2: P2State } }>(fn: () => Promise<T>, okMsg?: string) {
     setBusy(true); setMsg(null);
     const res = await fn();
@@ -1023,143 +1031,72 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
     else setMsg(res.error || "Toiminto epäonnistui");
   }
 
-  const setPhase = (enabled: boolean) => run(() => api.p2SetPhase(jobId, { enabled, by }), enabled ? "Vaihe 2 avattu asiakkaalle" : "Vaihe 2 suljettu");
+  const setPhase = (enabled: boolean) => run(() => api.p2SetPhase(jobId, { enabled, by }), enabled ? "Vaihe 2 avattu" : "Vaihe 2 suljettu");
   const saveShare = () => {
     const pct = Math.floor(Number(shareDraft));
     if (!Number.isInteger(pct) || pct < 1 || pct > 100) { setMsg("Osuuden on oltava 1–100 %"); return; }
-    void run(() => api.p2SetPhase(jobId, { workerSharePct: pct, by }), "Tekijän osuus tallennettu");
+    void run(() => api.p2SetPhase(jobId, { workerSharePct: pct, by }), "Osuus tallennettu");
   };
   const respond = (key: string, action: "accept_counter" | "cancel" | "unlock" | "propose", priceCents?: number, version?: number) =>
     run(() => api.p2Respond(jobId, { key, action, priceCents, version, by }));
 
-  // Asiakkaan vastatarjoukset (inbox) + kartalta puuttuvat lukot.
   const countered = Object.entries(p2?.offers ?? {}).filter(([, o]) => o.status === "countered");
   const customerAdded = (p2?.events ?? []).filter((e) => e.action === "add_point").length;
   const sharePct = p2?.workerSharePct ?? DEFAULT_P2_WORKER_SHARE_PCT;
 
-  const tile: React.CSSProperties = { flex: "1 1 110px", minWidth: 100, padding: "10px 12px", borderRadius: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" };
+  // Napit ovat 44 px korkeita (Applen/Googlen minimiosumakoko). Aiemmat 30 px
+  // napit olivat syy siihen että "pitää painaa napin yläpuolelta".
+  const btn: React.CSSProperties = { minHeight: 44, padding: "11px 15px", borderRadius: 11, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.9)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "13px", fontWeight: 600, cursor: "pointer" };
+  const tile: React.CSSProperties = { flex: "1 1 120px", minWidth: 110, padding: "11px 13px", borderRadius: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" };
   const tileLabel: React.CSSProperties = { fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 };
   const tileVal: React.CSSProperties = { fontSize: "15px", fontWeight: 700, color: "#fff", fontVariantNumeric: "tabular-nums" };
-  const btn: React.CSSProperties = { padding: "7px 12px", borderRadius: 9, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.85)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px", fontWeight: 600, cursor: "pointer" };
 
   return (
     <Section
       id="p2"
-      label="PRIORITY 2 — KELTAISET IKKUNAT"
+      label="KELTAISET"
       summary={
         <span style={{ fontVariantNumeric: "tabular-nums" }}>
           {p2?.enabled ? "🟢 " : ""}
-          {b.lockedCount > 0 ? `${b.lockedCount} sovittu · ${p2eur(b.lockedSumCents)}` : `${b.yellowTotal} keltaista`}
-          {countered.length > 0 ? ` · ${countered.length} vastatarjousta` : ""}
+          {b.lockedCount > 0 ? `${b.lockedCount} sovittu · ${p2eur(b.lockedSumCents)}` : `${b.yellowTotal} kpl`}
+          {countered.length > 0 ? ` · ${countered.length} vastatarjous` : ""}
         </span>
       }
       defaultOpen={countered.length > 0}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 
-        {/* Vaihekytkin + tekijän osuus */}
+        {/* Vaihe päälle/pois — yksi nappi, ei selityksiä. */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <button
-            disabled={busy}
+            disabled={busy || !canSend}
             onClick={() => void setPhase(!(p2?.enabled))}
-            style={{ ...btn, border: "none", background: p2?.enabled ? "rgba(95,224,138,0.9)" : "rgba(255,255,255,0.1)", color: p2?.enabled ? "#0a0a0c" : "#fff", fontWeight: 700 }}
+            style={{ ...btn, border: "none", background: p2?.enabled ? "rgba(95,224,138,0.9)" : "rgba(255,255,255,0.12)", color: p2?.enabled ? "#0a0a0c" : "#fff", fontWeight: 700 }}
           >
-            {p2?.enabled ? "Vaihe 2 päällä — sulje asiakkaalta" : "Avaa vaihe 2 asiakkaalle"}
+            {p2?.enabled ? "Vaihe 2 päällä" : "Avaa vaihe 2"}
           </button>
-          {!p2?.enabled && (
-            <span style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.06em", padding: "4px 9px", borderRadius: 999, border: "1px solid rgba(255,205,40,0.4)", background: "rgba(255,205,40,0.1)", color: "rgb(255,220,110)" }}>
-              VALMISTELU — ei näy asiakkaalle eikä tekijöille
-            </span>
-          )}
-          {!!deal && p1Pct >= 100 && !p2?.enabled && (
-            <span style={{ fontSize: "11.5px", color: "#9ff0bd" }}>P1 (punaiset) on valmis — aika siirtyä keltaisiin ✨</span>
-          )}
-        </div>
-        {/* Tilausehtojen hyväksyntä: onko asiakas allekirjoittanut keltaisten
-            sopimusehdot (kertaluontoinen). Näkyy perustajalle täällä, ettei
-            tarvitse avata asiakaslinkkiä tarkistaakseen. */}
-        {p2?.enabled && (
-          <div style={{ fontSize: "12px", lineHeight: 1.5, color: p2?.terms ? "#9ff0bd" : "rgba(255,255,255,0.55)" }}>
-            {p2?.terms
-              ? `✓ Asiakas on hyväksynyt tilausehdot — ${p2.terms.acceptorName}${p2.terms.acceptedAt ? `, ${new Date(p2.terms.acceptedAt).toLocaleDateString("fi-FI")}` : ""}. Yksittäiset ikkunahyväksynnät kirjautuvat lisäksi lokiin.`
-              : "Asiakas ei ole vielä hyväksynyt tilausehtoja — hän tekee sen kerran ennen ensimmäistä hinnan hyväksyntää (sen jälkeen ehtoja ei kysytä uudelleen)."}
-          </div>
-        )}
-        {/* Tekijän palkkiotaulukko on ENSISIJAINEN: kiinteä palkkio per ikkunan
-            hinta (34→18, 37,50→20, 50→27). %-osuus on vain fallback muille
-            hinnoille, ja se on siirretty muokkaimen sisään pois pääpaikalta. */}
-        <div style={{ marginTop: -6, padding: "10px 12px", borderRadius: 12, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontSize: "11.5px", fontWeight: 700, color: "rgba(255,255,255,0.75)" }}>Tekijän palkkio per ikkuna</span>
-            <span style={{ fontSize: "11.5px", color: "rgba(255,255,255,0.5)", fontVariantNumeric: "tabular-nums" }}>
-              {activeSchedule.map((r) => `${p2eur(r.priceCents)} → ${p2eur(r.payoutCents)}`).join("  ·  ")}
-              {"  ·  muut: "}{sharePct} %
-            </span>
-            <button onClick={() => { setShowPayout((v) => !v); setPayoutRows(activeSchedule.map((r) => ({ price: String(r.priceCents / 100), pay: String(r.payoutCents / 100) }))); }} style={{ ...btn, marginLeft: "auto", padding: "5px 10px", fontSize: "11px" }}>
-              {showPayout ? "Sulje" : "Muokkaa"}
-            </button>
-          </div>
-          {showPayout && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
-              {payoutRows.map((row, i) => (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)" }}>Hinta</span>
-                  <input value={row.price} inputMode="decimal" onChange={(e) => setPayoutRows((rs) => rs.map((r, j) => j === i ? { ...r, price: e.target.value } : r))}
-                    style={{ width: 66, padding: "6px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.16)", background: "rgba(0,0,0,0.4)", color: "#fff", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "12px", outline: "none" }} />
-                  <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.4)" }}>€ →</span>
-                  <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)" }}>palkkio</span>
-                  <input value={row.pay} inputMode="decimal" onChange={(e) => setPayoutRows((rs) => rs.map((r, j) => j === i ? { ...r, pay: e.target.value } : r))}
-                    style={{ width: 66, padding: "6px 8px", borderRadius: 8, border: "1px solid rgba(124,224,166,0.3)", background: "rgba(0,0,0,0.4)", color: "#7CE0A6", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "12px", outline: "none" }} />
-                  <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.4)" }}>€</span>
-                  <button onClick={() => setPayoutRows((rs) => rs.filter((_, j) => j !== i))} aria-label="Poista rivi" style={{ ...btn, padding: "4px 9px", fontSize: "13px", lineHeight: 1 }}>✕</button>
-                </div>
-              ))}
-              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <button onClick={() => setPayoutRows((rs) => [...rs, { price: "", pay: "" }])} style={{ ...btn, padding: "6px 11px", fontSize: "11.5px" }}>+ Lisää rivi</button>
-                <button onClick={() => setPayoutRows(DEFAULT_P2_PAYOUT_SCHEDULE.map((r) => ({ price: String(r.priceCents / 100), pay: String(r.payoutCents / 100) })))} style={{ ...btn, padding: "6px 11px", fontSize: "11.5px" }}>Palauta oletukset</button>
-                <button disabled={busy} onClick={savePayout} style={{ ...btn, border: "none", background: "#fff", color: "#0a0a0c", fontWeight: 700, padding: "6px 13px", fontSize: "11.5px" }}>Tallenna palkkiotaulukko</button>
-              </div>
-              {/* Fallback-%: koskee vain hintoja jotka eivät ole taulukossa. */}
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
-                <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)" }}>Muille hinnoille (fallback)</span>
-                <input type="number" min={1} max={100} value={shareDraft} onChange={(e) => setShareDraft(e.target.value)}
-                  style={{ width: 52, padding: "6px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.16)", background: "rgba(0,0,0,0.4)", color: "#fff", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "12px", outline: "none" }} />
-                <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.4)" }}>%</span>
-                {Number(shareDraft) !== sharePct && (
-                  <button disabled={busy} onClick={saveShare} style={{ ...btn, padding: "5px 9px", fontSize: "11px" }}>Tallenna %</button>
-                )}
-              </div>
-              <span style={{ fontSize: "10.5px", color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
-                Taulukon hinnat maksavat kiinteän palkkion; muut hinnat käyttävät fallback-%:ia. Muutos vaikuttaa myös jo pestyihin keltaisiin — palkkio lasketaan aina reaaliaikaisesti.
-              </span>
-            </div>
-          )}
-          <div style={{ fontSize: "10.5px", color: "rgba(255,255,255,0.4)", marginTop: 8 }}>
-            Hinnoittele ikkunat kartalla
-            <button onClick={() => onGoToFloor(project.building.floors[0] || "K")} style={{ background: "transparent", border: "none", color: "#9ff0bd", cursor: "pointer", fontSize: "10.5px", fontWeight: 600, padding: "0 2px", fontFamily: "inherit" }}>€ Hinnoittele -tilassa →</button>
-            (pikahinnat {P2_PRICE_PRESETS_CENTS.map((c) => p2eur(c)).join(" / ")}).
-          </div>
+          <button style={btn} onClick={() => onGoToFloor(project.building.floors[0] || "K")}>€ Hinnoittele kartalla</button>
         </div>
 
-        {/* Neuvottelun tila yhtenä rivinä (ei seitsemää erillistä tiiltä) */}
-        <div style={{ fontSize: "12.5px", color: "rgba(255,255,255,0.65)", lineHeight: 1.5 }}>
-          <strong style={{ color: "#fff" }}>{b.yellowTotal}</strong> keltaista
-          {" · "}<strong style={{ color: "#fff" }}>{b.proposedCount}</strong> odottaa asiakasta
-          {b.counteredCount > 0 && <>{" · "}<strong style={{ color: "rgb(255,205,40)" }}>{b.counteredCount}</strong> vastatarjousta</>}
-        </div>
-        {/* Raha — vain olennaiset: sovittu, kertynyt, kate (tekijäkulu katteen alla) */}
+        {/* Luvut: sovittu · pesty · odottaa hyväksyntää · kate. Ei virkkeitä. */}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <div style={tile}><span style={tileLabel}>SOVITTU (LUKITTU)</span><span style={{ ...tileVal, color: "#7CE0A6" }}>{b.lockedCount} kpl · {p2eur(b.lockedSumCents)}</span></div>
-          <div style={tile}><span style={tileLabel}>KERTYNYT (PESTY)</span><span style={tileVal}>{b.lockedWashedCount} kpl · {p2eur(b.earnedCents)}</span></div>
+          <div style={tile}><span style={tileLabel}>SOVITTU</span><span style={{ ...tileVal, color: "#7CE0A6" }}>{b.lockedCount} kpl · {p2eur(b.lockedSumCents)}</span></div>
+          <div style={tile}><span style={tileLabel}>PESTY</span><span style={tileVal}>{b.lockedWashedCount} kpl · {p2eur(b.earnedCents)}</span></div>
+          {b.pendingWashedCount > 0 && (
+            <div style={{ ...tile, borderColor: "rgba(150,175,255,0.35)" }}>
+              <span style={tileLabel}>ODOTTAA HYVÄKSYNTÄÄ</span>
+              <span style={{ ...tileVal, color: "rgb(150,175,255)" }}>{b.pendingWashedCount} kpl · {p2eur(b.pendingEarnedCents)}</span>
+            </div>
+          )}
           <div style={tile}>
-            <span style={tileLabel}>P2-KATE</span>
+            <span style={tileLabel}>KATE</span>
             <span style={{ ...tileVal, color: "#9ff0bd" }}>{p2eur(b.marginCents)}</span>
-            <span style={{ fontSize: "10px", color: "rgba(255,255,255,0.4)", display: "block", marginTop: 2 }}>tekijäkulu {p2eur(b.workerCostCents)}</span>
+            <span style={{ fontSize: "10px", color: "rgba(255,255,255,0.4)", display: "block", marginTop: 2 }}>tekijöille {p2eur(b.workerCostCents)}</span>
           </div>
           {(p2InvoicedCents > 0 || p2Remaining > 0) && (
             <div style={tile}>
-              <span style={tileLabel}>LASKUTUS (P2)</span>
-              <span style={tileVal}>{p2eur(p2InvoicedCents)} laskutettu</span>
+              <span style={tileLabel}>LASKUTETTU</span>
+              <span style={tileVal}>{p2eur(p2InvoicedCents)}</span>
               <span style={{ fontSize: "10px", color: p2Remaining > 0 ? "rgb(255,205,40)" : "rgba(255,255,255,0.4)", display: "block", marginTop: 2 }}>
                 {p2Remaining > 0 ? `laskuttamatta ${p2eur(p2Remaining)}` : "kaikki laskutettu ✓"}
               </span>
@@ -1167,47 +1104,46 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
           )}
         </div>
 
-        {/* Anomalia: pesty ilman lukittua hintaa (legacy tai ohitus) */}
-        {b.washedUnlockedKeys.length > 0 && (
-          <div style={{ padding: "9px 12px", borderRadius: 11, background: "rgba(255,176,72,0.08)", border: "1px solid rgba(255,176,72,0.3)", fontSize: "12px", color: "rgba(255,220,160,0.95)", lineHeight: 1.55 }}>
-            ⚠️ {b.washedUnlockedKeys.length} keltaista ikkunaa on pesty ILMAN lukittua hintaa (palkkio 0 €):
-            {" "}{b.washedUnlockedKeys.slice(0, 8).join(", ")}{b.washedUnlockedKeys.length > 8 ? "…" : ""}.
-            Lukitse niille hinta tai tyhjennä status.
+        {/* Yksi tilarivi: hinnoittelematta / odottaa asiakasta / asiakkaan lisäämät. */}
+        <div style={{ fontSize: "12.5px", color: "rgba(255,255,255,0.6)", display: "flex", gap: 14, flexWrap: "wrap" }}>
+          <span><b style={{ color: "#fff" }}>{b.yellowTotal}</b> keltaista</span>
+          <span><b style={{ color: "rgb(150,175,255)" }}>{b.proposedCount}</b> odottaa asiakasta</span>
+          {b.yellowTotal - b.pricedCount > 0 && <span><b style={{ color: "rgb(255,205,40)" }}>{b.yellowTotal - b.pricedCount}</b> ilman hintaa</span>}
+          {customerAdded > 0 && <span>💡 asiakas ehdotti {customerAdded}</span>}
+        </div>
+
+        {/* Pesty ilman hintaa — perustajan tehtävälista, ei varoitusseinä. */}
+        {b.unpricedWashedCount > 0 && (
+          <div style={{ padding: "10px 13px", borderRadius: 11, background: "rgba(255,176,72,0.08)", border: "1px solid rgba(255,176,72,0.3)", fontSize: "12.5px", color: "rgba(255,220,160,0.95)" }}>
+            {b.unpricedWashedCount} pesty ilman hintaa — hinnoittele ne kartalla.
           </div>
         )}
 
-        {/* Asiakkaan lisäämät pisteet */}
-        {customerAdded > 0 && (
-          <div style={{ fontSize: "12px", color: "rgba(255,255,255,0.6)" }}>
-            💡 Asiakas on ehdottanut {customerAdded} uutta ikkunaa karttaan — ne näkyvät hinnoittelemattomina keltaisina pisteinä.
-          </div>
-        )}
-
-        {/* Neuvottelu-inbox: asiakkaan vastatarjoukset */}
+        {/* Vastatarjoukset — tässä on ainoa varsinainen toiminto. */}
         {countered.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.12em", color: "rgba(255,205,40,0.8)" }}>VASTATARJOUKSET — VASTAA ASIAKKAALLE</span>
+            <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.12em", color: "rgba(255,205,40,0.8)" }}>VASTATARJOUKSET</span>
             {countered.map(([key, offer]) => {
               const floor = key.split("#")[0];
               const draft = counterInputs[key] ?? "";
               const draftCents = (() => { const v = Number(draft.replace(",", ".")); return Number.isFinite(v) && v > 0 ? Math.round(v * 100) : null; })();
               return (
-                <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "9px 12px", borderRadius: 11, background: "rgba(255,205,40,0.05)", border: "1px solid rgba(255,205,40,0.2)" }}>
-                  <button onClick={() => onGoToFloor(floor)} style={{ background: "transparent", border: "none", color: "#fff", fontWeight: 700, fontSize: "12.5px", cursor: "pointer", fontFamily: "inherit", padding: 0 }} title="Näytä kartalla">
+                <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "10px 12px", borderRadius: 11, background: "rgba(255,205,40,0.05)", border: "1px solid rgba(255,205,40,0.2)" }}>
+                  <button onClick={() => onGoToFloor(floor)} style={{ minHeight: 38, background: "transparent", border: "none", color: "#fff", fontWeight: 700, fontSize: "13px", cursor: "pointer", fontFamily: "inherit", padding: "0 4px" }} title="Näytä kartalla">
                     krs {floor} · {key.split("#")[1]}
                   </button>
-                  <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.6)", fontVariantNumeric: "tabular-nums" }}>
-                    oma {p2eur(offer.priceCents)} → asiakas <strong style={{ color: "rgb(255,205,40)" }}>{p2eur(offer.counterCents ?? 0)}</strong>
+                  <span style={{ fontSize: "12.5px", color: "rgba(255,255,255,0.6)", fontVariantNumeric: "tabular-nums" }}>
+                    {p2eur(offer.priceCents)} → <strong style={{ color: "rgb(255,205,40)" }}>{p2eur(offer.counterCents ?? 0)}</strong>
                   </span>
                   <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                    <button disabled={busy} onClick={() => void respond(key, "accept_counter", offer.counterCents, offer.version)} style={{ ...btn, border: "none", background: "rgba(95,224,138,0.85)", color: "#0a0a0c", fontWeight: 700 }}>
-                      Hyväksy {p2eur(offer.counterCents ?? 0)}
+                    <button disabled={busy} onClick={() => void respond(key, "accept_counter", offer.counterCents, offer.version)} style={{ ...btn, border: "none", background: "rgba(95,224,138,0.9)", color: "#0a0a0c", fontWeight: 700 }}>
+                      Hyväksy
                     </button>
                     <input
                       type="number" inputMode="decimal" min={1} step="0.5" placeholder="uusi €"
                       value={draft}
                       onChange={(e) => setCounterInputs((m) => ({ ...m, [key]: e.target.value }))}
-                      style={{ width: 70, padding: "6px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.16)", background: "rgba(0,0,0,0.4)", color: "#fff", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "12px", outline: "none" }}
+                      style={{ width: 78, minHeight: 44, padding: "8px 10px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.16)", background: "rgba(0,0,0,0.4)", color: "#fff", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "13px", outline: "none" }}
                     />
                     <button disabled={busy || !draftCents} onClick={() => draftCents && void respond(key, "propose", draftCents)} style={btn}>Ehdota</button>
                     <button disabled={busy} onClick={() => void respond(key, "cancel", undefined, offer.version)} style={{ ...btn, color: "rgba(255,155,155,0.9)" }}>Peru</button>
@@ -1218,59 +1154,50 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
           </div>
         )}
 
-        {/* Sopimusteksti + tapahtumaloki. HUOM: keltaisten laskun LÄHETYS ei ole
-            täällä. Asiakaslaskutus (punaiset erät + keltaiset) tapahtuu yhdessä
-            paikassa — keikkanäkymän Laskutus-kortissa — ettei sama toiminto ole
-            kahdessa näkymässä eri painikkeilla. Tämä paneeli on hinnoittelun ja
-            neuvottelun ohjaamo; rahan tilannekuva on dashin LASKUTUS & MAKSUT
-            -statseissa ja Maksut-välilehdellä. */}
+        {/* Palkkiotaulukko + loki — kaksi nappia, sisällöt piilossa kunnes tarvitaan.
+            Sopimusteksti EI ole täällä: se kuuluu keikkanäkymän sopimusosioon. */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          {canSend && p2Remaining > 0 && (
-            <span style={{ fontSize: "11.5px", color: "rgb(255,205,40)", lineHeight: 1.5 }}>
-              Laskuttamatta {p2eur(p2Remaining)} — lähetä keikkanäkymän Laskutus-kortista.
-            </span>
-          )}
-          <button onClick={() => { setShowTerms((v) => !v); setTermsDraft(p2?.termsText ?? ""); }} style={btn}>
-            📄 Sopimusteksti{p2?.termsText?.trim() ? " ✓" : ""}
+          <button onClick={() => { setShowPayout((v) => !v); setPayoutRows(activeSchedule.map((r) => ({ price: String(r.priceCents / 100), pay: String(r.payoutCents / 100) }))); }} style={btn}>
+            Palkkiot {activeSchedule.map((r) => `${Math.round(r.payoutCents / 100)}`).join("/")} €
           </button>
           {(p2?.events?.length ?? 0) > 0 && (
-            <button onClick={() => setShowLog((v) => !v)} style={{ ...btn, marginLeft: "auto", background: "transparent", color: "rgba(255,255,255,0.5)" }}>
-              {showLog ? "Piilota loki" : `Tapahtumaloki (${p2!.events.length})`}
+            <button onClick={() => setShowLog((v) => !v)} style={{ ...btn, marginLeft: "auto", background: "transparent", color: "rgba(255,255,255,0.55)" }}>
+              {showLog ? "Piilota loki" : `Loki (${p2!.events.length})`}
             </button>
           )}
         </div>
 
-        {/* Sopimusteksti — näkyy asiakkaalle tilausehtojen hyväksynnässä.
-            Tänne liitetään valmis P2-soppari; tyhjänä asiakas näkee lyhyen
-            oletustekstin. */}
-        {showTerms && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <textarea
-              value={termsDraft}
-              onChange={(e) => setTermsDraft(e.target.value)}
-              rows={7}
-              placeholder="Liitä tähän P2-sopimuksen teksti — asiakas näkee sen hyväksyessään tilausehdot seurantalinkissä. Tyhjänä käytetään lyhyttä oletustekstiä."
-              style={{ width: "100%", boxSizing: "border-box", resize: "vertical", padding: "11px 13px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(0,0,0,0.35)", color: "#fff", fontSize: "12.5px", lineHeight: 1.6, outline: "none", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}
-            />
+        {showPayout && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "12px", borderRadius: 12, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
+            {payoutRows.map((row, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input value={row.price} inputMode="decimal" aria-label="Ikkunan hinta" onChange={(e) => setPayoutRows((rs) => rs.map((r, j) => j === i ? { ...r, price: e.target.value } : r))}
+                  style={{ width: 74, minHeight: 44, padding: "8px 10px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.16)", background: "rgba(0,0,0,0.4)", color: "#fff", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "13px", outline: "none" }} />
+                <span style={{ fontSize: "13px", color: "rgba(255,255,255,0.4)" }}>€ →</span>
+                <input value={row.pay} inputMode="decimal" aria-label="Tekijän palkkio" onChange={(e) => setPayoutRows((rs) => rs.map((r, j) => j === i ? { ...r, pay: e.target.value } : r))}
+                  style={{ width: 74, minHeight: 44, padding: "8px 10px", borderRadius: 10, border: "1px solid rgba(124,224,166,0.3)", background: "rgba(0,0,0,0.4)", color: "#7CE0A6", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "13px", outline: "none" }} />
+                <span style={{ fontSize: "13px", color: "rgba(255,255,255,0.4)" }}>€</span>
+                <button onClick={() => setPayoutRows((rs) => rs.filter((_, j) => j !== i))} aria-label="Poista rivi" style={{ ...btn, minWidth: 44, padding: "10px 12px" }}>✕</button>
+              </div>
+            ))}
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <button
-                disabled={busy || termsDraft === (p2?.termsText ?? "")}
-                onClick={() => void run(() => api.p2SetPhase(jobId, { termsText: termsDraft, by }), "Sopimusteksti tallennettu")}
-                style={{ ...btn, border: "none", background: "#fff", color: "#0a0a0c", fontWeight: 700, opacity: termsDraft === (p2?.termsText ?? "") ? 0.5 : 1 }}
-              >
-                Tallenna sopimusteksti
-              </button>
-              {/* Bundlattu valmis P2-sopimus (PDF) — sama tiedosto jonka asiakas
-                  näkee tilausehdoissa. Tästä perustaja voi tarkistaa sen. */}
-              <a href="/fr8/priority2-sopimus-2026.pdf" target="_blank" rel="noopener noreferrer" style={{ ...btn, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}>
-                📄 Avaa liitetty sopimus (PDF)
-              </a>
-              <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)" }}>
-                Asiakas hyväksyy tämän nimellä + aikaleimalla; jokainen hintalukitus kirjautuu lokiin.
-              </span>
+              <button onClick={() => setPayoutRows((rs) => [...rs, { price: "", pay: "" }])} style={btn}>+ Rivi</button>
+              <button onClick={() => setPayoutRows(DEFAULT_P2_PAYOUT_SCHEDULE.map((r) => ({ price: String(r.priceCents / 100), pay: String(r.payoutCents / 100) })))} style={btn}>Oletukset</button>
+              <button disabled={busy} onClick={savePayout} style={{ ...btn, border: "none", background: "#fff", color: "#0a0a0c", fontWeight: 700 }}>Tallenna</button>
+            </div>
+            {/* Fallback-% muille hinnoille — pieni, ei selitystä. */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+              <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.5)" }}>Muut hinnat</span>
+              <input type="number" min={1} max={100} value={shareDraft} onChange={(e) => setShareDraft(e.target.value)}
+                style={{ width: 64, minHeight: 44, padding: "8px 10px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.16)", background: "rgba(0,0,0,0.4)", color: "#fff", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "13px", outline: "none" }} />
+              <span style={{ fontSize: "13px", color: "rgba(255,255,255,0.4)" }}>%</span>
+              {Number(shareDraft) !== sharePct && (
+                <button disabled={busy} onClick={saveShare} style={btn}>Tallenna %</button>
+              )}
             </div>
           </div>
         )}
+
         {showLog && (
           <div style={{ display: "flex", flexDirection: "column", gap: 5, maxHeight: 260, overflowY: "auto" }}>
             {p2!.events.slice(0, 40).map((e, i) => (
@@ -1288,24 +1215,13 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
           </div>
         )}
 
-        {/* Ehdotettujen/lukittujen yleiskuva pienenä listana */}
-        {b.pricedCount > 0 && (() => {
-          const byStatus: Record<string, number> = {};
-          for (const o of Object.values(p2?.offers ?? {})) byStatus[o.status] = (byStatus[o.status] || 0) + 1;
-          return (
-            <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)" }}>
-              Tilat: {Object.entries(byStatus).map(([s, n]) => `${P2_STATUS_LABEL[s] ?? s} ${n}`).join(" · ")}
-            </div>
-          );
-        })()}
-
-        {msg && <div style={{ fontSize: "12px", color: "rgba(255,220,160,0.95)" }}>{msg}</div>}
+        {msg && <div style={{ fontSize: "12.5px", color: "rgba(255,220,160,0.95)" }}>{msg}</div>}
       </div>
     </Section>
   );
 }
 
-// ─── GuidedAdminPanel — ohjattu eteneminen (yks kerros kerrallaa) ─────────────
+// ─── FloorLockPanel — kerrosten lukitus ───────────────────────────────────────
 
 /** Kerroksen selkokielinen nimi ("Kellari" / "3. kerros"). */
 function guidedFloorName(floor: string | null): string {
@@ -1314,150 +1230,79 @@ function guidedFloorName(floor: string | null): string {
 }
 
 /**
- * Perustajan kytkin ohjatulle etenemiselle: yks kerros kerrallaa, muut lukossa.
- * Oletuksena pois. Kun päällä: tekijät voivat merkata vain aktiivisen kerroksen
- * ikkunoita ja dashboard ohjaa heidät seuraavaan yksittäiseen ikkunaan. Ei
- * vaikeustasoja — hinta kertoo vaikeuden. Aktiivinen kerros ja seuraava ikkuna
- * lasketaan suoraan kartasta (computeGuided), joten näkymä on aina ajan tasalla.
+ * KERROSTEN LUKITUS — yksi asia, ei ohjausjärjestelmää.
+ *
+ * Perustaja valitsee mitkä kerrokset ovat AUKI. Tavalliset tekijät näkevät ja
+ * pesevät vain avoimia kerroksia; perustajat pesevät kaikkia. Ei mitään muuta:
+ * ei automaattista etenemistä, ei "seuraava ikkuna" -ohjausta, ei pakotettuja
+ * kerroksia. (Aiempi ohjattu eteneminen teki kaikkea tuota ja oli käytössä
+ * lähinnä tiellä — kun keltaisia on satoja auki, "yks kerros kerrallaa" ei
+ * vastaa todellisuutta.)
+ *
+ * Data on sama kuin ennen (`guided.enabled` + `guided.openFloors`), joten
+ * serverin portti ja testit pysyvät ennallaan: ei valittuja kerroksia =
+ * ei lukkoa (enabled=false), valitut kerrokset = tasan ne auki.
  */
-function GuidedAdminPanel({ project, onGuidedSet, onGoToFloor, canSend }: {
+function FloorLockPanel({ project, onGuidedSet, canSend }: {
   project: ProjectData;
   onGuidedSet: (data: { enabled?: boolean; activeFloorOverride?: string | null; openFloors?: string[] }) => Promise<void>;
-  onGoToFloor: (floor: string) => void;
   canSend: boolean;
 }) {
-  const g = computeGuided(project);
   const enabled = project.guided?.enabled === true;
-  const override = project.guided?.activeFloorOverride ?? "";
-  const openFloors = project.guided?.openFloors ?? [];
-  const manualOpen = openFloors.length > 0;   // founder is driving the open set
+  const openFloors = enabled ? (project.guided?.openFloors ?? []) : [];
   const [busy, setBusy] = useState(false);
+  const floors = project.building.floors;
 
-  const toggle = async () => { setBusy(true); await onGuidedSet({ enabled: !enabled }); setBusy(false); };
-  const setOverride = async (floor: string) => { setBusy(true); await onGuidedSet({ activeFloorOverride: floor || null }); setBusy(false); };
-  // Toggle a floor in/out of the founder-opened set. Opening any floor switches
-  // to manual multi-floor mode; clearing them all returns to automatic mode.
-  const toggleOpenFloor = async (floor: string) => {
-    const next = openFloors.includes(floor) ? openFloors.filter((f) => f !== floor) : [...openFloors, floor];
-    setBusy(true); await onGuidedSet({ openFloors: next }); setBusy(false);
+  /** Napauta kerrosta → auki/lukkoon. Ensimmäinen valinta kytkee lukituksen
+   *  päälle, kaikkien poisto kytkee sen pois (kartta kokonaan auki). */
+  const toggleFloor = async (f: string) => {
+    const next = openFloors.includes(f) ? openFloors.filter((x) => x !== f) : [...openFloors, f];
+    setBusy(true);
+    await onGuidedSet(next.length ? { enabled: true, openFloors: next, activeFloorOverride: null } : { enabled: false, openFloors: [] });
+    setBusy(false);
   };
-  const clearOpen = async () => { setBusy(true); await onGuidedSet({ openFloors: [] }); setBusy(false); };
+  const openAll = async () => { setBusy(true); await onGuidedSet({ enabled: false, openFloors: [] }); setBusy(false); };
 
-  const btn: React.CSSProperties = { padding: "7px 12px", borderRadius: 9, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.85)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px", fontWeight: 600, cursor: "pointer" };
-  const withScope = g.floorProgress.filter((f) => f.inScope > 0);
+  const lockedFloors = enabled ? floors.filter((f) => !openFloors.includes(f)) : [];
 
   return (
     <Section
-      id="guided"
-      label="OHJATTU ETENEMINEN — YKS KERROS KERRALLAA"
-      summary={
-        <span style={{ fontVariantNumeric: "tabular-nums" }}>
-          {!enabled
-            ? "pois päältä"
-            : manualOpen
-              ? `🟢 auki: ${openFloors.map(guidedFloorName).join(", ")}`
-              : `🟢 ${guidedFloorName(g.activeFloor)}${g.lockedFloors.length ? ` · ${g.lockedFloors.length} lukossa` : ""}`}
-        </span>
-      }
-      defaultOpen={false}
+      id="floorlock"
+      label="KERROSTEN LUKITUS"
+      summary={enabled && openFloors.length
+        ? `auki: ${openFloors.join(", ")}`
+        : "kaikki auki"}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <p style={{ margin: 0, fontSize: "12.5px", lineHeight: 1.5, color: "rgba(255,255,255,0.6)" }}>
-          Kun tämä on päällä, tekijät voivat merkata vain <b style={{ color: "#fff" }}>aktiivisen kerroksen</b> ikkunoita — muut kerrokset ovat lukossa, ja aktiivinen kerros etenee automaattisesti kun edellinen valmistuu. Dashboard ohjaa jokaisen <b style={{ color: "#fff" }}>lähimpään</b> pesemättömään ikkunaan (viereiseen, ei kartan toiselle laidalle), joten edetään järjestelmällisesti eikä poimita helppoja sieltä täältä. Punaiset ovat aina työn piirissä; keltainen tulee mukaan vasta kun sen hinta on lukittu. Vaikeustasoja ei ole — hinta kertoo vaikeuden.
-        </p>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <button
-            disabled={busy || !canSend}
-            onClick={() => void toggle()}
-            style={{ ...btn, border: "none", background: enabled ? "rgba(95,224,138,0.9)" : "rgba(255,255,255,0.1)", color: enabled ? "#0a0a0c" : "#fff", fontWeight: 700, opacity: canSend ? 1 : 0.5 }}
-          >
-            {enabled ? "Ohjaus päällä — kytke pois" : "Kytke ohjattu eteneminen päälle"}
-          </button>
-          {!enabled && (
-            <span style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.06em", padding: "4px 9px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.6)" }}>
-              OLETUS: POIS — kartta on täysin auki
-            </span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {floors.map((f) => {
+            const on = !enabled || openFloors.includes(f);
+            return (
+              <button key={f} disabled={busy || !canSend} onClick={() => void toggleFloor(f)}
+                style={{
+                  minWidth: 52, minHeight: 44, padding: "10px 14px", borderRadius: 11,
+                  border: on ? "1px solid rgba(95,224,138,0.55)" : "1px solid rgba(255,255,255,0.14)",
+                  background: on ? "rgba(95,224,138,0.16)" : "rgba(255,255,255,0.04)",
+                  color: on ? "#9ff0bd" : "rgba(255,255,255,0.5)",
+                  fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "14px", fontWeight: 700,
+                  cursor: "pointer", opacity: canSend ? 1 : 0.5,
+                }}>
+                {on ? "" : "🔒 "}{f}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>
+          {lockedFloors.length > 0
+            ? <span>Lukossa tekijöiltä: <b style={{ color: "#fff" }}>{lockedFloors.map(guidedFloorName).join(", ")}</b></span>
+            : <span>Kaikki kerrokset auki.</span>}
+          {enabled && (
+            <button disabled={busy || !canSend} onClick={() => void openAll()}
+              style={{ marginLeft: "auto", minHeight: 38, padding: "8px 13px", borderRadius: 9, border: "1px solid rgba(255,255,255,0.16)", background: "transparent", color: "rgba(255,255,255,0.75)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>
+              Avaa kaikki
+            </button>
           )}
         </div>
-
-        {enabled && (
-          <>
-            {/* Avaa kerroksia (manuaalinen monivalinta). Kun avoinna ≥1 kerros,
-                juuri ne ovat auki ja muut lukossa — ei automaattista etenemistä. */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "12px", borderRadius: 12, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
-              <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.1em", color: "rgba(255,255,255,0.5)" }}>AVAA KERROKSIA (valitse mitkä ovat auki)</span>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {project.building.floors.map((f) => {
-                  const on = openFloors.includes(f);
-                  return (
-                    <button key={f} disabled={busy || !canSend} onClick={() => void toggleOpenFloor(f)}
-                      style={{ minWidth: 40, padding: "8px 12px", borderRadius: 9, border: on ? "1px solid rgba(95,224,138,0.6)" : "1px solid rgba(255,255,255,0.14)", background: on ? "rgba(95,224,138,0.18)" : "rgba(255,255,255,0.04)", color: on ? "#9ff0bd" : "rgba(255,255,255,0.75)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "13px", fontWeight: 700, cursor: "pointer", opacity: canSend ? 1 : 0.5 }}>
-                      {on ? "✓ " : ""}{f}
-                    </button>
-                  );
-                })}
-              </div>
-              <span style={{ fontSize: "11.5px", lineHeight: 1.5, color: "rgba(255,255,255,0.55)" }}>
-                {manualOpen
-                  ? <>Auki: <b style={{ color: "#9ff0bd" }}>{openFloors.map(guidedFloorName).join(", ")}</b>. Tekijät voivat pestä vain näitä kerroksia; muut lukossa. Kunkin tekijän dashboard ohjaa lähimpään ikkunaan avoimella kerroksella.</>
-                  : <>Ei valittuja kerroksia → <b style={{ color: "#fff" }}>automaattinen</b> tila (yks kerros kerrallaa, etenee itsestään). Valitse yllä esim. kerrokset 2 ja 3 avataksesi ne kokonaan.</>}
-              </span>
-              {manualOpen && (
-                <button disabled={busy || !canSend} onClick={() => void clearOpen()}
-                  style={{ alignSelf: "flex-start", padding: "6px 11px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.16)", background: "transparent", color: "rgba(255,255,255,0.7)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>
-                  Tyhjennä → automaattinen tila
-                </button>
-              )}
-            </div>
-
-            {/* Aktiivinen kerros + kerroksen ohitus (automaattitilan hienosäätö) */}
-            {!manualOpen && (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <div style={{ padding: "10px 12px", borderRadius: 12, background: "rgba(95,224,138,0.08)", border: "1px solid rgba(95,224,138,0.28)", minWidth: 150 }}>
-                <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.1em", color: "rgba(159,240,189,0.7)", display: "block", marginBottom: 4 }}>AKTIIVINEN KERROS</span>
-                <span style={{ fontSize: "16px", fontWeight: 800, color: "#9ff0bd" }}>{guidedFloorName(g.activeFloor)}</span>
-                {g.allComplete && <span style={{ marginLeft: 8, fontSize: "12px", color: "#9ff0bd" }}>kaikki valmiit 🎉</span>}
-              </div>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "12px", color: "rgba(255,255,255,0.6)" }}>
-                Pakota kerros
-                <select
-                  value={override}
-                  disabled={busy || !canSend}
-                  onChange={(e) => void setOverride(e.target.value)}
-                  style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.16)", background: "rgba(0,0,0,0.4)", color: "#fff", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px", outline: "none" }}
-                >
-                  <option value="">Automaattinen (suositus)</option>
-                  {project.building.floors.map((f) => (
-                    <option key={f} value={f}>{guidedFloorName(f)}</option>
-                  ))}
-                </select>
-              </label>
-              {g.overrideActive && (
-                <span style={{ fontSize: "11px", color: "rgb(255,220,110)" }}>Kerros pakotettu — automaattinen eteneminen ohitettu</span>
-              )}
-            </div>
-            )}
-
-            {/* Kerrosten edistyminen */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {withScope.map((f) => (
-                <button key={f.floor} onClick={() => onGoToFloor(f.floor)}
-                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 11px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.08)", background: f.active ? "rgba(95,224,138,0.1)" : "rgba(255,255,255,0.03)", cursor: "pointer", textAlign: "left" }}>
-                  <span style={{ width: 20, fontSize: "13px" }}>{f.active ? "▶" : f.complete ? "✓" : f.locked ? "🔒" : ""}</span>
-                  <span style={{ flex: 1, fontSize: "13px", fontWeight: 600, color: f.active ? "#9ff0bd" : "#fff" }}>{guidedFloorName(f.floor)}</span>
-                  <span style={{ fontSize: "12px", fontVariantNumeric: "tabular-nums", color: "rgba(255,255,255,0.55)" }}>{f.washed}/{f.inScope}</span>
-                  <span style={{ width: 64, height: 5, borderRadius: 3, background: "rgba(255,255,255,0.1)", overflow: "hidden" }}>
-                    <span style={{ display: "block", height: "100%", width: `${f.inScope ? Math.round((f.washed / f.inScope) * 100) : 0}%`, background: f.complete ? "#5fe08a" : f.active ? "#9ff0bd" : "rgba(255,255,255,0.4)" }} />
-                  </span>
-                </button>
-              ))}
-              {withScope.length === 0 && (
-                <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.5)" }}>Ei työn piirissä olevia ikkunoita vielä (lukitse keltaisten hintoja tai lisää punaisia).</span>
-              )}
-            </div>
-          </>
-        )}
       </div>
     </Section>
   );

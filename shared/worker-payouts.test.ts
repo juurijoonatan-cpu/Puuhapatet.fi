@@ -11,6 +11,7 @@ import {
   eraInvoiceGrossCents, isEraInvoiceSettled, isEraInvoicePending,
   p2InvoiceState, settleWorker, eraMapsFor,
 } from "./worker-payouts";
+import { computeEraBilling, normalizeEraNumbers, isP2EraSelection, P2_ERA_NUMBERS } from "./era-billing";
 import { emptyProjectData, type ProjectData } from "./project";
 import { DEFAULT_WORKER_PER_WINDOW_CENTS, type CrewMember } from "./crew";
 import type { P2State } from "./p2";
@@ -152,6 +153,39 @@ describe("computeWorkerSettlements — punaiset ja keltaiset erillään", () => 
     expect(row.openP1Windows).toBe(10);
   });
 
+  it("harjoittelija (Milja) EI ole tekijöiden maksulistalla — palkka johtajan kautta", () => {
+    const p = projectWith({
+      workerId: "milja", red: 20, yellow: 0,
+      crew: [member({ id: "milja", name: "Milja Pitkänen" }), member({ id: "jani" })],
+    });
+    expect(computeWorkerSettlements(p).map((r) => r.workerId)).toEqual(["jani"]);
+    // Tarvittaessa mukaan saa erikseen (esim. raportointi).
+    const withT = computeWorkerSettlements(p, { includeTrainees: true });
+    expect(withT.find((r) => r.workerId === "milja")?.trainee).toBe(true);
+  });
+
+  it("deaktivoitu tekijä putoaa maksulistalta (mutta saa palata togglella)", () => {
+    const p = projectWith({
+      workerId: "selma", red: 6, yellow: 0,
+      crew: [member({ id: "selma", active: false }), member({ id: "jani" })],
+    });
+    expect(computeWorkerSettlements(p).map((r) => r.workerId)).toEqual(["jani"]);
+    expect(computeWorkerSettlements(p, { includeInactive: true }).map((r) => r.workerId).sort()).toEqual(["jani", "selma"]);
+  });
+
+  it("hyväksymätön keltainen näkyy odottavana, ei maksettavana", () => {
+    const p = projectWith({ workerId: "jani", red: 0, yellow: 3, lockedCents: 3750 });
+    // Muutetaan lukitut ehdotetuiksi → asiakas ei ole hyväksynyt.
+    for (const k of Object.keys(p.p2!.offers)) {
+      p.p2!.offers[k] = { status: "proposed", priceCents: 3750, version: 1 } as any;
+    }
+    const [row] = computeWorkerSettlements(p);
+    expect(row.p2EarnedCents).toBe(0);        // ei ansaittua
+    expect(row.openP2Cents).toBe(0);          // ei maksettavaa
+    expect(row.p2PendingCents).toBe(60_00);   // 3 × 20 € odottaa hyväksyntää
+    expect(row.p2PendingWashed).toBe(3);
+  });
+
   it("perustajat jätetään tekijöiden maksulistalta pois oletuksena", () => {
     const p = projectWith({
       workerId: "joonatan", red: 10, yellow: 0,
@@ -230,6 +264,62 @@ describe("erälaskujen tila-apurit", () => {
     expect(row.openP1Cents).toBe(200_00);
     expect(row.openP2Cents).toBe(80_00);
     expect(row.openP1Windows).toBe(10);
+  });
+});
+
+describe("keltaisten maksupotti (P2_ERA_NUMBER) pysyy erillään punaisista", () => {
+  const p1Inv = {
+    kind: "tekija", tila: "hyväksytty", senderId: "jani", totalCents: 200_00,
+    eraNumbers: [1, 2, 3], rivit: { input: { pestytIkkunat: 10 }, computed: { ansaittuCents: 200_00 } },
+  };
+  const p2Inv = {
+    kind: "tekija", tila: "hyväksytty", senderId: "jani", totalCents: 80_00,
+    eraNumbers: P2_ERA_NUMBERS, rivit: { input: { pestytIkkunat: 4 }, computed: { ansaittuCents: 80_00 } },
+  };
+
+  it("scope suodattaa oikean rahavirran laskut", () => {
+    const p1 = eraSettlementByWorker([p1Inv, p2Inv], "p1");
+    const p2 = eraSettlementByWorker([p1Inv, p2Inv], "p2");
+    expect(p1.centsByWorker.jani).toBe(200_00);
+    expect(p2.centsByWorker.jani).toBe(80_00);
+  });
+
+  it("keltaisten maksu kuittaa VAIN keltaisen velan", () => {
+    const p = projectWith({ workerId: "jani", red: 10, yellow: 4, lockedCents: 3750 });
+    const [row] = computeWorkerSettlements(p, {
+      era: eraSettlementByWorker([p2Inv], "p1"),
+      p2Era: eraSettlementByWorker([p2Inv], "p2"),
+    });
+    expect(row.openP2Cents).toBe(0);        // keltainen kuitattu
+    expect(row.openP1Cents).toBe(200_00);   // punainen EI kuitattu
+    expect(row.p2SettledCents).toBe(80_00);
+  });
+
+  it("punaisten erämaksu ei kuittaa keltaista velkaa", () => {
+    const p = projectWith({ workerId: "jani", red: 10, yellow: 4, lockedCents: 3750 });
+    const [row] = computeWorkerSettlements(p, {
+      era: eraSettlementByWorker([p1Inv], "p1"),
+      p2Era: eraSettlementByWorker([p1Inv], "p2"),
+    });
+    expect(row.openP1Cents).toBe(0);
+    expect(row.openP2Cents).toBe(80_00);
+  });
+
+  it("normalizeEraNumbers hyväksyy [0] keltaisten potiksi, ei mielivaltaisia", () => {
+    expect(normalizeEraNumbers([0])).toEqual([0]);
+    expect(isP2EraSelection([0])).toBe(true);
+    expect(isP2EraSelection([4])).toBe(false);
+    expect(isP2EraSelection([1, 2, 3])).toBe(false);
+    expect(normalizeEraNumbers([0, 4])).toBe(null);
+    expect(normalizeEraNumbers([2])).toBe(null);
+  });
+
+  it("ansaittuOverrideCents ohittaa ikkunamäärä × 20 € (keltaisten palkkiotaulukko)", () => {
+    const r = computeEraBilling(0, [
+      { workerId: "jani", name: "Jani", pestytIkkunat: 4, sovittuMuutosCents: 0, ennakkoCents: 0, ansaittuOverrideCents: 72_00 },
+    ], []);
+    expect(r.workers[0].ansaittuCents).toBe(72_00);   // EI 4 × 20 € = 80 €
+    expect(r.workers[0].maksettavaCents).toBe(72_00);
   });
 });
 

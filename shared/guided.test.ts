@@ -15,8 +15,9 @@ import {
  *   K: K#0 red (y10), K#1 red (y5), K#2 yellow (y20)
  *   1: 1#0 red,      1#1 yellow
  *   2: 2#0 red
- * A yellow is in scope ONLY when its price is locked (p2 enabled). By default no
- * offers exist, so the yellows are out of scope until a test locks them.
+ * KAIKKI kartan ikkunat ovat työn piirissä — myös keltaiset joiden hintaa asiakas
+ * ei ole hyväksynyt. Hinnan hyväksyntä on rahakysymys (shared/p2.ts isP2Priced),
+ * ei työkysymys: tekijät pesevät kaikki keltaiset. Piiri = kartta.
  */
 function fixture(): ProjectData {
   const data = emptyProjectData();
@@ -108,30 +109,37 @@ describe("computeGuided — aktiivinen kerros", () => {
 
   it("aktiivinen kerros etenee kun kerros valmistuu", () => {
     const data = enable(fixture());
-    // Wash the whole of K's in-scope set (2 reds; the yellow is out of scope).
+    // K:n koko piiri = 2 punaista + 1 keltainen (keltainen on piirissä myös
+    // hinnoittelemattomana — tekijä pesee sen).
     wash(data, "K#0");
     wash(data, "K#1");
+    expect(computeGuided(data).activeFloor).toBe("K"); // keltainen vielä pesemättä
+    wash(data, "K#2");
     const g = computeGuided(data);
     expect(g.activeFloor).toBe("1");
     expect(g.lockedFloors).toEqual(["2"]);
   });
 
-  it("lukittu keltainen tulee mukaan työn piiriin ja voi pitää kerroksen auki", () => {
+  it("keltainen pitää kerroksen auki myös ilman lukittua hintaa", () => {
     const data = enable(fixture());
     wash(data, "K#0");
     wash(data, "K#1");
-    // K#2 yellow now locked → K regains in-scope work → K is active again.
-    lockYellow(data, "K#2");
+    // K#2 on keltainen ilman hintaa — silti piirissä, joten K pysyy auki.
     const g = computeGuided(data);
     expect(g.activeFloor).toBe("K");
     expect(g.floorProgress.find((f) => f.floor === "K")!.remaining).toBe(1);
+    // Hinnan lukitus ei muuta piiriä (se vaikuttaa vain rahaan).
+    lockYellow(data, "K#2");
+    expect(computeGuided(data).floorProgress.find((f) => f.floor === "K")!.remaining).toBe(1);
   });
 
   it("kaikki pesty → allComplete, ei aktiivista kerrosta", () => {
     const data = enable(fixture());
     wash(data, "K#0");
     wash(data, "K#1");
+    wash(data, "K#2");
     wash(data, "1#0");
+    wash(data, "1#1");
     wash(data, "2#0");
     const g = computeGuided(data);
     expect(g.allComplete).toBe(true);
@@ -144,23 +152,21 @@ describe("computeGuided — aktiivinen kerros", () => {
 // ─── In-scope: red always, yellow only when locked ────────────────────────────
 
 describe("computeGuided — työn piiri", () => {
-  it("punaiset aina piirissä, keltaiset vain lukittuna", () => {
+  it("kaikki ikkunat piirissä — myös hinnoittelematon keltainen", () => {
     const data = enable(fixture());
-    const g = computeGuided(data);
-    // K in scope = 2 reds only (yellow K#2 not locked).
-    const k = g.floorProgress.find((f) => f.floor === "K")!;
-    expect(k.inScope).toBe(2);
+    const k = computeGuided(data).floorProgress.find((f) => f.floor === "K")!;
+    expect(k.inScope).toBe(3); // 2 punaista + 1 keltainen (ei hintaa)
+    // Hinnan lukitus ei kasvata piiriä — keltainen oli jo mukana.
     lockYellow(data, "K#2");
-    const g2 = computeGuided(data);
-    expect(g2.floorProgress.find((f) => f.floor === "K")!.inScope).toBe(3);
+    expect(computeGuided(data).floorProgress.find((f) => f.floor === "K")!.inScope).toBe(3);
   });
 
-  it("totalInScope laskee vain punaiset + lukitut keltaiset", () => {
+  it("totalInScope laskee kaikki kartan ikkunat", () => {
     const data = enable(fixture());
-    // 4 reds total (K#0,K#1,1#0,2#0); yellows out of scope.
-    expect(computeGuided(data).totalInScope).toBe(4);
+    // 4 punaista + 2 keltaista = 6, riippumatta hinnoista.
+    expect(computeGuided(data).totalInScope).toBe(6);
     lockYellow(data, "1#1");
-    expect(computeGuided(data).totalInScope).toBe(5);
+    expect(computeGuided(data).totalInScope).toBe(6);
   });
 });
 
@@ -184,7 +190,8 @@ describe("computeGuided — seuraava ikkuna", () => {
 
   it("openKeys sisältää vain aktiivisen kerroksen pesemättömät piirissä olevat", () => {
     const g = computeGuided(enable(fixture()));
-    expect(g.openKeys.sort()).toEqual(["K#0", "K#1"]);
+    // K:n kaikki kolme (keltainen mukaan lukien) ovat auki.
+    expect(g.openKeys.sort()).toEqual(["K#0", "K#1", "K#2"]);
   });
 
   it("nextKey siirtyy seuraavaan kun edellinen pestään", () => {
@@ -307,10 +314,7 @@ describe("isGuidedBlocked — pesuportti", () => {
 
   it("ei estä mitään kun ei aktiivista kerrosta (kaikki valmis)", () => {
     const data = enable(fixture());
-    wash(data, "K#0");
-    wash(data, "K#1");
-    wash(data, "1#0");
-    wash(data, "2#0");
+    for (const k of ["K#0", "K#1", "K#2", "1#0", "1#1", "2#0"]) wash(data, k);
     expect(isGuidedBlocked(data, "2#0")).toBe(false);
   });
 

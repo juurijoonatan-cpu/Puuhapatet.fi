@@ -508,9 +508,10 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
             })}
 
             {/* Observation badges — tappable marker on windows the crew noted.
-                Hidden during Priority 2 planning: these are washing notes, not
-                relevant while the customer is planning/pricing the extra windows. */}
-            {!p2On && points.map((pt) => observations[pt.key] ? (
+                Näkyvät MYÖS 2. vaiheen aikana: jos ikkunasta on huomautettavaa
+                (esim. vaikea pääsy, rikkinäinen tiiviste), asiakkaan pitää nähdä
+                se juuri kun hän päättää hinnasta. Teksti näkyy myös hintakuplassa. */}
+            {points.map((pt) => observations[pt.key] ? (
               <button
                 key={`obs-${pt.key}`}
                 onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setOpenObs({ key: pt.key, rect: r }); }}
@@ -788,6 +789,27 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
                 </button>
               </>
             )}
+
+            {/* Tekijän huomio tästä ikkunasta — samassa kuplassa kuin hinta, jotta
+                asiakas näkee sen päättäessään. Näkyy vain jos joku on kirjoittanut. */}
+            {(() => {
+              const obs = observations[openOffer.key];
+              if (!obs || (!obs.text?.trim() && !obs.imageDataUrl)) return null;
+              return (
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.hair}` }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                    <span style={{ fontSize: 12 }}>💬</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: T.muted }}>Huomio ikkunasta</span>
+                  </div>
+                  {obs.text?.trim() && (
+                    <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: T.navy, whiteSpace: "pre-wrap" }}>{obs.text.trim()}</p>
+                  )}
+                  {obs.imageDataUrl && (
+                    <img src={obs.imageDataUrl} alt="Huomion kuva" style={{ display: "block", width: "100%", maxHeight: 150, objectFit: "cover", borderRadius: 10, marginTop: obs.text?.trim() ? 8 : 0, border: `1px solid ${T.hair}` }} />
+                  )}
+                </div>
+              );
+            })()}
 
             {p2Error && (
               <p style={{ margin: "10px 0 0", fontSize: 12.5, color: "#B4231F", lineHeight: 1.5 }}>{p2Error}</p>

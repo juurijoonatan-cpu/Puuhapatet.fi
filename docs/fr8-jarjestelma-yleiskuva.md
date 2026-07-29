@@ -36,11 +36,11 @@ Osapuolet ja pääsy:
 | Moduuli | Vastuu |
 |---|---|
 | `project.ts` | `ProjectData`, kartta/pisteet (`allPoints`), kiinteä diili (`fixedDealFor`, `computeDealBilling`, `dealBillableScope`, `dealAgreedTotalCents`), erä-attribuutio, sanitointi. |
-| `p2.ts` | Priority 2 -moottori: tilakone (`p2Transition`), raha (`computeP2Billing`, `p2WorkerPayoutCents` + palkkiotaulukko), `pointPriority`, `isP2Washable`, sanitointi. |
-| `guided.ts` | Ohjattu eteneminen: `computeGuided` (mm. `activeFloors`, per-tekijä lähin ikkuna), `isGuidedBlocked`, `openFloors`-monivalinta, sanitointi. |
+| `p2.ts` | Priority 2 -moottori: tilakone (`p2Transition`), raha (`computeP2Billing` — myös `pending*` = pesty mutta hyväksymätön), `p2WorkerPayoutCents` + palkkiotaulukko, `pointPriority`, `isP2Priced`, sanitointi. |
+| `guided.ts` | Kerrosten lukitus: `computeGuided` (`activeFloors`), `isGuidedBlocked`, `openFloors`-valinta, sanitointi. Piiri = KAIKKI kartan ikkunat. |
 | `crew.ts` | `CrewMember`, `crewMemberStats` (p2-tietoinen), sessiot, sanitointi. |
 | `gig.ts` | `GigData`/`GigSector`/`GigPayment` (`scope?: "p1"|"p2"`), julkisen näkymän totalsit. |
-| `era-billing.ts` | Erälaskutuksen (arvomääräiset maksuerät) laskentamoottori. |
+| `era-billing.ts` | Erälaskutuksen (arvomääräiset maksuerät) laskentamoottori + keltaisten maksupotti (`P2_ERA_NUMBER`, `ansaittuOverrideCents`). |
 | `worker-payouts.ts` | **Tekijöiden maksettava — yksi totuuden lähde.** `computeWorkerSettlements`/`settleWorker` (punaiset vs. keltaiset erikseen), `eraSettlementByWorker`, `p2InvoiceState`. Ks. "Rahan kaksi virtaa" alla. |
 | `payprogress.ts`, `tax.ts`, `team.ts`, `trainees.ts`, `billers.ts` | Paydate/verot/tiimi/harjoittelijat/laskuttajat. |
 
@@ -77,15 +77,33 @@ palkkio = **palkkiotaulukko** (34 €→18, 37,50 €→20, 50 €→27), %-osuu
 Laskutus erikseen `scope:"p2"`; dashboard näyttää sovittu/kertynyt/laskutettu/
 laskuttamatta. **Täysi speksi: `docs/fr8-p2-hinnoittelu.md`.**
 
-### 3. Ohjattu eteneminen (guided) — työjärjestys, ei raha
+**EI PESUPORTTIA.** Tekijät pesevät kaikki keltaiset riippumatta siitä onko
+asiakas hyväksynyt hinnan — hyväksyntä on rahakysymys, ei työkysymys. Hinnan tila
+näkyy vain perustajalle (kartalla keltainen = sovittu, **sininen** = odottaa
+hyväksyntää) ja rahassa:
 
-Opt-in per keikka (oletus pois): kerros(kset) auki, muut lukossa, dashboard ohjaa
-lähimpään ikkunaan. **Kaksi tilaa:** automaattinen (yks kerros kerrallaa, etenee
-itse) tai manuaalinen **`openFloors`-monivalinta** (founder avaa esim. 2 & 3). Ei
-rahaa — pelkkä reiluuttava työjärjestys. **Tavalliset tekijät näkevät kartalla vain
-avoimet kerrokset** (`restrictFloors`), muut piilossa; **perustajat (role `host` /
-`FOUNDER_IDS`) ohittavat lukon** ja pesevät minkä tahansa kerroksen (kirjautuu
-normaalisti). **Täysi speksi: `docs/fr8-ohjattu-eteneminen.md`.**
+| Tila | Asiakkaalta | Tekijälle |
+|---|---|---|
+| locked | laskutetaan (`earnedCents`) | maksetaan (`p2EarnedCents` → `openP2Cents`) |
+| proposed / countered | ei laskuteta (`pendingEarnedCents` = arvio) | ei maksuun (`p2PendingCents` = arvio) |
+| ei hintaa | — | — (`unpricedWashedCount`: hinnoittele) |
+
+Tekijän näkymässä kaikki keltaiset ovat keltaisia; hyväksymättömän ikkunan oma
+palkkio näkyy merkinnällä "(arvio)".
+
+### 3. Kerrosten lukitus — työjärjestys, ei raha
+
+Perustaja valitsee mitkä kerrokset ovat AUKI (`FloorLockPanel`, dashin alalaita).
+**Tavalliset tekijät näkevät kartalla vain avoimet kerrokset** (`restrictFloors`),
+muut piilossa; **perustajat ohittavat lukon** ja pesevät minkä tahansa kerroksen.
+Ei mitään muuta: ei automaattista etenemistä, ei "seuraava ikkuna" -ohjausta, ei
+pakotettuja kerroksia, ei ohjauskorttia tekijän kartalla.
+
+Data on entinen `guided`-kenttä: `enabled` + `openFloors`. UI asettaa aina
+`openFloors` eksplisiittisesti, ja kaikkien kerrosten poisto kytkee `enabled:
+false` (kartta kokonaan auki) — automaattitilaan ei siis päädytä käyttöliittymästä.
+`inScopePoints` sisältää nyt KAIKKI ikkunat (myös hinnoittelemattomat keltaiset).
+Vanha speksi: `docs/fr8-ohjattu-eteneminen.md` (historiallinen).
 
 Erälaskutus (varsinainen lähetettävä laskutus) on neljäs, erillinen järjestelmä:
 `docs/fr8-era-laskutus-plan.md`. Ansio-/työaikamalli (dashboard-arviot):
@@ -111,6 +129,9 @@ liikkuvat eri aikaan, ja kaikki laskenta erottelee ne. Yksi totuuden lähde:
 | `settleWorker({stats, payouts, era, p2Enabled})` | sama yhdelle tekijälle, kun kutsujalla on valmiit `crewMemberStats` (Tiimi-sivu) |
 | `eraSettlementByWorker` / `eraMapsFor` | mitä erälaskuilla on jo hoidettu (lähetetty/hyväksytty) ja mikä odottaa kuittausta (luonnos) |
 | `p2InvoiceState(earnedCents, payments)` | keltaisten laskutettu / laskuttamatta + P1-maksujen määrä samasta suodatuksesta |
+| `eraSettlementByWorker(inv, "p1"\|"p2")` | kumman rahavirran maksut luetaan — keltaisen maksu ei kuittaa punaista velkaa |
+| `isP2EraSelection(eraNumbers)` | onko tämä maksu keltaisten potti (sentinel-erä `P2_ERA_NUMBER = 0`) |
+| `isTraineeMember(member)` | harjoittelija → EI tekijöiden maksulistalla (palkka johtajan kautta) |
 | `dealInternalRateCents(data, deal)` | perustajan sisäinen kate €/ikkuna (EFEKTIIVINEN sopimussumma ÷ punaiset) |
 
 ### Säännöt
@@ -128,6 +149,14 @@ liikkuvat eri aikaan, ja kaikki laskenta erottelee ne. Yksi totuuden lähde:
 5. **Tuntemattoman pesijän fallback on `DEFAULT_WORKER_PER_WINDOW_CENTS`** (20 €)
    kaikkialla. Aiemmin sama tapaus maksoi 37,50 € dashissa, 20 € tuottopotissa ja
    0 € erälaskennassa.
+6. **Keltaisten maksu on oma potti** (`P2_ERA_NUMBER = 0` sentinel-eränä
+   `eraNumbers`-listassa, ei DB-migraatiota). Sen summa tulee palkkiotaulukosta,
+   joten `TekijaPesu.ansaittuOverrideCents` ohittaa `ikkunat × 20 €` -laskennan.
+   Punaisten ja keltaisten maksut eivät koskaan kuittaa toisiaan.
+7. **Harjoittelija ja deaktivoitu tekijä eivät ole maksulistalla.** Harjoittelijan
+   (Milja) palkan tilittää vastuujohtaja, ja hänen työnsä lasketaan johtajan omaan
+   työhön kortilla — ei erillistä "sis. Milja" -riviä. Deaktivoitu tekijä katoaa
+   dashista ja maksuista, ja palaa Tiimi-sivun Aktiivinen-kytkimestä.
 
 ### Missä mikä toiminto asuu (ei duplikaatteja)
 
@@ -139,6 +168,8 @@ liikkuvat eri aikaan, ja kaikki laskenta erottelee ne. Yksi totuuden lähde:
 | Tekijöiden maksu (erämaksun luonti) | projektinäkymän **Maksut**-välilehti (`MaksutView`) |
 | Johtaja-välinen ristiinlasku | mustan dashin PERUSTAJIEN ANSIOT → toisen johtajan kortti |
 | Rahan tilannekuva | mustan dashin **LASKUTUS & MAKSUT** -statsit + Maksut-välilehti |
+| Keltaisten sopimusteksti | keikkanäkymän **Sopimus & asiakasnäkymä** (ei P2-paneelissa) |
+| Kerrosten lukitus | mustan dashin **KERROSTEN LUKITUS** (alalaita) |
 
 ### Edistymisprosentti
 
@@ -214,6 +245,22 @@ kun asiakas on hyväksynyt kaikki keltaiset.
 7. **Taaksepäin-yhteensopivuus**: `p2`, `guided`, `eraWindows` ovat valinnaisia
    kenttiä. Ilman niitä vanhat keikat round-trippaavat identtisesti. Ei
    DB-migraatioita näihin.
+
+## Kartta ja napit
+
+- **Kartalla ei näytetä hintoja.** Sadan pisteen hintakuplat tekivät kartasta
+  lukukelvottoman; hinta ja neuvottelutila näkyvät kun pistettä napauttaa.
+  Väri kertoo tilan: keltainen = sovittu, sininen = odottaa hyväksyntää.
+- **Huomiot (`observations`) näkyvät asiakkaalle myös 2. vaiheen aikana** — sekä
+  💬-merkkinä kartalla että hintakuplan sisällä, jos joku on kirjoittanut jotain.
+- **Osumakoko / napit.** `.fr8-root` on `position: fixed` ja sen korkeus tulee nyt
+  `100dvh`:stä eikä layout-viewportin `inset: 0`:sta — iOS laskee jälkimmäisen
+  selainpalkkien verran liian korkeaksi, jolloin piirretty nappi ja sen osumaruutu
+  erkanivat (~1 cm). Lisäksi: `main` venyy flexillä (ei `calc(100% - 62px)`),
+  `-webkit-overflow-scrolling: touch` poistettu (vanha iOS-hack, tunnettu
+  osumatestin siirtäjä), fr8-napeille `min-height: 40px`, ja `fr8-fadeUp` on
+  suojattu `prefers-reduced-motion`illa (sen `both`-täyttö jätti sisällön
+  `translateY(12px)`:ään jos animaatio ei käynnisty).
 
 ## Verifiointi
 

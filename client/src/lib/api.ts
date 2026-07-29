@@ -112,7 +112,11 @@ export interface WorkerView {
    *  window. Customer prices and the share % are never sent. Null = no P2. */
   p2: {
     enabled: boolean;
+    /** Keltaiset joiden hinnan asiakas on HYVÄKSYNYT. Ei pesuportti — kertoo vain
+     *  mistä palkkio on varma (loput ovat arvioita). */
     lockedKeys: string[];
+    /** Keltaiset joiden hinta odottaa asiakkaan hyväksyntää — palkkio arvio. */
+    pendingKeys?: string[];
     payoutByKey: Record<string, number>;
   } | null;
   /** Ohjattu eteneminen (guided): the open floor + the next window to guide to.
@@ -703,7 +707,7 @@ export const api = {
   // tekijä; jää tilaan "luonnos" kunnes tekijä itse hyväksyy/hylkää (vaihe 3).
   createWorkerEraInvoiceBatch: (jobId: number, data: {
     eraNumbers: number[];
-    workers: { workerId: string; name: string; pestytIkkunat: number; sovittuMuutosCents: number; ennakkoCents: number }[];
+    workers: { workerId: string; name: string; pestytIkkunat: number; sovittuMuutosCents: number; ennakkoCents: number; ansaittuOverrideCents?: number }[];
     /** Eräpäivä, johtajan valitsema ("YYYY-MM-DD"). Puuttuessaan 14 vrk -oletus. */
     dueDate?: string;
     /** Ohita kaksoiskappalesuoja (tarkoituksellinen korjauslasku samasta erästä). */

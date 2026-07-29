@@ -14,7 +14,7 @@ import type { ProjBuilding, FixedDeal, EraDebtBreakdown } from "@shared/project"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Disclosure } from "@/components/ui/disclosure";
 import { PAY_PERIODS, eraWindowCounts, computePayProgress } from "@shared/payprogress";
-import { settleWorker, eraMapsFor, sumWorkerSettlements } from "@shared/worker-payouts";
+import { settleWorker, eraMapsFor, sumWorkerSettlements, isTraineeMember } from "@shared/worker-payouts";
 import { WORKER_AGREEMENTS, PROFILE_QUESTIONS, resolveAgreementSet } from "@shared/worker-agreements";
 import { downloadWorkerContract, openWorkerContractForPrint, downloadSignatureImage } from "@/lib/worker-contract-doc";
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
@@ -292,7 +292,12 @@ export default function AdminCrewPage() {
                   // erälaskuilla jo hoidetut summat → ehdotus oli liian suuri.
                   const settled = settleWorker({
                     id: member.id, name: member.name, active: true, founder: false,
-                    stats, payouts: member.payouts || [], p2Enabled, era: eraMapsFor(eraInvoices),
+                    stats, payouts: member.payouts || [], p2Enabled,
+                    era: eraMapsFor(eraInvoices, "p1"),
+                    p2Settled: {
+                      sentCents: eraMapsFor(eraInvoices, "p2").eraSent[member.id] || 0,
+                      pendingCents: eraMapsFor(eraInvoices, "p2").eraPending[member.id] || 0,
+                    },
                   });
                   const claimedWindows = (member.payouts || []).reduce((s, p) => s + (p.windows || 0), 0);
                   return (
@@ -1041,9 +1046,12 @@ function PayrollSummary({ crew, eraInvoices, p2Enabled }: {
   eraInvoices: EraInvoiceClient[];
   p2Enabled: boolean;
 }) {
-  const eraMaps = eraMapsFor(eraInvoices);
+  const eraMaps = eraMapsFor(eraInvoices, "p1");
+  const p2Maps = eraMapsFor(eraInvoices, "p2");
   const rows = crew
-    .filter((c) => c.member.active)
+    // Harjoittelija (esim. Milja) ei ole maksulistalla: hänen palkkansa tilittää
+    // vastuujohtaja. Deaktivoitu tekijä ei myöskään ole maksettavana.
+    .filter((c) => c.member.active && !isTraineeMember(c.member))
     .map(({ member, stats }) => settleWorker({
       id: member.id,
       name: member.name,
@@ -1053,6 +1061,7 @@ function PayrollSummary({ crew, eraInvoices, p2Enabled }: {
       payouts: member.payouts || [],
       p2Enabled,
       era: eraMaps,
+      p2Settled: { sentCents: p2Maps.eraSent[member.id] || 0, pendingCents: p2Maps.eraPending[member.id] || 0 },
     }))
     .filter((r) => r.earnedCents > 0 || r.washed > 0)
     .sort((a, b) => b.openP1Cents - a.openP1Cents || b.p1EarnedCents - a.p1EarnedCents);
@@ -1238,11 +1247,16 @@ function WorkerCardHeader({
 
       {/* Scoreboard */}
       <div className="grid grid-cols-4 gap-2 mt-3 text-center">
-        <Metric label="Ikkunat" value={String(stats.washed)} />
-        <Metric label="Ansio" value={eur(stats.earnedCents)} />
+        <Metric label="Punaiset" value={fmtWindows(stats.p1Washed)} />
+        <Metric label="Punaisista" value={eur(stats.p1EarnedCents)} />
+        <Metric label="Keltaiset" value={stats.p2Washed > 0 ? `${fmtWindows(stats.p2Washed)} · ${eur(stats.p2EarnedCents)}` : "—"} />
         <Metric label="Tunnit" value={stats.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} />
-        <Metric label="€/h" value={stats.hours > 0 ? eur(Math.round(stats.eurPerHour * 100)) : "—"} />
       </div>
+      {stats.p2PendingCents > 0 && (
+        <p className="mt-1.5 text-[11px] text-blue-600 dark:text-blue-400">
+          {fmtWindows(stats.p2PendingWashed)} keltaista odottaa asiakkaan hyväksyntää ({eur(stats.p2PendingCents)}) — ei vielä maksettavaa.
+        </p>
+      )}
 
       {/* Controls: link · rate · active — one tidy row */}
       <div className="flex items-center gap-2 mt-3 flex-wrap">
@@ -1275,8 +1289,22 @@ function WorkerCardHeader({
             Päätä vuoro
           </button>
         )}
-        <button onClick={() => onUpdate(member.id, { active: !member.active })} className="text-xs underline text-muted-foreground ml-auto">
-          {member.active ? "Poista käytöstä" : "Ota käyttöön"}
+        {/* Aktiivinen-kytkin. Pois käytöstä = tekijä katoaa dashin rankingista JA
+            maksulistalta (hänelle on maksettu / hän ei ole enää keikalla). Palaa
+            heti takaisin kun kytkin laitetaan päälle. */}
+        <button
+          onClick={() => onUpdate(member.id, { active: !member.active })}
+          role="switch"
+          aria-checked={member.active}
+          title={member.active ? "Aktiivinen — napauta poistaaksesi käytöstä" : "Pois käytöstä — napauta aktivoidaksesi"}
+          className={`ml-auto inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold transition-colors ${
+            member.active ? "border-green-600/40 bg-green-500/10 text-green-700 dark:text-green-400" : "border-border bg-muted/40 text-muted-foreground"
+          }`}
+        >
+          <span className={`relative block h-4 w-7 shrink-0 rounded-full transition-colors ${member.active ? "bg-green-600" : "bg-zinc-400"}`}>
+            <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${member.active ? "left-3.5" : "left-0.5"}`} />
+          </span>
+          {member.active ? "Aktiivinen" : "Pois käytöstä"}
         </button>
       </div>
     </div>

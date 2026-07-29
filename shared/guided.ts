@@ -14,7 +14,8 @@
  *   • Rule-based, deterministic guidance (no LLM): the "next window" is simply the
  *     first unwashed in-scope window on the active floor, in a stable sweep order.
  *   • No difficulty tiers. In-scope = every Priority 1 (red) window ALWAYS, plus a
- *     Priority 2 (yellow) window ONLY once its price is locked (isP2Washable).
+ *     window on an open floor — red and yellow alike (hinnan hyväksyntä ei
+ *     rajaa työtä, ks. shared/p2.ts isP2Priced).
  *
  * The active floor is the first floor (in building order) that still has unwashed
  * in-scope windows — so it advances automatically as floors finish, and jumps back
@@ -27,7 +28,6 @@
 
 import type { ProjectData, WindowStatus } from "./project";
 import { DEFAULT_FLOORS } from "./project";
-import { isP2Washable } from "./p2";
 
 // ─── Persisted state ─────────────────────────────────────────────────────────
 
@@ -107,15 +107,18 @@ interface ScopePoint {
 /**
  * Every live IN-SCOPE window with its resolved position. In-scope = Priority 1
  * (red) always, plus Priority 2 (yellow) only when its price is locked and phase 2
- * is live (isP2Washable). Positions honour posOverrides, mirroring the map.
+ * Positions honour posOverrides, mirroring the map.
  */
 function inScopePoints(data: ProjectData): ScopePoint[] {
   const floors = data.building.floors.length ? data.building.floors : DEFAULT_FLOORS;
   const out: ScopePoint[] = [];
   const push = (floor: string, key: string, p: 1 | 2, bx: number, by: number) => {
     if (data.deleted[key]) return;
-    // Red is always in scope; yellow only once its price is locked.
-    if (p === 2 && !isP2Washable(data, key)) return;
+    // KAIKKI kartan ikkunat ovat työn piirissä — myös keltaiset joiden hintaa
+    // asiakas ei ole vielä hyväksynyt. Tekijät pesevät kaikki keltaiset; hinnan
+    // hyväksyntä on rahakysymys (ks. shared/p2.ts isP2Priced), ei työkysymys.
+    // Aiemmin tässä oli `if (p === 2 && !isP2Washable(...)) return;`, mikä piti
+    // hinnoittelemattomat keltaiset kokonaan pois kerrosten edistymisestä.
     const o = data.posOverrides[key];
     out.push({
       key, floor, p,
@@ -348,7 +351,7 @@ export function computeGuided(data: ProjectData, opts?: { anchorWorkerId?: strin
  *
  * Returns false (never blocks) when guided is off, or when there is no active
  * floor (nothing in scope / all done) — so clearing and normal work are unaffected.
- * The caller still applies the independent P2 lock (isP2Washable) for yellows and
+ * The caller applies no P2 price gate any more (yellows are always washable) and
  * always allows clearing a status back to "ei".
  */
 export function isGuidedBlocked(data: ProjectData, key: string): boolean {

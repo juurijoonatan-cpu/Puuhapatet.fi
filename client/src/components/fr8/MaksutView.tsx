@@ -18,7 +18,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type EraInvoiceClient } from "@/lib/api";
-import { summarizeEraInvoices } from "@shared/era-billing";
+import { summarizeEraInvoices, isP2EraSelection } from "@shared/era-billing";
 import {
   computeWorkerSettlements, eraSettlementByWorker, sumWorkerSettlements,
 } from "@shared/worker-payouts";
@@ -44,6 +44,7 @@ function founderName(id: string): string {
 }
 
 function eraLabel(nums: number[]): string {
+  if (isP2EraSelection(nums)) return "Keltaiset";
   if (nums.length === 0) return "Erä —";
   return nums.length === 1 ? `Erä ${nums[0]}` : `Erät ${nums[0]}–${nums[nums.length - 1]}`;
 }
@@ -178,14 +179,17 @@ export default function MaksutView({ jobId, project, billing, onOpenGig }: {
   // Tekijöiden maksettava — yksi jaettu laskenta. Muistetaan invoices/project
   // muuttuessa, koska tämä käy koko karttadatan läpi per tekijä.
   const settlements = useMemo(
-    () => (project ? computeWorkerSettlements(project, { era: eraSettlementByWorker(invoices) }) : []),
+    () => (project ? computeWorkerSettlements(project, {
+      era: eraSettlementByWorker(invoices, "p1"),
+      p2Era: eraSettlementByWorker(invoices, "p2"),
+    }) : []),
     [project, invoices],
   );
   const payable = useMemo(() => settlements.filter((r) => r.active || r.earnedCents > 0), [settlements]);
   const totals = useMemo(() => sumWorkerSettlements(payable), [payable]);
 
   return (
-    <div style={{ height: "100%", overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "20px 16px 40px", maxWidth: 860, margin: "0 auto", width: "100%" }}>
+    <div style={{ height: "100%", overflowY: "auto", padding: "20px 16px 40px", maxWidth: 860, margin: "0 auto", width: "100%" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <div>
           <h1 style={{ margin: 0, fontFamily: FONT, fontSize: 20, fontWeight: 800, color: "#fff" }}>Maksut</h1>
@@ -226,25 +230,39 @@ export default function MaksutView({ jobId, project, billing, onOpenGig }: {
               >
                 Asiakkaalta laskutettu
               </SectionTitle>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-                <StatTile
-                  label="Punaiset (4 erää)"
-                  value={fmtEurCents(billing.p1InvoicedCents)}
-                  sub={`${Math.min(4, billing.p1PayCount)}/4 erää · sopimus ${fmtEurCents(billing.agreedTotalCents)}`}
-                  tone="#5fe08a"
-                />
-                <StatTile
-                  label="Punaisia jäljellä"
-                  value={fmtEurCents(Math.max(0, billing.agreedTotalCents - billing.p1InvoicedCents))}
-                  sub={billing.p1PayCount >= 4 ? "kaikki erät lähetetty ✓" : `seuraava erä ${fmtEurCents(billing.nextInstalmentCents)}`}
-                />
-                <StatTile
-                  label="Keltaiset (2. vaihe)"
-                  value={fmtEurCents(billing.p2InvoicedCents)}
-                  sub={billing.p2RemainingCents > 0 ? `laskuttamatta ${fmtEurCents(billing.p2RemainingCents)}` : "ei laskuttamatonta"}
-                  tone={billing.p2InvoicedCents > 0 ? "#5fe08a" : undefined}
-                />
-              </div>
+              {/* Punaiset romahtavat yhdelle riville kun kaikki 4 erää on lähetetty —
+                  silloin niissä ei ole enää mitään tehtävää. Kesken oleva laskutus
+                  saa oman tiilensä. */}
+              {billing.p1PayCount >= 4 ? (
+                <div style={{ ...card, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{ fontFamily: FONT, fontSize: 13, color: "#5fe08a", fontWeight: 700 }}>✓ Punaiset laskutettu</span>
+                  <span style={{ fontFamily: FONT, fontSize: 12.5, color: "rgba(255,255,255,0.55)" }}>4/4 erää · {fmtEurCents(billing.p1InvoicedCents)}</span>
+                  <span style={{ marginLeft: "auto", fontFamily: FONT, fontSize: 12.5, color: billing.p2RemainingCents > 0 ? "rgb(255,206,40)" : "rgba(255,255,255,0.5)" }}>
+                    Keltaiset: {billing.p2InvoicedCents > 0 ? `laskutettu ${fmtEurCents(billing.p2InvoicedCents)}` : "ei laskutettu"}
+                    {billing.p2RemainingCents > 0 ? ` · laskuttamatta ${fmtEurCents(billing.p2RemainingCents)}` : ""}
+                  </span>
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                  <StatTile
+                    label="Punaiset laskutettu"
+                    value={fmtEurCents(billing.p1InvoicedCents)}
+                    sub={`${Math.min(4, billing.p1PayCount)}/4 erää · sopimus ${fmtEurCents(billing.agreedTotalCents)}`}
+                    tone="#5fe08a"
+                  />
+                  <StatTile
+                    label="Seuraava erä"
+                    value={fmtEurCents(billing.nextInstalmentCents)}
+                    sub={`jäljellä ${fmtEurCents(Math.max(0, billing.agreedTotalCents - billing.p1InvoicedCents))}`}
+                  />
+                  <StatTile
+                    label="Keltaiset"
+                    value={fmtEurCents(billing.p2InvoicedCents)}
+                    sub={billing.p2RemainingCents > 0 ? `laskuttamatta ${fmtEurCents(billing.p2RemainingCents)}` : "ei laskuttamatonta"}
+                    tone={billing.p2InvoicedCents > 0 ? "#5fe08a" : undefined}
+                  />
+                </div>
+              )}
             </>
           )}
 
@@ -264,23 +282,31 @@ export default function MaksutView({ jobId, project, billing, onOpenGig }: {
           ) : (
             <>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
-                <StatTile label="Punaisista ansaittu" value={fmtEurCents(totals.p1EarnedCents)} sub={`${fmtWin(totals.p1Washed)} punaista ikkunaa`} />
-                <StatTile label="Hoidettu" value={fmtEurCents(totals.settledCents)} sub={totals.eraPendingCents > 0 ? `+ ${fmtEurCents(totals.eraPendingCents)} odottaa kuittausta` : "maksut + erälaskut"} tone="#5fe08a" />
                 <StatTile
-                  label="Siirrettävä nyt"
+                  label="Punaisista siirrettävä"
                   value={fmtEurCents(totals.openP1Cents)}
-                  sub={`${fmtWin(totals.openP1Windows)} ikkunaa maksamatta`}
+                  sub={totals.openP1Cents > 0 ? `${fmtWin(totals.openP1Windows)} ikkunaa · ansaittu ${fmtEurCents(totals.p1EarnedCents)}` : "kaikki maksettu ✓"}
                   tone={totals.openP1Cents > 0 ? "#ffce28" : "rgba(255,255,255,0.5)"}
                 />
+                <StatTile
+                  label="Keltaisista siirrettävä"
+                  value={fmtEurCents(totals.openP2Cents)}
+                  sub={totals.openP2Cents > 0 ? `${fmtWin(totals.p2Washed)} ikkunaa · sovitut hinnat` : "ei maksettavaa"}
+                  tone={totals.openP2Cents > 0 ? "#ffce28" : "rgba(255,255,255,0.5)"}
+                />
+                <StatTile
+                  label="Hoidettu"
+                  value={fmtEurCents(totals.settledCents)}
+                  sub={totals.eraPendingCents > 0 ? `+ ${fmtEurCents(totals.eraPendingCents)} odottaa kuittausta` : "maksut + erälaskut"}
+                  tone="#5fe08a"
+                />
               </div>
-              {/* Keltaiset ODOTTAVAT — tarkoituksella oma, korostettu rivi ettei
-                  niitä vahingossa maksettaisi punaisten mukana. */}
-              {totals.openP2Cents > 0 && (
-                <div style={{ ...card, marginBottom: 12, borderColor: "rgba(255,206,40,0.3)", background: "rgba(255,206,40,0.06)" }}>
-                  <p style={{ margin: 0, fontFamily: FONT, fontSize: 12.5, color: "rgba(255,220,140,0.95)", lineHeight: 1.55 }}>
-                    <strong>Keltaisista odottaa {fmtEurCents(totals.openP2Cents)}</strong> ({fmtWin(totals.p2Washed)} ikkunaa).
-                    Näitä ei makseta vielä — ne maksetaan omana eränään sen jälkeen kun asiakas on maksanut keltaisten
-                    laskun. Yllä oleva "Siirrettävä nyt" sisältää vain punaiset.
+              {/* Hyväksymättömät keltaiset: työ tehty, hinta kesken. */}
+              {totals.p2PendingCents > 0 && (
+                <div style={{ ...card, marginBottom: 12, borderColor: "rgba(150,175,255,0.3)", background: "rgba(120,150,255,0.06)" }}>
+                  <p style={{ margin: 0, fontFamily: FONT, fontSize: 12.5, color: "rgba(190,205,255,0.95)", lineHeight: 1.5 }}>
+                    Lisäksi <strong>{fmtEurCents(totals.p2PendingCents)}</strong> keltaisista, joiden hintaa asiakas ei ole vielä
+                    hyväksynyt. Maksukelpoinen heti kun hinta lukitaan.
                   </p>
                 </div>
               )}
@@ -291,24 +317,23 @@ export default function MaksutView({ jobId, project, billing, onOpenGig }: {
                       <div style={{ minWidth: 0 }}>
                         <p style={{ margin: 0, fontFamily: FONT, fontSize: 13.5, fontWeight: 700, color: "#fff" }}>{r.name}</p>
                         <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: 11.5, color: "rgba(255,255,255,0.5)" }}>
-                          punaiset {fmtWin(r.p1Washed)} kpl · ansaittu {fmtEurCents(r.p1EarnedCents)} · hoidettu {fmtEurCents(r.settledCents)}
-                          {r.eraPendingCents > 0 ? ` · odottaa kuittausta ${fmtEurCents(r.eraPendingCents)}` : ""}
+                          punaiset {fmtWin(r.p1Washed)} · hoidettu {fmtEurCents(r.settledCents)}
+                          {r.eraPendingCents > 0 ? ` · kuittaamatta ${fmtEurCents(r.eraPendingCents)}` : ""}
                           {r.settledEras.length > 0 ? ` · erät ${r.settledEras.join(", ")}` : ""}
                         </p>
-                        {r.openP2Cents > 0 && (
-                          <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: 11.5, color: "rgb(255,206,40)" }}>
-                            keltaisista {fmtEurCents(r.openP2Cents)} ({fmtWin(r.p2Washed)} kpl) — odottaa keltaisten laskua
+                        {(r.openP2Cents > 0 || r.p2PendingCents > 0) && (
+                          <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: 11.5, color: r.openP2Cents > 0 ? "rgb(255,206,40)" : "rgb(150,175,255)" }}>
+                            keltaiset {fmtWin(r.p2Washed)}
+                            {r.openP2Cents > 0 ? ` · siirrettävä ${fmtEurCents(r.openP2Cents)}` : ""}
+                            {r.p2PendingCents > 0 ? ` · odottaa hyväksyntää ${fmtEurCents(r.p2PendingCents)}` : ""}
                           </p>
                         )}
                       </div>
                       <div style={{ textAlign: "right", flexShrink: 0 }}>
                         <p style={{ margin: 0, fontFamily: MONO, fontSize: 9.5, letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)" }}>SIIRRETTÄVÄ</p>
-                        <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: 17, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: r.openP1Cents > 0 ? "#ffce28" : "rgba(255,255,255,0.35)" }}>
-                          {fmtEurCents(r.openP1Cents)}
+                        <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: 17, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: (r.openP1Cents + r.openP2Cents) > 0 ? "#ffce28" : "rgba(255,255,255,0.35)" }}>
+                          {fmtEurCents(r.openP1Cents + r.openP2Cents)}
                         </p>
-                        {r.openP1Windows > 0 && (
-                          <p style={{ margin: 0, fontFamily: FONT, fontSize: 11, color: "rgba(255,255,255,0.45)" }}>{fmtWin(r.openP1Windows)} ikkunaa</p>
-                        )}
                       </div>
                     </div>
                   </div>

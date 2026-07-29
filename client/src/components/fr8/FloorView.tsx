@@ -337,16 +337,20 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
 
   // ── P2 (keltaiset ikkunat) helpers ──────────────────────────────────────────
   const p2OfferFor = (key: string): P2Offer | undefined => p2?.offers?.[key];
-  /** Is this yellow window part of the locked P2 work scope? Admin resolves from
-   *  the offers map, the worker from its lockedKeys list. */
-  const p2LockedForWork = (key: string): boolean => {
+  /** Has the customer AGREED this yellow window's price? Admin resolves from the
+   *  offers map, the worker from its lockedKeys list.
+   *
+   *  HUOM: tämä ei estä pesua. Kaikki keltaiset ovat pestävissä — hyväksyntä
+   *  vaikuttaa vain väriin (hyväksytty = keltainen, odottava = sininen) ja rahaan. */
+  const p2Agreed = (key: string): boolean => {
     if (!p2 || !p2.enabled) return false;
     if (p2.offers) return p2.offers[key]?.status === "locked";
     return (p2.lockedKeys || []).includes(key);
   };
-  /** Worker view: yellow windows are gated (not washable) until locked. */
-  const p2WorkerGated = (pt: Point): boolean =>
-    !canEdit && !!p2 && pt.p === 2 && !p2LockedForWork(pt.key);
+  /** Keltainen jota asiakas ei ole vielä hyväksynyt → SININEN. Tekijän näkymässä
+   *  kaikki keltaiset ovat keltaisia (hän pesee ne kaikki eikä näe hintoja). */
+  const p2AwaitingCustomer = (pt: Point): boolean =>
+    canEdit && !!p2?.enabled && pt.p === 2 && !p2Agreed(pt.key);
   const floorYellowUnpriced = points.filter((pt) => pt.p === 2 && !p2OfferFor(pt.key));
   const p2PriceCents = (() => {
     const v = Number(p2Price.replace(",", "."));
@@ -389,7 +393,9 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   }
 
   function orbStyle(pt: Point, status: WindowStatus, isDragging: boolean): React.CSSProperties {
-    const rgb = colorRgb(pt.p, status);
+    // Perustajan kartalla keltainen, jota asiakas ei ole hyväksynyt, on SININEN —
+    // näkee heti mikä on sovittua ja mikä ei. Silti pestävissä normaalisti.
+    const rgb = p2AwaitingCustomer(pt) ? (status === "pesty" ? "120,150,255" : "150,175,255") : colorRgb(pt.p, status);
     const washed = status === "pesty";
     const soft = status === "ei";
     const delMode = editMode && placeMode === "del";
@@ -435,11 +441,6 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
         base.animation = undefined;
         base.zIndex = 12;
       }
-    }
-    // Worker view: an unlocked yellow window is not in the work scope yet.
-    if (p2WorkerGated(pt)) {
-      base.opacity = Math.min(Number(base.opacity ?? 1), 0.35);
-      base.animation = undefined;
     }
     return base;
   }
@@ -872,43 +873,10 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                 );
               })}
 
-              {/* P2 price badges (admin view): the negotiation state of each
-                  yellow window. Worker view shows a lock on gated yellows instead. */}
-              {p2?.offers && !editMode && points.map((pt) => {
-                if (pt.p !== 2) return null;
-                const offer = p2.offers![pt.key];
-                if (!offer || offer.status === "declined") return null;
-                const bg = offer.status === "locked" ? "rgba(95,224,138,0.92)"
-                  : offer.status === "countered" ? "rgba(255,205,40,0.95)"
-                  : "rgba(120,150,255,0.92)";
-                const text = offer.status === "locked"
-                  ? `✓ ${euroUnit((offer.lockedCents ?? offer.priceCents) / 100)}`
-                  : offer.status === "countered"
-                    ? `↩ ${euroUnit((offer.counterCents ?? 0) / 100)}`
-                    : euroUnit(offer.priceCents / 100);
-                return (
-                  <span key={`p2-${pt.key}`} aria-hidden
-                    style={{ position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`, transform: "translate(-50%, 7px)", pointerEvents: "none", padding: "1px 5px", borderRadius: "999px", background: bg, color: "#0a0a0c", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "7.5px", fontWeight: 700, lineHeight: 1.5, whiteSpace: "nowrap", zIndex: 5, boxShadow: "0 1px 4px rgba(0,0,0,0.5)" }}>
-                    {text}
-                  </span>
-                );
-              })}
-
-              {/* Worker view: lock marker on yellow windows not yet in scope. */}
-              {!canEdit && p2 && !editMode && points.map((pt) => p2WorkerGated(pt) ? (
-                <span key={`p2lock-${pt.key}`} aria-hidden
-                  style={{ position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`, transform: "translate(3px, 3px)", pointerEvents: "none", fontSize: "7px", lineHeight: 1, zIndex: 5, opacity: 0.85 }}>
-                  🔒
-                </span>
-              ) : null)}
-
-              {/* Ohjattu eteneminen: sykkivä rengas seuraavan pestävän ikkunan
-                  ympärillä ("mene tähän seuraavaksi"). Vain kun ikkuna on tällä
-                  (aktiivisella) kerroksella. Ei ota napautuksia — dotti hoitaa sen. */}
-              {guided?.enabled && guided.nextKey && !editMode && points.map((pt) => pt.key === guided.nextKey ? (
-                <span key={`guided-${pt.key}`} aria-hidden className="fr8-guided-next"
-                  style={{ position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`, width: "26px", height: "26px", borderRadius: "50%", border: "2px solid #5fe08a", background: "rgba(95,224,138,0.1)", boxShadow: "0 0 10px rgba(95,224,138,0.65)", pointerEvents: "none", zIndex: 4 }} />
-              ) : null)}
+              {/* Kartalla EI näytetä hintoja. Sadan pisteen hintakupla-sumppu teki
+                  kartasta lukukelvottoman — hinta ja neuvottelutila näkyvät kun
+                  pistettä napauttaa (popover alla). Väri kertoo tilan: keltainen =
+                  asiakas hyväksynyt, sininen = odottaa hyväksyntää. */}
 
               {/* Observation badges — a small marker on windows that carry a note */}
               {points.map((pt) => observations?.[pt.key] ? (
@@ -1007,30 +975,28 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
               <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9.5px", color: "rgba(255,255,255,0.4)", marginLeft: "auto" }}>{activePt.p === 2 && p2 ? "PRIORITY 2" : deal && activePt.p === 2 ? "EI SOPIMUKSESSA" : `PRIORITEETTI ${activePt.p}`}</span>
             </div>
 
-            {/* P2 offer state (admin) — where the negotiation stands for this window. */}
+            {/* Keltaisen hinta ja neuvottelutila — VAIN täällä, ei kartalla. Yksi
+                rivi per tila, ei selityksiä. */}
             {canEdit && activePt.p === 2 && p2?.offers && (() => {
               const offer = p2.offers[activeOrb];
               if (!offer) return (
-                <div style={{ padding: "2px 4px 8px", fontSize: "11.5px", color: "rgba(255,220,110,0.9)" }}>
-                  Ei hinnoiteltu — käytä € Hinnoittele -tilaa.
+                <div style={{ padding: "2px 4px 8px", fontSize: "12px", color: "rgba(150,175,255,0.95)" }}>
+                  Ei hintaa — hinnoittele € -tilassa
                 </div>
               );
-              return (
-                <div style={{ padding: "2px 4px 8px", fontSize: "11.5px", color: "rgba(255,255,255,0.75)", lineHeight: 1.5 }}>
-                  {offer.status === "locked" && <>Lukittu hinta <strong style={{ color: "#7CE0A6" }}>{euroUnit((offer.lockedCents ?? offer.priceCents) / 100)}</strong> ✓</>}
-                  {offer.status === "proposed" && <>Ehdotettu <strong>{euroUnit(offer.priceCents / 100)}</strong> — odottaa asiakasta</>}
-                  {offer.status === "countered" && <>Vastatarjous <strong style={{ color: "rgb(255,205,40)" }}>{euroUnit((offer.counterCents ?? 0) / 100)}</strong> (oma ehdotus {euroUnit(offer.priceCents / 100)}) — vastaa projektinäkymän P2-osiossa</>}
-                  {offer.status === "declined" && <>Asiakas hylkäsi / peruttu — voit ehdottaa uutta hintaa</>}
+              const row = (label: string, value: string, color: string) => (
+                <div style={{ display: "flex", alignItems: "baseline", gap: 6, padding: "2px 4px 8px", fontSize: "12px" }}>
+                  <span style={{ color: "rgba(255,255,255,0.5)" }}>{label}</span>
+                  <strong style={{ color, fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "13px" }}>{value}</strong>
                 </div>
               );
+              if (offer.status === "locked") return row("Sovittu", euroUnit((offer.lockedCents ?? offer.priceCents) / 100), "#7CE0A6");
+              if (offer.status === "proposed") return row("Odottaa asiakasta", euroUnit(offer.priceCents / 100), "rgb(150,175,255)");
+              if (offer.status === "countered") return row("Vastatarjous", euroUnit((offer.counterCents ?? 0) / 100), "rgb(255,205,40)");
+              return row("Hylätty", euroUnit(offer.priceCents / 100), "rgba(255,255,255,0.5)");
             })()}
 
-            {/* Worker view: an unlocked yellow window is not washable yet. */}
-            {p2WorkerGated(activePt) ? (
-              <div style={{ padding: "6px 4px 4px", fontSize: "12px", color: "rgba(255,255,255,0.7)", lineHeight: 1.55 }}>
-                🔒 Ei vielä työn piirissä — tämän ikkunan hinta sovitaan ensin asiakkaan kanssa. Saat merkata sen, kun hinta on lukittu.
-              </div>
-            ) : (["ei", "kesken", "pesty"] as WindowStatus[]).map((s) => {
+            {(["ei", "kesken", "pesty"] as WindowStatus[]).map((s) => {
               const cur = statuses[activeOrb] || "ei";
               const isActive = cur === s;
               const rgb = colorRgb(activePt.p, s);
@@ -1057,12 +1023,16 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
               );
             })}
 
-            {/* Worker's own payout for a locked P2 window (their share of ITS
-                agreed price — the customer price itself is never shown). */}
-            {!canEdit && activePt.p === 2 && p2?.payoutByKey?.[activeOrb] != null && p2LockedForWork(activeOrb) && (
+            {/* Tekijän OMA palkkio tästä keltaisesta (ei koskaan asiakashintaa).
+                Näytetään myös kun hinta odottaa asiakkaan hyväksyntää — työ
+                kannattaa tehdä, ja summa merkitään silloin arvioksi. */}
+            {!canEdit && activePt.p === 2 && p2?.payoutByKey?.[activeOrb] != null && (
               <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "6px", padding: "6px 4px 0", borderTop: "1px solid rgba(255,255,255,0.08)", fontSize: "11.5px", color: "rgba(255,255,255,0.7)" }}>
-                <span>Sinulle tästä ikkunasta:</span>
-                <strong style={{ color: "#7CE0A6", fontFamily: "var(--font-jetbrains-mono, monospace)" }}>{euroUnit((p2.payoutByKey[activeOrb]) / 100)}</strong>
+                <span>Sinulle:</span>
+                <strong style={{ color: p2Agreed(activeOrb) ? "#7CE0A6" : "rgb(255,205,40)", fontFamily: "var(--font-jetbrains-mono, monospace)" }}>
+                  {euroUnit((p2.payoutByKey[activeOrb]) / 100)}
+                </strong>
+                {!p2Agreed(activeOrb) && <span style={{ fontSize: "10.5px", color: "rgba(255,205,40,0.8)" }}>(arvio)</span>}
               </div>
             )}
 

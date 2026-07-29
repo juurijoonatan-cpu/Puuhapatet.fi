@@ -33,6 +33,7 @@ import {
   sanitizeGigData, gigStatus, signatureRequired, type GigData, type GigCompany,
 } from "@shared/gig";
 import { computeProjectTotals, fixedDealFor, computeDealBilling, dealAgreedTotalCents, eurFromCents, type ProjectData } from "@shared/project";
+import { computeP2Billing } from "@shared/p2";
 import { downloadGigContract, openGigContractForPrint } from "@/lib/gig-contract-doc";
 
 const PUBLIC_BASE = "https://puuhapatet.fi";
@@ -435,6 +436,12 @@ export default function AdminGigTrackerPage() {
   const fixedInstallmentCents = deal
     ? (isFinalEra ? Math.max(0, agreedTotalCents - p1InvoicedCents) : Math.round(deal.capCents / 4))
     : 0;
+  // P2 (keltaiset) locked sum — grows the contract total on top of the fixed P1.
+  const p2Locked = project ? computeP2Billing(project).lockedSumCents : 0;
+  // The reduced final (4th) erä = effective agreed total − the three fixed 25 %
+  // instalments (e.g. 6150 − 3×1575 = 1425 when red windows were removed).
+  const rawInstalmentCents = deal ? Math.round(deal.capCents / 4) : 0;
+  const finalEraCents = deal ? Math.max(0, agreedTotalCents - rawInstalmentCents * 3) : 0;
   const perQuarter = dealBilling ? dealBilling.billableTotal / 4 : 0;
   // Use p1PayCount (red erät only) — P2 payments must never perturb P1 progression.
   const nextQuarterNeeded = dealBilling ? perQuarter * (p1PayCount + 1) : 0;
@@ -550,16 +557,35 @@ export default function AdminGigTrackerPage() {
               <Disclosure
                 icon={<Receipt className="w-4 h-4 text-muted-foreground" />}
                 title="Sopimushinta"
-                right={<span className="text-sm font-bold text-foreground tabular-nums">{eurFromCents(deal.capCents)}</span>}
+                right={<span className="text-sm font-bold text-foreground tabular-nums">{eurFromCents(agreedTotalCents + p2Locked)}</span>}
               >
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-muted-foreground">Kokonaishinta (kiinteä)</span>
-                    <span className="text-sm font-bold text-foreground tabular-nums">{eurFromCents(deal.capCents)}</span>
+                    <span className="text-xs text-muted-foreground">Punaiset (kiinteä)</span>
+                    <span className="text-sm font-bold text-foreground tabular-nums">{eurFromCents(agreedTotalCents)}</span>
+                  </div>
+                  {agreedTotalCents < deal.capCents && (
+                    <p className="text-[11px] leading-snug text-muted-foreground">
+                      Katto {eurFromCents(deal.capCents)} · pienentynyt, koska punaisia ikkunoita on poistettu (37,50 € / ikkuna).
+                    </p>
+                  )}
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">Maksuerät 1–3</span>
+                    <span className="text-sm font-semibold text-foreground tabular-nums">3 × {eurFromCents(rawInstalmentCents)}</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-muted-foreground">Maksuerä (4 × yhtä suuri)</span>
-                    <span className="text-sm font-semibold text-foreground tabular-nums">{eurFromCents(Math.round(deal.capCents / 4))}</span>
+                    <span className="text-xs text-muted-foreground">Maksuerä 4 (loppuerä)</span>
+                    <span className="text-sm font-semibold text-foreground tabular-nums">{eurFromCents(finalEraCents)}</span>
+                  </div>
+                  {p2Locked > 0 && (
+                    <div className="flex items-center justify-between border-t border-border pt-2.5">
+                      <span className="text-xs text-muted-foreground">Priority 2 (keltaiset, sovitut)</span>
+                      <span className="text-sm font-semibold text-amber-600 dark:text-amber-400 tabular-nums">+ {eurFromCents(p2Locked)}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between border-t border-border pt-2.5">
+                    <span className="text-xs font-semibold text-foreground">Yhteensä</span>
+                    <span className="text-sm font-bold text-foreground tabular-nums">{eurFromCents(agreedTotalCents + p2Locked)}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-muted-foreground">Tila</span>

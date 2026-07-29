@@ -12,6 +12,7 @@ import {
   computeEraBilling, TEKIJA_HINTA_CENTS, eraRecipientFounderId, normalizeEraNumbers,
   eraInvoiceRespondTransition,
   type EraInvoiceKind, type EraInvoiceTila, type EraInvoiceRespondAction,
+  isP2EraSelection,
 } from "@shared/era-billing";
 import { feeRateForWorker, effectiveJobTotal, FOUNDER_IDS, marketerCommissionCents, MARKETER_COMMISSION_RATE } from "@shared/team";
 import { randomUUID, createHmac, timingSafeEqual, scryptSync, randomBytes } from "crypto";
@@ -28,7 +29,7 @@ import {
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
-import { computeP2Billing, customerAddedKeys, emptyP2State, isP2Washable, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, type P2Action, type P2State } from "@shared/p2";
+import { computeP2Billing, customerAddedKeys, emptyP2State, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { p2InvoiceState, computeWorkerSettlements, eraSettlementByWorker, sumWorkerSettlements } from "@shared/worker-payouts";
 import {
@@ -2097,7 +2098,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const pestytIkkunat = Math.max(0, Number(w?.pestytIkkunat) || 0);
         const sovittuMuutosCents = Math.round(Number(w?.sovittuMuutosCents) || 0);
         const ennakkoCents = Math.max(0, Math.round(Number(w?.ennakkoCents) || 0));
-        const result = computeEraBilling(0, [{ workerId, name, pestytIkkunat, sovittuMuutosCents, ennakkoCents }], []);
+        // Keltaisten (2. vaihe) palkkio tulee palkkiotaulukosta per ikkuna, ei
+        // kiinteästä 20 €:sta — client lähettää valmiin ansion, joka ohittaa
+        // ikkunamäärä × vakio -laskennan. Vain P2-potissa hyväksytään.
+        const rawOverride = Number(w?.ansaittuOverrideCents);
+        const ansaittuOverrideCents = isP2EraSelection(eraNumbers) && Number.isFinite(rawOverride) && rawOverride >= 0
+          ? Math.round(rawOverride)
+          : undefined;
+        const result = computeEraBilling(0, [{ workerId, name, pestytIkkunat, sovittuMuutosCents, ennakkoCents, ansaittuOverrideCents }], []);
         const computed = result.workers[0];
         const [row] = await db.insert(eraInvoices).values({
           jobId,
@@ -2105,7 +2113,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           senderId: workerId,       // myyjä = tekijä (alihankkija laskuttaa omalla työllään)
           recipientId,              // ostaja = erän mukaan valittu johtaja
           eraNumbers: JSON.stringify(eraNumbers),
-          rivit: JSON.stringify({ input: { workerId, name, pestytIkkunat, sovittuMuutosCents, ennakkoCents }, computed }),
+          rivit: JSON.stringify({ input: { workerId, name, pestytIkkunat, sovittuMuutosCents, ennakkoCents, ...(ansaittuOverrideCents != null ? { ansaittuOverrideCents } : {}) }, computed }),
           totalCents: computed.maksettavaCents,
           dueDate,
           tila: "luonnos" satisfies EraInvoiceTila,
@@ -5945,20 +5953,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       deleted: project.deleted,
       hours: stats.hours,
       stats,
-      // P2 (keltaiset ikkunat): mitkä keltaiset ovat pestävissä (hinta lukittu)
-      // ja tekijän OMA palkkio per ikkuna. Asiakashintaa tai tekijän
-      // prosenttiosuutta ei lähetetä, joten hintaa ei voi rekonstruoida —
+      // P2 (keltaiset ikkunat): tekijän OMA palkkio per ikkuna. Asiakashintaa tai
+      // tekijän prosenttiosuutta ei lähetetä, joten hintaa ei voi rekonstruoida —
       // sama rahansuojaustaso kuin oma perWindowCents-taksa. Valmisteluvaihe
       // (enabled=false) ei näy tekijälle lainkaan.
-      p2: project.p2?.enabled ? {
-        enabled: project.p2.enabled,
-        lockedKeys: Object.entries(project.p2.offers)
-          .filter(([, o]) => o.status === "locked" && o.lockedCents)
-          .map(([k]) => k),
-        payoutByKey: Object.fromEntries(Object.entries(project.p2.offers)
-          .filter(([, o]) => o.status === "locked" && o.lockedCents)
-          .map(([k, o]) => [k, p2WorkerPayoutCents(o.lockedCents!, project.p2!.workerSharePct, project.p2!.payoutSchedule)])),
-      } : null,
+      //
+      // `lockedKeys` EI ole enää pesuportti (kaikki keltaiset ovat pestävissä) —
+      // se kertoo vain mistä palkkio on varma. `payoutByKey` sisältää myös
+      // odottavat ikkunat, jotta tekijä näkee mitä on tulossa.
+      p2: project.p2?.enabled ? (() => {
+        const sharePct = project.p2.workerSharePct;
+        const schedule = project.p2.payoutSchedule;
+        const lockedKeys: string[] = [];
+        const payoutByKey: Record<string, number> = {};
+        const pendingKeys: string[] = [];
+        for (const [k, o] of Object.entries(project.p2.offers)) {
+          if (o.status === "locked" && o.lockedCents) {
+            lockedKeys.push(k);
+            payoutByKey[k] = p2WorkerPayoutCents(o.lockedCents, sharePct, schedule);
+            continue;
+          }
+          const pending = p2PendingPriceCents(o);
+          if (pending != null) {
+            pendingKeys.push(k);
+            payoutByKey[k] = p2WorkerPayoutCents(pending, sharePct, schedule);
+          }
+        }
+        return { enabled: true, lockedKeys, pendingKeys, payoutByKey };
+      })() : null,
       // Ohjattu eteneminen (guided): kun perustaja on kytkenyt sen päälle, tekijä
       // näkee vain aktiivisen kerroksen auki, muut lukossa, ja "Seuraavaksi"-kortti
       // ohjaa täsmälleen seuraavaan pestävään ikkunaan. Puhtaasti johdettua tilaa
@@ -6106,15 +6128,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const status = req.body?.status === "pesty" || req.body?.status === "kesken" ? req.body.status : "ei";
       if (!key) return res.status(400).json({ error: "key puuttuu" });
 
-      // P2-pesuportti: kun ikkunakohtainen hinnoittelu on PÄÄLLÄ (enabled),
-      // keltaisen ikkunan saa merkata vasta kun sen hinta on lukittu asiakkaan
-      // kanssa. Prioriteetti katsotaan AINA kartasta, ei clientin lähettämästä
-      // p:stä. Statuksen tyhjennys ("ei") sallitaan aina. Valmisteluvaihe
-      // (p2 alustettu mutta ei päällä) EI vaikuta tekijöihin mitenkään.
+      // Prioriteetti luetaan AINA kartasta, ei clientin lähettämästä p:stä
+      // (lokimerkinnän luotettavuus).
       const mapPriority = pointPriority(project, key);
-      if (status !== "ei" && mapPriority === 2 && project.p2?.enabled && !isP2Washable(project, key)) {
-        return res.status(403).json({ error: "Tämä keltainen ikkuna ei ole vielä työn piirissä — hinta sovitaan ensin asiakkaan kanssa." });
-      }
+
+      // EI P2-pesuporttia. Tekijä pesee KAIKKI keltaiset riippumatta siitä onko
+      // asiakas hyväksynyt hinnan — hinnan hyväksyntä on rahakysymys, ei
+      // työkysymys. Hyväksymättömänä pesty keltainen kirjautuu "odottaa
+      // hyväksyntää" -pottiin (shared/p2.ts computeP2Billing.pending*,
+      // crewMemberStats.p2PendingCents) eikä katoa mihinkään. Aiemmin tässä oli
+      // 403-portti, joka pysäytti kentällä olevan työn hinnanneuvottelun ajaksi.
 
       // Ohjattu eteneminen (guided): kun perustaja on kytkenyt sen päälle, ikkunan
       // saa merkata vain AKTIIVISELLA kerroksella — muut kerrokset ovat lukossa,

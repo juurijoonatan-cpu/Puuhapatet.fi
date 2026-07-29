@@ -1007,76 +1007,12 @@ function NavIcon({ name, color }: { name: Tab; color: string }) {
 }
 
 /** Kerroksen selkokielinen nimi ("Kellari" / "3. kerros"). */
-function guidedFloorLabel(floor: string | null): string {
-  if (!floor) return "";
-  return floor === "K" ? "Kellari" : `${floor}. kerros`;
-}
-
 /**
- * "Seuraavaksi" -ohjauskortti (admin assistant tekijälle): näyttää mille
- * kerrokselle edetään, montako ikkunaa siellä on jäljellä, ja ohjaa napilla
- * seuraavaan yksittäiseen ikkunaan. Sääntöpohjainen — ei arvaa mitään, vaan
- * seuraa serverin johtamaa guided-tilaa (yks kerros kerrallaa, muut lukossa).
+ * Tekijän kartalla EI ole ohjauskorttia. Aiempi "Seuraavaksi"-popup peitti kartan
+ * alalaidan, ohjasi yksittäisiin ikkunoihin ja selitti lukittuja kerroksia
+ * pitkästi. Kerroslukko riittää: lukitut kerrokset eivät näy kartalla lainkaan
+ * (restrictFloors), joten tekijä näkee vain sen mitä hän saa pestä.
  */
-function GuidedCard({ guided, guidedNote, onFocusNext }: {
-  guided: GuidedWorkerView; guidedNote: string; onFocusNext: () => void;
-}) {
-  const done = guided.allComplete;
-  // All floors the founder has opened (multi mode), falling back to the single
-  // guide floor. Shown so the worker sees EVERY open floor, not just one.
-  const openFloors = (guided.activeFloors && guided.activeFloors.length)
-    ? guided.activeFloors
-    : (guided.activeFloor ? [guided.activeFloor] : []);
-  const multi = openFloors.length > 1;
-  const activeLabel = multi
-    ? `Auki: ${openFloors.map(guidedFloorLabel).join(", ")}`
-    : guidedFloorLabel(guided.activeFloor);
-  const lockedCount = guided.lockedFloors.length;
-  // NAME the locked floors so a worker sees exactly which floors are still closed
-  // (and that they open later) — not just a bare "N kerrosta lukossa".
-  const lockedLabels = guided.lockedFloors.map(guidedFloorLabel).join(", ");
-  return (
-    <div style={{ position: "absolute", left: 0, right: 0, bottom: 12, display: "flex", justifyContent: "center", padding: "0 12px", pointerEvents: "none", zIndex: 20 }}>
-      <div style={{ pointerEvents: "auto", width: "100%", maxWidth: 440, background: "rgba(12,13,15,0.94)", border: "1px solid rgba(95,224,138,0.28)", borderRadius: 16, padding: "12px 14px", boxShadow: "0 10px 34px rgba(0,0,0,0.5)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: done ? 0 : 8 }}>
-          <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#5fe08a", boxShadow: "0 0 8px rgba(95,224,138,0.9)", flexShrink: 0 }} />
-          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "#9ff0bd" }}>
-            {done ? "Kaikki kerrokset valmiit 🎉" : "Seuraavaksi"}
-          </span>
-        </div>
-        {!done && (
-          <>
-            <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
-              <div style={{ lineHeight: 1.3 }}>
-                <div style={{ fontSize: 16, fontWeight: 800 }}>{activeLabel}</div>
-                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
-                  {guided.remainingOnActive} ikkuna{guided.remainingOnActive === 1 ? "" : "a"} jäljellä{multi ? `: ${guidedFloorLabel(guided.activeFloor)}` : " tällä kerroksella"}
-                </div>
-              </div>
-              <button onClick={onFocusNext}
-                style={{ flexShrink: 0, padding: "9px 14px", borderRadius: 11, border: "none", background: "#5fe08a", color: "#062012", fontFamily: FONT, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-                Näytä ikkuna
-              </button>
-            </div>
-            {lockedCount > 0 && (
-              <div style={{ marginTop: 9, display: "flex", alignItems: "flex-start", gap: 7, padding: "7px 10px", borderRadius: 10, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.09)" }}>
-                <span style={{ fontSize: 12, lineHeight: 1.4 }}>🔒</span>
-                <span style={{ fontSize: 11.5, lineHeight: 1.45, color: "rgba(255,255,255,0.6)" }}>
-                  <strong style={{ color: "rgba(255,255,255,0.8)" }}>Lukossa: {lockedLabels}.</strong> Nämä avautuvat kun avoimet kerrokset on pesty (tai perustaja avaa ne) — keskity nyt yllä oleviin.
-                </span>
-              </div>
-            )}
-          </>
-        )}
-        {guidedNote && (
-          <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 10, background: "rgba(255,205,40,0.12)", border: "1px solid rgba(255,205,40,0.35)", color: "#ffe08a", fontSize: 12, lineHeight: 1.4 }}>
-            {guidedNote}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
 function Dashboard({ token, view, setView, reload, onLogout }: { token: string; view: WorkerView; setView: (v: WorkerView) => void; reload: () => void; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
@@ -1130,7 +1066,6 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
     }
   }, [token, setView]);
 
-  const focusNext = useCallback(() => setFloorFocusNonce((n) => n + 1), []);
 
   // Per-window observation (text + optional photo) the worker leaves on a window.
   const setObservation = useCallback(async (key: string, text: string, imageDataUrl?: string) => {
@@ -1185,7 +1120,7 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
           <p style={{ margin: 0, fontSize: 20, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: "#7CE0A6" }}>{euro(view.stats.earnedCents)}</p>
           <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
             {view.stats.washed} ikkunaa · {euro(view.worker.perWindowCents)}/kpl
-            {(view.stats.p2EarnedCents ?? 0) > 0 ? ` · sis. Priority 2 ${euro(view.stats.p2EarnedCents)}` : ""}
+            {(view.stats.p2EarnedCents ?? 0) > 0 ? ` · sis. keltaiset ${euro(view.stats.p2EarnedCents)}` : ""}
           </p>
         </div>
       </div>
@@ -1242,11 +1177,14 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
             }
           />
         )}
-        {/* Ohjattu eteneminen: "Seuraavaksi" -ohjauskortti kartan päällä. Näyttää
-            aktiivisen kerroksen, seuraavan ikkunan ja ohjaa sinne. Vain kun
-            perustaja on kytkenyt guided-tilan päälle. */}
-        {!sub && tab === "map" && guided?.enabled && (
-          <GuidedCard guided={guided} guidedNote={guidedNote} onFocusNext={focusNext} />
+        {/* Kerroslukon virheilmoitus (esim. "tämä kerros on lukossa") lyhyenä
+            toastina kartan alalaidassa — ei ohjauskorttia. */}
+        {!sub && tab === "map" && guidedNote && (
+          <div style={{ position: "absolute", left: 12, right: 12, bottom: 14, zIndex: 20, display: "flex", justifyContent: "center", pointerEvents: "none" }}>
+            <span style={{ maxWidth: 420, padding: "9px 13px", borderRadius: 11, background: "rgba(28,22,8,0.95)", border: "1px solid rgba(255,205,40,0.4)", color: "#ffe08a", fontSize: 12.5, lineHeight: 1.4, textAlign: "center" }}>
+              {guidedNote}
+            </span>
+          </div>
         )}
         {!sub && tab === "home" && (
           <HomeTab
@@ -1426,7 +1364,14 @@ function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
           <p style={{ margin: "4px 0 0", fontSize: 26, fontWeight: 800, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(s.earnedCents)}</p>
           {(s.p2EarnedCents ?? 0) > 0 && (
             <p style={{ margin: "3px 0 0", fontSize: 11, color: "rgba(255,220,110,0.85)", fontVariantNumeric: "tabular-nums" }}>
-              sis. Priority 2 {euro(s.p2EarnedCents)}
+              sis. keltaiset {euro(s.p2EarnedCents)}
+            </p>
+          )}
+          {/* Pesty keltainen jonka hintaa asiakas ei ole vielä hyväksynyt: työ on
+              tehty, joten summa näkyy — arviona, ei ansaittuna. */}
+          {(s.p2PendingCents ?? 0) > 0 && (
+            <p style={{ margin: "3px 0 0", fontSize: 11, color: "rgba(150,175,255,0.9)", fontVariantNumeric: "tabular-nums" }}>
+              + {euro(s.p2PendingCents)} odottaa hyväksyntää
             </p>
           )}
         </div>

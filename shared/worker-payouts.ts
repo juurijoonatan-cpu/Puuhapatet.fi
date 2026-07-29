@@ -22,6 +22,8 @@
 
 import type { ProjectData } from "./project";
 import { getCrew, crewMemberStats, type CrewMember, type CrewMemberStats } from "./crew";
+import { traineeForUserId, traineeForName } from "./trainees";
+import { isP2EraSelection } from "./era-billing";
 
 /** Erälaskun tila joka tarkoittaa "tämä on tekijälle hoidettu". Luonnos odottaa
  *  vielä tekijää, hylätty ei koskaan maksettu. */
@@ -75,8 +77,16 @@ export interface EraSettlementMaps {
   pendingWindowsByWorker: Record<string, number>;
 }
 
-/** Erälaskuista johdetut per-tekijä summat yhdellä läpikäynnillä. */
-export function eraSettlementByWorker(invoices: EraInvoiceLike[]): EraSettlementMaps {
+/**
+ * Erälaskuista johdetut per-tekijä summat yhdellä läpikäynnillä.
+ *
+ * `scope` valitsee kumman rahavirran laskut luetaan: "p1" (punaisten erät 1–4,
+ * oletus) tai "p2" (keltaisten potti). Ne EIVÄT saa kuitata toisiaan — keltaisten
+ * maksu ei vähennä punaista velkaa eikä toisinpäin.
+ */
+export function eraSettlementByWorker(invoices: EraInvoiceLike[], scope: "p1" | "p2" = "p1"): EraSettlementMaps {
+  const wanted = scope === "p2";
+  invoices = invoices.filter((i) => isP2EraSelection(i.eraNumbers) === wanted);
   const centsByWorker: Record<string, number> = {};
   const windowsByWorker: Record<string, number> = {};
   const eraNumbersByWorker: Record<string, number[]> = {};
@@ -105,14 +115,23 @@ export interface WorkerSettlement {
   /** Onko tämä tekijä perustaja (role "host")? Perustajat eivät ole tekijöiden
    *  maksulistalla — he tilittävät keskenään johtaja-välisillä laskuilla. */
   founder: boolean;
+  /** Harjoittelija (esim. Milja): EI itsenäinen alihankkija, ei laskuta meitä.
+   *  Hänen palkkansa tilittää vastuujohtaja, joten hän ei koskaan kuulu
+   *  tekijöiden maksulistalle — muuten sama työ maksettaisiin kahdesti. */
+  trainee: boolean;
   /** Ikkunat prioriteetin mukaan (0,5 jaetusta ikkunasta). */
   p1Washed: number;
   p2Washed: number;
   washed: number;
   /** Punaisista kertynyt palkka (× tekijän oma €/ikkuna). */
   p1EarnedCents: number;
-  /** Keltaisista kertynyt palkkio (palkkiotaulukko / fallback-%). */
+  /** Keltaisista kertynyt palkkio ASIAKKAAN HYVÄKSYMISTÄ ikkunoista. */
   p2EarnedCents: number;
+  /** Keltaiset jotka on PESTY mutta joiden hintaa asiakas ei ole vielä
+   *  hyväksynyt: odotettu palkkio. Työ on tehty — ei katoa mihinkään — mutta ei
+   *  ole vielä maksettavaa rahaa. */
+  p2PendingCents: number;
+  p2PendingWashed: number;
   earnedCents: number;
   /** Käsin kirjatut, "maksettu"-tilaiset payoutit. */
   paidCents: number;
@@ -133,6 +152,8 @@ export interface WorkerSettlement {
   openP1Windows: number;
   /** Erät jotka tälle tekijälle on jo laskutettu (esim. [1,2,3]). */
   settledEras: number[];
+  /** Keltaisista jo maksettu tai maksussa (kuittaa vain keltaista velkaa). */
+  p2SettledCents: number;
 }
 
 /**
@@ -146,17 +167,26 @@ export interface WorkerSettlement {
 export function computeWorkerSettlements(
   project: ProjectData,
   opts: {
-    /** Erälaskuista johdetut summat (ks. `eraSettlementByWorker`). */
+    /** PUNAISTEN erälaskuista johdetut summat (`eraSettlementByWorker(inv, "p1")`). */
     era?: Partial<EraSettlementMaps>;
+    /** KELTAISTEN maksuista johdetut summat (`eraSettlementByWorker(inv, "p2")`). */
+    p2Era?: Partial<EraSettlementMaps>;
     /** Jätä perustajat (role "host") pois — oletus true, koska perustajat
      *  tilittävät johtaja-välisillä laskuilla, eivät tekijämaksuilla. */
     includeFounders?: boolean;
+    /** Ota harjoittelijat mukaan (oletus: EI — heidän palkkansa kulkee johtajan
+     *  kautta, joten maksulistalla he olisivat tuplaus). */
+    includeTrainees?: boolean;
+    /** Ota epäaktiiviset (active === false) mukaan. Oletus: EI — deaktivoitu
+     *  tekijä on hoidettu eikä kuulu enää maksulistalle. */
+    includeInactive?: boolean;
     /** Valmiit crew-rivit, jos kutsuja on jo ladannut ne (server /crew-reitti
      *  suodattaa host-rivit pois, joten se antaa oman listansa). */
     crew?: CrewMember[];
   } = {},
 ): WorkerSettlement[] {
   const eraSent = opts.era?.centsByWorker ?? {};
+  const p2Era = opts.p2Era ?? {};
   const eraWindows = opts.era?.windowsByWorker ?? {};
   const eraNums = opts.era?.eraNumbersByWorker ?? {};
   const eraPending = opts.era?.pendingCentsByWorker ?? {};
@@ -167,15 +197,23 @@ export function computeWorkerSettlements(
   for (const member of crew) {
     const founder = member.role === "host";
     if (founder && !opts.includeFounders) continue;
+    const trainee = isTraineeMember(member);
+    if (trainee && !opts.includeTrainees) continue;
+    if (member.active === false && !opts.includeInactive) continue;
     rows.push(settleWorker({
       id: member.id,
       name: member.name || member.id,
       active: member.active !== false,
       founder,
+      trainee,
       stats: crewMemberStats(project, member),
       payouts: member.payouts || [],
       p2Enabled: !!project.p2?.enabled,
       era: { eraSent, eraWindows, eraNums, eraPending, eraPendingWindows },
+      p2Settled: {
+        sentCents: p2Era.centsByWorker?.[member.id] || 0,
+        pendingCents: p2Era.pendingCentsByWorker?.[member.id] || 0,
+      },
     }));
   }
 
@@ -193,7 +231,8 @@ export function settleWorker(input: {
   name: string;
   active: boolean;
   founder: boolean;
-  stats: Pick<CrewMemberStats, "washed" | "earnedCents" | "p1EarnedCents" | "p2EarnedCents" | "p1Washed" | "p2Washed">;
+  trainee?: boolean;
+  stats: Pick<CrewMemberStats, "washed" | "earnedCents" | "p1EarnedCents" | "p2EarnedCents" | "p1Washed" | "p2Washed"> & Partial<Pick<CrewMemberStats, "p2PendingCents" | "p2PendingWashed">>;
   payouts: { status: string; amountCents: number }[];
   /** Onko vaihe 2 päällä? Ohjaa sitä lasketaanko keltaiset omaan pottiinsa. */
   p2Enabled: boolean;
@@ -204,19 +243,27 @@ export function settleWorker(input: {
     eraPending: Record<string, number>;
     eraPendingWindows: Record<string, number>;
   };
+  /** Keltaisista jo maksettu / maksussa oleva — kuittaa VAIN keltaista velkaa. */
+  p2Settled?: { sentCents: number; pendingCents: number };
 }): WorkerSettlement {
   const { id, name, active, founder, stats, payouts, p2Enabled, era } = input;
+  const trainee = input.trainee === true;
   const paidCents = payouts.filter((p) => p.status === "maksettu").reduce((s, p) => s + p.amountCents, 0);
   const eraSentCents = era.eraSent[id] || 0;
   const eraPendingCents = era.eraPending[id] || 0;
   const settledCents = paidCents + eraSentCents;
 
-  // Kohdennus: punainen velka ensin, ylivuoto keltaiseen. Luonnokset lasketaan
-  // mukaan kuittaukseen — muuten juuri luotu maksu näkyisi yhä "Avoinna"na ja
-  // johtaja loisi sen toistamiseen (ks. eraPendingCents).
+  // Kohdennus: punainen velka kuitataan punaisten maksuilla, keltainen keltaisten
+  // maksuilla. Luonnokset lasketaan mukaan kuittaukseen — muuten juuri luotu maksu
+  // näkyisi yhä "Avoinna"na ja johtaja loisi sen toistamiseen (ks. eraPendingCents).
+  //
+  // Käsin kirjatut payoutit (vanha kanava) eivät tiedä kummasta rahasta on kysymys,
+  // joten ne kuittaavat ensin punaista ja ylivuoto menee keltaiseen.
+  const p2SettledCents = (input.p2Settled?.sentCents ?? 0) + (input.p2Settled?.pendingCents ?? 0);
   const reservedCents = settledCents + eraPendingCents;
   const p1Covered = Math.min(stats.p1EarnedCents, reservedCents);
-  const p2Covered = Math.min(stats.p2EarnedCents, Math.max(0, reservedCents - p1Covered));
+  const p1Overflow = Math.max(0, reservedCents - p1Covered);
+  const p2Covered = Math.min(stats.p2EarnedCents, p2SettledCents + p1Overflow);
   const openP1Cents = Math.max(0, stats.p1EarnedCents - p1Covered);
   const openP2Cents = Math.max(0, stats.p2EarnedCents - p2Covered);
 
@@ -231,11 +278,14 @@ export function settleWorker(input: {
     name,
     active,
     founder,
+    trainee,
     p1Washed: stats.p1Washed,
     p2Washed: stats.p2Washed,
     washed: stats.washed,
     p1EarnedCents: stats.p1EarnedCents,
     p2EarnedCents: stats.p2EarnedCents,
+    p2PendingCents: stats.p2PendingCents ?? 0,
+    p2PendingWashed: stats.p2PendingWashed ?? 0,
     earnedCents: stats.earnedCents,
     paidCents,
     eraSentCents,
@@ -245,13 +295,20 @@ export function settleWorker(input: {
     openP2Cents,
     openP1Windows,
     settledEras: era.eraNums[id] ?? [],
+    p2SettledCents,
   };
+}
+
+/** Onko tämä crew-rivi harjoittelija? Tunnistus linkitetystä login-id:stä, crew
+ *  id:stä tai etunimestä — sama järjestys kuin muualla sovelluksessa. */
+export function isTraineeMember(member: { id: string; name?: string; linkedUserId?: string }): boolean {
+  return !!(traineeForUserId(member.linkedUserId) || traineeForUserId(member.id) || traineeForName(member.name));
 }
 
 /** `settleWorker`in era-parametri suoraan erälaskuista — kutsujan ei tarvitse
  *  koota viittä mappia itse. */
-export function eraMapsFor(invoices: EraInvoiceLike[]) {
-  const m = eraSettlementByWorker(invoices);
+export function eraMapsFor(invoices: EraInvoiceLike[], scope: "p1" | "p2" = "p1") {
+  const m = eraSettlementByWorker(invoices, scope);
   return {
     eraSent: m.centsByWorker,
     eraWindows: m.windowsByWorker,
@@ -267,6 +324,7 @@ export interface WorkerSettlementTotals {
   p2Washed: number;
   p1EarnedCents: number;
   p2EarnedCents: number;
+  p2PendingCents: number;
   settledCents: number;
   eraPendingCents: number;
   openP1Cents: number;
@@ -282,6 +340,7 @@ export function sumWorkerSettlements(rows: WorkerSettlement[]): WorkerSettlement
     p2Washed: t.p2Washed + r.p2Washed,
     p1EarnedCents: t.p1EarnedCents + r.p1EarnedCents,
     p2EarnedCents: t.p2EarnedCents + r.p2EarnedCents,
+    p2PendingCents: t.p2PendingCents + r.p2PendingCents,
     settledCents: t.settledCents + r.settledCents,
     eraPendingCents: t.eraPendingCents + r.eraPendingCents,
     openP1Cents: t.openP1Cents + r.openP1Cents,
@@ -289,7 +348,8 @@ export function sumWorkerSettlements(rows: WorkerSettlement[]): WorkerSettlement
     openP1Windows: round1(t.openP1Windows + r.openP1Windows),
   }), {
     workers: 0, p1Washed: 0, p2Washed: 0, p1EarnedCents: 0, p2EarnedCents: 0,
-    settledCents: 0, eraPendingCents: 0, openP1Cents: 0, openP2Cents: 0, openP1Windows: 0,
+    p2PendingCents: 0, settledCents: 0, eraPendingCents: 0, openP1Cents: 0,
+    openP2Cents: 0, openP1Windows: 0,
   });
 }
 

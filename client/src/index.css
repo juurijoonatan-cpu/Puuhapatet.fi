@@ -527,6 +527,32 @@
 .fr8-root {
   --font-onest: "Onest", system-ui, -apple-system, sans-serif;
   --font-jetbrains-mono: "JetBrains Mono", ui-monospace, monospace;
+  /* Kuoren korkeus VISUAALISESTA viewportista, ei layout-viewportista.
+     Syy: .fr8-root on position:fixed; inset:0, ja iOS/Android laskee sen 100 %:n
+     layout-viewportista, joka on selainpalkkien verran KORKEAMPI kuin näkyvä alue.
+     Sisäinen vieritysalue skaalautui siis liian korkeaksi, jolloin napin piirretty
+     paikka ja sen osumaruutu erkanivat — käytännössä nappia piti painaa
+     ~1 cm sen yläpuolelta. dvh seuraa näkyvää aluetta ja korjaa tämän. */
+  height: 100vh;      /* fallback vanhoille selaimille */
+  height: -webkit-fill-available;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+/* Navbar pysyy kiinteänä, sisältö saa loput — ei calc(100% - 62px) -arvausta,
+   joka meni pieleen heti kun navbar kasvoi rivinvaihdon takia. */
+.fr8-root > main {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Osumakoko: dashin napit olivat 28–34 px korkeita, mikä on alle Applen ja
+   Googlen 44 px minimin — kapea nappi + sormen kosketusalue = "ei osu".
+   Tämä nostaa kaikki fr8-napit vähintään osumakelpoisiksi ilman että ulkoasu
+   muuttuu (padding ei kasva, vain minimikorkeus). Karttapisteet ja pienet
+   ikonikahvat rajataan ulos: niissä tarkkuus on tarkoituksellinen. */
+.fr8-root button:not([data-fr8-dot]):not([aria-label="Sulje"]) {
+  min-height: 40px;
 }
 
 @keyframes fr8-orbPulse {
@@ -609,6 +635,14 @@
 .fr8-root .anim-fadeUp-7 { animation: fr8-fadeUp 0.5s ease 0.35s both; }
 .fr8-root .anim-fadeUp-8 { animation: fr8-fadeUp 0.5s ease 0.4s both; }
 .fr8-root .anim-drift    { animation: fr8-drift 14s ease-in-out infinite; }
+/* fr8-fadeUp käyttää `both`-täyttöä, joten ENNEN animaation alkua (0,05–0,4 s
+   viive) elementti on translateY(12px):ssä. Jos animaatiot ovat pois päältä tai
+   eivät käynnisty, se jää sinne pysyvästi — sisältö näkyy alempana kuin sen
+   osumaruutu. Reduced-motionilla ei siis animoida lainkaan. */
+@media (prefers-reduced-motion: reduce) {
+  .fr8-root [class*="anim-fadeUp-"] { animation: none !important; transform: none !important; opacity: 1 !important; }
+  .fr8-root .anim-drift { animation: none !important; }
+}
 
 .fr8-root .floor-row-btn {
   display: flex; align-items: center; gap: 16px;

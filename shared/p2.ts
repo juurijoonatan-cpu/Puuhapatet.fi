@@ -309,11 +309,33 @@ export function pointPriority(data: ProjectData, key: string): 1 | 2 | null {
   return mk ? mk.p : null;
 }
 
-/** Is this yellow window part of the P2 work scope (locked price, phase on)? */
-export function isP2Washable(data: ProjectData, key: string): boolean {
+/**
+ * Is this yellow window's price AGREED with the customer (locked, phase on)?
+ *
+ * HUOM: tämä EI enää estä pesua. Tekijät pesevät kaikki keltaiset — hinnan
+ * hyväksyntä on rahakysymys, ei työkysymys. Tätä käytetään vain rahan puolella:
+ * lukittu → laskutetaan asiakkaalta ja maksetaan tekijälle; lukitsematta →
+ * "odottaa hyväksyntää" (ks. `computeP2Billing.pending*`).
+ */
+export function isP2Priced(data: ProjectData, key: string): boolean {
   const p2 = data.p2;
   if (!p2 || !p2.enabled) return false;
   return p2.offers[key]?.status === "locked";
+}
+
+/** @deprecated Käytä `isP2Priced`. Nimi jäi kun pesuportti poistettiin. */
+export const isP2Washable = isP2Priced;
+
+/**
+ * Odotettu hinta keltaiselle ikkunalle jota asiakas ei ole vielä hyväksynyt:
+ * vastatarjous > oma ehdotus. Ei mitään → null (ei hinnoiteltu lainkaan).
+ * Tätä käytetään "odottaa hyväksyntää" -summiin, jotta pesty mutta hyväksymätön
+ * työ näkyy sekä perustajalle että tekijän maksettavassa — merkittynä.
+ */
+export function p2PendingPriceCents(offer: P2Offer | undefined): number | null {
+  if (!offer || offer.status === "locked" || offer.status === "declined") return null;
+  const cents = offer.counterCents ?? offer.priceCents;
+  return typeof cents === "number" && cents > 0 ? cents : null;
 }
 
 // ─── Money ─────────────────────────────────────────────────────────────────────
@@ -349,7 +371,15 @@ export interface P2Billing {
   remainingLockedCents: number; // lockedSum − earned
   workerCostCents: number;      // Σ worker share over washed locked windows
   marginCents: number;          // earned − workerCost (founders' P2 kate)
-  /** Washed yellow windows WITHOUT a locked price (legacy / anomaly — pay 0). */
+  /** ODOTTAA HYVÄKSYNTÄÄ — pesty keltainen jolla on hinta ehdotettuna mutta
+   *  asiakas ei ole sitä vielä hyväksynyt. Työ on tehty, raha ei ole varmaa:
+   *  ei laskuteta eikä makseta ennen lukitusta, mutta näytetään aina. */
+  pendingWashedCount: number;
+  pendingEarnedCents: number;      // Σ odotettu asiakashinta
+  pendingWorkerCostCents: number;  // Σ odotettu tekijän palkkio
+  /** Pesty keltainen jolla EI ole hintaa lainkaan — hinnoittele tai tyhjennä. */
+  unpricedWashedCount: number;
+  /** Washed yellow windows with no price at all (avaimet varoitukseen). */
   washedUnlockedKeys: string[];
 }
 
@@ -363,6 +393,8 @@ export function computeP2Billing(data: ProjectData): P2Billing {
     yellowTotal: 0, pricedCount: 0, proposedCount: 0, counteredCount: 0,
     lockedCount: 0, lockedSumCents: 0, lockedWashedCount: 0, earnedCents: 0,
     remainingLockedCents: 0, workerCostCents: 0, marginCents: 0,
+    pendingWashedCount: 0, pendingEarnedCents: 0, pendingWorkerCostCents: 0,
+    unpricedWashedCount: 0,
     washedUnlockedKeys: [],
   };
   const p2 = data.p2;
@@ -385,7 +417,18 @@ export function computeP2Billing(data: ProjectData): P2Billing {
         out.workerCostCents += p2WorkerPayoutCents(offer.lockedCents, sharePct, schedule);
       }
     } else if (pt.status === "pesty") {
-      out.washedUnlockedKeys.push(pt.key);
+      // Pesty, mutta hintaa ei ole lukittu. Kaksi eri tapausta:
+      //  • hinta ehdotettu / vastatarjottu → ODOTTAA HYVÄKSYNTÄÄ (raha tulossa)
+      //  • ei hintaa lainkaan → hinnoittelematon (perustajan tehtävälista)
+      const pending = p2PendingPriceCents(offer);
+      if (pending != null) {
+        out.pendingWashedCount += 1;
+        out.pendingEarnedCents += pending;
+        out.pendingWorkerCostCents += p2WorkerPayoutCents(pending, sharePct, schedule);
+      } else {
+        out.unpricedWashedCount += 1;
+        out.washedUnlockedKeys.push(pt.key);
+      }
     }
   }
   out.remainingLockedCents = out.lockedSumCents - out.earnedCents;

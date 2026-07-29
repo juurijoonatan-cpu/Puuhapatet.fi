@@ -16,7 +16,7 @@
 
 import type { ProjectData } from "./project";
 import { allPoints } from "./project";
-import { DEFAULT_P2_WORKER_SHARE_PCT, p2WorkerPayoutCents } from "./p2";
+import { DEFAULT_P2_WORKER_SHARE_PCT, p2WorkerPayoutCents, p2PendingPriceCents } from "./p2";
 import type { TaxBreakdown } from "./tax";
 import type { BuyerSnapshot } from "./billers";
 import type { WorkerAgreementSet } from "./worker-agreements";
@@ -234,8 +234,15 @@ export interface CrewMemberStats {
   washed: number;               // windows attributed to this worker (pesty) — ALL priorities
   earnedCents: number;          // total pay: P1 windows × perWindowCents + P2 shares
   /** The P2 (keltaiset) part of earnedCents: Σ share × p2WorkerPayoutCents per
-   *  locked yellow window. 0 when the gig has no p2 pricing. */
+   *  LOCKED (customer-approved) yellow window. 0 when the gig has no p2 pricing. */
   p2EarnedCents: number;
+  /** ODOTTAA ASIAKKAAN HYVÄKSYNTÄÄ: washed yellow windows whose price is only
+   *  proposed/countered. The work is done and the worker WILL be paid for it, but
+   *  not before the customer locks the price — so it is never part of
+   *  `earnedCents`. Shown separately so nothing done is invisible. */
+  p2PendingCents: number;
+  /** Windows behind `p2PendingCents`. */
+  p2PendingWashed: number;
   /** The P1 (punaiset) part of earnedCents = earnedCents − p2EarnedCents. This is
    *  the ONLY money the 4-erä contract pays out, so every payout/settlement view
    *  must split on it instead of the combined total. */
@@ -274,6 +281,8 @@ export function crewMemberStats(project: ProjectData, member: CrewMember): CrewM
   let p2Washed = 0;
   let earnedRaw = 0;
   let p2EarnedRaw = 0;
+  let p2PendingRaw = 0;
+  let p2PendingWashed = 0;
   for (const p of pts) {
     if (p.status !== "pesty") continue;
     // A window done together (50/50 split) counts as half for each washer.
@@ -286,11 +295,20 @@ export function crewMemberStats(project: ProjectData, member: CrewMember): CrewM
     if (p.p === 2) p2Washed += share; else p1Washed += share;
     if (p2 && p.p === 2) {
       const offer = p2.offers[p.key];
-      const rate = offer?.status === "locked" && offer.lockedCents
-        ? p2WorkerPayoutCents(offer.lockedCents, sharePct, payoutSchedule)
-        : 0; // washed-before-lock anomaly: no pay, surfaced in admin
-      p2EarnedRaw += share * rate;
-      earnedRaw += share * rate;
+      if (offer?.status === "locked" && offer.lockedCents) {
+        const rate = p2WorkerPayoutCents(offer.lockedCents, sharePct, payoutSchedule);
+        p2EarnedRaw += share * rate;
+        earnedRaw += share * rate;
+      } else {
+        // Pesty ennen asiakkaan hyväksyntää: tekijä on tehnyt työn, joten se ei
+        // saa kadota — mutta se ei ole vielä ansaittua rahaa (hinta voi muuttua
+        // tai jäädä sopimatta). Odotettu palkkio omaan pottiinsa.
+        const pending = p2PendingPriceCents(offer);
+        if (pending != null) {
+          p2PendingRaw += share * p2WorkerPayoutCents(pending, sharePct, payoutSchedule);
+        }
+        p2PendingWashed += share;
+      }
     } else {
       earnedRaw += share * member.perWindowCents;
     }
@@ -302,6 +320,8 @@ export function crewMemberStats(project: ProjectData, member: CrewMember): CrewM
     washed,
     earnedCents,
     p2EarnedCents,
+    p2PendingCents: Math.round(p2PendingRaw),
+    p2PendingWashed,
     // NOTE: with p2 OFF a yellow window still pays the normal €/ikkuna rate
     // (legacy behaviour, see the doc comment above), so that money lands here —
     // which is correct: without a P2 contract there is no separate yellow pot.

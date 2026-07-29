@@ -22,6 +22,24 @@ export type EraInvoiceKind = (typeof ERA_INVOICE_KINDS)[number];
 export const ERA_INVOICE_TILAT = ["luonnos", "lähetetty", "hyväksytty", "hylätty"] as const;
 export type EraInvoiceTila = (typeof ERA_INVOICE_TILAT)[number];
 
+/**
+ * KELTAISTEN (2. vaihe) maksupotti. Punaiset maksetaan neljässä arvomääräisessä
+ * erässä; keltaiset ovat oma, erillinen rahansa (asiakkaalta `scope:"p2"` -lasku).
+ * Ne tarvitsevat oman "erän", jotta tekijän maksu ei sekoitu punaisten eriin eikä
+ * kaksoiskappalesuoja luule niitä samaksi maksuksi.
+ *
+ * Toteutus ilman DB-migraatiota: sentinel-erä 0 tallennetussa `eraNumbers`-
+ * listassa. `isP2EraSelection` on AINOA paikka jossa tätä tulkitaan, ja
+ * `eraLabel`-tyyppiset näkymät kirjoittavat sen auki ("Keltaiset (2. vaihe)").
+ */
+export const P2_ERA_NUMBER = 0;
+export const P2_ERA_NUMBERS: number[] = [P2_ERA_NUMBER];
+
+/** Onko tämä erävalinta keltaisten (2. vaihe) potti eikä punaisten erä? */
+export function isP2EraSelection(eraNumbers: number[] | null | undefined): boolean {
+  return Array.isArray(eraNumbers) && eraNumbers.length === 1 && eraNumbers[0] === P2_ERA_NUMBER;
+}
+
 /** Erät 1–3 laskutetaan Joonatanille, erä 4 Matiakselle (kohta 1). */
 export function eraRecipientFounderId(eraNumbers: number[]): "joonatan" | "matias" {
   return eraNumbers.includes(4) ? "matias" : "joonatan";
@@ -76,14 +94,15 @@ export function summarizeEraInvoices<T extends EraInvoiceSummaryRow>(invoices: T
   };
 }
 
-/** Ainoat sallitut erävalinnat: [1,2,3] yhdessä tai [4] yksin (kohta 3A.1: johtaja
- *  valitsee "erät 1-3" tai "erä 4" — ei mielivaltaisia osajoukkoja). */
+/** Ainoat sallitut erävalinnat: [1,2,3] yhdessä, [4] yksin, tai [0] = keltaisten
+ *  (2. vaihe) potti. Ei mielivaltaisia osajoukkoja. */
 export function normalizeEraNumbers(raw: unknown): number[] | null {
   if (!Array.isArray(raw)) return null;
   const nums = raw.map((n) => Math.round(Number(n))).filter((n) => Number.isFinite(n));
   const sorted = Array.from(new Set(nums)).sort((a, b) => a - b);
   if (sorted.length === 3 && sorted[0] === 1 && sorted[1] === 2 && sorted[2] === 3) return [1, 2, 3];
   if (sorted.length === 1 && sorted[0] === 4) return [4];
+  if (sorted.length === 1 && sorted[0] === P2_ERA_NUMBER) return [...P2_ERA_NUMBERS];
   return null;
 }
 
@@ -96,6 +115,13 @@ export interface TekijaPesu {
   sovittuMuutosCents: number;
   /** Jo maksettu ennakko, senttiä. EI vaikuta katteeseen, vähentää vain "maksettava nyt". */
   ennakkoCents: number;
+  /**
+   * Valmis ansio sentteinä, joka OHITTAA `pestytIkkunat × 20 €` -laskennan.
+   * Tarvitaan keltaisille (2. vaihe): niiden palkkio tulee palkkiotaulukosta
+   * (34 €→18, 37,50 €→20, 50 €→27) per ikkuna, ei kiinteästä 20 €:sta, joten
+   * ikkunamäärä × vakio antaisi väärän summan.
+   */
+  ansaittuOverrideCents?: number;
 }
 
 export interface JohtajaPesu {
@@ -177,7 +203,10 @@ export function computeEraBilling(
   const kokonaisikkunat = sumWindows([...workerWindows, ...founderWindows]);
 
   const workerRows: TekijaLaskuRivi[] = workers.map((w) => {
-    const ansaittuCents = roundCents((w.pestytIkkunat || 0) * TEKIJA_HINTA_CENTS) + (w.sovittuMuutosCents || 0);
+    const base = typeof w.ansaittuOverrideCents === "number" && Number.isFinite(w.ansaittuOverrideCents)
+      ? Math.max(0, roundCents(w.ansaittuOverrideCents))
+      : roundCents((w.pestytIkkunat || 0) * TEKIJA_HINTA_CENTS);
+    const ansaittuCents = base + (w.sovittuMuutosCents || 0);
     const maksettavaCents = ansaittuCents - (w.ennakkoCents || 0);
     return { workerId: w.workerId, name: w.name, pestytIkkunat: w.pestytIkkunat, ansaittuCents, maksettavaCents };
   });

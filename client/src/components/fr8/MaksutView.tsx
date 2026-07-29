@@ -149,7 +149,7 @@ export interface MaksutBilling {
   nextInstalmentCents: number;
 }
 
-export default function MaksutView({ jobId, project, billing, onOpenGig }: {
+export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAdjustment }: {
   jobId: number;
   /** Karttatila — tarvitaan tekijöiden maksettavan laskentaan. */
   project: ProjectData | null;
@@ -157,6 +157,9 @@ export default function MaksutView({ jobId, project, billing, onOpenGig }: {
   billing?: MaksutBilling | null;
   /** Hyppy keikkanäkymään, jossa asiakaslaskut lähetetään. */
   onOpenGig?: () => void;
+  /** Sovittu vähennys/lisä tekijän punaisten palkkaan (senttiä, etumerkillinen;
+   *  null poistaa). Tallentuu crew-riville, joten se pysyy. */
+  onSetAdjustment?: (workerId: string, cents: number | null) => Promise<void> | void;
 }) {
   const [invoices, setInvoices] = useState<EraInvoiceClient[]>([]);
   const [loading, setLoading] = useState(true);
@@ -321,6 +324,12 @@ export default function MaksutView({ jobId, project, billing, onOpenGig }: {
                           {r.eraPendingCents > 0 ? ` · kuittaamatta ${fmtEurCents(r.eraPendingCents)}` : ""}
                           {r.settledEras.length > 0 ? ` · erät ${r.settledEras.join(", ")}` : ""}
                         </p>
+                        {r.p1AdjustmentCents !== 0 && (
+                          <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: 11.5, color: "rgb(255,150,150)" }}>
+                            sovittu {r.p1AdjustmentCents < 0 ? "vähennys" : "lisä"} {r.p1AdjustmentCents < 0 ? "−" : "+"}{fmtEurCents(Math.abs(r.p1AdjustmentCents))}
+                            {" · brutto "}{fmtEurCents(r.p1EarnedCents)}
+                          </p>
+                        )}
                         {(r.openP2Cents > 0 || r.p2PendingCents > 0) && (
                           <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: 11.5, color: r.openP2Cents > 0 ? "rgb(255,206,40)" : "rgb(150,175,255)" }}>
                             keltaiset {fmtWin(r.p2Washed)}
@@ -329,13 +338,55 @@ export default function MaksutView({ jobId, project, billing, onOpenGig }: {
                           </p>
                         )}
                       </div>
+                      {/* SIIRRETTÄVÄ = VAIN PUNAISET. Erän 4 rahoista siirretään
+                          punaisten palkat; keltaiset odottavat oman laskunsa rahoja
+                          ja näkyvät omana pienempänä rivinä alla. Aiemmin nämä
+                          summattiin yhteen, jolloin luku ei vastannut sitä mitä
+                          erästä oikeasti siirretään. */}
                       <div style={{ textAlign: "right", flexShrink: 0 }}>
-                        <p style={{ margin: 0, fontFamily: MONO, fontSize: 9.5, letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)" }}>SIIRRETTÄVÄ</p>
-                        <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: 17, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: (r.openP1Cents + r.openP2Cents) > 0 ? "#ffce28" : "rgba(255,255,255,0.35)" }}>
-                          {fmtEurCents(r.openP1Cents + r.openP2Cents)}
+                        <p style={{ margin: 0, fontFamily: MONO, fontSize: 9.5, letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)" }}>SIIRRETTÄVÄ · PUNAISET</p>
+                        <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: 17, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: r.openP1Cents > 0 ? "#ffce28" : "rgba(255,255,255,0.35)" }}>
+                          {fmtEurCents(r.openP1Cents)}
                         </p>
+                        {r.openP2Cents > 0 && (
+                          <p style={{ margin: "1px 0 0", fontFamily: FONT, fontSize: 11, color: "rgba(255,255,255,0.45)", fontVariantNumeric: "tabular-nums" }}>
+                            + keltaiset {fmtEurCents(r.openP2Cents)}
+                          </p>
+                        )}
                       </div>
                     </div>
+                    {/* Sovittu vähennys/lisä. Käytetään kun tekijän kanssa on
+                        sovittu ettei koko summaa makseta (esim. yksi ikkuna jäi
+                        kesken) — ilman tätä summa jäisi ikuisesti "siirrettävänä"
+                        eikä sitä voisi kuitata pois. Peruttavissa. */}
+                    {onSetAdjustment && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                        <button
+                          onClick={() => {
+                            const cur = r.p1AdjustmentCents ? String(-r.p1AdjustmentCents / 100) : "";
+                            const raw = window.prompt(`Sovittu vähennys ${r.name}lle euroina (esim. 10 = vähennä 10 €). Tyhjä poistaa vähennyksen.`, cur);
+                            if (raw === null) return;
+                            const t = raw.trim();
+                            if (t === "") { void onSetAdjustment(r.workerId, null); return; }
+                            const v = Number(t.replace(",", "."));
+                            if (!Number.isFinite(v)) return;
+                            // Positiivinen syöte = vähennys → tallennetaan negatiivisena.
+                            void onSetAdjustment(r.workerId, -Math.round(v * 100));
+                          }}
+                          style={{ minHeight: 36, padding: "7px 12px", borderRadius: 9, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.7)", fontFamily: FONT, fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}
+                        >
+                          {r.p1AdjustmentCents !== 0 ? "Muuta vähennystä" : "Sovittu vähennys"}
+                        </button>
+                        {r.p1AdjustmentCents !== 0 && (
+                          <button
+                            onClick={() => void onSetAdjustment(r.workerId, null)}
+                            style={{ minHeight: 36, padding: "7px 12px", borderRadius: 9, border: "1px solid rgba(255,255,255,0.14)", background: "transparent", color: "rgba(255,255,255,0.5)", fontFamily: FONT, fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}
+                          >
+                            Poista
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

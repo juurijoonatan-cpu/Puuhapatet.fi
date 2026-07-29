@@ -123,8 +123,13 @@ export interface WorkerSettlement {
   p1Washed: number;
   p2Washed: number;
   washed: number;
-  /** Punaisista kertynyt palkka (× tekijän oma €/ikkuna). */
+  /** Punaisista kertynyt palkka BRUTTONA (× tekijän oma €/ikkuna). */
   p1EarnedCents: number;
+  /** Sovittu muutos punaisten palkkaan (− vähennys / + lisä). Näkyy erikseen,
+   *  jotta brutto ja lopullinen maksettava ovat molemmat luettavissa. */
+  p1AdjustmentCents: number;
+  /** p1Earned + sovittu muutos, ei koskaan alle nollan = maksettava brutto. */
+  p1PayableCents: number;
   /** Keltaisista kertynyt palkkio ASIAKKAAN HYVÄKSYMISTÄ ikkunoista. */
   p2EarnedCents: number;
   /** Keltaiset jotka on PESTY mutta joiden hintaa asiakas ei ole vielä
@@ -208,6 +213,7 @@ export function computeWorkerSettlements(
       trainee,
       stats: crewMemberStats(project, member),
       payouts: member.payouts || [],
+      adjustmentCents: member.payAdjustmentCents ?? 0,
       p2Enabled: !!project.p2?.enabled,
       era: { eraSent, eraWindows, eraNums, eraPending, eraPendingWindows },
       p2Settled: {
@@ -245,6 +251,8 @@ export function settleWorker(input: {
   };
   /** Keltaisista jo maksettu / maksussa oleva — kuittaa VAIN keltaista velkaa. */
   p2Settled?: { sentCents: number; pendingCents: number };
+  /** Sovittu muutos punaisten palkkaan (CrewMember.payAdjustmentCents). */
+  adjustmentCents?: number;
 }): WorkerSettlement {
   const { id, name, active, founder, stats, payouts, p2Enabled, era } = input;
   const trainee = input.trainee === true;
@@ -260,18 +268,22 @@ export function settleWorker(input: {
   // Käsin kirjatut payoutit (vanha kanava) eivät tiedä kummasta rahasta on kysymys,
   // joten ne kuittaavat ensin punaista ja ylivuoto menee keltaiseen.
   const p2SettledCents = (input.p2Settled?.sentCents ?? 0) + (input.p2Settled?.pendingCents ?? 0);
+  // Sovittu vähennys/lisä pienentää (tai kasvattaa) maksettavaa punaista. Brutto
+  // (`p1EarnedCents`) säilyy koskemattomana, jotta ikkunat ja raha täsmäävät yhä.
+  const p1AdjustmentCents = input.adjustmentCents ?? 0;
+  const p1PayableCents = Math.max(0, stats.p1EarnedCents + p1AdjustmentCents);
   const reservedCents = settledCents + eraPendingCents;
-  const p1Covered = Math.min(stats.p1EarnedCents, reservedCents);
+  const p1Covered = Math.min(p1PayableCents, reservedCents);
   const p1Overflow = Math.max(0, reservedCents - p1Covered);
   const p2Covered = Math.min(stats.p2EarnedCents, p2SettledCents + p1Overflow);
-  const openP1Cents = Math.max(0, stats.p1EarnedCents - p1Covered);
+  const openP1Cents = Math.max(0, p1PayableCents - p1Covered);
   const openP2Cents = Math.max(0, stats.p2EarnedCents - p2Covered);
 
   // Punaisia ikkunoita vielä maksamatta. Kun P2 ei ole päällä, keltaiset
   // maksetaan normaalilla taksalla (legacy), joten ne kuuluvat samaan pottiin.
   const payableWindows = p2Enabled ? stats.p1Washed : stats.washed;
   const invoicedWindows = (era.eraWindows[id] || 0) + (era.eraPendingWindows[id] || 0);
-  const openP1Windows = Math.max(0, round1(payableWindows - invoicedWindows));
+  const openP1Windows = openP1Cents <= 0 ? 0 : Math.max(0, round1(payableWindows - invoicedWindows));
 
   return {
     workerId: id,
@@ -283,6 +295,8 @@ export function settleWorker(input: {
     p2Washed: stats.p2Washed,
     washed: stats.washed,
     p1EarnedCents: stats.p1EarnedCents,
+    p1AdjustmentCents,
+    p1PayableCents,
     p2EarnedCents: stats.p2EarnedCents,
     p2PendingCents: stats.p2PendingCents ?? 0,
     p2PendingWashed: stats.p2PendingWashed ?? 0,
@@ -323,6 +337,7 @@ export interface WorkerSettlementTotals {
   p1Washed: number;
   p2Washed: number;
   p1EarnedCents: number;
+  p1AdjustmentCents: number;
   p2EarnedCents: number;
   p2PendingCents: number;
   settledCents: number;
@@ -339,6 +354,7 @@ export function sumWorkerSettlements(rows: WorkerSettlement[]): WorkerSettlement
     p1Washed: t.p1Washed + r.p1Washed,
     p2Washed: t.p2Washed + r.p2Washed,
     p1EarnedCents: t.p1EarnedCents + r.p1EarnedCents,
+    p1AdjustmentCents: t.p1AdjustmentCents + r.p1AdjustmentCents,
     p2EarnedCents: t.p2EarnedCents + r.p2EarnedCents,
     p2PendingCents: t.p2PendingCents + r.p2PendingCents,
     settledCents: t.settledCents + r.settledCents,
@@ -347,7 +363,7 @@ export function sumWorkerSettlements(rows: WorkerSettlement[]): WorkerSettlement
     openP2Cents: t.openP2Cents + r.openP2Cents,
     openP1Windows: round1(t.openP1Windows + r.openP1Windows),
   }), {
-    workers: 0, p1Washed: 0, p2Washed: 0, p1EarnedCents: 0, p2EarnedCents: 0,
+    workers: 0, p1Washed: 0, p2Washed: 0, p1EarnedCents: 0, p1AdjustmentCents: 0, p2EarnedCents: 0,
     p2PendingCents: 0, settledCents: 0, eraPendingCents: 0, openP1Cents: 0,
     openP2Cents: 0, openP1Windows: 0,
   });

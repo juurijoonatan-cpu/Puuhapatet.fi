@@ -133,6 +133,7 @@ liikkuvat eri aikaan, ja kaikki laskenta erottelee ne. Yksi totuuden lähde:
 | `isP2EraSelection(eraNumbers)` | onko tämä maksu keltaisten potti (sentinel-erä `P2_ERA_NUMBER = 0`) |
 | `isTraineeMember(member)` | harjoittelija → EI tekijöiden maksulistalla (palkka johtajan kautta) |
 | `dealInternalRateCents(data, deal)` | perustajan sisäinen kate €/ikkuna (EFEKTIIVINEN sopimussumma ÷ punaiset) |
+| `settleWorker({..., adjustmentCents})` | sovittu vähennys/lisä tekijän punaiseen palkkaan (`p1PayableCents`) |
 
 ### Säännöt
 
@@ -172,6 +173,18 @@ liikkuvat eri aikaan, ja kaikki laskenta erottelee ne. Yksi totuuden lähde:
    vielä hyväksynyt (oma palkkio + osuus katteesta). Omalla rivillään, koska se ei
    ole varmaa rahaa — mutta työ on tehty, joten pelkkä vahvistettu luku ei kerro
    koko kuvaa.
+11. **"Siirrettävä" tarkoittaa AINA vain punaisia.** Erän 4 rahoista siirretään
+   punaisten palkat; keltaiset odottavat oman laskunsa rahoja ja näkyvät omana,
+   pienempänä rivinä (`+ keltaiset X`). Kun nämä summattiin yhteen, johtajan
+   näkemä luku ei vastannut sitä mitä pankissa oikeasti siirretään.
+12. **Sovittu vähennys/lisä** (`CrewMember.payAdjustmentCents`, etumerkillinen sentti)
+   on tapa kuitata pois erotus, josta on tekijän kanssa sovittu (esim. "sovittiin
+   että siitä vähennetään 10 €"). Se **ei** muuta ikkunamääriä eikä `p1EarnedCents`iä
+   — brutto pysyy näkyvissä ja kirjanpito täsmää — vain
+   `p1PayableCents = max(0, p1Earned + adjustment)` ja siitä johdettu `openP1Cents`.
+   Kun maksettava menee nollaan, myös `openP1Windows` pakotetaan nollaan, muuten
+   maksudialogi esitäyttäisi ikkunoita nollan euron laskulle. Vähennys ei koskaan
+   vuoda keltaisiin. Asetetaan Maksut-välilehdellä (`onSetAdjustment`), poistettavissa.
 
 ### Missä mikä toiminto asuu (ei duplikaatteja)
 
@@ -181,6 +194,7 @@ liikkuvat eri aikaan, ja kaikki laskenta erottelee ne. Yksi totuuden lähde:
 | Keltaisten tilausehtojen tila + sopimus-PDF | `admin/gig-tracker.tsx` → **Sopimus & asiakasnäkymä** -dropdown |
 | Keltaisten hinnoittelu & neuvottelu | mustan dashin `P2AdminPanel` (ei laskun lähetystä) |
 | Tekijöiden maksu (erämaksun luonti) | projektinäkymän **Maksut**-välilehti (`MaksutView`) |
+| Sovittu vähennys tekijän palkkaan | projektinäkymän **Maksut**-välilehti (Tiimi-sivu vain näyttää sen) |
 | Johtaja-välinen ristiinlasku | mustan dashin PERUSTAJIEN ANSIOT → toisen johtajan kortti |
 | Rahan tilannekuva | mustan dashin **LASKUTUS & MAKSUT** -statsit + Maksut-välilehti |
 | Keltaisten sopimusteksti | keikkanäkymän **Sopimus & asiakasnäkymä** (ei P2-paneelissa) |

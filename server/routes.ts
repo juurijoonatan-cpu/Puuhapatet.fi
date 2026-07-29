@@ -7401,6 +7401,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           agreementSet: req.body?.agreementSet === undefined ? m.agreementSet : req.body.agreementSet,
           // Link / unlink an admin login user to this dashboard ("" clears it).
           linkedUserId: req.body?.linkedUserId === undefined ? m.linkedUserId : (req.body.linkedUserId || undefined),
+          // Sovittu vähennys/lisä tekijän punaisten palkkaan (etumerkillinen);
+          // null/"" tai 0 poistaa sen.
+          payAdjustmentCents: req.body?.payAdjustmentCents === undefined
+            ? m.payAdjustmentCents
+            : (req.body.payAdjustmentCents == null || req.body.payAdjustmentCents === "" ? undefined : Number(req.body.payAdjustmentCents)),
           // Manual earnings override (managers' dashboard); null/"" clears it.
           manualEarningsCents: req.body?.manualEarningsCents === undefined
             ? m.manualEarningsCents

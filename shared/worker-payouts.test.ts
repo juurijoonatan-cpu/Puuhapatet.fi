@@ -241,6 +241,88 @@ describe("computeWorkerSettlements — punaiset ja keltaiset erillään", () => 
     expect(jani.p1EarnedCents + oona.p1EarnedCents).toBe(40_00);
   });
 
+  it("sovittu vähennys pienentää siirrettävää, mutta brutto pysyy näkyvissä", () => {
+    // Doma pesi 5 ikkunaa = 100 €, mutta hänen kanssaan sovittiin 10 € vähennys.
+    const p = projectWith({
+      workerId: "doma", red: 5, yellow: 0,
+      crew: [member({ id: "doma", payAdjustmentCents: -10_00 })],
+    });
+    const [row] = computeWorkerSettlements(p);
+    expect(row.p1Washed).toBe(5);
+    expect(row.p1EarnedCents).toBe(100_00);      // brutto ennallaan
+    expect(row.p1AdjustmentCents).toBe(-10_00);
+    expect(row.p1PayableCents).toBe(90_00);
+    expect(row.openP1Cents).toBe(90_00);         // siirretään 90 €, ei 100 €
+    expect(row.openP1Windows).toBe(5);           // ikkunamäärä ei muutu
+  });
+
+  it("koko palkan kokoinen vähennys nollaa sekä summan että esitäytön ikkunat", () => {
+    const p = projectWith({
+      workerId: "doma", red: 5, yellow: 0,
+      crew: [member({ id: "doma", payAdjustmentCents: -100_00 })],
+    });
+    const [row] = computeWorkerSettlements(p);
+    expect(row.openP1Cents).toBe(0);
+    // Ilman tätä maksudialogi olisi esitäyttänyt 5 ikkunaa nollan euron laskulle.
+    expect(row.openP1Windows).toBe(0);
+    expect(row.p1EarnedCents).toBe(100_00);      // brutto edelleen raportoitavissa
+  });
+
+  it("vähennys ei koskaan käänny negatiiviseksi maksettavaksi", () => {
+    const p = projectWith({
+      workerId: "doma", red: 5, yellow: 0,
+      crew: [member({ id: "doma", payAdjustmentCents: -500_00 })],
+    });
+    const [row] = computeWorkerSettlements(p);
+    expect(row.p1PayableCents).toBe(0);
+    expect(row.openP1Cents).toBe(0);
+  });
+
+  it("vähennys ei vuoda keltaisiin — keltainen potti pysyy koskemattomana", () => {
+    const p = projectWith({
+      workerId: "doma", red: 5, yellow: 4, lockedCents: 3750,
+      crew: [member({ id: "doma", payAdjustmentCents: -10_00 })],
+    });
+    const [row] = computeWorkerSettlements(p);
+    expect(row.openP1Cents).toBe(90_00);
+    expect(row.openP2Cents).toBe(80_00);         // keltaiset ennallaan
+  });
+
+  it("sovittu LISÄ kasvattaa siirrettävää", () => {
+    const p = projectWith({
+      workerId: "doma", red: 5, yellow: 0,
+      crew: [member({ id: "doma", payAdjustmentCents: 15_00 })],
+    });
+    const [row] = computeWorkerSettlements(p);
+    expect(row.p1PayableCents).toBe(115_00);
+    expect(row.openP1Cents).toBe(115_00);
+  });
+
+  it("vähennys ja jo maksettu erälasku eivät jätä jäännöstä siirrettäväksi", () => {
+    // 100 € brutto − 10 € sovittu = 90 €, ja 90 € on jo laskutettu erällä 4.
+    const p = projectWith({
+      workerId: "doma", red: 5, yellow: 0,
+      crew: [member({ id: "doma", payAdjustmentCents: -10_00 })],
+    });
+    const invoices = [{
+      kind: "tekija", tila: "hyväksytty", senderId: "doma", totalCents: 90_00,
+      eraNumbers: [4], rivit: { input: { pestytIkkunat: 5 }, computed: { ansaittuCents: 90_00 } },
+    }];
+    const [row] = computeWorkerSettlements(p, { era: eraSettlementByWorker(invoices) });
+    expect(row.openP1Cents).toBe(0);
+    expect(row.openP1Windows).toBe(0);
+  });
+
+  it("sumWorkerSettlements laskee sovitut vähennykset yhteen", () => {
+    const p = projectWith({
+      workerId: "doma", red: 5, yellow: 0,
+      crew: [member({ id: "doma", payAdjustmentCents: -10_00 }), member({ id: "jani" })],
+    });
+    const t = sumWorkerSettlements(computeWorkerSettlements(p));
+    expect(t.p1AdjustmentCents).toBe(-10_00);
+    expect(t.openP1Cents).toBe(90_00);
+  });
+
   it("sumWorkerSettlements summaa punaiset ja keltaiset erikseen", () => {
     const p = projectWith({
       workerId: "jani", red: 10, yellow: 4,

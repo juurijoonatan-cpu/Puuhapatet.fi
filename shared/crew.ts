@@ -186,6 +186,20 @@ export interface CrewMember {
    *  founders to agree a split (e.g. "tehdään päivä yhdessä, jaetaan 50/50").
    *  Does NOT affect a worker's own dashboard payout view. */
   manualEarningsCents?: number;
+  /**
+   * SOVITTU MUUTOS tekijän punaisten palkkaan, senttiä, ETUMERKILLINEN.
+   * Negatiivinen = vähennys (esim. "sovittiin että tästä vähennetään 10 €, koska
+   * yksi ikkuna jäi kesken"), positiivinen = sovittu lisä.
+   *
+   * Miksi oma kenttä: ilman tätä johtajan ainoa tapa nollata pieni erä oli jättää
+   * maksu tekemättä — jolloin summa jäi ikuisesti "Siirrettävä"-listalle ja
+   * näytti maksamattomalta velalta. Nyt sovittu vähennys on eksplisiittinen,
+   * näkyvä ja peruttavissa, eikä velka jää roikkumaan.
+   *
+   * Ei vaikuta ikkunamääriin eikä `p1EarnedCents`iin (brutto säilyy näkyvissä) —
+   * vain maksettavaan (`openP1Cents`).
+   */
+  payAdjustmentCents?: number;
   active: boolean;
   pinHash?: string;             // optional 4-digit PIN, sha-256 hex (server-set)
   profile?: CrewProfile;
@@ -549,6 +563,10 @@ export function sanitizeCrewMember(input: any): CrewMember | null {
     // "kevyt" back to the full package. Without this, an explicit "standard" would
     // collapse to undefined and the default would silently re-apply.
     agreementSet: input.agreementSet === "kevyt" || input.agreementSet === "standard" ? input.agreementSet : undefined,
+    payAdjustmentCents: input.payAdjustmentCents != null && Number.isFinite(Number(input.payAdjustmentCents)) && Math.round(Number(input.payAdjustmentCents)) !== 0
+      // Etumerkillinen, kohtuullinen raja molempiin suuntiin.
+      ? Math.max(-1_000_000, Math.min(1_000_000, Math.round(Number(input.payAdjustmentCents))))
+      : undefined,
     manualEarningsCents: input.manualEarningsCents != null && Number.isFinite(Number(input.manualEarningsCents))
       ? Math.max(0, Math.min(10_000_000, Math.round(Number(input.manualEarningsCents))))
       : undefined,

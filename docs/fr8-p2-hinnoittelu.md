@@ -83,6 +83,14 @@ muuttua"), joten juuri muuttunutta hintaa ei voi hyväksyä vahingossa.
   (luonti, undo, `recomputeGigInvoiced`) ja sisäisessä maksuraportissa
   (`buildGigReportHtml` erittelee P1/P2), jotta maksun poisto tai P2-lasku ei
   koskaan korruptoi punaista €6300-summaa.
+- **Dashboardin valmius**: `GET /api/jobs/:id/project` palauttaa myös
+  `p2InvoicedCents` (Σ `scope:"p2"`-maksut). P2AdminPanel näyttää LASKUTUS-tiilen
+  (laskutettu / laskuttamatta = kertymä − laskutettu); "Lähetä P2-lasku" näkyy vain
+  kun laskuttamatta > 0 ja summa = laskuttamatta.
+- **"Uusi luku" -juhla** (perustajille): `FounderCelebration` (project.tsx) laukeaa
+  kerran (per keikka/selain, localStorage) kun asiakas on hyväksynyt kaiken:
+  `p2.enabled && lockedCount>0 && proposedCount===0 && counteredCount===0 &&
+  pricedCount===yellowTotal`. Vain perustajanäkymässä, ei asiakkaalle/tekijöille.
 
 ## Näkymät
 
@@ -94,15 +102,15 @@ muuttua"), joten juuri muuttunutta hintaa ei voi hyväksyä vahingossa.
 - **Asiakas** (`gig-live.tsx` + `CustomerFloorMap.tsx`): kun vaihe 2 on aktiivinen,
   näkymä pivotoi keltaisiin — 1. vaihe (kiinteä urakka) tiivistyy "✓ valmis"
   -kortiksi ja **"Priority 2"** -paneeli nousee pääfokukseksi (kasvava summa).
-  Siisti kaksirivinen työkalupalkki (kerrosvalitsin vieritettävänä rivinä +
-  suodatin/edistyminen omalla rivillään) pysyy linjassa myös mobiilissa.
-  Kartalla punaiset himmennetään ja tarjolla on "Vain Priority 2" -suodatin.
-  Kun kaikki keltaiset on hinnoiteltu, kartta ei sotkeennu: **lukitut näyttävät
-  vain pienen ✓-merkin** (hinta löytyy listasta), avoimet pitävät luettavan
-  pillerin. Kartan alla **organisoitu ehdotuslista KAIKISTA kerroksista** ryhmiteltynä
-  ("Odottaa sinua" / "Vastatarjouksesi" / "Sovitut"): jokaisella rivillä ikkunan
-  sijainti + hinta + Hyväksy / Vastatarjous / Ei, plus "Hyväksy kaikki (n · X €)".
-  Kartan napautus toimii yhä (popup). Näkyvä "odottava" lisäys-nudge ("Lisää
+  Kartta on **numeroidut pisteet** (ei hintoja kartalla — hinnat vain listassa),
+  värikoodattu tilan mukaan (sininen=ehdotus, keltainen=vastatarjous, vihreä ✓=sovittu,
+  valkoinen=ehdottamasi), numerointi per kerros = listan "ikkuna N". **Zoom + pan**
+  (pinch/rulla/napit). Punaiset himmennetään; työhuomiot piilossa suunnittelun ajan.
+  Kartan pisteen napautus avaa **suunnittelupopupin** (mikä ikkuna + tila + "Näytä
+  listassa"), EI suoraa hyväksyntää. Kartan alla **ehdotuslista RYHMITELTYNÄ
+  KERROKSITTAIN**: joka kerroksella "Hyväksy kerros (n · X €)", jokaisella rivillä
+  numero + hinta + Hyväksy / Vastatarjous / Ei + "Kartalla" (hyppää + korostaa),
+  plus "Hyväksy kaikki". Niilo voi hyväksyä kerros kerrallaan. Näkyvä "odottava" lisäys-nudge ("Lisää
   ikkunoita Priority 2:seen") kutsuu asiakasta ehdottamaan lisää ikkunoita;
   asiakkaan itse lisäämät pisteet saavat oman halo-merkin ja hän voi poistaa ne
   ennen hinnoittelua. Ammattimainen ehtomodaali ("Priority 2 -tilausehdot"): yksi

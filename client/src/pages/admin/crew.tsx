@@ -1086,25 +1086,29 @@ function PayrollSummary({ crew, eraInvoices, p2Enabled }: {
 
   return (
     <div className="rounded-2xl border bg-card p-4 mb-5">
-      <div className="flex items-center justify-between mb-3">
+      {/* Otsikko ja tunnusluvut OMILLA riveillään: samalla rivillä ne törmäsivät
+          puhelimen leveydellä ("Palkkayhteenveto" päälle "98 punaista · …"). */}
+      <div className="mb-3">
         <h2 className="flex items-center gap-1.5 text-sm font-bold"><Wallet className="h-4 w-4" /> Palkkayhteenveto</h2>
-        <span className="text-[11px] text-muted-foreground">
+        <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
           {fmtWindows(t.p1Washed)} punaista{t.p2Washed > 0 ? ` · ${fmtWindows(t.p2Washed)} keltaista` : ""} · {rows.length} tekijää
-        </span>
+        </p>
       </div>
 
-      {/* Totals strip — punaisten palkat, hoidettu ja vielä siirrettävä. */}
+      {/* Totals strip — punaisten palkat, hoidettu ja vielä siirrettävä.
+          Otsikot LYHYITÄ ja `leading-tight`: "Maksettu / laskutettu" katkesi
+          kolmelle riville ja työnsi laatikot eri korkuisiksi. */}
       <div className="grid grid-cols-3 gap-2 mb-3 text-center">
-        <div className="rounded-xl bg-muted/40 py-2">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Punaisten palkat</p>
+        <div className="rounded-xl bg-muted/40 px-1 py-2">
+          <p className="text-[10px] uppercase leading-tight tracking-wide text-muted-foreground">Punaiset</p>
           <p className="text-sm font-bold tabular-nums">{eur(t.p1EarnedCents)}</p>
         </div>
-        <div className="rounded-xl bg-muted/40 py-2">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{anyEra ? "Maksettu / laskutettu" : "Maksettu"}</p>
+        <div className="rounded-xl bg-muted/40 px-1 py-2">
+          <p className="text-[10px] uppercase leading-tight tracking-wide text-muted-foreground">{anyEra ? "Hoidettu" : "Maksettu"}</p>
           <p className="text-sm font-bold tabular-nums text-green-600">{eur(t.settledCents)}</p>
         </div>
-        <div className="rounded-xl bg-muted/40 py-2">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Siirrettävä</p>
+        <div className="rounded-xl bg-muted/40 px-1 py-2">
+          <p className="text-[10px] uppercase leading-tight tracking-wide text-muted-foreground">Siirrettävä</p>
           <p className={`text-sm font-bold tabular-nums ${t.openP1Cents > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{eur(t.openP1Cents)}</p>
         </div>
       </div>
@@ -1122,40 +1126,51 @@ function PayrollSummary({ crew, eraInvoices, p2Enabled }: {
         </p>
       )}
 
-      {/* Per-worker rows */}
+      {/* Per-worker rows. Oikealla on VAIN yksi luku (siirrettävä punaisista) —
+          kolme numerosaraketta vei puhelimessa niin paljon leveyttä, että nimen
+          alta katkesi "erät 1, 2," / "3" omalle riville. Hoidettu ja brutto
+          kulkevat nyt metarivillä, joka katkeaa siististi erottimista. */}
       <div className="divide-y divide-border">
         {rows.map((r) => (
-          <div key={r.workerId} className="flex items-center justify-between gap-3 py-2">
+          <div key={r.workerId} className="flex items-start justify-between gap-3 py-2.5">
             <div className="min-w-0">
               <p className="text-sm font-medium truncate">{r.name}</p>
-              <p className="text-[11px] text-muted-foreground">
-                {fmtWindows(r.p1Washed)} punaista
-                {r.p2Washed > 0 ? ` · ${fmtWindows(r.p2Washed)} keltaista` : ""}
-                {r.settledEras.length > 0 ? ` · erät ${r.settledEras.join(", ")}` : ""}
+              <p className="flex flex-wrap items-center gap-x-1.5 text-[11px] leading-snug text-muted-foreground">
+                <span className="whitespace-nowrap">{fmtWindows(r.p1Washed)} punaista</span>
+                <span className="whitespace-nowrap">· hoidettu {eur(r.settledCents)}</span>
+                {r.eraPendingCents > 0 && <span className="whitespace-nowrap">· kuittaamatta {eur(r.eraPendingCents)}</span>}
+                {r.settledEras.length > 0 && <span className="whitespace-nowrap">· erät {r.settledEras.join(", ")}</span>}
               </p>
-              {r.openP2Cents > 0 && (
-                <p className="text-[11px] text-amber-600 dark:text-amber-400">keltaisista {eur(r.openP2Cents)} odottaa</p>
+              {/* Sovittu vähennys näkyviin myös täällä, samoin kuin Maksut-välilehdellä
+                  — muuten luku näyttäisi tässä eri suuruiselta ilman selitystä. */}
+              {r.p1AdjustmentCents !== 0 && (
+                <p className="text-[11px] leading-snug text-red-600 dark:text-red-400">
+                  sovittu {r.p1AdjustmentCents < 0 ? "vähennys" : "lisä"} {r.p1AdjustmentCents < 0 ? "−" : "+"}{eur(Math.abs(r.p1AdjustmentCents))} · brutto {eur(r.p1EarnedCents)}
+                </p>
+              )}
+              {(r.openP2Cents > 0 || r.p2PendingCents > 0) && (
+                <p className={`text-[11px] leading-snug ${r.openP2Cents > 0 ? "text-amber-600 dark:text-amber-400" : "text-blue-600 dark:text-blue-400"}`}>
+                  keltaiset {fmtWindows(r.p2Washed)}
+                  {r.openP2Cents > 0 ? ` · odottaa ${eur(r.openP2Cents)}` : ""}
+                  {r.p2PendingCents > 0 ? ` · hyväksymättä ${eur(r.p2PendingCents)}` : ""}
+                </p>
               )}
             </div>
-            <div className="flex items-center gap-4 text-right shrink-0">
-              <div className="hidden sm:block">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Punaisista</p>
-                <p className="text-sm font-semibold tabular-nums">{eur(r.p1EarnedCents)}</p>
-              </div>
-              {/* Näkyy myös puhelimessa: paljonko tekijälle on hoidettu (maksettu
-                  tai lähetetty erälaskulla) — ettei kaikki näytä pelkältä Avoinna. */}
-              <div>
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{r.eraSentCents > 0 ? "Hoidettu" : "Maksettu"}</p>
-                <p className="text-sm font-semibold tabular-nums text-green-600">{eur(r.settledCents)}</p>
-              </div>
-              <div>
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Siirrettävä</p>
-                <p className={`text-sm font-bold tabular-nums ${r.openP1Cents > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{eur(r.openP1Cents)}</p>
-              </div>
+            <div className="shrink-0 text-right">
+              <p className="text-[10px] uppercase leading-tight tracking-wide text-muted-foreground">Siirrettävä</p>
+              <p className={`text-base font-bold tabular-nums ${r.openP1Cents > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{eur(r.openP1Cents)}</p>
+              {r.openP2Cents > 0 && (
+                <p className="text-[10px] leading-tight tabular-nums text-muted-foreground">+ keltaiset {eur(r.openP2Cents)}</p>
+              )}
             </div>
           </div>
         ))}
       </div>
+      {/* Maksut-välilehti on ainoa paikka jossa rahaa liikutetaan — täältä vain
+          näytetään, ettei samaa toimintoa ole kahdessa paikassa. */}
+      <p className="mt-3 text-[11px] leading-snug text-muted-foreground">
+        Siirrot, erälaskut ja sovitut vähennykset tehdään keikan <strong>Maksut</strong>-välilehdellä.
+      </p>
     </div>
   );
 }

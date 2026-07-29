@@ -224,10 +224,14 @@
      indicator) so content is never hidden under them in a standalone PWA.
      The floating pill nav sits ~1rem from the bottom and is ~4rem tall, so the
      bottom pad must clear its full footprint plus a comfortable gap — otherwise
-     content (e.g. a CTA card) ends up under it and can't be tapped. */
+     content (e.g. a CTA card) ends up under it and can't be tapped.
+     HUOM: chat-nappi (chat-widget.tsx) leijuu vielä navin YLÄPUOLELLA:
+     bottom 6.5rem + 3.5rem korkeus = 10rem. 8.5rem ei siis riittänyt — Tiimi-
+     sivun viimeinen tekijärivi jäi napin alle. Pad on nyt 11rem = navi + nappi
+     + väli. */
   .admin-shell-pad {
     padding-top: calc(5rem + env(safe-area-inset-top));
-    padding-bottom: calc(8.5rem + env(safe-area-inset-bottom));
+    padding-bottom: calc(11rem + env(safe-area-inset-bottom));
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
   }

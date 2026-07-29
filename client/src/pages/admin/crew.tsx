@@ -282,6 +282,19 @@ export default function AdminCrewPage() {
                     windows) and email them the summary, on their behalf. */}
                 <DayLogPanel member={member} onLog={(hours) => logDay(member.id, hours)} />
 
+                {/* Harjoittelija ei ole tekijöiden maksulistalla (hänen palkkansa kulkee
+                    vastuujohtajan kautta), joten jo tehty tilitys pitää kirjata TÄSTÄ —
+                    silloin se näkyy kirjanpidossa ja johtajan ansioista vähennetään se
+                    automaattisesti. */}
+                {isTraineeMember(member) && (
+                  <p className="mt-3 rounded-xl border border-blue-500/25 bg-blue-500/5 px-3 py-2 text-[11px] leading-snug text-blue-700 dark:text-blue-300">
+                    Harjoittelijan palkka kulkee {(traineeForUserId(member.linkedUserId) || traineeForUserId(member.id) || traineeForName(member.name))?.responsibleLeaderName.split(/\s+/)[0] || "vastuujohtajan"} kautta,
+                    joten häntä ei ole tekijöiden maksulistalla. <strong>Jos maksu on jo tehty, kirjaa se
+                    alta "Maksut"-osiosta ja merkitse maksetuksi</strong> — summa vähennetään silloin
+                    vastuujohtajan ansioista ja jää kirjanpitoon.
+                  </p>
+                )}
+
                 {/* Payouts (Puuhapatet → worker). Suggest only the UNPAID remainder
                     — what this worker has done since the last payout — so each payout
                     covers just the current billed period, never the cumulative total. */}
@@ -1219,7 +1232,7 @@ function WorkerCardHeader({
             {member.adminLinked && <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold text-blue-600">ADMIN</span>}
             {trainee ? (
               <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold text-blue-600">
-                Harjoittelija · ei allekirjoitusta
+                Harjoittelija · palkka {trainee.responsibleLeaderName.split(/\s+/)[0]} kautta
               </span>
             ) : (
               <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${onboarded ? "bg-green-500/10 text-green-600" : "bg-amber-500/10 text-amber-600"}`}>

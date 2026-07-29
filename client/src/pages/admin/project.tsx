@@ -591,6 +591,25 @@ export default function AdminProjectPage() {
    *  ne eteenpäin). Ilman tätä johtajan kortin erittely (oma työ + harjoittelija +
    *  tuotto-osuus + keltaiset) ei summautuisi kortin loppusummaan. */
   const traineeP2CentsByLeader: Record<string, number> = {};
+  /**
+   * Harjoittelijalle JO MAKSETUT eurot, vastuujohtajan piikkiin.
+   *
+   * Miksi: harjoittelijan ikkunat kertyvät johtajan ansioihin (hän kerää rahan ja
+   * tilittää sen eteenpäin). Kun hän on maksanut harjoittelijalle, se raha ei ole
+   * enää hänen — muuten kortti näyttäisi pysyvästi liikaa. Tavallisen tekijän
+   * palkka vähennetään jo katteesta (`workerLaborCents`), mutta harjoittelijan
+   * palkka ei kulje sitä kautta, joten se vähennetään tässä.
+   *
+   * Lasketaan kirjatuista, "maksettu"-tilaisista payouteista: kun johtaja kirjaa
+   * maksun Tiimi-sivulla, kortti korjaantuu itsestään.
+   */
+  const traineePaidCentsByLeader: Record<string, number> = {};
+  for (const mm of crew) {
+    const lead = leaderOf(mm.id);
+    if (!lead) continue;
+    const paid = (mm.payouts || []).filter((pay) => pay.status === "maksettu").reduce((sum, pay) => sum + pay.amountCents, 0);
+    if (paid > 0) traineePaidCentsByLeader[lead] = (traineePaidCentsByLeader[lead] || 0) + paid;
+  }
   // Hours are shown per person (no folding) so a trainee's specific hours stay
   // separate from their leader's.
   const managerHours: Record<string, number> = {};
@@ -650,7 +669,9 @@ export default function AdminProjectPage() {
       return Math.round((st.washedP1 + traineeWashed) * internalKateCents)
         + (traineeP2CentsByLeader[st.worker] || 0)
         + founderProfitEachCents
-        + p2Cents;
+        + p2Cents
+        // Harjoittelijalle jo tilitetty raha ei ole enää johtajan.
+        - (traineePaidCentsByLeader[st.worker] || 0);
     }
     return Math.round(st.washedP1 * rateOf(st.worker)) + p2Cents;
   };
@@ -723,6 +744,7 @@ export default function AdminProjectPage() {
         shareCents: founderProfitEachCents,
         p2Cents,
         p2Washed: s.washedP2,
+        traineePaidCents: traineePaidCentsByLeader[s.worker] || 0,
         totalCents: s.revenueCents, // respects manual override
         manual,
         hours: s.hours,

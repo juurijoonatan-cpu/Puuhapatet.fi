@@ -16,7 +16,7 @@ import {
   dealInternalRateCents,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense,
 } from "@shared/project";
-import { computeP2Billing, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule } from "@shared/p2";
+import { computeP2Billing, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule } from "@shared/p2";
 import { computeGuided, type GuidedWork } from "@shared/guided";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
 import { FOUNDER_IDS } from "@shared/team";
@@ -161,7 +161,18 @@ export default function AdminProjectPage() {
     const vp = document.querySelector('meta[name="viewport"]');
     const prev = vp?.getAttribute("content") ?? null;
     vp?.setAttribute("content", "width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no");
-    return () => { if (vp && prev != null) vp.setAttribute("content", prev); };
+    // Lukitse dokumentin vieritys niin kauan kuin musta kuori on auki. Syy on
+    // osumatestissä, ei ulkoasussa: iOS piirtää position:fixed -elementit
+    // visuaalisen viewportin mukaan mutta osumatestaa layout-viewportin mukaan,
+    // joten heti kun sivu on vierittynyt (vaikka vain osoitepalkin piiloutumisen
+    // verran), nappi osuu vierityksen verran väärään paikkaan. Vieritys tapahtuu
+    // .fr8-rootin sisällä, joten mitään ei menetetä. Ks. index.css `.fr8-lock`.
+    window.scrollTo(0, 0);
+    document.documentElement.classList.add("fr8-lock");
+    return () => {
+      if (vp && prev != null) vp.setAttribute("content", prev);
+      document.documentElement.classList.remove("fr8-lock");
+    };
   }, []);
 
   // ── Load (and seed / heal if necessary) ─────────────────────────────────────
@@ -570,7 +581,6 @@ export default function AdminProjectPage() {
     const t = traineeForUserId(mm?.linkedUserId) || traineeForUserId(id) || traineeForName(mm?.name);
     return t ? t.responsibleLeaderId : null;
   };
-  const isTrainee = (id: string): boolean => !!leaderOf(id);
   const baseStatsRaw = computeWorkerStats(project);
   // Trainees (e.g. Milja) are NOT folded into their leader's DISPLAYED windows/hours
   // anymore. Each person — trainees included — keeps their own window and hour counts
@@ -582,34 +592,22 @@ export default function AdminProjectPage() {
   // A trainee's washed RED windows, credited to their responsible leader FOR PAY
   // ONLY. Keltaiset lasketaan erikseen palkkiotaulukolla (`p2EarnedFor`), joten
   // niitä ei saa summata tähän punaisten taksalla laskettavaan määrään.
-  const traineeWashedByLeader: Record<string, number> = {};
-  for (const st of baseStatsRaw) {
-    const lead = leaderOf(st.worker);
-    if (lead) traineeWashedByLeader[lead] = (traineeWashedByLeader[lead] || 0) + st.washedP1;
-  }
-  /** Harjoittelijan KELTAISET palkkiot, hyvitetään samoin johtajalle (hän tilittää
-   *  ne eteenpäin). Ilman tätä johtajan kortin erittely (oma työ + harjoittelija +
-   *  tuotto-osuus + keltaiset) ei summautuisi kortin loppusummaan. */
-  const traineeP2CentsByLeader: Record<string, number> = {};
   /**
-   * Harjoittelijalle JO MAKSETUT eurot, vastuujohtajan piikkiin.
+   * Harjoittelija (esim. Milja) on RAHAN KANNALTA tavallinen tekijä:
+   * hänen ikkunansa maksavat hänen oman taksansa, ja loppu jää katteeksi joka
+   * jaetaan perustajien kesken — täsmälleen kuten Janin tai Oonan ikkunat.
    *
-   * Miksi: harjoittelijan ikkunat kertyvät johtajan ansioihin (hän kerää rahan ja
-   * tilittää sen eteenpäin). Kun hän on maksanut harjoittelijalle, se raha ei ole
-   * enää hänen — muuten kortti näyttäisi pysyvästi liikaa. Tavallisen tekijän
-   * palkka vähennetään jo katteesta (`workerLaborCents`), mutta harjoittelijan
-   * palkka ei kulje sitä kautta, joten se vähennetään tässä.
+   * Aiemmin hänen ikkunansa ja eurot hyvitettiin vastuujohtajalle (Matias), joten
+   * Matiaksen "oma työ" ja loppusumma sisälsivät Miljan työn. Se oli väärä kuva:
+   * Matias ei tehnyt niitä ikkunoita eikä pidä sitä rahaa. Nyt hänen lukunsa ovat
+   * vain hänen omiaan, ja Milja näkyy erikseen (koottuna kortin alle), koska
+   * vastuu tilityksestä on silti Matiaksella.
    *
-   * Lasketaan kirjatuista, "maksettu"-tilaisista payouteista: kun johtaja kirjaa
-   * maksun Tiimi-sivulla, kortti korjaantuu itsestään.
+   * Ero tavalliseen tekijään on vain juridinen: harjoittelija ei laskuta meitä
+   * eikä ole tekijöiden erämaksulistalla (`isTraineeMember`), vaan vastuujohtaja
+   * tilittää hänelle ja kirjaa maksun Tiimi-sivulla.
    */
-  const traineePaidCentsByLeader: Record<string, number> = {};
-  for (const mm of crew) {
-    const lead = leaderOf(mm.id);
-    if (!lead) continue;
-    const paid = (mm.payouts || []).filter((pay) => pay.status === "maksettu").reduce((sum, pay) => sum + pay.amountCents, 0);
-    if (paid > 0) traineePaidCentsByLeader[lead] = (traineePaidCentsByLeader[lead] || 0) + paid;
-  }
+  const traineeByLeader: Record<string, { id: string; name: string; washed: number; cents: number; paidCents: number }[]> = {};
   // Hours are shown per person (no folding) so a trainee's specific hours stay
   // separate from their leader's.
   const managerHours: Record<string, number> = {};
@@ -642,6 +640,23 @@ export default function AdminProjectPage() {
   }
   /** Yhden tekijän keltaisista kertynyt palkkio (0 kun vaihe 2 ei ole päällä). */
   const p2EarnedFor = (workerId: string): number => Math.round(p2CentsByWorker[workerId] || 0);
+  // Odottavat keltaiset (pesty, hinta ehdotettu mutta ei hyväksytty) — teoreettista
+  // rahaa, ei koskaan mukana vahvistetuissa ansioissa.
+  const p2PendingByWorker: Record<string, number> = {};
+  if (p2Enabled) {
+    const offers = project.p2?.offers ?? {};
+    const by2 = project.washedBy2 || {};
+    for (const pt of allPoints(project)) {
+      if (pt.p !== 2 || pt.status !== "pesty") continue;
+      const pending = p2PendingPriceCents(offers[pt.key]);
+      if (pending == null) continue;
+      const payout = p2WorkerPayoutCents(pending, p2SharePct, p2Schedule);
+      const second = by2[pt.key];
+      if (pt.washedBy) p2PendingByWorker[pt.washedBy] = (p2PendingByWorker[pt.washedBy] || 0) + (second ? payout / 2 : payout);
+      if (second) p2PendingByWorker[second] = (p2PendingByWorker[second] || 0) + payout / 2;
+    }
+  }
+  const p2PendingCentsFor = (workerId: string): number => Math.round(p2PendingByWorker[workerId] || 0);
   // Profit pool = Σ over real workers (NOT founders, NOT trainees) of
   // (sisäinen kate − that worker's rate) per worker-washed RED window. Keltaiset
   // eivät kuulu tähän: niissä kate lasketaan omalla logiikallaan (computeP2Billing
@@ -650,10 +665,24 @@ export default function AdminProjectPage() {
   let profitPoolCents = 0;
   for (const st of baseStatsRaw) {
     const mm = crew.find((c) => c.id === st.worker);
-    if (!isFounder(st.worker, mm?.role) && !isTrainee(st.worker)) {
+    // Harjoittelija on mukana: hänen ikkunansa tuottavat katetta samoin kuin
+    // muidenkin tekijöiden (hänen taksansa erotus sisäiseen katteeseen).
+    if (!isFounder(st.worker, mm?.role)) {
       profitPoolCents += st.washedP1 * Math.max(0, internalKateCents - rateOf(st.worker));
     }
   }
+  /**
+   * KELTAISTEN KATE perustajille. Tämä puuttui kokonaan perustajien ansioista,
+   * vaikka dashin "KERTYNYT"-kortti näytti sen — siksi perustajan kortin summa
+   * oli pienempi kuin ylälaidan luku. `computeP2Billing.marginCents` = pestyjen
+   * SOVITTUJEN keltaisten asiakashinta − tekijöiden palkkiot, eli juuri se raha
+   * joka jää perustajille. Jaetaan tasan, pariton sentti ensimmäiselle.
+   */
+  const p2Bill = computeP2Billing(project);
+  const p2MarginEachCents = Math.floor(p2Bill.marginCents / founderCount);
+  /** Sama odottaville (asiakas ei ole vielä hyväksynyt hintaa) — teoreettinen. */
+  const p2PendingMarginCents = Math.max(0, p2Bill.pendingEarnedCents - p2Bill.pendingWorkerCostCents);
+  const p2PendingMarginEachCents = Math.floor(p2PendingMarginCents / founderCount);
   const founderProfitEachCents = Math.round(profitPoolCents / founderCount);
   const earningsFor = (st: { worker: string; washed: number; washedP1: number }): number => {
     const mm = crew.find((c) => c.id === st.worker);
@@ -665,13 +694,11 @@ export default function AdminProjectPage() {
     // (myös keltaiset) laskettiin punaisten taksalla → dash ja Tiimi eri mieltä.
     const p2Cents = p2EarnedFor(st.worker);
     if (isFounder(st.worker, mm?.role)) {
-      const traineeWashed = traineeWashedByLeader[st.worker] || 0;
-      return Math.round((st.washedP1 + traineeWashed) * internalKateCents)
-        + (traineeP2CentsByLeader[st.worker] || 0)
+      // Vain OMA punainen työ — harjoittelijan ikkunat eivät ole johtajan työtä.
+      return Math.round(st.washedP1 * internalKateCents)
         + founderProfitEachCents
         + p2Cents
-        // Harjoittelijalle jo tilitetty raha ei ole enää johtajan.
-        - (traineePaidCentsByLeader[st.worker] || 0);
+        + p2MarginEachCents;
     }
     return Math.round(st.washedP1 * rateOf(st.worker)) + p2Cents;
   };
@@ -681,26 +708,22 @@ export default function AdminProjectPage() {
     return workerName(id);
   };
 
-  // Trainee indicator: each trainee (e.g. Milja) now gets their OWN windows/hours card
-  // on the dashboard, with no euro — their pay is settled through the leader (Matias).
-  // This maps a trainee id → the leader's display name for that "palkka <leader>" note.
-  const traineeInfo: Record<string, { leaderName: string }> = {};
-  // Leader id → the trainee slices folded into their COMBINED pay, so the leader's card
-  // can break the total down ("sis. Milja 6 ikk · 225 €" — how much of the combined sum
-  // is the trainee's work). Each trainee window is worth the full deal rate.
-  const traineeShareByLeader: Record<string, { name: string; washed: number; cents: number }[]> = {};
+  // Harjoittelijat koottuna vastuujohtajan alle: ikkunamäärä + hänen oma summansa
+  // + jo maksettu. EI osa johtajan lukuja — pelkkä vastuunäkymä, joka on kortilla
+  // piilossa kunnes sen avaa.
   for (const st of baseStatsRaw) {
     const lead = leaderOf(st.worker);
-    if (lead) {
-      traineeInfo[st.worker] = { leaderName: resolveName(lead) };
-      const traineeP2 = p2EarnedFor(st.worker);
-      traineeP2CentsByLeader[lead] = (traineeP2CentsByLeader[lead] || 0) + traineeP2;
-      if (st.washed > 0) (traineeShareByLeader[lead] ||= []).push({
-        name: resolveName(st.worker),
-        washed: st.washed,
-        cents: Math.round(st.washedP1 * internalKateCents) + traineeP2,
-      });
-    }
+    if (!lead) continue;
+    const mm = crew.find((c) => c.id === st.worker);
+    if (mm?.active === false) continue;
+    const paidCents = (mm?.payouts || []).filter((pay) => pay.status === "maksettu").reduce((sum, pay) => sum + pay.amountCents, 0);
+    (traineeByLeader[lead] ||= []).push({
+      id: st.worker,
+      name: resolveName(st.worker),
+      washed: st.washedP1 + st.washedP2,
+      cents: Math.round(st.washedP1 * rateOf(st.worker)) + p2EarnedFor(st.worker),
+      paidCents,
+    });
   }
 
   // Founders appear even with 0 own windows — they still earn the profit share.
@@ -713,8 +736,7 @@ export default function AdminProjectPage() {
   // aktivoidaan Tiimi-sivun kytkimestä.
   const inactiveIds = new Set(crew.filter((c) => c.active === false).map((c) => c.id));
   const workerStats = baseStats.filter((s) => !inactiveIds.has(s.worker)).map((s) => {
-    // Trainees show no euro of their own — their pay is folded into their leader.
-    const cents = isTrainee(s.worker) ? 0 : earningsFor(s);
+    const cents = earningsFor(s);
     return {
       ...s,
       revenueCents: cents,
@@ -724,18 +746,17 @@ export default function AdminProjectPage() {
   });
   // ── Perustajien (bossien) ansioerittely dashboardille ───────────────────────
   // Perustajan ansio = oma PUNAINEN työ × sisäinen kate + harjoittelijan osuus
-  // + tuotto-osuus työntekijöiden punaisista + oma keltainen palkkio.
+  // + tuotto-osuus työntekijöiden punaisista + oma keltainen palkkio + osuus
+  // keltaisten katteesta. Harjoittelija ei ole mukana missään näistä.
   const founderEarnings = workerStats
     .filter((s) => isFounder(s.worker, crew.find((c) => c.id === s.worker)?.role))
     .map((s) => {
       const mm = crew.find((c) => c.id === s.worker);
-      // Vastuullaan tehty PUNAINEN työ = omat + harjoittelijan ikkunat. Harjoittelija
-      // ei ole enää oma rivi kortilla (hänelle on maksettu ja hän on deaktivoitu),
-      // joten hänen työnsä lasketaan johtajan omaan työhön — näin kortin erittely
-      // (oma työ + tuotto-osuus + keltaiset) summautuu tarkalleen loppusummaan.
-      const ownWashed = s.washedP1 + (traineeWashedByLeader[s.worker] || 0);
+      // VAIN oma punainen työ. Harjoittelijan ikkunat eivät ole johtajan työtä
+      // eivätkä hänen rahaansa — ne näkyvät kortilla erikseen (`trainees`).
+      const ownWashed = s.washedP1;
       const manual = mm?.manualEarningsCents != null;
-      const p2Cents = p2EarnedFor(s.worker) + (traineeP2CentsByLeader[s.worker] || 0);
+      const p2Cents = p2EarnedFor(s.worker);
       return {
         id: s.worker,
         name: resolveName(s.worker),
@@ -744,7 +765,12 @@ export default function AdminProjectPage() {
         shareCents: founderProfitEachCents,
         p2Cents,
         p2Washed: s.washedP2,
-        traineePaidCents: traineePaidCentsByLeader[s.worker] || 0,
+        /** Osuus SOVITTUJEN keltaisten katteesta. */
+        p2MarginCents: p2MarginEachCents,
+        /** Teoreettinen lisä: oma palkkio + kate ikkunoista jotka on JO PESTY mutta
+         *  joiden hintaa asiakas ei ole vielä hyväksynyt. Ei vahvistettua rahaa. */
+        theoreticalCents: p2PendingCentsFor(s.worker) + p2PendingMarginEachCents,
+        trainees: traineeByLeader[s.worker] ?? [],
         totalCents: s.revenueCents, // respects manual override
         manual,
         hours: s.hours,
@@ -757,7 +783,8 @@ export default function AdminProjectPage() {
   // lukuun, kolmen tiilen rivi ei enää täsmäisi (sopimus ≠ työntekijät + perustajat).
   const realWorkerStats = workerStats.filter((s) => {
     const mm = crew.find((c) => c.id === s.worker);
-    return !isFounder(s.worker, mm?.role) && !isTrainee(s.worker);
+    // Harjoittelija mukaan: hänen palkkansa on työvoimakulua kuten muidenkin.
+    return !isFounder(s.worker, mm?.role);
   });
   const workerLaborP2Cents = realWorkerStats.reduce((sum, s) => sum + p2EarnedFor(s.worker), 0);
   const workerLaborCents = realWorkerStats.reduce((sum, s) => sum + s.revenueCents, 0) - workerLaborP2Cents;

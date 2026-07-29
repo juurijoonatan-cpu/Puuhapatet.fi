@@ -1015,6 +1015,13 @@ function NavIcon({ name, color }: { name: Tab; color: string }) {
  */
 
 function Dashboard({ token, view, setView, reload, onLogout }: { token: string; view: WorkerView; setView: (v: WorkerView) => void; reload: () => void; onLogout: () => void }) {
+  // Sama vierityslukko kuin perustajan näkymässä: fixed-kuori + vierittynyt sivu
+  // siirtää iOS:llä nappien osumaruudut. Ks. index.css `.fr8-lock`.
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    document.documentElement.classList.add("fr8-lock");
+    return () => document.documentElement.classList.remove("fr8-lock");
+  }, []);
   const [tab, setTab] = useState<Tab>("home");
   // Maksut + Info aren't bottom-nav tabs anymore — they open as sub-screens from
   // Koti, keeping the nav to three simple destinations.
@@ -1092,7 +1099,7 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
   const noop = useCallback(() => {}, []);
 
   return (
-    <div className="fr8-root" style={{ position: "fixed", inset: 0, background: "#060607", color: "#fff", display: "flex", flexDirection: "column", fontFamily: FONT, overflow: "hidden", overscrollBehavior: "none", WebkitTapHighlightColor: "transparent", WebkitUserSelect: "none", userSelect: "none" }}>
+    <div className="fr8-root" style={{ position: "fixed", top: 0, left: 0, right: 0, background: "#060607", color: "#fff", display: "flex", flexDirection: "column", fontFamily: FONT, overflow: "hidden", overscrollBehavior: "none", WebkitTapHighlightColor: "transparent", WebkitUserSelect: "none", userSelect: "none" }}>
       {/* Header */}
       <div style={{ flexShrink: 0, padding: "calc(12px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 12px max(16px, env(safe-area-inset-left))", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>

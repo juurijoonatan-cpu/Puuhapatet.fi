@@ -21,7 +21,17 @@ interface Props {
   onSetEarnings?: (id: string, cents: number | null) => void;
   /** Per-founder (boss) earnings breakdown — own work + profit share from the
    *  workers' windows. Only set for a signed deal; drives the "bossien ansiot" card. */
-  founderEarnings?: { id: string; name: string; ownWashed: number; ownCents: number; shareCents: number; p2Cents?: number; p2Washed?: number; traineePaidCents?: number; totalCents: number; manual: boolean; hours: number }[];
+  founderEarnings?: {
+    id: string; name: string; ownWashed: number; ownCents: number; shareCents: number;
+    p2Cents?: number; p2Washed?: number;
+    /** Osuus SOVITTUJEN keltaisten katteesta (computeP2Billing.marginCents / n). */
+    p2MarginCents?: number;
+    /** Teoreettinen lisä: jo pesty, mutta asiakas ei ole hyväksynyt hintaa. */
+    theoreticalCents?: number;
+    /** Vastuulla olevat harjoittelijat — EI osa yllä olevia lukuja. */
+    trainees?: { id: string; name: string; washed: number; cents: number; paidCents: number }[];
+    totalCents: number; manual: boolean; hours: number;
+  }[];
   /** Total paid to the real workers for RED windows (labour cost) — the other side
    *  of the red contract margin. Keltaisten tekijäkulu on erikseen alla. */
   workerLaborCents?: number;
@@ -94,6 +104,8 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   const [editId, setEditId] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
   const [openSessions, setOpenSessions] = useState<string | null>(null);
+  // Kumman perustajan harjoittelijalista on auki (oletuksena piilossa).
+  const [openTrainees, setOpenTrainees] = useState<string | null>(null);
   // Workers strip: false = show everyone assigned (incl. 0-activity like Oona),
   // true = only people who've washed a window or logged hours.
   const [showActiveOnly, setShowActiveOnly] = useState(false);
@@ -222,8 +234,10 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   // Kolmen tiilen rivi (Sopimushinta / Työntekijöille / Perustajille) on PUNAISTEN
   // jako, joten perustajien luvusta erotetaan heidän keltainen palkkionsa. Keltaiset
   // näytetään omana rivinä tiilien alla.
-  const foundersP2Cents = (founderEarnings ?? []).reduce((s, f) => s + (f.p2Cents ?? 0), 0);
+  const foundersP2Cents = (founderEarnings ?? []).reduce((s, f) => s + (f.p2Cents ?? 0) + (f.p2MarginCents ?? 0), 0);
   const foundersRedCents = foundersTotalCents - foundersP2Cents;
+  /** Teoreettinen kokonaisluku: vahvistettu + jo tehty mutta hyväksymätön. */
+  const foundersTheoreticalCents = foundersTotalCents + (founderEarnings ?? []).reduce((s, f) => s + (f.theoreticalCents ?? 0), 0);
   const laborCents = workerLaborCents ?? 0;
 
   // Crew on the clock right now — drives the "KÄYNNISSÄ NYT" strip pinned under the
@@ -236,7 +250,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
 
 
   return (
-    <div style={{ height: "100%", overflowY: "auto", overflowX: "hidden", overscrollBehavior: "contain", boxSizing: "border-box", padding: m ? "16px 12px calc(96px + env(safe-area-inset-bottom))" : "26px 30px 40px" }}>
+    <div data-fr8-pane style={{ height: "100%", overflowY: "auto", overflowX: "hidden", overscrollBehavior: "contain", boxSizing: "border-box", padding: m ? "16px 12px calc(96px + env(safe-area-inset-bottom))" : "26px 30px 40px" }}>
       <div style={{ maxWidth: "1400px", margin: "0 auto", width: "100%", boxSizing: "border-box" }}>
 
         {/* Header */}
@@ -413,7 +427,14 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             contract rate + the profit share earned on every worker's window. Gives
             the founders a clear, fair "how much have we made" view. Founders only. */}
         {deal && founderEarnings && founderEarnings.length > 0 && (
-            <Section id="founders" label="PERUSTAJIEN ANSIOT · VAIN PERUSTAJILLE" summary={euro(foundersTotalCents / 100)} animClass="anim-fadeUp-1">
+            <Section
+              id="founders"
+              label="PERUSTAJIEN ANSIOT · VAIN PERUSTAJILLE"
+              summary={foundersTheoreticalCents > foundersTotalCents
+                ? `${euro(foundersTotalCents / 100)} · teor. ${euro(foundersTheoreticalCents / 100)}`
+                : euro(foundersTotalCents / 100)}
+              animClass="anim-fadeUp-1"
+            >
 
               {/* Gig money split: contract value → workers' labour vs founders' share. */}
               {/* Kolme lukua mahtuu työpöydällä rinnakkain; puhelimessa kaksi + yksi,
@@ -461,16 +482,69 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                             <b style={{ fontWeight: 600 }}>{euro(f.p2Cents / 100)}</b>
                           </div>
                         )}
-                        {/* Harjoittelijalle jo tilitetty raha vähennetään: johtaja keräsi
-                            sen, mutta se on jo siirretty eteenpäin. */}
-                        {!!f.traineePaidCents && (
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "rgba(255,255,255,0.5)" }}>
-                            <span>Maksettu harjoittelijalle</span>
-                            <b style={{ fontWeight: 600 }}>− {euro(f.traineePaidCents / 100)}</b>
+                        {/* Osuus keltaisten katteesta. Tämä puuttui aiemmin kortilta
+                            kokonaan, joten kortti näytti vähemmän kuin ylälaidan
+                            KERTYNYT-luku. */}
+                        {!!f.p2MarginCents && (
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "rgb(255,205,40)" }}>
+                            <span>Osuus keltaisten katteesta</span>
+                            <b style={{ fontWeight: 600 }}>{euro(f.p2MarginCents / 100)}</b>
                           </div>
                         )}
                       </div>
                     )}
+                    {/* TEOREETTINEN TUOTTO — vahvistettu + jo tehty työ jonka hintaa
+                        asiakas ei ole vielä hyväksynyt. Erillään, koska tämä ei ole
+                        vielä varmaa rahaa; mutta työ on tehty, joten se kuuluu
+                        näkyviin eikä pelkkä vahvistettu luku kerro koko kuvaa. */}
+                    {!!f.theoreticalCents && (
+                      <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px dashed rgba(150,175,255,0.35)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: "12px" }}>
+                          <span style={{ color: "rgba(190,205,255,0.9)" }}>Teoreettinen tuotto</span>
+                          <b style={{ color: "rgb(150,175,255)", fontWeight: 700, fontSize: "14px" }}>{euro((f.totalCents + f.theoreticalCents) / 100)}</b>
+                        </div>
+                        <div style={{ fontSize: "10.5px", color: "rgba(255,255,255,0.45)", marginTop: 2 }}>
+                          sis. {euro(f.theoreticalCents / 100)} jo pestyistä keltaisista, joita asiakas ei ole vielä hyväksynyt
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Vastuulla olevat harjoittelijat — koottuna piiloon, koska nämä
+                        EIVÄT ole johtajan lukuja. Avaamalla näkee kenelle ja paljonko
+                        hän tilittää. */}
+                    {(f.trainees?.length ?? 0) > 0 && (() => {
+                      const open = openTrainees === f.id;
+                      const t = f.trainees!;
+                      const owed = t.reduce((sum, x) => sum + Math.max(0, x.cents - x.paidCents), 0);
+                      return (
+                        <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+                          <button
+                            onClick={() => setOpenTrainees(open ? null : f.id)}
+                            style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, width: "100%", padding: "6px 0", background: "transparent", border: "none", color: "rgba(156,193,255,0.95)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}
+                          >
+                            <span>Vastuullasi {t.length} harjoittelija{t.length === 1 ? "" : "a"}{owed > 0 ? ` · tilitä ${euro(owed / 100)}` : " · tilitetty ✓"}</span>
+                            <span aria-hidden>{open ? "▲" : "▾"}</span>
+                          </button>
+                          {open && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 4 }}>
+                              {t.map((x) => (
+                                <div key={x.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: "11.5px", color: "rgba(255,255,255,0.6)" }}>
+                                  <span>{x.name} · {x.washed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikkunaa</span>
+                                  <span style={{ textAlign: "right" }}>
+                                    <b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(x.cents / 100)}</b>
+                                    {x.paidCents > 0 && <span style={{ color: "#9ff0bd", marginLeft: 6 }}>maksettu {euro(x.paidCents / 100)}</span>}
+                                  </span>
+                                </div>
+                              ))}
+                              <span style={{ fontSize: "10.5px", color: "rgba(255,255,255,0.4)", lineHeight: 1.45 }}>
+                                Ei osa ansioitasi — tämä on työ jonka tilityksestä vastaat. Kirjaa maksu Tiimi-sivulla.
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
                     {/* Johtaja-välinen erälasku (kohta 3C.1) — vain toisen johtajan kortilla. */}
                     {(() => {
                       const slot = founderInvoiceSlot?.(f.id);

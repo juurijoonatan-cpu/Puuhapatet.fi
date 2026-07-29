@@ -153,18 +153,25 @@ liikkuvat eri aikaan, ja kaikki laskenta erottelee ne. Yksi totuuden lähde:
    `eraNumbers`-listassa, ei DB-migraatiota). Sen summa tulee palkkiotaulukosta,
    joten `TekijaPesu.ansaittuOverrideCents` ohittaa `ikkunat × 20 €` -laskennan.
    Punaisten ja keltaisten maksut eivät koskaan kuittaa toisiaan.
-7. **Harjoittelija ja deaktivoitu tekijä eivät ole maksulistalla.** Harjoittelijan
-   (Milja) palkan tilittää vastuujohtaja, ja hänen työnsä lasketaan johtajan omaan
-   työhön kortilla — ei erillistä "sis. Milja" -riviä. Deaktivoitu tekijä katoaa
-   dashista ja maksuista, ja palaa Tiimi-sivun Aktiivinen-kytkimestä.
-8. **Harjoittelijalle jo maksettu raha vähennetään johtajan ansioista.**
-   Harjoittelijan ikkunat kertyvät johtajan ansioihin (hän kerää rahan ja tilittää
-   sen eteenpäin), joten kun maksu on tehty, se ei ole enää hänen. Tavallisen
-   tekijän palkka vähenee jo katteesta (`workerLaborCents`), mutta harjoittelijan
-   palkka ei kulje sitä kautta — siksi `traineePaidCentsByLeader` (kirjatut,
-   "maksettu"-tilaiset payoutit) vähennetään johtajan totaalista ja näkyy kortilla
-   rivinä "Maksettu harjoittelijalle − X €". **Kirjaa siis jo tehty tilitys
-   Tiimi-sivun Maksut-osiosta** — muuten kortti näyttää pysyvästi liikaa.
+7. **Harjoittelija on RAHAN kannalta tavallinen tekijä.** Hänen ikkunansa maksavat
+   hänen oman taksansa, ja erotus sisäiseen katteeseen menee tuottopottiin joka
+   jaetaan perustajien kesken — täsmälleen kuten Janin ikkunat. **Vastuujohtajan
+   luvut eivät sisällä harjoittelijan ikkunoita eikä euroja**: hän ei tehnyt sitä
+   työtä eikä pidä sitä rahaa. Harjoittelija näkyy johtajan kortilla erikseen,
+   koottuna piiloon ("Vastuullasi 1 harjoittelija · tilitä X €").
+   Ero tavalliseen tekijään on vain juridinen: harjoittelija ei laskuta meitä eikä
+   ole erämaksulistalla (`isTraineeMember`) — vastuujohtaja tilittää ja kirjaa
+   maksun Tiimi-sivulla.
+8. **Deaktivoitu tekijä** katoaa dashista ja maksuista, ja palaa Tiimi-sivun
+   Aktiivinen-kytkimestä.
+9. **Keltaisten kate kuuluu perustajien ansioihin.** `computeP2Billing.marginCents`
+   (pestyjen sovittujen keltaisten asiakashinta − tekijöiden palkkiot) jaetaan
+   perustajien kesken (`p2MarginCents`). Ilman tätä perustajan kortti näytti
+   vähemmän kuin dashin ylälaidan KERTYNYT-luku, joka on aina sisältänyt sen.
+10. **Teoreettinen tuotto** = vahvistettu + jo PESTY työ jonka hintaa asiakas ei ole
+   vielä hyväksynyt (oma palkkio + osuus katteesta). Omalla rivillään, koska se ei
+   ole varmaa rahaa — mutta työ on tehty, joten pelkkä vahvistettu luku ei kerro
+   koko kuvaa.
 
 ### Missä mikä toiminto asuu (ei duplikaatteja)
 
@@ -261,14 +268,27 @@ kun asiakas on hyväksynyt kaikki keltaiset.
   Väri kertoo tilan: keltainen = sovittu, sininen = odottaa hyväksyntää.
 - **Huomiot (`observations`) näkyvät asiakkaalle myös 2. vaiheen aikana** — sekä
   💬-merkkinä kartalla että hintakuplan sisällä, jos joku on kirjoittanut jotain.
-- **Osumakoko / napit.** `.fr8-root` on `position: fixed` ja sen korkeus tulee nyt
-  `100dvh`:stä eikä layout-viewportin `inset: 0`:sta — iOS laskee jälkimmäisen
-  selainpalkkien verran liian korkeaksi, jolloin piirretty nappi ja sen osumaruutu
-  erkanivat (~1 cm). Lisäksi: `main` venyy flexillä (ei `calc(100% - 62px)`),
-  `-webkit-overflow-scrolling: touch` poistettu (vanha iOS-hack, tunnettu
-  osumatestin siirtäjä), fr8-napeille `min-height: 40px`, ja `fr8-fadeUp` on
-  suojattu `prefers-reduced-motion`illa (sen `both`-täyttö jätti sisällön
-  `translateY(12px)`:ään jos animaatio ei käynnisty).
+### "Nappia pitää painaa 1 cm yläpuolelta" — kolme mekanismia
+
+Kaikki kolme korjattu; jos oire palaa, tarkista nämä ensin.
+
+1. **Sisääntuloanimaatio jää päälle.** `fr8-fadeUp` on `translateY(12px) → 0` +
+   `animation-fill-mode: both`. Ennen animaation alkua (0,05–0,4 s viive) — ja
+   pysyvästi jos animaatio ei käynnisty — elementti on 12 px alempana kuin sen
+   osumaruutu. Sisäkkäiset animoidut tasot kertyvät ~36 px:ään ≈ 1 cm.
+   → Animaatio pois puhelimessa ja reduced-motionilla (`index.css`).
+2. **Fixed-kuori + vierittynyt dokumentti.** iOS piirtää `position: fixed`
+   visuaalisen viewportin mukaan mutta osumatestaa layout-viewportin mukaan.
+   → `html.fr8-lock` lukitsee dokumentin vierityksen niin kauan kuin musta kuori
+   on auki (`project.tsx`, `worker.tsx`); vieritys tapahtuu kuoren sisällä.
+3. **Kuoren korkeus layout-viewportista.** `inset: 0` antaa selainpalkkien verran
+   liian korkean kuoren. → `height: 100dvh` (+ `-webkit-fill-available`-fallback),
+   `main` venyy flexillä eikä `calc(100% - 62px)`:llä,
+   `-webkit-overflow-scrolling: touch` poistettu (vanha iOS-hack).
+
+Lisäksi fr8-napeille `min-height: 40px` — **mutta vain `[data-fr8-pane]`n sisällä**.
+Ilman tuota rajausta sääntö osui myös kartan 9–13 px pyöreisiin pisteisiin ja
+venytti ne kapseleiksi; kartan pisteillä on `data-fr8-dot`, joka jättää ne ulos.
 
 ## Verifiointi
 

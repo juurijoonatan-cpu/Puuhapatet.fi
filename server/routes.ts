@@ -2117,6 +2117,39 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Johtaja luo tekijä-maksuehdotukset valitulle eräl(l)e — yksi rivi per
   // tekijä. Kohta 3A: pestyt_ikkunat*20€ esitäytetty, sovittu_muutos ja ennakko
   // erillisinä kenttinä. Reititys (kohta 1): erät 1-3 → Joonatan, erä 4 → Matias.
+  /**
+   * Johtajan MITÄTÖINTI: merkitsee tekijälaskun hylätyksi.
+   *
+   * Miksi tämä tarvitaan: tekijä voi hylätä vain LUONNOKSEN omalta linkiltään.
+   * Kun johtaja huomaa väärän summan (tai väärän maksajan) vasta sen jälkeen kun
+   * lasku on jo lähetetty, mitään reittiä takaisin ei ollut — velka jäi kuitatuksi
+   * väärällä summalla eikä oikeaa laskua voinut tehdä. Hylätty lasku ei kuittaa
+   * mitään (`isEraInvoiceSettled`), joten velka palaa automaattisesti avoimeksi ja
+   * uuden, oikean laskun voi tehdä heti.
+   *
+   * Kirjanpidollisesti tämä on mitätöinti, ei muokkaus: rivi säilyy hylättynä eikä
+   * lähetetyn laskun sisältöä kirjoiteta uusiksi.
+   */
+  app.post("/api/jobs/:id/era-invoice/:invoiceId/void", async (req, res) => {
+    try {
+      const jobId = Number(req.params.id);
+      const invoiceId = Number(req.params.invoiceId);
+      if (!Number.isFinite(invoiceId)) return res.status(404).json({ error: "Laskua ei löytynyt" });
+      const [invoice] = await db.select().from(eraInvoices).where(eq(eraInvoices.id, invoiceId));
+      if (!invoice || invoice.jobId !== jobId) return res.status(404).json({ error: "Laskua ei löytynyt" });
+      if (invoice.tila === ("hylätty" satisfies EraInvoiceTila)) {
+        return res.json({ ok: true, invoice: toClientEraInvoice(invoice), alreadyVoided: true });
+      }
+      const [row] = await db.update(eraInvoices)
+        .set({ tila: "hylätty" satisfies EraInvoiceTila, respondedAt: new Date() })
+        .where(eq(eraInvoices.id, invoiceId))
+        .returning();
+      res.json({ ok: true, invoice: toClientEraInvoice(row) });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post("/api/jobs/:id/era-invoice/worker-batch", async (req, res) => {
     try {
       const jobId = Number(req.params.id);
@@ -2125,7 +2158,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const eraNumbers = normalizeEraNumbers(req.body?.eraNumbers);
       if (!eraNumbers) return res.status(400).json({ error: "Virheellinen erävalinta (1-3 tai 4)" });
-      const recipientId = eraRecipientFounderId(eraNumbers);
+      // Ostaja = johtaja jonka Y-tunnukselle tekijä laskuttaa, eli se joka
+      // OIKEASTI siirtää rahat. Oletus tulee erän mukaan (erät 1-3 Joonatan,
+      // erä 4 Matias), mutta se on vain oletus: käytännössä maksaja voi olla
+      // toinen, ja väärä nimi laskulla on kiusallinen korjata jälkikäteen.
+      // Siksi johtaja voi valita maksajan laskua luodessaan.
+      const requestedRecipient = String(req.body?.recipientId || "").toLowerCase();
+      const recipientId = FOUNDER_IDS.includes(requestedRecipient)
+        ? requestedRecipient
+        : eraRecipientFounderId(eraNumbers);
       const dueDate = normalizeDueDate(req.body?.dueDate);
 
       const rawWorkers = Array.isArray(req.body?.workers) ? req.body.workers : [];

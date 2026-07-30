@@ -233,6 +233,44 @@ function DownloadPdfButton({ jobId, invoiceId }: { jobId: number; invoiceId: num
   );
 }
 
+/**
+ * Mitätöi tekijälasku (väärä summa tai väärä maksaja).
+ *
+ * Tekijä voi hylätä vain LUONNOKSEN omalta linkiltään. Kun johtaja huomaa virheen
+ * vasta lähetyksen jälkeen, ilman tätä ei ollut mitään reittiä takaisin: velka jäi
+ * kuitatuksi väärällä summalla eikä oikeaa laskua voinut tehdä. Hylätty lasku ei
+ * kuittaa mitään, joten summa palaa avoimeksi heti.
+ */
+function VoidInvoiceButton({ jobId, invoiceId, name, onDone }: {
+  jobId: number; invoiceId: number; name: string; onDone: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const btn: React.CSSProperties = {
+    minHeight: 36, padding: "7px 12px", borderRadius: 9, cursor: "pointer",
+    fontFamily: FONT, fontSize: 11.5, fontWeight: 600,
+    border: "1px solid rgba(255,255,255,0.14)", background: "transparent", color: "rgba(255,255,255,0.5)",
+  };
+  if (!confirming) {
+    return <button onClick={() => setConfirming(true)} style={btn}>Mitätöi</button>;
+  }
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      <span style={{ fontFamily: FONT, fontSize: 11.5, color: "rgba(255,160,160,0.9)" }}>
+        Mitätöidäänkö {name}n lasku? Summa palaa siirrettäväksi.
+      </span>
+      <button
+        disabled={busy}
+        onClick={async () => { setBusy(true); await api.voidEraInvoice(jobId, invoiceId); setBusy(false); setConfirming(false); onDone(); }}
+        style={{ ...btn, background: "rgba(255,90,90,0.18)", borderColor: "rgba(255,90,90,0.45)", color: "#ffb3b3", fontWeight: 700 }}
+      >
+        {busy ? "Mitätöidään…" : "Kyllä, mitätöi"}
+      </button>
+      <button disabled={busy} onClick={() => setConfirming(false)} style={btn}>Peru</button>
+    </span>
+  );
+}
+
 export interface MaksutBilling {
   p1PayCount: number;
   p1InvoicedCents: number;
@@ -562,6 +600,11 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                         </span>
                       </div>
                     </div>
+                    {inv.tila !== "hylätty" && (
+                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                        <VoidInvoiceButton jobId={jobId} invoiceId={inv.id} name={input.name || inv.senderId} onDone={load} />
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -597,7 +640,10 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                       {fmtEurCents(inv.totalCents)}
                     </span>
                   </div>
-                  <DownloadPdfButton jobId={jobId} invoiceId={inv.id} />
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <DownloadPdfButton jobId={jobId} invoiceId={inv.id} />
+                    <VoidInvoiceButton jobId={jobId} invoiceId={inv.id} name={inv.rivit?.input?.name || inv.senderId} onDone={load} />
+                  </div>
                 </div>
               ))}
             </div>

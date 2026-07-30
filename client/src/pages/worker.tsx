@@ -1035,6 +1035,10 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
   // hetkellinen ilmoitus kun serveri estää lukitun kerroksen merkinnän (403).
   const [floorFocusNonce, setFloorFocusNonce] = useState(0);
   const [guidedNote, setGuidedNote] = useState("");
+  // Juhla jokaisesta pestystä ikkunasta. `n` on juokseva numero, jotta kahden
+  // peräkkäisen merkinnän animaatio käynnistyy varmasti uudelleen.
+  const [burst, setBurst] = useState<{ n: number; key: string } | null>(null);
+  const burstSeq = useRef(0);
   const guided = view.guided;
   // Toimintaa odottavat: perinteiset payoutit + FR8 erälaskuluonnokset (kohta 3B)
   // — molemmat aukeavat samasta "Maksut"-alanäkymästä.
@@ -1064,7 +1068,13 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
 
   const markWindow = useCallback(async (key: string, st: WindowStatus) => {
     const res = await api.crewMarkWindow(token, key, st);
-    if (res.ok && res.data?.view) { setView(res.data.view); setGuidedNote(""); }
+    if (res.ok && res.data?.view) {
+      setView(res.data.view);
+      setGuidedNote("");
+      // Pieni juhla jokaisesta pestystä ikkunasta. Näkymä päivittyy samalla
+      // (setView yllä), joten prosentti ja määrä nousevat serpentiinien alla.
+      if (st === "pesty") setBurst({ n: burstSeq.current++, key });
+    }
     else if (res.error) {
       // Pesuportti (lukittu kerros / keltainen ei vielä työn piirissä) → näytä
       // serverin selkokielinen syy hetken ajan sen sijaan että merkintä vain epäonnistuu.
@@ -1131,6 +1141,10 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
           </p>
         </div>
       </div>
+
+      {/* Juhla pestystä ikkunasta — serpentiinit + "+1 pesty" -merkki. Ei estä
+          käyttöä (pointerEvents: none) eikä peitä karttaa, katoaa itsestään. */}
+      {burst && <WindowDoneBurst key={burst.n} onDone={() => setBurst(null)} />}
 
       {/* Install nudge — only when not yet running as an installed app */}
       <InstallBanner pwa={pwa} onOpen={() => setShowInstall(true)} />
@@ -1306,6 +1320,52 @@ function PasswordModal({ token, name, onClose }: { token: string; name: string; 
   );
 }
 
+/**
+ * Lyhyt juhla kun tekijä merkitsee ikkunan pestyksi.
+ *
+ * Miksi: merkintä oli aiemmin täysin äänetön — ruutu vain päivittyi. Pieni
+ * palkinto tekee etenemisestä näkyvää ja saa prosentin nousun huomatuksi.
+ * Kevyt tarkoituksella: ei kirjastoa, samat CSS-serpentiinit kuin perustajien
+ * juhlassa (index.css: fr8-confetti-fall), ei klikkien estoa, katoaa 1,6 s:ssa.
+ */
+function WindowDoneBurst({ onDone }: { onDone: () => void }) {
+  const strips = useState(() => {
+    const colors = ["255,72,72", "255,206,40", "124,224,166", "255,255,255"];
+    return Array.from({ length: 18 }, (_, i) => ({
+      left: 12 + Math.round(Math.random() * 76),
+      color: colors[i % colors.length],
+      delay: Math.round(Math.random() * 260) / 1000,
+      dur: 1.0 + Math.round(Math.random() * 500) / 1000,
+      w: i % 3 === 0 ? 5 : 3,
+      h: 10 + (i % 4) * 4,
+    }));
+  })[0];
+  useEffect(() => {
+    const t = window.setTimeout(onDone, 1600);
+    return () => window.clearTimeout(t);
+  }, [onDone]);
+  return (
+    <div className="fr8-confetti" style={{ position: "fixed", inset: 0, zIndex: 70, pointerEvents: "none", overflow: "hidden" }}>
+      {strips.map((s, i) => (
+        <span key={i} style={{
+          position: "absolute", top: "18%", left: `${s.left}%`, width: s.w, height: s.h,
+          borderRadius: 2, background: `rgb(${s.color})`,
+          animation: `fr8-confetti-fall ${s.dur}s linear ${s.delay}s 1 both`,
+        }} />
+      ))}
+      <div style={{
+        position: "absolute", top: "34%", left: "50%", transform: "translateX(-50%)",
+        padding: "9px 18px", borderRadius: 999,
+        background: "rgba(124,224,166,0.16)", border: "1px solid rgba(124,224,166,0.45)",
+        color: "#9ff0bd", fontSize: 14.5, fontWeight: 800, whiteSpace: "nowrap",
+        animation: "fr8-burst-pop 1.6s ease-out 1 both",
+      }}>
+        +1 pesty ✓
+      </div>
+    </div>
+  );
+}
+
 /** Worker home / overview — the motivating landing screen: clear team progress on
  *  the contract (red) windows, your own windows + earnings, quick actions, and the
  *  team standings. Replaces "just a map" as the first thing a worker sees. */
@@ -1314,52 +1374,103 @@ function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
   pendingPayouts: number; onOpenPayouts: () => void; onOpenInfo: () => void;
 }) {
   const s = view.stats;
-  // Live RED (priority 1 = contract) progress, computed from the worker's own
-  // map data so it always matches what they see on the map.
-  const red = useMemo(() => {
-    let total = 0, washed = 0, all = 0, allWashed = 0;
+  // Live progress from the worker's OWN map data, so it always matches what they
+  // see on the map. Punaiset (sopimus) ja keltaiset (lisätyöt) erikseen — mutta
+  // iso prosentti lasketaan MOLEMMISTA. Aiemmin luku katsoi vain punaisia, joten
+  // se jäi jumiin 100 %:iin heti kun sopimusikkunat olivat valmiit, vaikka
+  // lisätöitä oli vielä kymmeniä pesemättä. Tekijälle se näytti siltä ettei
+  // työtä ole enää jäljellä.
+  const prog = useMemo(() => {
+    let red = 0, redDone = 0, yellow = 0, yellowDone = 0;
+    const add = (p: number, done: boolean) => {
+      if (p === 1) { red += 1; if (done) redDone += 1; }
+      else { yellow += 1; if (done) yellowDone += 1; }
+    };
     for (const f of view.building.floors) {
-      const seeded = view.marks[f]?.marks || [];
-      seeded.forEach((m, idx) => {
+      (view.marks[f]?.marks || []).forEach((m, idx) => {
         const key = `${f}#${idx}`;
         if (view.deleted[key]) return;
-        const done = view.statuses[key] === "pesty";
-        all += 1; if (done) allWashed += 1;
-        if (m.p === 1) { total += 1; if (done) washed += 1; }
+        add(m.p, view.statuses[key] === "pesty");
       });
       (view.customMarks[f] || []).forEach((cm) => {
         if (view.deleted[cm.key]) return;
-        const done = view.statuses[cm.key] === "pesty";
-        all += 1; if (done) allWashed += 1;
-        if (cm.p === 1) { total += 1; if (done) washed += 1; }
+        add(cm.p, view.statuses[cm.key] === "pesty");
       });
     }
-    return { total, washed, all, allWashed, pct: total > 0 ? (washed / total) * 100 : 0 };
+    const total = red + yellow;
+    const done = redDone + yellowDone;
+    return {
+      red, redDone, yellow, yellowDone, total, done,
+      pct: total > 0 ? (done / total) * 100 : 0,
+      redPct: red > 0 ? (redDone / red) * 100 : 0,
+      /** Osuus KOKO ympyrästä: kaaret piirretään peräkkäin, punainen ensin. */
+      redArc: total > 0 ? (redDone / total) * 100 : 0,
+      yellowArc: total > 0 ? (yellowDone / total) * 100 : 0,
+      redFull: red > 0 && redDone >= red,
+      allDone: total > 0 && done >= total,
+    };
   }, [view]);
 
   const CIRC = 2 * Math.PI * 52;
   return (
     <div style={{ height: "100%", overflowY: "auto", WebkitOverflowScrolling: "touch", padding: 20 }}>
-      {/* Team progress on the contract (red) windows — the big motivator */}
-      <div style={{ display: "flex", alignItems: "center", gap: 18, padding: 18, borderRadius: 18, background: "linear-gradient(155deg, rgba(255,72,72,0.10), rgba(255,255,255,0.03))", border: "1px solid rgba(255,72,72,0.22)" }}>
+      {/* Koko keikan edistyminen — punainen kaari + keltainen kaari samassa
+          ympyrässä, iso prosentti molemmista. Kun sopimusikkunat ovat valmiit,
+          punainen saa oman "tehty"-merkkinsä eikä luku jää jumiin sataan. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 18, padding: 18, borderRadius: 18,
+        background: prog.yellow > 0
+          ? "linear-gradient(155deg, rgba(255,72,72,0.09), rgba(255,206,40,0.08), rgba(255,255,255,0.03))"
+          : "linear-gradient(155deg, rgba(255,72,72,0.10), rgba(255,255,255,0.03))",
+        border: `1px solid ${prog.yellow > 0 ? "rgba(255,206,40,0.22)" : "rgba(255,72,72,0.22)"}` }}>
         <div style={{ position: "relative", width: 116, height: 116, flexShrink: 0 }}>
           <svg width="116" height="116" viewBox="0 0 116 116" style={{ transform: "rotate(-90deg)" }}>
             <circle cx="58" cy="58" r="52" fill="none" stroke="rgba(255,255,255,0.09)" strokeWidth="8" />
+            {/* Keltainen kaari piirretään ensin punaisen JÄLKEEN alkavaksi
+                (dashoffset), jotta segmentit eivät mene päällekkäin. */}
+            {prog.yellowArc > 0 && (
+              <circle cx="58" cy="58" r="52" fill="none" stroke="#ffce28" strokeWidth="8" strokeLinecap="round"
+                strokeDasharray={`${((prog.yellowArc / 100) * CIRC).toFixed(1)} ${CIRC.toFixed(1)}`}
+                strokeDashoffset={`${(-(prog.redArc / 100) * CIRC).toFixed(1)}`}
+                style={{ transition: "stroke-dasharray .6s ease, stroke-dashoffset .6s ease" }} />
+            )}
             <circle cx="58" cy="58" r="52" fill="none" stroke="#ff6b6b" strokeWidth="8" strokeLinecap="round"
-              strokeDasharray={`${((red.pct / 100) * CIRC).toFixed(1)} ${CIRC.toFixed(1)}`} style={{ transition: "stroke-dasharray .6s ease" }} />
+              strokeDasharray={`${((prog.redArc / 100) * CIRC).toFixed(1)} ${CIRC.toFixed(1)}`}
+              style={{ transition: "stroke-dasharray .6s ease" }} />
           </svg>
           <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-            <span style={{ fontSize: 26, fontWeight: 800, lineHeight: 1 }}>{Math.round(red.pct)}%</span>
+            <span style={{ fontSize: 26, fontWeight: 800, lineHeight: 1 }}>{Math.round(prog.pct)}%</span>
             <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>pesty</span>
           </div>
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{ margin: 0, fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "#ff9b9b" }}>Sopimusikkunat (punaiset)</p>
-          <p style={{ margin: "4px 0 0", fontSize: 30, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
-            {red.washed}<span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 600 }}> / {red.total}</span>
+          <p style={{ margin: 0, fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(255,255,255,0.55)" }}>
+            {prog.yellow > 0 ? "Koko keikka" : "Sopimusikkunat (punaiset)"}
           </p>
-          <p style={{ margin: "2px 0 0", fontSize: 12.5, color: "rgba(255,255,255,0.6)" }}>
-            {red.total - red.washed > 0 ? `Vielä ${red.total - red.washed} punaista pestävänä` : "Kaikki punaiset pesty! 🎉"}
+          <p style={{ margin: "4px 0 0", fontSize: 30, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+            {prog.done}<span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 600 }}> / {prog.total}</span>
+          </p>
+          {/* Punaiset ja keltaiset omina pikkuriveinään — tekijä näkee heti
+              kummasta on kyse ilman että hänen tarvitsee tulkita mitään. */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 7 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 999, fontSize: 11.5, fontWeight: 600,
+              background: prog.redFull ? "rgba(255,72,72,0.10)" : "rgba(255,72,72,0.16)", border: "1px solid rgba(255,107,107,0.35)", color: "#ffb3b3" }}>
+              <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ff6b6b" }} />
+              {prog.redFull ? `Punaiset tehty ✓ ${prog.red}` : `Punaiset ${prog.redDone}/${prog.red}`}
+            </span>
+            {prog.yellow > 0 && (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 999, fontSize: 11.5, fontWeight: 600,
+                background: "rgba(255,206,40,0.14)", border: "1px solid rgba(255,206,40,0.35)", color: "#ffe08a" }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ffce28" }} />
+                Lisätyöt {prog.yellowDone}/{prog.yellow}
+              </span>
+            )}
+          </div>
+          <p style={{ margin: "7px 0 0", fontSize: 12.5, color: "rgba(255,255,255,0.6)" }}>
+            {prog.allDone
+              ? "Kaikki pesty! 🎉"
+              : prog.redFull && prog.yellow - prog.yellowDone > 0
+                ? `Vielä ${prog.yellow - prog.yellowDone} lisätyöikkunaa`
+                : `Vielä ${prog.total - prog.done} ikkunaa pestävänä`}
           </p>
         </div>
       </div>
@@ -1374,13 +1485,10 @@ function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
               sis. keltaiset {euro(s.p2EarnedCents)}
             </p>
           )}
-          {/* Pesty keltainen jonka hintaa asiakas ei ole vielä hyväksynyt: työ on
-              tehty, joten summa näkyy — arviona, ei ansaittuna. */}
-          {(s.p2PendingCents ?? 0) > 0 && (
-            <p style={{ margin: "3px 0 0", fontSize: 11, color: "rgba(150,175,255,0.9)", fontVariantNumeric: "tabular-nums" }}>
-              + {euro(s.p2PendingCents)} odottaa hyväksyntää
-            </p>
-          )}
+          {/* EI "odottaa hyväksyntää" -summaa tekijälle. Hinnan hyväksyy asiakas,
+              ei tekijä — hänelle se on vain hämmentävä luku jolle ei voi tehdä
+              mitään. Tehty työ näkyy silti: ikkunamäärä on hero-ympyrässä ja
+              lisätyöt omassa pillerissään. */}
         </div>
         <div style={{ padding: 16, borderRadius: 14, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
           <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Sinun ikkunasi</p>

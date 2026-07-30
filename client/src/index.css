@@ -603,8 +603,17 @@
   0%   { transform: translateY(0)     rotateZ(0deg);   opacity: 1; }
   100% { transform: translateY(112vh) rotateZ(720deg); opacity: 0.85; }
 }
+/* Pestyn ikkunan "+1 pesty" -merkki: ponnahtaa esiin ja häipyy nousten. */
+@keyframes fr8-burst-pop {
+  0%   { transform: translateX(-50%) scale(0.7); opacity: 0; }
+  18%  { transform: translateX(-50%) scale(1.06); opacity: 1; }
+  32%  { transform: translateX(-50%) scale(1); opacity: 1; }
+  75%  { transform: translateX(-50%) translateY(-6px) scale(1); opacity: 1; }
+  100% { transform: translateX(-50%) translateY(-22px) scale(0.96); opacity: 0; }
+}
 @media (prefers-reduced-motion: reduce) {
   .fr8-confetti span { animation: none !important; opacity: 0 !important; }
+  .fr8-confetti div { animation: none !important; }
 }
 
 /* Luotettavat napautukset (fr8-nappien "ei painaudu" -bugi):

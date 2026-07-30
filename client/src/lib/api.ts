@@ -712,7 +712,15 @@ export const api = {
     dueDate?: string;
     /** Ohita kaksoiskappalesuoja (tarkoituksellinen korjauslasku samasta erästä). */
     force?: boolean;
+    /** Maksaja (ostaja) = johtaja jonka Y-tunnukselle tekijä laskuttaa. Oletus
+     *  tulee erän mukaan; tällä sen voi valita itse ennen laskun luontia. */
+    recipientId?: string;
   }) => request<{ ok: boolean; invoices: EraInvoiceClient[]; skipped?: string[] }>("POST", `/api/jobs/${jobId}/era-invoice/worker-batch`, data),
+  /** Johtaja mitätöi tekijälaskun (väärä summa/maksaja). Hylätty lasku ei kuittaa
+   *  velkaa, joten summa palaa avoimeksi ja uuden voi tehdä heti. */
+  voidEraInvoice: (jobId: number, invoiceId: number) =>
+    request<{ ok: boolean; invoice: EraInvoiceClient; alreadyVoided?: boolean }>(
+      "POST", `/api/jobs/${jobId}/era-invoice/${invoiceId}/void`),
   // Johtaja lähettää suoraan toiselle johtajalle ristiinlaskun (§3C) — lukittu heti.
   sendFounderEraInvoice: (jobId: number, data: {
     eraNumbers: number[]; senderId: string; itsepestytIkkunat: number; kokonaisikkunat: number;

@@ -43,6 +43,12 @@ function defaultDueDate(): string {
 
 const fmtWin = (n: number) => n.toLocaleString("fi-FI", { maximumFractionDigits: 1 });
 
+/** Johtajat jotka voivat toimia maksajana (ostaja tekijän laskulla). */
+const FOUNDER_PAYERS = [
+  { id: "joonatan", name: "Joonatan Juuri" },
+  { id: "matias", name: "Matias Pitkänen" },
+];
+
 export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant = "bar" }: {
   jobId: number;
   /** Tekijöiden maksutilanne — `computeWorkerSettlements`in tulos. */
@@ -59,6 +65,8 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
   // maksamatonta punaista työtä — täsmälleen ne joille maksu pitää tehdä.
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [dueDate, setDueDate] = useState(defaultDueDate);
+  /** Maksaja. Oletus erän mukaan, mutta johtaja voi vaihtaa sen. */
+  const [payerId, setPayerId] = useState<string>("joonatan");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sentCount, setSentCount] = useState<number | null>(null);
@@ -85,6 +93,13 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
     setEra(suggestedEra);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // Oletusmaksaja seuraa erävalintaa (erä 4 → Matias, muut → Joonatan), kunnes
+  // johtaja valitsee toisin.
+  useEffect(() => {
+    if (!open) return;
+    setPayerId(era === "4" ? "matias" : "joonatan");
+  }, [open, era]);
 
   // Esitäyttö AINA jäljellä olevasta työstä (ei koko keikasta) ja uudelleen kun
   // erävalinta vaihtuu — punaisilla ikkunamäärä, keltaisilla oma potti.
@@ -158,7 +173,7 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
     if (activeWorkers.length === 0) { setError("Valitse ainakin yksi tekijä ja täytä hänen tietonsa."); return; }
     setBusy(true);
     setError(null);
-    const res = await api.createWorkerEraInvoiceBatch(jobId, { eraNumbers, workers: activeWorkers, dueDate });
+    const res = await api.createWorkerEraInvoiceBatch(jobId, { eraNumbers, workers: activeWorkers, dueDate, recipientId: payerId });
     setBusy(false);
     if (res.ok && res.data) {
       setSentCount(res.data.invoices.length);
@@ -234,10 +249,29 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
           ))}
         </div>
 
-        <label className="block text-[11px] text-muted-foreground mb-4">
-          Eräpäivä
-          <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="h-9 mt-0.5" />
-        </label>
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <label className="block text-[11px] text-muted-foreground">
+            Eräpäivä
+            <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="h-9 mt-0.5" />
+          </label>
+          {/* MAKSAJA = se johtaja jonka Y-tunnukselle tekijä laskuttaa, eli se joka
+              oikeasti siirtää rahat. Oletus tuli ennen pelkästään erän numerosta
+              (erät 1-3 Joonatan, erä 4 Matias) eikä sitä voinut vaihtaa — laskulle
+              päätyi väärä nimi, ja korjaaminen jälkikäteen oli mahdotonta. */}
+          <label className="block text-[11px] text-muted-foreground">
+            Maksaja (kenelle laskutetaan)
+            <select
+              value={payerId}
+              onChange={(e) => setPayerId(e.target.value)}
+              className="h-9 mt-0.5 w-full rounded-md border border-input bg-background px-2 text-sm"
+              aria-label="Maksaja"
+            >
+              {FOUNDER_PAYERS.map((f) => (
+                <option key={f.id} value={f.id}>{f.name}</option>
+              ))}
+            </select>
+          </label>
+        </div>
 
         {/* Kenelle maksu lähetetään — vapaasti valittavissa. Chip näyttää heti
             paljonko tälle tekijälle on punaisista maksamatta. */}

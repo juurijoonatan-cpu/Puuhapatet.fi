@@ -185,6 +185,16 @@ liikkuvat eri aikaan, ja kaikki laskenta erottelee ne. Yksi totuuden lähde:
    Kun maksettava menee nollaan, myös `openP1Windows` pakotetaan nollaan, muuten
    maksudialogi esitäyttäisi ikkunoita nollan euron laskulle. Vähennys ei koskaan
    vuoda keltaisiin. Asetetaan Maksut-välilehdellä (`onSetAdjustment`), poistettavissa.
+13. **Maksettava ikkunamäärä johdetaan RAHASTA, ei pelkästä ikkunakirjanpidosta.**
+   Kaikki maksukanavat eivät kirjaa ikkunoita: käsin kirjattu payout siirtää
+   euroja mutta ei ikkunoita, ja erälaskulle voi kirjata ennakon. Silloin
+   `payableWindows − invoicedWindows` yliarvioi rajusti. `openP1Windows` on
+   `min(ikkunakirjanpito, maksamaton_brutto ÷ €/ikkuna)` — **pienempi voittaa**,
+   koska kumpikaan lähde ei saa yksin nostaa maksettavaa. Todellinen tapaus:
+   Jani, 34 pestyä (680 € brutto), hoidettu 620 € → jäljellä 60 € = 3 ikkunaa,
+   mutta ikkunakirjanpito väitti 22 ja dialogi olisi laskuttanut 440 €.
+   Maksudialogi varoittaa lisäksi **euroina** jos rivin loppusumma ylittää
+   `openP1Cents`in — pelkkä ikkunavertailu ei olisi tätä pysäyttänyt.
 
 ### Missä mikä toiminto asuu (ei duplikaatteja)
 

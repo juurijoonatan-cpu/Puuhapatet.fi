@@ -289,12 +289,31 @@ export function settleWorker(input: {
   // maksetaan normaalilla taksalla (legacy), joten ne kuuluvat samaan pottiin.
   const payableWindows = p2Enabled ? stats.p1Washed : stats.washed;
   const invoicedWindows = (era.eraWindows[id] || 0) + (era.eraPendingWindows[id] || 0);
+  //
+  // IKKUNAMÄÄRÄ JOHDETAAN RAHASTA, EI PELKÄSTÄ IKKUNAKIRJANPIDOSTA.
+  //
+  // Kaksi lähdettä voivat erota, koska KAIKKI maksukanavat eivät kirjaa
+  // ikkunamäärää: käsin kirjattu payout (vanha kanava) siirtää euroja mutta ei
+  // ikkunoita, ja erälaskulle voi kirjata ennakon tai sovitun muutoksen.
+  // Todellinen tapaus: Jani 34 pestyä (680 € brutto), hoidettu 620 € → jäljellä
+  // 60 € = 3 ikkunaa. Pelkkä ikkunakirjanpito (34 − 12 laskutettua) väitti 22
+  // ikkunaa, ja maksudialogi olisi esitäyttänyt 22 × 20 € = 440 € eli maksanut
+  // 380 € liikaa. Rivi näytti itse molemmat luvut vierekkäin:
+  // "maksamatta 22 kpl · 60,00 €".
+  //
+  // Otetaan aina PIENEMPI: kumpikaan lähde ei saa yksin nostaa maksettavaa.
+  // Raha lasketaan BRUTOSTA (ilman sovittua vähennystä), koska vähennys menee
+  // laskulle omalle "sovittu muutos" -rivilleen eikä ikkunamäärään.
+  const unpaidGrossCents = Math.max(0, stats.p1EarnedCents - reservedCents);
+  const perWindowCents = payableWindows > 0 ? stats.p1EarnedCents / payableWindows : 0;
+  const windowsFromMoney = perWindowCents > 0 ? unpaidGrossCents / perWindowCents : 0;
+  const windowsFromLedger = Math.max(0, payableWindows - invoicedWindows);
   // Sovittu vähennys voi nollata maksettavan kokonaan — silloin myös esitäytetty
   // ikkunamäärä on nolla, muuten maksudialogi tarjoaisi ikkunoita nollan euron
   // laskulle. Ehto katsoo NIMENOMAAN maksettavaa (`p1PayableCents`), ei avointa
   // saldoa: jos velka on kuitattu käsin kirjatulla maksulla, ikkunamäärä saa yhä
   // näkyä, jotta kirjanpidollisen erälaskun voi tehdä jälkikäteen.
-  const openP1Windows = p1PayableCents <= 0 ? 0 : Math.max(0, round1(payableWindows - invoicedWindows));
+  const openP1Windows = p1PayableCents <= 0 ? 0 : round1(Math.min(windowsFromLedger, windowsFromMoney));
 
   return {
     workerId: id,

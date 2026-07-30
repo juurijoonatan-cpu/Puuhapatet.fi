@@ -29,9 +29,9 @@ import {
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
-import { computeP2Billing, customerAddedKeys, emptyP2State, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, type P2Action, type P2State } from "@shared/p2";
+import { computeP2Billing, customerAddedKeys, emptyP2State, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
-import { p2InvoiceState, computeWorkerSettlements, eraSettlementByWorker, sumWorkerSettlements } from "@shared/worker-payouts";
+import { p2InvoiceState, computeWorkerSettlements, eraSettlementByWorker, sumWorkerSettlements, type EraInvoiceLike } from "@shared/worker-payouts";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
   hasSignedAllAgreements, DEFAULT_WORKER_PER_WINDOW_CENTS, MAX_SIGNATURE_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN, MAX_CREW_DOC_LEN, totalPaidPayoutCents, retentionFromDate,
@@ -90,7 +90,34 @@ const EXPENSE_KIND_LABELS: Record<string, string> = {
  * alihankkijat (crew payouts), logged job expenses, and the resulting margin.
  * Never sent to a customer — only to the founders (WORKER_NOTIFICATION_EMAILS).
  */
-function buildGigReportHtml(job: { id: number; description: string | null }, gig: GigData, project: ProjectData | null): string {
+/** Keikan erälaskut raportointia varten. Migraatiovarma: jos taulua ei ole
+ *  vielä ajettu kantaan, palautetaan tyhjä lista eikä kaadeta raporttia. */
+async function loadEraInvoicesForReport(jobId: number): Promise<EraInvoiceLike[]> {
+  try {
+    const rows = await db.select().from(eraInvoices).where(eq(eraInvoices.jobId, jobId));
+    return rows.map((r) => ({
+      kind: r.kind,
+      tila: r.tila,
+      senderId: r.senderId,
+      totalCents: r.totalCents,
+      eraNumbers: (() => { try { return JSON.parse(r.eraNumbers as any); } catch { return []; } })(),
+      rivit: (() => { try { return JSON.parse(r.rivit as any); } catch { return null; } })(),
+    }));
+  } catch (e) {
+    if (!isMissingTableError(e)) console.warn("era invoice load for report failed:", (e as any)?.message);
+    return [];
+  }
+}
+
+function buildGigReportHtml(
+  job: { id: number; description: string | null },
+  gig: GigData,
+  project: ProjectData | null,
+  /** Keikan erälaskut. Ilman näitä tekijöille maksettu näyttäisi nollaa —
+   *  ks. kohta 2 alla. Tyhjä lista on turvallinen (raportti kertoo silloin
+   *  koko palkan olevan avoinna, ei nollaa maksettuna). */
+  eraInvoicesForReport: EraInvoiceLike[] = [],
+): string {
   const eur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
   const dt = (ts: number) => new Date(ts).toLocaleDateString("fi-FI");
   const esc = (s: string) => String(s).replace(/</g, "&lt;");
@@ -127,16 +154,31 @@ function buildGigReportHtml(job: { id: number; description: string | null }, gig
       }).join("")
     : `<tr><td colspan="3" style="padding:8px 0;font-size:13px;color:#8C8A82">Ei vielä lähetettyjä eriä.</td></tr>`;
 
-  // 2) Alihankkija payouts (paid vs still pending).
+  // 2) Tekijöiden palkat. LUETAAN JAETUSTA LASKENNASTA, ei pelkistä
+  //    `m.payouts`-riveistä: käsin kirjatut payoutit ovat vanha kanava, ja
+  //    nykyään raha liikkuu erälaskuilla (era_invoices). Kun tämä raportti luki
+  //    vain payouteja, tekijöille maksettu näytti ~0 € ja kate siis satoja
+  //    euroja liian suurelta — sisäinen raportti valehteli juuri sen luvun,
+  //    jota varten se on olemassa.
+  const settlements = project
+    ? computeWorkerSettlements(project, {
+        era: eraSettlementByWorker(eraInvoicesForReport),
+        p2Era: eraSettlementByWorker(eraInvoicesForReport, "p2"),
+        includeTrainees: true,   // harjoittelijan palkka on oikeaa kulua
+        includeInactive: true,   // jo tehty työ ei katoa deaktivoinnista
+      })
+    : [];
   let crewPaidTotal = 0, crewPendingTotal = 0;
-  const crewRows = crew.map((m) => {
-    const paid = totalPaidPayoutCents(m);
-    const pending = (m.payouts || []).filter((p) => p.status !== "maksettu").reduce((s, p) => s + p.amountCents, 0);
+  const crewRows = settlements.map((r) => {
+    const paid = r.settledCents;
+    // "Avoinna" = punaisista siirtämättä + keltaisista odottamassa. Molemmat
+    // ovat oikeaa velkaa tekijälle, vaikka ne maksetaan eri aikaan.
+    const pending = r.openP1Cents + r.openP2Cents;
     crewPaidTotal += paid; crewPendingTotal += pending;
     if (paid === 0 && pending === 0) return "";
     return `
       <tr style="border-bottom:1px solid #E4E1D7">
-        <td style="padding:8px 0;font-size:13px;color:#1A1A1A">${esc(m.name)}</td>
+        <td style="padding:8px 0;font-size:13px;color:#1A1A1A">${esc(r.name)}${r.trainee ? ' <span style="color:#8C8A82;font-size:11px">(harjoittelija)</span>' : ""}</td>
         <td style="padding:8px 0;text-align:right;font-size:13px;color:#1A1A1A;font-variant-numeric:tabular-nums">${eur(paid)}</td>
         <td style="padding:8px 0;text-align:right;font-size:13px;color:${pending > 0 ? "#B45309" : "#8C8A82"};font-variant-numeric:tabular-nums">${eur(pending)}</td>
       </tr>`;
@@ -369,10 +411,19 @@ function isCrewTrainee(member: CrewMember): boolean {
 // Optional: protect the calendar feed with a token (set CALENDAR_TOKEN env var on Render)
 const CALENDAR_TOKEN = process.env.CALENDAR_TOKEN || null;
 
-/** Clean, simple end-of-day summary email to the worker (best-effort). */
+/** Clean, simple end-of-day summary email to the worker (best-effort).
+ *
+ *  `s.earnedCents` on VAIN punaisista kertynyt ansio. Keltaiset kulkevat omina
+ *  kenttinään (`p2Windows` / `p2Cents`), koska ne maksetaan vasta kun asiakas on
+ *  maksanut keltaisten laskun — niitä ei saa niputtaa samaan "Ansio"-lukuun.
+ *  Harjoittelijalle teksti Y-tunnuksesta on väärä, joten se vaihtuu. */
 async function sendSessionSummaryEmail(
   member: CrewMember,
-  s: { start: number; end: number; minutes: number; windows: number; earnedCents: number },
+  s: {
+    start: number; end: number; minutes: number; windows: number; earnedCents: number;
+    /** Päivän keltaiset ikkunat ja niistä kertynyt palkkio (odottaa asiakkaan maksua). */
+    p2Windows?: number; p2Cents?: number;
+  },
   buildingName?: string,
 ): Promise<void> {
   if (!resend) return;
@@ -380,6 +431,9 @@ async function sendSessionSummaryEmail(
   if (!to) return;
   const eur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + " €";
   const dur = s.minutes >= 60 ? `${Math.floor(s.minutes / 60)} t ${s.minutes % 60} min` : `${s.minutes} min`;
+  const p2Windows = Math.max(0, s.p2Windows || 0);
+  const p2Cents = Math.max(0, s.p2Cents || 0);
+  const trainee = isCrewTrainee(member);
   const first = (member.profile?.fullName || member.name || "").split(/\s+/)[0] || "";
   const day = new Date(s.end).toLocaleDateString("fi-FI", { day: "numeric", month: "numeric", year: "numeric" });
   const row = (label: string, value: string) =>
@@ -391,11 +445,17 @@ async function sendSessionSummaryEmail(
       <h1 style="font-size:22px;margin:8px 0 2px;color:#1A1A1A">Hyvää työtä${first ? `, ${first}` : ""}! 🎉</h1>
       <p style="margin:0 0 18px;color:#8C8A82;font-size:14px">Päivän yhteenveto · ${day}${buildingName ? ` · ${buildingName}` : ""}</p>
       <table style="width:100%;border-collapse:collapse">
-        ${row("Pestyt ikkunat", String(s.windows))}
-        ${row("Ansio", eur(s.earnedCents))}
+        ${row("Pestyt ikkunat", String(s.windows + p2Windows))}
+        ${row(p2Windows > 0 ? "Ansio (perustyö)" : "Ansio", eur(s.earnedCents))}
+        ${p2Windows > 0 ? row(`Lisätyöt (${p2Windows} kpl)`, eur(p2Cents)) : ""}
         ${row("Työaika", dur)}
       </table>
-      <p style="margin:20px 0 0;color:#8C8A82;font-size:12.5px;line-height:1.6">Ansio kertyy tekemistäsi ikkunoista ja maksetaan oman Y-tunnuksesi kautta. Kiitos päivästä!</p>
+      <p style="margin:20px 0 0;color:#8C8A82;font-size:12.5px;line-height:1.6">${
+        trainee
+          ? "Korvaus hoidetaan tiimin kautta — sinun ei tarvitse laskuttaa mitään. Kiitos päivästä!"
+          : "Ansio kertyy tekemistäsi ikkunoista ja maksetaan oman Y-tunnuksesi kautta. Kiitos päivästä!"
+      }</p>
+      ${p2Windows > 0 ? `<p style="margin:10px 0 0;color:#8C8A82;font-size:12.5px;line-height:1.6">Lisätyöt maksetaan omalla maksullaan sen jälkeen kun asiakas on maksanut niistä. Ne eivät ole mukana perustyön ansiossa.</p>` : ""}
     </div>
     <p style="text-align:center;color:#b8b5ab;font-size:11px;margin-top:14px">Puuhapatet · puuhapatet.fi</p>
   </div></body></html>`;
@@ -407,7 +467,7 @@ async function sendSessionSummaryEmail(
     from: FROM_EMAIL,
     to,
     ...(bcc.length ? { bcc } : {}),
-    subject: `Päivän yhteenveto — ${s.windows} ikkunaa · ${eur(s.earnedCents)}`,
+    subject: `Päivän yhteenveto — ${s.windows + p2Windows} ikkunaa · ${eur(s.earnedCents)}${p2Windows > 0 ? ` + lisätyöt ${eur(p2Cents)}` : ""}`,
     html,
   });
 }
@@ -1855,7 +1915,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     return { ...row, eraNumbers, rivit };
   }
 
-  const eraLabelOf = (nums: number[]) => (nums.length === 1 ? `Erä ${nums[0]}` : `Erät ${nums[0]}–${nums[nums.length - 1]}`);
+  // Keltaisten (2. vaihe) maksupotti on tallennettu sentinel-eränä 0, jotta
+  // uutta DB-saraketta ei tarvittu. Se on VARASTOMUOTO, ei nimi: ilman tätä
+  // laskun otsikoksi ja sähköpostin aiheeksi tuli "Erä 0", mikä ei tarkoita
+  // tekijälle mitään eikä vastaa mitään sovittua erää.
+  const eraLabelOf = (nums: number[]) =>
+    isP2EraSelection(nums) ? "Lisätyöt (2. vaihe)"
+      : nums.length === 1 ? `Erä ${nums[0]}`
+      : `Erät ${nums[0]}–${nums[nums.length - 1]}`;
 
   // Rakentaa generateEraInvoicePdf-parametrit tallennetusta, lukitusta
   // erälaskurivistä (kohta 4: lasku regeneroidaan aina deterministisesti
@@ -4914,7 +4981,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // + margin), not just the BCC'd customer invoice. Fire-and-forget — a report
       // failure must never break the actual invoicing.
       try {
-        const reportHtml = buildGigReportHtml({ id: job.id, description: job.description }, gig, proj);
+        const reportHtml = buildGigReportHtml({ id: job.id, description: job.description }, gig, proj, await loadEraInvoicesForReport(job.id));
         await resend.emails.send({
           from: FROM_EMAIL,
           to: WORKER_NOTIFICATION_EMAILS,
@@ -4945,7 +5012,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const gig = parseGig(job.gigData);
       if (!gig) return res.status(400).json({ error: "Keikalla ei ole seurantadataa" });
       const project = parseProject(job.projectData ?? null);
-      const html = buildGigReportHtml({ id: job.id, description: job.description }, gig, project);
+      const html = buildGigReportHtml({ id: job.id, description: job.description }, gig, project, await loadEraInvoicesForReport(job.id));
       const result = await resend.emails.send({
         from: FROM_EMAIL,
         to: WORKER_NOTIFICATION_EMAILS,
@@ -5888,8 +5955,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     for (const m of project.crew || []) workerNames[m.id] = m.name;
     // Team leaderboard (workers only). Exposes name + windows + windows/hour — NO
     // pay rate, tokens or euros — so it's safe to show every worker the standings.
+    //
+    // `adminLinked` EI ole peruste jättää pois. Se kertoo vain että tekijällä on
+    // myös Puuhapatet-admin-tunnus (Petrus) — hän on silti tavallinen tekijä joka
+    // pesee ikkunoita, usein kärkipäässä. Perustajat rajautuvat pois jo
+    // `role === "worker"` -ehdolla (joonatan/matias ovat "host"), joten
+    // `!adminLinked` poisti käytännössä VAIN Petruksen: hän puuttui
+    // sijoituslistalta kokonaan vaikka oli tehnyt työn.
     const leaderboard = (project.crew || [])
-      .filter((m) => m.active && m.role === "worker" && !m.adminLinked)
+      .filter((m) => m.active && m.role === "worker")
       .map((m) => {
         const s = crewMemberStats(project, m);
         return { id: m.id, name: m.name, washed: s.washed, windowsPerHour: s.windowsPerHour, hours: s.hours, isMe: m.id === member.id };
@@ -7489,10 +7563,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       for (const l of project.log || []) {
         if (l.by === member.id && l.status === "pesty" && l.ts >= startOfDay.getTime()) todayKeys.add(l.key);
       }
+      // Päivän ikkunat PRIORITEETIN mukaan. Aiemmin kaikki hinnoiteltiin
+      // `member.perWindowCents`illä (punaisen taksa) — myös keltaiset, joiden
+      // palkkio tulee palkkiotaulukosta ja jotka maksetaan vasta kun asiakas on
+      // maksanut keltaisten laskun. Tekijä sai siis sähköpostin jossa luki
+      // väärä ansio ja jossa maksamaton työ näytti ansaitulta.
+      let redWindows = 0;
+      let p2Windows = 0;
+      let p2Cents = 0;
+      const sharePct = project.p2?.workerSharePct ?? DEFAULT_P2_WORKER_SHARE_PCT;
+      for (const key of Array.from(todayKeys)) {
+        if (pointPriority(project, key) === 2) {
+          p2Windows++;
+          const locked = project.p2?.offers?.[key]?.lockedCents ?? 0;
+          if (locked > 0) p2Cents += p2WorkerPayoutCents(locked, sharePct, project.p2?.payoutSchedule);
+        } else {
+          redWindows++;
+        }
+      }
       const windows = todayKeys.size;
       if (minutes === 0 && windows === 0) return res.status(400).json({ error: "Ei tunteja eikä ikkunoita kirjattavaksi" });
       const end = Date.now();
-      const session = { start: end - minutes * 60000, end, minutes, windows, earnedCents: windows * member.perWindowCents, manual: true };
+      const session = {
+        start: end - minutes * 60000, end, minutes,
+        windows: redWindows,
+        earnedCents: redWindows * member.perWindowCents,
+        p2Windows, p2Cents,
+        manual: true,
+      };
       if (hours > 0) {
         project.hours[member.id] = Math.max(0, +(((project.hours[member.id] || 0) + hours).toFixed(2)));
         project.hourLog = [{ worker: member.id, delta: hours, ts: end, by: "johtaja" }, ...(project.hourLog || [])].slice(0, 200);
@@ -7503,7 +7601,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
       let emailed = false;
-      if (resend && savedMember.profile?.email) {
+      // Deaktivoitu tekijä ei ole enää keikalla — hänelle ei lähde päivän
+      // yhteenvetoa (kirjaus tallentuu silti, jotta historia säilyy).
+      // Perustaja ei ole tekijäkanavalla lainkaan: hänen ikkunansa ovat katetta,
+      // eivät palkkaa, joten "Ansio ... maksetaan Y-tunnuksesi kautta" olisi väärin.
+      const skipEmail = savedMember.active === false || savedMember.role === "host";
+      if (resend && savedMember.profile?.email && !skipEmail) {
         try { await sendSessionSummaryEmail(savedMember, session, project.building?.name); emailed = true; }
         catch (e: any) { console.warn("manager day-log email failed:", e?.message); }
       }

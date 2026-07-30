@@ -346,6 +346,40 @@ describe("computeWorkerSettlements — punaiset ja keltaiset erillään", () => 
     expect(row.openP1Windows).toBe(0);
   });
 
+  it("käsin maksettu raha pienentää myös ESITÄYTETTYÄ ikkunamäärää, ei vain euroja", () => {
+    // Todellinen tapaus (Jani): 34 punaista × 20 € = 680 € brutto. Osa oli
+    // maksettu erälaskuilla (12 ikkunaa = 240 €) ja loput käsin kirjatuilla
+    // maksuilla (380 €) jotka EIVÄT kirjaa ikkunamäärää. Jäljellä 60 € = 3
+    // ikkunaa, mutta pelkkä ikkunakirjanpito väitti 34 − 12 = 22 ikkunaa ja
+    // maksudialogi olisi esitäyttänyt 22 × 20 € = 440 € — 380 € liikaa.
+    const p = projectWith({
+      workerId: "jani", red: 34, yellow: 0,
+      crew: [member({ id: "jani", payouts: [{ id: "p1", amountCents: 380_00, status: "maksettu", createdAt: 1 } as any] })],
+    });
+    const invoices = [{
+      kind: "tekija", tila: "hyväksytty", senderId: "jani", totalCents: 240_00,
+      eraNumbers: [1, 2, 3], rivit: { input: { pestytIkkunat: 12 }, computed: { ansaittuCents: 240_00 } },
+    }];
+    const [row] = computeWorkerSettlements(p, { era: eraSettlementByWorker(invoices) });
+    expect(row.p1EarnedCents).toBe(680_00);
+    expect(row.settledCents).toBe(620_00);
+    expect(row.openP1Cents).toBe(60_00);
+    expect(row.openP1Windows).toBe(3);       // EI 22
+  });
+
+  it("ikkunakirjanpito rajoittaa yhä esitäyttöä, jos se on rahaa pienempi", () => {
+    // Käänteinen suunta: erälaskulle kirjattiin 30 ikkunaa mutta koko summa
+    // meni ennakkoon (0 € siirtoa). Rahan mukaan avoinna olisi kaikki 34
+    // ikkunaa, mutta ikkunakirjanpidon mukaan vain 4 — otetaan pienempi.
+    const p = projectWith({ workerId: "jani", red: 34, yellow: 0 });
+    const invoices = [{
+      kind: "tekija", tila: "hyväksytty", senderId: "jani", totalCents: 0,
+      eraNumbers: [1, 2, 3], rivit: { input: { pestytIkkunat: 30 }, computed: { ansaittuCents: 0 } },
+    }];
+    const [row] = computeWorkerSettlements(p, { era: eraSettlementByWorker(invoices) });
+    expect(row.openP1Windows).toBe(4);
+  });
+
   it("sumWorkerSettlements laskee sovitut vähennykset yhteen", () => {
     const p = projectWith({
       workerId: "doma", red: 5, yellow: 0,

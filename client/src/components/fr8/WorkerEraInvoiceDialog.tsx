@@ -134,9 +134,17 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
 
   // Varoita jos johtaja on nostanut ikkunamäärän yli sen mitä on maksamatta —
   // silloin samasta työstä maksettaisiin kahdesti.
+  //
+  // Tarkistus tehdään sekä ikkunoina ETTÄ euroina. Pelkkä ikkunavertailu ei
+  // riitä: ikkunamäärä ja raha voivat erota (käsin kirjattu maksu ei kirjaa
+  // ikkunoita), ja juuri se päästi läpi tapauksen jossa 60 € velasta olisi
+  // laskutettu 440 €. Raha on lopullinen totuus — se on sama luku jonka
+  // Maksut-välilehti näyttää siirrettävänä.
   const overBilled = isP2 ? [] : selectedWorkers.filter((w) => {
     const typed = Math.max(0, parseFloat((rows[w.workerId]?.pestytIkkunat || "").replace(",", ".")) || 0);
-    return typed > w.openP1Windows + 0.01;
+    if (typed > w.openP1Windows + 0.01) return true;
+    const line = preview.workers.find((t) => t.workerId === w.workerId);
+    return !!line && line.maksettavaCents > w.openP1Cents + 1;
   });
   // Onko tälle erälle jo tehty maksu jollekin valitulle tekijälle?
   const alreadyPaidEra = isP2 ? [] : selectedWorkers.filter((w) => eraNumbers.every((n) => w.settledEras.includes(n)));

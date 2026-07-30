@@ -12,30 +12,83 @@ import { FreeAssessmentPrompt } from "@/components/free-assessment-prompt";
 import { PageLoadingSkeleton } from "@/components/loading-skeleton";
 import { useEffect, Component, lazy, Suspense } from "react";
 import type { ReactNode, ErrorInfo } from "react";
+import { lazyRetry, isStaleBuildError, recoverFromStaleBuild } from "@/lib/stale-build";
 
-class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
-  constructor(props: { children: ReactNode }) {
+type ErrorBoundaryProps = {
+  children: ReactNode;
+  /** Muuttuessaan nollaa virhetilan. Reitin osoite: yhden rikkinäisen sivun ei
+   *  pidä jättää koko sovellusta jumiin, joten esim. takaisin-painike toipuu. */
+  resetKey?: string;
+};
+
+class ErrorBoundary extends Component<ErrorBoundaryProps, { error: Error | null; healing: boolean; reloading: boolean }> {
+  /** Jos uudelleenlataus ei ehdi tapahtua, näytä virhe — ei ikuista latausta. */
+  private healTimer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(props: ErrorBoundaryProps) {
     super(props);
-    this.state = { error: null };
+    this.state = { error: null, healing: false, reloading: false };
   }
   static getDerivedStateFromError(error: Error) {
-    return { error };
+    // Vanhentunut build ei ole sovellusvirhe vaan merkki siitä että käsissä on
+    // eilisen versio (uusi julkaisu poisti vanhat koodipalaset). Se korjaantuu
+    // itsestään, joten näytetään lataus eikä virhettä.
+    return { error, healing: isStaleBuildError(error) };
   }
-  componentDidCatch(_err: Error, _info: ErrorInfo) {}
+  componentDidCatch(err: Error, info: ErrorInfo) {
+    // Diagnostiikka konsoliin: ilman tätä virheen alkuperä katosi kokonaan eikä
+    // vikaa voinut jäljittää etänä.
+    // eslint-disable-next-line no-console
+    console.error("[ErrorBoundary]", err, info?.componentStack);
+    if (!isStaleBuildError(err)) return;
+    if (!recoverFromStaleBuild()) {
+      // Uudelleenlataus tehtiin juuri eikä auttanut — näytä virhe normaalisti,
+      // ettei käyttäjä jää tyhjän latausruudun kanssa jumiin.
+      this.setState({ healing: false });
+      return;
+    }
+    this.healTimer = setTimeout(() => this.setState({ healing: false }), 6000);
+  }
+  componentDidUpdate(prev: ErrorBoundaryProps) {
+    // Reitti vaihtui (esim. takaisin-painike) → yritä uudelleen puhtaalta
+    // pöydältä. Latautuvaa korjausta ei keskeytetä.
+    if (this.state.error && !this.state.healing && prev.resetKey !== this.props.resetKey) {
+      this.setState({ error: null, healing: false, reloading: false });
+    }
+  }
+  componentWillUnmount() {
+    if (this.healTimer) clearTimeout(this.healTimer);
+  }
   render() {
     if (this.state.error) {
+      if (this.state.healing) {
+        return (
+          <div style={{ padding: 32, fontFamily: "sans-serif", textAlign: "center" }}>
+            <p style={{ color: "#888" }}>Päivitetään uuteen versioon…</p>
+          </div>
+        );
+      }
       return (
         <div style={{ padding: 32, fontFamily: "sans-serif", textAlign: "center" }}>
           <p style={{ marginBottom: 16, color: "#888" }}>Jotain meni pieleen.</p>
           <p style={{ fontSize: 12, color: "#aaa", marginBottom: 24, wordBreak: "break-all" }}>
             {this.state.error.message}
           </p>
+          {/* Tyhjennä välimuisti ennen latausta: pelkkä reload tarjoili ennen
+              saman rikkinäisen palasen uudelleen. Siivous kestää jopa 1,5 s,
+              joten nappi kuittaa painalluksen heti — muuten se näyttää
+              reagoimattomalta ja tulee painetuksi monta kertaa. */}
           <button
-            onClick={() => window.location.reload()}
-            style={{ padding: "10px 24px", background: "#2d5016", color: "#fff", border: "none", borderRadius: 8, fontSize: 16 }}
+            disabled={this.state.reloading}
+            onClick={() => { this.setState({ reloading: true }); recoverFromStaleBuild(true); }}
+            style={{ padding: "12px 24px", minHeight: 44, background: "#2d5016", color: "#fff", border: "none", borderRadius: 8, fontSize: 16, opacity: this.state.reloading ? 0.6 : 1 }}
           >
-            Lataa uudelleen
+            {this.state.reloading ? "Päivitetään…" : "Lataa uudelleen"}
           </button>
+          {/* Varapoistumistie: jos yksi sivu on rikki, etusivulle pääsee aina. */}
+          <p style={{ marginTop: 16 }}>
+            <a href="/" style={{ fontSize: 13, color: "#888" }}>Etusivulle</a>
+          </p>
         </div>
       );
     }
@@ -43,48 +96,54 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
   }
 }
 
+/** ErrorBoundary joka nollautuu reitinvaihdossa. */
+function RouteErrorBoundary({ children }: { children: ReactNode }) {
+  const [location] = useLocation();
+  return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
+}
+
 // Routes are code-split (React.lazy): a visitor on the public site never
 // downloads the admin ERP bundle, and each heavy page loads on demand. This
 // keeps the initial paint fast and the app feeling instant. Suspense fallbacks
 // live below the nav (see layouts + ProtectedRoute) so navigation never flashes
 // the chrome.
-const LandingPage = lazy(() => import("@/pages/landing"));
-const ServicesPage = lazy(() => import("@/pages/services"));
-const FAQPage = lazy(() => import("@/pages/faq"));
-const AboutPage = lazy(() => import("@/pages/about"));
-const BookingPage = lazy(() => import("@/pages/booking"));
-const ConfirmationPage = lazy(() => import("@/pages/confirmation"));
-const EhdotPage = lazy(() => import("@/pages/ehdot"));
-const TietosuojaPage = lazy(() => import("@/pages/tietosuoja"));
-const LaskuriPage = lazy(() => import("@/pages/laskuri"));
-const AdminLoginPage = lazy(() => import("@/pages/admin/login"));
-const AdminDashboard = lazy(() => import("@/pages/admin/dashboard"));
-const AdminNewJobPage = lazy(() => import("@/pages/admin/new-job"));
-const AdminNewGigPage = lazy(() => import("@/pages/admin/new-gig"));
-const AdminWelcomePage = lazy(() => import("@/pages/admin/welcome"));
-const AdminGigTrackerPage = lazy(() => import("@/pages/admin/gig-tracker"));
-const AdminProjectPage = lazy(() => import("@/pages/admin/project"));
-const GigLivePage = lazy(() => import("@/pages/gig-live"));
-const WorkerPage = lazy(() => import("@/pages/worker"));
-const AdminCrewPage = lazy(() => import("@/pages/admin/crew"));
-const AdminCalendarPage = lazy(() => import("@/pages/admin/calendar"));
-const AdminJobsPage = lazy(() => import("@/pages/admin/jobs"));
-const AdminSellPage = lazy(() => import("@/pages/admin/sell"));
-const AdminLeadTriagePage = lazy(() => import("@/pages/admin/lead-triage"));
-const AdminPackagesPage = lazy(() => import("@/pages/admin/packages"));
-const AdminSettingsPage = lazy(() => import("@/pages/admin/settings"));
-const AdminCustomersPage = lazy(() => import("@/pages/admin/customers"));
-const AdminQuotesPage = lazy(() => import("@/pages/admin/quotes"));
-const AdminGuidePage = lazy(() => import("@/pages/admin/guide"));
-const AdminTaxExportPage = lazy(() => import("@/pages/admin/tax-export"));
-const AdminWorkerDetailPage = lazy(() => import("@/pages/admin/worker-detail"));
-const AdminInvestmentsPage = lazy(() => import("@/pages/admin/investments"));
-const AdminInboxPage = lazy(() => import("@/pages/admin/inbox"));
-const QuotePage = lazy(() => import("@/pages/quote"));
-const ITPage = lazy(() => import("@/pages/it"));
-const CVDemoPage = lazy(() => import("@/pages/cv-demo"));
-const RecruitmentPage = lazy(() => import("@/pages/recruitment"));
-const NotFound = lazy(() => import("@/pages/not-found"));
+const LandingPage = lazy(lazyRetry(() => import("@/pages/landing")));
+const ServicesPage = lazy(lazyRetry(() => import("@/pages/services")));
+const FAQPage = lazy(lazyRetry(() => import("@/pages/faq")));
+const AboutPage = lazy(lazyRetry(() => import("@/pages/about")));
+const BookingPage = lazy(lazyRetry(() => import("@/pages/booking")));
+const ConfirmationPage = lazy(lazyRetry(() => import("@/pages/confirmation")));
+const EhdotPage = lazy(lazyRetry(() => import("@/pages/ehdot")));
+const TietosuojaPage = lazy(lazyRetry(() => import("@/pages/tietosuoja")));
+const LaskuriPage = lazy(lazyRetry(() => import("@/pages/laskuri")));
+const AdminLoginPage = lazy(lazyRetry(() => import("@/pages/admin/login")));
+const AdminDashboard = lazy(lazyRetry(() => import("@/pages/admin/dashboard")));
+const AdminNewJobPage = lazy(lazyRetry(() => import("@/pages/admin/new-job")));
+const AdminNewGigPage = lazy(lazyRetry(() => import("@/pages/admin/new-gig")));
+const AdminWelcomePage = lazy(lazyRetry(() => import("@/pages/admin/welcome")));
+const AdminGigTrackerPage = lazy(lazyRetry(() => import("@/pages/admin/gig-tracker")));
+const AdminProjectPage = lazy(lazyRetry(() => import("@/pages/admin/project")));
+const GigLivePage = lazy(lazyRetry(() => import("@/pages/gig-live")));
+const WorkerPage = lazy(lazyRetry(() => import("@/pages/worker")));
+const AdminCrewPage = lazy(lazyRetry(() => import("@/pages/admin/crew")));
+const AdminCalendarPage = lazy(lazyRetry(() => import("@/pages/admin/calendar")));
+const AdminJobsPage = lazy(lazyRetry(() => import("@/pages/admin/jobs")));
+const AdminSellPage = lazy(lazyRetry(() => import("@/pages/admin/sell")));
+const AdminLeadTriagePage = lazy(lazyRetry(() => import("@/pages/admin/lead-triage")));
+const AdminPackagesPage = lazy(lazyRetry(() => import("@/pages/admin/packages")));
+const AdminSettingsPage = lazy(lazyRetry(() => import("@/pages/admin/settings")));
+const AdminCustomersPage = lazy(lazyRetry(() => import("@/pages/admin/customers")));
+const AdminQuotesPage = lazy(lazyRetry(() => import("@/pages/admin/quotes")));
+const AdminGuidePage = lazy(lazyRetry(() => import("@/pages/admin/guide")));
+const AdminTaxExportPage = lazy(lazyRetry(() => import("@/pages/admin/tax-export")));
+const AdminWorkerDetailPage = lazy(lazyRetry(() => import("@/pages/admin/worker-detail")));
+const AdminInvestmentsPage = lazy(lazyRetry(() => import("@/pages/admin/investments")));
+const AdminInboxPage = lazy(lazyRetry(() => import("@/pages/admin/inbox")));
+const QuotePage = lazy(lazyRetry(() => import("@/pages/quote")));
+const ITPage = lazy(lazyRetry(() => import("@/pages/it")));
+const CVDemoPage = lazy(lazyRetry(() => import("@/pages/cv-demo")));
+const RecruitmentPage = lazy(lazyRetry(() => import("@/pages/recruitment")));
+const NotFound = lazy(lazyRetry(() => import("@/pages/not-found")));
 
 function ScrollToTop() {
   const [location] = useLocation();
@@ -317,11 +376,11 @@ function App() {
         <ThemeProvider>
           <I18nProvider>
             <TooltipProvider>
-              <ErrorBoundary>
+              <RouteErrorBoundary>
                 <Toaster />
                 <ScrollToTop />
                 <Router />
-              </ErrorBoundary>
+              </RouteErrorBoundary>
             </TooltipProvider>
           </I18nProvider>
         </ThemeProvider>

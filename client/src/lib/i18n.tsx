@@ -786,15 +786,20 @@ const I18nContext = createContext<I18nContextType | undefined>(undefined);
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [lang, setLang] = useState<Language>(() => {
+    // Sama syy kuin theme.tsx:ssä: localStorage heittää privaattitilassa, ja
+    // tämä ajetaan sovelluksen juuressa — käsittelemätön poikkeus kaataisi koko
+    // sivun valkoiseksi virhesivuksi pelkän kielivalinnan takia.
     if (typeof window !== "undefined") {
-      const stored = localStorage.getItem("puuhapatet-lang");
-      if (stored === "en" || stored === "fi") return stored;
+      try {
+        const stored = localStorage.getItem("puuhapatet-lang");
+        if (stored === "en" || stored === "fi") return stored;
+      } catch { /* privaattitila — oletuskieli riittää */ }
     }
     return "fi";
   });
 
   useEffect(() => {
-    localStorage.setItem("puuhapatet-lang", lang);
+    try { localStorage.setItem("puuhapatet-lang", lang); } catch { /* ks. yllä */ }
     document.documentElement.lang = lang;
   }, [lang]);
 

@@ -98,7 +98,12 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
         pestytIkkunat: p2
           ? (w.p2Washed > 0 ? String(w.p2Washed) : "")
           : (w.openP1Windows > 0 ? String(w.openP1Windows) : ""),
-        sovittuMuutosCents: "",
+        // Tekijän kanssa sovittu vähennys esitäytetään laskun omalle "sovittu
+        // muutos" -riville. Ilman tätä lasku olisi laskenut ikkunat × taksa eli
+        // TÄYDEN summan, vaikka Maksut-välilehti näytti vähennetyn — ja velkaa
+        // olisi jäänyt roikkumaan erotuksen verran. Näin vähennys näkyy myös
+        // itse laskulla omana rivinään, kuten kuuluukin.
+        sovittuMuutosCents: !p2 && w.p1AdjustmentCents ? String(w.p1AdjustmentCents / 100) : "",
         ennakkoCents: "",
       };
     }

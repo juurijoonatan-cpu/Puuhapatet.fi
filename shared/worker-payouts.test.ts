@@ -288,6 +288,39 @@ describe("computeWorkerSettlements — punaiset ja keltaiset erillään", () => 
     expect(row.openP2Cents).toBe(80_00);         // keltaiset ennallaan
   });
 
+  it("jälkikäteen kirjattu vähennys ei pienennä keltaisia, vaikka punaiset olisi jo laskutettu", () => {
+    // Tämä on se vaarallinen järjestys: punaiset laskutettiin TÄYTENÄ (100 €) ja
+    // vasta sen jälkeen sovittiin 10 € vähennys. Naiivi ylivuotolaskenta olisi
+    // pitänyt erotusta ylimaksuna ja syönyt sillä keltaisia — vähennys oli
+    // kuitenkin sovittu punaisista.
+    const p = projectWith({
+      workerId: "doma", red: 5, yellow: 4, lockedCents: 3750,
+      crew: [member({ id: "doma", payAdjustmentCents: -10_00 })],
+    });
+    const invoices = [{
+      kind: "tekija", tila: "hyväksytty", senderId: "doma", totalCents: 100_00,
+      eraNumbers: [4], rivit: { input: { pestytIkkunat: 5 }, computed: { ansaittuCents: 100_00 } },
+    }];
+    const [row] = computeWorkerSettlements(p, { era: eraSettlementByWorker(invoices) });
+    expect(row.openP1Cents).toBe(0);
+    expect(row.openP2Cents).toBe(80_00);         // EI 70 €
+  });
+
+  it("aito ylimaksu (yli bruton) kuittaa yhä keltaista", () => {
+    // Vanha sääntö säilyy: käsin kirjattu liian iso maksu valuu keltaiseen.
+    // 5 punaista = 100 € brutto, maksettu 150 € → 50 € ylivuotoa keltaisiin.
+    const p = projectWith({
+      workerId: "doma", red: 5, yellow: 4, lockedCents: 3750,
+      crew: [member({
+        id: "doma", payAdjustmentCents: -10_00,
+        payouts: [{ id: "p1", amountCents: 150_00, status: "maksettu", createdAt: 1 } as any],
+      })],
+    });
+    const [row] = computeWorkerSettlements(p);
+    expect(row.openP1Cents).toBe(0);
+    expect(row.openP2Cents).toBe(30_00);         // 80 − 50
+  });
+
   it("sovittu LISÄ kasvattaa siirrettävää", () => {
     const p = projectWith({
       workerId: "doma", red: 5, yellow: 0,

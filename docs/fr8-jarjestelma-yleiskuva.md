@@ -304,6 +304,48 @@ Lisäksi fr8-napeille `min-height: 40px` — **mutta vain `[data-fr8-pane]`n sis
 Ilman tuota rajausta sääntö osui myös kartan 9–13 px pyöreisiin pisteisiin ja
 venytti ne kapseleiksi; kartan pisteillä on `data-fr8-dot`, joka jättää ne ulos.
 
+## Julkaisu ja "Importing a module script failed"
+
+Frontend on **GitHub Pagesissa** (`.github/workflows/deploy.yml`, joka main-push),
+API erillisellä palvelimella (`API_BASE`). Julkaisu **korvaa** `dist/public`in,
+joten edellisen buildin hashatut palaset katoavat samalla sekunnilla. Koska
+`App.tsx` koodijakaa lähes joka reitin, puhelimessa auki oleva vanha PWA yrittää
+seuraavalla reitinvaihdolla importata palasen jota ei enää ole → selain sanoo
+*"Importing a module script failed"* ja ErrorBoundary näyttää virhesivun. Jokainen
+reitti on oma palasensa, joten virhe toistuu joka näkymässä.
+
+Tämä EI ole sovellusvirhe vaan normaali seuraus julkaisusta. Puolustus on
+kerroksittainen — älä poista näitä:
+
+| Kerros | Tiedosto | Tehtävä |
+|---|---|---|
+| `lazyRetry` | `client/src/lib/stale-build.ts` | uusii kerran 600 ms:n päästä, sitten siivoaa ja lataa |
+| globaalit kuuntelijat | `client/src/main.tsx` | `vite:preloadError`, `unhandledrejection`, `error` |
+| ErrorBoundary | `client/src/App.tsx` | näyttää "Päivitetään…" eikä virhettä; nollautuu reitinvaihdossa |
+| splash-vahti | `client/index.html` | jos React ei mounttaa 6 s:ssa → korjausnappi (ei valkoista sivua) |
+| service worker | `client/public/sw.js` | ei tallenna HTML:ää `.js`:n paikalle; navigoinnit aina verkosta |
+| SPA-fallback | `server/static.ts` | puuttuva `/assets/*.js` → **404**, ei index.html 200:lla |
+
+Säännöt:
+
+1. **Älä lisää query-parametria uudelleenlataukseen.** GitHub Pagesin SPA-kierrätys
+   (`public/404.html` → `/?p=…`) ajetaan joka syvälle osoitteelle; ylimääräinen
+   parametri palasi ennen osaksi polkua ja rikkoi reitin. Tuoreus haetaan
+   `fetch(url, {cache:"reload"})`illa ennen `location.reload()`ia.
+2. **Luuppisuoja on aikaperustainen** (30 s), ei kertalukko. Kertalukko jätti
+   saman välilehden toisen julkaisun jälkeen taas raa'an virhesivun ääreen.
+3. **Palvelin ei koskaan vastaa staattisen tiedoston pyyntöön HTML:llä.** Se oli
+   ainoa reitti jolla service worker saattoi tallentaa HTML:n JS:n nimellä ja
+   myrkyttää välimuistin pysyvästi.
+4. **`localStorage` aina try/catchiin** juurikomponenteissa (`theme.tsx`,
+   `i18n.tsx`): Safarin privaattitilassa se heittää, ja käsittelemätön poikkeus
+   sovelluksen juuressa kaataa koko sivun.
+5. **Admin-UI:ssa ei `window.prompt`ia** — asennetussa iOS-PWA:ssa se on
+   epäluotettava, ja nappi näyttää siltä ettei se tee mitään. Käytä sivun sisäistä
+   lomaketta (esim. `AdjustmentControl` MaksutView'ssä).
+6. **Tiedostolinkit API:iin täydellä osoitteella** (`${API_BASE}/api/…`):
+   juurisuhteellinen `/api/…` osoittaa GitHub Pagesiin, joka vastaa 404:llä.
+
 ## Verifiointi
 
 ```

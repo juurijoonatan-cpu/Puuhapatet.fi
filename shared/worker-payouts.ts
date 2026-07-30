@@ -274,7 +274,13 @@ export function settleWorker(input: {
   const p1PayableCents = Math.max(0, stats.p1EarnedCents + p1AdjustmentCents);
   const reservedCents = settledCents + eraPendingCents;
   const p1Covered = Math.min(p1PayableCents, reservedCents);
-  const p1Overflow = Math.max(0, reservedCents - p1Covered);
+  // Ylivuoto keltaiseen lasketaan BRUTOSTA, ei vähennetystä summasta. Muuten
+  // sovittu vähennys olisi syönyt keltaisia: jos punaiset oli jo laskutettu
+  // täytenä (100 €) ja johtaja kirjasi jälkikäteen 10 € vähennyksen, erotus olisi
+  // valunut "ylivuotona" keltaisten päälle ja pienentänyt niitä 10 € — vaikka
+  // vähennys sovittiin punaisista. Aitoon ylimaksuun (yli bruton) sääntö pätee
+  // edelleen: käsin kirjattu liian iso maksu kuittaa keltaista.
+  const p1Overflow = Math.max(0, reservedCents - Math.max(p1PayableCents, stats.p1EarnedCents));
   const p2Covered = Math.min(stats.p2EarnedCents, p2SettledCents + p1Overflow);
   const openP1Cents = Math.max(0, p1PayableCents - p1Covered);
   const openP2Cents = Math.max(0, stats.p2EarnedCents - p2Covered);
@@ -283,7 +289,12 @@ export function settleWorker(input: {
   // maksetaan normaalilla taksalla (legacy), joten ne kuuluvat samaan pottiin.
   const payableWindows = p2Enabled ? stats.p1Washed : stats.washed;
   const invoicedWindows = (era.eraWindows[id] || 0) + (era.eraPendingWindows[id] || 0);
-  const openP1Windows = openP1Cents <= 0 ? 0 : Math.max(0, round1(payableWindows - invoicedWindows));
+  // Sovittu vähennys voi nollata maksettavan kokonaan — silloin myös esitäytetty
+  // ikkunamäärä on nolla, muuten maksudialogi tarjoaisi ikkunoita nollan euron
+  // laskulle. Ehto katsoo NIMENOMAAN maksettavaa (`p1PayableCents`), ei avointa
+  // saldoa: jos velka on kuitattu käsin kirjatulla maksulla, ikkunamäärä saa yhä
+  // näkyä, jotta kirjanpidollisen erälaskun voi tehdä jälkikäteen.
+  const openP1Windows = p1PayableCents <= 0 ? 0 : Math.max(0, round1(payableWindows - invoicedWindows));
 
   return {
     workerId: id,

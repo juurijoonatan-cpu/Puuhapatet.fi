@@ -16,7 +16,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { api, type WorkerDetail } from "@/lib/api";
+import { api, API_BASE, type WorkerDetail } from "@/lib/api";
 import { getAdminProfile, USERS } from "@/lib/admin-profile";
 import { computeTax, readVatStatus, readInPrepaymentRegister, readPayeeType, fmtPct } from "@shared/tax";
 import { MAX_CREW_DOC_LEN, retentionFromDate } from "@shared/crew";
@@ -89,7 +89,10 @@ export default function AdminWorkerDetailPage() {
       title: `Lasku ${p.invoiceNo}`,
       sub: p.gigName,
       amountCents: p.tax?.payableCents ?? p.amountCents,
-      href: `/api/crew/${p.token}/payout/${p.id}/invoice.pdf`,
+      // TÄYSI osoite, ei juurisuhteellinen: frontend on GitHub Pagesissa ja API
+      // erillisellä palvelimella, joten "/api/…" olisi osoittanut Pagesiin, joka
+      // vastaa 404:llä — lasku ei olisi auennut lainkaan.
+      href: `${API_BASE}/api/crew/${p.token}/payout/${p.id}/invoice.pdf`,
       retention: retentionFromDate(p.paidAt || p.createdAt),
       auto: true as const,
       tax: taxLine(p.amountCents, p.tax),

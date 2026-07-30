@@ -4,20 +4,19 @@
     <meta charset="utf-8" />
     <title>Puuhapatet</title>
     <script>
-      // GitHub Pages SPA redirect: forward the path as a query parameter
+      // GitHub Pages SPA redirect: forward the path as a query parameter.
+      //
+      // HUOM: kyselyosa palautetaan OMANA parametrinaan. Aiemmin polku ja kysely
+      // liimattiin yhteen ilman erotinta, joten esim. /admin/gig/12?tab=maksut
+      // palautui muodossa /admin/gig/12tab=maksut — reitti ei enää täsmännyt ja
+      // käyttäjä päätyi "sivua ei löydy" -näkymään. index.html liittää "q":n
+      // takaisin kyselyksi.
       var l = window.location;
-      l.replace(
-        l.protocol +
-          "//" +
-          l.hostname +
-          (l.port ? ":" + l.port : "") +
-          "/?p=" +
-          encodeURIComponent(
-            l.pathname.slice(1) +
-              (l.search ? l.search.slice(1) : "") +
-              l.hash
-          )
-      );
+      var target =
+        "/?p=" + encodeURIComponent(l.pathname.slice(1)) +
+        (l.search ? "&q=" + encodeURIComponent(l.search.slice(1)) : "") +
+        l.hash;
+      l.replace(l.protocol + "//" + l.hostname + (l.port ? ":" + l.port : "") + target);
     </script>
   </head>
   <body></body>

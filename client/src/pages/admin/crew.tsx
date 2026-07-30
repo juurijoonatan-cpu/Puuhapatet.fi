@@ -1073,6 +1073,9 @@ function PayrollSummary({ crew, eraInvoices, p2Enabled }: {
       stats,
       payouts: member.payouts || [],
       p2Enabled,
+      // Sovittu vähennys mukaan MYÖS täällä — muuten Tiimi-sivu näyttäisi eri
+      // siirrettävän kuin Maksut-välilehti, ja vähennysrivi jäisi näkymättä.
+      adjustmentCents: member.payAdjustmentCents ?? 0,
       era: eraMaps,
       p2Settled: { sentCents: p2Maps.eraSent[member.id] || 0, pendingCents: p2Maps.eraPending[member.id] || 0 },
     }))

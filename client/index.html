@@ -223,16 +223,19 @@
     <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
     <script>
-      // GitHub Pages SPA: restore path from query parameter
+      // GitHub Pages SPA: restore path from query parameter. "q" on alkuperäinen
+      // kyselyosa (ks. public/404.html) — se liitetään takaisin omana kyselynä,
+      // jotta esim. /admin/gig/12?tab=maksut selviää kierrätyksestä ehjänä.
       (function () {
-        var p = new URLSearchParams(window.location.search).get("p");
-        if (p) {
-          window.history.replaceState(
-            null,
-            null,
-            "/" + decodeURIComponent(p)
-          );
-        }
+        var params = new URLSearchParams(window.location.search);
+        var p = params.get("p");
+        if (!p) return;
+        var q = params.get("q");
+        window.history.replaceState(
+          null,
+          null,
+          "/" + decodeURIComponent(p) + (q ? "?" + decodeURIComponent(q) : "") + window.location.hash
+        );
       })();
     </script>
   </head>
@@ -247,11 +250,67 @@
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
     <script>
-      // Safety net: remove splash after 6s even if JS bundle fails to load
-      setTimeout(function() {
-        var s = document.getElementById("pp-splash");
-        if (s) { s.style.opacity = "0"; setTimeout(function(){ if(s.parentNode) s.parentNode.removeChild(s); }, 400); }
-      }, 6000);
+      // Safety net. Vanha versio poisti splashin 6 sekunnin jälkeen aina — myös
+      // silloin kun koodinippu EI latautunut, jolloin jäljelle jäi täysin
+      // valkoinen sivu ilman viestiä ja ilman ulospääsyä. Näin käy joka kerta kun
+      // uusi julkaisu on poistanut vanhat hashatut palaset ja puhelimessa on
+      // vielä eilisen index.html.
+      //
+      // Nyt tarkistetaan mounttasiko React. Jos ei, splash muuttuu
+      // korjausnäkymäksi. Tämä koodi on tarkoituksella inline-JS ilman importteja
+      // ja ilman moderneja rakenteita: sen TÄYTYY toimia silloinkin kun yksikään
+      // moduuli ei lataudu.
+      (function () {
+        function purgeAndReload() {
+          var jobs = [];
+          try {
+            if (window.caches && caches.keys) {
+              jobs.push(caches.keys().then(function (ks) {
+                return Promise.all(ks.map(function (k) { return caches.delete(k); }));
+              }));
+            }
+            if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+              jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) {
+                return Promise.all(rs.map(function (r) { return r.unregister(); }));
+              }));
+            }
+            // Pakota tuore index.html HTTP-välimuistiin ennen latausta.
+            jobs.push(fetch(location.href, { cache: "reload" })["catch"](function () {}));
+          } catch (e) { /* best effort */ }
+          var done = function () { location.reload(); };
+          setTimeout(done, 1500);
+          try { Promise.all(jobs).then(done, done); } catch (e) { done(); }
+        }
+
+        setTimeout(function () {
+          var s = document.getElementById("pp-splash");
+          if (!s) return;
+          var root = document.getElementById("root");
+          var mounted = root && root.childNodes.length > 0;
+          if (mounted) {
+            s.style.opacity = "0";
+            setTimeout(function () { if (s.parentNode) s.parentNode.removeChild(s); }, 400);
+            return;
+          }
+          // React ei mounttannut — näytä syy ja nappi sen sijaan että jätetään
+          // valkoinen sivu.
+          s.innerHTML =
+            '<div style="max-width:320px;padding:0 24px;text-align:center">' +
+            '<div style="color:#b8e07a;font-size:26px;font-weight:800;margin-bottom:12px">Puuhapatet.</div>' +
+            '<p style="color:rgba(255,255,255,0.75);font-size:14px;line-height:1.5;margin:0 0 20px">' +
+            'Sovellus ei latautunut. Yleensä kyse on siitä että puhelimessa on vanha versio muistissa.' +
+            '</p>' +
+            '<button id="pp-recover" style="min-height:46px;padding:12px 22px;border:none;border-radius:10px;' +
+            'background:#b8e07a;color:#1c3309;font-size:15px;font-weight:700">Päivitä ja lataa uudelleen</button>' +
+            '</div>';
+          var btn = document.getElementById("pp-recover");
+          if (btn) btn.addEventListener("click", function () {
+            btn.disabled = true;
+            btn.textContent = "Päivitetään…";
+            purgeAndReload();
+          });
+        }, 6000);
+      })();
     </script>
   </body>
 </html>

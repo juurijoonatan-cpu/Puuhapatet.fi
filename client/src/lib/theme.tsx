@@ -12,10 +12,19 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setTheme] = useState<Theme>(() => {
+    // localStorage HEITTÄÄ Safarin privaattitilassa ja joissakin in-app
+    // selaimissa (linkki avattuna Instagramista/WhatsAppista). Tämä ajetaan
+    // ensimmäisen renderin aikana koko sovelluksen juuressa, joten käsittelemätön
+    // poikkeus kaatoi KAIKEN valkoiseksi virhesivuksi. Teema on mukavuusasetus —
+    // sen puuttuminen ei saa estää sovelluksen käyttöä.
     if (typeof window !== "undefined") {
-      const stored = localStorage.getItem("puuhapatet-theme");
-      if (stored === "light" || stored === "dark") return stored;
-      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      try {
+        const stored = localStorage.getItem("puuhapatet-theme");
+        if (stored === "light" || stored === "dark") return stored;
+      } catch { /* privaattitila — jatketaan järjestelmän asetuksella */ }
+      try {
+        return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      } catch { return "light"; }
     }
     return "light";
   });
@@ -24,7 +33,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     const root = document.documentElement;
     root.classList.remove("light", "dark");
     root.classList.add(theme);
-    localStorage.setItem("puuhapatet-theme", theme);
+    try { localStorage.setItem("puuhapatet-theme", theme); } catch { /* ks. yllä */ }
   }, [theme]);
 
   const toggleTheme = () => {

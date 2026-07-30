@@ -91,6 +91,99 @@ function StatTile({ label, value, sub, tone }: { label: string; value: string; s
   );
 }
 
+/**
+ * Sovitun vähennyksen (tai lisän) säädin yhdelle tekijälle.
+ *
+ * Oma pieni lomake eikä `window.prompt`: kotivalikkoon asennetussa iOS-PWA:ssa
+ * natiivi prompt on epäluotettava — nappi näyttää siltä ettei se tee mitään.
+ * Tässä syöttö on osa sivua, numeronäppäimistöllä ja isoilla painikkeilla.
+ *
+ * Syöte on POSITIIVINEN euromäärä = vähennys, koska johtaja ajattelee
+ * "vähennetään 10 €". Tallennukseen se kääntyy negatiiviseksi sentiksi.
+ */
+function AdjustmentControl({ name, cents, onSave }: {
+  name: string;
+  /** Nykyinen sovittu muutos sentteinä, etumerkillinen (0 = ei muutosta). */
+  cents: number;
+  onSave: (cents: number | null) => Promise<void> | void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const start = () => {
+    // Näytä nykyinen vähennys positiivisena, samassa muodossa kuin se syötetään.
+    setValue(cents ? String(Math.abs(cents) / 100).replace(".", ",") : "");
+    setOpen(true);
+  };
+  const commit = async (next: number | null) => {
+    setBusy(true);
+    await onSave(next);
+    setBusy(false);
+    setOpen(false);
+  };
+  const parsed = Number(value.trim().replace(",", "."));
+  const canSave = value.trim() !== "" && Number.isFinite(parsed) && parsed > 0;
+
+  const btn: React.CSSProperties = {
+    minHeight: 40, padding: "9px 14px", borderRadius: 10,
+    border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.04)",
+    color: "rgba(255,255,255,0.7)", fontFamily: FONT, fontSize: 12, fontWeight: 600, cursor: "pointer",
+  };
+
+  return (
+    <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+      {!open ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <button onClick={start} style={btn}>
+            {cents !== 0 ? "Muuta vähennystä" : "Sovittu vähennys"}
+          </button>
+          {cents !== 0 && (
+            <button onClick={() => void commit(null)} disabled={busy} style={{ ...btn, background: "transparent", color: "rgba(255,255,255,0.5)" }}>
+              Poista
+            </button>
+          )}
+        </div>
+      ) : (
+        <div>
+          <p style={{ margin: "0 0 6px", fontFamily: FONT, fontSize: 11.5, color: "rgba(255,255,255,0.5)" }}>
+            Paljonko {name.split(/\s+/)[0]}lta vähennetään?
+          </p>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <input
+              type="text"
+              inputMode="decimal"
+              autoFocus
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && canSave) void commit(-Math.round(parsed * 100)); }}
+              placeholder="10"
+              aria-label={`Sovittu vähennys — ${name}`}
+              style={{
+                width: 90, minHeight: 40, padding: "9px 12px", borderRadius: 10,
+                border: "1px solid rgba(255,255,255,0.18)", background: "rgba(0,0,0,0.3)",
+                color: "#fff", fontFamily: FONT, fontSize: 15, fontWeight: 700,
+                fontVariantNumeric: "tabular-nums", textAlign: "right",
+              }}
+            />
+            <span style={{ fontFamily: FONT, fontSize: 14, color: "rgba(255,255,255,0.5)" }}>€</span>
+            <button
+              onClick={() => void commit(-Math.round(parsed * 100))}
+              disabled={!canSave || busy}
+              style={{ ...btn, background: canSave ? "#ffce28" : "rgba(255,255,255,0.04)", color: canSave ? "#000" : "rgba(255,255,255,0.3)", borderColor: "transparent", fontWeight: 700 }}
+            >
+              {busy ? "Tallennetaan…" : "Tallenna"}
+            </button>
+            <button onClick={() => setOpen(false)} disabled={busy} style={{ ...btn, background: "transparent", color: "rgba(255,255,255,0.5)" }}>
+              Peru
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Sähköpostikopioiden tila johtaja-väliselle laskulle (kohta 3D viimeinen
  *  luetelmakohta). Lokitetaan lähetyksen yhteydessä (kohta 4); luonnostila
  *  (esim. tekijän vielä käsittelemättä oleva luonnos) ei koskaan lähetä
@@ -360,32 +453,11 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                         kesken) — ilman tätä summa jäisi ikuisesti "siirrettävänä"
                         eikä sitä voisi kuitata pois. Peruttavissa. */}
                     {onSetAdjustment && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-                        <button
-                          onClick={() => {
-                            const cur = r.p1AdjustmentCents ? String(-r.p1AdjustmentCents / 100) : "";
-                            const raw = window.prompt(`Sovittu vähennys ${r.name}lle euroina (esim. 10 = vähennä 10 €). Tyhjä poistaa vähennyksen.`, cur);
-                            if (raw === null) return;
-                            const t = raw.trim();
-                            if (t === "") { void onSetAdjustment(r.workerId, null); return; }
-                            const v = Number(t.replace(",", "."));
-                            if (!Number.isFinite(v)) return;
-                            // Positiivinen syöte = vähennys → tallennetaan negatiivisena.
-                            void onSetAdjustment(r.workerId, -Math.round(v * 100));
-                          }}
-                          style={{ minHeight: 36, padding: "7px 12px", borderRadius: 9, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.7)", fontFamily: FONT, fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}
-                        >
-                          {r.p1AdjustmentCents !== 0 ? "Muuta vähennystä" : "Sovittu vähennys"}
-                        </button>
-                        {r.p1AdjustmentCents !== 0 && (
-                          <button
-                            onClick={() => void onSetAdjustment(r.workerId, null)}
-                            style={{ minHeight: 36, padding: "7px 12px", borderRadius: 9, border: "1px solid rgba(255,255,255,0.14)", background: "transparent", color: "rgba(255,255,255,0.5)", fontFamily: FONT, fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}
-                          >
-                            Poista
-                          </button>
-                        )}
-                      </div>
+                      <AdjustmentControl
+                        name={r.name}
+                        cents={r.p1AdjustmentCents}
+                        onSave={(c) => onSetAdjustment(r.workerId, c)}
+                      />
                     )}
                   </div>
                 ))}

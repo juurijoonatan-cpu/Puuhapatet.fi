@@ -155,5 +155,7 @@ export function fmtPct(rate: number): string {
 }
 
 export function fmtEurCents(cents: number): string {
-  return (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+  // Sitova välilyönti: tavallisella välillä "215,00 €" katkesi rivin lopussa
+  // niin että pelkkä € jäi omalle rivilleen.
+  return (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
 }

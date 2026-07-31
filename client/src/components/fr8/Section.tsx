@@ -13,6 +13,7 @@
 import { useState, useCallback, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { T, card as tokenCard, mono } from "./tokens";
 
 const STORE_PREFIX = "fr8.section.";
 
@@ -35,14 +36,9 @@ function writeOpen(id: string, open: boolean) {
   }
 }
 
-const card: React.CSSProperties = {
-  background: "rgba(255,255,255,0.035)",
-  border: "1px solid rgba(255,255,255,0.08)",
-  borderRadius: "20px",
-  backdropFilter: "blur(22px)",
-  WebkitBackdropFilter: "blur(22px)",
-  overflow: "hidden",
-};
+/** Sama kortti kuin dashissa — tämä oli aiemmin tavu tavulta identtinen
+ *  kopio `Dashboard.tsx`:n omasta `card`ista. */
+const card: React.CSSProperties = { ...tokenCard, overflow: "hidden" };
 
 interface Props {
   /** Stable key for localStorage persistence (e.g. "founders"). */
@@ -80,23 +76,21 @@ export default function Section({ id, label, summary, defaultOpen = false, animC
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          gap: "12px",
+          gap: T.space.md,
           width: "100%",
-          padding: m ? "15px 16px" : "17px 22px",
+          padding: m ? `${T.space.lg}px ${T.space.lg}px` : `${T.space.lg + 2}px ${T.space.xl - 2}px`,
           background: "none",
           border: "none",
           cursor: "pointer",
           color: "#fff",
           textAlign: "left",
-          fontFamily: "var(--font-onest, system-ui, sans-serif)",
+          fontFamily: T.font,
         }}
       >
         <span
           style={{
-            fontFamily: "var(--font-jetbrains-mono, monospace)",
-            fontSize: "11px",
-            letterSpacing: "0.14em",
-            color: "rgba(255,255,255,0.55)",
+            ...mono,
+            color: T.text.muted,
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -106,13 +100,14 @@ export default function Section({ id, label, summary, defaultOpen = false, animC
         >
           {label}
         </span>
-        <span style={{ display: "flex", alignItems: "center", gap: "12px", flexShrink: 0, minWidth: 0 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: T.space.md, flexShrink: 0, minWidth: 0 }}>
           {summary != null && (
             <span
               style={{
-                fontSize: m ? "12px" : "13px",
-                fontWeight: 600,
-                color: "rgba(255,255,255,0.85)",
+                fontFamily: T.font,
+                fontSize: T.size.sm,
+                fontWeight: 700,
+                color: T.text.secondary,
                 whiteSpace: "nowrap",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -128,13 +123,13 @@ export default function Section({ id, label, summary, defaultOpen = false, animC
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              width: "22px",
-              height: "22px",
-              borderRadius: "7px",
-              background: "rgba(255,255,255,0.05)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              color: "rgba(255,255,255,0.55)",
-              fontSize: "10px",
+              width: 22,
+              height: 22,
+              borderRadius: T.radius.xs + 1,
+              background: T.surface.raised,
+              border: T.border.subtle,
+              color: T.text.muted,
+              fontSize: T.size.label,
               transform: open ? "rotate(180deg)" : "none",
               transition: "transform .22s ease",
               flexShrink: 0,
@@ -154,8 +149,8 @@ export default function Section({ id, label, summary, defaultOpen = false, animC
             transition={{ duration: 0.28, ease: [0.2, 0.8, 0.2, 1] }}
             style={{ overflow: "hidden" }}
           >
-            <div style={{ padding: m ? "0 16px 16px" : "0 22px 20px", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-              <div style={{ marginTop: m ? "14px" : "16px" }}>{children}</div>
+            <div style={{ padding: m ? `0 ${T.space.lg}px ${T.space.lg}px` : `0 ${T.space.xl - 2}px ${T.space.lg + 4}px`, borderTop: T.border.divider }}>
+              <div style={{ marginTop: T.space.lg }}>{children}</div>
             </div>
           </motion.div>
         )}

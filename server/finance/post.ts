@@ -22,7 +22,7 @@ import {
 import { ensureAllLedgers, ensureFiscalYear, accountsByCode, ACCOUNT, LEDGER_DEFS } from "./accounts";
 import { BRAND_BILLERS, inferBillerId } from "@shared/billers";
 import { effectiveJobTotal } from "@shared/team";
-import { sanitizeGigData, type GigData } from "@shared/gig";
+import { sanitizeGigData, type GigData, livePayments } from "@shared/gig";
 
 function parseGig(raw: string | null): GigData | null {
   if (!raw) return null;
@@ -81,7 +81,8 @@ function buildDraftEntries(
     if (job.gigData) {
       const gig = parseGig(job.gigData);
       const gigName = gig?.company?.name || job.description || `Keikka #${job.id}`;
-      (gig?.payments ?? []).forEach((p, i) => {
+      // Mitätöityä laskutuserää ei kirjata myyntinä (ks. GigPayment.voided).
+      livePayments(gig?.payments).forEach((p, i) => {
         if (!p?.amountCents || p.amountCents <= 0 || !isFounder(p.biller?.id)) return;
         const date = new Date(p.t || job.scheduledAt || job.createdAt);
         drafts.push({
@@ -200,7 +201,18 @@ async function rebuildLedgersNow(): Promise<void> {
   await ensureAllLedgers();
 
   const [jobRows, expenseRows, investmentRows, settlementRows] = await Promise.all([
-    db.select().from(jobs),
+    // Kirjanpidon uudelleenrakennus lukee vain rahakentät ja gigData:n
+    // laskutuserät. `db.select().from(jobs)` veti mukanaan allekirjoitus-PNG:t
+    // ja koko karttablobin — ja tämä ajetaan JOKAISELLA /api/finance-haulla,
+    // joita Talous-sivu tekee viisi kerralla.
+    db.select({
+      id: jobs.id, customerId: jobs.customerId, description: jobs.description,
+      agreedPrice: jobs.agreedPrice, status: jobs.status, assignedTo: jobs.assignedTo,
+      scheduledAt: jobs.scheduledAt, waiveFee: jobs.waiveFee, quoteStatus: jobs.quoteStatus,
+      isTaloyhtiio: jobs.isTaloyhtiio, unitCount: jobs.unitCount, isCustomGig: jobs.isCustomGig,
+      billedBy: jobs.billedBy, createdAt: jobs.createdAt, updatedAt: jobs.updatedAt,
+      projectData: jobs.projectData, gigData: jobs.gigData,
+    }).from(jobs) as unknown as Promise<Job[]>,
     db.select().from(expenses),
     db.select().from(investments),
     db.select().from(founderSettlements),

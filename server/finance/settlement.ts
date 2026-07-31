@@ -9,7 +9,7 @@
  * straight lift (DB fetch stays in routes.ts; only the pure computation
  * moved here).
  */
-import { sanitizeGigData, type GigData } from "@shared/gig";
+import { sanitizeGigData, livePayments, type GigData } from "@shared/gig";
 import { sanitizeProjectData, fixedDealFor, computeEraDebts, type ProjectData } from "@shared/project";
 import { BRAND_BILLERS, inferBillerId } from "@shared/billers";
 import { effectiveJobTotal } from "@shared/team";
@@ -52,7 +52,8 @@ export function computeBillerTurnover(rows: Job[]): BillerTurnover {
     if (row.gigData) {
       const gig = parseGig(row.gigData);
       const gigName = gig?.company?.name || row.description || `Keikka #${row.id}`;
-      (gig?.payments || []).forEach((p, i) => {
+      // Mitätöidyt erät eivät ole liikevaihtoa (ks. GigPayment.voided).
+      livePayments(gig?.payments).forEach((p, i) => {
         if (!p?.amountCents || p.amountCents <= 0) return;
         const billerId = p.biller?.id;
         if (!billerId) {
@@ -152,7 +153,7 @@ export function computeFounderSettlement(
   for (const job of rows) {
     if (!job.gigData) continue;
     const g = parseGig(job.gigData);
-    for (const p of g?.payments || []) {
+    for (const p of livePayments(g?.payments)) {
       if (p?.amountCents > 0 && !p.biller?.id) unassignedEraCount += 1;
     }
   }
@@ -164,7 +165,7 @@ export function computeFounderSettlement(
     if (!deal) continue;
     const eraBreakdown = computeEraDebts(project, deal, project.crew || [], project.eraWindows ?? null);
     const gig = parseGig(job.gigData);
-    const payments = gig?.payments ?? [];
+    const payments = livePayments(gig?.payments);
     eraBreakdown.forEach((e, i) => {
       const p = payments[i];
       const b = p?.biller;

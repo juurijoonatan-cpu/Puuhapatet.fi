@@ -87,6 +87,10 @@ export type CrewPayoutStatus = "ilmoitettu" | "hyvaksytty" | "maksettu";
 /** Max stored size for a payout-expense receipt photo data URL (~0.5 MB base64). */
 export const MAX_PAYOUT_RECEIPT_LEN = 700_000;
 
+/** Montako payoutia yhdelle tekijälle säilytetään. Maksetut EIVÄT koskaan
+ *  putoa tämän takia — ks. sanitizeCrewMember. */
+export const MAX_PAYOUTS_KEPT = 100;
+
 /**
  * A deductible expense (kulu) the WORKER attaches to their own payout/invoice when
  * approving it. These are the worker's OWN costs (supplies, transport, …) that they
@@ -589,10 +593,25 @@ export function sanitizeCrewMember(input: any): CrewMember | null {
       }))
       .filter((s: CrewSession) => s.start > 0 && s.end > 0),
     notes,
-    payouts: (Array.isArray(input.payouts) ? input.payouts : [])
-      .slice(0, 100)
-      .map(sanitizePayout)
-      .filter((p: CrewPayout | null): p is CrewPayout => !!p),
+    // Katto on olemassa jotta blob ei kasva rajatta, mutta se EI saa pudottaa
+    // maksettua maksua: sillä on laskunumero ja jäädytetyt vero-/ostajatiedot,
+    // eli se on kirjanpidon tosite (säilytys 6 v). Aiempi `slice(0, 100)` otti
+    // sokeasti sata ensimmäistä, joten 101. maksu katosi hiljaa seuraavassa
+    // tallennuksessa — myös silloin kun se oli maksettu. Nyt maksetut säilyvät
+    // aina, ja katto koskee vain vielä maksamattomia.
+    payouts: (() => {
+      const all = (Array.isArray(input.payouts) ? input.payouts : [])
+        .map(sanitizePayout)
+        .filter((p: CrewPayout | null): p is CrewPayout => !!p);
+      if (all.length <= MAX_PAYOUTS_KEPT) return all;
+      const paid = all.filter((p: CrewPayout) => p.status === "maksettu");
+      const rest = all.filter((p: CrewPayout) => p.status !== "maksettu")
+        .sort((a: CrewPayout, b: CrewPayout) => (b.createdAt || 0) - (a.createdAt || 0))
+        .slice(0, Math.max(0, MAX_PAYOUTS_KEPT - paid.length));
+      // Alkuperäinen järjestys säilyy, jotta näkymät eivät hyppää.
+      const keep = new Set<CrewPayout>([...paid, ...rest]);
+      return all.filter((p: CrewPayout) => keep.has(p));
+    })(),
     documents: (Array.isArray(input.documents) ? input.documents : [])
       .slice(0, 200)
       .map((d: any, i: number): CrewDocument => {

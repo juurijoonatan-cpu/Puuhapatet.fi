@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Loader2, ClipboardList, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Check, CalendarClock, Save, Plus, Trash2, Receipt, Users, TrendingUp, Clock, Building2 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 
@@ -59,8 +59,13 @@ interface JobRow {
     notes: string | null;
     scheduledAt: string | null;
     createdAt: string;
-    customerSignature: string | null;
-    staffSignature: string | null;
+    // Allekirjoitukset EIVÄT tule keikkalistan mukana (base64-PNG per keikka
+    // paisutti listan megatavuiksi). Lista kertoo vain onko niitä; itse kuva
+    // haetaan kun keikka avataan — ks. `loadSignatures`.
+    customerSignature?: string | null;
+    staffSignature?: string | null;
+    hasCustomerSignature?: boolean;
+    hasStaffSignature?: boolean;
     waiveFee: boolean;
     pendingWorkers: string | null;
     quoteToken: string | null;
@@ -97,6 +102,23 @@ export default function AdminJobsPage() {
   const [jobs, setJobs] = useState<JobRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<JobRow | null>(null);
+
+  /**
+   * Avaa keikan ja hakee sen allekirjoitukset erikseen. Lista ei enää kanna
+   * base64-PNG:itä mukanaan, joten kortti täydentää ne auetessaan. Haun
+   * epäonnistuminen ei estä kortin avaamista — allekirjoituskenttä näyttää
+   * silloin tyhjää kanvasta, ja tallennus toimii yhä.
+   */
+  const openJob = useCallback((row: JobRow) => {
+    setSelected(row);
+    if (!row.job.hasCustomerSignature && !row.job.hasStaffSignature) return;
+    void api.getJobSignatures(row.job.id).then((res) => {
+      if (!res.ok || !res.data) return;
+      setSelected((cur) => (cur && cur.job.id === row.job.id
+        ? { ...cur, job: { ...cur.job, customerSignature: res.data!.customerSignature, staffSignature: res.data!.staffSignature } }
+        : cur));
+    });
+  }, []);
   const [updating, setUpdating] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -2123,11 +2145,19 @@ export default function AdminJobsPage() {
             <div className="grid grid-cols-2 gap-4">
               {/* Customer signature */}
               {(() => {
-                const showCanvas = !job.customerSignature || editingCustomerSig;
+                // Allekirjoitus haetaan erikseen kortin auetessa. Sillä välin
+                // EI saa näyttää piirtokanvasta: käyttäjä luulisi ettei
+                // allekirjoitusta ole ja piirtäisi olemassa olevan päälle.
+                const loadingSig = !!job.hasCustomerSignature && job.customerSignature == null;
+                const showCanvas = !loadingSig && (!job.customerSignature || editingCustomerSig);
                 return (
                   <div>
                     <p className="text-xs text-muted-foreground mb-1.5">Asiakas</p>
-                    {!showCanvas ? (
+                    {loadingSig ? (
+                      <div className="w-full h-20 border rounded-lg bg-muted/30 flex items-center justify-center mb-2">
+                        <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : !showCanvas ? (
                       <>
                         <img src={job.customerSignature!} alt="Asiakkaan allekirjoitus" className="w-full h-20 object-contain bg-white rounded-lg border p-1 mb-2" />
                         <Button variant="outline" size="sm" className="w-full text-xs gap-1.5" onClick={() => clearSignatureField(true)}>
@@ -2168,11 +2198,19 @@ export default function AdminJobsPage() {
 
               {/* Staff signature */}
               {(() => {
-                const showCanvas = !job.staffSignature || editingStaffSig;
+                // Allekirjoitus haetaan erikseen kortin auetessa. Sillä välin
+                // EI saa näyttää piirtokanvasta: käyttäjä luulisi ettei
+                // allekirjoitusta ole ja piirtäisi olemassa olevan päälle.
+                const loadingSig = !!job.hasStaffSignature && job.staffSignature == null;
+                const showCanvas = !loadingSig && (!job.staffSignature || editingStaffSig);
                 return (
                   <div>
                     <p className="text-xs text-muted-foreground mb-1.5">Työntekijä</p>
-                    {!showCanvas ? (
+                    {loadingSig ? (
+                      <div className="w-full h-20 border rounded-lg bg-muted/30 flex items-center justify-center mb-2">
+                        <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : !showCanvas ? (
                       <>
                         <img src={job.staffSignature!} alt="Työntekijän allekirjoitus" className="w-full h-20 object-contain bg-white rounded-lg border p-1 mb-2" />
                         <Button variant="outline" size="sm" className="w-full text-xs gap-1.5" onClick={() => clearSignatureField(false)}>
@@ -2290,7 +2328,7 @@ export default function AdminJobsPage() {
                 <Card
                   key={row.job.id}
                   className="p-4 bg-card border-0 premium-shadow cursor-pointer hover:opacity-90 transition-opacity"
-                  onClick={() => row.job.isCustomGig ? navigate(`/admin/gig/${row.job.id}`) : setSelected(row)}
+                  onClick={() => row.job.isCustomGig ? navigate(`/admin/gig/${row.job.id}`) : openJob(row)}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex-1 min-w-0">

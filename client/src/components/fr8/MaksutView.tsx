@@ -6,12 +6,16 @@
  *
  *  0. ASIAKKAALTA — punaisten 4 erää + keltaisten laskutus (vain tilannekuva;
  *     laskun lähetys tapahtuu keikkanäkymän Laskutus-kortissa, ei täällä).
- *  1. TEKIJÖILLE MAKSETTAVAA — per tekijä: punaisista ansaittu, hoidettu ja
+ *  1. JOHTAJIEN TASAUS — kumpi on velkaa kummalle ja paljonko (`TasausView`).
+ *     Tämä on heti laskutuksen alla, koska se on ainoa luku jota ei näe
+ *     mistään muualta: laskut kertovat mitä on laskutettu, tasaus sen kenen
+ *     taskussa raha oikeasti on.
+ *  2. TEKIJÖILLE MAKSETTAVAA — per tekijä: punaisista ansaittu, hoidettu ja
  *     **vielä siirtämättä**, + "Maksa tekijöille" -toiminto. Tämä on se näkymä
  *     jonka perustaja avaa saatuaan erän rahat tilille. Keltaiset näkyvät omana
  *     rivinä, koska niitä EI makseta ennen kuin asiakas on maksanut ne.
- *  2. Johtajien väliset laskut.
- *  3. Tekijöille lähetetyt maksut tiloineen + kuittaukset.
+ *  3. Johtajien väliset laskut.
+ *  4.–5. Tekijöille lähetetyt maksut tiloineen + kuittaukset.
  *
  * Kaikki summat tulevat jaetusta `shared/worker-payouts.ts`:stä — sama laskenta
  * kuin Tiimi-sivun palkkayhteenvedossa ja maksudialogin esitäytössä.
@@ -25,19 +29,20 @@ import {
 import type { ProjectData } from "@shared/project";
 import { fmtEurCents } from "@shared/tax";
 import { BRAND_BILLERS } from "@shared/billers";
-import { RefreshCw, Wallet, Users, CheckCircle2, Mail, FileDown, Receipt, HandCoins } from "lucide-react";
+import { RefreshCw, Wallet, Users, CheckCircle2, Mail, FileDown, Receipt, HandCoins, Scale } from "lucide-react";
+import { T, card as tokenCard, mono, statLabel, subLabel, button as tokenButton, input as tokenInput, chip } from "./tokens";
 import SendInvoiceEmailDialog from "./SendInvoiceEmailDialog";
 import WorkerEraInvoiceDialog from "./WorkerEraInvoiceDialog";
+import TasausView from "./TasausView";
 
-const FONT = "var(--font-onest, system-ui, sans-serif)";
-const MONO = "var(--font-jetbrains-mono, monospace)";
+/** Sama polettilähde kuin dashissa (`./tokens`). Aiemmin tämä näkymä käytti
+ *  omaa korttiaan (pyöristys 16 vs. dashin 20/22, tausta 0,04 vs. 0,035) ja
+ *  omaa vihreäänsä (#5fe08a vs. dashin #9ff0bd) — kaksi välilehteä samasta
+ *  rahasta näyttivät kahdelta eri sovellukselta. */
+const FONT = T.font;
+const MONO = T.mono;
 
-const card: React.CSSProperties = {
-  background: "rgba(255,255,255,0.04)",
-  border: "1px solid rgba(255,255,255,0.08)",
-  borderRadius: 16,
-  padding: 16,
-};
+const card: React.CSSProperties = { ...tokenCard, padding: T.space.lg };
 
 function founderName(id: string): string {
   return BRAND_BILLERS.find((b) => b.id === id)?.name || id;
@@ -56,26 +61,22 @@ function fiDate(iso: string | null | undefined): string {
 const fmtWin = (n: number) => n.toLocaleString("fi-FI", { maximumFractionDigits: 1 });
 
 const TILA_CHIP: Record<string, { label: string; color: string; bg: string }> = {
-  luonnos: { label: "Odottaa tekijää", color: "#ffce28", bg: "rgba(255,206,40,0.12)" },
-  "lähetetty": { label: "Lähetetty · lukittu", color: "#5fe08a", bg: "rgba(95,224,138,0.12)" },
-  "hyväksytty": { label: "Tekijä lähettänyt ✓", color: "#5fe08a", bg: "rgba(95,224,138,0.12)" },
-  "hylätty": { label: "Hylätty", color: "#ff8a8a", bg: "rgba(224,59,59,0.14)" },
+  luonnos: { label: "Odottaa tekijää", color: T.tone.warn, bg: T.tone.warnBg },
+  "lähetetty": { label: "Lähetetty · lukittu", color: T.tone.good, bg: T.tone.goodBg },
+  "hyväksytty": { label: "Tekijä lähettänyt ✓", color: T.tone.good, bg: T.tone.goodBg },
+  "hylätty": { label: "Hylätty", color: T.tone.bad, bg: T.tone.badBg },
 };
 
 function TilaChip({ tila }: { tila: string }) {
   const c = TILA_CHIP[tila] || TILA_CHIP.luonnos;
-  return (
-    <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 600, fontFamily: FONT, color: c.color, background: c.bg, borderRadius: 999, padding: "4px 10px", whiteSpace: "nowrap" }}>
-      {c.label}
-    </span>
-  );
+  return <span style={chip(c.color, c.bg)}>{c.label}</span>;
 }
 
 function SectionTitle({ icon, children, right }: { icon: React.ReactNode; children: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "26px 0 10px" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: T.space.sm, margin: `${T.space.xl}px 0 ${T.space.md}px` }}>
       {icon}
-      <h2 style={{ margin: 0, fontFamily: FONT, fontSize: 15, fontWeight: 700, color: "#fff", letterSpacing: "0.01em" }}>{children}</h2>
+      <h2 style={{ margin: 0, fontFamily: FONT, fontSize: T.size.body, fontWeight: 700, color: T.text.primary, letterSpacing: "0.01em" }}>{children}</h2>
       {right && <span style={{ marginLeft: "auto", flexShrink: 0 }}>{right}</span>}
     </div>
   );
@@ -84,9 +85,9 @@ function SectionTitle({ icon, children, right }: { icon: React.ReactNode; childr
 function StatTile({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
   return (
     <div style={{ ...card, flex: 1, minWidth: 150 }}>
-      <p style={{ margin: 0, fontFamily: MONO, fontSize: 10, letterSpacing: "0.1em", color: "rgba(255,255,255,0.45)", textTransform: "uppercase" }}>{label}</p>
-      <p style={{ margin: "6px 0 0", fontFamily: FONT, fontSize: 22, fontWeight: 800, color: tone || "#fff", fontVariantNumeric: "tabular-nums" }}>{value}</p>
-      {sub && <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: 11.5, color: "rgba(255,255,255,0.5)" }}>{sub}</p>}
+      <p style={{ ...statLabel, margin: 0 }}>{label}</p>
+      <p style={{ margin: `${T.space.xs + 2}px 0 0`, fontFamily: FONT, fontSize: T.size.title, fontWeight: 700, color: tone || T.text.primary }}>{value}</p>
+      {sub && <p style={subLabel}>{sub}</p>}
     </div>
   );
 }
@@ -125,31 +126,27 @@ function AdjustmentControl({ name, cents, onSave }: {
   const parsed = Number(value.trim().replace(",", "."));
   const canSave = value.trim() !== "" && Number.isFinite(parsed) && parsed > 0;
 
-  const btn: React.CSSProperties = {
-    minHeight: 40, padding: "9px 14px", borderRadius: 10,
-    border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.04)",
-    color: "rgba(255,255,255,0.7)", fontFamily: FONT, fontSize: 12, fontWeight: 600, cursor: "pointer",
-  };
+  const btn = tokenButton();
 
   return (
-    <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+    <div style={{ marginTop: T.space.sm, paddingTop: T.space.sm, borderTop: T.border.divider }}>
       {!open ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: T.space.sm, flexWrap: "wrap" }}>
           <button onClick={start} style={btn}>
             {cents !== 0 ? "Muuta vähennystä" : "Sovittu vähennys"}
           </button>
           {cents !== 0 && (
-            <button onClick={() => void commit(null)} disabled={busy} style={{ ...btn, background: "transparent", color: "rgba(255,255,255,0.5)" }}>
+            <button onClick={() => void commit(null)} disabled={busy} style={{ ...btn, background: "transparent", color: T.text.muted }}>
               Poista
             </button>
           )}
         </div>
       ) : (
         <div>
-          <p style={{ margin: "0 0 6px", fontFamily: FONT, fontSize: 11.5, color: "rgba(255,255,255,0.5)" }}>
+          <p style={{ margin: `0 0 ${T.space.xs + 2}px`, fontFamily: FONT, fontSize: T.size.xs, color: T.text.muted }}>
             Paljonko {name.split(/\s+/)[0]}lta vähennetään?
           </p>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: T.space.sm, flexWrap: "wrap" }}>
             <input
               type="text"
               inputMode="decimal"
@@ -159,22 +156,17 @@ function AdjustmentControl({ name, cents, onSave }: {
               onKeyDown={(e) => { if (e.key === "Enter" && canSave) void commit(-Math.round(parsed * 100)); }}
               placeholder="10"
               aria-label={`Sovittu vähennys — ${name}`}
-              style={{
-                width: 90, minHeight: 40, padding: "9px 12px", borderRadius: 10,
-                border: "1px solid rgba(255,255,255,0.18)", background: "rgba(0,0,0,0.3)",
-                color: "#fff", fontFamily: FONT, fontSize: 15, fontWeight: 700,
-                fontVariantNumeric: "tabular-nums", textAlign: "right",
-              }}
+              style={{ ...tokenInput, width: 90, textAlign: "right" }}
             />
-            <span style={{ fontFamily: FONT, fontSize: 14, color: "rgba(255,255,255,0.5)" }}>€</span>
+            <span style={{ fontFamily: FONT, fontSize: T.size.body, color: T.text.muted }}>€</span>
             <button
               onClick={() => void commit(-Math.round(parsed * 100))}
               disabled={!canSave || busy}
-              style={{ ...btn, background: canSave ? "#ffce28" : "rgba(255,255,255,0.04)", color: canSave ? "#000" : "rgba(255,255,255,0.3)", borderColor: "transparent", fontWeight: 700 }}
+              style={canSave ? tokenButton("accent") : { ...btn, opacity: 0.45 }}
             >
               {busy ? "Tallennetaan…" : "Tallenna"}
             </button>
-            <button onClick={() => setOpen(false)} disabled={busy} style={{ ...btn, background: "transparent", color: "rgba(255,255,255,0.5)" }}>
+            <button onClick={() => setOpen(false)} disabled={busy} style={{ ...btn, background: "transparent", color: T.text.muted }}>
               Peru
             </button>
           </div>
@@ -191,14 +183,16 @@ function AdjustmentControl({ name, cents, onSave }: {
 function EmailCopies({ inv }: { inv: EraInvoiceClient }) {
   const emails = inv.emails || [];
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-      <Mail style={{ width: 12, height: 12, color: "rgba(255,255,255,0.35)", flexShrink: 0 }} />
+    <div style={{ display: "flex", alignItems: "center", gap: T.space.xs + 2, marginTop: T.space.sm }}>
+      <Mail style={{ width: 12, height: 12, color: T.text.faint, flexShrink: 0 }} />
       {emails.length === 0 ? (
-        <span style={{ fontFamily: FONT, fontSize: 11.5, color: "rgba(255,255,255,0.4)" }}>
-          {inv.tila === "luonnos" ? "Ei vielä lähetetty — odottaa tekijää." : "Ei sähköpostikopioita (RESEND_API_KEY puuttuu tässä ympäristössä?)."}
+        <span style={{ fontFamily: FONT, fontSize: T.size.xs, color: T.text.faint }}>
+          {/* EI palvelimen ympäristömuuttujan nimeä käyttöliittymään — se ei
+              kerro johtajalle mitään ja näyttää rikkoutuneelta. */}
+          {inv.tila === "luonnos" ? "Ei vielä lähetetty — odottaa tekijää." : "Ei sähköpostikopioita."}
         </span>
       ) : (
-        <span style={{ fontFamily: FONT, fontSize: 11.5, color: "rgba(255,255,255,0.55)" }}>
+        <span style={{ fontFamily: FONT, fontSize: T.size.xs, color: T.text.muted }}>
           {emails.map((e, i) => (
             <span key={i}>
               {i > 0 && " · "}
@@ -227,7 +221,7 @@ function DownloadPdfButton({ jobId, invoiceId }: { jobId: number; invoiceId: num
   };
   return (
     <button onClick={download} disabled={busy}
-      style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 8, padding: "5px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.75)", fontFamily: FONT, fontSize: 11, fontWeight: 600, cursor: "pointer", opacity: busy ? 0.5 : 1 }}>
+      style={{ ...tokenButton(), opacity: busy ? 0.5 : 1 }}>
       <FileDown style={{ width: 12, height: 12 }} /> {busy ? "Avataan…" : "Lataa PDF"}
     </button>
   );
@@ -246,27 +240,29 @@ function VoidInvoiceButton({ jobId, invoiceId, name, onDone }: {
 }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
-  const btn: React.CSSProperties = {
-    minHeight: 36, padding: "7px 12px", borderRadius: 9, cursor: "pointer",
-    fontFamily: FONT, fontSize: 11.5, fontWeight: 600,
-    border: "1px solid rgba(255,255,255,0.14)", background: "transparent", color: "rgba(255,255,255,0.5)",
-  };
+  // minHeight tulee poletista (40) — inline-36 oli ainoa kohta joka ohitti
+  // dokumentoidun osumakokosäännön, ja se näkyi: viereinen "Lataa PDF" oli 40.
+  const btn: React.CSSProperties = { ...tokenButton(), background: "transparent", color: T.text.muted };
   if (!confirming) {
     return <button onClick={() => setConfirming(true)} style={btn}>Mitätöi</button>;
   }
+  // Kysymys omalle rivilleen ja napit sen alle: yhdellä rivillä tämä katkesi
+  // puhelimessa kolmelle riville, joista kaksi oli nappeja eri kohdissa.
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-      <span style={{ fontFamily: FONT, fontSize: 11.5, color: "rgba(255,160,160,0.9)" }}>
+    <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: T.space.sm }}>
+      <span style={{ fontFamily: FONT, fontSize: T.size.xs, color: "rgba(255,160,160,0.95)" }}>
         Mitätöidäänkö {name}n lasku? Summa palaa siirrettäväksi.
       </span>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: T.space.sm, flexWrap: "wrap" }}>
       <button
         disabled={busy}
         onClick={async () => { setBusy(true); await api.voidEraInvoice(jobId, invoiceId); setBusy(false); setConfirming(false); onDone(); }}
-        style={{ ...btn, background: "rgba(255,90,90,0.18)", borderColor: "rgba(255,90,90,0.45)", color: "#ffb3b3", fontWeight: 700 }}
+        style={tokenButton("danger")}
       >
         {busy ? "Mitätöidään…" : "Kyllä, mitätöi"}
       </button>
       <button disabled={busy} onClick={() => setConfirming(false)} style={btn}>Peru</button>
+      </span>
     </span>
   );
 }
@@ -280,7 +276,7 @@ export interface MaksutBilling {
   nextInstalmentCents: number;
 }
 
-export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAdjustment }: {
+export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAdjustment, canEditTasaus = true }: {
   jobId: number;
   /** Karttatila — tarvitaan tekijöiden maksettavan laskentaan. */
   project: ProjectData | null;
@@ -291,6 +287,8 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
   /** Sovittu vähennys/lisä tekijän punaisten palkkaan (senttiä, etumerkillinen;
    *  null poistaa). Tallentuu crew-riville, joten se pysyy. */
   onSetAdjustment?: (workerId: string, cents: number | null) => Promise<void> | void;
+  /** Saako katsoja kirjata tasauksen (vain perustaja). */
+  canEditTasaus?: boolean;
 }) {
   const [invoices, setInvoices] = useState<EraInvoiceClient[]>([]);
   const [loading, setLoading] = useState(true);
@@ -323,27 +321,29 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
   const totals = useMemo(() => sumWorkerSettlements(payable), [payable]);
 
   return (
-    <div data-fr8-pane style={{ height: "100%", overflowY: "auto", padding: "20px 16px 40px", maxWidth: 860, margin: "0 auto", width: "100%" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        <div>
-          <h1 style={{ margin: 0, fontFamily: FONT, fontSize: 20, fontWeight: 800, color: "#fff" }}>Maksut</h1>
-          <p style={{ margin: "4px 0 0", fontFamily: FONT, fontSize: 12.5, color: "rgba(255,255,255,0.5)" }}>
-            Mitä asiakkaalta on laskutettu ja paljonko kullekin tekijälle pitää vielä siirtää.
-          </p>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+    <div
+      data-fr8-pane
+      style={{
+        height: "100%", overflowY: "auto", overflowX: "hidden", overscrollBehavior: "contain",
+        boxSizing: "border-box",
+        padding: `${T.space.lg + 4}px ${T.space.lg}px calc(${T.space.xl}px + env(safe-area-inset-bottom))`,
+        maxWidth: 980, margin: "0 auto", width: "100%",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: T.space.sm + 2 }}>
+        <h1 style={{ margin: 0, fontFamily: FONT, fontSize: T.size.display, fontWeight: 700, color: T.text.primary, letterSpacing: "-0.01em" }}>Maksut</h1>
+        <div style={{ display: "flex", alignItems: "center", gap: T.space.sm, flexShrink: 0 }}>
           <SendInvoiceEmailDialog />
-          <button onClick={() => { setLoading(true); void load(); }} title="Päivitä"
-            style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, padding: "8px 12px", borderRadius: 10, cursor: "pointer", border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.75)", fontFamily: FONT, fontSize: 12, fontWeight: 600 }}>
+          <button onClick={() => { setLoading(true); void load(); }} title="Päivitä" style={tokenButton()}>
             <RefreshCw style={{ width: 13, height: 13 }} /> Päivitä
           </button>
         </div>
       </div>
 
-      {loading && <p style={{ fontFamily: FONT, fontSize: 13, color: "rgba(255,255,255,0.5)", marginTop: 24 }}>Ladataan…</p>}
+      {loading && <p style={{ fontFamily: FONT, fontSize: T.size.sm, color: T.text.muted, marginTop: T.space.xl }}>Ladataan…</p>}
       {err && !loading && (
-        <div style={{ ...card, marginTop: 20, borderColor: "rgba(224,59,59,0.4)" }}>
-          <p style={{ margin: 0, fontFamily: FONT, fontSize: 13, color: "#ff8a8a" }}>{err}</p>
+        <div style={{ ...card, marginTop: T.space.lg, borderColor: T.tone.badBorder }}>
+          <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.sm, color: T.tone.bad }}>{err}</p>
         </div>
       )}
 
@@ -354,10 +354,10 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
           {billing && (
             <>
               <SectionTitle
-                icon={<Receipt style={{ width: 15, height: 15, color: "rgba(255,255,255,0.6)" }} />}
+                icon={<Receipt style={{ width: 15, height: 15, color: T.text.secondary }} />}
                 right={onOpenGig ? (
                   <button onClick={onOpenGig}
-                    style={{ padding: "6px 11px", borderRadius: 9, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.75)", fontFamily: FONT, fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>
+                    style={tokenButton()}>
                     Lähetä lasku →
                   </button>
                 ) : undefined}
@@ -368,21 +368,21 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                   silloin niissä ei ole enää mitään tehtävää. Kesken oleva laskutus
                   saa oman tiilensä. */}
               {billing.p1PayCount >= 4 ? (
-                <div style={{ ...card, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                  <span style={{ fontFamily: FONT, fontSize: 13, color: "#5fe08a", fontWeight: 700 }}>✓ Punaiset laskutettu</span>
-                  <span style={{ fontFamily: FONT, fontSize: 12.5, color: "rgba(255,255,255,0.55)" }}>4/4 erää · {fmtEurCents(billing.p1InvoicedCents)}</span>
-                  <span style={{ marginLeft: "auto", fontFamily: FONT, fontSize: 12.5, color: billing.p2RemainingCents > 0 ? "rgb(255,206,40)" : "rgba(255,255,255,0.5)" }}>
+                <div style={{ ...card, display: "flex", alignItems: "center", gap: T.space.sm + 2, flexWrap: "wrap" }}>
+                  <span style={{ fontFamily: FONT, fontSize: T.size.sm, color: T.tone.good, fontWeight: 700 }}>✓ Punaiset laskutettu</span>
+                  <span style={{ fontFamily: FONT, fontSize: T.size.sm, color: T.text.muted }}>4/4 erää · {fmtEurCents(billing.p1InvoicedCents)}</span>
+                  <span style={{ marginLeft: "auto", fontFamily: FONT, fontSize: T.size.sm, color: billing.p2RemainingCents > 0 ? T.tone.warn : T.text.muted }}>
                     Keltaiset: {billing.p2InvoicedCents > 0 ? `laskutettu ${fmtEurCents(billing.p2InvoicedCents)}` : "ei laskutettu"}
                     {billing.p2RemainingCents > 0 ? ` · laskuttamatta ${fmtEurCents(billing.p2RemainingCents)}` : ""}
                   </span>
                 </div>
               ) : (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: T.space.sm + 2 }}>
                   <StatTile
                     label="Punaiset laskutettu"
                     value={fmtEurCents(billing.p1InvoicedCents)}
                     sub={`${Math.min(4, billing.p1PayCount)}/4 erää · sopimus ${fmtEurCents(billing.agreedTotalCents)}`}
-                    tone="#5fe08a"
+                    tone={T.tone.good}
                   />
                   <StatTile
                     label="Seuraava erä"
@@ -393,76 +393,84 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                     label="Keltaiset"
                     value={fmtEurCents(billing.p2InvoicedCents)}
                     sub={billing.p2RemainingCents > 0 ? `laskuttamatta ${fmtEurCents(billing.p2RemainingCents)}` : "ei laskuttamatonta"}
-                    tone={billing.p2InvoicedCents > 0 ? "#5fe08a" : undefined}
+                    tone={billing.p2InvoicedCents > 0 ? T.tone.good : undefined}
                   />
                 </div>
               )}
             </>
           )}
 
-          {/* ── 1. TEKIJÖILLE MAKSETTAVAA — päänäkymä. */}
+          {/* ── 1. JOHTAJIEN TASAUS — kuka on velkaa kenelle.
+                 Tämä on heti asiakaslaskutuksen alla, koska se on ainoa luku
+                 jota ei saa mistään muualta: erälaskut kertovat mitä on
+                 laskutettu, tasaus kertoo kenen taskussa raha oikeasti on. */}
+          <SectionTitle icon={<Scale style={{ width: 15, height: 15, color: T.text.secondary }} />}>
+            Johtajien tasaus
+          </SectionTitle>
+          <TasausView jobId={jobId} canEdit={canEditTasaus} />
+
+          {/* ── 2. TEKIJÖILLE MAKSETTAVAA — päänäkymä. */}
           <SectionTitle
-            icon={<HandCoins style={{ width: 15, height: 15, color: "rgba(255,255,255,0.6)" }} />}
+            icon={<HandCoins style={{ width: 15, height: 15, color: T.text.secondary }} />}
             right={payable.length > 0 ? <WorkerEraInvoiceDialog jobId={jobId} workers={payable} variant="button" onSent={() => void load()} /> : undefined}
           >
             Tekijöille maksettavaa
           </SectionTitle>
           {payable.length === 0 ? (
             <div style={card}>
-              <p style={{ margin: 0, fontFamily: FONT, fontSize: 12.5, color: "rgba(255,255,255,0.5)" }}>
+              <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.sm, color: T.text.muted }}>
                 Ei tekijöitä tällä keikalla. Lisää tekijät Tiimi-sivulla.
               </p>
             </div>
           ) : (
             <>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: T.space.sm + 2, marginBottom: T.space.md }}>
                 <StatTile
                   label="Punaisista siirrettävä"
                   value={fmtEurCents(totals.openP1Cents)}
                   sub={totals.openP1Cents > 0 ? `${fmtWin(totals.openP1Windows)} ikkunaa · ansaittu ${fmtEurCents(totals.p1EarnedCents)}` : "kaikki maksettu ✓"}
-                  tone={totals.openP1Cents > 0 ? "#ffce28" : "rgba(255,255,255,0.5)"}
+                  tone={totals.openP1Cents > 0 ? T.tone.warn : T.text.muted}
                 />
                 <StatTile
                   label="Keltaisista siirrettävä"
                   value={fmtEurCents(totals.openP2Cents)}
                   sub={totals.openP2Cents > 0 ? `${fmtWin(totals.p2Washed)} ikkunaa · sovitut hinnat` : "ei maksettavaa"}
-                  tone={totals.openP2Cents > 0 ? "#ffce28" : "rgba(255,255,255,0.5)"}
+                  tone={totals.openP2Cents > 0 ? T.tone.warn : T.text.muted}
                 />
                 <StatTile
                   label="Hoidettu"
                   value={fmtEurCents(totals.settledCents)}
                   sub={totals.eraPendingCents > 0 ? `+ ${fmtEurCents(totals.eraPendingCents)} odottaa kuittausta` : "maksut + erälaskut"}
-                  tone="#5fe08a"
+                  tone={T.tone.good}
                 />
               </div>
               {/* Hyväksymättömät keltaiset: työ tehty, hinta kesken. */}
               {totals.p2PendingCents > 0 && (
-                <div style={{ ...card, marginBottom: 12, borderColor: "rgba(150,175,255,0.3)", background: "rgba(120,150,255,0.06)" }}>
-                  <p style={{ margin: 0, fontFamily: FONT, fontSize: 12.5, color: "rgba(190,205,255,0.95)", lineHeight: 1.5 }}>
-                    Lisäksi <strong>{fmtEurCents(totals.p2PendingCents)}</strong> keltaisista, joiden hintaa asiakas ei ole vielä
-                    hyväksynyt. Maksukelpoinen heti kun hinta lukitaan.
+                <div style={{ ...card, marginBottom: T.space.md, borderColor: "rgba(150,175,255,0.3)", background: "rgba(120,150,255,0.06)" }}>
+                  <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.sm, color: "rgba(190,205,255,0.95)", lineHeight: 1.5 }}>
+                    Odottaa asiakkaan hyväksyntää: <strong>{fmtEurCents(totals.p2PendingCents)}</strong> keltaisista.
                   </p>
                 </div>
               )}
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: T.space.sm }}>
                 {payable.map((r) => (
-                  <div key={r.workerId} style={{ ...card, padding: "12px 16px" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                  <div key={r.workerId} style={{ ...card, padding: `${T.space.md}px ${T.space.lg}px` }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: T.space.sm + 2, flexWrap: "wrap" }}>
                       <div style={{ minWidth: 0 }}>
-                        <p style={{ margin: 0, fontFamily: FONT, fontSize: 13.5, fontWeight: 700, color: "#fff" }}>{r.name}</p>
-                        <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: 11.5, color: "rgba(255,255,255,0.5)" }}>
+                        <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.sm, fontWeight: 700, color: T.text.primary }}>{r.name}</p>
+                        <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: T.size.xs, color: T.text.muted }}>
                           punaiset {fmtWin(r.p1Washed)} · hoidettu {fmtEurCents(r.settledCents)}
                           {r.eraPendingCents > 0 ? ` · kuittaamatta ${fmtEurCents(r.eraPendingCents)}` : ""}
                           {r.settledEras.length > 0 ? ` · erät ${r.settledEras.join(", ")}` : ""}
                         </p>
                         {r.p1AdjustmentCents !== 0 && (
-                          <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: 11.5, color: "rgb(255,150,150)" }}>
+                          <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: T.size.xs, color: "rgb(255,150,150)" }}>
                             sovittu {r.p1AdjustmentCents < 0 ? "vähennys" : "lisä"} {r.p1AdjustmentCents < 0 ? "−" : "+"}{fmtEurCents(Math.abs(r.p1AdjustmentCents))}
                             {" · brutto "}{fmtEurCents(r.p1EarnedCents)}
                           </p>
                         )}
                         {(r.openP2Cents > 0 || r.p2PendingCents > 0) && (
-                          <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: 11.5, color: r.openP2Cents > 0 ? "rgb(255,206,40)" : "rgb(150,175,255)" }}>
+                          <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: T.size.xs, color: r.openP2Cents > 0 ? T.tone.warn : "rgb(150,175,255)" }}>
                             keltaiset {fmtWin(r.p2Washed)}
                             {r.openP2Cents > 0 ? ` · siirrettävä ${fmtEurCents(r.openP2Cents)}` : ""}
                             {r.p2PendingCents > 0 ? ` · odottaa hyväksyntää ${fmtEurCents(r.p2PendingCents)}` : ""}
@@ -475,12 +483,12 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                           summattiin yhteen, jolloin luku ei vastannut sitä mitä
                           erästä oikeasti siirretään. */}
                       <div style={{ textAlign: "right", flexShrink: 0 }}>
-                        <p style={{ margin: 0, fontFamily: MONO, fontSize: 9.5, letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)" }}>SIIRRETTÄVÄ · PUNAISET</p>
-                        <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: 17, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: r.openP1Cents > 0 ? "#ffce28" : "rgba(255,255,255,0.35)" }}>
+                        <p style={{ margin: 0, fontFamily: MONO, fontSize: T.size.label, letterSpacing: "0.1em", color: T.text.faint }}>SIIRRETTÄVÄ · PUNAISET</p>
+                        <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: T.size.title, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: r.openP1Cents > 0 ? T.tone.warn : T.text.faint }}>
                           {fmtEurCents(r.openP1Cents)}
                         </p>
                         {r.openP2Cents > 0 && (
-                          <p style={{ margin: "1px 0 0", fontFamily: FONT, fontSize: 11, color: "rgba(255,255,255,0.45)", fontVariantNumeric: "tabular-nums" }}>
+                          <p style={{ margin: "1px 0 0", fontFamily: FONT, fontSize: T.size.xs, color: T.text.faint, fontVariantNumeric: "tabular-nums" }}>
                             + keltaiset {fmtEurCents(r.openP2Cents)}
                           </p>
                         )}
@@ -503,43 +511,42 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
             </>
           )}
 
-          {/* ── 2. Johtajien väliset laskut (kohta 3C:n tulokset) */}
-          <SectionTitle icon={<Wallet style={{ width: 15, height: 15, color: "rgba(255,255,255,0.6)" }} />}>
+          {/* ── 3. Johtajien väliset laskut (kohta 3C:n tulokset) */}
+          <SectionTitle icon={<Wallet style={{ width: 15, height: 15, color: T.text.secondary }} />}>
             Johtajien väliset laskut
           </SectionTitle>
           {s.founderInvoices.length === 0 ? (
             <div style={card}>
-              <p style={{ margin: 0, fontFamily: FONT, fontSize: 12.5, color: "rgba(255,255,255,0.5)" }}>
-                Ei vielä johtajien välisiä laskuja. Lasku luodaan Tilanne-välilehden "Perustajien ansiot" -osiossa
-                toisen johtajan kortin Maksut-painikkeesta.
+              <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.sm, color: T.text.muted }}>
+                Ei vielä johtajien välisiä laskuja.
               </p>
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: T.space.sm + 2 }}>
               {s.founderInvoices.map((inv) => {
                 const computed = inv.rivit?.computed;
                 return (
                   <div key={inv.id} style={card}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: T.space.sm + 2, flexWrap: "wrap" }}>
                       <div style={{ minWidth: 0 }}>
-                        <p style={{ margin: 0, fontFamily: FONT, fontSize: 14.5, fontWeight: 700, color: "#fff" }}>
+                        <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.body, fontWeight: 700, color: T.text.primary }}>
                           {founderName(inv.senderId)} → {founderName(inv.recipientId)}
                         </p>
-                        <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
+                        <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: T.size.sm, color: T.text.muted }}>
                           {eraLabel(inv.eraNumbers)} · {fiDate(inv.sentAt)}
                           {inv.invoiceNumber ? <> · <span style={{ fontFamily: MONO }}>{inv.invoiceNumber}</span></> : null}
                           {inv.referenceNumber ? <> · viite <span style={{ fontFamily: MONO }}>{inv.referenceNumber}</span></> : null}
                         </p>
                       </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: T.space.sm + 2 }}>
                         <TilaChip tila={inv.tila} />
-                        <span style={{ fontFamily: FONT, fontSize: 19, fontWeight: 800, color: "#5fe08a", fontVariantNumeric: "tabular-nums" }}>
+                        <span style={{ fontFamily: FONT, fontSize: T.size.title, fontWeight: 700, color: T.tone.good, fontVariantNumeric: "tabular-nums" }}>
                           {fmtEurCents(inv.totalCents)}
                         </span>
                       </div>
                     </div>
                     {computed && (
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 18px", marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: `${T.space.xs}px ${T.space.lg + 2}px`, marginTop: T.space.sm + 2, paddingTop: T.space.sm + 2, borderTop: T.border.divider }}>
                         {([
                           ["S (erän summa)", fmtEurCents(computed.totalCents)],
                           ["x €/ikkuna", inv.xCents != null ? fmtEurCents(inv.xCents) : "—"],
@@ -547,8 +554,8 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                           ["Kate / 2", inv.katePerJohtajaCents != null ? fmtEurCents(inv.katePerJohtajaCents) : "—"],
                           ...(inv.manualAdjustmentCents ? [["Vapaa muokkaus", (inv.manualAdjustmentCents > 0 ? "+" : "−") + fmtEurCents(Math.abs(inv.manualAdjustmentCents))]] : []),
                         ] as [string, string][]).map(([lbl, val]) => (
-                          <span key={lbl} style={{ fontFamily: FONT, fontSize: 11.5, color: "rgba(255,255,255,0.55)" }}>
-                            {lbl}: <strong style={{ color: "rgba(255,255,255,0.85)", fontVariantNumeric: "tabular-nums" }}>{val}</strong>
+                          <span key={lbl} style={{ fontFamily: FONT, fontSize: T.size.xs, color: T.text.muted }}>
+                            {lbl}: <strong style={{ color: T.text.secondary, fontVariantNumeric: "tabular-nums" }}>{val}</strong>
                           </span>
                         ))}
                       </div>
@@ -561,48 +568,67 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
             </div>
           )}
 
-          {/* ── 3. Kaikki tekijöille lähetetyt maksut (kohta 3A:n luonnokset + tilat) */}
-          <SectionTitle icon={<Users style={{ width: 15, height: 15, color: "rgba(255,255,255,0.6)" }} />}>
+          {/* ── 4. Kaikki tekijöille lähetetyt maksut (kohta 3A:n luonnokset + tilat) */}
+          <SectionTitle icon={<Users style={{ width: 15, height: 15, color: T.text.secondary }} />}>
             Tekijöille lähetetyt maksut
           </SectionTitle>
           {s.workerInvoices.length === 0 ? (
             <div style={card}>
-              <p style={{ margin: 0, fontFamily: FONT, fontSize: 12.5, color: "rgba(255,255,255,0.5)" }}>
-                Ei vielä tekijöille lähetettyjä maksuja. Luo maksu yllä olevasta "Maksa tekijöille" -painikkeesta.
+              <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.sm, color: T.text.muted }}>
+                Ei vielä tekijöille lähetettyjä maksuja.
               </p>
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: T.space.sm }}>
               {s.workerInvoices.map((inv) => {
                 const input = inv.rivit?.input || {};
                 const ikkunat = Number(input.pestytIkkunat) || 0;
                 const sovittu = Number(input.sovittuMuutosCents) || 0;
                 const ennakko = Number(input.ennakkoCents) || 0;
                 return (
-                  <div key={inv.id} style={{ ...card, padding: "12px 16px" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                  <div key={inv.id} style={{ ...card, padding: `${T.space.md}px ${T.space.lg}px` }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: T.space.sm + 2, flexWrap: "wrap" }}>
                       <div style={{ minWidth: 0 }}>
-                        <p style={{ margin: 0, fontFamily: FONT, fontSize: 13.5, fontWeight: 700, color: "#fff" }}>
+                        <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.sm, fontWeight: 700, color: T.text.primary }}>
                           {input.name || inv.senderId}
-                          <span style={{ fontWeight: 500, color: "rgba(255,255,255,0.5)" }}> → {founderName(inv.recipientId)}</span>
+                          <span style={{ fontWeight: 500, color: T.text.muted }}> → {founderName(inv.recipientId)}</span>
                         </p>
-                        <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: 11.5, color: "rgba(255,255,255,0.5)" }}>
+                        <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: T.size.xs, color: T.text.muted }}>
                           {eraLabel(inv.eraNumbers)} · {ikkunat.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikkunaa
                           {sovittu !== 0 ? ` · sovittu muutos ${sovittu > 0 ? "+" : "−"}${fmtEurCents(Math.abs(sovittu))}` : ""}
                           {ennakko > 0 ? ` · ennakko ${fmtEurCents(ennakko)}` : ""}
                           {" · luotu "}{fiDate(inv.createdAt)}
                         </p>
                       </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: T.space.sm + 2 }}>
                         <TilaChip tila={inv.tila} />
-                        <span style={{ fontFamily: FONT, fontSize: 16, fontWeight: 800, color: inv.tila === "hylätty" ? "rgba(255,255,255,0.35)" : "#5fe08a", fontVariantNumeric: "tabular-nums", textDecoration: inv.tila === "hylätty" ? "line-through" : undefined }}>
+                        <span style={{ fontFamily: FONT, fontSize: T.size.lg, fontWeight: 700, color: inv.tila === "hylätty" ? T.text.faint : T.tone.good, fontVariantNumeric: "tabular-nums", textDecoration: inv.tila === "hylätty" ? "line-through" : undefined }}>
                           {fmtEurCents(inv.totalCents)}
                         </span>
                       </div>
                     </div>
-                    {inv.tila !== "hylätty" && (
-                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-                        <VoidInvoiceButton jobId={jobId} invoiceId={inv.id} name={input.name || inv.senderId} onDone={load} />
+                    {/* MITÄTÖITY LASKU ON YHÄ TOSITE.
+                        Rivi ei koskaan katoa kannasta (mitätöinti on tilamuutos,
+                        ei poisto) ja PDF regeneroituu siitä milloin tahansa —
+                        mutta latausnappi puuttui tästä osiosta kokonaan, joten
+                        lähetetyn ja sitten mitätöidyn laskun tositteeseen ei
+                        päässyt käsiksi mistään. Kirjanpitolaki vaatii tositteen
+                        säilyttämisen 6 vuotta, joten sen pitää myös löytyä.
+
+                        Näytetään PDF vain kun lasku on oikeasti ollut lähetetty
+                        (laskunumero annettu). Tekijän hylkäämä LUONNOS ei ole
+                        tosite eikä siitä ole PDF:ää. */}
+                    {(inv.tila !== "hylätty" || inv.invoiceNumber) && (
+                      <div style={{ marginTop: T.space.sm, paddingTop: T.space.sm, borderTop: T.border.divider, display: "flex", alignItems: "center", gap: T.space.sm + 2, flexWrap: "wrap" }}>
+                        {inv.invoiceNumber && <DownloadPdfButton jobId={jobId} invoiceId={inv.id} />}
+                        {inv.tila !== "hylätty" && (
+                          <VoidInvoiceButton jobId={jobId} invoiceId={inv.id} name={input.name || inv.senderId} onDone={load} />
+                        )}
+                        {inv.tila === "hylätty" && inv.invoiceNumber && (
+                          <span style={{ fontFamily: FONT, fontSize: T.size.xs, color: T.text.faint }}>
+                            Mitätöity · lasku {inv.invoiceNumber} säilyy tositteena
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>
@@ -611,36 +637,36 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
             </div>
           )}
 
-          {/* ── 4. Tekijöiden kuittaamat laskut (kohta 3D kolmas luetelmakohta) */}
-          <SectionTitle icon={<CheckCircle2 style={{ width: 15, height: 15, color: "rgba(255,255,255,0.6)" }} />}>
+          {/* ── 5. Tekijöiden kuittaamat laskut (kohta 3D kolmas luetelmakohta) */}
+          <SectionTitle icon={<CheckCircle2 style={{ width: 15, height: 15, color: T.text.secondary }} />}>
             Tekijöiden kuittaamat laskut
           </SectionTitle>
           {s.workerAccepted.length === 0 ? (
             <div style={card}>
-              <p style={{ margin: 0, fontFamily: FONT, fontSize: 12.5, color: "rgba(255,255,255,0.5)" }}>
-                Yksikään tekijä ei ole vielä lähettänyt laskuaan. Kuitatut laskut ilmestyvät tähän laskunumeroineen.
+              <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.sm, color: T.text.muted }}>
+                Yksikään tekijä ei ole vielä lähettänyt laskuaan.
               </p>
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: T.space.sm }}>
               {s.workerAccepted.map((inv) => (
-                <div key={inv.id} style={{ ...card, padding: "12px 16px" }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                <div key={inv.id} style={{ ...card, padding: `${T.space.md}px ${T.space.lg}px` }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: T.space.sm + 2, flexWrap: "wrap" }}>
                     <div style={{ minWidth: 0 }}>
-                      <p style={{ margin: 0, fontFamily: FONT, fontSize: 13.5, fontWeight: 700, color: "#fff" }}>
+                      <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.sm, fontWeight: 700, color: T.text.primary }}>
                         {inv.rivit?.input?.name || inv.senderId}
                       </p>
-                      <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: 11.5, color: "rgba(255,255,255,0.5)" }}>
+                      <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: T.size.xs, color: T.text.muted }}>
                         {eraLabel(inv.eraNumbers)} · lähetetty {fiDate(inv.sentAt)}
                         {inv.invoiceNumber ? <> · <span style={{ fontFamily: MONO }}>{inv.invoiceNumber}</span></> : null}
                         {inv.referenceNumber ? <> · viite <span style={{ fontFamily: MONO }}>{inv.referenceNumber}</span></> : null}
                       </p>
                     </div>
-                    <span style={{ fontFamily: FONT, fontSize: 16, fontWeight: 800, color: "#5fe08a", fontVariantNumeric: "tabular-nums" }}>
+                    <span style={{ fontFamily: FONT, fontSize: T.size.lg, fontWeight: 700, color: T.tone.good, fontVariantNumeric: "tabular-nums" }}>
                       {fmtEurCents(inv.totalCents)}
                     </span>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: T.space.sm + 2, flexWrap: "wrap" }}>
                     <DownloadPdfButton jobId={jobId} invoiceId={inv.id} />
                     <VoidInvoiceButton jobId={jobId} invoiceId={inv.id} name={inv.rivit?.input?.name || inv.senderId} onDone={load} />
                   </div>

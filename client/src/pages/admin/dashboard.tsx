@@ -37,12 +37,21 @@ export default function AdminDashboard() {
   // Gigs where the logged-in admin is ALSO a worker (e.g. Petrus). Shows a small
   // earnings card + a button straight to their own worker dashboard.
   const [myGigWork, setMyGigWork] = useState<MyGigWork[]>([]);
+  // Urakkakeikkojen (FR8) raha. Asuu gigData/projectData-blobeissa eikä siis
+  // näy `/api/stats`issa lainkaan — ilman tätä koko urakan laskutettu ja saatu
+  // raha puuttui admin-paneelista. Vain perustajille (palvelin rajaa myös).
+  const [gigMoney, setGigMoney] = useState<Awaited<ReturnType<typeof api.getGigMoney>>["data"] | null>(null);
 
   useEffect(() => {
     api.getMyGigWork().then((res) => {
       if (res.ok && res.data) setMyGigWork(res.data.gigs.filter((g) => g.earnedCents > 0 || g.washed > 0 || g.pendingCents > 0));
     });
   }, []);
+
+  useEffect(() => {
+    if (!isHost) return;
+    api.getGigMoney().then((res) => { if (res.ok && res.data) setGigMoney(res.data); });
+  }, [isHost]);
 
   useEffect(() => {
     api.stats().then((res) => {
@@ -231,6 +240,95 @@ export default function AdminDashboard() {
             </a>
           </Card>
         ))}
+
+        {/* URAKKAKEIKKOJEN RAHA — laskutettu, saatu ja tekijöille siirtämättä.
+            Perustajille. Klikkaus vie keikan omaan Maksut-näkymään, jossa
+            tasaus tehdään; tämä kortti on tilannekuva, ei toimintoja. */}
+        {isHost && gigMoney && gigMoney.totals.invoicedCents > 0 && (
+          <Card className="p-5 bg-card border-0 premium-shadow mb-6">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
+                  Urakkakeikat — raha
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Asiakkailta laskutettu ja tekijöille siirretty
+                </p>
+              </div>
+              <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center shrink-0">
+                <Banknote className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+              {[
+                { label: "Laskutettu", value: fmt(gigMoney.totals.invoicedCents), tone: "text-foreground" },
+                { label: "Tekijöille maksettu", value: fmt(gigMoney.totals.workerPaidCents), tone: "text-foreground" },
+                {
+                  label: "Tekijöille siirtämättä",
+                  value: fmt(gigMoney.totals.workerOpenCents),
+                  tone: gigMoney.totals.workerOpenCents > 0
+                    ? "text-amber-600 dark:text-amber-400"
+                    : "text-muted-foreground",
+                },
+                {
+                  label: "Jää meille",
+                  value: fmt(gigMoney.totals.invoicedCents - gigMoney.totals.workerEarnedCents),
+                  tone: "text-green-600 dark:text-green-400",
+                },
+              ].map((t) => (
+                <div key={t.label} className="rounded-xl bg-muted/40 py-2.5 px-3 min-w-0">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground truncate">{t.label}</p>
+                  <p className={`text-base font-bold tabular-nums ${t.tone}`}>{t.value}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Kumpi johtaja on kerännyt mitäkin — ja kumpi on velkaa kummalle. */}
+            <div className="space-y-1.5 border-t border-border pt-3">
+              {gigMoney.founders.map((f) => {
+                const received = gigMoney.totals.receivedByFounder[f.id] ?? 0;
+                const net = gigMoney.totals.netByFounder[f.id] ?? 0;
+                return (
+                  <div key={f.id} className="flex items-center justify-between gap-3 text-sm">
+                    <span className="text-muted-foreground truncate">{f.name}</span>
+                    <span className="flex items-center gap-3 shrink-0">
+                      <span className="tabular-nums text-foreground">{fmt(received)}</span>
+                      {Math.abs(net) >= 100 && (
+                        <span className={`text-xs tabular-nums ${net > 0 ? "text-amber-600 dark:text-amber-400" : "text-green-600 dark:text-green-400"}`}>
+                          {net > 0 ? `pitää liikaa ${fmt(net)}` : `jäi vajaaksi ${fmt(-net)}`}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+              {gigMoney.totals.unassignedCents > 0 && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 pt-1">
+                  {fmt(gigMoney.totals.unassignedCents)} laskutettu ilman merkintää siitä kuka rahat sai.
+                </p>
+              )}
+            </div>
+
+            {/* Per keikka — vain ne joissa on jotain kesken. */}
+            {gigMoney.gigs.filter((g) => g.transfer || g.unassignedEraCount > 0).length > 0 && (
+              <div className="mt-3 pt-3 border-t border-border space-y-2">
+                {gigMoney.gigs.filter((g) => g.transfer || g.unassignedEraCount > 0).map((g) => (
+                  <Link key={g.jobId} href={`/admin/gig/${g.jobId}/projekti`}>
+                    <div className="flex items-center justify-between gap-3 text-sm cursor-pointer hover:opacity-80 transition-opacity">
+                      <span className="text-foreground truncate">{g.name}</span>
+                      <span className="text-xs text-muted-foreground shrink-0">
+                        {g.transfer
+                          ? `tasaus ${fmt(g.transfer.cents)} →`
+                          : `${g.unassignedEraCount} erää merkitsemättä →`}
+                      </span>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </Card>
+        )}
 
         <DashboardBriefing />
 

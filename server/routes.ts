@@ -26,11 +26,14 @@ import {
   CUSTOM_PRICING_SUMMARY, SQM_RANGES, HOUSE_TYPES,
   type HouseKey, type TierKey, type HeightKey, type AreaKey, type AddonKey, type DifficultyKey,
 } from "@shared/pricing";
-import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, type GigData } from "@shared/gig";
+import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, livePayments, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeP2Billing, customerAddedKeys, emptyP2State, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
+import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
+import { fail } from "./errors";
+import { buildTasaus, type TasausEraInvoice, type TasausPayment } from "@shared/fr8-tasaus";
 import { p2InvoiceState, computeWorkerSettlements, eraSettlementByWorker, sumWorkerSettlements, type EraInvoiceLike } from "@shared/worker-payouts";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
@@ -1359,8 +1362,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // the one they choose next is the only password they'll ever need here.
       res.json({ ok: true, token, role, mustChangePassword: usedStarter && !stored });
     } catch (e: any) {
-      console.error("Login error:", e);
-      res.status(500).json({ error: e.message });
+      // EI `e.message`ia ulos: tästä vuoti kerran tietokantatarjoajan
+      // englanninkielinen kiintiöviesti suoraan kirjautumisruudulle, ja
+      // käyttäjä luuli salasanansa olevan väärin. `fail` kirjaa todellisen
+      // syyn lokiin ja vastaa 503 + suomenkielinen "yritä hetken päästä".
+      return fail(res, e, "POST /api/admin/login");
     }
   });
 
@@ -1479,16 +1485,95 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ─── Jobs ─────────────────────────────────────────────────────────────────────
 
+  /**
+   * Keikkalista.
+   *
+   * SARAKKEET ON LUETELTU KÄSIN, EIKÄ TÄHÄN SAA PALAUTTAA `jobs`-taulua
+   * sellaisenaan. Aiemmin tämä oli `.select({ job: jobs, customer: customers })`,
+   * eli JOKAINEN sarake JOKAISESTA keikasta — mukaan lukien:
+   *
+   *   projectData   FR8:n koko karttablobi: havaintokuvat (700 kB/kpl),
+   *                 tekijöiden kuitit (700 kB/kpl) ja dokumentit (1,5 MB/kpl)
+   *   gigData       sisältää asiakkaan allekirjoitus-PNG:n (300 kB)
+   *   customerSignature / staffSignature   base64-PNG per keikka
+   *
+   * Viisi admin-sivua (dashboard, keikat, kalenteri, asiakkaat, verotuloste)
+   * kutsuu tätä heti latautuessaan. Yksi FR8-keikka saattoi siis vetää kymmeniä
+   * megatavuja ulos tietokannasta ja uudelleen selaimeen joka sivunavigaatiolla
+   * — juuri tämä poltti tietokannan siirtokiintiön loppuun, ja se näkyi
+   * käyttäjälle "kirjautuminen epäonnistui" -virheenä.
+   *
+   * Raskaat kentät haetaan nyt vain kun niitä oikeasti tarvitaan:
+   * `GET /api/jobs/:id` palauttaa edelleen koko rivin.
+   */
   app.get("/api/jobs", async (_req, res) => {
     try {
       const rows = await db
-        .select({ job: jobs, customer: customers })
+        .select({
+          job: {
+            id: jobs.id,
+            customerId: jobs.customerId,
+            scheduledAt: jobs.scheduledAt,
+            description: jobs.description,
+            agreedPrice: jobs.agreedPrice,
+            status: jobs.status,
+            assignedTo: jobs.assignedTo,
+            notes: jobs.notes,
+            waiveFee: jobs.waiveFee,
+            pendingWorkers: jobs.pendingWorkers,
+            paymentMethod: jobs.paymentMethod,
+            quoteToken: jobs.quoteToken,
+            quoteStatus: jobs.quoteStatus,
+            suggestedTimes: jobs.suggestedTimes,
+            customerMessage: jobs.customerMessage,
+            isTaloyhtiio: jobs.isTaloyhtiio,
+            taloyhtiioApproved: jobs.taloyhtiioApproved,
+            unitCount: jobs.unitCount,
+            taloyhtiioName: jobs.taloyhtiioName,
+            unitResponses: jobs.unitResponses,
+            boardContactName: jobs.boardContactName,
+            boardContactEmail: jobs.boardContactEmail,
+            boardContactPhone: jobs.boardContactPhone,
+            isYritys: jobs.isYritys,
+            isCustomGig: jobs.isCustomGig,
+            billedBy: jobs.billedBy,
+            submittedBy: jobs.submittedBy,
+            submissionStatus: jobs.submissionStatus,
+            marketerId: jobs.marketerId,
+            marketerCommissionCents: jobs.marketerCommissionCents,
+            createdAt: jobs.createdAt,
+            updatedAt: jobs.updatedAt,
+            // Allekirjoitukset itse jätetään pois (base64-PNG per keikka);
+            // listalle riittää tieto ONKO niitä, jotta "allekirjoitettu"-tila
+            // näkyy. Kuva haetaan vasta kun keikka avataan.
+            hasCustomerSignature: sql<boolean>`${jobs.customerSignature} is not null`,
+            hasStaffSignature: sql<boolean>`${jobs.staffSignature} is not null`,
+          },
+          customer: customers,
+        })
         .from(jobs)
         .leftJoin(customers, eq(jobs.customerId, customers.id))
         .orderBy(desc(jobs.createdAt));
       res.json(rows);
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      return fail(res, e, "GET /api/jobs");
+    }
+  });
+
+  /**
+   * Yhden keikan allekirjoitukset erikseen. Keikkalista ei enää kanna base64-
+   * kuvia mukanaan (ks. yllä), joten keikkakortti hakee ne auetessaan.
+   */
+  app.get("/api/jobs/:id/signatures", async (req, res) => {
+    try {
+      const [row] = await db
+        .select({ customerSignature: jobs.customerSignature, staffSignature: jobs.staffSignature })
+        .from(jobs)
+        .where(eq(jobs.id, Number(req.params.id)));
+      if (!row) return res.status(404).json({ error: "Ei löydy" });
+      res.json({ ok: true, ...row });
+    } catch (e: any) {
+      return fail(res, e, "GET /api/jobs/:id/signatures");
     }
   });
 
@@ -1547,24 +1632,83 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  /**
+   * Mitä keikan poisto veisi mukanaan, jos sen antaisi mennä läpi.
+   *
+   * `jobs`-rivi ei ole pelkkä rivi: `projectData` sisältää koko tekijälistan
+   * maksettuine payouteineen (laskunumerot + jäädytetyt vero- ja ostajatiedot),
+   * kuittikuvat ja allekirjoitetut sopimukset, ja `gigData` kaikki asiakkaalta
+   * laskutetut erät. Ne ovat kirjanpidon tositteita: säilytysaika 6 vuotta.
+   *
+   * Palauttaa listan syitä joiden takia keikkaa EI saa poistaa. Tyhjä lista =
+   * keikassa ei ole rahahistoriaa (esim. hylätty liidi) ja poisto on turvallinen.
+   */
+  async function jobDeletionBlockers(job: typeof jobs.$inferSelect): Promise<string[]> {
+    const reasons: string[] = [];
+    const project = parseProject(job.projectData ?? null);
+    if (project) {
+      const paid = (project.crew || []).reduce(
+        (n, m) => n + (m.payouts || []).filter((p) => p.status === "maksettu").length, 0);
+      const docs = (project.crew || []).reduce((n, m) => n + (m.documents || []).length, 0);
+      if (paid > 0) reasons.push(`${paid} maksettua tekijämaksua`);
+      if (docs > 0) reasons.push(`${docs} tekijän dokumenttia`);
+      if ((project.expenses || []).length > 0) reasons.push(`${project.expenses!.length} kirjattua kulua`);
+    }
+    const gig = parseGig(job.gigData);
+    const payments = livePayments(gig?.payments).filter((p) => (p?.amountCents ?? 0) > 0);
+    if (payments.length > 0) reasons.push(`${payments.length} asiakkaalle lähetettyä laskuerää`);
+    if (job.billedBy) reasons.push("merkitty laskutetuksi");
+    try {
+      const invoices = await db.select({ id: eraInvoices.id }).from(eraInvoices).where(eq(eraInvoices.jobId, job.id));
+      if (invoices.length > 0) reasons.push(`${invoices.length} erälaskua`);
+    } catch (e: any) {
+      if (!isMissingTableError(e)) throw e;
+    }
+    return reasons;
+  }
+
   app.delete("/api/jobs/:id", async (req, res) => {
     try {
       const id = Number(req.params.id);
-      // Delete child expenses first (foreign key)
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Ei löydy" });
+      const blockers = await jobDeletionBlockers(job);
+      if (blockers.length > 0) {
+        // Peruutus säilyttää tositteet ja piilottaa keikan listoilta —
+        // sama lopputulos käyttäjälle, ilman kirjanpidon aukkoa.
+        return res.status(409).json({
+          error: `Keikkaa ei voi poistaa: siinä on ${blockers.join(", ")}. ` +
+            "Kirjanpidon tositteet on säilytettävä 6 vuotta — merkitse keikka peruutetuksi sen sijaan.",
+          blockers,
+        });
+      }
       await db.delete(expenses).where(eq(expenses.jobId, id));
-      const [row] = await db.delete(jobs).where(eq(jobs.id, id)).returning();
-      if (!row) return res.status(404).json({ error: "Ei löydy" });
+      await db.delete(jobs).where(eq(jobs.id, id));
       res.json({ ok: true });
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      return fail(res, e, "DELETE /api/jobs/:id");
     }
   });
 
   app.delete("/api/customers/:id", async (req, res) => {
     try {
       const id = Number(req.params.id);
-      // Cascade: delete expenses → jobs → customer
-      const customerJobs = await db.select({ id: jobs.id }).from(jobs).where(eq(jobs.customerId, id));
+      // Sama suoja kuin yksittäiselle keikalle — kerrottuna asiakkaan kaikilla
+      // keikoilla. Tämä reitti pyyhki ne kaikki yhdellä napautuksella.
+      const customerJobs = await db.select().from(jobs).where(eq(jobs.customerId, id));
+      const blocked: { jobId: number; reasons: string[] }[] = [];
+      for (const j of customerJobs) {
+        const reasons = await jobDeletionBlockers(j);
+        if (reasons.length > 0) blocked.push({ jobId: j.id, reasons });
+      }
+      if (blocked.length > 0) {
+        return res.status(409).json({
+          error: `Asiakasta ei voi poistaa: ${blocked.length} keikalla on kirjanpitoaineistoa ` +
+            `(${blocked[0].reasons.join(", ")}${blocked.length > 1 ? " ym." : ""}). ` +
+            "Kirjanpidon tositteet on säilytettävä 6 vuotta.",
+          blocked,
+        });
+      }
       for (const j of customerJobs) {
         await db.delete(expenses).where(eq(expenses.jobId, j.id));
       }
@@ -1573,7 +1717,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!row) return res.status(404).json({ error: "Ei löydy" });
       res.json({ ok: true });
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      return fail(res, e, "DELETE /api/customers/:id");
     }
   });
 
@@ -1767,7 +1911,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.get("/api/admin/biller-turnover", async (_req, res) => {
     try {
-      const rows = await db.select().from(jobs);
+      // computeBillerTurnover lukee vain gigData:n ja pienet kentät.
+      const rows = (await db.select({ ...MONEY_JOB_COLS, projectData: sql<null>`null` })
+        .from(jobs)) as typeof jobs.$inferSelect[];
       res.json(computeBillerTurnover(rows));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1782,7 +1928,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // founder-to-founder invoice (vastalasku).
   app.get("/api/admin/founder-settlement", async (_req, res) => {
     try {
-      const rows = await db.select().from(jobs);
+      const rows = (await db.select(MONEY_JOB_COLS).from(jobs)) as typeof jobs.$inferSelect[];
       const customerRows = await db.select().from(customers);
       const expenseRows = await db.select().from(expenses);
       const settledRows = await db.select().from(founderSettlements).orderBy(desc(founderSettlements.createdAt));
@@ -1998,7 +2144,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       invoiceNumber, referenceNumber, invoiceDate, dueDate,
       seller: { name: seller.name, yTunnus: seller.yTunnus, address: seller.address, iban: BRAND_BILLERS.find((b) => b.id === row.senderId)?.iban },
       buyer: { name: buyer.name, yTunnus: buyer.yTunnus, address: buyer.address, email: buyer.email },
-      description: `FR8-keikan tilitys, ${eraLabelOf(eraNumbers)}`,
+      // Tasauslasku kattaa koko keikan, ei yhtä erää — sanotaan se laskulla,
+      // ettei kirjanpidossa näytä siltä että sama erä laskutettiin uudelleen.
+      description: rivit?.input?.tasaus
+        ? "FR8-keikan johtajien tasaus — osuuksien oikaisu koko urakasta"
+        : `FR8-keikan tilitys, ${eraLabelOf(eraNumbers)}`,
       totalCents: row.totalCents,
     };
   }
@@ -2260,11 +2410,31 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const eraNumbers = normalizeEraNumbers(req.body?.eraNumbers);
       if (!eraNumbers) return res.status(400).json({ error: "Virheellinen erävalinta (1-3 tai 4)" });
-      const recipientId = eraRecipientFounderId(eraNumbers);
+
+      /**
+       * TASAUSLASKU: koko keikan johtajatasauksesta johdettu summa, ei yhden
+       * erän kaava. Silloin sekä summa että suunta tulevat tasauksesta —
+       * eräkohtainen `eraRecipientFounderId` ei päde, koska tasaus kattaa
+       * kaikki erät ja raha on voinut liikkua toisin kuin paperilla lukee
+       * (ks. shared/founder-settlement.ts). Erävalinta jää vain laskun
+       * otsikoksi. Ilman tätä haaraa sovittua summaa ei saanut laskutettua
+       * järjestelmän kautta lainkaan, jos suunta oli "väärä".
+       */
+      const isTasaus = req.body?.kind === "tasaus";
+      const settlementCents = Math.abs(Math.round(Number(req.body?.settlementCents) || 0));
+      const requestedRecipient = String(req.body?.recipientId || "").toLowerCase();
+      const recipientId = isTasaus
+        ? (FOUNDER_IDS.includes(requestedRecipient) ? requestedRecipient : eraRecipientFounderId(eraNumbers))
+        : eraRecipientFounderId(eraNumbers);
       if (recipientId === senderId) {
         return res.status(400).json({
-          error: "Et voi laskuttaa itseäsi tällä erällä — tämä erä laskutetaan toiselle johtajalle.",
+          error: isTasaus
+            ? "Et voi laskuttaa itseäsi — valitse vastaanottajaksi toinen johtaja."
+            : "Et voi laskuttaa itseäsi tällä erällä — tämä erä laskutetaan toiselle johtajalle.",
         });
+      }
+      if (isTasaus && settlementCents <= 0) {
+        return res.status(400).json({ error: "Tasauslaskun summa puuttuu." });
       }
 
       const itsepestytIkkunat = Math.max(0, Number(req.body?.itsepestytIkkunat) || 0);
@@ -2272,7 +2442,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const totalCents = Math.round(Number(req.body?.totalCents) || 0);
       const manualAdjustmentCents = Math.round(Number(req.body?.manualAdjustmentCents) || 0);
       const dueDate = normalizeDueDate(req.body?.dueDate);
-      if (totalCents <= 0) return res.status(400).json({ error: "Kokonaissumma puuttuu" });
+      if (!isTasaus && totalCents <= 0) return res.status(400).json({ error: "Kokonaissumma puuttuu" });
 
       // Tekijöiden ansaittu + ikkunat tälle erälle: summataan jo luoduista
       // tekijä-laskuista (hylätyt eivät lasketa mukaan — luonnos/lähetetty/
@@ -2294,7 +2464,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Loput ikkunat kokonaismäärästä kuuluvat vastaanottajalle (kolme
       // kategoriaa: tekijät + lähettäjä + vastaanottaja = kokonaisikkunat).
       const recipientPestytIkkunat = kokonaisikkunat - tekijatIkkunatSum - itsepestytIkkunat;
-      if (recipientPestytIkkunat < -0.001) {
+      if (!isTasaus && recipientPestytIkkunat < -0.001) {
         return res.status(400).json({
           error: `Ikkunamäärä ei täsmää: kokonaisikkunat (${kokonaisikkunat}) on pienempi kuin tekijöiden ` +
             `(${tekijatIkkunatSum}) + omat (${itsepestytIkkunat}) ikkunat yhteensä.`,
@@ -2317,10 +2487,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const result = computeEraBilling(totalCents, syntheticWorkers, [
         { founderId: senderId, name: senderName, pestytIkkunat: itsepestytIkkunat },
-        { founderId: recipientId, name: recipientName, pestytIkkunat: recipientPestytIkkunat },
+        { founderId: recipientId, name: recipientName, pestytIkkunat: Math.max(0, recipientPestytIkkunat) },
       ]);
       const senderRow = result.founders.find((f) => f.founderId === senderId)!;
-      const finalCents = senderRow.loppusummaCents + manualAdjustmentCents;
+      // Tasauslaskun summa on sovittu koko keikan tasauksesta, ei tästä erästä.
+      const finalCents = isTasaus
+        ? settlementCents
+        : senderRow.loppusummaCents + manualAdjustmentCents;
 
       // Numerointi + viite atomisesti (withNextInvoiceNumber) — advisory lock
       // estää kahta samalta lähettäjältä lähes yhtäaikaa lähetettyä laskua
@@ -2332,14 +2505,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           senderId, recipientId,
           eraNumbers: JSON.stringify(eraNumbers),
           rivit: JSON.stringify({
-            input: { itsepestytIkkunat, kokonaisikkunat, recipientPestytIkkunat, tekijatIkkunatSum, tekijatAnsaittuYhtCents },
+            input: {
+              itsepestytIkkunat, kokonaisikkunat, recipientPestytIkkunat, tekijatIkkunatSum, tekijatAnsaittuYhtCents,
+              // Tasauslasku merkitään erikseen, jotta jälkikäteen näkee ettei
+              // summa tullut eräkaavasta vaan koko keikan tasauksesta.
+              ...(isTasaus ? { tasaus: true, settlementCents } : {}),
+            },
             computed: result,
           }),
           totalCents: finalCents,
-          xCents: result.xCents,
-          kateCents: result.kateCents,
-          katePerJohtajaCents: senderRow.katePerJohtajaCents,
-          manualAdjustmentCents,
+          xCents: isTasaus ? null : result.xCents,
+          kateCents: isTasaus ? null : result.kateCents,
+          katePerJohtajaCents: isTasaus ? null : senderRow.katePerJohtajaCents,
+          manualAdjustmentCents: isTasaus ? 0 : manualAdjustmentCents,
           dueDate,
           tila: "lähetetty" satisfies EraInvoiceTila,
           invoiceNumber,
@@ -2379,12 +2557,25 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Reset the whole payment history. Clears every recorded service-fee
   // payment so the kassa "maksettu" goes back to 0 and each worker's
   // palveluvelka shows the full amount earned from gigs again.
-  app.delete("/api/workers/payments", async (_req, res) => {
+  // Vaatii perustajan JA nimenomaisen vahvistuksen. Tämä pyyhki koko taulun
+  // yhdellä pyynnöllä ilman roolitarkistusta ja ilman varmistusta — yksi
+  // vahingossa lähtenyt DELETE vei brändin koko palvelumaksuhistorian.
+  app.delete("/api/workers/payments", async (req, res) => {
     try {
-      await db.delete(workerPayments);
-      res.json({ ok: true });
+      const sub = String((req as any).admin?.sub ?? "").toLowerCase();
+      if ((req as any).admin?.role !== "host" && !FOUNDER_IDS.includes(sub)) {
+        return res.status(403).json({ error: "Vain perustaja voi nollata maksuhistorian." });
+      }
+      if (req.body?.confirm !== "NOLLAA") {
+        return res.status(400).json({
+          error: 'Vahvistus puuttuu. Tämä poistaa KAIKKI kirjatut palvelumaksut pysyvästi — lähetä { "confirm": "NOLLAA" }.',
+        });
+      }
+      const removed = await db.delete(workerPayments).returning();
+      console.warn(`[audit] ${sub} nollasi palvelumaksuhistorian: ${removed.length} riviä poistettu`);
+      res.json({ ok: true, removed: removed.length });
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      return fail(res, e, "DELETE /api/workers/payments");
     }
   });
 
@@ -4534,7 +4725,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         totals,
         updatedAt: gig.updatedAt,
         invoicedCents: gig.invoicedCents,
-        paymentsCount: gig.payments.length,
+        paymentsCount: livePayments(gig.payments).length,
         isFixedDeal: !!(proj && fixedDealFor(proj)),
         // Read-only floor-plan map (null if the gig has no plan).
         map,
@@ -5005,7 +5196,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // P2-maksut pidetään tämän ulkopuolella (vain P1-maksut lasketaan).
       if (!isP2Scope) {
         gig.invoicedCents = fixedDeal
-          ? gig.payments.filter((p) => p.scope !== "p2").length * (installmentCents ?? 0)
+          ? livePayments(gig.payments).filter((p) => p.scope !== "p2").length * (installmentCents ?? 0)
           : totalsAfter.invoicedCents;
       }
       gig.log.push({
@@ -5087,7 +5278,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const userId = String(req.query.user || "joonatan");
       const to = process.env.FOUNDER_DAILY_EMAIL || ADMIN_EMAIL;
-      const allJobs = await db.select().from(jobs);
+      const allJobs = (await db.select(MONEY_JOB_COLS).from(jobs)) as typeof jobs.$inferSelect[];
 
       const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
       const todayMs = startOfToday.getTime();
@@ -5248,7 +5439,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // koskaan vaikuta P1:n laskureihin — ne suodatetaan laskuista pois, ja
       // p2-maksun perumisessa riittää pelkkä listalta poisto (P2:n laskutettu
       // summa lasketaan aina suoraan scope:"p2" -maksuista).
-      const p1Remaining = gig.payments.filter((p) => p.scope !== "p2");
+      const p1Remaining = livePayments(gig.payments).filter((p) => p.scope !== "p2");
       if (removed.scope !== "p2") {
         if (fixedDeal) {
           gig.invoicedCents = p1Remaining.length * (installmentCents ?? 0);
@@ -5290,7 +5481,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // "laskuttamatta = kertymä − jo laskutettu" eikä pelkkää bruttokertymää.
       const gigForP2 = parseGig(job.gigData);
       const p2b = computeP2Billing(project);
-      const payments = gigForP2?.payments ?? [];
+      const payments = livePayments(gigForP2?.payments);
       const p2State = p2InvoiceState(p2b.earnedCents, payments);
       // Asiakaslaskutuksen tila samasta jaetusta laskennasta kuin laskureitillä,
       // jotta musta dash näyttää oikeat erä-statsit ilman omaa kaavaa.
@@ -5342,6 +5533,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Kaikki guided-mutaatiot kulkevat /guided-reitin kautta.
       const storedGuided = stored?.guided;
       if (storedGuided) project.guided = storedGuided; else delete project.guided;
+      // Johtajien tasaus on samalla tavalla serverin omistama: se sisältää
+      // rahankirjauksia (kuka sai erän, kuka maksoi tekijän) joita kartan
+      // tallennus ei saa pyyhkiä. Mutaatiot vain /settlement-reitin kautta.
+      const storedSettlement = stored?.settlement;
+      if (storedSettlement) project.settlement = storedSettlement; else delete project.settlement;
       const totals = computeProjectTotals(project);
 
       // Auto-sync the gig's billing sectors from the toolkit (FR8 = source of
@@ -5459,6 +5655,166 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json({ ok: true, guided: saved.guided, guidedState: computeGuided(saved) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
+    }
+  });
+
+  /**
+   * JOHTAJIEN TASAUS — kirjaa kuka SAI kunkin erän rahat ja kuka MAKSOI kunkin
+   * tekijälaskun, kun raha liikkui toisin kuin paperilla luki.
+   *
+   * MIKSI OMA REITTI eikä laskurivien muokkaus: lähetetty erälasku on laillinen,
+   * MUUTTUMATON tosite (docs/fr8-era-laskutus-plan.md kohta 4) — sen ostajaa ei
+   * saa vaihtaa jälkikäteen. Todellinen maksaja kirjataan siis viereen, ei
+   * laskun päälle. Sama koskee asiakaslaskua: `payment.biller` on se Y-tunnus
+   * jolla laskutettiin, `receivedBy` se johtaja jonka tilille raha tuli.
+   *
+   * Vain perustajat. Read-modify-write kannan tuoreimmasta rivistä, ja kentät
+   * yhdistetään olemassa olevaan tilaan — osittainen päivitys ei pyyhi muita.
+   */
+  app.post("/api/jobs/:id/settlement", async (req, res) => {
+    try {
+      const sub = String((req as any).admin?.sub ?? "").toLowerCase();
+      const isFounder = (req as any).admin?.role === "host" || FOUNDER_IDS.includes(sub);
+      if (!isFounder) return res.status(403).json({ error: "Vain perustaja voi kirjata tasauksen." });
+
+      const id = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const project = parseProject(job.projectData ?? null);
+      if (!project) return res.status(400).json({ error: "Keikalla ei ole projektidataa" });
+
+      const cur: FounderSettlementState = project.settlement ?? {};
+      const body = req.body ?? {};
+      const next: FounderSettlementState = { ...cur };
+
+      // Erän saaja / laskun maksaja: yksi avain kerrallaa, tyhjä arvo poistaa
+      // kirjauksen (= palataan siihen mitä lasku itse sanoo).
+      const patchMap = (
+        field: "receivedBy" | "paidBy",
+        entries: unknown,
+      ) => {
+        if (!entries || typeof entries !== "object") return;
+        const map: Record<string, string> = { ...(cur[field] ?? {}) };
+        for (const [k, v] of Object.entries(entries as Record<string, unknown>)) {
+          const key = String(k).slice(0, 40).trim();
+          if (!key) continue;
+          const val = String(v ?? "").toLowerCase().trim();
+          if (!val) delete map[key];
+          else if (FOUNDER_IDS.includes(val)) map[key] = val;
+        }
+        next[field] = Object.keys(map).length > 0 ? map : undefined;
+      };
+      patchMap("receivedBy", body.receivedBy);
+      patchMap("paidBy", body.paidBy);
+
+      if (body.expensesCents !== undefined && body.expensesCents && typeof body.expensesCents === "object") {
+        const map: Record<string, number> = { ...(cur.expensesCents ?? {}) };
+        for (const [k, v] of Object.entries(body.expensesCents as Record<string, unknown>)) {
+          const key = String(k).toLowerCase().trim();
+          if (!FOUNDER_IDS.includes(key)) continue;
+          const c = Math.round(Number(v));
+          if (!Number.isFinite(c) || c === 0) delete map[key];
+          else map[key] = c;
+        }
+        next.expensesCents = Object.keys(map).length > 0 ? map : undefined;
+      }
+
+      // Käsin asetettu siirtosumma. null / "" = palaa laskettuun summaan.
+      if (body.overrideCents !== undefined) {
+        const raw = body.overrideCents;
+        next.overrideCents = raw === null || raw === ""
+          ? null
+          : Math.abs(Math.round(Number(raw) || 0));
+      }
+      if (body.overrideFromId !== undefined) {
+        const v = String(body.overrideFromId ?? "").toLowerCase().trim();
+        next.overrideFromId = FOUNDER_IDS.includes(v) ? v : null;
+      }
+      if (body.note !== undefined) {
+        next.note = String(body.note ?? "").slice(0, 400).trim() || undefined;
+      }
+
+      // Kirjattu siirto: lisätään (append-only historia) tai poistetaan id:llä.
+      if (body.addTransfer && typeof body.addTransfer === "object") {
+        const t = body.addTransfer as Record<string, unknown>;
+        const fromId = String(t.fromId ?? "").toLowerCase().trim();
+        const toId = String(t.toId ?? "").toLowerCase().trim();
+        const cents = Math.abs(Math.round(Number(t.cents) || 0));
+        if (!FOUNDER_IDS.includes(fromId) || !FOUNDER_IDS.includes(toId) || fromId === toId || cents <= 0) {
+          return res.status(400).json({ error: "Virheellinen siirto." });
+        }
+        next.transfers = [
+          ...(cur.transfers ?? []),
+          {
+            id: `tr_${randomUUID().slice(0, 10)}`,
+            fromId, toId, cents,
+            ts: Date.now(),
+            note: t.note ? String(t.note).slice(0, 240) : undefined,
+          },
+        ].slice(-100);
+      }
+      if (body.removeTransferId) {
+        const rid = String(body.removeTransferId).slice(0, 60);
+        const left = (cur.transfers ?? []).filter((t) => t.id !== rid);
+        next.transfers = left.length > 0 ? left : undefined;
+      }
+
+      next.updatedAt = Date.now();
+      project.settlement = sanitizeFounderSettlementState(next);
+      const saved = await saveProject(job, project, { settlementMutation: true });
+      // Palautetaan heti uudelleenlaskettu tasaus, jotta näkymä päivittyy yhdellä
+      // kierroksella eikä käyttäjä ehdi nähdä vanhaa summaa.
+      res.json({ ok: true, settlement: saved.settlement ?? null, tasaus: await loadTasaus(job.id, saved) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  /**
+   * Kokoaa keikan tasauksen: asiakaserät + tekijämaksut + johtajien kirjaukset.
+   * Yksi laskenta (`@shared/fr8-tasaus`), jota sekä tämä reitti että
+   * admin-paneelin rahakortti käyttävät — ei kahta kaavaa.
+   */
+  async function loadTasaus(jobId: number, project: ProjectData) {
+    const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+    const gig = parseGig(job?.gigData ?? null);
+    let invoices: TasausEraInvoice[] = [];
+    try {
+      const rows = await db.select().from(eraInvoices).where(eq(eraInvoices.jobId, jobId));
+      invoices = rows.map((r) => {
+        let nums: number[] = [];
+        let rivit: any = null;
+        try { nums = JSON.parse(r.eraNumbers); } catch { /* tyhjä */ }
+        try { rivit = JSON.parse(r.rivit); } catch { /* null */ }
+        return {
+          id: r.id, kind: r.kind, tila: r.tila, senderId: r.senderId, recipientId: r.recipientId,
+          totalCents: r.totalCents, eraNumbers: nums, rivit,
+        };
+      });
+    } catch (e: any) {
+      // Taulua ei ole vielä kannassa (db:push ajamatta) → tasaus toimii silti
+      // pelkillä asiakaserillä, ei kaadu. Sama suoja kuin muualla erälaskuissa.
+      if (!isMissingTableError(e)) throw e;
+    }
+    return buildTasaus(project, (gig?.payments ?? []) as TasausPayment[], invoices, project.settlement);
+  }
+
+  /** Johtajien tasaus yhdelle keikalle. Vain perustajille — tämä on koko keikan
+   *  rahankulku, ei yksittäisen tekijän omat luvut. */
+  app.get("/api/jobs/:id/tasaus", async (req, res) => {
+    try {
+      const sub = String((req as any).admin?.sub ?? "").toLowerCase();
+      if ((req as any).admin?.role !== "host" && !FOUNDER_IDS.includes(sub)) {
+        return res.status(403).json({ error: "Vain perustaja näkee tasauksen." });
+      }
+      const id = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const project = parseProject(job.projectData ?? null);
+      if (!project) return res.json({ ok: true, tasaus: null });
+      res.json({ ok: true, tasaus: await loadTasaus(id, project) });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
   });
 
@@ -5781,13 +6137,69 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // through the admin job endpoints. Workers never see the gig price/cap — only
   // their own per-window pay rate × the windows they marked.
 
+  /**
+   * Analytiikka- ja raporttireittien sarakkeet: kaikki mitä rahalaskenta lukee,
+   * ei mitään mitä se ei lue. Pois jäävät `customerSignature`/`staffSignature`
+   * (base64-PNG per keikka), `propertyImageUrl`, `quoteVideoUrl`,
+   * `unitResponses`, `suggestedTimes`, `customerMessage` ja `notes` — yhteensä
+   * useita megatavuja per koko taulun luku, ja nämä reitit lukevat koko taulun.
+   */
+  const MONEY_JOB_COLS = {
+    id: jobs.id, customerId: jobs.customerId, description: jobs.description,
+    agreedPrice: jobs.agreedPrice, status: jobs.status, assignedTo: jobs.assignedTo,
+    scheduledAt: jobs.scheduledAt, waiveFee: jobs.waiveFee, quoteStatus: jobs.quoteStatus,
+    isTaloyhtiio: jobs.isTaloyhtiio, unitCount: jobs.unitCount, isCustomGig: jobs.isCustomGig,
+    billedBy: jobs.billedBy, submittedBy: jobs.submittedBy, submissionStatus: jobs.submissionStatus,
+    marketerId: jobs.marketerId, marketerCommissionCents: jobs.marketerCommissionCents,
+    createdAt: jobs.createdAt, updatedAt: jobs.updatedAt,
+    projectData: jobs.projectData, gigData: jobs.gigData,
+  } as const;
+
+  /**
+   * Sarakkeet jotka crew-reitit oikeasti tarvitsevat.
+   *
+   * `db.select().from(jobs)` vetää mukanaan `customerSignature`- ja
+   * `staffSignature`-base64-PNG:t sekä `propertyImageUrl`in ja
+   * `quoteVideoUrl`in, joita mikään näistä reiteistä ei lue. Karttablobi
+   * (`projectData`) ja `gigData` tarvitaan — `saveProject` synkronoi
+   * gig-sektorit — mutta muu paino on turhaa siirtoa.
+   */
+  const CREW_JOB_COLS = {
+    id: jobs.id, customerId: jobs.customerId, description: jobs.description,
+    agreedPrice: jobs.agreedPrice, status: jobs.status, assignedTo: jobs.assignedTo,
+    scheduledAt: jobs.scheduledAt, isCustomGig: jobs.isCustomGig, billedBy: jobs.billedBy,
+    quoteToken: jobs.quoteToken, createdAt: jobs.createdAt, updatedAt: jobs.updatedAt,
+    projectData: jobs.projectData, gigData: jobs.gigData,
+  } as const;
+
+  /** Token → keikan id. Prosessin sisäinen; väärä osuma korjaa itsensä. */
+  const crewTokenJobCache = new Map<string, number>();
+
+  /** Onboardattu tiimilista, lyhyt TTL (ks. loadOnboardedTeamRoster). */
+  const TEAM_ROSTER_TTL_MS = 60_000;
+  let teamRosterCache: { at: number; rows: { id: string; name: string; photoUrl?: string; onboardedAt: number }[] } | null = null;
+
   // Find which custom-gig job a crew token belongs to (scans custom gigs).
   // Tokens are minted globally unique (genUniqueCrewToken), so at most one gig
   // can match — but we still guard against an accidental cross-gig collision so
   // worker A in gig 1 can never be resolved to gig 2.
   async function findJobByCrewToken(token: string): Promise<{ job: typeof jobs.$inferSelect; project: ProjectData; member: CrewMember } | null> {
     if (!token) return null;
-    const rows = await db.select().from(jobs).where(eq(jobs.isCustomGig, true));
+
+    // Tunnettu token → hae SE keikka suoraan. Ilman tätä jokainen tekijän
+    // ikkunanapautus luki kaikkien keikkojen koko rivin (karttablobi
+    // havaintokuvineen, kuitteineen ja dokumentteineen) pelkästään
+    // löytääkseen kenelle token kuuluu. Väärä osuma putoaa takaisin skannaukseen.
+    const cachedJobId = crewTokenJobCache.get(token);
+    if (cachedJobId !== undefined) {
+      const [job] = await db.select(CREW_JOB_COLS).from(jobs).where(eq(jobs.id, cachedJobId));
+      const project = job ? parseProject(job.projectData ?? null) : null;
+      const member = project ? findCrewByToken(project, token) : undefined;
+      if (job && project && member) return { job: job as typeof jobs.$inferSelect, project, member };
+      crewTokenJobCache.delete(token);
+    }
+
+    const rows = (await db.select(CREW_JOB_COLS).from(jobs).where(eq(jobs.isCustomGig, true))) as typeof jobs.$inferSelect[];
     const matches: { job: typeof jobs.$inferSelect; project: ProjectData; member: CrewMember }[] = [];
     for (const job of rows) {
       const project = parseProject(job.projectData ?? null);
@@ -5801,6 +6213,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       console.warn(`crew token ${token.slice(0, 4)}… matched ${matches.length} gigs — refusing`);
       return null;
     }
+    if (matches[0]) crewTokenJobCache.set(token, matches[0].job.id);
     return matches[0] ?? null;
   }
 
@@ -5844,7 +6257,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // dashboard-only workers on top of the hand-maintained profiles already in
   // the codebase, never removes or overrides one.
   async function loadOnboardedTeamRoster(): Promise<{ id: string; name: string; photoUrl?: string; onboardedAt: number }[]> {
-    const rows = await db.select().from(jobs).where(eq(jobs.isCustomGig, true));
+    // Muistetaan hetki. Tätä kutsutaan KIRJAUTUMISESTA ja julkiselta
+    // /meistä-sivulta, eli myös kirjautumattomilta kävijöiltä — ja se luki joka
+    // kerta kaikkien keikkojen koko rivin. Roster muuttuu kerran viikossa jos
+    // sitäkään, joten minuutin ikäinen vastaus on aina riittävän tuore.
+    const now = Date.now();
+    if (teamRosterCache && now - teamRosterCache.at < TEAM_ROSTER_TTL_MS) return teamRosterCache.rows;
+    const rows = (await db.select({ id: jobs.id, projectData: jobs.projectData })
+      .from(jobs).where(eq(jobs.isCustomGig, true))) as { id: number; projectData: string | null }[];
     const byId = new Map<string, { id: string; name: string; photoUrl?: string; onboardedAt: number }>();
     for (const job of rows) {
       const project = parseProject(job.projectData ?? null);
@@ -5863,7 +6283,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
       }
     }
-    return Array.from(byId.values()).sort((a, b) => a.onboardedAt - b.onboardedAt);
+    const out = Array.from(byId.values()).sort((a, b) => a.onboardedAt - b.onboardedAt);
+    teamRosterCache = { at: now, rows: out };
+    return out;
   }
 
   // Public: powers the login picker (pre-auth, so it must be public) and the
@@ -5901,15 +6323,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   async function saveProject(
     job: typeof jobs.$inferSelect,
     project: ProjectData,
-    opts?: { p2Mutation?: boolean; guidedMutation?: boolean },
+    opts?: { p2Mutation?: boolean; guidedMutation?: boolean; settlementMutation?: boolean },
   ): Promise<ProjectData> {
     const clean = sanitizeProjectData(project);
-    // P2-neuvottelutila ja ohjattu eteneminen (guided) ovat serverin omistamia.
-    // Ellei TÄMÄ tallennus ole niiden dedikoidun reitin tarkoituksellinen
-    // mutaatio, luetaan kannan tuorein arvo juuri ennen kirjoitusta — niin
-    // tekijän ikkunamerkintä ei koskaan yliaja asiakkaan samaan aikaan lukitsemaa
-    // hintaa eikä perustajan ohjausasetusta.
-    if (!opts?.p2Mutation || !opts?.guidedMutation) {
+    // P2-neuvottelutila, ohjattu eteneminen (guided) ja johtajien tasaus ovat
+    // serverin omistamia. Ellei TÄMÄ tallennus ole niiden dedikoidun reitin
+    // tarkoituksellinen mutaatio, luetaan kannan tuorein arvo juuri ennen
+    // kirjoitusta — niin tekijän ikkunamerkintä ei koskaan yliaja asiakkaan
+    // samaan aikaan lukitsemaa hintaa, perustajan ohjausasetusta eikä
+    // rahankirjausta siitä kuka sai erän ja kuka maksoi tekijän.
+    if (!opts?.p2Mutation || !opts?.guidedMutation || !opts?.settlementMutation) {
       const [fresh] = await db.select({ projectData: jobs.projectData }).from(jobs).where(eq(jobs.id, job.id));
       const stored = fresh ? parseProject(fresh.projectData ?? null) : null;
       if (!opts?.p2Mutation) {
@@ -5919,6 +6342,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!opts?.guidedMutation) {
         const storedGuided = stored ? stored.guided : clean.guided;
         if (storedGuided) clean.guided = storedGuided; else delete clean.guided;
+      }
+      if (!opts?.settlementMutation) {
+        const storedSettlement = stored ? stored.settlement : clean.settlement;
+        if (storedSettlement) clean.settlement = storedSettlement; else delete clean.settlement;
       }
     }
     const totals = computeProjectTotals(clean);
@@ -6907,7 +7334,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // never defaulted to anyone — same rule as ALV turnover + founder
       // settlement; the Verotus view lists it for one-tap attribution.
       const gig = parseGig(job.gigData);
-      const payments = gig?.payments ?? [];
+      const payments = livePayments(gig?.payments);
       eraBreakdown.forEach((e, i) => {
         const b = payments[i]?.biller;
         e.biller = b?.id ? { id: b.id, name: b.name } : null;
@@ -6972,7 +7399,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/admin/worker/:workerId", async (req, res) => {
     try {
       const wid = String(req.params.workerId).toLowerCase();
-      const allJobs = await db.select().from(jobs);
+      const allJobs = (await db.select(MONEY_JOB_COLS).from(jobs)) as typeof jobs.$inferSelect[];
       let worker: any = null;
       let payouts: any[] = [];
       let documents: any[] = [];
@@ -7112,7 +7539,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // never shifts). Shared by the manual-document endpoint and the automatic
   // settlement tositteet.
   async function attachPersonDocument(wid: string, doc: CrewDocument, dedupe = false): Promise<boolean> {
-    const allJobs = await db.select().from(jobs);
+    const allJobs = (await db.select(MONEY_JOB_COLS).from(jobs)) as typeof jobs.$inferSelect[];
     for (const pred of [matchesWorkerExact, matchesWorkerByName]) {
       for (const job of allJobs) {
         const project = parseProject(job.projectData ?? null);
@@ -7184,6 +7611,109 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  /**
+   * KEIKKARAHAT — koko brändin urakkakeikkojen raha yhtenä lukuna.
+   *
+   * Puuhapatet-adminin etusivu näytti vain `/api/stats`in eli tavallisten
+   * keikkojen `agreedPrice`-summat. FR8:n kaltaiset urakat ovat kokonaan
+   * `gigData`/`projectData`-blobeissa, joten niiden laskutettu ja saatu raha ei
+   * näkynyt admin-paneelissa lainkaan — se piti käydä katsomassa keikan omasta
+   * mustasta näkymästä. Tämä reitti tuo saman rahan etusivulle.
+   *
+   * Laskenta on SAMA jaettu moottori (`@shared/fr8-tasaus`) kuin keikan omassa
+   * tasausnäkymässä — ei toista kaavaa, joten luvut eivät voi erota.
+   */
+  app.get("/api/admin/gig-money", async (req, res) => {
+    try {
+      const sub = String((req as any).admin?.sub ?? "").toLowerCase();
+      if ((req as any).admin?.role !== "host" && !FOUNDER_IDS.includes(sub)) {
+        return res.status(403).json({ error: "Vain perustaja näkee keikkarahat." });
+      }
+      const rows = (await db.select(MONEY_JOB_COLS).from(jobs)) as typeof jobs.$inferSelect[];
+      // Kaikki erälaskut kerralla ja ryhmiteltynä keikoittain — ei N+1 kyselyä.
+      const invoicesByJob = new Map<number, TasausEraInvoice[]>();
+      try {
+        for (const r of await db.select().from(eraInvoices)) {
+          let nums: number[] = [];
+          let rivit: any = null;
+          try { nums = JSON.parse(r.eraNumbers); } catch { /* tyhjä */ }
+          try { rivit = JSON.parse(r.rivit); } catch { /* null */ }
+          const list = invoicesByJob.get(r.jobId) ?? [];
+          list.push({
+            id: r.id, kind: r.kind, tila: r.tila, senderId: r.senderId, recipientId: r.recipientId,
+            totalCents: r.totalCents, eraNumbers: nums, rivit,
+          });
+          invoicesByJob.set(r.jobId, list);
+        }
+      } catch (e: any) {
+        if (!isMissingTableError(e)) throw e;
+      }
+
+      const founders = BRAND_BILLERS.map((b) => ({ id: b.id, name: b.name }));
+      const receivedByFounder: Record<string, number> = {};
+      const netByFounder: Record<string, number> = {};
+      let invoicedCents = 0, unassignedCents = 0;
+      let workerEarnedCents = 0, workerPaidCents = 0;
+      const gigs: {
+        jobId: number; name: string; invoicedCents: number; workerEarnedCents: number;
+        workerPaidCents: number; transfer: { fromId: string; toId: string; cents: number } | null;
+        unassignedEraCount: number;
+      }[] = [];
+
+      for (const job of rows) {
+        const project = parseProject(job.projectData ?? null);
+        if (!project) continue;
+        const gig = parseGig(job.gigData);
+        const payments = (gig?.payments ?? []) as TasausPayment[];
+        const invoices = invoicesByJob.get(job.id) ?? [];
+        // Keikka ilman rahaa ei kuulu listalle — muuten kortti täyttyisi nollista.
+        if (payments.length === 0 && invoices.length === 0) continue;
+        const t = buildTasaus(project, payments, invoices, project.settlement);
+
+        const gigInvoiced = t.input.p1PotCents + t.input.p2PotCents;
+        const gigWorkerEarned = t.input.workerP1EarnedCents + t.input.workerP2EarnedCents;
+        const gigWorkerPaid = t.result.rows.reduce((s, r) => s + r.paidOutCents, 0) + t.unattributedPaidCents;
+
+        invoicedCents += gigInvoiced;
+        workerEarnedCents += gigWorkerEarned;
+        workerPaidCents += gigWorkerPaid;
+        for (const r of t.result.rows) {
+          receivedByFounder[r.id] = (receivedByFounder[r.id] ?? 0) + r.receivedCents;
+          netByFounder[r.id] = (netByFounder[r.id] ?? 0) + r.netCents;
+        }
+        unassignedCents += t.eras.filter((e) => !e.receivedById).reduce((s, e) => s + e.amountCents, 0);
+
+        gigs.push({
+          jobId: job.id,
+          name: gig?.company?.name || job.description || `Keikka #${job.id}`,
+          invoicedCents: gigInvoiced,
+          workerEarnedCents: gigWorkerEarned,
+          workerPaidCents: gigWorkerPaid,
+          transfer: t.result.transfer,
+          unassignedEraCount: t.unassignedEraCount,
+        });
+      }
+      gigs.sort((a, b) => b.invoicedCents - a.invoicedCents);
+
+      res.json({
+        ok: true,
+        founders,
+        totals: {
+          invoicedCents,
+          receivedByFounder,
+          unassignedCents,
+          workerEarnedCents,
+          workerPaidCents,
+          workerOpenCents: Math.max(0, workerEarnedCents - workerPaidCents),
+          netByFounder,
+        },
+        gigs,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Urakkaerien hallinta — enterprise-grade instalment management ──────────
   // One list of EVERY recorded gig instalment across all gigs, with its biller
   // and (for fixed-deal gigs) the kate breakdown so a founder sees exactly what
@@ -7192,7 +7722,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/admin/gig-instalments", async (req, res) => {
     try {
       if ((req as any).admin?.role !== "host") return res.status(403).json({ error: "Vain perustaja voi hallita laskutuseriä." });
-      const rows = await db.select().from(jobs);
+      const rows = (await db.select(MONEY_JOB_COLS).from(jobs)) as typeof jobs.$inferSelect[];
       const n = Math.max(1, BRAND_BILLERS.length);
       const nameOfBiller = (id: string) => BRAND_BILLERS.find((b) => b.id === id)?.name ?? id;
       const instalments: {
@@ -7320,15 +7850,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // instalment is worth the same fixed amount regardless of position, so
       // removing a bogus/duplicate erä from anywhere in the list (not just the
       // end) is safe: the rest simply shift down and re-pair in order.
-      const [removed] = gig.payments.splice(idx, 1);
-      recomputeGigInvoiced(gig, job);
+      //
+      // MUTTA: erä jolle on lähetetty lasku asiakkaalle on kirjanpidon tosite
+      // (server/finance/post.ts kirjaa sen myyntinä tilille 3000). Sitä ei saa
+      // hävittää — muuten liikevaihto katoaa ALV-rajan seurannasta ja
+      // tuloslaskelmasta jälkiä jättämättä. Sellainen erä MITÄTÖIDÄÄN: rivi
+      // jää paikalleen `voided`-merkinnällä, ja kaikki summat ohittavat sen.
+      // Vain kirjaamaton haamuerä (ei summaa, ei lähetystä) poistetaan oikeasti.
+      const target = gig.payments[idx];
+      const wasSent = (target?.amountCents ?? 0) > 0 && (!!target?.emailId || !!target?.to || !!target?.biller?.id);
       const fmtEur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
-      gig.log.push({ t: Date.now(), text: `Maksuerä poistettu seurannasta: ${fmtEur(removed?.amountCents ?? 0)}` });
+      if (wasSent) {
+        gig.payments[idx] = {
+          ...target,
+          voided: true,
+          voidedAt: Date.now(),
+          voidedBy: String((req as any).admin?.sub ?? "") || undefined,
+        };
+        gig.log.push({ t: Date.now(), text: `Maksuerä mitätöity (säilyy tositteena): ${fmtEur(target?.amountCents ?? 0)}` });
+      } else {
+        const [removed] = gig.payments.splice(idx, 1);
+        gig.log.push({ t: Date.now(), text: `Kirjaamaton maksuerä poistettu: ${fmtEur(removed?.amountCents ?? 0)}` });
+      }
+      recomputeGigInvoiced(gig, job);
       gig.updatedAt = Date.now();
       await db.update(jobs).set({ gigData: JSON.stringify(gig), updatedAt: new Date() }).where(eq(jobs.id, jobId));
-      res.json({ ok: true });
+      res.json({ ok: true, voided: wasSent });
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      return fail(res, e, "DELETE /api/jobs/:id/gig-payment/:index");
     }
   });
 
@@ -7343,11 +7892,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // than 1/4 if red windows were removed (the reduction lands on the last
       // invoice), so counting erät × fixed instalment would overstate the total.
       // Only P1 counts toward the fixed deal; P2 (scope:"p2") is billed separately.
-      gig.invoicedCents = gig.payments
+      gig.invoicedCents = livePayments(gig.payments)
         .filter((p) => p.scope !== "p2")
         .reduce((s, p) => s + p.amountCents, 0);
     } else {
-      gig.invoicedCents = gig.payments.reduce((s, p) => s + p.amountCents, 0);
+      gig.invoicedCents = livePayments(gig.payments).reduce((s, p) => s + p.amountCents, 0);
       gig.invoicedThrough = gig.payments.length ? gig.payments[gig.payments.length - 1].countThrough : 0;
       gig.sectors.forEach((s) => { s.invoicedWashed = Math.min(s.invoicedWashed || 0, gig.invoicedThrough); });
     }
@@ -7569,18 +8118,56 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  // Remove a worker (host).
+  /**
+   * Poista tekijä keikalta.
+   *
+   * EI POISTA jos tekijällä on kirjanpidollista historiaa. Tämä reitti poisti
+   * ennen koko jäsenobjektin — ja sen mukana JOKAISEN maksetun payoutin
+   * (laskunumeroineen ja jäädytettyine vero-/ostajatietoineen), jokaisen
+   * dokumentin (base64-kuitit ja -laskut omine 6 vuoden säilytysaikoineen) ja
+   * jokaisen allekirjoitetun sopimuksen. Naapurireitti
+   * `DELETE .../payout/:payoutId` kieltäytyy poistamasta yhtä maksettua
+   * payoutia; tämä poisti ne kaikki kerralla.
+   *
+   * Kun historiaa on, tekijä DEAKTIVOIDAAN (`active: false`) — hän katoaa
+   * dashista ja maksulistoilta täsmälleen kuten ennenkin, mutta tositteet
+   * jäävät talteen ja hänet saa takaisin Tiimi-sivun kytkimestä.
+   */
   app.delete("/api/jobs/:id/crew/:memberId", async (req, res) => {
     try {
       const loaded = await loadJobProject(Number(req.params.id));
       if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const { job, project } = loaded;
       const mid = String(req.params.memberId);
+      const member = (project.crew || []).find((m) => m.id === mid);
+      if (!member) return res.json({ ok: true, crew: project.crew ?? [] });
+
+      const paidPayouts = (member.payouts || []).filter((p) => p.status === "maksettu").length;
+      const documents = (member.documents || []).length;
+      const signedAgreements = Object.keys(member.agreements || {}).length;
+      const keepReasons = [
+        paidPayouts > 0 ? `${paidPayouts} maksettua maksua` : null,
+        documents > 0 ? `${documents} dokumenttia` : null,
+        signedAgreements > 0 ? `${signedAgreements} allekirjoitettua sopimusta` : null,
+      ].filter(Boolean);
+
+      if (keepReasons.length > 0) {
+        project.crew = (project.crew || []).map((m) => (m.id === mid ? { ...m, active: false } : m));
+        const saved = await saveProject(job, project);
+        return res.json({
+          ok: true,
+          deactivated: true,
+          crew: saved.crew,
+          note: `${member.name || mid} on nyt epäaktiivinen, ei poistettu: hänellä on ${keepReasons.join(", ")}. ` +
+            "Kirjanpidon tositteita ei saa poistaa (6 vuoden säilytys).",
+        });
+      }
+
       project.crew = (project.crew || []).filter((m) => m.id !== mid);
       const saved = await saveProject(job, project);
-      res.json({ ok: true, crew: saved.crew });
+      res.json({ ok: true, deactivated: false, crew: saved.crew });
     } catch (e: any) {
-      res.status(400).json({ error: e.message });
+      return fail(res, e, "DELETE /api/jobs/:id/crew/:memberId");
     }
   });
 
@@ -7928,7 +8515,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // payout-tilannekuvasta. Käytetään sekä admin-napista että ajastetusti alla.
   async function reconcileMissingPayoutSyncs(): Promise<{ attempted: number }> {
     if (!isSheetsSyncEnabled()) return { attempted: 0 };
-    const allJobs = await db.select().from(jobs);
+    const allJobs = (await db.select(MONEY_JOB_COLS).from(jobs)) as typeof jobs.$inferSelect[];
     let attempted = 0;
     for (const job of allJobs) {
       const project = parseProject(job.projectData ?? null);
@@ -8002,7 +8589,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/admin/invoices", async (req, res) => {
     if (!isFounderCaller(req)) return res.status(403).json({ error: "Vain johtajat voivat selata kaikkia laskuja." });
     try {
-      const allJobs = await db.select().from(jobs);
+      const allJobs = (await db.select(MONEY_JOB_COLS).from(jobs)) as typeof jobs.$inferSelect[];
       const jobById = new Map(allJobs.map((j) => [j.id, j]));
       const customerIds = Array.from(new Set(allJobs.map((j) => j.customerId)));
       const custRows = customerIds.length ? await db.select().from(customers).where(inArray(customers.id, customerIds)) : [];
@@ -9121,7 +9708,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ALV-vapauden tilannerivi — yksi lähde sekä AI-työkalulle (get_vat_status)
   // että kontekstiyhteenvedolle, jotta kaksi esitystä ei voi erkaantua.
   async function vatTurnoverLine(year: number): Promise<string> {
-    const turnoverRows = await db.select().from(jobs);
+    const turnoverRows = (await db.select(MONEY_JOB_COLS).from(jobs)) as typeof jobs.$inferSelect[];
     const turnover = computeBillerTurnover(turnoverRows);
     const yearMap = turnover.turnoverByYear[String(year)] || {};
     return turnover.billers

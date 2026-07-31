@@ -17,6 +17,7 @@ import { sanitizeCrew, DEFAULT_WORKER_PER_WINDOW_CENTS, type CrewMember } from "
 import { PAY_PERIODS, eraWindowCounts } from "./payprogress";
 import { sanitizeP2State, type P2State } from "./p2";
 import { sanitizeGuidedWork, type GuidedWork } from "./guided";
+import { sanitizeFounderSettlementState, type FounderSettlementState } from "./founder-settlement";
 
 // ─── Data shapes ───────────────────────────────────────────────────────────────
 
@@ -168,6 +169,12 @@ export interface ProjectData {
    *  disabled = no behavioural change. Only the toggle + override are persisted here;
    *  the active floor / next window are DERIVED (computeGuided). */
   guided?: GuidedWork;
+  /** Johtajien tasaus (shared/founder-settlement.ts): kuka SAI kunkin erän rahat
+   *  ja kuka MAKSOI kunkin tekijälaskun, kun raha liikkui toisin kuin paperilla,
+   *  + käsin asetettu siirtosumma ja kirjatut siirrot. Absent = ei korjauksia,
+   *  tasaus lukee pelkän laskudatan. Mutatoidaan VAIN /settlement-reitin kautta —
+   *  geneerinen blob-tallennus säilyttää talletetun kopion, kuten p2/guided. */
+  settlement?: FounderSettlementState;
   updatedAt: number;                                // epoch ms
 }
 
@@ -1000,6 +1007,7 @@ export function sanitizeProjectData(input: any): ProjectData {
     ...(eraWindows ? { eraWindows } : {}),
     ...(input.p2 !== undefined ? (() => { const p2 = sanitizeP2State(input.p2); return p2 ? { p2 } : {}; })() : {}),
     ...(input.guided !== undefined ? (() => { const g = sanitizeGuidedWork(input.guided); return g ? { guided: g } : {}; })() : {}),
+    ...(input.settlement !== undefined ? (() => { const s = sanitizeFounderSettlementState(input.settlement); return s ? { settlement: s } : {}; })() : {}),
     updatedAt: Date.now(),
   };
 }

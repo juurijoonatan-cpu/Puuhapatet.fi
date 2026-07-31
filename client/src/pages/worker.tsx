@@ -1853,10 +1853,30 @@ function EraInvoiceSection({ token, view, setView }: { token: string; view: Work
                   </a>
                 </>
               )}
+              {/* "hylätty" tarkoittaa KAHTA eri tapahtumaa, ja ne erottaa
+                  laskunumero: luonnoksella ei ole numeroa (tekijä hylkäsi sen
+                  ennen lähetystä), lähetetyllä on (johtaja mitätöi sen jälkikäteen).
+                  Aiemmin molemmille luki "Hylkäsit tämän laskun" — mikä oli
+                  suorastaan väärin siinä tapauksessa jossa tekijä oli itse
+                  lähettänyt laskun ja johtaja mitätöi sen. Mitätöity lasku on
+                  yhä tosite, joten sen PDF pysyy ladattavissa. */}
               {inv.tila === "hylätty" && (
-                <p style={{ margin: "10px 0 0", fontSize: 11.5, color: "rgba(255,255,255,0.45)" }}>
-                  Hylkäsit tämän laskun {fiDate(inv.respondedAt)}. Johtaja voi lähettää uuden tilalle.
-                </p>
+                inv.invoiceNumber ? (
+                  <>
+                    <p style={{ margin: "10px 0 0", fontSize: 11.5, color: "rgba(255,255,255,0.45)" }}>
+                      Johtaja mitätöi tämän laskun {fiDate(inv.respondedAt)} — sitä ei makseta.
+                      Lasku {inv.invoiceNumber} säilyy silti kirjanpidon tositteena, ja korvaava lasku tulee omanaan.
+                    </p>
+                    <a href={api.crewEraInvoicePdfUrl(token, inv.id)} target="_blank" rel="noreferrer"
+                      style={{ display: "inline-block", marginTop: 8, fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.55)", textDecoration: "underline" }}>
+                      Lataa mitätöity lasku (PDF)
+                    </a>
+                  </>
+                ) : (
+                  <p style={{ margin: "10px 0 0", fontSize: 11.5, color: "rgba(255,255,255,0.45)" }}>
+                    Hylkäsit tämän laskun {fiDate(inv.respondedAt)}. Johtaja voi lähettää uuden tilalle.
+                  </p>
+                )
               )}
 
               {inv.tila === "luonnos" && (

@@ -13,6 +13,7 @@ import {
   eraInvoiceRespondTransition,
   type EraInvoiceKind, type EraInvoiceTila, type EraInvoiceRespondAction,
   isP2EraSelection,
+  isVoidedEraInvoiceExpired, voidedEraInvoicePurgeAt, isEraInvoiceReceipt,
 } from "@shared/era-billing";
 import { feeRateForWorker, effectiveJobTotal, FOUNDER_IDS, marketerCommissionCents, MARKETER_COMMISSION_RATE } from "@shared/team";
 import { randomUUID, createHmac, timingSafeEqual, scryptSync, randomBytes } from "crypto";
@@ -2215,6 +2216,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       try {
         rows = await db.select().from(eraInvoices)
           .where(eq(eraInvoices.jobId, jobId)).orderBy(desc(eraInvoices.createdAt));
+        // Mitätöityjen LUONNOSTEN siivous. Väärällä summalla tehty ja heti
+        // mitätöity ehdotus ei ole kirjanpidon tosite, joten se ei saa jäädä
+        // roikkumaan listoille ikuisesti — se näkyy "Poistetut"-osiossa 2 vrk ja
+        // katoaa sitten kokonaan. Lähetettyä laskua ei koskaan poisteta
+        // (`isEraInvoiceReceipt`): se on tosite, jolla on laskunumero ja jonka
+        // tekijä on saanut sähköpostiinsa.
+        //
+        // Siivous tehdään laiskasti tällä luvulla eikä ajastimella: ei uutta
+        // taustaprosessia, ei ylimääräisiä kantakyselyitä silloin kun kukaan ei
+        // katso sivua (siirtokiintiö).
+        const nowMs = Date.now();
+        const expired = rows.filter((r) => isVoidedEraInvoiceExpired(r as any, nowMs)).map((r) => r.id);
+        if (expired.length > 0) {
+          await db.delete(eraInvoices).where(inArray(eraInvoices.id, expired));
+          rows = rows.filter((r) => !expired.includes(r.id));
+        }
         // Sähköposti_loki per lasku (kohta 3D: kopiot kummankin johtajan
         // sähköpostissa). Rivit syntyvät vasta vaiheessa 4 — siihen asti tyhjä.
         if (rows.length > 0) {
@@ -2294,7 +2311,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         .set({ tila: "hylätty" satisfies EraInvoiceTila, respondedAt: new Date() })
         .where(eq(eraInvoices.id, invoiceId))
         .returning();
-      res.json({ ok: true, invoice: toClientEraInvoice(row) });
+      // Kertoo kutsujalle kumpi kohtalo rivi sai, jotta käyttöliittymä voi sanoa
+      // sen suoraan: lähetetty lasku on tosite ja säilyy, mitätöity luonnos
+      // katoaa itsestään 2 vrk:ssa.
+      res.json({
+        ok: true,
+        invoice: toClientEraInvoice(row),
+        receipt: isEraInvoiceReceipt(row as any),
+        purgeAt: voidedEraInvoicePurgeAt(row as any),
+      });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

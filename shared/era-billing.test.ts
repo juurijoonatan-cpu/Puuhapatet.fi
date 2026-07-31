@@ -3,6 +3,9 @@ import {
   computeEraBilling, sumWindows, TEKIJA_HINTA_CENTS, normalizeEraNumbers, eraRecipientFounderId,
   eraInvoiceRespondTransition, summarizeEraInvoices,
   type JohtajaPesu, type TekijaPesu, type EraInvoiceSummaryRow,
+  isEraInvoiceReceipt,
+  voidedEraInvoicePurgeAt,
+  isVoidedEraInvoiceExpired
 } from "./era-billing";
 
 // Speksin kohta 7 — käytä yksikkötestinä. Ks. docs/fr8-era-laskutus-plan.md.
@@ -203,5 +206,61 @@ describe("summarizeEraInvoices", () => {
     expect(empty.founderInvoices).toHaveLength(0);
     expect(empty.founderSumCents).toBe(0);
     expect(empty.workerAcceptedSumCents).toBe(0);
+  });
+});
+
+describe("mitätöityjen laskujen säilytys", () => {
+  const H = 3_600_000;
+  const draft = (over: Partial<any> = {}) => ({
+    kind: "tekija" as const, tila: "hylätty" as const, totalCents: 100_00,
+    invoiceNumber: null, sentAt: null, respondedAt: new Date(0), ...over,
+  });
+
+  it("mitätöity LUONNOS ei ole tosite ja katoaa 48 t kuluttua", () => {
+    const inv = draft();
+    expect(isEraInvoiceReceipt(inv)).toBe(false);
+    expect(voidedEraInvoicePurgeAt(inv)).toBe(48 * H);
+    expect(isVoidedEraInvoiceExpired(inv, 47 * H)).toBe(false);
+    expect(isVoidedEraInvoiceExpired(inv, 48 * H)).toBe(true);
+  });
+
+  it("mitätöity LÄHETETTY lasku on tosite eikä koskaan katoa", () => {
+    // Laskunumero = juokseva tosite, joka on tekijän kirjanpidossa. Kirjanpitolaki
+    // vaatii 6 v säilytyksen, joten purgeAt on null vaikka lasku mitätöitiin.
+    const sent = draft({ invoiceNumber: "2026-014", sentAt: new Date(0) });
+    expect(isEraInvoiceReceipt(sent)).toBe(true);
+    expect(voidedEraInvoicePurgeAt(sent)).toBeNull();
+    expect(isVoidedEraInvoiceExpired(sent, 10 * 365 * 24 * H)).toBe(false);
+  });
+
+  it("pelkkä sentAt ilman laskunumeroa riittää tositteeksi", () => {
+    const sent = draft({ sentAt: new Date(0) });
+    expect(isEraInvoiceReceipt(sent)).toBe(true);
+    expect(voidedEraInvoicePurgeAt(sent)).toBeNull();
+  });
+
+  it("elävää laskua ei koskaan poisteta", () => {
+    for (const tila of ["luonnos", "lähetetty", "hyväksytty"] as const) {
+      expect(voidedEraInvoicePurgeAt(draft({ tila }))).toBeNull();
+      expect(isVoidedEraInvoiceExpired(draft({ tila }), Date.now())).toBe(false);
+    }
+  });
+
+  it("ilman aikaleimaa ei poisteta — mieluummin jää kuin katoaa väärin", () => {
+    expect(voidedEraInvoicePurgeAt(draft({ respondedAt: null }))).toBeNull();
+  });
+
+  it("summarizeEraInvoices erottelee katoavat ja säilyvät", () => {
+    const rows = [
+      draft(),                                                    // katoava luonnos
+      draft({ invoiceNumber: "2026-014", sentAt: new Date(0) }),   // säilyvä tosite
+      { kind: "tekija" as const, tila: "hyväksytty" as const, totalCents: 50_00 },
+    ];
+    const s = summarizeEraInvoices(rows as any);
+    expect(s.workerVoidedTemp).toHaveLength(1);
+    expect(s.workerVoidedKept).toHaveLength(1);
+    expect(s.workerRejected).toHaveLength(2);
+    // Kumpikaan mitätöity ei näy summissa.
+    expect(s.workerAcceptedSumCents).toBe(50_00);
   });
 });

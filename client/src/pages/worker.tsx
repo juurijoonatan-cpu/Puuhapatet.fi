@@ -1536,10 +1536,12 @@ function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
       <Leaderboard view={view} />
       {!view.worker.trainee && <PathCard />}
       <InstallHint />
+      {/* Yksi rivi: MITEN palkka tulee. Aiempi kahden lauseen kappale selitti
+          myös sen että luku päivittyy merkinnästä — sen tekijä näkee itse. */}
       <p style={{ marginTop: 20, fontSize: 12.5, color: "rgba(255,255,255,0.45)", lineHeight: 1.6 }}>
         {view.worker.trainee
-          ? `Ansiosi päivittyy heti, kun merkitset ikkunan pestyksi kartalle. ${view.worker.trainee.responsibleLeaderName} hoitaa korvauksesi tiimin kautta — et laskuta itse.`
-          : "Ansiosi päivittyy heti, kun merkitset ikkunan pestyksi kartalle. Laskutat kertyneen summan Puuhapatetilta oman Y-tunnuksesi kautta."}
+          ? `Korvaus tiimin kautta · ${view.worker.trainee.responsibleLeaderName}`
+          : "Laskutus omalla Y-tunnuksellasi"}
       </p>
     </div>
   );

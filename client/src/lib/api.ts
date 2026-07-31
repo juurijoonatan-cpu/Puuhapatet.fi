@@ -790,7 +790,7 @@ export const api = {
   /** Johtaja mitätöi tekijälaskun (väärä summa/maksaja). Hylätty lasku ei kuittaa
    *  velkaa, joten summa palaa avoimeksi ja uuden voi tehdä heti. */
   voidEraInvoice: (jobId: number, invoiceId: number) =>
-    request<{ ok: boolean; invoice: EraInvoiceClient; alreadyVoided?: boolean }>(
+    request<{ ok: boolean; invoice: EraInvoiceClient; alreadyVoided?: boolean; receipt?: boolean; purgeAt?: number | null }>(
       "POST", `/api/jobs/${jobId}/era-invoice/${invoiceId}/void`),
   // Johtaja lähettää suoraan toiselle johtajalle ristiinlaskun (§3C) — lukittu heti.
   sendFounderEraInvoice: (jobId: number, data: {

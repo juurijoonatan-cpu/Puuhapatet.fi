@@ -22,14 +22,14 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type EraInvoiceClient } from "@/lib/api";
-import { summarizeEraInvoices, isP2EraSelection } from "@shared/era-billing";
+import { summarizeEraInvoices, isP2EraSelection, voidedEraInvoicePurgeAt } from "@shared/era-billing";
 import {
   computeWorkerSettlements, eraSettlementByWorker, sumWorkerSettlements,
 } from "@shared/worker-payouts";
 import type { ProjectData } from "@shared/project";
 import { fmtEurCents } from "@shared/tax";
 import { BRAND_BILLERS } from "@shared/billers";
-import { RefreshCw, Wallet, Users, CheckCircle2, Mail, FileDown, Receipt, HandCoins, Scale } from "lucide-react";
+import { RefreshCw, Wallet, Users, CheckCircle2, Mail, FileDown, Receipt, HandCoins, Scale, Trash2, Archive } from "lucide-react";
 import { T, card as tokenCard, mono, statLabel, subLabel, button as tokenButton, input as tokenInput, chip } from "./tokens";
 import SendInvoiceEmailDialog from "./SendInvoiceEmailDialog";
 import WorkerEraInvoiceDialog from "./WorkerEraInvoiceDialog";
@@ -267,6 +267,18 @@ function VoidInvoiceButton({ jobId, invoiceId, name, onDone }: {
   );
 }
 
+/** "katoaa 41 t kuluttua" — mitätöidyn luonnoksen jäljellä oleva säilytysaika.
+ *  Konkreettinen aika eikä pelkkä "poistetaan pian": johtajan pitää tietää
+ *  ehtiiköhän hän vielä tarkistaa mitä poisti. */
+function purgeCountdown(inv: { tila: string; invoiceNumber?: string | null; sentAt?: string | null; respondedAt?: string | null }): string {
+  const at = voidedEraInvoicePurgeAt(inv as any);
+  if (at == null) return "";
+  const left = at - Date.now();
+  if (left <= 0) return "katoaa seuraavalla päivityksellä";
+  const h = Math.ceil(left / 3_600_000);
+  return h >= 2 ? `katoaa ${h} t kuluttua` : "katoaa alle tunnissa";
+}
+
 export interface MaksutBilling {
   p1PayCount: number;
   p1InvoicedCents: number;
@@ -307,6 +319,9 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
   useEffect(() => { void load(); }, [load]);
 
   const s = summarizeEraInvoices(invoices);
+  // Työlistalla vain ELÄVÄT laskut. Mitätöidyt eivät jää sotkemaan sitä listaa
+  // jolta johtaja katsoo mitä on maksettu — ne ovat omissa osioissaan alla.
+  const liveWorkerInvoices = s.workerInvoices.filter((inv) => inv.tila !== "hylätty");
 
   // Tekijöiden maksettava — yksi jaettu laskenta. Muistetaan invoices/project
   // muuttuessa, koska tämä käy koko karttadatan läpi per tekijä.
@@ -572,7 +587,7 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
           <SectionTitle icon={<Users style={{ width: 15, height: 15, color: T.text.secondary }} />}>
             Tekijöille lähetetyt maksut
           </SectionTitle>
-          {s.workerInvoices.length === 0 ? (
+          {liveWorkerInvoices.length === 0 ? (
             <div style={card}>
               <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.sm, color: T.text.muted }}>
                 Ei vielä tekijöille lähetettyjä maksuja.
@@ -580,7 +595,7 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: T.space.sm }}>
-              {s.workerInvoices.map((inv) => {
+              {liveWorkerInvoices.map((inv) => {
                 const input = inv.rivit?.input || {};
                 const ikkunat = Number(input.pestytIkkunat) || 0;
                 const sovittu = Number(input.sovittuMuutosCents) || 0;
@@ -673,6 +688,58 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                 </div>
               ))}
             </div>
+          )}
+
+          {/* ── 6. Poistetut: mitätöidyt LUONNOKSET. Eivät kirjanpidon tositteita,
+                 joten ne katoavat itsestään 2 vrk:ssa. Tässä vain siksi, että
+                 johtaja näkee mitä poisti ja ehtii perua ajatuksensa. */}
+          {s.workerVoidedTemp.length > 0 && (
+            <>
+              <SectionTitle icon={<Trash2 style={{ width: 15, height: 15, color: T.text.muted }} />} right={`${s.workerVoidedTemp.length} kpl`}>
+                Poistetut
+              </SectionTitle>
+              <div style={{ display: "flex", flexDirection: "column", gap: T.space.xs }}>
+                {s.workerVoidedTemp.map((inv) => (
+                  <div key={inv.id} style={{ ...card, padding: `${T.space.sm}px ${T.space.lg}px`, opacity: 0.55 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: T.space.sm, flexWrap: "wrap" }}>
+                      <span style={{ fontFamily: FONT, fontSize: T.size.sm, color: T.text.secondary, textDecoration: "line-through" }}>
+                        {inv.rivit?.input?.name || inv.senderId} · {eraLabel(inv.eraNumbers)} · {fmtEurCents(inv.totalCents)}
+                      </span>
+                      <span style={{ fontFamily: MONO, fontSize: T.size.label, letterSpacing: "0.08em", color: T.text.muted }}>
+                        {purgeCountdown(inv)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* ── 7. Mitätöidyt tositteet: lasku oli jo lähetetty, joten sillä on
+                 laskunumero ja se on tekijän kirjanpidossa. Kirjanpitolaki vaatii
+                 6 v säilytyksen, joten näitä EI poisteta — mutta ne eivät ole
+                 mukana missään summassa. */}
+          {s.workerVoidedKept.length > 0 && (
+            <>
+              <SectionTitle icon={<Archive style={{ width: 15, height: 15, color: T.text.muted }} />} right={`${s.workerVoidedKept.length} kpl`}>
+                Mitätöidyt tositteet
+              </SectionTitle>
+              <div style={{ display: "flex", flexDirection: "column", gap: T.space.xs }}>
+                {s.workerVoidedKept.map((inv) => (
+                  <div key={inv.id} style={{ ...card, padding: `${T.space.sm}px ${T.space.lg}px`, opacity: 0.7 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: T.space.sm, flexWrap: "wrap" }}>
+                      <span style={{ fontFamily: FONT, fontSize: T.size.sm, color: T.text.secondary }}>
+                        <span style={{ textDecoration: "line-through" }}>
+                          {inv.rivit?.input?.name || inv.senderId} · {fmtEurCents(inv.totalCents)}
+                        </span>
+                        {inv.invoiceNumber ? <span style={{ fontFamily: MONO, marginLeft: 6 }}>{inv.invoiceNumber}</span> : null}
+                      </span>
+                      <DownloadPdfButton jobId={jobId} invoiceId={inv.id} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </>
       )}

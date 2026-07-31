@@ -344,3 +344,58 @@ describe("mitätöity erä ei ole rahaa", () => {
     expect(live.result.rows.find((r) => r.id === "matias")!.receivedCents).toBe(0);
   });
 });
+
+describe("käsin asetettu siirto ja kirjatut siirrot", () => {
+  const base = () => ({
+    founders: [
+      { id: "joonatan", name: "Joonatan", ownP1Windows: 24.5, ownP2Cents: 0, receivedCents: 300_000, paidWorkersCents: 0, expensesCents: 0 },
+      { id: "matias", name: "Matias", ownP1Windows: 13.5, ownP2Cents: 0, receivedCents: 0, paidWorkersCents: 0, expensesCents: 0 },
+    ],
+    p1WindowsTotal: 168,
+    distributableCents: 300_000,
+    workerCostCents: 0,
+  });
+
+  it("kirjattu siirto kuittaa käsin sovittua summaa", () => {
+    // Sovittu käsin 1000 €. Kun 400 € on kirjattu siirretyksi, jäljellä on 600 €
+    // — ei edelleen 1000 €. Ilman tätä iso luku ei koskaan kuittautunut pois.
+    const r = computeTasaus({
+      ...base(),
+      overrideCents: 1000_00,
+      overrideFromId: "joonatan",
+      transfers: [{ fromId: "joonatan", toId: "matias", cents: 400_00 }],
+    } as any);
+    expect(r.overridden).toBe(true);
+    expect(r.transfer?.fromId).toBe("joonatan");
+    expect(r.transfer?.cents).toBe(600_00);
+    expect(r.alreadyTransferredCents).toBe(400_00);
+  });
+
+  it("kokonaan siirretty käsin sovittu summa nollaa siirron", () => {
+    const r = computeTasaus({
+      ...base(),
+      overrideCents: 1000_00,
+      overrideFromId: "joonatan",
+      transfers: [{ fromId: "joonatan", toId: "matias", cents: 1000_00 }],
+    } as any);
+    expect(r.transfer).toBeNull();
+  });
+
+  it("ylisiirretty käsin sovittu summa kääntää suunnan", () => {
+    const r = computeTasaus({
+      ...base(),
+      overrideCents: 1000_00,
+      overrideFromId: "joonatan",
+      transfers: [{ fromId: "joonatan", toId: "matias", cents: 1200_00 }],
+    } as any);
+    expect(r.transfer?.fromId).toBe("matias");
+    expect(r.transfer?.toId).toBe("joonatan");
+    expect(r.transfer?.cents).toBe(200_00);
+  });
+
+  it("ilman kirjattuja siirtoja käsin sovittu summa säilyy ennallaan", () => {
+    const r = computeTasaus({ ...base(), overrideCents: 1000_00, overrideFromId: "joonatan" } as any);
+    expect(r.transfer?.cents).toBe(1000_00);
+    expect(r.alreadyTransferredCents).toBe(0);
+  });
+});

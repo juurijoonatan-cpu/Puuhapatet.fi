@@ -240,6 +240,7 @@ function VoidInvoiceButton({ jobId, invoiceId, name, onDone }: {
 }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   // minHeight tulee poletista (40) — inline-36 oli ainoa kohta joka ohitti
   // dokumentoidun osumakokosäännön, ja se näkyi: viereinen "Lataa PDF" oli 40.
   const btn: React.CSSProperties = { ...tokenButton(), background: "transparent", color: T.text.muted };
@@ -256,13 +257,24 @@ function VoidInvoiceButton({ jobId, invoiceId, name, onDone }: {
       <span style={{ display: "inline-flex", alignItems: "center", gap: T.space.sm, flexWrap: "wrap" }}>
       <button
         disabled={busy}
-        onClick={async () => { setBusy(true); await api.voidEraInvoice(jobId, invoiceId); setBusy(false); setConfirming(false); onDone(); }}
+        onClick={async () => {
+          setBusy(true);
+          const res = await api.voidEraInvoice(jobId, invoiceId);
+          setBusy(false);
+          // Epäonnistunut mitätöinti näytti ennen onnistuneelta: varmistus katosi
+          // ja rivi jäi paikalleen ilman mitään syytä.
+          if (!res.ok) { setErr(res.error || "Mitätöinti epäonnistui"); return; }
+          setErr(null);
+          setConfirming(false);
+          onDone();
+        }}
         style={tokenButton("danger")}
       >
         {busy ? "Mitätöidään…" : "Kyllä, mitätöi"}
       </button>
       <button disabled={busy} onClick={() => setConfirming(false)} style={btn}>Peru</button>
       </span>
+      {err && <span style={{ fontFamily: FONT, fontSize: T.size.xs, color: T.tone.bad }}>{err}</span>}
     </span>
   );
 }

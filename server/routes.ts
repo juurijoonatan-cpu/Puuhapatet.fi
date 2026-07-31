@@ -129,8 +129,12 @@ function buildGigReportHtml(
 
   // Erottele P1 (kiinteä urakka) ja P2 (keltaiset, scope:"p2") -laskutus, ettei
   // sisäinen raportti sekoita punaista €6300-katsausta lisätyön laskutukseen.
-  const p1Payments = gig.payments.filter((p) => p.scope !== "p2");
-  const p2Payments = gig.payments.filter((p) => p.scope === "p2");
+  // MITÄTÖITY ERÄ EI OLE LASKUTETTUA RAHAA. Ilman `livePayments`ia mitätöity erä
+  // piti liikevaihtoa keinotekoisesti ylhäällä tässä raportissa ja siirsi lisäksi
+  // erien numeroinnin (mitätöity sai oman "N. erä" -numeronsa).
+  const paymentsLive = livePayments(gig.payments);
+  const p1Payments = paymentsLive.filter((p) => p.scope !== "p2");
+  const p2Payments = paymentsLive.filter((p) => p.scope === "p2");
   const p1InvoicedCents = p1Payments.reduce((s, p) => s + p.amountCents, 0);
   const p2InvoicedCents = p2Payments.reduce((s, p) => s + p.amountCents, 0);
   const invoicedCents = p1InvoicedCents + p2InvoicedCents;   // total, for margin
@@ -146,8 +150,8 @@ function buildGigReportHtml(
   //    sequentially; P2 (lisätyö) payments are labelled distinctly so a P2
   //    invoice never reads as "5. erä" of the fixed 4-instalment red deal.
   let p1Seq = 0;
-  const instalmentRows = gig.payments.length
-    ? gig.payments.map((p) => {
+  const instalmentRows = paymentsLive.length
+    ? paymentsLive.map((p) => {
         const label = p.scope === "p2" ? "Priority 2" : `${++p1Seq}. erä`;
         return `
         <tr style="border-bottom:1px solid #E4E1D7">
@@ -2299,6 +2303,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
    */
   app.post("/api/jobs/:id/era-invoice/:invoiceId/void", async (req, res) => {
     try {
+      // Sama johtajatarkistus kuin sisarreiteillä (era-invoices GET,
+      // era-invoice/founder): mitätöinti vapauttaa velan uudelleen maksettavaksi,
+      // joten se ei kuulu kenellekään muulle kuin johtajalle.
+      const caller = (req as any).admin as AdminTokenPayload | undefined;
+      const sub = String(caller?.sub ?? "").toLowerCase();
+      if (caller?.role !== "host" && !FOUNDER_IDS.includes(sub)) {
+        return res.status(403).json({ error: "Vain johtajat voivat mitätöidä laskun." });
+      }
       const jobId = Number(req.params.id);
       const invoiceId = Number(req.params.invoiceId);
       if (!Number.isFinite(invoiceId)) return res.status(404).json({ error: "Laskua ei löytynyt" });
@@ -5454,9 +5466,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const gig = parseGig(job.gigData);
       if (!gig) return res.status(400).json({ error: "Keikalla ei ole seurantadataa" });
-      if (!gig.payments.length) return res.status(400).json({ error: "Ei peruttavia maksueriä" });
+      // Viimeisin PERUTTAVA erä on viimeisin ELÄVÄ erä. Aiemmin tämä otti listan
+      // viimeisen rivin, joka mitätöinnin jälkeen oli se mitätöity rivi — perutus
+      // "onnistui" poistamalla jo mitätöidyn tositteen ja jätti oikean erän
+      // paikalleen.
+      const lastLiveIdx = (() => {
+        for (let i = gig.payments.length - 1; i >= 0; i--) if (!gig.payments[i]?.voided) return i;
+        return -1;
+      })();
+      if (lastLiveIdx < 0) return res.status(400).json({ error: "Ei peruttavia maksueriä" });
 
-      const removed = gig.payments.pop()!;
+      const [removed] = gig.payments.splice(lastLiveIdx, 1);
       const proj = parseProject(job.projectData ?? null);
       const fixedDeal = proj ? fixedDealFor(proj) : null;
       const installmentCents = fixedDeal ? Math.round(fixedDeal.capCents / 4) : null;
@@ -7486,7 +7506,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           let gig: GigData | null = null;
           try { gig = sanitizeGigData(JSON.parse(job.gigData)); } catch { gig = null; }
           const gigName = gig?.company?.name || job.description || `Keikka #${job.id}`;
-          (gig?.payments || []).forEach((p, i) => {
+          // livePayments: mitätöity erä ei ole kenenkään lasku eikä sen summa kuulu
+          // ALV-rajan seurantaan tai liikevaihtoon.
+          livePayments(gig?.payments).forEach((p, i) => {
             if (!p?.amountCents || p.amountCents <= 0) return;
             // Explicit biller only — an unattributed instalment is NOBODY's
             // invoice until a founder assigns it (Verotus → ALV card).
@@ -7776,7 +7798,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const eraBreakdown = deal && project
           ? computeEraDebts(project, deal, project.crew || [], project.eraWindows ?? null)
           : [];
-        gig.payments.forEach((p, i) => {
+        // Suodatus ENNEN indeksointia: erä↔kate-paritus menee indeksillä, joten
+        // mitätöity rivi siirsi kaikkien seuraavien erien katteen väärälle erälle.
+        livePayments(gig.payments).forEach((p, i) => {
           const e = eraBreakdown[i];
           const kate = e ? e.marginCents : null;
           let shares: { id: string; name: string; cents: number }[] | null = null;
@@ -8931,7 +8955,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const where = status
         ? and(eq(chatConversations.source, "public"), eq(chatConversations.status, status))
         : eq(chatConversations.source, "public");
-      const rows = await db.select().from(chatConversations)
+      // Sarakerajaus: tämä reitti pollataan postilaatikkosivulta, joten se on
+      // yksi harvoista jotka ajetaan satoja kertoja päivässä. Lista tarvitsee
+      // vain otsikkotiedot — `SELECT *` haki turhaan myös sessiotokenin,
+      // sivu-URLin ja aikaleimat joita lista ei näytä. Siirtokiintiö.
+      const rows = await db.select({
+        id: chatConversations.id,
+        source: chatConversations.source,
+        status: chatConversations.status,
+        visitorName: chatConversations.visitorName,
+        visitorEmail: chatConversations.visitorEmail,
+        visitorPhone: chatConversations.visitorPhone,
+        unread: chatConversations.unread,
+        lastMessageAt: chatConversations.lastMessageAt,
+        createdAt: chatConversations.createdAt,
+      }).from(chatConversations)
         .where(where)
         .orderBy(desc(chatConversations.lastMessageAt))
         .limit(100);

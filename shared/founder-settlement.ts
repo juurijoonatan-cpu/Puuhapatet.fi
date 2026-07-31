@@ -352,13 +352,32 @@ export function computeTasaus(input: TasausInput): TasausResult {
   const overridden = typeof override === "number" && Number.isFinite(override);
   let transfer: TasausTransfer | null;
   if (overridden) {
-    const cents = Math.abs(r(override as number));
+    const gross = Math.abs(r(override as number));
     const fromId = input.overrideFromId
       ?? grossTransfer?.fromId
       ?? founders[0]?.id
       ?? "";
     const toId = founders.find((f) => f.id !== fromId)?.id ?? grossTransfer?.toId ?? "";
-    transfer = cents > 0 && fromId && toId ? { fromId, toId, cents } : null;
+    // KIRJATUT SIIRROT VÄHENTÄVÄT MYÖS KÄSIN SOVITTUA SUMMAA. Käsin asetettu
+    // luku on sovittu KOKONAISsiirto, ei "vielä siirrettävä" — ilman tätä
+    // vähennystä iso luku jäi näkymään täytenä vaikka raha oli jo siirretty,
+    // eikä tasaus koskaan kuittautunut nollille. Laskettu haara teki tämän jo;
+    // käsin asetettu ei.
+    let doneForOverride = 0;
+    if (fromId && toId) {
+      for (const t of transfers) {
+        if (t.fromId === fromId && t.toId === toId) doneForOverride += r(t.cents);
+        else if (t.fromId === toId && t.toId === fromId) doneForOverride -= r(t.cents);
+      }
+    }
+    const remaining = gross - doneForOverride;
+    transfer = !fromId || !toId || remaining === 0
+      ? null
+      : remaining > 0
+        ? { fromId, toId, cents: remaining }
+        // Ylisiirretty myös käsin sovitussa: erotus palaa toiseen suuntaan.
+        : { fromId: toId, toId: fromId, cents: -remaining };
+    if (fromId && toId) alreadyTransferredCents = doneForOverride;
   } else if (grossTransfer) {
     const remaining = grossTransfer.cents - alreadyTransferredCents;
     transfer = remaining > 0

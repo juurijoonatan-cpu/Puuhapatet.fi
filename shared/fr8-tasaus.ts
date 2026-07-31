@@ -154,8 +154,14 @@ export function founderWashCounts(project: ProjectData): {
   const crew = getCrew(project);
   const roleById = new Map(crew.map((c) => [c.id, c.role]));
   const rateById = new Map(crew.map((c) => [c.id, c.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS]));
+  // Tekijän kanssa SOVITTU vähennys/lisä (esim. "sovittiin että siitä vähennetään
+  // 10 €"). Tasauksen kulupuolen pitää käyttää sitä mitä tekijälle todella
+  // maksetaan: ilman tätä kulu oli 10 € liian suuri, johtajien kate (joka on
+  // jäännös) 10 € liian pieni ja siirtosumma 5 € väärin.
+  const adjustById = new Map(crew.map((c) => [c.id, c.payAdjustmentCents ?? 0]));
   const isFounder = (id: string) => roleById.get(id) === "host";
   const rateOf = (id: string) => rateById.get(id) ?? DEFAULT_WORKER_PER_WINDOW_CENTS;
+  const adjustOf = (id: string) => adjustById.get(id) ?? 0;
   const by2 = project.washedBy2 || {};
   const p1ByFounder: Record<string, number> = {};
   const p2CentsByFounder: Record<string, number> = {};
@@ -213,7 +219,9 @@ export function founderWashCounts(project: ProjectData): {
   for (const k of Object.keys(p2CentsByFounder)) p2CentsByFounder[k] = Math.round(p2CentsByFounder[k]);
   const workerP1EarnedByWorker: Record<string, number> = {};
   for (const [id, windows] of Object.entries(workerP1WindowsByWorker)) {
-    workerP1EarnedByWorker[id] = Math.round(windows * rateOf(id));
+    // Sama kaava kuin `settleWorker`in `p1PayableCents`: brutto + sovittu
+    // muutos, ei koskaan alle nollan. Yksi sääntö, kaksi kutsujaa.
+    workerP1EarnedByWorker[id] = Math.max(0, Math.round(windows * rateOf(id)) + adjustOf(id));
   }
   return {
     p1ByFounder, p2CentsByFounder, p1WindowsTotal, workerP1Windows,

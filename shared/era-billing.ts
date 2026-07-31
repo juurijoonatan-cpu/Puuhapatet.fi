@@ -68,6 +68,60 @@ export interface EraInvoiceSummaryRow {
   kind: EraInvoiceKind;
   tila: EraInvoiceTila;
   totalCents: number;
+  /** Laskunumero. Syntyy VAIN kun lasku lähetetään — luonnoksella ei ole. */
+  invoiceNumber?: string | null;
+  /** Lähetysaika. Sama merkitys: lähetetty = kirjanpidon tosite. */
+  sentAt?: Date | string | number | null;
+  /** Milloin hylättiin/mitätöitiin (respondedAt). Säilytysajan lähtöhetki. */
+  respondedAt?: Date | string | number | null;
+}
+
+/**
+ * Kuinka kauan MITÄTÖITY LUONNOS näkyy "Poistetut"-listalla ennen kuin se
+ * häviää lopullisesti. Kaksi vuorokautta: tarpeeksi kauan että virheen näkee ja
+ * ehtii tarkistaa, tarpeeksi lyhyt ettei väärien laskujen lista kasva ikuisesti.
+ */
+export const VOIDED_DRAFT_RETENTION_MS = 48 * 60 * 60 * 1000;
+
+function tsOf(v: Date | string | number | null | undefined): number | null {
+  if (v == null) return null;
+  const t = v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v));
+  return Number.isFinite(t) ? t : null;
+}
+
+/**
+ * Onko tämä lasku KIRJANPIDON TOSITE?
+ *
+ * Ratkaisee saako mitätöityä laskua koskaan poistaa. Lähetetty lasku sai
+ * juoksevan laskunumeron, lähti tekijälle sähköpostilla ja on hänen
+ * kirjanpidossaan myyntinä — Suomen kirjanpitolaki vaatii tositteiden
+ * säilytyksen **6 vuotta** tilikauden päättymisestä, joten sitä ei hävitetä
+ * vaikka se mitätöitäisiin. Luonnos jota ei koskaan lähetetty ei ole tosite:
+ * se on pelkkä ehdotus, ja sen saa poistaa.
+ *
+ * Sama periaate kuin asiakkaan maksuerissä (server/routes.ts gig-payment DELETE):
+ * lähetetty → mitätöidään ja säilytetään, kirjaamaton haamu → poistetaan.
+ */
+export function isEraInvoiceReceipt(inv: EraInvoiceSummaryRow): boolean {
+  return !!(inv.invoiceNumber && String(inv.invoiceNumber).trim()) || tsOf(inv.sentAt) != null;
+}
+
+/**
+ * Milloin mitätöity lasku häviää lopullisesti, tai `null` jos se säilyy
+ * pysyvästi (tosite) tai ei ole mitätöity lainkaan.
+ */
+export function voidedEraInvoicePurgeAt(inv: EraInvoiceSummaryRow): number | null {
+  if (inv.tila !== "hylätty") return null;
+  if (isEraInvoiceReceipt(inv)) return null;      // tosite säilyy
+  const at = tsOf(inv.respondedAt);
+  if (at == null) return null;                    // ei aikaleimaa → ei poisteta
+  return at + VOIDED_DRAFT_RETENTION_MS;
+}
+
+/** Onko mitätöidyn luonnoksen säilytysaika umpeutunut (`now` = Date.now())? */
+export function isVoidedEraInvoiceExpired(inv: EraInvoiceSummaryRow, now: number): boolean {
+  const at = voidedEraInvoicePurgeAt(inv);
+  return at != null && now >= at;
 }
 
 /**
@@ -81,6 +135,10 @@ export function summarizeEraInvoices<T extends EraInvoiceSummaryRow>(invoices: T
   const workerPending = workerInvoices.filter((i) => i.tila === "luonnos");
   const workerAccepted = workerInvoices.filter((i) => i.tila === "hyväksytty");
   const workerRejected = workerInvoices.filter((i) => i.tila === "hylätty");
+  // Mitätöidyt eriteltynä säilytyksen mukaan, jotta ne EIVÄT jää sotkemaan
+  // työlistoja: poistuvat pois näkyvistä itsestään, tositteet arkistoon.
+  const workerVoidedTemp = workerRejected.filter((i) => voidedEraInvoicePurgeAt(i) != null);
+  const workerVoidedKept = workerRejected.filter((i) => voidedEraInvoicePurgeAt(i) == null);
   const sum = (rows: T[]) => rows.reduce((s, i) => s + i.totalCents, 0);
   return {
     founderInvoices,
@@ -88,6 +146,10 @@ export function summarizeEraInvoices<T extends EraInvoiceSummaryRow>(invoices: T
     workerPending,
     workerAccepted,
     workerRejected,
+    /** Mitätöityjä luonnoksia — katoavat 2 vrk:ssa itsestään. */
+    workerVoidedTemp,
+    /** Mitätöityjä LÄHETETTYJÄ laskuja — säilyvät tositteina pysyvästi. */
+    workerVoidedKept,
     founderSumCents: sum(founderInvoices.filter((i) => i.tila !== "hylätty")),
     workerPendingSumCents: sum(workerPending),
     workerAcceptedSumCents: sum(workerAccepted),

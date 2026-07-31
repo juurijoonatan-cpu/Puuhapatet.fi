@@ -471,9 +471,11 @@ export default function TasausView({ jobId, canEdit = true }: {
         {result.reserveCents !== 0 && (
           <p style={{ margin: `${T.space.sm}px 0 0`, fontFamily: T.font, fontSize: T.size.xs, lineHeight: 1.5, color: T.tone.info }}>
             <Info style={{ width: 12, height: 12, display: "inline", verticalAlign: -2, marginRight: 4 }} />
+            {/* Yksi rivi, ei kappaletta: luku + mitä se on. Selitys kuuluu
+                dokumentaatioon, ei rahanäkymään. */}
             {result.reserveCents > 0
-              ? <>Käsissä on lisäksi <strong>{eur(result.reserveCents)}</strong> joka kuuluu vielä tekijöille. Sitä ei jaeta — siirron jälkeen kumpikin kantaa siitä puolet.</>
-              : <>Asiakkaalta on laskutettu <strong>{eur(-result.reserveCents)}</strong> enemmän kuin johtajien käsissä on. Siirto olettaa että sekin tulee tilille.</>}
+              ? <>Tekijöille kuuluvaa käsissä <strong>{eur(result.reserveCents)}</strong> · ei jaeta, kumpikin kantaa puolet</>
+              : <>Laskutettu käsissä olevaa enemmän <strong>{eur(-result.reserveCents)}</strong> · siirto olettaa sen tulevan</>}
           </p>
         )}
       </div>

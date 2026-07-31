@@ -49,7 +49,11 @@ export default function AdminInboxPage() {
       if (!res.ok) throw new Error("Latauksen virhe");
       return res.json();
     },
-    refetchInterval: 10000,
+    // 10 s -> 30 s. Tämä sivu jää auki taustalle, ja jokainen kierros luki 100
+    // keskustelua kannasta — turhaa siirtoa (Neonin kiintiö). 30 s riittää
+    // postilaatikolle, ja uusi viesti näkyy silti käytännössä heti.
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   });
 
   const convoQuery = useQuery({
@@ -60,7 +64,9 @@ export default function AdminInboxPage() {
       if (!res.ok) throw new Error("Latauksen virhe");
       return res.json();
     },
-    refetchInterval: activeId != null ? 5000 : false,
+    // 5 s -> 15 s. Avoin keskustelu haki koko viestihistorian joka kierros.
+    refetchInterval: activeId != null ? 15_000 : false,
+    refetchIntervalInBackground: false,
   });
 
   useEffect(() => {

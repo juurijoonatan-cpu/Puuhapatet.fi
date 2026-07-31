@@ -915,6 +915,7 @@ export default function AdminProjectPage() {
             project={project}
             billing={billing}
             onOpenGig={backToGig}
+            canEditTasaus={isFounderView}
             onSetAdjustment={async (workerId, cents) => {
               // Sovittu vähennys tallentuu crew-riville, joten se pysyy ja näkyy
               // kaikkialla samana (Maksut, Tiimi, maksudialogin esitäyttö).

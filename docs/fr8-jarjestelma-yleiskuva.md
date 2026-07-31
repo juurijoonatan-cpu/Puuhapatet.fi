@@ -42,6 +42,8 @@ Osapuolet ja pääsy:
 | `gig.ts` | `GigData`/`GigSector`/`GigPayment` (`scope?: "p1"|"p2"`), julkisen näkymän totalsit. |
 | `era-billing.ts` | Erälaskutuksen (arvomääräiset maksuerät) laskentamoottori + keltaisten maksupotti (`P2_ERA_NUMBER`, `ansaittuOverrideCents`). |
 | `worker-payouts.ts` | **Tekijöiden maksettava — yksi totuuden lähde.** `computeWorkerSettlements`/`settleWorker` (punaiset vs. keltaiset erikseen), `eraSettlementByWorker`, `p2InvoiceState`. Ks. "Rahan kaksi virtaa" alla. |
+| `founder-settlement.ts` | **Johtajien tasaus — puhdas matematiikka.** `computeTasaus` (ansainta vs. kassa → nettosiirto), `splitEvenCents`, tallennettu tila `FounderSettlementState` + sanitoija. Ks. "Johtajien tasaus" alla. |
+| `fr8-tasaus.ts` | Tasauksen syötteen kokoaminen oikeasta keikkadatasta: `buildTasaus`, `founderWashCounts`. |
 | `payprogress.ts`, `tax.ts`, `team.ts`, `trainees.ts`, `billers.ts` | Paydate/verot/tiimi/harjoittelijat/laskuttajat. |
 
 ## Ikkunan identiteetti (window key)
@@ -196,6 +198,51 @@ liikkuvat eri aikaan, ja kaikki laskenta erottelee ne. Yksi totuuden lähde:
    Maksudialogi varoittaa lisäksi **euroina** jos rivin loppusumma ylittää
    `openP1Cents`in — pelkkä ikkunavertailu ei olisi tätä pysäyttänyt.
 
+## Johtajien tasaus — kun raha ei liikkunut niin kuin paperilla
+
+Paperilla erät 1–3 laskutetaan Joonatanin ja erä 4 Matiaksen Y-tunnuksella
+(`eraRecipientFounderId`). Käytännössä raha voi kulkea toisin: erän 1 rahat
+menivät Matiakselle, joka maksoi niistä tekijöitä ja piti loput; Joonatan
+laskutti ja sai erät 2–4 ja maksoi niistä loput tekijät. Kumpikaan ei ole
+väärin, mutta silloin **kumpi tahansa johtaja voi istua toisen rahojen päällä
+eikä sitä näe mistään.** `shared/founder-settlement.ts` vastaa siihen:
+
+```
+ANSAINTA(F) = x × F:n omat punaiset + F:n omat keltaiset + tasaosuus katteesta
+              missä x = laskutettu P1-potti ÷ KAIKKI pestyt punaiset
+              ja kate = jaettava − johtajien oma työ  (JÄÄNNÖKSENÄ, ei kaavalla)
+KASSA(F)    = asiakkaalta saatu − tekijöille maksettu − omat kulut
+NETTO(F)    = KASSA − ANSAINTA
+SIIRTO      = se summa joka tekee molempien NETOSTA yhtä suuren
+```
+
+Säännöt:
+
+14. **Ansainnan on täsmättävä `computeEraBilling`iin.** `computeTasaus` tuottaa
+   speksin kohdan 7 luvut sentilleen (J 1257,90 €, M 1667,10 €, kate 1511,40 €)
+   — testattu `shared/founder-settlement.test.ts`:ssä. Jos nämä eroavat, meillä
+   on kaksi eri totuutta siitä mitä johtaja ansaitsee.
+15. **`server/finance/settlement.ts` vastaa ERI kysymykseen.** Se jakaa koko
+   (erä − tekijöiden palkat) tasan 50/50 eikä anna kummallekaan mitään OMASTA
+   pesutyöstään, ja se olettaa että erän laskuttaja myös maksoi sen erän
+   tekijät. Kumpikaan oletus ei päde FR8:ssa. Älä käytä sitä keikan sisäiseen
+   tasaukseen — se ajaa admin-paneelin kokonaiskuvaa muista keikoista.
+16. **Todellinen maksaja kirjataan laskun VIEREEN, ei päälle.** Lähetetty
+   erälasku on muuttumaton tosite; sen `recipientId` on laskun ostaja. Kun raha
+   liikkui toisin, se kirjataan `ProjectData.settlement.paidBy`hin. Sama
+   asiakaserille: `payment.biller` = kuka laskutti, `settlement.receivedBy` =
+   kenen tilille raha tuli.
+17. **Maksamaton tekijävelka EI ole johtajien katetta.** `reserveCents` =
+   Σ kassa − Σ ansainta. Sitä ei jaeta: siirto tasaa vain johtajien keskinäisen
+   eron, ja varaus jää molemmille yhtä suurena.
+18. **Kohdentamaton raha ei kuulu kenellekään.** Erä ilman `receivedBy`tä ja
+   käsin kirjattu payout ilman maksajaa raportoidaan omina varoituksinaan
+   (`unassignedEraCount`, `unattributedPaidCents`) eikä arvata kummallekaan —
+   arvaus vääristäisi tasausta satojen eurojen verran.
+19. **`settlement` on serverin omistama** kuten `p2` ja `guided`: geneerinen
+   blob-tallennus säilyttää talletetun kopion, mutaatiot vain
+   `POST /api/jobs/:id/settlement` -reitin kautta.
+
 ### Missä mikä toiminto asuu (ei duplikaatteja)
 
 | Toiminto | Ainoa paikka |
@@ -206,7 +253,11 @@ liikkuvat eri aikaan, ja kaikki laskenta erottelee ne. Yksi totuuden lähde:
 | Tekijöiden maksu (erämaksun luonti) | projektinäkymän **Maksut**-välilehti (`MaksutView`) |
 | Sovittu vähennys tekijän palkkaan | projektinäkymän **Maksut**-välilehti (Tiimi-sivu vain näyttää sen) |
 | Johtaja-välinen ristiinlasku | mustan dashin PERUSTAJIEN ANSIOT → toisen johtajan kortti |
+| **Johtajien tasaus** (kuka on velkaa kummalle) | Maksut-välilehden **Johtajien tasaus** -osio (`TasausView`) |
+| Kuka SAI erän / kuka MAKSOI tekijän | sama osio → "Mistä luvut tulevat" |
+| Tasauslasku sovitulla summalla | sama osio → "Tee lasku tästä" (vain velkojan näkymässä) |
 | Rahan tilannekuva | mustan dashin **LASKUTUS & MAKSUT** -statsit + Maksut-välilehti |
+| Urakkarahat koko brändin tasolla | Puuhapatet-adminin etusivu → "Urakkakeikat — raha" |
 | Keltaisten sopimusteksti | keikkanäkymän **Sopimus & asiakasnäkymä** (ei P2-paneelissa) |
 | Kerrosten lukitus | mustan dashin **KERROSTEN LUKITUS** (alalaita) |
 

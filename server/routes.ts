@@ -31,6 +31,8 @@ import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeP2Billing, customerAddedKeys, emptyP2State, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
+import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
+import { buildTasaus, type TasausEraInvoice, type TasausPayment } from "@shared/fr8-tasaus";
 import { p2InvoiceState, computeWorkerSettlements, eraSettlementByWorker, sumWorkerSettlements, type EraInvoiceLike } from "@shared/worker-payouts";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
@@ -1998,7 +2000,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       invoiceNumber, referenceNumber, invoiceDate, dueDate,
       seller: { name: seller.name, yTunnus: seller.yTunnus, address: seller.address, iban: BRAND_BILLERS.find((b) => b.id === row.senderId)?.iban },
       buyer: { name: buyer.name, yTunnus: buyer.yTunnus, address: buyer.address, email: buyer.email },
-      description: `FR8-keikan tilitys, ${eraLabelOf(eraNumbers)}`,
+      // Tasauslasku kattaa koko keikan, ei yhtä erää — sanotaan se laskulla,
+      // ettei kirjanpidossa näytä siltä että sama erä laskutettiin uudelleen.
+      description: rivit?.input?.tasaus
+        ? "FR8-keikan johtajien tasaus — osuuksien oikaisu koko urakasta"
+        : `FR8-keikan tilitys, ${eraLabelOf(eraNumbers)}`,
       totalCents: row.totalCents,
     };
   }
@@ -2260,11 +2266,31 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const eraNumbers = normalizeEraNumbers(req.body?.eraNumbers);
       if (!eraNumbers) return res.status(400).json({ error: "Virheellinen erävalinta (1-3 tai 4)" });
-      const recipientId = eraRecipientFounderId(eraNumbers);
+
+      /**
+       * TASAUSLASKU: koko keikan johtajatasauksesta johdettu summa, ei yhden
+       * erän kaava. Silloin sekä summa että suunta tulevat tasauksesta —
+       * eräkohtainen `eraRecipientFounderId` ei päde, koska tasaus kattaa
+       * kaikki erät ja raha on voinut liikkua toisin kuin paperilla lukee
+       * (ks. shared/founder-settlement.ts). Erävalinta jää vain laskun
+       * otsikoksi. Ilman tätä haaraa sovittua summaa ei saanut laskutettua
+       * järjestelmän kautta lainkaan, jos suunta oli "väärä".
+       */
+      const isTasaus = req.body?.kind === "tasaus";
+      const settlementCents = Math.abs(Math.round(Number(req.body?.settlementCents) || 0));
+      const requestedRecipient = String(req.body?.recipientId || "").toLowerCase();
+      const recipientId = isTasaus
+        ? (FOUNDER_IDS.includes(requestedRecipient) ? requestedRecipient : eraRecipientFounderId(eraNumbers))
+        : eraRecipientFounderId(eraNumbers);
       if (recipientId === senderId) {
         return res.status(400).json({
-          error: "Et voi laskuttaa itseäsi tällä erällä — tämä erä laskutetaan toiselle johtajalle.",
+          error: isTasaus
+            ? "Et voi laskuttaa itseäsi — valitse vastaanottajaksi toinen johtaja."
+            : "Et voi laskuttaa itseäsi tällä erällä — tämä erä laskutetaan toiselle johtajalle.",
         });
+      }
+      if (isTasaus && settlementCents <= 0) {
+        return res.status(400).json({ error: "Tasauslaskun summa puuttuu." });
       }
 
       const itsepestytIkkunat = Math.max(0, Number(req.body?.itsepestytIkkunat) || 0);
@@ -2272,7 +2298,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const totalCents = Math.round(Number(req.body?.totalCents) || 0);
       const manualAdjustmentCents = Math.round(Number(req.body?.manualAdjustmentCents) || 0);
       const dueDate = normalizeDueDate(req.body?.dueDate);
-      if (totalCents <= 0) return res.status(400).json({ error: "Kokonaissumma puuttuu" });
+      if (!isTasaus && totalCents <= 0) return res.status(400).json({ error: "Kokonaissumma puuttuu" });
 
       // Tekijöiden ansaittu + ikkunat tälle erälle: summataan jo luoduista
       // tekijä-laskuista (hylätyt eivät lasketa mukaan — luonnos/lähetetty/
@@ -2294,7 +2320,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Loput ikkunat kokonaismäärästä kuuluvat vastaanottajalle (kolme
       // kategoriaa: tekijät + lähettäjä + vastaanottaja = kokonaisikkunat).
       const recipientPestytIkkunat = kokonaisikkunat - tekijatIkkunatSum - itsepestytIkkunat;
-      if (recipientPestytIkkunat < -0.001) {
+      if (!isTasaus && recipientPestytIkkunat < -0.001) {
         return res.status(400).json({
           error: `Ikkunamäärä ei täsmää: kokonaisikkunat (${kokonaisikkunat}) on pienempi kuin tekijöiden ` +
             `(${tekijatIkkunatSum}) + omat (${itsepestytIkkunat}) ikkunat yhteensä.`,
@@ -2317,10 +2343,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const result = computeEraBilling(totalCents, syntheticWorkers, [
         { founderId: senderId, name: senderName, pestytIkkunat: itsepestytIkkunat },
-        { founderId: recipientId, name: recipientName, pestytIkkunat: recipientPestytIkkunat },
+        { founderId: recipientId, name: recipientName, pestytIkkunat: Math.max(0, recipientPestytIkkunat) },
       ]);
       const senderRow = result.founders.find((f) => f.founderId === senderId)!;
-      const finalCents = senderRow.loppusummaCents + manualAdjustmentCents;
+      // Tasauslaskun summa on sovittu koko keikan tasauksesta, ei tästä erästä.
+      const finalCents = isTasaus
+        ? settlementCents
+        : senderRow.loppusummaCents + manualAdjustmentCents;
 
       // Numerointi + viite atomisesti (withNextInvoiceNumber) — advisory lock
       // estää kahta samalta lähettäjältä lähes yhtäaikaa lähetettyä laskua
@@ -2332,14 +2361,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           senderId, recipientId,
           eraNumbers: JSON.stringify(eraNumbers),
           rivit: JSON.stringify({
-            input: { itsepestytIkkunat, kokonaisikkunat, recipientPestytIkkunat, tekijatIkkunatSum, tekijatAnsaittuYhtCents },
+            input: {
+              itsepestytIkkunat, kokonaisikkunat, recipientPestytIkkunat, tekijatIkkunatSum, tekijatAnsaittuYhtCents,
+              // Tasauslasku merkitään erikseen, jotta jälkikäteen näkee ettei
+              // summa tullut eräkaavasta vaan koko keikan tasauksesta.
+              ...(isTasaus ? { tasaus: true, settlementCents } : {}),
+            },
             computed: result,
           }),
           totalCents: finalCents,
-          xCents: result.xCents,
-          kateCents: result.kateCents,
-          katePerJohtajaCents: senderRow.katePerJohtajaCents,
-          manualAdjustmentCents,
+          xCents: isTasaus ? null : result.xCents,
+          kateCents: isTasaus ? null : result.kateCents,
+          katePerJohtajaCents: isTasaus ? null : senderRow.katePerJohtajaCents,
+          manualAdjustmentCents: isTasaus ? 0 : manualAdjustmentCents,
           dueDate,
           tila: "lähetetty" satisfies EraInvoiceTila,
           invoiceNumber,
@@ -5342,6 +5376,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Kaikki guided-mutaatiot kulkevat /guided-reitin kautta.
       const storedGuided = stored?.guided;
       if (storedGuided) project.guided = storedGuided; else delete project.guided;
+      // Johtajien tasaus on samalla tavalla serverin omistama: se sisältää
+      // rahankirjauksia (kuka sai erän, kuka maksoi tekijän) joita kartan
+      // tallennus ei saa pyyhkiä. Mutaatiot vain /settlement-reitin kautta.
+      const storedSettlement = stored?.settlement;
+      if (storedSettlement) project.settlement = storedSettlement; else delete project.settlement;
       const totals = computeProjectTotals(project);
 
       // Auto-sync the gig's billing sectors from the toolkit (FR8 = source of
@@ -5459,6 +5498,166 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json({ ok: true, guided: saved.guided, guidedState: computeGuided(saved) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
+    }
+  });
+
+  /**
+   * JOHTAJIEN TASAUS — kirjaa kuka SAI kunkin erän rahat ja kuka MAKSOI kunkin
+   * tekijälaskun, kun raha liikkui toisin kuin paperilla luki.
+   *
+   * MIKSI OMA REITTI eikä laskurivien muokkaus: lähetetty erälasku on laillinen,
+   * MUUTTUMATON tosite (docs/fr8-era-laskutus-plan.md kohta 4) — sen ostajaa ei
+   * saa vaihtaa jälkikäteen. Todellinen maksaja kirjataan siis viereen, ei
+   * laskun päälle. Sama koskee asiakaslaskua: `payment.biller` on se Y-tunnus
+   * jolla laskutettiin, `receivedBy` se johtaja jonka tilille raha tuli.
+   *
+   * Vain perustajat. Read-modify-write kannan tuoreimmasta rivistä, ja kentät
+   * yhdistetään olemassa olevaan tilaan — osittainen päivitys ei pyyhi muita.
+   */
+  app.post("/api/jobs/:id/settlement", async (req, res) => {
+    try {
+      const sub = String((req as any).admin?.sub ?? "").toLowerCase();
+      const isFounder = (req as any).admin?.role === "host" || FOUNDER_IDS.includes(sub);
+      if (!isFounder) return res.status(403).json({ error: "Vain perustaja voi kirjata tasauksen." });
+
+      const id = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const project = parseProject(job.projectData ?? null);
+      if (!project) return res.status(400).json({ error: "Keikalla ei ole projektidataa" });
+
+      const cur: FounderSettlementState = project.settlement ?? {};
+      const body = req.body ?? {};
+      const next: FounderSettlementState = { ...cur };
+
+      // Erän saaja / laskun maksaja: yksi avain kerrallaa, tyhjä arvo poistaa
+      // kirjauksen (= palataan siihen mitä lasku itse sanoo).
+      const patchMap = (
+        field: "receivedBy" | "paidBy",
+        entries: unknown,
+      ) => {
+        if (!entries || typeof entries !== "object") return;
+        const map: Record<string, string> = { ...(cur[field] ?? {}) };
+        for (const [k, v] of Object.entries(entries as Record<string, unknown>)) {
+          const key = String(k).slice(0, 40).trim();
+          if (!key) continue;
+          const val = String(v ?? "").toLowerCase().trim();
+          if (!val) delete map[key];
+          else if (FOUNDER_IDS.includes(val)) map[key] = val;
+        }
+        next[field] = Object.keys(map).length > 0 ? map : undefined;
+      };
+      patchMap("receivedBy", body.receivedBy);
+      patchMap("paidBy", body.paidBy);
+
+      if (body.expensesCents !== undefined && body.expensesCents && typeof body.expensesCents === "object") {
+        const map: Record<string, number> = { ...(cur.expensesCents ?? {}) };
+        for (const [k, v] of Object.entries(body.expensesCents as Record<string, unknown>)) {
+          const key = String(k).toLowerCase().trim();
+          if (!FOUNDER_IDS.includes(key)) continue;
+          const c = Math.round(Number(v));
+          if (!Number.isFinite(c) || c === 0) delete map[key];
+          else map[key] = c;
+        }
+        next.expensesCents = Object.keys(map).length > 0 ? map : undefined;
+      }
+
+      // Käsin asetettu siirtosumma. null / "" = palaa laskettuun summaan.
+      if (body.overrideCents !== undefined) {
+        const raw = body.overrideCents;
+        next.overrideCents = raw === null || raw === ""
+          ? null
+          : Math.abs(Math.round(Number(raw) || 0));
+      }
+      if (body.overrideFromId !== undefined) {
+        const v = String(body.overrideFromId ?? "").toLowerCase().trim();
+        next.overrideFromId = FOUNDER_IDS.includes(v) ? v : null;
+      }
+      if (body.note !== undefined) {
+        next.note = String(body.note ?? "").slice(0, 400).trim() || undefined;
+      }
+
+      // Kirjattu siirto: lisätään (append-only historia) tai poistetaan id:llä.
+      if (body.addTransfer && typeof body.addTransfer === "object") {
+        const t = body.addTransfer as Record<string, unknown>;
+        const fromId = String(t.fromId ?? "").toLowerCase().trim();
+        const toId = String(t.toId ?? "").toLowerCase().trim();
+        const cents = Math.abs(Math.round(Number(t.cents) || 0));
+        if (!FOUNDER_IDS.includes(fromId) || !FOUNDER_IDS.includes(toId) || fromId === toId || cents <= 0) {
+          return res.status(400).json({ error: "Virheellinen siirto." });
+        }
+        next.transfers = [
+          ...(cur.transfers ?? []),
+          {
+            id: `tr_${randomUUID().slice(0, 10)}`,
+            fromId, toId, cents,
+            ts: Date.now(),
+            note: t.note ? String(t.note).slice(0, 240) : undefined,
+          },
+        ].slice(-100);
+      }
+      if (body.removeTransferId) {
+        const rid = String(body.removeTransferId).slice(0, 60);
+        const left = (cur.transfers ?? []).filter((t) => t.id !== rid);
+        next.transfers = left.length > 0 ? left : undefined;
+      }
+
+      next.updatedAt = Date.now();
+      project.settlement = sanitizeFounderSettlementState(next);
+      const saved = await saveProject(job, project, { settlementMutation: true });
+      // Palautetaan heti uudelleenlaskettu tasaus, jotta näkymä päivittyy yhdellä
+      // kierroksella eikä käyttäjä ehdi nähdä vanhaa summaa.
+      res.json({ ok: true, settlement: saved.settlement ?? null, tasaus: await loadTasaus(job.id, saved) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  /**
+   * Kokoaa keikan tasauksen: asiakaserät + tekijämaksut + johtajien kirjaukset.
+   * Yksi laskenta (`@shared/fr8-tasaus`), jota sekä tämä reitti että
+   * admin-paneelin rahakortti käyttävät — ei kahta kaavaa.
+   */
+  async function loadTasaus(jobId: number, project: ProjectData) {
+    const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+    const gig = parseGig(job?.gigData ?? null);
+    let invoices: TasausEraInvoice[] = [];
+    try {
+      const rows = await db.select().from(eraInvoices).where(eq(eraInvoices.jobId, jobId));
+      invoices = rows.map((r) => {
+        let nums: number[] = [];
+        let rivit: any = null;
+        try { nums = JSON.parse(r.eraNumbers); } catch { /* tyhjä */ }
+        try { rivit = JSON.parse(r.rivit); } catch { /* null */ }
+        return {
+          id: r.id, kind: r.kind, tila: r.tila, senderId: r.senderId, recipientId: r.recipientId,
+          totalCents: r.totalCents, eraNumbers: nums, rivit,
+        };
+      });
+    } catch (e: any) {
+      // Taulua ei ole vielä kannassa (db:push ajamatta) → tasaus toimii silti
+      // pelkillä asiakaserillä, ei kaadu. Sama suoja kuin muualla erälaskuissa.
+      if (!isMissingTableError(e)) throw e;
+    }
+    return buildTasaus(project, (gig?.payments ?? []) as TasausPayment[], invoices, project.settlement);
+  }
+
+  /** Johtajien tasaus yhdelle keikalle. Vain perustajille — tämä on koko keikan
+   *  rahankulku, ei yksittäisen tekijän omat luvut. */
+  app.get("/api/jobs/:id/tasaus", async (req, res) => {
+    try {
+      const sub = String((req as any).admin?.sub ?? "").toLowerCase();
+      if ((req as any).admin?.role !== "host" && !FOUNDER_IDS.includes(sub)) {
+        return res.status(403).json({ error: "Vain perustaja näkee tasauksen." });
+      }
+      const id = Number(req.params.id);
+      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const project = parseProject(job.projectData ?? null);
+      if (!project) return res.json({ ok: true, tasaus: null });
+      res.json({ ok: true, tasaus: await loadTasaus(id, project) });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
   });
 
@@ -5901,15 +6100,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   async function saveProject(
     job: typeof jobs.$inferSelect,
     project: ProjectData,
-    opts?: { p2Mutation?: boolean; guidedMutation?: boolean },
+    opts?: { p2Mutation?: boolean; guidedMutation?: boolean; settlementMutation?: boolean },
   ): Promise<ProjectData> {
     const clean = sanitizeProjectData(project);
-    // P2-neuvottelutila ja ohjattu eteneminen (guided) ovat serverin omistamia.
-    // Ellei TÄMÄ tallennus ole niiden dedikoidun reitin tarkoituksellinen
-    // mutaatio, luetaan kannan tuorein arvo juuri ennen kirjoitusta — niin
-    // tekijän ikkunamerkintä ei koskaan yliaja asiakkaan samaan aikaan lukitsemaa
-    // hintaa eikä perustajan ohjausasetusta.
-    if (!opts?.p2Mutation || !opts?.guidedMutation) {
+    // P2-neuvottelutila, ohjattu eteneminen (guided) ja johtajien tasaus ovat
+    // serverin omistamia. Ellei TÄMÄ tallennus ole niiden dedikoidun reitin
+    // tarkoituksellinen mutaatio, luetaan kannan tuorein arvo juuri ennen
+    // kirjoitusta — niin tekijän ikkunamerkintä ei koskaan yliaja asiakkaan
+    // samaan aikaan lukitsemaa hintaa, perustajan ohjausasetusta eikä
+    // rahankirjausta siitä kuka sai erän ja kuka maksoi tekijän.
+    if (!opts?.p2Mutation || !opts?.guidedMutation || !opts?.settlementMutation) {
       const [fresh] = await db.select({ projectData: jobs.projectData }).from(jobs).where(eq(jobs.id, job.id));
       const stored = fresh ? parseProject(fresh.projectData ?? null) : null;
       if (!opts?.p2Mutation) {
@@ -5919,6 +6119,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!opts?.guidedMutation) {
         const storedGuided = stored ? stored.guided : clean.guided;
         if (storedGuided) clean.guided = storedGuided; else delete clean.guided;
+      }
+      if (!opts?.settlementMutation) {
+        const storedSettlement = stored ? stored.settlement : clean.settlement;
+        if (storedSettlement) clean.settlement = storedSettlement; else delete clean.settlement;
       }
     }
     const totals = computeProjectTotals(clean);
@@ -7179,6 +7383,109 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       };
       await db.update(jobs).set({ gigData: JSON.stringify(gig), updatedAt: new Date() }).where(eq(jobs.id, jobId));
       res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * KEIKKARAHAT — koko brändin urakkakeikkojen raha yhtenä lukuna.
+   *
+   * Puuhapatet-adminin etusivu näytti vain `/api/stats`in eli tavallisten
+   * keikkojen `agreedPrice`-summat. FR8:n kaltaiset urakat ovat kokonaan
+   * `gigData`/`projectData`-blobeissa, joten niiden laskutettu ja saatu raha ei
+   * näkynyt admin-paneelissa lainkaan — se piti käydä katsomassa keikan omasta
+   * mustasta näkymästä. Tämä reitti tuo saman rahan etusivulle.
+   *
+   * Laskenta on SAMA jaettu moottori (`@shared/fr8-tasaus`) kuin keikan omassa
+   * tasausnäkymässä — ei toista kaavaa, joten luvut eivät voi erota.
+   */
+  app.get("/api/admin/gig-money", async (req, res) => {
+    try {
+      const sub = String((req as any).admin?.sub ?? "").toLowerCase();
+      if ((req as any).admin?.role !== "host" && !FOUNDER_IDS.includes(sub)) {
+        return res.status(403).json({ error: "Vain perustaja näkee keikkarahat." });
+      }
+      const rows = await db.select().from(jobs);
+      // Kaikki erälaskut kerralla ja ryhmiteltynä keikoittain — ei N+1 kyselyä.
+      const invoicesByJob = new Map<number, TasausEraInvoice[]>();
+      try {
+        for (const r of await db.select().from(eraInvoices)) {
+          let nums: number[] = [];
+          let rivit: any = null;
+          try { nums = JSON.parse(r.eraNumbers); } catch { /* tyhjä */ }
+          try { rivit = JSON.parse(r.rivit); } catch { /* null */ }
+          const list = invoicesByJob.get(r.jobId) ?? [];
+          list.push({
+            id: r.id, kind: r.kind, tila: r.tila, senderId: r.senderId, recipientId: r.recipientId,
+            totalCents: r.totalCents, eraNumbers: nums, rivit,
+          });
+          invoicesByJob.set(r.jobId, list);
+        }
+      } catch (e: any) {
+        if (!isMissingTableError(e)) throw e;
+      }
+
+      const founders = BRAND_BILLERS.map((b) => ({ id: b.id, name: b.name }));
+      const receivedByFounder: Record<string, number> = {};
+      const netByFounder: Record<string, number> = {};
+      let invoicedCents = 0, unassignedCents = 0;
+      let workerEarnedCents = 0, workerPaidCents = 0;
+      const gigs: {
+        jobId: number; name: string; invoicedCents: number; workerEarnedCents: number;
+        workerPaidCents: number; transfer: { fromId: string; toId: string; cents: number } | null;
+        unassignedEraCount: number;
+      }[] = [];
+
+      for (const job of rows) {
+        const project = parseProject(job.projectData ?? null);
+        if (!project) continue;
+        const gig = parseGig(job.gigData);
+        const payments = (gig?.payments ?? []) as TasausPayment[];
+        const invoices = invoicesByJob.get(job.id) ?? [];
+        // Keikka ilman rahaa ei kuulu listalle — muuten kortti täyttyisi nollista.
+        if (payments.length === 0 && invoices.length === 0) continue;
+        const t = buildTasaus(project, payments, invoices, project.settlement);
+
+        const gigInvoiced = t.input.p1PotCents + t.input.p2PotCents;
+        const gigWorkerEarned = t.input.workerP1EarnedCents + t.input.workerP2EarnedCents;
+        const gigWorkerPaid = t.result.rows.reduce((s, r) => s + r.paidOutCents, 0) + t.unattributedPaidCents;
+
+        invoicedCents += gigInvoiced;
+        workerEarnedCents += gigWorkerEarned;
+        workerPaidCents += gigWorkerPaid;
+        for (const r of t.result.rows) {
+          receivedByFounder[r.id] = (receivedByFounder[r.id] ?? 0) + r.receivedCents;
+          netByFounder[r.id] = (netByFounder[r.id] ?? 0) + r.netCents;
+        }
+        unassignedCents += t.eras.filter((e) => !e.receivedById).reduce((s, e) => s + e.amountCents, 0);
+
+        gigs.push({
+          jobId: job.id,
+          name: gig?.company?.name || job.description || `Keikka #${job.id}`,
+          invoicedCents: gigInvoiced,
+          workerEarnedCents: gigWorkerEarned,
+          workerPaidCents: gigWorkerPaid,
+          transfer: t.result.transfer,
+          unassignedEraCount: t.unassignedEraCount,
+        });
+      }
+      gigs.sort((a, b) => b.invoicedCents - a.invoicedCents);
+
+      res.json({
+        ok: true,
+        founders,
+        totals: {
+          invoicedCents,
+          receivedByFounder,
+          unassignedCents,
+          workerEarnedCents,
+          workerPaidCents,
+          workerOpenCents: Math.max(0, workerEarnedCents - workerPaidCents),
+          netByFounder,
+        },
+        gigs,
+      });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

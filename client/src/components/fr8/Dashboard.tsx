@@ -9,6 +9,10 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useState, useEffect } from "react";
 import Section from "./Section";
 import Toggle from "./Toggle";
+import {
+  T, card as tokenCard, inset, mono as tokenMono, statLabel, subLabel,
+  button as tokenButton, input as tokenInput,
+} from "./tokens";
 
 interface Props {
   project: ProjectData;
@@ -66,10 +70,10 @@ interface Props {
 }
 
 function fmt(n: number) { return Math.round(n).toLocaleString("fi-FI"); }
-function euro(n: number) { return n.toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €"; }
+function euro(n: number) { return n.toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "\u00a0€"; }
 /** Per-window price — keeps cents (e.g. "37,50 €") so 37.5 never rounds to 38. */
 function euroUnit(n: number) {
-  return n.toLocaleString("fi-FI", { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 }) + " €";
+  return n.toLocaleString("fi-FI", { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 }) + "\u00a0€";
 }
 function ago(ts: number) {
   const s = (Date.now() - ts) / 1000;
@@ -85,19 +89,12 @@ function colorRgb(p: 1 | 2, status: WindowStatus) {
   return p === 1 ? "255,140,178" : "240,226,150";
 }
 
-const card: React.CSSProperties = {
-  background: "rgba(255,255,255,0.035)",
-  border: "1px solid rgba(255,255,255,0.08)",
-  borderRadius: "20px",
-  backdropFilter: "blur(22px)",
-  WebkitBackdropFilter: "blur(22px)",
-};
-const mono: React.CSSProperties = {
-  fontFamily: "var(--font-jetbrains-mono, monospace)",
-  fontSize: "11px",
-  letterSpacing: "0.14em",
-  color: "rgba(255,255,255,0.4)",
-};
+/** Kortti, tiili, mono-etiketti ja nappi tulevat nyt jaetuista poleteista
+ *  (`./tokens`), jotta dash ja Maksut-välilehti näyttävät samalta. Aiemmin
+ *  samasta kortista oli neljä eri versiota (reunus 0,08 vs 0,09, pyöristys
+ *  16/20/22) ja mono-etiketistä yhdeksän. */
+const card = tokenCard;
+const mono = tokenMono;
 
 export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot, founderInvoiceSlot, gigBilling, workerLaborP2Cents, workerOpenP1Cents, onGoToMaksut, p2Slot, settingsSlot }: Props) {
   const m = useIsMobile();
@@ -250,16 +247,35 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
 
 
   return (
-    <div data-fr8-pane style={{ height: "100%", overflowY: "auto", overflowX: "hidden", overscrollBehavior: "contain", boxSizing: "border-box", padding: m ? "16px 12px calc(96px + env(safe-area-inset-bottom))" : "26px 30px 40px" }}>
-      <div style={{ maxWidth: "1400px", margin: "0 auto", width: "100%", boxSizing: "border-box" }}>
+    <div
+      data-fr8-pane
+      style={{
+        height: "100%", overflowY: "auto", overflowX: "hidden", overscrollBehavior: "contain",
+        boxSizing: "border-box",
+        // Alalaidan 96 px oli kopioitu FloorView'stä, jossa on kelluva
+        // alapalkki. Dashissa ei ole mitään kiinteää alareunassa, joten se oli
+        // pelkkää tyhjää vieritystä sivun lopussa.
+        padding: m
+          ? `${T.space.lg}px ${T.space.md}px calc(${T.space.xl}px + env(safe-area-inset-bottom))`
+          : `${T.space.xl}px ${T.space.xxl - 2}px ${T.space.xl}px`,
+      }}
+    >
+      {/* YKSI pystyrytmi: kaikki lohkot ovat saman flex-pinon lapsia ja
+          väli tulee yhdestä `gap`ista. Aiemmin ylälohkot käyttivät omia
+          `marginBottom`-arvojaan (14/20/22 px) ja alaosa erillistä gapia —
+          viisi mekanismia samalle välille. */}
+      <div style={{
+        maxWidth: 1400, margin: "0 auto", width: "100%", boxSizing: "border-box",
+        display: "flex", flexDirection: "column", gap: m ? T.space.md : T.space.lg,
+      }}>
 
         {/* Header */}
-        <div style={{ display: "flex", flexDirection: m ? "column" : "row", alignItems: m ? "center" : "flex-end", justifyContent: "space-between", gap: m ? "6px" : "12px", textAlign: m ? "center" : "left", marginBottom: m ? "14px" : "20px" }}>
+        <div style={{ display: "flex", flexDirection: m ? "column" : "row", alignItems: m ? "center" : "flex-end", justifyContent: "space-between", gap: m ? T.space.xs + 2 : T.space.md, textAlign: m ? "center" : "left" }}>
           <div>
-            <div style={{ ...mono, letterSpacing: "0.18em", marginBottom: "7px" }}>KOKONAISTILANNE</div>
-            <h1 style={{ margin: 0, fontSize: m ? "22px" : "30px", fontWeight: 700, letterSpacing: "-0.01em" }}>Projektin yleiskatsaus</h1>
+            <div style={{ ...mono, marginBottom: T.space.sm - 1 }}>KOKONAISTILANNE</div>
+            <h1 style={{ margin: 0, fontFamily: T.font, fontSize: m ? T.size.title + 3 : T.size.display, fontWeight: 700, letterSpacing: "-0.01em" }}>Projektin yleiskatsaus</h1>
           </div>
-          <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: m ? "10px" : "11px", color: "rgba(255,255,255,0.4)", letterSpacing: "0.06em", textAlign: "right", flexShrink: 0 }}>
+          <div style={{ ...mono, textAlign: "right", flexShrink: 0 }}>
             {deal
               ? <>{FLOORS.length} KERROSTA · {heroTotal > 0 ? heroTotal : "…"} SOVITTUA IKKUNAA{scopeHasYellow ? ` (${billGrp?.total ?? 0} + ${p2b.lockedCount} KELT.)` : ""}</>
               : <>{FLOORS.length} KERROSTA · {total > 0 ? total : "…"} IKKUNAA</>}
@@ -267,8 +283,8 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
         </div>
 
         {/* Row 1: ring + revenue */}
-        <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1.35fr 1fr", gap: "14px", marginBottom: "14px" }}>
-          <div className="anim-fadeUp-0" style={{ ...card, borderRadius: "22px", display: "flex", flexDirection: m ? "column" : "row", gap: m ? "20px" : "26px", alignItems: "center", padding: m ? "22px" : "30px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "minmax(0, 1.35fr) minmax(0, 1fr)", gap: T.space.md + 2 }}>
+          <div className="anim-fadeUp-0" style={{ ...card, minWidth: 0, display: "flex", flexWrap: "wrap", justifyContent: "center", gap: m ? T.space.lg + 4 : T.space.xl, alignItems: "center", padding: m ? T.space.xl - 4 : T.space.xl + 4 }}>
             <div style={{ position: "relative", width: "184px", height: "184px", flexShrink: 0 }}>
               <svg width="184" height="184" viewBox="0 0 184 184" style={{ transform: "rotate(-90deg)" }}>
                 <circle cx="92" cy="92" r="80" fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="11" />
@@ -277,51 +293,56 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                   style={{ transition: "stroke-dasharray .7s cubic-bezier(.2,.8,.2,1)" }} />
               </svg>
               <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-                <div style={{ fontSize: "38px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{heroPctStr}</div>
-                <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.45)", marginTop: "3px" }}>VALMIS</div>
+                <div style={{ fontFamily: T.font, fontSize: T.size.hero, fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>{heroPctStr}</div>
+                <div style={{ ...mono, marginTop: T.space.xs - 1 }}>VALMIS</div>
               </div>
             </div>
-            <div style={{ flex: 1, width: m ? "100%" : undefined, textAlign: m ? "center" : "left" }}>
-              <div style={{ ...mono, marginBottom: "10px" }}>
+            <div style={{ flex: "1 1 230px", minWidth: 0, textAlign: m ? "center" : "left" }}>
+              <div style={{ ...mono, marginBottom: T.space.sm + 2 }}>
                 {deal ? (scopeHasYellow ? "SOVITTU TYÖ · PUNAISET + KELTAISET" : "SOPIMUSIKKUNAT (PUNAISET)") : "KOKONAISEDISTYMINEN"}
               </div>
-              <div style={{ fontSize: "34px", fontWeight: 700, letterSpacing: "-0.01em", marginBottom: "2px" }}>
-                {heroWashed} <span style={{ color: "rgba(255,255,255,0.35)", fontWeight: 500 }}>/ {heroTotal}</span>
+              <div style={{ fontFamily: T.font, fontSize: T.size.display + 6, fontWeight: 700, letterSpacing: "-0.01em", marginBottom: 2 }}>
+                {heroWashed} <span style={{ color: T.text.faint, fontWeight: 500 }}>/ {heroTotal}</span>
               </div>
-              <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.5)", marginBottom: scopeHasYellow ? "10px" : "20px" }}>
+              <div style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted, marginBottom: scopeHasYellow ? T.space.sm + 2 : T.space.lg + 4 }}>
                 {deal ? (scopeHasYellow ? "sovittua ikkunaa pesty" : "punaista ikkunaa pesty") : "ikkunaa pesty"}
               </div>
               {/* Erittely: kun keltaiset ovat mukana piirissä, kokonaisprosentti ei
                   enää kerro yksin missä mennään — punaiset voivat olla valmiit
                   vaikka keltaisia on kesken. Näytetään molemmat rinnakkain. */}
               {deal && scopeHasYellow && billGrp && (
-                <div style={{ display: "flex", gap: "14px", flexWrap: "wrap", justifyContent: m ? "center" : "flex-start", marginBottom: "18px" }}>
+                <div style={{ display: "flex", gap: T.space.md + 2, flexWrap: "wrap", justifyContent: m ? "center" : "flex-start", marginBottom: T.space.lg + 2 }}>
                   {([
                     ["Punaiset", "rgb(255,72,72)", billGrp.washed, billGrp.total],
-                    ["Keltaiset (sovitut)", "rgb(255,205,40)", p2b.lockedWashedCount, p2b.lockedCount],
+                    ["Keltaiset (sovitut)", T.tone.warn, p2b.lockedWashedCount, p2b.lockedCount],
                   ] as [string, string, number, number][]).map(([label, color, w, t]) => (
-                    <span key={label} style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: "12px", color: "rgba(255,255,255,0.6)" }}>
+                    <span key={label} style={{ display: "inline-flex", alignItems: "center", gap: T.space.sm - 1, fontFamily: T.font, fontSize: T.size.sm, color: T.text.secondary }}>
                       <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, boxShadow: `0 0 7px ${color}`, flexShrink: 0 }} />
-                      {label} <b style={{ color: "#fff", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{w}/{t}</b>
-                      <span style={{ color: "rgba(255,255,255,0.4)" }}>{t > 0 ? Math.round((w / t) * 100) : 0} %</span>
+                      {label} <b style={{ color: T.text.primary, fontWeight: 700 }}>{w}/{t}</b>
+                      <span style={{ color: T.text.faint }}>{t > 0 ? Math.round((w / t) * 100) : 0} %</span>
                     </span>
                   ))}
                 </div>
               )}
               {!attributionCheck.matches && (
-                <div style={{ marginBottom: "16px", padding: "9px 12px", borderRadius: "10px", background: "rgba(224,168,0,0.12)", border: "1px solid rgba(224,168,0,0.3)", fontSize: "11.5px", color: "rgba(255,206,80,0.9)" }}>
-                  Ikkunamäärä ei täsmää: {attributionCheck.dotCount} pestyä ikkunaa, mutta tekijöiden/johtajien summa on {attributionCheck.attributedSum}
-                  {" "}(ero {attributionCheck.diff > 0 ? "+" : ""}{attributionCheck.diff}). Jollain pestyllä ikkunalla ei ole pesijää merkittynä.
+                <div style={{
+                  marginBottom: T.space.lg, padding: `${T.space.sm + 1}px ${T.space.md}px`,
+                  borderRadius: T.radius.sm, background: T.tone.warnBg, border: `1px solid ${T.tone.warnBorder}`,
+                  fontFamily: T.font, fontSize: T.size.xs, color: "rgba(255,206,80,0.95)",
+                  textAlign: "left", lineHeight: 1.45,
+                }}>
+                  Ikkunamäärä ei täsmää: {attributionCheck.dotCount} pestyä vs. {attributionCheck.attributedSum} attribuoitua
+                  {" "}(ero {attributionCheck.diff > 0 ? "+" : ""}{attributionCheck.diff}) — pesijä puuttuu.
                 </div>
               )}
-              <div style={{ display: "flex", gap: "10px" }}>
-                {([["kesken", "rgb(188,150,255)", "rgba(188,150,255,0.7)", heroKesken], ["Pesemättä", "rgba(255,255,255,0.4)", undefined, heroUnwashed]] as [string, string, string|undefined, number][]).map(([label, bg, shadow, val]) => (
-                  <div key={label} style={{ flex: 1, padding: "12px 14px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "13px" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: m ? "center" : "flex-start", gap: "7px", marginBottom: "5px" }}>
+              <div style={{ display: "flex", gap: T.space.sm + 2 }}>
+                {([["kesken", "rgb(188,150,255)", "rgba(188,150,255,0.7)", heroKesken], ["Pesemättä", T.text.faint, undefined, heroUnwashed]] as [string, string, string|undefined, number][]).map(([label, bg, shadow, val]) => (
+                  <div key={label} style={{ ...inset, flex: 1 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: m ? "center" : "flex-start", gap: T.space.sm - 1, marginBottom: T.space.xs + 1 }}>
                       <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: bg, boxShadow: shadow ? `0 0 7px ${shadow}` : undefined, flexShrink: 0 }} />
-                      <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)" }}>{label === "kesken" ? "Kesken" : label}</span>
+                      <span style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted }}>{label === "kesken" ? "Kesken" : label}</span>
                     </div>
-                    <div style={{ fontSize: "21px", fontWeight: 600 }}>{val}</div>
+                    <div style={{ fontFamily: T.font, fontSize: T.size.title, fontWeight: 700 }}>{val}</div>
                   </div>
                 ))}
               </div>
@@ -332,13 +353,13 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
               sisäisellä katteella (pesty punainen × kate/ikkuna) ja KELTAISET
               omalla P2-katteellaan (computeP2Billing.marginCents) — keltaista
               ikkunaa ei saa koskaan arvottaa punaisten taksalla. */}
-          <div className="anim-fadeUp-1" style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: "10px", padding: m ? "24px 22px" : "30px", background: "linear-gradient(155deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))", border: "1px solid rgba(255,255,255,0.09)", borderRadius: "22px", backdropFilter: "blur(22px)", WebkitBackdropFilter: "blur(22px)" }}>
-            <div style={{ ...mono }}>{deal ? "KERTYNYT · VAIN PERUSTAJILLE" : "LIIKEVAIHTO"}</div>
-            <div style={{ fontSize: m ? "44px" : "52px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}>
+          <div className="anim-fadeUp-1" style={{ ...card, minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center", gap: T.space.sm + 2, padding: m ? `${T.space.xl}px ${T.space.xl - 2}px` : T.space.xl + 4, background: "linear-gradient(155deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))" }}>
+            <div style={mono}>{deal ? "KERTYNYT · VAIN PERUSTAJILLE" : "LIIKEVAIHTO"}</div>
+            <div style={{ fontFamily: T.font, fontSize: `clamp(${T.size.display}px, 5.5vw, ${T.size.hero}px)`, fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1.05 }}>
               {euro(deal ? (billGrp ? billGrp.washed : 0) * internalPerWindowEur + p2b.marginCents / 100 : washed * PRICE)}
             </div>
             {deal && p2b.marginCents > 0 && (
-              <div style={{ fontSize: "11.5px", color: "rgba(255,255,255,0.5)", lineHeight: 1.5 }}>
+              <div style={{ ...subLabel, marginTop: 0 }}>
                 punaiset {euro((billGrp ? billGrp.washed : 0) * internalPerWindowEur)} · keltaisten kate {euro(p2b.marginCents / 100)}
               </div>
             )}
@@ -350,52 +371,52 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             tapahtuu keikkanäkymässä ja tekijöille maksetaan Maksut-välilehdellä,
             joten samaa toimintoa ei ole kahdessa paikassa. */}
         {deal && gigBilling && (
-          <div className="anim-fadeUp-2" style={{ ...card, padding: m ? "14px" : "16px 18px", marginBottom: "14px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: "12px", flexWrap: "wrap" }}>
-              <span style={{ ...mono }}>LASKUTUS &amp; MAKSUT</span>
+          <div className="anim-fadeUp-2" style={{ ...card, padding: m ? T.space.lg : T.space.xl - 4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: T.space.sm + 2, marginBottom: T.space.md, flexWrap: "wrap" }}>
+              <span style={mono}>LASKUTUS &amp; MAKSUT</span>
               {onGoToMaksut && (
                 <button
                   type="button"
                   onClick={onGoToMaksut}
-                  style={{ marginLeft: "auto", padding: "5px 11px", borderRadius: 9, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.75)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer" }}
+                  style={{ ...tokenButton(), marginLeft: "auto" }}
                 >
                   Avaa Maksut →
                 </button>
               )}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: m ? "1fr 1fr" : "repeat(4, 1fr)", gap: m ? "8px" : "12px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(148px, 1fr))", gap: m ? T.space.sm : T.space.md }}>
               {([
                 {
-                  label: "PUNAISET LASKUTETTU",
+                  label: "Laskutettu",
                   val: euro(gigBilling.p1InvoicedCents / 100),
-                  sub: `${Math.min(4, gigBilling.p1PayCount)}/4 erää · sopimus ${euro(gigBilling.agreedTotalCents / 100)}`,
-                  tone: "#9ff0bd",
+                  sub: `${Math.min(4, gigBilling.p1PayCount)}/4 erää · ${euro(gigBilling.agreedTotalCents / 100)}`,
+                  tone: T.tone.goodSoft,
                 },
                 {
-                  label: "PUNAISIA JÄLJELLÄ",
+                  label: "Laskuttamatta",
                   val: euro(Math.max(0, gigBilling.agreedTotalCents - gigBilling.p1InvoicedCents) / 100),
-                  sub: gigBilling.p1PayCount >= 4 ? "kaikki erät lähetetty ✓" : `seuraava erä ${euro(gigBilling.nextInstalmentCents / 100)}`,
-                  tone: "rgba(255,255,255,0.9)",
+                  sub: gigBilling.p1PayCount >= 4 ? "kaikki erät lähetetty ✓" : `seuraava ${euro(gigBilling.nextInstalmentCents / 100)}`,
+                  tone: T.text.primary,
                 },
                 {
-                  label: "KELTAISET",
+                  label: "Keltaiset",
                   val: euro(gigBilling.p2InvoicedCents / 100),
                   sub: gigBilling.p2RemainingCents > 0
                     ? `laskuttamatta ${euro(gigBilling.p2RemainingCents / 100)}`
                     : p2b.lockedCount > 0 ? "ei laskuttamatonta" : "ei sovittuja vielä",
-                  tone: gigBilling.p2RemainingCents > 0 ? "rgb(255,205,40)" : "rgba(255,255,255,0.9)",
+                  tone: gigBilling.p2RemainingCents > 0 ? T.tone.warn : T.text.primary,
                 },
                 {
-                  label: "TEKIJÖILLE (PUNAISET)",
+                  label: "Tekijöille",
                   val: euro((workerOpenP1Cents ?? 0) / 100),
-                  sub: (workerOpenP1Cents ?? 0) > 0 ? "siirrettävä tekijöille" : "kaikki maksettu ✓",
-                  tone: (workerOpenP1Cents ?? 0) > 0 ? "rgb(255,205,40)" : "rgba(255,255,255,0.9)",
+                  sub: (workerOpenP1Cents ?? 0) > 0 ? "punaisista siirrettävä" : "kaikki maksettu ✓",
+                  tone: (workerOpenP1Cents ?? 0) > 0 ? T.tone.warn : T.text.primary,
                 },
               ]).map((t) => (
-                <div key={t.label} style={{ padding: "11px 13px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "13px", minWidth: 0 }}>
-                  <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)", marginBottom: "6px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.label}</div>
-                  <div style={{ fontSize: m ? "16px" : "19px", fontWeight: 700, color: t.tone, fontVariantNumeric: "tabular-nums" }}>{t.val}</div>
-                  <div style={{ fontSize: "10.5px", color: "rgba(255,255,255,0.45)", marginTop: 3, lineHeight: 1.4 }}>{t.sub}</div>
+                <div key={t.label} style={inset}>
+                  <div style={statLabel}>{t.label}</div>
+                  <div style={{ fontFamily: T.font, fontSize: m ? T.size.lg : T.size.title, fontWeight: 700, color: t.tone }}>{t.val}</div>
+                  <div style={subLabel}>{t.sub}</div>
                 </div>
               ))}
             </div>
@@ -405,15 +426,15 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
         {/* KÄYNNISSÄ NYT — live shift strip, pinned under the hero ONLY while someone
             is on the clock (otherwise the top stays minimal). */}
         {runningShifts.length > 0 && (
-          <div className="anim-fadeUp-1" style={{ ...card, padding: m ? "12px 14px" : "12px 18px", marginBottom: "14px", display: "flex", alignItems: "center", gap: m ? "8px" : "12px", flexWrap: "wrap" }}>
-            <span style={{ ...mono, display: "inline-flex", alignItems: "center", gap: "8px", color: "rgba(255,255,255,0.55)" }}>
+          <div className="anim-fadeUp-1" style={{ ...card, padding: `${T.space.md}px ${T.space.lg + 2}px`, display: "flex", alignItems: "center", gap: m ? T.space.sm : T.space.md, flexWrap: "wrap" }}>
+            <span style={{ ...mono, display: "inline-flex", alignItems: "center", gap: T.space.sm, color: T.text.muted }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#5fe08a", boxShadow: "0 0 8px rgba(95,224,138,0.9)", animation: "fr8-zonePulse 1.8s ease-in-out infinite" }} />
               KÄYNNISSÄ NYT
             </span>
             {runningShifts.map((s) => (
-              <span key={s.id} style={{ display: "inline-flex", alignItems: "center", gap: "8px", padding: "5px 11px", borderRadius: 999, background: "rgba(95,224,138,0.1)", border: "1px solid rgba(95,224,138,0.28)" }}>
-                <span style={{ fontSize: "13px", fontWeight: 600 }}>{s.name}</span>
-                <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "#9ff0bd" }}>{fmtDur(now - s.since)}</span>
+              <span key={s.id} style={{ display: "inline-flex", alignItems: "center", gap: T.space.sm, padding: `${T.space.xs + 1}px ${T.space.md - 1}px`, borderRadius: T.radius.pill, background: T.tone.goodBg, border: `1px solid ${T.tone.goodBorder}` }}>
+                <span style={{ fontFamily: T.font, fontSize: T.size.sm, fontWeight: 600 }}>{s.name}</span>
+                <span style={{ fontFamily: T.mono, fontSize: T.size.xs, color: T.tone.goodSoft }}>{fmtDur(now - s.since)}</span>
               </span>
             ))}
           </div>
@@ -421,7 +442,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
 
         {/* Collapsible "dropdown bar" sections — everything below the hero folds
             away, each bar keeping its headline figure visible while closed. */}
-        <div style={{ display: "flex", flexDirection: "column", gap: m ? "12px" : "14px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: m ? T.space.md : T.space.md + 2 }}>
 
         {/* Perustajien ansiot — bosses' earnings: own washed windows at the full
             contract rate + the profit share earned on every worker's window. Gives
@@ -439,45 +460,45 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
               {/* Gig money split: contract value → workers' labour vs founders' share. */}
               {/* Kolme lukua mahtuu työpöydällä rinnakkain; puhelimessa kaksi + yksi,
                   ettei 19px euro murru kolmeen riviin kapealla näytöllä. */}
-              <div style={{ display: "grid", gridTemplateColumns: m ? "1fr 1fr" : "1fr 1fr 1fr", gap: m ? "8px" : "12px", marginBottom: "16px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: m ? T.space.sm : T.space.md, marginBottom: T.space.lg }}>
                 {[
-                  { label: "Sopimushinta", val: euro(capEur), tone: "rgba(255,255,255,0.9)" },
-                  { label: "Työntekijöille", val: euro(laborCents / 100), tone: "rgba(255,255,255,0.7)" },
-                  { label: "Perustajille yht.", val: euro(foundersRedCents / 100), tone: "#9ff0bd" },
+                  { label: "Sopimushinta", val: euro(capEur), tone: T.text.primary },
+                  { label: "Työntekijöille", val: euro(laborCents / 100), tone: T.text.secondary },
+                  { label: "Perustajille yht.", val: euro(foundersRedCents / 100), tone: T.tone.goodSoft },
                 ].map((b) => (
-                  <div key={b.label} style={{ padding: "12px 14px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "13px" }}>
-                    <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9.5px", letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)", marginBottom: "6px" }}>{b.label.toUpperCase()}</div>
-                    <div style={{ fontSize: m ? "16px" : "19px", fontWeight: 700, color: b.tone }}>{b.val}</div>
+                  <div key={b.label} style={inset}>
+                    <div style={statLabel}>{b.label}</div>
+                    <div style={{ fontFamily: T.font, fontSize: m ? T.size.lg : T.size.title, fontWeight: 700, color: b.tone }}>{b.val}</div>
                   </div>
                 ))}
               </div>
 
               {/* Per-founder breakdown: own work + profit share = total. */}
-              <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : `repeat(${Math.min(founderEarnings.length, 2)}, 1fr)`, gap: m ? "10px" : "12px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: m ? T.space.sm + 2 : T.space.md }}>
                 {founderEarnings.map((f) => {
                   return (
-                  <div key={f.id} style={{ padding: "16px 18px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "15px" }}>
-                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, marginBottom: "8px" }}>
-                      <span style={{ fontSize: "15px", fontWeight: 600 }}>{f.name}</span>
-                      <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", color: "rgba(255,255,255,0.4)" }}>PERUSTAJA</span>
+                  <div key={f.id} style={{ ...inset, padding: T.space.lg + 2 }}>
+                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: T.space.sm, marginBottom: T.space.sm }}>
+                      <span style={{ fontFamily: T.font, fontSize: T.size.body, fontWeight: 700 }}>{f.name}</span>
+                      <span style={mono}>PERUSTAJA</span>
                     </div>
-                    <div style={{ fontSize: "28px", fontWeight: 700, lineHeight: 1, marginBottom: "10px" }}>{euro(f.totalCents / 100)}</div>
+                    <div style={{ fontFamily: T.font, fontSize: T.size.display, fontWeight: 700, lineHeight: 1, marginBottom: T.space.sm + 2 }}>{euro(f.totalCents / 100)}</div>
                     {f.manual ? (
-                      <div style={{ fontSize: "12px", color: "#9ff0bd" }}>Käsin asetettu ansio</div>
+                      <div style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.tone.goodSoft }}>Käsin asetettu ansio</div>
                     ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: T.space.xs + 1, fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted }}>
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                           <span>Oma työ · {f.ownWashed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikkunaa</span>
-                          <b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(f.ownCents / 100)}</b>
+                          <b style={{ color: T.text.secondary, fontWeight: 700 }}>{euro(f.ownCents / 100)}</b>
                         </div>
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                           <span>Tuotto-osuus työntekijöistä</span>
-                          <b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(f.shareCents / 100)}</b>
+                          <b style={{ color: T.text.secondary, fontWeight: 700 }}>{euro(f.shareCents / 100)}</b>
                         </div>
                         {/* Keltaiset (2. vaihe) ovat oma palkkionsa palkkiotaulukosta,
                             eivät osa punaisten sisäistä katetta — siksi oma rivi. */}
                         {!!f.p2Cents && (
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "rgb(255,205,40)" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: T.space.sm, color: T.tone.warn }}>
                             <span>Keltaiset · {(f.p2Washed ?? 0).toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikkunaa</span>
                             <b style={{ fontWeight: 600 }}>{euro(f.p2Cents / 100)}</b>
                           </div>
@@ -486,7 +507,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                             kokonaan, joten kortti näytti vähemmän kuin ylälaidan
                             KERTYNYT-luku. */}
                         {!!f.p2MarginCents && (
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "rgb(255,205,40)" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: T.space.sm, color: T.tone.warn }}>
                             <span>Osuus keltaisten katteesta</span>
                             <b style={{ fontWeight: 600 }}>{euro(f.p2MarginCents / 100)}</b>
                           </div>
@@ -498,13 +519,13 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                         vielä varmaa rahaa; mutta työ on tehty, joten se kuuluu
                         näkyviin eikä pelkkä vahvistettu luku kerro koko kuvaa. */}
                     {!!f.theoreticalCents && (
-                      <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px dashed rgba(150,175,255,0.35)" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: "12px" }}>
+                      <div style={{ marginTop: T.space.md, paddingTop: T.space.sm + 2, borderTop: `1px dashed ${T.tone.infoBorder}` }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: T.space.sm, fontFamily: T.font, fontSize: T.size.sm }}>
                           <span style={{ color: "rgba(190,205,255,0.9)" }}>Teoreettinen tuotto</span>
-                          <b style={{ color: "rgb(150,175,255)", fontWeight: 700, fontSize: "14px" }}>{euro((f.totalCents + f.theoreticalCents) / 100)}</b>
+                          <b style={{ color: T.tone.info, fontWeight: 700, fontSize: T.size.body }}>{euro((f.totalCents + f.theoreticalCents) / 100)}</b>
                         </div>
-                        <div style={{ fontSize: "10.5px", color: "rgba(255,255,255,0.45)", marginTop: 2 }}>
-                          sis. {euro(f.theoreticalCents / 100)} jo pestyistä keltaisista, joita asiakas ei ole vielä hyväksynyt
+                        <div style={subLabel}>
+                          sis. {euro(f.theoreticalCents / 100)} hyväksymättömistä keltaisista
                         </div>
                       </div>
                     )}
@@ -517,28 +538,26 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                       const t = f.trainees!;
                       const owed = t.reduce((sum, x) => sum + Math.max(0, x.cents - x.paidCents), 0);
                       return (
-                        <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+                        <div style={{ marginTop: T.space.sm + 2, paddingTop: T.space.sm + 2, borderTop: T.border.divider }}>
                           <button
                             onClick={() => setOpenTrainees(open ? null : f.id)}
-                            style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, width: "100%", padding: "6px 0", background: "transparent", border: "none", color: "rgba(156,193,255,0.95)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}
+                            style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: T.space.sm, width: "100%", padding: 0, background: "transparent", border: "none", color: "rgba(156,193,255,0.95)", fontFamily: T.font, fontSize: T.size.xs, fontWeight: 600, cursor: "pointer", textAlign: "left" }}
                           >
                             <span>Vastuullasi {t.length} harjoittelija{t.length === 1 ? "" : "a"}{owed > 0 ? ` · tilitä ${euro(owed / 100)}` : " · tilitetty ✓"}</span>
                             <span aria-hidden>{open ? "▲" : "▾"}</span>
                           </button>
                           {open && (
-                            <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 4 }}>
+                            <div style={{ display: "flex", flexDirection: "column", gap: T.space.xs + 1, marginTop: T.space.sm }}>
                               {t.map((x) => (
-                                <div key={x.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: "11.5px", color: "rgba(255,255,255,0.6)" }}>
+                                <div key={x.id} style={{ display: "flex", justifyContent: "space-between", gap: T.space.sm, fontFamily: T.font, fontSize: T.size.xs, color: T.text.secondary }}>
                                   <span>{x.name} · {x.washed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikkunaa</span>
                                   <span style={{ textAlign: "right" }}>
-                                    <b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(x.cents / 100)}</b>
-                                    {x.paidCents > 0 && <span style={{ color: "#9ff0bd", marginLeft: 6 }}>maksettu {euro(x.paidCents / 100)}</span>}
+                                    <b style={{ color: T.text.secondary, fontWeight: 700 }}>{euro(x.cents / 100)}</b>
+                                    {x.paidCents > 0 && <span style={{ color: T.tone.goodSoft, marginLeft: T.space.xs + 2 }}>maksettu {euro(x.paidCents / 100)}</span>}
                                   </span>
                                 </div>
                               ))}
-                              <span style={{ fontSize: "10.5px", color: "rgba(255,255,255,0.4)", lineHeight: 1.45 }}>
-                                Ei osa ansioitasi — tämä on työ jonka tilityksestä vastaat. Kirjaa maksu Tiimi-sivulla.
-                              </span>
+                              <span style={{ ...subLabel, marginTop: T.space.xs }}>Kirjaa maksu Tiimi-sivulla.</span>
                             </div>
                           )}
                         </div>
@@ -548,7 +567,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                     {/* Johtaja-välinen erälasku (kohta 3C.1) — vain toisen johtajan kortilla. */}
                     {(() => {
                       const slot = founderInvoiceSlot?.(f.id);
-                      return slot ? <div style={{ marginTop: "12px" }}>{slot}</div> : null;
+                      return slot ? <div style={{ marginTop: T.space.md }}>{slot}</div> : null;
                     })()}
                   </div>
                   );
@@ -557,11 +576,14 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
               {/* Keltaiset (2. vaihe) ovat oma rahansa: ne EIVÄT kuulu yllä olevaan
                   punaisten sopimushinnan jakoon, joten ne eritellään omalle riville. */}
               {p2On && (p2b.earnedCents > 0 || (workerLaborP2Cents ?? 0) > 0 || foundersP2Cents > 0) && (
-                <div style={{ marginTop: "14px", padding: "11px 13px", borderRadius: 13, background: "rgba(255,205,40,0.06)", border: "1px solid rgba(255,205,40,0.22)" }}>
-                  <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9.5px", letterSpacing: "0.1em", color: "rgba(255,220,140,0.8)", marginBottom: 6 }}>
-                    KELTAISET · 2. VAIHE (EI SOPIMUSHINNASSA)
+                <div style={{ ...inset, marginTop: T.space.md + 2, background: T.tone.warnBg, border: `1px solid ${T.tone.warnBorder}` }}>
+                  <div style={{ ...statLabel, color: "rgba(255,220,140,0.8)" }}>
+                    Keltaiset · 2. vaihe (ei sopimushinnassa)
                   </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 18px", fontSize: "11.5px", color: "rgba(255,255,255,0.6)" }}>
+                  {/* Ruudukko, ei rivittyvä inline-jono: neljä label/value-paria
+                      katkesi ennen puhelimessa satunnaisista kohdista ja arvot
+                      päätyivät eri sarakkeisiin joka rivillä. */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: `${T.space.xs}px ${T.space.lg}px`, fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted }}>
                     {([
                       ["Kertymä (pesty)", euro(p2b.earnedCents / 100)],
                       ["Työntekijöille", euro((workerLaborP2Cents ?? 0) / 100)],
@@ -569,14 +591,18 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                       ["Kate", euro(p2b.marginCents / 100)],
                     ] as [string, string][]).map(([lbl, val]) => (
                       <span key={lbl}>
-                        {lbl}: <b style={{ color: "rgba(255,255,255,0.9)", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{val}</b>
+                        {lbl}: <b style={{ color: T.text.primary, fontWeight: 700 }}>{val}</b>
                       </span>
                     ))}
                   </div>
                 </div>
               )}
-              <p style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)", marginTop: "12px", lineHeight: 1.5 }}>
-                Perustaja ansaitsee {euroUnit(founderRateEur ?? PRICE)} / ikkuna (sisäinen kate = efektiivinen sopimussumma ÷ punaiset ikkunat yhteensä) + osuuden katteesta jokaisesta työntekijän punaisesta ikkunasta. Keltaiset maksavat palkkiotaulukon mukaan erikseen. Päivittyy pesujen myötä.
+              {/* Ennen tässä oli ~250 merkkiä 11 px harmaata kaavatekstiä, joka
+                  puhelimessa oli seitsemän rivin muuri tärkeimmän kortin lopussa.
+                  Luku jonka perustaja oikeasti lukee on €/ikkuna; johtaminen
+                  kuuluu selitteeseen, ei näkymään. */}
+              <p style={{ ...subLabel, marginTop: T.space.md }} title="Sisäinen kate = efektiivinen sopimussumma ÷ punaiset ikkunat. Lisäksi osuus katteesta jokaisesta työntekijän punaisesta ikkunasta. Keltaiset maksetaan palkkiotaulukon mukaan erikseen.">
+                Sisäinen kate <b style={{ color: T.text.secondary, fontWeight: 700 }}>{euroUnit(founderRateEur ?? PRICE)}</b> / punainen ikkuna
               </p>
             </Section>
         )}
@@ -591,7 +617,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
           animClass="anim-fadeUp-3"
           defaultOpen
         >
-          <div style={{ display: "grid", gridTemplateColumns: m ? "1fr 1fr" : "1fr 1fr 1fr", gap: m ? "10px" : "16px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: m ? T.space.sm + 2 : T.space.lg }}>
           {[{ label: "Prioriteetti 1", rgb: "255,72,72", data: p1, p: 1 }, { label: "Prioriteetti 2", rgb: "255,205,40", data: p2, p: 2 }].map((g, gi) => {
             // Punaiset kuuluvat kiinteään urakkaan. Keltaiset EIVÄT kuulu siihen —
             // mutta kun 2. vaihe on avattu, ne laskutetaan ikkunakohtaisesti sovitulla
@@ -601,33 +627,46 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             const isYellowPriced = g.p === 2 && p2On;
             const outOfDeal = !!deal && g.p !== deal.billablePriority && !isYellowPriced;
             return (
-            <div key={g.label} className={`anim-fadeUp-${gi + 2}`} style={{ ...card, padding: "22px", opacity: outOfDeal ? 0.72 : 1 }}>
-              <div style={{ marginBottom: "16px" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "9px", minWidth: 0 }}>
-                    <span style={{ width: "11px", height: "11px", borderRadius: "50%", flexShrink: 0, background: `rgb(${g.rgb})`, boxShadow: `0 0 10px rgba(${g.rgb},0.8)` }} />
-                    <span style={{ fontSize: "14px", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{g.label}</span>
+            <div key={g.label} className={`anim-fadeUp-${gi + 2}`} style={{ ...card, padding: T.space.xl - 2, opacity: outOfDeal ? 0.72 : 1, minWidth: 0 }}>
+              <div style={{ marginBottom: T.space.lg }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: T.space.sm }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: T.space.sm + 1, minWidth: 0 }}>
+                    <span style={{ width: 11, height: 11, borderRadius: "50%", flexShrink: 0, background: `rgb(${g.rgb})`, boxShadow: `0 0 10px rgba(${g.rgb},0.8)` }} />
+                    <span style={{ fontFamily: T.font, fontSize: T.size.body, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{g.label}</span>
                   </div>
-                  <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
+                  <span style={{ ...mono, flexShrink: 0 }}>
                     {isYellowPriced
                       ? `${p2b.lockedCount > 0 ? Math.round((p2b.lockedWashedCount / p2b.lockedCount) * 100) : 0} %`
                       : g.data.pctStr}
                   </span>
                 </div>
-                {outOfDeal && <span style={{ display: "inline-block", marginTop: 7, fontSize: "9.5px", fontWeight: 600, color: "rgba(255,255,255,0.5)", padding: "2px 7px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.14)" }}>ei sopimuksessa</span>}
-                {isYellowPriced && <span style={{ display: "inline-block", marginTop: 7, fontSize: "9.5px", fontWeight: 600, color: "rgb(255,220,110)", padding: "2px 7px", borderRadius: 6, border: "1px solid rgba(255,205,40,0.35)", background: "rgba(255,205,40,0.1)" }}>2. vaihe · ikkunakohtainen</span>}
-                {!!deal && !outOfDeal && !isYellowPriced && <span style={{ display: "inline-block", marginTop: 7, fontSize: "9.5px", fontWeight: 600, color: "#9ff0bd", padding: "2px 7px", borderRadius: 6, border: "1px solid rgba(95,224,138,0.3)", background: "rgba(95,224,138,0.1)" }}>sopimus</span>}
+                {(() => {
+                  // Yksi merkkikapselin muoto, kolme sävyä — aiemmin nämä olivat
+                  // kolme erillistä inline-objektia joissa vain väri erosi.
+                  const pill = (color: string, bg: string, border: string, text: string) => (
+                    <span style={{
+                      display: "inline-block", marginTop: T.space.sm - 1,
+                      fontFamily: T.font, fontSize: T.size.label, fontWeight: 700,
+                      padding: `2px ${T.space.sm - 1}px`, borderRadius: T.radius.sm - 4,
+                      color, background: bg, border: `1px solid ${border}`,
+                    }}>{text}</span>
+                  );
+                  if (outOfDeal) return pill(T.text.muted, "transparent", "rgba(255,255,255,0.14)", "ei sopimuksessa");
+                  if (isYellowPriced) return pill("rgb(255,220,110)", T.tone.warnBg, T.tone.warnBorder, "2. vaihe · ikkunakohtainen");
+                  if (deal) return pill(T.tone.goodSoft, T.tone.goodBg, T.tone.goodBorder, "sopimus");
+                  return null;
+                })()}
               </div>
               {/* Keltaisen kortin luvut ovat SOVITUT (lukitut) ikkunat, ei kaikki
                   kartan keltaiset — hinnoittelemattomasta ei ole sovittu mitään,
                   joten se ei kuulu edistymisen nimittäjään. */}
-              <div style={{ fontSize: "28px", fontWeight: 700, marginBottom: "3px" }}>
+              <div style={{ fontFamily: T.font, fontSize: T.size.display, fontWeight: 700, marginBottom: 2 }}>
                 {isYellowPriced ? p2b.lockedWashedCount : g.data.washed}
-                <span style={{ color: "rgba(255,255,255,0.32)", fontWeight: 500, fontSize: "22px" }}> / {isYellowPriced ? p2b.lockedCount : g.data.total}</span>
+                <span style={{ color: T.text.faint, fontWeight: 500, fontSize: T.size.title }}> / {isYellowPriced ? p2b.lockedCount : g.data.total}</span>
               </div>
               {isYellowPriced && (
-                <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.45)" }}>
-                  sovittua ikkunaa pesty · {p2b.yellowTotal} keltaista kartalla, {p2b.proposedCount} odottaa asiakasta
+                <div style={{ ...subLabel, marginTop: 0 }}>
+                  sovittua pesty · {p2b.proposedCount} odottaa asiakasta
                 </div>
               )}
               {(() => {
@@ -635,26 +674,26 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                   ? (p2b.lockedCount > 0 ? (p2b.lockedWashedCount / p2b.lockedCount) * 100 : 0)
                   : g.data.pct;
                 return (
-                  <div style={{ height: "6px", borderRadius: "5px", background: "rgba(255,255,255,0.08)", overflow: "hidden", margin: "13px 0 14px" }}>
-                    <div style={{ width: `${pct.toFixed(1)}%`, height: "100%", borderRadius: "5px", background: `rgb(${g.rgb})`, boxShadow: `0 0 10px rgba(${g.rgb},0.6)`, transition: "width .6s" }} />
+                  <div style={{ height: 6, borderRadius: T.radius.xs, background: "rgba(255,255,255,0.08)", overflow: "hidden", margin: `${T.space.md + 2}px 0 ${T.space.md + 2}px` }}>
+                    <div style={{ width: `${pct.toFixed(1)}%`, height: "100%", borderRadius: T.radius.xs, background: `rgb(${g.rgb})`, boxShadow: `0 0 10px rgba(${g.rgb},0.6)`, transition: "width .6s" }} />
                   </div>
                 );
               })()}
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "rgba(255,255,255,0.5)" }}>
-                <span>Kesken <b style={{ color: "#fff", fontWeight: 600 }}>{g.data.kesken}</b></span>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: T.space.sm, fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted }}>
+                <span>Kesken <b style={{ color: T.text.primary, fontWeight: 700 }}>{g.data.kesken}</b></span>
                 <span>{isYellowPriced ? euro(p2b.earnedCents / 100) : outOfDeal ? "— ei laskuteta" : g.data.revStr}</span>
               </div>
             </div>
             );
           })}
 
-          <div style={{ display: "flex", flexDirection: m ? "row" : "column", gap: m ? "10px" : "12px", gridColumn: m ? "1 / -1" : undefined }}>
-            {[{ label: "TÄNÄÄN TEHTY", val: todayWindows, sub: `ikkunaa · ${euro(todayWindows * PRICE)}`, cls: "anim-fadeUp-4" }, { label: "ARVIO JÄLJELLÄ", val: remaining, sub: `ikkunaa · ${estStr}`, cls: "anim-fadeUp-5" }].map((mc) => (
-              <div key={mc.label} className={mc.cls} style={{ ...card, flex: 1, padding: "16px 18px" }}>
-                <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.4)", marginBottom: "9px" }}>{mc.label}</div>
-                <div style={{ display: "flex", alignItems: "baseline", gap: "8px", flexWrap: "wrap" }}>
-                  <span style={{ fontSize: "25px", fontWeight: 700 }}>{mc.val}</span>
-                  <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.45)" }}>{mc.sub}</span>
+          <div style={{ display: "flex", flexDirection: m ? "row" : "column", gap: m ? T.space.sm + 2 : T.space.md, gridColumn: m ? "1 / -1" : undefined, minWidth: 0 }}>
+            {[{ label: "Tänään tehty", val: todayWindows, sub: `ikkunaa · ${euro(todayWindows * PRICE)}`, cls: "anim-fadeUp-4" }, { label: "Arvio jäljellä", val: remaining, sub: `ikkunaa · ${estStr}`, cls: "anim-fadeUp-5" }].map((mc) => (
+              <div key={mc.label} className={mc.cls} style={{ ...card, flex: 1, padding: T.space.lg + 2, minWidth: 0 }}>
+                <div style={{ ...mono, marginBottom: T.space.sm + 1 }}>{mc.label}</div>
+                <div style={{ display: "flex", alignItems: "baseline", gap: T.space.sm, flexWrap: "wrap" }}>
+                  <span style={{ fontFamily: T.font, fontSize: T.size.display, fontWeight: 700 }}>{mc.val}</span>
+                  <span style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.faint }}>{mc.sub}</span>
                 </div>
               </div>
             ))}
@@ -666,17 +705,17 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
         {allWorkers.length > 0 && (
           <Section id="workers" label="TEKIJÄT" summary={`${shownWorkers.length} tekijää`} animClass="anim-fadeUp-5" defaultOpen>
             {/* Controls: show-all-vs-active + reveal €/h teho */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "18px", marginBottom: "14px", flexWrap: "wrap" }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: "10px" }}>
-                <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>Näytä teho (€/h)</span>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: T.space.lg + 2, marginBottom: T.space.md, flexWrap: "wrap" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: T.space.sm + 2 }}>
+                <span style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted }}>Näytä teho (€/h)</span>
                 <Toggle checked={showTeho} onChange={setShowTeho} ariaLabel="Näytä €/h ja tunnit" />
               </span>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: "10px" }}>
-                <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>Vain aktiiviset</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: T.space.sm + 2 }}>
+                <span style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted }}>Vain aktiiviset</span>
                 <Toggle checked={showActiveOnly} onChange={setShowActiveOnly} ariaLabel="Näytä vain aktiiviset tekijät" />
               </span>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(Math.max(shownWorkers.length, 1), m ? 2 : 4)}, 1fr)`, gap: m ? "10px" : "12px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${m ? 150 : 210}px, 1fr))`, gap: m ? T.space.sm + 2 : T.space.md }}>
               {shownWorkers.map((s) => {
                 const share = washed > 0 ? (s.washed / washed) * 100 : 0;
                 const rate = s.washed > 0 ? s.revenueCents / s.washed / 100 : 0; // €/ikkuna (personal pay)
@@ -686,69 +725,72 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                 const overridden = cm?.manualEarningsCents != null;
                 const editing = editId === s.worker;
                 return (
-                  <div key={s.worker} style={{ padding: "16px 18px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "15px" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px", gap: 8 }}>
-                      <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                        <span style={{ fontSize: "15px", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{workerName(s.worker)}</span>
+                  <div key={s.worker} style={{ ...inset, padding: T.space.lg + 2, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: T.space.sm + 2, gap: T.space.sm }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: T.space.xs + 2, minWidth: 0 }}>
+                        <span style={{ fontFamily: T.font, fontSize: T.size.body, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{workerName(s.worker)}</span>
                       </span>
-                      <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.45)", flexShrink: 0 }}>{Math.round(share)} %</span>
+                      <span style={{ ...mono, flexShrink: 0 }}>{Math.round(share)} %</span>
                     </div>
-                    <div style={{ fontSize: "26px", fontWeight: 700, lineHeight: 1 }}>
-                      {s.washed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} <span style={{ fontSize: "13px", fontWeight: 500, color: "rgba(255,255,255,0.4)" }}>ikkunaa</span>
+                    <div style={{ fontFamily: T.font, fontSize: T.size.display, fontWeight: 700, lineHeight: 1 }}>
+                      {s.washed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} <span style={{ fontSize: T.size.sm, fontWeight: 500, color: T.text.faint }}>ikkunaa</span>
                     </div>
                     {shiftStart && (
-                      <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 10, padding: "3px 9px", borderRadius: 999, background: "rgba(95,224,138,0.12)", border: "1px solid rgba(95,224,138,0.3)" }}>
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: T.space.xs + 2, marginTop: T.space.sm + 2, padding: `3px ${T.space.sm + 1}px`, borderRadius: T.radius.pill, background: T.tone.goodBg, border: `1px solid ${T.tone.goodBorder}` }}>
                         <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#5fe08a", boxShadow: "0 0 8px rgba(95,224,138,0.9)", animation: "fr8-zonePulse 1.8s ease-in-out infinite" }} />
-                        <span style={{ fontSize: "11px", fontWeight: 600, color: "#9ff0bd" }}>Vuoro käynnissä · {fmtDur(now - shiftStart)}</span>
+                        <span style={{ fontFamily: T.font, fontSize: T.size.xs, fontWeight: 600, color: T.tone.goodSoft }}>Vuoro käynnissä · {fmtDur(now - shiftStart)}</span>
                       </div>
                     )}
-                    <div style={{ height: "6px", borderRadius: "5px", background: "rgba(255,255,255,0.08)", overflow: "hidden", margin: "12px 0" }}>
-                      <div style={{ width: `${share.toFixed(1)}%`, height: "100%", borderRadius: "5px", background: "linear-gradient(90deg,rgba(255,255,255,0.5),#fff)", transition: "width .6s" }} />
+                    <div style={{ height: 6, borderRadius: T.radius.xs, background: "rgba(255,255,255,0.08)", overflow: "hidden", margin: `${T.space.md}px 0` }}>
+                      <div style={{ width: `${share.toFixed(1)}%`, height: "100%", borderRadius: T.radius.xs, background: "linear-gradient(90deg,rgba(255,255,255,0.5),#fff)", transition: "width .6s" }} />
                     </div>
                     {/* Stacked label/value rows so the euro, rate and €/h figures never
                         overlap each other when they wrap on a narrow card. */}
-                    <div style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: "12px", color: "rgba(255,255,255,0.55)" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: T.space.xs + 1, fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: T.space.sm + 2 }}>
                         <span>Ansio</span>
                         <span style={{ textAlign: "right" }}>
-                          <b style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{euro(s.revenueCents / 100)}</b>
-                          {overridden && <span style={{ marginLeft: 6, color: "#9ff0bd", fontSize: 10.5 }}>muokattu</span>}
+                          <b style={{ color: T.text.secondary, fontWeight: 700 }}>{euro(s.revenueCents / 100)}</b>
+                          {overridden && <span style={{ marginLeft: T.space.xs + 2, color: T.tone.goodSoft, fontSize: T.size.xs }}>muokattu</span>}
                         </span>
                       </div>
                       {cm?.role === "host" ? (
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: T.space.sm + 2 }}>
                           <span>Hinnoittelu</span>
-                          <span style={{ textAlign: "right", color: "rgba(255,255,255,0.5)" }}>sis. tuotto-osuus</span>
+                          <span style={{ textAlign: "right", color: T.text.faint }}>sis. tuotto-osuus</span>
                         </div>
                       ) : (
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: T.space.sm + 2 }}>
                           <span>€ / ikkuna</span>
-                          <span style={{ textAlign: "right", color: "rgba(255,255,255,0.85)" }}>{euroUnit(rate)}</span>
+                          <span style={{ textAlign: "right", color: T.text.secondary }}>{euroUnit(rate)}</span>
                         </div>
                       )}
                       {showTeho && (
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: T.space.sm + 2 }}>
                           <span>Teho</span>
-                          <span style={{ textAlign: "right", color: "rgba(255,255,255,0.85)" }}>{s.hours > 0 ? `${euro(s.eurPerHour)} / h · ${s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} h` : "0 h"}</span>
+                          <span style={{ textAlign: "right", color: T.text.secondary }}>{s.hours > 0 ? `${euro(s.eurPerHour)} / h · ${s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} h` : "0 h"}</span>
                         </div>
                       )}
                     </div>
                     {canEditPay && !editing && (
                       <button onClick={() => { setEditId(s.worker); setEditVal(overridden ? String(Math.round((cm!.manualEarningsCents! / 100))) : String(Math.round(s.revenueCents / 100))); }}
-                        style={{ marginTop: 10, width: "100%", padding: "7px", borderRadius: 9, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.7)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>
+                        style={{ ...tokenButton(), marginTop: T.space.sm + 2, width: "100%" }}>
                         Muokkaa ansiota
                       </button>
                     )}
                     {canEditPay && editing && (
-                      <div style={{ marginTop: 10, display: "flex", gap: 6, alignItems: "center" }}>
-                        <input value={editVal} onChange={(e) => setEditVal(e.target.value)} inputMode="decimal" autoFocus
-                          style={{ width: 64, padding: "7px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.06)", color: "#fff", fontSize: "13px", textAlign: "right", fontFamily: "var(--font-onest, system-ui, sans-serif)" }} />
-                        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>€</span>
+                      <div style={{ marginTop: T.space.sm + 2, display: "flex", gap: T.space.xs + 2, alignItems: "center", flexWrap: "wrap" }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: T.space.xs + 2, flex: "1 1 100px", minWidth: 0 }}>
+                          <input value={editVal} onChange={(e) => setEditVal(e.target.value)} inputMode="decimal" autoFocus
+                            aria-label={`Ansio — ${workerName(s.worker)}`}
+                            style={{ ...tokenInput, flex: 1, minWidth: 0, textAlign: "right" }} />
+                          <span style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted }}>€</span>
+                        </span>
                         <button onClick={() => { const v = parseFloat(editVal.replace(",", ".")); onSetEarnings!(s.worker, Number.isFinite(v) ? Math.round(v * 100) : null); setEditId(null); }}
-                          style={{ flex: 1, padding: "7px", borderRadius: 8, border: "none", background: "#fff", color: "#0a0a0c", fontSize: "12px", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>Tallenna</button>
+                          style={{ ...tokenButton("solid"), flex: "1 1 84px" }}>Tallenna</button>
                         {overridden && (
                           <button onClick={() => { onSetEarnings!(s.worker, null); setEditId(null); }} title="Palauta laskettu"
-                            style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.14)", background: "transparent", color: "rgba(255,255,255,0.6)", fontSize: "12px", cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>↺</button>
+                            style={{ ...tokenButton(), background: "transparent", color: T.text.muted, flexShrink: 0 }}>↺</button>
                         )}
                       </div>
                     )}
@@ -756,15 +798,15 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                     {(cm?.sessions?.length ?? 0) > 0 && (
                       <>
                         <button onClick={() => setOpenSessions(openSessions === s.worker ? null : s.worker)}
-                          style={{ marginTop: 10, width: "100%", padding: "6px", borderRadius: 8, border: "none", background: "transparent", color: "rgba(255,255,255,0.45)", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-jetbrains-mono, monospace)", letterSpacing: "0.06em" }}>
+                          style={{ ...tokenButton(), marginTop: T.space.sm + 2, width: "100%", border: "none", background: "transparent", fontFamily: T.mono, fontSize: T.size.label, letterSpacing: "0.12em", color: T.text.faint }}>
                           PÄIVÄKIRJA ({cm!.sessions!.length}) {openSessions === s.worker ? "▲" : "▾"}
                         </button>
                         {openSessions === s.worker && (
-                          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+                          <div style={{ display: "flex", flexDirection: "column", gap: T.space.xs + 2, marginTop: T.space.xs + 2 }}>
                             {[...cm!.sessions!].reverse().slice(0, 10).map(( se, i) => (
-                              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11.5px", color: "rgba(255,255,255,0.6)", padding: "5px 8px", background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>
+                              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: T.space.sm, fontFamily: T.font, fontSize: T.size.xs, color: T.text.secondary, padding: `${T.space.xs + 1}px ${T.space.sm}px`, background: T.surface.inset, borderRadius: T.radius.sm }}>
                                 <span>{new Date(se.end).toLocaleDateString("fi-FI", { day: "numeric", month: "numeric" })} · {se.windows} ikk · {fmtDur(se.minutes * 60000)}</span>
-                                <span style={{ fontWeight: 700, color: "rgba(255,255,255,0.8)" }}>{euro(se.earnedCents / 100)}</span>
+                                <span style={{ fontWeight: 700, color: T.text.secondary, flexShrink: 0 }}>{euro(se.earnedCents / 100)}</span>
                               </div>
                             ))}
                           </div>
@@ -783,21 +825,21 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
 
         {/* Row 3: floor breakdown + activity log */}
         <Section id="floors" label="KERROKSITTAIN" summary={`${washed}/${total}`} animClass="anim-fadeUp-6">
-            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: T.space.xs }}>
               {FLOORS.map((f) => {
                 const arr = all.filter((a) => a.floor === f);
                 const w = arr.filter((a) => a.status === "pesty").length;
                 const pc = arr.length > 0 ? (w / arr.length) * 100 : 0;
                 return (
                   <button key={f} className="floor-row-btn" onClick={() => onGoToFloor(f)}>
-                    <span style={{ width: "34px", height: "34px", flexShrink: 0, borderRadius: "9px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.09)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: "14px" }}>{f}</span>
+                    <span style={{ width: 34, height: 34, flexShrink: 0, borderRadius: T.radius.sm, background: T.surface.raised, border: T.border.normal, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: T.font, fontWeight: 700, fontSize: T.size.body }}>{f}</span>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ height: "7px", borderRadius: "5px", background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
-                        <div style={{ width: `${pc.toFixed(1)}%`, height: "100%", borderRadius: "5px", background: "linear-gradient(90deg,rgba(255,255,255,0.5),#fff)", transition: "width .6s" }} />
+                      <div style={{ height: 6, borderRadius: T.radius.xs, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+                        <div style={{ width: `${pc.toFixed(1)}%`, height: "100%", borderRadius: T.radius.xs, background: "linear-gradient(90deg,rgba(255,255,255,0.5),#fff)", transition: "width .6s" }} />
                       </div>
                     </div>
-                    <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "12px", color: "rgba(255,255,255,0.6)", width: "74px", textAlign: "right" }}>{w}/{arr.length}</span>
-                    <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "13px", fontWeight: 600, width: "50px", textAlign: "right" }}>{Math.round(pc)} %</span>
+                    <span style={{ fontFamily: T.mono, fontSize: T.size.sm, color: T.text.secondary, width: 74, textAlign: "right", flexShrink: 0 }}>{w}/{arr.length}</span>
+                    <span style={{ fontFamily: T.mono, fontSize: T.size.sm, fontWeight: 700, width: 50, textAlign: "right", flexShrink: 0 }}>{Math.round(pc)} %</span>
                   </button>
                 );
               })}
@@ -807,15 +849,15 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
 
           {activity.length > 0 && (
             <Section id="activity" label="VIIMEISIN TOIMINTA" summary={activity[0]?.time} animClass="anim-fadeUp-8">
-                <div style={{ display: "flex", flexDirection: "column", gap: "11px" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: T.space.md }}>
                   {activity.map((a, i) => (
-                    <div key={i} style={{ display: "flex", alignItems: "center", gap: "11px" }}>
-                      <span style={{ width: "10px", height: "10px", borderRadius: "50%", flexShrink: 0, background: a.color, boxShadow: `0 0 8px ${a.glow}` }} />
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: T.space.md - 1 }}>
+                      <span style={{ width: 10, height: 10, borderRadius: "50%", flexShrink: 0, background: a.color, boxShadow: `0 0 8px ${a.glow}` }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: "13px", fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.title}</div>
-                        <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)" }}>{a.sub}</div>
+                        <div style={{ fontFamily: T.font, fontSize: T.size.sm, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.title}</div>
+                        <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint }}>{a.sub}</div>
                       </div>
-                      <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "10.5px", color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>{a.time}</span>
+                      <span style={{ fontFamily: T.mono, fontSize: T.size.label, color: T.text.faint, flexShrink: 0 }}>{a.time}</span>
                     </div>
                   ))}
                 </div>
@@ -827,11 +869,11 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
         {/* Kulut — tucked away off the main view. A quiet link opens the expense
             form/list in a popup, for the rare time something needs logging. */}
         {expensesSlot && (
-          <div style={{ display: "flex", justifyContent: "center", marginTop: m ? "18px" : "22px" }}>
+          <div style={{ display: "flex", justifyContent: "center", marginTop: T.space.sm }}>
             <button
               type="button"
               onClick={() => setShowExpenses(true)}
-              style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 10, background: "transparent", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.45)", fontSize: "12px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}
+              style={{ ...tokenButton(), background: "transparent", color: T.text.faint }}
             >
               Kulut{expensesTotalCents ? ` · ${euro(expensesTotalCents / 100)}` : ""}
             </button>
@@ -847,15 +889,15 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            style={{ width: "100%", maxWidth: "640px", maxHeight: m ? "88vh" : "86vh", overflowY: "auto", background: "#0c0c0e", border: "1px solid rgba(255,255,255,0.1)", borderRadius: m ? "20px 20px 0 0" : "20px", padding: m ? "18px 14px calc(20px + env(safe-area-inset-bottom))" : "22px 22px 24px", boxShadow: "0 24px 60px rgba(0,0,0,0.6)" }}
+            style={{ width: "100%", maxWidth: 640, maxHeight: m ? "88vh" : "86vh", overflowY: "auto", background: "#0c0c0e", border: T.border.normal, borderRadius: m ? `${T.radius.xl}px ${T.radius.xl}px 0 0` : T.radius.xl, padding: m ? `${T.space.lg + 2}px ${T.space.lg}px calc(${T.space.lg + 4}px + env(safe-area-inset-bottom))` : `${T.space.xl - 2}px ${T.space.xl - 2}px ${T.space.xl}px`, boxShadow: "0 24px 60px rgba(0,0,0,0.6)" }}
           >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "14px" }}>
-              <span style={{ ...mono, color: "rgba(255,255,255,0.55)" }}>KULUT{expensesTotalCents ? ` · ${euro(expensesTotalCents / 100)}` : ""}</span>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: T.space.md, marginBottom: T.space.md + 2 }}>
+              <span style={{ ...mono, color: T.text.muted }}>KULUT{expensesTotalCents ? ` · ${euro(expensesTotalCents / 100)}` : ""}</span>
               <button
                 type="button"
                 onClick={() => setShowExpenses(false)}
                 aria-label="Sulje"
-                style={{ width: 30, height: 30, borderRadius: 9, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.7)", fontSize: 15, cursor: "pointer", lineHeight: 1 }}
+                style={{ ...tokenButton(), width: 40, height: 40, padding: 0, fontSize: T.size.lg, lineHeight: 1, flexShrink: 0 }}
               >×</button>
             </div>
             {expensesSlot}

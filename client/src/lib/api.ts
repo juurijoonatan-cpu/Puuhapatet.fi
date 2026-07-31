@@ -181,6 +181,11 @@ export interface EraInvoiceClient {
   emails?: { recipients: string[]; success: boolean; sentAt: string }[];
 }
 
+/** Johtajien tasaus sellaisena kuin palvelin sen palauttaa. Rakenne tulee
+ *  suoraan `@shared/fr8-tasaus`in `TasausBundle`ista — tyypitetään tässä
+ *  eksplisiittisesti, ettei client joudu importtaamaan serverin reittityyppejä. */
+export type TasausBundleClient = import("@shared/fr8-tasaus").TasausBundle;
+
 /** One entry in the system-wide "every invoice PDF we can regenerate" picker
  *  (GET /api/admin/invoices) — used by the free-form "lähetä sähköpostilla"
  *  dialog to attach an existing invoice to a custom email. */
@@ -700,6 +705,52 @@ export const api = {
   deleteFounderSettlement: (id: number) =>
     request<{ ok: boolean }>("DELETE", `/api/admin/founder-settlement/${id}`),
 
+  /** Urakkakeikkojen (FR8-tyyppiset) raha koko brändin tasolla: laskutettu,
+   *  kummankin johtajan saama, tekijöille maksettu ja yhä siirtämättä. Sama
+   *  jaettu laskenta kuin keikan omassa tasausnäkymässä. Vain perustajille. */
+  getGigMoney: () =>
+    request<{
+      ok: boolean;
+      founders: { id: string; name: string }[];
+      totals: {
+        invoicedCents: number;
+        receivedByFounder: Record<string, number>;
+        unassignedCents: number;
+        workerEarnedCents: number;
+        workerPaidCents: number;
+        workerOpenCents: number;
+        netByFounder: Record<string, number>;
+      };
+      gigs: {
+        jobId: number; name: string; invoicedCents: number; workerEarnedCents: number;
+        workerPaidCents: number; unassignedEraCount: number;
+        transfer: { fromId: string; toId: string; cents: number } | null;
+      }[];
+    }>("GET", "/api/admin/gig-money"),
+
+  // ─── FR8 johtajien tasaus (shared/founder-settlement.ts) ─────────────────
+  /** Koko keikan tasaus: kuka sai mitäkin asiakkaalta, kuka maksoi tekijöille,
+   *  paljonko kummankin kuuluu saada ja mikä on nettosiirto. Vain perustajille. */
+  getTasaus: (jobId: number) =>
+    request<{ ok: boolean; tasaus: TasausBundleClient | null }>("GET", `/api/jobs/${jobId}/tasaus`),
+  /** Kirjaa tasauksen korjaukset. Osittainen päivitys — annetut kentät
+   *  yhdistetään tallennettuun tilaan, muut säilyvät. Palauttaa uuden tasauksen. */
+  saveTasaus: (jobId: number, data: {
+    /** Erän indeksi → johtaja joka sai rahat. Tyhjä arvo poistaa kirjauksen. */
+    receivedBy?: Record<string, string>;
+    /** Erälaskun id (tai `manual:<tekijä>`) → johtaja joka maksoi. */
+    paidBy?: Record<string, string>;
+    /** Johtaja → omasta pussista maksetut kulut (senttiä, 0 poistaa). */
+    expensesCents?: Record<string, number>;
+    /** Käsin asetettu siirtosumma senttiä; null palauttaa lasketun summan. */
+    overrideCents?: number | null;
+    overrideFromId?: string | null;
+    note?: string;
+    addTransfer?: { fromId: string; toId: string; cents: number; note?: string };
+    removeTransferId?: string;
+  }) => request<{ ok: boolean; settlement: unknown; tasaus: TasausBundleClient | null }>(
+    "POST", `/api/jobs/${jobId}/settlement`, data),
+
   // ─── FR8 erälaskutus (docs/fr8-era-laskutus-plan.md) ─────────────────────
   getEraInvoices: (jobId: number) =>
     request<{ ok: boolean; invoices: EraInvoiceClient[] }>("GET", `/api/jobs/${jobId}/era-invoices`),
@@ -725,6 +776,11 @@ export const api = {
   sendFounderEraInvoice: (jobId: number, data: {
     eraNumbers: number[]; senderId: string; itsepestytIkkunat: number; kokonaisikkunat: number;
     totalCents: number; manualAdjustmentCents?: number; dueDate?: string;
+    /** "tasaus" = summa ja suunta tulevat koko keikan johtajatasauksesta, ei
+     *  eräkaavasta. Silloin `settlementCents` + `recipientId` ratkaisevat. */
+    kind?: "tasaus";
+    settlementCents?: number;
+    recipientId?: string;
   }) => request<{ ok: boolean; invoice: EraInvoiceClient }>("POST", `/api/jobs/${jobId}/era-invoice/founder`, data),
   // Johtajan PDF-lataus (kohta 4) — admin-Bearer-autentikoitu reitti, joten ei
   // kelpaa suoraan <a href>:ksi; haetaan blobina ja avataan/ladataan JS:llä.

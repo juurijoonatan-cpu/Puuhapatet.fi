@@ -211,7 +211,11 @@ async function rebuildLedgersNow(): Promise<void> {
       scheduledAt: jobs.scheduledAt, waiveFee: jobs.waiveFee, quoteStatus: jobs.quoteStatus,
       isTaloyhtiio: jobs.isTaloyhtiio, unitCount: jobs.unitCount, isCustomGig: jobs.isCustomGig,
       billedBy: jobs.billedBy, createdAt: jobs.createdAt, updatedAt: jobs.updatedAt,
-      projectData: jobs.projectData, gigData: jobs.gigData,
+      // EI `projectData`ta: `buildDraftEntries` ei lue sitä kertaakaan, mutta se
+      // on koko karttablobi (havaintokuvat, kuitit, dokumentit — kymmeniä
+      // megatavuja per FR8-keikka). Tämä kysely ajetaan JOKAISELLA
+      // /api/finance-haulla ja Talous-sivu tekee viisi kerralla.
+      gigData: jobs.gigData,
     }).from(jobs) as unknown as Promise<Job[]>,
     db.select().from(expenses),
     db.select().from(investments),

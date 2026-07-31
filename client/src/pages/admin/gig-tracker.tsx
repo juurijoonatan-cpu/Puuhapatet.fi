@@ -380,7 +380,10 @@ export default function AdminGigTrackerPage() {
   // Open the invoice dialog, defaulting the instalment number to the next one in
   // sequence (the admin can still change it manually in the dialog).
   const openInvoice = () => {
-    setInvForm((f) => ({ ...f, paymentNumber: (gig?.payments.length ?? 0) + 1 }));
+    // Erän numero ELÄVISTÄ eristä. Raa'an taulukon pituus juoksi mitätöinnin
+    // jälkeen edelle, joten dialogi tarjosi seuraavaksi eräksi jo laskutettua
+    // numeroa ja esikatselu näytti 1575 € vaikka jäljellä oli vähemmän.
+    setInvForm((f) => ({ ...f, paymentNumber: (gig?.payments ?? []).filter((p) => !p.voided).length + 1 }));
     setInvoiceOpen(true);
   };
 
@@ -480,6 +483,9 @@ export default function AdminGigTrackerPage() {
   // — sama laskenta kuin mustassa dashissa ja serverillä, ei kolmea kopiota
   // erilaisia scope-suodatuksia.
   const invState = p2InvoiceState(p2b?.earnedCents ?? 0, gig.payments);
+  // ELÄVÄT erät. Mitätöity rivi jää `gig.payments`iin tositteeksi, joten sen
+  // pituus ei kerro montako laskua on lähetetty eikä ole peruttavissa.
+  const liveGigPayments = (gig.payments ?? []).filter((p) => !p.voided);
   const p1PayCount = invState.p1Payments;
   const p1InvoicedCents = invState.p1InvoicedCents;
   const p2InvoicedCents = invState.invoicedCents;
@@ -935,7 +941,7 @@ export default function AdminGigTrackerPage() {
                   </span>
                   <span className="text-sm font-semibold text-foreground tabular-nums shrink-0">{eur(p1InvoicedCents)}</span>
                 </div>
-                {gig.payments.length > 0 && (
+                {liveGigPayments.length > 0 && (
                   <button type="button" className="mt-1 text-[11px] text-muted-foreground underline underline-offset-2" onClick={undoInstalment}>
                     Peruuta viimeisin erä
                   </button>
@@ -976,7 +982,7 @@ export default function AdminGigTrackerPage() {
                 <Send className="w-4 h-4 mr-2" />
                 Lähetä lasku
               </Button>
-              {gig.payments.length > 0 && (
+              {liveGigPayments.length > 0 && (
                 <Button variant="ghost" size="sm" className="w-full mt-1 text-xs text-muted-foreground" onClick={undoInstalment}>
                   Peruuta viimeisin erä (nollaa laskuri)
                 </Button>
@@ -990,7 +996,7 @@ export default function AdminGigTrackerPage() {
                 <span className="text-lg font-bold text-foreground tabular-nums">{eur(totals.uninvoicedCents)}</span>
               </div>
               {totals.invoicedCents > 0 && (
-                <p className="text-xs text-muted-foreground mb-3">Jo laskutettu: {eur(totals.invoicedCents)} ({gig.payments.length} laskua)</p>
+                <p className="text-xs text-muted-foreground mb-3">Jo laskutettu: {eur(totals.invoicedCents)} ({liveGigPayments.length} laskua)</p>
               )}
               <Button className="w-full" disabled={totals.uninvoicedCents <= 0} onClick={openInvoice}>
                 <Send className="w-4 h-4 mr-2" /> Lähetä lasku sähköpostilla

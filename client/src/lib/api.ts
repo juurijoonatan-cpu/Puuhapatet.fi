@@ -834,8 +834,11 @@ export const api = {
   markWorkerPaid: (workerId: string, amount: number) =>
     request<{ id: number }>("POST", `/api/workers/${workerId}/mark-paid`, { amount }),
 
+  /** Nollaa palvelumaksusaldot OIKAISUVIENNEILLÄ — alkuperäiset rivit säilyvät
+   *  tositteina. Vaatii nimenomaisen vahvistuksen palvelimella. */
   resetWorkerPayments: () =>
-    request<{ ok: boolean }>("DELETE", "/api/workers/payments"),
+    request<{ ok: boolean; corrected?: number; preserved?: number }>(
+      "DELETE", "/api/workers/payments", { confirm: "NOLLAA" }),
 
   // packages() returns static list — no packages table in DB yet
   packages: (): Promise<ApiResponse<{ ok: boolean; packages: ApiPackage[] }>> =>

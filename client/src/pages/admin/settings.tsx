@@ -99,14 +99,13 @@ export default function AdminSettingsPage() {
   const [resettingPayments, setResettingPayments] = useState(false);
   const handleResetPayments = async () => {
     if (!window.confirm(
-      "Nollataanko koko maksuhistoria?\n\nKaikki kirjatut palvelumaksut poistetaan. " +
-      "Tämän jälkeen jokaisen tekijän palveluvelka näyttää keikoista kertyneen summan kokonaan " +
-      "ja kassan \"Tästä maksettu\" palaa nollaan. Tätä ei voi perua."
+      "Nollataanko palvelumaksusaldot?\n\nJokaiselle tekijälle kirjataan oikaisuvienti, " +
+      "joka vie saldon nollaan. Alkuperäiset maksurivit SÄILYVÄT kirjanpidon tositteina."
     )) return;
     setResettingPayments(true);
     const res = await api.resetWorkerPayments();
     if (res.ok) {
-      toast({ title: "Maksuhistoria nollattu", description: "Velat ja kassa laskettu uudelleen keikoista" });
+      toast({ title: "Saldot nollattu", description: `${res.data?.corrected ?? 0} oikaisuvientiä · ${res.data?.preserved ?? 0} alkuperäistä riviä säilytetty` });
       loadStats();
     } else {
       toast({ variant: "destructive", title: "Virhe", description: res.error });

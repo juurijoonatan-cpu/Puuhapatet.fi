@@ -365,6 +365,60 @@ Lisäksi fr8-napeille `min-height: 40px` — **mutta vain `[data-fr8-pane]`n sis
 Ilman tuota rajausta sääntö osui myös kartan 9–13 px pyöreisiin pisteisiin ja
 venytti ne kapseleiksi; kartan pisteillä on `data-fr8-dot`, joka jättää ne ulos.
 
+## Säilytys ja siirtokiintiö — kaksi sääntöä joita rikotaan helposti
+
+### 1. Mitä EI saa poistaa
+
+Kirjanpitolaki: tosite säilytetään **6 vuotta** tilikauden päättymisestä. Koodissa
+tämä tarkoittaa että "poista" ei koskaan tarkoita `DELETE` jos rivi on tosite.
+
+| Rivi | Onko tosite? | Poisto |
+|---|---|---|
+| Erälasku, `luonnos` (ei laskunumeroa) | ei | mitätöinti → katoaa 2 vrk:ssa (`voidedEraInvoicePurgeAt`) |
+| Erälasku, lähetetty/hyväksytty | **kyllä** | ei koskaan; siirtyy arkistoon |
+| Asiakkaan maksuerä, lähetetty | **kyllä** | `voided: true`, rivi jää |
+| Asiakkaan maksuerä, kirjaamaton haamu | ei | poistetaan + `receivedBy`-avaimet siirretään |
+| `expenses`-taulun rivi | **kyllä** | estää keikan poiston |
+| `worker_payments`-rivi | **kyllä** | nollaus tehdään OIKAISUVIENNILLÄ, ei poistolla |
+| Tekijä jolla on erälaskuja | — | deaktivoidaan, ei poisteta |
+
+Kaksi kohtaa joissa tämä menee helposti väärin:
+
+- **Mitätöity ≠ olematon.** Mitätöity erä jätetään pois **summista**
+  (`livePayments`), mutta poiston esteenä se painaa täysin yhtä paljon — se on
+  nimenomaan se tosite jota mitätöinti suojeli. `jobDeletionBlockers` käyttää
+  siksi raakaa listaa, ei `livePayments`ia.
+- **Indeksointi suodatuksen JÄLKEEN.** Erä↔kate- ja erä↔numero-paritukset menevät
+  listaindeksillä. Jos suodatat mitätöidyt pois vasta silmukan sisällä, kaikki
+  myöhemmät erät saavat väärän katteen ja väärän numeron.
+- **Myyjän tiedot luetaan elävästä crew-rivistä** (`buildEraInvoicePdfParams`:
+  Y-tunnus, osoite, IBAN). Siksi tekijää jolla on erälaskuja ei saa poistaa —
+  muuten hänen menneet laskunsa regeneroituisivat ilman Y-tunnusta eivätkä olisi
+  enää kelvollisia tositteita.
+
+### 2. Siirtokiintiö (Neon, 5 GB/kk ilmaisversiossa)
+
+Kanta on Neonissa ja **ilmaisversion siirtokiintiö on ylittynyt kertaalleen** —
+sovellus meni nurin ja kirjautuminen näytti tietokantatarjoajan
+englanninkielisen laskutusvirheen. Syy oli koodissa, ei kuormassa.
+
+Kolme sääntöä:
+
+1. **Älä koskaan `db.select().from(jobs)` monelle riville.** `jobs`-rivi sisältää
+   `projectData`n (karttablobi: havaintokuvat 700 kB, kuitit 700 kB, dokumentit
+   1,5 MB — kymmeniä megatavuja per FR8-keikka) ja kaksi base64-allekirjoitus-PNG:tä
+   (300 kB). Nimeä sarakkeet aina. Yhden rivin `where(eq(jobs.id, …))` on ok.
+2. **`projectData` mukaan vain jos se todella luetaan.** Se oli mukana
+   `rebuildLedgers`issa jossa sitä ei käytetty kertaakaan — ja se ajetaan joka
+   `/api/finance`-haulla, joita Talous-sivu tekee viisi kerralla.
+3. **Ajastin ja pollaus ovat pahimmat**, koska ne jatkuvat vaikka kukaan ei käytä
+   sovellusta: `reconcileMissingPayoutSyncs` (30 min), `/api/calendar.ics`
+   (kalenteriohjelma pollaa itsekseen), asiakkaan seurantasivu ja postilaatikko.
+   Rajaa sarakkeet, suodata `isCustomGig`, ja tarkista näkyvyys clientissä.
+
+Nyrkkisääntö uudelle reitille: **jos vastaus on pelkkiä skalaareja, kyselyn pitää
+olla myös.**
+
 ## Julkaisu ja "Importing a module script failed"
 
 Frontend on **GitHub Pagesissa** (`.github/workflows/deploy.yml`, joka main-push),

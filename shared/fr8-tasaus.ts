@@ -352,7 +352,15 @@ export function buildTasaus(
   const wash = founderWashCounts(project);
   const { p1ByFounder, p2CentsByFounder, p1WindowsTotal } = wash;
   workerP1EarnedCents = Object.values(wash.workerP1EarnedByWorker).reduce((s, c) => s + c, 0);
-  workerP2EarnedCents = Math.max(0, p2Bill.workerCostCents ?? 0);
+  // KELTAISISTA VÄHENNETÄÄN JOHTAJIEN OMA OSUUS. `computeP2Billing.workerCostCents`
+  // laskee palkkion JOKAISESTA pestystä ja lukitusta keltaisesta — myös niistä
+  // jotka johtaja itse pesi. Sama summa annetaan johtajalle vielä kertaalleen
+  // `p2OwnCents`inä, joten se laskettiin kahdesti: kertaalleen tekijäkuluna ja
+  // kertaalleen johtajan ansaintana. Punaisilla sääntö on oikein päin
+  // (`workerP1EarnedByWorker` sisältää vain tekijät), joten tämä yhdenmukaistaa
+  // keltaiset punaisten kanssa.
+  const founderP2Cents = Object.values(p2CentsByFounder).reduce((s, c) => s + c, 0);
+  workerP2EarnedCents = Math.max(0, (p2Bill.workerCostCents ?? 0) - founderP2Cents);
 
   const founderInputs: TasausFounderInput[] = founders.map((f) => ({
     id: f.id,

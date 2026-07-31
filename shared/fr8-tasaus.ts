@@ -47,6 +47,8 @@ export interface TasausEraRow {
   /** Onko saaja kirjattu käsin (eroaa laskuttajasta)? */
   overridden: boolean;
   scope: "p1" | "p2";
+  /** Mitätöity erä — näkyy historiassa, ei lasketa pottiin. */
+  voided?: boolean;
 }
 
 /** Tekijälle mennyt maksu sellaisena kuin tasaus sen näkee. */
@@ -86,6 +88,8 @@ export interface TasausPayment {
   amountCents: number;
   scope?: "p1" | "p2";
   biller?: { id?: string } | null;
+  /** Mitätöity laskutuserä — säilyy tositteena, ei lasketa mihinkään summaan. */
+  voided?: boolean;
 }
 
 export interface TasausBundle {
@@ -249,13 +253,14 @@ export function buildTasaus(
     const scope: "p1" | "p2" = p.scope === "p2" ? "p2" : "p1";
     return {
       index,
-      label: scope === "p2" ? "Keltaiset" : `Erä ${payments.slice(0, index + 1).filter((q) => (q.scope ?? "p1") !== "p2").length}`,
+      label: scope === "p2" ? "Keltaiset" : `Erä ${payments.slice(0, index + 1).filter((q) => (q.scope ?? "p1") !== "p2" && !q.voided).length}`,
       amountCents: Math.round(p.amountCents || 0),
       dateMs: p.t ?? null,
       billerId,
       receivedById,
       overridden: !!manual && manual !== billerId,
       scope,
+      voided: !!p.voided,
     };
   });
 
@@ -264,6 +269,8 @@ export function buildTasaus(
   let p2PotCents = 0;
   let unassignedEraCount = 0;
   for (const e of eras) {
+    // Mitätöity erä näkyy rivinä (tosite), mutta ei ole rahaa kenellekään.
+    if (e.voided) continue;
     if (e.scope === "p2") p2PotCents += e.amountCents; else p1PotCents += e.amountCents;
     if (!e.receivedById) { if (e.amountCents > 0) unassignedEraCount += 1; continue; }
     receivedByFounder[e.receivedById] = (receivedByFounder[e.receivedById] || 0) + e.amountCents;

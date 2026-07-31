@@ -279,3 +279,22 @@ pääsyä siihen):
 
 Ks. myös haaran `claude/puuha-paten-accounting-redesign-iuokbj` PR-kuvaus
 tarkemmalle vaihe-erittelylle.
+
+## Tositteiden säilytys — mitä EI voi poistaa
+
+Kirjanpitolaki vaatii tositteiden säilyttämisen **6 vuotta**. Järjestelmä
+estää nyt poistot jotka veisivät tositteen mukanaan. Sääntö on aina sama:
+*tosite ei katoa, se merkitään mitätöidyksi ja jää riviksi historiaan.*
+
+| Toiminto | Mitä tapahtuu |
+|---|---|
+| Erälaskun mitätöinti | Rivi säilyy (`tila: "hylätty"`), PDF regeneroituu ja on ladattavissa Maksut-välilehdeltä ja tekijän omasta näkymästä. Laskunumero jää käyttöön — numerosarjaan ei tule aukkoa. |
+| Asiakkaan laskutuserän poisto | Lähetetty erä **mitätöidään** (`GigPayment.voided`), ei poisteta. Kaikki summat ohittavat sen (`livePayments`), myös kirjanpidon myyntikirjaus. Vain lähettämätön haamuerä poistetaan oikeasti. |
+| Tekijän poisto keikalta | Jos hänellä on maksettuja maksuja, dokumentteja tai allekirjoitettuja sopimuksia, hänet **deaktivoidaan** eikä poisteta. Vastaus kertoo syyn. |
+| Keikan tai asiakkaan poisto | **Estetty** (409) kun keikalla on maksettuja tekijämaksuja, kuluja, lähetettyjä laskutuseriä tai erälaskuja. Merkitse keikka peruutetuksi sen sijaan. |
+| Palvelumaksuhistorian nollaus | Vaatii perustajan roolin JA `{"confirm":"NOLLAA"}`. Poistettu rivimäärä kirjataan lokiin. |
+| Tekijän 101. payout | Ei putoa enää katosta jos se on **maksettu** — katto koskee vain maksamattomia (`MAX_PAYOUTS_KEPT`). |
+
+**Yhä auki:** tilikauden sulkeminen (`fiscalYears.isClosed`) on skeemassa mutta
+toteuttamatta. Kunnes se on tehty, `rebuildLedgers()` rakentaa päiväkirjan
+uudelleen joka haulla, eli poisto avoimelta tilikaudelta ei jätä vastakirjausta.

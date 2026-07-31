@@ -409,6 +409,8 @@ function round1(n: number): number {
 export interface PaymentLike {
   amountCents: number;
   scope?: "p1" | "p2";
+  /** Mitätöity laskutuserä — säilyy tositteena, ei lasketa summiin. */
+  voided?: boolean;
 }
 
 /**
@@ -420,8 +422,12 @@ export interface PaymentLike {
  * -maksuja, joten p2-maksu ei koskaan kuluta punaisen urakan 4 erän rajaa.
  */
 export function p2InvoiceState(earnedCents: number, payments: PaymentLike[]) {
-  const p2Payments = payments.filter((p) => p.scope === "p2");
-  const p1Payments = payments.filter((p) => p.scope !== "p2");
+  // Mitätöity erä ei ole laskutettua rahaa. Se jää riviksi tositteeksi, mutta
+  // se ei saa näkyä missään summassa — muuten peruttu lasku pitäisi
+  // liikevaihtoa keinotekoisesti ylhäällä.
+  const live = payments.filter((p) => !p.voided);
+  const p2Payments = live.filter((p) => p.scope === "p2");
+  const p1Payments = live.filter((p) => p.scope !== "p2");
   const invoicedCents = p2Payments.reduce((s, p) => s + p.amountCents, 0);
   const p1InvoicedCents = p1Payments.reduce((s, p) => s + p.amountCents, 0);
   return {

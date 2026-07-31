@@ -76,18 +76,50 @@ export default function GigLivePage() {
     if (res.ok && res.data) { setData(res.data); setStatus("ok"); }
   }, [token]);
 
+  /**
+   * Asiakkaan seurantanäkymän päivitys.
+   *
+   * Tämä oli `setInterval(load, 30_000)` ilman mitään ehtoa: jokainen auki
+   * jätetty seurantavälilehti haki koko keikan tilan — karttablobin
+   * havaintokuvineen ja allekirjoituksineen — kaksi kertaa minuutissa,
+   * loputtomiin, myös taustalla ja yön yli. Yksi unohtunut välilehti riitti
+   * polttamaan tietokannan siirtokiintiön.
+   *
+   * Nyt: 2 min välein, vain kun välilehti on näkyvissä, ja heti kun se
+   * palaa näkyviin (silloin luku on tuore juuri kun sitä katsotaan).
+   */
   useEffect(() => {
     if (!token) return;
     let active = true;
+    let iv: ReturnType<typeof setInterval> | null = null;
+
     const load = async () => {
       const res = await api.getGig(token);
       if (!active) return;
       if (res.ok && res.data) { setData(res.data); setStatus("ok"); }
       else setStatus((s) => (s === "ok" ? "ok" : "error"));
     };
-    load();
-    const iv = setInterval(load, 30_000);
-    return () => { active = false; clearInterval(iv); };
+
+    const start = () => {
+      if (iv) return;
+      iv = setInterval(() => { if (!document.hidden) void load(); }, 120_000);
+    };
+    const stop = () => { if (iv) { clearInterval(iv); iv = null; } };
+
+    const onVisibility = () => {
+      if (document.hidden) { stop(); return; }
+      void load();
+      start();
+    };
+
+    void load();
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      active = false;
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [token]);
 
   if (status === "loading") return <LoadingOrb label="Ladataan seurantaa" theme="light" />;

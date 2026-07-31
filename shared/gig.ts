@@ -50,6 +50,25 @@ export interface GigPayment {
    *  per-window billing (shared/p2.ts), kept apart from the fixed P1 instalments.
    *  Absent = P1 (the historical default). */
   scope?: "p1" | "p2";
+  /**
+   * MITÄTÖITY erä. Lähetetty laskutuserä on kirjanpidon tosite (se kirjataan
+   * myyntinä tilille 3000), joten sitä ei saa poistaa — virheellinen erä
+   * merkitään mitätöidyksi ja se jää riviksi historiaan. Kaikki summat
+   * ohittavat mitätöidyn erän: ks. `livePayments`.
+   */
+  voided?: boolean;
+  voidedAt?: number;
+  voidedBy?: string;
+}
+
+/**
+ * Erät jotka lasketaan mukaan rahaan — eli kaikki paitsi mitätöidyt.
+ *
+ * YKSI paikka jossa mitätöinti suodatetaan, jotta se ei unohdu joltakin
+ * summalta. Kaikki laskenta joka lukee `gig.payments` pitäisi lukea tämä.
+ */
+export function livePayments(payments: GigPayment[] | undefined | null): GigPayment[] {
+  return (payments ?? []).filter((p) => !p?.voided);
 }
 
 export interface GigCompany {
@@ -294,6 +313,11 @@ export function sanitizeGigData(input: any): GigData {
         } : undefined,
         eInvoice: p?.eInvoice ? String(p.eInvoice).slice(0, 200) : undefined,
         scope: p?.scope === "p2" ? "p2" as const : p?.scope === "p1" ? "p1" as const : undefined,
+        ...(p?.voided ? {
+          voided: true as const,
+          voidedAt: Number(p.voidedAt) || Date.now(),
+          voidedBy: p.voidedBy ? String(p.voidedBy).slice(0, 40) : undefined,
+        } : {}),
       }))
     : [];
   const str = (v: any, max: number) => (v == null ? undefined : String(v).slice(0, max));

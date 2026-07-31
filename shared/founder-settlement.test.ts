@@ -296,3 +296,51 @@ describe("splitEvenCents", () => {
     expect(splitEvenCents(500, 0)).toEqual([]);
   });
 });
+
+/**
+ * MITÄTÖITY LASKUTUSERÄ säilyy tositteena mutta ei ole kenenkään rahaa.
+ * Testi elää täällä koska tasaus on herkin paikka jossa virhe näkyisi:
+ * mitätöity erä nostaisi pottia ja siirtäisi väärän summan johtajien välillä.
+ */
+describe("mitätöity erä ei ole rahaa", () => {
+  it("p2InvoiceState ohittaa mitätöidyn erän", async () => {
+    const { p2InvoiceState } = await import("./worker-payouts");
+    const withVoid = p2InvoiceState(0, [
+      { amountCents: 157_500 },
+      { amountCents: 157_500, voided: true },
+      { amountCents: 84_000, scope: "p2" },
+    ]);
+    expect(withVoid.p1InvoicedCents).toBe(157_500);
+    expect(withVoid.p1Payments).toBe(1);
+    expect(withVoid.invoicedCents).toBe(84_000);
+  });
+
+  it("buildTasaus ei laske mitätöityä erää pottiin", async () => {
+    const { buildTasaus } = await import("./fr8-tasaus");
+    const project = {
+      version: 1 as const,
+      building: { name: "T", address: "", floors: ["1"], planBase: "/fr8/plans/bp-" },
+      pricePerWindow: 37.5,
+      marks: { "1": { marks: [{ p: 1 as const, x: 1, y: 1 }, { p: 1 as const, x: 2, y: 2 }] } },
+      statuses: { "1#0": "pesty" as const, "1#1": "pesty" as const },
+      washedBy: { "1#0": "joonatan", "1#1": "matias" },
+      customMarks: {}, posOverrides: {}, deleted: {}, log: [], hours: {}, hourLog: [],
+      workers: [],
+      crew: [
+        { id: "joonatan", name: "Joonatan", token: "a", role: "host" as const, perWindowCents: 2000, active: true },
+        { id: "matias", name: "Matias", token: "b", role: "host" as const, perWindowCents: 2000, active: true },
+      ] as any,
+      updatedAt: Date.now(),
+    } as any;
+    const live = buildTasaus(project, [
+      { amountCents: 100_000, biller: { id: "joonatan" } },
+      { amountCents: 100_000, biller: { id: "matias" }, voided: true },
+    ], []);
+    expect(live.input.p1PotCents).toBe(100_000);
+    // Mitätöity rivi näkyy yhä historiassa.
+    expect(live.eras).toHaveLength(2);
+    expect(live.eras[1].voided).toBe(true);
+    // Eikä sen rahaa lasketa Matiaksen kassaan.
+    expect(live.result.rows.find((r) => r.id === "matias")!.receivedCents).toBe(0);
+  });
+});

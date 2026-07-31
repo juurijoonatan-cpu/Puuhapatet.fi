@@ -171,10 +171,17 @@ export default function AdminLoginPage() {
       });
       navigate("/admin/dashboard");
     } else {
+      // Palvelin- tai tietokantahäiriö EI ole kirjautumisvirhe. Aiemmin
+      // molemmat näkyivät otsikolla "Kirjautuminen epäonnistui", joten
+      // tietokannan siirtokiintiön ylitys luki ruudulla ikään kuin salasana
+      // olisi ollut väärin (ja englanniksi). Otsikko seuraa nyt statusta.
+      const isOutage = (res.status ?? 0) >= 500 || res.status === 0 || res.status == null;
       toast({
         variant: "destructive",
-        title: "Kirjautuminen epäonnistui",
-        description: res.error || "Tarkista salasana ja yritä uudelleen.",
+        title: isOutage ? "Palvelu ei vastaa" : "Kirjautuminen epäonnistui",
+        description: res.error || (isOutage
+          ? "Yritä hetken päästä uudelleen."
+          : "Tarkista salasana ja yritä uudelleen."),
       });
     }
 

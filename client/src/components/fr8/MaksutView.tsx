@@ -607,9 +607,28 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                         </span>
                       </div>
                     </div>
-                    {inv.tila !== "hylätty" && (
-                      <div style={{ marginTop: T.space.sm, paddingTop: T.space.sm, borderTop: T.border.divider }}>
-                        <VoidInvoiceButton jobId={jobId} invoiceId={inv.id} name={input.name || inv.senderId} onDone={load} />
+                    {/* MITÄTÖITY LASKU ON YHÄ TOSITE.
+                        Rivi ei koskaan katoa kannasta (mitätöinti on tilamuutos,
+                        ei poisto) ja PDF regeneroituu siitä milloin tahansa —
+                        mutta latausnappi puuttui tästä osiosta kokonaan, joten
+                        lähetetyn ja sitten mitätöidyn laskun tositteeseen ei
+                        päässyt käsiksi mistään. Kirjanpitolaki vaatii tositteen
+                        säilyttämisen 6 vuotta, joten sen pitää myös löytyä.
+
+                        Näytetään PDF vain kun lasku on oikeasti ollut lähetetty
+                        (laskunumero annettu). Tekijän hylkäämä LUONNOS ei ole
+                        tosite eikä siitä ole PDF:ää. */}
+                    {(inv.tila !== "hylätty" || inv.invoiceNumber) && (
+                      <div style={{ marginTop: T.space.sm, paddingTop: T.space.sm, borderTop: T.border.divider, display: "flex", alignItems: "center", gap: T.space.sm + 2, flexWrap: "wrap" }}>
+                        {inv.invoiceNumber && <DownloadPdfButton jobId={jobId} invoiceId={inv.id} />}
+                        {inv.tila !== "hylätty" && (
+                          <VoidInvoiceButton jobId={jobId} invoiceId={inv.id} name={input.name || inv.senderId} onDone={load} />
+                        )}
+                        {inv.tila === "hylätty" && inv.invoiceNumber && (
+                          <span style={{ fontFamily: FONT, fontSize: T.size.xs, color: T.text.faint }}>
+                            Mitätöity · lasku {inv.invoiceNumber} säilyy tositteena
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>

@@ -340,6 +340,9 @@ export function withAuth(headers: Record<string, string> = {}): Record<string, s
 
 // On 401 from a protected endpoint the token is missing/expired → drop it and
 // bounce to the login screen. Public pages never reach this path.
+/** Kirjautumisreitti — 401 siltä tarkoittaa väärää salasanaa, ei mennyttä sessiota. */
+const LOGIN_PATH = "/api/admin/login";
+
 function handleUnauthorized(): void {
   clearAdminToken();
   if (typeof window !== "undefined" && !window.location.pathname.startsWith("/admin/login")) {
@@ -420,6 +423,12 @@ interface ApiResponse<T> {
   ok: boolean;
   data?: T;
   error?: string;
+  /** HTTP-status kun pyyntö meni perille. Puuttuu kun verkko petti kokonaan.
+   *  Tarvitaan jotta kutsuja voi erottaa "väärä salasana" (401) tilanteesta
+   *  "palvelin/tietokanta on rikki" (5xx) — ne vaativat eri viestin. */
+  status?: number;
+  /** Palvelimen koneluettava syy (server/errors.ts), esim. "db_quota". */
+  code?: string;
 }
 
 async function request<T>(
@@ -440,15 +449,26 @@ async function request<T>(
       signal: controller.signal,
     });
     if (res.status === 401) {
+      // Kirjautumispyyntö itse on poikkeus: siinä 401 EI tarkoita "sessio
+      // vanhentui" vaan "väärä salasana". Ilman tätä väärä salasana näytti
+      // tekstin "Kirjautuminen vaaditaan" ja nollasi tokenin turhaan.
+      if (path === LOGIN_PATH) {
+        try {
+          const errData = await res.json();
+          return { ok: false, error: errData.error || "Virheellinen salasana.", status: 401, code: errData.code };
+        } catch {
+          return { ok: false, error: "Virheellinen salasana.", status: 401 };
+        }
+      }
       handleUnauthorized();
-      return { ok: false, error: "Kirjautuminen vaaditaan" };
+      return { ok: false, error: "Kirjautuminen vaaditaan", status: 401 };
     }
     if (!res.ok) {
       try {
         const errData = await res.json();
-        return { ok: false, error: errData.error || `HTTP ${res.status}` };
+        return { ok: false, error: errData.error || `HTTP ${res.status}`, status: res.status, code: errData.code };
       } catch {
-        return { ok: false, error: `HTTP ${res.status}` };
+        return { ok: false, error: `HTTP ${res.status}`, status: res.status };
       }
     }
     const data = await res.json();
@@ -1049,8 +1069,14 @@ export const api = {
     request<{ count: number }>("GET", `/api/customers/${customerId}/job-count`),
 
   // Server-side login — verifies credentials and returns an HMAC-signed token.
+  /** Yhden keikan allekirjoitukset. Keikkalista ei enää palauta base64-PNG:itä,
+   *  joten keikkakortti hakee ne vasta auetessaan. */
+  getJobSignatures: (jobId: number) =>
+    request<{ ok: boolean; customerSignature: string | null; staffSignature: string | null }>(
+      "GET", `/api/jobs/${jobId}/signatures`),
+
   adminLogin: (userId: string, password: string) =>
-    request<{ ok: boolean; token: string; role: string; mustChangePassword?: boolean }>("POST", "/api/admin/login", { userId, password }),
+    request<{ ok: boolean; token: string; role: string; mustChangePassword?: boolean }>("POST", LOGIN_PATH, { userId, password }),
 
   // Resolve the logged-in user's personal worker dashboard link (dashboard-only users).
   getMyDashboard: () =>

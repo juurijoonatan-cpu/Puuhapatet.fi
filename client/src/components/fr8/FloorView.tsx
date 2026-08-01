@@ -70,6 +70,13 @@ interface Props {
   canObserve?: boolean;
   /** Persist an observation. Empty text + no image clears it. */
   onSetObservation?: (key: string, text: string, imageDataUrl?: string) => void;
+  /**
+   * Hae yhden havainnon kuva pyynnöstä. Palvelin lähettää havainnoista vain
+   * tekstin ja `hasImage`-lipun, joten kuva ladataan vasta kun pistettä
+   * napautetaan. Ilman tätä propia `hasImage`-havainnon kuvaa ei näytetä eikä
+   * — tärkeämpää — voi vahingossa tyhjentää tallennettaessa.
+   */
+  onLoadObservationImage?: (key: string) => Promise<string | undefined>;
   /** The single "work happening here now" highlight (shown to the customer too). */
   activeZone?: ProjActiveZone | null;
   onSetActiveZone?: (floor: string, x: number, y: number) => void;
@@ -203,7 +210,7 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, guided, floorFocus, restrictFloors }: Props) {
+export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, onLoadObservationImage, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, guided, floorFocus, restrictFloors }: Props) {
   // Discreet worker map: when restrictFloors is set, show ONLY those floors and
   // hide the rest, so a regular worker sees exactly the opened floors and nothing
   // else. Founders (restrictFloors null) always see every floor.
@@ -229,6 +236,17 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   // Per-window observation editor (text + optional photo) inside the status popover.
   const [obsDraft, setObsDraft] = useState("");
   const [obsImage, setObsImage] = useState<string | undefined>(undefined);
+  // Onko kuva jo kädessä? "loading" = havainnossa on kuva mutta sitä vasta
+  // haetaan. Tämä on eri asia kuin `obsImage === undefined`, joka tarkoittaa
+  // myös "ei kuvaa" ja "käyttäjä poisti kuvan" — ilman erottelua tallennus
+  // lähettäisi latauksen aikana `undefined`in ja PYYHKISI palvelimen kuvan.
+  const [obsImageState, setObsImageState] = useState<"none" | "loading" | "ready">("none");
+  // Viimeisimmän kuvapyynnön ikkuna — vanhentunut vastaus ei saa ylikirjoittaa
+  // jo vaihdettua editoria.
+  const obsReqRef = useRef<string | null>(null);
+  // "Havainnossa on kuva" — myös silloin kun sitä vielä ladataan. Käyttöliittymä
+  // ei siis tarjoa "+ Kuva" -nappia päälle latautuvan kuvan.
+  const obsHasPhoto = !!obsImage || obsImageState === "loading";
   const [obsBusy, setObsBusy] = useState(false);
   const [obsOpen, setObsOpen] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
@@ -466,10 +484,23 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
       setActiveNote(null);
       setShowWasherPicker(false); // names stay hidden until "Vaihda" is tapped
       setShowSplitPicker(false);
-      // Load any existing observation for this window into the editor.
+      // Load any existing observation for this window into the editor. Kuva tulee
+      // palvelimelta vasta pyynnöstä (`hasImage`), joten se haetaan tässä — vain
+      // tälle yhdelle ikkunalle, ei koko kerrokselle.
       const ex = next ? observations?.[next] : undefined;
+      obsReqRef.current = next;
       setObsDraft(ex?.text ?? "");
       setObsImage(ex?.imageDataUrl);
+      if (ex?.imageDataUrl) setObsImageState("ready");
+      else if (next && ex?.hasImage && onLoadObservationImage) {
+        setObsImageState("loading");
+        void onLoadObservationImage(next).then((url) => {
+          // Ikkuna on voitu vaihtaa latauksen aikana — älä sotke uutta editoria.
+          if (obsReqRef.current !== next) return;
+          setObsImage(url);
+          setObsImageState(url ? "ready" : "none");
+        }).catch(() => { if (obsReqRef.current === next) setObsImageState("none"); });
+      } else setObsImageState("none");
       setObsOpen(!!ex);
       setActiveOrb(next);
     }
@@ -503,6 +534,9 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
 
   function saveObservation() {
     if (!activeOrb || !onSetObservation) return;
+    // Kuva on vielä matkalla: `obsImage` olisi nyt `undefined` ja tallennus
+    // pyyhkisi palvelimelta kuvan jota käyttäjä ei edes koskenut. Odota.
+    if (obsImageState === "loading") return;
     setObsBusy(true);
     onSetObservation(activeOrb, obsDraft.trim(), obsImage);
     setObsBusy(false);
@@ -1121,8 +1155,8 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                   <button className="status-opt-btn" onClick={() => setObsOpen(true)}
                     style={{ border: "1px solid transparent" }}>
                     <span style={{ fontSize: "13px" }}>💬</span>
-                    <span style={{ flex: 1, textAlign: "left" }}>{(obsDraft.trim() || obsImage) ? "Muokkaa huomiota" : "Lisää huomio"}</span>
-                    {(obsDraft.trim() || obsImage) && <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#7CE0A6", flexShrink: 0 }} />}
+                    <span style={{ flex: 1, textAlign: "left" }}>{(obsDraft.trim() || obsHasPhoto) ? "Muokkaa huomiota" : "Lisää huomio"}</span>
+                    {(obsDraft.trim() || obsHasPhoto) && <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#7CE0A6", flexShrink: 0 }} />}
                   </button>
                 ) : (
                   <>
@@ -1130,24 +1164,29 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                     <textarea value={obsDraft} onChange={(e) => setObsDraft(e.target.value)} rows={2}
                       placeholder="Esim. rikkinäinen tiiviste, naarmu lasissa…" autoFocus
                       style={{ width: "100%", resize: "none", padding: "8px 10px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(0,0,0,0.35)", color: "#fff", fontSize: "12.5px", outline: "none", fontFamily: "var(--font-onest, system-ui, sans-serif)", boxSizing: "border-box" }} />
+                    {obsImageState === "loading" && (
+                      <div style={{ marginTop: "8px", padding: "14px 0", textAlign: "center", borderRadius: "9px", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.45)", fontSize: "11.5px" }}>
+                        Ladataan kuvaa…
+                      </div>
+                    )}
                     {obsImage && (
                       <div style={{ position: "relative", marginTop: "8px" }}>
                         <img src={obsImage} alt="huomio" style={{ width: "100%", maxHeight: "120px", objectFit: "cover", borderRadius: "9px", display: "block" }} />
-                        <button onClick={() => setObsImage(undefined)} aria-label="Poista kuva"
+                        <button onClick={() => { setObsImage(undefined); setObsImageState("none"); }} aria-label="Poista kuva"
                           style={{ position: "absolute", top: 5, right: 5, width: 22, height: 22, borderRadius: "50%", border: "none", background: "rgba(0,0,0,0.6)", color: "#fff", fontSize: "13px", cursor: "pointer", lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
                       </div>
                     )}
                     <div style={{ display: "flex", gap: "7px", marginTop: "8px" }}>
-                      {!obsImage && (
+                      {!obsHasPhoto && (
                         <label style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "8px 11px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.16)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.8)", fontSize: "12.5px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", whiteSpace: "nowrap" }}>
                           + Kuva
                           <input type="file" accept="image/*" style={{ display: "none" }}
                             onChange={(e) => { const f = e.target.files?.[0]; if (f) pickObservationImage(f); e.currentTarget.value = ""; }} />
                         </label>
                       )}
-                      <button onClick={saveObservation} disabled={obsBusy}
-                        style={{ flex: 1, padding: "8px 12px", borderRadius: "10px", border: "none", background: "#fff", color: "#0a0a0c", fontSize: "12.5px", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", opacity: obsBusy ? 0.6 : 1 }}>
-                        {(obsDraft.trim() || obsImage) ? "Tallenna" : "Poista huomio"}
+                      <button onClick={saveObservation} disabled={obsBusy || obsImageState === "loading"}
+                        style={{ flex: 1, padding: "8px 12px", borderRadius: "10px", border: "none", background: "#fff", color: "#0a0a0c", fontSize: "12.5px", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", opacity: (obsBusy || obsImageState === "loading") ? 0.6 : 1 }}>
+                        {(obsDraft.trim() || obsHasPhoto) ? "Tallenna" : "Poista huomio"}
                       </button>
                     </div>
                   </>

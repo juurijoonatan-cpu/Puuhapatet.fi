@@ -29,7 +29,7 @@ import {
 } from "@shared/pricing";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, livePayments, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeP2Billing, customerAddedKeys, emptyP2State, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
@@ -4854,9 +4854,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         // Navigation markers + the live "work happening here now" highlight so the
         // customer can see ladders/entrances/hazards and where work is in progress.
         notes: proj.notes ?? {},
-        // Per-window observations the workers left (text + optional photo) — shown
-        // as small dismissible popups on the customer map.
-        observations: proj.observations ?? {},
+        // Per-window observations the workers left — shown as small dismissible
+        // popups on the customer map. Kuva EI tule mukana: tämä on se sivu jota
+        // asiakkaan selain pollaa itsekseen, ja kuva haetaan vasta napautuksesta
+        // (`/api/gig/:token/observation-image`).
+        observations: stripObservationImages(proj.observations),
         activeZone: proj.activeZone ?? null,
       } : null;
       // Only expose what the customer is meant to see — no internal billing notes.
@@ -4926,6 +4928,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           address: gig.company?.address ?? gig.company?.billing ?? null,
         },
       });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Yhden havainnon kuva asiakkaan seurantasivulle, pyynnöstä. Seurantasivu on
+  // se joka pollaa itsekseen, joten kuvat eivät saa olla mukana joka kierroksella
+  // — vain kartan 💬-merkki ja teksti. Sama tokenointi kuin seurannassa itsessään.
+  app.get("/api/gig/:token/observation-image", async (req, res) => {
+    try {
+      const [row] = await db
+        .select({ isCustomGig: jobs.isCustomGig, projectData: jobs.projectData })
+        .from(jobs)
+        .where(eq(jobs.quoteToken, req.params.token));
+      if (!row || !row.isCustomGig) return res.status(404).json({ error: "Seurantaa ei löydy" });
+      const proj = parseProject(row.projectData ?? null);
+      const key = String(req.query.key ?? "").slice(0, 64);
+      const img = proj?.observations?.[key]?.imageDataUrl;
+      if (!img) return res.status(404).json({ error: "Kuvaa ei löydy" });
+      res.json({ imageDataUrl: img });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -6708,7 +6730,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       keskenBy: project.keskenBy ?? {},
       workerNames,
       notes: project.notes ?? {},
-      observations: project.observations ?? {},
+      // Ilman kuvadataa. Tekijän näkymä palautetaan 13 reitiltä — jokainen
+      // ikkunanapautus on yksi — joten kuvat lähtivät kymmeniä kertoja tunnissa.
+      // Kuva haetaan `/api/crew/:token/observation-image` -reitiltä napautuksesta.
+      observations: stripObservationImages(project.observations),
       activeZone: project.activeZone ?? null,
       customMarks: project.customMarks,
       posOverrides: project.posOverrides,
@@ -6975,6 +7000,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
       res.json({ ok: true, view: await workerView(job, saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Yhden havainnon kuva, pyynnöstä. Tekijän näkymä lähettää havainnoista vain
+  // tekstin + `hasImage`-lipun (ks. stripObservationImages), joten kuva siirtyy
+  // vasta kun sitä oikeasti katsotaan — ei enää jokaisen ikkunanapautuksen
+  // mukana. Sama tokenointi kuin muissakin crew-reiteissä.
+  app.get("/api/crew/:token/observation-image", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const key = String(req.query.key ?? "").slice(0, 64);
+      const img = found.project.observations?.[key]?.imageDataUrl;
+      if (!img) return res.status(404).json({ error: "Kuvaa ei löydy" });
+      res.json({ imageDataUrl: img });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }

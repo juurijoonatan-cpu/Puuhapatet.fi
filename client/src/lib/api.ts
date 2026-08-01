@@ -1267,6 +1267,14 @@ export const api = {
   crewSetWindowObservation: (token: string, key: string, text: string, imageDataUrl?: string) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/window-observation`, { key, text, imageDataUrl }),
 
+  // Yhden havainnon kuva pyynnöstä. Näkymä lähettää havainnoista vain tekstin ja
+  // `hasImage`-lipun, joten kuva siirtyy vasta kun pistettä napautetaan.
+  crewObservationImage: (token: string, key: string) =>
+    request<{ imageDataUrl: string }>("GET", `/api/crew/${token}/observation-image?key=${encodeURIComponent(key)}`),
+
+  gigObservationImage: (token: string, key: string) =>
+    request<{ imageDataUrl: string }>("GET", `/api/gig/${token}/observation-image?key=${encodeURIComponent(key)}`),
+
   // Worker map notes (simple shared markers on the floor plan).
   crewAddMapNote: (token: string, floor: string, x: number, y: number, kind: string, text?: string) =>
     request<{ ok: boolean; key: string; view: WorkerView }>("POST", `/api/crew/${token}/map-note`, { floor, x, y, kind, text }),

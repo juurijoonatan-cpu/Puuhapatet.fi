@@ -61,6 +61,10 @@ import { registerFinanceRoutes } from "./finance/routes";
 import { uploadPdf } from "./drive/upload";
 import { BRAND_BILLERS as DRIVE_BRAND_BILLERS } from "@shared/billers";
 
+/** Kohteen esittelykuvan kokokatto (~1 MB base64). Sarake oli aiemmin täysin
+ *  rajaton — selain sai tallentaa siihen minkä kokoisen kuvan tahansa. */
+const MAX_PROPERTY_IMAGE_LEN = 1_000_000;
+
 /** Best-effort Drive backup for an invoice PDF — never throws, never blocks
  *  the response that generated the PDF. See docs/google-drive-backup.md. */
 function backupInvoicePdf(
@@ -1636,6 +1640,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         body.quoteVideoUrl    = null;  // no longer needed
         body.pendingWorkers   = null;  // invite state irrelevant after completion
       }
+      // KOKORAJAT. Nämä kolme saraketta olivat ainoat kuvakentät joilla ei ollut
+      // mitään kattoa: `req.body` meni suoraan `db.update`iin, joten selain sai
+      // tallentaa niihin minkä kokoisen base64-kuvan tahansa. Muualla vastaavat
+      // on katottu (allekirjoitus 300 kB, kuitti 700 kB, dokumentti 1,5 MB).
+      // Allekirjoitus on pieni viivapiirros — 300 kB on reilusti yli tarpeen,
+      // eli tämä ei katkaise yhtään aitoa allekirjoitusta.
+      const capDataUrl = (v: unknown, max: number) =>
+        typeof v === "string" && v.length > max ? v.slice(0, max) : v;
+      if (body.customerSignature != null) body.customerSignature = capDataUrl(body.customerSignature, MAX_SIGNATURE_DATAURL_LEN);
+      if (body.staffSignature != null) body.staffSignature = capDataUrl(body.staffSignature, MAX_SIGNATURE_DATAURL_LEN);
+      if (body.propertyImageUrl != null) body.propertyImageUrl = capDataUrl(body.propertyImageUrl, MAX_PROPERTY_IMAGE_LEN);
       const [row] = await db
         .update(jobs)
         .set({ ...body, updatedAt: new Date() })
@@ -5696,15 +5711,27 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const gig = sanitizeGigData(
           syncGigSectorsFromProject(parseGig(job.gigData) ?? emptyGigData(), project),
         );
-        extra.gigData = JSON.stringify(gig);
+        const nextGigJson = JSON.stringify(gig);
+        if (nextGigJson !== (job.gigData ?? null)) extra.gigData = nextGigJson;
         // Sopimusarvo = kiinteä P1-katto + lukitut P2-hinnat (kasvava summa).
-        extra.agreedPrice = computeTotals(gig).capCents + computeP2Billing(project).lockedSumCents;
-        extra.isCustomGig = true;
+        const nextAgreed = computeTotals(gig).capCents + computeP2Billing(project).lockedSumCents;
+        if (nextAgreed !== job.agreedPrice) extra.agreedPrice = nextAgreed;
+        if (!job.isCustomGig) extra.isCustomGig = true;
       }
 
-      await db.update(jobs)
-        .set({ projectData: JSON.stringify(project), updatedAt: new Date(), ...extra })
-        .where(eq(jobs.id, id));
+      // Sama tyhjän kirjoituksen esto kuin `saveProject`issa: adminin
+      // autosave lähettää koko blobin 700 ms jokaisen muutoksen jälkeen, ja
+      // sivulta poistuttaessa vielä kerran — usein tavulleen samana.
+      const contentChanged = !stored || !sameProjectContent(stored, project);
+      if (contentChanged || Object.keys(extra).length > 0) {
+        await db.update(jobs)
+          .set({
+            ...(contentChanged ? { projectData: JSON.stringify(project) } : {}),
+            updatedAt: new Date(),
+            ...extra,
+          })
+          .where(eq(jobs.id, id));
+      }
       res.json({
         ok: true,
         project,
@@ -6487,9 +6514,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     // kirjoitusta — niin tekijän ikkunamerkintä ei koskaan yliaja asiakkaan
     // samaan aikaan lukitsemaa hintaa, perustajan ohjausasetusta eikä
     // rahankirjausta siitä kuka sai erän ja kuka maksoi tekijän.
+    let stored: ProjectData | null = null;
     if (!opts?.p2Mutation || !opts?.guidedMutation || !opts?.settlementMutation) {
       const [fresh] = await db.select({ projectData: jobs.projectData }).from(jobs).where(eq(jobs.id, job.id));
-      const stored = fresh ? parseProject(fresh.projectData ?? null) : null;
+      stored = fresh ? parseProject(fresh.projectData ?? null) : null;
       if (!opts?.p2Mutation) {
         const storedP2 = stored ? stored.p2 : clean.p2;
         if (storedP2) clean.p2 = storedP2; else delete clean.p2;
@@ -6503,6 +6531,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         if (storedSettlement) clean.settlement = storedSettlement; else delete clean.settlement;
       }
     }
+    const nextProjectJson = JSON.stringify(clean);
+
     const totals = computeProjectTotals(clean);
     // Keep the customer's billing view (gig sectors) in sync with the map, just
     // like the admin project save does — so worker marks flow to /seuranta too.
@@ -6511,15 +6541,50 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const gig = sanitizeGigData(
         syncGigSectorsFromProject(parseGig(job.gigData) ?? emptyGigData(), clean),
       );
-      extra.gigData = JSON.stringify(gig);
+      const nextGigJson = JSON.stringify(gig);
+      // gigData kirjoitetaan VAIN jos se oikeasti muuttui. Sektorit johdetaan
+      // kartasta, joten valtaosa tallennuksista tuottaa tavulleen saman
+      // gig-blobin — ja sen mukana lähtisi silti asiakkaan allekirjoitus-PNG
+      // (300 kB) uudelleen kantaan joka kerta.
+      if (nextGigJson !== (job.gigData ?? null)) extra.gigData = nextGigJson;
       // Sopimusarvo = kiinteä P1-katto + lukitut P2-hinnat (kasvava summa).
-      extra.agreedPrice = computeTotals(gig).capCents + computeP2Billing(clean).lockedSumCents;
-      extra.isCustomGig = true;
+      const nextAgreed = computeTotals(gig).capCents + computeP2Billing(clean).lockedSumCents;
+      if (nextAgreed !== job.agreedPrice) extra.agreedPrice = nextAgreed;
+      if (!job.isCustomGig) extra.isCustomGig = true;
     }
+
+    /**
+     * TYHJÄN KIRJOITUKSEN ESTO — tämä on Neonilla iso asia.
+     *
+     * Postgres ei päivitä TOAST-saraketta osittain: kun `projectData` annetaan
+     * `.set()`iin, koko monen megatavun arvo kirjoitetaan uusina TOAST-paloina
+     * ja uutena heap-tuplena — myös silloin kun arvo on tavulleen sama. Neonin
+     * tallennus on copy-on-write historiaikkunalla, joten jokainen tuollainen
+     * turha kirjoitus jää laskutettavaan tallennustilaan kunnes historia
+     * vanhenee. Yksi ikkunanapautus kirjoitti ~3,3 MB muuttaakseen ~100 tavua.
+     *
+     * Vertailu tehdään sanitoitua vastaan sanitoitua: `sanitizeProjectData`
+     * rakentaa kentät aina samassa järjestyksessä, joten JSON-merkkijonot ovat
+     * vertailukelpoisia. `updatedAt` nollataan molemmista — se on kellonaika,
+     * ei sisältöä, ja ilman sitä mikään vertailu ei koskaan osuisi.
+     */
+    const contentChanged = !stored || !sameProjectContent(stored, clean);
+    if (!contentChanged && Object.keys(extra).length === 0) return clean;
+
     await db.update(jobs)
-      .set({ projectData: JSON.stringify(clean), updatedAt: new Date(), ...extra })
+      .set({
+        ...(contentChanged ? { projectData: nextProjectJson } : {}),
+        updatedAt: new Date(),
+        ...extra,
+      })
       .where(eq(jobs.id, job.id));
     return clean;
+  }
+
+  /** Onko kahden karttatilan SISÄLTÖ sama? Aikaleima ei ole sisältöä. */
+  function sameProjectContent(a: ProjectData, b: ProjectData): boolean {
+    return JSON.stringify({ ...sanitizeProjectData(a), updatedAt: 0 })
+      === JSON.stringify({ ...b, updatedAt: 0 });
   }
 
   // Build the worker-facing view: floor map + their own progress, NO gig price.
@@ -7696,10 +7761,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // never shifts). Shared by the manual-document endpoint and the automatic
   // settlement tositteet.
   async function attachPersonDocument(wid: string, doc: CrewDocument, dedupe = false): Promise<boolean> {
-    const allJobs = (await db.select(MONEY_JOB_COLS).from(jobs)) as typeof jobs.$inferSelect[];
+    // Etsintä lukee VAIN karttablobin. Aiemmin tässä oli `MONEY_JOB_COLS`,
+    // joka veti mukanaan myös jokaisen keikan `gigData`n — asiakkaan
+    // allekirjoitus-PNG (satoja kilotavuja) siinä sisällä — pelkästään sen
+    // selvittämiseksi kenen riviin dokumentti liitetään. Tasauksen kirjaus
+    // kutsuu tätä kahdesti, eli se oli kaksi turhaa blobilukua koko taulusta
+    // yhtä kirjanpitomerkintää kohden. Osuman jälkeen haetaan se yksi rivi
+    // kokonaan, koska `saveProject` tarvitsee `gigData`n sektorisynkkaan.
+    const allJobs = await db.select({ id: jobs.id, projectData: jobs.projectData }).from(jobs);
+    const fullJob = async (id: number) => {
+      const [row] = await db.select(CREW_JOB_COLS).from(jobs).where(eq(jobs.id, id));
+      return row as typeof jobs.$inferSelect | undefined;
+    };
     for (const pred of [matchesWorkerExact, matchesWorkerByName]) {
-      for (const job of allJobs) {
-        const project = parseProject(job.projectData ?? null);
+      for (const row of allJobs) {
+        const project = parseProject(row.projectData ?? null);
         if (!project?.crew) continue;
         const idx = project.crew.findIndex((c) => pred(c, wid));
         if (idx < 0) continue;
@@ -7709,6 +7785,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         if (dedupe && (project.crew[idx].documents || []).some(
           (d) => d.desc === doc.desc && d.amountCents === doc.amountCents,
         )) return true;
+        const job = await fullJob(row.id);
+        if (!job) continue;
         project.crew[idx] = { ...project.crew[idx], documents: [doc, ...(project.crew[idx].documents || [])] };
         await saveProject(job, project);
         return true;
@@ -7716,8 +7794,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
     const biller = BRAND_BILLERS.find((b) => b.id === wid);
     if (biller) {
-      for (const job of allJobs) {
-        const project = parseProject(job.projectData ?? null);
+      for (const row of allJobs) {
+        const project = parseProject(row.projectData ?? null);
         if (!project) continue;
         const member = sanitizeCrewMember({
           id: biller.id, token: await genUniqueCrewToken(), name: biller.name,
@@ -7725,6 +7803,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           agreements: [], notes: [], createdAt: Date.now(), documents: [doc],
         });
         if (!member) break;
+        const job = await fullJob(row.id);
+        if (!job) continue;
         project.crew = [...(project.crew || []), member];
         await saveProject(job, project);
         return true;

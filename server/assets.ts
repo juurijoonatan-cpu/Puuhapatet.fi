@@ -88,10 +88,16 @@ export async function resolveAsset(
 export async function assetStats(jobId: number): Promise<{
   count: number; bytes: number; blobBytes: number; gigBytes: number; perTapBytes: number;
 }> {
-  const [row] = await db.select({
-    count: sql<number>`count(*)::int`,
-    bytes: sql<number>`coalesce(sum(${jobAssets.bytes}), 0)::int`,
-  }).from(jobAssets).where(eq(jobAssets.jobId, jobId));
+  // Taulua ei ehkä ole vielä luotu (migraatio ei ole päässyt ajoon esim.
+  // kiintiökatkon takia). Mittari ei saa siitä kaatua — se on juuri se työkalu
+  // jolla tilannetta selvitetään, joten sen pitää vastata aina.
+  let row: { count: number; bytes: number } | undefined;
+  try {
+    [row] = await db.select({
+      count: sql<number>`count(*)::int`,
+      bytes: sql<number>`coalesce(sum(${jobAssets.bytes}), 0)::int`,
+    }).from(jobAssets).where(eq(jobAssets.jobId, jobId));
+  } catch { row = undefined; }
 
   // `pg_column_size` antaa PAKATUN koon levyllä; `octet_length` antaa sen mikä
   // oikeasti siirtyy verkon yli. Siirtomittari kiinnostaa, joten jälkimmäinen.

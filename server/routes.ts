@@ -6706,19 +6706,53 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     // rahankirjausta siitä kuka sai erän ja kuka maksoi tekijän.
     let stored: ProjectData | null = null;
     if (!opts?.p2Mutation || !opts?.guidedMutation || !opts?.settlementMutation) {
-      const [fresh] = await db.select({ projectData: jobs.projectData }).from(jobs).where(eq(jobs.id, job.id));
-      stored = fresh ? parseProject(fresh.projectData ?? null) : null;
+      /**
+       * VAIN KOLME KENTTÄÄ, EI KOKO BLOBIA.
+       *
+       * Tämä luki aiemmin `projectData`n kokonaisuudessaan pelkästään
+       * kolmen pienen alipuun takia. Tekijän ikkunanapautus luki siis blobin
+       * KAHDESTI: kerran `findJobByCrewToken`issa ja kerran tässä. Kun blobi
+       * on megatavuja, se on suoraan kaksinkertainen lasku Neonin
+       * siirtomittarissa — ja tämä on järjestelmän kuumin polku, koska
+       * tekijät napauttavat satoja ikkunoita per keikka.
+       *
+       * Postgres poimii alipuut palvelimen päässä ja lähettää vain ne, joten
+       * verkon yli tulee kilotavuja megatavujen sijaan. Suojaus on täsmälleen
+       * sama: kannan tuorein arvo voittaa, jottei tekijän merkintä yliaja
+       * asiakkaan hintaa, perustajan ohjausasetusta tai rahankirjausta.
+       *
+       * Jos poiminta epäonnistuu (esim. vioittunut JSON), pudotaan takaisin
+       * koko blobin lukuun — hitaampi mutta varma.
+       */
+      let picked: { p2?: unknown; guided?: unknown; settlement?: unknown } | null = null;
+      try {
+        const r: any = await db.execute(sql`
+          select project_data::jsonb -> 'p2'         as p2,
+                 project_data::jsonb -> 'guided'     as guided,
+                 project_data::jsonb -> 'settlement' as settlement
+          from jobs where id = ${job.id} and project_data is not null
+        `);
+        const row = (r?.rows ?? r)?.[0];
+        if (row) picked = row;
+      } catch {
+        picked = null;
+      }
+      if (!picked) {
+        const [fresh] = await db.select({ projectData: jobs.projectData }).from(jobs).where(eq(jobs.id, job.id));
+        stored = fresh ? parseProject(fresh.projectData ?? null) : null;
+        picked = stored ? { p2: stored.p2, guided: stored.guided, settlement: stored.settlement } : {};
+      }
       if (!opts?.p2Mutation) {
-        const storedP2 = stored ? stored.p2 : clean.p2;
-        if (storedP2) clean.p2 = storedP2; else delete clean.p2;
+        const storedP2 = picked.p2 ?? undefined;
+        if (storedP2) clean.p2 = storedP2 as ProjectData["p2"]; else delete clean.p2;
       }
       if (!opts?.guidedMutation) {
-        const storedGuided = stored ? stored.guided : clean.guided;
-        if (storedGuided) clean.guided = storedGuided; else delete clean.guided;
+        const storedGuided = picked.guided ?? undefined;
+        if (storedGuided) clean.guided = storedGuided as ProjectData["guided"]; else delete clean.guided;
       }
       if (!opts?.settlementMutation) {
-        const storedSettlement = stored ? stored.settlement : clean.settlement;
-        if (storedSettlement) clean.settlement = storedSettlement; else delete clean.settlement;
+        const storedSettlement = picked.settlement ?? undefined;
+        if (storedSettlement) clean.settlement = storedSettlement as ProjectData["settlement"]; else delete clean.settlement;
       }
     }
     const nextProjectJson = JSON.stringify(clean);
@@ -6757,6 +6791,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
      * rakentaa kentät aina samassa järjestyksessä, joten JSON-merkkijonot ovat
      * vertailukelpoisia. `updatedAt` nollataan molemmista — se on kellonaika,
      * ei sisältöä, ja ilman sitä mikään vertailu ei koskaan osuisi.
+     *
+     * HUOM: `stored` on nyt asetettu vain siinä harvinaisessa tapauksessa että
+     * JSON-poiminta epäonnistui ja jouduttiin lukemaan koko blobi. Muuten
+     * vertailua ei voi tehdä eikä tehdä — ja se on tietoinen valinta:
+     * lukeminen on Neonilla mitattu ja rajattu resurssi (5 GB/kk),
+     * tallennustila ei ole (käytössä 6 %). Koko blobin lukeminen pelkän
+     * turhan kirjoituksen välttämiseksi maksaisi enemmän kuin säästäisi.
+     * Adminin autosavella — joka oikeasti lähettää saman blobin uudestaan —
+     * on oma vertailunsa PATCH-reitillä, ja se säilyy.
      */
     const contentChanged = !stored || !sameProjectContent(stored, clean);
     if (!contentChanged && Object.keys(extra).length === 0) return clean;

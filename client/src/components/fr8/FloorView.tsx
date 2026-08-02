@@ -352,6 +352,12 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   }
 
   const points = getPoints(floor, marks, posOverrides, customMarks, deleted);
+  // Ohjatun etenemisen ehdottama seuraava ikkuna, jos se on TÄLLÄ kerroksella.
+  // `nextKey` on muotoa "<kerros>#<n>", joten kerrosvaihto piilottaa renkaan
+  // itsestään eikä sitä tarvitse erikseen tyhjentää.
+  const guidedNextPoint = guided?.nextKey
+    ? points.find((p) => p.key === guided.nextKey) ?? null
+    : null;
 
   // ── P2 (keltaiset ikkunat) helpers ──────────────────────────────────────────
   const p2OfferFor = (key: string): P2Offer | undefined => p2?.offers?.[key];
@@ -907,6 +913,27 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                   />
                 );
               })}
+
+              {/* SEURAAVA IKKUNA — ohjatun etenemisen opastin.
+                  `computeGuided` on laskenut `nextKey`:n koko ajan (kesken-työt
+                  ensin, sitten pyyhkäisy ylhäältä alas, ankkuroituna viimeksi
+                  pestyyn) — sitä ei vain koskaan piirretty, joten tekijä ei
+                  nähnyt ehdotusta mistään. Rengas ei estä mitään: kaikki avoimen
+                  kerroksen pisteet ovat yhtä lailla painettavissa, tämä vain
+                  kertoo mistä kannattaa jatkaa. */}
+              {guided?.enabled && guidedNextPoint && (
+                <span aria-hidden data-fr8-next
+                  style={{
+                    position: "absolute",
+                    left: `${guidedNextPoint.x}%`, top: `${guidedNextPoint.y}%`,
+                    transform: "translate(-50%,-50%)",
+                    width: "30px", height: "30px", borderRadius: "50%",
+                    border: "2px solid #5fe08a",
+                    boxShadow: "0 0 0 5px rgba(95,224,138,0.14)",
+                    animation: "fr8-zonePulse 1.8s ease-in-out infinite",
+                    pointerEvents: "none", zIndex: 4,
+                  }} />
+              )}
 
               {/* Kartalla EI näytetä hintoja. Sadan pisteen hintakupla-sumppu teki
                   kartasta lukukelvottoman — hinta ja neuvottelutila näkyvät kun

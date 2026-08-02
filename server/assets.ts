@@ -76,13 +76,45 @@ export async function resolveAsset(
   return ref.inline ?? null;
 }
 
-/** Yhden keikan liitteiden yhteenveto — kokomittari ilman datan lataamista. */
-export async function assetStats(jobId: number): Promise<{ count: number; bytes: number }> {
+/**
+ * Yhden keikan kokomittari — ilman että mitään dataa ladataan.
+ *
+ * Tämä on se luku jota ei ollut olemassa kun kiintiö loppui: kukaan ei nähnyt
+ * että karttablobi oli kasvanut kymmeniin megatavuihin. `blobBytes` on se mikä
+ * luetaan kannasta JOKAISELLA ikkunanapautuksella, joten se on suoraan
+ * kulutuksen mittari. `assetBytes` on se mikä on jo siirretty pois blobista
+ * eikä siis enää maksa mitään karttapyynnössä.
+ */
+export async function assetStats(jobId: number): Promise<{
+  count: number; bytes: number; blobBytes: number; gigBytes: number; perTapBytes: number;
+}> {
   const [row] = await db.select({
     count: sql<number>`count(*)::int`,
     bytes: sql<number>`coalesce(sum(${jobAssets.bytes}), 0)::int`,
   }).from(jobAssets).where(eq(jobAssets.jobId, jobId));
-  return { count: Number(row?.count ?? 0), bytes: Number(row?.bytes ?? 0) };
+
+  // `pg_column_size` antaa PAKATUN koon levyllä; `octet_length` antaa sen mikä
+  // oikeasti siirtyy verkon yli. Siirtomittari kiinnostaa, joten jälkimmäinen.
+  let blobBytes = 0, gigBytes = 0;
+  try {
+    const r: any = await db.execute(sql`
+      select coalesce(octet_length(project_data), 0)::int as blob,
+             coalesce(octet_length(gig_data), 0)::int     as gig
+      from jobs where id = ${jobId}
+    `);
+    const s = (r?.rows ?? r)?.[0];
+    blobBytes = Number(s?.blob ?? 0);
+    gigBytes = Number(s?.gig ?? 0);
+  } catch { /* mittari ei saa kaataa mitään */ }
+
+  return {
+    count: Number(row?.count ?? 0),
+    bytes: Number(row?.bytes ?? 0),
+    blobBytes,
+    gigBytes,
+    // Yksi tekijän ikkunanapautus lukee karttablobin + gig-blobin.
+    perTapBytes: blobBytes + gigBytes,
+  };
 }
 
 export interface MigrationResult {

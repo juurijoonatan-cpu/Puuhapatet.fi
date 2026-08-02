@@ -169,7 +169,16 @@ export interface CrewDocument {
   desc: string;
   amountCents?: number;
   fileName?: string;
-  fileDataUrl?: string;     // uploaded file (image/pdf) as a data URL
+  fileDataUrl?: string;     // uploaded file (image/pdf) as a data URL — VANHA muoto
+  /**
+   * Viite `job_assets`-tauluun. Kun tämä on asetettu, tiedosto EI ole blobissa
+   * vaan omassa taulussaan. Tosite on 1,5 MB kappaleelta eikä niitä poisteta
+   * koskaan (6 v säilytys), joten juuri ne kasvattivat blobia pysyvästi.
+   * Vanhat tositteet kantavat tiedoston yhä inline — molemmat toimivat.
+   */
+  fileAssetId?: number;
+  /** Tiedoston koko tavuina — lista voi näyttää sen lataamatta itse tiedostoa. */
+  fileBytes?: number;
   kind?: "kuitti" | "lasku" | "muu";
   retentionUntil: number;   // date + 6 years (säilytysaika) — background info
   addedAt: number;
@@ -670,6 +679,10 @@ export function sanitizeCrewMember(input: any): CrewMember | null {
             && /^data:(image\/|application\/pdf)/.test(d.fileDataUrl)
             && d.fileDataUrl.length <= MAX_CREW_DOC_LEN
             ? d.fileDataUrl : undefined,
+          fileAssetId: Number.isSafeInteger(Number(d?.fileAssetId)) && Number(d.fileAssetId) > 0
+            ? Number(d.fileAssetId) : undefined,
+          fileBytes: Number.isSafeInteger(Number(d?.fileBytes)) && Number(d.fileBytes) > 0
+            ? Number(d.fileBytes) : undefined,
           kind: d?.kind === "kuitti" || d?.kind === "lasku" ? d.kind : "muu",
           retentionUntil: Number(d?.retentionUntil) || retentionFromDate(date),
           addedAt: Number(d?.addedAt) || Date.now(),

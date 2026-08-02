@@ -97,3 +97,48 @@ describe("stripObservationImages", () => {
     expect(clean.observations!["K#0"].hasImage).toBeUndefined();
   });
 });
+
+// Liitteet omassa taulussaan (job_assets): blobiin jää vain viite. Sanitoija ei
+// saa pudottaa havaintoa vain siksi että kuvadata ei ole enää sen sisällä.
+describe("liiteviitteet säilyvät sanitoinnissa", () => {
+  it("viitteellinen havainto säilyy vaikka kuvadataa ei ole", () => {
+    const clean = sanitizeProjectData({
+      ...emptyProjectData(),
+      observations: { "K#0": { text: "", ts: 5, imageAssetId: 42 } },
+    });
+    expect(clean.observations!["K#0"]).toBeDefined();
+    expect(clean.observations!["K#0"].imageAssetId).toBe(42);
+  });
+
+  it("tyhjä havainto ilman tekstiä, kuvaa ja viitettä putoaa yhä", () => {
+    const clean = sanitizeProjectData({
+      ...emptyProjectData(),
+      observations: { "K#0": { text: "", ts: 5 } },
+    });
+    expect(clean.observations!["K#0"]).toBeUndefined();
+  });
+
+  it("kelvoton viite ei mene läpi", () => {
+    // Huom: numeroksi muuntuva merkkijono ("42") KELPAA — `Number()`-muunnos on
+    // sama kuvio kuin muuallakin sanitoijassa, ja JSON-kierros voi tuottaa sen.
+    for (const bad of [0, -1, 1.5, "eiluku", null, undefined, {}]) {
+      const clean = sanitizeProjectData({
+        ...emptyProjectData(),
+        observations: { "K#0": { text: "on tekstiä", ts: 5, imageAssetId: bad } },
+      });
+      expect(clean.observations!["K#0"].imageAssetId).toBeUndefined();
+    }
+  });
+
+  it("stripObservationImages välittää viitteen selaimelle mutta ei dataa", () => {
+    const out = stripObservationImages({
+      "K#0": { text: "Naarmu", ts: 1, imageAssetId: 7 },
+      "K#1": { text: "Vanha", ts: 2, imageDataUrl: "data:image/jpeg;base64,AAA" },
+    });
+    expect(out["K#0"]).toEqual({ text: "Naarmu", by: undefined, ts: 1, hasImage: true, imageAssetId: 7 });
+    // Vanha inline-muoto: merkki näkyy, mutta id:tä ei ole eikä dataa lähetetä.
+    expect(out["K#1"].hasImage).toBe(true);
+    expect(out["K#1"].imageAssetId).toBeUndefined();
+    expect(out["K#1"].imageDataUrl).toBeUndefined();
+  });
+});

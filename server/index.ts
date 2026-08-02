@@ -219,6 +219,20 @@ app.use((req, res, next) => {
       updated_at      timestamp NOT NULL DEFAULT now(),
       UNIQUE (kind, source_key)
     )`,
+    // Liitteet pois karttablobista — ks. shared/schema.ts (jobAssets) ja
+    // docs/datakartoitus-ja-korjaussuunnitelma.md, OSA 3.
+    sql`CREATE TABLE IF NOT EXISTS job_assets (
+      id         serial PRIMARY KEY,
+      job_id     integer NOT NULL REFERENCES jobs(id),
+      kind       text NOT NULL,
+      ref_key    text NOT NULL,
+      mime       text NOT NULL,
+      bytes      integer NOT NULL,
+      data       text NOT NULL,
+      created_at timestamp NOT NULL DEFAULT now(),
+      UNIQUE (job_id, kind, ref_key)
+    )`,
+    sql`CREATE INDEX IF NOT EXISTS job_assets_job_kind ON job_assets (job_id, kind)`,
   ]) {
     try { await db.execute(stmt); } catch (e: any) { console.warn("Migration warning:", e.message); }
   }

@@ -6106,6 +6106,42 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         next.note = String(body.note ?? "").slice(0, 400).trim() || undefined;
       }
 
+      /**
+       * KÄSINSYÖTETYT LÄHTÖLUVUT. Kenttä kerrallaan, `null`/`""` palauttaa
+       * kartasta johtamisen. Tämä on tarkoituksella osittainen: keikan kartta
+       * voidaan nollata maksujen jälkeen, jolloin johtajien ikkunamäärät
+       * tulevat nollina ja koko tasaus menee pieleen — mutta pottiin ja
+       * tekijäkuluihin ei ole mitään syytä koskea. Silloin syötetään vain se
+       * mikä on rikki.
+       */
+      if (body.manual !== undefined && body.manual && typeof body.manual === "object") {
+        const m = body.manual as Record<string, unknown>;
+        const nextManual = { ...(cur.manual ?? {}) } as Record<string, unknown>;
+        const setNum = (key: string, max: number) => {
+          if (!(key in m)) return;
+          const raw = m[key];
+          if (raw === null || raw === "") { nextManual[key] = null; return; }
+          const n = Math.round(Number(raw));
+          if (Number.isFinite(n) && n >= 0 && n <= max) nextManual[key] = n;
+        };
+        setNum("p1PotCents", 100_000_000);
+        setNum("p1WindowsTotal", 1_000_000);
+        setNum("workerP1EarnedCents", 100_000_000);
+        if (m.p1WindowsByFounder && typeof m.p1WindowsByFounder === "object") {
+          const map: Record<string, number> = { ...((cur.manual?.p1WindowsByFounder) ?? {}) };
+          for (const [k, v] of Object.entries(m.p1WindowsByFounder as Record<string, unknown>)) {
+            const key = String(k).toLowerCase().trim();
+            if (!FOUNDER_IDS.includes(key)) continue;
+            if (v === null || v === "") { delete map[key]; continue; }
+            const n = Math.round(Number(v));
+            if (Number.isFinite(n) && n >= 0 && n <= 100_000) map[key] = n;
+          }
+          nextManual.p1WindowsByFounder = Object.keys(map).length > 0 ? map : undefined;
+        }
+        const anySet = Object.values(nextManual).some((v) => v !== null && v !== undefined);
+        next.manual = anySet ? (nextManual as FounderSettlementState["manual"]) : undefined;
+      }
+
       // Kirjattu siirto: lisätään (append-only historia) tai poistetaan id:llä.
       if (body.addTransfer && typeof body.addTransfer === "object") {
         const t = body.addTransfer as Record<string, unknown>;

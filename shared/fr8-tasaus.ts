@@ -28,7 +28,7 @@ import { getCrew, DEFAULT_WORKER_PER_WINDOW_CENTS } from "./crew";
 import { isP2EraSelection } from "./era-billing";
 import { BRAND_BILLERS } from "./billers";
 import {
-  computeTasaus, type FounderSettlementState, type TasausInput, type TasausResult,
+  computeTasaus, type FounderSettlementState, type FounderSettlementManual, type TasausInput, type TasausResult,
   type TasausFounderInput, type TasausTransfer,
 } from "./founder-settlement";
 
@@ -106,6 +106,21 @@ export interface TasausBundle {
   /** Pestyt punaiset ilman pesijää: ne eivät maksa palkkaa kenellekään, joten
    *  ne näkyvät katteena. Varoitus, ei laskennan osa. */
   unattributedP1Windows: number;
+  /**
+   * Käsin annetut lähtöluvut sellaisenaan, plus se mitä kartta olisi sanonut.
+   * Näkymä voi näyttää molemmat rinnakkain: käsinsyötetty luku on merkittävä
+   * poikkeama automatiikasta, ja se pitää näkyä eikä piiloutua.
+   */
+  manual?: {
+    active: FounderSettlementManual;
+    /** Sama tieto kartasta johdettuna — vertailua varten. */
+    derived: {
+      p1PotCents: number;
+      p1WindowsTotal: number;
+      workerP1EarnedCents: number;
+      p1WindowsByFounder: Record<string, number>;
+    };
+  };
 }
 
 /** Onko tämä erälasku maksettu/maksussa (ei luonnos, ei hylätty)? */
@@ -362,10 +377,30 @@ export function buildTasaus(
   const founderP2Cents = Object.values(p2CentsByFounder).reduce((s, c) => s + c, 0);
   workerP2EarnedCents = Math.max(0, (p2Bill.workerCostCents ?? 0) - founderP2Cents);
 
+  /**
+   * KÄSINSYÖTTÖ OHITTAA JOHDETUN ARVON — KENTTÄ KERRALLAAN.
+   *
+   * Kartasta johtaminen on oikein niin kauan kuin kartta kertoo totuuden.
+   * Mutta kartta voidaan nollata maksujen jälkeen, osa työstä on voitu tehdä
+   * ennen järjestelmän käyttöönottoa, tai johtaja yksinkertaisesti tietää
+   * luvun paremmin. Silloin automatiikka ei auta vaan haittaa: se kertoo
+   * itsevarmasti nollaa, ja kaikki sen päälle laskettu menee pieleen.
+   *
+   * `null`/puuttuva = laske kartasta kuten ennenkin, joten käsinsyöttö voi
+   * olla osittainen. Nolla on oikea arvo eikä tarkoita "ei asetettu".
+   */
+  const man = state?.manual;
+  const pick = <T,>(manual: T | null | undefined, derived: T): T =>
+    manual === null || manual === undefined ? derived : manual;
+
+  const effP1Pot = pick(man?.p1PotCents, p1PotCents);
+  const effP1WindowsTotal = pick(man?.p1WindowsTotal, p1WindowsTotal);
+  const effWorkerP1Earned = pick(man?.workerP1EarnedCents, workerP1EarnedCents);
+
   const founderInputs: TasausFounderInput[] = founders.map((f) => ({
     id: f.id,
     name: f.name,
-    p1Windows: p1ByFounder[f.id] || 0,
+    p1Windows: pick(man?.p1WindowsByFounder?.[f.id], p1ByFounder[f.id] || 0),
     p2OwnCents: p2CentsByFounder[f.id] || 0,
     receivedCents: receivedByFounder[f.id] || 0,
     paidOutCents: paidByFounder[f.id] || 0,
@@ -378,11 +413,11 @@ export function buildTasaus(
 
   const input: TasausInput = {
     founders: founderInputs,
-    p1PotCents,
+    p1PotCents: effP1Pot,
     p2PotCents,
-    workerP1EarnedCents,
+    workerP1EarnedCents: effWorkerP1Earned,
     workerP2EarnedCents,
-    p1WindowsTotal,
+    p1WindowsTotal: effP1WindowsTotal,
     transfers,
     overrideCents: state?.overrideCents ?? null,
     overrideFromId: state?.overrideFromId ?? null,
@@ -397,6 +432,15 @@ export function buildTasaus(
     result: computeTasaus(input),
     unassignedEraCount,
     unattributedP1Windows: wash.unattributedP1Windows,
+    ...(man ? {
+      manual: {
+        active: man,
+        derived: {
+          p1PotCents, p1WindowsTotal, workerP1EarnedCents,
+          p1WindowsByFounder: p1ByFounder,
+        },
+      },
+    } : {}),
   };
 }
 

@@ -399,3 +399,51 @@ describe("käsin asetettu siirto ja kirjatut siirrot", () => {
     expect(r.alreadyTransferredCents).toBe(0);
   });
 });
+
+/**
+ * FR8 heinäkuu 2026 — OIKEA keikka, käsin laskettuna.
+ *
+ * Nämä luvut tulevat Joonatanin omasta laskelmasta, ei keksitystä esimerkistä.
+ * Testi on olemassa kahdesta syystä:
+ *
+ *  1. Se todistaa että moottori tuottaa saman tuloksen kuin ihminen kynällä.
+ *     Kun luvut ruudulla joskus näyttävät väärältä, syy EI ole tässä
+ *     laskennassa — se on syötteissä (esim. kartta nollattu maksujen jälkeen,
+ *     jolloin johtajien ikkunamäärät tulevat nollina).
+ *  2. Se on regressiosuoja: jos joku muuttaa jakokaavaa, tämä kaatuu.
+ */
+describe("heinäkuu 2026 — oikean keikan käsinlasku", () => {
+  const e = (eur: number) => Math.round(eur * 100);
+
+  it("164 ikkunaa, 6150 € potti → sama tulos kuin kynällä laskettuna", () => {
+    const r = computeTasaus({
+      founders: [
+        { id: "joonatan", name: "Joonatan", p1Windows: 19, p2OwnCents: 0, receivedCents: 0, paidOutCents: 0 },
+        { id: "matias", name: "Matias", p1Windows: 27, p2OwnCents: 0, receivedCents: 0, paidOutCents: 0 },
+      ],
+      p1PotCents: e(6150),
+      p2PotCents: 0,
+      // Jani 700, Oliver 320, Doma 90, Oona 490, Petrus 220,
+      // Milja 400 + 52,50 (Mikaelin ja Rogerin korjaukset), Selma 120.
+      workerP1EarnedCents: e(2392.5),
+      workerP2EarnedCents: 0,
+      p1WindowsTotal: 164,
+    });
+
+    expect(r.xCents).toBe(e(37.5));                 // 6150 / 164
+    expect(r.founderKateCents).toBe(e(2032.5));     // 6150 − 4117,50
+
+    const j = r.rows.find((x) => x.id === "joonatan")!;
+    const m = r.rows.find((x) => x.id === "matias")!;
+
+    expect(j.ownWorkCents).toBe(e(712.5));          // 19 × 37,50
+    expect(m.ownWorkCents).toBe(e(1012.5));         // 27 × 37,50
+    expect(j.kateShareCents).toBe(e(1016.25));      // 2032,50 / 2
+    expect(m.kateShareCents).toBe(e(1016.25));
+    expect(j.entitledCents).toBe(e(1728.75));       // 712,50 + 1016,25
+    expect(m.entitledCents).toBe(e(2028.75));       // 1012,50 + 1016,25
+
+    // Kuuluvat summat yhteensä = jaettava potti. Mitään ei katoa matkalla.
+    expect(j.entitledCents + m.entitledCents).toBe(e(3757.5));
+  });
+});

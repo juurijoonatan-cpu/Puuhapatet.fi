@@ -23,6 +23,7 @@ import { api, type TasausBundleClient } from "@/lib/api";
 import { getAdminProfile } from "@/lib/admin-profile";
 import { T, card, inset, mono, statLabel, subLabel, button, input as inputStyle, chip, eur, win } from "./tokens";
 import { Scale, RefreshCw, Check, Undo2, Plus, Info, FileText } from "lucide-react";
+import ManualInputs from "./ManualInputs";
 
 type Bundle = TasausBundleClient;
 
@@ -218,7 +219,7 @@ export default function TasausView({ jobId, canEdit = true }: {
   }
   if (!data) return null;
 
-  const { result, founders } = data;
+  const { result, founders, input } = data;
   const transfer = result.transfer;
   const recorded = data.input.transfers ?? [];
 
@@ -286,6 +287,21 @@ export default function TasausView({ jobId, canEdit = true }: {
               busy={busy}
               onSave={(cents) => save({ overrideCents: cents, overrideFromId: transfer?.fromId ?? founders[0]?.id })}
               onClear={result.overridden ? () => save({ overrideCents: null }) : undefined}
+            />
+            {/* Lähtölukujen käsinsyöttö. Siirtosumman ohitus korjaa vain
+                LOPPUTULOKSEN; tämä korjaa sen mistä lopputulos lasketaan —
+                eri asia, ja se on se jota tarvitaan kun kartta on nollattu. */}
+            <ManualInputs
+              founders={founders}
+              active={data.manual?.active}
+              derived={data.manual?.derived ?? {
+                p1PotCents: input.p1PotCents,
+                p1WindowsTotal: input.p1WindowsTotal,
+                workerP1EarnedCents: input.workerP1EarnedCents,
+                p1WindowsByFounder: Object.fromEntries(input.founders.map((f) => [f.id, f.p1Windows])),
+              }}
+              busy={busy}
+              onSave={(manual) => save({ manual } as Parameters<typeof save>[0])}
             />
             {transfer && (
               <>

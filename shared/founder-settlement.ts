@@ -78,7 +78,33 @@ export interface FounderSettlementState {
   note?: string;
   /** Jo tehdyt/laskutetut johtajien väliset siirrot. */
   transfers?: TasausTransferRecord[];
+  /**
+   * KÄSINSYÖTETYT LÄHTÖTIEDOT.
+   *
+   * Laskenta johtaa normaalisti kaiken kartasta ja laskuista, ja se on oikein
+   * niin kauan kuin kartta kertoo totuuden. Mutta kartta voidaan nollata
+   * maksujen jälkeen, keikka voidaan tehdä osin ennen järjestelmän käyttöönottoa,
+   * tai johtajat voivat vain tietää luvun paremmin kuin kartta. Silloin
+   * automatiikka ei ole apu vaan este: se kertoo itsevarmasti nollaa.
+   *
+   * Nämä kentät ohittavat johdetun arvon YKSI KERRALLAAN. Tyhjä kenttä
+   * tarkoittaa "laske tämä kartasta kuten ennenkin", joten käsinsyöttö voi olla
+   * osittainen — esimerkiksi vain johtajien ikkunamäärät, muu kartasta.
+   */
+  manual?: FounderSettlementManual;
   updatedAt?: number;
+}
+
+/** Käsin annetut lähtöluvut. Kaikki valinnaisia; puuttuva = johda kartasta. */
+export interface FounderSettlementManual {
+  /** Punaisten potti = asiakkaalta laskutettu yhteensä (senttiä). */
+  p1PotCents?: number | null;
+  /** Punaiset ikkunat yhteensä — `x`:n nimittäjä. */
+  p1WindowsTotal?: number | null;
+  /** Tekijöiden punaisista ansaitsema BRUTTO yhteensä (ei johtajia). */
+  workerP1EarnedCents?: number | null;
+  /** Johtaja → hänen itse pesemänsä punaiset ikkunat. */
+  p1WindowsByFounder?: Record<string, number>;
 }
 
 const MAX_TRANSFERS = 100;
@@ -137,6 +163,36 @@ export function sanitizeFounderSettlementState(input: any): FounderSettlementSta
     ? null
     : Math.abs(cleanCents(rawOverride));
 
+  // Käsinsyötetyt lähtöluvut. Tyhjä/puuttuva kenttä = johda kartasta, joten
+  // käsinsyöttö voi olla osittainen. `null` on merkitsevä: se tarkoittaa
+  // nimenomaan "ei ohitusta", eikä sitä pidä sekoittaa nollaan.
+  const manual = ((): FounderSettlementManual | undefined => {
+    const m = input.manual;
+    if (!m || typeof m !== "object") return undefined;
+    const num = (v: unknown, max: number): number | null => {
+      if (v === null || v === undefined || v === "") return null;
+      const n = Math.round(Number(v));
+      return Number.isFinite(n) && n >= 0 && n <= max ? n : null;
+    };
+    const byFounder: Record<string, number> = {};
+    if (m.p1WindowsByFounder && typeof m.p1WindowsByFounder === "object") {
+      for (const k of Object.keys(m.p1WindowsByFounder).slice(0, MAX_MAP_KEYS)) {
+        const id = cleanId(k);
+        const n = num(m.p1WindowsByFounder[k], 100_000);
+        if (id && n !== null) byFounder[id] = n;
+      }
+    }
+    const out: FounderSettlementManual = {
+      p1PotCents: num(m.p1PotCents, 100_000_000),
+      p1WindowsTotal: num(m.p1WindowsTotal, 1_000_000),
+      workerP1EarnedCents: num(m.workerP1EarnedCents, 100_000_000),
+      ...(Object.keys(byFounder).length > 0 ? { p1WindowsByFounder: byFounder } : {}),
+    };
+    const any = out.p1PotCents !== null || out.p1WindowsTotal !== null
+      || out.workerP1EarnedCents !== null || !!out.p1WindowsByFounder;
+    return any ? out : undefined;
+  })();
+
   const state: FounderSettlementState = {
     receivedBy: cleanIdMap(input.receivedBy),
     paidBy: cleanIdMap(input.paidBy),
@@ -145,11 +201,12 @@ export function sanitizeFounderSettlementState(input: any): FounderSettlementSta
     overrideFromId: input.overrideFromId ? cleanId(input.overrideFromId) || null : null,
     note: input.note ? String(input.note).slice(0, 400).trim() || undefined : undefined,
     transfers: transfers.length > 0 ? transfers : undefined,
+    ...(manual ? { manual } : {}),
     updatedAt: Number(input.updatedAt) || Date.now(),
   };
 
   const meaningful = !!(state.receivedBy || state.paidBy || state.expensesCents
-    || state.overrideCents != null || state.note || state.transfers);
+    || state.overrideCents != null || state.note || state.transfers || state.manual);
   return meaningful ? state : undefined;
 }
 

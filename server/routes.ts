@@ -1502,7 +1502,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const [customer] = await db.select().from(customers).where(eq(customers.id, Number(req.params.id)));
       if (!customer) return res.status(404).json({ error: "Ei löydy" });
-      const customerJobs = await db.select().from(jobs).where(eq(jobs.customerId, customer.id)).orderBy(desc(jobs.createdAt));
+      // Asiakaskortti näyttää keikoista viisi kenttää. Koko rivi toi mukanaan
+      // molemmat karttablobit ja allekirjoitukset — FR8-asiakkaan kortin
+      // avaaminen luki kymmeniä megatavuja näyttääkseen listan otsikoita.
+      const customerJobs = await db.select({
+        id: jobs.id, description: jobs.description, status: jobs.status,
+        agreedPrice: jobs.agreedPrice, scheduledAt: jobs.scheduledAt,
+        isCustomGig: jobs.isCustomGig, quoteStatus: jobs.quoteStatus,
+        createdAt: jobs.createdAt, updatedAt: jobs.updatedAt,
+      }).from(jobs).where(eq(jobs.customerId, customer.id)).orderBy(desc(jobs.createdAt));
       res.json({ ...customer, jobs: customerJobs });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1768,7 +1776,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const id = Number(req.params.id);
       // Sama suoja kuin yksittäiselle keikalle — kerrottuna asiakkaan kaikilla
       // keikoilla. Tämä reitti pyyhki ne kaikki yhdellä napautuksella.
-      const customerJobs = await db.select().from(jobs).where(eq(jobs.customerId, id));
+      // Vain ne kentät joita `jobDeletionBlockers` katsoo.
+      const customerJobs = await db.select({
+        id: jobs.id, projectData: jobs.projectData, gigData: jobs.gigData, billedBy: jobs.billedBy,
+      }).from(jobs).where(eq(jobs.customerId, id)) as typeof jobs.$inferSelect[];
       const blocked: { jobId: number; reasons: string[] }[] = [];
       for (const j of customerJobs) {
         const reasons = await jobDeletionBlockers(j);
@@ -5682,7 +5693,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/jobs/:id/project", async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      const [job] = await db.select(CREW_JOB_COLS).from(jobs).where(eq(jobs.id, id)) as typeof jobs.$inferSelect[];
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const project = parseProject(job.projectData ?? null);
       if (!project) return res.json({ ok: true, project: null });
@@ -5728,7 +5739,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.patch("/api/jobs/:id/project", async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      // Adminin autosave osuu tähän 700 ms jokaisen kartan muutoksen jälkeen.
+      // Koko rivi toi mukanaan molemmat allekirjoitus-PNG:t ja kohdekuvan —
+      // noin 1,6 MB turhaa JOKA tallennuksessa, blobin päälle.
+      const [job] = await db.select(CREW_JOB_COLS).from(jobs).where(eq(jobs.id, id)) as typeof jobs.$inferSelect[];
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const project = sanitizeProjectData(req.body?.projectData ?? req.body);
       // P2-neuvottelutila on serverin omistama: geneerinen blob-tallennus ei
@@ -6398,7 +6412,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   const crewTokenJobCache = new Map<string, number>();
 
   /** Onboardattu tiimilista, lyhyt TTL (ks. loadOnboardedTeamRoster). */
-  const TEAM_ROSTER_TTL_MS = 60_000;
+  // 60 s -> 10 min. Roster muuttuu kun uusi tekijä onboardataan, eli kerran
+  // viikossa jos sitäkään, mutta jokainen kylmä osuma lukee jokaisen FR8-keikan
+  // karttablobin. Kirjautumissivu ja julkinen /meistä kutsuvat tätä, joten
+  // lyhyt TTL tarkoitti kymmeniä blobilukuja päivässä ilman mitään muutosta.
+  const TEAM_ROSTER_TTL_MS = 10 * 60_000;
   let teamRosterCache: { at: number; rows: { id: string; name: string; photoUrl?: string; onboardedAt: number }[] } | null = null;
 
   // Find which custom-gig job a crew token belongs to (scans custom gigs).
@@ -7582,7 +7600,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ── Host (admin) crew management ────────────────────────────────────────────
 
   async function loadJobProject(id: number) {
-    const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+    // `CREW_JOB_COLS` eikä koko riviä. Tämän kautta kulkee kymmenen
+    // admin-kutsupaikkaa (mm. koko palkanmaksusivu ja jokainen
+    // tekijälistan muokkaus), ja koko rivi olisi tuonut mukanaan molemmat
+    // allekirjoitus-PNG:t ja kohdekuvan — noin 1,6 MB turhaa joka kutsulla,
+    // blobin päälle. Yksi rivi korjaa kaikki kutsupaikat kerralla.
+    const [job] = await db.select(CREW_JOB_COLS).from(jobs).where(eq(jobs.id, id)) as typeof jobs.$inferSelect[];
     if (!job) return null;
     const project = parseProject(job.projectData ?? null) ?? { ...emptyProjectData() };
     return { job, project };
@@ -7803,13 +7826,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const wid = String(req.params.workerId).toLowerCase();
       const { date, desc, amountCents, fileName, fileDataUrl, kind } = (req.body || {}) as Record<string, any>;
       const dt = Number(date) || Date.now();
+      // HYLKÄÄ ylikokoinen, älä katkaise. Katkaistu tosite näyttää
+      // tallentuneelta mutta ei avaudu — ja koska kyse on kirjanpidon
+      // tositteesta, käyttäjän PITÄÄ saada tietää heti että liite ei mennyt
+      // läpi, jotta hän voi pakata sen ja yrittää uudelleen.
+      if (typeof fileDataUrl === "string" && fileDataUrl.length > MAX_CREW_DOC_LEN) {
+        return res.status(413).json({
+          error: `Tiedosto on liian suuri (${Math.round(fileDataUrl.length / 1024 / 1024 * 10) / 10} MB). `
+            + `Enimmäiskoko on ${Math.round(MAX_CREW_DOC_LEN / 1024 / 1024 * 10) / 10} MB — pakkaa tiedosto ja yritä uudelleen.`,
+        });
+      }
       const doc: CrewDocument = {
         id: `doc_${randomUUID().slice(0, 12)}`,
         date: dt,
         desc: String(desc ?? "").slice(0, 300).trim(),
         amountCents: amountCents != null && Number.isFinite(Number(amountCents)) ? Math.max(0, Math.round(Number(amountCents))) : undefined,
         fileName: fileName ? String(fileName).slice(0, 200) : undefined,
-        fileDataUrl: typeof fileDataUrl === "string" && /^data:(image\/|application\/pdf)/.test(fileDataUrl) ? fileDataUrl.slice(0, MAX_CREW_DOC_LEN) : undefined,
+        fileDataUrl: typeof fileDataUrl === "string" && /^data:(image\/|application\/pdf)/.test(fileDataUrl) ? fileDataUrl : undefined,
         kind: kind === "kuitti" || kind === "lasku" ? kind : "muu",
         retentionUntil: retentionFromDate(dt),
         addedAt: Date.now(),
@@ -9398,8 +9431,32 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.json({ reply: "Tekoälyavustaja ei ole vielä käytössä — aseta ANTHROPIC_API_KEY (Claude) tai AI_API_KEY ympäristömuuttuja ottaaksesi sen käyttöön." });
       }
 
-      const effectiveRole: "HOST" | "STAFF" = role === "HOST" ? "HOST" : "STAFF";
-      const contextBlock = await buildAdminContext(String(userId || ""), userName || "tiimiläinen", effectiveRole);
+      // IDENTITEETTI TOKENISTA, EI PYYNNÖN RUNGOSTA.
+      //
+      // Tämä luki aiemmin `role`, `userId` ja `userName` suoraan `req.body`sta.
+      // Autentikaatioportti (ks. app.use ylempänä) tarkistaa tokenin ja asettaa
+      // todellisen identiteetin `req.admin`iin allekirjoitettuine rooleineen —
+      // tämä reitti vain ei käyttänyt sitä. Kuka tahansa kirjautunut tekijä
+      // saattoi lähettää {"role":"HOST","userId":"joonatan"} ja saada
+      // perustajatason kontekstin: kaikki keikat, kaikki asiakkaat, koko
+      // talousyhteenveto ja sen henkilökohtaisen ansioerittelyn joka on
+      // nimenomaan tarkoitettu vain omistajalleen (ks. buildAdminContext).
+      //
+      // Rungon `userId`/`userName`/`role` jätetään tietoisesti huomiotta.
+      // Nimi EI ole tässä kosmeettinen: `buildAdminContext` suodattaa
+      // STAFF-käyttäjän keikat sekä id:llä ETTÄ nimellä (vanhat rivit
+      // tallensivat `assignedTo`:hon koko nimen), joten rungosta tuleva nimi
+      // olisi yhtä iso aukko kuin rungosta tuleva rooli. Haetaan se
+      // `users`-taulusta — yksi kevyt rivi, ei blobeja.
+      const admin = (req as any).admin as { sub?: string; role?: string } | undefined;
+      const effectiveRole: "HOST" | "STAFF" = admin?.role === "host" ? "HOST" : "STAFF";
+      const effectiveUserId = String(admin?.sub || "");
+      const [me] = effectiveUserId
+        ? await db.select({ name: users.name }).from(users).where(eq(users.username, effectiveUserId))
+        : [];
+      const contextBlock = await buildAdminContext(
+        effectiveUserId, me?.name || effectiveUserId || "tiimiläinen", effectiveRole,
+      );
 
       // Tarkka verolaskuri on turvallinen kaikille rooleille: se laskee vain
       // annetusta summasta sovelluksen vakioilla eikä lue kenenkään kirjanpitoa.
@@ -9714,12 +9771,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               const year = Number(args.year) || new Date().getFullYear();
               toolResult = `ALV-vapauden (vähäinen toiminta, AVL 3 §) raja on ${VAT_SMALL_BUSINESS_LIMIT_EUR} €/kalenterivuosi/henkilö. Tilanne ${year}: ${await vatTurnoverLine(year)}. Raja koskee henkilön KAIKKEA liiketoimintaa, ei vain Puuhapatetin kautta laskutettua — tämä luku on siis lattia, ei koko totuus.`;
             } else if (tc.function.name === "get_founder_settlement_status") {
-              const [rows, customerRows, expenseRows, settledRows] = await Promise.all([
-                db.select().from(jobs),
+              // `MONEY_JOB_COLS` eikä koko taulua — sama projektio jota muu
+              // rahalaskenta käyttää. Koko rivi olisi vetänyt molemmat
+              // allekirjoitus-PNG:t ja kohdekuvan jokaisesta keikasta, vaikka
+              // `computeFounderSettlement` ei katso niistä yhtäkään.
+              const [rawRows, customerRows, expenseRows, settledRows] = await Promise.all([
+                db.select(MONEY_JOB_COLS).from(jobs),
                 db.select().from(customers),
                 db.select().from(expenses),
                 db.select().from(founderSettlements),
               ]);
+              const rows = rawRows as unknown as typeof jobs.$inferSelect[];
               const s = computeFounderSettlement(rows, customerRows, expenseRows, settledRows);
               if (s.crossInvoices.length === 0) {
                 toolResult = `Bossien tilitys on tasan — kenenkään ei tarvitse maksaa toiselle juuri nyt.`;
@@ -10148,8 +10210,27 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       ((cents ?? 0) / 100).toLocaleString("fi-FI", { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + " €";
     const fmtDate = (d: Date | null | undefined) => d ? new Date(d).toLocaleDateString("fi-FI") : "—";
 
-    const allJobs = await db.select().from(jobs).orderBy(desc(jobs.updatedAt)).limit(200);
-    const allCustomers = await db.select().from(customers);
+    // SARAKERAJAUS. Tämä oli `db.select().from(jobs)` eli 200 riviä KAIKKINE
+    // sarakkeineen: molemmat allekirjoitus-PNG:t (300 kB kpl), kohdekuva
+    // (1 MB), esittelyvideo — yhtään niistä ei käytetä alla. Yksi FR8-keikka
+    // blobeineen on kymmeniä megatavuja, joten yksi avustajan viesti saattoi
+    // vetää kannasta yli sata megatavua. Neon laskee juuri sen liikenteeksi.
+    // Kentät alla ovat tasan ne joita tämä funktio lukee.
+    const allJobs = await db.select({
+      id: jobs.id, customerId: jobs.customerId, description: jobs.description,
+      agreedPrice: jobs.agreedPrice, status: jobs.status, assignedTo: jobs.assignedTo,
+      pendingWorkers: jobs.pendingWorkers, scheduledAt: jobs.scheduledAt, notes: jobs.notes,
+      quoteToken: jobs.quoteToken, quoteStatus: jobs.quoteStatus,
+      submittedBy: jobs.submittedBy, submissionStatus: jobs.submissionStatus,
+      marketerId: jobs.marketerId, marketerCommissionCents: jobs.marketerCommissionCents,
+      billedBy: jobs.billedBy, isCustomGig: jobs.isCustomGig,
+      projectData: jobs.projectData, gigData: jobs.gigData,
+      createdAt: jobs.createdAt, updatedAt: jobs.updatedAt,
+    }).from(jobs).orderBy(desc(jobs.updatedAt)).limit(200);
+    const allCustomers = await db.select({
+      id: customers.id, name: customers.name, address: customers.address,
+      phone: customers.phone, email: customers.email,
+    }).from(customers);
     const customerById = new Map(allCustomers.map(c => [c.id, c]));
 
     // STAFF: restrict to jobs assigned to them. assignedTo / pendingWorkers are

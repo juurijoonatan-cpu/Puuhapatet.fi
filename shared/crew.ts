@@ -87,9 +87,16 @@ export type CrewPayoutStatus = "ilmoitettu" | "hyvaksytty" | "maksettu";
 /** Max stored size for a payout-expense receipt photo data URL (~0.5 MB base64). */
 export const MAX_PAYOUT_RECEIPT_LEN = 700_000;
 
-/** Montako payoutia yhdelle tekijälle säilytetään. Maksetut EIVÄT koskaan
- *  putoa tämän takia — ks. sanitizeCrewMember. */
+/** Montako payoutia yhdelle tekijälle säilytetään. Katto koskee VAIN
+ *  koskemattomia ilmoituksia — hyväksytty, maksettu tai laskutus-/vero-/
+ *  kulutiedot saanut rivi on kirjanpidon tosite eikä putoa koskaan.
+ *  Ks. sanitizeCrewMember. */
 export const MAX_PAYOUTS_KEPT = 100;
+
+/** Kuinka monelle uudelle, vielä koskemattomalle ilmoitukselle jätetään tilaa
+ *  vaikka tositteita olisi jo katon verran. Ilman tätä takuuta katto muuttuisi
+ *  umpikujaksi: sadan tositteen jälkeen yksikään uusi maksu ei tallentuisi. */
+export const MIN_UNTOUCHED_PAYOUTS_KEPT = 20;
 
 /**
  * A deductible expense (kulu) the WORKER attaches to their own payout/invoice when
@@ -604,16 +611,45 @@ export function sanitizeCrewMember(input: any): CrewMember | null {
         .map(sanitizePayout)
         .filter((p: CrewPayout | null): p is CrewPayout => !!p);
       if (all.length <= MAX_PAYOUTS_KEPT) return all;
-      const paid = all.filter((p: CrewPayout) => p.status === "maksettu");
-      const rest = all.filter((p: CrewPayout) => p.status !== "maksettu")
-        .sort((a: CrewPayout, b: CrewPayout) => (b.createdAt || 0) - (a.createdAt || 0))
-        .slice(0, Math.max(0, MAX_PAYOUTS_KEPT - paid.length));
+      // KOSKEMATON = pelkkä ilmoitus, ei vielä mitään kirjanpidollista sisältöä.
+      // Vain tällaisen saa pudottaa. Heti kun tekijä on hyväksynyt, tai riville
+      // on jäädytetty laskutus-, vero- tai kulutiedot, se on tosite.
+      //
+      // Aiempi versio suojasi vain `status === "maksettu"`. Se jätti kaksi
+      // aukkoa: hyväksytty-mutta-maksamaton rivi saattoi pudota, ja mikä
+      // pahempaa — kun maksettuja oli 100, `MAX_PAYOUTS_KEPT - paid.length`
+      // meni nollaan ja JOKAINEN uusi maksu katosi tallennuksessa. Tekijä ei
+      // olisi voinut enää koskaan saada maksua kirjatuksi sille keikalle.
+      const untouched = (p: CrewPayout) =>
+        p.status === "ilmoitettu" && !p.approvedAt && !p.paidAt && !p.invoiceNo
+        && !p.billing && !p.tax && !(p as any).expenses;
+      const keep = all.filter((p: CrewPayout) => !untouched(p));
+      const droppable = all.filter(untouched)
+        .sort((a: CrewPayout, b: CrewPayout) => (b.createdAt || 0) - (a.createdAt || 0));
+      // Katto koskee VAIN koskemattomia, ja uusille jää AINA tilaa. Pelkkä
+      // `MAX_PAYOUTS_KEPT - keep.length` menisi nollaan heti kun tositteita on
+      // katon verran, jolloin jokainen uusi ilmoitus katoaisi — sama umpikuja
+      // eri kohdassa. Siksi pohjalla on takuu.
+      const room = Math.max(MIN_UNTOUCHED_PAYOUTS_KEPT, MAX_PAYOUTS_KEPT - keep.length);
+      const kept = new Set<CrewPayout>([...keep, ...droppable.slice(0, room)]);
       // Alkuperäinen järjestys säilyy, jotta näkymät eivät hyppää.
-      const keep = new Set<CrewPayout>([...paid, ...rest]);
-      return all.filter((p: CrewPayout) => keep.has(p));
+      return all.filter((p: CrewPayout) => kept.has(p));
     })(),
+    // EI KATTOA. Tässä on kirjanpidon tositteet, joilla on 6 vuoden
+    // säilytysvelvoite ja oma `retentionUntil`-kenttä.
+    //
+    // Aiempi `.slice(0, 200)` oli hiljainen tuhoaja: `attachPersonDocument`
+    // lisää uuden dokumentin listan ALKUUN, joten lista on uusin-ensin ja
+    // slice heitti pois VANHIMMAT. Perustajalle kertyy ~2 tositetta per
+    // kirjattu tasaus ja 1 per laskutettu keikka, joten raja tuli vastaan
+    // muutamassa sadassa keikassa — ja sen jälkeen jokainen uusi tosite
+    // tuhosi vanhimman ilman virhettä tai lokimerkintää.
+    //
+    // Metadata on ~250 tavua per rivi, joten 10 000 tositetta on 2,5 MB.
+    // Itse tiedostot siirtyvät omaan tauluunsa (ks.
+    // docs/datakartoitus-ja-korjaussuunnitelma.md, OSA 3), jolloin blobiin
+    // jää pelkkä viiteluettelo.
     documents: (Array.isArray(input.documents) ? input.documents : [])
-      .slice(0, 200)
       .map((d: any, i: number): CrewDocument => {
         const date = Number(d?.date) || Date.now();
         return {
@@ -623,8 +659,17 @@ export function sanitizeCrewMember(input: any): CrewMember | null {
           amountCents: d?.amountCents != null && Number.isFinite(Number(d.amountCents))
             ? Math.max(0, Math.round(Number(d.amountCents))) : undefined,
           fileName: d?.fileName ? String(d.fileName).slice(0, 200) : undefined,
-          fileDataUrl: typeof d?.fileDataUrl === "string" && /^data:(image\/|application\/pdf)/.test(d.fileDataUrl)
-            ? d.fileDataUrl.slice(0, MAX_CREW_DOC_LEN) : undefined,
+          // EI KATKAISUA. `slice(0, MAX_CREW_DOC_LEN)` teki liian isosta
+          // tositteesta rikkinäisen base64-jonon: tiedosto näytti
+          // tallentuneen mutta ei avautunut, eikä käyttäjälle kerrottu
+          // mitään. Ylikokoinen liite jätetään mieluummin kokonaan pois —
+          // puuttuva tiedosto on rehellinen ja korjattavissa, katkaistu ei.
+          // Latausreitti hylkää ylikokoisen jo ovella (413), joten tähän ei
+          // pitäisi koskaan päätyä; tämä on viimeinen varmistus.
+          fileDataUrl: typeof d?.fileDataUrl === "string"
+            && /^data:(image\/|application\/pdf)/.test(d.fileDataUrl)
+            && d.fileDataUrl.length <= MAX_CREW_DOC_LEN
+            ? d.fileDataUrl : undefined,
           kind: d?.kind === "kuitti" || d?.kind === "lasku" ? d.kind : "muu",
           retentionUntil: Number(d?.retentionUntil) || retentionFromDate(date),
           addedAt: Number(d?.addedAt) || Date.now(),

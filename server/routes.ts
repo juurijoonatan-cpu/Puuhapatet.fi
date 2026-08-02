@@ -580,6 +580,7 @@ function verifyToken(token: string): AdminTokenPayload | null {
 // Everything else under /api is admin-only (default-deny).
 const PUBLIC_API: { method: string; re: RegExp }[] = [
   { method: "GET",  re: /^\/api\/health$/ },
+  { method: "GET",  re: /^\/api\/health\/db$/ },
   { method: "GET",  re: /^\/api\/ai-status$/ },
   { method: "POST", re: /^\/api\/contact$/ },
   { method: "POST", re: /^\/api\/it-contact$/ },
@@ -1382,6 +1383,31 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ─── Health ──────────────────────────────────────────────────────────────────
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true, ts: new Date().toISOString() });
+  });
+
+  /**
+   * Onko TIETOKANTA tavoitettavissa?
+   *
+   * `/api/health` kertoo vain että Render vastaa — se ei koske kantaan lainkaan
+   * (eikä saa: keep-warm-cron kutsuu sitä 5 min välein, ja kantakysely siinä
+   * pitäisi Neonin computen hereillä ympäri vuorokauden). Siksi palvelin näytti
+   * terveeltä silloinkin kun kirjautuminen kaatui kantaan.
+   *
+   * Tämä on erillinen, KÄSIN kutsuttava tarkistus: avaa osoite selaimessa ja
+   * näet heti onko vika kannassa vai muualla, ilman että kuluu yksi 20:stä
+   * kirjautumisyrityksestä. Vastaus kertoo koneluettavan syyn (`db_quota`,
+   * `db_unavailable`, `db_schema`) mutta EI palveluntarjoajan omaa tekstiä —
+   * se menee vain lokiin, kuten kaikkialla muuallakin.
+   *
+   * ÄLÄ pollaa tätä mistään: jokainen kutsu herättää Neonin computen.
+   */
+  app.get("/api/health/db", async (_req, res) => {
+    try {
+      await db.execute(sql`select 1`);
+      res.json({ ok: true, db: "ok", ts: new Date().toISOString() });
+    } catch (e) {
+      return fail(res, e, "GET /api/health/db");
+    }
   });
 
   // ─── ICS Calendar feed ───────────────────────────────────────────────────────

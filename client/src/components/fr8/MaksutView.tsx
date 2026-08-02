@@ -34,6 +34,7 @@ import { T, card as tokenCard, mono, statLabel, subLabel, button as tokenButton,
 import SendInvoiceEmailDialog from "./SendInvoiceEmailDialog";
 import WorkerEraInvoiceDialog from "./WorkerEraInvoiceDialog";
 import TasausView from "./TasausView";
+import StorageCard from "./StorageCard";
 
 /** Sama polettilähde kuin dashissa (`./tokens`). Aiemmin tämä näkymä käytti
  *  omaa korttiaan (pyöristys 16 vs. dashin 20/22, tausta 0,04 vs. 0,035) ja
@@ -435,6 +436,11 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
             Johtajien tasaus
           </SectionTitle>
           <TasausView jobId={jobId} canEdit={canEditTasaus} />
+
+          {/* Tallennuksen kokomittari + liitteiden siirto. Vain perustajalle,
+              koska siirto koskee koko kantaa. Tämä on se luku jota ei ollut
+              olemassa kun siirtokiintiö loppui kesken työpäivän. */}
+          {canEditTasaus && <StorageCard jobId={jobId} />}
 
           {/* ── 2. TEKIJÖILLE MAKSETTAVAA — päänäkymä. */}
           <SectionTitle

@@ -1479,6 +1479,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         results,
       });
     } catch (e) {
+      // Tyypillisin syy tälle on että `job_assets` puuttuu: migraatiot ajetaan
+      // vain palvelimen käynnistyksessä, ja jos kanta oli silloin kiintiön
+      // takana, ne kaatuivat kaikki. Yleinen "tietokanta on päivityksen
+      // tarpeessa" ei kertoisi mitä tehdä — tämä kertoo.
+      if (isMissingTableError(e)) {
+        return res.status(503).json({
+          error: "Liitetaulua ei ole vielä luotu. Käynnistä palvelin uudelleen "
+            + "(Render → Manual Deploy → Restart service), niin taulu syntyy — "
+            + "sen jälkeen tämä toimii. Mitään ei ole menetetty.",
+          code: "db_schema",
+        });
+      }
       return fail(res, e, "POST /api/admin/assets/migrate");
     }
   });
@@ -7225,10 +7237,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         // UUSI KUVA MENEE SUORAAN OMAAN TAULUUNSA, ei blobiin. Tämä on se kohta
         // jossa kasvu pysähtyy: blobiin jää pelkkä viite, joten kartan luku ei
         // enää raskaudu jokaisesta lisätystä valokuvasta.
-        const assetId = img ? await putAsset(job.id, "observation", key, img) : undefined;
+        // VARAPOLKU. Jos `job_assets`-taulua ei ole (migraatio ei ole päässyt
+        // ajoon esim. kiintiökatkon takia) tai kirjoitus muuten epäonnistuu,
+        // kuva tallennetaan vanhaan tapaan blobiin. Tekijä ei saa koskaan
+        // menettää havaintoaan sen takia että tallennuksen optimointi ei ole
+        // vielä paikoillaan — hitaampi mutta toimiva voittaa virheilmoituksen.
+        let assetId: number | undefined;
+        if (img) {
+          try {
+            assetId = await putAsset(job.id, "observation", key, img);
+          } catch (e: any) {
+            console.warn("job_assets ei käytettävissä, havaintokuva blobiin:", e?.message);
+          }
+        }
         project.observations[key] = {
           text,
           ...(assetId ? { imageAssetId: assetId } : {}),
+          ...(img && !assetId ? { imageDataUrl: img } : {}),
           by: member.id, ts: Date.now(),
         };
       }
@@ -8102,9 +8127,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   async function fileDocumentAsset(jobId: number, memberId: string, doc: CrewDocument): Promise<CrewDocument> {
     if (!doc.fileDataUrl) return doc;
     const bytes = doc.fileDataUrl.length;
-    const assetId = await putAsset(jobId, "crew_document", `${memberId}:${doc.id}`, doc.fileDataUrl);
-    const { fileDataUrl, ...rest } = doc;
-    return { ...rest, fileAssetId: assetId, fileBytes: bytes };
+    try {
+      const assetId = await putAsset(jobId, "crew_document", `${memberId}:${doc.id}`, doc.fileDataUrl);
+      const { fileDataUrl, ...rest } = doc;
+      return { ...rest, fileAssetId: assetId, fileBytes: bytes };
+    } catch (e: any) {
+      // Sama varapolku kuin havaintokuvilla — ja tositteella se on vielä
+      // tärkeämpi: tämä on kirjanpidon aineistoa, joten se EI saa kadota
+      // sen takia ettei uutta taulua ole vielä luotu. Jää blobiin.
+      console.warn("job_assets ei käytettävissä, tosite blobiin:", e?.message);
+      return { ...doc, fileBytes: bytes };
+    }
   }
 
   async function attachPersonDocument(wid: string, doc: CrewDocument, dedupe = false): Promise<boolean> {

@@ -84,10 +84,41 @@ export interface ProjWindowObservation {
   imageDataUrl?: string; // optional photo (downscaled data URL)
   by?: string;           // worker id who wrote it
   ts: number;            // epoch ms
+  /**
+   * Vain siirtoa varten, EI tallenneta. Kun palvelin lähettää havainnon ilman
+   * kuvaa (ks. `stripObservationImages`), tämä kertoo että kuva on olemassa —
+   * niin käyttöliittymä osaa hakea sen vasta kun pistettä napautetaan.
+   */
+  hasImage?: boolean;
 }
 
 /** Max stored size for an observation photo data URL (~0.5 MB base64). */
 export const MAX_OBSERVATION_IMAGE_LEN = 700_000;
+
+/**
+ * Havainnot ilman kuvadataa, laiskaa latausta varten.
+ *
+ * Havaintokuva on jopa 0,5 MB base64. Ne lähtivät joka vastauksessa: tekijän
+ * näkymä palautetaan 13 eri reitiltä (jokainen ikkunanapautus on yksi), ja
+ * asiakkaan seurantasivu pollaa omansa itsekseen. Kymmenen havaintokuvaa = 5 MB
+ * jokaista napautusta kohden, vaikka kuvaa katsotaan käytännössä kerran.
+ *
+ * Teksti, tekijä ja aikaleima jäävät mukaan, joten 💬-merkki ja havainnon
+ * sisältö näkyvät kartalla heti kuten ennenkin. `hasImage` kertoo että kuva on
+ * haettavissa erillisestä osoitteesta.
+ */
+export function stripObservationImages(
+  obs: Record<string, ProjWindowObservation> | undefined | null,
+): Record<string, ProjWindowObservation> {
+  const out: Record<string, ProjWindowObservation> = {};
+  for (const [k, o] of Object.entries(obs ?? {})) {
+    if (!o) continue;
+    out[k] = o.imageDataUrl
+      ? { text: o.text, by: o.by, ts: o.ts, hasImage: true }
+      : { text: o.text, by: o.by, ts: o.ts };
+  }
+  return out;
+}
 
 export interface ProjLogEntry {
   floor: string;

@@ -8,7 +8,7 @@
  * dot coordinate scheme as FloorView so the markers line up identically.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GigPublicView, P2PublicOffer, P2PublicView } from "@/lib/api";
 import { NOTE_KINDS } from "@shared/project";
 import { eur } from "@shared/gig";
@@ -109,11 +109,17 @@ export interface P2CustomerActions {
   requireTerms: () => void;
 }
 
-export default function CustomerFloorMap({ map, p2, p2Actions }: {
+export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservationImage }: {
   map: MapData;
   /** P2 negotiation state — pills + offer popups render only when enabled. */
   p2?: P2PublicView | null;
   p2Actions?: P2CustomerActions;
+  /**
+   * Hae yhden havainnon kuva pyynnöstä. Seurantasivu pollaa itseään, joten kuvat
+   * eivät tule mukana joka kierroksella — vain `hasImage`-lippu. Ilman tätä
+   * propia teksti näkyy normaalisti, kuva ei.
+   */
+  onLoadObservationImage?: (key: string) => Promise<string | undefined>;
 }) {
   const floors = map.building.floors.length ? map.building.floors : ["1"];
   const activeZone = map.activeZone ?? null;
@@ -127,6 +133,21 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
   // The window whose observation popup is open (+ the badge rect to anchor it).
   const [openObs, setOpenObs] = useState<{ key: string; rect: DOMRect } | null>(null);
   const openObservation = openObs ? observations[openObs.key] : undefined;
+  // Havaintokuvat ladataan yksitellen pyynnöstä ja pidetään muistissa, jotta
+  // saman kuplan avaaminen uudestaan ei hae kuvaa uudestaan.
+  const [obsImages, setObsImages] = useState<Record<string, string>>({});
+  const obsFetched = useRef<Set<string>>(new Set());
+  const wantObservationImage = useCallback((key: string | null | undefined) => {
+    if (!key || !onLoadObservationImage) return;
+    if (obsFetched.current.has(key)) return;
+    obsFetched.current.add(key);
+    void onLoadObservationImage(key)
+      .then((url) => { if (url) setObsImages((cur) => ({ ...cur, [key]: url })); })
+      .catch(() => { obsFetched.current.delete(key); }); // salli uusi yritys
+  }, [onLoadObservationImage]);
+  /** Havainnon kuva: suoraan mukana tullut, jo haettu, tai undefined. */
+  const obsImageFor = (key: string) =>
+    observations[key]?.imageDataUrl ?? obsImages[key];
   const washed = points.filter((p) => map.statuses[p.key] === "pesty").length;
   const total = points.length;
   const pct = total > 0 ? Math.round((washed / total) * 100) : 0;
@@ -134,6 +155,10 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
   // ── P2 negotiation state ──────────────────────────────────────────────────
   const p2On = !!(p2?.enabled && p2Actions);
   const [openOffer, setOpenOffer] = useState<{ key: string; rect: DOMRect } | null>(null);
+  // Sekä 💬-kupla että hintakupla näyttävät saman havainnon, joten kuva haetaan
+  // aina kun jompikumpi avautuu — ei koskaan etukäteen.
+  useEffect(() => { wantObservationImage(openObs?.key); }, [openObs?.key, wantObservationImage]);
+  useEffect(() => { wantObservationImage(openOffer?.key); }, [openOffer?.key, wantObservationImage]);
   const [p2Busy, setP2Busy] = useState(false);
   const [p2Error, setP2Error] = useState<string | null>(null);
   const [addMode, setAddMode] = useState(false);
@@ -514,7 +539,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
             {points.map((pt) => observations[pt.key] ? (
               <button
                 key={`obs-${pt.key}`}
-                onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setOpenObs({ key: pt.key, rect: r }); }}
+                onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); wantObservationImage(pt.key); setOpenObs({ key: pt.key, rect: r }); }}
                 title="Huomio tästä ikkunasta"
                 aria-label="Näytä huomio"
                 style={{
@@ -794,7 +819,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
                 asiakas näkee sen päättäessään. Näkyy vain jos joku on kirjoittanut. */}
             {(() => {
               const obs = observations[openOffer.key];
-              if (!obs || (!obs.text?.trim() && !obs.imageDataUrl)) return null;
+              if (!obs || (!obs.text?.trim() && !obs.imageDataUrl && !obs.hasImage)) return null;
               return (
                 <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.hair}` }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
@@ -804,9 +829,11 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
                   {obs.text?.trim() && (
                     <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: T.navy, whiteSpace: "pre-wrap" }}>{obs.text.trim()}</p>
                   )}
-                  {obs.imageDataUrl && (
-                    <img src={obs.imageDataUrl} alt="Huomion kuva" style={{ display: "block", width: "100%", maxHeight: 150, objectFit: "cover", borderRadius: 10, marginTop: obs.text?.trim() ? 8 : 0, border: `1px solid ${T.hair}` }} />
-                  )}
+                  {obsImageFor(openOffer.key) ? (
+                    <img src={obsImageFor(openOffer.key)} alt="Huomion kuva" style={{ display: "block", width: "100%", maxHeight: 150, objectFit: "cover", borderRadius: 10, marginTop: obs.text?.trim() ? 8 : 0, border: `1px solid ${T.hair}` }} />
+                  ) : obs.hasImage ? (
+                    <div style={{ marginTop: obs.text?.trim() ? 8 : 0, padding: "22px 0", textAlign: "center", borderRadius: 10, background: T.paper, color: T.muted, fontSize: 12 }}>Ladataan kuvaa…</div>
+                  ) : null}
                 </div>
               );
             })()}
@@ -822,7 +849,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
       {openObs && openObservation && (
         <>
           <div onClick={() => setOpenObs(null)} style={{ position: "fixed", inset: 0, zIndex: 55 }} />
-          <div style={{ ...popupStyle(openObs.rect, 250, openObservation.imageDataUrl ? 280 : 130), width: 250, background: T.card, border: `1px solid ${T.hair}`, borderRadius: 14, boxShadow: "0 14px 40px rgba(0,0,0,0.22)", padding: 14, fontFamily: FONT }}>
+          <div style={{ ...popupStyle(openObs.rect, 250, (openObservation.imageDataUrl || openObservation.hasImage) ? 280 : 130), width: 250, background: T.card, border: `1px solid ${T.hair}`, borderRadius: 14, boxShadow: "0 14px 40px rgba(0,0,0,0.22)", padding: 14, fontFamily: FONT }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
               <span style={{ fontSize: 15 }}>💬</span>
               <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: T.navy }}>Huomio ikkunasta</span>
@@ -831,9 +858,11 @@ export default function CustomerFloorMap({ map, p2, p2Actions }: {
             {openObservation.text && (
               <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: T.ink, whiteSpace: "pre-wrap" }}>{openObservation.text}</p>
             )}
-            {openObservation.imageDataUrl && (
-              <img src={openObservation.imageDataUrl} alt="Huomion kuva" style={{ display: "block", width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 10, marginTop: openObservation.text ? 10 : 0, border: `1px solid ${T.hair}` }} />
-            )}
+            {obsImageFor(openObs.key) ? (
+              <img src={obsImageFor(openObs.key)} alt="Huomion kuva" style={{ display: "block", width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 10, marginTop: openObservation.text ? 10 : 0, border: `1px solid ${T.hair}` }} />
+            ) : openObservation.hasImage ? (
+              <div style={{ marginTop: openObservation.text ? 10 : 0, padding: "26px 0", textAlign: "center", borderRadius: 10, background: T.paper, color: T.muted, fontSize: 12 }}>Ladataan kuvaa…</div>
+            ) : null}
           </div>
         </>
       )}

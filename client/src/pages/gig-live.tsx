@@ -76,6 +76,13 @@ export default function GigLivePage() {
     if (res.ok && res.data) { setData(res.data); setStatus("ok"); }
   }, [token]);
 
+  // Havaintokuva haetaan vasta kun asiakas avaa kuplan. Tämä sivu pollaa
+  // itseään, joten kuvat eivät saa olla mukana joka kierroksella.
+  const loadObservationImage = useCallback(async (key: string) => {
+    const res = await api.gigObservationImage(token, key);
+    return res.ok ? res.data?.imageDataUrl : undefined;
+  }, [token]);
+
   /**
    * Asiakkaan seurantanäkymän päivitys.
    *
@@ -390,7 +397,7 @@ export default function GigLivePage() {
             <p style={{ margin: "0 0 16px", fontSize: 13, color: T.muted }}>
               Näet reaaliaikaisesti mitkä ikkunat on pesty. Kartta päivittyy työn edetessä.
             </p>
-            <CustomerFloorMap map={data.map} p2={p2} p2Actions={p2Live ? p2Actions : undefined} />
+            <CustomerFloorMap map={data.map} p2={p2} p2Actions={p2Live ? p2Actions : undefined} onLoadObservationImage={loadObservationImage} />
             <p style={{ margin: "14px 0 0", fontSize: 12, color: T.muted, lineHeight: 1.6 }}>
               {p2Live
                 ? "Keltaisella merkityt ovat Priority 2 -ikkunoita: jokainen hinnoitellaan ikkunakohtaisesti. Vastaa ehdotuksiin alla olevasta listasta — tai napauta ikkunaa suoraan kartalta."

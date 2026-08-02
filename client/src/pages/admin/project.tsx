@@ -6,7 +6,7 @@
  * Replaces the prototype's localStorage with debounced server autosave and adds
  * per-worker attribution so the dashboard can show window counts and €/h.
  */
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useRoute, useLocation } from "wouter";
 import { api } from "@/lib/api";
 import { getAdminProfile, USERS, getPreferredWasher, setPreferredWasher } from "@/lib/admin-profile";
@@ -377,7 +377,40 @@ export default function AdminProjectPage() {
     });
   }, [mutate]);
 
+  /**
+   * Pisteen raahaus.
+   *
+   * `FloorView` erottelee tarkoituksella esikatselun ja lopullisen sijainnin:
+   * `onMoveMark` tulee JOKAISESTA pointermove-tapahtumasta (~60 Hz) ja
+   * `onMoveMarkCommit` kerran kun sormi nousee. Tämä sivu oli kytkenyt
+   * molempiin saman `mutate`n, joka syväkopioi koko karttablobin ja ajastaa
+   * tallennuksen — eli raahaus kloonasi megatavuja 60 kertaa sekunnissa ja
+   * jokainen yli 700 ms:n tauko kesken raahauksen lähetti koko blobin kantaan.
+   *
+   * Nyt liike päivittää vain paikallisen esikatselun (ei kloonia, ei
+   * tallennusta) ja vasta sormen nosto kirjaa sijainnin.
+   */
+  const [dragPreview, setDragPreview] = useState<Record<string, { x: number; y: number }>>({});
+
   const onMoveMark = useCallback((key: string, x: number, y: number) => {
+    setDragPreview((cur) => ({ ...cur, [key]: { x, y } }));
+  }, []);
+
+  /** Raahauksen aikainen sijainti näytetään esikatselusta; muuten tallennettu. */
+  const livePosOverrides = useMemo(
+    () => (Object.keys(dragPreview).length
+      ? { ...(project?.posOverrides ?? {}), ...dragPreview }
+      : (project?.posOverrides ?? {})),
+    [project?.posOverrides, dragPreview],
+  );
+
+  const onMoveMarkCommit = useCallback((key: string, x: number, y: number) => {
+    setDragPreview((cur) => {
+      if (!(key in cur)) return cur;
+      const next = { ...cur };
+      delete next[key];
+      return next;
+    });
     mutate((d) => { d.posOverrides[key] = { x, y }; });
   }, [mutate]);
 
@@ -935,7 +968,7 @@ export default function AdminProjectPage() {
             pricePerWindow={effectivePrice}
             marks={project.marks}
             statuses={project.statuses}
-            posOverrides={project.posOverrides}
+            posOverrides={livePosOverrides}
             customMarks={project.customMarks}
             deleted={project.deleted}
             initialFloor={activeFloor}
@@ -943,7 +976,7 @@ export default function AdminProjectPage() {
             onAddCustomMark={onAddCustomMark}
             onDeleteMark={onDeleteMark}
             onMoveMark={onMoveMark}
-            onMoveMarkCommit={onMoveMark}
+            onMoveMarkCommit={onMoveMarkCommit}
             onResetFloor={onResetFloor}
             washedBy={project.washedBy}
             washedBy2={project.washedBy2}

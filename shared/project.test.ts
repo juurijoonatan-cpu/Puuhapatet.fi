@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, type ProjectData } from "./project";
+import { emptyProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, sanitizeProjectData, stripObservationImages, type ProjectData } from "./project";
 
 // Kohta 6.1 — kokonaistilanteen ikkunamäärän täsmäytys. Ks. docs/fr8-era-laskutus-plan.md.
 function fixture(): ProjectData {
@@ -63,5 +63,37 @@ describe("checkWindowAttribution — kohta 6.1 (ikkunamäärän täsmäytys)", (
     expect(check.dotCount).toBe(6);
     expect(check.attributedSum).toBe(6);
     expect(check.matches).toBe(true);
+  });
+});
+
+// Havaintokuvat eivät saa lähteä joka vastauksessa (Neonin siirtokiintiö), mutta
+// teksti ja 💬-merkki pitää silti näkyä kartalla heti.
+describe("stripObservationImages", () => {
+  it("pudottaa kuvan mutta jättää tekstin, tekijän ja aikaleiman", () => {
+    const out = stripObservationImages({
+      "K#0": { text: "Rikkinäinen tiiviste", imageDataUrl: "data:image/jpeg;base64,AAAA", by: "jani", ts: 111 },
+    });
+    expect(out["K#0"]).toEqual({ text: "Rikkinäinen tiiviste", by: "jani", ts: 111, hasImage: true });
+    expect(out["K#0"].imageDataUrl).toBeUndefined();
+  });
+
+  it("kuvaton havainto ei saa hasImage-lippua", () => {
+    const out = stripObservationImages({ "K#1": { text: "Naarmu", ts: 222 } });
+    expect(out["K#1"]).toEqual({ text: "Naarmu", by: undefined, ts: 222 });
+    expect(out["K#1"].hasImage).toBeUndefined();
+  });
+
+  it("tyhjä tai puuttuva syöte antaa tyhjän objektin", () => {
+    expect(stripObservationImages(undefined)).toEqual({});
+    expect(stripObservationImages(null)).toEqual({});
+    expect(stripObservationImages({})).toEqual({});
+  });
+
+  it("hasImage on vain siirtokenttä — sitä ei koskaan tallenneta", () => {
+    const clean = sanitizeProjectData({
+      ...emptyProjectData(),
+      observations: { "K#0": { text: "Naarmu", ts: 1, hasImage: true } },
+    });
+    expect(clean.observations!["K#0"].hasImage).toBeUndefined();
   });
 });

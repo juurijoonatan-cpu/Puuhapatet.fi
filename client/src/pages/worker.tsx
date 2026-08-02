@@ -1090,6 +1090,12 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
     if (res.ok && res.data?.view) setView(res.data.view);
   }, [token, setView]);
 
+  // Havaintokuva haetaan vasta napautuksesta — ks. stripObservationImages.
+  const loadObservationImage = useCallback(async (key: string) => {
+    const res = await api.crewObservationImage(token, key);
+    return res.ok ? res.data?.imageDataUrl : undefined;
+  }, [token]);
+
   // Worker map notes — add a "huomio" / "tikkaat" marker, edit or delete own.
   const addNote = useCallback((floor: string, x: number, y: number, kind: string): void => {
     (async () => {
@@ -1182,6 +1188,7 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
             observations={view.observations}
             canObserve
             onSetObservation={setObservation}
+            onLoadObservationImage={loadObservationImage}
             activeZone={view.activeZone}
             p2={view.p2 ? { enabled: view.p2.enabled, lockedKeys: view.p2.lockedKeys, payoutByKey: view.p2.payoutByKey } : null}
             guided={guided ? { enabled: guided.enabled, activeFloor: guided.activeFloor, activeFloors: guided.activeFloors, lockedFloors: guided.lockedFloors, nextKey: guided.nextKey } : null}

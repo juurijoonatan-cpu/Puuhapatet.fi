@@ -1275,6 +1275,16 @@ export const api = {
   gigObservationImage: (token: string, key: string) =>
     request<{ imageDataUrl: string }>("GET", `/api/gig/${token}/observation-image?key=${encodeURIComponent(key)}`),
 
+  // Liitteiden koko ja siirto pois karttablobista — ks.
+  // docs/datakartoitus-ja-korjaussuunnitelma.md, OSA 3.
+  getAssetStats: (jobId: number) =>
+    request<{ count: number; bytes: number; blobBytes: number; gigBytes: number; perTapBytes: number }>(
+      "GET", `/api/jobs/${jobId}/assets/stats`),
+
+  migrateAssets: (dryRun: boolean) =>
+    request<{ ok: boolean; dryRun: boolean; jobsTouched: number; totalMoved: number; totalBytes: number; summary: string }>(
+      "POST", "/api/admin/assets/migrate", { dryRun }),
+
   // Worker map notes (simple shared markers on the floor plan).
   crewAddMapNote: (token: string, floor: string, x: number, y: number, kind: string, text?: string) =>
     request<{ ok: boolean; key: string; view: WorkerView }>("POST", `/api/crew/${token}/map-note`, { floor, x, y, kind, text }),

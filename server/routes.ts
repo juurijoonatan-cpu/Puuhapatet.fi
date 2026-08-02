@@ -66,6 +66,44 @@ import { BRAND_BILLERS as DRIVE_BRAND_BILLERS } from "@shared/billers";
  *  rajaton — selain sai tallentaa siihen minkä kokoisen kuvan tahansa. */
 const MAX_PROPERTY_IMAGE_LEN = 1_000_000;
 
+/**
+ * `jobs`-rivi ILMAN neljää raskasta kuvakenttää.
+ *
+ * `db.select().from(jobs)` vetää mukanaan `customer_signature` (300 kB),
+ * `staff_signature` (300 kB), `property_image_url` (1 MB) ja
+ * `quote_video_url` — noin 1,6 MB per rivi. Käytännössä yksikään reitti ei
+ * tarvitse niitä: allekirjoitukset haetaan omalta reitiltään
+ * (`/api/jobs/:id/signatures`) ja kohdekuva näkyy vain tarjoussivulla.
+ *
+ * Tämä on tarkoituksella "kaikki paitsi ne neljä" eikä tiukka minimi, jotta
+ * sen voi pudottaa suoraan vanhan `select()`-kutsun tilalle ilman että
+ * yksikään kutsupaikka rikkoutuu. Tiukemmat projektiot (`CREW_JOB_COLS`,
+ * `MONEY_JOB_COLS`) ovat kuumilla poluilla.
+ */
+const JOB_COLS = {
+  id: jobs.id, customerId: jobs.customerId, scheduledAt: jobs.scheduledAt,
+  description: jobs.description, agreedPrice: jobs.agreedPrice, status: jobs.status,
+  assignedTo: jobs.assignedTo, notes: jobs.notes, waiveFee: jobs.waiveFee,
+  pendingWorkers: jobs.pendingWorkers, paymentMethod: jobs.paymentMethod,
+  quoteToken: jobs.quoteToken, quoteStatus: jobs.quoteStatus,
+  suggestedTimes: jobs.suggestedTimes, customerMessage: jobs.customerMessage,
+  isTaloyhtiio: jobs.isTaloyhtiio, taloyhtiioApproved: jobs.taloyhtiioApproved,
+  unitCount: jobs.unitCount, taloyhtiioName: jobs.taloyhtiioName,
+  unitResponses: jobs.unitResponses, boardContactName: jobs.boardContactName,
+  boardContactEmail: jobs.boardContactEmail, boardContactPhone: jobs.boardContactPhone,
+  isYritys: jobs.isYritys, isCustomGig: jobs.isCustomGig,
+  gigData: jobs.gigData, projectData: jobs.projectData, billedBy: jobs.billedBy,
+  submittedBy: jobs.submittedBy, submissionStatus: jobs.submissionStatus,
+  marketerId: jobs.marketerId, marketerCommissionCents: jobs.marketerCommissionCents,
+  createdAt: jobs.createdAt, updatedAt: jobs.updatedAt,
+} as const;
+
+/** Yksi keikkarivi ilman raskaita kuvakenttiä. Ks. `JOB_COLS`. */
+async function loadJobRow(id: number): Promise<typeof jobs.$inferSelect | undefined> {
+  const [row] = await db.select(JOB_COLS).from(jobs).where(eq(jobs.id, id));
+  return row as typeof jobs.$inferSelect | undefined;
+}
+
 /** Best-effort Drive backup for an invoice PDF — never throws, never blocks
  *  the response that generated the PDF. See docs/google-drive-backup.md. */
 function backupInvoicePdf(
@@ -1836,7 +1874,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.delete("/api/jobs/:id", async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      const job = await loadJobRow(id);
       if (!job) return res.status(404).json({ error: "Ei löydy" });
       const blockers = await jobDeletionBlockers(job);
       if (blockers.length > 0) {
@@ -2504,7 +2542,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/jobs/:id/era-invoice/worker-batch", async (req, res) => {
     try {
       const jobId = Number(req.params.id);
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+      const job = await loadJobRow(jobId);
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
 
       const eraNumbers = normalizeEraNumbers(req.body?.eraNumbers);
@@ -4316,7 +4354,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!resend) return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä" });
     try {
       const id = Number(req.params.id);
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      const job = await loadJobRow(id);
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
       if (!job.scheduledAt) return res.status(400).json({ error: "Ajankohta ei asetettu" });
 
@@ -4488,7 +4526,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       };
       if (!invitedUserId) return res.status(400).json({ error: "invitedUserId puuttuu" });
 
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+      const job = await loadJobRow(jobId);
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
 
       // Add to pendingWorkers (avoid duplicates)
@@ -4543,7 +4581,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const { userId, accept } = req.body as { userId: string; accept: boolean };
       if (!userId) return res.status(400).json({ error: "userId puuttuu" });
 
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+      const job = await loadJobRow(jobId);
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
 
       // Remove from pending
@@ -4670,7 +4708,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (admin?.role !== "host") return res.status(403).json({ error: "Vain perustaja voi käsitellä liidejä." });
       const jobId = Number(req.params.id);
       const action = String(req.body?.action ?? "");
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+      const job = await loadJobRow(jobId);
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy." });
       if (job.submissionStatus !== "pending_review") return res.status(400).json({ error: "Liidi ei ole enää tarkistettavana." });
 
@@ -5174,7 +5212,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/jobs/:id/gig/approve", async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      const job = await loadJobRow(id);
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const gig = parseGig(job.gigData);
       if (!gig) return res.status(400).json({ error: "Keikalla ei ole seurantadataa" });
@@ -5202,7 +5240,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.patch("/api/jobs/:id/gig", async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      const job = await loadJobRow(id);
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const gig = sanitizeGigData(req.body?.gigData ?? req.body);
       const totals = computeTotals(gig);
@@ -5224,7 +5262,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
     try {
       const id = Number(req.params.id);
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      const job = await loadJobRow(id);
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const gig = parseGig(job.gigData);
       if (!gig) return res.status(400).json({ error: "Keikalla ei ole seurantadataa" });
@@ -5533,7 +5571,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
     try {
       const id = Number(req.params.id);
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      const job = await loadJobRow(id);
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const gig = parseGig(job.gigData);
       if (!gig) return res.status(400).json({ error: "Keikalla ei ole seurantadataa" });
@@ -5724,7 +5762,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/jobs/:id/gig/invoice/undo", async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      const job = await loadJobRow(id);
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const gig = parseGig(job.gigData);
       if (!gig) return res.status(400).json({ error: "Keikalla ei ole seurantadataa" });
@@ -5915,7 +5953,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/jobs/:id/p2/phase", async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      const job = await loadJobRow(id);
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const project = parseProject(job.projectData ?? null);
       if (!project) return res.status(400).json({ error: "Keikalla ei ole projektidataa" });
@@ -5952,7 +5990,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/jobs/:id/guided", async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      const job = await loadJobRow(id);
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const project = parseProject(job.projectData ?? null);
       if (!project) return res.status(400).json({ error: "Keikalla ei ole projektidataa" });
@@ -6000,7 +6038,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!isFounder) return res.status(403).json({ error: "Vain perustaja voi kirjata tasauksen." });
 
       const id = Number(req.params.id);
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      const job = await loadJobRow(id);
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const project = parseProject(job.projectData ?? null);
       if (!project) return res.status(400).json({ error: "Keikalla ei ole projektidataa" });
@@ -6098,7 +6136,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
    * admin-paneelin rahakortti käyttävät — ei kahta kaavaa.
    */
   async function loadTasaus(jobId: number, project: ProjectData) {
-    const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+    const job = await loadJobRow(jobId);
     const gig = parseGig(job?.gigData ?? null);
     let invoices: TasausEraInvoice[] = [];
     try {
@@ -6130,7 +6168,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(403).json({ error: "Vain perustaja näkee tasauksen." });
       }
       const id = Number(req.params.id);
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      const job = await loadJobRow(id);
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const project = parseProject(job.projectData ?? null);
       if (!project) return res.json({ ok: true, tasaus: null });
@@ -6144,7 +6182,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/jobs/:id/p2/propose", async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      const job = await loadJobRow(id);
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const project = parseProject(job.projectData ?? null);
       if (!project) return res.status(400).json({ error: "Keikalla ei ole projektidataa" });
@@ -6186,7 +6224,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/jobs/:id/p2/respond", async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+      const job = await loadJobRow(id);
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const project = parseProject(job.projectData ?? null);
       if (!project?.p2) return res.status(400).json({ error: "Vaihe 2 ei ole alustettu" });
@@ -6844,7 +6882,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       },
       // Puuhapatet -> worker payouts (newest-first). The worker sees and approves
       // these; the gig price/cap stays hidden as always.
-      payouts: (member.payouts || []).slice().sort((a, b) => b.createdAt - a.createdAt),
+      //
+      // KUITIT POIS. Tämä näkymä palautetaan 13 reitiltä — jokainen
+      // ikkunanapautus on yksi — ja maksukuitit ovat 700 kB kappaleelta.
+      // Sadan ikkunan vuorossa samat kuitit lähtivät sata kertaa, vaikka
+      // maksulista on eri välilehdellä. Kulun summa ja nimi jäävät, joten
+      // lista näyttää samalta; itse kuva haetaan sitä katsottaessa.
+      payouts: (member.payouts || []).slice()
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .map((p) => ({
+          ...p,
+          expenses: (p.expenses || []).map(({ receiptDataUrl, ...e }: any) => ({
+            ...e, hasReceipt: !!receiptDataUrl || !!e.receiptAssetId,
+          })),
+        })),
       // FR8 erälaskut, vain tekijän omat (kohta 3B) — luonnos = odottaa tekijän
       // "Lähetä lasku" / "Hylkää" -vastausta, hyväksytty/hylätty = lukittu.
       eraInvoices: workerEraInvoices,
@@ -7737,10 +7788,31 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // here. Only the founder hosts (Joonatan/Matias, role "host") stay masked,
       // since they manage from the admin views, not the worker roster UI. Each
       // admin-linked worker shows an "ADMIN" badge in the crew card.
+      // TOSITTEIDEN JA KUITTIEN DATA POIS. Palkanmaksusivu näyttää taulukon
+      // nimiä, ikkunamääriä ja euroja — se ei näytä yhtäkään PDF:ää. `member: m`
+      // lähetti silti jokaisen tekijän kaikki tositteet (1,5 MB kpl) ja
+      // maksukuitit (700 kB kpl) joka kerta kun sivu avattiin.
+      //
+      // Metadata jää: kuvaus, summa, päivä, säilytysaika, tiedostonimi ja koko.
+      // Rekisteri näyttää siis samalta, mutta liite haetaan vasta kun sitä
+      // napautetaan (GET /api/jobs/:id/assets/:assetId).
+      const lightMember = (m: CrewMember) => ({
+        ...m,
+        documents: (m.documents || []).map(({ fileDataUrl, ...d }) => ({
+          ...d, hasFile: !!fileDataUrl || !!d.fileAssetId,
+          fileBytes: d.fileBytes ?? fileDataUrl?.length,
+        })),
+        payouts: (m.payouts || []).map((p) => ({
+          ...p,
+          expenses: (p.expenses || []).map(({ receiptDataUrl, ...e }: any) => ({
+            ...e, hasReceipt: !!receiptDataUrl || !!e.receiptAssetId,
+          })),
+        })),
+      });
       const crew = (project.crew || [])
         .filter((m) => m.role !== "host")
         .map((m) => ({
-          member: m,
+          member: lightMember(m),
           stats: crewMemberStats(project, m),
           onboarded: isOnboarded(m, requiredAgreementIdsForSet(resolveAgreementSet(m)), WORKER_AGREEMENT_VERSION),
         }));
@@ -7825,7 +7897,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/admin/worker/:workerId", async (req, res) => {
     try {
       const wid = String(req.params.workerId).toLowerCase();
-      const allJobs = (await db.select(MONEY_JOB_COLS).from(jobs)) as typeof jobs.$inferSelect[];
+      // Vain karttablobi ja kuvaus. `MONEY_JOB_COLS` veti tähän myös jokaisen
+      // keikan `gigData`n (asiakkaan allekirjoitus-PNG mukana), vaikka tämä
+      // näkymä ei katso siitä yhtäkään kenttää — se kokoaa yhden henkilön
+      // maksut ja tositteet crew-listalta.
+      const allJobs = (await db.select({
+        id: jobs.id, description: jobs.description, projectData: jobs.projectData,
+      }).from(jobs).where(eq(jobs.isCustomGig, true))) as typeof jobs.$inferSelect[];
       let worker: any = null;
       let payouts: any[] = [];
       let documents: any[] = [];
@@ -8059,8 +8137,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!biller || !Number.isFinite(idx) || idx < 0) {
         return res.status(400).json({ error: "Virheellinen laskuttaja tai erä" });
       }
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
-      const gig = parseGig(job?.gigData ?? null);
+      const job = await loadJobRow(jobId);
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const gig = parseGig(job.gigData ?? null);
       if (!gig || !gig.payments[idx]) return res.status(404).json({ error: "Erämaksua ei löydy" });
       // Only fill an EMPTY attribution. Payment indexes shift when instalments
       // are cancelled, so a stale row in the UI must never silently overwrite
@@ -8257,8 +8336,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const jobId = Number(req.params.id);
       const idx = Math.floor(Number(req.params.index));
       const { amountCents, dateMs, billerId } = (req.body || {}) as Record<string, any>;
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
-      const gig = parseGig(job?.gigData ?? null);
+      const job = await loadJobRow(jobId);
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const gig = parseGig(job.gigData ?? null);
       if (!gig || !Number.isFinite(idx) || idx < 0 || !gig.payments[idx]) {
         return res.status(404).json({ error: "Erämaksua ei löydy" });
       }
@@ -8310,8 +8390,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if ((req as any).admin?.role !== "host") return res.status(403).json({ error: "Vain perustaja voi poistaa laskutuseriä." });
       const jobId = Number(req.params.id);
       const idx = Math.floor(Number(req.params.index));
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
-      const gig = parseGig(job?.gigData ?? null);
+      const job = await loadJobRow(jobId);
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const gig = parseGig(job.gigData ?? null);
       if (!gig || !Number.isFinite(idx) || idx < 0 || !gig.payments[idx]) {
         return res.status(404).json({ error: "Erämaksua ei löydy" });
       }
@@ -9783,7 +9864,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               // Puoliautonominen: EI suorita muutosta — luo ehdotuksen jonka
               // käyttäjä hyväksyy napilla. Näin avustaja ei koskaan muokkaa
               // keikkaa ilman nimenomaista lupaa (esim. omin päin lisätyt notet).
-              const jobRow = (await db.select().from(jobs).where(eq(jobs.id, args.job_id)).limit(1))[0];
+              const jobRow = await loadJobRow(args.job_id);
               if (!jobRow) {
                 toolResult = `Virhe: keikkaa #${args.job_id} ei löydy.`;
               } else if (!args.status && !args.notes) {
@@ -9807,7 +9888,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               }
             } else if (tc.function.name === "draft_followup_email") {
               // Puoliautonominen: ei lähetä — luo luonnos jonka käyttäjä hyväksyy.
-              const jobRow = (await db.select().from(jobs).where(eq(jobs.id, args.job_id)).limit(1))[0];
+              const jobRow = await loadJobRow(args.job_id);
               if (!jobRow) {
                 toolResult = `Virhe: keikkaa #${args.job_id} ei löydy.`;
               } else {
@@ -9960,7 +10041,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (type === "update_job") {
         const jobId = Number(p.job_id);
         if (!jobId) return res.status(400).json({ error: "Keikan ID puuttuu." });
-        const jobRow = (await db.select().from(jobs).where(eq(jobs.id, jobId)).limit(1))[0];
+        const jobRow = await loadJobRow(jobId);
         if (!jobRow) return res.status(404).json({ error: `Keikkaa #${jobId} ei löydy.` });
         const updates: any = { updatedAt: new Date() };
         const validStatus = ["lead", "scheduled", "in_progress", "done"].includes(String(p.status));
@@ -10020,7 +10101,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const mid = marketerId.toLowerCase();
     let mineSummary = "Ei vielä omia liidejä.";
     try {
-      const rows = mid ? await db.select().from(jobs).where(eq(jobs.marketerId, mid)) : [];
+      // Vain kolme kenttää — tämä laskee lukumääriä ja palkkiosumman, ei muuta.
+      const rows = mid ? await db.select({
+        submissionStatus: jobs.submissionStatus,
+        marketerCommissionCents: jobs.marketerCommissionCents,
+      }).from(jobs).where(eq(jobs.marketerId, mid)) : [];
       const approved = rows.filter(r => r.submissionStatus === "approved");
       const pending = rows.filter(r => r.submissionStatus === "pending_review");
       const commission = approved.reduce((s, r) => s + (r.marketerCommissionCents || 0), 0);
@@ -10268,7 +10353,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!jid || !msg) return res.status(400).json({ error: "Keikka tai viesti puuttuu." });
       const st: OutreachStyle = (["henkikohtainen", "pro", "lyhyt"].includes(style) ? style : "henkikohtainen");
 
-      const jobRow = (await db.select().from(jobs).where(eq(jobs.id, jid)).limit(1))[0];
+      const jobRow = await loadJobRow(jid);
       if (!jobRow) return res.status(404).json({ error: `Keikkaa #${jid} ei löydy.` });
       const customer = jobRow.customerId
         ? (await db.select().from(customers).where(eq(customers.id, jobRow.customerId)).limit(1))[0]

@@ -90,6 +90,12 @@ export interface ProjWindowObservation {
    * niin käyttöliittymä osaa hakea sen vasta kun pistettä napautetaan.
    */
   hasImage?: boolean;
+  /**
+   * Viite `job_assets`-tauluun. Kun tämä on asetettu, kuva EI ole blobissa
+   * vaan omassa taulussaan, eikä `imageDataUrl` ole enää mukana. Vanhat
+   * havainnot kantavat kuvan yhä inline — lukupolut osaavat molemmat.
+   */
+  imageAssetId?: number;
 }
 
 /** Max stored size for an observation photo data URL (~0.5 MB base64). */
@@ -113,9 +119,13 @@ export function stripObservationImages(
   const out: Record<string, ProjWindowObservation> = {};
   for (const [k, o] of Object.entries(obs ?? {})) {
     if (!o) continue;
-    out[k] = o.imageDataUrl
-      ? { text: o.text, by: o.by, ts: o.ts, hasImage: true }
-      : { text: o.text, by: o.by, ts: o.ts };
+    const base = { text: o.text, by: o.by, ts: o.ts };
+    // `imageAssetId` kulkee mukana, jotta selain voi pyytää kuvan suoraan
+    // avaimella — silloin palvelimen ei tarvitse lukea koko karttablobia
+    // yhden kuvan palauttamiseksi. `hasImage` yksin jätti sen tekemättä.
+    if (o.imageAssetId) out[k] = { ...base, hasImage: true, imageAssetId: o.imageAssetId };
+    else if (o.imageDataUrl) out[k] = { ...base, hasImage: true };
+    else out[k] = base;
   }
   return out;
 }
@@ -949,9 +959,14 @@ export function sanitizeProjectData(input: any): ProjectData {
       const text = String(o.text ?? "").slice(0, 1000).trim();
       const img = typeof o.imageDataUrl === "string" && o.imageDataUrl.startsWith("data:image/")
         ? o.imageDataUrl.slice(0, MAX_OBSERVATION_IMAGE_LEN) : undefined;
-      if (!text && !img) continue; // drop empty observations
+      const assetId = Number.isSafeInteger(Number(o.imageAssetId)) && Number(o.imageAssetId) > 0
+        ? Number(o.imageAssetId) : undefined;
+      // Kuvaton mutta viitteellinen havainto on validi: liite asuu
+      // `job_assets`-taulussa eikä blobissa.
+      if (!text && !img && !assetId) continue;
       observations[cleanKey(k)] = {
         text, imageDataUrl: img,
+        ...(assetId ? { imageAssetId: assetId } : {}),
         by: o.by ? String(o.by).slice(0, 40) : undefined,
         ts: Number(o.ts) || Date.now(),
       };

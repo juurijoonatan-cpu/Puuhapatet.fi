@@ -503,3 +503,38 @@ export const driveFiles = pgTable("drive_files", {
 }));
 
 export type DriveFile = typeof driveFiles.$inferSelect;
+
+// ─── Job assets — liitteet pois karttablobista ────────────────────────────────
+//
+// MIKSI TÄMÄ ON OLEMASSA: kaikki liitteet — havaintokuvat, kulukuitit,
+// maksukuitit ja tekijöiden tositteet — asuivat base64-datana `jobs.project_data`
+// -blobin sisällä. Blobi luetaan JOKAISELLA ikkunanapautuksella, joten kartan
+// piirtämiseen tarvittava ~31 kB haki mukanaan kymmeniä megatavuja kuvia.
+// Neon laskee liikenteeksi datan joka lähtee kannasta ulos, joten se oli
+// suoraan se lasku joka lopulta sulki tietokannan.
+//
+// Nyt blobiin jää vain viite (`...AssetId`) ja metatieto. Liite haetaan tästä
+// taulusta vasta kun sitä katsotaan. Karttapyyntö ei koske tähän tauluun
+// koskaan.
+//
+// Vanhat inline-liitteet toimivat edelleen: lukupolut osaavat molemmat muodot,
+// ja siirto tehdään erikseen (POST /api/admin/assets/migrate), ei automaattisesti.
+// Ks. docs/datakartoitus-ja-korjaussuunnitelma.md, OSA 3.
+
+export const jobAssets = pgTable("job_assets", {
+  id:        serial("id").primaryKey(),
+  jobId:     integer("job_id").references(() => jobs.id).notNull(),
+  /** observation | expense_receipt | payout_receipt | crew_document */
+  kind:      text("kind").notNull(),
+  /** Mihin tämä liittyy: ikkuna-avain ("K#12"), kulun id, payoutin id, dokumentin id. */
+  refKey:    text("ref_key").notNull(),
+  mime:      text("mime").notNull(),
+  /** Data URL:n pituus tavuina — UI voi näyttää koon lataamatta itse liitettä. */
+  bytes:     integer("bytes").notNull(),
+  data:      text("data").notNull(),      // koko data URL
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  oneAssetPerRef: unique().on(t.jobId, t.kind, t.refKey),
+}));
+
+export type JobAsset = typeof jobAssets.$inferSelect;

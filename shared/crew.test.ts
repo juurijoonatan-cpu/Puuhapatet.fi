@@ -127,3 +127,17 @@ describe("maksut eivät katoa", () => {
     expect(m.payouts!.map((p) => p.id)).toEqual(["p3", "p1", "p2"]);
   });
 });
+
+describe("tositteen liiteviite", () => {
+  it("fileAssetId ja fileBytes säilyvät sanitoinnissa", () => {
+    const m = member({ documents: [doc(1, { fileAssetId: 99, fileBytes: 123456 })] });
+    expect(m.documents![0].fileAssetId).toBe(99);
+    expect(m.documents![0].fileBytes).toBe(123456);
+  });
+
+  it("kelvoton viite ei mene läpi", () => {
+    const m = member({ documents: [doc(1, { fileAssetId: -3, fileBytes: 0 })] });
+    expect(m.documents![0].fileAssetId).toBeUndefined();
+    expect(m.documents![0].fileBytes).toBeUndefined();
+  });
+});

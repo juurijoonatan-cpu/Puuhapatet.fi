@@ -34,6 +34,7 @@ import { computeP2Billing, customerAddedKeys, emptyP2State, p2PendingPriceCents,
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
 import { fail } from "./errors";
+import { putAsset, getAsset, resolveAsset, assetStats, migrateJobAssets } from "./assets";
 import { buildTasaus, type TasausEraInvoice, type TasausPayment } from "@shared/fr8-tasaus";
 import { p2InvoiceState, computeWorkerSettlements, eraSettlementByWorker, sumWorkerSettlements, type EraInvoiceLike } from "@shared/worker-payouts";
 import {
@@ -1377,6 +1378,90 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // käyttäjä luuli salasanansa olevan väärin. `fail` kirjaa todellisen
       // syyn lokiin ja vastaa 503 + suomenkielinen "yritä hetken päästä".
       return fail(res, e, "POST /api/admin/login");
+    }
+  });
+
+  /**
+   * Siirrä olemassa olevat inline-liitteet omaan tauluunsa.
+   *
+   * EI AJETA AUTOMAATTISESTI. Julkaisu ei saa liikuttaa dataa itsestään — tämä
+   * on nappi jota painetaan kun on hyvä hetki. Uudet liitteet menevät joka
+   * tapauksessa jo suoraan `job_assets`iin, joten kasvu on pysähtynyt ilman
+   * tätäkin; tämä kutistaa sen mikä on jo blobissa.
+   *
+   * Idempotentti ja turvallinen: jokainen liite kirjoitetaan uuteen tauluun
+   * ENNEN kuin se poistetaan blobista, jo siirretyt ohitetaan, ja ajon voi
+   * toistaa. `?dryRun=1` kertoo mitä tapahtuisi kirjoittamatta mitään.
+   */
+  app.post("/api/admin/assets/migrate", async (req, res) => {
+    try {
+      if ((req as any).admin?.role !== "host") {
+        return res.status(403).json({ error: "Vain perustaja voi ajaa siirron." });
+      }
+      const dryRun = req.query.dryRun === "1" || req.body?.dryRun === true;
+      const onlyJobId = Number(req.body?.jobId) || null;
+      const rows = await db.select({ id: jobs.id, projectData: jobs.projectData })
+        .from(jobs).where(onlyJobId ? eq(jobs.id, onlyJobId) : eq(jobs.isCustomGig, true));
+
+      const results: { jobId: number; moved: number; bytesFreed: number }[] = [];
+      for (const row of rows) {
+        const project = parseProject(row.projectData ?? null);
+        if (!project) continue;
+        if (dryRun) {
+          // Laske vain, älä kirjoita mitään.
+          let moved = 0, bytesFreed = 0;
+          for (const o of Object.values(project.observations ?? {})) {
+            if (o?.imageDataUrl && !o.imageAssetId) { moved++; bytesFreed += o.imageDataUrl.length; }
+          }
+          for (const e of (project.expenses ?? []) as any[]) {
+            if (e?.receipt && !e.receiptAssetId) { moved++; bytesFreed += String(e.receipt).length; }
+          }
+          for (const m of project.crew ?? []) {
+            for (const d of m.documents ?? []) {
+              if (d.fileDataUrl && !d.fileAssetId) { moved++; bytesFreed += d.fileDataUrl.length; }
+            }
+          }
+          if (moved) results.push({ jobId: row.id, moved, bytesFreed });
+          continue;
+        }
+        const out = await migrateJobAssets(row.id, project);
+        if (out.changed) {
+          await db.update(jobs)
+            .set({ projectData: JSON.stringify(sanitizeProjectData(project)), updatedAt: new Date() })
+            .where(eq(jobs.id, row.id));
+          results.push({ jobId: out.jobId, moved: out.moved, bytesFreed: out.bytesFreed });
+        }
+      }
+      const totalMoved = results.reduce((s, r) => s + r.moved, 0);
+      const totalBytes = results.reduce((s, r) => s + r.bytesFreed, 0);
+      res.json({
+        ok: true, dryRun, jobsTouched: results.length, totalMoved, totalBytes,
+        summary: `${dryRun ? "Siirrettäisiin" : "Siirretty"} ${totalMoved} liitettä `
+          + `(${(totalBytes / 1024 / 1024).toFixed(1)} MB) ${results.length} keikalta.`,
+        results,
+      });
+    } catch (e) {
+      return fail(res, e, "POST /api/admin/assets/migrate");
+    }
+  });
+
+  /** Yhden keikan liitteiden koko — kokomittari ilman datan lataamista. */
+  app.get("/api/jobs/:id/assets/stats", async (req, res) => {
+    try {
+      res.json(await assetStats(Number(req.params.id)));
+    } catch (e) {
+      return fail(res, e, "GET /api/jobs/:id/assets/stats");
+    }
+  });
+
+  /** Yksi tosite tai kuitti pyynnöstä — host-suojattu, ei koske karttablobiin. */
+  app.get("/api/jobs/:id/assets/:assetId", async (req, res) => {
+    try {
+      const data = await getAsset(Number(req.params.id), Number(req.params.assetId));
+      if (!data) return res.status(404).json({ error: "Liitettä ei löydy" });
+      res.json({ dataUrl: data });
+    } catch (e) {
+      return fail(res, e, "GET /api/jobs/:id/assets/:assetId");
     }
   });
 
@@ -4976,13 +5061,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/gig/:token/observation-image", async (req, res) => {
     try {
       const [row] = await db
-        .select({ isCustomGig: jobs.isCustomGig, projectData: jobs.projectData })
+        .select({ id: jobs.id, isCustomGig: jobs.isCustomGig, projectData: jobs.projectData })
         .from(jobs)
         .where(eq(jobs.quoteToken, req.params.token));
       if (!row || !row.isCustomGig) return res.status(404).json({ error: "Seurantaa ei löydy" });
       const proj = parseProject(row.projectData ?? null);
       const key = String(req.query.key ?? "").slice(0, 64);
-      const img = proj?.observations?.[key]?.imageDataUrl;
+      const obs = proj?.observations?.[key];
+      const img = await resolveAsset(row.id, { assetId: obs?.imageAssetId, inline: obs?.imageDataUrl });
       if (!img) return res.status(404).json({ error: "Kuvaa ei löydy" });
       res.json({ imageDataUrl: img });
     } catch (e: any) {
@@ -7039,8 +7125,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const img = typeof req.body?.imageDataUrl === "string" && req.body.imageDataUrl.startsWith("data:image/")
         ? req.body.imageDataUrl.slice(0, MAX_OBSERVATION_IMAGE_LEN) : undefined;
       project.observations = project.observations || {};
-      if (!text && !img) delete project.observations[key];
-      else project.observations[key] = { text, imageDataUrl: img, by: member.id, ts: Date.now() };
+      if (!text && !img) {
+        delete project.observations[key];
+      } else {
+        // UUSI KUVA MENEE SUORAAN OMAAN TAULUUNSA, ei blobiin. Tämä on se kohta
+        // jossa kasvu pysähtyy: blobiin jää pelkkä viite, joten kartan luku ei
+        // enää raskaudu jokaisesta lisätystä valokuvasta.
+        const assetId = img ? await putAsset(job.id, "observation", key, img) : undefined;
+        project.observations[key] = {
+          text,
+          ...(assetId ? { imageAssetId: assetId } : {}),
+          by: member.id, ts: Date.now(),
+        };
+      }
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
       res.json({ ok: true, view: await workerView(job, saved, savedMember) });
@@ -7055,10 +7152,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // mukana. Sama tokenointi kuin muissakin crew-reiteissä.
   app.get("/api/crew/:token/observation-image", async (req, res) => {
     try {
-      const found = await findJobByCrewToken(String(req.params.token));
+      const token = String(req.params.token);
+      const assetId = Number(req.query.assetId);
+      // NOPEA POLKU: liite on omassa taulussaan ja selain tietää sen id:n, joten
+      // koko karttablobia ei tarvitse lukea. Tämä oli reitin alkuperäinen vika:
+      // se luki megatavuja palauttaakseen yhden kuvan, eli se kevensi selaimen
+      // liikennettä mutta teki kannan puolella katselusta kalliimpaa.
+      // Token→keikka tulee välimuistista, joka on täytetty vasta todennetun
+      // osuman jälkeen; välimuistiohitus putoaa alla olevaan täyteen polkuun.
+      if (Number.isSafeInteger(assetId) && assetId > 0) {
+        const cachedJobId = crewTokenJobCache.get(token);
+        if (cachedJobId !== undefined) {
+          const data = await getAsset(cachedJobId, assetId);
+          if (data) return res.json({ imageDataUrl: data });
+        }
+      }
+      // VANHA POLKU: kuva on yhä blobin sisällä (siirtoa ei ole ajettu tälle
+      // keikalle), tai token ei ollut välimuistissa.
+      const found = await findJobByCrewToken(token);
       if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
       const key = String(req.query.key ?? "").slice(0, 64);
-      const img = found.project.observations?.[key]?.imageDataUrl;
+      const obs = found.project.observations?.[key];
+      const img = await resolveAsset(found.job.id, { assetId: obs?.imageAssetId, inline: obs?.imageDataUrl });
       if (!img) return res.status(404).json({ error: "Kuvaa ei löydy" });
       res.json({ imageDataUrl: img });
     } catch (e: any) {
@@ -7861,6 +7976,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // host-role holder member (active:false + 1-cent rate so payroll/kate math
   // never shifts). Shared by the manual-document endpoint and the automatic
   // settlement tositteet.
+  /** Tosite talteen omaan tauluunsa; palauttaa dokumentin jossa on viite datan
+   *  sijaan. Ilman tiedostoa (pelkkä muistio) palautetaan sellaisenaan. */
+  async function fileDocumentAsset(jobId: number, memberId: string, doc: CrewDocument): Promise<CrewDocument> {
+    if (!doc.fileDataUrl) return doc;
+    const bytes = doc.fileDataUrl.length;
+    const assetId = await putAsset(jobId, "crew_document", `${memberId}:${doc.id}`, doc.fileDataUrl);
+    const { fileDataUrl, ...rest } = doc;
+    return { ...rest, fileAssetId: assetId, fileBytes: bytes };
+  }
+
   async function attachPersonDocument(wid: string, doc: CrewDocument, dedupe = false): Promise<boolean> {
     // Etsintä lukee VAIN karttablobin. Aiemmin tässä oli `MONEY_JOB_COLS`,
     // joka veti mukanaan myös jokaisen keikan `gigData`n — asiakkaan
@@ -7888,7 +8013,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         )) return true;
         const job = await fullJob(row.id);
         if (!job) continue;
-        project.crew[idx] = { ...project.crew[idx], documents: [doc, ...(project.crew[idx].documents || [])] };
+        // Tiedosto omaan tauluunsa, blobiin vain viite. Tosite on jopa 1,5 MB
+        // eikä sitä poisteta koskaan (6 v säilytys), joten juuri nämä
+        // kasvattivat karttablobia pysyvästi — ja blobi luetaan jokaisella
+        // ikkunanapautuksella.
+        const filed = await fileDocumentAsset(job.id, project.crew[idx].id, doc);
+        project.crew[idx] = { ...project.crew[idx], documents: [filed, ...(project.crew[idx].documents || [])] };
         await saveProject(job, project);
         return true;
       }
@@ -7906,6 +8036,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         if (!member) break;
         const job = await fullJob(row.id);
         if (!job) continue;
+        member.documents = [await fileDocumentAsset(job.id, member.id, doc)];
         project.crew = [...(project.crew || []), member];
         await saveProject(job, project);
         return true;

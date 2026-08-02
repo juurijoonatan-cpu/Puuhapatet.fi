@@ -299,34 +299,66 @@ loogisemman — juuri sitä mitä pyysit. Kaikki *(varmistamattomia)*.
 
 ---
 
-# OSA 6 — P5: Ettei tämä toistu
+# OSA 6 — P5: Ettei tämä toistu ✅ TEHTY
 
-Kartoitus laski että `server/routes.ts`:ssä on **yhä 33 rajaamatonta
-`db.select().from(jobs)`-kutsua.** Sääntö on jo kirjattu dokumenttiin, mutta
-dokumentti ei estä mitään.
+Kartoitus laski **27 rajaamatonta `db.select().from(jobs)`-kutsua**. Sääntö oli
+jo kirjattu dokumenttiin, eikä dokumentti estänyt mitään.
 
-1. **Testi joka kaatuu** jos `jobs`-taulua luetaan ilman sarakelistaa.
-2. **Kokomittari**: admin-näkymä joka kertoo `pg_column_size(project_data)`
-   ja liitteiden määrän per keikka. Vika oli näkymätön siihen asti kunnes
-   kanta meni lukkoon.
-3. **Liikennemittari lokiin**: mikä reitti luki montako tavua.
+1. ✅ **`server/query-hygiene.test.ts`** kaatuu jos `jobs`-taulua luetaan ilman
+   sarakelistaa. Testi tarkistaa myös itsensä: se todistaa tunnistavansa
+   rikkomuksen ja jättävänsä kommentit rauhaan. Kaikki 27 on korjattu.
+2. ✅ **Kokomittari** `GET /api/jobs/:id/assets/stats` — liitteiden määrä ja
+   tavut ilman datan lataamista.
+3. ⬜ Liikennemittari lokiin (mikä reitti luki montako tavua) — tekemättä.
+
+## Työkalut joita korjauksissa kannattaa käyttää
+
+| Tarve | Käytä |
+|---|---|
+| Yksi keikkarivi, ei kuvakenttiä | `loadJobRow(id)` |
+| Keikkarivi ilman raskaita kuvia | `JOB_COLS` |
+| Crew-/karttapolku | `CREW_JOB_COLS` |
+| Rahalaskenta | `MONEY_JOB_COLS` |
+| Liite pyynnöstä | `resolveAsset(jobId, { assetId, inline })` |
+
+`JOB_COLS` on tarkoituksella "kaikki paitsi ne neljä raskasta kuvakenttää"
+eikä tiukka minimi — sen voi pudottaa vanhan `select()`-kutsun tilalle
+rikkomatta yhtäkään kutsupaikkaa.
 
 ---
 
+# OSA 6B — Tyhjäkäynti: mikä pyörii kun kukaan ei katso
+
+Erikseen tarkistettu, koska "järjestelmä pyörii hiljaa päällä ja kuluttaa" on
+juuri se mitä pilvilaskussa ei näy ennen kuin se on jo tullut.
+
+| Mikä | Tila | Kuluttaako Neonia |
+|---|---|---|
+| Keep-warm-cron (`/api/health` 5 min välein) | päällä | **Ei** — reitti ei koske kantaan lainkaan. Pitää vain Renderin hereillä, ja se mahtuu ilmaistason tuntikattoon. |
+| Sheets-täsmäytys 30 min välein | **ei rekisteröidy** | Ei — `if (isSheetsSyncEnabled())` on epätosi kun ympäristömuuttujia ei ole. Olisi ollut ~1,5 GB/vrk/keikka. |
+| Drive-varmuuskopiot | no-op | Ei — `isDriveConfigured()` epätosi. |
+| Selainpollit | pysähtyvät piilossa | Vain näkyvänä. Postilaatikko 30 s / 15 s, seurantasivu 120 s. |
+| Yhteyspooli | ✅ säädetty | `idleTimeoutMillis` 3 s, `max` 5, `allowExitOnIdle`. Jouten oleva yhteys suljetaan nopeasti, jotta Neonin compute pääsee lepotilaan heti käytön jälkeen. |
+| Palvelimen käynnistys | kevyt | `CREATE TABLE IF NOT EXISTS` -migraatiot, ei datalukuja. |
+
+**Johtopäätös: tyhjäkäynnillä ei enää kulu Neonia.** Ainoa jatkuva kutsu on
+keep-warm, eikä se koske tietokantaan.
+
 # OSA 7 — Järjestys ja työmäärä
 
-| Vaihe | Sisältö | Työmäärä | Miksi tässä järjestyksessä |
-|---|---|---|---|
-| **A** | P0-1…P0-4 | **½ pv** | Estää datan tuhoutumisen ja sulkee tietoturva-aukon. Tehdään ensin riippumatta kaikesta muusta. |
-| **B** | OSA 2, kohdat 1–10 | **1 pv** | Suurin kiintiövaikutus pienimmällä riskillä. Ei skeemamuutoksia. |
-| **C** | OSA 3 vaiheet 1–3 | **1 pv** | Uusi taulu käyttöön, rinnakkaiskäyttö. |
-| **D** | OSA 3 vaiheet 4–5 + kokokatto | **½ pv** | Kertasiirto. Tässä blobi kutistuu oikeasti. |
-| **E** | OSA 4 arkisto | **½ pv** | Tositteet Driveen. |
-| **F** | OSA 5 valinnat + OSA 6 | **1 pv** | Rakenne ja vartijat. |
+| Vaihe | Sisältö | Tila |
+|---|---|---|
+| **A** | P0-1…P0-4 — datan tuhoutuminen ja tietoturva | ✅ **tehty** (#402) |
+| **B** | Sarakerajaukset, kaikki 27 | ✅ **tehty** (#402, #404) |
+| **C** | `job_assets` käyttöön, rinnakkaiskäyttö | ✅ **tehty** (#403) |
+| **D** | Kertasiirto vanhalle datalle | ⏳ **valmis ajettavaksi** — `POST /api/admin/assets/migrate` |
+| **E** | Arkisto Driveen | ⬜ odottaa — Drivea ei ole vielä luotu Googlessa |
+| **F** | Vartijat | ✅ **tehty** (#404) |
+| **G** | OSA 5 rakennevalinnat | ⬜ odottaa päätöksiä (ks. OSA 8) |
 
-**Yhteensä ~4,5 työpäivää.** Vaiheet A ja B kannattaa tehdä heti — ne
-yhdessä ovat noin puolitoista päivää ja kattavat sekä vaarallisimmat bugit
-että suurimman osan kulutuksesta.
+Vaihe D ei ole kiireellinen: **uudet liitteet menevät jo uuteen tauluun, eli
+kasvu on pysähtynyt.** Siirto kutistaa sen mikä on jo blobissa, ja sen voi
+ajaa rauhassa kun järjestelmä on todettu toimivaksi.
 
 ---
 
@@ -338,15 +370,16 @@ Nämä ovat asioita joita minä en voi tehdä puolestasi.
 
 1. **Neonin paketti.** Osta maksullinen tälle kuukaudelle jos haluat
    järjestelmän auki ennen 1.9. Tarkista hinta Billing-näkymästä. Muista
-   että maksullisella ylitys **laskutetaan** eikä estä — eli vaiheet A–D
-   pitää tehdä sen kuukauden aikana.
-2. **Tarkista Renderistä onko Sheets-synkka päällä** (ympäristömuuttujat).
-   Jos on, se 30 minuutin ajastin lukee ~1,5 GB/vrk/keikka ilman että kukaan
-   käyttää sovellusta. Kerro minulle kumpi se on.
-3. **Kerro käytetäänkö Google Drive -varmuuskopiointia oikeasti** — eli onko
-   `GOOGLE_SERVICE_ACCOUNT_KEY` ja `GOOGLE_DRIVE_ROOT_FOLDER_ID` asetettu.
-   Dokumentin mukaan integraatiota ei ole koskaan testattu oikeaa Drivea
-   vasten. Se on OSA 4:n perusta, joten sen pitää olla toimiva.
+   että maksullisella ylitys **laskutetaan** eikä estä.
+2. ✅ ~~Tarkista onko Sheets-synkka päällä~~ — **ei ole**, joten se 30 minuutin
+   ajastin ei rekisteröidy lainkaan. Riski oli nolla.
+3. ✅ ~~Onko Drive konfiguroitu~~ — **ei ole**. Varmuuskopiot ovat no-op.
+   Seuraus: `project_data` on tositteiden ainoa kappale. Se on siedettävää nyt
+   kun 200-katto ja katkaisu on korjattu ja Neonilla on oma historiansa, mutta
+   Drive kannattaa luoda kun järjestelmä on vakaa.
+4. **Aja liitteiden siirto** kun kirjautuminen ja kartta on todettu toimiviksi:
+   `POST /api/admin/assets/migrate?dryRun=1` näyttää mitä siirtyisi, sama ilman
+   `dryRun`ia tekee sen. Idempotentti, voi ajaa uudestaan.
 
 ## Päätökset joita en tee puolestasi
 

@@ -657,8 +657,22 @@
      `!important` on pakollinen: kortin tausta tulee inline-tyylistä.
      Gradienttikortit (esim. KERTYNYT) säilyttävät liukunsa, koska
      background-image voittaa background-colorin. */
-  .fr8-root [style*="backdrop-filter"] {
+  .fr8-root [style*="backdrop-filter"]:not([data-fr8-pop]):not([data-fr8-solid]) {
     background-color: rgba(255, 255, 255, 0.055) !important;
+  }
+
+  /* PÄÄLLEKKÄISET VALIKOT OVAT ERI ASIA KUIN KORTIT.
+     Yllä oleva sääntö kirjoitettiin sivun kortteja varten: ne ovat kuoren
+     päällä, joten läpikuultava tausta on vain koriste. Valikko sen sijaan
+     leijuu kartan JA työkalupalkin päällä, ja 5,5 % valkoista ei peitä
+     mitään — ikkunavalikon läpi näkyi koko yläpalkki ja teksti meni ristiin
+     kartan tekstien kanssa, täysin lukukelvottomaksi.
+     Valikko saa siis oman peittävän taustansa. Blur pysyy poissa
+     (suorituskyky), mutta läpinäkyvyys ei ole enää vaihtoehto. */
+  .fr8-root [data-fr8-pop],
+  .fr8-root [data-fr8-solid] {
+    background-color: #16161c !important;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.85) !important;
   }
 }
 

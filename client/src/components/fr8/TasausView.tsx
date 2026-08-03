@@ -292,9 +292,6 @@ export default function TasausView({ jobId, canEdit = true }: {
             }}>
               Tasan ✓
             </div>
-            <p style={{ ...subLabel, marginTop: T.space.sm }}>
-              Kummankaan ei tarvitse siirtää toiselle mitään.
-            </p>
           </>
         )}
 
@@ -426,10 +423,10 @@ export default function TasausView({ jobId, canEdit = true }: {
                 </div>
               </div>
             )}
-            <p style={{ ...subLabel }}>
-              Lasku lukittuu heti ja kopio lähtee kummankin sähköpostiin. Se ei kirjaa maksua —
-              merkitse siirto tehdyksi vasta kun raha on oikeasti liikkunut.
-            </p>
+            {/* Yksi rivi kahden sijaan. "Lukittuu ja lähtee sähköpostiin" on
+                se mitä nappi tekee — sitä ei tarvitse selittää etukäteen. Jäljelle
+                jää se ainoa asia jonka voi tehdä väärin. */}
+            <p style={{ ...subLabel }}>Lasku ei kirjaa maksua — merkitse siirto vasta kun raha on liikkunut.</p>
           </div>
         )}
       </div>
@@ -439,17 +436,16 @@ export default function TasausView({ jobId, canEdit = true }: {
       {data.unassignedEraCount > 0 && (
         <div style={{ ...card, padding: T.space.md + 2, background: T.tone.warnBg, borderColor: T.tone.warnBorder }}>
           <p style={{ margin: 0, fontFamily: T.font, fontSize: T.size.sm, color: "rgba(255,225,150,0.95)", lineHeight: 1.5 }}>
-            <strong>{data.unassignedEraCount}</strong>{" "}
-            {data.unassignedEraCount === 1 ? "erällä" : "erällä"} ei ole merkintää siitä kuka rahat sai.
-            Merkitse ne alta — muuten yllä oleva summa on väärä.
+            <strong>{data.unassignedEraCount}</strong> erällä ei ole maksajaa — merkitse alta,
+            tai yllä oleva summa on väärä.
           </p>
         </div>
       )}
       {data.unattributedPaidCents > 0 && (
         <div style={{ ...card, padding: T.space.md + 2, background: T.tone.infoBg, borderColor: T.tone.infoBorder }}>
           <p style={{ margin: 0, fontFamily: T.font, fontSize: T.size.sm, color: "rgba(200,212,255,0.95)", lineHeight: 1.5 }}>
-            Käsin kirjattuja tekijämaksuja <strong>{eur(data.unattributedPaidCents)}</strong> ilman maksajaa.
-            Ne eivät ole kummankaan kassassa ennen kuin merkitset maksajan.
+            Tekijämaksuja <strong>{eur(data.unattributedPaidCents)}</strong> ilman maksajaa —
+            ne eivät ole kummankaan kassassa ennen kuin merkitset sen.
           </p>
         </div>
       )}
@@ -665,10 +661,7 @@ export default function TasausView({ jobId, canEdit = true }: {
               )}
             </div>
             {recorded.length === 0 ? (
-              <p style={{ ...subLabel, marginTop: 0 }}>
-                Ei kirjattuja siirtoja. Kirjaa siirto kun raha on oikeasti liikkunut — silloin sitä ei
-                lasketa toista kertaa.
-              </p>
+              <p style={{ ...subLabel, marginTop: 0 }}>Ei kirjattuja siirtoja.</p>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: T.space.sm }}>
                 {(data.input.transfers ?? []).map((t, i) => (

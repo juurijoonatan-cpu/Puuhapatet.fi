@@ -122,11 +122,9 @@ export default function ManualInputs({ founders, active, derived, busy, onSave }
       display: "grid", gap: T.space.md, padding: T.space.md,
       borderRadius: T.radius.md, border: T.border.divider, background: "rgba(255,255,255,0.03)",
     }}>
-      <p style={{ ...subLabel, margin: 0, lineHeight: 1.55 }}>
-        Tyhjä kenttä = laske kartasta. Täytä vain ne jotka kartta saa väärin —
-        esimerkiksi jos kartta on nollattu maksujen jälkeen, riittää että
-        syötät johtajien ikkunamäärät.
-      </p>
+      {/* Yksi rivi riittää: sen alla jokainen kenttä näyttää itse mitä kartta
+          sanoo, joten esimerkkejä ei tarvitse luetella tässä. */}
+      <p style={{ ...subLabel, margin: 0 }}>Tyhjä kenttä = kartasta.</p>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: T.space.md }}>
         <Field label="Punaisten potti" suffix="€" value={pot} onChange={setPot}

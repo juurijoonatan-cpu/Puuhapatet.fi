@@ -105,9 +105,8 @@ export default function StorageCard({ jobId }: { jobId: number }) {
               background: "rgba(255,157,107,0.10)", border: "1px solid rgba(255,157,107,0.30)",
               fontSize: T.size.sm, color: T.text.secondary, lineHeight: 1.55,
             }}>
-              Karttablobissa on yhä liitteitä, ja se luetaan kannasta joka kerta kun
-              tekijä merkitsee ikkunan. Siirrä ne omaan tauluunsa — se ei poista
-              mitään, vaan vaihtaa liitteen paikkaa ja jättää blobiin viitteen.
+              Liitteet ovat yhä kartan sisällä, joka luetaan joka napautuksella.
+              Siirto vaihtaa niiden paikkaa — mitään ei poisteta.
             </div>
           )}
 
@@ -128,10 +127,6 @@ export default function StorageCard({ jobId }: { jobId: number }) {
           {err && (
             <div style={{ ...subLabel, color: "#ff8b8b", fontSize: T.size.sm }}>{err}</div>
           )}
-          <div style={{ ...subLabel, fontSize: T.size.xs, lineHeight: 1.5 }}>
-            Siirto on turvallinen ja voidaan ajaa uudestaan: liite kirjoitetaan uuteen
-            tauluun ennen kuin se poistetaan blobista, eikä mitään poisteta.
-          </div>
         </>
       )}
     </div>

@@ -883,7 +883,11 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
 
       {/* Kulut popup */}
       {expensesSlot && showExpenses && (
+        // data-fr8-bg: himmennys on mustaa 60 %. Ilman merkintää mobiilisääntö
+        // vaihtoi sen 5,5 %:n valkoiseen, jolloin lomake leijui kirkkaan dashin
+        // päällä eikä katse löytänyt kumpaakaan.
         <div
+          data-fr8-bg
           onClick={() => setShowExpenses(false)}
           style={{ position: "fixed", inset: 0, zIndex: 80, display: "flex", alignItems: m ? "flex-end" : "center", justifyContent: "center", padding: m ? "0" : "24px", background: "rgba(0,0,0,0.6)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }}
         >

@@ -871,7 +871,9 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
 
         {/* Edit banner */}
         {editMode && (
-          <div style={{ position: "absolute", top: "14px", left: "50%", transform: "translateX(-50%)", zIndex: 20, display: "flex", alignItems: "center", gap: "12px", padding: "9px 9px 9px 16px", background: "rgba(16,16,20,0.82)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: "13px", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", boxShadow: "0 12px 34px rgba(0,0,0,0.5)", whiteSpace: "nowrap" }}>
+          // data-fr8-pop: kelluu kartan päällä, joten tausta ei saa
+          // pudota 5,5 %:n valkoiseksi — teksti menisi ristiin pisteiden kanssa.
+          <div data-fr8-pop style={{ position: "absolute", top: "14px", left: "50%", transform: "translateX(-50%)", zIndex: 20, display: "flex", alignItems: "center", gap: "12px", padding: "9px 9px 9px 16px", background: "rgba(16,16,20,0.82)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: "13px", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", boxShadow: "0 12px 34px rgba(0,0,0,0.5)", whiteSpace: "nowrap" }}>
             <span style={{ fontSize: "12.5px", color: "rgba(255,255,255,0.8)" }}>{editBanner}</span>
             {/* Live price impact — each dot is worth one window, so adding/removing
                 dots moves the contract cap in real time. */}
@@ -995,7 +997,8 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
 
       {/* P2 pricing bar — shown in select mode: pick yellows, set one price. */}
       {p2SelectMode && (
-        <div style={{ position: "fixed", left: "50%", bottom: "calc(14px + env(safe-area-inset-bottom))", transform: "translateX(-50%)", zIndex: 1150, display: "flex", alignItems: "center", gap: "9px", flexWrap: "wrap", justifyContent: "center", maxWidth: "calc(100vw - 24px)", padding: "10px 12px", background: "rgba(16,16,20,0.94)", border: "1px solid rgba(255,205,40,0.4)", borderRadius: "15px", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 18px 50px rgba(0,0,0,0.7)" }}>
+        // data-fr8-pop: sama kuin muokkauspalkki — kelluu kartan päällä.
+        <div data-fr8-pop style={{ position: "fixed", left: "50%", bottom: "calc(14px + env(safe-area-inset-bottom))", transform: "translateX(-50%)", zIndex: 1150, display: "flex", alignItems: "center", gap: "9px", flexWrap: "wrap", justifyContent: "center", maxWidth: "calc(100vw - 24px)", padding: "10px 12px", background: "rgba(16,16,20,0.94)", border: "1px solid rgba(255,205,40,0.4)", borderRadius: "15px", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 18px 50px rgba(0,0,0,0.7)" }}>
           {!p2?.enabled && (
             <span title="Vaihe 2 ei ole vielä auki asiakkaalle — hinnat menevät jonoon odottamaan" style={{ fontSize: "9.5px", fontWeight: 700, letterSpacing: "0.06em", padding: "3px 7px", borderRadius: 999, border: "1px solid rgba(255,205,40,0.4)", background: "rgba(255,205,40,0.1)", color: "rgb(255,220,110)", whiteSpace: "nowrap" }}>
               VALMISTELU

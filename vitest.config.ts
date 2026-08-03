@@ -9,6 +9,8 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["shared/**/*.test.ts", "server/**/*.test.ts"],
+    // client/**: toistaiseksi vain lähdekoodia lukevat vartijatestit (ei
+    // DOM-renderöintiä), joten ne ajavat samassa node-ympäristössä.
+    include: ["shared/**/*.test.ts", "server/**/*.test.ts", "client/**/*.test.ts"],
   },
 });

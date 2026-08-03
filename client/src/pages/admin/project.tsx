@@ -866,9 +866,15 @@ export default function AdminProjectPage() {
         <FounderCelebration jobId={jobId} />
       )}
       {error && (
+        // data-fr8-bg: keltainen on virheen väri. Ilman merkintää mobiilisääntö
+        // ylikirjoitti sen 5,5 %:n valkoiseksi juuri silloin kun palkin pitää
+        // erottua. Ja `top` seuraa turva-aluetta, koska yläpalkki tekee niin —
+        // muuten palkki tuli asennetussa PWA:ssa navin alle.
         <div
+          data-fr8-bg
           style={{
-            position: "fixed", top: 70, left: "50%", transform: "translateX(-50%)", zIndex: 60,
+            position: "fixed", top: "calc(70px + env(safe-area-inset-top))", left: "50%",
+            transform: "translateX(-50%)", zIndex: 60,
             maxWidth: "min(92vw, 560px)", padding: "9px 16px", borderRadius: 11,
             background: "rgba(80,60,20,0.85)", border: "1px solid rgba(255,200,90,0.35)",
             color: "rgba(255,236,200,0.95)", fontSize: 12.5, textAlign: "center",
@@ -1041,6 +1047,7 @@ function FounderCelebration({ jobId }: { jobId: number }) {
   return (
     <div
       className="fr8-confetti"
+      data-fr8-bg
       onClick={() => setShow(false)}
       style={{ position: "fixed", inset: 0, zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(4,4,6,0.55)", backdropFilter: "blur(3px)", WebkitBackdropFilter: "blur(3px)", cursor: "pointer" }}
     >
@@ -1530,7 +1537,8 @@ function ExpensesView({
               {showTip && (
                 <>
                   <div onClick={() => setShowTip(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
-                  <div style={{ position: "absolute", left: 0, top: "calc(100% + 6px)", zIndex: 50, width: "320px", padding: "14px 16px", borderRadius: "12px", background: "rgba(18,18,22,0.97)", border: "1px solid rgba(255,255,255,0.14)", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 16px 40px rgba(0,0,0,0.65)" }}>
+                  {/* data-fr8-pop: leijuva selite, tarvitsee peittävän taustan. */}
+                  <div data-fr8-pop style={{ position: "absolute", left: 0, top: "calc(100% + 6px)", zIndex: 50, width: "min(320px, calc(100vw - 32px))", padding: "14px 16px", borderRadius: "12px", background: "rgba(18,18,22,0.97)", border: "1px solid rgba(255,255,255,0.14)", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 16px 40px rgba(0,0,0,0.65)" }}>
                     <p style={{ margin: "0 0 8px", fontSize: "12px", fontWeight: 700, color: "rgba(255,255,255,0.85)" }}>Mitä voi merkitä kuluksi?</p>
                     {EXPENSE_TOOLTIP.split("\n").map((line, i) => (
                       <p key={i} style={{ margin: line === "" ? "8px 0" : "2px 0", fontSize: "12px", color: line.startsWith("•") ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.45)" }}>{line || " "}</p>

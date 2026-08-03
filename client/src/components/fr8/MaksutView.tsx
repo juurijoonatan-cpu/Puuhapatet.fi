@@ -29,7 +29,7 @@ import {
 import type { ProjectData } from "@shared/project";
 import { fmtEurCents } from "@shared/tax";
 import { BRAND_BILLERS } from "@shared/billers";
-import { RefreshCw, Wallet, Users, CheckCircle2, Mail, FileDown, Receipt, HandCoins, Scale, Trash2, Archive } from "lucide-react";
+import { RefreshCw, Wallet, Users, CheckCircle2, Mail, FileDown, Receipt, HandCoins, Scale, Trash2, Archive, ChevronDown } from "lucide-react";
 import { T, card as tokenCard, mono, statLabel, subLabel, button as tokenButton, input as tokenInput, chip } from "./tokens";
 import SendInvoiceEmailDialog from "./SendInvoiceEmailDialog";
 import WorkerEraInvoiceDialog from "./WorkerEraInvoiceDialog";
@@ -79,6 +79,57 @@ function SectionTitle({ icon, children, right }: { icon: React.ReactNode; childr
       {icon}
       <h2 style={{ margin: 0, fontFamily: FONT, fontSize: T.size.body, fontWeight: 700, color: T.text.primary, letterSpacing: "0.01em" }}>{children}</h2>
       {right && <span style={{ marginLeft: "auto", flexShrink: 0 }}>{right}</span>}
+    </div>
+  );
+}
+
+/**
+ * Taittuva osio.
+ *
+ * Maksut-välilehdellä on seitsemän osiota ja ne olivat kaikki auki yhtä aikaa:
+ * historiaa, kuittauksia ja mitätöityjä tositteita satoja rivejä sen alla mitä
+ * johtaja oikeasti tuli tekemään. Kaikki on tarpeellista JOSKUS, mutta harva
+ * asia on tarpeellista NYT.
+ *
+ * Siksi arkistomaiset osiot ovat kiinni oletuksena. Otsikkorivi kertoo silti
+ * määrän ja summan, joten mitään ei katoa näkyvistä — se on yhden napautuksen
+ * takana sen sijaan että olisi kymmenen vierityksen.
+ */
+function Fold({ icon, title, summary, defaultOpen = false, children }: {
+  icon: React.ReactNode; title: string; summary?: string;
+  defaultOpen?: boolean; children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{ marginTop: T.space.xl }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        style={{
+          display: "flex", alignItems: "center", gap: T.space.sm, width: "100%",
+          minHeight: 44, padding: `${T.space.sm}px ${T.space.md}px`,
+          borderRadius: T.radius.md, border: T.border.subtle,
+          background: open ? "rgba(255,255,255,0.04)" : "transparent",
+          cursor: "pointer", fontFamily: FONT, textAlign: "left",
+        }}
+      >
+        {icon}
+        <span style={{ fontSize: T.size.body, fontWeight: 700, color: T.text.primary }}>{title}</span>
+        {summary && (
+          <span style={{ marginLeft: "auto", fontSize: T.size.sm, color: T.text.muted, fontVariantNumeric: "tabular-nums" }}>
+            {summary}
+          </span>
+        )}
+        <ChevronDown
+          style={{
+            width: 16, height: 16, flexShrink: 0, color: T.text.faint,
+            marginLeft: summary ? 0 : "auto",
+            transform: open ? "rotate(180deg)" : "none", transition: "transform .15s",
+          }}
+        />
+      </button>
+      {open && <div style={{ marginTop: T.space.md }}>{children}</div>}
     </div>
   );
 }
@@ -544,10 +595,12 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
             </>
           )}
 
-          {/* ── 3. Johtajien väliset laskut (kohta 3C:n tulokset) */}
-          <SectionTitle icon={<Wallet style={{ width: 15, height: 15, color: T.text.secondary }} />}>
-            Johtajien väliset laskut
-          </SectionTitle>
+          {/* ── 3. Johtajien väliset laskut — arkisto, kiinni oletuksena. */}
+          <Fold
+            icon={<Wallet style={{ width: 15, height: 15, color: T.text.secondary }} />}
+            title="Johtajien väliset laskut"
+            summary={s.founderInvoices.length > 0 ? `${s.founderInvoices.length} kpl` : "ei vielä"}
+          >
           {s.founderInvoices.length === 0 ? (
             <div style={card}>
               <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.sm, color: T.text.muted }}>
@@ -601,10 +654,14 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
             </div>
           )}
 
-          {/* ── 4. Kaikki tekijöille lähetetyt maksut (kohta 3A:n luonnokset + tilat) */}
-          <SectionTitle icon={<Users style={{ width: 15, height: 15, color: T.text.secondary }} />}>
-            Tekijöille lähetetyt maksut
-          </SectionTitle>
+          </Fold>
+
+          {/* ── 4. Tekijöille lähetetyt maksut — historia, kiinni oletuksena. */}
+          <Fold
+            icon={<Users style={{ width: 15, height: 15, color: T.text.secondary }} />}
+            title="Tekijöille lähetetyt maksut"
+            summary={liveWorkerInvoices.length > 0 ? `${liveWorkerInvoices.length} kpl` : "ei vielä"}
+          >
           {liveWorkerInvoices.length === 0 ? (
             <div style={card}>
               <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.sm, color: T.text.muted }}>
@@ -670,10 +727,14 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
             </div>
           )}
 
-          {/* ── 5. Tekijöiden kuittaamat laskut (kohta 3D kolmas luetelmakohta) */}
-          <SectionTitle icon={<CheckCircle2 style={{ width: 15, height: 15, color: T.text.secondary }} />}>
-            Tekijöiden kuittaamat laskut
-          </SectionTitle>
+          </Fold>
+
+          {/* ── 5. Tekijöiden kuittaamat laskut — kuittaukset, kiinni oletuksena. */}
+          <Fold
+            icon={<CheckCircle2 style={{ width: 15, height: 15, color: T.text.secondary }} />}
+            title="Tekijöiden kuittaamat laskut"
+            summary={s.workerAccepted.length > 0 ? `${s.workerAccepted.length} kpl` : "ei vielä"}
+          >
           {s.workerAccepted.length === 0 ? (
             <div style={card}>
               <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.sm, color: T.text.muted }}>
@@ -707,6 +768,8 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
               ))}
             </div>
           )}
+
+          </Fold>
 
           {/* ── 6. Poistetut: mitätöidyt LUONNOKSET. Eivät kirjanpidon tositteita,
                  joten ne katoavat itsestään 2 vrk:ssa. Tässä vain siksi, että

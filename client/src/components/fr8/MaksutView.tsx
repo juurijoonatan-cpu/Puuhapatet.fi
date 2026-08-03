@@ -775,10 +775,11 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                  joten ne katoavat itsestään 2 vrk:ssa. Tässä vain siksi, että
                  johtaja näkee mitä poisti ja ehtii perua ajatuksensa. */}
           {s.workerVoidedTemp.length > 0 && (
-            <>
-              <SectionTitle icon={<Trash2 style={{ width: 15, height: 15, color: T.text.muted }} />} right={`${s.workerVoidedTemp.length} kpl`}>
-                Poistetut
-              </SectionTitle>
+            <Fold
+              icon={<Trash2 style={{ width: 15, height: 15, color: T.text.muted }} />}
+              title="Poistetut"
+              summary={`${s.workerVoidedTemp.length} kpl`}
+            >
               <div style={{ display: "flex", flexDirection: "column", gap: T.space.xs }}>
                 {s.workerVoidedTemp.map((inv) => (
                   <div key={inv.id} style={{ ...card, padding: `${T.space.sm}px ${T.space.lg}px`, opacity: 0.55 }}>
@@ -793,7 +794,7 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                   </div>
                 ))}
               </div>
-            </>
+            </Fold>
           )}
 
           {/* ── 7. Mitätöidyt tositteet: lasku oli jo lähetetty, joten sillä on
@@ -801,10 +802,11 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                  6 v säilytyksen, joten näitä EI poisteta — mutta ne eivät ole
                  mukana missään summassa. */}
           {s.workerVoidedKept.length > 0 && (
-            <>
-              <SectionTitle icon={<Archive style={{ width: 15, height: 15, color: T.text.muted }} />} right={`${s.workerVoidedKept.length} kpl`}>
-                Mitätöidyt tositteet
-              </SectionTitle>
+            <Fold
+              icon={<Archive style={{ width: 15, height: 15, color: T.text.muted }} />}
+              title="Mitätöidyt tositteet"
+              summary={`${s.workerVoidedKept.length} kpl`}
+            >
               <div style={{ display: "flex", flexDirection: "column", gap: T.space.xs }}>
                 {s.workerVoidedKept.map((inv) => (
                   <div key={inv.id} style={{ ...card, padding: `${T.space.sm}px ${T.space.lg}px`, opacity: 0.7 }}>
@@ -820,7 +822,7 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                   </div>
                 ))}
               </div>
-            </>
+            </Fold>
           )}
         </>
       )}

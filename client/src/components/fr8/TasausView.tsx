@@ -191,6 +191,39 @@ export default function TasausView({ jobId, canEdit = true }: {
     else setErr(res.error || "Tallennus epäonnistui");
   }, [jobId]);
 
+  // Kaksoislaskun varoitus. Palvelin palauttaa 409:n jos samalle parille on jo
+  // tasauslasku; se EI ole virhe vaan tieto, joten se näytetään vahvistuksena.
+  const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
+
+  /** Lähetä tasauslasku. `force` ohittaa kaksoislaskun eston tietoisesti. */
+  const sendInvoice = useCallback(async (force: boolean) => {
+    const t = data?.result.transfer;
+    if (!t) return;
+    setBusy(true);
+    setDuplicateWarning(null);
+    const res = await api.sendFounderEraInvoice(jobId, {
+      kind: "tasaus",
+      settlementCents: t.cents,
+      recipientId: t.fromId,
+      senderId: t.toId,
+      // Erävalinta on tasauslaskulla vain otsikko — summa ja suunta tulevat
+      // tasauksesta, eivät tästä.
+      eraNumbers: [1, 2, 3],
+      itsepestytIkkunat: 0, kokonaisikkunat: 0, totalCents: t.cents,
+      dueDate,
+      ...(force ? { force: true } : {}),
+    } as Parameters<typeof api.sendFounderEraInvoice>[1]);
+    setBusy(false);
+    if (res.ok && res.data) {
+      setInvoiceDone(res.data.invoice.invoiceNumber || `#${res.data.invoice.id}`);
+      setErr(null);
+      return;
+    }
+    // 409 = tasauslasku on jo olemassa. Kysytään, ei estetä.
+    if (res.status === 409) { setDuplicateWarning(res.error || "Tasauslasku on jo tehty."); return; }
+    setErr(res.error || "Laskun lähetys epäonnistui");
+  }, [data, jobId, dueDate]);
+
   const nameOf = useCallback(
     (id: string | null | undefined) => data?.founders.find((f) => f.id === id)?.name ?? id ?? "—",
     [data],
@@ -355,27 +388,7 @@ export default function TasausView({ jobId, canEdit = true }: {
                   type="button"
                   disabled={busy}
                   style={button("solid")}
-                  onClick={async () => {
-                    setBusy(true);
-                    const res = await api.sendFounderEraInvoice(jobId, {
-                      kind: "tasaus",
-                      settlementCents: transfer.cents,
-                      recipientId: transfer.fromId,
-                      senderId: transfer.toId,
-                      // Erävalinta on tasauslaskulla vain otsikko — summa ja
-                      // suunta tulevat tasauksesta, eivät tästä.
-                      eraNumbers: [1, 2, 3],
-                      itsepestytIkkunat: 0, kokonaisikkunat: 0, totalCents: transfer.cents,
-                      dueDate,
-                    });
-                    setBusy(false);
-                    if (res.ok && res.data) {
-                      setInvoiceDone(res.data.invoice.invoiceNumber || `#${res.data.invoice.id}`);
-                      setErr(null);
-                    } else {
-                      setErr(res.error || "Laskun lähetys epäonnistui");
-                    }
-                  }}
+                  onClick={() => void sendInvoice(false)}
                 >
                   {busy ? "Lähetetään…" : `Lähetä lasku ${eur(transfer.cents)}`}
                 </button>
@@ -383,6 +396,34 @@ export default function TasausView({ jobId, canEdit = true }: {
                   style={{ ...button(), background: "transparent", color: T.text.muted }}>
                   Peru
                 </button>
+              </div>
+            )}
+
+            {/* JÄRJESTELMÄ KERTOO, JOHTAJA PÄÄTTÄÄ.
+                Aiemmin toinen tasauslasku samalle parille palautui 409:llä ja
+                teksti neuvoi "lähetä force-lipulla" — lippua ei voinut antaa
+                mistään, joten ainoa tie eteenpäin oli mitätöidä vanha lasku.
+                Korjauslaskun tekeminen on täysin normaali tilanne (summa
+                sovittiin toisin, edellinen oli väärä), joten este on nyt
+                vahvistus: näet mitä on jo tehty ja jatkat yhdellä napilla. */}
+            {duplicateWarning && !invoiceDone && (
+              <div style={{
+                marginTop: T.space.md, padding: T.space.md, borderRadius: T.radius.md,
+                background: T.tone.warnBg, border: `1px solid ${T.tone.warn}`,
+              }}>
+                <p style={{ margin: 0, fontFamily: T.font, fontSize: T.size.sm, color: T.text.secondary, lineHeight: 1.55 }}>
+                  {duplicateWarning}
+                </p>
+                <div style={{ display: "flex", gap: T.space.sm, marginTop: T.space.sm, flexWrap: "wrap" }}>
+                  <button type="button" disabled={busy} style={button("accent")}
+                    onClick={() => void sendInvoice(true)}>
+                    Tee korjauslasku silti
+                  </button>
+                  <button type="button" onClick={() => setDuplicateWarning(null)}
+                    style={{ ...button(), background: "transparent", color: T.text.muted }}>
+                    Älä tee
+                  </button>
+                </div>
               </div>
             )}
             <p style={{ ...subLabel }}>

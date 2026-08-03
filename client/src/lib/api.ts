@@ -801,6 +801,10 @@ export const api = {
     kind?: "tasaus";
     settlementCents?: number;
     recipientId?: string;
+    /** Tee tasauslasku vaikka samalle parille on jo yksi. Korjauslasku on
+     *  normaali tilanne (summa sovittiin toisin), joten palvelimen 409 on
+     *  vahvistuskysymys eikä este — käyttäjä vastaa siihen tällä. */
+    force?: boolean;
   }) => request<{ ok: boolean; invoice: EraInvoiceClient }>("POST", `/api/jobs/${jobId}/era-invoice/founder`, data),
   // Johtajan PDF-lataus (kohta 4) — admin-Bearer-autentikoitu reitti, joten ei
   // kelpaa suoraan <a href>:ksi; haetaan blobina ja avataan/ladataan JS:llä.

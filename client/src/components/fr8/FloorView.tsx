@@ -419,7 +419,17 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   function orbStyle(pt: Point, status: WindowStatus, isDragging: boolean): React.CSSProperties {
     // Perustajan kartalla keltainen, jota asiakas ei ole hyväksynyt, on SININEN —
     // näkee heti mikä on sovittua ja mikä ei. Silti pestävissä normaalisti.
-    const rgb = p2AwaitingCustomer(pt) ? (status === "pesty" ? "120,150,255" : "150,175,255") : colorRgb(pt.p, status);
+    //
+    // VÄRIPARIN PITÄÄ EROTTUA. Punaisella (255,140,178 → 255,72,72) ja
+    // keltaisella (240,226,150 → 255,205,40) pesty on selvästi kylläisempi
+    // kuin pesemätön. Sinisellä pari oli 150,175,255 → 120,150,255, eli
+    // käytännössä sama väri hitusen tummempana: tekijä merkitsi ikkunan
+    // pestyksi eikä nähnyt tapahtuiko mitään. Nyt sininen noudattaa samaa
+    // sääntöä kuin muut — vaalea ja haalistunut kun pesemätön, kylläinen
+    // kun pesty.
+    const rgb = p2AwaitingCustomer(pt)
+      ? (status === "pesty" ? "48,124,255" : "175,195,245")
+      : colorRgb(pt.p, status);
     const washed = status === "pesty";
     const soft = status === "ei";
     const delMode = editMode && placeMode === "del";
@@ -428,7 +438,9 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
     // P2 select mode: red dots fade out, selected yellows get a white ring.
     const p2Selectable = p2SelectMode && pt.p === 2;
     const p2IsSelected = p2Selectable && p2Selected.has(pt.key);
-    const size = editMode ? (washed ? 13 : 12) : (washed ? 10 : 9);
+    // Pesty on selvästi isompi. 10 vs 9 px oli ero jota ei huomannut
+    // puhelimella lainkaan; 12 vs 9 näkyy vilkaisulla.
+    const size = editMode ? (washed ? 14 : 12) : (washed ? 12 : 9);
     const base: React.CSSProperties = {
       position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`,
       transform: "translate(-50%,-50%)", width: `${size}px`, height: `${size}px`,
@@ -450,9 +462,16 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
     if (soft && !editMode && !isMobile) {
       base.animation = "fr8-orbPulse 3.2s ease-in-out infinite";
     } else {
+      // PESTYLLÄ ON VALKOINEN RENGAS. Väri yksin ei riitä: kartta on tumma,
+      // pisteitä on satoja, ja osa väripareista on väistämättä lähellä
+      // toisiaan. Rengas on väristä riippumaton merkki "tämä on tehty" — se
+      // erottuu myös sinisellä, myös pienellä ruudulla ja myös silloin kun
+      // katsoja ei erota värisävyjä.
       base.boxShadow = isDragging
         ? `0 0 0 3px rgba(255,255,255,0.35), 0 0 14px rgba(${rgb},0.9)`
-        : washed ? `0 0 6px rgba(${rgb},0.95), 0 0 13px rgba(${rgb},0.5)` : `0 0 5px rgba(${rgb},0.7), 0 0 11px rgba(${rgb},0.35)`;
+        : washed
+          ? `0 0 0 1.5px rgba(255,255,255,0.9), 0 0 7px rgba(${rgb},0.95), 0 0 14px rgba(${rgb},0.55)`
+          : `0 0 5px rgba(${rgb},0.7), 0 0 11px rgba(${rgb},0.35)`;
     }
     // P2 select mode overrides: fade the non-selectable reds, ring the selection.
     if (p2SelectMode) {

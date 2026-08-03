@@ -657,9 +657,25 @@
      `!important` on pakollinen: kortin tausta tulee inline-tyylistä.
      Gradienttikortit (esim. KERTYNYT) säilyttävät liukunsa, koska
      background-image voittaa background-colorin. */
-  .fr8-root [style*="backdrop-filter"]:not([data-fr8-pop]):not([data-fr8-solid]) {
+  .fr8-root [style*="backdrop-filter"]:not([data-fr8-pop]):not([data-fr8-solid]):not([data-fr8-bg]) {
     background-color: rgba(255, 255, 255, 0.055) !important;
   }
+
+  /* KOLMAS TAPAUS: TAUSTA ON JO TARKOITUKSELLA JOKIN.
+     Yllä oleva sääntö on poissulkulista, ja se osui kolmeen asiaan joiden
+     tausta ei ole "kortin vaalea kalvo" vaan itse pointti:
+
+       · modaalin himmennys (musta 55–60 %) — 5,5 % valkoista EI himmennä
+         mitään, joten kululomake ja juhlaruutu leijuivat täysin kirkkaan
+         dashin päällä eikä katse löytänyt kumpaakaan;
+       · virheilmoituksen keltainen palkki — muuttui haaleaksi haamuksi
+         juuri silloin kun sen pitää erottua;
+       · yläpalkin oletustekijä-valikko — ks. Navbar.tsx.
+
+     Valikot merkitään `data-fr8-pop`illa (saavat peittävän #16161c).
+     Nämä eivät halua sitäkään: ne haluavat vain oman taustansa rauhaan.
+     `data-fr8-bg` sanoo täsmälleen sen — blur lähtee suorituskyvyn takia,
+     väri jää. */
 
   /* PÄÄLLEKKÄISET VALIKOT OVAT ERI ASIA KUIN KORTIT.
      Yllä oleva sääntö kirjoitettiin sivun kortteja varten: ne ovat kuoren
@@ -675,6 +691,12 @@
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.85) !important;
   }
 }
+
+/* Yläpalkin välilehtinauha vierii vaakasuunnassa jos kolme välilehteä ei mahdu
+   kapealle puhelimelle. Vierityspalkki itse ei saa näkyä: se on pyöristetyn
+   pillerin sisällä ja piirtyy sen kulmien yli harmaana viiruna. */
+.fr8-root nav [data-fr8-tabs] { scrollbar-width: none; -ms-overflow-style: none; }
+.fr8-root nav [data-fr8-tabs]::-webkit-scrollbar { display: none; }
 
 .fr8-root .anim-fadeUp-0 { animation: fr8-fadeUp 0.5s ease both; }
 .fr8-root .anim-fadeUp-1 { animation: fr8-fadeUp 0.5s ease 0.05s both; }

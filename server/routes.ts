@@ -7092,6 +7092,45 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  /**
+   * Tekijän OMA allekirjoitettu sopimus.
+   *
+   * MIKSI OMA REITTI EIKÄ OSA workerView'TÄ: allekirjoitus on PNG data URL,
+   * enintään 300 kB kappale (MAX_SIGNATURE_DATAURL_LEN), ja niitä on yksi per
+   * sopimus — nelosepaketilla yli megatavu. workerView haetaan uudestaan joka
+   * kerta kun tekijä avaa työpöydän ja jokaisen kirjauksen jälkeen. Jos
+   * allekirjoitukset olisivat siinä mukana, jokainen työpäivä maksaisi satoja
+   * megatavuja siirtoa asiasta jota katsotaan ehkä kerran vuodessa.
+   *
+   * Tämä reitti ajetaan vasta kun tekijä painaa nappia. Sama tieto, kerran.
+   *
+   * Tekijä näkee VAIN oman rivinsä: linkkitokenista löytyy täsmälleen yksi
+   * member, eikä vastauksessa ole muiden tekijöiden dataa, keikan hintaa
+   * eikä kattoa.
+   */
+  app.get("/api/crew/:token/contract", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const m = found.member;
+      res.json({
+        ok: true,
+        member: {
+          id: m.id,
+          name: m.name,
+          profile: m.profile ?? null,
+          agreements: m.agreements ?? [],
+          agreementSet: (m as any).agreementSet ?? undefined,
+          perWindowCents: m.perWindowCents,
+        },
+        buildingName: found.project.building?.name,
+        buildingAddress: found.project.building?.address,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // PIN-koodit poistettu kokonaan: linkki on ainoa avain työpöytään, eikä
   // onboardingissa kysytä (tai hyväksytä) enää mitään ylimääräistä koodia.
   // Vanhat tallennetut pinHashit jäävät dataan mutta mikään ei lue niitä.

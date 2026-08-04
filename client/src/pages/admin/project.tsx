@@ -538,7 +538,7 @@ export default function AdminProjectPage() {
 
   // ── Render ──────────────────────────────────────────────────────────────────
   const shell = (children: React.ReactNode) => (
-    <div className="fr8-root" style={{ position: "fixed", top: 0, left: 0, right: 0, background: "#060607", color: "#fff", overflow: "hidden", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>
+    <div className="fr8-root" style={{ position: "fixed", inset: 0, background: "#060607", color: "#fff", overflow: "hidden", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>
       {/* Single, very subtle top glow — kept faint so the dashboard reads clean */}
       <div style={{ position: "absolute", top: "-35%", left: "50%", transform: "translateX(-50%)", width: "1000px", height: "620px", background: "radial-gradient(ellipse at center, rgba(120,124,150,0.05), transparent 68%)", pointerEvents: "none" }} />
       {children}

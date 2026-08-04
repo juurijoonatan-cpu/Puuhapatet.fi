@@ -531,15 +531,37 @@
 .fr8-root {
   --font-onest: "Onest", system-ui, -apple-system, sans-serif;
   --font-jetbrains-mono: "JetBrains Mono", ui-monospace, monospace;
-  /* Kuoren korkeus VISUAALISESTA viewportista, ei layout-viewportista.
-     Syy: .fr8-root on position:fixed; inset:0, ja iOS/Android laskee sen 100 %:n
-     layout-viewportista, joka on selainpalkkien verran KORKEAMPI kuin näkyvä alue.
-     Sisäinen vieritysalue skaalautui siis liian korkeaksi, jolloin napin piirretty
-     paikka ja sen osumaruutu erkanivat — käytännössä nappia piti painaa
-     ~1 cm sen yläpuolelta. dvh seuraa näkyvää aluetta ja korjaa tämän. */
-  height: 100vh;      /* fallback vanhoille selaimille */
-  height: -webkit-fill-available;
-  height: 100dvh;
+  /* NAPPI EI OSU — KOLMAS JA TODENNÄKÖISIN MEKANISMI: KUOREN KORKEUS.
+     ("pitää painaa napin yläpuolelta", ei korjaantunut kahdella edellisellä
+      yrityksellä alempana tässä tiedostossa.)
+
+     Kuori mitoitettiin viewport-YKSIKÖLLÄ (100dvh / -webkit-fill-available /
+     100vh), vaikka se on position:fixed. Se on kaksi eri asiaa:
+
+       · fixed-elementti PIIRRETÄÄN viewportin mukaan;
+       · `100dvh` on erikseen laskettu luku, jonka selain päivittää omaan
+         tahtiinsa.
+
+     Kun ne eroavat, kuori on todellista näkyvää aluetta korkeampi. Pystysuora
+     flex-jako (otsikko · sisältö · alapalkki) venyy sen mukana, jokainen nappi
+     piirtyy alemmas kuin missä sen osumaruutu on, ja käyttäjä joutuu painamaan
+     napin yläpuolelta. Juuri se oire.
+
+     iOS 15:llä ero on pysyvä: `dvh` ei ole tuettu, joten voimaan jää
+     `-webkit-fill-available`, joka ratkeaa selainpalkit piilossa -korkeuteen
+     eikä päivity kun palkki tulee näkyviin. Uudemmillakin ero elää
+     osoitepalkin animaation ajan.
+
+     KORJAUS: älä mitoita yksiköllä lainkaan. `inset: 0` sitoo kaikki neljä
+     reunaa samaan containing blockiin, jonka mukaan elementti myös piirretään
+     — korkeus ei voi enää olla eri kuin näkyvä alue, koska sitä ei lasketa
+     erikseen. Sama kuoren kaava kuin GigToolsOverlayssa, joka ei ole koskaan
+     oireillut.
+
+     ÄLÄ palauta `height`-riviä tähän: eksplisiittinen korkeus ylimäärittelee
+     laatikon, jolloin `bottom: 0` jätetään huomiotta ja vika palaa. */
+  position: fixed;
+  inset: 0;
   display: flex;
   flex-direction: column;
 }

@@ -934,6 +934,31 @@ export function sanitizeProjectData(input: any): ProjectData {
     }
   }
 
+  /**
+   * KESKEN JÄTTÄNYT TEKIJÄ.
+   *
+   * Tämä puuttui sanitoinnista kokonaan, joten tieto katosi joka kerta.
+   * Palvelin kirjoitti `project.keskenBy[key] = member.id` aina kun tekijä
+   * merkitsi ikkunan keskeneräiseksi, mutta `saveProject` ajaa tallennuksen
+   * tämän funktion läpi — ja mitä täällä ei nimetä, sitä ei kirjoiteta.
+   * Kartan ikkunavalikossa on valmis rivi "Kesken: <nimi>", joka ei siis
+   * voinut koskaan näyttää mitään.
+   *
+   * Merkinnällä on käyttöä juuri kahden tekijän keikalla: kun ikkuna jää
+   * kesken, seuraava näkee kuka sen jätti eikä arvaile. Sama muoto ja sama
+   * 20 000 avaimen katto kuin washedBy:llä.
+   */
+  const keskenBy: Record<string, string> = {};
+  if (input.keskenBy && typeof input.keskenBy === "object") {
+    for (const k of Object.keys(input.keskenBy).slice(0, 20000)) {
+      const key = cleanKey(k);
+      const v = input.keskenBy[k] ? String(input.keskenBy[k]).slice(0, 40) : "";
+      // Vain oikeasti kesken oleville ikkunoille: pesty tai tyhjä ikkuna ei
+      // kanna kesken-merkintää, ja muuten poistetut jäisivät roikkumaan.
+      if (v && statuses[key] === "kesken") keskenBy[key] = v;
+    }
+  }
+
   const posOverrides: Record<string, { x: number; y: number }> = {};
   if (input.posOverrides && typeof input.posOverrides === "object") {
     for (const k of Object.keys(input.posOverrides).slice(0, 20000)) {
@@ -1038,6 +1063,7 @@ export function sanitizeProjectData(input: any): ProjectData {
     statuses,
     washedBy,
     washedBy2,
+    keskenBy,
     customMarks,
     notes,
     observations,

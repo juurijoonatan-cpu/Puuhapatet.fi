@@ -4,7 +4,7 @@
 
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { ArrowLeft, LogOut, User, Sun, Moon, Banknote, CheckCircle, BookOpen, FileSpreadsheet, ShoppingCart, KeyRound, Eye, EyeOff, Sparkles, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, LogOut, User, Sun, Moon, Banknote, CheckCircle, BookOpen, FileSpreadsheet, ShoppingCart, KeyRound, Eye, EyeOff, Sparkles, Plus, Trash2, FileText, Printer, Download } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useTheme } from "@/lib/theme";
 import { getAdminProfile, clearAdminProfile, USERS } from "@/lib/admin-profile";
 import { api, WorkerStatsResponse } from "@/lib/api";
+import { downloadMemberAgreement, openMemberAgreementForPrint } from "@/lib/member-agreement-doc";
+import type { MemberAgreementSignature } from "@shared/member-agreement";
 import { cn } from "@/lib/utils";
 
 interface BonusUsage {
@@ -251,6 +253,9 @@ export default function AdminSettingsPage() {
             </Button>
           </div>
         </Card>
+
+        {/* Oma allekirjoitettu jäsensopimus — ks. MemberAgreementCard. */}
+        <MemberAgreementCard userId={profile?.id} />
 
         {/* Theme */}
         <Card className="p-6 bg-card border-0 premium-shadow mb-6">
@@ -582,5 +587,72 @@ export default function AdminSettingsPage() {
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Oma allekirjoitettu jäsensopimus.
+ *
+ * MIKSI TÄMÄ ON TÄSSÄ: jäsensopimus allekirjoitetaan kerran /admin/tervetuloa
+ * -polulla ennen kuin työkalut aukeavat, ja sen jälkeen siihen ei päässyt enää
+ * mistään käsiksi. Allekirjoitus tallennettiin kokonaisena kantaan ja
+ * palvelin palautti sen pyydettäessä, mutta ainoa kutsuja luki vastauksesta
+ * version ja heitti loput pois. Data oli write-only: sitouduit sopimukseen
+ * etkä voinut lukea sitä uudestaan.
+ *
+ * Asiakas saa oman keikkasopimuksensa seurantalinkistä ja tekijä omansa
+ * työpöydältä. Tämä on sama asia jäsenelle — ja se on juuri se ryhmä johon
+ * perustajat itse kuuluvat.
+ *
+ * Haku on laiska: allekirjoituskuva on jopa 300 kB, eikä sitä kannata ladata
+ * asetussivun mukana. Kortti kysyy vain onko sopimus olemassa, ja kuva
+ * haetaan vasta napin painalluksesta.
+ */
+function MemberAgreementCard({ userId }: { userId?: string }) {
+  const [sig, setSig] = useState<MemberAgreementSignature | null>(null);
+  const [state, setState] = useState<"loading" | "ready" | "none" | "error">("loading");
+
+  useEffect(() => {
+    let alive = true;
+    if (!userId) { setState("none"); return; }
+    void (async () => {
+      const res = await api.getMemberAgreement(userId);
+      if (!alive) return;
+      if (!res.ok) { setState("error"); return; }
+      const s = res.data?.signature ?? null;
+      setSig(s);
+      setState(s ? "ready" : "none");
+    })();
+    return () => { alive = false; };
+  }, [userId]);
+
+  // Ei allekirjoitusta → ei korttia. Tyhjä laatikko ei kerro mitään.
+  if (state === "none" || state === "error") return null;
+
+  return (
+    <Card className="p-6 bg-card border-0 premium-shadow mb-6">
+      <div className="flex items-center gap-2 mb-4">
+        <FileText className="w-5 h-5 text-muted-foreground" />
+        <h2 className="text-lg font-semibold text-foreground">Oma sopimus</h2>
+      </div>
+      {state === "loading" || !sig ? (
+        <p className="text-sm text-muted-foreground">Ladataan…</p>
+      ) : (
+        <>
+          <p className="text-sm text-muted-foreground mb-4">
+            {sig.type === "founder" ? "Perustajasopimus" : "Jäsensopimus"} · allekirjoitettu{" "}
+            {new Date(sig.signedAt).toLocaleDateString("fi-FI")} · versio {sig.version}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => downloadMemberAgreement(sig)} data-testid="btn-download-member-agreement">
+              <Download className="w-4 h-4 mr-1.5" /> Lataa sopimus
+            </Button>
+            <Button variant="outline" onClick={() => openMemberAgreementForPrint(sig)}>
+              <Printer className="w-4 h-4 mr-1.5" /> Tulosta
+            </Button>
+          </div>
+        </>
+      )}
+    </Card>
   );
 }

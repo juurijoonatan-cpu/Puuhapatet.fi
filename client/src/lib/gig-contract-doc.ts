@@ -5,6 +5,7 @@
  */
 
 import { eur } from "@shared/gig";
+import { downloadHtmlDocument, printHtmlDocument } from "./doc-print";
 
 export interface DocSector {
   name: string;
@@ -101,7 +102,18 @@ export function buildGigContractHtml(input: GigContractDocInput): string {
   .sigbox{border:1px solid #E4E1D7;border-radius:10px;padding:12px;margin-top:10px;background:#fff}
   .sigbox img{max-width:320px;max-height:130px;display:block}
   .banner{background:#eafaef;border:1px solid #b6e6c6;border-radius:10px;padding:10px 14px;font-size:13px;color:#1c5f33;margin-bottom:12px}
-  @media print{body{padding:0}.banner,pre{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+  /* Tulostus. Aiemmin ohjattiin vain paddingia, joten hinnoittelutaulukko ja
+     allekirjoituslohko saattoivat katketa sivunvaihdon yli. */
+  @page{margin:18mm 16mm}
+  @media print{
+    body{padding:0;max-width:none;font-size:11.5pt}
+    a[href]{text-decoration:none;color:inherit}
+    /* page-break-* on vanha alias — iOS Safari tarvitsee sen yha. */
+    .sign,.total,.banner,.sigbox{break-inside:avoid;page-break-inside:avoid}
+    tr{break-inside:avoid;page-break-inside:avoid}
+    h2{break-after:avoid;page-break-after:avoid}
+    .banner,pre,.sigbox{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  }
 </style></head><body>
   <div class="muted small">PUUHAPATET${input.contractId ? " · " + esc(input.contractId) : ""}</div>
   <h1>Tarjous & sopimus</h1>
@@ -126,21 +138,9 @@ function fileName(input: GigContractDocInput) {
 }
 
 export function downloadGigContract(input: GigContractDocInput) {
-  if (typeof document === "undefined") return;
-  const blob = new Blob([buildGigContractHtml(input)], { type: "text/html;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = fileName(input);
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  downloadHtmlDocument(buildGigContractHtml(input), fileName(input));
 }
 
 export function openGigContractForPrint(input: GigContractDocInput) {
-  const w = window.open("", "_blank");
-  if (!w) return downloadGigContract(input);
-  w.document.write(buildGigContractHtml(input));
-  w.document.close();
+  printHtmlDocument(buildGigContractHtml(input), fileName(input));
 }

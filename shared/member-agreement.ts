@@ -16,7 +16,23 @@
  * minor. Have a professional review before relying on it in a dispute.
  */
 
-import { HOST_SERVICE_FEE_PCT, type TeamRole } from "./team";
+/**
+ * HUOM: sopimustekstissä EI saa lukea eläviä vakioita.
+ *
+ * Perustajavariantti kirjoitti palvelumaksun `HOST_SERVICE_FEE_PCT`-vakiosta
+ * suoraan tekstiin, vaikka allekirjoituksen mukana tallennetaan `snapshot`
+ * jossa on juuri se prosentti johon henkilö sitoutui. Kun sopimus renderöidään
+ * uudestaan — ja nyt se renderöidään, koska siitä saa oman kappaleen — teksti
+ * olisi näyttänyt NYKYISTÄ prosenttia eikä allekirjoitettua. Vakion muutos
+ * olisi siis muuttanut takautuvasti jokaisen jo allekirjoitetun sopimuksen
+ * sisältöä.
+ *
+ * `p.feePct` tulee allekirjoitushetken snapshotista (welcome.tsx täyttää sen
+ * `feePctForWorker`illa, joka palauttaa perustajalle saman
+ * HOST_SERVICE_FEE_PCT:n). Luku on siis tänään sama, mutta se on nyt
+ * jäädytetty siihen mitä allekirjoitettiin.
+ */
+import { type TeamRole } from "./team";
 
 /** Bump this (e.g. add "-2") whenever the agreement text materially changes. */
 export const AGREEMENT_VERSION = "2026-06";
@@ -254,7 +270,7 @@ function founderAgreement(p: AgreementParty): AgreementDoc {
       no: "03",
       title: "Raha ja palvelumaksu",
       body: [
-        `Perustajan palvelumaksu brändille on ${HOST_SERVICE_FEE_PCT} % oman osuuden nettotulosta. Yhteiset kulut, investoinnit ja brändin kassa hoidetaan yhdessä sovitusti ja läpinäkyvästi.`,
+        `Perustajan palvelumaksu brändille on ${p.feePct} % oman osuuden nettotulosta. Yhteiset kulut, investoinnit ja brändin kassa hoidetaan yhdessä sovitusti ja läpinäkyvästi.`,
         "Tilitykset, investoinnit ja yhteiset varat kirjataan järjestelmään niin, että molemmat perustajat näkevät tilanteen.",
       ],
     },
@@ -284,7 +300,7 @@ function founderAgreement(p: AgreementParty): AgreementDoc {
     type: "founder",
     version: AGREEMENT_VERSION,
     title: "Puuhapatet — Perustajasopimus",
-    subtitle: `${p.name} · perustaja · palvelumaksu ${HOST_SERVICE_FEE_PCT} %`,
+    subtitle: `${p.name} · perustaja · palvelumaksu ${p.feePct} %`,
     intro:
       "Tämä on perustajien yhteinen sopimus siitä, miten rakennamme ja hoidamme Puuhapatetia: yhdessä, lojaalisti ja läpinäkyvästi. Lue läpi, hyväksy käytännöt ja allekirjoita.",
     sections,

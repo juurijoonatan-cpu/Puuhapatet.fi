@@ -1242,6 +1242,17 @@ export const api = {
   getCrewView: (token: string) =>
     request<{ ok: boolean; view: WorkerView }>("GET", `/api/crew/${token}`),
 
+  /** Tekijän oma allekirjoitettu sopimus. Haetaan VAIN napin painalluksesta —
+   *  allekirjoituskuvat ovat satoja kilotavuja eivätkä kuulu joka latauksella
+   *  mukana tulevaan workerView'hyn. */
+  getCrewContract: (token: string) =>
+    request<{
+      ok: boolean;
+      member: CrewMember;
+      buildingName?: string;
+      buildingAddress?: string;
+    }>("GET", `/api/crew/${token}/contract`),
+
 
   crewOnboard: (token: string, payload: CrewOnboardPayload) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/onboard`, payload),

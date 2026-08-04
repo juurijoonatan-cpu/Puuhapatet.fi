@@ -36,6 +36,9 @@ import { MAX_PHOTO_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN } from "@shared/crew";
 import { BRAND_BILLERS } from "@shared/billers";
 import { FOUNDER_IDS } from "@shared/team";
 import { isValidYTunnus } from "@shared/y-tunnus";
+// Sama dokumenttirakentaja jota johtajan Tiimi-sivu käyttää — molemmat
+// osapuolet saavat tismalleen saman tiedoston, ei kahta eri totuutta.
+import { downloadWorkerContract, openWorkerContractForPrint } from "@/lib/worker-contract-doc";
 
 const T = { ink: "#1A1A1A", paper: "#F6F4EE", card: "#FFFFFF", hair: "#E4E1D7", muted: "#8C8A82", green: "#3E7C59", navy: "#1F3B57" };
 const FONT = "'Poppins', ui-sans-serif, system-ui, -apple-system, sans-serif";
@@ -2551,6 +2554,79 @@ function TraineeCard({ leader }: { leader: string }) {
   );
 }
 
+/**
+ * "Oma sopimus" — tekijän pääsy siihen mitä hän allekirjoitti.
+ *
+ * MIKSI TÄMÄ PUUTTUI JA MIKSI SE ON ONGELMA: tekijä piirtää allekirjoituksensa
+ * onboardingissa, ja sen jälkeen sopimus katoaa hänen ulottuviltaan kokonaan.
+ * Onboarding-näkymä renderöityy vain kun `!onboarded || needsToSign`, eikä
+ * työpöydällä ollut yhtään linkkiä sopimustekstiin. Palvelin ei edes lähettänyt
+ * allekirjoitusta takaisin — workerView tarjosi vain `signedAgreementIds`, eli
+ * listan id-merkkijonoja. Tekijä oli siis sitoutunut kilpailukieltoon,
+ * sopimussakkoon ja asiakassuojaan pystymättä lukemaan niistä sanaakaan.
+ *
+ * Sama dokumentti on ollut olemassa koko ajan — johtaja on voinut ladata sen
+ * Tiimi-sivulta (`buildWorkerContractHtml`). Vain toinen osapuoli näki
+ * sopimuksen. Nyt molemmat näkevät saman tiedoston, samasta rakentajasta.
+ *
+ * HAKU ON LAISKA. Allekirjoitus on PNG data URL, enintään 300 kB kappale, ja
+ * niitä on yksi per sopimus. Jos ne olisivat workerView'ssä, ne latautuisivat
+ * uudestaan joka kerta kun tekijä avaa työpöydän — satoja megatavuja päivässä
+ * asiasta jota katsotaan ehkä kerran. Haku tapahtuu vasta napin painalluksesta.
+ */
+function ContractCard({ token, view }: { token: string; view: WorkerView }) {
+  const [busy, setBusy] = useState<"" | "download" | "print">("");
+  const [err, setErr] = useState<string | null>(null);
+  const signedCount = view.worker.signedAgreementIds?.length ?? 0;
+
+  // Ei allekirjoitusta → ei mitään näytettävää. Kortti ei ilmesty tyhjänä.
+  if (signedCount === 0) return null;
+
+  const run = async (mode: "download" | "print") => {
+    setBusy(mode); setErr(null);
+    const res = await api.getCrewContract(token);
+    setBusy("");
+    if (!res.ok || !res.data?.member) {
+      setErr(res.error || "Sopimusta ei saatu haettua.");
+      return;
+    }
+    const input = {
+      member: res.data.member,
+      buildingName: res.data.buildingName,
+      buildingAddress: res.data.buildingAddress,
+    };
+    if (mode === "download") downloadWorkerContract(input);
+    else openWorkerContractForPrint(input);
+  };
+
+  return (
+    <div style={{ padding: 16, borderRadius: 16, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", marginBottom: 18 }}>
+      <p style={{ margin: "0 0 4px", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)" }}>Oma sopimus</p>
+      <p style={{ margin: "0 0 12px", fontSize: 13, lineHeight: 1.5, color: "rgba(255,255,255,0.75)" }}>
+        Allekirjoitit {signedCount === 1 ? "yhden sopimuksen" : `${signedCount} sopimusta`}. Koko teksti,
+        hyväksymäsi kohdat ja allekirjoituksesi ovat tallessa — saat ne itsellesi milloin tahansa.
+      </p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button
+          onClick={() => void run("download")}
+          disabled={!!busy}
+          style={{ ...secondaryBtn, flex: 1, minWidth: 130, borderColor: "rgba(255,255,255,0.22)", color: "#fff", opacity: busy ? 0.6 : 1 }}
+        >
+          {busy === "download" ? "Haetaan…" : "Lataa sopimus"}
+        </button>
+        <button
+          onClick={() => void run("print")}
+          disabled={!!busy}
+          style={{ ...secondaryBtn, flex: 1, minWidth: 130, borderColor: "rgba(255,255,255,0.22)", color: "rgba(255,255,255,0.7)", opacity: busy ? 0.6 : 1 }}
+        >
+          {busy === "print" ? "Haetaan…" : "Avaa luettavaksi"}
+        </button>
+      </div>
+      {err && <p style={{ margin: "10px 0 0", fontSize: 12.5, color: "#ffb0b0" }}>{err}</p>}
+    </div>
+  );
+}
+
 function NotesTab({ token, view, setView }: { token: string; view: WorkerView; setView: (v: WorkerView) => void }) {
   const [text, setText] = useState("");
   const add = async () => {
@@ -2574,6 +2650,7 @@ function NotesTab({ token, view, setView }: { token: string; view: WorkerView; s
         </>
       )}
       <AccessCard />
+      <ContractCard token={token} view={view} />
       <p style={{ margin: "4px 0 10px", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)" }}>Omat muistiinpanot</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} placeholder="Kirjoita muistiinpano (esim. rikkinäinen ikkuna, puuttuva avain)…" style={{ ...inputStyle, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff", resize: "vertical" }} />

@@ -1,6 +1,6 @@
 import type { Express, Request } from "express";
 import { type Server } from "http";
-import { eq, desc, sql, ne, and, isNotNull, isNull, inArray } from "drizzle-orm";
+import { eq, desc, sql, ne, and, isNotNull, isNull, inArray, lt } from "drizzle-orm";
 import { Resend } from "resend";
 import bwipjs from "bwip-js";
 import PDFDocument from "pdfkit";
@@ -9553,8 +9553,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ─── Public: visitor sends a message to the bot ────────────────────────────
   // Stateless by design. Conversation memory lives ONLY in the visitor's
   // browser session (sent up as `history` each turn) and clears when they
-  // leave — we never persist casual chats. The ONLY thing that reaches the
-  // team is an explicit handoff (see /api/chat/handoff), kept as a lead note.
+  // leave — THIS route persists nothing. The only thing that reaches the team
+  // is an explicit handoff (see /api/chat/handoff).
+  //
+  // TARKENNUS: handoff EI ole pelkkä "lead note" — se tallentaa kantaan myös
+  // siihenastisen keskustelun (jopa 20 vuoroa). Tästä kommentista luki aiemmin
+  // että chattia ei tallenneta lainkaan, mikä on totta vain tälle reitille.
+  // Tallennettu transkripti poistetaan kahden vuorokauden jälkeen
+  // (purgeOldChatMessages); yhteystiedot jäävät, koska ne ovat yhteydenotto.
   //
   // Body: { message, history?: [{role, content}], pageUrl? }
   // Returns: { reply, offerHandoff }
@@ -9684,8 +9690,46 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   }
 
   // ─── Admin: list website conversations (inbox) ─────────────────────────────
+  /**
+   * CHAT-VIESTIEN SÄILYTYS: 2 VRK.
+   *
+   * MITÄ POISTETAAN JA MITÄ EI. Poistetaan viestien SISÄLTÖ — vapaa teksti,
+   * jota kertyy paljon ja joka on se osa jota ei ole syytä säilyttää. EI
+   * poisteta keskustelun riviä, koska siinä ovat kävijän nimi, sähköposti ja
+   * puhelin: se ei ole chat-historiaa vaan ikkunanpesupyyntö. Kahden
+   * vuorokauden siivous ei saa hävittää juuri niitä yhteydenottoja jotka on
+   * tarkoitus nähdä.
+   *
+   * MIKSI EI AJASTINTA. Talon oma kuvio (vrt. mitätöityjen erälaskujen siivous
+   * tässä samassa tiedostossa) on laiska poisto lukureitin sisällä: ei uutta
+   * taustaprosessia eikä yhtään kantakyselyä silloin kun kukaan ei katso
+   * sivua. Ajastin herättäisi Neonin viideltä aamulla tyhjään työhön.
+   *
+   * HUOM koodin muihin kommentteihin: julkinen /api/chat on aidosti tilaton,
+   * mutta /api/chat/handoff TALLENTAA keskustelun kantaan. Purgettavaa dataa
+   * siis on, toisin kuin muutama kommentti antaa ymmärtää.
+   */
+  const CHAT_MESSAGE_RETENTION_MS = 48 * 60 * 60 * 1000;
+  let lastChatPurgeMs = 0;
+
+  async function purgeOldChatMessages(): Promise<void> {
+    // Korkeintaan kerran tunnissa: postilaatikkosivu pollaa tätä reittiä, eikä
+    // jokaisen pollauksen tarvitse ajaa poistokyselyä.
+    const now = Date.now();
+    if (now - lastChatPurgeMs < 60 * 60 * 1000) return;
+    lastChatPurgeMs = now;
+    try {
+      const cutoff = new Date(now - CHAT_MESSAGE_RETENTION_MS);
+      await db.delete(chatMessages).where(lt(chatMessages.createdAt, cutoff));
+    } catch (e: any) {
+      // Siivous ei saa koskaan kaataa postilaatikon lukemista.
+      console.warn("Chat-viestien siivous epäonnistui:", e?.message ?? e);
+    }
+  }
+
   app.get("/api/admin/chats", async (req, res) => {
     try {
+      await purgeOldChatMessages();
       const status = req.query.status ? String(req.query.status) : null;
       const where = status
         ? and(eq(chatConversations.source, "public"), eq(chatConversations.status, status))

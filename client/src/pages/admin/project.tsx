@@ -536,6 +536,10 @@ export default function AdminProjectPage() {
     } else setError(res.error || "Tallennus epäonnistui");
   }, [jobId]);
 
+  // Kerroslukon saa asettaa vain perustaja — sama ehto kuin dashin
+  // KERROSTEN LUKITUS -paneelilla, jotta kartta ei anna enempää oikeuksia.
+  const canEditLocks = profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "");
+
   // ── Render ──────────────────────────────────────────────────────────────────
   const shell = (children: React.ReactNode) => (
     <div className="fr8-root" style={{ position: "fixed", inset: 0, background: "#060607", color: "#fff", overflow: "hidden", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>
@@ -1007,6 +1011,19 @@ export default function AdminProjectPage() {
             /* Kartta tarvitsee vain tiedon avoimista kerroksista — "seuraava ikkuna"
                -ohjaus on poistettu. */
             guided={project.guided?.enabled ? (() => { const g = computeGuided(project); return { enabled: true, activeFloor: g.activeFloor, activeFloors: g.activeFloors, lockedFloors: g.lockedFloors, nextKey: null }; })() : null}
+            /* Kerroslukko suoraan kartalta. Sama `onGuidedSet` jota dashin
+               KERROSTEN LUKITUS -paneeli käyttää, joten totuus on yksi:
+               avoimien kerrosten lista. Jos lukitus ei ole vielä päällä,
+               ensimmäinen lukitus kytkee sen ja jättää kaikki muut auki —
+               muuten yksi napautus sulkisi vahingossa koko talon. */
+            onToggleFloorLock={canEditLocks ? (f, lock) => {
+              const floors = project.building.floors;
+              const open = project.guided?.enabled
+                ? (project.guided.openFloors ?? floors)
+                : floors;
+              const next = lock ? open.filter((x) => x !== f) : Array.from(new Set([...open, f]));
+              void onGuidedSet({ enabled: true, openFloors: floors.filter((x) => next.includes(x)) });
+            } : undefined}
           />
         )}
       </main>

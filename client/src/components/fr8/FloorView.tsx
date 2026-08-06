@@ -106,6 +106,13 @@ interface Props {
     lockedFloors: string[];
     nextKey: string | null;
   } | null;
+  /**
+   * Kerroksen lukitus suoraan kartalta. Kun tämä on annettu, kerrosnapissa on
+   * pieni lukkopainike: johtajan ei tarvitse poistua kartalta ja etsiä
+   * dashin taittuvaa "KERROSTEN LUKITUS" -osiota vain avatakseen kerroksen.
+   * Ilman tätä propia (tekijän näkymä) kerrosnappi käyttäytyy kuten ennen.
+   */
+  onToggleFloorLock?: (floor: string, locked: boolean) => void;
   /** Bump `nonce` to programmatically jump the map to `floor` (e.g. the worker's
    *  "Vie minut seuraavaan" button). */
   floorFocus?: { floor: string; nonce: number } | null;
@@ -210,7 +217,7 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, onLoadObservationImage, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, guided, floorFocus, restrictFloors }: Props) {
+export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, onLoadObservationImage, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, guided, onToggleFloorLock, floorFocus, restrictFloors }: Props) {
   // Discreet worker map: when restrictFloors is set, show ONLY those floors and
   // hide the rest, so a regular worker sees exactly the opened floors and nothing
   // else. Founders (restrictFloors null) always see every floor.
@@ -693,15 +700,37 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
             );
             const st = floorBtnStyle(f === floor);
             return (
-              <button key={f} onClick={() => { setFloor(f); setActiveOrb(null); }}
-                title={gLocked ? "Lukossa — ohjattu eteneminen: pese aktiivinen kerros ensin (voit silti katsoa)" : gActive ? "Aktiivinen kerros — pese tämä ensin" : undefined}
-                style={{
-                  ...st,
-                  ...(gActive && f !== floor ? { boxShadow: "inset 0 0 0 1.5px rgba(95,224,138,0.7)", color: "#9ff0bd" } : {}),
-                  ...(gLocked && f !== floor ? { opacity: 0.5 } : {}),
-                }}>
-                {gLocked ? `🔒${f}` : f}
-              </button>
+              <span key={f} style={{ position: "relative", display: "inline-flex" }}>
+                <button onClick={() => { setFloor(f); setActiveOrb(null); }}
+                  title={gLocked ? "Lukossa tekijöiltä — sinä näet sen silti" : gActive ? "Auki tekijöille" : undefined}
+                  style={{
+                    ...st,
+                    ...(gActive && f !== floor ? { boxShadow: "inset 0 0 0 1.5px rgba(95,224,138,0.7)", color: "#9ff0bd" } : {}),
+                    ...(gLocked && f !== floor ? { opacity: 0.5 } : {}),
+                    ...(onToggleFloorLock ? { paddingRight: 22 } : {}),
+                  }}>
+                  {gLocked ? `🔒${f}` : f}
+                </button>
+                {onToggleFloorLock && (
+                  // Oma pieni osumakohta napin sisällä: kerroksen VAIHTO ja sen
+                  // LUKITUS ovat eri asioita, eikä lukko saa lauetakaan vahingossa
+                  // kun vain selaa kerroksia.
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onToggleFloorLock(f, !gLocked); }}
+                    title={gLocked ? `Avaa kerros ${f} tekijöille` : `Lukitse kerros ${f} tekijöiltä`}
+                    aria-label={gLocked ? `Avaa kerros ${f}` : `Lukitse kerros ${f}`}
+                    style={{
+                      position: "absolute", right: 1, top: "50%", transform: "translateY(-50%)",
+                      width: 18, height: 18, padding: 0, borderRadius: 6, border: "none",
+                      background: "transparent", cursor: "pointer", lineHeight: 1,
+                      fontSize: 10, opacity: gLocked ? 0.95 : 0.4,
+                      color: gLocked ? "#ffce28" : "rgba(255,255,255,0.8)",
+                    }}
+                  >
+                    {gLocked ? "🔓" : "🔒"}
+                  </button>
+                )}
+              </span>
             );
           })}
         </div>

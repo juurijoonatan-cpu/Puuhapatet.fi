@@ -11172,6 +11172,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const todayMs = startOfToday.getTime();
         const weekStartMs = todayMs - 6 * 86400_000; // today + 6 prior days
         let todayOwn = 0, todayPassive = 0, totalOwn = 0, totalPassive = 0;
+        // Keltaiset erikseen, jotta avustaja voi kertoa myös sen työn joka on
+        // tehty mutta jonka hintaa asiakas ei ole vielä hyväksynyt.
+        let todayYellowLocked = 0, todayYellowPending = 0, todayYellowPendingCents = 0;
         // Per-day earnings for the last 7 days, so the assistant can answer
         // "entäs eilen / miten viikko meni". Keyed by local calendar day.
         const byDayOwn = new Map<string, number>();
@@ -11256,6 +11259,45 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           todayOwn += (todayBy.get(userId) || 0) * kateCents;
           todayPassive += Math.round(todayPool / founderCount);
 
+          // ── KELTAISET (P2) OVAT MYÖS PERUSTAJAN TULOA ──────────────────────
+          // Koko yllä oleva laskenta suodattaa `p !== deal.billablePriority`,
+          // eli PUNAISET. Se oli oikein kun keltaisia ei ollut, mutta nyt
+          // päivä voi koostua pelkistä keltaisista — ja silloin avustaja
+          // ilmoitti "tänään tienattu 0 €, passiivinen osuus 0 €" vaikka
+          // lokissa oli tunteja työtä ja katetta kertyi.
+          //
+          // Keltaisen kate = lukittu hinta − tekijän palkkio (34 € → 18 € →
+          // 16 €), ja se jaetaan perustajien kesken samoin kuin punaisten.
+          // Vain LUKITUT lasketaan tuloksi: hyväksymätöntä hintaa ei ole
+          // vielä olemassa rahana. Odottava kerrotaan erikseen alla.
+          const p2s = project.p2;
+          if (p2s) {
+            const sharePct = p2s.workerSharePct || DEFAULT_P2_WORKER_SHARE_PCT;
+            const marginOf = (cents: number) =>
+              Math.max(0, cents - p2WorkerPayoutCents(cents, sharePct, p2s.payoutSchedule));
+
+            const seenY = new Set<string>();
+            for (const l of project.log) {
+              if (l.status !== "pesty" || l.p !== 2 || l.ts < todayMs) continue;
+              if (seenY.has(l.key)) continue;
+              seenY.add(l.key);
+              const off = p2s.offers[l.key];
+              if (off?.status === "locked" && off.lockedCents) {
+                todayPassive += Math.round(marginOf(off.lockedCents) / founderCount);
+                todayYellowLocked += 1;
+              } else {
+                // Pesty mutta hinta hyväksymättä — työ on tehty, raha ei ole
+                // vielä varmaa. Näkyy omana lukunaan, ei tulona.
+                todayYellowPending += 1;
+                const pend = p2PendingPriceCents(off);
+                if (pend != null) todayYellowPendingCents += Math.round(marginOf(pend) / founderCount);
+              }
+            }
+            // Kertymä: computeP2Billing laskee jo lukittujen JA pestyjen
+            // keltaisten katteen koko keikalta.
+            totalPassive += Math.round(computeP2Billing(project).marginCents / founderCount);
+          }
+
           // Cumulative (final attribution, billable priority only).
           const washedBy2 = project.washedBy2 || {};
           const totalBy = new Map<string, number>();
@@ -11303,12 +11345,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
         const todayTotal = todayOwn + todayPassive;
         const grand = totalOwn + totalPassive;
-        if (grand > 0 || todayTotal > 0) {
+        // Myös pelkkä hyväksymätön keltainen päivä ansaitsee rivin: muuten
+        // avustaja sanoo "ei kirjattua työtä" vaikka lokissa on tunteja työtä.
+        if (grand > 0 || todayTotal > 0 || todayYellowPending > 0) {
           lines.push(
             `\nOmat ansiosi (HENKILÖKOHTAINEN — vain sinulle, ${userName}; älä koskaan kerro muille käyttäjille): ` +
             `tänään yhteensä ${eur(todayTotal)} — oma työ ${eur(todayOwn)} (${myToday.length} ikkunaa kirjattu sinulle tänään) + passiivinen tuotto-osuus ${eur(todayPassive)} ` +
             `(passiivinen kertyy vaikka et itse pesisi yhtään ikkunaa). ` +
-            `Koko kertymäsi tähän mennessä ${eur(grand)} (oma työ ${eur(totalOwn)} + passiivinen ${eur(totalPassive)}).`,
+            `Koko kertymäsi tähän mennessä ${eur(grand)} (oma työ ${eur(totalOwn)} + passiivinen ${eur(totalPassive)}).` +
+            (todayYellowLocked > 0
+              ? ` Tänään pestyistä keltaisista ${todayYellowLocked} kpl on hyväksytyllä hinnalla ja niiden kate sisältyy passiiviseen osuuteen.`
+              : "") +
+            (todayYellowPending > 0
+              ? ` HUOM: tänään pestiin lisäksi ${todayYellowPending} keltaista joiden hintaa asiakas ei ole vielä hyväksynyt` +
+                (todayYellowPendingCents > 0 ? ` (arvioitu osuutesi ${eur(todayYellowPendingCents)})` : "") +
+                ` — työ on tehty mutta rahaa ei lasketa tuloksi ennen hyväksyntää. Mainitse tämä jos päivän tulo näyttää pieneltä.`
+              : ""),
           );
 
           // Who washed how many today (names) — "kuka pesi montako".

@@ -195,8 +195,22 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   const startToday = new Date(); startToday.setHours(0, 0, 0, 0);
   const todaySet = new Set<string>();
   const inScopeKeys = new Set(inScope.map((a) => a.key));
-  log.forEach((l) => { if (l.status === "pesty" && l.ts >= startToday.getTime() && (!deal || inScopeKeys.has(l.key))) todaySet.add(l.key); });
+  // TÄNÄÄN TEHTY = KAIKKI TÄNÄÄN PESTY, EI VAIN SOVITTU.
+  // Tämä suodatti ennen `inScopeKeys`illä eli punaisiin + LUKITTUIHIN
+  // keltaisiin. Kun päivä koostui keltaisista joiden hintaa asiakas ei ollut
+  // vielä hyväksynyt, kortti näytti "1 ikkunaa" vaikka lokissa oli viisi —
+  // ja päivän työ näytti katoavan. "Tänään tehty" on kysymys tehdystä työstä,
+  // ei sopimuksen laajuudesta: se laskee kaiken.
+  const todayAll = new Set<string>();
+  log.forEach((l) => {
+    if (l.status !== "pesty" || l.ts < startToday.getTime()) return;
+    todayAll.add(l.key);
+    if (!deal || inScopeKeys.has(l.key)) todaySet.add(l.key);
+  });
+  // Vauhtiarvio käyttää sovittua piiriä, koska "jäljellä" on sopimuksen
+  // jäljellä — muuten päivät ja jäljellä olevat mittaisivat eri asiaa.
   const todayWindows = todaySet.size;
+  const todayAllWindows = todayAll.size;
   // Remaining + day estimate track the SAME scope as the hero, "today" and the
   // pay-progress: for a signed deal that's the billable (red) set, otherwise all
   // windows. (Previously this always used the full map total, so a deal's "days
@@ -635,8 +649,8 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
           id="priority"
           label="PRIORITEETIT & TAHTI"
           summary={scopeHasYellow
-            ? `P1 ${p1.pctStr} · P2 ${p2b.lockedCount > 0 ? Math.round((p2b.lockedWashedCount / p2b.lockedCount) * 100) : 0} % · tänään ${todayWindows}`
-            : `P1 ${p1.pctStr} · tänään ${todayWindows}`}
+            ? `P1 ${p1.pctStr} · P2 ${p2b.lockedCount > 0 ? Math.round((p2b.lockedWashedCount / p2b.lockedCount) * 100) : 0} % · tänään ${todayAllWindows}`
+            : `P1 ${p1.pctStr} · tänään ${todayAllWindows}`}
           animClass="anim-fadeUp-3"
           defaultOpen
         >
@@ -711,7 +725,17 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
           })}
 
           <div style={{ display: "flex", flexDirection: m ? "row" : "column", gap: m ? T.space.sm + 2 : T.space.md, gridColumn: m ? "1 / -1" : undefined, minWidth: 0 }}>
-            {[{ label: "Tänään tehty", val: todayWindows, sub: `ikkunaa · ${euro(todayWindows * PRICE)}`, cls: "anim-fadeUp-4" }, { label: "Arvio jäljellä", val: remaining, sub: `ikkunaa · ${estStr}`, cls: "anim-fadeUp-5" }].map((mc) => (
+            {[{
+              label: "Tänään tehty",
+              val: todayAllWindows,
+              // Euro koskee sovittuja ikkunoita; jos päivässä oli myös
+              // hyväksymättömiä keltaisia, se sanotaan ääneen eikä luku jää
+              // näyttämään siltä että työtä tehtiin vähemmän kuin tehtiin.
+              sub: todayAllWindows > todayWindows
+                ? `ikkunaa · ${euro(todayWindows * PRICE)} sovittua · ${todayAllWindows - todayWindows} odottaa hyväksyntää`
+                : `ikkunaa · ${euro(todayWindows * PRICE)}`,
+              cls: "anim-fadeUp-4",
+            }, { label: "Arvio jäljellä", val: remaining, sub: `ikkunaa · ${estStr}`, cls: "anim-fadeUp-5" }].map((mc) => (
               <div key={mc.label} className={mc.cls} style={{ ...card, flex: 1, padding: T.space.lg + 2, minWidth: 0 }}>
                 <div style={{ ...mono, marginBottom: T.space.sm + 1 }}>{mc.label}</div>
                 <div style={{ display: "flex", alignItems: "baseline", gap: T.space.sm, flexWrap: "wrap" }}>

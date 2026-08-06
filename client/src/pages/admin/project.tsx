@@ -515,8 +515,8 @@ export default function AdminProjectPage() {
     // LASKUTUS & MAKSUT -statsit haetaan uudelleen serverin laskennasta.
     void refreshBilling();
   }, [refreshBilling]);
-  const onP2Propose = useCallback(async (keys: string[], priceCents: number) => {
-    const res = await api.p2Propose(jobId, { keys, priceCents, by: currentWorker });
+  const onP2Propose = useCallback(async (keys: string[], priceCents: number, note?: string) => {
+    const res = await api.p2Propose(jobId, { keys, priceCents, by: currentWorker, note });
     if (res.ok && res.data) applyP2(res.data.p2);
     else setError(res.error || "Hinnoittelu epäonnistui");
   }, [jobId, currentWorker, applyP2]);

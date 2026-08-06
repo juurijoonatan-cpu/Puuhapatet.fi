@@ -21,6 +21,8 @@ export interface P2PublicOffer {
   version: number;
   lockedCents: number | null;
   lockedAt: number | null;
+  /** Perustajan lyhyt perustelu hinnalle — näytetään hinnan vieressä. */
+  note?: string | null;
 }
 
 /** Customer-visible slice of computeP2Billing — no worker cost/margin. */
@@ -1180,7 +1182,7 @@ export const api = {
   p2SetPhase: (jobId: number, data: { enabled?: boolean; workerSharePct?: number; termsText?: string; payoutSchedule?: { priceCents: number; payoutCents: number }[]; by?: string }) =>
     request<{ ok: boolean; p2: P2State; p2Billing: P2Billing }>("POST", `/api/jobs/${jobId}/p2/phase`, data),
 
-  p2Propose: (jobId: number, data: { keys: string[]; priceCents: number; by?: string }) =>
+  p2Propose: (jobId: number, data: { keys: string[]; priceCents: number; by?: string; note?: string }) =>
     request<{ ok: boolean; applied: string[]; skipped: { key: string; reason: string }[]; p2: P2State; p2Billing: P2Billing }>(
       "POST", `/api/jobs/${jobId}/p2/propose`, data,
     ),

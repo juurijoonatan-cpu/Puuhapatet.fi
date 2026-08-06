@@ -30,6 +30,8 @@ export const DEFAULT_P2_WORKER_SHARE_PCT = 53;    // ≈ existing 20 € / 37,50
 export const MAX_P2_EVENTS = 500;                 // audit log cap (newest kept)
 export const MAX_P2_CUSTOMER_POINTS = 300;        // cap on customer-added yellow dots
 export const MAX_P2_PAYOUT_RULES = 20;            // cap on the payout-schedule size
+/** Hintahuomion pituusraja — yksi rivi, ei essee. */
+export const MAX_P2_NOTE_LEN = 140;
 
 /** Quick admin price presets (cents) shown in the pricing UI — the two agreed
  *  FR8 yellow sizes (34,00 € / 37,50 €) plus a larger option. */
@@ -72,6 +74,14 @@ export interface P2Offer {
   lockedAt?: number;         // epoch ms
   lockedBy?: "customer" | "admin";
   updatedAt: number;         // epoch ms
+  /**
+   * HINTAHUOMIO: lyhyt perustelu ehdotetulle hinnalle, esim. "iso ikkuna,
+   * tikkaat" tai "kaksi puolta". Asiakas näkee sen samassa kohdassa kuin
+   * hinnan, joten hyväksyntäpäätös ei ole pelkkä luku ilman kontekstia.
+   * Kulkee tarjouksen mukana, koska se koskee HINTAA — työtä koskevat
+   * huomiot ovat erikseen (ProjWindowObservation).
+   */
+  note?: string;
 }
 
 export type P2Action =
@@ -160,7 +170,7 @@ export function p2Transition(
   offer: P2Offer | undefined,
   action: Exclude<P2Action, "add_point" | "remove_point">,
   actor: P2Actor,
-  payload: { priceCents?: number; version?: number },
+  payload: { priceCents?: number; version?: number; note?: string },
   now: number = Date.now(),
 ): P2TransitionResult {
   const versionMatches = offer !== undefined && Number(payload.version) === offer.version;
@@ -170,6 +180,12 @@ export function p2Transition(
       if (actor.who !== "admin") return err(403, "Vain admin voi ehdottaa hintaa");
       if (offer?.status === "locked") return err(409, "Hinta on jo lukittu");
       if (!validPrice(payload.priceCents)) return err(400, "Virheellinen hinta");
+      // Hintahuomio: annettu teksti korvaa vanhan, tyhjä merkkijono poistaa sen,
+      // ja `undefined` säilyttää aiemman — niin hinnan voi päivittää huomiota
+      // menettämättä, mutta huomion saa myös nollattua.
+      const note = payload.note === undefined
+        ? offer?.note
+        : (String(payload.note).trim().slice(0, MAX_P2_NOTE_LEN) || undefined);
       return {
         ok: true,
         offer: {
@@ -178,6 +194,7 @@ export function p2Transition(
           counterCents: undefined,
           version: (offer?.version ?? 0) + 1,
           updatedAt: now,
+          note,
         },
       };
     }
@@ -274,6 +291,8 @@ export function p2Transition(
           counterCents: undefined,
           version: offer.version + 1,
           updatedAt: now,
+          // Sama ikkuna, uusi neuvottelu — hintaperustelu pätee yhä.
+          note: offer.note,
         },
       };
     }
@@ -517,6 +536,7 @@ export function sanitizeP2State(input: any): P2State | undefined {
         lockedAt: o?.lockedAt ? Number(o.lockedAt) || undefined : undefined,
         lockedBy: o?.lockedBy === "customer" || o?.lockedBy === "admin" ? o.lockedBy : undefined,
         updatedAt: Number(o?.updatedAt) || Date.now(),
+        note: typeof o?.note === "string" && o.note.trim() ? String(o.note).trim().slice(0, MAX_P2_NOTE_LEN) : undefined,
       };
       // A "locked" offer without a usable lockedCents is corrupt — drop it back
       // to proposed so it can be re-negotiated instead of billing garbage.

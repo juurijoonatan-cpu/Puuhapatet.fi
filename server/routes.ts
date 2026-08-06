@@ -7,6 +7,7 @@ import PDFDocument from "pdfkit";
 import rateLimit from "express-rate-limit";
 import { db } from "./db";
 import { syncPayoutRecord, isSheetsSyncEnabled, getSyncStatus } from "./sheets-sync";
+import { rebuildLedgers } from "./finance/post";
 import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, contactRequests, founderSettlements, eraInvoices, eraInvoiceEmails, driveWorkerFolders, externalSyncLog, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 import {
   computeEraBilling, TEKIJA_HINTA_CENTS, eraRecipientFounderId, normalizeEraNumbers,
@@ -1956,6 +1957,64 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const data = insertExpenseSchema.parse({ ...req.body, jobId: Number(req.params.id) });
       const [row] = await db.insert(expenses).values(data).returning();
       res.status(201).json(row);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  /**
+   * VÄÄRÄÄN PAIKKAAN MENNYT TOSITE: siirrä se oikealle keikalle.
+   *
+   * MIKSI TÄMÄ RIITTÄÄ, EIKÄ KORJAUSVIENTIÄ TARVITA. Kirjanpito on JOHDETTU:
+   * `rebuildLedgers()` laskee kaikki viennit uudestaan lähderiveistä joka
+   * kerta kun tilinpäätöstä luetaan. Kulurivi ON se lähde. Kun rivi siirtyy
+   * oikealle keikalle, kirjanpito korjaa itsensä seuraavalla luvulla — se ei
+   * voi jäädä eri mieltä lähteen kanssa, koska sitä ei säilötä erikseen.
+   *
+   * Korjausvienti olisi tässä nimenomaan väärä työkalu: se tuplaisi rivit ja
+   * jättäisi virheellisen kirjauksen näkyviin, vaikka kone osaa laskea oikean
+   * lopputuloksen suoraan. Korjausvienti on oikea vasta SULJETULLE
+   * tilikaudelle, jonka viennit on jäädytetty (`fiscalYears.isClosed`) — ja
+   * suljettuja kausia ei ole vielä yhtään.
+   *
+   * MIKSI SIIRTO EIKÄ POISTA+LUO. Poista+luo oli tähän asti ainoa keino, ja
+   * se hävittää tositteen luontihetken. Siirto säilyttää rivin, sen id:n ja
+   * `createdAt`in — tosite pysyy samana tositteena, vain sen kohdistus
+   * korjaantuu.
+   */
+  app.patch("/api/expenses/:id", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const [current] = await db.select().from(expenses).where(eq(expenses.id, id));
+      if (!current) return res.status(404).json({ error: "Kulua ei löytynyt" });
+
+      const patch: { jobId?: number; description?: string; amount?: number } = {};
+
+      if (req.body?.jobId != null) {
+        const jobId = Number(req.body.jobId);
+        if (!Number.isInteger(jobId)) return res.status(400).json({ error: "Virheellinen keikka" });
+        // Kohde on oltava olemassa: siirto olemattomaan keikkaan piilottaisi
+        // tositteen kokonaan, mikä on pahempi kuin väärä kohdistus.
+        const [target] = await db.select({ id: jobs.id }).from(jobs).where(eq(jobs.id, jobId));
+        if (!target) return res.status(400).json({ error: "Kohdekeikkaa ei ole" });
+        patch.jobId = jobId;
+      }
+      if (typeof req.body?.description === "string" && req.body.description.trim()) {
+        patch.description = String(req.body.description).slice(0, 500);
+      }
+      if (req.body?.amount != null) {
+        const amount = Math.round(Number(req.body.amount));
+        if (!Number.isFinite(amount)) return res.status(400).json({ error: "Virheellinen summa" });
+        patch.amount = amount;
+      }
+      if (!Object.keys(patch).length) return res.status(400).json({ error: "Ei muutettavaa" });
+
+      const [row] = await db.update(expenses).set(patch).where(eq(expenses.id, id)).returning();
+      // Kirjanpito johdetaan lähteestä, joten se korjaantuu itsestään —
+      // pyydetään uudelleenrakennus heti, jotta Talous-sivu näyttää oikein
+      // ilman että kukaan joutuu odottamaan seuraavaa lukua.
+      void rebuildLedgers().catch((e) => console.warn("Ledger rebuild failed after expense move:", e?.message ?? e));
+      res.json({ ok: true, expense: row });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }

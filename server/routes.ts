@@ -7,7 +7,7 @@ import PDFDocument from "pdfkit";
 import rateLimit from "express-rate-limit";
 import { db } from "./db";
 import { syncPayoutRecord, isSheetsSyncEnabled, getSyncStatus } from "./sheets-sync";
-import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, founderSettlements, eraInvoices, eraInvoiceEmails, driveWorkerFolders, externalSyncLog, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
+import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, contactRequests, founderSettlements, eraInvoices, eraInvoiceEmails, driveWorkerFolders, externalSyncLog, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 import {
   computeEraBilling, TEKIJA_HINTA_CENTS, eraRecipientFounderId, normalizeEraNumbers,
   eraInvoiceRespondTransition,
@@ -4758,6 +4758,117 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // ─── Public booking contact form ─────────────────────────────────────────────
+  /**
+   * Kirjaa nettisivun yhteydenotto kantaan. Tämä ajetaan AINA ennen
+   * sähköpostia: sähköposti on ilmoitus, ei tallennuspaikka.
+   */
+  async function recordContactRequest(input: {
+    kind: "siivous" | "it";
+    name: string; phone?: string | null; email?: string | null;
+    address?: string | null; urgency?: string | null; message: string;
+    extra?: string; pageUrl?: string;
+  }) {
+    const cut = (v: unknown, n: number) => (v == null ? null : String(v).slice(0, n));
+    const [row] = await db.insert(contactRequests).values({
+      kind: input.kind,
+      name: String(input.name).slice(0, 160),
+      phone: cut(input.phone, 60),
+      email: cut(input.email, 200),
+      address: cut(input.address, 300),
+      urgency: cut(input.urgency, 40),
+      message: String(input.message).slice(0, 5000),
+      extra: cut(input.extra, 2000),
+      pageUrl: cut(input.pageUrl, 500),
+    }).returning();
+    return row;
+  }
+
+  /**
+   * Lähetä ilmoitus yhteydenotosta ja merkitse tulos riville.
+   *
+   * EI KOSKAAN HEITÄ. Yhteydenotto on jo tallessa, joten epäonnistunut
+   * sähköposti ei saa muuttua asiakkaalle näkyväksi virheeksi eikä varsinkaan
+   * hukata pyyntöä. Vika näkyy adminissa (`notified === false`), jossa se on
+   * korjattavissa — sen sijaan että se katoaisi lokiin.
+   */
+  async function notifyContactRequest(
+    row: { id: number },
+    mail: { to: string; replyTo?: string; subject: string; html: string },
+  ): Promise<void> {
+    if (!resend) {
+      await db.update(contactRequests)
+        .set({ notified: false, notifyError: "RESEND_API_KEY puuttuu" })
+        .where(eq(contactRequests.id, row.id));
+      return;
+    }
+    try {
+      await resend.emails.send({
+        from: FROM_EMAIL, to: [mail.to], replyTo: mail.replyTo,
+        subject: mail.subject, html: mail.html,
+      });
+      await db.update(contactRequests).set({ notified: true, notifyError: null })
+        .where(eq(contactRequests.id, row.id));
+    } catch (e: any) {
+      console.error("Yhteydenoton ilmoitus epäonnistui:", e?.message ?? e);
+      await db.update(contactRequests)
+        .set({ notified: false, notifyError: String(e?.message ?? e).slice(0, 500) })
+        .where(eq(contactRequests.id, row.id));
+    }
+  }
+
+  /**
+   * Yhteydenotot + tilastot adminille.
+   *
+   * Ei uutta kävijäseurantaa: luvut lasketaan siitä datasta jota syntyy jo
+   * itsestään. `emailBroken` on se tärkein — se kertoo että outreach on rikki
+   * ENNEN kuin sen huomaa siitä ettei puhelin soi.
+   */
+  app.get("/api/admin/contact-requests", async (req, res) => {
+    try {
+      const caller = (req as any).admin as AdminTokenPayload | undefined;
+      const sub = String(caller?.sub ?? "").toLowerCase();
+      if (caller?.role !== "host" && !FOUNDER_IDS.includes(sub)) {
+        return res.status(403).json({ error: "Vain johtajat voivat tarkastella yhteydenottoja." });
+      }
+      const rows = await db.select().from(contactRequests)
+        .orderBy(desc(contactRequests.createdAt)).limit(200);
+      const now = Date.now();
+      const since = (days: number) => rows.filter((r) => now - r.createdAt.getTime() < days * 864e5).length;
+      res.json({
+        ok: true,
+        rows,
+        stats: {
+          total: rows.length,
+          last7: since(7),
+          last30: since(30),
+          unhandled: rows.filter((r) => !r.handledAt).length,
+          emailBroken: rows.filter((r) => !r.notified).length,
+          byKind: { siivous: rows.filter((r) => r.kind === "siivous").length, it: rows.filter((r) => r.kind === "it").length },
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** Kuittaa yhteydenotto hoidetuksi (tai palauta hoitamattomaksi). */
+  app.post("/api/admin/contact-requests/:id/handled", async (req, res) => {
+    try {
+      const caller = (req as any).admin as AdminTokenPayload | undefined;
+      const sub = String(caller?.sub ?? "").toLowerCase();
+      if (caller?.role !== "host" && !FOUNDER_IDS.includes(sub)) {
+        return res.status(403).json({ error: "Vain johtajat voivat tarkastella yhteydenottoja." });
+      }
+      const handled = req.body?.handled !== false;
+      await db.update(contactRequests)
+        .set({ handledAt: handled ? new Date() : null })
+        .where(eq(contactRequests.id, Number(req.params.id)));
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post("/api/contact", async (req, res) => {
     try {
       const { name, phone, email, address, urgency, message, coupon } = req.body;
@@ -4815,12 +4926,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 </body>
 </html>`;
 
-      if (!resend) {
-        return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä — aseta RESEND_API_KEY ympäristömuuttuja." });
-      }
-      await resend.emails.send({
-        from: FROM_EMAIL,
-        to: [ADMIN_EMAIL],
+      // TALTEEN ENNEN LÄHETYSTÄ.
+      // Tässä oli aiemmin `if (!resend) return 503` ja sen jälkeen suojaamaton
+      // `await resend.emails.send(...)`. Kumpikin polku hävitti yhteydenoton
+      // kokonaan: kantaan ei kirjoitettu riviäkään, joten jos Resend oli
+      // konfiguroimatta tai alhaalla, asiakas luuli lähettäneensä eikä kukaan
+      // saanut tietää. Sähköposti on ILMOITUS, ei tallennuspaikka.
+      const saved = await recordContactRequest({
+        kind: "siivous", name, phone, email, address,
+        urgency: urgencyLabel, message,
+        pageUrl: typeof req.body?.pageUrl === "string" ? req.body.pageUrl : undefined,
+      });
+
+      await notifyContactRequest(saved, {
+        to: ADMIN_EMAIL,
         replyTo: email || undefined,
         subject: `Yhteydenotto: ${name} — ${urgencyLabel}`,
         html,
@@ -4867,7 +4986,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 </body>
 </html>`;
         try {
-          await resend.emails.send({
+          // `resend` voi olla null (avain puuttuu). Aiemmin tämän yläpuolella
+          // oli portti joka palautti 503:n, mutta se hävitti yhteydenoton —
+          // nyt pyyntö on jo tallessa ja tämä on pelkkä kohteliaisuusviesti.
+          await resend?.emails.send({
             from: FROM_EMAIL,
             to: [email],
             replyTo: ADMIN_EMAIL,
@@ -4963,12 +5085,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 </body>
 </html>`;
 
-      if (!resend) {
-        return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä — aseta RESEND_API_KEY ympäristömuuttuja." });
-      }
-      await resend.emails.send({
-        from: FROM_EMAIL,
-        to: [ADMIN_EMAIL],
+      // Sama kuin /api/contact: talteen ensin, ilmoitus sitten.
+      const savedIt = await recordContactRequest({
+        kind: "it", name, phone, email, message,
+        extra: JSON.stringify({ company: company || undefined, service: serviceLabel, currentSite: currentSite || undefined }),
+        pageUrl: typeof req.body?.pageUrl === "string" ? req.body.pageUrl : undefined,
+      });
+
+      await notifyContactRequest(savedIt, {
+        to: ADMIN_EMAIL,
         replyTo: email,
         subject: `IT-yhteydenotto: ${name}${company ? ` (${company})` : ""} — ${serviceLabel}`,
         html,

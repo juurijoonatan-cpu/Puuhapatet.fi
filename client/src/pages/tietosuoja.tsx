@@ -57,7 +57,13 @@ export default function TietosuojaPage() {
             <p className="text-muted-foreground leading-relaxed">
               Henkilötietoja säilytetään niin kauan kuin ne ovat tarpeellisia asiakassuhteen
               hoitamiseksi. Tietoja ei luovuteta kolmansille osapuolille eikä siirretä ETA-maiden
-              ulkopuolelle.
+              ulkopuolelle. Kirjanpitoon liittyvät tositteet säilytetään kirjanpitolain
+              edellyttämät kuusi vuotta.
+            </p>
+            <p className="text-muted-foreground leading-relaxed mt-3">
+              Verkkosivuston chatissa käytyjen keskustelujen viestisisältö poistetaan
+              automaattisesti kahden vuorokauden kuluttua. Jos jätit chatissa yhteystietosi,
+              ne säilytetään yhteydenottona, jotta voimme vastata sinulle.
             </p>
           </section>
 
@@ -65,16 +71,36 @@ export default function TietosuojaPage() {
             <h2 className="text-base font-semibold text-foreground mb-2">Säännönmukaiset tietolähteet</h2>
             <ul className="text-muted-foreground space-y-1 list-disc list-inside">
               <li>Yhteydenottolomake verkkosivuilla</li>
+              <li>Verkkosivuston chat, jos jätät siinä yhteystietosi</li>
               <li>Puhelimitse annettavat tiedot</li>
               <li>Asiakkaan luovuttamat tiedot henkilökohtaisessa tapaamisessa</li>
             </ul>
           </section>
 
           <section>
-            <h2 className="text-base font-semibold text-foreground mb-2">Evästeet</h2>
+            <h2 className="text-base font-semibold text-foreground mb-2">Evästeet ja kävijämittaus</h2>
             <p className="text-muted-foreground leading-relaxed">
               Verkkosivustollamme ei käytetä seurantaevästeitä eikä kolmansien osapuolten
-              analytiikkapalveluja.
+              analytiikkapalveluja. Emme tallenna selaimeesi evästettä, tunnistetta emmekä
+              muutakaan tietoa, joten sivusto ei kysy evästesuostumusta.
+            </p>
+            <p className="text-muted-foreground leading-relaxed mt-3">
+              Laskemme kävijämääriä omalla palvelimellamme, jotta tiedämme mitkä sivut ovat
+              hyödyllisiä. Mittauksesta tallennetaan vain sivun osoite, viittaavan sivuston
+              verkkotunnus, mahdollinen kampanjatunniste sekä karkea laitetyyppi
+              (mobiili / tabletti / työpöytä). <strong className="text-foreground">IP-osoitettasi ei
+              tallenneta</strong> eikä tietoja luovuteta kenellekään.
+            </p>
+            <p className="text-muted-foreground leading-relaxed mt-3">
+              Toistuvat käynnit tunnistetaan saman vuorokauden sisällä tiivisteellä, joka
+              lasketaan päivittäin vaihtuvalla salaisella avaimella. Tiivistettä ei voi purkaa
+              takaisin tunnistetiedoksi, eikä eri päivien tiivisteitä voi yhdistää toisiinsa —
+              emme siis voi seurata yksittäistä kävijää päivästä toiseen. Mittaustiedot eivät ole
+              henkilötietoja.
+            </p>
+            <p className="text-muted-foreground leading-relaxed mt-3">
+              Jos selaimesi lähettää <em>Do Not Track</em>- tai <em>Global Privacy Control</em>
+              -pyynnön, kävijämittaus ohitetaan kokonaan.
             </p>
           </section>
 

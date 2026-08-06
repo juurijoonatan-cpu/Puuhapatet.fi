@@ -1,4 +1,5 @@
 import { Switch, Route, useLocation } from "wouter";
+import { trackPageView } from "@/lib/track";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -150,6 +151,18 @@ function ScrollToTop() {
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [location]);
+  return null;
+}
+
+/**
+ * Evästeetön sivunlatauksen kirjaus. Ratsastaa samalla reittimuutoksella kuin
+ * ScrollToTop, koska SPA:ssa "uusi sivu" on nimenomaan reitin vaihtuminen —
+ * palvelin ei näe sitä lainkaan. Ks. lib/track.ts: ei evästeitä, ei
+ * tunnistetta selaimeen, ja Do Not Track estää mittauksen kokonaan.
+ */
+function TrackPageViews() {
+  const [location] = useLocation();
+  useEffect(() => { trackPageView(location); }, [location]);
   return null;
 }
 
@@ -379,6 +392,7 @@ function App() {
               <RouteErrorBoundary>
                 <Toaster />
                 <ScrollToTop />
+                <TrackPageViews />
                 <Router />
               </RouteErrorBoundary>
             </TooltipProvider>

@@ -884,6 +884,12 @@ export const api = {
   deleteExpense: (expenseId: number) =>
     request<unknown>("DELETE", `/api/expenses/${expenseId}`),
 
+  /** Siirrä väärään paikkaan mennyt tosite oikealle keikalle (tai korjaa
+   *  kuvaus/summa). Kirjanpito on johdettu lähderiveistä, joten se korjaa
+   *  itsensä — korjausvientiä ei tarvita avoimella kaudella. */
+  moveExpense: (expenseId: number, patch: { jobId?: number; description?: string; amount?: number }) =>
+    request<{ ok: boolean; expense: unknown }>("PATCH", `/api/expenses/${expenseId}`, patch),
+
   getInvestments: () =>
     request<unknown[]>("GET", "/api/investments"),
 

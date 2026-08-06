@@ -8,7 +8,7 @@ import { useState, useRef, useEffect } from "react";
 import type { ProjMarksData, WindowStatus, ProjCustomMark, ProjMapNote, ProjNoteKind, ProjActiveZone, ProjWindowObservation, FixedDeal } from "@shared/project";
 import { NOTE_KINDS } from "@shared/project";
 import type { P2Offer } from "@shared/p2";
-import { P2_PRICE_PRESETS_CENTS } from "@shared/p2";
+import { P2_PRICE_PRESETS_CENTS, MAX_P2_NOTE_LEN } from "@shared/p2";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 const CIRC_S = 2 * Math.PI * 17; // mini ring
@@ -95,7 +95,7 @@ interface Props {
   } | null;
   /** Admin: bulk price proposal for selected yellow windows — enables the
    *  "€ Hinnoittele" multi-select mode. */
-  onP2Propose?: (keys: string[], priceCents: number) => void;
+  onP2Propose?: (keys: string[], priceCents: number, note?: string) => void;
   /** Ohjattu eteneminen (guided): the open floor + which floors are locked + the
    *  single next window to wash. Drives the locked-floor tabs and the pulsing
    *  "next" ring. Null/absent = no guidance (map fully open). */
@@ -261,6 +261,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   // price for the whole selection.
   const [p2SelectMode, setP2SelectMode] = useState(false);
   const [p2Selected, setP2Selected] = useState<Set<string>>(new Set());
+  const [p2Note, setP2Note] = useState("");
   const [p2Price, setP2Price] = useState("");
   const planRef = useRef<HTMLImageElement>(null);
   const notesCanEdit = !!onAddNote;
@@ -1062,12 +1063,23 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
               style={{ width: "84px", padding: "7px 9px", borderRadius: "9px", border: "1px solid rgba(255,255,255,0.16)", background: "rgba(0,0,0,0.4)", color: "#fff", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "12px", outline: "none" }}
             />
           </div>
+          {/* HINTAHUOMIO. Asiakas näkee pelkän luvun eikä tiedä miksi juuri se —
+              yksi rivi ("iso ikkuna, tikkaat") tekee hyväksymisestä helppoa.
+              Kulkee tarjouksen mukana ja säilyy hinnan päivityksissä. */}
+          <input
+            value={p2Note}
+            onChange={(e) => setP2Note(e.target.value.slice(0, MAX_P2_NOTE_LEN))}
+            placeholder="Hintahuomio (valinnainen)"
+            title="Näkyy asiakkaalle hinnan vieressä"
+            style={{ width: "170px", padding: "7px 9px", borderRadius: "9px", border: "1px solid rgba(255,255,255,0.16)", background: "rgba(0,0,0,0.4)", color: "#fff", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px", outline: "none" }}
+          />
           <button
             disabled={p2Selected.size === 0 || !p2PriceCents}
             onClick={() => {
               if (!p2PriceCents || p2Selected.size === 0) return;
-              onP2Propose?.(Array.from(p2Selected), p2PriceCents);
+              onP2Propose?.(Array.from(p2Selected), p2PriceCents, p2Note.trim() || undefined);
               setP2Selected(new Set());
+              setP2Note("");
             }}
             style={{ padding: "8px 15px", borderRadius: "10px", border: "none", background: (p2Selected.size && p2PriceCents) ? "rgb(255,205,40)" : "rgba(255,255,255,0.12)", color: (p2Selected.size && p2PriceCents) ? "#0a0a0c" : "rgba(255,255,255,0.4)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12.5px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
           >

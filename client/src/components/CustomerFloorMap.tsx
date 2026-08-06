@@ -895,6 +895,18 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
               </>
             )}
 
+            {/* Hintahuomio: perustajan lyhyt perustelu. Näytetään ENNEN
+                nappeja, jotta se on luettu ennen kuin hinnasta päätetään. */}
+            {openOfferData?.note && (
+              <p style={{
+                margin: "0 0 10px", padding: "8px 10px", borderRadius: 9,
+                background: "rgba(31,59,87,0.06)", border: `1px solid ${T.hair}`,
+                fontSize: 12.5, lineHeight: 1.5, color: T.ink,
+              }}>
+                {openOfferData.note}
+              </p>
+            )}
+
             {openOfferData?.status === "locked" && (
               <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>
                 Sovittu hinta <strong style={{ fontVariantNumeric: "tabular-nums" }}>{eur(openOfferData.lockedCents ?? openOfferData.priceCents)}</strong>

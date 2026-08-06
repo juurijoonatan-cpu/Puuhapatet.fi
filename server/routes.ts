@@ -6427,6 +6427,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!Number.isInteger(priceCents) || priceCents <= 0 || priceCents > MAX_P2_PRICE_CENTS) {
         return res.status(400).json({ error: "Virheellinen hinta" });
       }
+      // Hintahuomio on valinnainen. `undefined` = älä koske aiempaan,
+      // tyhjä merkkijono = poista. Ks. p2Transition("propose").
+      const note = typeof req.body?.note === "string" ? req.body.note : undefined;
 
       if (!project.p2) project.p2 = emptyP2State();
       const actor = p2AdminActor(req);
@@ -6435,7 +6438,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       for (const key of keys) {
         if (pointPriority(project, key) !== 2) { skipped.push({ key, reason: "Ei keltainen ikkuna" }); continue; }
         const prev = project.p2.offers[key];
-        const r = p2Transition(prev, "propose", { who: "admin", id: actor }, { priceCents });
+        const r = p2Transition(prev, "propose", { who: "admin", id: actor }, { priceCents, note });
         if (!r.ok) { skipped.push({ key, reason: r.error }); continue; }
         project.p2.offers[key] = r.offer;
         pushP2Event(project.p2.events, {
@@ -6528,6 +6531,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       offers: Object.fromEntries(Object.entries(p2.offers).map(([k, o]) => [k, {
         status: o.status, priceCents: o.priceCents, counterCents: o.counterCents ?? null,
         version: o.version, lockedCents: o.lockedCents ?? null, lockedAt: o.lockedAt ?? null,
+        // Hintahuomio on tarkoitettu nimenomaan asiakkaalle — ilman tätä
+        // riviä projektio pudottaisi sen hiljaa, ja kenttä olisi olemassa
+        // mutta näkymätön (sama vika kuin keltaisten luvuissa).
+        note: o.note ?? null,
       }])),
       customerAddedKeys: customerAddedKeys(project),
       billing: (({ yellowTotal, proposedCount, counteredCount, lockedCount, lockedSumCents, lockedWashedCount, earnedCents }) =>

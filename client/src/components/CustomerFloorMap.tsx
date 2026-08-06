@@ -360,6 +360,132 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
     </div>
   );
 
+  /**
+   * PIKAHYVÄKSYNTÄ — "hyväksy nämä".
+   *
+   * MIKSI: hinnat hyväksyttiin yksi ikkuna kerrallaan, kolmella napautuksella
+   * per ikkuna (avaa piste → Hyväksy → vahvistus). Sadan pestyn keltaisen
+   * kohdalla se on satoja napautuksia, eikä kukaan tee sitä loppuun. Palvelin
+   * on osannut joukkohyväksynnän koko ajan (`/p2/accept` ottaa taulukon), joten
+   * puuttui vain tapa käyttää sitä.
+   *
+   * MITÄ EHDOTETAAN: vain PESTYT keltaiset joilla on avoin hintaehdotus. Työ on
+   * jo tehty, joten hinnan hyväksyminen on se ainoa jäljellä oleva askel — ja
+   * juuri se joukko jonka asiakas haluaa kuitata kerralla. Pesemättömät jäävät
+   * pois: niistä sopiminen etukäteen on eri päätös, ja ne hoituvat kartalta
+   * yksi kerrallaan kuten ennenkin.
+   *
+   * MITÄ EI EHDOTETA: poistetut pisteet putoavat pois jo `getPoints`issa, ja
+   * palvelin tarkistaa lisäksi jokaisen avaimen (`pointPriority !== 2`), joten
+   * kartalta poistettu tai punaiseksi vaihdettu ikkuna ei voi tulla
+   * hyväksytyksi vaikka se olisi ollut listalla näkymän latautuessa.
+   */
+  const quickAccept = useMemo(() => {
+    if (!p2?.enabled) return { rows: [], byFloor: new Map<string, number>(), totalCents: 0 };
+    const rows: { key: string; floor: string; priceCents: number; version: number }[] = [];
+    const byFloor = new Map<string, number>();
+    for (const f of floors) {
+      for (const pt of getPoints(f, map)) {
+        if (pt.p !== 2) continue;
+        if (map.statuses[pt.key] !== "pesty") continue;
+        const o = p2.offers[pt.key];
+        if (!o || o.status !== "proposed" || !o.priceCents) continue;
+        rows.push({ key: pt.key, floor: f, priceCents: o.priceCents, version: o.version });
+        byFloor.set(f, (byFloor.get(f) ?? 0) + 1);
+      }
+    }
+    return { rows, byFloor, totalCents: rows.reduce((n, r) => n + r.priceCents, 0) };
+  }, [floors, map, p2]);
+
+  // Kaksivaiheinen nappi: ensimmäinen painallus näyttää mitä ollaan
+  // hyväksymässä, toinen tekee sen. Sadan ikkunan hyväksyntä on iso päätös
+  // eikä se saa lähteä vahingossa — mutta se ei myöskään ansaitse dialogia.
+  const [armed, setArmed] = useState<string | null>(null);   // null | "all" | floor
+  const [showList, setShowList] = useState(false);
+
+  async function acceptGroup(scope: string) {
+    const items = (scope === "all" ? quickAccept.rows : quickAccept.rows.filter((r) => r.floor === scope))
+      .map((r) => ({ key: r.key, priceCents: r.priceCents, version: r.version }));
+    if (!items.length) return;
+    setArmed(null);
+    await runP2(p2Actions!.accept, items);
+  }
+
+  const quickAcceptPanel = p2?.enabled && p2Actions && quickAccept.rows.length > 0 ? (
+    <div style={{
+      marginBottom: 14, padding: "14px 16px", borderRadius: 14,
+      background: "rgba(62,124,89,0.07)", border: `1px solid rgba(62,124,89,0.28)`,
+    }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+        <strong style={{ fontSize: 15 }}>Hyväksy pestyt lisätyöt</strong>
+        <span style={{ fontSize: 13, color: T.muted }}>
+          {quickAccept.rows.length} ikkunaa · <b style={{ color: T.ink }}>{eur(quickAccept.totalCents)}</b>
+        </span>
+      </div>
+      <p style={{ margin: "6px 0 10px", fontSize: 12.5, color: T.muted, lineHeight: 1.5 }}>
+        Nämä on jo pesty ja odottavat vain hinnan hyväksyntääsi.
+      </p>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button
+          disabled={p2Busy}
+          onClick={() => { if (!p2.termsAccepted) { p2Actions.requireTerms(); return; } armed === "all" ? void acceptGroup("all") : setArmed("all"); }}
+          style={{
+            padding: "10px 15px", borderRadius: 10, border: "none",
+            background: armed === "all" ? "#2f6347" : "#3E7C59", color: "#fff",
+            fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1,
+          }}
+        >
+          {armed === "all"
+            ? `Vahvista — hyväksy ${quickAccept.rows.length} kpl (${eur(quickAccept.totalCents)})`
+            : "Hyväksy kaikki"}
+        </button>
+        {armed === "all" && (
+          <button onClick={() => setArmed(null)}
+            style={{ padding: "10px 13px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.card, color: T.muted, fontFamily: FONT, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
+            Peru
+          </button>
+        )}
+        <button onClick={() => setShowList((v) => !v)}
+          style={{ padding: "10px 13px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.card, color: T.ink, fontFamily: FONT, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
+          {showList ? "Piilota" : "Katso mitkä"}
+        </button>
+      </div>
+
+      {/* Kerroskohtainen hyväksyntä — sama kaksivaiheisuus. */}
+      {quickAccept.byFloor.size > 1 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+          {Array.from(quickAccept.byFloor.entries()).map(([f, n]) => (
+            <button key={f}
+              disabled={p2Busy}
+              onClick={() => { if (!p2.termsAccepted) { p2Actions.requireTerms(); return; } armed === f ? void acceptGroup(f) : setArmed(f); }}
+              style={{
+                padding: "6px 11px", borderRadius: 999,
+                border: `1px solid ${armed === f ? "#3E7C59" : T.hair}`,
+                background: armed === f ? "rgba(62,124,89,0.14)" : T.card,
+                color: T.ink, fontFamily: FONT, fontSize: 12, fontWeight: 600, cursor: "pointer",
+              }}
+            >
+              {armed === f ? `Vahvista krs ${f} (${n})` : `Krs ${f} · ${n}`}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {showList && (
+        <div style={{ marginTop: 10, maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+          {quickAccept.rows.map((r) => (
+            <button key={r.key} onClick={() => jumpToMap(r.key, r.floor)}
+              style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "7px 10px", borderRadius: 8, border: `1px solid ${T.hair}`, background: T.card, cursor: "pointer", fontFamily: FONT, fontSize: 12.5, textAlign: "left" }}>
+              <span style={{ color: T.muted }}>Krs {r.floor}</span>
+              <b>{eur(r.priceCents)}</b>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  ) : null;
+
   return (
     <div style={{ fontFamily: FONT, color: T.ink }}>
       <style>{`
@@ -373,6 +499,8 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
           [data-cfm-anim]{animation:none !important}
         }
       `}</style>
+
+      {quickAcceptPanel}
 
       {/* "Work happening here now" banner */}
       {activeZone && (

@@ -328,6 +328,25 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                   ))}
                 </div>
               )}
+              {/* PESTY MUTTA HYVÄKSYMÄTÖN EI SAA OLLA NÄKYMÄTÖN.
+                  Hero laskee sovittua työtä = punaiset + LUKITUT keltaiset.
+                  Pesty keltainen jonka hintaa asiakas ei ole vielä hyväksynyt
+                  ei ole kummassakaan — ei osoittajassa eikä nimittäjässä.
+                  Työ on siis tehty mutta se puuttuu ruudulta kokonaan, ja
+                  juuri siitä syntyy tunne että luvut heittävät. Se ei kuulu
+                  sovittuun piiriin ennen hyväksyntää, joten se ei mene heroon
+                  — mutta se sanotaan tässä ääneen. */}
+              {p2b.washedTotal > p2b.lockedWashedCount && (
+                <div style={{
+                  display: "inline-flex", alignItems: "center", gap: T.space.sm,
+                  padding: `${T.space.xs + 2}px ${T.space.md}px`, borderRadius: T.radius.sm,
+                  background: T.tone.infoBg, border: `1px solid ${T.tone.infoBorder}`,
+                  fontFamily: T.font, fontSize: T.size.sm, color: T.tone.info,
+                  marginBottom: T.space.lg,
+                }}>
+                  + {p2b.washedTotal - p2b.lockedWashedCount} pestyä keltaista odottaa asiakkaan hyväksyntää
+                </div>
+              )}
               {!attributionCheck.matches && (
                 <div style={{
                   marginBottom: T.space.lg, padding: `${T.space.sm + 1}px ${T.space.md}px`,

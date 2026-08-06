@@ -136,6 +136,10 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
 
   const total = all.length;
   const washed = all.filter((a) => a.status === "pesty").length;
+  // Kerroksittain-osion otsikko laskee samaa asiaa kuin sen rivit: punaiset.
+  const redPoints = all.filter((a) => a.p === 1);
+  const redTotal = redPoints.length;
+  const redDone = redPoints.filter((a) => a.status === "pesty").length;
   const kesken = all.filter((a) => a.status === "kesken").length;
 
   const grp = (p: 1 | 2) => {
@@ -824,12 +828,22 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
         {p2Slot && <div className="anim-fadeUp-6">{p2Slot}</div>}
 
         {/* Row 3: floor breakdown + activity log */}
-        <Section id="floors" label="KERROKSITTAIN" summary={`${washed}/${total}`} animClass="anim-fadeUp-6">
+        <Section id="floors" label="KERROKSITTAIN" summary={`${redDone}/${redTotal} punaista`} animClass="anim-fadeUp-6">
             <div style={{ display: "flex", flexDirection: "column", gap: T.space.xs }}>
               {FLOORS.map((f) => {
-                const arr = all.filter((a) => a.floor === f);
+                // KERROKSEN EDISTYMINEN ON PUNAISTEN EDISTYMINEN.
+                // Palkki laski ennen punaiset ja keltaiset yhteen, jolloin
+                // kerros ei koskaan näyttänyt valmiilta: sopimustyö saattoi
+                // olla 13/13 tehty, mutta hinnoittelemattomat keltaiset
+                // pitivät palkin 60 %:ssa. Sopimus on punaiset — se on se
+                // työ jonka pitää valmistua. Keltaiset ovat lisätyötä, ja ne
+                // näkyvät omana rivinään alla eivätkä katoa mihinkään.
+                const onFloor = all.filter((a) => a.floor === f);
+                const arr = onFloor.filter((a) => a.p === 1);
                 const w = arr.filter((a) => a.status === "pesty").length;
                 const pc = arr.length > 0 ? (w / arr.length) * 100 : 0;
+                const yellow = onFloor.filter((a) => a.p === 2);
+                const yellowDone = yellow.filter((a) => a.status === "pesty").length;
                 return (
                   <button key={f} className="floor-row-btn" onClick={() => onGoToFloor(f)}>
                     <span style={{ width: 34, height: 34, flexShrink: 0, borderRadius: T.radius.sm, background: T.surface.raised, border: T.border.normal, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: T.font, fontWeight: 700, fontSize: T.size.body }}>{f}</span>
@@ -838,7 +852,14 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                         <div style={{ width: `${pc.toFixed(1)}%`, height: "100%", borderRadius: T.radius.xs, background: "linear-gradient(90deg,rgba(255,255,255,0.5),#fff)", transition: "width .6s" }} />
                       </div>
                     </div>
-                    <span style={{ fontFamily: T.mono, fontSize: T.size.sm, color: T.text.secondary, width: 74, textAlign: "right", flexShrink: 0 }}>{w}/{arr.length}</span>
+                    <span style={{ fontFamily: T.mono, fontSize: T.size.sm, color: T.text.secondary, width: 74, textAlign: "right", flexShrink: 0 }}>
+                      {w}/{arr.length}
+                      {yellow.length > 0 && (
+                        <span style={{ display: "block", fontSize: T.size.label, color: "rgba(255,206,40,0.75)" }}>
+                          +{yellowDone}/{yellow.length} kelt.
+                        </span>
+                      )}
+                    </span>
                     <span style={{ fontFamily: T.mono, fontSize: T.size.sm, fontWeight: 700, width: 50, textAlign: "right", flexShrink: 0 }}>{Math.round(pc)} %</span>
                   </button>
                 );

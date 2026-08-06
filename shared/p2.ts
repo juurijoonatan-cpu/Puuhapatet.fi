@@ -381,6 +381,26 @@ export interface P2Billing {
   unpricedWashedCount: number;
   /** Washed yellow windows with no price at all (avaimet varoitukseen). */
   washedUnlockedKeys: string[];
+  /**
+   * KAIKKI pestyt keltaiset — riippumatta siitä onko hinta lukittu, ehdotettu
+   * vai puuttuuko se kokonaan.
+   *
+   * MIKSI TÄMÄ ON OLEMASSA: pestyt keltaiset hajosivat kolmeen laskuriin
+   * (lockedWashedCount / pendingWashedCount / unpricedWashedCount), joista
+   * kahta näytettiin vain jos ne olivat nollaa suurempia. Perustajan
+   * "PESTY"-tiili näytti siis pelkän lukitun osajoukon, ja kun sen vähensi
+   * kokonaismäärästä (`yellowTotal`), erotus oli aivan liian suuri. Tekijän
+   * sovellus taas laski pestyt keltaiset ilman tarjousliitosta, joten se
+   * näytti oikean luvun — kaksi näkymää, kaksi eri totuutta samasta asiasta.
+   *
+   * Tämä lasketaan suoraan kartan tilasta samalla tavalla kuin tekijän
+   * sovelluksessa, EI kolmen osalaskurin summana. Niiden yhtäsuuruus on siis
+   * aito väite jonka testi voi tarkistaa, ei määritelmä joka pitää itsestään.
+   */
+  washedTotal: number;
+  /** Asiakkaan hylkäämät hinnat. Puuttui tilariviltä, jolloin osat eivät
+   *  summautuneet kokonaismäärään ja rivi näytti kadottavan ikkunoita. */
+  declinedCount: number;
 }
 
 /**
@@ -396,6 +416,7 @@ export function computeP2Billing(data: ProjectData): P2Billing {
     pendingWashedCount: 0, pendingEarnedCents: 0, pendingWorkerCostCents: 0,
     unpricedWashedCount: 0,
     washedUnlockedKeys: [],
+    washedTotal: 0, declinedCount: 0,
   };
   const p2 = data.p2;
   const yellows = allPoints(data).filter((p) => p.p === 2);
@@ -405,9 +426,14 @@ export function computeP2Billing(data: ProjectData): P2Billing {
   const schedule = p2.payoutSchedule;
   for (const pt of yellows) {
     const offer = p2.offers[pt.key];
+    // Pesty on pesty riippumatta hinnan tilasta. Lasketaan tässä, ennen
+    // tarjouskohtaisia haaroja, jotta luku ei voi jäädä yhdenkään haaran
+    // varaan — juuri se teki "PESTY"-tiilestä osajoukon.
+    if (pt.status === "pesty") out.washedTotal += 1;
     if (offer) out.pricedCount += 1;
     if (offer?.status === "proposed") out.proposedCount += 1;
     if (offer?.status === "countered") out.counteredCount += 1;
+    if (offer?.status === "declined") out.declinedCount += 1;
     if (offer?.status === "locked" && offer.lockedCents) {
       out.lockedCount += 1;
       out.lockedSumCents += offer.lockedCents;

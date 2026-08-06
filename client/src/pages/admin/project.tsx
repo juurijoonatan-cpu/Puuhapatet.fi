@@ -1186,11 +1186,27 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
         {/* Luvut: sovittu · pesty · odottaa hyväksyntää · kate. Ei virkkeitä. */}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <div style={tile}><span style={tileLabel}>SOVITTU</span><span style={{ ...tileVal, color: "#7CE0A6" }}>{b.lockedCount} kpl · {p2eur(b.lockedSumCents)}</span></div>
-          <div style={tile}><span style={tileLabel}>PESTY</span><span style={tileVal}>{b.lockedWashedCount} kpl · {p2eur(b.earnedCents)}</span></div>
+          {/* PESTY = kaikki pestyt keltaiset. Tiili näytti ennen pelkkää
+              lukittua osajoukkoa (lockedWashedCount), joten kun luvun vähensi
+              kokonaismäärästä, erotus oli aivan liian suuri — ja tekijän
+              sovellus näytti samasta asiasta eri luvun. Nyt iso luku on koko
+              totuus ja erittely kertoo missä raha on menossa. */}
+          <div style={tile}>
+            <span style={tileLabel}>PESTY</span>
+            <span style={tileVal}>{b.washedTotal} kpl · {p2eur(b.earnedCents + b.pendingEarnedCents)}</span>
+            <span style={{ fontSize: "10px", color: "rgba(255,255,255,0.45)", display: "block", marginTop: 2 }}>
+              {b.lockedWashedCount} hyväksytty
+              {b.pendingWashedCount > 0 ? ` · ${b.pendingWashedCount} odottaa` : ""}
+              {b.unpricedWashedCount > 0 ? ` · ${b.unpricedWashedCount} ilman hintaa` : ""}
+            </span>
+          </div>
           {b.pendingWashedCount > 0 && (
             <div style={{ ...tile, borderColor: "rgba(150,175,255,0.35)" }}>
               <span style={tileLabel}>ODOTTAA HYVÄKSYNTÄÄ</span>
               <span style={{ ...tileVal, color: "rgb(150,175,255)" }}>{b.pendingWashedCount} kpl · {p2eur(b.pendingEarnedCents)}</span>
+              <span style={{ fontSize: "10px", color: "rgba(255,255,255,0.45)", display: "block", marginTop: 2 }}>
+                mukana pestyjen summassa
+              </span>
             </div>
           )}
           <div style={tile}>
@@ -1211,8 +1227,13 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
 
         {/* Yksi tilarivi: hinnoittelematta / odottaa asiakasta / asiakkaan lisäämät. */}
         <div style={{ fontSize: "12.5px", color: "rgba(255,255,255,0.6)", display: "flex", gap: 14, flexWrap: "wrap" }}>
+          {/* Osien on summauduttava kokonaismäärään. Ennen tästä puuttuivat
+              vastatarjoukset ja hylätyt, joten rivi näytti kadottavan ikkunoita. */}
           <span><b style={{ color: "#fff" }}>{b.yellowTotal}</b> keltaista</span>
+          <span><b style={{ color: "#7CE0A6" }}>{b.lockedCount}</b> sovittu</span>
           <span><b style={{ color: "rgb(150,175,255)" }}>{b.proposedCount}</b> odottaa asiakasta</span>
+          {b.counteredCount > 0 && <span><b style={{ color: "rgb(255,205,40)" }}>{b.counteredCount}</b> vastatarjous</span>}
+          {b.declinedCount > 0 && <span><b style={{ color: "rgba(255,150,150,0.9)" }}>{b.declinedCount}</b> hylätty</span>}
           {b.yellowTotal - b.pricedCount > 0 && <span><b style={{ color: "rgb(255,205,40)" }}>{b.yellowTotal - b.pricedCount}</b> ilman hintaa</span>}
           {customerAdded > 0 && <span>💡 asiakas ehdotti {customerAdded}</span>}
         </div>

@@ -1147,6 +1147,7 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
           <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
             {view.stats.washed} ikkunaa · {euro(view.worker.perWindowCents)}/kpl
             {(view.stats.p2EarnedCents ?? 0) > 0 ? ` · sis. keltaiset ${euro(view.stats.p2EarnedCents)}` : ""}
+            {(view.stats.p2PendingCents ?? 0) > 0 ? ` · ${euro(view.stats.p2PendingCents)} odottaa hyväksyntää` : ""}
           </p>
         </div>
       </div>
@@ -1495,10 +1496,19 @@ function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
               sis. keltaiset {euro(s.p2EarnedCents)}
             </p>
           )}
-          {/* EI "odottaa hyväksyntää" -summaa tekijälle. Hinnan hyväksyy asiakas,
-              ei tekijä — hänelle se on vain hämmentävä luku jolle ei voi tehdä
-              mitään. Tehty työ näkyy silti: ikkunamäärä on hero-ympyrässä ja
-              lisätyöt omassa pillerissään. */}
+          {/* HYVÄKSYMÄTÖN TYÖ NÄKYY NYT.
+              Tässä luki aiemmin että odottavaa summaa EI näytetä tekijälle:
+              hinnan hyväksyy asiakas, joten luku olisi vain hämmentävä eikä
+              sille voi tehdä mitään. Käytäntö osoitti päättelyn vääräksi —
+              hämmennyksen aiheutti nimenomaan sen PUUTTUMINEN. Tekijä näkee
+              pesseensä esimerkiksi 40 keltaista mutta summa vastaa vain
+              kahtakymmentä, eikä mikään kerro miksi. Nyt kerrotaan. */}
+          {(s.p2PendingCents ?? 0) > 0 && (
+            <p style={{ margin: "3px 0 0", fontSize: 11, color: "rgba(160,185,255,0.9)", fontVariantNumeric: "tabular-nums" }}>
+              + {euro(s.p2PendingCents)} odottaa asiakkaan hyväksyntää
+              {(s.p2PendingWashed ?? 0) > 0 ? ` (${s.p2PendingWashed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikkunaa)` : ""}
+            </p>
+          )}
         </div>
         <div style={{ padding: 16, borderRadius: 14, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
           <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Sinun ikkunasi</p>

@@ -168,6 +168,20 @@ app.use((req, res, next) => {
       created_at   timestamp NOT NULL DEFAULT now()
     )`,
     sql`CREATE INDEX IF NOT EXISTS contact_requests_created_idx ON contact_requests(created_at)`,
+    // KÄVIJÄSEURANTA, EVÄSTEETÖN. Ei evästeitä, ei localStoragea, ei IP:tä,
+    // ei kolmansia osapuolia. `visitor_hash` on päivittäin vaihtuvalla
+    // suolalla laskettu tiiviste, jota ei voi purkaa eikä yhdistää eri
+    // päivien välillä — se kertoo vain "sama selain saman päivän sisällä".
+    sql`CREATE TABLE IF NOT EXISTS page_views (
+      id            serial PRIMARY KEY,
+      path          text NOT NULL,
+      referrer_host text,
+      source        text,
+      device        text,
+      visitor_hash  text NOT NULL,
+      created_at    timestamp NOT NULL DEFAULT now()
+    )`,
+    sql`CREATE INDEX IF NOT EXISTS page_views_created_idx ON page_views(created_at)`,
     sql`CREATE INDEX IF NOT EXISTS chat_conversations_session_idx ON chat_conversations(session_token)`,
     sql`CREATE INDEX IF NOT EXISTS chat_messages_conversation_idx ON chat_messages(conversation_id)`,
     // Kirjanpito (double-entry ledger) — Talous ja verotus, Osa 1

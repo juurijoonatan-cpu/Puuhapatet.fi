@@ -329,6 +329,35 @@ export const contactRequests = pgTable("contact_requests", {
 
 export type ContactRequest = typeof contactRequests.$inferSelect;
 
+/**
+ * Sivunlataukset — evästeetön kävijäseuranta.
+ *
+ * EI EVÄSTEITÄ eikä selaimeen tallennettavaa tunnistetta, joten
+ * suostumusbanneria ei tarvita: ePrivacy-direktiivin evästesääntö koskee
+ * päätelaitteelle tallentamista, eikä tässä tallenneta mitään. IP-osoitetta
+ * ei kirjoiteta kantaan lainkaan.
+ *
+ * `visitorHash` on HMAC(päivän suola, ip + selain), missä päivän suola
+ * johdetaan palvelimen salaisuudesta ja päivämäärästä. Tiiviste kertoo vain
+ * "sama selain saman päivän sisällä": eri päivien tiivisteitä ei voi yhdistää
+ * toisiinsa eikä yhtäkään voi purkaa takaisin osoitteeksi. Tämä on sama
+ * menetelmä jota evästeettömät analytiikkapalvelut käyttävät.
+ */
+export const pageViews = pgTable("page_views", {
+  id:           serial("id").primaryKey(),
+  path:         text("path").notNull(),
+  /** Vain viittaavan sivuston verkkotunnus, ei koko osoitetta. */
+  referrerHost: text("referrer_host"),
+  /** utm_source tai pääteltu lähde ("google", "instagram", "suora"). */
+  source:       text("source"),
+  /** "mobiili" | "tabletti" | "työpöytä" — karkea, ei laitetunnistetta. */
+  device:       text("device"),
+  visitorHash:  text("visitor_hash").notNull(),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+});
+
+export type PageView = typeof pageViews.$inferSelect;
+
 export const chatConversationsRelations = relations(chatConversations, ({ many }) => ({
   messages: many(chatMessages),
 }));

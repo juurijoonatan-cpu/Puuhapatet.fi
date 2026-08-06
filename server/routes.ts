@@ -1,6 +1,6 @@
 import type { Express, Request } from "express";
 import { type Server } from "http";
-import { eq, desc, sql, ne, and, isNotNull, isNull, inArray, lt } from "drizzle-orm";
+import { eq, desc, sql, ne, and, isNotNull, isNull, inArray, lt, gte } from "drizzle-orm";
 import { Resend } from "resend";
 import bwipjs from "bwip-js";
 import PDFDocument from "pdfkit";
@@ -8,7 +8,7 @@ import rateLimit from "express-rate-limit";
 import { db } from "./db";
 import { syncPayoutRecord, isSheetsSyncEnabled, getSyncStatus } from "./sheets-sync";
 import { rebuildLedgers } from "./finance/post";
-import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, contactRequests, founderSettlements, eraInvoices, eraInvoiceEmails, driveWorkerFolders, externalSyncLog, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
+import { customers, jobs, expenses, workerPayments, investments, startupBonusUsages, users, chatConversations, chatMessages, contactRequests, pageViews, founderSettlements, eraInvoices, eraInvoiceEmails, driveWorkerFolders, externalSyncLog, insertCustomerSchema, insertJobSchema, insertExpenseSchema, insertInvestmentSchema, insertStartupBonusUsageSchema } from "@shared/schema";
 import {
   computeEraBilling, TEKIJA_HINTA_CENTS, eraRecipientFounderId, normalizeEraNumbers,
   eraInvoiceRespondTransition,
@@ -647,6 +647,8 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   // Tekijän oman erälaskun PDF-lataus (kohta 4).
   { method: "GET",  re: /^\/api\/crew\/[^/]+\/era-invoice\/\d+\/pdf$/ },
   { method: "DELETE", re: /^\/api\/crew\/[^/]+\/expense\/[^/]+$/ },
+  // Evästeetön kävijäseuranta: julkisen sivun on voitava kirjata sivunlataus.
+  { method: "POST", re: /^\/api\/track$/ },
 ];
 
 function isPublicApi(method: string, path: string): boolean {
@@ -1317,6 +1319,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.use("/api/jobs/:id/gig/invoice", emailLimiter);
   app.use("/api/contact",           contactLimiter);
   app.use("/api/it-contact",        contactLimiter);
+  // Seuranta: reilusti tilaa normaalille selailulle, katto väärinkäytölle.
+  app.use("/api/track", rateLimit({
+    windowMs: 10 * 60 * 1000, max: 120,
+    standardHeaders: true, legacyHeaders: false,
+    // Ei virheviestiä: seuranta on hiljainen eikä sen kuulu näkyä kävijälle.
+    handler: (_req, res) => res.status(204).end(),
+  }));
   // Chat: allow a real back-and-forth but stop abuse (per IP)
   const chatLimiter = rateLimit({
     windowMs: 60 * 1000,
@@ -4817,6 +4826,141 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // ─── Public booking contact form ─────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // KÄVIJÄSEURANTA — evästeetön, ensimmäisen osapuolen, ei kolmansia
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Päivän suola. Johdetaan palvelimen salaisuudesta ja päivämäärästä, joten
+   * se on sama uudelleenkäynnistyksen yli (uniikit eivät hypähdä deployssa)
+   * mutta vaihtuu joka yö. Eri päivien tiivisteitä ei voi yhdistää.
+   */
+  function visitorSaltForToday(): string {
+    const day = new Date().toISOString().slice(0, 10);
+    return createHmac("sha256", AUTH_SECRET || "puuhapatet-analytics").update(`salt:${day}`).digest("hex");
+  }
+
+  /** Karkea laitetyyppi user-agentista. Ei laitetunniste, vain kolme luokkaa. */
+  function deviceClass(ua: string): string {
+    if (/iPad|Tablet/i.test(ua)) return "tabletti";
+    if (/Mobi|Android|iPhone/i.test(ua)) return "mobiili";
+    return "työpöytä";
+  }
+
+  /** Viittaavan sivuston verkkotunnus, ei koko osoitetta (ei polkuja/parametreja). */
+  function referrerHost(ref: string | undefined, self: string): string | null {
+    if (!ref) return null;
+    try {
+      const h = new URL(ref).hostname.replace(/^www\./, "");
+      return h && h !== self ? h.slice(0, 120) : null;
+    } catch { return null; }
+  }
+
+  /**
+   * Sivunlatauksen kirjaus. Julkinen ja tarkoituksella mitätön: 204 aina, myös
+   * virheessä — seuranta ei saa koskaan näkyä kävijälle eikä hidastaa sivua.
+   *
+   * MITÄ EI TALLENNETA: IP-osoitetta, evästettä, selaimeen tallennettua
+   * tunnistetta, koko viittaavaa osoitetta, mitään henkilötietoa. Vain polku,
+   * viittaava verkkotunnus, lähde, karkea laitetyyppi ja päiväkohtainen
+   * tiiviste.
+   */
+  app.post("/api/track", async (req, res) => {
+    res.status(204).end();   // vastaa heti; kirjaus jatkuu taustalla
+    try {
+      const path = String(req.body?.path ?? "").slice(0, 300);
+      if (!path.startsWith("/")) return;
+      // Sisäiset työkalut eivät ole kävijäliikennettä.
+      if (/^\/(admin|tyo|seuranta)\b/.test(path)) return;
+
+      const ua = String(req.headers["user-agent"] ?? "").slice(0, 400);
+      // Botit pois: ne vääristäisivät luvut pahemmin kuin puuttuva data.
+      if (!ua || /bot|crawl|spider|slurp|preview|monitor|curl|wget|headless/i.test(ua)) return;
+
+      const ip = clientIp(req) ?? "";
+      const visitorHash = createHmac("sha256", visitorSaltForToday())
+        .update(`${ip}|${ua}`).digest("hex").slice(0, 32);
+
+      const utm = String(req.body?.source ?? "").slice(0, 60) || null;
+      const host = referrerHost(String(req.body?.referrer ?? "") || undefined, "puuhapatet.fi");
+
+      await db.insert(pageViews).values({
+        path,
+        referrerHost: host,
+        source: utm ?? (host ?? "suora"),
+        device: deviceClass(ua),
+        visitorHash,
+      });
+    } catch {
+      // Seuranta ei saa koskaan kaataa mitään eikä täyttää lokia.
+    }
+  });
+
+  /**
+   * Kävijätilastot adminille. Yksi kysely, koko kuva.
+   *
+   * `perDay` piirtää käyrän, `uniques` kertoo montako eri selainta, `topPages`
+   * ja `topSources` mistä tullaan. Suppilo (kävijät → yhteydenotot) on se luku
+   * joka oikeasti kiinnostaa: tuleeko liikenteestä pyyntöjä.
+   */
+  app.get("/api/admin/analytics", async (req, res) => {
+    try {
+      const caller = (req as any).admin as AdminTokenPayload | undefined;
+      const sub = String(caller?.sub ?? "").toLowerCase();
+      if (caller?.role !== "host" && !FOUNDER_IDS.includes(sub)) {
+        return res.status(403).json({ error: "Vain johtajat voivat tarkastella tilastoja." });
+      }
+      const days = Math.min(90, Math.max(1, Number(req.query.days) || 30));
+      const since = new Date(Date.now() - days * 864e5);
+
+      const rows = await db.select({
+        path: pageViews.path, source: pageViews.source, device: pageViews.device,
+        visitorHash: pageViews.visitorHash, createdAt: pageViews.createdAt,
+      }).from(pageViews).where(gte(pageViews.createdAt, since));
+
+      const contacts = await db.select({ createdAt: contactRequests.createdAt })
+        .from(contactRequests).where(gte(contactRequests.createdAt, since));
+
+      const dayKey = (d: Date) => d.toISOString().slice(0, 10);
+      const perDay = new Map<string, { views: number; visitors: Set<string> }>();
+      const pages = new Map<string, number>();
+      const sources = new Map<string, number>();
+      const devices = new Map<string, number>();
+      const uniques = new Set<string>();
+
+      for (const r of rows) {
+        const k = dayKey(r.createdAt);
+        if (!perDay.has(k)) perDay.set(k, { views: 0, visitors: new Set() });
+        const d = perDay.get(k)!;
+        d.views += 1; d.visitors.add(r.visitorHash);
+        uniques.add(`${k}|${r.visitorHash}`);
+        pages.set(r.path, (pages.get(r.path) ?? 0) + 1);
+        sources.set(r.source ?? "suora", (sources.get(r.source ?? "suora") ?? 0) + 1);
+        devices.set(r.device ?? "?", (devices.get(r.device ?? "?") ?? 0) + 1);
+      }
+
+      const top = (m: Map<string, number>, n: number) =>
+        Array.from(m.entries()).sort((a, b) => b[1] - a[1]).slice(0, n).map(([name, count]) => ({ name, count }));
+
+      res.json({
+        ok: true,
+        days,
+        views: rows.length,
+        // Uniikki = eri selain per päivä. Sama kävijä kahtena päivänä on kaksi.
+        visitors: uniques.size,
+        contacts: contacts.length,
+        conversionPct: uniques.size > 0 ? Math.round((contacts.length / uniques.size) * 1000) / 10 : 0,
+        perDay: Array.from(perDay.entries()).sort(([a], [b]) => a.localeCompare(b))
+          .map(([day, d]) => ({ day, views: d.views, visitors: d.visitors.size })),
+        topPages: top(pages, 8),
+        topSources: top(sources, 8),
+        devices: top(devices, 3),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   /**
    * Kirjaa nettisivun yhteydenotto kantaan. Tämä ajetaan AINA ennen
    * sähköpostia: sähköposti on ilmoitus, ei tallennuspaikka.

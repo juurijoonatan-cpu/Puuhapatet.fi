@@ -23,6 +23,94 @@ import { EmptyState } from "@/components/empty-state";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { API_BASE, withAuth } from "@/lib/api";
 
+/**
+ * Kävijätilastot — evästeetön mittaus omalta palvelimelta.
+ *
+ * Suppilo on tämän tärkein rivi: liikenne yksin ei kerro mitään, mutta
+ * "kävijöitä 340 → yhteydenottoja 6" kertoo tuleeko liikenteestä töitä.
+ */
+function Analytics() {
+  const [days, setDays] = useState(30);
+  const [d, setD] = useState<any>(null);
+
+  useEffect(() => {
+    setD(null);
+    fetch(`${API_BASE}/api/admin/analytics?days=${days}`, { headers: withAuth() })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (j?.ok) setD(j); })
+      .catch(() => {});
+  }, [days]);
+
+  const peak = d ? Math.max(1, ...d.perDay.map((x: any) => x.views)) : 1;
+
+  return (
+    <Card className="p-5 mb-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+        <h2 className="text-lg font-semibold text-foreground">Nettisivun kävijät</h2>
+        <div className="flex gap-1">
+          {[7, 30, 90].map((n) => (
+            <Button key={n} variant={days === n ? "default" : "outline"} size="sm" onClick={() => setDays(n)}>
+              {n} pv
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      {!d ? (
+        <p className="text-sm text-muted-foreground">Ladataan…</p>
+      ) : d.views === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Ei vielä kävijädataa. Mittaus alkaa kun sivusto on päivitetty.
+        </p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            {[
+              ["Kävijöitä", d.visitors],
+              ["Sivunlatauksia", d.views],
+              ["Yhteydenottoja", d.contacts],
+              ["Näistä yhteyttä", `${d.conversionPct} %`],
+            ].map(([label, value]) => (
+              <div key={String(label)} className="rounded-lg border p-3">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+                <p className="text-xl font-semibold text-foreground tabular-nums">{value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Käyrä pylväinä — ei kirjastoa yhtä riviä varten. */}
+          <div className="flex items-end gap-[2px] h-16 mb-4">
+            {d.perDay.map((x: any) => (
+              <div key={x.day} title={`${x.day}: ${x.views} latausta, ${x.visitors} kävijää`}
+                className="flex-1 bg-primary/30 hover:bg-primary/60 rounded-t transition-colors"
+                style={{ height: `${Math.max(4, (x.views / peak) * 100)}%` }} />
+            ))}
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-4 text-sm">
+            {[["Suosituimmat sivut", d.topPages], ["Mistä tullaan", d.topSources], ["Laite", d.devices]].map(([title, list]: any) => (
+              <div key={title}>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">{title}</p>
+                {list.length === 0 ? <p className="text-muted-foreground">—</p> : list.map((x: any) => (
+                  <div key={x.name} className="flex justify-between gap-2">
+                    <span className="truncate text-foreground">{x.name}</span>
+                    <span className="text-muted-foreground tabular-nums">{x.count}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+
+          <p className="mt-4 text-xs text-muted-foreground">
+            Evästeetön mittaus omalla palvelimella: ei evästeitä, ei IP-osoitteita, ei kolmansia
+            osapuolia. Kävijä = eri selain saman päivän sisällä.
+          </p>
+        </>
+      )}
+    </Card>
+  );
+}
+
 interface ContactRow {
   id: number; kind: string; name: string;
   phone?: string | null; email?: string | null; address?: string | null;
@@ -209,6 +297,7 @@ export default function AdminInboxPage() {
           </Button>
         </div>
 
+        <Analytics />
         <ContactRequests />
 
         <div className="grid md:grid-cols-[300px_1fr] gap-4">

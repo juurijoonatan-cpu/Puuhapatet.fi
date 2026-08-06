@@ -64,6 +64,10 @@ export function AdminNav() {
     { icon: Calendar,        label: "Kalenteri", href: "/admin/calendar" },
     { icon: ClipboardList,   label: "Keikat",    href: "/admin/jobs" },
     ...(isHost ? [triageItem, { icon: Megaphone, label: "Myynti", href: "/admin/myynti" } as NavItem] : []),
+    // Yhteydenotot: sivu oli olemassa mutta siihen ei ollut yhtään linkkiä —
+    // sinne pääsi vain ilmoitussähköpostin napista. Nyt myös nettisivun
+    // lomakkeet päätyvät tänne, joten se on oikea postilaatikko.
+    ...(isHost ? [{ icon: Inbox, label: "Yhteydenotot", href: "/admin/inbox" } as NavItem] : []),
     { icon: Users,           label: "Asiakkaat", href: "/admin/customers" },
     { icon: Settings,        label: "Asetukset", href: "/admin/settings" },
   ];

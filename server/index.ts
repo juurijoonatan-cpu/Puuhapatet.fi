@@ -146,6 +146,28 @@ app.use((req, res, next) => {
       author_name     text,
       created_at      timestamp NOT NULL DEFAULT now()
     )`,
+    // YHTEYDENOTOT NETTISIVULTA. Aiemmin /api/contact lähetti pelkän
+    // sähköpostin eikä kirjoittanut kantaan riviäkään: jos Resend oli alhaalla
+    // tai konfiguroimatta, pyyntö katosi kokonaan eikä kukaan tiennyt sen
+    // tulleen. Nyt jokainen yhteydenotto talletetaan ENNEN lähetystä, ja
+    // `notified` kertoo meniko ilmoitus perille.
+    sql`CREATE TABLE IF NOT EXISTS contact_requests (
+      id           serial PRIMARY KEY,
+      kind         text NOT NULL DEFAULT 'siivous',
+      name         text NOT NULL,
+      phone        text,
+      email        text,
+      address      text,
+      urgency      text,
+      message      text NOT NULL,
+      extra        text,
+      page_url     text,
+      notified     boolean NOT NULL DEFAULT false,
+      notify_error text,
+      handled_at   timestamp,
+      created_at   timestamp NOT NULL DEFAULT now()
+    )`,
+    sql`CREATE INDEX IF NOT EXISTS contact_requests_created_idx ON contact_requests(created_at)`,
     sql`CREATE INDEX IF NOT EXISTS chat_conversations_session_idx ON chat_conversations(session_token)`,
     sql`CREATE INDEX IF NOT EXISTS chat_messages_conversation_idx ON chat_messages(conversation_id)`,
     // Kirjanpito (double-entry ledger) — Talous ja verotus, Osa 1

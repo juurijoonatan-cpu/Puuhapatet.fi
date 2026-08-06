@@ -294,6 +294,41 @@ export const chatMessages = pgTable("chat_messages", {
   createdAt:      timestamp("created_at").defaultNow().notNull(),
 });
 
+/**
+ * Nettisivun yhteydenotot.
+ *
+ * MIKSI TÄMÄ ON OLEMASSA: `/api/contact` ja `/api/it-contact` lähettivät pelkän
+ * sähköpostin eivätkä kirjoittaneet kantaan riviäkään. Jos Resend oli alhaalla,
+ * kiintiö täynnä tai RESEND_API_KEY asettamatta, yhteydenotto katosi kokonaan —
+ * asiakas luuli lähettäneensä, eikä kukaan tiennyt sen tulleen. Samasta syystä
+ * kysymykseen "montako pyyntöä tuli tässä kuussa" ei ollut mitään vastausta.
+ *
+ * Rivi kirjoitetaan ENNEN sähköpostin lähetystä. `notified` + `notifyError`
+ * kertovat menikö ilmoitus perille, joten rikkinäinen sähköposti näkyy
+ * adminissa sen sijaan että se hiljaa nielaisisi asiakkaita.
+ */
+export const contactRequests = pgTable("contact_requests", {
+  id:          serial("id").primaryKey(),
+  kind:        text("kind").notNull().default("siivous"),  // "siivous" | "it"
+  name:        text("name").notNull(),
+  phone:       text("phone"),
+  email:       text("email"),
+  address:     text("address"),
+  urgency:     text("urgency"),
+  message:     text("message").notNull(),
+  /** Lomakekohtaiset lisäkentät JSONina (esim. IT: yritys, palvelu, nykysivu). */
+  extra:       text("extra"),
+  pageUrl:     text("page_url"),
+  /** Menikö ilmoitussähköposti perille. false = yhteydenotto on VAIN täällä. */
+  notified:    boolean("notified").notNull().default(false),
+  notifyError: text("notify_error"),
+  /** Kuittaus: yhteydenotto on hoidettu. */
+  handledAt:   timestamp("handled_at"),
+  createdAt:   timestamp("created_at").defaultNow().notNull(),
+});
+
+export type ContactRequest = typeof contactRequests.$inferSelect;
+
 export const chatConversationsRelations = relations(chatConversations, ({ many }) => ({
   messages: many(chatMessages),
 }));

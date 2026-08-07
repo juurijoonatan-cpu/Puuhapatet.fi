@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { Loader2, MapPin, Phone, Check, X, UserCheck, Users } from "lucide-react";
 import { getAdminProfile, canApproveLeads, USERS } from "@/lib/admin-profile";
+import { Analytics, ContactRequests } from "@/components/admin/site-insights";
 import { API_BASE, withAuth } from "@/lib/api";
 
 interface LeadRow {
@@ -77,10 +78,20 @@ export default function LeadTriagePage() {
 
   return (
     <div className="min-h-screen bg-background admin-shell-pad">
-      <div className="max-w-2xl mx-auto px-4 py-6">
+      <div className="max-w-3xl mx-auto px-4 py-6">
         <div className="mb-4">
-          <h1 className="text-2xl font-bold tracking-tight">Liidien tarkistus</h1>
-          <p className="text-sm text-muted-foreground">Myyjien keräämät liidit — hyväksy, ota itselle tai hylkää.</p>
+          <h1 className="text-2xl font-bold tracking-tight">Liidit</h1>
+          <p className="text-sm text-muted-foreground">Nettisivun kävijät ja yhteydenotot sekä myyjien keräämät liidit.</p>
+        </div>
+
+        {/* Nettisivun tilannekuva ensin: se kertoo tuleeko liikennettä ja
+            tuleeko siitä pyyntöjä. Myyjien liidit sen alla. */}
+        <Analytics />
+        <ContactRequests />
+
+        <div className="mb-3 mt-6">
+          <h2 className="text-lg font-semibold">Myyjien keräämät liidit</h2>
+          <p className="text-sm text-muted-foreground">Hyväksy, ota itselle tai hylkää.</p>
         </div>
 
         {loading ? (

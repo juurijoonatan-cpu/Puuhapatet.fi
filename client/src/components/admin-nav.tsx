@@ -7,7 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Plus, Calendar, ClipboardList, Users, Settings, Sun, Moon, LogOut, Inbox, Megaphone, MessageSquare } from "lucide-react";
+import { LayoutDashboard, Plus, Calendar, ClipboardList, Users, Settings, Sun, Moon, LogOut, Inbox, Megaphone } from "lucide-react";
 import { useTheme } from "@/lib/theme";
 import { clearAdminSession } from "@/pages/admin/login";
 import { clearAdminProfile, getAdminProfile, canApproveLeads } from "@/lib/admin-profile";
@@ -46,9 +46,7 @@ export function AdminNav() {
   }, [isHost, currentPath]);
 
   const triageItem: NavItem = { icon: Inbox, label: "Liidit", href: "/admin/liidit", badge: pendingLeads };
-  // Yhteydenotot: nettisivun lomakkeet, chatin handoffit ja kävijätilastot.
-  // Oma ikoni, koska Inbox on jo Liideillä.
-  const contactsItem: NavItem = { icon: MessageSquare, label: "Yhteydenotot", href: "/admin/inbox" };
+
 
   // Mobile bottom bar — most-used items (+ Liidit for founders)
   const mobileNavItems: NavItem[] = [
@@ -56,7 +54,7 @@ export function AdminNav() {
     { icon: Plus,            label: "Uusi",      href: "/admin/new" },
     { icon: Calendar,        label: "Kalenteri", href: "/admin/calendar" },
     { icon: ClipboardList,   label: "Keikat",    href: "/admin/jobs" },
-    ...(isHost ? [triageItem, contactsItem] : []),
+    ...(isHost ? [triageItem] : []),
     { icon: Settings,        label: "Asetukset", href: "/admin/settings" },
   ];
 
@@ -70,7 +68,6 @@ export function AdminNav() {
     // Yhteydenotot: sivu oli olemassa mutta siihen ei ollut yhtään linkkiä —
     // sinne pääsi vain ilmoitussähköpostin napista. Nyt myös nettisivun
     // lomakkeet päätyvät tänne, joten se on oikea postilaatikko.
-    ...(isHost ? [contactsItem] : []),
     { icon: Users,           label: "Asiakkaat", href: "/admin/customers" },
     { icon: Settings,        label: "Asetukset", href: "/admin/settings" },
   ];

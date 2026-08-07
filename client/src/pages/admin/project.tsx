@@ -1256,9 +1256,33 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
         </div>
 
         {/* Pesty ilman hintaa — perustajan tehtävälista, ei varoitusseinä. */}
+        {/* HINNOITTELEMATTOMAT: KERRO MITKÄ, ÄLÄ VAIN MONTAKO.
+            Tässä luki "3 pesty ilman hintaa — hinnoittele ne kartalla", eikä
+            mikään kertonut MITKÄ kolme. Kun kaikki näyttää hinnoitellulta,
+            luvusta tulee väite jota ei voi tarkistaa — ja silloin uskotaan
+            että järjestelmä on väärässä. Avaimet ovat olleet laskennassa koko
+            ajan (`washedUnlockedKeys`), niitä ei vain näytetty. Nyt jokaisesta
+            pääsee suoraan sen kerroksen kartalle. */}
         {b.unpricedWashedCount > 0 && (
           <div style={{ padding: "10px 13px", borderRadius: 11, background: "rgba(255,176,72,0.08)", border: "1px solid rgba(255,176,72,0.3)", fontSize: "12.5px", color: "rgba(255,220,160,0.95)" }}>
-            {b.unpricedWashedCount} pesty ilman hintaa — hinnoittele ne kartalla.
+            <div style={{ marginBottom: 7 }}>
+              {b.unpricedWashedCount} pesty keltainen ilman hintaa — avaa ja hinnoittele:
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {b.washedUnlockedKeys.slice(0, 24).map((k) => {
+                const fl = k.split("#")[0];
+                return (
+                  <button key={k} onClick={() => onGoToFloor(fl)}
+                    title={`Avaa kerros ${fl} — ikkuna ${k}`}
+                    style={{ padding: "4px 10px", borderRadius: 999, border: "1px solid rgba(255,176,72,0.45)", background: "rgba(255,176,72,0.12)", color: "rgba(255,225,175,0.98)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer" }}>
+                    Krs {fl}
+                  </button>
+                );
+              })}
+              {b.washedUnlockedKeys.length > 24 && (
+                <span style={{ alignSelf: "center", opacity: 0.8 }}>+{b.washedUnlockedKeys.length - 24}</span>
+              )}
+            </div>
           </div>
         )}
 

@@ -79,7 +79,16 @@ const barButton: React.CSSProperties = {
 
 function tabStyle(active: boolean, m: boolean): React.CSSProperties {
   return {
-    padding: m ? `7px ${T.space.md}px` : `7px ${T.space.lg - 1}px`,
+    // OSUMAKOKO. Välilehdet olivat 28 px korkeita — Applen ja Googlen minimi on
+    // 44. Tämä on sama "nappi ei painaudu" -vika joka on korjattu tähän
+    // sovellukseen jo kahdesti, mutta yläpalkki jäi molemmilla kerroilla
+    // ulkopuolelle: index.css:n min-height-sääntö koskee vain
+    // `[data-fr8-pane]`-alueita, eikä navbar ole sellainen.
+    minHeight: m ? 44 : 36,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: m ? `0 ${T.space.md}px` : `7px ${T.space.lg - 1}px`,
     borderRadius: T.radius.sm - 2,
     border: "none",
     cursor: "pointer",
@@ -182,6 +191,11 @@ export default function Navbar({ activeTab, onTabChange, buildingName, buildingA
           background: "rgba(255,255,255,0.04)", border: T.border.subtle,
           borderRadius: T.radius.md, overflowX: "auto", minWidth: 0,
           flex: m ? "1 1 auto" : "0 0 auto",
+          // Nauha vierii vain jos välilehdet eivät mahdu (320 px). Vierivällä
+          // alueella napautus voi muuttua panniksi ja klikkaus perutaan;
+          // `manipulation` poistaa tuplatap-tunnistuksen, joka on se osa joka
+          // nielaisee napautuksia.
+          touchAction: "manipulation",
         }}
       >
         {TABS.filter((t) => t.id !== "maksut" || showMaksutTab).map((t) => (

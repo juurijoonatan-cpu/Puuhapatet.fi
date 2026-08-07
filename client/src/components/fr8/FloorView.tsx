@@ -402,11 +402,16 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
     setEditMode(false); setPlaceMode(null); setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null);
   }
 
-  // Floor revenue: with a signed deal only the billable priority (red) counts.
-  const floorBillable = deal ? points.filter((p) => p.p === deal.billablePriority) : points;
-  const floorWashed = floorBillable.filter((p) => (statuses[p.key] || "ei") === "pesty").length;
-  const floorTotal = floorBillable.length;
+  // KERROKSEN YMPYRÄ LASKEE KAIKKI PISTEET, EI VAIN PUNAISIA.
+  // Rengas näytti "74/74 pesty · 100 %" kerroksessa jossa oli silminnähden
+  // pesemättömiä keltaisia — koska se laski vain sopimuksen (punaiset). Kartta
+  // on kuva siitä mitä kerroksessa on, joten sen mittarin on vastattava
+  // pisteitä jotka samalla ruudulla näkyvät. Raha lasketaan yhä sopimuksesta.
+  const floorWashed = points.filter((p) => (statuses[p.key] || "ei") === "pesty").length;
+  const floorTotal = points.length;
   const floorPct = floorTotal > 0 ? (floorWashed / floorTotal) * 100 : 0;
+  // Rahaluku pysyy sopimuksen piirissä: € tulee punaisista, ei kaikista.
+  const floorBillable = deal ? points.filter((p) => p.p === deal.billablePriority) : points;
   // Whole-contract billable window count (every floor) → drives the price cap.
   const totalLive = countAllLive(floors, marks, customMarks, deleted, deal?.billablePriority);
   // A signed deal has a fixed agreed cap; an open gig's cap is count × price.

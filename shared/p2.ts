@@ -306,6 +306,86 @@ export function pushP2Event(events: P2Event[], ev: P2Event): P2Event[] {
   return events;
 }
 
+// ─── Laskun erittely: mistä ikkunoista kertymä koostuu ─────────────────────────
+
+/** Yksi laskutettava ikkuna. */
+export interface P2InvoiceLine {
+  key: string;
+  floor: string;
+  /** Kerroskohtainen juokseva numero — sama numero jonka asiakas näkee kartalla. */
+  number: number;
+  /** Sovittu hinta (lockedCents). */
+  priceCents: number;
+  lockedAt?: number;
+  lockedBy?: "customer" | "admin";
+}
+
+export interface P2InvoiceFloorGroup {
+  floor: string;
+  count: number;
+  sumCents: number;
+  lines: P2InvoiceLine[];
+}
+
+export interface P2Itemisation {
+  lines: P2InvoiceLine[];
+  byFloor: P2InvoiceFloorGroup[];
+  /** Σ rivien hinnat. */
+  totalCents: number;
+  /** Laskutusperusta samasta datasta laskettuna (computeP2Billing). */
+  earnedCents: number;
+  /**
+   * Täsmääkö erittely laskutusperustaan sentilleen?
+   *
+   * Tämä ei ole koriste. Erittely ja laskutettava summa lasketaan eri
+   * funktioissa, ja jos ne joskus eroavat, lasku olisi väärä eikä kukaan
+   * huomaisi. Kun tämä on epätosi, laskua EI saa lähettää ennen kuin syy on
+   * selvitetty.
+   */
+  matchesBilling: boolean;
+}
+
+/**
+ * Mitkä ikkunat muodostavat laskutettavan kertymän, kerroksittain.
+ *
+ * Mukaan tulevat täsmälleen ne keltaiset joista lasku muodostuu: PESTY ja
+ * hinta SOVITTU (`locked` + `lockedCents`). Ei pesemättömiä sovittuja (työtä ei
+ * ole tehty) eikä pestyjä hyväksymättömiä (hinnasta ei ole sovittu).
+ *
+ * Numerointi on sama kuin asiakkaan kartalla: kerroksen keltaiset juoksevassa
+ * järjestyksessä. Silloin laskun rivi ja asiakkaan näkymä puhuvat samasta
+ * ikkunasta samalla nimellä.
+ */
+export function p2Itemisation(data: ProjectData): P2Itemisation {
+  const p2 = data.p2;
+  const byFloor: P2InvoiceFloorGroup[] = [];
+  const lines: P2InvoiceLine[] = [];
+  if (p2) {
+    const counters: Record<string, number> = {};
+    const groups = new Map<string, P2InvoiceFloorGroup>();
+    for (const pt of allPoints(data)) {
+      if (pt.p !== 2) continue;
+      // Numero juoksee kerroksen KAIKISTA keltaisista, ei vain laskutettavista —
+      // muuten numero ei vastaisi asiakkaan karttaa.
+      counters[pt.floor] = (counters[pt.floor] ?? 0) + 1;
+      const offer = p2.offers[pt.key];
+      if (offer?.status !== "locked" || !offer.lockedCents) continue;
+      if (pt.status !== "pesty") continue;
+      const line: P2InvoiceLine = {
+        key: pt.key, floor: pt.floor, number: counters[pt.floor],
+        priceCents: offer.lockedCents, lockedAt: offer.lockedAt, lockedBy: offer.lockedBy,
+      };
+      lines.push(line);
+      let g = groups.get(pt.floor);
+      if (!g) { g = { floor: pt.floor, count: 0, sumCents: 0, lines: [] }; groups.set(pt.floor, g); byFloor.push(g); }
+      g.count += 1; g.sumCents += line.priceCents; g.lines.push(line);
+    }
+  }
+  const totalCents = lines.reduce((n, l) => n + l.priceCents, 0);
+  const earnedCents = computeP2Billing(data).earnedCents;
+  return { lines, byFloor, totalCents, earnedCents, matchesBilling: totalCents === earnedCents };
+}
+
 // ─── Hätäperuutus: asiakkaan hyväksynnät takaisin odottamaan ───────────────────
 
 /** Yksi peruttavissa oleva hyväksyntä. */
@@ -435,6 +515,17 @@ export interface P2Billing {
   pendingWorkerCostCents: number;  // Σ odotettu tekijän palkkio
   /** Pesty keltainen jolla EI ole hintaa lainkaan — hinnoittele tai tyhjennä. */
   unpricedWashedCount: number;
+  /**
+   * Pesty keltainen jonka asiakas HYLKÄSI. Työ on tehty mutta siitä ei saada
+   * rahaa, eikä sille tehdä mitään.
+   *
+   * OMA LASKURINSA, koska nämä laskettiin ennen `unpricedWashedCount`iin: sama
+   * ikkuna näkyi yhtä aikaa "hylätty" ja "ilman hintaa", ja perustajaa
+   * kehotettiin hinnoittelemaan ikkuna jonka asiakas oli juuri torjunut.
+   * Luvut näyttivät siltä että jossain on virhe — ja juuri sitä epäluottamusta
+   * ei laskutushetkellä kaivata.
+   */
+  declinedWashedCount: number;
   /** Washed yellow windows with no price at all (avaimet varoitukseen). */
   washedUnlockedKeys: string[];
   /**
@@ -470,7 +561,7 @@ export function computeP2Billing(data: ProjectData): P2Billing {
     lockedCount: 0, lockedSumCents: 0, lockedWashedCount: 0, earnedCents: 0,
     remainingLockedCents: 0, workerCostCents: 0, marginCents: 0,
     pendingWashedCount: 0, pendingEarnedCents: 0, pendingWorkerCostCents: 0,
-    unpricedWashedCount: 0,
+    unpricedWashedCount: 0, declinedWashedCount: 0,
     washedUnlockedKeys: [],
     washedTotal: 0, declinedCount: 0,
   };
@@ -499,9 +590,14 @@ export function computeP2Billing(data: ProjectData): P2Billing {
         out.workerCostCents += p2WorkerPayoutCents(offer.lockedCents, sharePct, schedule);
       }
     } else if (pt.status === "pesty") {
-      // Pesty, mutta hintaa ei ole lukittu. Kaksi eri tapausta:
+      // Pesty, mutta hintaa ei ole lukittu. Kolme eri tapausta:
+      //  • asiakas hylkäsi → ei rahaa, ei tehtävää (oma laskurinsa)
       //  • hinta ehdotettu / vastatarjottu → ODOTTAA HYVÄKSYNTÄÄ (raha tulossa)
       //  • ei hintaa lainkaan → hinnoittelematon (perustajan tehtävälista)
+      if (offer?.status === "declined") {
+        out.declinedWashedCount += 1;
+        continue;
+      }
       const pending = p2PendingPriceCents(offer);
       if (pending != null) {
         out.pendingWashedCount += 1;

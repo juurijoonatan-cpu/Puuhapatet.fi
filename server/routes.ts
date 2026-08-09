@@ -31,7 +31,7 @@ import {
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, livePayments, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
-import { computeP2Billing, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, type P2Action, type P2State } from "@shared/p2";
+import { computeP2Billing, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
 import { fail } from "./errors";
@@ -5682,6 +5682,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const totalsBefore = computeTotals(gig);
       const amountCents = isP2Scope ? p2AmountCents : (installmentCents ?? totalsBefore.uninvoicedCents);
       if (amountCents <= 0) return res.status(400).json({ error: "Ei laskutettavaa kertymää" });
+      // Laskun summa tulee `earnedCents`istä ja erittely omasta funktiostaan.
+      // Ne lasketaan samasta datasta samalla säännöllä, joten ero tarkoittaa
+      // vikaa — ja väärää laskua. Ei lähetetä.
+      if (isP2Scope && proj) {
+        const chk = p2Itemisation(proj);
+        if (!chk.matchesBilling) {
+          return res.status(409).json({
+            error: `Laskun erittely ei täsmää laskutusperustaan (${(chk.totalCents / 100).toFixed(2)} € vs. ${(chk.earnedCents / 100).toFixed(2)} €). Laskua ei lähetetty.`,
+          });
+        }
+      }
       if (fixedDeal && p1PaymentCount >= 4) {
         return res.status(400).json({ error: "Kaikki neljä maksuerää on jo lähetetty." });
       }
@@ -5691,11 +5702,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // P2: one clean line for the washed locked extra windows; for fixed-price
       // contracts one clean instalment line; for standard gigs per-sector
       // window counts as before.
+      // Keltaisten lasku eritellään kerroksittain. Asiakas on hyväksynyt hinnat
+      // ikkuna kerrallaan, joten laskun on kerrottava mistä ikkunoista summa
+      // syntyy — yksi rivi "lisäikkunat" ei ole tarkistettavissa.
+      const p2Items = isP2Scope && proj ? p2Itemisation(proj) : null;
+      const p2FloorLines = p2Items?.byFloor
+        .map((g) => `${g.floor === "K" ? "Kellari" : `${g.floor}. kerros`} ${g.count} kpl · ${fmtEur(g.sumCents)}`)
+        .join(" &nbsp;·&nbsp; ") ?? "";
+
       const lineRows = isP2Scope
         ? `<tr style="border-bottom:1px solid #E4E1D7">
             <td style="padding:10px 0;color:#1A1A1A;font-size:14px">
               Lisäikkunat (2. vaihe) — ikkunakohtaisesti sovitut hinnat<br>
               <span style="color:#8C8A82;font-size:12px">${p2b?.lockedWashedCount ?? 0} pestyä ikkunaa · kertymä ${fmtEur(p2b?.earnedCents ?? 0)}${p2InvoicedCents > 0 ? ` · aiemmin laskutettu ${fmtEur(p2InvoicedCents)}` : ""}</span>
+              ${p2FloorLines ? `<br><span style="color:#8C8A82;font-size:12px">${p2FloorLines}</span>` : ""}
             </td>
             <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:#1A1A1A;font-variant-numeric:tabular-nums">${fmtEur(amountCents)}</td>
           </tr>`

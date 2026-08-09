@@ -77,8 +77,20 @@ describe("keltaisten luvut täsmäävät", () => {
 
   it("osalaskurit summautuvat pestyjen kokonaismäärään", () => {
     const b = computeP2Billing(MIXED);
-    expect(b.lockedWashedCount + b.pendingWashedCount + b.unpricedWashedCount)
+    expect(b.lockedWashedCount + b.pendingWashedCount + b.unpricedWashedCount + b.declinedWashedCount)
       .toBe(b.washedTotal);
+  });
+
+  it("pesty ja HYLÄTTY ei ole 'ilman hintaa'", () => {
+    // Sama ikkuna näkyi ennen yhtä aikaa 'hylätty' ja 'ilman hintaa', ja
+    // perustajaa kehotettiin hinnoittelemaan ikkuna jonka asiakas oli juuri
+    // torjunut. Nyt sillä on oma laskurinsa eikä se ole tehtävälistalla.
+    const b = computeP2Billing(project([{ p: 2, offer: "declined", status: "pesty" }]));
+    expect(b.declinedWashedCount).toBe(1);
+    expect(b.unpricedWashedCount).toBe(0);
+    expect(b.washedUnlockedKeys).toEqual([]);
+    expect(b.pendingWashedCount).toBe(0);
+    expect(b.pendingEarnedCents).toBe(0);
   });
 
   it("tarjoustilat summautuvat keltaisten kokonaismäärään", () => {

@@ -33,7 +33,11 @@ function mapWith(
 function offers(byKey: Record<string, P2PublicOffer["status"]>): P2PublicView {
   const offers: Record<string, P2PublicOffer> = {};
   for (const [key, status] of Object.entries(byKey)) {
-    offers[key] = { status, priceCents: 3400, counterCents: null, lockedCents: null, version: 1 } as P2PublicOffer;
+    // Lukitulla tarjouksella on aina lockedCents — niin palvelin sen kirjoittaa.
+    offers[key] = {
+      status, priceCents: 3400, counterCents: null,
+      lockedCents: status === "locked" ? 3400 : null, version: 1,
+    } as P2PublicOffer;
   }
   return {
     enabled: true, termsAccepted: true, termsAcceptorName: null, termsAcceptedAt: null,
@@ -58,7 +62,7 @@ describe("customerProgress", () => {
     );
     // Punaiset 2/2 = 100 %. Keltainen ei nosta eikä laske lukua, eikä siitä
     // väitetä "odottaa hyväksyntääsi" kun neuvottelua ei ole olemassa.
-    expect(customerProgress(map, null)).toEqual({ total: 2, done: 2, awaiting: 0, pct: 100 });
+    expect(customerProgress(map, null)).toEqual({ total: 2, done: 2, awaiting: 0, pct: 100, p2AccruedCents: 0, p2AccruedCount: 0 });
   });
 
   it("hyväksymätön keltainen on mukana sekä pestynä että kokonaismäärässä", () => {
@@ -80,6 +84,36 @@ describe("customerProgress", () => {
     expect(customerProgress(map, p2).awaiting).toBe(1);
   });
 
+  it("KERTYNYT on vain pesty JA sovittu — ei sovittua pesemätöntä", () => {
+    const map = mapWith(
+      [{ p: 2 }, { p: 2 }, { p: 2 }],
+      { "1#0": "pesty", "1#2": "pesty" },      // 1#1 sovittu mutta pesemättä
+    );
+    const p2 = offers({ "1#0": "locked", "1#1": "locked", "1#2": "proposed" });
+    const r = customerProgress(map, p2);
+    // Sovittuja on kaksi (68,00 €) mutta kertynyt vain yksi: se joka on pesty.
+    expect(r.p2AccruedCount).toBe(1);
+    expect(r.p2AccruedCents).toBe(3400);
+    // Pesty mutta hyväksymätön on "odottaa", ei "kertynyt".
+    expect(r.awaiting).toBe(1);
+  });
+
+  it("KERTYNYT käyttää lukittua hintaa, ei alkuperäistä ehdotusta", () => {
+    const map = mapWith([{ p: 2 }], { "1#0": "pesty" });
+    const p2 = offers({ "1#0": "locked" });
+    p2.offers["1#0"].lockedCents = 2800;      // asiakkaan vastatarjous voitti
+    expect(customerProgress(map, p2).p2AccruedCents).toBe(2800);
+  });
+
+  it("lukittu ilman lukittua hintaa ei ole kertynyt vaan yhä avoin", () => {
+    // Sama tulkinta kuin shared/p2.ts:ssä — muuten asiakkaan näkymä ja
+    // laskentakone kertoisivat eri summan samasta ikkunasta.
+    const map = mapWith([{ p: 2 }], { "1#0": "pesty" });
+    const p2 = offers({ "1#0": "locked" });
+    p2.offers["1#0"].lockedCents = null;
+    expect(customerProgress(map, p2)).toMatchObject({ p2AccruedCents: 0, p2AccruedCount: 0, awaiting: 1 });
+  });
+
   it("pesemätön keltainen ei odota hyväksyntää (mitään ei ole vielä tehty)", () => {
     const map = mapWith([{ p: 2 }], {});
     expect(customerProgress(map, offers({ "1#0": "proposed" }))).toMatchObject({ total: 1, done: 0, awaiting: 0, pct: 0 });
@@ -95,7 +129,7 @@ describe("customerProgress", () => {
   });
 
   it("tyhjä kartta ei kaadu eikä jaa nollalla", () => {
-    expect(customerProgress(null, null)).toEqual({ total: 0, done: 0, awaiting: 0, pct: 0 });
+    expect(customerProgress(null, null)).toEqual({ total: 0, done: 0, awaiting: 0, pct: 0, p2AccruedCents: 0, p2AccruedCount: 0 });
     expect(customerProgress(mapWith([], {}), null)).toMatchObject({ total: 0, pct: 0 });
   });
 });

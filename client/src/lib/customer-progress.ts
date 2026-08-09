@@ -39,6 +39,15 @@ export interface CustomerProgress {
   awaiting: number;
   /** 0–100, pyöristetty. */
   pct: number;
+  /**
+   * KERTYNYT Priority 2 -summa: vain ne lisätyöikkunat jotka on sekä PESTY että
+   * hinnaltaan SOVITTU. Tämä on eri luku kuin sovittu kokonaissumma, johon
+   * kuuluvat myös vielä pesemättömät sovitut ikkunat — "kertynyt" tarkoittaa
+   * tehtyä työtä, joten sen pitää tarkoittaa juuri sitä.
+   */
+  p2AccruedCents: number;
+  /** Kertyneiden lisätyöikkunoiden lukumäärä. */
+  p2AccruedCount: number;
 }
 
 /**
@@ -74,10 +83,10 @@ export function customerProgress(
   map: CustomerMap | null | undefined,
   p2?: P2PublicView | null,
 ): CustomerProgress {
-  if (!map) return { total: 0, done: 0, awaiting: 0, pct: 0 };
+  if (!map) return { total: 0, done: 0, awaiting: 0, pct: 0, p2AccruedCents: 0, p2AccruedCount: 0 };
   const p2Live = !!p2?.enabled;
   const floors = map.building.floors.length ? map.building.floors : ["1"];
-  let total = 0, done = 0, awaiting = 0;
+  let total = 0, done = 0, awaiting = 0, p2AccruedCents = 0, p2AccruedCount = 0;
   for (const f of floors) {
     for (const pt of getPoints(f, map)) {
       if (!inCustomerScope(pt, p2)) continue;
@@ -86,9 +95,21 @@ export function customerProgress(
       const washed = map.statuses[pt.key] === "pesty";
       if (!washed) continue;
       done += 1;
-      // "Odottaa hyväksyntää" on mielekäs vain kun neuvottelu on käynnissä.
-      if (pt.p === 2 && p2Live && offer?.status !== "locked") awaiting += 1;
+      if (pt.p !== 2 || !p2Live) continue;
+      // Sama ehto kuin laskentakoneessa (`shared/p2.ts`): lukittu hinta on
+      // `lockedCents`, ja ilman sitä ikkuna ei ole sovittu vaan yhä avoin.
+      if (offer?.status === "locked" && typeof offer.lockedCents === "number") {
+        p2AccruedCount += 1;
+        p2AccruedCents += offer.lockedCents;
+      } else {
+        // "Odottaa hyväksyntää" on mielekäs vain kun neuvottelu on käynnissä.
+        awaiting += 1;
+      }
     }
   }
-  return { total, done, awaiting, pct: total > 0 ? Math.round((done / total) * 100) : 0 };
+  return {
+    total, done, awaiting,
+    pct: total > 0 ? Math.round((done / total) * 100) : 0,
+    p2AccruedCents, p2AccruedCount,
+  };
 }

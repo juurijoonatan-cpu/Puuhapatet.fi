@@ -5,22 +5,17 @@
  * fills the pre-questionnaire (tilaajan tiedot), draws a signature and accepts.
  * On success the parent reloads the gig and the live view takes over.
  *
- * Styled to match gig-live.tsx (contract paper look — Poppins, airy, hairlines).
+ * Styled to match gig-live.tsx — sama paperi, sama kirjasin, samat poletit
+ * (`@/lib/customer-theme`), koska allekirjoitus ja seuranta ovat asiakkaalle
+ * yksi ja sama matka.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type GigPublicView, type GigSignPayload } from "@/lib/api";
+import { CT, CFONT } from "@/lib/customer-theme";
 
-const T = {
-  ink: "#1A1A1A",
-  paper: "#F6F4EE",
-  card: "#FFFFFF",
-  hair: "#E4E1D7",
-  muted: "#8C8A82",
-  navy: "#1F3B57",
-  green: "#3E7C59",
-};
-const FONT = "'Poppins', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif";
+const T = CT;
+const FONT = CFONT;
 
 // The physical signed contract, served from the client's public folder.
 const CONTRACT_PDF_URL = "/contracts/PT-2026-02.pdf";
@@ -169,17 +164,8 @@ export default function GigContractSign({ token, view, onSigned }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    const id = "poppins-font-link";
-    if (!document.getElementById(id)) {
-      const link = document.createElement("link");
-      link.id = id;
-      link.rel = "stylesheet";
-      link.href = "https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap";
-      document.head.appendChild(link);
-    }
-    document.title = "Puuhapatet — Sopimuksen hyväksyntä";
-  }, []);
+  // Kirjasin tulee index.html:stä — ei ajonaikaista fonttihakua.
+  useEffect(() => { document.title = "Puuhapatet — Sopimuksen hyväksyntä"; }, []);
 
   const set = (k: keyof typeof customer) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setCustomer((v) => ({ ...v, [k]: e.target.value }));

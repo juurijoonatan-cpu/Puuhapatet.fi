@@ -10,8 +10,9 @@
  * variant.
  */
 import { useEffect, useState } from "react";
+import { CFONT } from "@/lib/customer-theme";
 
-const FONT = "'Poppins', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif";
+const FONT = CFONT;
 
 const THEMES = {
   light: {

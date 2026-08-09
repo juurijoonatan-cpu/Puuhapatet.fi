@@ -151,15 +151,14 @@ export default function GigLivePage() {
   const pct = hasMapProgress ? mapProgress.pct : contractPct;
   // LASKUTUS. Tämä luki ennen työn edistymisestä johdettuna ("työ on 100 %,
   // siis 4/4 erää") — ja se väitti asiakkaalle neljää lähetettyä laskua vaikka
-  // yhtäkään ei olisi lähetetty. Nyt luku on se mikä se sanookin olevansa:
-  // montako laskua on oikeasti lähetetty. Vanhemmalla palvelimella kenttää ei
-  // vielä ole, jolloin näytetään kaikkien laskujen määrä ilman nimittäjää.
+  // yhtäkään ei olisi lähetetty.
+  //
+  // Nimittäjä on nyt poissa kokonaan. "4 / 4" luetaan niin että kaikki on
+  // laskutettu ja urakka kuitattu loppuun, ja se on eri väite kuin mitä luku
+  // tietää: montako laskua on lähetetty tähän mennessä. Juokseva määrä ei voi
+  // luvata mitään sellaista.
   const INSTALMENTS = 4;
-  const p1Invoices = data.p1PaymentsCount;
-  const invoicesSentLabel = typeof p1Invoices === "number"
-    ? `${Math.min(p1Invoices, INSTALMENTS)} / ${INSTALMENTS}`
-    : `${data.paymentsCount} kpl`;
-  const allInstalmentsSent = typeof p1Invoices === "number" && p1Invoices >= INSTALMENTS;
+  const invoicesSent = data.paymentsCount;
   const updated = new Date(data.updatedAt).toLocaleString("fi-FI", {
     day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit",
   });
@@ -228,8 +227,8 @@ export default function GigLivePage() {
   if (zone) {
     heroTiles.push({ label: "Työn alla", value: zone.floor === "K" ? "Kellari" : `${zone.floor}. kerros`, tone: "green" });
   }
-  if (data.isFixedDeal) {
-    heroTiles.push({ label: "Laskuja lähetetty", value: invoicesSentLabel });
+  if (data.isFixedDeal && invoicesSent > 0) {
+    heroTiles.push({ label: "Laskuja lähetetty", value: `${invoicesSent} kpl` });
   }
 
   return (
@@ -396,9 +395,8 @@ export default function GigLivePage() {
               )}
               {data.isFixedDeal && (
                 <p style={{ margin: 0, color: T.muted }}>
-                  {allInstalmentsSent
-                    ? `Sopimus on laskutettu kaikissa ${INSTALMENTS} erässä.`
-                    : `Sopimus laskutetaan ${INSTALMENTS} yhtä suuressa erässä työn edetessä. "Laskuja lähetetty" kertoo, montako erää olemme tähän mennessä lähettäneet.`}
+                  Sopimus laskutetaan {INSTALMENTS} yhtä suuressa erässä työn edetessä.
+                  “Laskuja lähetetty” kertoo, montako laskua olemme tähän mennessä lähettäneet.
                 </p>
               )}
               <p style={{ margin: 0, color: T.muted }}>

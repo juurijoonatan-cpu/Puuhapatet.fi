@@ -9,7 +9,7 @@
  * pyöristetty palkki jolla on oma hehku, ja reilusti ilmaa kaiken ympärillä.
  */
 
-import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { CT, CFONT, PROGRESS_GRADIENT, PROGRESS_GLOW, eyebrow, display, tileStyle } from "@/lib/customer-theme";
 
 export interface HeroTile {
@@ -22,6 +22,46 @@ export interface HeroTile {
 const TONE: Record<NonNullable<HeroTile["tone"]>, string> = {
   ink: CT.ink, green: CT.green, amber: "#8A6A00", navy: CT.navy,
 };
+
+const GROW_MS = 1150;
+
+function reducedMotion(): boolean {
+  return typeof window !== "undefined"
+    && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+}
+
+/**
+ * Pehmeä nousu kohti tavoitelukua.
+ *
+ * Sama arvo ohjaa SEKÄ numeroa että palkin leveyttä, joten ne liikkuvat
+ * täsmälleen yhdessä — CSS-siirtymä palkille ja erillinen laskuri numerolle
+ * eivät koskaan pysyisi samassa tahdissa. Kesken jäävä nousu jatkuu siitä
+ * mihin se ehti (näkymä päivittää itseään taustalla), eikä nykäise alkuun.
+ */
+function useEaseTo(target: number, ms = GROW_MS): number {
+  const [value, setValue] = useState(() => (reducedMotion() ? target : 0));
+  const from = useRef(reducedMotion() ? target : 0);
+
+  useEffect(() => {
+    if (reducedMotion()) { from.current = target; setValue(target); return; }
+    const start = performance.now();
+    const a = from.current;
+    if (a === target) return;
+    let raf = 0;
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / ms);
+      const eased = 1 - Math.pow(1 - t, 4);            // easeOutQuart
+      const cur = a + (target - a) * eased;
+      from.current = cur;
+      setValue(cur);
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, ms]);
+
+  return value;
+}
 
 export default function CustomerProgressHero({
   pct, done, total, awaiting = 0, label = "Työn edistyminen", chip, tiles = [], note,
@@ -38,6 +78,9 @@ export default function CustomerProgressHero({
 }) {
   const shown = Math.max(0, Math.min(100, pct));
   const hasCounts = typeof done === "number" && typeof total === "number" && total > 0;
+  // Elävä arvo: numero ja palkki nousevat yhdessä nollasta lukemaan.
+  const live = useEaseTo(shown);
+  const grown = shown > 0 ? Math.min(1, live / shown) : 0;   // 0…1, nousun eteneminen
 
   return (
     <section
@@ -47,6 +90,18 @@ export default function CustomerProgressHero({
         padding: "26px 22px 24px", marginBottom: 16,
       }}
     >
+      <style>{`
+        /* Valonhäivähdys pyyhkäisee täytön yli tasaisin väliajoin. Se kertoo
+           yhdellä silmäyksellä että näkymä on elossa — mikään muu tällä
+           sivulla ei liiku. */
+        @keyframes cphSheen{0%{transform:translateX(-140%) skewX(-18deg)}100%{transform:translateX(320%) skewX(-18deg)}}
+        /* Kärjen hento syke: sama pulssi kuin LIVE-merkissä, hiljaisempana. */
+        @keyframes cphTip{0%,100%{opacity:.85}50%{opacity:.35}}
+        @media (prefers-reduced-motion: reduce){
+          [data-cph-anim]{animation:none !important}
+        }
+      `}</style>
+
       {/* Yläotsikko + tilamerkki */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <p style={eyebrow}>{label}</p>
@@ -56,7 +111,7 @@ export default function CustomerProgressHero({
       {/* Luku. Prosenttimerkki on pienempi ja hiljaisempi kuin luku itse —
           numero on se mitä katsotaan, yksikkö vain kertoo mistä on kyse. */}
       <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginTop: 12 }}>
-        <span style={{ ...display(64), fontSize: "clamp(56px, 17vw, 78px)" }}>{shown}</span>
+        <span style={{ ...display(64), fontSize: "clamp(56px, 17vw, 78px)" }}>{Math.round(live)}</span>
         <span style={{ fontSize: "clamp(26px, 7.5vw, 36px)", fontWeight: 700, color: CT.muted, letterSpacing: "-0.02em" }}>%</span>
       </div>
 
@@ -71,7 +126,9 @@ export default function CustomerProgressHero({
 
       {/* Palkki. Täyttö on oma pyöristetty pilleri jolla on hehku, aivan kuten
           jäljellä oleva osuus on omansa — siksi kehystä EI leikata
-          (`overflow: hidden` söisi hehkun). */}
+          (`overflow: hidden` söisi hehkun). Leveys tulee samasta elävästä
+          arvosta kuin numero, joten CSS-siirtymää ei ole: kaksi eri kiihdytystä
+          samalle liikkeelle näyttäisi siltä että ne kilpailevat keskenään. */}
       <div
         role="progressbar"
         aria-valuenow={shown}
@@ -81,16 +138,45 @@ export default function CustomerProgressHero({
         style={{
           position: "relative", marginTop: 16,
           height: "clamp(38px, 10vw, 46px)", borderRadius: 999, background: "#EDEAE2",
+          boxShadow: "inset 0 1px 2px rgba(0,0,0,0.05)",
         }}
       >
         <div
           style={{
             position: "absolute", left: 0, top: 0, bottom: 0,
-            width: `${shown}%`, minWidth: shown > 0 ? 40 : 0,
-            borderRadius: 999, background: PROGRESS_GRADIENT, boxShadow: PROGRESS_GLOW,
-            transition: "width .7s cubic-bezier(.2,.8,.2,1)",
+            width: `${live}%`,
+            // Vähimmäisleveys kasvaa nousun mukana: valmis pilleri on aina
+            // vähintään 40 px leveä, mutta nousu alkaa silti nollasta eikä
+            // hyppää heti leveäksi.
+            minWidth: 40 * grown,
+            borderRadius: 999, background: PROGRESS_GRADIENT,
+            boxShadow: PROGRESS_GLOW,
           }}
-        />
+        >
+          {/* Sisäkehys leikkaa häivähdyksen pillerin muotoon. Hehku jää
+              ulomman elementin päälle, joten sitä tämä ei syö. */}
+          <div style={{ position: "absolute", inset: 0, borderRadius: 999, overflow: "hidden" }}>
+            <div
+              data-cph-anim=""
+              style={{
+                position: "absolute", top: 0, bottom: 0, left: 0, width: "34%",
+                background: "linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.55) 50%, rgba(255,255,255,0) 100%)",
+                animation: `cphSheen 2.6s cubic-bezier(.45,0,.2,1) ${GROW_MS}ms infinite`,
+                pointerEvents: "none",
+              }}
+            />
+            {/* Kärjen valo: pilleri näyttää päättyvän valoon eikä leikkaukseen. */}
+            <div
+              data-cph-anim=""
+              style={{
+                position: "absolute", top: 0, bottom: 0, right: 0, width: 44,
+                background: "linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.5) 100%)",
+                animation: "cphTip 2.8s ease-in-out infinite",
+                pointerEvents: "none",
+              }}
+            />
+          </div>
+        </div>
       </div>
 
       {awaiting > 0 && (

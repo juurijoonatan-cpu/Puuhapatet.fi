@@ -717,8 +717,12 @@
 /* Yläpalkin välilehtinauha vierii vaakasuunnassa jos kolme välilehteä ei mahdu
    kapealle puhelimelle. Vierityspalkki itse ei saa näkyä: se on pyöristetyn
    pillerin sisällä ja piirtyy sen kulmien yli harmaana viiruna. */
-.fr8-root nav [data-fr8-tabs] { scrollbar-width: none; -ms-overflow-style: none; }
-.fr8-root nav [data-fr8-tabs]::-webkit-scrollbar { display: none; }
+/* Sivusuunnassa vierivä pilleririvi (yläpalkin välilehdet, kerrosvalitsin):
+   vierityspalkki piiloon. Sääntö oli ennen sidottu nav-elementtiin, mutta
+   kerrosvalitsin ei ole navissa — ja siihen ilmestyi palkki heti kun kerroksia
+   oli enemmän kuin riville mahtuu. */
+.fr8-root [data-fr8-tabs] { scrollbar-width: none; -ms-overflow-style: none; }
+.fr8-root [data-fr8-tabs]::-webkit-scrollbar { display: none; }
 
 .fr8-root .anim-fadeUp-0 { animation: fr8-fadeUp 0.5s ease both; }
 .fr8-root .anim-fadeUp-1 { animation: fr8-fadeUp 0.5s ease 0.05s both; }

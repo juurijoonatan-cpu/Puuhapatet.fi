@@ -306,6 +306,57 @@ export function pushP2Event(events: P2Event[], ev: P2Event): P2Event[] {
   return events;
 }
 
+// ─── Keltaisten palkkiot tekijöittäin ──────────────────────────────────────────
+
+export interface P2WorkerSplit {
+  /** Tekijä → sovituista keltaisista kertynyt palkkio (senttiä). Maksetaan. */
+  earnedCents: Record<string, number>;
+  /** Tekijä → pestyjen mutta hyväksymättömien keltaisten palkkio. EI vielä rahaa. */
+  pendingCents: Record<string, number>;
+  /** Tekijä → montako pestyä keltaista odottaa asiakkaan hyväksyntää (0,5 = jaettu). */
+  pendingCount: Record<string, number>;
+}
+
+/**
+ * Keltaisten palkkiot tekijöittäin YHDELLÄ kartan läpikäynnillä.
+ *
+ * MIKSI YHDESSÄ: nämä kolme laskettiin kolmena lähes identtisenä silmukkana
+ * peräkkäin. Yhden ehdon muuttuessa muut jäisivät jälkeen, ja tekijän kortti
+ * väittäisi eri asiaa kuin hänen palkkansa. Yhtenä funktiona ne eivät voi
+ * erkaantua, ja niiden jako (kahdestaan pesty ikkuna = 50/50) on testattavissa.
+ */
+export function p2WorkerSplit(data: ProjectData): P2WorkerSplit {
+  const out: P2WorkerSplit = { earnedCents: {}, pendingCents: {}, pendingCount: {} };
+  const p2 = data.p2;
+  if (!p2?.enabled) return out;
+  const sharePct = p2.workerSharePct || DEFAULT_P2_WORKER_SHARE_PCT;
+  const schedule = p2.payoutSchedule;
+  const by2 = data.washedBy2 || {};
+  const add = (bucket: Record<string, number>, who: string | undefined, amount: number) => {
+    if (!who) return;
+    bucket[who] = (bucket[who] || 0) + amount;
+  };
+  for (const pt of allPoints(data)) {
+    if (pt.p !== 2 || pt.status !== "pesty") continue;
+    const offer = p2.offers[pt.key];
+    const second = by2[pt.key];
+    const half = second ? 0.5 : 1;
+    if (offer?.status === "locked" && offer.lockedCents) {
+      const pay = p2WorkerPayoutCents(offer.lockedCents, sharePct, schedule);
+      add(out.earnedCents, pt.washedBy, pay * half);
+      if (second) add(out.earnedCents, second, pay * 0.5);
+      continue;
+    }
+    const pending = p2PendingPriceCents(offer);
+    if (pending == null) continue;
+    const pay = p2WorkerPayoutCents(pending, sharePct, schedule);
+    add(out.pendingCents, pt.washedBy, pay * half);
+    add(out.pendingCount, pt.washedBy, half);
+    if (second) { add(out.pendingCents, second, pay * 0.5); add(out.pendingCount, second, 0.5); }
+  }
+  return out;
+}
+
 // ─── Laskun erittely: mistä ikkunoista kertymä koostuu ─────────────────────────
 
 /** Yksi laskutettava ikkuna. */

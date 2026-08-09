@@ -14,9 +14,28 @@ import {
   button as tokenButton, input as tokenInput,
 } from "./tokens";
 
+/**
+ * Tekijän luvut kortille. Perus-`WorkerStat`in päälle ne osat joista ansio
+ * OIKEASTI koostuu, koska yksi keskiarvo ei kelpaa: kortilla luki "€ / ikkuna",
+ * joka oli ansio jaettuna KAIKILLA pestyillä ikkunoilla — myös niillä
+ * keltaisilla joista asiakas ei ole vielä hyväksynyt hintaa ja joista ei siis
+ * makseta vielä mitään. Kaksi tekijää samalla taksalla näyttivät siksi
+ * ansaitsevan eri verran ikkunaa kohti, ja enemmän pessyt näytti tienaavan
+ * vähemmän. Luku ei ollut väärin laskettu, se oli väärä luku.
+ */
+export interface DashWorkerStat extends WorkerStat {
+  /** Sovituista keltaisista kertynyt palkkio (senttiä). */
+  p2Cents?: number;
+  /** Pestyjä keltaisia joiden hintaa asiakas ei ole hyväksynyt — ei vielä rahaa. */
+  p2PendingCents?: number;
+  p2PendingCount?: number;
+  /** Tekijän oma €/punainen ikkuna (perustajalla sisäinen kate). */
+  rateCents?: number;
+}
+
 interface Props {
   project: ProjectData;
-  workerStats: WorkerStat[];
+  workerStats: DashWorkerStat[];
   workerName: (id: string) => string;
   onGoToFloor: (floor: string) => void;
   /** When set, a signed fixed-price deal drives the money figures (FR8). */
@@ -238,8 +257,8 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   const statIds = new Set(workerStats.map((s) => s.worker));
   const zeroStats = (project.crew || [])
     .filter((c) => c.active !== false && c.role === "worker" && !statIds.has(c.id))
-    .map((c) => ({ worker: c.id, washed: 0, washedP1: 0, washedP2: 0, revenueCents: 0, hours: 0, windowsPerHour: 0, eurPerHour: 0 }));
-  const allWorkers = [...workerStats, ...zeroStats].sort((a, b) => b.washed - a.washed);
+    .map((c): DashWorkerStat => ({ worker: c.id, washed: 0, washedP1: 0, washedP2: 0, revenueCents: 0, hours: 0, windowsPerHour: 0, eurPerHour: 0 }));
+  const allWorkers: DashWorkerStat[] = [...workerStats, ...zeroStats].sort((a, b) => b.washed - a.washed);
   const activeWorkers = allWorkers.filter((s) => s.washed > 0 || s.hours > 0);
   const shownWorkers = showActiveOnly ? activeWorkers : allWorkers;
 
@@ -801,16 +820,37 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                           {overridden && <span style={{ marginLeft: T.space.xs + 2, color: T.tone.goodSoft, fontSize: T.size.xs }}>muokattu</span>}
                         </span>
                       </div>
+                      {/* ANSION OSAT, EI KESKIARVOA. Punaiset maksavat tekijän
+                          oman taksan, keltaiset palkkiotaulukon mukaan ja vasta
+                          kun asiakas on hyväksynyt hinnan. Yksi jaettu luku
+                          sekoitti nämä keskenään ja näytti siltä että sama
+                          taksa maksaa eri verran eri ihmisille. */}
                       {cm?.role === "host" ? (
                         <div style={{ display: "flex", justifyContent: "space-between", gap: T.space.sm + 2 }}>
                           <span>Hinnoittelu</span>
                           <span style={{ textAlign: "right", color: T.text.faint }}>sis. tuotto-osuus</span>
                         </div>
                       ) : (
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: T.space.sm + 2 }}>
-                          <span>€ / ikkuna</span>
-                          <span style={{ textAlign: "right", color: T.text.secondary }}>{euroUnit(rate)}</span>
-                        </div>
+                        <>
+                          {s.washedP1 > 0 && (
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: T.space.sm + 2 }}>
+                              <span>Punaiset {s.washedP1.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} × {euroUnit((s.rateCents ?? 0) / 100)}</span>
+                              <span style={{ textAlign: "right", color: T.text.secondary }}>{euro(s.washedP1 * (s.rateCents ?? 0) / 100)}</span>
+                            </div>
+                          )}
+                          {(s.washedP2 > 0 || (s.p2Cents ?? 0) > 0) && (
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: T.space.sm + 2 }}>
+                              <span>Keltaiset {(s.washedP2 - (s.p2PendingCount ?? 0)).toLocaleString("fi-FI", { maximumFractionDigits: 1 })} sovittu</span>
+                              <span style={{ textAlign: "right", color: T.text.secondary }}>{euro((s.p2Cents ?? 0) / 100)}</span>
+                            </div>
+                          )}
+                          {(s.p2PendingCount ?? 0) > 0 && (
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: T.space.sm + 2, color: T.text.faint }}>
+                              <span>Odottaa asiakasta {(s.p2PendingCount ?? 0).toLocaleString("fi-FI", { maximumFractionDigits: 1 })}</span>
+                              <span style={{ textAlign: "right" }}>+{euro((s.p2PendingCents ?? 0) / 100)} myöhemmin</span>
+                            </div>
+                          )}
+                        </>
                       )}
                       {showTeho && (
                         <div style={{ display: "flex", justifyContent: "space-between", gap: T.space.sm + 2 }}>

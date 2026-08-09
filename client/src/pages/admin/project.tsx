@@ -16,7 +16,7 @@ import {
   dealInternalRateCents,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense,
 } from "@shared/project";
-import { computeP2Billing, p2CustomerLocksSince, p2Itemisation, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule } from "@shared/p2";
+import { computeP2Billing, p2CustomerLocksSince, p2Itemisation, p2WorkerSplit, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule } from "@shared/p2";
 import { computeGuided, type GuidedWork } from "@shared/guided";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
 import { FOUNDER_IDS } from "@shared/team";
@@ -655,45 +655,16 @@ export default function AdminProjectPage() {
   // kolmea eri arvoa: 37,50 € täällä, 20 € tuottopotissa ja 0 € erälaskennassa —
   // poistetun tekijän haamu-ikkunat maksoivat siis eri verran joka näkymässä).
   const rateOf = (id: string): number => crew.find((c) => c.id === id)?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS;
-  // Keltaisen (P2) ikkunan palkkio tekijälle — palkkiotaulukko, ei punaisten taksa.
-  const p2Enabled = !!project.p2?.enabled;
-  const p2SharePct = project.p2?.workerSharePct ?? DEFAULT_P2_WORKER_SHARE_PCT;
-  const p2Schedule = project.p2?.payoutSchedule;
-  // Keltaisten palkkiot per tekijä YHDELLÄ kartan läpikäynnillä (aiempi per-tekijä
-  // -haku olisi käynyt koko pistelistan jokaiselle tekijälle joka renderillä).
-  const p2CentsByWorker: Record<string, number> = {};
-  if (p2Enabled) {
-    const offers = project.p2?.offers ?? {};
-    const by2 = project.washedBy2 || {};
-    for (const pt of allPoints(project)) {
-      if (pt.p !== 2 || pt.status !== "pesty") continue;
-      const offer = offers[pt.key];
-      if (offer?.status !== "locked" || !offer.lockedCents) continue;
-      const payout = p2WorkerPayoutCents(offer.lockedCents, p2SharePct, p2Schedule);
-      const second = by2[pt.key];
-      if (pt.washedBy) p2CentsByWorker[pt.washedBy] = (p2CentsByWorker[pt.washedBy] || 0) + (second ? payout / 2 : payout);
-      if (second) p2CentsByWorker[second] = (p2CentsByWorker[second] || 0) + payout / 2;
-    }
-  }
+  // Keltaisen (P2) ikkunan palkkio tekijälle — palkkiotaulukko, ei punaisten
+  // taksa. Kertyneet, odottavat ja odottavien lukumäärä tulevat yhdestä jaetusta
+  // funktiosta: ne laskettiin ennen kolmena lähes identtisenä silmukkana, joista
+  // yksi olisi jäänyt jälkeen heti kun ehto muuttuu.
+  const p2Split = p2WorkerSplit(project);
   /** Yhden tekijän keltaisista kertynyt palkkio (0 kun vaihe 2 ei ole päällä). */
-  const p2EarnedFor = (workerId: string): number => Math.round(p2CentsByWorker[workerId] || 0);
+  const p2EarnedFor = (workerId: string): number => Math.round(p2Split.earnedCents[workerId] || 0);
   // Odottavat keltaiset (pesty, hinta ehdotettu mutta ei hyväksytty) — teoreettista
   // rahaa, ei koskaan mukana vahvistetuissa ansioissa.
-  const p2PendingByWorker: Record<string, number> = {};
-  if (p2Enabled) {
-    const offers = project.p2?.offers ?? {};
-    const by2 = project.washedBy2 || {};
-    for (const pt of allPoints(project)) {
-      if (pt.p !== 2 || pt.status !== "pesty") continue;
-      const pending = p2PendingPriceCents(offers[pt.key]);
-      if (pending == null) continue;
-      const payout = p2WorkerPayoutCents(pending, p2SharePct, p2Schedule);
-      const second = by2[pt.key];
-      if (pt.washedBy) p2PendingByWorker[pt.washedBy] = (p2PendingByWorker[pt.washedBy] || 0) + (second ? payout / 2 : payout);
-      if (second) p2PendingByWorker[second] = (p2PendingByWorker[second] || 0) + payout / 2;
-    }
-  }
-  const p2PendingCentsFor = (workerId: string): number => Math.round(p2PendingByWorker[workerId] || 0);
+  const p2PendingCentsFor = (workerId: string): number => Math.round(p2Split.pendingCents[workerId] || 0);
   // Profit pool = Σ over real workers (NOT founders, NOT trainees) of
   // (sisäinen kate − that worker's rate) per worker-washed RED window. Keltaiset
   // eivät kuulu tähän: niissä kate lasketaan omalla logiikallaan (computeP2Billing
@@ -772,13 +743,22 @@ export default function AdminProjectPage() {
   // rosterista) ei näy dashissa lainkaan. Palaa näkyviin heti kun hänet
   // aktivoidaan Tiimi-sivun kytkimestä.
   const inactiveIds = new Set(crew.filter((c) => c.active === false).map((c) => c.id));
+  // Montako pestyä keltaista odottaa vielä asiakkaan hyväksyntää, per tekijä.
+  // Ilman tätä kortti ei voi kertoa MIKSI ansio per ikkuna näyttää matalalta.
   const workerStats = baseStats.filter((s) => !inactiveIds.has(s.worker)).map((s) => {
     const cents = earningsFor(s);
+    const mm = crew.find((c) => c.id === s.worker);
     return {
       ...s,
       revenueCents: cents,
       windowsPerHour: s.hours > 0 ? s.washed / s.hours : 0,
       eurPerHour: s.hours > 0 ? cents / 100 / s.hours : 0,
+      // Ansion osat kortille — punaiset omalla taksalla, keltaiset erikseen,
+      // ja hyväksyntää odottavat omanaan koska niistä ei vielä makseta.
+      p2Cents: p2EarnedFor(s.worker),
+      p2PendingCents: p2PendingCentsFor(s.worker),
+      p2PendingCount: p2Split.pendingCount[s.worker] || 0,
+      rateCents: isFounder(s.worker, mm?.role) ? internalKateCents : rateOf(s.worker),
     };
   });
   // ── Perustajien (bossien) ansioerittely dashboardille ───────────────────────

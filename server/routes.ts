@@ -31,7 +31,7 @@ import {
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, livePayments, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
-import { computeP2Billing, customerAddedKeys, emptyP2State, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, type P2Action, type P2State } from "@shared/p2";
+import { computeP2Billing, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
 import { fail } from "./errors";
@@ -6638,6 +6638,70 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       });
       const saved = await saveProject(job, project, { p2Mutation: true });
       res.json({ ok: true, offer: saved.p2?.offers[key] ?? null, p2: saved.p2, p2Billing: computeP2Billing(saved) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  /**
+   * HÄTÄPERUUTUS — asiakkaan hyväksynnät takaisin odottamaan.
+   *
+   * MIKSI TÄMÄ ON OLEMASSA: hyväksyntänappi on asiakkaan näkymässä, ja sitä voi
+   * painaa vahingossa — esimerkiksi kun keikkaa testataan asiakkaan linkillä.
+   * Yksittäinen `unlock` ei auta, koska se kieltäytyy pestystä ikkunasta, ja
+   * juuri pestyt ovat niitä joita pikahyväksyntä tarjoaa. Ilman tätä reittiä
+   * vahinko olisi peruuttamaton ilman tietokantaan käsin koskemista.
+   *
+   * TURVARAJAT:
+   *  · vain kirjautunut (globaali auth-middleware);
+   *  · vain asiakkaan lukitsemat (`lockedBy === "customer"`) — meidän oma
+   *    vastatarjouksen hyväksyntä ei lähde mukana;
+   *  · vain annetun hetken jälkeen, enintään 30 vrk taaksepäin;
+   *  · jokainen peruutus kirjataan tapahtumalokiin, joten jälki jää.
+   *
+   * SEURAUS: ikkuna palaa `proposed`-tilaan alkuperäisellä hinnalla ja putoaa
+   * samalla ansaitusta summasta takaisin "odottaa hyväksyntää" -summaan. Niin
+   * pitääkin: hinnasta ei ole enää sovittu.
+   */
+  app.post("/api/jobs/:id/p2/revert-accepts", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const job = await loadJobRow(id);
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const project = parseProject(job.projectData ?? null);
+      if (!project?.p2) return res.status(400).json({ error: "Vaihe 2 ei ole alustettu" });
+
+      const now = Date.now();
+      const MAX_BACK_MS = 30 * 24 * 60 * 60 * 1000;
+      const asked = Number(req.body?.since);
+      if (!Number.isFinite(asked)) return res.status(400).json({ error: "Aikaraja puuttuu" });
+      // Kello voi olla eri selaimessa ja palvelimella, joten raja siivotaan:
+      // ei tulevaisuuteen eikä kuukautta kauemmas.
+      const since = Math.min(Math.max(asked, now - MAX_BACK_MS), now);
+
+      const locks = p2CustomerLocksSince(project.p2, since);
+      if (locks.length === 0) {
+        return res.json({ ok: true, reverted: 0, keys: [], p2: project.p2, p2Billing: computeP2Billing(project) });
+      }
+
+      const actor = p2AdminActor(req);
+      const done: string[] = [];
+      for (const lock of locks) {
+        const prev = project.p2.offers[lock.key];
+        // `unlock` palauttaa tarjouksen `proposed`-tilaan ja säilyttää
+        // hintahuomion. Sen oma "ei pestyä" -ehto on tarkoituksella tässä
+        // ohitettu: pesty vahinkohyväksyntä on juuri se mitä perutaan.
+        const r = p2Transition(prev, "unlock", { who: "admin", id: actor }, {});
+        if (!r.ok) continue;
+        project.p2.offers[lock.key] = r.offer;
+        pushP2Event(project.p2.events, {
+          ts: now, key: lock.key, action: "unlock", actor,
+          priceCents: r.offer.priceCents, prevPriceCents: lock.lockedCents, version: r.offer.version,
+        });
+        done.push(lock.key);
+      }
+      const saved = await saveProject(job, project, { p2Mutation: true });
+      res.json({ ok: true, reverted: done.length, keys: done, p2: saved.p2, p2Billing: computeP2Billing(saved) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }

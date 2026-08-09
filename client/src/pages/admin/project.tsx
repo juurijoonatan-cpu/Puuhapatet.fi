@@ -16,7 +16,7 @@ import {
   dealInternalRateCents,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense,
 } from "@shared/project";
-import { computeP2Billing, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule } from "@shared/p2";
+import { computeP2Billing, p2CustomerLocksSince, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule } from "@shared/p2";
 import { computeGuided, type GuidedWork } from "@shared/guided";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
 import { FOUNDER_IDS } from "@shared/team";
@@ -1164,6 +1164,20 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
 
   const countered = Object.entries(p2?.offers ?? {}).filter(([, o]) => o.status === "countered");
   const customerAdded = (p2?.events ?? []).filter((e) => e.action === "add_point").length;
+
+  // Peruttavat hyväksynnät kahdella aikarajalla. `since` lasketaan vasta
+  // napautuksen hetkellä, jotta "viimeinen tunti" tarkoittaa tuntia taaksepäin
+  // siitä hetkestä eikä siitä kun näkymä avattiin.
+  const [revertArmed, setRevertArmed] = useState<string | null>(null);
+  const hourAgo = () => Date.now() - 60 * 60 * 1000;
+  const todayStart = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
+  const revertScopes = [
+    { id: "hour", label: "Viimeinen tunti", since: hourAgo },
+    { id: "today", label: "Tänään", since: todayStart },
+  ].map((s) => {
+    const locks = p2CustomerLocksSince(p2, s.since());
+    return { ...s, locks, sumCents: locks.reduce((n, l) => n + l.lockedCents, 0) };
+  });
   const sharePct = p2?.workerSharePct ?? DEFAULT_P2_WORKER_SHARE_PCT;
 
   // Napit ovat 44 px korkeita (Applen/Googlen minimiosumakoko). Aiemmat 30 px
@@ -1241,6 +1255,49 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
             </div>
           )}
         </div>
+
+        {/* HÄTÄPERUUTUS. Hyväksyntänappi on asiakkaan näkymässä, ja sitä voi
+            painaa vahingossa — esimerkiksi kun keikkaa testataan asiakkaan
+            linkillä. Tämä rivi ilmestyy vain jos peruttavaa on, ja se kertoo
+            tarkalleen mitä se peruu ennen kuin mitään tapahtuu. */}
+        {revertScopes.some((s) => s.locks.length > 0) && (
+          <div style={{ padding: "12px 14px", borderRadius: 12, background: "rgba(255,205,40,0.07)", border: "1px solid rgba(255,205,40,0.3)" }}>
+            <div style={{ fontSize: "12.5px", fontWeight: 700, color: "#ffce28" }}>Peru asiakkaan hyväksyntä</div>
+            <div style={{ fontSize: "12px", color: "rgba(255,255,255,0.6)", lineHeight: 1.55, marginTop: 4 }}>
+              Palauttaa ikkunat odottamaan hyväksyntää alkuperäisellä hinnalla. Koskee vain
+              asiakkaan itsensä hyväksymiä — meidän hyväksymämme vastatarjoukset eivät lähde mukaan.
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+              {revertScopes.filter((s) => s.locks.length > 0).map((s) => (
+                <button
+                  key={s.id}
+                  disabled={busy}
+                  onClick={() => {
+                    if (revertArmed !== s.id) { setRevertArmed(s.id); return; }
+                    setRevertArmed(null);
+                    void run(
+                      () => api.p2RevertAccepts(jobId, { since: s.since(), by }),
+                      `Palautettu odottamaan hyväksyntää: ${s.locks.length} kpl`,
+                    );
+                  }}
+                  style={{
+                    ...btn,
+                    border: `1px solid ${revertArmed === s.id ? "#ffce28" : "rgba(255,206,40,0.35)"}`,
+                    background: revertArmed === s.id ? "rgba(255,205,40,0.18)" : "rgba(255,255,255,0.05)",
+                    color: "#ffce28",
+                  }}
+                >
+                  {revertArmed === s.id
+                    ? `Vahvista — palauta ${s.locks.length} kpl (${p2eur(s.sumCents)})`
+                    : `${s.label} · ${s.locks.length} kpl · ${p2eur(s.sumCents)}`}
+                </button>
+              ))}
+              {revertArmed && (
+                <button style={btn} onClick={() => setRevertArmed(null)}>Peru</button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Yksi tilarivi: hinnoittelematta / odottaa asiakasta / asiakkaan lisäämät. */}
         <div style={{ fontSize: "12.5px", color: "rgba(255,255,255,0.6)", display: "flex", gap: 14, flexWrap: "wrap" }}>

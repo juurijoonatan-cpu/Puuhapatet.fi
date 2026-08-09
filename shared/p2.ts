@@ -306,6 +306,43 @@ export function pushP2Event(events: P2Event[], ev: P2Event): P2Event[] {
   return events;
 }
 
+// ─── Hätäperuutus: asiakkaan hyväksynnät takaisin odottamaan ───────────────────
+
+/** Yksi peruttavissa oleva hyväksyntä. */
+export interface P2CustomerLock {
+  key: string;
+  /** Sovittu hinta jonka hyväksyntä lukitsi. */
+  lockedCents: number;
+  lockedAt: number;
+}
+
+/**
+ * ASIAKKAAN hyväksynnät annetun hetken jälkeen, uusin ensin.
+ *
+ * MIKSI TÄMÄ ON OMA FUNKTIONSA: hyväksyntä on asiakkaan tahdonilmaisu, ja sen
+ * peruminen on poikkeustoimi. Sen kohdejoukko pitää voida näyttää ETUKÄTEEN
+ * täsmälleen samalla säännöllä jolla palvelin sen tekee — muuten napissa lukisi
+ * eri määrä kuin mitä se peruu.
+ *
+ * Rajaus on tarkoituksella tiukka:
+ *  · vain `locked` — muut tilat eivät ole hyväksyntöjä;
+ *  · vain `lockedBy === "customer"` — meidän oma `accept_counter` on eri asia
+ *    eikä sitä pidä perua vahingossa mukana;
+ *  · vain annetun aikarajan jälkeen — vanhoihin sopimuksiin ei kosketa.
+ */
+export function p2CustomerLocksSince(
+  p2: P2State | null | undefined,
+  sinceMs: number,
+): P2CustomerLock[] {
+  const out: P2CustomerLock[] = [];
+  for (const [key, o] of Object.entries(p2?.offers ?? {})) {
+    if (o.status !== "locked" || o.lockedBy !== "customer") continue;
+    if (typeof o.lockedAt !== "number" || o.lockedAt < sinceMs) continue;
+    out.push({ key, lockedCents: o.lockedCents ?? o.priceCents, lockedAt: o.lockedAt });
+  }
+  return out.sort((a, b) => b.lockedAt - a.lockedAt);
+}
+
 // ─── Point helpers ─────────────────────────────────────────────────────────────
 
 /**

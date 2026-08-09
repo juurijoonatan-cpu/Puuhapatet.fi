@@ -16,7 +16,7 @@ import {
   dealInternalRateCents,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense,
 } from "@shared/project";
-import { computeP2Billing, p2CustomerLocksSince, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule } from "@shared/p2";
+import { computeP2Billing, p2CustomerLocksSince, p2Itemisation, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule } from "@shared/p2";
 import { computeGuided, type GuidedWork } from "@shared/guided";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
 import { FOUNDER_IDS } from "@shared/team";
@@ -1168,6 +1168,10 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
   // Peruttavat hyväksynnät kahdella aikarajalla. `since` lasketaan vasta
   // napautuksen hetkellä, jotta "viimeinen tunti" tarkoittaa tuntia taaksepäin
   // siitä hetkestä eikä siitä kun näkymä avattiin.
+  // Laskun erittely: mistä ikkunoista laskutettava kertymä koostuu.
+  const item = useMemo(() => p2Itemisation(project), [project]);
+  const [showItems, setShowItems] = useState(false);
+
   const [revertArmed, setRevertArmed] = useState<string | null>(null);
   const hourAgo = () => Date.now() - 60 * 60 * 1000;
   const todayStart = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
@@ -1228,6 +1232,10 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
             <span style={{ fontSize: "10px", color: "rgba(255,255,255,0.45)", display: "block", marginTop: 2 }}>
               {b.lockedWashedCount} hyväksytty
               {b.pendingWashedCount > 0 ? ` · ${b.pendingWashedCount} odottaa` : ""}
+              {/* Hylätty on oma asiansa: työ tehty, asiakas sanoi ei. Se luki
+                  ennen "ilman hintaa", jolloin sama ikkuna näkyi kahdella eri
+                  nimellä ja näytti tehtävältä jota ei ole. */}
+              {b.declinedWashedCount > 0 ? ` · ${b.declinedWashedCount} hylätty` : ""}
               {b.unpricedWashedCount > 0 ? ` · ${b.unpricedWashedCount} ilman hintaa` : ""}
             </span>
           </div>
@@ -1255,6 +1263,59 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
             </div>
           )}
         </div>
+
+        {/* LASKUN ERITTELY. Ennen ensimmäistä keltaisten laskua pitää nähdä
+            mistä ikkunoista summa koostuu — ei pelkkää loppusummaa. Erittely
+            lasketaan eri funktiossa kuin laskutusperusta, ja niiden täsmäävyys
+            tarkistetaan: jos ne eroavat sentinkin, tässä lukee punaisella eikä
+            laskua pidä lähettää. */}
+        {item.lines.length > 0 && (
+          <div style={{ padding: "12px 14px", borderRadius: 12, background: "rgba(255,255,255,0.03)", border: `1px solid ${item.matchesBilling ? "rgba(255,255,255,0.09)" : "rgba(255,120,120,0.5)"}` }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ fontSize: "12.5px", fontWeight: 700 }}>Laskun erittely</span>
+              <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.55)", fontVariantNumeric: "tabular-nums" }}>
+                {item.lines.length} ikkunaa · <b style={{ color: "#fff" }}>{p2eur(item.totalCents)}</b>
+              </span>
+              <button style={{ ...btn, marginLeft: "auto", minHeight: 36, padding: "8px 12px", fontSize: "12px" }} onClick={() => setShowItems((v) => !v)}>
+                {showItems ? "Piilota" : "Näytä ikkunat"}
+              </button>
+            </div>
+            <div style={{ fontSize: "11.5px", lineHeight: 1.6, marginTop: 6, color: item.matchesBilling ? "rgba(255,255,255,0.5)" : "#ff9b9b" }}>
+              {item.matchesBilling
+                ? <>Pesty ja hinta sovittu. Täsmää laskutusperustaan ✓ {p2InvoicedCents > 0 ? `· aiemmin laskutettu ${p2eur(p2InvoicedCents)} · laskutettavaa ${p2eur(p2Remaining)}` : "· ei vielä laskutettu"}</>
+                : <>⚠ Erittely {p2eur(item.totalCents)} ≠ laskutusperusta {p2eur(item.earnedCents)}. Älä lähetä laskua ennen kuin ero on selvitetty.</>}
+            </div>
+
+            {showItems && (
+              <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
+                {item.byFloor.map((g) => (
+                  <div key={g.floor}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: "12px", fontWeight: 700, paddingBottom: 4, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+                      <span>{g.floor === "K" ? "Kellari" : `${g.floor}. kerros`} · {g.count} kpl</span>
+                      <span style={{ fontVariantNumeric: "tabular-nums" }}>{p2eur(g.sumCents)}</span>
+                    </div>
+                    {g.lines.map((l) => (
+                      <div key={l.key} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: "11.5px", color: "rgba(255,255,255,0.6)", padding: "3px 0" }}>
+                        <span>
+                          Ikkuna {l.number}
+                          <span style={{ color: "rgba(255,255,255,0.35)" }}>
+                            {" · "}{l.lockedBy === "admin" ? "me hyväksyimme" : "asiakas hyväksyi"}
+                            {l.lockedAt ? ` ${new Date(l.lockedAt).toLocaleString("fi-FI", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })}` : ""}
+                          </span>
+                        </span>
+                        <span style={{ fontVariantNumeric: "tabular-nums", color: "#fff" }}>{p2eur(l.priceCents)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: "13px", fontWeight: 700, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.14)" }}>
+                  <span>Yhteensä</span>
+                  <span style={{ fontVariantNumeric: "tabular-nums" }}>{p2eur(item.totalCents)}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* HÄTÄPERUUTUS. Hyväksyntänappi on asiakkaan näkymässä, ja sitä voi
             painaa vahingossa — esimerkiksi kun keikkaa testataan asiakkaan

@@ -364,6 +364,9 @@ export interface GigPublicView {
   updatedAt: number;
   invoicedCents: number;
   paymentsCount: number;
+  /** Kiinteän urakan lähetetyt laskutuserät (ilman erillisiä P2-laskuja).
+   *  Valinnainen, koska client voi olla palvelinta uudempi. */
+  p1PaymentsCount?: number;
   /** True when the gig is billed as a fixed flat-rate contract (4 equal instalments). */
   isFixedDeal: boolean;
   // Read-only floor-plan map (white, customer view). Null if no plan.

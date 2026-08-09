@@ -241,6 +241,10 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
   // spatial context. Per-key counter input lives here.
   const [listCounterKey, setListCounterKey] = useState<string | null>(null);
   const [listCounterVal, setListCounterVal] = useState("");
+  // Avoimet kerrosryhmät päätöslistassa. Sadan avoimen hintaehdotuksen lista on
+  // loputon vieritys, joten kerrokset ovat oletuksena kiinni ja aukeavat
+  // otsikosta. "Hyväksy kerros" toimii silti ilman avaamista.
+  const [openFloors, setOpenFloors] = useState<Record<string, boolean>>({});
   const allYellow = useMemo(() => {
     if (!p2On) return [] as { key: string; floor: string; idx: number; offer: P2PublicOffer }[];
     const out: { key: string; floor: string; idx: number; offer: P2PublicOffer }[] = [];
@@ -296,8 +300,13 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
   // where accept / counter / decline live (the map itself stays planning-only).
   function jumpToList(key: string) {
     closeOffer();
+    // Rivi voi olla kiinni olevan kerrosryhmän sisällä, jolloin sitä ei ole
+    // edes piirretty. Avataan ryhmä ensin ja vieritetään vasta kun rivi on
+    // olemassa — muuten "Näytä listassa" ei tekisi mitään.
+    const f = allYellow.find((o) => o.key === key)?.floor ?? key.split("#")[0];
+    setOpenFloors((s) => (s[f] ? s : { ...s, [f]: true }));
     setHiRow(key);
-    requestAnimationFrame(() => listRowRefs.current[key]?.scrollIntoView({ behavior: "smooth", block: "center" }));
+    window.setTimeout(() => listRowRefs.current[key]?.scrollIntoView({ behavior: "smooth", block: "center" }), 60);
     window.setTimeout(() => setHiRow((k) => (k === key ? null : k)), 2600);
   }
 
@@ -751,27 +760,39 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
 
               {proposedFloors.map((g) => {
                 const floorSum = g.items.reduce((s, o) => s + o.offer.priceCents, 0);
+                // Yhden kerroksen keikalla ryhmittely ei auta mitään, joten se
+                // on auki oletuksena.
+                const open = openFloors[g.floor] ?? proposedFloors.length === 1;
                 return (
-                  <div key={g.floor} style={{ marginBottom: 14 }}>
-                    {/* Kerroksen otsikko + "Hyväksy kerros" */}
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: T.ink }}>
-                        <span style={{ minWidth: 30, height: 22, padding: "0 7px", borderRadius: 7, background: T.paper, border: `1px solid ${T.hair}`, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: T.navy }}>{g.floor}</span>
-                        {floorLabel(g.floor)} · {g.items.length} ikkunaa
-                      </span>
-                      <button
-                        disabled={p2Busy}
-                        onClick={() => void runP2(p2Actions!.accept, g.items.map((o) => ({ key: o.key, priceCents: o.offer.priceCents, version: o.offer.version })))}
-                        style={{ marginLeft: "auto", padding: "7px 12px", borderRadius: 9, border: "none", background: "#3E7C59", color: "#fff", fontFamily: FONT, fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}
-                      >
-                        Hyväksy kerros ({g.items.length} · {eur(floorSum)})
-                      </button>
+                    <div key={g.floor} style={{ marginBottom: 10, borderRadius: 13, border: `1px solid ${T.hair}`, background: open ? T.card : T.paper, overflow: "hidden" }}>
+                      {/* Kerroksen otsikkorivi. Kerros aukeaa ja sulkeutuu
+                          tästä; "Hyväksy kerros" toimii avaamattakin, joten
+                          koko kerroksen voi kuitata sitä avaamatta. */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", flexWrap: "wrap" }}>
+                        <button
+                          onClick={() => setOpenFloors((s) => ({ ...s, [g.floor]: !s[g.floor] }))}
+                          aria-expanded={open}
+                          style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: 0, border: "none", background: "transparent", cursor: "pointer", fontFamily: FONT, fontSize: 12.5, fontWeight: 700, color: T.ink, textAlign: "left" }}
+                        >
+                          <span aria-hidden style={{ display: "inline-block", width: 10, color: T.muted, fontSize: 10, transform: open ? "rotate(90deg)" : undefined, transition: "transform .15s" }}>▶</span>
+                          <span style={{ minWidth: 30, height: 22, padding: "0 7px", borderRadius: 7, background: T.fill, border: `1px solid ${T.hair}`, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: T.navy }}>{g.floor}</span>
+                          <span>{floorLabel(g.floor)} · {g.items.length} ikkunaa</span>
+                        </button>
+                        <button
+                          disabled={p2Busy}
+                          onClick={() => void runP2(p2Actions!.accept, g.items.map((o) => ({ key: o.key, priceCents: o.offer.priceCents, version: o.offer.version })))}
+                          style={{ marginLeft: "auto", padding: "7px 12px", borderRadius: 9, border: "none", background: "#3E7C59", color: "#fff", fontFamily: FONT, fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1, whiteSpace: "nowrap" }}
+                        >
+                          Hyväksy kerros ({g.items.length} · {eur(floorSum)})
+                        </button>
+                      </div>
+                      {open && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "0 12px 12px" }}>
+                          {g.items.map(renderProposedRow)}
+                        </div>
+                      )}
                     </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {g.items.map(renderProposedRow)}
-                    </div>
-                  </div>
-                );
+                  );
               })}
             </div>
           )}

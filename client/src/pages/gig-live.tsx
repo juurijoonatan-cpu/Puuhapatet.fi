@@ -149,13 +149,17 @@ export default function GigLivePage() {
   // olemassa; ilman karttaa palataan sopimuksen lukuun.
   const hasMapProgress = mapProgress.total > 0;
   const pct = hasMapProgress ? mapProgress.pct : contractPct;
-  // Billing milestones (maksuerät) — driven by ACTUAL WORK, not by invoices sent.
-  // A contract is billed in 4 equal instalments as the work passes each quarter;
-  // this shows which work-quarters are complete (no euro amount, no claim that an
-  // invoice has been sent). Deliberately NOT based on paymentsCount, so the
-  // customer never sees a milestone the real work hasn't reached.
+  // LASKUTUS. Tämä luki ennen työn edistymisestä johdettuna ("työ on 100 %,
+  // siis 4/4 erää") — ja se väitti asiakkaalle neljää lähetettyä laskua vaikka
+  // yhtäkään ei olisi lähetetty. Nyt luku on se mikä se sanookin olevansa:
+  // montako laskua on oikeasti lähetetty. Vanhemmalla palvelimella kenttää ei
+  // vielä ole, jolloin näytetään kaikkien laskujen määrä ilman nimittäjää.
   const INSTALMENTS = 4;
-  const instalmentsDone = Math.min(INSTALMENTS, Math.floor(contractPct / 25));
+  const p1Invoices = data.p1PaymentsCount;
+  const invoicesSentLabel = typeof p1Invoices === "number"
+    ? `${Math.min(p1Invoices, INSTALMENTS)} / ${INSTALMENTS}`
+    : `${data.paymentsCount} kpl`;
+  const allInstalmentsSent = typeof p1Invoices === "number" && p1Invoices >= INSTALMENTS;
   const updated = new Date(data.updatedAt).toLocaleString("fi-FI", {
     day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit",
   });
@@ -215,14 +219,17 @@ export default function GigLivePage() {
   if (p2Live && p2!.billing.proposedCount > 0) {
     heroTiles.push({ label: "Odottaa sinua", value: `${p2!.billing.proposedCount} ikkunaa`, tone: "amber" });
   }
-  if (p2Live && p2!.billing.lockedCount > 0) {
-    heroTiles.push({ label: "Sovittu P2", value: eur(p2!.billing.lockedSumCents), tone: "green" });
+  // "Kertynyt" on nimensä mukaisesti kertynyt: vain ne lisätyöikkunat jotka on
+  // sekä pesty ETTÄ hinnaltaan sovittu. Sovittu kokonaissumma (myös vielä
+  // pesemättömät) näkyy omana lukunaan Priority 2 -kortissa.
+  if (p2Live && mapProgress.p2AccruedCents > 0) {
+    heroTiles.push({ label: "Kertynyt", value: eur(mapProgress.p2AccruedCents), tone: "green" });
   }
   if (zone) {
     heroTiles.push({ label: "Työn alla", value: zone.floor === "K" ? "Kellari" : `${zone.floor}. kerros`, tone: "green" });
   }
   if (data.isFixedDeal) {
-    heroTiles.push({ label: "Laskutuserät", value: `${instalmentsDone} / ${INSTALMENTS}` });
+    heroTiles.push({ label: "Laskuja lähetetty", value: invoicesSentLabel });
   }
 
   return (
@@ -389,9 +396,9 @@ export default function GigLivePage() {
               )}
               {data.isFixedDeal && (
                 <p style={{ margin: 0, color: T.muted }}>
-                  {instalmentsDone >= INSTALMENTS
-                    ? "Työ on valmis — sopimus laskutetaan loppuun sovitusti."
-                    : `Sopimus laskutetaan ${INSTALMENTS} yhtä suuressa erässä työn edetessä. Seuraava erä erääntyy, kun työ etenee seuraavaan neljännekseen.`}
+                  {allInstalmentsSent
+                    ? `Sopimus on laskutettu kaikissa ${INSTALMENTS} erässä.`
+                    : `Sopimus laskutetaan ${INSTALMENTS} yhtä suuressa erässä työn edetessä. "Laskuja lähetetty" kertoo, montako erää olemme tähän mennessä lähettäneet.`}
                 </p>
               )}
               <p style={{ margin: 0, color: T.muted }}>

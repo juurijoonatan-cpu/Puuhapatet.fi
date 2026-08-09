@@ -712,60 +712,34 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
       {/* Sub-navbar */}
       <div style={{ position: "relative", zIndex: 15, display: "flex", alignItems: "center", gap: isMobile ? "10px" : "18px", flexWrap: "wrap", padding: isMobile ? "10px 12px" : "14px 26px", borderBottom: "1px solid rgba(255,255,255,0.07)", background: isMobile ? "rgba(10,10,12,0.96)" : "rgba(8,8,10,0.5)", backdropFilter: isMobile ? undefined : "blur(18px)", WebkitBackdropFilter: isMobile ? undefined : "blur(18px)" }}>
 
-        {/* Floor selector */}
-        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "7px", padding: "5px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: "13px" }}>
-          <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.35)", padding: "0 6px 0 8px" }}>KRS</span>
+        {/* Kerrosvalitsin. Yksi rivi, aina — jos kerroksia on paljon, rivi
+            vierii sivusuunnassa. Se ei taitu, koska taittuva pillerikehys
+            kasvaa kaksinkertaiseksi ja näyttää rikkinäiseltä.
+
+            Merkitään vain POIKKEUS: lukossa oleva kerros himmenee ja saa
+            lukon. Auki oleminen on normaalitila eikä kaipaa koristetta — kun
+            joka kerroksessa oli vihreä rengas, rivi ei kertonut mitään. */}
+        <div data-fr8-tabs style={{ display: "flex", alignItems: "center", gap: "6px", padding: "5px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: "13px", maxWidth: "100%", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+          <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.35)", padding: "0 5px 0 7px", flexShrink: 0 }}>KRS</span>
           {shownFloors.map((f) => {
             const gLocked = !!guided?.enabled && (guided.lockedFloors || []).includes(f);
-            const gActive = !!guided?.enabled && (
-              guided.activeFloors?.length ? guided.activeFloors.includes(f) : guided.activeFloor === f
-            );
             const st = floorBtnStyle(f === floor);
-            // Lukkokuvake kertoo VAIN tilan: se on kerroksen kohdalla silloin ja
-            // vain silloin kun kerros on oikeasti lukossa. Lukitseminen tehdään
-            // yhdellä erillisellä napilla (alla) — ei jokaisen kerroksen sisällä,
-            // koska silloin joka kerroksessa näkyi lukko ja rivi luki väärin.
             return (
               <button key={f} onClick={() => { setFloor(f); setActiveOrb(null); }}
-                title={gLocked ? "Lukossa tekijöiltä — sinä näet sen silti" : gActive ? "Auki tekijöille" : undefined}
+                title={gLocked ? "Lukossa tekijöiltä — sinä näet sen silti" : undefined}
                 style={{
                   ...st,
-                  ...(gActive && f !== floor ? { boxShadow: "inset 0 0 0 1.5px rgba(95,224,138,0.7)", color: "#9ff0bd" } : {}),
-                  ...(gLocked && f !== floor ? { opacity: 0.5 } : {}),
+                  flexShrink: 0,
+                  ...(gLocked && f !== floor ? { opacity: 0.45 } : {}),
                 }}>
                 {gLocked ? `🔒${f}` : f}
               </button>
             );
           })}
-
-          {onToggleFloorLock && (
-            // Yksi nappi, joka koskee valittua kerrosta. Teksti kertoo teon, ei
-            // tilaa, joten se ei voi mennä sekaisin kerrosrivin lukkomerkkien
-            // kanssa. Kerroksen vaihto ja lukitus ovat eri napit.
-            <>
-              <span aria-hidden style={{ width: 1, height: 20, background: "rgba(255,255,255,0.1)", margin: "0 1px", flexShrink: 0 }} />
-              <button
-                onClick={() => onToggleFloorLock(floor, !selectedFloorLocked)}
-                title={selectedFloorLocked
-                  ? `${floorLongName(floor)} on lukossa tekijöiltä — avaa se`
-                  : `Piilota ${floorLongName(floor).toLowerCase()} tekijöiltä`}
-                style={{
-                  height: 34, padding: "0 11px", borderRadius: 9, border: "none", cursor: "pointer",
-                  whiteSpace: "nowrap", lineHeight: 1,
-                  fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 12, fontWeight: 600,
-                  background: selectedFloorLocked ? "rgba(255,206,40,0.16)" : "rgba(255,255,255,0.06)",
-                  color: selectedFloorLocked ? "#ffce28" : "rgba(255,255,255,0.6)",
-                  transition: "all .16s",
-                }}
-              >
-                {selectedFloorLocked ? `Avaa ${floorShortName(floor)}` : `Lukitse ${floorShortName(floor)}`}
-              </button>
-            </>
-          )}
         </div>
 
-        {/* Mini ring + stats */}
-        <div style={{ display: "flex", alignItems: "center", gap: "13px", minWidth: "188px" }}>
+        {/* Mini ring + stats + kerroksen lukko */}
+        <div style={{ display: "flex", alignItems: "center", gap: "13px", flex: "1 1 240px", minWidth: "188px" }}>
           <div style={{ position: "relative", width: "42px", height: "42px", flexShrink: 0 }}>
             <svg width="42" height="42" viewBox="0 0 42 42" style={{ transform: "rotate(-90deg)" }}>
               <circle cx="21" cy="21" r="17" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="4" />
@@ -786,6 +760,32 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
               {Math.round(floorPct)} %{hideMoney ? "" : ` · ${euro(floorWashed * pricePerWindow)}`}
             </div>
           </div>
+
+          {/* Kerroksen lukko asuu tässä eikä kerrosrivillä: tämä rivi kertoo jo
+              valitusta kerroksesta, ja tyhjä oikea laita on juuri sen kokoinen
+              kuin nappi tarvitsee. Kerrosrivillä se joutui omalle rivilleen ja
+              näytti irralliselta. Teksti kertoo teon, ei tilaa. */}
+          {onToggleFloorLock && (
+            <button
+              onClick={() => onToggleFloorLock(floor, !selectedFloorLocked)}
+              title={selectedFloorLocked
+                ? `${floorLongName(floor)} on lukossa tekijöiltä — avaa se`
+                : `Piilota ${floorLongName(floor).toLowerCase()} tekijöiltä`}
+              style={{
+                marginLeft: "auto", flexShrink: 0,
+                display: "inline-flex", alignItems: "center", gap: 6,
+                height: 32, padding: "0 12px", borderRadius: 999, cursor: "pointer",
+                whiteSpace: "nowrap", lineHeight: 1,
+                fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 12, fontWeight: 600,
+                border: `1px solid ${selectedFloorLocked ? "rgba(255,206,40,0.45)" : "rgba(255,255,255,0.12)"}`,
+                background: selectedFloorLocked ? "rgba(255,206,40,0.14)" : "transparent",
+                color: selectedFloorLocked ? "#ffce28" : "rgba(255,255,255,0.55)",
+                transition: "all .16s",
+              }}
+            >
+              {selectedFloorLocked ? `Avaa ${floorShortName(floor)}` : `Lukitse ${floorShortName(floor)}`}
+            </button>
+          )}
         </div>
 
         {/* Filter */}

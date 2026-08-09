@@ -1,30 +1,27 @@
 /**
  * Public live progress view for a custom gig (read-only, shareable link).
  *
- * Styled to match the Puuhapatet contract document (PT-…): Poppins, airy,
- * minimalist, thin hairlines, tabular numbers. Independent of the admin theme
- * so it always reads like the contract. Auto-refreshes every ~30 s.
+ * Muotoilu: vaalea paperi, iso lihava näyttöluku, pehmeät kortit ja paljon
+ * ilmaa — asiakkaan näkymä on tarkoituksella koruton koontinäyttö eikä
+ * raportti. Ohjeteksti asuu sivun alaosan taittuvassa osiossa, jotta ruudulle
+ * jää se mitä asiakas oikeasti tulee katsomaan. Päivittyy itsestään ~2 min
+ * välein, vain kun välilehti on näkyvissä.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRoute } from "wouter";
 import { api, type GigPublicView } from "@/lib/api";
 import { eur } from "@shared/gig";
 import GigContractSign from "@/components/GigContractSign";
 import CustomerFloorMap, { type P2CustomerActions } from "@/components/CustomerFloorMap";
+import CustomerProgressHero, { type HeroTile } from "@/components/CustomerProgressHero";
 import LoadingOrb from "@/components/LoadingOrb";
 import { downloadGigContract } from "@/lib/gig-contract-doc";
+import { customerProgress } from "@/lib/customer-progress";
+import { CT, CFONT, eyebrow } from "@/lib/customer-theme";
 
-const T = {
-  ink: "#1A1A1A",
-  paper: "#F6F4EE",
-  card: "#FFFFFF",
-  hair: "#E4E1D7",
-  muted: "#8C8A82",
-  navy: "#1F3B57",
-};
-
-const FONT = "'Poppins', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif";
+const T = CT;
+const FONT = CFONT;
 
 /** Valmis Priority 2 -sopimus (FR8 FAFO Oy), bundlattu staattisena assetina.
  *  Näytetään asiakkaalle tilausehtojen hyväksynnän yhteydessä. */
@@ -59,17 +56,9 @@ export default function GigLivePage() {
     try { localStorage.setItem(`pp.p2invite.${token}`, "1"); } catch { /* private mode */ }
   };
 
-  useEffect(() => {
-    const id = "poppins-font-link";
-    if (!document.getElementById(id)) {
-      const link = document.createElement("link");
-      link.id = id;
-      link.rel = "stylesheet";
-      link.href = "https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap";
-      document.head.appendChild(link);
-    }
-    document.title = "Puuhapatet — Edistyminen";
-  }, []);
+  // Kirjasin (Onest 400–800) tulee index.html:stä, joten sitä ei haeta täällä
+  // ajonaikaisesti — yksi renderöintiä estävä pyyntö vähemmän puhelimella.
+  useEffect(() => { document.title = "Puuhapatet — Edistyminen"; }, []);
 
   const reload = useCallback(async () => {
     const res = await api.getGig(token);
@@ -129,6 +118,12 @@ export default function GigLivePage() {
     };
   }, [token]);
 
+  // Kokonaisedistyminen lasketaan kartasta (kaikki pisteet, hylätyt keltaiset
+  // pois) — sama funktio jota kartta itse käyttää, jotta luvut eivät voi olla
+  // eri mieltä. useMemo on tässä, ennen varhaisia paluita, jotta hook-järjestys
+  // pysyy samana joka renderillä.
+  const mapProgress = useMemo(() => customerProgress(data?.map, data?.p2), [data]);
+
   if (status === "loading") return <LoadingOrb label="Ladataan seurantaa" theme="light" />;
   if (status === "error" || !data) return <Centered>Seurantaa ei löytynyt.</Centered>;
 
@@ -144,18 +139,23 @@ export default function GigLivePage() {
   // customer % was derived from invoices sent, which drifted from real work.)
   const sectorsWashed = data.sectors.reduce((s, x) => s + x.washed, 0);
   const sectorsTotal = data.sectors.reduce((s, x) => s + x.total, 0);
-  // ALWAYS work-based (washed / scope). Never derived from invoices sent, so the
-  // view can't claim progress the real work hasn't reached.
-  const pct = sectorsTotal > 0
+  // SOPIMUKSEN edistyminen: vain sovittu työ (Priority 1). Tämä ohjaa
+  // laskutuseriä, joten se ei saa liikkua lisätöiden mukana.
+  const contractPct = sectorsTotal > 0
     ? Math.round((sectorsWashed / sectorsTotal) * 100)
     : Math.round(t.percentByCap * 100);
+  // KOKONAISEDISTYMINEN: mitä asiakas näkee isona lukuna. Kartta on tarkempi
+  // (se tuntee myös lisätyöikkunat), joten sitä käytetään aina kun se on
+  // olemassa; ilman karttaa palataan sopimuksen lukuun.
+  const hasMapProgress = mapProgress.total > 0;
+  const pct = hasMapProgress ? mapProgress.pct : contractPct;
   // Billing milestones (maksuerät) — driven by ACTUAL WORK, not by invoices sent.
   // A contract is billed in 4 equal instalments as the work passes each quarter;
   // this shows which work-quarters are complete (no euro amount, no claim that an
   // invoice has been sent). Deliberately NOT based on paymentsCount, so the
   // customer never sees a milestone the real work hasn't reached.
   const INSTALMENTS = 4;
-  const instalmentsDone = Math.min(INSTALMENTS, Math.floor(pct / 25));
+  const instalmentsDone = Math.min(INSTALMENTS, Math.floor(contractPct / 25));
   const updated = new Date(data.updatedAt).toLocaleString("fi-FI", {
     day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit",
   });
@@ -208,23 +208,42 @@ export default function GigLivePage() {
     await reload();
   };
 
-  return (
-    <div style={{ minHeight: "100vh", background: T.paper, fontFamily: FONT, color: T.ink, padding: "calc(28px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(48px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left))" }}>
-      <style>{`@keyframes ppPulse{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
-      <div style={{ maxWidth: 640, margin: "0 auto" }}>
+  // Pääkortin ruudut. Vain ne joilla on jotain sanottavaa — tyhjää ruutua ei
+  // piirretä, jolloin yhden keikan näkymä voi olla pelkkä luku ja palkki.
+  const zone = data.map?.activeZone ?? null;
+  const heroTiles: HeroTile[] = [];
+  if (p2Live && p2!.billing.proposedCount > 0) {
+    heroTiles.push({ label: "Odottaa sinua", value: `${p2!.billing.proposedCount} ikkunaa`, tone: "amber" });
+  }
+  if (p2Live && p2!.billing.lockedCount > 0) {
+    heroTiles.push({ label: "Sovittu P2", value: eur(p2!.billing.lockedSumCents), tone: "green" });
+  }
+  if (zone) {
+    heroTiles.push({ label: "Työn alla", value: zone.floor === "K" ? "Kellari" : `${zone.floor}. kerros`, tone: "green" });
+  }
+  if (data.isFixedDeal) {
+    heroTiles.push({ label: "Laskutuserät", value: `${instalmentsDone} / ${INSTALMENTS}` });
+  }
 
-        {/* Header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 22 }}>
-          <div>
-            <p style={{ margin: 0, fontSize: 22, fontWeight: 800, letterSpacing: "-0.3px" }}>Puuhapatet</p>
-            <p style={{ margin: "4px 0 0", fontSize: 13, color: T.muted }}>
-              {data.contractId ? `${data.contractId} · ` : ""}{data.companyName}
-            </p>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: T.muted, letterSpacing: "0.08em", border: `1px solid ${T.hair}`, borderRadius: 999, padding: "5px 10px", background: T.card }}>
+  return (
+    <div style={{ minHeight: "100vh", background: T.paper, fontFamily: FONT, color: T.ink, padding: "calc(34px + env(safe-area-inset-top)) calc(18px + env(safe-area-inset-right)) calc(56px + env(safe-area-inset-bottom)) calc(18px + env(safe-area-inset-left))" }}>
+      <style>{`@keyframes ppPulse{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
+      <div style={{ maxWidth: 660, margin: "0 auto" }}>
+
+        {/* Header. Nimi ja LIVE ylärivillä, tunnistetiedot ja tilamerkki
+            alarivillä samassa virrassa — kapealla puhelimella merkki kiertyy
+            omalle rivilleen sen sijaan että puskisi yrityksen nimen rikki. */}
+        <div style={{ marginBottom: 26 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <p style={{ margin: 0, fontSize: 27, fontWeight: 800, letterSpacing: "-0.035em" }}>Puuhapatet</p>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0, fontSize: 11, fontWeight: 600, color: T.muted, letterSpacing: "0.08em", border: `1px solid ${T.hair}`, borderRadius: 999, padding: "5px 10px", background: T.card }}>
               <span style={{ width: 7, height: 7, borderRadius: 999, background: "#3E7C59", animation: "ppPulse 1.8s ease-in-out infinite" }} />
               LIVE
+            </span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px 12px", flexWrap: "wrap", marginTop: 7 }}>
+            <span style={{ fontSize: 13.5, color: T.muted, overflowWrap: "anywhere" }}>
+              {data.contractId ? `${data.contractId} · ` : ""}{data.companyName}
             </span>
             {data.approved
               ? <StatusBadge color="#1F3B57" label={`Hyväksytty${data.approvedAt ? " " + fmtDate(data.approvedAt) : ""}`} />
@@ -234,81 +253,25 @@ export default function GigLivePage() {
           </div>
         </div>
 
-        {/* Vaihe 2 aktiivinen: 1. vaihe (kiinteä urakka) tiivistyy valmis-kortiksi,
-            jotta keltaisten lisäikkunoiden suunnittelu on selkeä pääfokus. */}
-        {p2Live && (
-          <Panel>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ width: 40, height: 40, flexShrink: 0, borderRadius: 999, background: "#EAF6EE", border: "1px solid #BFE3CC", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }} aria-hidden>✓</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ margin: 0, fontSize: 13.5, fontWeight: 700 }}>Priority 1 — kiinteä urakka</p>
-                <p style={{ margin: "2px 0 0", fontSize: 12.5, color: T.muted, lineHeight: 1.5 }}>
-                  {pct >= 100 ? "Valmis 🎉 Kaikki sovitut ikkunat pesty." : `Käynnissä — ${pct} % valmis.`} Nyt suunnitellaan Priority 2 alla.
-                </p>
-              </div>
-            </div>
-          </Panel>
-        )}
-
-        {/* Hero: radial gauge + work progress. The customer sees ONLY progress —
-            no euro figures and no total contract price. The agreed price lives in
-            the signed contract (downloadable below); this live view is about how
-            far the work has come and when the next billing milestone lands. */}
-        {!p2Live && (
-        <Panel>
-          <p style={{ margin: "0 0 4px", fontSize: 13, color: T.muted }}>{data.description}</p>
-          <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap", marginTop: 8 }}>
-            <Gauge sectors={data.sectors} pct={pct} isFixedDeal={data.isFixedDeal} />
-            <div style={{ flex: "1 1 200px", minWidth: 180 }}>
-              <p style={label}>Työn edistyminen</p>
-              <p style={{ margin: "2px 0 0", fontSize: 44, fontWeight: 800, lineHeight: 1.0, fontVariantNumeric: "tabular-nums" }}>{pct} %</p>
-              <p style={{ margin: "8px 0 0", fontSize: 13.5, color: T.muted, lineHeight: 1.55 }}>
-                Näet reaaliaikaisesti, kuinka suuri osa sovitusta työstä on valmis.
-                Työ tehdään sopimuksen mukaisten ehtojen mukaisesti.
-              </p>
-            </div>
-          </div>
-
-          {/* Progress bar — always window-based (actual work done). */}
-          <div style={{ height: 10, width: "100%", borderRadius: 999, background: T.paper, overflow: "hidden", display: "flex", marginTop: 20 }}>
-            {data.isFixedDeal || sectorsTotal === 0 ? (
-              <div style={{ width: `${pct}%`, background: T.navy, height: "100%", borderRadius: 999 }} />
-            ) : (
-              data.sectors.map((s) => {
-                const w = sectorsTotal > 0 ? (s.washed / sectorsTotal) * 100 : 0;
-                return <div key={s.id} style={{ width: `${w}%`, background: s.color, height: "100%" }} />;
-              })
-            )}
-          </div>
-
-          {/* Billing milestones — which of the 4 instalments have been sent. No
-              amounts shown; just the "next payroll" rhythm so the customer knows
-              where things stand. Only meaningful for fixed-price contracts. */}
-          {data.isFixedDeal && (
-            <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${T.hair}` }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
-                <p style={label}>Laskutuksen vaihe</p>
-                <span style={{ fontSize: 13, fontWeight: 600, color: T.ink, fontVariantNumeric: "tabular-nums" }}>
-                  {instalmentsDone} / {INSTALMENTS}
-                </span>
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                {Array.from({ length: INSTALMENTS }).map((_, i) => {
-                  const done = i < instalmentsDone;
-                  return (
-                    <div key={i} style={{ flex: 1, height: 8, borderRadius: 999, background: done ? T.navy : T.paper, border: `1px solid ${done ? T.navy : T.hair}` }} />
-                  );
-                })}
-              </div>
-              <p style={{ margin: "10px 0 0", fontSize: 11.5, color: T.muted, lineHeight: 1.5 }}>
-                {instalmentsDone >= INSTALMENTS
-                  ? "Työ on valmis — sopimus laskutetaan loppuun sovitusti."
-                  : `Sopimus laskutetaan ${INSTALMENTS} yhtä suuressa erässä työn edetessä. Seuraava erä erääntyy, kun työ etenee seuraavaan neljännekseen.`}
-              </p>
-            </div>
-          )}
-        </Panel>
-        )}
+        {/* PÄÄKORTTI. Yksi luku, yksi palkki, muutama ruutu. Ei euroja
+            urakkahinnasta — sovittu hinta asuu allekirjoitetussa sopimuksessa.
+            Kaikki selittävä teksti on siirretty sivun alaosan taittuvaan
+            osioon, jotta tämä näkymä on koontinäyttö eikä saate. */}
+        <CustomerProgressHero
+          pct={pct}
+          done={hasMapProgress ? mapProgress.done : undefined}
+          total={hasMapProgress ? mapProgress.total : undefined}
+          awaiting={mapProgress.awaiting}
+          chip={
+            p2Live ? { text: "Priority 2", tone: "amber" }
+            : pct >= 100 ? { text: "Valmis", tone: "green" }
+            : null
+          }
+          note={p2Live && contractPct >= 100
+            ? "Priority 1 -urakka on valmis. Nyt suunnitellaan Priority 2 -ikkunat alla."
+            : undefined}
+          tiles={heroTiles}
+        />
 
         {/* Sector cards — hidden for fixed-price deals (flat rate, no per-sector billing). */}
         {!data.isFixedDeal && data.sectors.map((s) => {
@@ -349,35 +312,32 @@ export default function GigLivePage() {
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#E0A800" }} />
                 PRIORITY 2
               </span>
+              {/* Hyväksynnän koko kirjaus (nimi + aikaleima) näkyy ehtodialogissa
+                  yhden napautuksen päässä — tässä riittää tieto että ehdot ovat
+                  kunnossa, jottei kortin yläreuna täyty tekstillä. */}
               {p2!.termsAccepted && (
-                <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 700, color: "#3E7C59", background: "rgba(62,124,89,0.1)", border: "1px solid rgba(62,124,89,0.3)", borderRadius: 999, padding: "3px 9px" }}>
-                    ✓ Ehdot hyväksytty{p2!.termsAcceptorName ? ` · ${p2!.termsAcceptorName}` : ""}{p2!.termsAcceptedAt ? ` · ${fmtDate(p2!.termsAcceptedAt)}` : ""}
-                  </span>
-                  <button onClick={() => { setTermsError(null); setTermsOpen(true); }} style={{ border: "none", background: "transparent", color: T.navy, fontFamily: FONT, fontSize: 11.5, fontWeight: 700, cursor: "pointer", textDecoration: "underline", padding: 0 }}>
-                    Näytä sopimusehdot
-                  </button>
-                </span>
+                <button
+                  onClick={() => { setTermsError(null); setTermsOpen(true); }}
+                  title={`Ehdot hyväksytty${p2!.termsAcceptorName ? ` · ${p2!.termsAcceptorName}` : ""}${p2!.termsAcceptedAt ? ` · ${fmtDate(p2!.termsAcceptedAt)}` : ""}`}
+                  style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 700, color: "#3E7C59", background: "rgba(62,124,89,0.1)", border: "1px solid rgba(62,124,89,0.3)", borderRadius: 999, padding: "4px 11px", fontFamily: FONT, cursor: "pointer" }}
+                >
+                  ✓ Ehdot hyväksytty
+                </button>
               )}
             </div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginTop: 6 }}>
-              <span style={{ fontSize: 34, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
+              <span style={{ fontSize: 38, fontWeight: 800, lineHeight: 1, letterSpacing: "-0.035em", fontVariantNumeric: "tabular-nums" }}>
                 {eur(p2!.billing.lockedSumCents)}
               </span>
               <span style={{ fontSize: 13, color: T.muted }}>
-                sovittu Priority 2 · {p2!.billing.lockedCount} ikkunaa
+                sovittu · {p2!.billing.lockedCount} ikkunaa
               </span>
             </div>
-            <p style={{ margin: "10px 0 0", fontSize: 13.5, lineHeight: 1.6 }}>
-              Pesty <strong style={{ fontVariantNumeric: "tabular-nums" }}>{p2!.billing.lockedWashedCount} / {p2!.billing.lockedCount}</strong> sovituista Priority 2 -ikkunoista.
+            <p style={{ margin: "12px 0 0", fontSize: 13.5, lineHeight: 1.6 }}>
+              Pesty <strong style={{ fontVariantNumeric: "tabular-nums" }}>{p2!.billing.lockedWashedCount} / {p2!.billing.lockedCount}</strong> sovituista.
               {p2!.billing.proposedCount > 0 && (
-                <> <strong style={{ color: T.navy }}>{p2!.billing.proposedCount} hintaehdotusta odottaa vastaustasi</strong> — vastaa niihin alla olevasta listasta tai kartalta.</>
+                <> <strong style={{ color: T.navy }}>{p2!.billing.proposedCount} hintaehdotusta odottaa sinua</strong> alla.</>
               )}
-            </p>
-            <p style={{ margin: "8px 0 0", fontSize: 12.5, color: T.muted, lineHeight: 1.6 }}>
-              Toisin kuin Priority 1 -urakan kiinteä hinta, Priority 2 -ikkunat hinnoitellaan
-              ikkunakohtaisesti: hyväksyt jokaisen hinnan erikseen (tai teet vastatarjouksen), ja
-              summa kasvaa vain hyväksymistäsi ikkunoista. Voit myös lisätä uusia ikkunoita kartalla.
             </p>
             {!p2!.termsAccepted && (
               <button
@@ -393,43 +353,65 @@ export default function GigLivePage() {
         {/* Read-only floor-plan map — customer watches washed windows live. */}
         {data.map && (
           <Panel>
-            <p style={{ margin: "0 0 4px", ...label }}>Pohjapiirros</p>
-            <p style={{ margin: "0 0 16px", fontSize: 13, color: T.muted }}>
-              Näet reaaliaikaisesti mitkä ikkunat on pesty. Kartta päivittyy työn edetessä.
-            </p>
+            <p style={{ margin: "0 0 14px", ...label }}>Pohjapiirros</p>
             <CustomerFloorMap map={data.map} p2={p2} p2Actions={p2Live ? p2Actions : undefined} onLoadObservationImage={loadObservationImage} />
-            <p style={{ margin: "14px 0 0", fontSize: 12, color: T.muted, lineHeight: 1.6 }}>
-              {p2Live
-                ? "Keltaisella merkityt ovat Priority 2 -ikkunoita: jokainen hinnoitellaan ikkunakohtaisesti. Vastaa ehdotuksiin alla olevasta listasta — tai napauta ikkunaa suoraan kartalta."
-                : "Keltaisella merkityt ikkunat eivät kuulu tähän sopimukseen — niiden tilanne katsotaan seuraavassa sopimuksessa."}
-            </p>
           </Panel>
         )}
 
-        {/* Two-way info / contact note — keep it simple: WhatsApp for anything urgent. */}
+        {/* TIEDOTTEET JA OHJEET — kaikki selittävä teksti yhdessä taittuvassa
+            osiossa. Se on luettavissa kun sitä tarvitsee, muttei joka kerta
+            ensimmäisenä ruudulla. Yhteydenotto jää näkyviin, koska se on
+            toiminto eikä selitys. */}
         <Panel>
-          <p style={{ margin: "0 0 4px", ...label }}>Tiedotus</p>
-          <p style={{ margin: "0 0 12px", fontSize: 14, lineHeight: 1.7 }}>
-            Jos rakennuksessa on jotain työhön vaikuttavaa (esim. kulku, hälytykset, telineet
-            tai ajankohtaiset huomiot), laita meille viestiä — vastaamme nopeasti. Ilmoitamme
-            myös itse tästä näkymästä, jos jotain huomioitavaa tulee.
-          </p>
-          <a
-            href="https://wa.me/358400389999"
-            target="_blank"
-            rel="noreferrer"
-            style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 16px", borderRadius: 10, border: "none", background: "#25D366", color: "#fff", fontFamily: FONT, fontSize: 14, fontWeight: 700, textDecoration: "none" }}
-          >
-            💬 Laita WhatsApp-viesti
-          </a>
-        </Panel>
+          <details>
+            <summary style={{ cursor: "pointer", listStyle: "none", display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 600 }}>
+              <span aria-hidden style={{ color: T.muted, fontSize: 12 }}>▸</span>
+              Tiedotteet ja ohjeet
+            </summary>
+            <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 12, fontSize: 13.5, lineHeight: 1.7, color: T.ink }}>
+              <p style={{ margin: 0 }}>{data.description}</p>
+              <p style={{ margin: 0 }}>
+                {data.customerNote || "Tälle sopimukselle on sovittu kiinteä kokonaishinta, ja työ tehdään sopimuksen mukaisten ehtojen mukaisesti. Voit seurata edistymistä reaaliaikaisesti tästä näkymästä."}
+              </p>
+              {data.map && (
+                <p style={{ margin: 0, color: T.muted }}>
+                  {p2Live
+                    ? "Kartalla keltaisella merkityt ovat Priority 2 -ikkunoita: jokainen hinnoitellaan ikkunakohtaisesti. Vastaa ehdotuksiin listasta tai napauta ikkunaa kartalta."
+                    : "Kartalla keltaisella merkityt ikkunat eivät kuulu tähän sopimukseen — niiden tilanne katsotaan seuraavassa sopimuksessa."}
+                </p>
+              )}
+              {p2Live && (
+                <p style={{ margin: 0, color: T.muted }}>
+                  Toisin kuin Priority 1 -urakan kiinteä hinta, Priority 2 -ikkunat hinnoitellaan
+                  ikkunakohtaisesti: hyväksyt jokaisen hinnan erikseen (tai teet vastatarjouksen), ja
+                  summa kasvaa vain hyväksymistäsi ikkunoista. Voit myös lisätä uusia ikkunoita kartalla.
+                </p>
+              )}
+              {data.isFixedDeal && (
+                <p style={{ margin: 0, color: T.muted }}>
+                  {instalmentsDone >= INSTALMENTS
+                    ? "Työ on valmis — sopimus laskutetaan loppuun sovitusti."
+                    : `Sopimus laskutetaan ${INSTALMENTS} yhtä suuressa erässä työn edetessä. Seuraava erä erääntyy, kun työ etenee seuraavaan neljännekseen.`}
+                </p>
+              )}
+              <p style={{ margin: 0, color: T.muted }}>
+                Jos rakennuksessa on jotain työhön vaikuttavaa (kulku, hälytykset, telineet tai muu
+                huomio), laita meille viestiä — vastaamme nopeasti. Ilmoitamme myös itse tästä
+                näkymästä, jos jotain huomioitavaa tulee.
+              </p>
+              {data.vatNote && <p style={{ margin: 0, fontSize: 12, color: T.muted }}>{data.vatNote}</p>}
+            </div>
+          </details>
 
-        {/* Reassurance note */}
-        <Panel>
-          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.7 }}>
-            {data.customerNote || "Tälle sopimukselle on sovittu kiinteä kokonaishinta, ja työ tehdään sopimuksen mukaisten ehtojen mukaisesti. Voit seurata edistymistä reaaliaikaisesti tästä näkymästä."}
-          </p>
-          {data.vatNote && <p style={{ margin: "10px 0 0", fontSize: 12, color: T.muted }}>{data.vatNote}</p>}
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 18 }}>
+            <a
+              href="https://wa.me/358400389999"
+              target="_blank"
+              rel="noreferrer"
+              style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 17px", borderRadius: 12, border: "none", background: "#25D366", color: "#fff", fontFamily: FONT, fontSize: 14, fontWeight: 700, textDecoration: "none" }}
+            >
+              💬 Laita viesti
+            </a>
           {data.signature && (
             <button
               type="button"
@@ -451,14 +433,15 @@ export default function GigLivePage() {
                 },
                 approvedAt: data.approvedAt,
               })}
-              style={{ marginTop: 14, width: "100%", padding: "11px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, color: T.ink, fontFamily: FONT, fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}
+              style={{ padding: "11px 17px", borderRadius: 12, border: `1px solid ${T.hair}`, background: T.fill, color: T.ink, fontFamily: FONT, fontSize: 14, fontWeight: 600, cursor: "pointer" }}
             >
-              Lataa allekirjoitettu sopimus
+              Lataa sopimus
             </button>
           )}
+          </div>
         </Panel>
 
-        <p style={{ textAlign: "center", fontSize: 12, color: T.muted, marginTop: 8 }}>
+        <p style={{ textAlign: "center", fontSize: 12, color: T.muted, marginTop: 10 }}>
           Viimeksi päivitetty {updated} · päivittyy automaattisesti · puuhapatet.fi
         </p>
       </div>
@@ -605,54 +588,6 @@ export default function GigLivePage() {
   );
 }
 
-/** Radial gauge: one arc at the work-progress %, or a multi-segment ring split by
- *  sector (window-based) for open gigs. Never derived from euros. */
-function Gauge({ sectors, pct, isFixedDeal }: {
-  sectors: GigPublicView["sectors"]; pct: number; isFixedDeal: boolean;
-}) {
-  const size = 132, stroke = 13, r = (size - stroke) / 2;
-  const C = 2 * Math.PI * r;
-  const sectorsTotal = sectors.reduce((s, x) => s + x.total, 0);
-  let offset = 0;
-  const arcs = isFixedDeal || sectorsTotal === 0
-    ? [<circle
-        key="fixed"
-        cx={size / 2} cy={size / 2} r={r}
-        fill="none" stroke={T.navy} strokeWidth={stroke}
-        strokeDasharray={`${(pct / 100) * C} ${C - (pct / 100) * C}`}
-        strokeDashoffset={0}
-        strokeLinecap="butt"
-      />]
-    : sectors.map((s) => {
-        const frac = sectorsTotal > 0 ? s.washed / sectorsTotal : 0;
-        const len = frac * C;
-        const arc = (
-          <circle
-            key={s.id}
-            cx={size / 2} cy={size / 2} r={r}
-            fill="none" stroke={s.color} strokeWidth={stroke}
-            strokeDasharray={`${len} ${C - len}`}
-            strokeDashoffset={-offset}
-            strokeLinecap="butt"
-          />
-        );
-        offset += len;
-        return arc;
-      });
-  return (
-    <div style={{ position: "relative", width: size, height: size, flex: "0 0 auto" }}>
-      <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={T.paper} strokeWidth={stroke} />
-        {arcs}
-      </svg>
-      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-        <span style={{ fontSize: 30, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{pct}%</span>
-        <span style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>sovitusta</span>
-      </div>
-    </div>
-  );
-}
-
 function fmtDate(ts: number) {
   return new Date(ts).toLocaleDateString("fi-FI", { day: "numeric", month: "numeric", year: "numeric" });
 }
@@ -667,13 +602,11 @@ function StatusBadge({ color, label }: { color: string; label: string }) {
   );
 }
 
-const label: React.CSSProperties = {
-  margin: 0, fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: T.muted,
-};
+const label: React.CSSProperties = eyebrow;
 
 function Panel({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ background: T.card, border: `1px solid ${T.hair}`, borderRadius: 14, padding: 20, marginBottom: 16 }}>
+    <div style={{ background: T.card, border: `1px solid ${T.hair}`, borderRadius: 22, padding: 22, marginBottom: 16 }}>
       {children}
     </div>
   );

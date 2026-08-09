@@ -12,6 +12,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GigPublicView, P2PublicOffer, P2PublicView } from "@/lib/api";
 import { NOTE_KINDS } from "@shared/project";
 import { eur } from "@shared/gig";
+import { getPoints, inCustomerScope, type CustomerPoint } from "@/lib/customer-progress";
+import { CT, CFONT } from "@/lib/customer-theme";
 
 /** Position a fixed popup near an on-screen anchor rect, flipping above/below and
  *  clamping to the viewport so it's never clipped (mobile-friendly). */
@@ -28,21 +30,14 @@ function popupStyle(rect: DOMRect | null, width: number, height: number): React.
   return { position: "fixed", left: `${left}px`, top: `${top}px`, zIndex: 60 };
 }
 
-const T = {
-  ink: "#1A1A1A",
-  paper: "#F6F4EE",
-  card: "#FFFFFF",
-  hair: "#E4E1D7",
-  muted: "#8C8A82",
-  navy: "#1F3B57",
-};
-const FONT = "'Poppins', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif";
+const T = CT;
+const FONT = CFONT;
 
 const MIN_SCALE = 1, MAX_SCALE = 5;
 const clampScale = (s: number) => Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
 
 type WindowStatus = "ei" | "kesken" | "pesty";
-interface Point { key: string; p: 1 | 2; x: number; y: number; }
+type Point = CustomerPoint;
 
 type MapData = NonNullable<GigPublicView["map"]>;
 
@@ -51,22 +46,6 @@ function dotColor(p: 1 | 2, status: WindowStatus): string {
   if (status === "pesty") return p === 1 ? "#E03B3B" : "#E0A800";
   if (status === "kesken") return "#7C5CD6";
   return p === 1 ? "#F4A6C0" : "#D9C97E";
-}
-
-function getPoints(floor: string, map: MapData): Point[] {
-  const out: Point[] = [];
-  (map.marks[floor]?.marks || []).forEach((mk, idx) => {
-    const key = `${floor}#${idx}`;
-    if (map.deleted[key]) return;
-    const ov = map.posOverrides[key];
-    out.push({ key, p: mk.p, x: ov ? ov.x : mk.x, y: ov ? ov.y : mk.y });
-  });
-  (map.customMarks[floor] || []).forEach((cm) => {
-    if (map.deleted[cm.key]) return;
-    const ov = map.posOverrides[cm.key];
-    out.push({ key: cm.key, p: cm.p, x: ov ? ov.x : cm.x, y: ov ? ov.y : cm.y });
-  });
-  return out;
 }
 
 const LEGEND: { label: string; color: string }[] = [
@@ -148,8 +127,12 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
   /** Havainnon kuva: suoraan mukana tullut, jo haettu, tai undefined. */
   const obsImageFor = (key: string) =>
     observations[key]?.imageDataUrl ?? obsImages[key];
-  const washed = points.filter((p) => map.statuses[p.key] === "pesty").length;
-  const total = points.length;
+  // Kerroksen oma luku lasketaan samalla laajuussäännöllä kuin sivun
+  // kokonaisluku (`inCustomerScope`), jotteivät ne voi olla eri mieltä samalla
+  // ruudulla: keltaiset ovat mukana vasta kun vaihe 2 on auki.
+  const scoped = points.filter((pt) => inCustomerScope(pt, p2));
+  const washed = scoped.filter((p) => map.statuses[p.key] === "pesty").length;
+  const total = scoped.length;
   const pct = total > 0 ? Math.round((washed / total) * 100) : 0;
 
   // ── P2 negotiation state ──────────────────────────────────────────────────
@@ -390,31 +373,6 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
    * kartalta poistettu tai punaiseksi vaihdettu ikkuna ei voi tulla
    * hyväksytyksi vaikka se olisi ollut listalla näkymän latautuessa.
    */
-  /**
-   * KOKONAISEDISTYMINEN — asiakkaan ensimmäinen ja tärkein luku.
-   *
-   * MUKANA: kaikki punaiset ja kaikki keltaiset, MYÖS ne joiden hintaa asiakas
-   * ei ole vielä hyväksynyt. Työ on tehty, joten sen kuuluu näkyä edistymisenä
-   * riippumatta siitä missä vaiheessa hinnasta sopiminen on.
-   *
-   * POIS: hylätyt keltaiset. Kun asiakas sanoo ei, ikkuna ei ole enää osa
-   * työtä — se katoaa sekä osoittajasta että nimittäjästä, jolloin prosentti
-   * nousee sen sijaan että jäisi ikuisesti vajaaksi.
-   */
-  const progress = useMemo(() => {
-    let total = 0, done = 0, awaiting = 0;
-    for (const f of floors) {
-      for (const pt of getPoints(f, map)) {
-        if (pt.p === 2 && p2?.offers[pt.key]?.status === "declined") continue;
-        total += 1;
-        const washed = map.statuses[pt.key] === "pesty";
-        if (washed) done += 1;
-        if (pt.p === 2 && washed && p2?.offers[pt.key]?.status !== "locked") awaiting += 1;
-      }
-    }
-    return { total, done, awaiting, pct: total > 0 ? Math.round((done / total) * 100) : 0 };
-  }, [floors, map, p2]);
-
   const quickAccept = useMemo(() => {
     if (!p2?.enabled) return { rows: [], byFloor: new Map<string, number>(), totalCents: 0 };
     const rows: { key: string; floor: string; priceCents: number; version: number; note?: string }[] = [];
@@ -448,16 +406,16 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
 
   const quickAcceptPanel = p2?.enabled && p2Actions && quickAccept.rows.length > 0 ? (
     <div style={{
-      marginBottom: 14, padding: "14px 16px", borderRadius: 14,
+      marginBottom: 16, padding: "18px 18px 16px", borderRadius: 20,
       background: "rgba(62,124,89,0.07)", border: `1px solid rgba(62,124,89,0.28)`,
     }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-        <strong style={{ fontSize: 15 }}>Hyväksy pestyt lisätyöt</strong>
-        <span style={{ fontSize: 13, color: T.muted }}>
+        <strong style={{ fontSize: 16, letterSpacing: "-0.02em" }}>Hyväksy pestyt lisätyöt</strong>
+        <span style={{ fontSize: 13, color: T.muted, fontVariantNumeric: "tabular-nums" }}>
           {quickAccept.rows.length} ikkunaa · <b style={{ color: T.ink }}>{eur(quickAccept.totalCents)}</b>
         </span>
       </div>
-      <p style={{ margin: "6px 0 10px", fontSize: 12.5, color: T.muted, lineHeight: 1.5 }}>
+      <p style={{ margin: "7px 0 13px", fontSize: 13, color: T.muted, lineHeight: 1.55 }}>
         Nämä on jo pesty ja odottavat vain hinnan hyväksyntääsi.
       </p>
 
@@ -540,39 +498,8 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
         }
       `}</style>
 
-      {/* ── KOKONAISTILANNE ─────────────────────────────────────────────────
-          Asiakkaan näkymän ensimmäinen asia on yksi luku, ei selitys. Kaikki
-          ohjeteksti on siirretty alas taittuvaan osioon: se on luettavissa
-          kun sitä tarvitsee, muttei ensimmäisenä joka kerta. */}
-      <div style={{
-        marginBottom: 14, padding: "20px 18px", borderRadius: 18,
-        background: T.card, border: `1px solid ${T.hair}`,
-      }}>
-        <div style={{ fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: T.muted }}>
-          Työn tilanne
-        </div>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 6 }}>
-          <span style={{ fontSize: 46, fontWeight: 800, lineHeight: 1, letterSpacing: "-0.02em", color: T.ink, fontVariantNumeric: "tabular-nums" }}>
-            {progress.pct}
-          </span>
-          <span style={{ fontSize: 20, fontWeight: 600, color: T.muted }}>%</span>
-          <span style={{ marginLeft: "auto", fontSize: 13, color: T.muted, fontVariantNumeric: "tabular-nums" }}>
-            {progress.done} / {progress.total} ikkunaa
-          </span>
-        </div>
-        <div style={{ height: 8, borderRadius: 999, background: T.hair, overflow: "hidden", marginTop: 12 }}>
-          <div style={{
-            width: `${progress.pct}%`, height: "100%", borderRadius: 999,
-            background: "linear-gradient(90deg,#8FD694,#3E7C59)", transition: "width .6s ease",
-          }} />
-        </div>
-        {progress.awaiting > 0 && (
-          <div style={{ marginTop: 10, fontSize: 12.5, color: T.muted, lineHeight: 1.5 }}>
-            {progress.awaiting} pestyä lisätyöikkunaa odottaa hinnan hyväksyntääsi.
-          </div>
-        )}
-      </div>
-
+      {/* Kokonaisluku ei ole enää täällä: se on sivun pääkortissa (yksi luku,
+          yksi paikka). Kartta kertoo vain tämän kerroksen tilanteen. */}
       {quickAcceptPanel}
 
       {/* "Work happening here now" banner */}
@@ -591,37 +518,37 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
       {/* Toolbar — a clean, always-aligned two-row layout so it never wraps into
           an awkward shape on mobile: the floor tabs scroll horizontally on their
           own row, and the filter + progress sit on a tidy second row. */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: 4, background: T.paper, border: `1px solid ${T.hair}`, borderRadius: 11, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-          <span style={{ fontSize: 10, letterSpacing: "0.12em", color: T.muted, padding: "0 6px 0 8px", flexShrink: 0 }}>KRS</span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 11, marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: 5, background: T.fill, borderRadius: 14, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+          <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.14em", color: T.muted, padding: "0 6px 0 9px", flexShrink: 0 }}>KRS</span>
           {floors.map((f) => {
             const active = f === floor;
             return (
               <button
                 key={f}
                 onClick={() => setFloor(f)}
-                style={{ minWidth: 34, height: 30, padding: "0 8px", borderRadius: 8, border: "none", cursor: "pointer", fontFamily: FONT, fontSize: 13.5, fontWeight: active ? 700 : 600, background: active ? T.card : "transparent", color: active ? T.ink : T.muted, boxShadow: active ? "0 1px 3px rgba(0,0,0,0.08)" : "none", transition: "all .15s", flexShrink: 0 }}
+                style={{ minWidth: 38, height: 34, padding: "0 10px", borderRadius: 10, border: "none", cursor: "pointer", fontFamily: FONT, fontSize: 14, fontWeight: active ? 700 : 600, letterSpacing: "-0.01em", background: active ? T.card : "transparent", color: active ? T.ink : T.muted, boxShadow: active ? "0 1px 3px rgba(0,0,0,0.10)" : "none", transition: "all .15s", flexShrink: 0 }}
               >
                 {f}
               </button>
             );
           })}
         </div>
-        {/* Progress as a percentage only — the customer never sees raw window
-            counts (those are internal; the agreed price is fixed regardless). */}
+        {/* Kerroksen oma luku. Kokonaisedistyminen on sivun pääkortissa — tässä
+            kerrotaan vain se mitä juuri tämä pohjapiirros näyttää. */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
           {p2On && yellowCount > 0 ? (
             <button
               onClick={() => setOnlyYellow((v) => !v)}
               title="Näytä kartalla vain Priority 2 -ikkunat (keltaiset)"
-              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 999, cursor: "pointer", fontFamily: FONT, fontSize: 12, fontWeight: 600, border: `1px solid ${onlyYellow ? "#E0A800" : T.hair}`, background: onlyYellow ? "rgba(224,168,0,0.14)" : T.card, color: onlyYellow ? "#8A6A00" : T.muted, flexShrink: 0 }}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 13px", borderRadius: 999, cursor: "pointer", fontFamily: FONT, fontSize: 12.5, fontWeight: 600, border: `1px solid ${onlyYellow ? "#E0A800" : T.hair}`, background: onlyYellow ? "rgba(224,168,0,0.14)" : T.card, color: onlyYellow ? "#8A6A00" : T.muted, flexShrink: 0 }}
             >
               <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#E0A800" }} />
               {onlyYellow ? "Näytä kaikki" : "Vain Priority 2"}
             </button>
           ) : <span />}
           <div style={{ fontSize: 13, color: T.muted, textAlign: "right" }}>
-            Pesty <strong style={{ color: T.ink, fontVariantNumeric: "tabular-nums" }}>{pct} %</strong> tästä kerroksesta
+            Tässä kerroksessa pesty <strong style={{ color: T.ink, fontVariantNumeric: "tabular-nums" }}>{pct} %</strong>
           </div>
         </div>
       </div>

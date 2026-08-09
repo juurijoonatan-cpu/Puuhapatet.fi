@@ -262,6 +262,11 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   const [p2SelectMode, setP2SelectMode] = useState(false);
   const [p2Selected, setP2Selected] = useState<Set<string>>(new Set());
   const [p2Note, setP2Note] = useState("");
+  // Ikkunakohtainen HINTAperustelu. Nimet erottuvat kartan omista
+  // muistiinpanoista (noteDraft), jotka ovat eri asia: ne koskevat paikkaa,
+  // tämä koskee hintaa ja näkyy asiakkaalle hyväksynnän yhteydessä.
+  const [priceNoteFor, setPriceNoteFor] = useState<string | null>(null);
+  const [priceNoteDraft, setPriceNoteDraft] = useState("");
   const [p2Price, setP2Price] = useState("");
   const planRef = useRef<HTMLImageElement>(null);
   const notesCanEdit = !!onAddNote;
@@ -1120,10 +1125,56 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                   <strong style={{ color, fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "13px" }}>{value}</strong>
                 </div>
               );
-              if (offer.status === "locked") return row("Sovittu", euroUnit((offer.lockedCents ?? offer.priceCents) / 100), "#7CE0A6");
-              if (offer.status === "proposed") return row("Odottaa asiakasta", euroUnit(offer.priceCents / 100), "rgb(150,175,255)");
-              if (offer.status === "countered") return row("Vastatarjous", euroUnit((offer.counterCents ?? 0) / 100), "rgb(255,205,40)");
-              return row("Hylätty", euroUnit(offer.priceCents / 100), "rgba(255,255,255,0.5)");
+              const statusRow =
+                offer.status === "locked" ? row("Sovittu", euroUnit((offer.lockedCents ?? offer.priceCents) / 100), "#7CE0A6")
+                : offer.status === "proposed" ? row("Odottaa asiakasta", euroUnit(offer.priceCents / 100), "rgb(150,175,255)")
+                : offer.status === "countered" ? row("Vastatarjous", euroUnit((offer.counterCents ?? 0) / 100), "rgb(255,205,40)")
+                : row("Hylätty", euroUnit(offer.priceCents / 100), "rgba(255,255,255,0.5)");
+
+              // PERUSTELU TÄLLE IKKUNALLE, SUORAAN PISTEESTÄ.
+              // Hintahuomion sai ennen antaa vain hinnoittelupalkista, eli
+              // kaikille valituille ikkunoille kerralla. Perustelu on kuitenkin
+              // ikkunakohtainen ("tämä on parvekkeen takana"), ja se on
+              // hyödyllisin juuri silloin kun katsoo yhtä pistettä. Teksti
+              // näkyy asiakkaalle siinä kohdassa jossa hän hyväksyy hinnan.
+              const canNote = onP2Propose && offer.status !== "locked";
+              return (
+                <>
+                  {statusRow}
+                  {canNote && (
+                    <div style={{ padding: "0 4px 8px" }}>
+                      {priceNoteFor === activeOrb ? (
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <input
+                            autoFocus
+                            value={priceNoteDraft}
+                            onChange={(e) => setPriceNoteDraft(e.target.value.slice(0, MAX_P2_NOTE_LEN))}
+                            placeholder="Perustelu asiakkaalle"
+                            style={{ flex: 1, minWidth: 0, padding: "7px 9px", borderRadius: 9, border: "1px solid rgba(255,255,255,0.16)", background: "rgba(0,0,0,0.4)", color: "#fff", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px", outline: "none" }}
+                          />
+                          <button
+                            onClick={() => {
+                              onP2Propose!([activeOrb], offer.priceCents, priceNoteDraft.trim());
+                              setPriceNoteFor(null);
+                            }}
+                            style={{ padding: "7px 11px", borderRadius: 9, border: "none", background: "rgb(255,205,40)", color: "#0a0a0c", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>
+                            OK
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => { setPriceNoteFor(activeOrb); setPriceNoteDraft(offer.note ?? ""); }}
+                          style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", padding: "6px 4px", background: "transparent", border: "none", cursor: "pointer", textAlign: "left", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px", color: offer.note ? "rgba(255,225,175,0.95)" : "rgba(255,255,255,0.45)" }}>
+                          <span style={{ flexShrink: 0 }}>💬</span>
+                          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {offer.note || "Lisää perustelu asiakkaalle"}
+                          </span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </>
+              );
             })()}
 
             {(["ei", "kesken", "pesty"] as WindowStatus[]).map((s) => {

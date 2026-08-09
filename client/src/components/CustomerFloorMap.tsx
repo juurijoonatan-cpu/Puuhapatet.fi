@@ -216,7 +216,17 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
     if (ptrs.current.size >= 2 && pinch.current) {
       const [a, b] = Array.from(ptrs.current.values());
       const d = Math.hypot(a.x - b.x, a.y - b.y);
-      setView((v) => ({ ...v, s: clampScale(pinch.current!.startS * (d / pinch.current!.startDist)) }));
+      // KAATUMISEN JUURISYY: `setView`in päivitysfunktio suoritetaan VASTA
+      // myöhemmin, ei tässä. Ehto yllä tarkisti `pinch.current`in nyt, mutta
+      // funktion sisällä luettiin `pinch.current!` uudestaan — ja siihen
+      // mennessä `onPtrUp` oli ehtinyt nollata sen. Tulos:
+      // "null is not an object (evaluating 'pinch.current.startS')", koko sivu
+      // kaatui virherajaan kesken nipistyszoomin.
+      //
+      // Arvot luetaan nyt talteen ENNEN päivitysfunktiota, jolloin sen sisällä
+      // ei ole yhtään refiä johon aika voisi vaikuttaa.
+      const { startS, startDist } = pinch.current;
+      setView((v) => ({ ...v, s: clampScale(startS * (d / (startDist || 1))) }));
       return;
     }
     const p = pan.current;
@@ -380,9 +390,34 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
    * kartalta poistettu tai punaiseksi vaihdettu ikkuna ei voi tulla
    * hyväksytyksi vaikka se olisi ollut listalla näkymän latautuessa.
    */
+  /**
+   * KOKONAISEDISTYMINEN — asiakkaan ensimmäinen ja tärkein luku.
+   *
+   * MUKANA: kaikki punaiset ja kaikki keltaiset, MYÖS ne joiden hintaa asiakas
+   * ei ole vielä hyväksynyt. Työ on tehty, joten sen kuuluu näkyä edistymisenä
+   * riippumatta siitä missä vaiheessa hinnasta sopiminen on.
+   *
+   * POIS: hylätyt keltaiset. Kun asiakas sanoo ei, ikkuna ei ole enää osa
+   * työtä — se katoaa sekä osoittajasta että nimittäjästä, jolloin prosentti
+   * nousee sen sijaan että jäisi ikuisesti vajaaksi.
+   */
+  const progress = useMemo(() => {
+    let total = 0, done = 0, awaiting = 0;
+    for (const f of floors) {
+      for (const pt of getPoints(f, map)) {
+        if (pt.p === 2 && p2?.offers[pt.key]?.status === "declined") continue;
+        total += 1;
+        const washed = map.statuses[pt.key] === "pesty";
+        if (washed) done += 1;
+        if (pt.p === 2 && washed && p2?.offers[pt.key]?.status !== "locked") awaiting += 1;
+      }
+    }
+    return { total, done, awaiting, pct: total > 0 ? Math.round((done / total) * 100) : 0 };
+  }, [floors, map, p2]);
+
   const quickAccept = useMemo(() => {
     if (!p2?.enabled) return { rows: [], byFloor: new Map<string, number>(), totalCents: 0 };
-    const rows: { key: string; floor: string; priceCents: number; version: number }[] = [];
+    const rows: { key: string; floor: string; priceCents: number; version: number; note?: string }[] = [];
     const byFloor = new Map<string, number>();
     for (const f of floors) {
       for (const pt of getPoints(f, map)) {
@@ -390,7 +425,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
         if (map.statuses[pt.key] !== "pesty") continue;
         const o = p2.offers[pt.key];
         if (!o || o.status !== "proposed" || !o.priceCents) continue;
-        rows.push({ key: pt.key, floor: f, priceCents: o.priceCents, version: o.version });
+        rows.push({ key: pt.key, floor: f, priceCents: o.priceCents, version: o.version, note: o.note ?? undefined });
         byFloor.set(f, (byFloor.get(f) ?? 0) + 1);
       }
     }
@@ -476,9 +511,14 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
         <div style={{ marginTop: 10, maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
           {quickAccept.rows.map((r) => (
             <button key={r.key} onClick={() => jumpToMap(r.key, r.floor)}
-              style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "7px 10px", borderRadius: 8, border: `1px solid ${T.hair}`, background: T.card, cursor: "pointer", fontFamily: FONT, fontSize: 12.5, textAlign: "left" }}>
-              <span style={{ color: T.muted }}>Krs {r.floor}</span>
-              <b>{eur(r.priceCents)}</b>
+              style={{ display: "flex", flexDirection: "column", gap: 2, padding: "7px 10px", borderRadius: 8, border: `1px solid ${T.hair}`, background: T.card, cursor: "pointer", fontFamily: FONT, fontSize: 12.5, textAlign: "left" }}>
+              <span style={{ display: "flex", justifyContent: "space-between", gap: 10, width: "100%" }}>
+                <span style={{ color: T.muted }}>Krs {r.floor}</span>
+                <b>{eur(r.priceCents)}</b>
+              </span>
+              {/* Perustaja voi kirjoittaa ikkunalle perustelun kartalta; se
+                  näkyy tässä, siinä kohdassa jossa hinta hyväksytään. */}
+              {r.note && <span style={{ color: T.muted, fontSize: 11.5, lineHeight: 1.4 }}>{r.note}</span>}
             </button>
           ))}
         </div>
@@ -499,6 +539,39 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
           [data-cfm-anim]{animation:none !important}
         }
       `}</style>
+
+      {/* ── KOKONAISTILANNE ─────────────────────────────────────────────────
+          Asiakkaan näkymän ensimmäinen asia on yksi luku, ei selitys. Kaikki
+          ohjeteksti on siirretty alas taittuvaan osioon: se on luettavissa
+          kun sitä tarvitsee, muttei ensimmäisenä joka kerta. */}
+      <div style={{
+        marginBottom: 14, padding: "20px 18px", borderRadius: 18,
+        background: T.card, border: `1px solid ${T.hair}`,
+      }}>
+        <div style={{ fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: T.muted }}>
+          Työn tilanne
+        </div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 6 }}>
+          <span style={{ fontSize: 46, fontWeight: 800, lineHeight: 1, letterSpacing: "-0.02em", color: T.ink, fontVariantNumeric: "tabular-nums" }}>
+            {progress.pct}
+          </span>
+          <span style={{ fontSize: 20, fontWeight: 600, color: T.muted }}>%</span>
+          <span style={{ marginLeft: "auto", fontSize: 13, color: T.muted, fontVariantNumeric: "tabular-nums" }}>
+            {progress.done} / {progress.total} ikkunaa
+          </span>
+        </div>
+        <div style={{ height: 8, borderRadius: 999, background: T.hair, overflow: "hidden", marginTop: 12 }}>
+          <div style={{
+            width: `${progress.pct}%`, height: "100%", borderRadius: 999,
+            background: "linear-gradient(90deg,#8FD694,#3E7C59)", transition: "width .6s ease",
+          }} />
+        </div>
+        {progress.awaiting > 0 && (
+          <div style={{ marginTop: 10, fontSize: 12.5, color: T.muted, lineHeight: 1.5 }}>
+            {progress.awaiting} pestyä lisätyöikkunaa odottaa hinnan hyväksyntääsi.
+          </div>
+        )}
+      </div>
 
       {quickAcceptPanel}
 
@@ -831,12 +904,8 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
             </button>
           ) : (
             <div style={{ borderRadius: 12, border: `1.5px dashed ${T.navy}55`, background: "linear-gradient(160deg, rgba(31,59,87,0.05), rgba(224,168,0,0.06))", padding: 14 }}>
-              <p style={{ margin: 0, fontSize: 13.5, fontWeight: 700, color: T.ink }}>
-                Lisää ikkunoita Priority 2:seen
-              </p>
-              <p style={{ margin: "4px 0 10px", fontSize: 12.5, color: T.muted, lineHeight: 1.55 }}>
-                Napauta pohjapiirrosta ja merkitse ikkunat, jotka haluat mukaan Priority 2 -vaiheeseen.
-                Hinnoittelemme jokaisen erikseen, ja päätät itse mitkä otetaan. Voit lisätä niitä vapaasti.
+              <p style={{ margin: "0 0 10px", fontSize: 12.5, color: T.muted, lineHeight: 1.55 }}>
+                Merkitse kartalta ikkunat jotka haluat mukaan — hinnoittelemme jokaisen erikseen.
               </p>
               <button
                 disabled={p2Busy}
@@ -851,8 +920,13 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
         </div>
       )}
 
-      {/* Legend */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 18px", marginTop: 14, alignItems: "center" }}>
+      {/* Selite taittuvana: väriselitys on hyödyllinen kerran, ei joka kerta.
+          Sama periaate kuin muuallakin — ohje on saatavilla, ei tiellä. */}
+      <details style={{ marginTop: 14 }}>
+        <summary style={{ cursor: "pointer", fontSize: 12.5, color: T.muted, listStyle: "none", padding: "6px 0" }}>
+          Mitä värit tarkoittavat?
+        </summary>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 18px", marginTop: 8, alignItems: "center" }}>
         {(p2On ? LEGEND_P2 : LEGEND).map((l) => (
           <span key={l.label} style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, color: T.muted }}>
             <span style={{ width: 11, height: 11, borderRadius: "50%", background: l.color, border: "2px solid #fff", boxShadow: `0 0 0 1px ${T.hair}` }} />
@@ -861,6 +935,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
         ))}
         <span style={{ marginLeft: "auto", fontSize: 11.5, color: T.muted }}>Päivittyy automaattisesti</span>
       </div>
+      </details>
 
       {/* P2 window popup — PLANNING ONLY. Tapping a numbered badge tells you which
           window it is and its current state; the actual price decisions (accept /

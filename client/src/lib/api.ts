@@ -1193,6 +1193,13 @@ export const api = {
       "POST", `/api/jobs/${jobId}/p2/respond`, data,
     ),
 
+  /** Hätäperuutus: asiakkaan hyväksynnät `since`-hetken jälkeen takaisin
+   *  odottamaan hyväksyntää. `since` on epoch ms (selaimen kello). */
+  p2RevertAccepts: (jobId: number, data: { since: number; by?: string }) =>
+    request<{ ok: boolean; reverted: number; keys: string[]; p2: P2State; p2Billing: P2Billing }>(
+      "POST", `/api/jobs/${jobId}/p2/revert-accepts`, data,
+    ),
+
   /** Email a comprehensive payment report (instalments + crew payouts + expenses
    *  + margin) for a gig to the founders. Manager-only summary, never the customer. */
   sendGigReport: (jobId: number) =>

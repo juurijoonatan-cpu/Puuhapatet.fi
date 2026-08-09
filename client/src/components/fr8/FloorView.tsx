@@ -189,6 +189,14 @@ function floorBtnStyle(active: boolean): React.CSSProperties {
   return { minWidth: "34px", height: "34px", padding: "0 4px", borderRadius: "9px", border: "none", cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "14px", fontWeight: active ? 700 : 600, background: active ? "#fff" : "transparent", color: active ? "#0a0a0c" : "rgba(255,255,255,0.55)", transition: "all .16s" };
 }
 
+function floorLongName(floor: string): string {
+  return floor === "K" ? "Kellari" : `${floor}. kerros`;
+}
+
+function floorShortName(floor: string): string {
+  return floor === "K" ? "kellari" : `krs ${floor}`;
+}
+
 function filterBtnStyle(active: boolean): React.CSSProperties {
   return { padding: "7px 13px", borderRadius: "10px", border: "none", cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px", fontWeight: active ? 600 : 500, background: active ? "rgba(255,255,255,0.92)" : "transparent", color: active ? "#0a0a0c" : "rgba(255,255,255,0.55)", transition: "all .15s" };
 }
@@ -688,6 +696,9 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
     setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null);
   }
 
+  // Onko juuri valittu kerros lukossa tekijöiltä? Ohjaa lukkonapin tekstin.
+  const selectedFloorLocked = !!guided?.enabled && (guided.lockedFloors || []).includes(floor);
+
   const editBanner = placeMode === 1 ? "Lisää punaisia pisteitä — klikkaa pohjapiirrosta haluttuun kohtaan."
     : placeMode === 2 ? "Lisää keltaisia pisteitä — klikkaa pohjapiirrosta haluttuun kohtaan."
     : placeMode === "del" ? "Poistotila — klikkaa pisteitä tai merkintöjä jotka haluat poistaa."
@@ -702,7 +713,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
       <div style={{ position: "relative", zIndex: 15, display: "flex", alignItems: "center", gap: isMobile ? "10px" : "18px", flexWrap: "wrap", padding: isMobile ? "10px 12px" : "14px 26px", borderBottom: "1px solid rgba(255,255,255,0.07)", background: isMobile ? "rgba(10,10,12,0.96)" : "rgba(8,8,10,0.5)", backdropFilter: isMobile ? undefined : "blur(18px)", WebkitBackdropFilter: isMobile ? undefined : "blur(18px)" }}>
 
         {/* Floor selector */}
-        <div style={{ display: "flex", alignItems: "center", gap: "7px", padding: "5px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: "13px" }}>
+        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "7px", padding: "5px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: "13px" }}>
           <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.35)", padding: "0 6px 0 8px" }}>KRS</span>
           {shownFloors.map((f) => {
             const gLocked = !!guided?.enabled && (guided.lockedFloors || []).includes(f);
@@ -710,40 +721,47 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
               guided.activeFloors?.length ? guided.activeFloors.includes(f) : guided.activeFloor === f
             );
             const st = floorBtnStyle(f === floor);
+            // Lukkokuvake kertoo VAIN tilan: se on kerroksen kohdalla silloin ja
+            // vain silloin kun kerros on oikeasti lukossa. Lukitseminen tehdään
+            // yhdellä erillisellä napilla (alla) — ei jokaisen kerroksen sisällä,
+            // koska silloin joka kerroksessa näkyi lukko ja rivi luki väärin.
             return (
-              <span key={f} style={{ position: "relative", display: "inline-flex" }}>
-                <button onClick={() => { setFloor(f); setActiveOrb(null); }}
-                  title={gLocked ? "Lukossa tekijöiltä — sinä näet sen silti" : gActive ? "Auki tekijöille" : undefined}
-                  style={{
-                    ...st,
-                    ...(gActive && f !== floor ? { boxShadow: "inset 0 0 0 1.5px rgba(95,224,138,0.7)", color: "#9ff0bd" } : {}),
-                    ...(gLocked && f !== floor ? { opacity: 0.5 } : {}),
-                    ...(onToggleFloorLock ? { paddingRight: 22 } : {}),
-                  }}>
-                  {gLocked ? `🔒${f}` : f}
-                </button>
-                {onToggleFloorLock && (
-                  // Oma pieni osumakohta napin sisällä: kerroksen VAIHTO ja sen
-                  // LUKITUS ovat eri asioita, eikä lukko saa lauetakaan vahingossa
-                  // kun vain selaa kerroksia.
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onToggleFloorLock(f, !gLocked); }}
-                    title={gLocked ? `Avaa kerros ${f} tekijöille` : `Lukitse kerros ${f} tekijöiltä`}
-                    aria-label={gLocked ? `Avaa kerros ${f}` : `Lukitse kerros ${f}`}
-                    style={{
-                      position: "absolute", right: 1, top: "50%", transform: "translateY(-50%)",
-                      width: 18, height: 18, padding: 0, borderRadius: 6, border: "none",
-                      background: "transparent", cursor: "pointer", lineHeight: 1,
-                      fontSize: 10, opacity: gLocked ? 0.95 : 0.4,
-                      color: gLocked ? "#ffce28" : "rgba(255,255,255,0.8)",
-                    }}
-                  >
-                    {gLocked ? "🔓" : "🔒"}
-                  </button>
-                )}
-              </span>
+              <button key={f} onClick={() => { setFloor(f); setActiveOrb(null); }}
+                title={gLocked ? "Lukossa tekijöiltä — sinä näet sen silti" : gActive ? "Auki tekijöille" : undefined}
+                style={{
+                  ...st,
+                  ...(gActive && f !== floor ? { boxShadow: "inset 0 0 0 1.5px rgba(95,224,138,0.7)", color: "#9ff0bd" } : {}),
+                  ...(gLocked && f !== floor ? { opacity: 0.5 } : {}),
+                }}>
+                {gLocked ? `🔒${f}` : f}
+              </button>
             );
           })}
+
+          {onToggleFloorLock && (
+            // Yksi nappi, joka koskee valittua kerrosta. Teksti kertoo teon, ei
+            // tilaa, joten se ei voi mennä sekaisin kerrosrivin lukkomerkkien
+            // kanssa. Kerroksen vaihto ja lukitus ovat eri napit.
+            <>
+              <span aria-hidden style={{ width: 1, height: 20, background: "rgba(255,255,255,0.1)", margin: "0 1px", flexShrink: 0 }} />
+              <button
+                onClick={() => onToggleFloorLock(floor, !selectedFloorLocked)}
+                title={selectedFloorLocked
+                  ? `${floorLongName(floor)} on lukossa tekijöiltä — avaa se`
+                  : `Piilota ${floorLongName(floor).toLowerCase()} tekijöiltä`}
+                style={{
+                  height: 34, padding: "0 11px", borderRadius: 9, border: "none", cursor: "pointer",
+                  whiteSpace: "nowrap", lineHeight: 1,
+                  fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 12, fontWeight: 600,
+                  background: selectedFloorLocked ? "rgba(255,206,40,0.16)" : "rgba(255,255,255,0.06)",
+                  color: selectedFloorLocked ? "#ffce28" : "rgba(255,255,255,0.6)",
+                  transition: "all .16s",
+                }}
+              >
+                {selectedFloorLocked ? `Avaa ${floorShortName(floor)}` : `Lukitse ${floorShortName(floor)}`}
+              </button>
+            </>
+          )}
         </div>
 
         {/* Mini ring + stats */}

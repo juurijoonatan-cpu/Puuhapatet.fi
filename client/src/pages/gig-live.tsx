@@ -440,10 +440,41 @@ export default function GigLivePage() {
               })}
               style={{ padding: "11px 17px", borderRadius: 12, border: `1px solid ${T.hair}`, background: T.fill, color: T.ink, fontFamily: FONT, fontSize: 14, fontWeight: 600, cursor: "pointer" }}
             >
-              Lataa sopimus
+              Lataa urakkasopimus
             </button>
           )}
+          {/* Keltaisten oma sopimus. Se oli tähän asti vain ehtoikkunan sisällä
+              yhden napautuksen takana, eli siitä joka paikassa jossa asiakas
+              hakee sopimuksiaan — tästä rivistä — se puuttui. Kaksi vaihetta,
+              kaksi sopimusta, molemmat samasta paikasta. */}
+          {p2Live && (
+            <a
+              href={P2_CONTRACT_PDF_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "11px 17px", borderRadius: 12, border: `1px solid ${T.hair}`, background: T.fill, color: T.ink, fontFamily: FONT, fontSize: 14, fontWeight: 600, textDecoration: "none" }}
+            >
+              <span aria-hidden style={{ width: 8, height: 8, borderRadius: "50%", background: T.amber }} />
+              Priority 2 -sopimus
+            </a>
+          )}
           </div>
+
+          {/* Hyväksynnän kirjaus: kuka hyväksyi ehdot ja milloin. Se on osa
+              sopimusta, joten se kuuluu tähän eikä pelkästään dialogiin. */}
+          {p2Live && p2!.termsAccepted && (
+            <p style={{ margin: "12px 0 0", fontSize: 12, color: T.muted, lineHeight: 1.6 }}>
+              Priority 2 -tilausehdot hyväksytty
+              {p2!.termsAcceptorName ? ` — ${p2!.termsAcceptorName}` : ""}
+              {p2!.termsAcceptedAt ? `, ${fmtDate(p2!.termsAcceptedAt)}` : ""}.{" "}
+              <button
+                onClick={() => { setTermsError(null); setTermsOpen(true); }}
+                style={{ border: "none", background: "transparent", padding: 0, color: T.navy, fontFamily: FONT, fontSize: 12, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}
+              >
+                Näytä ehdot
+              </button>
+            </p>
+          )}
         </Panel>
 
         <p style={{ textAlign: "center", fontSize: 12, color: T.muted, marginTop: 10 }}>

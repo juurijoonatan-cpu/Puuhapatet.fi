@@ -1266,6 +1266,20 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
                 : <>⚠ Erittely {p2eur(item.totalCents)} ≠ laskutusperusta {p2eur(item.earnedCents)}. Älä lähetä laskua ennen kuin ero on selvitetty.</>}
             </div>
 
+            {/* HINTAJAKAUMA. Keltaisten hinnat sovitaan ikkunakohtaisesti, joten
+                loppusumma ei kerro hinnoista mitään eikä summa/ikkunamäärä ole
+                kenenkään hyväksymä hinta. Tässä näkyvät todelliset hinnat — ja
+                yksikin näppäilyvirhe erottuu omana portaanaan. */}
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 9 }}>
+              {item.byPrice.map((b) => (
+                <span key={b.priceCents} style={{ display: "inline-flex", alignItems: "baseline", gap: 5, padding: "4px 10px", borderRadius: 999, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: "11.5px", fontVariantNumeric: "tabular-nums" }}>
+                  <b style={{ color: "#fff" }}>{b.count} ×</b>
+                  <span style={{ color: "rgba(255,255,255,0.75)" }}>{p2eur(b.priceCents)}</span>
+                  <span style={{ color: "rgba(255,255,255,0.35)" }}>= {p2eur(b.sumCents)}</span>
+                </span>
+              ))}
+            </div>
+
             {showItems && (
               <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
                 {item.byFloor.map((g) => (

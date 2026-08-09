@@ -91,6 +91,35 @@ describe("p2Itemisation", () => {
     expect(it2.byFloor.reduce((n, g) => n + g.sumCents, 0)).toBe(it2.totalCents);
   });
 
+  it("hintajakauma näyttää TODELLISET hinnat, ei keskiarvoa", () => {
+    // Keskiarvo on tässä tasan 34,00 € vaikka yksikään ikkuna ei maksa 34,00 €.
+    // Juuri tästä syystä loppusummasta ei saa päätellä hintoja.
+    const data = project(
+      { "1": [{ p: 2, status: "pesty" }, { p: 2, status: "pesty" }] },
+      { "1#0": locked(3000), "1#1": locked(3800) },
+    );
+    const it2 = p2Itemisation(data);
+    expect(it2.totalCents / it2.lines.length).toBe(3400);   // harhaanjohtava keskiarvo
+    expect(it2.byPrice).toEqual([
+      { priceCents: 3800, count: 1, sumCents: 3800 },
+      { priceCents: 3000, count: 1, sumCents: 3000 },
+    ]);
+  });
+
+  it("hintajakauma ryhmittelee samat hinnat ja summautuu kokonaissummaan", () => {
+    const data = project(
+      { "1": [{ p: 2, status: "pesty" }, { p: 2, status: "pesty" }, { p: 2, status: "pesty" }] },
+      { "1#0": locked(3400), "1#1": locked(3400), "1#2": locked(2700) },
+    );
+    const it2 = p2Itemisation(data);
+    expect(it2.byPrice).toEqual([
+      { priceCents: 3400, count: 2, sumCents: 6800 },
+      { priceCents: 2700, count: 1, sumCents: 2700 },
+    ]);
+    expect(it2.byPrice.reduce((n, b) => n + b.sumCents, 0)).toBe(it2.totalCents);
+    expect(it2.byPrice.reduce((n, b) => n + b.count, 0)).toBe(it2.lines.length);
+  });
+
   it("kertoo kuka hinnan hyväksyi ja milloin", () => {
     const data = project({ "1": [{ p: 2, status: "pesty" }] }, { "1#0": locked(3400, "admin", 123) });
     expect(p2Itemisation(data).lines[0]).toMatchObject({ lockedBy: "admin", lockedAt: 123 });

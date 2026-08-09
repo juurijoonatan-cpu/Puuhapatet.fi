@@ -378,9 +378,26 @@ export interface P2InvoiceFloorGroup {
   lines: P2InvoiceLine[];
 }
 
+/** Yksi hintaporras: montako ikkunaa tällä hinnalla ja paljonko yhteensä. */
+export interface P2PriceBucket {
+  priceCents: number;
+  count: number;
+  sumCents: number;
+}
+
 export interface P2Itemisation {
   lines: P2InvoiceLine[];
   byFloor: P2InvoiceFloorGroup[];
+  /**
+   * HINTAJAKAUMA, kallein ensin.
+   *
+   * Keltaisten hinnat neuvotellaan IKKUNAKOHTAISESTI, eivätkä ne ole yhtä
+   * lukua. Pelkästä loppusummasta ei siis näe hintoja, ja summan jakaminen
+   * ikkunamäärällä antaa keskiarvon jota kukaan ei ole hyväksynyt — juuri sitä
+   * lukua ei saa esittää hintana. Tämä kertoo todellisen jakauman, jolloin
+   * yksikin väärä hinta (näppäilyvirhe) erottuu heti omana portaanaan.
+   */
+  byPrice: P2PriceBucket[];
   /** Σ rivien hinnat. */
   totalCents: number;
   /** Laskutusperusta samasta datasta laskettuna (computeP2Billing). */
@@ -432,9 +449,16 @@ export function p2Itemisation(data: ProjectData): P2Itemisation {
       g.count += 1; g.sumCents += line.priceCents; g.lines.push(line);
     }
   }
+  const buckets = new Map<number, P2PriceBucket>();
+  for (const l of lines) {
+    const b = buckets.get(l.priceCents) ?? { priceCents: l.priceCents, count: 0, sumCents: 0 };
+    b.count += 1; b.sumCents += l.priceCents;
+    buckets.set(l.priceCents, b);
+  }
+  const byPrice = Array.from(buckets.values()).sort((a, b) => b.priceCents - a.priceCents);
   const totalCents = lines.reduce((n, l) => n + l.priceCents, 0);
   const earnedCents = computeP2Billing(data).earnedCents;
-  return { lines, byFloor, totalCents, earnedCents, matchesBilling: totalCents === earnedCents };
+  return { lines, byFloor, byPrice, totalCents, earnedCents, matchesBilling: totalCents === earnedCents };
 }
 
 // ─── Hätäperuutus: asiakkaan hyväksynnät takaisin odottamaan ───────────────────

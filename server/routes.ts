@@ -5709,12 +5709,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const p2FloorLines = p2Items?.byFloor
         .map((g) => `${g.floor === "K" ? "Kellari" : `${g.floor}. kerros`} ${g.count} kpl · ${fmtEur(g.sumCents)}`)
         .join(" &nbsp;·&nbsp; ") ?? "";
+      // Hinnat sovittiin ikkunakohtaisesti, joten lasku kertoo myös millä
+      // hinnoilla — ei pelkkää loppusummaa josta hintoja ei näe.
+      const p2PriceLines = p2Items?.byPrice
+        .map((b) => `${b.count} × ${fmtEur(b.priceCents)}`)
+        .join(" &nbsp;·&nbsp; ") ?? "";
 
       const lineRows = isP2Scope
         ? `<tr style="border-bottom:1px solid #E4E1D7">
             <td style="padding:10px 0;color:#1A1A1A;font-size:14px">
               Lisäikkunat (2. vaihe) — ikkunakohtaisesti sovitut hinnat<br>
               <span style="color:#8C8A82;font-size:12px">${p2b?.lockedWashedCount ?? 0} pestyä ikkunaa · kertymä ${fmtEur(p2b?.earnedCents ?? 0)}${p2InvoicedCents > 0 ? ` · aiemmin laskutettu ${fmtEur(p2InvoicedCents)}` : ""}</span>
+              ${p2PriceLines ? `<br><span style="color:#8C8A82;font-size:12px">Hinnat: ${p2PriceLines}</span>` : ""}
               ${p2FloorLines ? `<br><span style="color:#8C8A82;font-size:12px">${p2FloorLines}</span>` : ""}
             </td>
             <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:#1A1A1A;font-variant-numeric:tabular-nums">${fmtEur(amountCents)}</td>

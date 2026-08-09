@@ -5376,11 +5376,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         totals,
         updatedAt: gig.updatedAt,
         invoicedCents: gig.invoicedCents,
+        // Lähetettyjen laskujen määrä (mitätöidyt eivät ole mukana). Asiakkaan
+        // näkymä näyttää tämän juoksevana lukuna ilman nimittäjää, joten
+        // urakan eriä ja keltaisten P2-laskuja ei tarvitse erotella.
         paymentsCount: livePayments(gig.payments).length,
-        // Kiinteän urakan laskutuserät erikseen: asiakkaan näkymä kertoo
-        // "laskuja lähetetty 2 / 4", ja siihen lukuun eivät kuulu keltaisten
-        // ikkunoiden erilliset P2-laskut (ne eivät ole urakan eriä).
-        p1PaymentsCount: livePayments(gig.payments).filter((p) => (p.scope ?? "p1") === "p1").length,
         isFixedDeal: !!(proj && fixedDealFor(proj)),
         // Read-only floor-plan map (null if the gig has no plan).
         map,

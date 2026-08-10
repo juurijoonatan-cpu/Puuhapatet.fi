@@ -26,6 +26,7 @@ import InkReveal from "@/components/InkReveal";
 import { Shine } from "@/components/animate-ui/primitives/effects/shine";
 import SignaturePad from "@/components/SignaturePad";
 import FloorView from "@/components/fr8/FloorView";
+import { useEaseTo } from "@/hooks/use-ease-to";
 import LoadingOrb from "@/components/LoadingOrb";
 import {
   computeTax, readVatStatus, readInPrepaymentRegister, readPayeeType, fmtPct, fmtEurCents,
@@ -45,6 +46,12 @@ const FONT = "'Poppins', ui-sans-serif, system-ui, -apple-system, sans-serif";
 
 function euro(cents: number) {
   return (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + " €";
+}
+
+/** Ikkunamäärä. Kahdestaan pesty ikkuna on 0,5 kummallekin, joten desimaali on
+ *  todellinen — mutta vain silloin kun sellainen on, ei "12,0". */
+function fmtWindows(n: number): string {
+  return n.toLocaleString("fi-FI", { maximumFractionDigits: 1 });
 }
 
 export default function WorkerPage() {
@@ -1144,10 +1151,16 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
         </div>
         <div style={{ textAlign: "right" }}>
           <p style={{ margin: 0, fontSize: 20, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: "#7CE0A6" }}>{euro(view.stats.earnedCents)}</p>
+          {/* "N ikkunaa · 20,00 €/kpl" oli peruja punaisesta urakasta: N sisälsi
+              keltaiset, mutta taksa oli punaisten oma. Keltaiset maksetaan
+              palkkiotaulukon mukaan (36 € → 19 €), joten yhtä ikkunahintaa ei
+              ole olemassa — se luku oli väärä heti ensimmäisestä keltaisesta.
+              Nyt kumpikin väri kertoo oman lukunsa, eikä kumpaakaan lasketa
+              toisen taksalla. */}
           <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
-            {view.stats.washed} ikkunaa · {euro(view.worker.perWindowCents)}/kpl
-            {(view.stats.p2EarnedCents ?? 0) > 0 ? ` · sis. keltaiset ${euro(view.stats.p2EarnedCents)}` : ""}
-            {(view.stats.p2PendingCents ?? 0) > 0 ? ` · ${euro(view.stats.p2PendingCents)} odottaa hyväksyntää` : ""}
+            {view.stats.p2Washed > 0
+              ? <>{fmtWindows(view.stats.p1Washed)} punaista · {fmtWindows(view.stats.p2Washed)} keltaista</>
+              : <>{fmtWindows(view.stats.washed)} ikkunaa · {euro(view.worker.perWindowCents)}/kpl</>}
           </p>
         </div>
       </div>
@@ -1196,6 +1209,10 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
             activeZone={view.activeZone}
             p2={view.p2 ? { enabled: view.p2.enabled, lockedKeys: view.p2.lockedKeys, payoutByKey: view.p2.payoutByKey } : null}
             guided={guided ? { enabled: guided.enabled, activeFloor: guided.activeFloor, activeFloors: guided.activeFloors, lockedFloors: guided.lockedFloors, nextKey: guided.nextKey } : null}
+            /* Johtajan piilottamat ikkunat katoavat tekijän kartalta kokonaan.
+               Piste jota ei voi painaa näyttäisi rikkinäiseltä sovellukselta,
+               ei päätökseltä. */
+            lockedWindowKeys={view.lockedWindowKeys ?? []}
             floorFocus={guided?.activeFloor ? { floor: guided.activeFloor, nonce: floorFocusNonce } : null}
             /* Discreet map: regular workers see ONLY the opened floors; founders
                (role "host") see every floor. Falls back to the single guide floor
@@ -1385,6 +1402,7 @@ function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
   pendingPayouts: number; onOpenPayouts: () => void; onOpenInfo: () => void;
 }) {
   const s = view.stats;
+  const todayWashed = view.todayWashed ?? 0;
   // Live progress from the worker's OWN map data, so it always matches what they
   // see on the map. Punaiset (sopimus) ja keltaiset (lisätyöt) erikseen — mutta
   // iso prosentti lasketaan MOLEMMISTA. Aiemmin luku katsoi vain punaisia, joten
@@ -1423,6 +1441,15 @@ function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
   }, [view]);
 
   const CIRC = 2 * Math.PI * 52;
+  // ANIMOITU EDISTYMINEN. Kaaret ja prosentti kasvavat samasta arvosta, joten
+  // ne eivät voi olla eri kohdassa — CSS-siirtymä kaarelle ja erillinen laskuri
+  // numerolle ajautuvat aina erilleen. `useEaseTo` kunnioittaa
+  // `prefers-reduced-motion`ia, jolloin arvo on heti lopussa.
+  const grow = useEaseTo(1);
+  const redArcLive = prog.redArc * grow;
+  const yellowArcLive = prog.yellowArc * grow;
+  const pctLive = prog.pct * grow;
+  const doneLive = prog.done * grow;
   return (
     <div style={{ height: "100%", overflowY: "auto", WebkitOverflowScrolling: "touch", padding: 20 }}>
       {/* Koko keikan edistyminen — punainen kaari + keltainen kaari samassa
@@ -1440,25 +1467,32 @@ function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
                 (dashoffset), jotta segmentit eivät mene päällekkäin. */}
             {prog.yellowArc > 0 && (
               <circle cx="58" cy="58" r="52" fill="none" stroke="#ffce28" strokeWidth="8" strokeLinecap="round"
-                strokeDasharray={`${((prog.yellowArc / 100) * CIRC).toFixed(1)} ${CIRC.toFixed(1)}`}
-                strokeDashoffset={`${(-(prog.redArc / 100) * CIRC).toFixed(1)}`}
-                style={{ transition: "stroke-dasharray .6s ease, stroke-dashoffset .6s ease" }} />
+                strokeDasharray={`${((yellowArcLive / 100) * CIRC).toFixed(1)} ${CIRC.toFixed(1)}`}
+                strokeDashoffset={`${(-(redArcLive / 100) * CIRC).toFixed(1)}`} />
             )}
             <circle cx="58" cy="58" r="52" fill="none" stroke="#ff6b6b" strokeWidth="8" strokeLinecap="round"
-              strokeDasharray={`${((prog.redArc / 100) * CIRC).toFixed(1)} ${CIRC.toFixed(1)}`}
-              style={{ transition: "stroke-dasharray .6s ease" }} />
+              strokeDasharray={`${((redArcLive / 100) * CIRC).toFixed(1)} ${CIRC.toFixed(1)}`} />
           </svg>
           <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-            <span style={{ fontSize: 26, fontWeight: 800, lineHeight: 1 }}>{Math.round(prog.pct)}%</span>
+            <span style={{ fontSize: 26, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{Math.round(pctLive)}%</span>
             <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>pesty</span>
           </div>
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{ margin: 0, fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(255,255,255,0.55)" }}>
-            {prog.yellow > 0 ? "Koko keikka" : "Sopimusikkunat (punaiset)"}
-          </p>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <p style={{ margin: 0, fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(255,255,255,0.55)" }}>
+              {prog.yellow > 0 ? "Koko keikka" : "Sopimusikkunat (punaiset)"}
+            </p>
+            {/* Päivän oma saldo. Tekijän ainoa palaute päivän aikana oli pisteen
+                värin vaihtuminen kartalla; tämä kertoo mitä tänään on saatu aikaan. */}
+            {todayWashed > 0 && (
+              <span style={{ marginLeft: "auto", flexShrink: 0, fontSize: 10.5, fontWeight: 700, color: "#7CE0A6", background: "rgba(124,224,166,0.13)", border: "1px solid rgba(124,224,166,0.3)", borderRadius: 999, padding: "2px 8px", whiteSpace: "nowrap" }}>
+                tänään {todayWashed}
+              </span>
+            )}
+          </div>
           <p style={{ margin: "4px 0 0", fontSize: 30, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
-            {prog.done}<span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 600 }}> / {prog.total}</span>
+            {Math.round(doneLive)}<span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 600 }}> / {prog.total}</span>
           </p>
           {/* Punaiset ja keltaiset omina pikkuriveinään — tekijä näkee heti
               kummasta on kyse ilman että hänen tarvitsee tulkita mitään. */}
@@ -1490,7 +1524,9 @@ function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
         <div style={{ padding: 16, borderRadius: 14, background: "rgba(124,224,166,0.10)", border: "1px solid rgba(124,224,166,0.22)" }}>
           <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Sinun ansiosi</p>
-          <p style={{ margin: "4px 0 0", fontSize: 26, fontWeight: 800, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(s.earnedCents)}</p>
+          {/* Ansio nousee samalla rytmillä kuin kaari — se on päivän luku,
+              ja sen ilmestyminen valmiina ei tunnu miltään. */}
+          <p style={{ margin: "4px 0 0", fontSize: 26, fontWeight: 800, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(Math.round(s.earnedCents * grow))}</p>
           {(s.p2EarnedCents ?? 0) > 0 && (
             <p style={{ margin: "3px 0 0", fontSize: 11, color: "rgba(255,220,110,0.85)", fontVariantNumeric: "tabular-nums" }}>
               sis. keltaiset {euro(s.p2EarnedCents)}
@@ -1842,7 +1878,11 @@ function EraInvoiceSection({ token, view, setView }: { token: string; view: Work
                   vero (ALV/ennakonpidätys, sama malli kuin PayoutsTab ja PDF). */}
               <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 10, background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,0.06)", fontSize: 12.5 }}>
                 {([
-                  [`Pestyt ikkunat ${ikkunat.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} × 20 €`, fmtEurCents(ansaittu - sovittuMuutos), "rgba(255,255,255,0.7)"],
+                  // Ei "× 20 €": lasku voi sisältää sekä punaisia omalla
+                  // taksallaan että keltaisia palkkiotaulukon mukaan, jolloin
+                  // yhtä kerrointa ei ole. Rivi kertoo määrän ja summan; keksitty
+                  // yksikköhinta ei tekisi siitä tarkistettavampaa vaan väärän.
+                  [`Pestyt ikkunat ${ikkunat.toLocaleString("fi-FI", { maximumFractionDigits: 1 })}`, fmtEurCents(ansaittu - sovittuMuutos), "rgba(255,255,255,0.7)"],
                   ...(sovittuMuutos !== 0 ? [["Sovittu muutos", `${sovittuMuutos > 0 ? "+ " : "− "}${fmtEurCents(Math.abs(sovittuMuutos))}`, "rgba(255,255,255,0.7)"]] : []),
                   ...(tx.vatRegistered ? [[`ALV ${fmtPct(tx.vatRate)}`, "+ " + fmtEurCents(tx.vatCents), "rgba(255,255,255,0.7)"]] : []),
                   ...(tx.withheld ? [[`Ennakonpidätys ${fmtPct(tx.withholdingRate)}`, "− " + fmtEurCents(tx.withholdingCents), "#E0A800"]] : []),

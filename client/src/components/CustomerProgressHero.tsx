@@ -9,7 +9,8 @@
  * pyöristetty palkki jolla on oma hehku, ja reilusti ilmaa kaiken ympärillä.
  */
 
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { type CSSProperties, type ReactNode } from "react";
+import { useEaseTo, EASE_MS } from "@/hooks/use-ease-to";
 import { CT, CFONT, PROGRESS_GRADIENT, PROGRESS_GLOW, eyebrow, display, tileStyle } from "@/lib/customer-theme";
 
 export interface HeroTile {
@@ -23,45 +24,8 @@ const TONE: Record<NonNullable<HeroTile["tone"]>, string> = {
   ink: CT.ink, green: CT.green, amber: "#8A6A00", navy: CT.navy,
 };
 
-const GROW_MS = 1150;
-
-function reducedMotion(): boolean {
-  return typeof window !== "undefined"
-    && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-}
-
-/**
- * Pehmeä nousu kohti tavoitelukua.
- *
- * Sama arvo ohjaa SEKÄ numeroa että palkin leveyttä, joten ne liikkuvat
- * täsmälleen yhdessä — CSS-siirtymä palkille ja erillinen laskuri numerolle
- * eivät koskaan pysyisi samassa tahdissa. Kesken jäävä nousu jatkuu siitä
- * mihin se ehti (näkymä päivittää itseään taustalla), eikä nykäise alkuun.
- */
-function useEaseTo(target: number, ms = GROW_MS): number {
-  const [value, setValue] = useState(() => (reducedMotion() ? target : 0));
-  const from = useRef(reducedMotion() ? target : 0);
-
-  useEffect(() => {
-    if (reducedMotion()) { from.current = target; setValue(target); return; }
-    const start = performance.now();
-    const a = from.current;
-    if (a === target) return;
-    let raf = 0;
-    const tick = (now: number) => {
-      const t = Math.min(1, (now - start) / ms);
-      const eased = 1 - Math.pow(1 - t, 4);            // easeOutQuart
-      const cur = a + (target - a) * eased;
-      from.current = cur;
-      setValue(cur);
-      if (t < 1) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [target, ms]);
-
-  return value;
-}
+// Nousun animaatio on jaettu tekijän näkymän kanssa (@/hooks/use-ease-to):
+// kaksi kopiota samasta rAF-silmukasta ajautuisi ennen pitkää erilleen.
 
 export default function CustomerProgressHero({
   pct, done, total, awaiting = 0, label = "Työn edistyminen", chip, tiles = [], note,
@@ -161,7 +125,7 @@ export default function CustomerProgressHero({
               style={{
                 position: "absolute", top: 0, bottom: 0, left: 0, width: "34%",
                 background: "linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.55) 50%, rgba(255,255,255,0) 100%)",
-                animation: `cphSheen 2.6s cubic-bezier(.45,0,.2,1) ${GROW_MS}ms infinite`,
+                animation: `cphSheen 2.6s cubic-bezier(.45,0,.2,1) ${EASE_MS}ms infinite`,
                 pointerEvents: "none",
               }}
             />

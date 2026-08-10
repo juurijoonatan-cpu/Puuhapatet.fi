@@ -44,10 +44,28 @@ export interface GuidedWork {
    *  floors 2 and 3" control. Empty/absent = legacy single-floor auto mode.
    *  Within the open floors each worker is still guided nearest-neighbour. */
   openFloors?: string[];
+  /**
+   * YKSITTÄISET LUKITUT IKKUNAT.
+   *
+   * Kerroslukitus on tylppä työkalu: joskus koko kerros on työn alla mutta yksi
+   * ikkuna ei ole (rikki, tavaraa edessä, ei kuulu tähän erään). Näitä avaimia
+   * ei voi merkitä pestyksi eivätkä ne näy tekijän kartalla lainkaan.
+   *
+   * TÄMÄ EI RIIPU `enabled`ista. Yhden ikkunan piilottaminen on pieni arkinen
+   * teko, eikä sen takia pidä joutua kytkemään koko ohjattua etenemistä päälle
+   * — se muuttaisi kaikkien kerrosten käyttäytymisen kerralla.
+   */
+  lockedKeys?: string[];
 }
 
 export function emptyGuidedWork(): GuidedWork {
-  return { enabled: false, activeFloorOverride: null, openFloors: [] };
+  return { enabled: false, activeFloorOverride: null, openFloors: [], lockedKeys: [] };
+}
+
+/** Onko tämä yksittäinen ikkuna lukittu tekijöiltä? */
+export function isWindowLocked(data: ProjectData, key: string): boolean {
+  const keys = data.guided?.lockedKeys;
+  return Array.isArray(keys) && keys.includes(key);
 }
 
 // ─── Derived state ───────────────────────────────────────────────────────────
@@ -355,6 +373,10 @@ export function computeGuided(data: ProjectData, opts?: { anchorWorkerId?: strin
  * always allows clearing a status back to "ei".
  */
 export function isGuidedBlocked(data: ProjectData, key: string): boolean {
+  // Yksittäinen lukko ENSIN: se pätee riippumatta siitä onko ohjattu eteneminen
+  // päällä. Muuten yhden ikkunan piilottaminen vaatisi koko järjestelmän
+  // kytkemisen, mikä muuttaisi jokaisen kerroksen käyttäytymisen kerralla.
+  if (isWindowLocked(data, key)) return true;
   if (data.guided?.enabled !== true) return false;
   const g = computeGuided(data);
   if (!g.activeFloors.length) return false;   // nothing open / all in-scope done
@@ -376,10 +398,20 @@ export function sanitizeGuidedWork(input: any): GuidedWork | undefined {
         rawOpen.filter((f: any) => typeof f === "string" && f.trim()).map((f: string) => f.slice(0, 8)),
       )).slice(0, 32)
     : [];
+  const rawLocked = input.lockedKeys;
+  // Sama muoto ja rajat kuin muualla avaimilla: enintään 64 merkkiä, ei
+  // duplikaatteja. Yläraja on karkea suoja rikkinäistä clienttiä vastaan, ei
+  // tuotepäätös — 4000 lukittua ikkunaa on enemmän kuin yhdessäkään keikassa.
+  const lockedKeys = Array.isArray(rawLocked)
+    ? Array.from(new Set(
+        rawLocked.filter((k: any) => typeof k === "string" && k.trim()).map((k: string) => k.slice(0, 64)),
+      )).slice(0, 4000)
+    : [];
   return {
     enabled: input.enabled === true,
     activeFloorOverride:
       typeof override === "string" && override.trim() ? override.slice(0, 8) : null,
     openFloors,
+    lockedKeys,
   };
 }

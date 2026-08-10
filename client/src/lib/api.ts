@@ -99,6 +99,12 @@ export interface WorkerView {
   deleted: Record<string, boolean>;
   hours: number;
   stats: CrewMemberStats;
+  /** Johtajan yksitellen piilottamat ikkunat — eivät näy tekijän kartalla eikä
+   *  niitä voi merkitä pestyksi. Erillään `guided`ista, joka on null kun
+   *  ohjattu eteneminen on pois päältä. */
+  lockedWindowKeys?: string[];
+  /** Tekijän tänään pesemät ikkunat — päivän oma mittari edistymispalkissa. */
+  todayWashed?: number;
   /** Gig-wide window counts (team) for the shared paydate-progress stat. No euros. */
   windowsTotal: number;
   windowsWashed: number;
@@ -1236,7 +1242,10 @@ export const api = {
     request<{ ok: boolean; gigData: GigData }>("POST", `/api/jobs/${jobId}/gig/invoice/undo`, {}),
 
   // ─── Ohjattu eteneminen (guided) — perustajan kytkin + kerroksen ohitus ─────
-  guidedSet: (jobId: number, data: { enabled?: boolean; activeFloorOverride?: string | null; openFloors?: string[] }) =>
+  // `lockWindow`/`unlockWindow` muuttavat YHTÄ avainta kerrallaan. Koko listan
+  // lähettäminen tekisi kahdesta yhtaikaisesta napautuksesta kilpajuoksun jossa
+  // jälkimmäinen pyyhkii ensimmäisen.
+  guidedSet: (jobId: number, data: { enabled?: boolean; activeFloorOverride?: string | null; openFloors?: string[]; lockWindow?: string; unlockWindow?: string }) =>
     request<{ ok: boolean; guided: GuidedWork; guidedState: GuidedState }>(
       "POST", `/api/jobs/${jobId}/guided`, data,
     ),

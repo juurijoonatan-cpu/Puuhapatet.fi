@@ -539,7 +539,7 @@ export default function AdminProjectPage() {
   // projektiin. Johdettu tila (aktiivinen kerros, seuraava ikkuna) lasketaan
   // clientissä `computeGuided`illä suoraan kartasta, joten se pysyy aina synkassa.
   // HUOM: tämä hook on ennen early returneja (React #310).
-  const onGuidedSet = useCallback(async (data: { enabled?: boolean; activeFloorOverride?: string | null; openFloors?: string[] }) => {
+  const onGuidedSet = useCallback(async (data: { enabled?: boolean; activeFloorOverride?: string | null; openFloors?: string[]; lockWindow?: string; unlockWindow?: string }) => {
     const res = await api.guidedSet(jobId, data);
     if (res.ok && res.data) {
       const guided = res.data.guided;
@@ -1018,6 +1018,13 @@ export default function AdminProjectPage() {
               const next = lock ? open.filter((x) => x !== f) : Array.from(new Set([...open, f]));
               void onGuidedSet({ enabled: true, openFloors: floors.filter((x) => next.includes(x)) });
             } : undefined}
+            /* Yhden ikkunan piilotus kartalta. EI kytke ohjattua etenemistä
+               päälle: yhden pisteen piilottaminen on pieni arkinen teko, eikä
+               sen pidä muuttaa jokaisen kerroksen käyttäytymistä kerralla. */
+            onToggleWindowLock={canEditLocks
+              ? (key, lock) => { void onGuidedSet(lock ? { lockWindow: key } : { unlockWindow: key }); }
+              : undefined}
+            lockedWindowKeys={project.guided?.lockedKeys ?? []}
           />
         )}
       </main>

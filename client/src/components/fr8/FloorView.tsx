@@ -113,6 +113,15 @@ interface Props {
    * Ilman tätä propia (tekijän näkymä) kerrosnappi käyttäytyy kuten ennen.
    */
   onToggleFloorLock?: (floor: string, locked: boolean) => void;
+  /**
+   * Yhden ikkunan lukitus suoraan kartalta (johtaja). Kun tämä on annettu,
+   * ikkunan tietoikkunassa on "Piilota tekijöiltä". Tekijän näkymä ei anna
+   * tätä propia — se vain saa `lockedWindowKeys`in ja piilottaa pisteet.
+   */
+  onToggleWindowLock?: (key: string, locked: boolean) => void;
+  /** Tekijöiltä lukitut ikkunat. Tekijän kartalla nämä eivät näy lainkaan;
+   *  johtajan kartalla ne näkyvät himmeinä ja lukkomerkillä. */
+  lockedWindowKeys?: string[];
   /** Bump `nonce` to programmatically jump the map to `floor` (e.g. the worker's
    *  "Vie minut seuraavaan" button). */
   /** Hyppää kerrokselle; `key` avaa lisäksi juuri sen ikkunan tiedot. */
@@ -226,7 +235,7 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, onLoadObservationImage, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, guided, onToggleFloorLock, floorFocus, restrictFloors }: Props) {
+export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, onLoadObservationImage, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, guided, onToggleFloorLock, onToggleWindowLock, lockedWindowKeys, floorFocus, restrictFloors }: Props) {
   // Discreet worker map: when restrictFloors is set, show ONLY those floors and
   // hide the rest, so a regular worker sees exactly the opened floors and nothing
   // else. Founders (restrictFloors null) always see every floor.
@@ -375,7 +384,15 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
     if (e.touches.length === 0) { pinchRef.current = null; panRef.current = null; }
   }
 
-  const points = getPoints(floor, marks, posOverrides, customMarks, deleted);
+  const lockedKeySet = useMemo(() => new Set(lockedWindowKeys ?? []), [lockedWindowKeys]);
+  const allFloorPoints = getPoints(floor, marks, posOverrides, customMarks, deleted);
+  // TEKIJÄLTÄ LUKITTU IKKUNA EI OLE OLEMASSA. Johtaja näkee sen himmeänä ja
+  // lukkomerkillä (hän on se joka sen lukitsi), tekijältä se katoaa kartalta
+  // kokonaan — muuten se olisi piste jota ei voi painaa, ja se näyttäisi
+  // rikkinäiseltä sovellukselta eikä päätökseltä.
+  const points = onToggleWindowLock
+    ? allFloorPoints
+    : allFloorPoints.filter((pt) => !lockedKeySet.has(pt.key));
   // Keltaisten numerot samasta funktiosta kuin asiakkaan näkymä ja laskun
   // erittely — kartta ei laske niitä omalla tavallaan.
   const p2Numbers = useMemo(
@@ -1019,15 +1036,24 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
               {points.map((pt) => {
                 const status = statuses[pt.key] || "ei";
                 const isDragging = dragging === pt.key;
+                // Lukittu näkyy vain johtajalle (tekijältä se on jo suodatettu
+                // pois): himmeä ja katkoviivainen, jotta yhdellä silmäyksellä
+                // erottaa "piilotettu" tilasta "pesemättä".
+                const locked = lockedKeySet.has(pt.key);
                 return (
                   <button key={pt.key}
                     data-fr8-dot
-                    style={orbStyle(pt, status, isDragging)}
+                    style={{
+                      ...orbStyle(pt, status, isDragging),
+                      ...(locked ? { opacity: 0.34, filter: "grayscale(1)", borderStyle: "dashed" } : null),
+                    }}
                     onClick={(e) => onOrbClick(pt, e)}
                     onPointerDown={(e) => onOrbPointerDown(pt, e)}
                     onPointerMove={(e) => onOrbPointerMove(pt, e)}
                     onPointerUp={(e) => onOrbPointerUp(pt, e)}
-                    title={editMode && placeMode === "del" ? "Poista tämä piste" : `${labelFor(pt)} · ${status === "pesty" ? "Pesty" : status === "kesken" ? "Kesken" : "Ei pesty"}`}
+                    title={editMode && placeMode === "del"
+                      ? "Poista tämä piste"
+                      : `${labelFor(pt)} · ${locked ? "PIILOTETTU tekijöiltä · " : ""}${status === "pesty" ? "Pesty" : status === "kesken" ? "Kesken" : "Ei pesty"}`}
                   />
                 );
               })}
@@ -1394,6 +1420,28 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                     </div>
                   </>
                 )}
+              </div>
+            )}
+
+            {/* YHDEN IKKUNAN LUKITUS. Kerroslukitus on tylppä työkalu: joskus
+                kerros on työn alla mutta yksi ikkuna ei ole (rikki, tavaraa
+                edessä, ei kuulu tähän erään). Poistaminen olisi väärä keino —
+                ikkuna on olemassa ja palaa työhön myöhemmin. Lukittu piste
+                katoaa tekijän kartalta kokonaan eikä sitä voi merkitä pestyksi. */}
+            {onToggleWindowLock && (
+              <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                <button className="status-opt-btn"
+                  onClick={() => { onToggleWindowLock(activeOrb, !lockedKeySet.has(activeOrb)); setActiveOrb(null); setOrbAnchor(null); }}
+                  style={{ color: lockedKeySet.has(activeOrb) ? "#7CE0A6" : "rgba(255,255,255,0.82)" }}>
+                  {lockedKeySet.has(activeOrb) ? (
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#7CE0A6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 9.9-1" /></svg>
+                  ) : (
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+                  )}
+                  <span style={{ flex: 1, textAlign: "left" }}>
+                    {lockedKeySet.has(activeOrb) ? "Avaa tekijöille" : "Piilota tekijöiltä"}
+                  </span>
+                </button>
               </div>
             )}
 

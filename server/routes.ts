@@ -6397,6 +6397,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const want = new Set(raw.filter((f: any) => typeof f === "string").map((f: string) => f.slice(0, 8)));
         project.guided.openFloors = floors.filter((f) => want.has(f));
       }
+      // YKSITTÄISEN IKKUNAN LUKITUS. `lockWindow`/`unlockWindow` muuttavat yhtä
+      // avainta kerrallaan, koska kartalta painetaan yhtä pistettä — koko
+      // listan lähettäminen tekisi kahdesta yhtaikaisesta napautuksesta
+      // kilpajuoksun jossa jälkimmäinen pyyhkii ensimmäisen.
+      const lockOne = String(req.body?.lockWindow ?? "").slice(0, 64);
+      const unlockOne = String(req.body?.unlockWindow ?? "").slice(0, 64);
+      if (lockOne || unlockOne) {
+        const cur = new Set(project.guided.lockedKeys ?? []);
+        // Lukitaan vain piste joka on oikeasti kartalla — kirjoitusvirhe ei saa
+        // jättää kummittelevaa avainta listalle.
+        if (lockOne && allPoints(project).some((p) => p.key === lockOne)) cur.add(lockOne);
+        if (unlockOne) cur.delete(unlockOne);
+        project.guided.lockedKeys = Array.from(cur).slice(0, 4000);
+      }
       const saved = await saveProject(job, project, { guidedMutation: true });
       res.json({ ok: true, guided: saved.guided, guidedState: computeGuided(saved) });
     } catch (e: any) {
@@ -7559,6 +7573,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             washed: f.washed, active: f.active, locked: f.locked, complete: f.complete,
           })),
         };
+      })(),
+      /**
+       * Tekijöiltä piilotetut yksittäiset ikkunat.
+       *
+       * OMANA KENTTÄNÄÄN eikä `guided`in sisällä: `guided` on `null` kun
+       * ohjattu eteneminen on pois päältä, mutta yhden ikkunan piilottamisen
+       * pitää toimia silloinkin. Muuten johtaja joutuisi kytkemään koko
+       * ohjausjärjestelmän päälle piilottaakseen yhden rikkinäisen ikkunan.
+       *
+       * Lista on lyhyt (avaimia, ei dataa), joten se ei paina tätä vastausta —
+       * ja se on pakko lähettää, koska kartta piirretään clientillä.
+       */
+      lockedWindowKeys: project.guided?.lockedKeys ?? [],
+      /**
+       * Tekijän TÄNÄÄN pesemät ikkunat. Yksi luku, ei lokia: koko `project.log`
+       * on iso ja tekijän puhelin hakee tämän vastauksen satoja kertoja
+       * päivässä (ks. worker-view-hygiene.test.ts). Sama avain lasketaan vain
+       * kerran, jottei kahdesti merkitty ikkuna näytä kahdelta.
+       */
+      todayWashed: (() => {
+        const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+        const seen = new Set<string>();
+        for (const l of project.log) {
+          if (l.ts < startOfDay.getTime()) continue;
+          if (l.status !== "pesty" || l.by !== member.id) continue;
+          seen.add(l.key);
+        }
+        return seen.size;
       })(),
       // Gig-wide window counts (team) for the shared "paydate progress" stat — NO
       // euros, so the worker still never sees the gig total/price/cap.

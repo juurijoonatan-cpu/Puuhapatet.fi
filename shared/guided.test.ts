@@ -6,6 +6,7 @@ import {
   isGuidedBlocked,
   sanitizeGuidedWork,
   emptyGuidedWork,
+  isWindowLocked,
 } from "./guided";
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
@@ -336,11 +337,11 @@ describe("sanitizeGuidedWork", () => {
 
   it("normalisoi enabled + override", () => {
     expect(sanitizeGuidedWork({ enabled: true, activeFloorOverride: "3" }))
-      .toEqual({ enabled: true, activeFloorOverride: "3", openFloors: [] });
+      .toEqual({ enabled: true, activeFloorOverride: "3", openFloors: [], lockedKeys: [] });
     expect(sanitizeGuidedWork({ enabled: "yes" }))
-      .toEqual({ enabled: false, activeFloorOverride: null, openFloors: [] });
+      .toEqual({ enabled: false, activeFloorOverride: null, openFloors: [], lockedKeys: [] });
     expect(sanitizeGuidedWork({ enabled: true, activeFloorOverride: "" }))
-      .toEqual({ enabled: true, activeFloorOverride: null, openFloors: [] });
+      .toEqual({ enabled: true, activeFloorOverride: null, openFloors: [], lockedKeys: [] });
   });
 
   it("leikkaa liian pitkän override-arvon", () => {
@@ -354,7 +355,7 @@ describe("sanitizeGuidedWork", () => {
   });
 
   it("emptyGuidedWork on disabloitu", () => {
-    expect(emptyGuidedWork()).toEqual({ enabled: false, activeFloorOverride: null, openFloors: [] });
+    expect(emptyGuidedWork()).toEqual({ enabled: false, activeFloorOverride: null, openFloors: [], lockedKeys: [] });
   });
 });
 
@@ -421,5 +422,64 @@ describe("computeGuided — avaa useita kerroksia (openFloors)", () => {
     expect(g.activeFloor).toBe("K");            // auto: ensimmäinen kesken
     expect(g.activeFloors).toEqual(["K"]);
     expect(isGuidedBlocked(d, "1#0")).toBe(true);
+  });
+});
+
+// ─── Yhden ikkunan lukitus ────────────────────────────────────────────────────
+
+describe("yhden ikkunan lukitus", () => {
+  /**
+   * Kerroslukitus on tylppä: joskus kerros on työn alla mutta yksi ikkuna ei
+   * ole (rikki, tavaraa edessä, ei kuulu tähän erään). Poistaminen olisi väärä
+   * keino — ikkuna on olemassa ja palaa työhön myöhemmin.
+   */
+  it("lukittua ikkunaa ei voi pestä VAIKKA ohjaus olisi pois päältä", () => {
+    // Tämä on koko pointti: yhden ikkunan piilottaminen ei saa vaatia koko
+    // ohjausjärjestelmän kytkemistä, joka muuttaisi jokaisen kerroksen
+    // käyttäytymisen kerralla.
+    const data = fixture();
+    expect(data.guided?.enabled).not.toBe(true);
+    expect(isGuidedBlocked(data, "K#0")).toBe(false);
+    data.guided = { enabled: false, lockedKeys: ["K#0"] };
+    expect(isGuidedBlocked(data, "K#0")).toBe(true);
+    // Naapuri ei lukkiudu mukana.
+    expect(isGuidedBlocked(data, "K#1")).toBe(false);
+  });
+
+  it("lukko pätee myös avoimella kerroksella kun ohjaus on päällä", () => {
+    const data = enable(fixture());
+    expect(computeGuided(data).activeFloor).toBe("K");
+    expect(isGuidedBlocked(data, "K#1")).toBe(false);
+    data.guided!.lockedKeys = ["K#1"];
+    expect(isGuidedBlocked(data, "K#1")).toBe(true);
+  });
+
+  it("lukon avaaminen palauttaa ikkunan työhön", () => {
+    const data = fixture();
+    data.guided = { enabled: false, lockedKeys: ["K#0"] };
+    expect(isGuidedBlocked(data, "K#0")).toBe(true);
+    data.guided.lockedKeys = [];
+    expect(isGuidedBlocked(data, "K#0")).toBe(false);
+  });
+
+  it("isWindowLocked kestää puuttuvan tai roskaisen tilan", () => {
+    const data = fixture();
+    expect(isWindowLocked(data, "K#0")).toBe(false);
+    data.guided = { enabled: false };
+    expect(isWindowLocked(data, "K#0")).toBe(false);
+    (data.guided as { lockedKeys?: unknown }).lockedKeys = "K#0";
+    expect(isWindowLocked(data, "K#0")).toBe(false);
+  });
+
+  it("sanitointi siivoaa avaimet eikä päästä roskaa läpi", () => {
+    const g = sanitizeGuidedWork({
+      enabled: false,
+      lockedKeys: ["K#0", "K#0", "", null, 42, "x".repeat(200)],
+    })!;
+    expect(g.lockedKeys).toEqual(["K#0", "x".repeat(64)]);
+  });
+
+  it("emptyGuidedWork ei lukitse mitään", () => {
+    expect(emptyGuidedWork().lockedKeys).toEqual([]);
   });
 });

@@ -94,3 +94,37 @@ describe("peruttu hyväksyntä palaa odottamaan alkuperäisellä hinnalla", () =
     expect(stale.ok).toBe(false);
   });
 });
+
+describe("asiakas saa hyväksyä aiemmin hylkäämänsä ikkunan", () => {
+  /**
+   * "Ei" on asiakkaan näkymässä hyväksyntänapin vieressä ja osuu vahingossa.
+   * Ilman tätä vahinko jäi lopulliseksi: hylätystä ikkunasta ei saanut rahaa
+   * vaikka se oli jo pesty, eikä asiakas voinut korjata sitä itse. Hylkäys on
+   * asiakkaan oma päätös, joten hän saa myös muuttaa sitä.
+   */
+  const declined = offer({ status: "declined", priceCents: 3400, version: 3, lockedCents: undefined, lockedAt: undefined, lockedBy: undefined });
+
+  it("hyväksyntä hylätystä lukitsee hinnan", () => {
+    const r = p2Transition(declined, "accept", { who: "customer" }, { priceCents: 3400, version: 3 });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.offer.status).toBe("locked");
+    expect(r.offer.lockedCents).toBe(3400);
+    expect(r.offer.lockedBy).toBe("customer");
+    expect(r.offer.version).toBe(4);
+  });
+
+  it("väärä hinta tai versio ei mene läpi hylätystäkään", () => {
+    expect(p2Transition(declined, "accept", { who: "customer" }, { priceCents: 3000, version: 3 }).ok).toBe(false);
+    expect(p2Transition(declined, "accept", { who: "customer" }, { priceCents: 3400, version: 2 }).ok).toBe(false);
+  });
+
+  it("lukittua ei voi hyväksyä uudestaan", () => {
+    const locked = offer({ lockedBy: "customer", lockedCents: 3400, lockedAt: T, version: 3 });
+    expect(p2Transition(locked, "accept", { who: "customer" }, { priceCents: 3400, version: 3 }).ok).toBe(false);
+  });
+
+  it("vain asiakas voi hyväksyä — admin ei hylätynkään kohdalla", () => {
+    expect(p2Transition(declined, "accept", { who: "admin", id: "j" }, { priceCents: 3400, version: 3 }).ok).toBe(false);
+  });
+});

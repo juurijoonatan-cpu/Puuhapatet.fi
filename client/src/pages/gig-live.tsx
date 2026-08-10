@@ -171,8 +171,14 @@ export default function GigLivePage() {
       const res = await api.p2Accept(token, items);
       await reload();
       if (!res.ok) return res.error ?? "Hyväksyntä epäonnistui — yritä uudelleen";
-      if (res.data && res.data.conflicts.length > 0 && res.data.locked.length === 0) {
-        return res.data.conflicts[0]?.error ?? "Hinta ehti muuttua — päivitä näkymä";
+      // Kentät luetaan varovasti: tämä on asiakkaan rahapolku, ja odottamaton
+      // vastausmuoto (vanha palvelin, välityspalvelimen virhesivu) kaatoi koko
+      // sivun juuri hyväksynnän hetkellä. Tuntematon vastaus = ei virhettä
+      // näytettäväksi, ja `reload` yllä kertoo oikean tilan joka tapauksessa.
+      const conflicts = res.data?.conflicts ?? [];
+      const locked = res.data?.locked ?? [];
+      if (conflicts.length > 0 && locked.length === 0) {
+        return conflicts[0]?.error ?? "Hinta ehti muuttua — päivitä näkymä";
       }
       return null;
     },

@@ -200,7 +200,14 @@ export function p2Transition(
     }
     case "accept": {
       if (actor.who !== "customer") return err(403, "Vain asiakas voi hyväksyä ehdotuksen");
-      if (!offer || offer.status !== "proposed") return err(409, "Ehdotus ei ole avoinna");
+      // HYLÄTYN SAA HYVÄKSYÄ. Hylkäys on asiakkaan oma päätös, joten hän saa
+      // myös muuttaa sitä — eikä sitä pitäisi tarvita meiltä pyytää. "Ei" on
+      // asiakkaan näkymässä hyväksyntänapin vieressä ja osuu vahingossa, ja
+      // ilman tätä vahinko jäi lopulliseksi: hylätystä ikkunasta ei saanut
+      // rahaa vaikka se oli jo pesty. Hinta ja versio tarkistetaan yhä.
+      if (!offer || (offer.status !== "proposed" && offer.status !== "declined")) {
+        return err(409, "Ehdotus ei ole avoinna");
+      }
       if (!versionMatches || Number(payload.priceCents) !== offer.priceCents) {
         return err(409, "Hinta ehti muuttua — päivitä näkymä");
       }

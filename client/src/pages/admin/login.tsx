@@ -16,6 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import { USERS, setAdminProfile, type AdminProfile, type UserRole } from "@/lib/admin-profile";
 import { api, getAdminToken, setAdminToken, clearAdminToken } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import ServerStatus from "@/components/ServerStatus";
 
 const LAST_USER_KEY = "puuhapatet_last_user";
 
@@ -201,6 +202,14 @@ export default function AdminLoginPage() {
         <div className="text-center mb-6">
           <h1 className="text-2xl font-semibold text-foreground mb-1">Puuhapatet.</h1>
           <p className="text-muted-foreground">{mode === "setpw" ? "Aseta oma salasanasi" : "Kuka kirjautuu?"}</p>
+          {/* Palvelimen tila ennen kuin salasanaa on edes kirjoitettu. Render
+              nukkuu ~15 min hiljaisuuden jälkeen ja herää ~50 s; ilman tätä
+              kirjautuja painoi nappia, mitään ei tapahtunut minuuttiin, ja
+              ainoa johtopäätös oli että sovellus on rikki. Sama kysely
+              herättää palvelimen, joten odotus on ohi jo kirjoittaessa. */}
+          <div className="mt-3 flex justify-center">
+            <ServerStatus />
+          </div>
         </div>
 
         {/* Set-your-own-password step (worker who logged in with a starter password) */}

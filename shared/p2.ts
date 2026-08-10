@@ -306,6 +306,102 @@ export function pushP2Event(events: P2Event[], ev: P2Event): P2Event[] {
   return events;
 }
 
+// ─── Pestyt keltaiset: rivi riviltä ────────────────────────────────────────────
+
+/** Missä tilassa pestyn keltaisen hinta on. */
+export type P2WashedState =
+  | "locked"     // sovittu — asiakas hyväksyi hinnan
+  | "pending"    // hinta ehdotettu tai vastatarjottu — odottaa asiakasta
+  | "declined"   // asiakas hylkäsi — ei rahaa
+  | "unpriced";  // ei hintaa lainkaan — hinnoittelematta
+
+export interface P2WashedLine {
+  key: string;
+  floor: string;
+  /** Kerroskohtainen juokseva numero — sama kuin asiakkaan kartalla. */
+  number: number;
+  state: P2WashedState;
+  /**
+   * Mitä TÄMÄ ikkuna tuo "PESTY"-ruudun summaan. Sovittu tuo lukitun hinnan,
+   * odottava odotetun, ja hylätty tai hinnoittelematon tuo nollan. Rivien summa
+   * on siis sama luku kuin ruudussa — se on tarkistettavissa eikä uskon asia.
+   */
+  priceCents: number;
+}
+
+export interface P2WashedFloorGroup {
+  floor: string;
+  count: number;
+  sumCents: number;
+  lines: P2WashedLine[];
+}
+
+export interface P2WashedList {
+  byFloor: P2WashedFloorGroup[];
+  /** Kaikki pestyt keltaiset. Sama luku kuin `computeP2Billing().washedTotal`. */
+  count: number;
+  /** Σ rivien hinnat. Sama kuin ruudun euro (earned + pending). */
+  sumCents: number;
+  byState: Record<P2WashedState, { count: number; sumCents: number }>;
+  /** Täsmääkö lista ruudun lukuihin? Epätosi = jompikumpi on väärin. */
+  matchesBilling: boolean;
+}
+
+/**
+ * JOKAINEN pesty keltainen omana rivinään, kerroksittain.
+ *
+ * MIKSI: "79 pestyä · 2 587,50 €" ei ole tarkistettavissa. Kun rakennuksesta
+ * lasketaan 77, pelkkä loppuluku ei kerro kumpi on oikeassa eikä mistä ero
+ * tulee. Rivilista kertoo: käy kerros kerrallaan läpi, ja ylimääräinen tai
+ * puuttuva ikkuna näkyy siinä kerroksessa jossa se on.
+ *
+ * Summa lasketaan riveistä, ei erikseen, ja verrataan `computeP2Billing`in
+ * lukuihin. Jos ne eroavat, `matchesBilling` on epätosi — silloin virhe on
+ * laskennassa eikä laskennassa.
+ */
+export function p2WashedYellows(data: ProjectData): P2WashedList {
+  const p2 = data.p2;
+  const byFloor: P2WashedFloorGroup[] = [];
+  const groups = new Map<string, P2WashedFloorGroup>();
+  const byState: Record<P2WashedState, { count: number; sumCents: number }> = {
+    locked: { count: 0, sumCents: 0 }, pending: { count: 0, sumCents: 0 },
+    declined: { count: 0, sumCents: 0 }, unpriced: { count: 0, sumCents: 0 },
+  };
+  let count = 0, sumCents = 0;
+
+  if (p2) {
+    const counters: Record<string, number> = {};
+    for (const pt of allPoints(data)) {
+      if (pt.p !== 2) continue;
+      // Numero juoksee kerroksen KAIKISTA keltaisista, jotta se vastaa karttaa.
+      counters[pt.floor] = (counters[pt.floor] ?? 0) + 1;
+      if (pt.status !== "pesty") continue;
+      const offer = p2.offers[pt.key];
+      let state: P2WashedState;
+      let priceCents = 0;
+      if (offer?.status === "locked" && offer.lockedCents) { state = "locked"; priceCents = offer.lockedCents; }
+      else if (offer?.status === "declined") { state = "declined"; }
+      else {
+        const pending = p2PendingPriceCents(offer);
+        if (pending != null) { state = "pending"; priceCents = pending; }
+        else { state = "unpriced"; }
+      }
+      const line: P2WashedLine = { key: pt.key, floor: pt.floor, number: counters[pt.floor], state, priceCents };
+      count += 1; sumCents += priceCents;
+      byState[state].count += 1; byState[state].sumCents += priceCents;
+      let g = groups.get(pt.floor);
+      if (!g) { g = { floor: pt.floor, count: 0, sumCents: 0, lines: [] }; groups.set(pt.floor, g); byFloor.push(g); }
+      g.count += 1; g.sumCents += priceCents; g.lines.push(line);
+    }
+  }
+
+  const b = computeP2Billing(data);
+  return {
+    byFloor, count, sumCents, byState,
+    matchesBilling: count === b.washedTotal && sumCents === b.earnedCents + b.pendingEarnedCents,
+  };
+}
+
 // ─── Keltaisten palkkiot tekijöittäin ──────────────────────────────────────────
 
 export interface P2WorkerSplit {

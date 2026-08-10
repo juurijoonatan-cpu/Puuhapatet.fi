@@ -64,19 +64,30 @@ export interface CustomerProgress {
  * painaa prosenttia alas. Kun vaihe 2 avataan, työn laajuus kasvaa ja luku
  * elää sen mukana — se on rehellinen kuvaus tilanteesta.
  *
- * POIS aina: hylätyt keltaiset. Kun asiakas sanoo ei, ikkuna ei ole enää osa
- * työtä — se katoaa sekä osoittajasta että nimittäjästä, jolloin prosentti
- * nousee sen sijaan että jäisi ikuisesti vajaaksi.
+ * POIS: hylätty keltainen jota EI ole pesty. Kun asiakas sanoo ei ennen kuin
+ * työ on tehty, ikkuna ei ole enää osa työtä — se katoaa sekä osoittajasta
+ * että nimittäjästä, jolloin prosentti nousee sen sijaan että jäisi ikuisesti
+ * vajaaksi.
+ *
+ * MUTTA PESTY HYLÄTTY ON MUKANA. Työtä ei voi perua jälkikäteen: ikkuna on
+ * pesty, ja asiakas voi hyväksyä sen hinnan yhä omasta näkymästään. Sama
+ * sääntö on `shared/p2.ts`:ssä (`p2PendingPriceCents`), ja jos tämä poikkeaa
+ * siitä, sama ikkuna on samalla ruudulla yhtä aikaa "odottaa hyväksyntääsi"
+ * -laatikossa ja poissa edistymisestä — eri luvut samasta joukosta.
  */
 /**
  * Kuuluuko piste siihen työhön jota asiakkaalle näytetään? Sama sääntö ohjaa
  * sekä pääkortin kokonaislukua että kartan kerroskohtaista lukua, jotteivät ne
  * voi kertoa eri tarinaa samalla ruudulla.
+ *
+ * `washed` on pakollinen juuri siksi että hylätyn kohtalo riippuu siitä: ilman
+ * sitä laajuus ei voi olla yhtä mieltä hyväksyntälaatikon kanssa.
  */
-export function inCustomerScope(pt: CustomerPoint, p2?: P2PublicView | null): boolean {
+export function inCustomerScope(pt: CustomerPoint, p2: P2PublicView | null | undefined, washed: boolean): boolean {
   if (pt.p !== 2) return true;
   if (!p2?.enabled) return false;
-  return p2.offers[pt.key]?.status !== "declined";
+  if (p2.offers[pt.key]?.status !== "declined") return true;
+  return washed;
 }
 
 export function customerProgress(
@@ -89,10 +100,10 @@ export function customerProgress(
   let total = 0, done = 0, awaiting = 0, p2AccruedCents = 0, p2AccruedCount = 0;
   for (const f of floors) {
     for (const pt of getPoints(f, map)) {
-      if (!inCustomerScope(pt, p2)) continue;
+      const washed = map.statuses[pt.key] === "pesty";
+      if (!inCustomerScope(pt, p2, washed)) continue;
       const offer = pt.p === 2 ? p2?.offers[pt.key] : undefined;
       total += 1;
-      const washed = map.statuses[pt.key] === "pesty";
       if (!washed) continue;
       done += 1;
       if (pt.p !== 2 || !p2Live) continue;

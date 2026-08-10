@@ -131,7 +131,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
   // Kerroksen oma luku lasketaan samalla laajuussäännöllä kuin sivun
   // kokonaisluku (`inCustomerScope`), jotteivät ne voi olla eri mieltä samalla
   // ruudulla: keltaiset ovat mukana vasta kun vaihe 2 on auki.
-  const scoped = points.filter((pt) => inCustomerScope(pt, p2));
+  const scoped = points.filter((pt) => inCustomerScope(pt, p2, map.statuses[pt.key] === "pesty"));
   const washed = scoped.filter((p) => map.statuses[p.key] === "pesty").length;
   const total = scoped.length;
   const pct = total > 0 ? Math.round((washed / total) * 100) : 0;

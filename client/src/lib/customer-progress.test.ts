@@ -72,10 +72,33 @@ describe("customerProgress", () => {
     expect(customerProgress(map, p2)).toMatchObject({ total: 2, done: 2, pct: 100, awaiting: 1 });
   });
 
-  it("hylätty keltainen katoaa kokonaan — myös nimittäjästä", () => {
+  it("PESEMÄTÖN hylätty keltainen katoaa kokonaan — myös nimittäjästä", () => {
     const map = mapWith([{ p: 1 }, { p: 2 }], { "1#0": "pesty" });
     expect(customerProgress(map, offers({}))).toMatchObject({ total: 2, done: 1, pct: 50 });
     expect(customerProgress(map, offers({ "1#1": "declined" }))).toMatchObject({ total: 1, done: 1, pct: 100 });
+  });
+
+  it("PESTY hylätty keltainen EI katoa — se on yhä odottava, aivan kuten ehdotettu", () => {
+    // VIKA JOTA TÄMÄ VARTIOI: kun hylätystä tuli tavallinen odottava
+    // (`shared/p2.ts`, p2PendingPriceCents), tätä tiedostoa ei päivitetty.
+    // Samalla ruudulla luki yhtä aikaa "12 ikkunaa odottaa hyväksyntääsi" ja
+    // edistymisprosentti josta ne 3 hylättyä puuttuivat — sekä osoittajasta
+    // että nimittäjästä. Tehtyä työtä ei voi perua asiakkaan painalluksella.
+    const map = mapWith([{ p: 2 }, { p: 2 }], { "1#0": "pesty", "1#1": "pesty" });
+    const both = customerProgress(map, offers({ "1#0": "proposed", "1#1": "declined" }));
+    expect(both).toMatchObject({ total: 2, done: 2, pct: 100, awaiting: 2 });
+  });
+
+  it("hylätty ei saa laskea prosenttia pesemällä lisää", () => {
+    // Sama kerros ennen ja jälkeen hylkäyksen: pesty ikkuna on pesty. Vanhalla
+    // säännöllä hylkäys pudotti ikkunan pois molemmista luvuista, jolloin
+    // 2/3 = 67 % muuttui 1/2 = 50 % — prosentti LASKI ilman että mitään
+    // muuttui työmaalla. Juuri se romuttaa luottamuksen lukuun.
+    const map = mapWith([{ p: 2 }, { p: 2 }, { p: 2 }], { "1#0": "pesty", "1#1": "pesty" });
+    const before = customerProgress(map, offers({ "1#0": "proposed", "1#1": "proposed", "1#2": "proposed" }));
+    const after = customerProgress(map, offers({ "1#0": "proposed", "1#1": "declined", "1#2": "proposed" }));
+    expect(before).toMatchObject({ total: 3, done: 2, pct: 67 });
+    expect(after).toMatchObject({ total: 3, done: 2, pct: 67 });
   });
 
   it("sovittu (locked) keltainen ei odota hyväksyntää", () => {

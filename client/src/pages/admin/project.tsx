@@ -1209,7 +1209,10 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, onGoToWindow, can
           {countered.length > 0 ? ` · ${countered.length} vastatarjous` : ""}
         </span>
       }
-      defaultOpen={countered.length > 0}
+      // Kun vaihe 2 on päällä, tämä ON näkymä eikä liite: se aukeaa itsestään.
+      // Suljettuna se oli sivun kahdeksas palkki, ja kaikki mitä siitä näki oli
+      // otsikkorivin summa.
+      defaultOpen={countered.length > 0 || !!p2?.enabled}
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 
@@ -1227,7 +1230,23 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, onGoToWindow, can
 
         {/* Luvut: sovittu · pesty · odottaa hyväksyntää · kate. Ei virkkeitä. */}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <div style={tile}><span style={tileLabel}>SOVITTU</span><span style={{ ...tileVal, color: "#7CE0A6" }}>{b.lockedCount} kpl · {p2eur(b.lockedSumCents)}</span></div>
+          {/* SOVITTU ja PESTY leikkaavat kahdesta eri suunnasta: tämä on
+              hyväksytty (pesty tai ei), tuo on pesty (hyväksytty tai ei).
+              Yhteinen osa on `earnedCents`. Ilman alariviä ne näyttävät
+              kahdelta erilliseltä potilta, ja niiden yhteenlasku antaa summan
+              jota ei ole missään — juuri se sai perustajan laskemaan
+              1 438,50 + 1 603,50 = 3 042,00 ja epäilemään että 282,50 € on
+              hukassa. Erotus on tässä nimeltä mainittuna. */}
+          <div style={tile}>
+            <span style={tileLabel}>SOVITTU</span>
+            <span style={{ ...tileVal, color: "#7CE0A6" }}>{b.lockedCount} kpl · {p2eur(b.lockedSumCents)}</span>
+            <span style={{ fontSize: "10px", color: "rgba(255,255,255,0.45)", display: "block", marginTop: 2 }}>
+              {b.lockedWashedCount} pesty
+              {b.lockedCount > b.lockedWashedCount
+                ? ` · ${b.lockedCount - b.lockedWashedCount} pesemättä ${p2eur(b.lockedSumCents - b.earnedCents)}`
+                : " · kaikki pesty ✓"}
+            </span>
+          </div>
           {/* PESTY = kaikki pestyt keltaiset. Tiili näytti ennen pelkkää
               lukittua osajoukkoa (lockedWashedCount), joten kun luvun vähensi
               kokonaismäärästä, erotus oli aivan liian suuri — ja tekijän

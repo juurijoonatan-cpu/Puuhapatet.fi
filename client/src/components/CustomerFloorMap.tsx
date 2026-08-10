@@ -146,6 +146,8 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
   const [p2Busy, setP2Busy] = useState(false);
   const [p2Error, setP2Error] = useState<string | null>(null);
   const [addMode, setAddMode] = useState(false);
+  /** Montako ikkunaa tässä lisäysistunnossa on merkitty — kuittaus käyttäjälle. */
+  const [addedCount, setAddedCount] = useState(0);
   // Phase-2 opens focused on just the extra (yellow) windows — the reds are done,
   // so the map starts clean and only the numbered Priority 2 points carry it.
   const [onlyYellow, setOnlyYellow] = useState(p2On);
@@ -322,13 +324,15 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
   }
   // Free actions = PLANNING (add / remove own window, decline). No commitment, so
   // the customer can explore and prepare the map before any terms — a logical order.
-  async function runP2Free<A extends unknown[]>(fn: (...args: A) => Promise<string | null>, ...args: A) {
-    if (!p2Actions) return;
+  /** Palauttaa `true` kun toiminto onnistui — kutsuja voi luottaa tulokseen. */
+  async function runP2Free<A extends unknown[]>(fn: (...args: A) => Promise<string | null>, ...args: A): Promise<boolean> {
+    if (!p2Actions) return false;
     setP2Busy(true); setP2Error(null);
     const err = await fn(...args);
     setP2Busy(false);
-    if (err) setP2Error(err);
-    else closeOffer();
+    if (err) { setP2Error(err); return false; }
+    closeOffer();
+    return true;
   }
 
   // One open-proposal row (accept / counter / decline). Extracted so the floor
@@ -572,6 +576,31 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
         onPointerCancel={onPtrUp}
         style={{ position: "relative", borderRadius: 12, border: `1px solid ${T.hair}`, background: "#FFFFFF", padding: 12, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", scrollMarginTop: 12, touchAction: addMode ? "auto" : "none", cursor: addMode ? undefined : dragging ? "grabbing" : "grab" }}
       >
+        {/* LISÄYSTILAN OHJAIN KARTAN PÄÄLLÄ. Ohje ja lopetus ovat siellä missä
+            katse on — kartalla — eivätkä sen alapuolella, jonne piti vierittää
+            jokaisen pisteen jälkeen. Laskuri kuittaa että napautus meni perille;
+            ilman sitä ainoa palaute oli uusi pieni pallo pohjapiirroksessa. */}
+        {p2On && addMode && (
+          // `pointerEvents: none` on olennainen: palkki leijuu pohjapiirroksen
+          // PÄÄLLÄ, ja ilman tätä sen alle jäävät ikkunat olisivat lisäystilassa
+          // tavoittamattomissa — juuri ne ylimmän rivin ikkunat. Napautus menee
+          // palkin läpi kartalle; vain "Valmis" ottaa painalluksen vastaan.
+          <div style={{ position: "absolute", top: 10, left: 10, right: 56, zIndex: 21, display: "flex", alignItems: "center", gap: 8, padding: "9px 11px", borderRadius: 11, background: "rgba(31,59,87,0.94)", color: "#fff", boxShadow: "0 2px 10px rgba(0,0,0,0.28)", pointerEvents: "none" }}>
+            <span style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.35, minWidth: 0 }}>
+              {addedCount > 0
+                ? <>Lisätty <b style={{ fontVariantNumeric: "tabular-nums" }}>{addedCount}</b> {addedCount === 1 ? "ikkuna" : "ikkunaa"} — napauta lisää</>
+                : <>Napauta ikkunan kohtaa kartalla</>}
+            </span>
+            <button
+              disabled={p2Busy}
+              onClick={() => { setAddMode(false); setAddedCount(0); }}
+              style={{ marginLeft: "auto", flexShrink: 0, padding: "7px 14px", borderRadius: 9, border: "none", background: "#fff", color: "#1F3B57", fontFamily: FONT, fontSize: 12.5, fontWeight: 800, cursor: "pointer", pointerEvents: "auto" }}
+            >
+              Valmis
+            </button>
+          </div>
+        )}
+
         {/* Zoom controls — pinch/wheel also work; these are the always-visible fallback. */}
         <div style={{ position: "absolute", top: 10, right: 10, zIndex: 20, display: "flex", flexDirection: "column", gap: 6 }}>
           <button onClick={() => zoomBy(1.35)} aria-label="Lähennä" title="Lähennä" style={{ width: 34, height: 34, borderRadius: 9, border: `1px solid ${T.hair}`, background: "rgba(255,255,255,0.95)", color: T.ink, fontSize: 19, fontWeight: 700, cursor: "pointer", lineHeight: 1, boxShadow: "0 1px 4px rgba(0,0,0,0.12)" }}>+</button>
@@ -593,8 +622,14 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
               const rect = e.currentTarget.getBoundingClientRect();
               const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
               const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
-              setAddMode(false);
-              void runP2Free(p2Actions!.addPoint, floor, x, y);
+              // LISÄYSTILA JÄÄ PÄÄLLE. Ennen tämä sammui heti ensimmäisestä
+              // pisteestä, ja koska lisäysnappi on kartan ALAPUOLELLA, viiden
+              // ikkunan merkitseminen tarkoitti: vieritä alas, paina, vieritä
+              // ylös, napauta — viisi kertaa. Nyt jokainen seuraava ikkuna on
+              // yksi napautus, ja tilasta poistutaan kartan päällä olevasta
+              // "Valmis"-painikkeesta.
+              void runP2Free(p2Actions!.addPoint, floor, x, y)
+                .then((ok) => { if (ok) setAddedCount((n) => n + 1); });
             } : undefined}
           >
             {points.map((pt) => {
@@ -840,26 +875,21 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
           {/* The add-window CTA: a warm, obvious invitation. When the customer
               hasn't engaged at all yet, it grows into an empty-state that
               actively expects them to add windows. */}
-          {addMode ? (
-            <button
-              disabled={p2Busy}
-              onClick={() => setAddMode(false)}
-              style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1.5px solid #3E7C59", background: "#EAF6EE", color: "#1F5B36", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}
-            >
-              👆 Napauta kartalta ikkunan kohta — tai peru tästä
-            </button>
-          ) : (
+          {/* Lisäystilassa ohjain on kartan päällä, joten tähän ei tarvita
+              toista nappia — se olisi vain sama toiminto kahdessa paikassa. */}
+          {!addMode && (
             <div style={{ borderRadius: 12, border: `1.5px dashed ${T.navy}55`, background: "linear-gradient(160deg, rgba(31,59,87,0.05), rgba(224,168,0,0.06))", padding: 14 }}>
               <p style={{ margin: "0 0 10px", fontSize: 12.5, color: T.muted, lineHeight: 1.55 }}>
                 Merkitse kartalta ikkunat jotka haluat mukaan — hinnoittelemme jokaisen erikseen.
+                Voit merkitä niin monta kuin haluat peräkkäin.
               </p>
               <button
                 disabled={p2Busy}
                 data-cfm-anim=""
-                onClick={() => setAddMode(true)}
+                onClick={() => { setAddMode(true); setAddedCount(0); }}
                 style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 18px", borderRadius: 11, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 14, fontWeight: 700, cursor: "pointer", animation: anyYellowActivity ? undefined : "cfmAddNudge 2.4s ease-in-out infinite" }}
               >
-                <span style={{ fontSize: 17, lineHeight: 1 }}>➕</span> Lisää ikkuna Priority 2:seen
+                <span style={{ fontSize: 17, lineHeight: 1 }}>➕</span> Lisää ikkunoita
               </button>
             </div>
           )}

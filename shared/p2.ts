@@ -692,10 +692,36 @@ export function p2PendingPriceCents(offer: P2Offer | undefined): number | null {
 // ─── Money ─────────────────────────────────────────────────────────────────────
 
 /**
- * Worker's payout for one locked yellow window. A fixed rule for the exact
- * locked price wins (34 € → 18 €, 37,50 € → 20 €); otherwise a percentage share
- * of the locked price. `schedule` absent → DEFAULT_P2_PAYOUT_SCHEDULE, so the two
- * agreed FR8 sizes always pay their flat amount without any per-gig config.
+ * Tekijän palkkio yhdestä sovitusta keltaisesta ikkunasta.
+ *
+ * PALKKIOTAULUKKO ON KÄYRÄ, EI KOLME SAARTA.
+ *
+ * Sovitut ankkurit ovat 34 € → 18 €, 37,50 € → 20 € ja 50 € → 27 €. Ennen
+ * niihin osuttiin TÄSMÄLLEEN ja kaikki muu maksettiin tasaprosentilla (53 %).
+ * Koska jokainen ankkuri on prosenttiviivan YLÄPUOLELLA, palkkio putosi heti
+ * ankkurin jälkeen:
+ *
+ *     37,50 € → 20,00 €        37,51 € → 19,88 €
+ *     50,00 € → 27,00 €        50,01 € → 26,51 €
+ *
+ * Kalliimmasta ikkunasta sai siis VÄHEMMÄN. Se ei ole hinnoittelupäätös vaan
+ * taulukon muodon sivuvaikutus, eikä sitä voi selittää tekijälle.
+ *
+ * Nyt palkkio kulkee suoraan ankkurista ankkuriin. Ankkurit maksavat
+ * täsmälleen sen mitä on sovittu — 34 € on yhä 18 € ja 37,50 € on yhä 20 € —
+ * ja niiden välissä palkkio nousee tasaisesti hinnan mukana. Ankkurivälin
+ * ulkopuolella käytetään lähimmän ankkurin omaa osuutta, jolloin käyrä pysyy
+ * jatkuvana eikä kukaan joudu arvaamaan trendiä sovitun alueen ulkopuolelle.
+ *
+ * Esimerkki (36 € on 34:n ja 37,50:n välissä, 57 % matkasta):
+ *     36,00 € → 18 € + 0,571 × 2 € = 19,14 €
+ *
+ * Ominaisuus jonka tämä takaa: kalliimpi ikkuna ei voi koskaan maksaa tekijälle
+ * vähemmän kuin halvempi. `shared/p2-payout.test.ts` vartioi sitä.
+ *
+ * `schedule` puuttuu → DEFAULT_P2_PAYOUT_SCHEDULE. Tyhjä taulukko → pelkkä
+ * `workerSharePct`, eli vanha tasaprosentti, jotta keikka ilman palkkiotaulukkoa
+ * käyttäytyy kuten ennenkin.
  */
 export function p2WorkerPayoutCents(
   lockedCents: number,
@@ -703,11 +729,33 @@ export function p2WorkerPayoutCents(
   schedule?: P2PayoutRule[] | null,
 ): number {
   const cents = Math.max(0, Math.round(Number(lockedCents) || 0));
-  const rules = schedule && schedule.length ? schedule : DEFAULT_P2_PAYOUT_SCHEDULE;
-  const rule = rules.find((r) => r.priceCents === cents);
-  if (rule) return Math.max(0, Math.round(rule.payoutCents));
-  const pct = Math.max(1, Math.min(100, Math.round(Number(workerSharePct) || 0)));
-  return Math.round(cents * pct / 100);
+  if (cents === 0) return 0;
+  const rules = schedule === undefined || schedule === null ? DEFAULT_P2_PAYOUT_SCHEDULE : schedule;
+  // Kelvolliset ankkurit hinnan mukaan. Nollahinta ei ole ankkuri: siitä ei
+  // saa osuutta eikä sen kautta voi vetää suoraa.
+  const anchors = rules
+    .filter((r) => Number.isFinite(r?.priceCents) && Number.isFinite(r?.payoutCents) && r.priceCents > 0 && r.payoutCents >= 0)
+    .map((r) => ({ price: Math.round(r.priceCents), pay: Math.round(r.payoutCents) }))
+    .sort((a, b) => a.price - b.price);
+
+  if (anchors.length === 0) {
+    const pct = Math.max(1, Math.min(100, Math.round(Number(workerSharePct) || 0)));
+    return Math.round(cents * pct / 100);
+  }
+  const lo = anchors[0], hi = anchors[anchors.length - 1];
+  // Alueen ulkopuolella lähimmän ankkurin oma osuus — ankkurissa itsessään
+  // tämä antaa täsmälleen sovitun summan, joten käyrä ei hyppää reunoilla.
+  if (cents <= lo.price) return Math.round(cents * lo.pay / lo.price);
+  if (cents >= hi.price) return Math.round(cents * hi.pay / hi.price);
+  for (let i = 0; i < anchors.length - 1; i++) {
+    const a = anchors[i], b = anchors[i + 1];
+    if (cents < a.price || cents > b.price) continue;
+    if (b.price === a.price) return Math.round(Math.max(a.pay, b.pay));
+    const t = (cents - a.price) / (b.price - a.price);
+    return Math.round(a.pay + t * (b.pay - a.pay));
+  }
+  /* istanbul ignore next — kaikki hinnat osuvat johonkin haaraan yllä. */
+  return Math.round(cents * hi.pay / hi.price);
 }
 
 export interface P2Billing {

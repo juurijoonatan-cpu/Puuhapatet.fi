@@ -345,9 +345,28 @@ export function withAuth(headers: Record<string, string> = {}): Record<string, s
 /** Kirjautumisreitti — 401 siltä tarkoittaa väärää salasanaa, ei mennyttä sessiota. */
 const LOGIN_PATH = "/api/admin/login";
 
+/**
+ * Sivut joilla EI OLE admin-sessiota: asiakkaan seurantalinkki ja tekijän oma
+ * näkymä. Ne tunnistautuvat omalla tokenillaan polussa, eikä niillä ole mitään
+ * tekemistä `/admin/login`in kanssa.
+ *
+ * MIKSI TÄMÄ ON OLEMASSA: yksi puuttuva rivi palvelimen julkisten reittien
+ * listasta riitti heittämään asiakkaan meidän kirjautumisruudullemme kesken
+ * ikkunan lisäämisen. Portti vastasi 401, ja tämä funktio tulkitsi sen
+ * vanhentuneeksi admin-sessioksi. Reitin puuttuminen on palvelinvirhe ja se on
+ * korjattu erikseen — mutta uloskirjautuminen ei ole oikea vastaus mihinkään
+ * 401:een sivulla jolla ei ole sessiota, joten se estetään myös täällä.
+ * Seuraava vastaava aukko näkyy virheilmoituksena, ei ulosheittona.
+ */
+export function isTokenPage(pathname: string): boolean {
+  return /^\/(seuranta|tarjous|tyo)\//.test(pathname);
+}
+
 function handleUnauthorized(): void {
+  if (typeof window === "undefined") { clearAdminToken(); return; }
+  if (isTokenPage(window.location.pathname)) return;
   clearAdminToken();
-  if (typeof window !== "undefined" && !window.location.pathname.startsWith("/admin/login")) {
+  if (!window.location.pathname.startsWith("/admin/login")) {
     window.location.href = "/admin/login";
   }
 }

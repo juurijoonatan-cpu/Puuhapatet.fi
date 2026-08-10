@@ -247,8 +247,11 @@ describe("computeP2Billing", () => {
     expect(b.lockedWashedCount).toBe(1);
     expect(b.earnedCents).toBe(3000);
     expect(b.remainingLockedCents).toBe(2000);
-    expect(b.workerCostCents).toBe(1500);   // 50 % × 3000
-    expect(b.marginCents).toBe(1500);
+    // 30 € on alle alimman ankkurin (34 € → 18 €), joten se maksetaan sen
+    // omalla osuudella 18/34 = 52,9 %. Ennen tämä oli tasainen 50 %; ks.
+    // shared/p2-payout.test.ts siitä miksi tasaprosentti piti korvata.
+    expect(b.workerCostCents).toBe(1588);   // 30 € × 18/34
+    expect(b.marginCents).toBe(1412);       // 3000 − 1588
 
     data.deleted["K#3"] = true; // poistettu lukittu piste putoaa summasta
     b = computeP2Billing(data);
@@ -285,7 +288,7 @@ describe("computeP2Billing", () => {
     const b = computeP2Billing(data);
     expect(b.pendingWashedCount).toBe(2);
     expect(b.pendingEarnedCents).toBe(7000);        // 4000 ehdotus + 3000 vastatarjous
-    expect(b.pendingWorkerCostCents).toBe(3500);    // 50 % kumpikin
+    expect(b.pendingWorkerCostCents).toBe(3728);    // 40 € → 21,40 € + 30 € → 15,88 €
     expect(b.unpricedWashedCount).toBe(0);
     // EI mukana varmoissa luvuissa.
     expect(b.earnedCents).toBe(0);
@@ -295,12 +298,24 @@ describe("computeP2Billing", () => {
 });
 
 describe("p2WorkerPayoutCents", () => {
-  it("pyöristää senttiin ja clampaa osuuden 1..100 (%-fallback ei-taulukkohinnoille)", () => {
-    // 3000 ja 2500 EIVÄT ole oletustaulukossa → %-osuus.
-    expect(p2WorkerPayoutCents(3000, 53)).toBe(1590);
-    expect(p2WorkerPayoutCents(2500, 53)).toBe(1325);
-    expect(p2WorkerPayoutCents(3000, 0)).toBe(30);     // clamp → 1 %
-    expect(p2WorkerPayoutCents(3000, 200)).toBe(3000); // clamp → 100 %
+  it("taulukon ulkopuolinen hinta kulkee käyrällä, ei tasaprosentilla", () => {
+    // MUUTTUNUT TAHALLAAN. Ennen kaikki taulukon ulkopuolinen maksettiin
+    // tasaprosentilla, jolloin palkkio putosi heti ankkurin jälkeen
+    // (37,51 € maksoi vähemmän kuin 37,50 €). Nyt palkkio kulkee suoraan
+    // ankkurista ankkuriin; alle alimman ankkurin käytetään sen omaa osuutta
+    // (18/34), jolloin käyrä on jatkuva myös reunalla. Ks. p2-payout.test.ts.
+    expect(p2WorkerPayoutCents(3000, 53)).toBe(1588);   // 30 € × 18/34
+    expect(p2WorkerPayoutCents(2500, 53)).toBe(1324);   // 25 € × 18/34
+    // Osuus ei enää ohjaa mitään kun palkkiotaulukko on olemassa — taulukko on
+    // sovittu, prosentti oli vain sen puuttuva täyte.
+    expect(p2WorkerPayoutCents(3000, 0)).toBe(1588);
+    expect(p2WorkerPayoutCents(3000, 200)).toBe(1588);
+  });
+
+  it("ILMAN taulukkoa osuus yhä ohjaa ja clampataan 1..100", () => {
+    expect(p2WorkerPayoutCents(3000, 53, [])).toBe(1590);
+    expect(p2WorkerPayoutCents(3000, 0, [])).toBe(30);     // clamp → 1 %
+    expect(p2WorkerPayoutCents(3000, 200, [])).toBe(3000); // clamp → 100 %
   });
 
   it("oletustaulukko: 34 € → 18 €, 37,50 € → 20 €, 50 € → 27 € (osuudesta riippumatta)", () => {
@@ -312,10 +327,12 @@ describe("p2WorkerPayoutCents", () => {
     expect(p2WorkerPayoutCents(3750, 10)).toBe(2000);
   });
 
-  it("eksplisiittinen taulukko voittaa; muut hinnat käyttävät osuutta", () => {
+  it("eksplisiittinen taulukko voittaa; muut hinnat kulkevat sen osuudella", () => {
     const sched = [{ priceCents: 5000, payoutCents: 2500 }];
-    expect(p2WorkerPayoutCents(5000, 53, sched)).toBe(2500);   // rule
-    expect(p2WorkerPayoutCents(3400, 53, sched)).toBe(Math.round(3400 * 53 / 100)); // no rule → %
+    expect(p2WorkerPayoutCents(5000, 53, sched)).toBe(2500);   // ankkuri
+    // Yhden ankkurin taulukko on käytännössä osuus (2500/5000 = 50 %), ja se
+    // pätee myös ankkurin ulkopuolella — muuten palkkio hyppäisi ankkurissa.
+    expect(p2WorkerPayoutCents(3400, 53, sched)).toBe(1700);
   });
 });
 
@@ -351,20 +368,20 @@ describe("crewMemberStats — P2", () => {
     expect(s.p2EarnedCents).toBe(0);
   });
 
-  it("p2:lla: punainen maksaa oman taksan, lukittu keltainen %-osuuden hinnasta, lukitsematon 0", () => {
+  it("p2:lla: punainen maksaa oman taksan, lukittu keltainen palkkiotaulukon mukaan, lukitsematon 0", () => {
     const data = fixture();
     data.p2 = emptyP2State();
     data.p2.enabled = true;
     data.p2.workerSharePct = 50;
     data.p2.offers["K#2"] = { status: "locked", priceCents: 3000, lockedCents: 3000, version: 2, updatedAt: 1 };
     data.statuses["K#0"] = "pesty"; data.washedBy["K#0"] = "jani";  // punainen → 2000
-    data.statuses["K#2"] = "pesty"; data.washedBy["K#2"] = "jani";  // lukittu keltainen → 1500
+    data.statuses["K#2"] = "pesty"; data.washedBy["K#2"] = "jani";  // lukittu keltainen → 1588
     data.statuses["K#3"] = "pesty"; data.washedBy["K#3"] = "jani";  // lukitsematon keltainen → 0
 
     const s = crewMemberStats(data, crewMember("jani"));
     expect(s.washed).toBe(3);                 // LUKUMÄÄRÄ laskee kaikki pestyt
-    expect(s.earnedCents).toBe(3500);         // 2000 + 1500 + 0
-    expect(s.p2EarnedCents).toBe(1500);
+    expect(s.earnedCents).toBe(3588);         // 2000 punainen + 1588 keltainen + 0
+    expect(s.p2EarnedCents).toBe(1588);   // 30 € × 18/34
 
     // Attribuutiotäsmäytys vertailee kappaleita — pysyy täsmäävänä.
     const check = checkWindowAttribution(data);
@@ -385,8 +402,8 @@ describe("crewMemberStats — P2", () => {
     const milja = crewMemberStats(data, crewMember("milja"));
     expect(jani.washed).toBe(0.5);
     expect(milja.washed).toBe(0.5);
-    expect(jani.earnedCents).toBe(750);   // 0.5 × 1500
-    expect(milja.earnedCents).toBe(750);
+    expect(jani.earnedCents).toBe(794);   // 0,5 × 1588
+    expect(milja.earnedCents).toBe(794);
     expect(checkWindowAttribution(data).matches).toBe(true);
   });
 });

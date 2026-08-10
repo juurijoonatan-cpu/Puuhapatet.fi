@@ -77,20 +77,23 @@ describe("keltaisten luvut täsmäävät", () => {
 
   it("osalaskurit summautuvat pestyjen kokonaismäärään", () => {
     const b = computeP2Billing(MIXED);
-    expect(b.lockedWashedCount + b.pendingWashedCount + b.unpricedWashedCount + b.declinedWashedCount)
+    // Hylätty ei ole oma ryhmänsä vaan osajoukko odottavista, joten se EI ole
+    // tässä summassa — muuten sama ikkuna laskettaisiin kahdesti.
+    expect(b.lockedWashedCount + b.pendingWashedCount + b.unpricedWashedCount)
       .toBe(b.washedTotal);
   });
 
-  it("pesty ja HYLÄTTY ei ole 'ilman hintaa'", () => {
-    // Sama ikkuna näkyi ennen yhtä aikaa 'hylätty' ja 'ilman hintaa', ja
-    // perustajaa kehotettiin hinnoittelemaan ikkuna jonka asiakas oli juuri
-    // torjunut. Nyt sillä on oma laskurinsa eikä se ole tehtävälistalla.
-    const b = computeP2Billing(project([{ p: 2, offer: "declined", status: "pesty" }]));
-    expect(b.declinedWashedCount).toBe(1);
+  it("pesty ja hylätty on ODOTTAVA, ei hinnaton eikä oma ryhmänsä", () => {
+    // Asiakas voi hyväksyä hylkäämänsä ikkunan suoraan omasta näkymästään,
+    // joten se on rahan kannalta samassa tilassa kuin ehdotettu: työ tehty,
+    // hinta olemassa, päätös puuttuu. Nollana se piilotti tehtyä työtä.
+    const b = computeP2Billing(project([{ p: 2, offer: "declined", status: "pesty", cents: 3400 }]));
+    expect(b.pendingWashedCount).toBe(1);
+    expect(b.pendingEarnedCents).toBe(3400);
     expect(b.unpricedWashedCount).toBe(0);
     expect(b.washedUnlockedKeys).toEqual([]);
-    expect(b.pendingWashedCount).toBe(0);
-    expect(b.pendingEarnedCents).toBe(0);
+    // Tieto hylkäyksestä on tallella, mutta se on osajoukko odottavista.
+    expect(b.declinedWashedCount).toBe(1);
   });
 
   it("tarjoustilat summautuvat keltaisten kokonaismäärään", () => {

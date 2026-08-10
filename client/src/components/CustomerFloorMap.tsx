@@ -386,30 +386,23 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
    * hyväksytyksi vaikka se olisi ollut listalla näkymän latautuessa.
    */
   const quickAccept = useMemo(() => {
-    if (!p2?.enabled) return { rows: [], totalCents: 0, declinedCount: 0 };
-    const rows: { key: string; floor: string; priceCents: number; version: number; note?: string; wasDeclined: boolean }[] = [];
+    if (!p2?.enabled) return { rows: [], totalCents: 0 };
+    const rows: { key: string; floor: string; priceCents: number; version: number; note?: string }[] = [];
     for (const f of floors) {
       for (const pt of getPoints(f, map)) {
         if (pt.p !== 2) continue;
         if (map.statuses[pt.key] !== "pesty") continue;
         const o = p2.offers[pt.key];
         if (!o || !o.priceCents) continue;
-        // AIEMMIN HYLÄTYT OVAT MUKANA. "Ei" on tässä näkymässä hyväksyntänapin
-        // vieressä ja osuu vahingossa, ja ikkuna on jo pesty — ilman tätä
-        // vahinko jäisi lopulliseksi eikä asiakas voisi korjata sitä itse.
-        // Ne merkitään erikseen, jottei kukaan hyväksy niitä huomaamattaan.
+        // AIEMMIN HYLÄTYT OVAT MUKANA TAVALLISINA RIVEINÄ. "Ei" on tässä
+        // näkymässä hyväksyntänapin vieressä ja osuu vahingossa, ja ikkuna on
+        // jo pesty. Erillinen merkintä olisi vain kohinaa: asiakkaan kannalta
+        // tilanne on sama kuin muillakin — työ on tehty, hinta odottaa.
         if (o.status !== "proposed" && o.status !== "declined") continue;
-        rows.push({
-          key: pt.key, floor: f, priceCents: o.priceCents, version: o.version,
-          note: o.note ?? undefined, wasDeclined: o.status === "declined",
-        });
+        rows.push({ key: pt.key, floor: f, priceCents: o.priceCents, version: o.version, note: o.note ?? undefined });
       }
     }
-    return {
-      rows,
-      totalCents: rows.reduce((n, r) => n + r.priceCents, 0),
-      declinedCount: rows.filter((r) => r.wasDeclined).length,
-    };
+    return { rows, totalCents: rows.reduce((n, r) => n + r.priceCents, 0) };
   }, [floors, map, p2]);
 
   // Kaksivaiheinen nappi: ensimmäinen painallus näyttää mitä ollaan
@@ -448,23 +441,10 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
         <span style={{ fontSize: 14, color: T.muted }}>ikkunaa ·</span>
         <span style={{ fontSize: 18, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{eur(quickAccept.totalCents)}</span>
       </div>
-      <p style={{ margin: "8px 0 0", fontSize: 13, color: T.muted, lineHeight: 1.55 }}>
+      <p style={{ margin: "8px 0 13px", fontSize: 13, color: T.muted, lineHeight: 1.55 }}>
         Nämä ikkunat on jo pesty. Hyväksy hinnat, niin ne siirtyvät laskutukseen.
       </p>
 
-      {/* Aiemmin hylätyt ovat mukana. Se on kerrottava selvästi ennen nappia:
-          hyväksyntä koskee myös niitä, ja jos hylkäys oli aito, sen saa jättää
-          tekemättä. Yksi virke, ei selitystä sen ympärille. */}
-      {quickAccept.declinedCount > 0 && (
-        <div style={{ display: "flex", gap: 9, alignItems: "flex-start", margin: "11px 0 0", padding: "10px 12px", borderRadius: 11, background: "rgba(224,168,0,0.10)", border: "1px solid rgba(224,168,0,0.35)" }}>
-          <span aria-hidden style={{ fontSize: 14, lineHeight: 1.3 }}>⚠</span>
-          <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.55, color: T.ink }}>
-            <b>Huom:</b> mukana on {quickAccept.declinedCount} ikkunaa jotka on aiemmin merkitty
-            hylätyksi. Nekin on jo pesty — jos hylkäys tuli vahingossa, hyväksyt ne tässä samalla.
-          </p>
-        </div>
-      )}
-      <div style={{ height: 13 }} />
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button
@@ -498,11 +478,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
             <button key={r.key} onClick={() => jumpToMap(r.key, r.floor)}
               style={{ display: "flex", flexDirection: "column", gap: 2, padding: "7px 10px", borderRadius: 8, border: `1px solid ${T.hair}`, background: T.card, cursor: "pointer", fontFamily: FONT, fontSize: 12.5, textAlign: "left" }}>
               <span style={{ display: "flex", justifyContent: "space-between", gap: 10, width: "100%" }}>
-                <span style={{ color: T.muted }}>
-                  Krs {r.floor}
-                  {/* Aiemmin hylätty näkyy myös rivillä, ei vain yhteishuomiona. */}
-                  {r.wasDeclined && <span style={{ color: "#8A6A00", fontWeight: 700 }}> · aiemmin hylätty</span>}
-                </span>
+                <span style={{ color: T.muted }}>Krs {r.floor}</span>
                 <b>{eur(r.priceCents)}</b>
               </span>
               {/* Perustaja voi kirjoittaa ikkunalle perustelun kartalta; se

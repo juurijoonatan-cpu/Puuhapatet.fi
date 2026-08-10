@@ -349,8 +349,7 @@ export function p2NumbersByFloor(data: P2NumberingInput): Record<string, number>
 /** Missä tilassa pestyn keltaisen hinta on. */
 export type P2WashedState =
   | "locked"     // sovittu — asiakas hyväksyi hinnan
-  | "pending"    // hinta ehdotettu tai vastatarjottu — odottaa asiakasta
-  | "declined"   // asiakas hylkäsi — ei rahaa
+  | "pending"    // hinta olemassa, päätös puuttuu — odottaa asiakasta
   | "unpriced";  // ei hintaa lainkaan — hinnoittelematta
 
 export interface P2WashedLine {
@@ -359,6 +358,13 @@ export interface P2WashedLine {
   /** Kerroskohtainen juokseva numero — sama kuin asiakkaan kartalla. */
   number: number;
   state: P2WashedState;
+  /**
+   * Asiakas on kertaalleen torjunut tämän hinnan. Ikkuna on silti tavallinen
+   * odottava: asiakas voi hyväksyä sen suoraan omasta näkymästään, ja hinta on
+   * mukana summissa. Tieto on tallella vain siltä varalta että hylkäys pitää
+   * tunnistaa jälkikäteen.
+   */
+  wasDeclined?: boolean;
   /**
    * Mitä TÄMÄ ikkuna tuo "PESTY"-ruudun summaan. Sovittu tuo lukitun hinnan,
    * odottava odotetun, ja hylätty tai hinnoittelematon tuo nollan. Rivien summa
@@ -403,7 +409,7 @@ export function p2WashedYellows(data: ProjectData): P2WashedList {
   const groups = new Map<string, P2WashedFloorGroup>();
   const byState: Record<P2WashedState, { count: number; sumCents: number }> = {
     locked: { count: 0, sumCents: 0 }, pending: { count: 0, sumCents: 0 },
-    declined: { count: 0, sumCents: 0 }, unpriced: { count: 0, sumCents: 0 },
+    unpriced: { count: 0, sumCents: 0 },
   };
   let count = 0, sumCents = 0;
 
@@ -415,13 +421,15 @@ export function p2WashedYellows(data: ProjectData): P2WashedList {
       let state: P2WashedState;
       let priceCents = 0;
       if (offer?.status === "locked" && offer.lockedCents) { state = "locked"; priceCents = offer.lockedCents; }
-      else if (offer?.status === "declined") { state = "declined"; }
       else {
         const pending = p2PendingPriceCents(offer);
         if (pending != null) { state = "pending"; priceCents = pending; }
         else { state = "unpriced"; }
       }
-      const line: P2WashedLine = { key: pt.key, floor: pt.floor, number: numbers[pt.key], state, priceCents };
+      const line: P2WashedLine = {
+        key: pt.key, floor: pt.floor, number: numbers[pt.key], state, priceCents,
+        wasDeclined: offer?.status === "declined" || undefined,
+      };
       count += 1; sumCents += priceCents;
       byState[state].count += 1; byState[state].sumCents += priceCents;
       let g = groups.get(pt.floor);
@@ -672,7 +680,11 @@ export const isP2Washable = isP2Priced;
  * työ näkyy sekä perustajalle että tekijän maksettavassa — merkittynä.
  */
 export function p2PendingPriceCents(offer: P2Offer | undefined): number | null {
-  if (!offer || offer.status === "locked" || offer.status === "declined") return null;
+  // HYLÄTTY ON MYÖS ODOTTAVA. Asiakas voi hyväksyä hylkäämänsä ikkunan suoraan
+  // omasta näkymästään, joten se on rahan kannalta samassa tilassa kuin
+  // ehdotettu: työ on tehty, hinta on olemassa, päätös puuttuu. Nollaksi
+  // laskeminen piilotti tehtyä työtä sekä meiltä että tekijältä.
+  if (!offer || offer.status === "locked") return null;
   const cents = offer.counterCents ?? offer.priceCents;
   return typeof cents === "number" && cents > 0 ? cents : null;
 }
@@ -719,14 +731,10 @@ export interface P2Billing {
   /** Pesty keltainen jolla EI ole hintaa lainkaan — hinnoittele tai tyhjennä. */
   unpricedWashedCount: number;
   /**
-   * Pesty keltainen jonka asiakas HYLKÄSI. Työ on tehty mutta siitä ei saada
-   * rahaa, eikä sille tehdä mitään.
-   *
-   * OMA LASKURINSA, koska nämä laskettiin ennen `unpricedWashedCount`iin: sama
-   * ikkuna näkyi yhtä aikaa "hylätty" ja "ilman hintaa", ja perustajaa
-   * kehotettiin hinnoittelemaan ikkuna jonka asiakas oli juuri torjunut.
-   * Luvut näyttivät siltä että jossain on virhe — ja juuri sitä epäluottamusta
-   * ei laskutushetkellä kaivata.
+   * Pesty keltainen jonka asiakas hylkäsi. TÄMÄ ON OSAJOUKKO `pendingWashedCount`ista,
+   * ei erillinen ryhmä: asiakas voi hyväksyä hylkäämänsä ikkunan suoraan omasta
+   * näkymästään, joten se odottaa päätöstä aivan kuten ehdotettukin. Luku on
+   * tallella vain tiedoksi (esim. "nämä oli kertaalleen torjuttu").
    */
   declinedWashedCount: number;
   /** Washed yellow windows with no price at all (avaimet varoitukseen). */
@@ -797,10 +805,7 @@ export function computeP2Billing(data: ProjectData): P2Billing {
       //  • asiakas hylkäsi → ei rahaa, ei tehtävää (oma laskurinsa)
       //  • hinta ehdotettu / vastatarjottu → ODOTTAA HYVÄKSYNTÄÄ (raha tulossa)
       //  • ei hintaa lainkaan → hinnoittelematon (perustajan tehtävälista)
-      if (offer?.status === "declined") {
-        out.declinedWashedCount += 1;
-        continue;
-      }
+      if (offer?.status === "declined") out.declinedWashedCount += 1;
       const pending = p2PendingPriceCents(offer);
       if (pending != null) {
         out.pendingWashedCount += 1;

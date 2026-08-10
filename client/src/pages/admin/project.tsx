@@ -1097,7 +1097,6 @@ const p2eur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFraction
 const WASHED_STATES: { id: P2WashedState; label: string; color: string }[] = [
   { id: "locked", label: "sovittu", color: "#7CE0A6" },
   { id: "pending", label: "odottaa", color: "rgb(150,175,255)" },
-  { id: "declined", label: "hylätty", color: "rgba(255,150,150,0.9)" },
   { id: "unpriced", label: "ei hintaa", color: "rgb(255,205,40)" },
 ];
 const P2_STATUS_LABEL: Record<string, string> = {
@@ -1250,7 +1249,6 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, onGoToWindow, can
               {/* Hylätty on oma asiansa: työ tehty, asiakas sanoi ei. Se luki
                   ennen "ilman hintaa", jolloin sama ikkuna näkyi kahdella eri
                   nimellä ja näytti tehtävältä jota ei ole. */}
-              {b.declinedWashedCount > 0 ? ` · ${b.declinedWashedCount} hylätty` : ""}
               {b.unpricedWashedCount > 0 ? ` · ${b.unpricedWashedCount} ilman hintaa` : ""}
             </span>
             <span style={{ fontSize: "10px", color: "rgba(255,255,255,0.35)", display: "block", marginTop: 4 }}>
@@ -1333,11 +1331,12 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, onGoToWindow, can
                           style={{ flex: 1, minWidth: 0, textAlign: "left", background: "transparent", border: "none", padding: "4px 0", color: "inherit", font: "inherit", cursor: "pointer" }}
                         >
                           Keltainen {l.number} <span style={{ color: st.color }}>· {st.label}</span>
+                          {l.wasDeclined && <span style={{ color: "rgba(255,255,255,0.3)" }}> · torjuttu kerran</span>}
                         </button>
                         {/* Hylätty voidaan palauttaa odottamaan hyväksyntää:
                             "Ei" on asiakkaan näkymässä hyväksynnän vieressä ja
                             osuu vahingossa, eikä asiakas voi perua sitä itse. */}
-                        {l.state === "declined" && (
+                        {l.wasDeclined && (
                           <button
                             onClick={() => setRestorePick((s2) => { const n = new Set(s2); n.has(l.key) ? n.delete(l.key) : n.add(l.key); return n; })}
                             style={{ flexShrink: 0, padding: "3px 9px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: "11px", fontWeight: 600,

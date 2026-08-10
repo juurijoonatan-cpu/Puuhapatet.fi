@@ -202,12 +202,15 @@ describe("pointPriority / isP2Priced", () => {
     expect(isP2Priced(data, "K#3")).toBe(false); // vain ehdotettu
   });
 
-  it("p2PendingPriceCents: vastatarjous voittaa ehdotuksen, lukittu/hylätty → null", () => {
+  it("p2PendingPriceCents: vastatarjous voittaa ehdotuksen, vain lukittu → null", () => {
     expect(p2PendingPriceCents(undefined)).toBe(null);
     expect(p2PendingPriceCents(proposedOffer(4000))).toBe(4000);
     expect(p2PendingPriceCents({ status: "countered", priceCents: 4000, counterCents: 2500, version: 2, updatedAt: 1 })).toBe(2500);
+    // Lukittu ei enää odota mitään — se on sovittu.
     expect(p2PendingPriceCents({ status: "locked", priceCents: 3000, lockedCents: 3000, version: 2, updatedAt: 1 })).toBe(null);
-    expect(p2PendingPriceCents({ status: "declined", priceCents: 3000, version: 2, updatedAt: 1 })).toBe(null);
+    // HYLÄTTY ODOTTAA YHÄ: asiakas voi hyväksyä sen suoraan omasta
+    // näkymästään, joten hinta on edelleen tulossa eikä nolla.
+    expect(p2PendingPriceCents({ status: "declined", priceCents: 3000, version: 2, updatedAt: 1 })).toBe(3000);
   });
 });
 

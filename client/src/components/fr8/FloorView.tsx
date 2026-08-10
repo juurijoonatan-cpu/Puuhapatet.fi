@@ -423,6 +423,10 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   const floorWashed = points.filter((p) => (statuses[p.key] || "ei") === "pesty").length;
   const floorTotal = points.length;
   const floorPct = floorTotal > 0 ? (floorWashed / floorTotal) * 100 : 0;
+  // Keltaiset erikseen: kokonaisluku ei kerro kumpaa väriä siinä on, ja kun
+  // käsin laskettu määrä ei täsmää, ero etsitään nimenomaan keltaisista.
+  const floorYellow = points.filter((p) => p.p === 2);
+  const floorYellowWashed = floorYellow.filter((p) => (statuses[p.key] || "ei") === "pesty").length;
   // Rahaluku pysyy sopimuksen piirissä: € tulee punaisista, ei kaikista.
   const floorBillable = deal ? points.filter((p) => p.p === deal.billablePriority) : points;
   // Whole-contract billable window count (every floor) → drives the price cap.
@@ -759,6 +763,15 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
             <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.45)" }}>
               {Math.round(floorPct)} %{hideMoney ? "" : ` · ${euro(floorWashed * pricePerWindow)}`}
             </div>
+            {/* Keltaiset omana rivinään. Kokonaisluku ei kerro kumpaa väriä
+                siinä on, ja kun käsin laskettu määrä ei täsmää, ero etsitään
+                nimenomaan keltaisista — silloin luku pitää olla siinä
+                kerroksessa jota katsoo, ei vain yhteenvedossa. */}
+            {floorYellow.length > 0 && (
+              <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,205,40,0.8)" }}>
+                {floorYellowWashed} / {floorYellow.length} keltaista pesty
+              </div>
+            )}
           </div>
 
           {/* Kerroksen lukko asuu tässä eikä kerrosrivillä: tämä rivi kertoo jo

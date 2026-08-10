@@ -926,6 +926,8 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                 const pc = arr.length > 0 ? (w / arr.length) * 100 : 0;
                 const red = onFloor.filter((a) => a.p === 1);
                 const redDoneOnFloor = red.filter((a) => a.status === "pesty").length;
+                const yellowOnFloor = onFloor.filter((a) => a.p === 2).length;
+                const yellowDoneOnFloor = onFloor.filter((a) => a.p === 2 && a.status === "pesty").length;
                 return (
                   <button key={f} className="floor-row-btn" onClick={() => onGoToFloor(f)}>
                     <span style={{ width: 34, height: 34, flexShrink: 0, borderRadius: T.radius.sm, background: T.surface.raised, border: T.border.normal, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: T.font, fontWeight: 700, fontSize: T.size.body }}>{f}</span>
@@ -934,11 +936,19 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                         <div style={{ width: `${pc.toFixed(1)}%`, height: "100%", borderRadius: T.radius.xs, background: "linear-gradient(90deg,rgba(255,255,255,0.5),#fff)", transition: "width .6s" }} />
                       </div>
                     </div>
-                    <span style={{ fontFamily: T.mono, fontSize: T.size.sm, color: T.text.secondary, width: 74, textAlign: "right", flexShrink: 0 }}>
+                    <span style={{ fontFamily: T.mono, fontSize: T.size.sm, color: T.text.secondary, width: 84, textAlign: "right", flexShrink: 0 }}>
                       {w}/{arr.length}
                       {red.length > 0 && red.length !== arr.length && (
                         <span style={{ display: "block", fontSize: T.size.label, color: "rgba(255,120,120,0.75)" }}>
                           {redDoneOnFloor}/{red.length} sopimus
+                        </span>
+                      )}
+                      {/* Keltaiset omana rivinään: kun kokonaisluku ei täsmää
+                          käsin laskettuun, tästä näkee heti mistä kerroksesta
+                          ero tulee ilman että mihinkään tarvitsee mennä. */}
+                      {yellowOnFloor > 0 && (
+                        <span style={{ display: "block", fontSize: T.size.label, color: "rgba(255,205,40,0.8)" }}>
+                          {yellowDoneOnFloor}/{yellowOnFloor} keltaiset
                         </span>
                       )}
                     </span>

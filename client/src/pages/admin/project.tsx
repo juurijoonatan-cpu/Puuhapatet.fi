@@ -16,6 +16,7 @@ import {
   dealInternalRateCents,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense,
 } from "@shared/project";
+import { auditWindowCounts } from "@shared/count-audit";
 import { computeP2Billing, p2CustomerLocksSince, p2Itemisation, p2WorkerSplit, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule } from "@shared/p2";
 import { computeGuided, type GuidedWork } from "@shared/guided";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
@@ -1151,6 +1152,9 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
   // Laskun erittely: mistä ikkunoista laskutettava kertymä koostuu.
   const item = useMemo(() => p2Itemisation(project), [project]);
   const [showItems, setShowItems] = useState(false);
+  // Määrän tarkistus: kerroksittainen erittely + päällekkäiset pisteet.
+  const audit = useMemo(() => auditWindowCounts(project), [project]);
+  const [showAudit, setShowAudit] = useState(false);
 
   const [revertArmed, setRevertArmed] = useState<string | null>(null);
   const hourAgo = () => Date.now() - 60 * 60 * 1000;
@@ -1240,6 +1244,69 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
               <span style={{ fontSize: "10px", color: p2Remaining > 0 ? "rgb(255,205,40)" : "rgba(255,255,255,0.4)", display: "block", marginTop: 2 }}>
                 {p2Remaining > 0 ? `laskuttamatta ${p2eur(p2Remaining)}` : "kaikki laskutettu ✓"}
               </span>
+            </div>
+          )}
+        </div>
+
+        {/* MÄÄRÄN TARKISTUS. Kun paneelin luku ja rakennuksesta laskettu määrä
+            eroavat, arvaaminen on turhaa. Tämä kertoo kerroksittain mistä luku
+            koostuu — eron paikantaminen vie sekunteja — ja varoittaa lähes
+            päällekkäisistä pisteistä: kartalla yksi pallo, datassa kaksi
+            ikkunaa. Poistetut eivät voi olla mukana, se on testattu erikseen. */}
+        <div style={{ padding: "12px 14px", borderRadius: 12, background: "rgba(255,255,255,0.03)", border: `1px solid ${audit.overlaps.length ? "rgba(255,206,40,0.4)" : "rgba(255,255,255,0.09)"}` }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: "12.5px", fontWeight: 700 }}>Määrän tarkistus</span>
+            <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.55)", fontVariantNumeric: "tabular-nums" }}>
+              <b style={{ color: "#fff" }}>{audit.totalYellowWashed}</b> pestyä keltaista / {audit.totalYellow}
+            </span>
+            <button style={{ ...btn, marginLeft: "auto", minHeight: 36, padding: "8px 12px", fontSize: "12px" }} onClick={() => setShowAudit((v) => !v)}>
+              {showAudit ? "Piilota" : "Kerroksittain"}
+            </button>
+          </div>
+
+          {audit.overlaps.length > 0 && (
+            <div style={{ marginTop: 8, fontSize: "11.5px", lineHeight: 1.6, color: "#ffce28" }}>
+              ⚠ {audit.overlaps.length} kohdassa on pisteitä lähes päällekkäin — kartalla ne näyttävät yhdeltä
+              ikkunalta mutta niitä on {audit.overlapExtra} enemmän{audit.overlapExtraWashed > 0 ? ` (${audit.overlapExtraWashed} pestyä)` : ""}.
+              Tämä selittää eron silmämääräiseen laskentaan. Avaa kerros kartalla ja poista ylimääräinen.
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 7 }}>
+                {audit.overlaps.map((o) => (
+                  <button
+                    key={o.keys.join()}
+                    onClick={() => onGoToFloor(o.floor)}
+                    title={o.keys.join(" + ")}
+                    style={{ ...btn, minHeight: 32, padding: "6px 11px", fontSize: "11.5px", border: "1px solid rgba(255,206,40,0.35)", color: "#ffce28" }}
+                  >
+                    Krs {o.floor} · {o.keys.length} päällekkäin{o.washed > 0 ? ` · ${o.washed} pesty` : ""}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {audit.duplicateKeys.length > 0 && (
+            <div style={{ marginTop: 8, fontSize: "11.5px", color: "#ff9b9b" }}>
+              ⚠ Sama ikkuna esiintyy kahdesti datassa ({audit.duplicateKeys.length} kpl) — ilmoita tästä.
+            </div>
+          )}
+
+          {showAudit && (
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 2 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: "11px", color: "rgba(255,255,255,0.4)", paddingBottom: 4, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+                <span>Kerros</span><span>keltaiset pesty / kaikki</span>
+              </div>
+              {audit.byFloor.map((f) => (
+                <div key={f.floor} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: "12px", color: "rgba(255,255,255,0.65)", padding: "3px 0" }}>
+                  <span>{f.floor === "K" ? "Kellari" : `${f.floor}. kerros`}</span>
+                  <span style={{ fontVariantNumeric: "tabular-nums" }}>
+                    <b style={{ color: "#fff" }}>{f.yellowWashed}</b> / {f.yellow}
+                    <span style={{ color: "rgba(255,255,255,0.3)" }}> · punaiset {f.redWashed}/{f.red}</span>
+                  </span>
+                </div>
+              ))}
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: "12.5px", fontWeight: 700, paddingTop: 7, borderTop: "1px solid rgba(255,255,255,0.14)" }}>
+                <span>Yhteensä</span>
+                <span style={{ fontVariantNumeric: "tabular-nums" }}>{audit.totalYellowWashed} / {audit.totalYellow}</span>
+              </div>
             </div>
           )}
         </div>

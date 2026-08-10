@@ -464,9 +464,21 @@ export default function AdminProjectPage() {
     mutate((d) => { d.activeZone = null; });
   }, [mutate]);
 
+  // Kartan kohdistus: kerros + valinnainen ikkuna-avain. Nonce pakottaa
+  // hypyn myös silloin kun sama ikkuna avataan uudestaan.
+  const [floorFocus, setFloorFocus] = useState<{ floor: string; key?: string; nonce: number } | null>(null);
+
   const onGoToFloor = useCallback((floor: string) => {
     setActiveFloor(floor);
     setTab("floor");
+  }, []);
+
+  // Hyppää kerrokselle JA avaa juuri sen ikkunan tiedot kartalla. Listan rivi
+  // ilman tätä kertoisi vain numeron; tällä sen voi käydä katsomassa.
+  const onGoToWindow = useCallback((floor: string, key: string) => {
+    setActiveFloor(floor);
+    setTab("floor");
+    setFloorFocus((f) => ({ floor, key, nonce: (f?.nonce ?? 0) + 1 }));
   }, []);
 
   const changeDefaultWasher = useCallback((id: string) => {
@@ -879,6 +891,7 @@ export default function AdminProjectPage() {
                 by={currentWorker}
                 onP2={applyP2}
                 onGoToFloor={onGoToFloor}
+                onGoToWindow={onGoToWindow}
                 canSend={profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")}
                 p2InvoicedCents={p2Invoiced}
               />
@@ -996,6 +1009,7 @@ export default function AdminProjectPage() {
                avoimien kerrosten lista. Jos lukitus ei ole vielä päällä,
                ensimmäinen lukitus kytkee sen ja jättää kaikki muut auki —
                muuten yksi napautus sulkisi vahingossa koko talon. */
+            floorFocus={floorFocus}
             onToggleFloorLock={canEditLocks ? (f, lock) => {
               const floors = project.building.floors;
               const open = project.guided?.enabled
@@ -1098,12 +1112,13 @@ const P2_STATUS_LABEL: Record<string, string> = {
  * neuvottelu-inbox (asiakkaan vastatarjoukset), anomaliavaroitukset ja
  * tapahtumaloki. Hinnoittelu itsessään tapahtuu kartalla (€ Hinnoittele -tila).
  */
-function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2InvoicedCents = 0 }: {
+function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, onGoToWindow, canSend, p2InvoicedCents = 0 }: {
   project: ProjectData;
   jobId: number;
   by: string;
   onP2: (p2: P2State) => void;
   onGoToFloor: (floor: string) => void;
+  onGoToWindow: (floor: string, key: string) => void;
   canSend: boolean;
   /** €-cents of P2 already invoiced (scope:"p2" payments) — from the server. */
   p2InvoicedCents?: number;
@@ -1162,6 +1177,8 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
   // Pestyt keltaiset rivi riviltä — avataan PESTY-ruudusta.
   const washedList = useMemo(() => p2WashedYellows(project), [project]);
   const [showWashed, setShowWashed] = useState(false);
+  // Valitut hylätyt jotka palautetaan odottamaan hyväksyntää.
+  const [restorePick, setRestorePick] = useState<Set<string>>(new Set());
 
   const [revertArmed, setRevertArmed] = useState<string | null>(null);
   const hourAgo = () => Date.now() - 60 * 60 * 1000;
@@ -1306,10 +1323,32 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
                   </div>
                   {g.lines.map((l) => {
                     const st = WASHED_STATES.find((w) => w.id === l.state)!;
+                    const picked = restorePick.has(l.key);
                     return (
-                      <div key={l.key} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: "11.5px", color: "rgba(255,255,255,0.6)", padding: "3px 0" }}>
-                        <span>Ikkuna {l.number} <span style={{ color: st.color }}>· {st.label}</span></span>
-                        <span style={{ fontVariantNumeric: "tabular-nums", color: l.priceCents > 0 ? "#fff" : "rgba(255,255,255,0.3)" }}>
+                      <div key={l.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "11.5px", color: "rgba(255,255,255,0.6)", padding: "2px 0" }}>
+                        {/* Rivi avaa ikkunan kartalla — sen voi käydä katsomassa. */}
+                        <button
+                          onClick={() => onGoToWindow(l.floor, l.key)}
+                          title="Näytä kartalla"
+                          style={{ flex: 1, minWidth: 0, textAlign: "left", background: "transparent", border: "none", padding: "4px 0", color: "inherit", font: "inherit", cursor: "pointer" }}
+                        >
+                          Keltainen {l.number} <span style={{ color: st.color }}>· {st.label}</span>
+                        </button>
+                        {/* Hylätty voidaan palauttaa odottamaan hyväksyntää:
+                            "Ei" on asiakkaan näkymässä hyväksynnän vieressä ja
+                            osuu vahingossa, eikä asiakas voi perua sitä itse. */}
+                        {l.state === "declined" && (
+                          <button
+                            onClick={() => setRestorePick((s2) => { const n = new Set(s2); n.has(l.key) ? n.delete(l.key) : n.add(l.key); return n; })}
+                            style={{ flexShrink: 0, padding: "3px 9px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: "11px", fontWeight: 600,
+                              border: `1px solid ${picked ? "#7CE0A6" : "rgba(255,255,255,0.18)"}`,
+                              background: picked ? "rgba(124,224,166,0.16)" : "transparent",
+                              color: picked ? "#7CE0A6" : "rgba(255,255,255,0.55)" }}
+                          >
+                            {picked ? "✓ palautetaan" : "palauta"}
+                          </button>
+                        )}
+                        <span style={{ flexShrink: 0, minWidth: 62, textAlign: "right", fontVariantNumeric: "tabular-nums", color: l.priceCents > 0 ? "#fff" : "rgba(255,255,255,0.3)" }}>
                           {l.priceCents > 0 ? p2eur(l.priceCents) : "—"}
                         </span>
                       </div>
@@ -1321,6 +1360,19 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, canSend, p2Invoic
                 <span>Yhteensä {washedList.count} kpl</span>
                 <span style={{ fontVariantNumeric: "tabular-nums" }}>{p2eur(washedList.sumCents)}</span>
               </div>
+              {restorePick.size > 0 && (
+                <button
+                  disabled={busy}
+                  onClick={() => {
+                    const keys = Array.from(restorePick);
+                    setRestorePick(new Set());
+                    void run(() => api.p2RestoreDeclined(jobId, { keys, by }), `Palautettu odottamaan hyväksyntää: ${keys.length} kpl`);
+                  }}
+                  style={{ ...btn, marginTop: 4, border: "none", background: "#3E7C59", color: "#fff", fontWeight: 700 }}
+                >
+                  Palauta {restorePick.size} ikkunaa odottamaan hyväksyntää
+                </button>
+              )}
             </div>
           </div>
         )}

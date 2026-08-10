@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GigPublicView, P2PublicOffer, P2PublicView } from "@/lib/api";
 import { NOTE_KINDS } from "@shared/project";
 import { eur } from "@shared/gig";
+import { p2NumbersByFloor, type P2NumberingInput } from "@shared/p2";
 import { getPoints, inCustomerScope, type CustomerPoint } from "@/lib/customer-progress";
 import { CT, CFONT } from "@/lib/customer-theme";
 
@@ -270,14 +271,16 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
     .filter((g) => g.items.length > 0);
   // Stable per-floor Priority 2 numbering so the map badges and the list rows
   // always agree ("ikkuna 10" on the map = "ikkuna 10" in the list).
-  const p2Number = useMemo(() => {
-    const m: Record<string, number> = {};
-    for (const f of floors) {
-      let n = 0;
-      getPoints(f, map).forEach((pt) => { if (pt.p === 2) { n += 1; m[pt.key] = n; } });
-    }
-    return m;
-  }, [floors, map]);
+  // Numerointi tulee jaetusta funktiosta, samasta jota perustajien kartta ja
+  // laskun erittely käyttävät — kolme näkymää ei voi antaa samalle ikkunalle
+  // kolmea eri numeroa.
+  const p2Number = useMemo(
+    () => p2NumbersByFloor({
+      building: { floors }, marks: map.marks, customMarks: map.customMarks,
+      deleted: map.deleted, statuses: map.statuses, washedBy: {},
+    } as unknown as P2NumberingInput),
+    [floors, map],
+  );
   // Has the customer engaged with phase-2 yet (any yellow priced or added)?
   // Drives an inviting empty-state nudge that expects them to add windows.
   const yellowCount = p2On ? points.filter((pt) => pt.p === 2).length : 0;
@@ -383,9 +386,8 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
    * hyväksytyksi vaikka se olisi ollut listalla näkymän latautuessa.
    */
   const quickAccept = useMemo(() => {
-    if (!p2?.enabled) return { rows: [], byFloor: new Map<string, number>(), totalCents: 0 };
+    if (!p2?.enabled) return { rows: [], totalCents: 0 };
     const rows: { key: string; floor: string; priceCents: number; version: number; note?: string }[] = [];
-    const byFloor = new Map<string, number>();
     for (const f of floors) {
       for (const pt of getPoints(f, map)) {
         if (pt.p !== 2) continue;
@@ -393,10 +395,9 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
         const o = p2.offers[pt.key];
         if (!o || o.status !== "proposed" || !o.priceCents) continue;
         rows.push({ key: pt.key, floor: f, priceCents: o.priceCents, version: o.version, note: o.note ?? undefined });
-        byFloor.set(f, (byFloor.get(f) ?? 0) + 1);
       }
     }
-    return { rows, byFloor, totalCents: rows.reduce((n, r) => n + r.priceCents, 0) };
+    return { rows, totalCents: rows.reduce((n, r) => n + r.priceCents, 0) };
   }, [floors, map, p2]);
 
   // Kaksivaiheinen nappi: ensimmäinen painallus näyttää mitä ollaan
@@ -406,6 +407,8 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
   const [showList, setShowList] = useState(false);
 
   async function acceptGroup(scope: string) {
+    // Vain "all" on jäljellä: kerroskohtainen hyväksyntä pilkkoi yhden
+    // päätöksen useaksi napiksi kertomatta mitään olennaista.
     const items = (scope === "all" ? quickAccept.rows : quickAccept.rows.filter((r) => r.floor === scope))
       .map((r) => ({ key: r.key, priceCents: r.priceCents, version: r.version }));
     if (!items.length) return;
@@ -418,14 +421,23 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
       marginBottom: 16, padding: "18px 18px 16px", borderRadius: 20,
       background: "rgba(62,124,89,0.07)", border: `1px solid rgba(62,124,89,0.28)`,
     }}>
+      {/* Yksi selkeä laatikko: montako ikkunaa ja mitä ne maksavat. Tämän
+          ylin rivi kertoo että työ on JO TEHTY — muuten hylkääminen näyttää
+          yhtä luontevalta vaihtoehdolta kuin hyväksyminen, vaikka ikkuna on
+          jo pesty. Kerroskohtaiset pillerit poistettiin: ne pilkkoivat yhden
+          päätöksen viideksi eivätkä kertoneet mitään olennaista. */}
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-        <strong style={{ fontSize: 16, letterSpacing: "-0.02em" }}>Hyväksy pestyt lisätyöt</strong>
-        <span style={{ fontSize: 13, color: T.muted, fontVariantNumeric: "tabular-nums" }}>
-          {quickAccept.rows.length} ikkunaa · <b style={{ color: T.ink }}>{eur(quickAccept.totalCents)}</b>
-        </span>
+        <strong style={{ fontSize: 16, letterSpacing: "-0.02em" }}>Jo pesty — odottaa hyväksyntääsi</strong>
       </div>
-      <p style={{ margin: "7px 0 13px", fontSize: 13, color: T.muted, lineHeight: 1.55 }}>
-        Nämä on jo pesty ja odottavat vain hinnan hyväksyntääsi.
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+        <span style={{ fontSize: 30, fontWeight: 800, lineHeight: 1, letterSpacing: "-0.03em", fontVariantNumeric: "tabular-nums" }}>
+          {quickAccept.rows.length}
+        </span>
+        <span style={{ fontSize: 14, color: T.muted }}>ikkunaa ·</span>
+        <span style={{ fontSize: 18, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{eur(quickAccept.totalCents)}</span>
+      </div>
+      <p style={{ margin: "8px 0 13px", fontSize: 13, color: T.muted, lineHeight: 1.55 }}>
+        Nämä ikkunat on jo pesty. Hyväksy hinnat, niin ne siirtyvät laskutukseen.
       </p>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -453,26 +465,6 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
           {showList ? "Piilota" : "Katso mitkä"}
         </button>
       </div>
-
-      {/* Kerroskohtainen hyväksyntä — sama kaksivaiheisuus. */}
-      {quickAccept.byFloor.size > 1 && (
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
-          {Array.from(quickAccept.byFloor.entries()).map(([f, n]) => (
-            <button key={f}
-              disabled={p2Busy}
-              onClick={() => { if (!p2.termsAccepted) { p2Actions.requireTerms(); return; } armed === f ? void acceptGroup(f) : setArmed(f); }}
-              style={{
-                padding: "6px 11px", borderRadius: 999,
-                border: `1px solid ${armed === f ? "#3E7C59" : T.hair}`,
-                background: armed === f ? "rgba(62,124,89,0.14)" : T.card,
-                color: T.ink, fontFamily: FONT, fontSize: 12, fontWeight: 600, cursor: "pointer",
-              }}
-            >
-              {armed === f ? `Vahvista krs ${f} (${n})` : `Krs ${f} · ${n}`}
-            </button>
-          ))}
-        </div>
-      )}
 
       {showList && (
         <div style={{ marginTop: 10, maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>

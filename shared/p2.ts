@@ -306,6 +306,37 @@ export function pushP2Event(events: P2Event[], ev: P2Event): P2Event[] {
   return events;
 }
 
+// ─── Keltaisten numerointi ─────────────────────────────────────────────────────
+
+/**
+ * KELTAISEN IKKUNAN NUMERO — yksi numerointi kaikkialle.
+ *
+ * Numero juoksee kerroksen keltaisista, ei kaikista pisteistä. Sama ikkuna sai
+ * ennen eri numeron eri paikoissa: asiakkaan kartta ja laskun erittely
+ * laskivat keltaiset, mutta perustajien kartta laski kaikki pisteet — sama
+ * ikkuna oli listassa "ikkuna 7" ja kartalla "ikkuna 41". Kun kaksi näkymää
+ * puhuu samasta ikkunasta eri nimellä, kumpaakaan ei voi käyttää tarkistamiseen.
+ *
+ * Keltaisten numerointi voitti, koska se on se numero jonka ASIAKAS näkee ja
+ * joka päätyy laskulle.
+ */
+export type P2NumberingInput =
+  Pick<ProjectData, "building" | "marks" | "customMarks" | "deleted" | "statuses" | "washedBy">;
+
+export function p2NumbersByFloor(data: P2NumberingInput): Record<string, number> {
+  const out: Record<string, number> = {};
+  const counters: Record<string, number> = {};
+  // `allPoints` lukee vain yllä luetellut kentät. Kavennettu tyyppi on tässä
+  // siksi, että kartta voi kutsua tätä ilman koko projektiblobia — muuten se
+  // laskisi numerot omalla kopiollaan ja ne ehtisivät erkaantua.
+  for (const pt of allPoints(data as ProjectData)) {
+    if (pt.p !== 2) continue;
+    counters[pt.floor] = (counters[pt.floor] ?? 0) + 1;
+    out[pt.key] = counters[pt.floor];
+  }
+  return out;
+}
+
 // ─── Pestyt keltaiset: rivi riviltä ────────────────────────────────────────────
 
 /** Missä tilassa pestyn keltaisen hinta on. */
@@ -370,12 +401,9 @@ export function p2WashedYellows(data: ProjectData): P2WashedList {
   let count = 0, sumCents = 0;
 
   if (p2) {
-    const counters: Record<string, number> = {};
+    const numbers = p2NumbersByFloor(data);
     for (const pt of allPoints(data)) {
-      if (pt.p !== 2) continue;
-      // Numero juoksee kerroksen KAIKISTA keltaisista, jotta se vastaa karttaa.
-      counters[pt.floor] = (counters[pt.floor] ?? 0) + 1;
-      if (pt.status !== "pesty") continue;
+      if (pt.p !== 2 || pt.status !== "pesty") continue;
       const offer = p2.offers[pt.key];
       let state: P2WashedState;
       let priceCents = 0;
@@ -386,7 +414,7 @@ export function p2WashedYellows(data: ProjectData): P2WashedList {
         if (pending != null) { state = "pending"; priceCents = pending; }
         else { state = "unpriced"; }
       }
-      const line: P2WashedLine = { key: pt.key, floor: pt.floor, number: counters[pt.floor], state, priceCents };
+      const line: P2WashedLine = { key: pt.key, floor: pt.floor, number: numbers[pt.key], state, priceCents };
       count += 1; sumCents += priceCents;
       byState[state].count += 1; byState[state].sumCents += priceCents;
       let g = groups.get(pt.floor);
@@ -525,18 +553,15 @@ export function p2Itemisation(data: ProjectData): P2Itemisation {
   const byFloor: P2InvoiceFloorGroup[] = [];
   const lines: P2InvoiceLine[] = [];
   if (p2) {
-    const counters: Record<string, number> = {};
+    const numbers = p2NumbersByFloor(data);
     const groups = new Map<string, P2InvoiceFloorGroup>();
     for (const pt of allPoints(data)) {
       if (pt.p !== 2) continue;
-      // Numero juoksee kerroksen KAIKISTA keltaisista, ei vain laskutettavista —
-      // muuten numero ei vastaisi asiakkaan karttaa.
-      counters[pt.floor] = (counters[pt.floor] ?? 0) + 1;
       const offer = p2.offers[pt.key];
       if (offer?.status !== "locked" || !offer.lockedCents) continue;
       if (pt.status !== "pesty") continue;
       const line: P2InvoiceLine = {
-        key: pt.key, floor: pt.floor, number: counters[pt.floor],
+        key: pt.key, floor: pt.floor, number: numbers[pt.key],
         priceCents: offer.lockedCents, lockedAt: offer.lockedAt, lockedBy: offer.lockedBy,
       };
       lines.push(line);

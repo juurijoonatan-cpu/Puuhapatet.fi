@@ -1193,6 +1193,12 @@ export const api = {
       "POST", `/api/jobs/${jobId}/p2/respond`, data,
     ),
 
+  /** Palauta hylätyt ikkunat odottamaan asiakkaan hyväksyntää (avaimet nimeltä). */
+  p2RestoreDeclined: (jobId: number, data: { keys: string[]; by?: string }) =>
+    request<{ ok: boolean; restored: number; keys: string[]; p2: P2State; p2Billing: P2Billing }>(
+      "POST", `/api/jobs/${jobId}/p2/restore-declined`, data,
+    ),
+
   /** Hätäperuutus: asiakkaan hyväksynnät `since`-hetken jälkeen takaisin
    *  odottamaan hyväksyntää. `since` on epoch ms (selaimen kello). */
   p2RevertAccepts: (jobId: number, data: { since: number; by?: string }) =>

@@ -4,11 +4,11 @@
  * prototype; only persistence (handled by the parent) and the plan image base
  * path differ.
  */
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import type { ProjMarksData, WindowStatus, ProjCustomMark, ProjMapNote, ProjNoteKind, ProjActiveZone, ProjWindowObservation, FixedDeal } from "@shared/project";
 import { NOTE_KINDS } from "@shared/project";
-import type { P2Offer } from "@shared/p2";
-import { P2_PRICE_PRESETS_CENTS, MAX_P2_NOTE_LEN } from "@shared/p2";
+import type { P2Offer, P2NumberingInput } from "@shared/p2";
+import { P2_PRICE_PRESETS_CENTS, MAX_P2_NOTE_LEN, p2NumbersByFloor } from "@shared/p2";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 const CIRC_S = 2 * Math.PI * 17; // mini ring
@@ -115,7 +115,8 @@ interface Props {
   onToggleFloorLock?: (floor: string, locked: boolean) => void;
   /** Bump `nonce` to programmatically jump the map to `floor` (e.g. the worker's
    *  "Vie minut seuraavaan" button). */
-  floorFocus?: { floor: string; nonce: number } | null;
+  /** Hyppää kerrokselle; `key` avaa lisäksi juuri sen ikkunan tiedot. */
+  floorFocus?: { floor: string; nonce: number; key?: string } | null;
   /** When set (non-empty), the floor selector shows ONLY these floors and hides
    *  the rest entirely — a discreet worker map that reveals just the opened
    *  floors. Founders pass null/undefined to see every floor. */
@@ -331,7 +332,9 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   useEffect(() => {
     if (floorFocus && floorFocus.floor && floors.includes(floorFocus.floor)) {
       setFloor(floorFocus.floor);
-      setActiveOrb(null);
+      // Avaimella hypätään suoraan siihen ikkunaan: listasta klikattu rivi
+      // avaa sen tiedot kartalla, jolloin sen voi tarkistaa paikan päältä.
+      setActiveOrb(floorFocus.key ?? null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [floorFocus?.nonce]);
@@ -373,6 +376,12 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   }
 
   const points = getPoints(floor, marks, posOverrides, customMarks, deleted);
+  // Keltaisten numerot samasta funktiosta kuin asiakkaan näkymä ja laskun
+  // erittely — kartta ei laske niitä omalla tavallaan.
+  const p2Numbers = useMemo(
+    () => p2NumbersByFloor({ building: { floors }, marks, customMarks, deleted, statuses, washedBy } as unknown as P2NumberingInput),
+    [floors, marks, customMarks, deleted, statuses, washedBy],
+  );
   // Ohjatun etenemisen ehdottama seuraava ikkuna, jos se on TÄLLÄ kerroksella.
   // `nextKey` on muotoa "<kerros>#<n>", joten kerrosvaihto piilottaa renkaan
   // itsestään eikä sitä tarvitse erikseen tyhjentää.
@@ -435,6 +444,23 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   const capEur = deal ? deal.capCents / 100 : totalLive * pricePerWindow;
   const activePt = activeOrb ? points.find((p) => p.key === activeOrb) ?? null : null;
   const activeIdx = activePt ? points.indexOf(activePt) : -1;
+
+  /**
+   * IKKUNAN NIMI KARTALLA.
+   *
+   * Keltainen saa saman numeron kuin asiakkaan näkymässä ja laskun erittelyssä
+   * (`p2NumbersByFloor`), eli kerroksen keltaisista juoksevan. Ennen kartta
+   * laski kaikki pisteet, joten sama ikkuna oli listassa "ikkuna 7" ja kartalla
+   * "ikkuna 41" — kahdella nimellä ei voi tarkistaa mitään.
+   *
+   * Punaisten numerointi jätetään ennalleen (kerroksen kaikkien pisteiden
+   * juokseva numero), koska tekijät ovat tottuneet siihen. Väri on nyt
+   * nimessä, joten kahta numerointia ei voi enää sekoittaa keskenään.
+   */
+  function labelFor(pt: { key: string; p: 1 | 2 }): string {
+    if (pt.p === 2) return `Keltainen ${p2Numbers[pt.key] ?? "?"}`;
+    return `Ikkuna ${points.findIndex((q) => q.key === pt.key) + 1}`;
+  }
   const floorNotes = notes?.[floor] || [];
   const activeNoteObj = activeNote ? floorNotes.find((n) => n.key === activeNote) ?? null : null;
 
@@ -1001,7 +1027,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                     onPointerDown={(e) => onOrbPointerDown(pt, e)}
                     onPointerMove={(e) => onOrbPointerMove(pt, e)}
                     onPointerUp={(e) => onOrbPointerUp(pt, e)}
-                    title={editMode && placeMode === "del" ? "Poista tämä piste" : `Ikkuna ${points.indexOf(pt) + 1} · P${pt.p} · ${status === "pesty" ? "Pesty" : status === "kesken" ? "Kesken" : "Ei pesty"}`}
+                    title={editMode && placeMode === "del" ? "Poista tämä piste" : `${labelFor(pt)} · ${status === "pesty" ? "Pesty" : status === "kesken" ? "Kesken" : "Ei pesty"}`}
                   />
                 );
               })}
@@ -1137,7 +1163,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
           <div data-fr8-pop="menu" style={{ ...fixedPopoverStyle(orbAnchor, 210, canObserve ? 380 : 230), width: "210px", maxHeight: "min(78vh, 460px)", overflowY: "auto", padding: "11px", background: "rgba(16,16,20,0.92)", border: "1px solid rgba(255,255,255,0.16)", borderRadius: "15px", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 20px 50px rgba(0,0,0,0.7)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "2px 4px 9px", borderBottom: "1px solid rgba(255,255,255,0.08)", marginBottom: "7px" }}>
               <span style={{ width: "9px", height: "9px", borderRadius: "50%", background: `rgb(${colorRgb(activePt.p, statuses[activeOrb] || "ei")})`, boxShadow: `0 0 7px rgba(${colorRgb(activePt.p, statuses[activeOrb] || "ei")},0.7)` }} />
-              <span style={{ fontSize: "12px", fontWeight: 600 }}>Ikkuna {activeIdx + 1}</span>
+              <span style={{ fontSize: "12px", fontWeight: 600 }}>{activePt ? labelFor(activePt) : `Ikkuna ${activeIdx + 1}`}</span>
               <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9.5px", color: "rgba(255,255,255,0.4)", marginLeft: "auto" }}>{activePt.p === 2 && p2 ? "PRIORITY 2" : deal && activePt.p === 2 ? "EI SOPIMUKSESSA" : `PRIORITEETTI ${activePt.p}`}</span>
             </div>
 

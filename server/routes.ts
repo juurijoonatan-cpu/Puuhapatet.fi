@@ -6733,6 +6733,56 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  /**
+   * PALAUTA HYLÄTYT ODOTTAMAAN HYVÄKSYNTÄÄ.
+   *
+   * "Ei"-nappi on asiakkaan näkymässä hyväksyntänapin vieressä, ja sitä voi
+   * painaa vahingossa. Hylätty ikkuna putoaa pois kaikesta: ei rahaa, ei
+   * laskua, eikä asiakas voi enää hyväksyä sitä itse — vaikka työ on tehty.
+   *
+   * Palautus on `propose` samalla hinnalla jolla ehdotus oli: ikkuna palaa
+   * `proposed`-tilaan, hintahuomio säilyy, versio nousee. Asiakas näkee sen
+   * taas omassa näkymässään ja voi hyväksyä sen.
+   *
+   * Avaimet annetaan aina nimeltä — tämä ei koskaan palauta "kaikkia" omin
+   * päin, koska osa hylkäyksistä on aitoja.
+   */
+  app.post("/api/jobs/:id/p2/restore-declined", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const job = await loadJobRow(id);
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const project = parseProject(job.projectData ?? null);
+      if (!project?.p2) return res.status(400).json({ error: "Vaihe 2 ei ole alustettu" });
+
+      const keys = Array.isArray(req.body?.keys)
+        ? req.body.keys.slice(0, 500).map((k: unknown) => String(k).slice(0, 64))
+        : [];
+      if (keys.length === 0) return res.status(400).json({ error: "Valitse palautettavat ikkunat" });
+
+      const actor = p2AdminActor(req);
+      const now = Date.now();
+      const done: string[] = [];
+      for (const key of keys) {
+        if (pointPriority(project, key) !== 2) continue;
+        const prev = project.p2.offers[key];
+        if (prev?.status !== "declined") continue;
+        const r = p2Transition(prev, "propose", { who: "admin", id: actor }, { priceCents: prev.priceCents });
+        if (!r.ok) continue;
+        project.p2.offers[key] = r.offer;
+        pushP2Event(project.p2.events, {
+          ts: now, key, action: "propose", actor,
+          priceCents: r.offer.priceCents, prevPriceCents: prev.priceCents, version: r.offer.version,
+        });
+        done.push(key);
+      }
+      const saved = await saveProject(job, project, { p2Mutation: true });
+      res.json({ ok: true, restored: done.length, keys: done, p2: saved.p2, p2Billing: computeP2Billing(saved) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
   // ── Asiakkaan p2-reitit (token = avain, kuten GET /api/gig/:token) ────────────
 
   /** Lataa keikka + projekti asiakkaan p2-toimintoa varten, samat portit kuin

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeP2Billing, p2WashedYellows, type P2Offer, type P2State } from "./p2";
+import { computeP2Billing, p2NumbersByFloor, p2WashedYellows, type P2Offer, type P2State } from "./p2";
 import type { ProjectData, WindowStatus } from "./project";
 
 /**
@@ -124,5 +124,45 @@ describe("p2WashedYellows", () => {
     const noP2 = project({ "1": [{ p: 2, status: "pesty" }] });
     (noP2 as { p2?: P2State }).p2 = undefined;
     expect(p2WashedYellows(noP2).count).toBe(0);
+  });
+});
+
+describe("p2NumbersByFloor", () => {
+  it("numero juoksee kerroksen keltaisista, ei kaikista pisteistä", () => {
+    // Tämä oli vika: kartta laski kaikki pisteet (punainen mukaan lukien),
+    // lista vain keltaiset — sama ikkuna sai kaksi eri numeroa.
+    const data = project({ "1": [
+      { p: 1 }, { p: 1 }, { p: 2 }, { p: 1 }, { p: 2 },
+    ] });
+    const n = p2NumbersByFloor(data);
+    expect(n["1#2"]).toBe(1);
+    expect(n["1#4"]).toBe(2);
+    expect(n["1#0"]).toBeUndefined();   // punaisella ei ole keltaisen numeroa
+  });
+
+  it("numerointi alkaa alusta joka kerroksessa", () => {
+    const data = project({ "1": [{ p: 2 }, { p: 2 }], "2": [{ p: 2 }] });
+    const n = p2NumbersByFloor(data);
+    expect([n["1#0"], n["1#1"], n["2#0"]]).toEqual([1, 2, 1]);
+  });
+
+  it("poistettu keltainen ei kuluta numeroa", () => {
+    const data = project({ "1": [{ p: 2 }, { p: 2 }, { p: 2 }] });
+    (data as { deleted: Record<string, boolean> }).deleted["1#0"] = true;
+    const n = p2NumbersByFloor(data);
+    expect(n["1#1"]).toBe(1);
+    expect(n["1#2"]).toBe(2);
+  });
+
+  it("sama numerointi kuin pestyjen listassa", () => {
+    const data = project({ "1": [
+      { p: 1, status: "pesty" },
+      { p: 2, status: "pesty", offer: locked(3400) },
+      { p: 2, status: "pesty", offer: proposed(3400) },
+    ] });
+    const n = p2NumbersByFloor(data);
+    for (const line of p2WashedYellows(data).byFloor[0].lines) {
+      expect(line.number).toBe(n[line.key]);
+    }
   });
 });

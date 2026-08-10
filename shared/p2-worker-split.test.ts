@@ -106,11 +106,14 @@ describe("p2WorkerSplit", () => {
     expect(s.pendingCents).toEqual({});
   });
 
-  it("hylätty keltainen ei ole odottavaa rahaa", () => {
+  it("hylätty keltainen ON odottavaa rahaa — asiakas voi vielä hyväksyä sen", () => {
+    // Tekijän tekemä työ ei katoa siitä että asiakas painoi "Ei": hän voi
+    // hyväksyä ikkunan yhä omasta näkymästään, joten palkkio on tulossa.
     const declined: P2Offer = { status: "declined", priceCents: 3400, version: 2, updatedAt: 0 };
     const s = p2WorkerSplit(project([{ p: 2, status: "pesty", by: "petrus", offer: declined }]));
-    expect(s.pendingCents).toEqual({});
-    expect(s.pendingCount).toEqual({});
+    expect(s.pendingCents.petrus).toBe(1800);
+    expect(s.pendingCount.petrus).toBe(1);
+    expect(s.earnedCents).toEqual({});
   });
 
   it("ilman vaihetta 2 kaikki on tyhjää", () => {

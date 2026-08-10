@@ -56,17 +56,20 @@ describe("p2WashedYellows", () => {
     expect(l.matchesBilling).toBe(true);
   });
 
-  it("hylätty ja hinnoittelematon ovat mukana MÄÄRÄSSÄ mutta tuovat nollan", () => {
-    // Juuri tämä selittää miksi kpl ja € eivät liiku samassa tahdissa.
+  it("hylätty on tavallinen odottava, hinta mukana summassa", () => {
     const data = project({ "1": [
       { p: 2, status: "pesty", offer: declined(3400) },
       { p: 2, status: "pesty" },
     ] });
     const l = p2WashedYellows(data);
     expect(l.count).toBe(2);
-    expect(l.sumCents).toBe(0);
-    expect(l.byState.declined).toEqual({ count: 1, sumCents: 0 });
+    expect(l.sumCents).toBe(3400);
+    expect(l.byState.pending).toEqual({ count: 1, sumCents: 3400 });
+    // Vain hinnaton tuo nollan — se on ainoa syy jonka takia kpl ja € eivät
+    // liiku samassa tahdissa.
     expect(l.byState.unpriced).toEqual({ count: 1, sumCents: 0 });
+    // Merkintä on tallella, jotta hylkäyksen voi tunnistaa jälkikäteen.
+    expect(l.byFloor[0].lines[0].wasDeclined).toBe(true);
   });
 
   it("vastatarjous lasketaan asiakkaan tarjoamalla hinnalla", () => {
@@ -97,13 +100,13 @@ describe("p2WashedYellows", () => {
   it("kerrossummat ja -määrät summautuvat kokonaislukuihin", () => {
     const data = project({
       "K": [{ p: 2, status: "pesty", offer: locked(3400) }],
-      "4": [{ p: 2, status: "pesty", offer: proposed(2700) }, { p: 2, status: "pesty", offer: declined(3400) }],
+      "4": [{ p: 2, status: "pesty", offer: proposed(2700) }, { p: 2, status: "pesty", offer: declined(3400) }],  // hylätty on odottava → 2700 + 3400
     });
     const l = p2WashedYellows(data);
     // Ryhmien järjestys seuraa rakennuksen kerrosjärjestystä; tässä tarkistetaan
     // sisältö, ei järjestys (fixture rakentaa kerrokset objektin avaimista).
     expect(l.byFloor.find((g) => g.floor === "K")).toMatchObject({ count: 1, sumCents: 3400 });
-    expect(l.byFloor.find((g) => g.floor === "4")).toMatchObject({ count: 2, sumCents: 2700 });
+    expect(l.byFloor.find((g) => g.floor === "4")).toMatchObject({ count: 2, sumCents: 6100 });
     expect(l.byFloor.reduce((n, g) => n + g.count, 0)).toBe(l.count);
     expect(l.byFloor.reduce((n, g) => n + g.sumCents, 0)).toBe(l.sumCents);
   });

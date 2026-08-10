@@ -16,7 +16,7 @@ import {
   dealInternalRateCents,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense,
 } from "@shared/project";
-import { computeP2Billing, p2CustomerLocksSince, p2Itemisation, p2WashedYellows, p2WorkerSplit, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule, type P2WashedState } from "@shared/p2";
+import { computeP2Billing, customerAddedKeys, p2CustomerLocksSince, p2Itemisation, p2WashedYellows, p2WorkerSplit, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule, type P2WashedState } from "@shared/p2";
 import { computeGuided, type GuidedWork } from "@shared/guided";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
 import { FOUNDER_IDS } from "@shared/team";
@@ -1165,7 +1165,16 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, onGoToWindow, can
     run(() => api.p2Respond(jobId, { key, action, priceCents, version, by }));
 
   const countered = Object.entries(p2?.offers ?? {}).filter(([, o]) => o.status === "countered");
-  const customerAdded = (p2?.events ?? []).filter((e) => e.action === "add_point").length;
+  // ASIAKKAAN EHDOTTAMAT IKKUNAT — TOIMENPIDELISTA, EI LUKU.
+  // Tässä oli "💡 asiakas ehdotti N", jossa N laski KAIKKI add_point-tapahtumat
+  // ikuisuudesta: myös ne jotka asiakas oli sittemmin poistanut ja ne jotka oli
+  // jo hinnoiteltu. Luku ei siis vastannut mihinkään tekemättömään työhön eikä
+  // siitä päässyt mihinkään. Nyt jäljellä on se mikä oikeasti odottaa meitä:
+  // asiakkaan lisäämä ikkuna joka on yhä kartalla ja jolla EI ole hintaa.
+  const customerPending = useMemo(() => {
+    const keys = customerAddedKeys(project);
+    return keys.filter((k) => !project.p2?.offers[k]);
+  }, [project]);
 
   // Peruttavat hyväksynnät kahdella aikarajalla. `since` lasketaan vasta
   // napautuksen hetkellä, jotta "viimeinen tunti" tarkoittaa tuntia taaksepäin
@@ -1515,8 +1524,35 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, onGoToWindow, can
           {b.counteredCount > 0 && <span><b style={{ color: "rgb(255,205,40)" }}>{b.counteredCount}</b> vastatarjous</span>}
           {b.declinedCount > 0 && <span><b style={{ color: "rgba(255,150,150,0.9)" }}>{b.declinedCount}</b> hylätty</span>}
           {b.yellowTotal - b.pricedCount > 0 && <span><b style={{ color: "rgb(255,205,40)" }}>{b.yellowTotal - b.pricedCount}</b> ilman hintaa</span>}
-          {customerAdded > 0 && <span>💡 asiakas ehdotti {customerAdded}</span>}
         </div>
+
+        {/* ASIAKKAAN EHDOTTAMAT — sama muoto kuin hinnoittelemattomilla pestyillä,
+            koska se on sama tehtävä: avaa kerros ja anna hinta. Asiakas on
+            merkinnyt ikkunan itse ja odottaa meiltä hintaa; ilman tätä listaa
+            se hukkui muiden hinnoittelemattomien joukkoon eikä mikään kertonut
+            että joku odottaa vastausta. */}
+        {customerPending.length > 0 && (
+          <div style={{ padding: "10px 13px", borderRadius: 11, background: "rgba(150,175,255,0.09)", border: "1px solid rgba(150,175,255,0.32)", fontSize: "12.5px", color: "rgba(205,220,255,0.95)" }}>
+            <div style={{ marginBottom: 7 }}>
+              💡 Asiakas ehdotti {customerPending.length} {customerPending.length === 1 ? "ikkunaa" : "ikkunaa"} — anna hinta:
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {customerPending.slice(0, 24).map((k) => {
+                const fl = k.split("#")[0];
+                return (
+                  <button key={k} onClick={() => onGoToFloor(fl)}
+                    title={`Avaa kerros ${fl} — ikkuna ${k}`}
+                    style={{ padding: "4px 10px", borderRadius: 999, border: "1px solid rgba(150,175,255,0.45)", background: "rgba(150,175,255,0.14)", color: "rgba(215,228,255,0.98)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer" }}>
+                    Krs {fl}
+                  </button>
+                );
+              })}
+              {customerPending.length > 24 && (
+                <span style={{ alignSelf: "center", opacity: 0.8 }}>+{customerPending.length - 24}</span>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Pesty ilman hintaa — perustajan tehtävälista, ei varoitusseinä. */}
         {/* HINNOITTELEMATTOMAT: KERRO MITKÄ, ÄLÄ VAIN MONTAKO.
@@ -1615,9 +1651,18 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, onGoToWindow, can
               <button onClick={() => setPayoutRows(DEFAULT_P2_PAYOUT_SCHEDULE.map((r) => ({ price: String(r.priceCents / 100), pay: String(r.payoutCents / 100) })))} style={btn}>Oletukset</button>
               <button disabled={busy} onClick={savePayout} style={{ ...btn, border: "none", background: "#fff", color: "#0a0a0c", fontWeight: 700 }}>Tallenna</button>
             </div>
-            {/* Fallback-% muille hinnoille — pieni, ei selitystä. */}
+            {/* Taulukon rivit ovat ANKKUREITA: niiden välissä palkkio kulkee
+                suoraan, joten väliin osuva hinta ei enää pudota palkkiota.
+                Sanotaan se tässä, koska se on koko taulukon lukuohje. */}
+            <div style={{ fontSize: "11.5px", color: "rgba(255,255,255,0.45)", lineHeight: 1.55, paddingTop: 4 }}>
+              Rivien välissä palkkio kulkee suoraan: 36,00 € → {p2eur(p2WorkerPayoutCents(3600, sharePct, p2?.payoutSchedule))}.
+              Alimman ja ylimmän rivin ulkopuolella käytetään lähimmän rivin osuutta.
+              Kalliimpi ikkuna ei voi maksaa tekijälle vähemmän kuin halvempi.
+            </div>
+            {/* Prosentti pätee vain jos taulukko on tyhjä — sanotaan se, ettei
+                kenttä lupaa vaikutusta jota sillä ei ole. */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
-              <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.5)" }}>Muut hinnat</span>
+              <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.5)" }}>Jos taulukko on tyhjä</span>
               <input type="number" min={1} max={100} value={shareDraft} onChange={(e) => setShareDraft(e.target.value)}
                 style={{ width: 64, minHeight: 44, padding: "8px 10px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.16)", background: "rgba(0,0,0,0.4)", color: "#fff", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "13px", outline: "none" }} />
               <span style={{ fontSize: "13px", color: "rgba(255,255,255,0.4)" }}>%</span>

@@ -633,12 +633,29 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   { method: "GET",  re: /^\/api\/quote\/[^/]+$/ },
   { method: "POST", re: /^\/api\/quote\/[^/]+\/respond$/ },
   { method: "GET",  re: /^\/api\/gig\/[^/]+$/ },
+  // Havainnon kuva seurantalinkistä. TÄMÄ PUUTTUI, ja seuraus oli ruma: reitti
+  // tunnistaa asiakkaan omalla tokenillaan aivan kuten `GET /api/gig/:token`,
+  // mutta koska sitä ei ollut tässä listassa, portti vastasi 401. Selain
+  // tulkitsee 401:n vanhentuneeksi ADMIN-sessioksi ja heittää käyttäjän
+  // /admin/login-sivulle — eli asiakas, joka napautti ikkunaa kartallaan,
+  // päätyi meidän kirjautumisruudullemme.
+  { method: "GET",  re: /^\/api\/gig\/[^/]+\/observation-image$/ },
   { method: "POST", re: /^\/api\/gig\/[^/]+\/sign$/ },
   // P2 (keltaiset ikkunat): asiakkaan hintaneuvottelu seurantalinkistä. Token
   // on avain; jokainen reitti validoi lisäksi vaiheen + allekirjoitusportin.
   { method: "POST", re: /^\/api\/gig\/[^/]+\/p2\/(terms|accept|counter|decline|add-point|remove-point)$/ },
   { method: "GET",  re: /^\/api\/crew\/[^/]+$/ },
+  // Sama vika tekijän puolella: kuvan haku omalla tokenilla vastasi 401 ja
+  // heitti tekijän adminin kirjautumiseen kesken työpäivän.
+  { method: "GET",  re: /^\/api\/crew\/[^/]+\/observation-image$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/(password|onboard|window|hours|note|map-note|shift|expense)$/ },
+  // Nämä neljä olivat samassa aukossa kuin observation-image: jokainen
+  // tunnistaa tekijän `findJobByCrewToken`illa täsmälleen kuten yllä olevat,
+  // mutta portti vastasi niihin 401 → tekijä lensi adminin kirjautumiseen
+  // kesken työvuoron. Vartija `server/public-api-coverage.test.ts` löysi nämä.
+  { method: "GET",  re: /^\/api\/crew\/[^/]+\/contract$/ },
+  { method: "POST", re: /^\/api\/crew\/[^/]+\/(window-observation|manual-session)$/ },
+  { method: "GET",  re: /^\/api\/crew\/[^/]+\/payout\/[^/]+\/invoice\.pdf$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/map-note\/(update|delete)$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/payout\/[^/]+\/approve$/ },
   // FR8 erälaskutus, tekijän vastaus (kohta 3B): tekijä lähettää tai hylkää

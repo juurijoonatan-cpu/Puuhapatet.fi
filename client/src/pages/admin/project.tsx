@@ -16,7 +16,7 @@ import {
   dealInternalRateCents,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense,
 } from "@shared/project";
-import { computeP2Billing, customerAddedKeys, p2CustomerLocksSince, p2Itemisation, p2WashedYellows, p2WorkerSplit, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule, type P2WashedState } from "@shared/p2";
+import { computeP2Billing, customerAddedKeys, p2FounderOpts, p2CustomerLocksSince, p2Itemisation, p2WashedYellows, p2WorkerSplit, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule, type P2WashedState } from "@shared/p2";
 import { computeGuided, type GuidedWork } from "@shared/guided";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
 import { FOUNDER_IDS } from "@shared/team";
@@ -609,6 +609,14 @@ export default function AdminProjectPage() {
   // Manuaalinen ohitus (manualEarningsCents) voittaa aina. Nimet crew:stä.
   const crew = project.crew ?? [];
   const isFounder = (id: string, role?: string) => role === "host" || FOUNDER_IDS.includes(id);
+  /**
+   * Sama tieto muodossa jonka `shared/p2.ts` ymmärtää. Perustaja saa OMASTA
+   * keltaisesta ikkunastaan koko hinnan (kuten punaisistakin), ei työntekijän
+   * palkkiotaulukon mukaista osuutta — hänelle ei ole palkattavaa, joten
+   * katetta ei jää jaettavaksi. Ks. shared/p2-founder-pay.test.ts.
+   */
+  const p2IsFounder = (id: string) => isFounder(id, crew.find((c) => c.id === id)?.role);
+  const p2Opts = { isFounder: p2IsFounder };
   const dealTotalCents = Math.round(effectivePrice * 100);
   // Sisäinen kate: EFEKTIIVINEN sopimussumma jaettuna todellisella punaisella
   // ikkunamäärällä (`dealInternalRateCents`). Tämä on perustajien oman työn oikea
@@ -671,7 +679,7 @@ export default function AdminProjectPage() {
   // taksa. Kertyneet, odottavat ja odottavien lukumäärä tulevat yhdestä jaetusta
   // funktiosta: ne laskettiin ennen kolmena lähes identtisenä silmukkana, joista
   // yksi olisi jäänyt jälkeen heti kun ehto muuttuu.
-  const p2Split = p2WorkerSplit(project);
+  const p2Split = p2WorkerSplit(project, p2Opts);
   /** Yhden tekijän keltaisista kertynyt palkkio (0 kun vaihe 2 ei ole päällä). */
   const p2EarnedFor = (workerId: string): number => Math.round(p2Split.earnedCents[workerId] || 0);
   // Odottavat keltaiset (pesty, hinta ehdotettu mutta ei hyväksytty) — teoreettista
@@ -698,7 +706,7 @@ export default function AdminProjectPage() {
    * SOVITTUJEN keltaisten asiakashinta − tekijöiden palkkiot, eli juuri se raha
    * joka jää perustajille. Jaetaan tasan, pariton sentti ensimmäiselle.
    */
-  const p2Bill = computeP2Billing(project);
+  const p2Bill = computeP2Billing(project, p2Opts);
   const p2MarginEachCents = Math.floor(p2Bill.marginCents / founderCount);
   /** Sama odottaville (asiakas ei ole vielä hyväksynyt hintaa) — teoreettinen. */
   const p2PendingMarginCents = Math.max(0, p2Bill.pendingEarnedCents - p2Bill.pendingWorkerCostCents);
@@ -1130,7 +1138,10 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, onGoToWindow, can
   p2InvoicedCents?: number;
 }) {
   const p2 = project.p2;
-  const b = computeP2Billing(project);
+  // Sama perustajasääntö kuin perustajien ansioissa: perustajan itse pesemä
+  // keltainen maksaa hänelle koko hinnan, joten siitä ei jää katetta. Ilman
+  // tätä KATE-tiili näyttäisi eri luvun kuin perustajien kortit.
+  const b = computeP2Billing(project, p2FounderOpts(project));
   const p2Remaining = Math.max(0, b.earnedCents - p2InvoicedCents);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);

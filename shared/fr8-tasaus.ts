@@ -23,7 +23,7 @@
  */
 
 import { allPoints, type ProjectData } from "./project";
-import { computeP2Billing, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT } from "./p2";
+import { p2FounderOpts, computeP2Billing, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT } from "./p2";
 import { getCrew, DEFAULT_WORKER_PER_WINDOW_CENTS } from "./crew";
 import { isP2EraSelection } from "./era-billing";
 import { BRAND_BILLERS } from "./billers";
@@ -223,12 +223,18 @@ export function founderWashCounts(project: ProjectData): {
     if (!p2Enabled) continue;
     const offer = offers[pt.key];
     if (offer?.status !== "locked" || !offer.lockedCents) continue;
+    // PERUSTAJA SAA OMASTA IKKUNASTAAN KOKO HINNAN, ei työntekijän
+    // palkkiotaulukon osuutta — hänelle ei ole palkattavaa, joten katetta ei
+    // jää jaettavaksi. Sama sääntö kuin `shared/p2.ts`:n `p2WorkerSplit`issä;
+    // jos nämä eriytyvät, tasaus jakaa eri summan kuin dash näyttää.
     const payout = p2WorkerPayoutCents(offer.lockedCents, sharePct, schedule);
+    const dueTo = (who: string) => (isFounder(who) ? offer.lockedCents! : payout);
     if (pt.washedBy && isFounder(pt.washedBy)) {
-      p2CentsByFounder[pt.washedBy] = (p2CentsByFounder[pt.washedBy] || 0) + (second ? payout / 2 : payout);
+      const full = dueTo(pt.washedBy);
+      p2CentsByFounder[pt.washedBy] = (p2CentsByFounder[pt.washedBy] || 0) + (second ? full / 2 : full);
     }
     if (second && isFounder(second)) {
-      p2CentsByFounder[second] = (p2CentsByFounder[second] || 0) + payout / 2;
+      p2CentsByFounder[second] = (p2CentsByFounder[second] || 0) + dueTo(second) / 2;
     }
   }
   for (const k of Object.keys(p2CentsByFounder)) p2CentsByFounder[k] = Math.round(p2CentsByFounder[k]);
@@ -363,7 +369,7 @@ export function buildTasaus(
   // Luetaan KARTALTA eikä laskuista: lasku kertoo mitä on maksettu, ei mitä on
   // ansaittu. Jos näiden ero jätettäisiin huomiotta, maksamaton tekijävelka
   // näkyisi johtajien katteena — eli tasaus antaisi molemmille liikaa.
-  const p2Bill = computeP2Billing(project);
+  const p2Bill = computeP2Billing(project, p2FounderOpts(project));
   const wash = founderWashCounts(project);
   const { p1ByFounder, p2CentsByFounder, p1WindowsTotal } = wash;
   workerP1EarnedCents = Object.values(wash.workerP1EarnedByWorker).reduce((s, c) => s + c, 0);

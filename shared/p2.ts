@@ -22,6 +22,7 @@
 
 import type { ProjectData } from "./project";
 import { allPoints } from "./project";
+import { FOUNDER_IDS } from "./team";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -490,34 +491,76 @@ export interface P2WorkerSplit {
  * väittäisi eri asiaa kuin hänen palkkansa. Yhtenä funktiona ne eivät voi
  * erkaantua, ja niiden jako (kahdestaan pesty ikkuna = 50/50) on testattavissa.
  */
-export function p2WorkerSplit(data: ProjectData): P2WorkerSplit {
+/**
+ * PERUSTAJA SAA OMASTA IKKUNASTAAN KOKO HINNAN.
+ *
+ * Palkkiotaulukko (34 € → 18 €) on TYÖNTEKIJÄN palkka: erotus jää yritykselle
+ * katteeksi, joka jaetaan perustajien kesken. Kun perustaja pesee ikkunan itse,
+ * palkattavaa ei ole — koko hinta on hänen. Punaisissa näin on aina ollut
+ * (perustaja saa 37,50 €/ikkuna, ei työntekijän taksaa), keltaisissa ei, ja
+ * siksi 16,5 itse pestyä keltaista näytti tuottavan 300,50 € kun sen olisi
+ * pitänyt olla yli 560 €.
+ *
+ * Ero ei ollut pelkkä esitystapa mutta ei myöskään kadonnutta rahaa: puuttuva
+ * osa tuli takaisin "osuutena katteesta", MUTTA puoliksi jaettuna toisen
+ * perustajan kanssa. Itse tehty työ valui siis puoliksi kumppanille. Nyt
+ * perustaja pitää oman työnsä ja katetta jaetaan vain työntekijöiden töistä.
+ *
+ * `isFounder` on valinnainen. Ilman sitä käytös on entinen — kutsujat jotka
+ * eivät tunne perustajia (esim. tekijän oma näkymä) eivät voi vahingossa
+ * saada eri lukua kuin ennen.
+ */
+export interface P2SplitOpts {
+  isFounder?: (workerId: string) => boolean;
+}
+
+/**
+ * Perustaja-predikaatti suoraan projektin miehistöstä. Yksi paikka, jotta
+ * dash, keltaisten paneeli ja perustajien ansiot eivät voi olla eri mieltä
+ * siitä kuka on perustaja — se ero näkyisi suoraan euroina.
+ */
+export function p2FounderOpts(data: ProjectData): P2SplitOpts {
+  const crew = data.crew ?? [];
+  return {
+    isFounder: (id: string) => {
+      if (FOUNDER_IDS.includes(id)) return true;
+      return crew.find((c) => c.id === id)?.role === "host";
+    },
+  };
+}
+
+export function p2WorkerSplit(data: ProjectData, opts: P2SplitOpts = {}): P2WorkerSplit {
   const out: P2WorkerSplit = { earnedCents: {}, pendingCents: {}, pendingCount: {} };
   const p2 = data.p2;
   if (!p2?.enabled) return out;
   const sharePct = p2.workerSharePct || DEFAULT_P2_WORKER_SHARE_PCT;
   const schedule = p2.payoutSchedule;
   const by2 = data.washedBy2 || {};
+  const isFounder = opts.isFounder ?? (() => false);
   const add = (bucket: Record<string, number>, who: string | undefined, amount: number) => {
     if (!who) return;
     bucket[who] = (bucket[who] || 0) + amount;
   };
+  /** Mitä TÄMÄ tekijä saa tästä ikkunasta: perustaja koko hinnan, muut taulukon. */
+  const dueTo = (who: string | undefined, priceCents: number): number =>
+    who && isFounder(who) ? priceCents : p2WorkerPayoutCents(priceCents, sharePct, schedule);
   for (const pt of allPoints(data)) {
     if (pt.p !== 2 || pt.status !== "pesty") continue;
     const offer = p2.offers[pt.key];
     const second = by2[pt.key];
     const half = second ? 0.5 : 1;
     if (offer?.status === "locked" && offer.lockedCents) {
-      const pay = p2WorkerPayoutCents(offer.lockedCents, sharePct, schedule);
-      add(out.earnedCents, pt.washedBy, pay * half);
-      if (second) add(out.earnedCents, second, pay * 0.5);
+      // Puoliksi tehty ikkuna arvotetaan KUMMANKIN oman sääntönsä mukaan:
+      // perustaja + työntekijä samassa ikkunassa ei ole sama kuin kaksi samaa.
+      add(out.earnedCents, pt.washedBy, dueTo(pt.washedBy, offer.lockedCents) * half);
+      if (second) add(out.earnedCents, second, dueTo(second, offer.lockedCents) * 0.5);
       continue;
     }
     const pending = p2PendingPriceCents(offer);
     if (pending == null) continue;
-    const pay = p2WorkerPayoutCents(pending, sharePct, schedule);
-    add(out.pendingCents, pt.washedBy, pay * half);
+    add(out.pendingCents, pt.washedBy, dueTo(pt.washedBy, pending) * half);
     add(out.pendingCount, pt.washedBy, half);
-    if (second) { add(out.pendingCents, second, pay * 0.5); add(out.pendingCount, second, 0.5); }
+    if (second) { add(out.pendingCents, second, dueTo(second, pending) * 0.5); add(out.pendingCount, second, 0.5); }
   }
   return out;
 }
@@ -840,7 +883,7 @@ export interface P2Billing {
  * offers against the LIVE p=2 points, so deleted dots drop out of every total.
  * With no `p2` on the project everything is zero and P1 behaves exactly as today.
  */
-export function computeP2Billing(data: ProjectData): P2Billing {
+export function computeP2Billing(data: ProjectData, opts: P2SplitOpts = {}): P2Billing {
   const out: P2Billing = {
     yellowTotal: 0, pricedCount: 0, proposedCount: 0, counteredCount: 0,
     lockedCount: 0, lockedSumCents: 0, lockedWashedCount: 0, earnedCents: 0,
@@ -856,6 +899,25 @@ export function computeP2Billing(data: ProjectData): P2Billing {
   if (!p2) return out;
   const sharePct = p2.workerSharePct || DEFAULT_P2_WORKER_SHARE_PCT;
   const schedule = p2.payoutSchedule;
+  const isFounder = opts.isFounder ?? (() => false);
+  const by2 = data.washedBy2 || {};
+  /**
+   * Mitä ikkunasta MAKSETAAN pesijöilleen. Perustaja saa koko hinnan (hänelle
+   * ei ole palkattavaa), työntekijä palkkiotaulukon mukaan. Kate on erotus,
+   * eli sitä syntyy vain työntekijöiden tekemästä työstä — perustajan omasta
+   * ikkunasta ei jää katetta jaettavaksi, koska koko summa on jo hänen.
+   *
+   * Ilman `isFounder`ia käytös on entinen (kaikki taulukon mukaan), jottei
+   * kutsuja joka ei tunne perustajia saa vahingossa eri lukua.
+   */
+  const payoutFor = (key: string, priceCents: number): number => {
+    const first = data.washedBy?.[key];
+    const second = by2[key];
+    const rate = (who: string | undefined) =>
+      who && isFounder(who) ? priceCents : p2WorkerPayoutCents(priceCents, sharePct, schedule);
+    if (!second) return rate(first);
+    return Math.round(rate(first) * 0.5 + rate(second) * 0.5);
+  };
   for (const pt of yellows) {
     const offer = p2.offers[pt.key];
     // Pesty on pesty riippumatta hinnan tilasta. Lasketaan tässä, ennen
@@ -872,7 +934,7 @@ export function computeP2Billing(data: ProjectData): P2Billing {
       if (pt.status === "pesty") {
         out.lockedWashedCount += 1;
         out.earnedCents += offer.lockedCents;
-        out.workerCostCents += p2WorkerPayoutCents(offer.lockedCents, sharePct, schedule);
+        out.workerCostCents += payoutFor(pt.key, offer.lockedCents);
       }
     } else if (pt.status === "pesty") {
       // Pesty, mutta hintaa ei ole lukittu. Kolme eri tapausta:
@@ -884,7 +946,7 @@ export function computeP2Billing(data: ProjectData): P2Billing {
       if (pending != null) {
         out.pendingWashedCount += 1;
         out.pendingEarnedCents += pending;
-        out.pendingWorkerCostCents += p2WorkerPayoutCents(pending, sharePct, schedule);
+        out.pendingWorkerCostCents += payoutFor(pt.key, pending);
       } else {
         out.unpricedWashedCount += 1;
         out.washedUnlockedKeys.push(pt.key);

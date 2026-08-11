@@ -796,6 +796,8 @@ export const api = {
     /** Käsin asetettu siirtosumma senttiä; null palauttaa lasketun summan. */
     overrideCents?: number | null;
     overrideFromId?: string | null;
+    /** Kuka maksaa jäljellä olevan tekijävelan; null jakaa sen tasan. */
+    reserveOwnerId?: string | null;
     note?: string;
     addTransfer?: { fromId: string; toId: string; cents: number; note?: string };
     removeTransferId?: string;

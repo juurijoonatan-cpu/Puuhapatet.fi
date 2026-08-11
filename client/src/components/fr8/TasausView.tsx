@@ -522,14 +522,39 @@ export default function TasausView({ jobId, canEdit = true }: {
           {data.unattributedP1Windows > 0 ? ` · ${win(data.unattributedP1Windows)} ikkunaa ilman pesijää` : ""}
         </p>
         {result.reserveCents !== 0 && (
-          <p style={{ margin: `${T.space.sm}px 0 0`, fontFamily: T.font, fontSize: T.size.xs, lineHeight: 1.5, color: T.tone.info }}>
-            <Info style={{ width: 12, height: 12, display: "inline", verticalAlign: -2, marginRight: 4 }} />
-            {/* Yksi rivi, ei kappaletta: luku + mitä se on. Selitys kuuluu
-                dokumentaatioon, ei rahanäkymään. */}
-            {result.reserveCents > 0
-              ? <>Tekijöille kuuluvaa käsissä <strong>{eur(result.reserveCents)}</strong> · ei jaeta, kumpikin kantaa puolet</>
-              : <>Laskutettu käsissä olevaa enemmän <strong>{eur(-result.reserveCents)}</strong> · siirto olettaa sen tulevan</>}
-          </p>
+          <div style={{ margin: `${T.space.sm}px 0 0` }}>
+            <p style={{ margin: 0, fontFamily: T.font, fontSize: T.size.xs, lineHeight: 1.5, color: T.tone.info }}>
+              <Info style={{ width: 12, height: 12, display: "inline", verticalAlign: -2, marginRight: 4 }} />
+              {/* Yksi rivi, ei kappaletta: luku + mitä se on. */}
+              {result.reserveCents > 0
+                ? <>Tekijöille kuuluvaa käsissä <strong>{eur(result.reserveCents)}</strong></>
+                : <>Laskutettu käsissä olevaa enemmän <strong>{eur(-result.reserveCents)}</strong> · siirto olettaa sen tulevan</>}
+            </p>
+            {/* KUKA MAKSAA SEN. Oletus jakaa varauksen tasan, mikä on oikein vain
+                kun velkaa ei ole kohdennettu. Kun tiedetään kuka maksaa (esim.
+                harjoittelijan loppupalkan tilittää hänen vastuujohtajansa),
+                tasajako jättää maksajan puolikkaan verran vajaaksi. */}
+            {result.reserveCents > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: T.space.xs, flexWrap: "wrap", marginTop: T.space.xs }}>
+                <span style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted }}>Maksaa:</span>
+                {[{ id: "", name: "molemmat" }, ...founders.map((f) => ({ id: f.id, name: f.name.split(/\s+/)[0] }))].map((opt) => {
+                  const active = (data.input.reserveOwnerId ?? "") === opt.id;
+                  return (
+                    <button
+                      key={opt.id || "split"}
+                      onClick={() => save({ reserveOwnerId: opt.id || null })}
+                      style={{
+                        ...button(active ? "accent" : "ghost"),
+                        minHeight: 32, padding: "5px 10px", fontSize: T.size.xs,
+                      }}
+                    >
+                      {opt.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         )}
       </div>
 

@@ -74,6 +74,8 @@ export interface FounderSettlementState {
   overrideCents?: number | null;
   /** Käsin asetetun siirron maksaja. */
   overrideFromId?: string | null;
+  /** Kuka maksaa jäljellä olevan tekijävelan. Tyhjä = jaetaan tasan. */
+  reserveOwnerId?: string | null;
   /** Miksi summa on käsin asetettu — näkyy tasausnäkymässä. */
   note?: string;
   /** Jo tehdyt/laskutetut johtajien väliset siirrot. */
@@ -199,6 +201,7 @@ export function sanitizeFounderSettlementState(input: any): FounderSettlementSta
     expensesCents: Object.keys(expensesCents).length > 0 ? expensesCents : undefined,
     overrideCents,
     overrideFromId: input.overrideFromId ? cleanId(input.overrideFromId) || null : null,
+    reserveOwnerId: input.reserveOwnerId ? cleanId(input.reserveOwnerId) || null : null,
     note: input.note ? String(input.note).slice(0, 400).trim() || undefined : undefined,
     transfers: transfers.length > 0 ? transfers : undefined,
     ...(manual ? { manual } : {}),
@@ -206,7 +209,8 @@ export function sanitizeFounderSettlementState(input: any): FounderSettlementSta
   };
 
   const meaningful = !!(state.receivedBy || state.paidBy || state.expensesCents
-    || state.overrideCents != null || state.note || state.transfers || state.manual);
+    || state.overrideCents != null || state.reserveOwnerId || state.note
+    || state.transfers || state.manual);
   return meaningful ? state : undefined;
 }
 
@@ -251,6 +255,19 @@ export interface TasausInput {
   overrideCents?: number | null;
   /** Ohituksen maksaja. Ilman tätä käytetään lasketun siirron suuntaa. */
   overrideFromId?: string | null;
+  /**
+   * Kuka MAKSAA jäljellä olevan tekijävelan (`reserveCents`).
+   *
+   * Oletus on jakaa varaus tasan: kumpikaan ei joudu rahoittamaan sitä yksin.
+   * Se on oikea sääntö kun velkaa ei ole vielä kohdennettu kenellekään. Mutta
+   * usein tiedetään kuka sen maksaa — esim. harjoittelijan loppupalkan tilittää
+   * hänen vastuujohtajansa. Silloin tasajako on väärin: se jättää maksajan
+   * puolikkaan verran vajaaksi ja toisen saman verran plussalle.
+   *
+   * Kun tämä on asetettu, koko varaus luetaan tämän johtajan kannettavaksi ja
+   * siirtosumma kasvaa vastaavasti.
+   */
+  reserveOwnerId?: string | null;
 }
 
 /** Yksi johtajien välinen siirto (maksettu tai laskutettu). */
@@ -390,8 +407,16 @@ export function computeTasaus(input: TasausInput): TasausResult {
   // jäävä varaus (tekijöiden maksamaton velka / keräämättä oleva lasku) jakautuu
   // molemmille yhtä suurena eikä toinen joudu rahoittamaan sitä yksin.
   const netSum = rows.reduce((s, x) => s + x.netCents, 0);
-  const meanShares = splitEvenCents(netSum, n);
-  rows.forEach((row, i) => { row.dueCents = row.netCents - meanShares[i]; });
+  // Jos varauksen maksaja on tiedossa, se luetaan HÄNEN kannettavakseen ennen
+  // tasausta: hänen nettonsa pienenee koko varauksen verran, jolloin jäljelle
+  // jäävä summa jakautuu nollaan ja siirto kattaa velan kokonaan. Ilman tätä
+  // maksaja jäisi puolikkaan varauksen verran vajaaksi.
+  const reserveOwner = cleanId(input.reserveOwnerId);
+  const ownerIdx = reserveOwner ? rows.findIndex((row) => row.id === reserveOwner) : -1;
+  const adjustedNets = rows.map((row, i) => (i === ownerIdx ? row.netCents - netSum : row.netCents));
+  const adjustedSum = adjustedNets.reduce((s, x) => s + x, 0);
+  const meanShares = splitEvenCents(adjustedSum, n);
+  rows.forEach((row, i) => { row.dueCents = adjustedNets[i] - meanShares[i]; });
 
   const grossTransfer = pickTransfer(rows);
 

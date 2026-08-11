@@ -83,8 +83,12 @@ export interface P2CustomerActions {
   accept: (items: { key: string; priceCents: number; version: number }[]) => Promise<string | null>;
   counter: (key: string, counterCents: number, version: number) => Promise<string | null>;
   decline: (key: string, version: number) => Promise<string | null>;
-  addPoint: (floor: string, x: number, y: number) => Promise<string | null>;
+  /** Palauttaa lisätyn ikkunan avaimen — sitä tarvitaan toiveen kirjaamiseen
+   *  ja siihen että juuri lisätty piste erottuu kartalla muista. */
+  addPoint: (floor: string, x: number, y: number) => Promise<{ key: string } | { error: string }>;
   removePoint: (key: string) => Promise<string | null>;
+  /** Asiakkaan toive omasta ehdotuksestaan: hinta-arvio ja/tai viesti. */
+  setWish: (key: string, cents: number | null, note: string) => Promise<string | null>;
   /** Terms not accepted yet → the parent opens the terms dialog. */
   requireTerms: () => void;
 }
@@ -146,8 +150,47 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
   const [p2Busy, setP2Busy] = useState(false);
   const [p2Error, setP2Error] = useState<string | null>(null);
   const [addMode, setAddMode] = useState(false);
-  /** Montako ikkunaa tässä lisäysistunnossa on merkitty — kuittaus käyttäjälle. */
-  const [addedCount, setAddedCount] = useState(0);
+  /** Tässä lisäysistunnossa merkityt avaimet. Ne pysyvät kirkkaina kun muut
+   *  himmenevät, ja niistä lasketaan kuittaus ("Lisätty 3 ikkunaa"). */
+  const [sessionKeys, setSessionKeys] = useState<string[]>([]);
+  const addedCount = sessionKeys.length;
+  /** Mille juuri lisätylle ikkunalle kirjoitetaan toivetta. */
+  const [wishFor, setWishFor] = useState<string | null>(null);
+  const [wishPrice, setWishPrice] = useState("");
+  const [wishNote, setWishNote] = useState("");
+  const [wishBusy, setWishBusy] = useState(false);
+
+  /**
+   * Yksi napautus = yksi ikkuna + heti mahdollisuus kertoa siitä.
+   *
+   * Ennen napautus loi pisteen ja siihen se jäi: asiakas ei voinut kertoa mitä
+   * hän olisi valmis maksamaan eikä mistä ikkunasta on kyse. Meille tuli
+   * pelkkä koordinaatti ja hinnoittelu alkoi arvauksella. Lomake on
+   * VAPAAEHTOINEN — pisteen voi jättää sellaisenaan ja napauttaa seuraavaa.
+   */
+  async function addOneWindow(f: string, x: number, y: number) {
+    if (!p2Actions) return;
+    setP2Busy(true); setP2Error(null);
+    const res = await p2Actions.addPoint(f, x, y);
+    setP2Busy(false);
+    if ("error" in res) { setP2Error(res.error); return; }
+    setSessionKeys((ks) => [...ks, res.key]);
+    setWishFor(res.key);
+    setWishPrice(""); setWishNote("");
+  }
+
+  async function saveWish(skip = false) {
+    const key = wishFor;
+    if (!key || !p2Actions) { setWishFor(null); return; }
+    if (skip) { setWishFor(null); setWishPrice(""); setWishNote(""); return; }
+    const n = Number(wishPrice.replace(",", "."));
+    const cents = Number.isFinite(n) && n > 0 ? Math.round(n * 100) : null;
+    setWishBusy(true);
+    const err = await p2Actions.setWish(key, cents, wishNote.trim());
+    setWishBusy(false);
+    if (err) { setP2Error(err); return; }
+    setWishFor(null); setWishPrice(""); setWishNote("");
+  }
   // Phase-2 opens focused on just the extra (yellow) windows — the reds are done,
   // so the map starts clean and only the numbered Priority 2 points carry it.
   const [onlyYellow, setOnlyYellow] = useState(p2On);
@@ -167,6 +210,9 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
   const ptrs = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinch = useRef<{ startDist: number; startS: number } | null>(null);
   const pan = useRef<{ x0: number; y0: number; ox: number; oy: number; id: number; active: boolean } | null>(null);
+  /** Liikkuiko sormi tarpeeksi, että ele oli veto eikä napautus? Estää
+   *  lisäämästä ikkunaa kartan siirron päätteeksi. */
+  const dragMoved = useRef(false);
   const zoomed = view.s > 1.01 || Math.abs(view.x) > 1 || Math.abs(view.y) > 1;
   const resetView = () => setView({ s: 1, x: 0, y: 0 });
   const zoomBy = (f: number) => setView((v) => ({ ...v, s: clampScale(v.s * f) }));
@@ -177,7 +223,6 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
     const el = mapRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      if (addMode) return;
       e.preventDefault();
       setView((v) => ({ ...v, s: clampScale(v.s * (e.deltaY < 0 ? 1.12 : 0.89)) }));
     };
@@ -186,7 +231,12 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
   }, [addMode]);
 
   function onPtrDown(e: React.PointerEvent) {
-    if (addMode) return;
+    // LISÄYSTILASSAKIN SAA LIIKUTTAA KARTTAA. Nämä käsittelijät palasivat
+    // ennen heti kun `addMode` oli päällä, joten kartta jäätyi juuri silloin
+    // kun sitä eniten tarvitsee liikuttaa: ikkunaa ei voinut merkitä jos se ei
+    // sattunut olemaan näkyvissä. Vedon ja napautuksen erottaa jo olemassa
+    // oleva 5 pikselin kynnys alla — sama ele toimii molemmissa tiloissa.
+    dragMoved.current = false;
     ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (ptrs.current.size === 2) {
       const [a, b] = Array.from(ptrs.current.values());
@@ -221,6 +271,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
       if (!p.active) {
         if (Math.hypot(dx, dy) < 5) return; // a tap, not a drag → let badge clicks through
         p.active = true;
+        dragMoved.current = true;
         setDragging(true);
         (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
       }
@@ -574,7 +625,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
         onPointerMove={onPtrMove}
         onPointerUp={onPtrUp}
         onPointerCancel={onPtrUp}
-        style={{ position: "relative", borderRadius: 12, border: `1px solid ${T.hair}`, background: "#FFFFFF", padding: 12, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", scrollMarginTop: 12, touchAction: addMode ? "auto" : "none", cursor: addMode ? undefined : dragging ? "grabbing" : "grab" }}
+        style={{ position: "relative", borderRadius: 12, border: `1px solid ${T.hair}`, background: "#FFFFFF", padding: 12, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", scrollMarginTop: 12, touchAction: "none", cursor: addMode ? undefined : dragging ? "grabbing" : "grab" }}
       >
         {/* LISÄYSTILAN OHJAIN KARTAN PÄÄLLÄ. Ohje ja lopetus ovat siellä missä
             katse on — kartalla — eivätkä sen alapuolella, jonne piti vierittää
@@ -593,7 +644,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
             </span>
             <button
               disabled={p2Busy}
-              onClick={() => { setAddMode(false); setAddedCount(0); }}
+              onClick={() => { setAddMode(false); setSessionKeys([]); }}
               style={{ marginLeft: "auto", flexShrink: 0, padding: "7px 14px", borderRadius: 9, border: "none", background: "#fff", color: "#1F3B57", fontFamily: FONT, fontSize: 12.5, fontWeight: 800, cursor: "pointer", pointerEvents: "auto" }}
             >
               Valmis
@@ -619,6 +670,8 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
           <div
             style={{ position: "absolute", inset: 0, cursor: p2On && addMode ? "crosshair" : undefined }}
             onClick={p2On && addMode ? (e) => {
+              // Kartan siirron päätteeksi ei synny ikkunaa: veto on veto.
+              if (dragMoved.current) { dragMoved.current = false; return; }
               const rect = e.currentTarget.getBoundingClientRect();
               const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
               const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
@@ -628,8 +681,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
               // ylös, napauta — viisi kertaa. Nyt jokainen seuraava ikkuna on
               // yksi napautus, ja tilasta poistutaan kartan päällä olevasta
               // "Valmis"-painikkeesta.
-              void runP2Free(p2Actions!.addPoint, floor, x, y)
-                .then((ok) => { if (ok) setAddedCount((n) => n + 1); });
+              void addOneWindow(floor, x, y);
             } : undefined}
           >
             {points.map((pt) => {
@@ -641,7 +693,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
               //    coded by negotiation state. No price pills — the euro amounts
               //    live in the decision list below (the map just locates a window
               //    by its number and shows its state at a glance).
-              if (p2On && isYellow && !addMode) {
+              if (p2On && isYellow) {
                 const offer = p2!.offers[pt.key];
                 const state: P2BadgeState = offer && offer.status !== "declined"
                   ? offer.status
@@ -650,6 +702,13 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
                 const mine = customerAdded.has(pt.key);
                 const { bg, fg, border } = p2BadgeStyle(state);
                 const focused = focusKey === pt.key;
+                // LISÄYSTILASSA VANHAT VÄISTYVÄT. Kartta oli täynnä samanarvoisia
+                // palloja, eikä juuri lisätty erottunut niistä mitenkään — piti
+                // arvata mikä niistä oli oma. Nyt istunnossa lisätyt palavat
+                // kirkkaina ja muut himmenevät taustaksi. Himmennetyt eivät ota
+                // napautusta vastaan, jotta niiden päälle voi merkitä uuden.
+                const fresh = sessionKeys.includes(pt.key);
+                const dimmed = addMode && !fresh;
                 return (
                   <button
                     key={pt.key}
@@ -657,6 +716,9 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
                     onClick={(e) => {
                       e.stopPropagation();
                       const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                      // Lisäystilassa oman tuoreen pisteen napautus avaa sen
+                      // toiveen, ei neuvottelukuplaa — hintaa ei ole vielä.
+                      if (addMode && fresh) { setWishFor(pt.key); return; }
                       setOpenOffer({ key: pt.key, rect: r });
                       setP2Error(null);
                     }}
@@ -670,7 +732,10 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
                       display: "flex", alignItems: "center", justifyContent: "center",
                       cursor: "pointer", fontVariantNumeric: "tabular-nums",
                       boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
-                      zIndex: focused ? 9 : state === "locked" ? 4 : 6,
+                      zIndex: fresh ? 10 : focused ? 9 : state === "locked" ? 4 : 6,
+                      opacity: dimmed ? 0.2 : 1,
+                      pointerEvents: dimmed ? "none" : "auto",
+                      transition: "opacity .25s ease",
                       animation: focused
                         ? "cfmFocus 1.3s ease-out 2"
                         : mine && state === "none" ? "cfmMineHalo 2.4s ease-in-out infinite" : undefined,
@@ -695,7 +760,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
                     width: 13, height: 13, borderRadius: "50%", background: color,
                     border: "2px solid #fff",
                     boxShadow: done ? `0 0 0 1px ${color}, 0 1px 3px rgba(0,0,0,0.25)` : "0 1px 2px rgba(0,0,0,0.18)",
-                    opacity: p2On ? 0.3 : status === "ei" ? 0.8 : 1,
+                    opacity: addMode ? 0.1 : p2On ? 0.3 : status === "ei" ? 0.8 : 1,
                     transition: "opacity .3s",
                   }}
                 />
@@ -706,7 +771,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
                 Näkyvät MYÖS 2. vaiheen aikana: jos ikkunasta on huomautettavaa
                 (esim. vaikea pääsy, rikkinäinen tiiviste), asiakkaan pitää nähdä
                 se juuri kun hän päättää hinnasta. Teksti näkyy myös hintakuplassa. */}
-            {points.map((pt) => observations[pt.key] ? (
+            {!addMode && points.map((pt) => observations[pt.key] ? (
               <button
                 key={`obs-${pt.key}`}
                 onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); wantObservationImage(pt.key); setOpenObs({ key: pt.key, rect: r }); }}
@@ -757,6 +822,70 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
           </div>
         </div>
       </div>
+
+      {/* TOIVELOMAKE juuri lisätylle ikkunalle — kartan ALLA, ei sen päällä.
+        Kokeilin ensin kelluvaa paneelia kartan päällä: se peitti puolet
+        pohjapiirroksesta juuri kun seuraavaa ikkunaa piti etsiä. Lomake on
+        täysin vapaaehtoinen, ja seuraavan ikkunan voi napauttaa kartalta
+        koskematta tähän lainkaan. */}
+        {p2On && addMode && wishFor && (
+        <div style={{
+        marginTop: 10, padding: "11px 12px", borderRadius: 13, background: T.card,
+        border: `1.5px solid ${T.navy}44`, boxShadow: "0 2px 10px rgba(0,0,0,0.06)",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
+            <span style={{ width: 20, height: 20, flexShrink: 0, borderRadius: "50%", background: T.navy, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10.5, fontWeight: 800 }}>
+              {p2Number[wishFor] ?? "•"}
+            </span>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: T.ink }}>Ikkuna lisätty</span>
+            <button
+              type="button"
+              onClick={() => void saveWish(true)}
+              style={{ marginLeft: "auto", background: "none", border: "none", padding: "2px 4px", cursor: "pointer", color: T.muted, fontFamily: FONT, fontSize: 11.5 }}
+            >
+              Ohita
+            </button>
+          </div>
+          <div style={{ display: "flex", gap: 7, alignItems: "center" }}>
+            <input
+              value={wishPrice}
+              onChange={(e) => setWishPrice(e.target.value)}
+              inputMode="decimal"
+              placeholder="Hinta-arvio"
+              aria-label="Hinta-arvio euroina (valinnainen)"
+              style={{ width: 96, flexShrink: 0, padding: "9px 10px", borderRadius: 9, border: `1px solid ${T.hair}`, background: "#fff", color: T.ink, fontFamily: FONT, fontSize: 13, outline: "none" }}
+            />
+            <span style={{ fontSize: 13, color: T.muted, flexShrink: 0 }}>€</span>
+            <input
+              value={wishNote}
+              onChange={(e) => setWishNote(e.target.value)}
+              placeholder="Viesti (valinnainen)"
+              aria-label="Viesti tästä ikkunasta (valinnainen)"
+              maxLength={500}
+              style={{ flex: 1, minWidth: 0, padding: "9px 10px", borderRadius: 9, border: `1px solid ${T.hair}`, background: "#fff", color: T.ink, fontFamily: FONT, fontSize: 13, outline: "none" }}
+            />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+            <span style={{ fontSize: 10.5, color: T.muted, lineHeight: 1.4, minWidth: 0 }}>
+              Arvio ei sido kumpaakaan — lähetämme lopullisen hinnan.
+            </span>
+            <button
+              type="button"
+              disabled={wishBusy || (!wishPrice.trim() && !wishNote.trim())}
+              onClick={() => void saveWish()}
+              style={{
+                marginLeft: "auto", flexShrink: 0, padding: "8px 15px", borderRadius: 9, border: "none",
+                background: (!wishPrice.trim() && !wishNote.trim()) ? T.fill : T.navy,
+                color: (!wishPrice.trim() && !wishNote.trim()) ? T.muted : "#fff",
+                fontFamily: FONT, fontSize: 12.5, fontWeight: 800,
+                cursor: (wishBusy || (!wishPrice.trim() && !wishNote.trim())) ? "default" : "pointer",
+              }}
+            >
+              {wishBusy ? "Tallennetaan…" : "Tallenna"}
+            </button>
+          </div>
+        </div>
+        )}
 
       {/* Organized Priority 2 list — the clean way to review + respond to every
           window across all floors, grouped by what needs your attention. */}
@@ -886,7 +1015,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
               <button
                 disabled={p2Busy}
                 data-cfm-anim=""
-                onClick={() => { setAddMode(true); setAddedCount(0); }}
+                onClick={() => { setAddMode(true); setSessionKeys([]); }}
                 style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 18px", borderRadius: 11, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 14, fontWeight: 700, cursor: "pointer", animation: anyYellowActivity ? undefined : "cfmAddNudge 2.4s ease-in-out infinite" }}
               >
                 <span style={{ fontSize: 17, lineHeight: 1 }}>➕</span> Lisää ikkunoita

@@ -128,7 +128,33 @@ export interface P2State {
    *  DEFAULT_P2_PAYOUT_SCHEDULE. Drives worker pay for every locked yellow window,
    *  so editing it re-values already-washed yellows too (pay is computed live). */
   payoutSchedule?: P2PayoutRule[];
+  /**
+   * ASIAKKAAN TOIVE lisäämästään ikkunasta: ehdotettu hinta ja/tai viesti.
+   *
+   * Asiakas merkitsi ikkunan kartalle eikä voinut kertoa siitä mitään — ei
+   * mitä hän olisi valmis maksamaan eikä mistä ikkunasta on kyse ("se iso
+   * ruokalan takana"). Piste päätyi meille pelkkänä koordinaattina, ja
+   * hinnoittelu alkoi arvauksella.
+   *
+   * TÄMÄ EI OLE TARJOUS. Se ei sido kumpaakaan eikä näy missään summassa —
+   * hinta syntyy vasta kun me ehdotamme ja asiakas hyväksyy (`offers`).
+   * Toive on saatekirje pisteen mukana, ei neuvottelun tila.
+   */
+  wishes?: Record<string, P2Wish>;
 }
+
+/** Asiakkaan saate omalle ikkunaehdotukselleen. Kumpikin kenttä vapaaehtoinen. */
+export interface P2Wish {
+  /** Mitä asiakas arvelisi maksavansa. Ei sido meitä eikä häntä. */
+  cents?: number;
+  /** Vapaa viesti: mikä ikkuna, miksi, mihin mennessä. */
+  note?: string;
+  ts: number;
+}
+
+/** Viestin pituusraja. Sama luokka kuin muillakin vapailla teksteillä; estää
+ *  yhtä pitkän romaanin päätymisen karttablobiin. */
+export const MAX_P2_WISH_NOTE = 500;
 
 export function emptyP2State(): P2State {
   return {
@@ -985,8 +1011,27 @@ export function sanitizeP2State(input: any): P2State | undefined {
     if (rules.length) payoutSchedule = rules.sort((a, b) => a.priceCents - b.priceCents);
   }
 
+  // Asiakkaan toiveet: vapaaehtoinen hinta ja/tai viesti per avain. Tyhjä
+  // toive (ei hintaa eikä viestiä) ei ansaitse riviä — se pudotetaan.
+  let wishes: Record<string, P2Wish> | undefined;
+  if (input.wishes && typeof input.wishes === "object") {
+    const out: Record<string, P2Wish> = {};
+    for (const k of Object.keys(input.wishes).slice(0, 10000)) {
+      const key = cleanKey(k);
+      if (!key) continue;
+      const w = input.wishes[k];
+      const rawCents = Math.floor(Number(w?.cents));
+      const cents = Number.isFinite(rawCents) && rawCents > 0 && rawCents <= MAX_P2_PRICE_CENTS ? rawCents : undefined;
+      const note = String(w?.note ?? "").slice(0, MAX_P2_WISH_NOTE).trim() || undefined;
+      if (cents === undefined && note === undefined) continue;
+      out[key] = { cents, note, ts: Number(w?.ts) || Date.now() };
+    }
+    if (Object.keys(out).length) wishes = out;
+  }
+
   const sharePct = Math.floor(Number(input.workerSharePct));
   return {
+    wishes,
     enabled: input.enabled === true,
     workerSharePct: Number.isFinite(sharePct) && sharePct >= 1 && sharePct <= 100 ? sharePct : DEFAULT_P2_WORKER_SHARE_PCT,
     offers,

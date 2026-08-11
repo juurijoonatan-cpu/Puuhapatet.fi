@@ -195,7 +195,15 @@ export default function GigLivePage() {
     addPoint: async (floor, x, y) => {
       const res = await api.p2AddPoint(token, floor, x, y);
       await reload();
-      return res.ok ? null : (res.error ?? "Ikkunan lisäys epäonnistui — yritä uudelleen");
+      // Avain palautetaan kutsujalle: kartta merkitsee juuri lisätyn pisteen
+      // kirkkaaksi ja avaa sille toivelomakkeen.
+      if (!res.ok || !res.data?.key) return { error: res.error ?? "Ikkunan lisäys epäonnistui — yritä uudelleen" };
+      return { key: res.data.key };
+    },
+    setWish: async (key, cents, note) => {
+      const res = await api.p2SetWish(token, key, cents, note);
+      await reload();
+      return res.ok ? null : (res.error ?? "Tallennus epäonnistui — yritä uudelleen");
     },
     removePoint: async (key) => {
       const res = await api.p2RemovePoint(token, key);

@@ -31,7 +31,7 @@ import {
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, livePayments, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
-import { computeP2Billing, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, type P2Action, type P2State } from "@shared/p2";
+import { computeP2Billing, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
 import { fail } from "./errors";
@@ -643,7 +643,7 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   { method: "POST", re: /^\/api\/gig\/[^/]+\/sign$/ },
   // P2 (keltaiset ikkunat): asiakkaan hintaneuvottelu seurantalinkistä. Token
   // on avain; jokainen reitti validoi lisäksi vaiheen + allekirjoitusportin.
-  { method: "POST", re: /^\/api\/gig\/[^/]+\/p2\/(terms|accept|counter|decline|add-point|remove-point)$/ },
+  { method: "POST", re: /^\/api\/gig\/[^/]+\/p2\/(terms|accept|counter|decline|add-point|remove-point|wish)$/ },
   { method: "GET",  re: /^\/api\/crew\/[^/]+$/ },
   // Sama vika tekijän puolella: kuvan haku omalla tokenilla vastasi 401 ja
   // heitti tekijän adminin kirjautumiseen kesken työpäivän.
@@ -6855,6 +6855,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         note: o.note ?? null,
       }])),
       customerAddedKeys: customerAddedKeys(project),
+      // Asiakkaan omat toiveet takaisin hänelle: hän saa nähdä ja muokata mitä
+      // kirjoitti. Ilman tätä riviä kenttä olisi olemassa mutta näkymätön —
+      // sama vika kuin hintahuomion kanssa yllä.
+      wishes: p2.wishes ?? {},
       billing: (({ yellowTotal, proposedCount, counteredCount, lockedCount, lockedSumCents, lockedWashedCount, earnedCents }) =>
         ({ yellowTotal, proposedCount, counteredCount, lockedCount, lockedSumCents, lockedWashedCount, earnedCents }))(computeP2Billing(project)),
     };
@@ -7008,6 +7012,43 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       pushP2Event(p2.events, { ts: Date.now(), key, action: "add_point", actor: "customer", version: 0, ip: clientIp(req) });
       const saved = await saveProject(job, project, { p2Mutation: true });
       res.json({ ok: true, key, p2: publicP2(saved) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  /**
+   * ASIAKKAAN TOIVE omalle ikkunaehdotukselleen: hinta-arvio ja/tai viesti.
+   *
+   * EI VAADI TILAUSEHTOJA eikä ole tarjous. Se ei sido kumpaakaan eikä näy
+   * yhdessäkään summassa — hinta syntyy vasta kun me ehdotamme ja asiakas
+   * hyväksyy. Ilman tätä piste päätyi meille pelkkänä koordinaattina, ja
+   * hinnoittelu alkoi arvauksella siitä mistä ikkunasta on kyse.
+   */
+  app.post("/api/gig/:token/p2/wish", async (req, res) => {
+    try {
+      const loaded = await loadP2ForCustomer(String(req.params.token));
+      if (!loaded.ok) return res.status(loaded.code).json({ error: loaded.error });
+      const { job, project, p2 } = loaded;
+      const key = String(req.body?.key ?? "").slice(0, 64);
+      if (!key) return res.status(400).json({ error: "key puuttuu" });
+      // Vain OMAAN ehdotukseen. Adminin seedaamiin ikkunoihin ei saa kirjoittaa.
+      if (!customerAddedKeys(project).includes(key)) {
+        return res.status(403).json({ error: "Voit kuvailla vain itse lisäämiäsi ikkunoita" });
+      }
+      // Sovittua hintaa ei enää toivota — se on jo neuvoteltu loppuun.
+      if (p2.offers[key]?.status === "locked") {
+        return res.status(409).json({ error: "Hinta on jo sovittu" });
+      }
+      const rawCents = Math.floor(Number(req.body?.cents));
+      const cents = Number.isFinite(rawCents) && rawCents > 0 && rawCents <= MAX_P2_PRICE_CENTS ? rawCents : undefined;
+      const note = String(req.body?.note ?? "").slice(0, MAX_P2_WISH_NOTE).trim() || undefined;
+      if (!p2.wishes) p2.wishes = {};
+      // Tyhjä toive poistaa rivin: asiakas sai perua sanomisensa.
+      if (cents === undefined && note === undefined) delete p2.wishes[key];
+      else p2.wishes[key] = { cents, note, ts: Date.now() };
+      const saved = await saveProject(job, project, { p2Mutation: true });
+      res.json({ ok: true, p2: publicP2(saved) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }

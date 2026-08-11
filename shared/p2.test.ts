@@ -13,6 +13,7 @@ import {
   pushP2Event,
   sanitizeP2State,
   MAX_P2_PRICE_CENTS,
+  MAX_P2_WISH_NOTE,
   type P2Offer,
 } from "./p2";
 
@@ -484,5 +485,67 @@ describe("sanitizeP2State", () => {
   it("payoutSchedule tyhjä/puuttuva → undefined (käytetään oletustaulukkoa)", () => {
     expect(sanitizeP2State({ enabled: true, offers: {} })!.payoutSchedule).toBeUndefined();
     expect(sanitizeP2State({ enabled: true, offers: {}, payoutSchedule: [] })!.payoutSchedule).toBeUndefined();
+  });
+});
+
+// ─── Asiakkaan toive (hinta-arvio + viesti) ───────────────────────────────────
+
+describe("sanitizeP2State — asiakkaan toiveet", () => {
+  /**
+   * Toive on SAATE, ei tarjous: se ei sido kumpaakaan eikä saa vuotaa
+   * yhteenkään summaan. Sanitointi on ainoa paikka joka estää rikkinäistä
+   * clienttiä kirjoittamasta karttablobiin mitä tahansa.
+   */
+  const wish = (wishes: unknown) => sanitizeP2State({ enabled: true, offers: {}, events: [], wishes })!.wishes;
+
+  it("hinta-arvio ja viesti säilyvät", () => {
+    expect(wish({ "1#c1": { cents: 3600, note: "Iso ikkuna ruokalan takana", ts: 5 } }))
+      .toEqual({ "1#c1": { cents: 3600, note: "Iso ikkuna ruokalan takana", ts: 5 } });
+  });
+
+  it("pelkkä viesti tai pelkkä hinta riittää — molemmat ovat vapaaehtoisia", () => {
+    expect(wish({ a: { note: "vain viesti" } })!.a).toMatchObject({ note: "vain viesti", cents: undefined });
+    expect(wish({ a: { cents: 3000 } })!.a).toMatchObject({ cents: 3000, note: undefined });
+  });
+
+  it("TYHJÄ toive ei ansaitse riviä", () => {
+    // Muuten jokainen ohitettu lomake jättäisi jälkeensä tyhjän merkinnän.
+    expect(wish({ a: { cents: 0, note: "   " } })).toBeUndefined();
+    expect(wish({})).toBeUndefined();
+  });
+
+  it("mahdoton hinta pudotetaan, viesti jää", () => {
+    expect(wish({ a: { cents: -5, note: "silti" } })!.a).toMatchObject({ cents: undefined, note: "silti" });
+    expect(wish({ a: { cents: MAX_P2_PRICE_CENTS + 1, note: "silti" } })!.a.cents).toBeUndefined();
+    expect(wish({ a: { cents: MAX_P2_PRICE_CENTS, note: "x" } })!.a.cents).toBe(MAX_P2_PRICE_CENTS);
+  });
+
+  it("liian pitkä viesti katkaistaan eikä blobi kasva rajatta", () => {
+    const long = "x".repeat(5000);
+    expect(wish({ a: { note: long } })!.a.note!.length).toBe(MAX_P2_WISH_NOTE);
+  });
+
+  it("roskasyöte ei kaada sanitointia", () => {
+    expect(wish(null)).toBeUndefined();
+    expect(wish("ei objekti")).toBeUndefined();
+    expect(wish({ a: null, b: { note: "ok" } })).toEqual({ b: { cents: undefined, note: "ok", ts: expect.any(Number) } });
+  });
+
+  it("toive EI ole tarjous — se ei näy yhdessäkään summassa", () => {
+    // Tämä on koko asian ydin. Jos toive vuotaisi laskentaan, asiakkaan
+    // arvaus muuttuisi rahaksi ilman että kukaan sopi mitään.
+    const data = fixture();
+    data.p2 = sanitizeP2State({
+      enabled: true, offers: {}, events: [],
+      wishes: { "K#2": { cents: 9900, note: "maksan mitä vaan" } },
+    })!;
+    data.statuses["K#2"] = "pesty";
+    const b = computeP2Billing(data);
+    expect(b.lockedSumCents).toBe(0);
+    expect(b.earnedCents).toBe(0);
+    expect(b.pendingEarnedCents).toBe(0);
+    // Pesty se kyllä on — työ on tehty, hintaa vain ei ole.
+    expect(b.washedTotal).toBe(1);
+    expect(b.unpricedWashedCount).toBe(1);
   });
 });

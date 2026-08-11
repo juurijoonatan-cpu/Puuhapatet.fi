@@ -1182,6 +1182,8 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, onGoToWindow, can
     const keys = customerAddedKeys(project);
     return keys.filter((k) => !project.p2?.offers[k]);
   }, [project]);
+  /** Asiakkaan saate ehdotukselleen: hinta-arvio ja/tai viesti. Ei tarjous. */
+  const wishes = project.p2?.wishes ?? {};
 
   // Peruttavat hyväksynnät kahdella aikarajalla. `since` lasketaan vasta
   // napautuksen hetkellä, jotta "viimeinen tunti" tarkoittaa tuntia taaksepäin
@@ -1543,19 +1545,33 @@ function P2AdminPanel({ project, jobId, by, onP2, onGoToFloor, onGoToWindow, can
             <div style={{ marginBottom: 7 }}>
               💡 Asiakas ehdotti {customerPending.length} {customerPending.length === 1 ? "ikkunaa" : "ikkunaa"} — anna hinta:
             </div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {/* ASIAKKAAN SAATE NÄKYVIIN. Hinta-arvio ja viesti ovat juuri se
+                tieto jonka varassa hinnoittelu tehdään — ilman niitä piste on
+                pelkkä koordinaatti ja hinta arvaus. Rivi näyttää ne suoraan,
+                ei linkin takana. */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {customerPending.slice(0, 24).map((k) => {
                 const fl = k.split("#")[0];
+                const w = wishes[k];
                 return (
                   <button key={k} onClick={() => onGoToFloor(fl)}
                     title={`Avaa kerros ${fl} — ikkuna ${k}`}
-                    style={{ padding: "4px 10px", borderRadius: 999, border: "1px solid rgba(150,175,255,0.45)", background: "rgba(150,175,255,0.14)", color: "rgba(215,228,255,0.98)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer" }}>
-                    Krs {fl}
+                    style={{ display: "flex", alignItems: "baseline", gap: 8, textAlign: "left", width: "100%", padding: "6px 10px", borderRadius: 9, border: "1px solid rgba(150,175,255,0.35)", background: "rgba(150,175,255,0.10)", color: "rgba(215,228,255,0.98)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer" }}>
+                    <span style={{ flexShrink: 0 }}>Krs {fl}</span>
+                    {w?.cents ? (
+                      <span style={{ flexShrink: 0, color: "rgb(255,205,40)", fontWeight: 700 }}>toivoo {p2eur(w.cents)}</span>
+                    ) : null}
+                    {w?.note ? (
+                      <span style={{ minWidth: 0, opacity: 0.85, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>”{w.note}”</span>
+                    ) : null}
+                    {!w?.cents && !w?.note && (
+                      <span style={{ opacity: 0.5, fontWeight: 500 }}>ei saatetta</span>
+                    )}
                   </button>
                 );
               })}
               {customerPending.length > 24 && (
-                <span style={{ alignSelf: "center", opacity: 0.8 }}>+{customerPending.length - 24}</span>
+                <span style={{ opacity: 0.8 }}>+{customerPending.length - 24}</span>
               )}
             </div>
           </div>

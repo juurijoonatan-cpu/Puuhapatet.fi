@@ -46,6 +46,9 @@ export interface P2PublicView {
   /** Window keys the customer added themselves (still live) — drives the
    *  "your suggestion" marker + their own remove control. */
   customerAddedKeys: string[];
+  /** Asiakkaan omat toiveet lisäämistään ikkunoista: hinta-arvio ja/tai viesti.
+   *  Ei tarjous — ei sido kumpaakaan eikä näy missään summassa. */
+  wishes?: Record<string, { cents?: number | null; note?: string | null; ts: number }>;
   billing: P2PublicBilling;
 }
 
@@ -1200,6 +1203,11 @@ export const api = {
 
   p2AddPoint: (token: string, floor: string, x: number, y: number) =>
     request<{ ok: boolean; key: string; p2: P2PublicView }>("POST", `/api/gig/${token}/p2/add-point`, { floor, x, y }),
+
+  /** Asiakkaan toive omasta ikkunaehdotuksestaan: hinta-arvio ja/tai viesti.
+   *  EI tarjous — ei sido kumpaakaan eikä näy missään summassa. */
+  p2SetWish: (token: string, key: string, cents: number | null, note: string) =>
+    request<{ ok: boolean; p2: P2PublicView }>("POST", `/api/gig/${token}/p2/wish`, { key, cents, note }),
 
   p2RemovePoint: (token: string, key: string) =>
     request<{ ok: boolean; p2: P2PublicView }>("POST", `/api/gig/${token}/p2/remove-point`, { key }),

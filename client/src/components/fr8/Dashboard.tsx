@@ -3,7 +3,7 @@
  * Adds a per-worker "TEKIJÄT" strip (window counts + €/h optimisation).
  */
 import { allPoints, computeDealBilling, checkWindowAttribution, type ProjectData, type WindowStatus, type WorkerStat, type FixedDeal } from "@shared/project";
-import { computeP2Billing } from "@shared/p2";
+import { computeP2Billing, p2FounderOpts } from "@shared/p2";
 import type { GigBillingState } from "@/lib/api";
 import { dashboardPhase } from "@/lib/dashboard-phase";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -214,7 +214,9 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   // Lukitut keltaiset = asiakkaan hyväksymät hinnat → ne KUULUVAT työn piiriin
   // aivan kuten punaiset. Sen takia ne lasketaan mukaan edistymiseen alla.
   const p2On = !!project.p2?.enabled;
-  const p2b = computeP2Billing(project);
+  // Perustajan itse pesemä keltainen maksaa hänelle koko hinnan (kuten
+  // punainenkin), joten siitä ei jää katetta jaettavaksi.
+  const p2b = computeP2Billing(project, p2FounderOpts(project));
   const lockedYellowKeys = new Set<string>(
     p2On
       ? Object.entries(project.p2?.offers ?? {})
@@ -569,9 +571,12 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                     marginTop: T.space.xs, paddingTop: T.space.sm, borderTop: "1px dashed rgba(255,255,255,0.12)",
                     fontFamily: T.font, fontSize: T.size.label, color: T.text.faint, lineHeight: 1.5,
                   }}>
-                    Lisäksi <b style={{ color: T.text.secondary, fontWeight: 700 }}>{euro(yAgreedUnwashedCents / 100)}</b>
-                    {" "}sovittua työtä ({yAgreedUnwashedCount} ikkunaa) on vielä pesemättä — se ei ole yllä,
-                    koska tämä luku on tehtyä työtä.
+                    {/* Sanotaan mitä luku ON, ei mitä se ei ole. Aiempi
+                        "se ei ole yllä, koska…" luki kuin puuttuva rivi tai
+                        virhe, vaikka se on tavallinen tuleva tulo. */}
+                    Sovittu, ei vielä pesty:{" "}
+                    <b style={{ color: T.text.secondary, fontWeight: 700 }}>{euro(yAgreedUnwashedCents / 100)}</b>
+                    {" "}({yAgreedUnwashedCount} ikkunaa). Kertyy yllä olevaan kun ne on pesty.
                   </div>
                 )}
                 <RedFold label="Punaiset · kertynyt kate" value={euro((billGrp ? billGrp.washed : 0) * internalPerWindowEur)}>

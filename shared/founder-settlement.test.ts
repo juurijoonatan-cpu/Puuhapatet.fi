@@ -447,3 +447,81 @@ describe("heinäkuu 2026 — oikean keikan käsinlasku", () => {
     expect(j.entitledCents + m.entitledCents).toBe(e(3757.5));
   });
 });
+
+describe("FR8 07/2026 — todellinen tasauslasku (Joonatan & Matias)", () => {
+  // Käsin tehty lasku jonka johtajat tarkistivat. Tämä testi lukitsee sen, että
+  // koneen laskema tulos on sentilleen sama.
+  //
+  //   6150 € / 164 punaista = 37,50 €/ikkuna (asiakkaan hinta = x)
+  //   Matias pesi 27, Joonatan 19  → 1012,50 € ja 712,50 €
+  //   Tekijöille yhteensä 2422,50 € (sis. sovitut lisät: Jani +20, Milja +52,50,
+  //   Oona +30 — käsin laskussa Oonan 30 € oli vähennetty johtajilta 15+15,
+  //   mikä on matemaattisesti sama kuin lisätä se tekijäkuluun)
+  //   → kate 2002,50 €, puolikas 1001,25 €
+  //   → ansainta: Joonatan 1713,75 €, Matias 2013,75 €
+  const input = () => ({
+    founders: [
+      {
+        id: "joonatan", name: "Joonatan", p1Windows: 19, p2OwnCents: 0,
+        receivedCents: 4575_00,           // erät 2, 3, 4
+        paidOutCents: 1590_00,            // kaikki tekijät paitsi Jani-osuus ja Milja
+        expensesCents: 0,
+      },
+      {
+        id: "matias", name: "Matias", p1Windows: 27, p2OwnCents: 0,
+        receivedCents: 1575_00,           // erä 1
+        paidOutCents: 720_00,             // Jani 380 + Milja 340
+        expensesCents: 0,
+      },
+    ],
+    p1PotCents: 6150_00,
+    p2PotCents: 0,
+    workerP1EarnedCents: 2422_50,
+    workerP2EarnedCents: 0,
+    p1WindowsTotal: 164,
+  });
+
+  it("ansainta täsmää käsin laskettuun sentilleen", () => {
+    const r = computeTasaus(input() as any);
+    expect(r.xCents).toBe(3750);
+    const j = r.rows.find((x) => x.id === "joonatan")!;
+    const m = r.rows.find((x) => x.id === "matias")!;
+    expect(j.ownWorkCents).toBe(712_50);
+    expect(m.ownWorkCents).toBe(1012_50);
+    expect(r.founderKateCents).toBe(2002_50);
+    expect(j.entitledCents).toBe(1713_75);
+    expect(m.entitledCents).toBe(2013_75);
+  });
+
+  it("maksamaton Miljan loppuosa näkyy varauksena, ei katteena", () => {
+    const r = computeTasaus(input() as any);
+    // 6150 saatu − 2310 maksettu tekijöille = 3840 käsissä; ansainta yhteensä
+    // 3727,50 → erotus 112,50 = Miljan maksamatta oleva loppuosa.
+    expect(r.reserveCents).toBe(112_50);
+  });
+
+  it("ilman kohdennusta varaus jaetaan tasan → siirto 1215 €", () => {
+    const r = computeTasaus(input() as any);
+    expect(r.transfer?.fromId).toBe("joonatan");
+    expect(r.transfer?.toId).toBe("matias");
+    expect(r.transfer?.cents).toBe(1215_00);
+  });
+
+  it("kun Matias maksaa Miljan loppuosan, siirto on 1271,25 €", () => {
+    // Milja on Matiaksen harjoittelija ja Matias tilittää hänen palkkansa, joten
+    // varaus ei jakaudu: se on kokonaan Matiaksen kannettavana. Tämä on se luku
+    // joka johtajien käsin tekemässä laskussa lukee.
+    const r = computeTasaus({ ...input(), reserveOwnerId: "matias" } as any);
+    expect(r.transfer?.fromId).toBe("joonatan");
+    expect(r.transfer?.cents).toBe(1271_25);
+  });
+
+  it("siirron jälkeen kumpikin päätyy TASAN ansaintaansa", () => {
+    const r = computeTasaus({ ...input(), reserveOwnerId: "matias" } as any);
+    const t = r.transfer!.cents;
+    const j = r.rows.find((x) => x.id === "joonatan")!;
+    const m = r.rows.find((x) => x.id === "matias")!;
+    expect(j.holdsCents - t).toBe(j.entitledCents);              // 2985 − 1271,25 = 1713,75
+    expect(m.holdsCents + t - 112_50).toBe(m.entitledCents);     // 855 + 1271,25 − 112,50 = 2013,75
+  });
+});

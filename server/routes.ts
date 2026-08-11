@@ -6486,6 +6486,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           ? null
           : Math.abs(Math.round(Number(raw) || 0));
       }
+      // Kuka maksaa jäljellä olevan tekijävelan. Oletus (tyhjä) jakaa varauksen
+      // tasan; kohdennus siirtää sen kokonaan yhdelle — esim. harjoittelijan
+      // loppupalkan tilittää aina hänen vastuujohtajansa.
+      if (body.reserveOwnerId !== undefined) {
+        const v = String(body.reserveOwnerId ?? "").toLowerCase().trim();
+        next.reserveOwnerId = FOUNDER_IDS.includes(v) ? v : null;
+      }
       if (body.overrideFromId !== undefined) {
         const v = String(body.overrideFromId ?? "").toLowerCase().trim();
         next.overrideFromId = FOUNDER_IDS.includes(v) ? v : null;

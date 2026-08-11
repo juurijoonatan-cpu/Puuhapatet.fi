@@ -365,6 +365,32 @@ Lisäksi fr8-napeille `min-height: 40px` — **mutta vain `[data-fr8-pane]`n sis
 Ilman tuota rajausta sääntö osui myös kartan 9–13 px pyöreisiin pisteisiin ja
 venytti ne kapseleiksi; kartan pisteillä on `data-fr8-dot`, joka jättää ne ulos.
 
+## Maksamaton tekijävelka tasauksessa (`reserveOwnerId`)
+
+`reserveCents` = raha joka on johtajien käsissä mutta kuuluu vielä tekijöille.
+Oletus jakaa sen **tasan**: kumpikaan ei joudu rahoittamaan sitä yksin. Se on
+oikein kun velkaa ei ole kohdennettu kenellekään.
+
+Mutta usein tiedetään kuka sen maksaa — **harjoittelijan loppupalkan tilittää
+aina hänen vastuujohtajansa**. Silloin tasajako on väärin: se jättää maksajan
+puolikkaan varauksen verran vajaaksi ja toisen saman verran plussalle.
+
+Todellinen tapaus (07/2026), lukittu testinä `founder-settlement.test.ts`:
+
+| | |
+|---|---|
+| Miljalta maksamatta | 112,50 € (452,50 ansaittu − 340 Matiaksen maksama) |
+| Tasajako → siirto | **1215,00 €** — molemmat jäävät 56,25 € pieleen |
+| Matias kantaa (`reserveOwnerId: "matias"`) → siirto | **1271,25 €** — molemmat päätyvät TASAN ansaintaansa |
+
+Sääntö: **jos tiedät kuka maksaa loppusumman, kohdenna se.** Tasausnäkymän
+varausrivillä on "Maksaa: molemmat / Joonatan / Matias".
+
+Sivuhuomio samasta laskusta: käsin laskettu "−15 € Oonalle kummaltakin johtajalta"
+on matemaattisesti **täsmälleen sama** kuin lisätä Oonalle 30 € tekijäkuluun.
+Jälkimmäinen on se muoto jonka järjestelmä ymmärtää (`payAdjustmentCents`), ja
+silloin ansainta tulee suoraan oikein ilman käsin vähentämistä.
+
 ## Säilytys ja siirtokiintiö — kaksi sääntöä joita rikotaan helposti
 
 ### 1. Mitä EI saa poistaa

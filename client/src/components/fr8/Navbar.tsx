@@ -103,6 +103,13 @@ function tabStyle(active: boolean, m: boolean): React.CSSProperties {
   };
 }
 
+/**
+ * Yläpalkin sisäinen kerrosjärjestys. Ulkoklikkari on ALIMPANA, jotta se ei
+ * koskaan peitä palkin omia nappeja; valikko on ylimpänä.
+ */
+const SCRIM = 1;
+const OVER_SCRIM = 2;
+
 export default function Navbar({ activeTab, onTabChange, buildingName, buildingAddress, currentWorkerName, saving, onBack, workers, defaultWasherId, onChangeDefaultWasher, showMaksutTab }: NavbarProps) {
   const m = useIsMobile();
   const [isFs, setIsFs] = useState(false);
@@ -127,6 +134,9 @@ export default function Navbar({ activeTab, onTabChange, buildingName, buildingA
   const sideZone: React.CSSProperties = {
     display: "flex", alignItems: "center", gap: m ? T.space.sm : T.space.md,
     flex: m ? "0 0 auto" : "1 1 0", minWidth: 0,
+    // Ks. NAPAUTUS KATOAA -selitys alempana: yläpalkin omat napit ovat aina
+    // ulkoklikkarin YLÄPUOLELLA, jotta ne toimivat myös valikon ollessa auki.
+    position: "relative", zIndex: OVER_SCRIM,
   };
 
   return (
@@ -155,6 +165,33 @@ export default function Navbar({ activeTab, onTabChange, buildingName, buildingA
         WebkitBackdropFilter: "blur(20px)",
       }}
     >
+      {/*
+        NAPAUTUS KATOAA — TÄMÄ LÄPINÄKYVÄ LEVY OLI SYY.
+
+        Levy on koko ruudun kokoinen "klikkaa ohi sulkeaksesi". Se oli
+        `zIndex: 44` yläpalkin (20) sisällä, ja yläpalkin omat napit ovat
+        sijoittamattomia — ne piirtyvät siis levyn ALLE. Kun tekijävalitsin oli
+        auki, jokainen napautus Tilanne/Kerrokset/Maksut-välilehteen tai
+        takaisin-nuoleen meni levylle: valikko sulkeutui hiljaa eikä mitään
+        muuta tapahtunut. Käyttäjälle koko yläpalkki näytti kuolleelta, ja
+        valitsin on pieni siru välilehtien vieressä — sen avaa vahingossa
+        helposti.
+
+        Levy on nyt navin ENSIMMÄINEN lapsi eikä oikean vyöhykkeen sisällä.
+        Sillä on väliä: vyöhyke on itse `zIndex: OVER_SCRIM`, joten sen sisällä
+        oleva levy nousisi koko vyöhykkeen mukana välilehtien yläpuolelle
+        riippumatta omasta z-arvostaan. (Kokeilin sitä ensin — ei toiminut.)
+
+        Vartija: client/src/components/fr8/navbar-scrim.test.ts
+      */}
+      {canPickWasher && washerOpen && (
+        <div
+          data-fr8-scrim
+          onClick={() => setWasherOpen(false)}
+          style={{ position: "fixed", inset: 0, zIndex: SCRIM }}
+        />
+      )}
+
       {/* ── VASEN: mistä tulit, ja missä olet ─────────────────────────────── */}
       <div style={sideZone}>
         <button
@@ -191,6 +228,7 @@ export default function Navbar({ activeTab, onTabChange, buildingName, buildingA
           background: "rgba(255,255,255,0.04)", border: T.border.subtle,
           borderRadius: T.radius.md, overflowX: "auto", minWidth: 0,
           flex: m ? "1 1 auto" : "0 0 auto",
+          position: "relative", zIndex: OVER_SCRIM,
           // Nauha vierii vain jos välilehdet eivät mahdu (320 px). Vierivällä
           // alueella napautus voi muuttua panniksi ja klikkaus perutaan;
           // `manipulation` poistaa tuplatap-tunnistuksen, joka on se osa joka
@@ -250,14 +288,14 @@ export default function Navbar({ activeTab, onTabChange, buildingName, buildingA
             </button>
             {canPickWasher && washerOpen && (
               <>
-                <div onClick={() => setWasherOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 44 }} />
+
                 {/* data-fr8-pop: leijuva valikko tarvitsee peittävän taustan.
                     Ilman merkintää mobiilisääntö pudotti tämän 5,5 %:n
                     valkoiseksi ja valikon läpi näkyi kartta. */}
                 <div
                   data-fr8-pop
                   style={{
-                    position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 46, width: 208,
+                    position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: OVER_SCRIM + 1, width: 208,
                     padding: T.space.xs + 3, background: "rgba(16,16,20,0.96)", border: T.border.strong,
                     borderRadius: T.radius.md, backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)",
                     boxShadow: "0 20px 50px rgba(0,0,0,0.7)",

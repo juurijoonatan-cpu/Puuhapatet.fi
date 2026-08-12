@@ -99,3 +99,25 @@ export function effectiveJobTotal(job: {
   }
   return price;
 }
+
+/**
+ * JAA SENTIT TASAN ILMAN ETTÄ NIITÄ KATOAA TAI SYNTYY.
+ *
+ * Perustajien kesken jaettava kate laskettiin `Math.floor(total / n)` — jolloin
+ * pariton sentti katosi näkyvistä kokonaan — tai `Math.round(total / n)`, joka
+ * on pahempi: 3 senttiä kahdelle antaa 2 + 2 = 4, eli sentti syntyy tyhjästä.
+ * Kumpikaan ei ole iso raha, mutta kun koko näkymän tarkoitus on että luvut
+ * täsmäävät, yksikin karkaava sentti syö luottamuksen.
+ *
+ * Tämä jakaa perusosan kaikille ja antaa jakojäännöksen sentit ensimmäisille
+ * järjestyksessä. Summa on AINA täsmälleen `totalCents`.
+ */
+export function splitCentsEvenly(totalCents: number, parts: number): number[] {
+  const n = Math.max(1, Math.floor(parts));
+  const total = Math.round(totalCents);
+  const sign = total < 0 ? -1 : 1;
+  const abs = Math.abs(total);
+  const base = Math.floor(abs / n);
+  const extra = abs - base * n;          // 0..n-1 senttiä jaettavana
+  return Array.from({ length: n }, (_, i) => sign * (base + (i < extra ? 1 : 0)));
+}

@@ -385,6 +385,11 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   }
 
   const lockedKeySet = useMemo(() => new Set(lockedWindowKeys ?? []), [lockedWindowKeys]);
+  /** Piilotettuja TÄLLÄ kerroksella — kerrosrivin oma luku. */
+  const lockedOnFloor = useMemo(
+    () => getPoints(floor, marks, posOverrides, customMarks, deleted).filter((pt) => lockedKeySet.has(pt.key)).length,
+    [floor, marks, posOverrides, customMarks, deleted, lockedKeySet],
+  );
   const allFloorPoints = getPoints(floor, marks, posOverrides, customMarks, deleted);
   // TEKIJÄLTÄ LUKITTU IKKUNA EI OLE OLEMASSA. Johtaja näkee sen himmeänä ja
   // lukkomerkillä (hän on se joka sen lukitsi), tekijältä se katoaa kartalta
@@ -815,6 +820,17 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                 {floorYellowWashed} / {floorYellow.length} keltaista pesty
               </div>
             )}
+            {/* PIILOTETUT NÄKYVIIN LUKUNA. Yksittäinen himmeä piste hukkuu
+                kartalle: ilman tätä riviä johtaja ei tiedä piilottiko hän
+                yhden vai kymmenen, eikä löydä niitä takaisin. */}
+            {onToggleWindowLock && lockedOnFloor > 0 && (
+              <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.55)", display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                  <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+                {lockedOnFloor} piilotettu tekijöiltä
+              </div>
+            )}
           </div>
 
           {/* Kerroksen lukko asuu tässä eikä kerrosrivillä: tämä rivi kertoo jo
@@ -1057,6 +1073,30 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                   />
                 );
               })}
+
+              {/* LUKKOMERKKI PIILOTETUN PISTEEN PÄÄLLE.
+                  Pelkkä himmennys ei riitä: kartalla on muutenkin haaleita
+                  pisteitä (pesemättömät, toisen prioriteetin), joten "onko tuo
+                  piilotettu vai ei" jäi arvailuksi. Merkki on yksiselitteinen
+                  ja näkyy vain johtajalle — tekijältä koko piste on poissa. */}
+              {onToggleWindowLock && points.filter((pt) => lockedKeySet.has(pt.key)).map((pt) => (
+                <span
+                  key={`lock-${pt.key}`}
+                  aria-hidden
+                  style={{
+                    position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`,
+                    transform: "translate(-50%,-50%)",
+                    width: 15, height: 15, borderRadius: "50%",
+                    background: "rgba(10,10,12,0.92)", border: "1px solid rgba(255,255,255,0.5)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    pointerEvents: "none", zIndex: 7,
+                  }}
+                >
+                  <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.85)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                  </svg>
+                </span>
+              ))}
 
               {/* SEURAAVA IKKUNA — ohjatun etenemisen opastin.
                   `computeGuided` on laskenut `nextKey`:n koko ajan (kesken-työt

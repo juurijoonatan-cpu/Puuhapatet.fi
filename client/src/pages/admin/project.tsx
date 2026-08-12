@@ -539,14 +539,34 @@ export default function AdminProjectPage() {
   // projektiin. Johdettu tila (aktiivinen kerros, seuraava ikkuna) lasketaan
   // clientissä `computeGuided`illä suoraan kartasta, joten se pysyy aina synkassa.
   // HUOM: tämä hook on ennen early returneja (React #310).
+  /** Palauttaa palvelimen tallentaman tilan, jotta kutsuja voi tarkistaa että
+   *  pyydetty muutos OIKEASTI meni läpi — ei vain että pyyntö onnistui. */
   const onGuidedSet = useCallback(async (data: { enabled?: boolean; activeFloorOverride?: string | null; openFloors?: string[]; lockWindow?: string; unlockWindow?: string }) => {
     const res = await api.guidedSet(jobId, data);
     if (res.ok && res.data) {
       const guided = res.data.guided;
       setProject((cur) => (cur ? { ...cur, guided } : cur));
       latest.current = latest.current ? { ...latest.current, guided } : latest.current;
-    } else setError(res.error || "Tallennus epäonnistui");
+      return guided;
+    }
+    setError(res.error || "Tallennus epäonnistui");
+    return null;
   }, [jobId]);
+
+  /**
+   * Kuittaus tehdystä toimenpiteestä. `error` on virheille; tämä on sille että
+   * jokin ONNISTUI. Ilman tätä ikkunan piilotus oli täysin mykkä: valikko
+   * sulkeutui ja piste himmeni jossain kartalla, mutta jos katse oli muualla,
+   * mikään ei kertonut tapahtuiko mitään.
+   */
+  const [flash, setFlash] = useState<{ text: string; undo?: () => void } | null>(null);
+  const flashTimer = useRef<number | null>(null);
+  const showFlash = useCallback((text: string, undo?: () => void) => {
+    if (flashTimer.current) window.clearTimeout(flashTimer.current);
+    setFlash({ text, undo });
+    flashTimer.current = window.setTimeout(() => setFlash(null), 6000);
+  }, []);
+  useEffect(() => () => { if (flashTimer.current) window.clearTimeout(flashTimer.current); }, []);
 
   // Kerroslukon saa asettaa vain perustaja — sama ehto kuin dashin
   // KERROSTEN LUKITUS -paneelilla, jotta kartta ei anna enempää oikeuksia.
@@ -892,6 +912,37 @@ export default function AdminProjectPage() {
       {isFounderView && celebrateMilestone && (
         <FounderCelebration jobId={jobId} />
       )}
+      {/* KUITTAUS. `error` on virheille, tämä sille että jokin onnistui.
+          Ilman tätä ikkunan piilotus oli täysin mykkä: valikko sulkeutui ja
+          piste himmeni jossain kartalla, mutta jos katse oli muualla, mikään
+          ei kertonut tapahtuiko mitään — eikä siitä että toiminto ei
+          tallentunut lainkaan. Kumoa-nappi on tässä koska piilotus on helppo
+          osua vahingossa (valikossa se on Poista-kohdan vieressä). */}
+      {flash && (
+        <div
+          data-fr8-bg
+          style={{
+            position: "fixed", top: "calc(70px + env(safe-area-inset-top))", left: "50%",
+            transform: "translateX(-50%)", zIndex: 61,
+            maxWidth: "min(92vw, 560px)", padding: "9px 14px", borderRadius: 11,
+            background: "rgba(18,44,30,0.92)", border: "1px solid rgba(124,224,166,0.4)",
+            color: "rgba(214,247,228,0.98)", fontSize: 12.5, textAlign: "center",
+            display: "flex", alignItems: "center", gap: 12, boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
+          }}
+        >
+          <span>{flash.text}</span>
+          {flash.undo && (
+            <button
+              type="button"
+              onClick={() => { const u = flash.undo!; setFlash(null); u(); }}
+              style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "#7CE0A6", fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, textDecoration: "underline", textUnderlineOffset: 2, flexShrink: 0 }}
+            >
+              Kumoa
+            </button>
+          )}
+        </div>
+      )}
+
       {error && (
         // data-fr8-bg: keltainen on virheen väri. Ilman merkintää mobiilisääntö
         // ylikirjoitti sen 5,5 %:n valkoiseksi juuri silloin kun palkin pitää
@@ -1053,7 +1104,30 @@ export default function AdminProjectPage() {
                päälle: yhden pisteen piilottaminen on pieni arkinen teko, eikä
                sen pidä muuttaa jokaisen kerroksen käyttäytymistä kerralla. */
             onToggleWindowLock={canEditLocks
-              ? (key, lock) => { void onGuidedSet(lock ? { lockWindow: key } : { unlockWindow: key }); }
+              ? (key, lock) => {
+                  void (async () => {
+                    const saved = await onGuidedSet(lock ? { lockWindow: key } : { unlockWindow: key });
+                    if (!saved) return;                       // virhe näytettiin jo
+                    const nowLocked = (saved.lockedKeys ?? []).includes(key);
+                    if (nowLocked !== lock) {
+                      // Pyyntö onnistui mutta tila ei muuttunut. Käytännössä
+                      // tämä tarkoittaa että palvelin ei vielä tunne
+                      // lockWindow-kenttää (julkaisu tekemättä). Sanotaan se
+                      // suoraan sen sijaan että toiminto olisi hiljaa mykkä.
+                      setError(lock
+                        ? "Piilotus ei tallentunut — palvelimen päivitys puuttuu."
+                        : "Avaus ei tallentunut — palvelimen päivitys puuttuu.");
+                      return;
+                    }
+                    const n = (saved.lockedKeys ?? []).length;
+                    showFlash(
+                      lock
+                        ? `Ikkuna piilotettu tekijöiltä · ${n} piilossa`
+                        : `Ikkuna näkyy taas tekijöille · ${n} piilossa`,
+                      () => { void onGuidedSet(lock ? { unlockWindow: key } : { lockWindow: key }); },
+                    );
+                  })();
+                }
               : undefined}
             lockedWindowKeys={project.guided?.lockedKeys ?? []}
           />
@@ -1777,7 +1851,7 @@ function guidedFloorName(floor: string | null): string {
  */
 function FloorLockPanel({ project, onGuidedSet, canSend }: {
   project: ProjectData;
-  onGuidedSet: (data: { enabled?: boolean; activeFloorOverride?: string | null; openFloors?: string[] }) => Promise<void>;
+  onGuidedSet: (data: { enabled?: boolean; activeFloorOverride?: string | null; openFloors?: string[] }) => Promise<unknown>;
   canSend: boolean;
 }) {
   const enabled = project.guided?.enabled === true;

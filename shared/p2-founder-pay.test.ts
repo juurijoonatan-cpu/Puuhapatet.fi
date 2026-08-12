@@ -143,3 +143,58 @@ describe("perustajan keltaiset", () => {
     expect(computeP2Billing(p, { isFounder }).marginCents).toBe(0);
   });
 });
+
+describe("kate on aina sama molemmille perustajille", () => {
+  /**
+   * Perustajien sopima sääntö, sanatarkasti: "jos meistä jompikumpi tekee
+   * duunia niin omista ikkunoista ei tuu katetta, mutta työntekijöiltä aina
+   * tasaisesti."
+   *
+   * Kaksi väitettä, jotka on helppo rikkoa vahingossa myöhemmin:
+   *   1. Perustajan oma ikkuna ei tuota katetta lainkaan.
+   *   2. Työntekijöiden tuottama kate jaetaan tasan — riippumatta siitä
+   *      kumpi perustaja on pessyt enemmän.
+   */
+  const kateEach = (p: ProjectData) => {
+    const total = computeP2Billing(p, { isFounder }).marginCents;
+    return [Math.floor(total / 2), total];
+  };
+
+  it("kate ei muutu siitä kumpi perustaja pesi — vain työntekijöiden työstä", () => {
+    // Sama työntekijämäärä, eri jako perustajien kesken → sama kate.
+    const jooPesi = project([
+      ...Array(10).fill(0).map(() => W({ by: "joonatan" })),
+      ...Array(5).fill(0).map(() => W({ by: "petrus" })),
+    ]);
+    const matiasPesi = project([
+      ...Array(10).fill(0).map(() => W({ by: "matias" })),
+      ...Array(5).fill(0).map(() => W({ by: "petrus" })),
+    ]);
+    const tasan = project([
+      ...Array(5).fill(0).map(() => W({ by: "joonatan" })),
+      ...Array(5).fill(0).map(() => W({ by: "matias" })),
+      ...Array(5).fill(0).map(() => W({ by: "petrus" })),
+    ]);
+    // Kaikissa kolmessa työntekijä pesi 5 → kate on sama.
+    expect(kateEach(jooPesi)).toEqual(kateEach(matiasPesi));
+    expect(kateEach(jooPesi)).toEqual(kateEach(tasan));
+    expect(kateEach(jooPesi)[1]).toBe(5 * (3400 - 1800));
+  });
+
+  it("jos vain perustajat pesevät, katetta ei ole jaettavaksi", () => {
+    const p = project([W({ by: "joonatan" }), W({ by: "joonatan" }), W({ by: "matias" })]);
+    expect(computeP2Billing(p, { isFounder }).marginCents).toBe(0);
+    // …mutta kumpikin sai oman työnsä täysimääräisenä.
+    const s = p2WorkerSplit(p, { isFounder });
+    expect(s.earnedCents.joonatan).toBe(6800);
+    expect(s.earnedCents.matias).toBe(3400);
+  });
+
+  it("työntekijän lisääminen kasvattaa katetta, ei perustajan oman työn määrä", () => {
+    const yksi = project([W({ by: "joonatan" }), W({ by: "petrus" })]);
+    const kaksi = project([W({ by: "joonatan" }), W({ by: "petrus" }), W({ by: "oona" })]);
+    const lisaaOmaa = project([W({ by: "joonatan" }), W({ by: "joonatan" }), W({ by: "petrus" })]);
+    expect(kateEach(kaksi)[1]).toBe(kateEach(yksi)[1] * 2);
+    expect(kateEach(lisaaOmaa)[1]).toBe(kateEach(yksi)[1]);
+  });
+});

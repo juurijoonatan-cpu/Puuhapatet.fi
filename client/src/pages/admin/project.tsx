@@ -19,7 +19,7 @@ import {
 import { computeP2Billing, customerAddedKeys, p2FounderOpts, p2CustomerLocksSince, p2Itemisation, p2WashedYellows, p2WorkerSplit, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule, type P2WashedState } from "@shared/p2";
 import { computeGuided, type GuidedWork } from "@shared/guided";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
-import { FOUNDER_IDS } from "@shared/team";
+import { splitCentsEvenly, FOUNDER_IDS } from "@shared/team";
 import { traineeForUserId, traineeForName } from "@shared/trainees";
 import { DEFAULT_WORKER_PER_WINDOW_CENTS } from "@shared/crew";
 import Dashboard from "@/components/fr8/Dashboard";
@@ -707,11 +707,34 @@ export default function AdminProjectPage() {
    * joka jää perustajille. Jaetaan tasan, pariton sentti ensimmäiselle.
    */
   const p2Bill = computeP2Billing(project, p2Opts);
-  const p2MarginEachCents = Math.floor(p2Bill.marginCents / founderCount);
-  /** Sama odottaville (asiakas ei ole vielä hyväksynyt hintaa) — teoreettinen. */
   const p2PendingMarginCents = Math.max(0, p2Bill.pendingEarnedCents - p2Bill.pendingWorkerCostCents);
-  const p2PendingMarginEachCents = Math.floor(p2PendingMarginCents / founderCount);
-  const founderProfitEachCents = Math.round(profitPoolCents / founderCount);
+  /**
+   * KATE JAETAAN TASAN — JA TÄSMÄLLEEN.
+   *
+   * Kate on aina sama molemmille riippumatta siitä kumpi pesi enemmän: omasta
+   * ikkunasta ei synny katetta lainkaan (koko hinta on jo tekijän), ja
+   * työntekijöiden tuottama kate kuuluu perustajille tasan.
+   *
+   * Jako laskettiin `Math.floor`illa, jolloin pariton sentti katosi näkyvistä,
+   * ja tuotto-osuus `Math.round`illa, joka on pahempi: 3 senttiä kahdelle
+   * antaa 2 + 2 = 4, eli sentti syntyi tyhjästä. Kumpikaan ei ole iso raha,
+   * mutta kun koko näkymän tarkoitus on että luvut täsmäävät, yksikin karkaava
+   * sentti syö luottamuksen. `splitCentsEvenly` jakaa jäännössentit
+   * järjestyksessä, joten summa on aina täsmälleen jaettava summa.
+   */
+  const founderIdsInOrder = (() => {
+    const fromCrew = crew.filter((c) => isFounder(c.id, c.role)).map((c) => c.id);
+    return (fromCrew.length ? Array.from(new Set(fromCrew)) : [...FOUNDER_IDS]).sort();
+  })();
+  const shareByFounder = (cents: number): Record<string, number> => {
+    const parts = splitCentsEvenly(cents, founderIdsInOrder.length);
+    const out: Record<string, number> = {};
+    founderIdsInOrder.forEach((id, i) => { out[id] = parts[i] ?? 0; });
+    return out;
+  };
+  const p2MarginBy = shareByFounder(p2Bill.marginCents);
+  const p2PendingMarginBy = shareByFounder(p2PendingMarginCents);
+  const founderProfitBy = shareByFounder(profitPoolCents);
   const earningsFor = (st: { worker: string; washed: number; washedP1: number }): number => {
     const mm = crew.find((c) => c.id === st.worker);
     if (mm?.manualEarningsCents != null) return mm.manualEarningsCents;
@@ -724,9 +747,9 @@ export default function AdminProjectPage() {
     if (isFounder(st.worker, mm?.role)) {
       // Vain OMA punainen työ — harjoittelijan ikkunat eivät ole johtajan työtä.
       return Math.round(st.washedP1 * internalKateCents)
-        + founderProfitEachCents
+        + (founderProfitBy[st.worker] ?? 0)
         + p2Cents
-        + p2MarginEachCents;
+        + (p2MarginBy[st.worker] ?? 0);
     }
     return Math.round(st.washedP1 * rateOf(st.worker)) + p2Cents;
   };
@@ -799,14 +822,14 @@ export default function AdminProjectPage() {
         name: resolveName(s.worker),
         ownWashed,
         ownCents: Math.round(ownWashed * internalKateCents),
-        shareCents: founderProfitEachCents,
+        shareCents: founderProfitBy[s.worker] ?? 0,
         p2Cents,
         p2Washed: s.washedP2,
         /** Osuus SOVITTUJEN keltaisten katteesta. */
-        p2MarginCents: p2MarginEachCents,
+        p2MarginCents: p2MarginBy[s.worker] ?? 0,
         /** Teoreettinen lisä: oma palkkio + kate ikkunoista jotka on JO PESTY mutta
          *  joiden hintaa asiakas ei ole vielä hyväksynyt. Ei vahvistettua rahaa. */
-        theoreticalCents: p2PendingCentsFor(s.worker) + p2PendingMarginEachCents,
+        theoreticalCents: p2PendingCentsFor(s.worker) + (p2PendingMarginBy[s.worker] ?? 0),
         trainees: traineeByLeader[s.worker] ?? [],
         totalCents: s.revenueCents, // respects manual override
         manual,

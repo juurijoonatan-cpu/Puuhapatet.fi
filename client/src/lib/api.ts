@@ -401,6 +401,8 @@ export interface GigPublicView {
   isFixedDeal: boolean;
   /** Yhteisökeikka: euroja ei näytetä asiakkaalle lainkaan. */
   isCommunity?: boolean;
+  /** Asiakasnäkymän ulkoasu: "paper" (oletus) | "tech" (tumma, tekninen). */
+  theme?: "paper" | "tech";
   // Read-only floor-plan map (white, customer view). Null if no plan.
   map: {
     building: {

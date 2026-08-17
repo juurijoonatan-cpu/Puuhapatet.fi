@@ -130,6 +130,15 @@ export interface GigData {
   currency: "EUR";
   vatNote?: string;           // e.g. "Hintoihin ei lisätä alv (AVL 3 §)"
   customerNote?: string;      // shown on the public live view
+  /**
+   * Asiakasnäkymän ulkoasu: `"paper"` (oletus, vaalea) tai `"tech"` (tumma,
+   * tekninen). Puuttuva = paper, joten olemassa olevat keikat eivät muutu.
+   *
+   * MIKSI KEIKKAKOHTAINEN: sama näkymä palvelee hyvin erilaisia asiakkaita.
+   * Tekniselle yhteisölle mittalaitteen kieli on luontevampi kuin esite, ja
+   * toisin päin. Teema on keikan ominaisuus, ei järjestelmän asetus.
+   */
+  customerTheme?: "paper" | "tech";
   sectors: GigSector[];
   invoiceInterval: number;    // invoice roughly every N washed units (e.g. 100)
   invoicedThrough: number;    // cumulative washed-unit count already invoiced
@@ -392,6 +401,8 @@ export function sanitizeGigData(input: any): GigData {
     currency: "EUR",
     vatNote: str(input.vatNote, 240),
     customerNote: str(input.customerNote, 2000),
+    customerTheme: input.customerTheme === "tech" ? "tech" as const
+      : input.customerTheme === "paper" ? "paper" as const : undefined,
     sectors,
     invoiceInterval: clampNonNeg(Number(input.invoiceInterval)) || 100,
     invoicedThrough: clampNonNeg(Number(input.invoicedThrough)),

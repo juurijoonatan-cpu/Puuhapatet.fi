@@ -19,10 +19,12 @@ import CustomerProgressHero, { type HeroTile } from "@/components/CustomerProgre
 import LoadingOrb from "@/components/LoadingOrb";
 import { downloadGigContract } from "@/lib/gig-contract-doc";
 import { customerProgress } from "@/lib/customer-progress";
-import { CT, CFONT, eyebrow } from "@/lib/customer-theme";
+import { CT, CFONT, eyebrow, customerTheme, isTechTheme, eyebrowOn } from "@/lib/customer-theme";
+import TechHero from "@/components/customer/TechHero";
 
-const T = CT;
 const FONT = CFONT;
+/** Oletusteema. Käytössä latausruudulla, jossa keikan teemaa ei vielä tiedetä. */
+const T = CT;
 
 /**
  * FR8:n allekirjoitettu Priority 2 -sopimus (PDF), bundlattu staattisena
@@ -140,6 +142,17 @@ export default function GigLivePage() {
   if (data.requireSignature && !data.signed) {
     return <GigContractSign token={token} view={data} onSigned={reload} />;
   }
+
+  /**
+   * KEIKAN TEEMA.
+   *
+   * Tämä varjostaa tarkoituksella moduulitason `T`:n: koko näkymä on kirjoitettu
+   * `T.x`-viittauksilla, joten yksi sijoitus teemaa koko sivun eikä sadan rivin
+   * inline-tyylejä tarvitse koskea. Puuttuva teema = `CT` = täsmälleen entinen
+   * vaalea ulkoasu, joten elävän sopimusasiakkaan sivu ei muutu.
+   */
+  const T = customerTheme(data.theme);
+  const tech = isTechTheme(data.theme);
 
   const t = data.totals;
   // Customer view shows ACTUAL work progress (washed windows / scope), never euros.
@@ -287,21 +300,29 @@ export default function GigLivePage() {
             urakkahinnasta — sovittu hinta asuu allekirjoitetussa sopimuksessa.
             Kaikki selittävä teksti on siirretty sivun alaosan taittuvaan
             osioon, jotta tämä näkymä on koontinäyttö eikä saate. */}
-        <CustomerProgressHero
-          pct={pct}
-          done={hasMapProgress ? mapProgress.done : undefined}
-          total={hasMapProgress ? mapProgress.total : undefined}
-          awaiting={mapProgress.awaiting}
-          chip={
-            p2Live ? { text: "Priority 2", tone: "amber" }
-            : pct >= 100 ? { text: "Valmis", tone: "green" }
-            : null
-          }
-          note={p2Live && contractPct >= 100
-            ? "Priority 1 -urakka on valmis. Nyt suunnitellaan Priority 2 -ikkunat alla."
-            : undefined}
-          tiles={heroTiles}
-        />
+        {/* Kaksi ulkoasua, sama tieto. Tekninen variantti on oma komponenttinsa
+            eikä lippu vanhassa: vaalea on käytössä elävällä sopimusasiakkaalla,
+            eikä sitä haluta testata uudelleen joka kerta kun tummaa muutetaan. */}
+        {(() => {
+          const heroProps = {
+            pct,
+            done: hasMapProgress ? mapProgress.done : undefined,
+            total: hasMapProgress ? mapProgress.total : undefined,
+            awaiting: mapProgress.awaiting,
+            chip: (
+              p2Live ? { text: "Priority 2", tone: "amber" as const }
+              : pct >= 100 ? { text: "Valmis", tone: "green" as const }
+              : null
+            ),
+            note: p2Live && contractPct >= 100
+              ? "Priority 1 -urakka on valmis. Nyt suunnitellaan Priority 2 -ikkunat alla."
+              : undefined,
+            tiles: heroTiles,
+          };
+          return tech
+            ? <TechHero theme={T} {...heroProps} />
+            : <CustomerProgressHero {...heroProps} />;
+        })()}
 
         /**
          * Sektorien eurokortit.
@@ -343,7 +364,7 @@ export default function GigLivePage() {
 
         {/* Priority 2 -vaihe: kasvava sovittu summa + avoimet hintaehdotukset */}
         {p2Live && (
-          <Panel>
+          <Panel theme={T}>
             {/* Accent header makes phase 2 read as the current main focus */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10.5, fontWeight: 800, letterSpacing: "0.08em", color: "#8A6A00", background: "rgba(224,168,0,0.16)", border: "1px solid rgba(224,168,0,0.4)", borderRadius: 999, padding: "4px 10px" }}>
@@ -390,7 +411,7 @@ export default function GigLivePage() {
 
         {/* Read-only floor-plan map — customer watches washed windows live. */}
         {data.map && (
-          <Panel>
+          <Panel theme={T}>
             <p style={{ margin: "0 0 14px", ...label }}>Pohjapiirros</p>
             <CustomerFloorMap map={data.map} p2={p2} p2Actions={p2Live ? p2Actions : undefined} onLoadObservationImage={loadObservationImage} planUrlBase={api.planUrlBaseForGig(token)} />
           </Panel>
@@ -400,7 +421,7 @@ export default function GigLivePage() {
             osiossa. Se on luettavissa kun sitä tarvitsee, muttei joka kerta
             ensimmäisenä ruudulla. Yhteydenotto jää näkyviin, koska se on
             toiminto eikä selitys. */}
-        <Panel>
+        <Panel theme={T}>
           <details>
             <summary style={{ cursor: "pointer", listStyle: "none", display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 600 }}>
               <span aria-hidden style={{ color: T.muted, fontSize: 12 }}>▸</span>
@@ -677,9 +698,9 @@ function StatusBadge({ color, label }: { color: string; label: string }) {
 
 const label: React.CSSProperties = eyebrow;
 
-function Panel({ children }: { children: React.ReactNode }) {
+function Panel({ children, theme = CT }: { children: React.ReactNode; theme?: typeof CT }) {
   return (
-    <div style={{ background: T.card, border: `1px solid ${T.hair}`, borderRadius: 22, padding: 22, marginBottom: 16 }}>
+    <div style={{ background: theme.card, border: `1px solid ${theme.hair}`, borderRadius: 22, padding: 22, marginBottom: 16 }}>
       {children}
     </div>
   );

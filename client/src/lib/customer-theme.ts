@@ -28,6 +28,55 @@ export const CT = {
   amber: "#E0A800",
 } as const;
 
+/**
+ * TEKNINEN TUMMA VARIANTTI.
+ *
+ * Sama rakenne, eri pinta. Tarkoitettu asiakkaille joille vaalea paperi on
+ * väärä sävy — esim. teknisen yhteisön keikalle, jossa näkymä luetaan samassa
+ * seurassa kuin kehitystyökaluja.
+ *
+ * MIKSI OMA OBJEKTI EIKÄ `CT`:N MUOKKAUS: `CT` on jäätynyt vakio jonka viisi
+ * tiedostoa importtaa suoraan. Sen arvojen vaihtaminen muuttaisi käynnissä
+ * olevan asiakkaan sivun kesken sopimuksen. Variantti on siis LISÄYS: `CT` on
+ * edelleen oletus ja täsmälleen ennallaan, ja tämä valitaan erikseen.
+ *
+ * Värit: pinta lähes musta, teksti valkoinen, ja YKSI aksentti (vihreä =
+ * pesty). Tilavärit ovat samat kuin FR8:n työkaluissa, jotta sama merkitys
+ * näyttää samalta koko järjestelmässä.
+ *
+ * HUOM tilaväreistä: vihreä ja keltainen ovat CVD-erottelultaan rajatapaus
+ * (protan ΔE 7,9), joten kumpaakaan ei saa käyttää YKSIN tilan merkkinä —
+ * jokaisella merkillä on aina myös teksti. Ks. `Chip`.
+ */
+export const CT_TECH = {
+  ink: "#FFFFFF",
+  paper: "#08090A",
+  card: "#101215",
+  fill: "#16191D",
+  hair: "#23272D",
+  muted: "#8A929C",
+  navy: "#8FB4FF",
+  green: "#5FE08A",
+  amber: "#FFCE28",
+} as const;
+
+/** Asiakasnäkymien teemat. `CT` on oletus; `tech` on tumma tekninen. */
+export type CustomerThemeId = "paper" | "tech";
+export type CustomerTheme = typeof CT;
+
+export function toCustomerThemeId(v: any): CustomerThemeId | undefined {
+  return v === "paper" || v === "tech" ? v : undefined;
+}
+
+/** Puuttuva/tuntematon = "paper", eli täsmälleen vanha ulkoasu. */
+export function customerTheme(id?: string | null): CustomerTheme {
+  return toCustomerThemeId(id) === "tech" ? (CT_TECH as unknown as CustomerTheme) : CT;
+}
+
+export function isTechTheme(id?: string | null): boolean {
+  return toCustomerThemeId(id) === "tech";
+}
+
 export const CFONT =
   "'Onest', 'Poppins', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif";
 
@@ -75,3 +124,46 @@ export const tileStyle: CSSProperties = {
   padding: "13px 15px",
   minWidth: 0,
 };
+
+/**
+ * Teemakohtainen edistymispalkin täyttö. Vaalealla paperilla säilyy entinen
+ * gradientti; tummalla käytetään YHTÄ sävyä, koska mittarin täyttö kantaa
+ * merkityksen (pesty) eikä sen kuulu olla koriste.
+ */
+export function progressFill(id?: string | null): string {
+  return isTechTheme(id) ? `linear-gradient(90deg, ${CT_TECH.green} 0%, #7CE8A4 100%)` : PROGRESS_GRADIENT;
+}
+
+export function progressGlow(id?: string | null): string {
+  return isTechTheme(id) ? "0 6px 26px -8px rgba(95,224,138,0.55)" : PROGRESS_GLOW;
+}
+
+/**
+ * Näyttöluku teemalla.
+ *
+ * `display()` käyttää `tabular-nums`ia. Se on oikein SARAKKEESSA jossa luvut
+ * ladotaan allekkain, mutta väärin isolle yksittäiselle luvulle: tabular antaa
+ * jokaiselle numerolle nollan levyisen ruudun, joten "121" näyttää display-koossa
+ * löysältä. Näyttöluku käyttää siksi suhteellisia numeroita.
+ */
+export function displayOn(theme: CustomerTheme, size: number): CSSProperties {
+  return {
+    fontSize: size,
+    fontWeight: 800,
+    lineHeight: 1,
+    letterSpacing: size >= 44 ? "-0.045em" : "-0.03em",
+    color: theme.ink,
+  };
+}
+
+export function eyebrowOn(theme: CustomerTheme): CSSProperties {
+  return { ...eyebrow, color: theme.muted };
+}
+
+export function cardOn(theme: CustomerTheme): CSSProperties {
+  return { ...cardStyle, background: theme.card, border: `1px solid ${theme.hair}` };
+}
+
+export function tileOn(theme: CustomerTheme): CSSProperties {
+  return { ...tileStyle, background: theme.fill };
+}

@@ -5566,6 +5566,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
          * Vapaaehtoistyöstä ei kerrota hintaa jota kukaan ei maksa.
          */
         isCommunity: !!(proj && isCommunityGig(proj)),
+        /** Asiakasnäkymän ulkoasu. Puuttuva = vaalea, eli entinen. */
+        theme: gig.customerTheme ?? "paper",
         // Read-only floor-plan map (null if the gig has no plan).
         map,
         // P2 (keltaiset ikkunat): per-ikkuna hintaneuvottelu. Vain hinnat +

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, sanitizeProjectData, stripObservationImages, type ProjectData } from "./project";
+import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, sanitizeProjectData, stripObservationImages, fixedDealFor, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
 
 // Kohta 6.1 — kokonaistilanteen ikkunamäärän täsmäytys. Ks. docs/fr8-era-laskutus-plan.md.
 function fixture(): ProjectData {
@@ -140,5 +140,61 @@ describe("liiteviitteet säilyvät sanitoinnissa", () => {
     expect(out["K#1"].hasImage).toBe(true);
     expect(out["K#1"].imageAssetId).toBeUndefined();
     expect(out["K#1"].imageDataUrl).toBeUndefined();
+  });
+});
+
+// ─── Keikan urakkatyyppi (dealKind) ──────────────────────────────────────────
+//
+// FR8:n allekirjoitettu 6300 €:n urakka kiinnittyi ennen pelkkään merkkijonoon
+// `planBase`issa. Nämä testit lukitsevat sen, ettei uusi keikka voi PERIÄ sitä
+// vahingossa eikä FR8 voi MENETTÄÄ sitä.
+describe("fixedDealFor — urakka kiinnittyy nimenomaisesti, ei polkuarvauksella", () => {
+  it("vanha FR8-blobi ilman dealKindiä saa yhä urakkansa (taaksepäin-yhteensopivuus)", () => {
+    const data = emptyProjectData();            // ei dealKindiä, kuten talletettu FR8
+    expect("dealKind" in data).toBe(false);
+    data.building.planBase = "/fr8/plans/bp-";
+    const deal = fixedDealFor(data);
+    expect(deal).not.toBeNull();
+    expect(deal!.pricePerWindow).toBe(FR8_PRICE_PER_WINDOW);
+    expect(deal!.capCents).toBe(FR8_CONTRACT_CAP_CENTS);
+  });
+
+  it("uusi keikka ei peri FR8:n urakkaa vaikka pohjakuva olisi /fr8/-polussa", () => {
+    const data = newGigProjectData();
+    data.building.planBase = "/fr8/plans/stuhi-";
+    expect(data.dealKind).toBe("none");
+    expect(fixedDealFor(data)).toBeNull();
+  });
+
+  it("emptyProjectData EI leimaa dealKindiä — sitä käytetään myös varafallbackina", () => {
+    // Jos tämä leimaisi "none", FR8:n urakka katoaisi silloin kun latausvirheen
+    // jälkeen tallennetaan varakopio sen päälle.
+    expect("dealKind" in emptyProjectData()).toBe(false);
+    expect(newGigProjectData().dealKind).toBe("none");
+  });
+
+  it("nimenomainen fr8 pitää urakan vaikka pohjakuvat siirrettäisiin muualle", () => {
+    const data = emptyProjectData();
+    data.dealKind = "fr8";
+    data.building.planBase = "/plans/bulevardi31-";
+    expect(fixedDealFor(data)).not.toBeNull();
+  });
+
+  it("tavallinen uusi keikka omalla polulla ei saa urakkaa", () => {
+    const data = emptyProjectData();
+    data.building.planBase = "/gigs/stuhi/room-";
+    expect(fixedDealFor(data)).toBeNull();
+  });
+
+  it("sanitointi säilyttää dealKindin ja jättää sen pois kun sitä ei ole", () => {
+    const withKind = sanitizeProjectData({ ...emptyProjectData(), dealKind: "fr8" });
+    expect(withKind.dealKind).toBe("fr8");
+
+    const legacy: any = { ...emptyProjectData() };
+    delete legacy.dealKind;
+    expect("dealKind" in sanitizeProjectData(legacy)).toBe(false);
+
+    // Roskaa ei tallenneta.
+    expect("dealKind" in sanitizeProjectData({ dealKind: "vapaa-urakka" })).toBe(false);
   });
 });

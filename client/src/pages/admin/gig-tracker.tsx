@@ -6,12 +6,13 @@
  * link, and partial-invoice sending (the "every ~100 units" invoice button).
  */
 
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, useRoute, useLocation } from "wouter";
 import {
   ArrowLeft, Share2, Copy, Check, FileText,
   Send, AlertCircle, ChevronDown, Receipt, ExternalLink, ChevronRight,
   PenLine, ShieldCheck, Clock, Save, Download, Printer, LayoutDashboard, Users, Loader2,
+  SlidersHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -36,6 +37,16 @@ import { computeProjectTotals, fixedDealFor, computeDealBilling, dealAgreedTotal
 import { computeP2Billing } from "@shared/p2";
 import { p2InvoiceState } from "@shared/worker-payouts";
 import { downloadGigContract, openGigContractForPrint } from "@/lib/gig-contract-doc";
+
+/**
+ * Keikan työkalut (pohjakartat, kerrokset, tehokkuus).
+ *
+ * MIKSI LAZY: työkalupaneeli on koko ruudun tumma kuori omine riippuvuuksineen,
+ * eikä sitä tarvita ennen kuin nappia painetaan. Ks. `lazyRetry`-huomio
+ * docs/fr8-jarjestelma-yleiskuva.md ("Julkaisu ja Importing a module script
+ * failed") — Suspense-fallback pitää virhesivun poissa julkaisun aikana.
+ */
+const GigToolsOverlay = lazy(() => import("@/components/gig-tools/GigToolsOverlay"));
 
 const PUBLIC_BASE = "https://puuhapatet.fi";
 
@@ -76,6 +87,10 @@ export default function AdminGigTrackerPage() {
   const [jobDescription, setJobDescription] = useState("");
   const [savingDescription, setSavingDescription] = useState(false);
   const [token, setToken] = useState<string | null>(null);
+  // Keikan työkalut (pohjakartat & asetukset, tehokkuus). Tämä on se paikka
+  // josta UUSI keikka saa rakennuksensa, kerroksensa ja pohjakuvansa — ilman
+  // sitä toista keikkaa ei pysty perustamaan sovelluksen sisältä lainkaan.
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [approving, setApproving] = useState(false);
@@ -694,6 +709,16 @@ export default function AdminGigTrackerPage() {
           </button>
 
           <button
+            onClick={() => setToolsOpen(true)}
+            aria-label="Keikan asetukset ja pohjakartat"
+            title="Pohjakartat, kerrokset ja keikan asetukset"
+            className="flex shrink-0 flex-col items-center justify-center gap-1 rounded-2xl w-16 sm:w-auto sm:px-5 bg-card text-foreground hover:bg-accent transition-all active:scale-[0.99] premium-shadow"
+          >
+            <SlidersHorizontal className="h-5 w-5" />
+            <span className="text-[11px] sm:text-xs font-medium">Asetukset</span>
+          </button>
+
+          <button
             onClick={() => navigate(`/admin/gig/${jobId}/tiimi`)}
             aria-label="Tiimi ja työntekijät"
             className="flex shrink-0 flex-col items-center justify-center gap-1 rounded-2xl w-16 sm:w-auto sm:px-5 bg-card text-foreground hover:bg-accent transition-all active:scale-[0.99] premium-shadow"
@@ -1293,6 +1318,24 @@ export default function AdminGigTrackerPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Keikan työkalut. Täältä uusi keikka saa rakennuksen, kerrokset ja
+          pohjakuvan polun — sulkeutuessa projekti ladataan uudelleen, jotta
+          muuttunut kerroslista näkyy heti hinta-/ikkunaluvuissa. */}
+      {toolsOpen && (
+        <Suspense fallback={null}>
+          <GigToolsOverlay
+            jobId={jobId}
+            title={gig?.company?.name || "Sopimuskeikka"}
+            onClose={() => {
+              setToolsOpen(false);
+              void api.getProject(jobId).then((res) => {
+                if (res.ok && res.data?.project) setProject(res.data.project);
+              });
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

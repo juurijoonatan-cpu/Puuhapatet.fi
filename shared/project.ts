@@ -201,6 +201,11 @@ export interface ProjectData {
    *  e.g. [40,41,42,45]. Drives the per-erä kate on the crew/payroll page; absent
    *  → even split. Display/planning only — does NOT affect worker pay or earnings. */
   eraWindows?: number[];
+  /** Which signed deal this gig runs on (`GigDealKind`). Absent = decide from
+   *  the plan path, i.e. exactly the old behaviour — so FR8's stored blob is
+   *  unchanged. New gigs are created as `"none"` so they can never inherit
+   *  FR8's contract by accident. */
+  dealKind?: GigDealKind;
   /** Priority 2 (keltaiset ikkunat): per-window pricing + customer negotiation
    *  (shared/p2.ts). Absent = the gig behaves exactly as before. Mutated ONLY via
    *  the dedicated /p2 endpoints — generic blob saves keep the stored copy. */
@@ -248,9 +253,39 @@ export interface FixedDeal {
   billablePriority: 1 | 2;    // which window priority the deal covers
 }
 
+/**
+ * Which signed deal a gig runs on.
+ *
+ * MIKSI TÄMÄ ON OLEMASSA: ennen tätä FR8:n allekirjoitettu 6300 €:n urakka
+ * kiinnittyi keikkaan pelkän MERKKIJONOHAUN perusteella — `planBase`in piti
+ * vain sisältää "/fr8/". `planBase` on vapaa tekstikenttä, jonka
+ * paikkamerkkiteksti on kirjaimellisesti `/fr8/plans/bp-`, joten uusi keikka
+ * peri FR8:n sopimuksen (37,50 €/punainen, katto 6300 €, 4 erälaskua) heti jos
+ * joku kopioi polun mallista tai tallensi pohjakuvansa samaan kansioon. Vapaa
+ * yhteisökeikka olisi saanut 562,50 €:n haamusopimuksen ilman että mikään
+ * kertoo siitä.
+ *
+ * Nyt keikka voi SANOA kumpi se on, eikä sitä tarvitse arvata polusta:
+ *   - `"fr8"`  → FR8:n allekirjoitettu urakka (riippumatta polusta)
+ *   - `"none"` → ei kiinteää urakkaa; keikka käyttää omaa hintaansa
+ *   - puuttuu  → vanha käyttäytyminen (polkuhaku), jotta FR8:n talletettu
+ *                blobi round-trippaa identtisesti ilman migraatiota
+ *                (ks. invariantti 7, docs/fr8-jarjestelma-yleiskuva.md).
+ */
+export type GigDealKind = "fr8" | "none";
+
+export function toDealKind(v: any): GigDealKind | undefined {
+  return v === "fr8" || v === "none" ? v : undefined;
+}
+
 /** The locked deal for a gig, or null when the gig uses an editable price. */
 export function fixedDealFor(data: ProjectData): FixedDeal | null {
-  if (!isFr8Plans(data.building.planBase)) return null;
+  // An explicit declaration always wins over the legacy path sniff, in BOTH
+  // directions: "none" can never be talked into a deal by its plan path, and
+  // "fr8" keeps the signed deal even if the plans are ever moved elsewhere.
+  const kind = data.dealKind;
+  if (kind === "none") return null;
+  if (kind !== "fr8" && !isFr8Plans(data.building.planBase)) return null;
   return {
     pricePerWindow: FR8_PRICE_PER_WINDOW,
     capCents: FR8_CONTRACT_CAP_CENTS,
@@ -343,6 +378,11 @@ export function emptyProjectData(): ProjectData {
       planBase: "",
     },
     pricePerWindow: DEFAULT_PRICE_PER_WINDOW,
+    // NOTE: `dealKind` is deliberately NOT set here. `emptyProjectData()` is
+    // also used as a load-failure fallback (GigToolsOverlay), and stamping
+    // "none" there would strip FR8's signed deal if that fallback were ever
+    // saved. New gigs are stamped explicitly at creation instead — see
+    // `newGigProjectData()`.
     marks: {},
     statuses: {},
     washedBy: {},
@@ -361,6 +401,18 @@ export function emptyProjectData(): ProjectData {
     expenses: [],
     updatedAt: Date.now(),
   };
+}
+
+/**
+ * A blank project for a BRAND-NEW gig.
+ *
+ * Same as `emptyProjectData()` but explicitly declares that this gig is not the
+ * FR8 contract. Use this whenever a gig gets its first project; use
+ * `emptyProjectData()` only for throwaway/fallback objects that might be
+ * written over an existing gig.
+ */
+export function newGigProjectData(): ProjectData {
+  return { ...emptyProjectData(), dealKind: "none" };
 }
 
 // ─── Window enumeration ────────────────────────────────────────────────────────
@@ -1059,6 +1111,9 @@ export function sanitizeProjectData(input: any): ProjectData {
       planBase: input?.building?.planBase ? String(input.building.planBase).slice(0, 200) : base.building.planBase,
     },
     pricePerWindow: clampNonNeg(Number(input.pricePerWindow)) || DEFAULT_PRICE_PER_WINDOW,
+    // Only ever stored when the gig actually declared one; an absent value must
+    // stay absent so old blobs (FR8) round-trip byte-identically.
+    ...(toDealKind(input.dealKind) ? { dealKind: toDealKind(input.dealKind)! } : {}),
     marks,
     statuses,
     washedBy,

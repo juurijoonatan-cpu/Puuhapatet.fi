@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRoute } from "wouter";
 import { api, type GigPublicView } from "@/lib/api";
 import { eur } from "@shared/gig";
+import { floorLabel } from "@shared/project";
 import GigContractSign from "@/components/GigContractSign";
 import CustomerFloorMap, { type P2CustomerActions } from "@/components/CustomerFloorMap";
 import CustomerProgressHero, { type HeroTile } from "@/components/CustomerProgressHero";
@@ -23,8 +24,16 @@ import { CT, CFONT, eyebrow } from "@/lib/customer-theme";
 const T = CT;
 const FONT = CFONT;
 
-/** Valmis Priority 2 -sopimus (FR8 FAFO Oy), bundlattu staattisena assetina.
- *  Näytetään asiakkaalle tilausehtojen hyväksynnän yhteydessä. */
+/**
+ * FR8:n allekirjoitettu Priority 2 -sopimus (PDF), bundlattu staattisena
+ * assetina. Näytetään tilausehtojen hyväksynnän yhteydessä.
+ *
+ * TÄMÄ ON YHDEN ASIAKKAAN SOPIMUS, ei yleinen ehtoliite. Linkki näytettiin
+ * ennen jokaisella keikalla jolla keltaiset olivat käytössä, joten toinen
+ * asiakas olisi nähnyt FR8 FAFO Oy:n sopimusasiakirjan. Näytetään vain sille
+ * keikalle jonka sopimus se on (`isFixedDeal` = FR8:n kiinteä urakka); muilla
+ * keikoilla ehdot luetaan keikan omasta `p2.termsText`istä.
+ */
 const P2_CONTRACT_PDF_URL = "/fr8/priority2-sopimus-2026.pdf";
 
 export default function GigLivePage() {
@@ -235,11 +244,12 @@ export default function GigLivePage() {
   // "Kertynyt" on nimensä mukaisesti kertynyt: vain ne lisätyöikkunat jotka on
   // sekä pesty ETTÄ hinnaltaan sovittu. Sovittu kokonaissumma (myös vielä
   // pesemättömät) näkyy omana lukunaan Priority 2 -kortissa.
-  if (p2Live && mapProgress.p2AccruedCents > 0) {
+  // Euromäärä ei kuulu yhteisökeikan näkymään missään muodossa.
+  if (p2Live && !data.isCommunity && mapProgress.p2AccruedCents > 0) {
     heroTiles.push({ label: "Kertynyt", value: eur(mapProgress.p2AccruedCents), tone: "green" });
   }
   if (zone) {
-    heroTiles.push({ label: "Työn alla", value: zone.floor === "K" ? "Kellari" : `${zone.floor}. kerros`, tone: "green" });
+    heroTiles.push({ label: "Työn alla", value: floorLabel(data.map?.building as any, zone.floor), tone: "green" });
   }
   if (data.isFixedDeal && invoicesSent > 0) {
     heroTiles.push({ label: "Laskuja lähetetty", value: `${invoicesSent} kpl` });
@@ -293,8 +303,16 @@ export default function GigLivePage() {
           tiles={heroTiles}
         />
 
-        {/* Sector cards — hidden for fixed-price deals (flat rate, no per-sector billing). */}
-        {!data.isFixedDeal && data.sectors.map((s) => {
+        /**
+         * Sektorien eurokortit.
+         *
+         * Piilossa kiinteähintaisella urakalla (yksi kokonaishinta, ei
+         * sektorikohtaista laskutusta) JA yhteisökeikalla. Jälkimmäinen oli
+         * ennen pahin oletus koko sivulla: ehto oli pelkkä `!isFixedDeal`, joten
+         * juuri vastikkeeton keikka sai eurokortit — "0,00 € / 525,00 €"
+         * asiakkaalle joka ei maksa mitään.
+         */
+        {!data.isFixedDeal && !data.isCommunity && data.sectors.map((s) => {
           const accrued = s.washed * s.unitPriceCents;
           const cap = s.total * s.unitPriceCents;
           const credit = s.skipped * s.unitPriceCents;
@@ -374,7 +392,7 @@ export default function GigLivePage() {
         {data.map && (
           <Panel>
             <p style={{ margin: "0 0 14px", ...label }}>Pohjapiirros</p>
-            <CustomerFloorMap map={data.map} p2={p2} p2Actions={p2Live ? p2Actions : undefined} onLoadObservationImage={loadObservationImage} />
+            <CustomerFloorMap map={data.map} p2={p2} p2Actions={p2Live ? p2Actions : undefined} onLoadObservationImage={loadObservationImage} planUrlBase={api.planUrlBaseForGig(token)} />
           </Panel>
         )}
 
@@ -391,7 +409,9 @@ export default function GigLivePage() {
             <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 12, fontSize: 13.5, lineHeight: 1.7, color: T.ink }}>
               <p style={{ margin: 0 }}>{data.description}</p>
               <p style={{ margin: 0 }}>
-                {data.customerNote || "Tälle sopimukselle on sovittu kiinteä kokonaishinta, ja työ tehdään sopimuksen mukaisten ehtojen mukaisesti. Voit seurata edistymistä reaaliaikaisesti tästä näkymästä."}
+                {data.customerNote || (data.isCommunity
+                  ? "Tämä on yhteisökeikka: teemme työn veloituksetta, joten näkymässä ei ole hintoja eikä laskuja — vain työn tilanne. Voit seurata edistymistä reaaliaikaisesti."
+                  : "Tälle sopimukselle on sovittu kiinteä kokonaishinta, ja työ tehdään sopimuksen mukaisten ehtojen mukaisesti. Voit seurata edistymistä reaaliaikaisesti tästä näkymästä.")}
               </p>
               {data.map && (
                 <p style={{ margin: 0, color: T.muted }}>
@@ -461,7 +481,7 @@ export default function GigLivePage() {
               yhden napautuksen takana, eli siitä joka paikassa jossa asiakas
               hakee sopimuksiaan — tästä rivistä — se puuttui. Kaksi vaihetta,
               kaksi sopimusta, molemmat samasta paikasta. */}
-          {p2Live && (
+          {p2Live && data.isFixedDeal && (
             <a
               href={P2_CONTRACT_PDF_URL}
               target="_blank"
@@ -569,7 +589,9 @@ export default function GigLivePage() {
               </p>
             )}
 
-            {/* Valmis Priority 2 -sopimus (PDF) — luettavissa ennen hyväksyntää. */}
+            {/* Valmis Priority 2 -sopimus (PDF) — luettavissa ennen hyväksyntää.
+                Vain FR8:lla: PDF on sen oma allekirjoitettu sopimus. */}
+            {data.isFixedDeal && (
             <a
               href={P2_CONTRACT_PDF_URL}
               target="_blank"
@@ -579,6 +601,7 @@ export default function GigLivePage() {
               <span aria-hidden style={{ fontSize: 15 }}>📄</span>
               Lue koko sopimus (PDF) <span style={{ color: T.muted, fontWeight: 500 }}>· avautuu uuteen välilehteen</span>
             </a>
+            )}
 
             {/* Jos ehdot on jo hyväksytty, dialogi on VAIN katselua varten: näytä
                 hyväksynnän leima (nimi + aikaleima) eikä uutta lomaketta. */}

@@ -85,6 +85,10 @@ export interface WorkerView {
   eraInvoices: EraInvoiceClient[];
   building: ProjBuilding;
   pricePerWindow: number;          // the worker's OWN rate (not the gig price)
+  /** Onko keikalla erälaskutus. EI hintatietoa — ohjaa vain maksuerämittarin näkymistä. */
+  hasInstalments?: boolean;
+  /** Yhteisökeikka: keikasta ei liiku rahaa, joten korvausta ei luvata. */
+  isCommunity?: boolean;
   marks: ProjMarksData;
   statuses: Record<string, WindowStatus>;
   washedBy: Record<string, string>;
@@ -395,9 +399,19 @@ export interface GigPublicView {
   paymentsCount: number;
   /** True when the gig is billed as a fixed flat-rate contract (4 equal instalments). */
   isFixedDeal: boolean;
+  /** Yhteisökeikka: euroja ei näytetä asiakkaalle lainkaan. */
+  isCommunity?: boolean;
   // Read-only floor-plan map (white, customer view). Null if no plan.
   map: {
-    building: { name: string | null; address: string | null; floors: string[]; planBase: string };
+    building: {
+      name: string | null; address: string | null; floors: string[]; planBase: string;
+      /** Kerros → `job_assets`-id ladatulle pohjakuvalle. Kuva haetaan omalta reitiltään. */
+      planImages?: Record<string, number>;
+      /** "plan" (viivapiirros, käännetään + rajataan) | "photo" (näytetään sellaisenaan). */
+      planRender?: "plan" | "photo";
+      /** Korvaa sanan "kerros", esim. "tila". */
+      unitWord?: string;
+    };
     marks: ProjMarksData;
     statuses: Record<string, WindowStatus>;
     customMarks: Record<string, ProjCustomMark[]>;

@@ -30,7 +30,7 @@ import {
 } from "@shared/pricing";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, livePayments, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
@@ -5475,8 +5475,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Lives in projectData; we expose only the dot positions + statuses so the
       // customer can watch washed windows update live. No worker ids, no rates.
       const proj = parseProject(row.job.projectData ?? null);
-      const map = proj && proj.building?.planBase ? {
-        building: { name: proj.building.name ?? null, address: proj.building.address ?? null, floors: proj.building.floors, planBase: proj.building.planBase },
+      // Kartta näytetään kun keikalla on JOKIN pohjakuva — ladattu tai
+      // staattinen polku. Ennen tässä katsottiin vain `planBase`ia, joten
+      // ladatulla huonekuvalla varustettu keikka ei olisi näyttänyt karttaa
+      // asiakkaalle lainkaan.
+      const map = proj && hasAnyPlan(proj.building) ? {
+        building: {
+          name: proj.building.name ?? null, address: proj.building.address ?? null,
+          floors: proj.building.floors, planBase: proj.building.planBase,
+          // Ladatut kuvat: pelkät id:t. Selain rakentaa niistä osoitteen
+          // (`planImageUrl`) ja hakee kuvan omalta reitiltään — kuva ei siis
+          // kulje tämän pollattavan vastauksen mukana.
+          ...(proj.building.planImages ? { planImages: proj.building.planImages } : {}),
+          // Kertoo esitetäänkö kuva sellaisenaan vai käännettynä/rajattuna.
+          ...(proj.building.planRender ? { planRender: proj.building.planRender } : {}),
+          // "kerros" → esim. "tila", jottei yhden huoneen keikalla lue "1. kerros".
+          ...(proj.building.unitWord ? { unitWord: proj.building.unitWord } : {}),
+        },
         marks: proj.marks,
         statuses: proj.statuses,
         customMarks: proj.customMarks,
@@ -5512,6 +5527,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         // urakan eriä ja keltaisten P2-laskuja ei tarvitse erotella.
         paymentsCount: livePayments(gig.payments).length,
         isFixedDeal: !!(proj && fixedDealFor(proj)),
+        /**
+         * YHTEISÖKEIKKA — asiakkaalle ei näytetä euroja lainkaan.
+         *
+         * Tämä on se lippu joka puuttui. Asiakasnäkymä näyttää sektorien
+         * eurokortit aina kun keikka EI ole kiinteä urakka (`!isFixedDeal`) —
+         * eli juuri vastikkeettomalla keikalla, jolle se on kaikkein väärin.
+         * Vapaaehtoistyöstä ei kerrota hintaa jota kukaan ei maksa.
+         */
+        isCommunity: !!(proj && isCommunityGig(proj)),
         // Read-only floor-plan map (null if the gig has no plan).
         map,
         // P2 (keltaiset ikkunat): per-ikkuna hintaneuvottelu. Vain hinnat +
@@ -7690,6 +7714,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       eraInvoices: workerEraInvoices,
       building: project.building,
       pricePerWindow: member.perWindowCents / 100, // worker's OWN rate, not the gig price
+      /**
+       * Kaksi keikkakohtaista lippua — EI hintatietoa (rahan yksityisyys,
+       * invariantti 1: tekijä ei näe keikan hintaa, kattoa eikä liikevaihtoa).
+       *
+       * `hasInstalments` kertoo vain onko keikalla erälaskutus. Ilman tätä
+       * tekijän työpöytä näytti "Maksuerä 1/4" jokaisella keikalla, myös
+       * sellaisella jolla ei ole yhtään erää — luku oli FR8:n rakenne.
+       *
+       * `isCommunity` kertoo että keikasta ei liiku rahaa, jottei näkymä lupaa
+       * ikkunakohtaista korvausta talkookeikalla.
+       */
+      hasInstalments: !!payDeal,
+      isCommunity: isCommunityGig(project),
       marks: project.marks,
       // Workers see the full live map: which windows are washed and (on tap) WHO
       // washed them, plus the host's info notes (ladders, hazards, storage, …) and

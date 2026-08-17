@@ -11,6 +11,14 @@ FR8 = Puuhapatet.fi:n lippulaivakeikka: **VANHA TKK, Bulevardi 31**, asiakas
 **FR8 FAFO Oy** (yhteyshenkilö Niilo). Ikkunanpesu-urakka, jota hallitaan
 karttapohjaisella työkalulla (kerroskartat + pisteet + statukset + attribuutio).
 
+> **FR8 on YKSI KEIKKA, ei järjestelmä.** Keikka on vain `jobs`-rivi jolla on
+> `is_custom_gig = true` ja kaksi JSON-blobia; reitit ovat keikkakohtaisia
+> (`/admin/gig/:id/…`, `/seuranta/:token`, `/tyo/:token`) eikä koodissa ole
+> missään "sen FR8:n id:tä". Kaikki tässä dokumentissa kuvattu raha — 37,50 €
+> /ikkuna, katto 6300 €, neljä erää — on **FR8:n oma sopimus**, ei
+> järjestelmän oletus. Uuden asiakkaan perustaminen ja se, mikä oli
+> FR8-kohtaista ja on nyt yleistä: **`docs/uusi-keikka-ja-asiakas.md`**.
+
 Osapuolet ja pääsy:
 
 | Rooli | Kuka | Näkymä | Reitti |
@@ -316,11 +324,14 @@ kun asiakas on hyväksynyt kaikki keltaiset.
    lähetetään VAIN oma palkkio per lukittu ikkuna (ei asiakashintaa, ei
    `workerSharePct`iä). Älä koskaan välitä `deal`ia tai keikan hintaa tekijän
    komponenteille. (`docs/fr8-tyo-logiikka.md`.)
-2. **p2 ja guided ovat serverin omistamia**: geneeriset blob-tallennukset
-   (`PATCH /project`, `saveProject`) EIVÄT ota niitä clientiltä — serveri liittää
-   talletetun kopion takaisin. Mutaatiot vain dedikoitujen reittien kautta
-   (versiotarkistettu read-modify-write). Näin samanaikainen karttamuokkaus ei
-   pyyhi asiakkaan hyväksyntää tai ohjausasetusta.
+2. **p2, guided, settlement ja `building.planImages` ovat serverin omistamia**:
+   geneeriset blob-tallennukset (`PATCH /project`, `saveProject`) EIVÄT ota niitä
+   clientiltä — serveri liittää talletetun kopion takaisin. Mutaatiot vain
+   dedikoitujen reittien kautta (versiotarkistettu read-modify-write). Näin
+   samanaikainen karttamuokkaus ei pyyhi asiakkaan hyväksyntää, ohjausasetusta,
+   rahankirjausta eikä juuri ladattua pohjakuvaa. `saveProject` poimii kaikki
+   neljä **samasta `jsonb`-projektiosta**, joten kuumalle polulle (tekijän
+   ikkunanapautus) ei tule ylimääräistä blobin lukua.
 3. **Prioriteetti aina kartasta** (`pointPriority`), ei clientin `p`:stä — muuten
    pesuportin voisi kiertää valehtelemalla prioriteetin.
 4. **Hookit ennen early returneja** (React #310): kaikki `useCallback`/`useState`/
@@ -518,6 +529,7 @@ Repossa EI ole CI:tä — aja nämä käsin ennen PR:ää.
 | Dokumentti | Sisältö |
 |---|---|
 | **`fr8-jarjestelma-yleiskuva.md`** (tämä) | Yleiskuva + invariantit + hakemisto. |
+| **`uusi-keikka-ja-asiakas.md`** | Uuden asiakkaan/keikan perustaminen, pohjakuvan lataus, yhteisökeikka (0 €), tuntiarvio — ja mikä oli FR8-kohtaista. |
 | `fr8-p2-hinnoittelu.md` | Priority 2: hinnoittelu, neuvottelu, sopimus-PDF, raha. |
 | `fr8-ohjattu-eteneminen.md` | Ohjattu eteneminen (yks kerros kerrallaa). |
 | `fr8-tyo-logiikka.md` | Ansio-, työaika- ja näkymälogiikka + rahan yksityisyys. |

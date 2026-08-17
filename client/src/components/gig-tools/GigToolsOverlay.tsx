@@ -162,7 +162,10 @@ export default function GigToolsOverlay({ jobId, title, initialToolId = null, on
           <EfficiencyTool project={project} workerName={workerName} />
         )}
         {active === "pohjakartat" && project && !loading && (
-          <FloorSetupTool project={project} saving={saving} onSave={saveProject} />
+          // `jobId` on pakollinen pohjakuvien lataukselle: kuva menee keikan
+          // omaan liitetauluun (`POST /api/jobs/:id/plan/:floor`). Ilman sitä
+          // työkalu toimii muuten normaalisti mutta lataus on piilossa.
+          <FloorSetupTool jobId={jobId} project={project} saving={saving} onSave={saveProject} />
         )}
       </main>
     </div>

@@ -530,6 +530,7 @@ Repossa EI ole CI:tä — aja nämä käsin ennen PR:ää.
 |---|---|
 | **`fr8-jarjestelma-yleiskuva.md`** (tämä) | Yleiskuva + invariantit + hakemisto. |
 | **`uusi-keikka-ja-asiakas.md`** | Uuden asiakkaan/keikan perustaminen, pohjakuvan lataus, yhteisökeikka (0 €), tuntiarvio — ja mikä oli FR8-kohtaista. |
+| **`stuhi-keikan-perustus.md`** | Stuhin (ry, yhteisökeikka) perustus alusta loppuun: asetukset järjestyksessä, pohjakuvan esitystapa ja tarkistuslista. |
 | `fr8-p2-hinnoittelu.md` | Priority 2: hinnoittelu, neuvottelu, sopimus-PDF, raha. |
 | `fr8-ohjattu-eteneminen.md` | Ohjattu eteneminen (yks kerros kerrallaa). |
 | `fr8-tyo-logiikka.md` | Ansio-, työaika- ja näkymälogiikka + rahan yksityisyys. |

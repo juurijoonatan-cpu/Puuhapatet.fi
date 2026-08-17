@@ -377,12 +377,22 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pri
     return Math.hypot(dx, dy);
   }
   function onSceneWheel(e: React.WheelEvent) {
-    if (editMode) return;
+    /**
+     * LISÄYSTILASSAKIN SAA ZOOMATA JA LIIKUTTAA KARTTAA.
+     *
+     * Nämä käsittelijät palasivat ennen heti kun `editMode` oli päällä, joten
+     * kartta jäätyi juuri silloin kun sitä eniten tarvitsee liikuttaa: pisteitä
+     * lisätään huonetarkkuudella, eikä pientä huonetta voi osua tarkasti jos
+     * siihen ei pääse lähemmäs. Asiakaskartalla tämä oli jo korjattu samasta
+     * syystä (`CustomerFloorMap`), mutta adminin kartta jäi jälkeen.
+     *
+     * Vahinkopisteet estää `pannedRef`: veto on veto, ei napautus (ks.
+     * `onPlanClick`).
+     */
     e.preventDefault();
     zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12);
   }
   function onSceneTouchStart(e: React.TouchEvent) {
-    if (editMode) return;
     if (e.touches.length === 2) { pinchRef.current = touchDist(e.touches); panRef.current = null; }
     else if (e.touches.length === 1 && zoom > 1) {
       const p = e.touches[0];
@@ -391,7 +401,6 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pri
     }
   }
   function onSceneTouchMove(e: React.TouchEvent) {
-    if (editMode) return;
     if (e.touches.length === 2 && pinchRef.current != null) {
       e.preventDefault();
       const d = touchDist(e.touches);
@@ -722,6 +731,10 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pri
   }
 
   function onPlanClick(e: React.MouseEvent) {
+    // Kartan siirron päätteeksi ei synny pistettä: veto on veto. Ilman tätä
+    // zoomin salliminen lisäystilassa tarkoittaisi että jokainen panorointi
+    // jättää jälkeensä ylimääräisen ikkunan.
+    if (pannedRef.current) { pannedRef.current = false; return; }
     const img = planRef.current; if (!img) return;
     const r = img.getBoundingClientRect();
     const x = (e.clientX - r.left) / r.width * 100;
@@ -1020,7 +1033,9 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pri
         onTouchStart={onSceneTouchStart}
         onTouchMove={onSceneTouchMove}
         onTouchEnd={onSceneTouchEnd}
-        style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", padding: isMobile ? "10px" : "26px", minHeight: 0, overflow: "hidden", touchAction: editMode ? "auto" : "none", background: "radial-gradient(ellipse 72% 72% at 50% 47%, rgba(125,135,170,0.07), transparent 72%)" }}
+        style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", padding: isMobile ? "10px" : "26px", minHeight: 0, overflow: "hidden", // Kartta ottaa eleet myös lisäystilassa, joten selain ei saa
+            // kaapata niitä sivun vieritykseen.
+            touchAction: "none", background: "radial-gradient(ellipse 72% 72% at 50% 47%, rgba(125,135,170,0.07), transparent 72%)" }}
       >
 
         {/* Edit banner */}

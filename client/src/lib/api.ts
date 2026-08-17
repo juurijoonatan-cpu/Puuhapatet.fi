@@ -1277,6 +1277,37 @@ export const api = {
     ),
 
   /**
+   * KEIKAN POHJAKUVAT.
+   *
+   * Kuva lähtee data URLina JSONissa (sama kuvio kuin havaintokuvilla — ei
+   * multipartia missään) ja tallentuu `job_assets`-tauluun, EI karttablobiin.
+   * Vastauksena tulee päivitetty projekti, jonka `building.planImages` sisältää
+   * uuden viitteen — se on serverin omistama kenttä, joten sitä ei lähetetä
+   * takaisin tavallisessa tallennuksessa.
+   */
+  uploadPlanImage: (jobId: number, floor: string, dataUrl: string) =>
+    request<{ ok: boolean; project: ProjectData; assetId: number }>(
+      "POST", `/api/jobs/${jobId}/plan/${encodeURIComponent(floor)}`, { dataUrl },
+    ),
+
+  deletePlanImage: (jobId: number, floor: string) =>
+    request<{ ok: boolean; project: ProjectData }>(
+      "DELETE", `/api/jobs/${jobId}/plan/${encodeURIComponent(floor)}`,
+    ),
+
+  /**
+   * Pohjakuvan osoitteen ETULIITE per yleisö. `planImageUrl` (shared/project.ts)
+   * liittää tähän kerroksen ja versiotunnuksen.
+   *
+   * Täydellinen osoite on pakollinen: juurisuhteellinen `/api/…` osoittaisi
+   * GitHub Pagesiin, joka vastaa 404:llä (ks. docs, "Tiedostolinkit API:iin
+   * täydellä osoitteella").
+   */
+  planUrlBaseForJob:  (jobId: number) => `${API_BASE}/api/jobs/${jobId}/plan/`,
+  planUrlBaseForGig:  (token: string) => `${API_BASE}/api/gig/${encodeURIComponent(token)}/plan/`,
+  planUrlBaseForCrew: (token: string) => `${API_BASE}/api/crew/${encodeURIComponent(token)}/plan/`,
+
+  /**
    * Last-chance save for the floor-plan project, used when the page is being
    * hidden/closed/refreshed (pagehide/visibilitychange). A normal fetch is
    * cancelled the moment the document tears down, which is exactly when a

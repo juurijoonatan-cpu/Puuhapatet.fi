@@ -1178,6 +1178,8 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
           <FloorView
             floors={view.building.floors}
             planBase={view.building.planBase || ""}
+            building={view.building}
+            planUrlBase={api.planUrlBaseForCrew(token)}
             pricePerWindow={view.pricePerWindow}
             marks={view.marks}
             statuses={view.statuses}

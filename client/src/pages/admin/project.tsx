@@ -1052,6 +1052,8 @@ export default function AdminProjectPage() {
           <FloorView
             floors={project.building.floors}
             planBase={project.building.planBase || ""}
+            building={project.building}
+            planUrlBase={api.planUrlBaseForJob(jobId)}
             pricePerWindow={effectivePrice}
             marks={project.marks}
             statuses={project.statuses}

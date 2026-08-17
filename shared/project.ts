@@ -166,11 +166,90 @@ export interface ProjExpense {
   receiptDataUrl?: string;
 }
 
+/**
+ * How a plan image should be presented.
+ *
+ * FR8:n pohjakuvat ovat vaaleaa viivapiirrosta, joten asiakaskartta kääntää
+ * värit (`invert(1)`) ja rajaa 2 % reunoista pois. Valokuvalle tai
+ * ruudunkaappaukselle molemmat ovat väärin: kuva näkyisi negatiivina ja sen
+ * reunat leikkautuisivat. Tämä kertoo kummasta on kyse.
+ *
+ *   "plan"  → viivapiirros: käännä värit, rajaa reunat (FR8:n vanha käytös)
+ *   "photo" → kuva/kaappaus: näytä sellaisenaan
+ */
+export type PlanRender = "plan" | "photo";
+
+export function toPlanRender(v: any): PlanRender | undefined {
+  return v === "plan" || v === "photo" ? v : undefined;
+}
+
+/** Efektiivinen esitystapa: puuttuva = "plan", eli FR8:n vanha käytös. */
+export function planRenderOf(b: ProjBuilding | undefined | null): PlanRender {
+  return toPlanRender(b?.planRender) ?? "plan";
+}
+
+/**
+ * Kerroksen pohjakuvan osoite — YKSI paikka jota kaikki kolme näkymää käyttävät.
+ *
+ * Kaksi lähdettä, tässä järjestyksessä:
+ *   1. LADATTU kuva (`building.planImages[floor]`) → `<urlBase><floor>?v=<id>`.
+ *      `urlBase` on yleisökohtainen, koska tunnistus on eri: admin
+ *      `/api/jobs/:id/plan/`, asiakas `/api/gig/:token/plan/`, tekijä
+ *      `/api/crew/:token/plan/`. `?v=<id>` vaihtuu kun kuva korvataan, joten
+ *      selaimen välimuisti ei jää näyttämään vanhaa.
+ *   2. STAATTINEN polku (`planBase`) → `<planBase><floor>.png` (FR8).
+ *
+ * Palauttaa null kun kumpaakaan ei ole — silloin näkymä näyttää "ei pohjakuvaa"
+ * -tilan sen sijaan että piirtäisi rikkinäisen kuvan.
+ */
+export function planImageUrl(
+  building: ProjBuilding | undefined | null,
+  floor: string,
+  urlBase?: string | null,
+): string | null {
+  const assetId = building?.planImages?.[floor];
+  if (assetId && urlBase) {
+    return `${urlBase}${encodeURIComponent(floor)}?v=${assetId}`;
+  }
+  const base = building?.planBase;
+  return base ? `${base}${floor}.png` : null;
+}
+
+/** True kun keikalla on jokin pohjakuva (ladattu tai staattinen). */
+export function hasAnyPlan(building: ProjBuilding | undefined | null): boolean {
+  if (building?.planBase) return true;
+  return Object.keys(building?.planImages ?? {}).length > 0;
+}
+
 export interface ProjBuilding {
   name?: string;         // "FR8 — VANHA TKK"
   address?: string;      // "Bulevardi 31"
   floors: string[];      // ["K","1","2","3","4","5"]
   planBase?: string;     // image base path, e.g. "/fr8/plans/bp-" → bp-K.png
+  /**
+   * Ladatut pohjakuvat: kerros → `job_assets`-rivin id.
+   *
+   * MIKSI VIITE EIKÄ KUVA: kuva EI saa asua tässä blobissa. Blobi luetaan
+   * jokaisella ikkunanapautuksella ja jokaisella asiakkaan seurantakierroksella
+   * — juuri se kaatoi Neonin siirtokiintiön kertaalleen. Tässä on vain id;
+   * kuva haetaan omasta reitistään vasta kun kartta piirretään, ja selain
+   * välimuistittaa sen.
+   *
+   * Kun kerroksella on tässä id, sitä käytetään; muuten palataan
+   * `planBase`+kerros+".png"-polkuun (FR8).
+   *
+   * SERVERIN OMISTAMA kuten `p2`/`guided`: geneerinen blob-tallennus säilyttää
+   * talletetun kopion, jottei vanhentunut asetusluonnos pyyhi juuri ladattua
+   * kuvaa. Mutaatiot vain omien reittiensä kautta.
+   */
+  planImages?: Record<string, number>;
+  /** Miten pohjakuva esitetään (`PlanRender`). Puuttuva = "plan" (FR8). */
+  planRender?: PlanRender;
+  /**
+   * Yksikön nimi monikossa/yksikössä kun "kerros" on väärä sana — esim. yhden
+   * huoneen keikalla "tila". Puuttuva = "kerros" (FR8). Ks. `floorLabel`.
+   */
+  unitWord?: string;
 }
 
 export interface ProjectData {
@@ -206,6 +285,15 @@ export interface ProjectData {
    *  unchanged. New gigs are created as `"none"` so they can never inherit
    *  FR8's contract by accident. */
   dealKind?: GigDealKind;
+  /** Miten keikasta korvataan (`GigCompensation`). Puuttuva = "money". */
+  compensation?: GigCompensation;
+  /**
+   * Arvio yhden ikkunan pesuun kuluvasta ajasta tunteina (esim. 1.5 kun
+   * ikkunat ovat isoja monilohkoisia). Vapaaehtoinen; kun asetettu, siitä
+   * johdetaan keikan kokonaisarvio ja tuntipohjainen ETA (`computeEfficiency`).
+   * Pelkkä suunnittelutieto — ei vaikuta rahaan eikä palkkoihin.
+   */
+  estimatedHoursPerWindow?: number;
   /** Priority 2 (keltaiset ikkunat): per-window pricing + customer negotiation
    *  (shared/p2.ts). Absent = the gig behaves exactly as before. Mutated ONLY via
    *  the dedicated /p2 endpoints — generic blob saves keep the stored copy. */
@@ -276,6 +364,58 @@ export type GigDealKind = "fr8" | "none";
 
 export function toDealKind(v: any): GigDealKind | undefined {
   return v === "fr8" || v === "none" ? v : undefined;
+}
+
+/**
+ * Miten keikasta korvataan.
+ *
+ *   "money"     → tavallinen maksullinen keikka (oletus, FR8)
+ *   "community" → yhteisökeikka: EI rahaa. Korvaus on jotain muuta (näkyvyyttä,
+ *                 vastapalvelusta). Hinta on aidosti 0 €, eikä euroja näytetä
+ *                 asiakkaalle lainkaan.
+ *
+ * MIKSI TÄMÄ TARVITTIIN: 0 €/ikkuna ei ollut ESITETTÄVISSÄ. Sanitoija muutti
+ * nollan takaisin oletushinnaksi (`clampNonNeg(...) || DEFAULT_PRICE_PER_WINDOW`),
+ * ja neljä laskentakohtaa toisti saman maskin. Vastikkeeton keikka näytti siis
+ * 35 €/ikkuna -keikalta, ja `PATCH /project` kirjoitti siitä johdetun summan
+ * `jobs.agreedPrice`iin — vapaaehtoistyö olisi näkynyt liikevaihtona.
+ */
+export type GigCompensation = "money" | "community";
+
+export function toCompensation(v: any): GigCompensation | undefined {
+  return v === "money" || v === "community" ? v : undefined;
+}
+
+/** True kun keikasta ei liiku rahaa — euroja ei lasketa eikä näytetä. */
+export function isCommunityGig(data: Pick<ProjectData, "compensation">): boolean {
+  return data.compensation === "community";
+}
+
+/**
+ * Ikkunan hinta euroina — YKSI paikka jossa oletushinnan varakäytäntö asuu.
+ *
+ * Yhteisökeikalla tämä on aidosti 0 eikä varakäytäntöä sovelleta. Muualla
+ * käytös on ennallaan: puuttuva tai kelvoton hinta → `DEFAULT_PRICE_PER_WINDOW`.
+ * Tämä korvaa neljä erillistä `data.pricePerWindow || DEFAULT_PRICE_PER_WINDOW`
+ * -riviä, jotka olisi pitänyt muistaa muuttaa kaikki yhtä aikaa.
+ */
+export function pricePerWindowOf(data: ProjectData): number {
+  if (isCommunityGig(data)) return 0;
+  return data.pricePerWindow || DEFAULT_PRICE_PER_WINDOW;
+}
+
+/**
+ * Kerroksen näyttönimi. FR8:lla "Kellari" / "3. kerros"; kun `unitWord` on
+ * asetettu (esim. "tila"), nimi muodostetaan siitä — yhden huoneen keikalla
+ * "3. kerros" olisi väärä sana.
+ */
+export function floorLabel(building: ProjBuilding | undefined | null, floor: string): string {
+  const word = building?.unitWord?.trim();
+  if (!word) return floor === "K" ? "Kellari" : `${floor}. kerros`;
+  // Yhden yksikön keikalla pelkkä sana riittää ("Tila"), muuten numeroidaan.
+  const many = (building?.floors?.length ?? 0) > 1;
+  const w = many ? `${floor}. ${word}` : word;
+  return w.charAt(0).toUpperCase() + w.slice(1);
 }
 
 /** The locked deal for a gig, or null when the gig uses an editable price. */
@@ -463,7 +603,7 @@ export function computeProjectTotals(data: ProjectData): ProjTotals {
   const washed = pts.filter((p) => p.status === "pesty").length;
   const kesken = pts.filter((p) => p.status === "kesken").length;
   const unwashed = total - washed - kesken;
-  const price = data.pricePerWindow || DEFAULT_PRICE_PER_WINDOW;
+  const price = pricePerWindowOf(data);
   return {
     total,
     washed,
@@ -495,7 +635,7 @@ export interface WorkerStat {
  */
 export function computeWorkerStats(data: ProjectData): WorkerStat[] {
   const pts = allPoints(data);
-  const price = data.pricePerWindow || DEFAULT_PRICE_PER_WINDOW;
+  const price = pricePerWindowOf(data);
   const washedBy2 = data.washedBy2 || {};
   // Union of configured workers + anyone who appears in attribution / hours.
   const ids = new Set<string>(data.workers || []);
@@ -724,6 +864,17 @@ export interface GigEfficiency {
   totalHours: number;
   eurPerHour: number;         // revenue / total hours
   windowsPerHour: number;     // washed / total hours
+  /** Arvio tunneista per ikkuna (`ProjectData.estimatedHoursPerWindow`), jos asetettu. */
+  estHoursPerWindow: number | null;
+  /** Koko keikan työmäärä arviolla: kaikki ikkunat × arvio. Null ilman arviota. */
+  estTotalHours: number | null;
+  /** Jäljellä oleva työmäärä arviolla: pesemättömät × arvio. Null ilman arviota. */
+  estRemainingHours: number | null;
+  /**
+   * Toteutunut tunnit/ikkuna kirjatuista tunneista (`totalHours / washed`).
+   * Tämä on se luku jota arvioon verrataan; null jos tunteja tai pesuja ei ole.
+   */
+  actualHoursPerWindow: number | null;
 }
 
 /** Local YYYY-MM-DD key for grouping log events by calendar day. */
@@ -740,7 +891,7 @@ function dayKey(ts: number): string {
  */
 export function computeEfficiency(data: ProjectData): GigEfficiency {
   const totals = computeProjectTotals(data);
-  const price = data.pricePerWindow || DEFAULT_PRICE_PER_WINDOW;
+  const price = pricePerWindowOf(data);
 
   // Group pesty events by calendar day from the activity log.
   const startToday = new Date(); startToday.setHours(0, 0, 0, 0);
@@ -776,6 +927,14 @@ export function computeEfficiency(data: ProjectData): GigEfficiency {
 
   const totalHours = Object.values(data.hours || {}).reduce((a, h) => a + Math.max(0, h || 0), 0);
 
+  // Tuntiarvio (esim. 1,5 h per iso monilohkoinen ikkuna). Puuttuva arvio →
+  // kaikki tuntiluvut ovat null, eikä mikään näkymä keksi lukua tyhjästä.
+  const est = data.estimatedHoursPerWindow;
+  const estHoursPerWindow = Number.isFinite(est) && (est as number) > 0 ? (est as number) : null;
+  const estTotalHours = estHoursPerWindow !== null ? round2(estHoursPerWindow * totals.total) : null;
+  const estRemainingHours = estHoursPerWindow !== null ? round2(estHoursPerWindow * remaining) : null;
+  const actualHoursPerWindow = totalHours > 0 && totals.washed > 0 ? round2(totalHours / totals.washed) : null;
+
   return {
     total: totals.total,
     washed: totals.washed,
@@ -795,7 +954,16 @@ export function computeEfficiency(data: ProjectData): GigEfficiency {
     totalHours,
     eurPerHour: totalHours > 0 ? totals.revenueCents / 100 / totalHours : 0,
     windowsPerHour: totalHours > 0 ? totals.washed / totalHours : 0,
+    estHoursPerWindow,
+    estTotalHours,
+    estRemainingHours,
+    actualHoursPerWindow,
   };
+}
+
+/** Kaksi desimaalia — tuntiluvut eivät saa näyttää liukulukuroskaa. */
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 // ─── Gig billing sync (FR8 toolkit = source of truth) ──────────────────────────
@@ -850,7 +1018,7 @@ export function syncGigSectorsFromProject(gig: GigData, project: ProjectData): G
   }
 
   const floors = project.building.floors.length ? project.building.floors : DEFAULT_FLOORS;
-  const unitPriceCents = Math.round((project.pricePerWindow || DEFAULT_PRICE_PER_WINDOW) * 100);
+  const unitPriceCents = Math.round(pricePerWindowOf(project) * 100);
   const pts = allPoints(project);
   const prevById = new Map(gig.sectors.map((s) => [s.id, s]));
 
@@ -904,6 +1072,27 @@ export function sanitizeProjectData(input: any): ProjectData {
   const floors: string[] = Array.isArray(input?.building?.floors) && input.building.floors.length
     ? input.building.floors.slice(0, 40).map((f: any) => String(f).slice(0, 8))
     : [...DEFAULT_FLOORS];
+
+  const compensation = toCompensation(input.compensation);
+
+  // Tuntiarvio: positiivinen, järkevästi rajattu (yksi ikkuna ei realistisesti
+  // vie yli 24 h), kaksi desimaalia. Nolla/roska → ei arviota lainkaan.
+  const estRaw = Number(input.estimatedHoursPerWindow);
+  const estimatedHoursPerWindow = Number.isFinite(estRaw) && estRaw > 0
+    ? Math.min(24, Math.round(estRaw * 100) / 100)
+    : undefined;
+
+  // Ladatut pohjakuvat: kerros → asset-id. Vain positiiviset kokonaisluvut, ja
+  // vain kerroksille jotka ovat oikeasti olemassa — muuten poistettu kerros
+  // jättäisi roikkuvan viitteen.
+  const planImages: Record<string, number> = {};
+  if (input?.building?.planImages && typeof input.building.planImages === "object") {
+    for (const f of Object.keys(input.building.planImages).slice(0, 40)) {
+      const id = Number(input.building.planImages[f]);
+      const key = String(f).slice(0, 8);
+      if (Number.isSafeInteger(id) && id > 0 && floors.includes(key)) planImages[key] = id;
+    }
+  }
 
   const marks: ProjMarksData = {};
   if (input.marks && typeof input.marks === "object") {
@@ -1109,11 +1298,20 @@ export function sanitizeProjectData(input: any): ProjectData {
       floors,
       // Empty unless the client provides one — keeps new gigs free of the FR8 plans.
       planBase: input?.building?.planBase ? String(input.building.planBase).slice(0, 200) : base.building.planBase,
+      ...(Object.keys(planImages).length ? { planImages } : {}),
+      ...(toPlanRender(input?.building?.planRender) ? { planRender: toPlanRender(input.building.planRender)! } : {}),
+      ...(input?.building?.unitWord ? { unitWord: String(input.building.unitWord).slice(0, 24) } : {}),
     },
-    pricePerWindow: clampNonNeg(Number(input.pricePerWindow)) || DEFAULT_PRICE_PER_WINDOW,
+    // Yhteisökeikalla nolla on OIKEA hinta, joten varakäytäntöä ei sovelleta.
+    // Muualla käytös on ennallaan (kelvoton/puuttuva → oletushinta).
+    pricePerWindow: compensation === "community"
+      ? clampNonNeg(Number(input.pricePerWindow))
+      : clampNonNeg(Number(input.pricePerWindow)) || DEFAULT_PRICE_PER_WINDOW,
     // Only ever stored when the gig actually declared one; an absent value must
     // stay absent so old blobs (FR8) round-trip byte-identically.
     ...(toDealKind(input.dealKind) ? { dealKind: toDealKind(input.dealKind)! } : {}),
+    ...(compensation ? { compensation } : {}),
+    ...(estimatedHoursPerWindow !== undefined ? { estimatedHoursPerWindow } : {}),
     marks,
     statuses,
     washedBy,

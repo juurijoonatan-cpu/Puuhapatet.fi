@@ -30,12 +30,15 @@ import {
 } from "@shared/pricing";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, livePayments, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
 import { fail } from "./errors";
-import { putAsset, getAsset, resolveAsset, assetStats, migrateJobAssets } from "./assets";
+import {
+  putAsset, getAsset, resolveAsset, assetStats, migrateJobAssets,
+  getPlanImage, deletePlanImage, MAX_PLAN_IMAGE_LEN,
+} from "./assets";
 import { buildTasaus, type TasausEraInvoice, type TasausPayment } from "@shared/fr8-tasaus";
 import { p2InvoiceState, computeWorkerSettlements, eraSettlementByWorker, sumWorkerSettlements, type EraInvoiceLike } from "@shared/worker-payouts";
 import {
@@ -640,6 +643,10 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   // /admin/login-sivulle — eli asiakas, joka napautti ikkunaa kartallaan,
   // päätyi meidän kirjautumisruudullemme.
   { method: "GET",  re: /^\/api\/gig\/[^/]+\/observation-image$/ },
+  // Keikan pohjakuva. Sama tunnistus kuin `GET /api/gig/:token` (quoteToken on
+  // avain) — ilman tätä riviä asiakkaan kartta olisi rikkinäinen kuva ja portti
+  // heittäisi hänet meidän kirjautumisruudullemme, kuten observation-imagelle kävi.
+  { method: "GET",  re: /^\/api\/gig\/[^/]+\/plan\/[^/]*$/ },
   { method: "POST", re: /^\/api\/gig\/[^/]+\/sign$/ },
   // P2 (keltaiset ikkunat): asiakkaan hintaneuvottelu seurantalinkistä. Token
   // on avain; jokainen reitti validoi lisäksi vaiheen + allekirjoitusportin.
@@ -648,6 +655,8 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   // Sama vika tekijän puolella: kuvan haku omalla tokenilla vastasi 401 ja
   // heitti tekijän adminin kirjautumiseen kesken työpäivän.
   { method: "GET",  re: /^\/api\/crew\/[^/]+\/observation-image$/ },
+  // Pohjakuva tekijän työlinkistä — sama aukko kuin yllä.
+  { method: "GET",  re: /^\/api\/crew\/[^/]+\/plan\/[^/]*$/ },
   { method: "POST", re: /^\/api\/crew\/[^/]+\/(password|onboard|window|hours|note|map-note|shift|expense)$/ },
   // Nämä neljä olivat samassa aukossa kuin observation-image: jokainen
   // tunnistaa tekijän `findJobByCrewToken`illa täsmälleen kuten yllä olevat,
@@ -1539,6 +1548,111 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json({ dataUrl: data });
     } catch (e) {
       return fail(res, e, "GET /api/jobs/:id/assets/:assetId");
+    }
+  });
+
+  /**
+   * KEIKAN POHJAKUVAT (kerros → kuva).
+   *
+   * Ennen tätä pohjakuvan sai järjestelmään vain committaamalla PNG:n
+   * `client/public/`iin ja julkaisemalla frontendin uudelleen: `planBase` on
+   * polkuetuliite ja kuva haettiin muodossa `<planBase><kerros>.png`. Uuden
+   * keikan huonekuvalle ei siis ollut mitään reittiä.
+   *
+   * Kuva menee `job_assets`-tauluun, EI karttablobiin. Blobiin jää vain
+   * `building.planImages[kerros]` = rivin id. Tämä on sama sääntö kuin
+   * havaintokuvilla: blobi luetaan joka ikkunanapautuksella, joten siellä oleva
+   * kuva maksaisi joka kerta vaikka sitä katsotaan kerran per sivunlataus.
+   *
+   * Kolme lukureittiä, koska kolme yleisöä tunnistautuu eri tavalla (admin
+   * sessiolla, asiakas quoteTokenilla, tekijä crewTokenilla). Kaikki palauttavat
+   * saman raa'an kuvan `Content-Type`in kanssa, jotta `<img src>` toimii ja
+   * selain välimuistittaa sen.
+   */
+  const planFloorParam = (v: unknown) => String(v ?? "").slice(0, 8);
+
+  /** Yhteinen kuvavastaus: oikea mime, ETag ja 304 kun selaimella on jo kuva. */
+  async function sendPlanImage(req: any, res: any, jobId: number, floor: string) {
+    const img = await getPlanImage(jobId, floor);
+    if (!img) return res.status(404).json({ error: "Pohjakuvaa ei löydy" });
+    res.setHeader("ETag", img.etag);
+    // Kuva on muuttumaton kunnes se korvataan (jolloin ETag muuttuu), joten
+    // selain saa pitää sen. `must-revalidate` varmistaa että korvattu kuva
+    // huomataan heti eikä vanha jää roikkumaan asiakkaan näkymään.
+    res.setHeader("Cache-Control", "private, max-age=300, must-revalidate");
+    res.setHeader("Content-Type", img.mime);
+    if (req.headers["if-none-match"] === img.etag) return res.status(304).end();
+    return res.end(img.body);
+  }
+
+  /** Admin: lataa kerroksen pohjakuva (data URL JSONissa, ei multipartia). */
+  app.post("/api/jobs/:id/plan/:floor", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const floor = planFloorParam(req.params.floor);
+      const dataUrl = String(req.body?.dataUrl ?? "");
+      if (!dataUrl.startsWith("data:image/")) {
+        return res.status(400).json({ error: "Kuva puuttuu tai ei ole kuvatiedosto" });
+      }
+      if (dataUrl.length > MAX_PLAN_IMAGE_LEN) {
+        return res.status(413).json({ error: "Kuva on liian suuri — pienennä sitä ennen latausta" });
+      }
+      const [job] = await db.select(CREW_JOB_COLS).from(jobs).where(eq(jobs.id, id)) as typeof jobs.$inferSelect[];
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const project = parseProject(job.projectData ?? null);
+      if (!project) return res.status(400).json({ error: "Keikalla ei ole vielä projektia" });
+      if (!project.building.floors.includes(floor)) {
+        return res.status(400).json({ error: "Tuntematon kerros" });
+      }
+      const assetId = await putAsset(id, "floor_plan", floor, dataUrl);
+      project.building.planImages = { ...(project.building.planImages ?? {}), [floor]: assetId };
+      const saved = await saveProject(job, project, { planMutation: true });
+      res.json({ ok: true, project: saved, assetId });
+    } catch (e) {
+      return fail(res, e, "POST /api/jobs/:id/plan/:floor");
+    }
+  });
+
+  /** Admin: poista kerroksen pohjakuva (palaa `planBase`-polkuun jos sellainen on). */
+  app.delete("/api/jobs/:id/plan/:floor", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const floor = planFloorParam(req.params.floor);
+      const [job] = await db.select(CREW_JOB_COLS).from(jobs).where(eq(jobs.id, id)) as typeof jobs.$inferSelect[];
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const project = parseProject(job.projectData ?? null);
+      if (!project) return res.status(404).json({ error: "Keikalla ei ole projektia" });
+      await deletePlanImage(id, floor);
+      if (project.building.planImages) {
+        const next = { ...project.building.planImages };
+        delete next[floor];
+        project.building.planImages = next;
+      }
+      const saved = await saveProject(job, project, { planMutation: true });
+      res.json({ ok: true, project: saved });
+    } catch (e) {
+      return fail(res, e, "DELETE /api/jobs/:id/plan/:floor");
+    }
+  });
+
+  /** Admin: kerroksen pohjakuva kuvana. */
+  app.get("/api/jobs/:id/plan/:floor", async (req, res) => {
+    try {
+      return await sendPlanImage(req, res, Number(req.params.id), planFloorParam(req.params.floor));
+    } catch (e) {
+      return fail(res, e, "GET /api/jobs/:id/plan/:floor");
+    }
+  });
+
+  /** Asiakas: kerroksen pohjakuva seurantalinkin tokenilla. */
+  app.get("/api/gig/:token/plan/:floor", async (req, res) => {
+    try {
+      const [row] = await db.select({ id: jobs.id, isCustomGig: jobs.isCustomGig })
+        .from(jobs).where(eq(jobs.quoteToken, req.params.token));
+      if (!row || !row.isCustomGig) return res.status(404).json({ error: "Seurantaa ei löydy" });
+      return await sendPlanImage(req, res, row.id, planFloorParam(req.params.floor));
+    } catch (e) {
+      return fail(res, e, "GET /api/gig/:token/plan/:floor");
     }
   });
 
@@ -6272,6 +6386,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // tallennus ei saa pyyhkiä. Mutaatiot vain /settlement-reitin kautta.
       const storedSettlement = stored?.settlement;
       if (storedSettlement) project.settlement = storedSettlement; else delete project.settlement;
+      // Ladattujen pohjakuvien viitteet ovat samalla tavalla serverin omistamia:
+      // asetusnäkymä pitää omaa luonnostaan, joten juuri ladattu kuva katoaisi
+      // jos vanhentunut luonnos tallennettaisiin sen päälle. Mutaatiot vain
+      // /plan-reittien kautta.
+      const storedPlans = stored?.building?.planImages;
+      if (storedPlans) project.building.planImages = storedPlans;
+      else delete project.building.planImages;
       const totals = computeProjectTotals(project);
 
       // Auto-sync the gig's billing sectors from the toolkit (FR8 = source of
@@ -6286,7 +6407,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const nextGigJson = JSON.stringify(gig);
         if (nextGigJson !== (job.gigData ?? null)) extra.gigData = nextGigJson;
         // Sopimusarvo = kiinteä P1-katto + lukitut P2-hinnat (kasvava summa).
-        const nextAgreed = computeTotals(gig).capCents + computeP2Billing(project).lockedSumCents;
+        // Yhteisökeikasta ei kirjata sopimusarvoa. Sektorien hinta on 0 €, joten
+        // summa olisi 0 muutenkin — mutta tämä on nimenomainen: vapaaehtoistyö ei
+        // saa koskaan päätyä `agreedPrice`iin, josta se valuisi /api/statsin
+        // liikevaihtoon ja verotulosteeseen.
+        const nextAgreed = isCommunityGig(project)
+          ? 0
+          : computeTotals(gig).capCents + computeP2Billing(project).lockedSumCents;
         if (nextAgreed !== job.agreedPrice) extra.agreedPrice = nextAgreed;
         if (!job.isCustomGig) extra.isCustomGig = true;
       }
@@ -7300,7 +7427,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   async function saveProject(
     job: typeof jobs.$inferSelect,
     project: ProjectData,
-    opts?: { p2Mutation?: boolean; guidedMutation?: boolean; settlementMutation?: boolean },
+    opts?: { p2Mutation?: boolean; guidedMutation?: boolean; settlementMutation?: boolean; planMutation?: boolean },
   ): Promise<ProjectData> {
     const clean = sanitizeProjectData(project);
     // P2-neuvottelutila, ohjattu eteneminen (guided) ja johtajien tasaus ovat
@@ -7310,7 +7437,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     // samaan aikaan lukitsemaa hintaa, perustajan ohjausasetusta eikä
     // rahankirjausta siitä kuka sai erän ja kuka maksoi tekijän.
     let stored: ProjectData | null = null;
-    if (!opts?.p2Mutation || !opts?.guidedMutation || !opts?.settlementMutation) {
+    if (!opts?.p2Mutation || !opts?.guidedMutation || !opts?.settlementMutation || !opts?.planMutation) {
       /**
        * VAIN KOLME KENTTÄÄ, EI KOKO BLOBIA.
        *
@@ -7329,12 +7456,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
        * Jos poiminta epäonnistuu (esim. vioittunut JSON), pudotaan takaisin
        * koko blobin lukuun — hitaampi mutta varma.
        */
-      let picked: { p2?: unknown; guided?: unknown; settlement?: unknown } | null = null;
+      let picked: { p2?: unknown; guided?: unknown; settlement?: unknown; planImages?: unknown } | null = null;
       try {
         const r: any = await db.execute(sql`
-          select project_data::jsonb -> 'p2'         as p2,
-                 project_data::jsonb -> 'guided'     as guided,
-                 project_data::jsonb -> 'settlement' as settlement
+          select project_data::jsonb -> 'p2'                        as p2,
+                 project_data::jsonb -> 'guided'                    as guided,
+                 project_data::jsonb -> 'settlement'                as settlement,
+                 project_data::jsonb -> 'building' -> 'planImages'  as "planImages"
           from jobs where id = ${job.id} and project_data is not null
         `);
         const row = (r?.rows ?? r)?.[0];
@@ -7345,7 +7473,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!picked) {
         const [fresh] = await db.select({ projectData: jobs.projectData }).from(jobs).where(eq(jobs.id, job.id));
         stored = fresh ? parseProject(fresh.projectData ?? null) : null;
-        picked = stored ? { p2: stored.p2, guided: stored.guided, settlement: stored.settlement } : {};
+        picked = stored
+          ? { p2: stored.p2, guided: stored.guided, settlement: stored.settlement, planImages: stored.building?.planImages }
+          : {};
       }
       if (!opts?.p2Mutation) {
         const storedP2 = picked.p2 ?? undefined;
@@ -7358,6 +7488,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!opts?.settlementMutation) {
         const storedSettlement = picked.settlement ?? undefined;
         if (storedSettlement) clean.settlement = storedSettlement as ProjectData["settlement"]; else delete clean.settlement;
+      }
+      if (!opts?.planMutation) {
+        const storedPlans = picked.planImages ?? undefined;
+        if (storedPlans) clean.building.planImages = storedPlans as ProjectData["building"]["planImages"];
+        else delete clean.building.planImages;
       }
     }
     const nextProjectJson = JSON.stringify(clean);
@@ -7377,7 +7512,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // (300 kB) uudelleen kantaan joka kerta.
       if (nextGigJson !== (job.gigData ?? null)) extra.gigData = nextGigJson;
       // Sopimusarvo = kiinteä P1-katto + lukitut P2-hinnat (kasvava summa).
-      const nextAgreed = computeTotals(gig).capCents + computeP2Billing(clean).lockedSumCents;
+      // Yhteisökeikasta ei kirjata sopimusarvoa. Sektorien hinta on 0 €, joten
+      // summa olisi 0 muutenkin — mutta tämä on nimenomainen: vapaaehtoistyö ei
+      // saa koskaan päätyä `agreedPrice`iin, josta se valuisi /api/statsin
+      // liikevaihtoon ja verotulosteeseen.
+      const nextAgreed = isCommunityGig(clean)
+        ? 0
+        : computeTotals(gig).capCents + computeP2Billing(clean).lockedSumCents;
       if (nextAgreed !== job.agreedPrice) extra.agreedPrice = nextAgreed;
       if (!job.isCustomGig) extra.isCustomGig = true;
     }
@@ -7955,6 +8096,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const img = await resolveAsset(found.job.id, { assetId: obs?.imageAssetId, inline: obs?.imageDataUrl });
       if (!img) return res.status(404).json({ error: "Kuvaa ei löydy" });
       res.json({ imageDataUrl: img });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  /** Tekijä: kerroksen pohjakuva omalla työlinkin tokenilla. */
+  app.get("/api/crew/:token/plan/:floor", async (req, res) => {
+    try {
+      const token = String(req.params.token);
+      const floor = planFloorParam(req.params.floor);
+      // Token→keikka välimuistista kun se on jo todennettu kertaalleen, jottei
+      // pohjakuvan haku lue karttablobia uudelleen (sama kuvio kuin
+      // observation-image-reitillä).
+      const cachedJobId = crewTokenJobCache.get(token);
+      if (cachedJobId !== undefined) return await sendPlanImage(req, res, cachedJobId, floor);
+      const found = await findJobByCrewToken(token);
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      return await sendPlanImage(req, res, found.job.id, floor);
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }

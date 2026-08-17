@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, sanitizeProjectData, stripObservationImages, fixedDealFor, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
+import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
+import { emptyGigData, computeTotals } from "./gig";
 
 // Kohta 6.1 — kokonaistilanteen ikkunamäärän täsmäytys. Ks. docs/fr8-era-laskutus-plan.md.
 function fixture(): ProjectData {
@@ -196,5 +197,147 @@ describe("fixedDealFor — urakka kiinnittyy nimenomaisesti, ei polkuarvauksella
 
     // Roskaa ei tallenneta.
     expect("dealKind" in sanitizeProjectData({ dealKind: "vapaa-urakka" })).toBe(false);
+  });
+});
+
+// ─── Yhteisökeikka (€0) ──────────────────────────────────────────────────────
+//
+// Nolla ei ollut ESITETTÄVISSÄ: sanitoija muutti sen takaisin oletushinnaksi ja
+// neljä laskentakohtaa toisti saman maskin. Vapaaehtoistyö näytti 35 €/ikkuna
+// -keikalta. Nämä testit lukitsevat, että nolla pysyy nollana — mutta VAIN
+// yhteisökeikalla, jottei tavallinen keikka voi vahingossa mennä nollille.
+describe("yhteisökeikka — 0 € on oikea hinta", () => {
+  it("community-keikan nollahinta säilyy sanitoinnissa", () => {
+    const clean = sanitizeProjectData({
+      ...newGigProjectData(), compensation: "community", pricePerWindow: 0,
+    });
+    expect(clean.compensation).toBe("community");
+    expect(clean.pricePerWindow).toBe(0);
+    expect(pricePerWindowOf(clean)).toBe(0);
+    expect(isCommunityGig(clean)).toBe(true);
+  });
+
+  it("tavallisen keikan nollahinta putoaa yhä oletukseen (ei vahinkonollia)", () => {
+    const clean = sanitizeProjectData({ ...newGigProjectData(), pricePerWindow: 0 });
+    expect(clean.compensation).toBeUndefined();
+    expect(clean.pricePerWindow).toBe(DEFAULT_PRICE_PER_WINDOW);
+    expect(isCommunityGig(clean)).toBe(false);
+  });
+
+  it("yhteisökeikalla ikkunat lasketaan mutta rahaa ei kerry", () => {
+    const data = newGigProjectData();
+    data.compensation = "community";
+    data.pricePerWindow = 0;
+    data.building.floors = ["Tila"];
+    data.marks = { Tila: { marks: [{ p: 1, x: 1, y: 1 }, { p: 1, x: 2, y: 2 }] } };
+    data.statuses["Tila#0"] = "pesty";
+
+    const totals = computeProjectTotals(data);
+    expect(totals.total).toBe(2);
+    expect(totals.washed).toBe(1);          // edistyminen toimii normaalisti
+    expect(totals.revenueCents).toBe(0);    // rahaa ei kerry
+    expect(totals.contractCents).toBe(0);
+  });
+
+  it("yhteisökeikan sektorit ovat 0 €, joten agreedPrice ei kasva", () => {
+    const data = newGigProjectData();
+    data.compensation = "community";
+    data.pricePerWindow = 0;
+    data.building.floors = ["Tila"];
+    data.marks = { Tila: { marks: Array.from({ length: 15 }, (_, i) => ({ p: 1 as const, x: i, y: 0 })) } };
+
+    const gig = syncGigSectorsFromProject(emptyGigData(), data);
+    expect(gig.sectors).toHaveLength(1);
+    expect(gig.sectors[0].total).toBe(15);
+    expect(gig.sectors[0].unitPriceCents).toBe(0);
+    expect(computeTotals(gig).capCents).toBe(0);
+  });
+
+  it("roskakorvaustyyppi ei mene läpi", () => {
+    expect(sanitizeProjectData({ compensation: "talkoo" }).compensation).toBeUndefined();
+  });
+});
+
+// ─── Tuntiarvio per ikkuna ───────────────────────────────────────────────────
+describe("estimatedHoursPerWindow — arvio ja toteuma", () => {
+  it("arviosta johdetaan koko keikan ja jäljellä olevan työn tunnit", () => {
+    const data = newGigProjectData();
+    data.estimatedHoursPerWindow = 1.5;
+    data.building.floors = ["Tila"];
+    data.marks = { Tila: { marks: Array.from({ length: 15 }, (_, i) => ({ p: 1 as const, x: i, y: 0 })) } };
+    data.statuses["Tila#0"] = "pesty";
+    data.statuses["Tila#1"] = "pesty";
+
+    const eff = computeEfficiency(data);
+    expect(eff.estHoursPerWindow).toBe(1.5);
+    expect(eff.estTotalHours).toBe(22.5);      // 15 × 1,5 h
+    expect(eff.estRemainingHours).toBe(19.5);  // 13 pesemätöntä × 1,5 h
+  });
+
+  it("toteutunut tunnit/ikkuna lasketaan kirjatuista tunneista", () => {
+    const data = newGigProjectData();
+    data.estimatedHoursPerWindow = 1.5;
+    data.building.floors = ["Tila"];
+    data.marks = { Tila: { marks: [{ p: 1, x: 0, y: 0 }, { p: 1, x: 1, y: 0 }] } };
+    data.statuses["Tila#0"] = "pesty";
+    data.statuses["Tila#1"] = "pesty";
+    data.hours = { akseli: 4 };
+
+    const eff = computeEfficiency(data);
+    expect(eff.actualHoursPerWindow).toBe(2);  // 4 h / 2 ikkunaa — arvio ylittyi
+  });
+
+  it("ilman arviota tuntiluvut ovat null eikä mitään keksitä", () => {
+    const eff = computeEfficiency(newGigProjectData());
+    expect(eff.estHoursPerWindow).toBeNull();
+    expect(eff.estTotalHours).toBeNull();
+    expect(eff.estRemainingHours).toBeNull();
+    expect(eff.actualHoursPerWindow).toBeNull();
+  });
+
+  it("kelvoton arvio hylätään, järjetön rajataan", () => {
+    for (const bad of [0, -1, "eiluku", null]) {
+      expect(sanitizeProjectData({ estimatedHoursPerWindow: bad }).estimatedHoursPerWindow).toBeUndefined();
+    }
+    expect(sanitizeProjectData({ estimatedHoursPerWindow: 999 }).estimatedHoursPerWindow).toBe(24);
+    expect(sanitizeProjectData({ estimatedHoursPerWindow: 1.5 }).estimatedHoursPerWindow).toBe(1.5);
+  });
+});
+
+// ─── Pohjakuvat ja tilan nimi ────────────────────────────────────────────────
+describe("pohjakuvan viite, esitystapa ja tilan nimi", () => {
+  it("kerroksen pohjakuvan viite säilyy vain oikeille kerroksille", () => {
+    const clean = sanitizeProjectData({
+      ...newGigProjectData(),
+      building: { floors: ["Tila"], planImages: { Tila: 42, Poistettu: 7 } },
+    });
+    expect(clean.building.planImages).toEqual({ Tila: 42 });  // roikkuva viite pois
+  });
+
+  it("kelvoton kuvaviite ei mene läpi", () => {
+    for (const bad of [0, -3, 1.5, "eiluku", null]) {
+      const clean = sanitizeProjectData({
+        ...newGigProjectData(), building: { floors: ["Tila"], planImages: { Tila: bad } },
+      });
+      expect(clean.building.planImages).toBeUndefined();
+    }
+  });
+
+  it("kuva esitetään sellaisenaan vain kun se on merkitty valokuvaksi", () => {
+    expect(planRenderOf(undefined)).toBe("plan");                    // FR8:n vanha käytös
+    expect(planRenderOf({ floors: [] })).toBe("plan");
+    expect(planRenderOf({ floors: [], planRender: "photo" })).toBe("photo");
+    expect(sanitizeProjectData({ building: { floors: ["1"], planRender: "roska" } }).building.planRender)
+      .toBeUndefined();
+  });
+
+  it("tilan nimi korvaa 'kerroksen' kun se on väärä sana", () => {
+    // FR8 — ennallaan.
+    expect(floorLabel({ floors: ["K", "1"] }, "K")).toBe("Kellari");
+    expect(floorLabel({ floors: ["K", "1"] }, "3")).toBe("3. kerros");
+    // Yhden tilan keikka: pelkkä sana, ei numeroa.
+    expect(floorLabel({ floors: ["Sali"], unitWord: "tila" }, "Sali")).toBe("Tila");
+    // Monta yksikköä: numeroidaan omalla sanalla.
+    expect(floorLabel({ floors: ["1", "2"], unitWord: "tila" }, "2")).toBe("2. tila");
   });
 });

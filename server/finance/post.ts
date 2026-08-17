@@ -15,7 +15,7 @@
 import { eq, and, ne, inArray } from "drizzle-orm";
 import { db } from "../db";
 import {
-  jobs, expenses, investments, founderSettlements, fiscalYears,
+  jobs, expenses, investments, founderSettlements, eraInvoices, fiscalYears,
   journalEntries, journalLines,
   type Job, type Expense, type Investment, type FounderSettlement,
 } from "@shared/schema";
@@ -23,6 +23,8 @@ import { ensureAllLedgers, ensureFiscalYear, accountsByCode, ACCOUNT, LEDGER_DEF
 import { BRAND_BILLERS, inferBillerId } from "@shared/billers";
 import { effectiveJobTotal } from "@shared/team";
 import { sanitizeGigData, type GigData, livePayments } from "@shared/gig";
+import { isEraInvoiceSettled, eraInvoiceGrossCents, type EraInvoiceLike } from "@shared/worker-payouts";
+import { isP2EraSelection } from "@shared/era-billing";
 
 function parseGig(raw: string | null): GigData | null {
   if (!raw) return null;
@@ -30,6 +32,36 @@ function parseGig(raw: string | null): GigData | null {
 }
 
 const isFounder = (id?: string | null): id is string => !!id && BRAND_BILLERS.some((b) => b.id === id);
+
+/**
+ * Tekijän (alihankkijan) erälasku sellaisena kuin KIRJANPITO sen tarvitsee.
+ *
+ * Minimikentät samaan tapaan kuin `InternalInvoiceRow` liikevaihtolaskennassa
+ * (server/finance/settlement.ts): kannassa `eraNumbers` ja `rivit` ovat
+ * JSON-merkkijonoja, ja kutsuja parsii ne ennen kuin antaa rivit tänne — näin
+ * `buildDraftEntries` pysyy puhtaana funktiona ja on testattavissa ilman kantaa.
+ *
+ * `EraInvoiceLike` (shared/worker-payouts.ts) on sama muoto jota tekijöiden
+ * maksettavan YKSI totuuden lähde lukee, joten tilan suodatus
+ * (`isEraInvoiceSettled`) ja bruttosumma (`eraInvoiceGrossCents`) ovat tässä
+ * samat funktiot kuin Maksut-välilehdellä ja tasauksessa.
+ */
+export interface WorkerInvoiceRow extends EraInvoiceLike {
+  id: number;
+  jobId: number;
+  /**
+   * Laskun OSTAJA = se johtaja jonka Y-tunnuksella tekijä laskuttaa, eli se
+   * jonka kirjanpitoon osto kuuluu. Reititetään erän mukaan laskua luotaessa
+   * (`eraRecipientFounderId`, ohitettavissa todellisella maksajalla) — ks.
+   * docs/fr8-vero-ja-maksut.md "Kuka laskuttaa kenet".
+   */
+  recipientId: string;
+  /** Laskun päivä = lukitushetki. Vasta lähetetty lasku on tosite. */
+  sentAt: Date | null;
+  createdAt: Date;
+  /** `rivit.input.name` on tekijän nimi laskuhetkellä — vientiselitteeseen. */
+  rivit?: { input?: { name?: string; pestytIkkunat?: number }; computed?: { ansaittuCents?: number } } | null;
+}
 
 interface DraftLine { accountCode: string; debitCents?: number; creditCents?: number }
 interface DraftEntry {
@@ -63,16 +95,25 @@ function assertBalanced(entry: DraftEntry) {
  *   4. Yrittäjien väliset laskut — `founderSettlements` rows (a confirmed,
  *      amount-settled vastalasku): payer's real expense + payee's real
  *      revenue, both ledgers, same amount.
+ *   5. Alihankkijakulu — every SENT/ACCEPTED tekijä-erälasku (`era_invoices`)
+ *      → Ostot ja ulkopuoliset palvelut (debet) / Pankkitili (kredit) in the
+ *      ledger of the founder the invoice names as buyer. See the loop's own
+ *      comment for the source-of-truth and accrual reasoning.
  *
- * Deliberately NOT posted yet (see docs for why): worker/alihankkija payouts
- * (already netted out of the founders' revenue via "kate"), palvelumaksu
- * (service-fee) revenue, startup-bonus usage.
+ * Deliberately NOT posted yet (see docs for why): palvelumaksu (service-fee)
+ * revenue, startup-bonus usage, and the part of the workers' earnings that
+ * nobody has invoiced yet (`reserveCents` — no tosite, and the figure only
+ * exists in the map blob this rebuild deliberately never reads).
+ *
+ * Exported for `post.test.ts`: this is the whole posting rulebook as a pure
+ * function of the source rows, so it is tested directly without a database.
  */
-function buildDraftEntries(
+export function buildDraftEntries(
   jobRows: Job[],
   expenseRows: Expense[],
   investmentRows: Investment[],
   settlementRows: FounderSettlement[],
+  workerInvoiceRows: WorkerInvoiceRow[] = [],
 ): DraftEntry[] {
   const drafts: DraftEntry[] = [];
   const jobsById = new Map(jobRows.map((j) => [j.id, j]));
@@ -110,6 +151,89 @@ function buildDraftEntries(
       lines: [
         { accountCode: ACCOUNT.BANK, debitCents: total },
         { accountCode: ACCOUNT.SALES, creditCents: total },
+      ],
+    });
+  }
+
+  /**
+   * ALIHANKKIJAKULU — tekijöiden erälaskut kuluksi sille johtajalle joka ne ostaa.
+   *
+   * MIKSI TÄMÄ ON OLEMASSA: yllä oleva silmukka kirjaa urakkakeikan JOKAISEN
+   * asiakaserän kokonaan myynniksi (3000). Aiemmin tekijöiden palkkaa ei
+   * veloitettu lainkaan, ja perusteluna oli että se "on jo netotettu pois
+   * katteessa" — mutta kirjaussääntö kirjaa BRUTON erän, ei katetta. Siksi
+   * laskuttavan johtajan tuloslaskelma näytti koko urakkasumman tuloksena:
+   * lippulaivakeikassa 6 150 € laskutettua, josta 5 576,50 € on tekijöiden
+   * palkkaa ja johtajien yhteinen kate 573,50 €.
+   *
+   * MISTÄ SUMMA TULEE: tekijän erälaskusta (`era_invoices`, kind "tekija") eli
+   * siitä tositteesta jolla alihankkija laskuttaa johtajaa. Kaksi asiaa luetaan
+   * jaetuista totuuden lähteistä eikä kirjoiteta uudestaan:
+   *   - `isEraInvoiceSettled` (shared/worker-payouts.ts) — vain lähetetty tai
+   *     hyväksytty lasku on tosite. Luonnos odottaa vielä tekijää ja hylätty
+   *     lasku ei koskaan syntynyt kuluksi.
+   *   - `eraInvoiceGrossCents` — BRUTTO (`rivit.computed.ansaittuCents`), ei
+   *     `totalCents`. `totalCents` on "maksettava nyt" = ansaittu − ennakko,
+   *     joten se aliarvioisi kulun aina kun ennakkoa on kirjattu. Sama sääntö
+   *     kuin velan kuittauksessa ja tasauksessa (`fr8-tasaus.grossOf`).
+   *
+   * EI KAKSOISLASKENTAA PUNAISISTA JA KELTAISISTA: punaisten erämaksu ja
+   * keltaisten potti ovat eri laskuja eri riveillä (`eraNumbers`, sentinel-erä
+   * 0 = keltaiset, `isP2EraSelection`). Kumpikin rivi kirjataan kertaalleen
+   * omana vientinään, joten kaksi rahavirtaa eivät voi summautua päällekkäin —
+   * eikä sama euro voi tulla molempia teitä, koska lähde on rivi eikä kaava.
+   *
+   * SUORITE- VAI MAKSUPERUSTE: kulu kirjataan LASKUN päivälle (`sentAt`), ei
+   * pankkisiirron päivälle — järjestelmä ei edes tiedä milloin tekijän lasku
+   * maksettiin (`tila` kertoo tekijän kuittauksen, ei maksua). Sama peruste
+   * kuin myyntipuolella: asiakaserä kirjataan laskutushetkelle (`p.t`).
+   * Vastatilinä on Pankkitili kuten kaikilla muillakin tämän kirjaajan
+   * vienneillä — 1700/2800 (myyntisaamiset/ostovelat) ovat tilikartassa yhä
+   * varattuja. Peruste on tarkoituksella sama molemmilla puolilla; sen
+   * lopullinen lukkoonlyönti on kirjanpitäjän päätös (ks. docs).
+   *
+   * MIHIN KIRJANPITOON: laskun ostajalle (`recipientId`). Se on erän mukaan
+   * reititetty eli oletuksena juuri se johtaja joka laskutti asiakkaan tästä
+   * erästä (docs/fr8-vero-ja-maksut.md) — sama kirjanpito johon erän myynti
+   * meni. Se on myös oikea vastaus silloin kun rahan tosiasiallinen liike oli
+   * toinen: tosite nimeää ostajan, ja johtajien keskinäinen oikaisu kulkee
+   * `founder_settlements`-vientien kautta (invariantti 16).
+   */
+  for (const inv of workerInvoiceRows) {
+    if (!isEraInvoiceSettled(inv)) continue;
+    const cents = eraInvoiceGrossCents(inv);
+    if (cents <= 0) continue;
+    // Tuntematon ostaja: EI arvata kummallekaan johtajalle. Sama sääntö kuin
+    // laskuttajattomalla erällä yllä ja invariantti 18 (kohdentamaton raha ei
+    // kuulu kenellekään) — arvaus siirtäisi satoja euroja väärään kirjanpitoon.
+    if (!isFounder(inv.recipientId)) continue;
+    const job = jobsById.get(inv.jobId);
+    const gig = job?.gigData ? parseGig(job.gigData) : null;
+    const gigName = gig?.company?.name || job?.description || `Keikka #${inv.jobId}`;
+    const workerName = inv.rivit?.input?.name?.trim() || inv.senderId;
+    const eraLabel = isP2EraSelection(inv.eraNumbers)
+      ? "keltaiset"
+      : inv.eraNumbers?.length ? `erä ${inv.eraNumbers.join("+")}` : "erittelemätön";
+    drafts.push({
+      ledgerId: inv.recipientId,
+      date: new Date(inv.sentAt ?? inv.createdAt),
+      description: `Alihankkijalasku — ${workerName}, ${gigName}, ${eraLabel}`,
+      sourceType: "expense",
+      // Erälaskun id on globaalisti uniikki, joten avain on vakaa ja erottuu
+      // sekä asiakaserästä (`job:1:era:0`) että kulusta (`expense:1`). Yksi
+      // lasku → yksi vienti → yksi kirjanpito, joten uudelleenajo ei koskaan
+      // tuota duplikaattia (uniikkirajoite `(ledgerId, sourceKey)`).
+      sourceKey: `job:${inv.jobId}:tekijalasku:${inv.id}`,
+      lines: [
+        // 4000 Ostot ja ulkopuoliset palvelut — EI 4010, joka on varattu
+        // yrittäjien VÄLISILLE laskuille: tekijä on ulkopuolinen alihankkija,
+        // ja jos nämä menisivät samalle tilille, tuloslaskelmasta ei enää
+        // näkisi erikseen ulos maksettua palkkaa ja johtajien keskinäistä
+        // siirtoa (joka brändin tasolla kuittaa itsensä). EI myöskään 5000
+        // Henkilöstökulut: maksu on työkorvausta eikä palkkaa, eikä
+        // työnantajavelvoitteita synny (docs/fr8-vero-ja-maksut.md).
+        { accountCode: ACCOUNT.PURCHASES, debitCents: cents },
+        { accountCode: ACCOUNT.BANK, creditCents: cents },
       ],
     });
   }
@@ -191,6 +315,40 @@ function buildDraftEntries(
  * constraint. rebuildLedgers() is therefore serialized behind a single
  * in-flight promise: concurrent callers all await the SAME run.
  */
+/**
+ * Tekijöiden (alihankkijoiden) erälaskut kirjanpitoa varten.
+ *
+ * Vain ne sarakkeet joita `buildDraftEntries` lukee, ja `eraNumbers`/`rivit`
+ * parsitaan JSONista samalla tavalla kuin tasauksessa (`loadTasaus`,
+ * server/routes.ts). Rivit ovat kevyitä: ei liitteitä, ei karttablobia — tämä
+ * ajetaan joka `/api/finance/*`-pyynnöllä siinä missä muut kyselyt.
+ */
+async function loadWorkerInvoices(): Promise<WorkerInvoiceRow[]> {
+  try {
+    const rows = await db.select({
+      id: eraInvoices.id, jobId: eraInvoices.jobId, kind: eraInvoices.kind,
+      tila: eraInvoices.tila, senderId: eraInvoices.senderId,
+      recipientId: eraInvoices.recipientId, eraNumbers: eraInvoices.eraNumbers,
+      rivit: eraInvoices.rivit, totalCents: eraInvoices.totalCents,
+      sentAt: eraInvoices.sentAt, createdAt: eraInvoices.createdAt,
+    }).from(eraInvoices);
+    return rows.map((r) => {
+      let eraNumbers: number[] = [];
+      let rivit: WorkerInvoiceRow["rivit"] = null;
+      try { const parsed = JSON.parse(r.eraNumbers); if (Array.isArray(parsed)) eraNumbers = parsed; } catch { /* tyhjä */ }
+      try { rivit = JSON.parse(r.rivit); } catch { /* null */ }
+      return { ...r, eraNumbers, rivit };
+    });
+  } catch (e: any) {
+    // Taulua ei ole vielä kannassa (db:push ajamatta) → kirjanpito rakentuu
+    // ilman alihankkijakuluja eikä kaadu. Sama suoja kuin erälaskureiteillä
+    // (server/routes.ts `isMissingTableError`), joka ei ole exportattu sieltä
+    // (routes.ts importtaa tämän moduulin — kehäriippuvuus).
+    if (e?.code !== "42P01") throw e;
+    return [];
+  }
+}
+
 let inFlight: Promise<void> | null = null;
 export function rebuildLedgers(): Promise<void> {
   if (!inFlight) inFlight = rebuildLedgersNow().finally(() => { inFlight = null; });
@@ -200,7 +358,7 @@ export function rebuildLedgers(): Promise<void> {
 async function rebuildLedgersNow(): Promise<void> {
   await ensureAllLedgers();
 
-  const [jobRows, expenseRows, investmentRows, settlementRows] = await Promise.all([
+  const [jobRows, expenseRows, investmentRows, settlementRows, workerInvoiceRows] = await Promise.all([
     // Kirjanpidon uudelleenrakennus lukee vain rahakentät ja gigData:n
     // laskutuserät. `db.select().from(jobs)` veti mukanaan allekirjoitus-PNG:t
     // ja koko karttablobin — ja tämä ajetaan JOKAISELLA /api/finance-haulla,
@@ -220,8 +378,9 @@ async function rebuildLedgersNow(): Promise<void> {
     db.select().from(expenses),
     db.select().from(investments),
     db.select().from(founderSettlements),
+    loadWorkerInvoices(),
   ]);
-  const drafts = buildDraftEntries(jobRows, expenseRows, investmentRows, settlementRows);
+  const drafts = buildDraftEntries(jobRows, expenseRows, investmentRows, settlementRows, workerInvoiceRows);
 
   for (const ledgerDef of LEDGER_DEFS) {
     const ledgerId = ledgerDef.id;

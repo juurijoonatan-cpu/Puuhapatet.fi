@@ -721,6 +721,8 @@ export const api = {
       internalByYear?: Record<string, Record<string, number>>;
       /** Kirjatut yrittäjien väliset maksut joille ei löydy laskua. Ei summata. */
       settledWithoutInvoiceCents?: number;
+      /** Lähetetty mutta hylätty sisäinen lasku — tosite, mutta ei liikevaihdossa. */
+      rejectedButSentCents?: number;
       /** Done small jobs with no biller set — attribute them or the tracker under-counts. */
       unassignedByYear: Record<string, { count: number; cents: number }>;
       /** Recorded gig instalments (urakkaerät) with no biller — in NOBODY's
@@ -1158,7 +1160,14 @@ export const api = {
 
   // Resolve the logged-in user's personal worker dashboard link (dashboard-only users).
   getMyDashboard: () =>
-    request<{ ok: boolean; token: string | null }>("GET", "/api/admin/my-dashboard"),
+    request<{
+      ok: boolean;
+      /** Ensimmäinen osuma — säilytetty taaksepäin-yhteensopivuuden vuoksi. */
+      token: string | null;
+      /** KAIKKI keikat joilla käyttäjä on tekijänä. Kun näitä on useampi, valinta
+       *  on käyttäjän — ennen palvelin palautti satunnaisesti yhden. */
+      gigs?: { jobId: number; name: string; token: string }[];
+    }>("GET", "/api/admin/my-dashboard"),
 
   // Workers who've finished onboarding (entered the app + signed their agreements) —
   // powers the login picker and the about-page team photos so a new hire appears

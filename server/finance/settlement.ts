@@ -59,6 +59,16 @@ export interface BillerTurnover {
    * tuplaisi. Ks. `docs/talous-kirjanpito.md`.
    */
   settledWithoutInvoiceCents: number;
+  /**
+   * Yrittäjien välisiä laskuja jotka on LÄHETETTY mutta sitten HYLÄTTY.
+   *
+   * Nämä eivät ole liikevaihdossa: hylättyä laskua ei todennäköisesti makseta.
+   * Mutta lähetetty lasku on `isEraInvoiceReceipt`in mukaan yhä TOSITE (sillä on
+   * laskunumero ja lähetysaikaleima), eikä sellaista pyyhitä pois — oikea
+   * käsittely on hyvityslasku, ei hiljainen poisjättö. Raportoidaan siis
+   * erikseen, jottei summa eroa tositteista selittämättä.
+   */
+  rejectedButSentCents: number;
 }
 
 /** Yrittäjien välinen lasku sellaisena kuin liikevaihtolaskenta sen tarvitsee. */
@@ -70,6 +80,28 @@ export interface InternalInvoiceRow {
   sentAt: Date | null;
   createdAt: Date;
 }
+
+/**
+ * MILLÄ PÄIVÄLLÄ liikevaihto kirjautuu vuodelle.
+ *
+ * Kortti käytti kolmea eri päivää tietämättään, mikä teki vuosirajasta
+ * epämääräisen: urakkaerä laskutushetkestä (`GigPayment.t`), pikkukeikka TYÖN
+ * päivästä (`scheduledAt ?? createdAt`) ja sisäinen lasku lähetyshetkestä.
+ * Suomen kirjanpito on lähtökohtaisesti SUORITEPERUSTEINEN, joten oikea päivä
+ * on laskun/suoritteen päivä — ei työn suunniteltu päivä.
+ *
+ * Pikkukeikan kohdalla laskun päivää ei ole tallennettuna missään: `jobs`illa ei
+ * ole laskutuspäivää. Siksi työn päivä JÄÄ toistaiseksi käyttöön sille haaralle
+ * — mutta se on nyt nimetty ja näkyvä valinta eikä vahinko, ja
+ * `docs/talous-kirjanpito.md` kirjaa sen avoimena kysymyksenä kirjanpitäjälle.
+ * Jos/kun `jobs`ille lisätään laskutuspäivä, se vaihdetaan TÄSTÄ yhdestä
+ * paikasta.
+ */
+export const TURNOVER_DATE_BASIS = {
+  gigInstalment: "laskutushetki (GigPayment.t)",
+  internalInvoice: "lähetyshetki (era_invoices.sentAt)",
+  smallJob: "työn päivä (scheduledAt ?? createdAt) — ei laskun päivä, ks. docs",
+} as const;
 
 /**
  * Per-founder (biller) customer-invoice turnover by calendar year. Each
@@ -126,7 +158,17 @@ export function computeBillerTurnover(
       const eff = inferBillerId(row);
       if (eff && BRAND_BILLERS.some((b) => b.id === eff)) {
         add(customerByYear, year, eff, total);
-      } else if (!row.billedBy) {
+      } else {
+        /**
+         * KAIKKI KOHDENTAMATON TÄHÄN, EI VAIN `billedBy`-tyhjä.
+         *
+         * Ehto oli aiemmin `else if (!row.billedBy)`, joten keikka jonka
+         * `billedBy` osoitti JOHONKIN MUUHUN kuin brändin laskuttajaan katosi
+         * kortilta kokonaan: se ei ollut kenenkään liikevaihdossa eikä
+         * kohdentamattomien listalla. Käyttöliittymä tarjoaa myös muita
+         * Y-tunnuksen haltijoita, joten se oli täysin mahdollinen tila —
+         * ja tulos oli hiljaa kadonnutta rahaa.
+         */
         (unassignedByYear[year] ||= { count: 0, cents: 0 });
         unassignedByYear[year].count += 1;
         unassignedByYear[year].cents += total;
@@ -137,11 +179,14 @@ export function computeBillerTurnover(
    * Yrittäjien väliset laskut. Vain LÄHETETYT (tai hyväksytyt): luonnos ei ole
    * lasku eikä tosite. Vuosi luetaan lähetyshetkestä — se on laskun päivä.
    */
+  let rejectedButSentCents = 0;
   for (const inv of internalInvoices) {
     if (inv.kind !== "johtaja_valinen") continue;
-    if (inv.tila !== "lähetetty" && inv.tila !== "hyväksytty") continue;
     if (!BRAND_BILLERS.some((b) => b.id === inv.senderId)) continue;
     if (!inv.totalCents || inv.totalCents <= 0) continue;
+    // Lähetetty mutta hylätty: pois summasta, mutta ei vaieten — se on tosite.
+    if (inv.tila === "hylätty" && inv.sentAt) { rejectedButSentCents += inv.totalCents; continue; }
+    if (inv.tila !== "lähetetty" && inv.tila !== "hyväksytty") continue;
     const year = String(new Date(inv.sentAt ?? inv.createdAt).getFullYear());
     add(internalByYear, year, inv.senderId, inv.totalCents);
   }
@@ -162,6 +207,7 @@ export function computeBillerTurnover(
     unassignedByYear,
     unassignedEras,
     settledWithoutInvoiceCents,
+    rejectedButSentCents,
   };
 }
 

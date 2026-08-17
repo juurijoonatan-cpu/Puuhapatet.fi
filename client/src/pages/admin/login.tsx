@@ -87,6 +87,12 @@ export default function AdminLoginPage() {
   // the hand-maintained profiles in admin-profile.ts — no code change needed
   // per new hire. Only ever adds; never overrides an existing profile.
   const [roster, setRoster] = useState<{ id: string; name: string; photoUrl?: string }[]>([]);
+  /**
+   * Useampi työpöytä: kun sama henkilö on tekijänä monella keikalla, valinta on
+   * hänen. Ennen palvelin palautti ensimmäisen osuman ilman järjestystä, eli
+   * kirjautuminen saattoi heittää satunnaisesti väärän keikan työpöydälle.
+   */
+  const [gigChoices, setGigChoices] = useState<{ jobId: number; name: string; token: string }[] | null>(null);
   useEffect(() => {
     api.getTeamRoster().then((r) => { if (r.ok && r.data?.workers) setRoster(r.data.workers); }).catch(() => {});
   }, []);
@@ -101,6 +107,13 @@ export default function AdminLoginPage() {
   // Resolve a dashboard-only user's personal worker link and go there.
   const goToDashboard = async () => {
     const r = await api.getMyDashboard();
+    const found = r.ok ? (r.data?.gigs ?? []) : [];
+    // Kaksi tai useampi keikka → kysytään kumpi, ei arvata.
+    if (found.length > 1) {
+      setGigChoices(found);
+      setIsLoading(false);
+      return;
+    }
     if (r.ok && r.data?.token) {
       navigate(`/tyo/${r.data.token}`);
     } else {
@@ -199,6 +212,35 @@ export default function AdminLoginPage() {
       }}
     >
       <div className="w-full max-w-sm my-auto">
+        {/* Monta työpöytää — valitse keikka. Näkyy vain kun osumia on useampi. */}
+        {gigChoices && gigChoices.length > 1 && (
+          <div className="mb-5 rounded-2xl border border-border bg-card p-4 premium-shadow">
+            <p className="text-sm font-semibold text-foreground mb-1">Kummalle keikalle?</p>
+            <p className="text-xs text-muted-foreground mb-3">
+              Olet tekijänä useammalla keikalla. Valitse mikä työpöytä avataan.
+            </p>
+            <div className="space-y-2">
+              {gigChoices.map((g) => (
+                <button
+                  key={g.jobId}
+                  type="button"
+                  onClick={() => navigate(`/tyo/${g.token}`)}
+                  className="w-full flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2.5 text-left text-sm hover:bg-accent transition-colors"
+                >
+                  <span className="truncate font-medium text-foreground">{g.name}</span>
+                  <span aria-hidden className="text-muted-foreground shrink-0">→</span>
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setGigChoices(null)}
+              className="mt-3 text-xs text-muted-foreground hover:underline"
+            >
+              Peruuta
+            </button>
+          </div>
+        )}
         <div className="text-center mb-6">
           <h1 className="text-2xl font-semibold text-foreground mb-1">Puuhapatet.</h1>
           <p className="text-muted-foreground">{mode === "setpw" ? "Aseta oma salasanasi" : "Kuka kirjautuu?"}</p>

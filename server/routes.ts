@@ -7384,20 +7384,40 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // FR8-keikan koko rivin — molemmat allekirjoitus-PNG:t mukaan lukien —
       // pelkän yhden token-merkkijonon löytämiseksi. Tämä reitti ajetaan HETI
       // admin-kirjautumisen jälkeen, eli juuri silloin kun kiintiö oli poikki.
-      const rows = await db.select({ id: jobs.id, projectData: jobs.projectData })
-        .from(jobs).where(eq(jobs.isCustomGig, true));
-      let fallback: string | null = null; // a name match, used only if no stronger match
+      const rows = await db.select({ id: jobs.id, projectData: jobs.projectData, gigData: jobs.gigData, description: jobs.description })
+        .from(jobs).where(eq(jobs.isCustomGig, true)).orderBy(jobs.id);
+      /**
+       * KAIKKI OSUMAT, EI ENSIMMÄINEN.
+       *
+       * Tämä palautti ennen `return`illa heti ensimmäisen vahvan osuman, ja
+       * kysely oli ilman järjestystä. Kun sama henkilö on tekijänä KAHDELLA
+       * keikalla — mikä on nyt normaalia — hän päätyi satunnaisesti jommallekummalle
+       * työpöydälle sen mukaan missä järjestyksessä kanta sattui palauttamaan
+       * rivit. Nyt palautetaan kaikki, ja valinta on käyttäjän.
+       *
+       * `token` säilyy vastauksessa (ensimmäinen osuma), jottei vanha kutsuja
+       * hajoa; uudet kutsujat lukevat `gigs`-listan.
+       */
+      const strong: { jobId: number; name: string; token: string }[] = [];
+      const weak: { jobId: number; name: string; token: string }[] = [];
       for (const job of rows) {
         const project = parseProject(job.projectData ?? null);
+        const gigName = (() => {
+          try {
+            const gd = job.gigData ? JSON.parse(job.gigData) : null;
+            return String(gd?.company?.name || job.description || `Keikka #${job.id}`).slice(0, 120);
+          } catch { return job.description || `Keikka #${job.id}`; }
+        })();
         for (const m of project?.crew ?? []) {
           if (!m.active) continue;
-          if ((m.linkedUserId && m.linkedUserId.toLowerCase() === sub) || m.id.toLowerCase() === sub) {
-            return res.json({ ok: true, token: m.token }); // strong match → done
-          }
-          if (!fallback && firstName(m) === sub) fallback = m.token;
+          const row = { jobId: job.id, name: gigName, token: m.token };
+          if ((m.linkedUserId && m.linkedUserId.toLowerCase() === sub) || m.id.toLowerCase() === sub) strong.push(row);
+          else if (firstName(m) === sub) weak.push(row);
         }
       }
-      res.json({ ok: true, token: fallback });
+      // Vahvat osumat (id tai linkitetty käyttäjä) voittavat nimiosumat aina.
+      const gigs = strong.length ? strong : weak;
+      res.json({ ok: true, token: gigs[0]?.token ?? null, gigs });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

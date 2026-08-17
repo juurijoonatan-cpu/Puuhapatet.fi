@@ -127,3 +127,36 @@ describe("computeBillerTurnover — yrittäjien väliset laskut", () => {
     expect(total).toBe(125000);
   });
 });
+
+describe("computeBillerTurnover — kohdentamaton ja hylätty", () => {
+  it("keikka jonka laskuttaja EI ole brändin laskuttaja ei katoa kortilta", () => {
+    // Ehto oli aiemmin `else if (!row.billedBy)`, joten `billedBy` joka osoitti
+    // johonkin muuhun Y-tunnukseen katosi kokonaan: ei kenenkään
+    // liikevaihdossa eikä kohdentamattomien listalla. Hiljaa kadonnutta rahaa.
+    const job = {
+      id: 9, description: "Pikkukeikka", isCustomGig: false, gigData: null,
+      status: "done", quoteStatus: null, agreedPrice: 30000,
+      billedBy: "joku-muu", assignedTo: "joku-muu",
+      scheduledAt: new Date("2026-05-05T00:00:00Z"), createdAt: new Date("2026-05-05T00:00:00Z"),
+    } as unknown as Job;
+    const t = computeBillerTurnover([job]);
+    expect(t.turnoverByYear[Y]).toBeUndefined();          // ei kenenkään
+    expect(t.unassignedByYear[Y].cents).toBe(30000);      // mutta näkyvissä
+    expect(t.unassignedByYear[Y].count).toBe(1);
+  });
+
+  it("lähetetty mutta hylätty sisäinen lasku raportoidaan erikseen, ei summassa", () => {
+    const t = computeBillerTurnover([], internal([
+      { tila: "hylätty", totalCents: 50000, sentAt: new Date("2026-06-01T00:00:00Z") },
+      { tila: "lähetetty", totalCents: 72000 },
+    ]));
+    expect(t.internalByYear[Y].matias).toBe(72000);  // vain lähetetty
+    expect(t.rejectedButSentCents).toBe(50000);      // hylätty näkyy erikseen
+  });
+
+  it("hylätty luonnos (ei lähetetty) ei ole tosite eikä sitä raportoida", () => {
+    const t = computeBillerTurnover([], internal([{ tila: "hylätty", sentAt: null }]));
+    expect(t.rejectedButSentCents).toBe(0);
+    expect(t.turnoverByYear[Y]).toBeUndefined();
+  });
+});

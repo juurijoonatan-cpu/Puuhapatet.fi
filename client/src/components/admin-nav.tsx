@@ -7,7 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Plus, Calendar, ClipboardList, Users, Settings, Sun, Moon, LogOut, Inbox, Megaphone } from "lucide-react";
+import { LayoutDashboard, Plus, Calendar, ClipboardList, Users, Settings, Sun, Moon, LogOut, Inbox, Megaphone, Building2 } from "lucide-react";
 import { useTheme } from "@/lib/theme";
 import { clearAdminSession } from "@/pages/admin/login";
 import { clearAdminProfile, getAdminProfile, canApproveLeads } from "@/lib/admin-profile";
@@ -48,6 +48,16 @@ export function AdminNav() {
   const triageItem: NavItem = { icon: Inbox, label: "Liidit", href: "/admin/liidit", badge: pendingLeads };
 
 
+  // Urakkakeikkojen hakemisto (`/admin/gigs`). VAIN työpöytävalikossa:
+  // mobiilipalkki on kiinteä rivi 48 px:n kohteita ilman rivitystä tai
+  // vieritystä, ja perustajalla siinä on jo kuusi (Liidit mukaan lukien) =
+  // ~322 px. Seitsemäs nostaa leveyden ~376 px:ään, eli 360–375 px:n puhelimessa
+  // palkki leikkautuisi molemmista reunoista — ja koska se on keskitetty
+  // (translateX(-50%)), leikkaus osuisi juuri reunimmaisiin nappeihin.
+  // Mobiilissa keikalle mennään toistaiseksi Keikat-listan tai suoran
+  // osoitteen kautta.
+  const gigsItem: NavItem = { icon: Building2, label: "Urakat", href: "/admin/gigs" };
+
   // Mobile bottom bar — most-used items (+ Liidit for founders)
   const mobileNavItems: NavItem[] = [
     { icon: LayoutDashboard, label: "Dashboard", href: "/admin/dashboard" },
@@ -64,6 +74,7 @@ export function AdminNav() {
     { icon: Plus,            label: "Uusi",      href: "/admin/new" },
     { icon: Calendar,        label: "Kalenteri", href: "/admin/calendar" },
     { icon: ClipboardList,   label: "Keikat",    href: "/admin/jobs" },
+    gigsItem,
     ...(isHost ? [triageItem, { icon: Megaphone, label: "Myynti", href: "/admin/myynti" } as NavItem] : []),
     // Yhteydenotot: sivu oli olemassa mutta siihen ei ollut yhtään linkkiä —
     // sinne pääsi vain ilmoitussähköpostin napista. Nyt myös nettisivun

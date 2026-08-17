@@ -553,9 +553,22 @@ export default function TaxExportPage() {
                   });
                   // Gig instalments with no biller are shown for EVERY year — they
                   // are in nobody's figures at all until someone attributes them.
-                  const unEras = turnover.unassignedEras ?? [];
+                  /**
+                   * VAIN VALITUN VUODEN erät. Tämä laski ennen KAIKKIEN vuosien
+                   * kohdentamattomat erät valitun vuoden lukuun, joten
+                   * "{year}"-otsikon alla oleva summa oli vuosien sekoitus.
+                   * Erä ilman päivämäärää jätetään mukaan — se on nimenomaan
+                   * korjattavien joukossa eikä sitä saa piilottaa.
+                   */
+                  const unEras = (turnover.unassignedEras ?? []).filter((e2) =>
+                    e2.dateMs == null || new Date(e2.dateMs).getFullYear() === year);
                   const unTotal = (un?.cents ?? 0) + unEras.reduce((s2, e) => s2 + e.cents, 0);
                   const unCount = (un?.count ?? 0) + unEras.length;
+                  // Edellinen vuosi näkyviin: vähäisen toiminnan raja riippuu
+                  // 1.1.2025 alkaen SEKÄ kuluvasta ETTÄ edellisestä
+                  // kalenterivuodesta, ja kortti näytti vain yhden vuoden.
+                  const prevYear = year - 1;
+                  const prevMap = turnover.turnoverByYear[String(prevYear)] ?? {};
                   return (
                     <Card className="p-5 bg-card border-0 premium-shadow print:hidden">
                       <div className="flex items-center justify-between gap-2 mb-2">
@@ -586,6 +599,11 @@ export default function TaxExportPage() {
                               {intCents > 0 && (
                                 <p className="text-[11px] text-muted-foreground tabular-nums">
                                   asiakaslaskut {fmt(custCents)} + yrittäjien väliset {fmt(intCents)}
+                                </p>
+                              )}
+                              {(prevMap[b.id] ?? 0) > 0 && (
+                                <p className="text-[11px] text-muted-foreground tabular-nums">
+                                  edellinen vuosi {prevYear}: {fmt(prevMap[b.id] ?? 0)}
                                 </p>
                               )}
                               {level !== "ok" && (
@@ -671,7 +689,21 @@ export default function TaxExportPage() {
                           </p>
                         </div>
                       )}
+                      {(turnover.rejectedButSentCents ?? 0) > 0 && (
+                        <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                          <p className="text-[11px] text-amber-600">
+                            {fmt(turnover.rejectedButSentCents ?? 0)} yrittäjien välisiä laskuja on lähetetty ja sitten
+                            hylätty. Ne EIVÄT ole yllä olevassa liikevaihdossa, mutta lähetetty lasku on yhä tosite —
+                            oikea käsittely on hyvityslasku, ei poisjättö. Tarkista nämä kirjanpitäjän kanssa.
+                          </p>
+                        </div>
+                      )}
                       <p className="text-[11px] text-muted-foreground mt-3 pt-2 border-t border-border">
+                        Vähäisen toiminnan raja riippuu <b>1.1.2025 alkaen sekä kuluvasta että edellisestä</b>
+                        kalenterivuodesta, joten edellinen vuosi näkyy yllä. Tämä kortti ei valvo kahden vuoden
+                        ehtoa automaattisesti — tarkista sääntö vero.fi:stä tai kirjanpitäjältä.
+                      </p>
+                      <p className="text-[11px] text-muted-foreground mt-2">
                         Luku sisältää asiakaslaskut <b>ja</b> yrittäjien väliset lähetetyt laskut — molemmat ovat
                         omaa myyntiä ja kerryttävät rajaa. Raja koskee henkilön <b>kaikkea</b> liiketoimintaa, joten
                         muista myös Puuhapatetin ulkopuoliset tulot. Laskuttajaa vailla olevat erät (yllä) eivät ole

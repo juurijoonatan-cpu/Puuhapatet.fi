@@ -404,6 +404,20 @@ osa myynnistä jäisi hiljaa näkymättä.
 
 Vartija: `server/finance/biller-turnover.test.ts` (10 testiä).
 
+### Mitä näistä on nyt korjattu
+
+Kaikki alla oleva tehtiin samassa työssä; loput ovat edelleen kirjanpitäjän
+päätettävää (seuraava osio).
+
+| Asia | Tila |
+|---|---|
+| Kohdentamaton laskuttaja katosi kortilta | **korjattu** — `billedBy` joka osoitti muuhun kuin brändin laskuttajaan ei ollut kenenkään liikevaihdossa **eikä** kohdentamattomien listalla. Ehto oli `else if (!row.billedBy)`; nyt kaikki kohdentamaton menee listalle. |
+| Kohdentamattomien erien vuosisekoitus | **korjattu** — `{vuosi}`-otsikon alla oleva summa laski kaikkien vuosien erät. Nyt suodatetaan valittuun vuoteen; päivämäärätön erä jää mukaan (se on nimenomaan korjattavien joukossa). |
+| Lähetetty mutta hylätty sisäinen lasku | **korjattu näkyväksi** — ei liikevaihdossa (hylättyä ei todennäköisesti makseta), mutta lähetetty lasku on `isEraInvoiceReceipt`in mukaan yhä **tosite**, joten sitä ei vaieta: oma varoitusrivi (`rejectedButSentCents`). Oikea käsittely on hyvityslasku, ei poisjättö. |
+| Kahden vuoden ehto (1.1.2025) | **osittain** — edellinen vuosi näkyy nyt jokaisen johtajan rivillä ja kortti kertoo että ehto koskee kahta vuotta. Sääntöä **ei valvota automaattisesti**: se vaatii vero.fi-varmistuksen. |
+| Kirjauspäivän peruste | **nimetty, ei yhtenäistetty** — `TURNOVER_DATE_BASIS` (`server/finance/settlement.ts`) kirjaa nyt eksplisiittisesti että urakkaerä käyttää laskutushetkeä, sisäinen lasku lähetyshetkeä ja pikkukeikka **työn päivää**. Pikkukeikan laskun päivää ei ole tallennettuna missään (`jobs`illa ei ole laskutuspäivää), joten peruste on yhä epäyhtenäinen — mutta nyt näkyvä valinta yhdessä paikassa eikä vahinko. |
+| Alihankkijakulu puuttui tuloslaskelmasta | **korjattu** — ks. oma osio alla. |
+
 ### Mitä tässä on YHÄ auki — kirjanpitäjän päätettävää
 
 Näitä ei ratkaistu koodissa, koska ne ovat verotus- eivät ohjelmointikysymyksiä:

@@ -57,18 +57,24 @@ Yksi täysin erillinen, itse täsmäävä kirjanpito per **ledger**
   luodaan automaattisesti ensimmäisen kirjauksen yhteydessä. `isClosed`
   suojaa tilikauden uudelleenkirjoitukselta (ks. alla).
 - **`accounts`** — tilikartta per ledger. `isSystemAccount` = automaattikirjaajan
-  käyttämä tili (ks. `server/finance/accounts.ts` → `STANDARD_ACCOUNTS`).
+  käyttämä tili (ks. `server/finance/account-codes.ts` → `STANDARD_ACCOUNTS`).
 - **`journal_entries`** + **`journal_lines`** — päiväkirja (tapahtumat) ja
   niiden debet/kredit-viennit. `sourceKey` on vakaa deduplikointiavain
-  (esim. `"job:123:era:2"`, `"expense:55"`, `"settlement:9:payer"`) — tekee
-  uudelleenkirjauksesta idempotentin. Pääkirja EI ole erillinen taulu — se on
+  (esim. `"job:123:era:2"`, `"job:123:tekijalasku:45"`, `"expense:55"`,
+  `"settlement:9:payer"`) — tekee uudelleenkirjauksesta idempotentin. Pääkirja EI ole erillinen taulu — se on
   `journal_lines` liitettynä `accounts`-tauluun ja ryhmiteltynä tilin mukaan
   (`server/finance/reports.ts` → `getGeneralLedger`), jotta se ei voi koskaan
   ajautua eri linjalle päiväkirjan kanssa.
 - **`forecast_entries`** — ennustelaskelman rivit (ks. alla). Ei koske
   varsinaista kirjanpitoa.
 
-## Tilikartta (`server/finance/accounts.ts`)
+## Tilikartta (`server/finance/account-codes.ts`)
+
+Tilinumerot ja tilien nimet ovat omassa, kannasta riippumattomassa
+tiedostossaan (`account-codes.ts`), jotta kirjaussääntöjä voi testata ilman
+tietokantaa. `accounts.ts` re-exporttaa ne ja hoitaa kantapuolen
+(`ensureLedger` luo puuttuvat tilit myös jo olemassa oleviin kirjanpitoihin).
+
 
 FAS-mukainen, minimaalinen mutta täydellinen tuloslaskelman + taseen
 muodostamiseen. Muutama tili on tarkoituksella varattu tulevaan käyttöön
@@ -101,10 +107,16 @@ kunnes niitä tarvitaan:
 `rebuildLedgers()` on koko automaattikirjaajan ydin. Se **poistaa** kaikki
 edelliset automaattikirjaukset (paitsi suljetuilta tilikausilta) ja **kirjaa
 ne uudelleen** nykyisen lähdedatan pohjalta — kirjanpito on siis aina puhdas
-funktio `jobs`/`expenses`/`investments`/`founder_settlements`-tauluista, eikä
-voi koskaan ajautua niistä eri linjalle. Kutsutaan automaattisesti JOKA
-`/api/finance/*`-pyynnön alussa (`server/finance/reports.ts`) — erillistä
-"synkronoi"-nappia ei ole eikä tarvita.
+funktio `jobs`/`expenses`/`investments`/`founder_settlements`/`era_invoices`
+-tauluista, eikä voi koskaan ajautua niistä eri linjalle. Kutsutaan
+automaattisesti JOKA `/api/finance/*`-pyynnön alussa
+(`server/finance/reports.ts`) — erillistä "synkronoi"-nappia ei ole eikä
+tarvita.
+
+Itse kirjaussäännöt (`buildDraftEntries`) asuvat
+`server/finance/draft-entries.ts`:ssä: puhdas funktio lähderiveistä vienteihin,
+ilman kantaa, jotta koko sääntökirja on yksikkötestattavissa
+(`server/finance/post.test.ts`). `post.ts` on kantapuoli.
 
 1. **Asiakaslaskut** — joka `jobs`-rivi (tai FR8-erä `gigData.payments`-listasta),
    jolla on TÄSMÄLLEEN YKSI tunnistettu founder-laskuttaja
@@ -126,6 +138,27 @@ voi koskaan ajautua niistä eri linjalle. Kutsutaan automaattisesti JOKA
    yrittäjälle (kredit). **HUOM**: näiden ei tarvitse olla eriteltyjä
    FR8-kate-osuuksia — mikä tahansa `founder_settlements`-rivi (myös
    "MobilePay — pikkukeikat kuitattu" -merkinnät) kirjautuu näin.
+5. **Alihankkijakulu (tekijöiden erälaskut)** — `era_invoices`-taulun rivit
+   joilla `kind = "tekija"` ja tila `lähetetty`/`hyväksytty`
+   (`isEraInvoiceSettled`, `shared/worker-payouts.ts`). Ostot ja ulkopuoliset
+   palvelut **4000** (debet) / Pankkitili (kredit) sen johtajan kirjanpitoon
+   jonka lasku nimeää OSTAJAKSI (`recipientId`). Summa on **BRUTTO**
+   (`eraInvoiceGrossCents` = `rivit.computed.ansaittuCents`), ei `totalCents`,
+   koska `totalCents` on "maksettava nyt" = ansaittu − ennakko. Päivä on laskun
+   päivä (`sentAt`), samalla perusteella kuin myyntipuolen erä laskutuspäivältä.
+
+   **Miksi 4000 eikä 4010:** 4010 on yrittäjien VÄLISILLE laskuille. Tekijä on
+   ulkopuolinen alihankkija, ja jos molemmat menisivät samalle tilille,
+   tuloslaskelmasta ei enää näkisi erikseen ulos maksettua työkorvausta ja
+   johtajien keskinäistä siirtoa (joka brändin tasolla kuittaa itsensä).
+   **Miksi ei 5000 Henkilöstökulut:** maksu on työkorvausta eikä palkkaa
+   (`docs/fr8-vero-ja-maksut.md`) — työnantajavelvoitteita ei synny.
+
+   **Miksi tämä lisättiin:** ennen tätä koko erä kirjattiin myyntinä eikä
+   tekijäkulua veloitettu lainkaan, joten laskuttavan johtajan tuloslaskelma
+   näytti urakkasumman tuloksena. Punaiset ja keltaiset ovat eri laskuja eri
+   riveillä (`eraNumbers`, sentinel-erä 0 = keltaiset), joten kaksi rahavirtaa
+   eivät voi kaksinkertaistua.
 
 ### Mitä EI kirjata automaattisesti (tarkoituksella)
 
@@ -133,11 +166,23 @@ voi koskaan ajautua niistä eri linjalle. Kutsutaan automaattisesti JOKA
   Kenen kirjanpitoon tämä lopulta kuuluisi (jaettu founderien kesken? erillinen
   "brändi"-tili?) ei ole yksiselitteinen nykyisestä koodista — päätä tämä
   ennen kuin lisäät sen kirjanpitoon.
-- **Alihankkijoiden (esim. Jani) korvaukset** — nämä on jo netotettu pois
-  founderien tuloksesta FR8-kate-laskennassa (`shared/project.ts` →
-  `computeEraDebts`, `marginCents` = erä − palkat) ennenkuin mitään kirjataan
-  founderin kirjanpitoon. Alihankkijan oma kirjanpito on hänen omansa,
-  tämän järjestelmän ulkopuolella.
+- **Tekijöiden LASKUTTAMATON velka** (`reserveCents`) — se osa tekijöiden
+  ansaitsemasta palkasta josta ei ole vielä erälaskua. Kohta 5 kirjaa
+  tositteelliset erälaskut; loppu jää kirjaamatta kahdesta syystä: (a) siitä ei
+  ole tositetta, ja (b) sen ainoa lähde on karttablobi (`projectData`), jota
+  uudelleenrakennus **ei tarkoituksella lue** — se ajetaan joka
+  `/api/finance/*`-pyynnöllä ja blobi on kymmeniä megatavuja per urakkakeikka.
+  Luku on nähtävissä keikan tasausnäkymässä (`reserveCents`,
+  `shared/founder-settlement.ts`) ja etusivun urakkakortissa. Tilinpäätöksessä
+  tämä on jaksotuskysymys (siirtovelka) — ks. "Mitä tässä on YHÄ auki".
+  **HUOM:** aiemmin tässä luki että alihankkijakorvaukset on "jo netotettu pois
+  katteessa". Se ei pitänyt paikkaansa: kirjaussääntö kirjasi bruton erän, ei
+  katetta. Ks. kohta 5.
+- **Käsin kirjatut tekijämaksut** (`CrewMember.payouts`, vanha kanava) — raha on
+  liikkunut, mutta kanava ei tallenna maksajaa eikä ostajaa, joten kulua ei voi
+  kohdistaa kenenkään kirjanpitoon (invariantti 18: ei arvata). Nämä näkyvät
+  varoituksena tasauksessa (`unattributedPaidCents`). Kirjanpitoon ne saa
+  mukaan tekemällä maksusta erälaskun.
 - **Aloitustuki/yritysseteli** (`startup_bonus_usages`) — 4H-yhdistyksen tuki,
   ei Puuhapatetin liiketoiminnan tuloa/menoa tässä muodossa; näkyy edelleen
   "Aloitustuki"-dropdownissa ennallaan.
@@ -438,10 +483,25 @@ Näitä ei ratkaistu koodissa, koska ne ovat verotus- eivät ohjelmointikysymyks
    hyvityslaskukäsittelyn eikä pelkkää poissulkemista.
 5. **10 %:n palvelumaksu brändille** — onko se neljäs sisäinen myynti joka
    kuuluu jonkun liikevaihtoon? `post.ts` ei kirjaa sitä lainkaan.
-6. **Tuloslaskelma yliarvioi katetta.** `post.ts` kirjaa koko erän tilille 3000
-   Myynnit eikä veloita alihankkijakulua lainkaan. Näillä luvuilla se
-   yliarvioi laskuttajan tulosta vähintään jo maksetun 1 940 €:n verran. Eri
-   vika kuin ALV-kortti; ei korjattu tässä.
+6. **Laskuttamattoman tekijävelan jaksotus.** Alihankkijakulu kirjautuu nyt
+   (ks. oma osio alla), mutta vain tositteellisista erälaskuista. Se osa
+   tekijöiden ansainnasta josta ei ole vielä laskua (`reserveCents`,
+   lippulaivakeikassa ~3 636,50 €) jää kirjaamatta, joten tuloslaskelma
+   yliarvioi tulosta yhä sen verran. Kysymykset kirjanpitäjälle:
+   **(a)** pitääkö tilinpäätöksessä tehdä jaksotusvienti (4000 debet / 2800
+   Ostovelat kredit) tästä velasta, ja jos kyllä, kelpaako karttadatasta
+   johdettu luku sen perusteeksi ilman tositetta;
+   **(b)** jos jaksotetaan kulu, pitääkö myyntipuoli jaksottaa samalla logiikalla
+   (1700 Myyntisaamiset) — nyt molemmat puolet ovat tarkoituksella samalla,
+   laskun päivään sidotulla perusteella ja vastatilinä on aina Pankkitili;
+   **(c)** kumman johtajan kannettavaa velka on, jos se jaksotetaan — tasaus
+   jakaa varauksen oletuksena tasan (invariantti 17), mutta kirjanpito on
+   henkilökohtainen.
+7. **Käsin kirjatut tekijämaksut ilman maksajaa.** Vanhan kanavan payoutit
+   (~380 € lippulaivakeikassa) ovat oikeaa maksettua rahaa, mutta niiltä puuttuu
+   sekä ostaja että tosite, joten ne eivät ole kummankaan kirjanpidossa. Pitääkö
+   niistä tehdä jälkikäteen erälasku (jolloin ne kirjautuvat kohdan 5 kautta),
+   vai riittääkö käsin tehty korjausvienti?
 
 ## Alihankkijakulu tuloslaskelmaan (oli: kate yliarvioitu)
 

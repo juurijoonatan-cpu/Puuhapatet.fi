@@ -60,7 +60,7 @@ import {
 import { computePayProgress } from "@shared/payprogress";
 import { isValidYTunnus } from "@shared/y-tunnus";
 import { traineeForUserId, traineeForName, type TraineeInfo } from "@shared/trainees";
-import { computeBillerTurnover, computeFounderSettlement } from "./finance/settlement";
+import { computeBillerTurnover, computeFounderSettlement, type InternalInvoiceRow } from "./finance/settlement";
 import { getIncomeStatement, getBalanceSheet } from "./finance/reports";
 import { registerFinanceRoutes } from "./finance/routes";
 import { uploadPdf } from "./drive/upload";
@@ -2332,7 +2332,37 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // computeBillerTurnover lukee vain gigData:n ja pienet kentät.
       const rows = (await db.select({ ...MONEY_JOB_COLS, projectData: sql<null>`null` })
         .from(jobs)) as typeof jobs.$inferSelect[];
-      res.json(computeBillerTurnover(rows));
+      /**
+       * YRITTÄJIEN VÄLISET LASKUT mukaan liikevaihtoon.
+       *
+       * Nämä puuttuivat kokonaan: `computeBillerTurnover` sai vain `jobs`-rivit,
+       * joten ALV-kortti mittasi "asiakasrahaa jonka tämä johtaja keräsi" eikä
+       * "laskuja jotka tämä Y-tunnus lähetti". Koska johtajat jakavat erät
+       * keskenään ja siirtävät rahan laskuttamalla toisiaan, juuri se osa
+       * kummankin liikevaihdosta oli näkymätöntä — ja 20 000 €:n raja voi
+       * ylittyä ilman että kortti varoittaa.
+       *
+       * Vain laskurivit summataan. `founder_settlements` (kirjatut maksut)
+       * luetaan erikseen VERTAILUUN eikä summaan: sama tapahtuma on kahdessa
+       * taulussa, ja yhteenlasku tuplaisi liikevaihdon.
+       */
+      let internal: InternalInvoiceRow[] = [];
+      let settledCents = 0;
+      try {
+        internal = await db.select({
+          senderId: eraInvoices.senderId, kind: eraInvoices.kind, tila: eraInvoices.tila,
+          totalCents: eraInvoices.totalCents, sentAt: eraInvoices.sentAt, createdAt: eraInvoices.createdAt,
+        }).from(eraInvoices).where(eq(eraInvoices.kind, "johtaja_valinen"));
+      } catch (e: any) {
+        if (!isMissingTableError(e)) throw e;
+      }
+      try {
+        const settled = await db.select({ cents: founderSettlements.cents }).from(founderSettlements);
+        settledCents = settled.reduce((s, r) => s + (r.cents || 0), 0);
+      } catch (e: any) {
+        if (!isMissingTableError(e)) throw e;
+      }
+      res.json(computeBillerTurnover(rows, internal, settledCents));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -9148,6 +9178,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
        * vain ei palauttanut niitä.
        */
       const dueByFounder: Record<string, number> = {};
+      /**
+       * Mitä kumpikin johtaja on OIKEASTI ansainnut urakkakeikoista.
+       *
+       * Tämä puuttui, ja siksi etusivun "Oma tulo" ei sisältänyt urakkakeikoista
+       * senttiä: se summaa `jobs.agreedPrice`ia vain `status = "done"`
+       * -keikoilta, ja urakkakeikka on `in_progress` koko kestonsa ajan. Jos
+       * joku merkitsee sen valmiiksi, luku hyppää sopimuksen KATTOON jaettuna
+       * tekijämäärällä — mikä ei ole liikevaihtoa eikä katetta.
+       *
+       * `entitledCents` on moottorin oma vastaus (`computeTasaus`): oma pesutyö
+       * + omat keltaiset + tasaosuus katteesta. Se on jo laskettu joka keikalle.
+       */
+      const entitledByFounder: Record<string, number> = {};
       let invoicedCents = 0, unassignedCents = 0;
       let workerEarnedCents = 0, workerPaidCents = 0;
       let reserveCents = 0, unattributedPaidCents = 0;
@@ -9181,6 +9224,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           receivedByFounder[r.id] = (receivedByFounder[r.id] ?? 0) + r.receivedCents;
           netByFounder[r.id] = (netByFounder[r.id] ?? 0) + r.netCents;
           dueByFounder[r.id] = (dueByFounder[r.id] ?? 0) + r.dueCents;
+          entitledByFounder[r.id] = (entitledByFounder[r.id] ?? 0) + r.entitledCents;
         }
         reserveCents += t.result.reserveCents;
         // Kirjatut maksut joilla ei ole maksajaa: ne ovat oikeasti lähteneet
@@ -9227,6 +9271,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           workerOpenCents: Math.max(0, workerEarnedCents - workerPaidCents),
           netByFounder,
           dueByFounder,
+          entitledByFounder,
           reserveCents,
           unattributedPaidCents,
           transfer: transferHint,

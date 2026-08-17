@@ -568,6 +568,11 @@ export default function TaxExportPage() {
                       <div className="space-y-2">
                         {turnover.billers.map((b) => {
                           const cents = yearMap[b.id] ?? 0;
+                          // Erittely: asiakaslaskut vs. yrittäjien väliset laskut.
+                          // Ilman tätä kokonaisluku vain kasvoi selittämättä, kun
+                          // sisäiset laskut alkoivat kertyä mukaan.
+                          const custCents = turnover.customerByYear?.[year]?.[b.id] ?? 0;
+                          const intCents = turnover.internalByYear?.[year]?.[b.id] ?? 0;
                           const pct = limitCents > 0 ? (cents / limitCents) * 100 : 0;
                           const level = pct >= 100 ? "over" : pct >= 70 ? "near" : "ok";
                           return (
@@ -578,6 +583,11 @@ export default function TaxExportPage() {
                                   {fmt(cents)} <span className="text-[11px] font-normal text-muted-foreground">/ {turnover.limitEur.toLocaleString("fi-FI")} €</span> {level === "ok" ? "✓" : level === "near" ? "⚠️" : "❗"}
                                 </span>
                               </div>
+                              {intCents > 0 && (
+                                <p className="text-[11px] text-muted-foreground tabular-nums">
+                                  asiakaslaskut {fmt(custCents)} + yrittäjien väliset {fmt(intCents)}
+                                </p>
+                              )}
                               {level !== "ok" && (
                                 <>
                                   <div className="h-2 w-full rounded-full bg-muted overflow-hidden mt-1">
@@ -647,8 +657,25 @@ export default function TaxExportPage() {
                           </div>
                         </div>
                       )}
+                      {/* Kirjatut yrittäjien väliset MAKSUT joille ei löydy lähetettyä
+                          laskua. Näitä ei summata liikevaihtoon: sama tapahtuma on
+                          kahdessa taulussa (`era_invoices` + `founder_settlements`),
+                          ja yhteenlasku tuplaisi. Mutta erosta on kerrottava —
+                          muuten osa myynnistä jää näkymättä. */}
+                      {(turnover.settledWithoutInvoiceCents ?? 0) > 0 && (
+                        <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                          <p className="text-[11px] text-amber-600">
+                            {fmt(turnover.settledWithoutInvoiceCents ?? 0)} yrittäjien välisiä maksuja on kirjattu
+                            ilman vastaavaa lähetettyä laskua, eikä niitä lasketa yllä olevaan liikevaihtoon.
+                            Tee niistä lasku, niin ne näkyvät oikein rajassa.
+                          </p>
+                        </div>
+                      )}
                       <p className="text-[11px] text-muted-foreground mt-3 pt-2 border-t border-border">
-                        Raja koskee henkilön <b>kaikkea</b> liiketoimintaa — muista myös Puuhapatetin ulkopuoliset tulot.
+                        Luku sisältää asiakaslaskut <b>ja</b> yrittäjien väliset lähetetyt laskut — molemmat ovat
+                        omaa myyntiä ja kerryttävät rajaa. Raja koskee henkilön <b>kaikkea</b> liiketoimintaa, joten
+                        muista myös Puuhapatetin ulkopuoliset tulot. Laskuttajaa vailla olevat erät (yllä) eivät ole
+                        mukana kenenkään luvussa.
                       </p>
                     </Card>
                   );

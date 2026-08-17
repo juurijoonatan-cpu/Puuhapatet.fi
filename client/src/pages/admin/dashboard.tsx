@@ -65,13 +65,21 @@ export default function AdminDashboard() {
     if (profile) {
       api.getJobs().then((res) => {
         if (res.ok && res.data) {
-          const rows = res.data as { job: { assignedTo: string | null; status: string; agreedPrice: number; waiveFee?: boolean; quoteStatus?: string | null; unitCount?: number | null; isTaloyhtiio?: boolean | null } }[];
+          const rows = res.data as { job: { assignedTo: string | null; status: string; agreedPrice: number; waiveFee?: boolean; quoteStatus?: string | null; unitCount?: number | null; isTaloyhtiio?: boolean | null; isCustomGig?: boolean | null; gigData?: string | null } }[];
           const mine = rows.filter(r => isMyJob(r.job.assignedTo, profile.id));
           setMyJobTotal(mine.length);
           setMyJobUpcoming(mine.filter(r => r.job.status === "scheduled").length);
           const rev = mine
             // A declined quote earned nothing — keep it out of personal income.
-            .filter(r => r.job.status === "done" && r.job.quoteStatus !== "declined")
+            // URAKKAKEIKAT POIS. Niiden `agreedPrice` on sopimuksen KATTO, ei
+            // ansaittua rahaa, eikä se jakaudu tekijämäärällä. Jos urakkakeikka
+            // merkitään valmiiksi, tämä summa hyppäisi kattoon jaettuna
+            // tekijöillä — luku joka ei ole liikevaihtoa eikä katetta. Kaikki
+            // muut tämän taulun lukijat suodattavat urakkakeikat pois
+            // (server/finance/settlement.ts, post.ts); tämä oli ainoa joka ei.
+            // Urakkakeikkojen oma ansio tulee `entitledByFounder`ista alla.
+            .filter(r => r.job.status === "done" && r.job.quoteStatus !== "declined"
+              && !r.job.isCustomGig && !r.job.gigData)
             .reduce((sum, r) => {
               const workerCount = Math.max(1, parseWorkerIds(r.job.assignedTo).length);
               // taloyhtiö gigs bill per apartment × unitCount — use the full total.
@@ -97,6 +105,18 @@ export default function AdminDashboard() {
   const fmt = (cents: number) =>
     (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
 
+  /**
+   * Oma ansio URAKKAKEIKOISTA.
+   *
+   * Tämä puuttui "Oma tulo" -luvusta kokonaan. Luku summasi vain
+   * `status = "done"` -keikkojen `agreedPrice`ia, ja urakkakeikka on
+   * `in_progress` koko kestonsa ajan — joten koko urakkatyö oli näkymätöntä.
+   * `entitledCents` on moottorin oma vastaus (oma pesutyö + omat keltaiset +
+   * tasaosuus katteesta), EI kassaan kerätty raha: kerätystä valtaosa on
+   * tekijöiden palkkaa eikä omaa tuloa.
+   */
+  const myGigEntitled = (profile && gigMoney?.totals.entitledByFounder?.[profile.id]) || 0;
+
   const myDebt = workerStats && profile ? (workerStats.workerFees[profile.id] ?? 0) : null;
   const myJobCount = workerStats && profile ? (workerStats.workerJobCount[profile.id] ?? 0) : null;
 
@@ -120,11 +140,15 @@ export default function AdminDashboard() {
         },
         {
           title: "Oma tulo",
-          value: myRevenue === null ? "…" : fmt(Math.max(0, myRevenue - (myInvestmentShare ?? 0))),
+          value: myRevenue === null ? "…" : fmt(Math.max(0, myRevenue + myGigEntitled - (myInvestmentShare ?? 0))),
           icon: TrendingUp,
-          description: myInvestmentShare
-            ? `Keikat ${myRevenue !== null ? fmt(myRevenue) : "…"} − investoinnit ${fmt(myInvestmentShare)}`
-            : "Valmistuneiden omien keikkojen tulot",
+          // Kolme osaa erikseen, koska yksi luku ilman erittelyä oli juuri se
+          // mikä ei täsmännyt millään: urakkakeikkojen ansio puuttui kokonaan.
+          description: [
+            `Pikkukeikat ${myRevenue !== null ? fmt(myRevenue) : "…"}`,
+            myGigEntitled > 0 ? `urakat ${fmt(myGigEntitled)}` : null,
+            myInvestmentShare ? `− investoinnit ${fmt(myInvestmentShare)}` : null,
+          ].filter(Boolean).join(" + ").replace("+ −", "−"),
           color: "text-green-600 dark:text-green-400",
           bgColor: "bg-green-100 dark:bg-green-900/30",
         },

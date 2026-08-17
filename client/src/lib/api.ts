@@ -715,6 +715,12 @@ export const api = {
       limitEur: number;
       billers: { id: string; name: string; yTunnus?: string }[];
       turnoverByYear: Record<string, Record<string, number>>;
+      /** Pelkät asiakaslaskut — erittelyä varten. */
+      customerByYear?: Record<string, Record<string, number>>;
+      /** Yrittäjien väliset LÄHETETYT laskut. Nämä puuttuivat ennen kokonaan. */
+      internalByYear?: Record<string, Record<string, number>>;
+      /** Kirjatut yrittäjien väliset maksut joille ei löydy laskua. Ei summata. */
+      settledWithoutInvoiceCents?: number;
       /** Done small jobs with no biller set — attribute them or the tracker under-counts. */
       unassignedByYear: Record<string, { count: number; cents: number }>;
       /** Recorded gig instalments (urakkaerät) with no biller — in NOBODY's
@@ -789,6 +795,8 @@ export const api = {
         netByFounder: Record<string, number>;
         /** Poikkeama johtajien keskiarvosta = kumpi on velkaa kummalle. */
         dueByFounder?: Record<string, number>;
+        /** Mitä kumpikin johtaja on ANSAINNUT urakkakeikoista (oma työ + osuus katteesta). */
+        entitledByFounder?: Record<string, number>;
         /** Johtajien käsissä oleva raha joka kuuluu vielä TEKIJÖILLE. Ei kummankaan katetta. */
         reserveCents?: number;
         /** Maksut jotka lähtivät tileiltä ilman merkintää maksajasta. */

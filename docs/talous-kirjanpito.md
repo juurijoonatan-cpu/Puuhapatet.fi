@@ -298,3 +298,133 @@ estää nyt poistot jotka veisivät tositteen mukanaan. Sääntö on aina sama:
 **Yhä auki:** tilikauden sulkeminen (`fiscalYears.isClosed`) on skeemassa mutta
 toteuttamatta. Kunnes se on tehty, `rebuildLedgers()` rakentaa päiväkirjan
 uudelleen joka haulla, eli poisto avoimelta tilikaudelta ei jätä vastakirjausta.
+
+---
+
+# Kolme korjattua lukua etusivulla ja ALV-kortissa (17.8.2026)
+
+Perustaja huomasi kolme lukua jotka eivät vastanneet todellisuutta. Kaikki
+kolme olivat aitoja vikoja, eivät väärinlukemisia. Tämä osio kirjaa mitä ne
+olivat ja miksi — jotta samoja ei rakenneta takaisin.
+
+## 1. "Pitää liikaa" näytti TEKIJÖIDEN rahat johtajien velkana
+
+Etusivun **Urakkakeikat — raha** -kortti näytti per johtaja `netByFounder`in eli
+`holdsCents − entitledCents` (`shared/founder-settlement.ts`). Rivien nettojen
+summa on **määritelmällisesti `reserveCents`** — raha jota johtajat pitävät
+mutta joka kuuluu vielä tekijöille. Invariantti 17 sanoo nimenomaisesti ettei
+sitä jaeta eikä se ole kummankaan katetta.
+
+Seuraus: **molemmat** johtajat lukivat yhtä aikaa "pitää liikaa", mikä on
+velkalukemana mahdotonta — kaksi osapuolta ei voi olla toisilleen
+nettovelallisia. Se oli oire, ei paradoksi: mittatikku oli kummankin oma
+ansainta, ei toinen johtaja.
+
+Todellinen tilanne kortin omilla luvuilla:
+
+| | |
+|---|---|
+| Kortin väite | J pitää liikaa 2 728,25 € · M pitää liikaa 1 288,25 € |
+| Σ = tekijöiden varaus | 4 016,50 € |
+| Kummankin osuus varauksesta | 2 008,25 € |
+| **Oikea johtajien välinen epätasapaino** | **720,00 €** (J → M) |
+
+Eli 2 728,25 = 2 008,25 + 720 ja 1 288,25 = 2 008,25 − 720.
+
+**Korjaus:** kortti näyttää nyt `dueByFounder`in ("maksaa" / "saa"), yhden
+lauseen siitä mitä pankissa oikeasti liikkuu **suuntineen**, ja tekijöiden
+varauksen erikseen omana rivinään. Luvut olivat jo laskettuna moottorissa —
+`/api/admin/gig-money` vain ei palauttanut niitä.
+
+**Sivulöydös:** 380,00 € tekijöille maksettua on kirjattu ilman maksajaa, joten
+moottori ei voi vähentää sitä keneltäkään (invariantti 18: se ei arvaa).
+Se paisutti molempia lukuja yhteensä 380 €. Keikan oma tasausnäkymä varoitti
+tästä; etusivu ei varoittanut lainkaan. Nyt varoittaa.
+
+## 2. "Oma tulo" ei sisältänyt urakkakeikoista senttiä
+
+`client/src/pages/admin/dashboard.tsx` laski luvun selaimessa `/api/jobs`in
+riveistä: `assignedTo` + `status === "done"`, summana `agreedPrice`
+jaettuna tekijämäärällä. **Urakkakeikka on `in_progress` koko kestonsa ajan**,
+joten koko urakkatyö oli näkymätöntä — 572,13 € "omaa tuloa" samalla kun
+urakasta oli laskutettu 6 150 €.
+
+Pahempi puoli: suodattimesta puuttui `isCustomGig`. Kaikki muut saman taulun
+lukijat rajaavat urakkakeikat pois (`server/finance/settlement.ts`,
+`post.ts`, `routes.ts`); tämä oli ainoa joka ei. Jos joku merkitsee
+urakkakeikan valmiiksi, luku hyppäisi **sopimuksen kattoon jaettuna
+tekijämäärällä** — luku joka ei ole liikevaihtoa eikä katetta, ja joka
+laskettaisiin toisen kerran urakkakortissa.
+
+**Korjaus:** urakkakeikat pois naiivista summasta, ja tilalle johtajan **oikea**
+ansio moottorista (`entitledCents` = oma pesutyö + omat keltaiset + tasaosuus
+katteesta). Kortti näyttää erittelyn "pikkukeikat X + urakat Y − investoinnit Z",
+koska yksi luku ilman erittelyä oli juuri se mikä ei täsmännyt millään.
+
+**Huom mikä EI ollut vikaa:** 4 575,00 € ei ole Joonatanin tulo — se on hänen
+Y-tunnuksellaan **kerätty kassa**. Siitä 5 576,50 €/6 150 € on tekijöiden
+palkkaa; johtajien yhteinen kate koko urakasta on 573,50 €.
+
+## 3. ALV-raja ei nähnyt yrittäjien välisiä laskuja
+
+`computeBillerTurnover` sai **vain `jobs`-rivit**
+(`server/routes.ts` → `server/finance/settlement.ts`). Se mittasi siis
+"asiakasrahaa jonka tämä johtaja keräsi" eikä "laskuja jotka tämä Y-tunnus
+lähetti".
+
+Se on väärä mittari juuri tälle liiketoimintamallille: johtajat **jakavat erät
+tarkoituksella keskenään** ettei kummankaan liikevaihto ylitä 20 000 €:n
+vähäisen toiminnan rajaa, ja siirtävät rahan oikealle ansaitsijalle
+**laskuttamalla toisiaan** omilla Y-tunnuksillaan. Lähetetty lasku on
+lähettäjän omaa myyntiä ja kerryttää hänen rajaansa.
+
+Kaksi mekanismia oli täysin näkymättömiä:
+
+| Taulu | Tila ennen |
+|---|---|
+| `era_invoices`, `kind = "johtaja_valinen"` | numeroitu, viitteellinen, sähköpostitettu, PDF-arkistoitu lasku — **ei missään liikevaihdossa** |
+| `founder_settlements` | kirjattu maksu — kirjanpidossa tilillä 3010 (myynti), **ei ALV-kortissa** |
+
+Sama euro oli siis **tuloslaskelmassa myyntiä ja ALV-kortissa ei mitään**,
+samalla sivulla.
+
+**Korjaus:** `johtaja_valinen`-laskut (tila `lähetetty` tai `hyväksytty`,
+vuosi lähetyshetkestä) lasketaan lähettäjän liikevaihtoon. Maksajalta ei
+vähennetä mitään — osto ei ole negatiivista liikevaihtoa, ja nykyinen
+vähennyksen puuttuminen oli jo oikein. Kortti näyttää erittelyn
+"asiakaslaskut X + yrittäjien väliset Y".
+
+### Kaksoislaskennan esto
+
+`era_invoices` ja `founder_settlements` ovat **kaksi kirjausta samasta
+taloudellisesta tapahtumasta**. Niitä ei summata yhteen. Laskurivit voittavat
+(lasku on tosite, jolla on numero ja joka on muuttumaton lähetyksen jälkeen), ja
+ero raportoidaan omana varoituksenaan (`settledWithoutInvoiceCents`) — muuten
+osa myynnistä jäisi hiljaa näkymättä.
+
+Vartija: `server/finance/biller-turnover.test.ts` (10 testiä).
+
+### Mitä tässä on YHÄ auki — kirjanpitäjän päätettävää
+
+Näitä ei ratkaistu koodissa, koska ne ovat verotus- eivät ohjelmointikysymyksiä:
+
+1. **Kumpi taulu on kanoninen** yrittäjien välisille myynneille? Nyt
+   `era_invoices` voittaa ja `founder_settlements` vain raportoidaan. Pitkällä
+   aikavälillä toisen pitäisi **johtua** toisesta, ei elää rinnalla.
+2. **Suorite- vai maksuperuste.** Kortti käyttää nyt kolmea eri päivää:
+   urakkaerä laskutushetkestä, pikkukeikka **työn päivästä**
+   (`scheduledAt ?? createdAt`), sisäinen lasku lähetyshetkestä. Peruste pitäisi
+   lyödä lukkoon kertaalleen kaikille kolmelle.
+3. **Kahden vuoden ehto.** Vähäisen toiminnan raja riippuu 1.1.2025 alkaen sekä
+   kuluvasta että edellisestä kalenterivuodesta. Kortti näyttää yhden vuoden
+   kerrallaan. Data on jo olemassa (`turnoverByYear`) — sääntö on
+   varmistettava vero.fi:ltä ennen koodaamista.
+4. **Mikä `tila` kelpaa.** Nyt `lähetetty` + `hyväksytty`. Lähetetty mutta
+   `hylätty` lasku on yhä tosite (`isEraInvoiceReceipt`) ja saattaisi vaatia
+   hyvityslaskukäsittelyn eikä pelkkää poissulkemista.
+5. **10 %:n palvelumaksu brändille** — onko se neljäs sisäinen myynti joka
+   kuuluu jonkun liikevaihtoon? `post.ts` ei kirjaa sitä lainkaan.
+6. **Tuloslaskelma yliarvioi katetta.** `post.ts` kirjaa koko erän tilille 3000
+   Myynnit eikä veloita alihankkijakulua lainkaan. Näillä luvuilla se
+   yliarvioi laskuttajan tulosta vähintään jo maksetun 1 940 €:n verran. Eri
+   vika kuin ALV-kortti; ei korjattu tässä.

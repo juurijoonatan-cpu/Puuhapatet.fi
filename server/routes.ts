@@ -9216,6 +9216,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       let invoicedCents = 0, unassignedCents = 0;
       let workerEarnedCents = 0, workerPaidCents = 0;
       let reserveCents = 0, unattributedPaidCents = 0;
+      /**
+       * Laskutus KUUKAUSITTAIN ("YYYY-MM" → senttiä).
+       *
+       * Etusivun trendikuvaaja tarvitsee aidon aikasarjan. Ilman tätä sarja
+       * olisi pitänyt keksiä tai jättää pois — ja keksitty käyrä yrityksen
+       * omalla kojelaudalla on pahempi kuin ei käyrää lainkaan. Erämaksuilla on
+       * aikaleima (`GigPayment.t`), joten sarja on suoraan luettavissa.
+       */
+      const monthlyInvoicedCents: Record<string, number> = {};
       // Nettosiirto kaikkien keikkojen yli, etumerkillisenä yhden johtajan
       // suuntaan. Kootaan `dueByFounder`ista, jotta suunta säilyy.
       let transferHint: { fromId: string; toId: string; cents: number } | null = null;
@@ -9234,6 +9243,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         // Keikka ilman rahaa ei kuulu listalle — muuten kortti täyttyisi nollista.
         if (payments.length === 0 && invoices.length === 0) continue;
         const t = buildTasaus(project, payments, invoices, project.settlement);
+
+        for (const p of livePayments(gig?.payments)) {
+          const cents = Math.round(p?.amountCents || 0);
+          if (cents <= 0 || !p?.t) continue;
+          const d = new Date(p.t);
+          const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+          monthlyInvoicedCents[key] = (monthlyInvoicedCents[key] ?? 0) + cents;
+        }
 
         const gigInvoiced = t.input.p1PotCents + t.input.p2PotCents;
         const gigWorkerEarned = t.input.workerP1EarnedCents + t.input.workerP2EarnedCents;
@@ -9296,6 +9313,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           entitledByFounder,
           reserveCents,
           unattributedPaidCents,
+          monthlyInvoicedCents,
           transfer: transferHint,
         },
         gigs,

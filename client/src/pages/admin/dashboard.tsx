@@ -334,41 +334,46 @@ export default function AdminDashboard() {
                 );
               })}
 
-              {/* Yksi lause siitä mitä pankissa oikeasti liikkuu. */}
+              {/* Yksi lause siitä mitä pankissa oikeasti liikkuu — ja polku sinne
+                  missä sen voi kuitata. Luku ilman toimintoa on umpikuja: siirto
+                  merkitään tehdyksi keikan Maksut-näkymän tasausosiossa
+                  ("Merkitse siirretyksi"), eikä sinne päässyt tästä mitenkään. */}
               {(() => {
                 const tr = gigMoney.totals.transfer;
                 const nameOf = (id: string) => gigMoney.founders.find((x) => x.id === id)?.name ?? id;
+                const moneyGigs = gigMoney.gigs ?? [];
+                const settleHref = moneyGigs.length === 1
+                  ? `/admin/gig/${moneyGigs[0].jobId}/projekti`
+                  : "/admin/gigs";
                 if (!tr || tr.cents < 100) {
-                  return (
-                    <p className="text-xs text-green-600 dark:text-green-400 pt-1">
-                      Johtajien kesken tasan — kumpikaan ei ole velkaa toiselle.
-                    </p>
-                  );
+                  return <p className="text-xs text-green-600 dark:text-green-400 pt-1">Tasan</p>;
                 }
                 return (
-                  <p className="text-xs text-amber-600 dark:text-amber-400 pt-1">
-                    Tasaus: {nameOf(tr.fromId)} maksaa {nameOf(tr.toId)}lle {fmt(tr.cents)}.
-                  </p>
+                  <Link
+                    href={settleHref}
+                    className="block text-xs text-amber-600 dark:text-amber-400 pt-1 hover:underline"
+                  >
+                    Tasaus {fmt(tr.cents)}: {nameOf(tr.fromId)} → {nameOf(tr.toId)} · merkitse tehdyksi →
+                  </Link>
                 );
               })()}
 
               {/* Tekijöiden raha erikseen, jottei sitä lueta johtajien katteeksi. */}
               {(gigMoney.totals.reserveCents ?? 0) > 0 && (
-                <p className="text-xs text-muted-foreground pt-1 leading-relaxed">
-                  Tämän lisäksi käsissänne on {fmt(gigMoney.totals.reserveCents ?? 0)} joka kuuluu
-                  tekijöille. Se ei ole kummankaan omaa eikä sitä jaeta — molemmat kantavat sitä
-                  yhtä paljon kunnes tekijät on maksettu.
+                <p className="text-xs text-muted-foreground pt-1">
+                  Tekijöille kuuluvaa käsissä {fmt(gigMoney.totals.reserveCents ?? 0)}
                 </p>
               )}
 
               {/* Maksut ilman maksajaa vääristävät yllä olevia lukuja. Keikan oma
                   tasausnäkymä varoittaa tästä; etusivu ei varoittanut lainkaan. */}
               {(gigMoney.totals.unattributedPaidCents ?? 0) > 0 && (
-                <p className="text-xs text-amber-600 dark:text-amber-400 pt-1 leading-relaxed">
-                  {fmt(gigMoney.totals.unattributedPaidCents ?? 0)} tekijöille maksettua on kirjattu
-                  ilman tietoa siitä kumpi maksoi — merkitse maksaja keikan Maksut-näkymässä, niin
-                  yllä olevat luvut täsmäävät.
-                </p>
+                <Link
+                  href={(gigMoney.gigs ?? []).length === 1 ? `/admin/gig/${(gigMoney.gigs ?? [])[0].jobId}/projekti` : "/admin/gigs"}
+                  className="block text-xs text-amber-600 dark:text-amber-400 pt-1 hover:underline"
+                >
+                  {fmt(gigMoney.totals.unattributedPaidCents ?? 0)} maksettu ilman maksajamerkintää →
+                </Link>
               )}
               {gigMoney.totals.unassignedCents > 0 && (
                 <p className="text-xs text-amber-600 dark:text-amber-400 pt-1">

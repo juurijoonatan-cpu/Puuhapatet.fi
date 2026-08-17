@@ -88,7 +88,7 @@ kunnes niitä tarvitaan:
 | 2900 | ALV-velka | liability | ei (varattu, ALV-rekisteröinnin jälkeen) |
 | 3000 | Myynnit | revenue | **kyllä** — asiakaslaskut |
 | 3010 | Myynnit toiselle yrittäjälle | revenue | **kyllä** — yrittäjien väliset laskut (saatu) |
-| 4000 | Ostot ja ulkopuoliset palvelut | expense | ei (varattu) |
+| 4000 | Ostot ja ulkopuoliset palvelut | expense | **kyllä** — tekijöiden (alihankkijoiden) erälaskut |
 | 4010 | Ostot toiselta yrittäjältä | expense | **kyllä** — yrittäjien väliset laskut (maksettu) |
 | 4900 | Kalusto ja välineet | expense | **kyllä** — investoinnit (kertapoisto) |
 | 4990 | Muut kulut | expense | **kyllä** — `expenses`-taulun kuitit |
@@ -442,3 +442,57 @@ Näitä ei ratkaistu koodissa, koska ne ovat verotus- eivät ohjelmointikysymyks
    Myynnit eikä veloita alihankkijakulua lainkaan. Näillä luvuilla se
    yliarvioi laskuttajan tulosta vähintään jo maksetun 1 940 €:n verran. Eri
    vika kuin ALV-kortti; ei korjattu tässä.
+
+## Alihankkijakulu tuloslaskelmaan (oli: kate yliarvioitu)
+
+`buildDraftEntries` kirjasi urakkakeikan asiakaserän kokonaan myyntinä tilille
+3000 **eikä veloittanut alihankkijakulua lainkaan**. Dokumentti perusteli sen
+sillä että tekijöiden palkka "netottuu jo katteen kautta" — mutta käytössä oleva
+vientisääntö kirjaa BRUTON erän, ei katetta. Laskuttavan johtajan tuloslaskelma
+yliarvioi siis tuloksen kaikella tekijöille maksetulla ja maksettavalla.
+
+Mittaluokka oikealla datalla: 6 150 € laskutettua, josta 5 576,50 € on
+tekijöiden palkkaa. Todellinen yhteinen kate on 573,50 €.
+
+**Nyt:** jokainen LÄHETETTY tai HYVÄKSYTTY tekijän erälasku kirjautuu
+
+```
+4000 Ostot ja ulkopuoliset palvelut   (debet)
+1910 Pankkitili                       (kredit)
+```
+
+sen johtajan kirjanpitoon jonka lasku nimeää **ostajaksi** — eli oletuksena
+saman johtajan, jonka kirjanpitoon erän myynti meni.
+
+Päätökset ja perustelut:
+
+| Kysymys | Valinta | Miksi |
+|---|---|---|
+| Mikä tili | **4000**, ei 4010 | 4010 on varattu yrittäjien VÄLISILLE laskuille. Jos nämä menisivät samalle tilille, tuloslaskelmasta ei näkisi erikseen ulos maksettua palkkaa ja johtajien keskinäistä siirtoa (joka brändin tasolla kuittaa itsensä). Ei myöskään 5000 Henkilöstökulut: maksu on **työkorvausta eikä palkkaa**. |
+| Mistä summa | `eraInvoiceGrossCents` | Sama funktio jota tekijöiden maksettavan yksi totuuden lähde (`shared/worker-payouts.ts`) käyttää — ei uutta kaavaa. **Brutto**, ei ennakolla vähennetty maksettava (invariantti 3). |
+| Milloin kirjautuu | laskun päivä (`sentAt`) | Suoriteperuste: vasta lähetetty lasku on tosite. Luonnos ei ole kulu. |
+| Kumman kirjanpitoon | laskun **ostaja** | Tosite nimeää ostajan; johtajien keskinäinen oikaisu kulkee `founder_settlements`-vientien kautta (invariantti 16). |
+| Tuntematon ostaja | **ei kirjata** | Sama sääntö kuin laskuttajattomalla erällä ja invariantti 18: kohdentamatonta rahaa ei arvata kenellekään. |
+| Avain | `job:<id>:tekijalasku:<inv.id>` | Erälaskun id on uniikki, joten uudelleenajo ei tuota duplikaattia — erottuu myös asiakaserästä ja kulukirjauksesta. |
+
+**Mitä tämä EI vielä kirjaa, tiedostetusti:** laskuttamaton tekijävelka
+(`reserveCents`). Sillä ei ole tositetta, ja luku on olemassa vain
+karttablobissa jota tämä uudelleenrakennus tarkoituksella ei lue (siirtokiintiö).
+Tuloslaskelma siis yliarvioi tulosta yhä sen verran mitä tekijöille on
+ansaittu mutta ei vielä laskutettu — mutta ero on nyt **tiedossa ja testattu**
+(`server/finance/post.test.ts`) eikä hiljainen.
+
+### Sivutuote: vientisäännöt ovat nyt testattavissa ilman kantaa
+
+`buildDraftEntries` asui tiedostossa joka importtaa `server/db.ts`:n, joka
+heittää heti ilman `DATABASE_URL`:ia — joten koko kirjanpidon sääntökirjaa ei
+voinut testata ilman tietokantaa, vaikka se on puhdas funktio. Nyt:
+
+| Moduuli | Sisältö | Riippuu kannasta |
+|---|---|---|
+| `server/finance/account-codes.ts` | tilikartan data, `ACCOUNT`, `LEDGER_DEFS` | ei |
+| `server/finance/draft-entries.ts` | **vientisäännöt** (`buildDraftEntries`) | ei |
+| `server/finance/accounts.ts` | tilien luonti kantaan (re-exportaa datan) | kyllä |
+| `server/finance/post.ts` | rivien haku + kirjaus | kyllä |
+
+Vanhat importit toimivat ennallaan, koska `accounts.ts` re-exporttaa datan.

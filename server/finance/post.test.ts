@@ -16,7 +16,12 @@
  *   5. tuntematon ostaja ei päädy kenenkään kirjanpitoon (invariantti 18).
  */
 import { describe, expect, it } from "vitest";
-import { buildDraftEntries, type WorkerInvoiceRow } from "./post";
+
+// Vientisäännöt luetaan `draft-entries.ts`:stä, joka EI importtaa `server/db.ts`:ää.
+// Siksi tämä testi ei tarvitse kantaa eikä sen mockaamista — sama lupaus kuin
+// muualla server-testeissä (ks. `query-hygiene.test.ts`, `biller-turnover.test.ts`).
+// `post.ts` itse on kirjaaja ja importtaa poolin; se ei kuulu tähän testiin.
+import { buildDraftEntries, type WorkerInvoiceRow } from "./draft-entries";
 import type { Job } from "@shared/schema";
 
 type Draft = ReturnType<typeof buildDraftEntries>[number];

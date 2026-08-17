@@ -15,6 +15,46 @@ export const jobStatusEnum = pgEnum("job_status", [
 
 // ─── Customers ────────────────────────────────────────────────────────────────
 
+/**
+ * Asiakkaan laji.
+ *
+ *   "henkilo" → yksityishenkilö
+ *   "yritys"  → yritys
+ *   "ry"      → **rekisteröity yhdistys** (non-profit). Yhdistyksellä on nimi ja
+ *               Y-tunnus kuten yrityksellä, mutta se ei ole yritys: se ei
+ *               yleensä harjoita liiketoimintaa, eikä sillä ole rahaa
+ *               samalla tavalla. Siksi yhdistyskeikka on tyypillisesti
+ *               yhteisökeikka (`ProjectData.compensation = "community"`).
+ *
+ * MIKSI TÄMÄ EIKÄ PELKKÄ `isYritys`: kaksiarvoinen lippu pakotti valitsemaan
+ * "henkilö vai yritys", ja yhdistys jouduttiin kirjaamaan yritykseksi. Silloin
+ * järjestelmä ei tiedä miksi keikasta ei makseta.
+ *
+ * `isYritys` JÄÄ ennalleen ja pysyy tosi myös yhdistyksellä: jokainen sen
+ * nykyinen seuraus on oikein myös yhdistykselle (nimi + Y-tunnus käytössä,
+ * vapaa hinnoittelu tarjouksessa, ei kotitalousvähennystä). Näin mikään
+ * olemassa oleva lukija ei muutu.
+ */
+export type CustomerType = "henkilo" | "yritys" | "ry";
+
+export function toCustomerType(v: any): CustomerType | undefined {
+  return v === "henkilo" || v === "yritys" || v === "ry" ? v : undefined;
+}
+
+/** Asiakkaan laji, myös vanhoille riveille joilla saraketta ei ole. */
+export function customerTypeOf(
+  c: { customerType?: string | null; isYritys?: boolean | null } | null | undefined,
+): CustomerType {
+  return toCustomerType(c?.customerType) ?? (c?.isYritys ? "yritys" : "henkilo");
+}
+
+/** Näyttönimi asiakaslajille. */
+export const CUSTOMER_TYPE_LABEL: Record<CustomerType, string> = {
+  henkilo: "Henkilö",
+  yritys: "Yritys",
+  ry: "Yhdistys (ry)",
+};
+
 export const customers = pgTable("customers", {
   id:          serial("id").primaryKey(),
   name:        text("name").notNull(),       // contact person (yhteyshenkilö)
@@ -24,8 +64,11 @@ export const customers = pgTable("customers", {
   notes:       text("notes"),
   ownedBy:     text("owned_by"),             // user ID of the "owner" when no jobs yet
   isYritys:    boolean("is_yritys").default(false),
-  companyName: text("company_name"),         // yrityksen nimi
+  companyName: text("company_name"),         // yrityksen / yhdistyksen nimi
   yTunnus:     text("y_tunnus"),             // Y-tunnus (FI business ID)
+  /** `CustomerType`. Nullable: puuttuva arvo johdetaan `isYritys`ista, joten
+   *  vanhat rivit vastaavat täsmälleen kuten ennen. Ks. `customerTypeOf`. */
+  customerType: text("customer_type"),
   createdAt:   timestamp("created_at").defaultNow().notNull(),
 });
 

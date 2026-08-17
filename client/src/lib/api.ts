@@ -641,6 +641,8 @@ export interface NewCustomer {
   notes?: string;
   ownedBy?: string;
   isYritys?: boolean;
+  /** `CustomerType` — "henkilo" | "yritys" | "ry". Ks. shared/schema.ts. */
+  customerType?: string;
   companyName?: string;
   yTunnus?: string;
 }
@@ -785,6 +787,14 @@ export const api = {
         workerPaidCents: number;
         workerOpenCents: number;
         netByFounder: Record<string, number>;
+        /** Poikkeama johtajien keskiarvosta = kumpi on velkaa kummalle. */
+        dueByFounder?: Record<string, number>;
+        /** Johtajien käsissä oleva raha joka kuuluu vielä TEKIJÖILLE. Ei kummankaan katetta. */
+        reserveCents?: number;
+        /** Maksut jotka lähtivät tileiltä ilman merkintää maksajasta. */
+        unattributedPaidCents?: number;
+        /** Se summa joka pankissa oikeasti liikkuu, suuntineen. */
+        transfer?: { fromId: string; toId: string; cents: number } | null;
       };
       gigs: {
         jobId: number; name: string; invoicedCents: number; workerEarnedCents: number;

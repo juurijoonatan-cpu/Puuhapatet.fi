@@ -284,25 +284,68 @@ export default function AdminDashboard() {
               ))}
             </div>
 
-            {/* Kumpi johtaja on kerännyt mitäkin — ja kumpi on velkaa kummalle. */}
+            {/* Kumpi johtaja on kerännyt mitäkin — ja kumpi on velkaa kummalle.
+                HUOM: velan mitta on `dueByFounder` (poikkeama keskiarvosta), EI
+                `netByFounder`. Netto on `käsissä − oma osuus`, ja rivien
+                nettojen summa on määritelmällisesti tekijöille kuuluva varaus
+                (invariantti 17). Kun tässä näytettiin nettoa, MOLEMMAT johtajat
+                lukivat "pitää liikaa" yhtä aikaa — velkalukemana mahdotonta —
+                ja luku oli oikeasti kummankin puolikas tekijöiden rahoista. */}
             <div className="space-y-1.5 border-t border-border pt-3">
               {gigMoney.founders.map((f) => {
                 const received = gigMoney.totals.receivedByFounder[f.id] ?? 0;
-                const net = gigMoney.totals.netByFounder[f.id] ?? 0;
+                const due = gigMoney.totals.dueByFounder?.[f.id] ?? 0;
                 return (
                   <div key={f.id} className="flex items-center justify-between gap-3 text-sm">
                     <span className="text-muted-foreground truncate">{f.name}</span>
                     <span className="flex items-center gap-3 shrink-0">
                       <span className="tabular-nums text-foreground">{fmt(received)}</span>
-                      {Math.abs(net) >= 100 && (
-                        <span className={`text-xs tabular-nums ${net > 0 ? "text-amber-600 dark:text-amber-400" : "text-green-600 dark:text-green-400"}`}>
-                          {net > 0 ? `pitää liikaa ${fmt(net)}` : `jäi vajaaksi ${fmt(-net)}`}
+                      {Math.abs(due) >= 100 && (
+                        <span className={`text-xs tabular-nums ${due > 0 ? "text-amber-600 dark:text-amber-400" : "text-green-600 dark:text-green-400"}`}>
+                          {due > 0 ? `maksaa ${fmt(due)}` : `saa ${fmt(-due)}`}
                         </span>
                       )}
                     </span>
                   </div>
                 );
               })}
+
+              {/* Yksi lause siitä mitä pankissa oikeasti liikkuu. */}
+              {(() => {
+                const tr = gigMoney.totals.transfer;
+                const nameOf = (id: string) => gigMoney.founders.find((x) => x.id === id)?.name ?? id;
+                if (!tr || tr.cents < 100) {
+                  return (
+                    <p className="text-xs text-green-600 dark:text-green-400 pt-1">
+                      Johtajien kesken tasan — kumpikaan ei ole velkaa toiselle.
+                    </p>
+                  );
+                }
+                return (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 pt-1">
+                    Tasaus: {nameOf(tr.fromId)} maksaa {nameOf(tr.toId)}lle {fmt(tr.cents)}.
+                  </p>
+                );
+              })()}
+
+              {/* Tekijöiden raha erikseen, jottei sitä lueta johtajien katteeksi. */}
+              {(gigMoney.totals.reserveCents ?? 0) > 0 && (
+                <p className="text-xs text-muted-foreground pt-1 leading-relaxed">
+                  Tämän lisäksi käsissänne on {fmt(gigMoney.totals.reserveCents ?? 0)} joka kuuluu
+                  tekijöille. Se ei ole kummankaan omaa eikä sitä jaeta — molemmat kantavat sitä
+                  yhtä paljon kunnes tekijät on maksettu.
+                </p>
+              )}
+
+              {/* Maksut ilman maksajaa vääristävät yllä olevia lukuja. Keikan oma
+                  tasausnäkymä varoittaa tästä; etusivu ei varoittanut lainkaan. */}
+              {(gigMoney.totals.unattributedPaidCents ?? 0) > 0 && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 pt-1 leading-relaxed">
+                  {fmt(gigMoney.totals.unattributedPaidCents ?? 0)} tekijöille maksettua on kirjattu
+                  ilman tietoa siitä kumpi maksoi — merkitse maksaja keikan Maksut-näkymässä, niin
+                  yllä olevat luvut täsmäävät.
+                </p>
+              )}
               {gigMoney.totals.unassignedCents > 0 && (
                 <p className="text-xs text-amber-600 dark:text-amber-400 pt-1">
                   {fmt(gigMoney.totals.unassignedCents)} laskutettu ilman merkintää siitä kuka rahat sai.
@@ -319,7 +362,10 @@ export default function AdminDashboard() {
                       <span className="text-foreground truncate">{g.name}</span>
                       <span className="text-xs text-muted-foreground shrink-0">
                         {g.transfer
-                          ? `tasaus ${fmt(g.transfer.cents)} →`
+                          // Suunta mukaan: `fromId`/`toId` tulivat jo mukana,
+                          // mutta rivi näytti pelkän summan — eli sen ainoan
+                          // paikan joka tiesi kuka maksaa, ei kertonut sitä.
+                          ? `${gigMoney.founders.find((x) => x.id === g.transfer!.fromId)?.name?.split(" ")[0] ?? g.transfer.fromId} maksaa ${fmt(g.transfer.cents)} →`
                           : `${g.unassignedEraCount} erää merkitsemättä →`}
                       </span>
                     </div>

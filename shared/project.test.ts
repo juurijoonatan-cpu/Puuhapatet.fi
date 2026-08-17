@@ -341,3 +341,22 @@ describe("pohjakuvan viite, esitystapa ja tilan nimi", () => {
     expect(floorLabel({ floors: ["1", "2"], unitWord: "tila" }, "2")).toBe("2. tila");
   });
 });
+
+describe("newGigProjectData — yhdistyskeikan oletus", () => {
+  it("tavallinen uusi keikka ei ole yhteisökeikka", () => {
+    const d = newGigProjectData();
+    expect(d.compensation).toBeUndefined();
+    expect(isCommunityGig(d)).toBe(false);
+    expect(pricePerWindowOf(d)).toBe(DEFAULT_PRICE_PER_WINDOW);
+  });
+
+  it("yhdistyskeikka aloitetaan vastikkeettomana", () => {
+    const d = newGigProjectData({ community: true });
+    expect(d.compensation).toBe("community");
+    expect(pricePerWindowOf(d)).toBe(0);
+    // Oletus, ei lukko — sen voi vaihtaa keikan asetuksista.
+    d.compensation = "money";
+    d.pricePerWindow = 35;
+    expect(pricePerWindowOf(d)).toBe(35);
+  });
+});

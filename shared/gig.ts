@@ -75,6 +75,14 @@ export interface GigCompany {
   name?: string;         // firm / customer name
   contact?: string;      // contact person (yhteyshenkilö)
   businessId?: string;   // Y-tunnus / VAT id
+  /**
+   * Onko tilaaja yritys vai **rekisteröity yhdistys (ry)**.
+   *
+   * Molemmilla on nimi ja Y-tunnus, joten pelkistä tiedoista ei näe kummasta on
+   * kyse — ja sopimuksessa on eri asia sanoa "yritys" kuin "yhdistys".
+   * Puuttuva = yritys (vanha käytös).
+   */
+  entityType?: "yritys" | "ry";
   email?: string;
   phone?: string;
   address?: string;
@@ -366,6 +374,11 @@ export function sanitizeGigData(input: any): GigData {
     name: str(input.company.name, 120),
     contact: str(input.company.contact, 120),
     businessId: str(input.company.businessId, 40),
+    // HUOM: tämä objekti rakennetaan kenttä kerrallaan ilman spreadia, joten
+    // jokainen uusi `GigCompany`-kenttä on lisättävä myös tähän — muuten se
+    // katoaa hiljaa joka tallennuksessa.
+    entityType: input.company.entityType === "ry" ? "ry" as const
+      : input.company.entityType === "yritys" ? "yritys" as const : undefined,
     email: str(input.company.email, 200),
     phone: str(input.company.phone, 60),
     address: str(input.company.address, 240),

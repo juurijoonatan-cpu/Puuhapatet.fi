@@ -9132,8 +9132,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const founders = BRAND_BILLERS.map((b) => ({ id: b.id, name: b.name }));
       const receivedByFounder: Record<string, number> = {};
       const netByFounder: Record<string, number> = {};
+      /**
+       * `dueByFounder` on se luku joka vastaa kysymykseen "kumpi on velkaa
+       * kummalle" — `netByFounder` EI ole.
+       *
+       * `netCents = holdsCents − entitledCents`, ja rivien nettojen summa on
+       * määritelmällisesti `reserveCents` eli raha jota johtajat pitävät mutta
+       * joka kuuluu vielä TEKIJÖILLE (shared/founder-settlement.ts). Se ei ole
+       * kummankaan katetta eikä velkaa toiselle — invariantti 17. Kun sen
+       * puolikkaat näytettiin per johtaja, molemmat näyttivät "pitävän liikaa"
+       * yhtä aikaa, mikä on velkalukemana mahdotonta.
+       *
+       * `dueCents` on poikkeama johtajien keskiarvosta ja `transfer` se summa
+       * joka pankissa oikeasti liikkuu. Ne olivat jo laskettuna; tämä reitti
+       * vain ei palauttanut niitä.
+       */
+      const dueByFounder: Record<string, number> = {};
       let invoicedCents = 0, unassignedCents = 0;
       let workerEarnedCents = 0, workerPaidCents = 0;
+      let reserveCents = 0, unattributedPaidCents = 0;
+      // Nettosiirto kaikkien keikkojen yli, etumerkillisenä yhden johtajan
+      // suuntaan. Kootaan `dueByFounder`ista, jotta suunta säilyy.
+      let transferHint: { fromId: string; toId: string; cents: number } | null = null;
       const gigs: {
         jobId: number; name: string; invoicedCents: number; workerEarnedCents: number;
         workerPaidCents: number; transfer: { fromId: string; toId: string; cents: number } | null;
@@ -9160,7 +9180,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         for (const r of t.result.rows) {
           receivedByFounder[r.id] = (receivedByFounder[r.id] ?? 0) + r.receivedCents;
           netByFounder[r.id] = (netByFounder[r.id] ?? 0) + r.netCents;
+          dueByFounder[r.id] = (dueByFounder[r.id] ?? 0) + r.dueCents;
         }
+        reserveCents += t.result.reserveCents;
+        // Kirjatut maksut joilla ei ole maksajaa: ne ovat oikeasti lähteneet
+        // tileiltä, mutta moottori ei voi vähentää niitä keneltäkään (se ei
+        // arvaa — invariantti 18). Ilman tätä lukua näkymä ei kerro MIKSI
+        // luvut eivät täsmää.
+        unattributedPaidCents += t.unattributedPaidCents;
         unassignedCents += t.eras.filter((e) => !e.receivedById).reduce((s, e) => s + e.amountCents, 0);
 
         gigs.push({
@@ -9175,6 +9202,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
       gigs.sort((a, b) => b.invoicedCents - a.invoicedCents);
 
+      // Kokonaissiirto: se johtaja jonka `due` on positiivinen maksaa sille
+      // jonka `due` on negatiivinen. Summataan keikkojen yli, jotta kortti voi
+      // sanoa yhden lauseen ("A maksaa B:lle X €") eikä jätä lukijaa
+      // päättelemään suuntaa itse.
+      {
+        const entries = Object.entries(dueByFounder).filter(([, v]) => v !== 0);
+        const payer = entries.find(([, v]) => v > 0);
+        const payee = entries.find(([, v]) => v < 0);
+        if (payer && payee) {
+          transferHint = { fromId: payer[0], toId: payee[0], cents: Math.min(payer[1], -payee[1]) };
+        }
+      }
+
       res.json({
         ok: true,
         founders,
@@ -9186,6 +9226,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           workerPaidCents,
           workerOpenCents: Math.max(0, workerEarnedCents - workerPaidCents),
           netByFounder,
+          dueByFounder,
+          reserveCents,
+          unattributedPaidCents,
+          transfer: transferHint,
         },
         gigs,
       });

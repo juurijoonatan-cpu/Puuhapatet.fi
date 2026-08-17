@@ -551,8 +551,15 @@ export function emptyProjectData(): ProjectData {
  * `emptyProjectData()` only for throwaway/fallback objects that might be
  * written over an existing gig.
  */
-export function newGigProjectData(): ProjectData {
-  return { ...emptyProjectData(), dealKind: "none" };
+export function newGigProjectData(opts?: { community?: boolean }): ProjectData {
+  return {
+    ...emptyProjectData(),
+    dealKind: "none",
+    // Yhdistyskeikka on tyypillisesti vastikkeeton, joten se aloitetaan
+    // yhteisökeikkana. Tämä on OLETUS, ei kytkös: sama yhdistys voi maksaa
+    // toisesta keikasta, ja korvaustapa on vaihdettavissa keikan asetuksista.
+    ...(opts?.community ? { compensation: "community" as const, pricePerWindow: 0 } : {}),
+  };
 }
 
 // ─── Window enumeration ────────────────────────────────────────────────────────

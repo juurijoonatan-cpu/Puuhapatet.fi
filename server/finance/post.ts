@@ -1,181 +1,64 @@
 /**
  * The automatic posting engine — turns invoicing (jobs), receipts (expenses),
- * tool purchases (investments) and inter-founder settlements into real
- * double-entry journal entries, one ledger per founder. Nothing here is
- * hand-typed; see docs/talous-kirjanpito.md for the exact posting rules and
- * the (small, deliberate) list of things NOT yet posted.
+ * tool purchases (investments), inter-founder settlements and subcontractor
+ * (tekijä) era-invoices into real double-entry journal entries, one ledger per
+ * founder. Nothing here is hand-typed; see docs/talous-kirjanpito.md for the
+ * exact posting rules and the (small, deliberate) list of things NOT yet posted.
  *
  * Design: `rebuildLedgers()` derives the FULL set of entries that SHOULD
  * exist right now from the current source rows, deletes the old auto-posted
  * entries (never touching closed fiscal years or any future manual entry),
  * and re-inserts the fresh set. The ledger is therefore always a pure,
- * current function of jobs/expenses/investments/founderSettlements — it can
- * never drift, because it is rebuilt from scratch every time it's read.
+ * current function of jobs/expenses/investments/founderSettlements/eraInvoices
+ * — it can never drift, because it is rebuilt from scratch every time it's read.
+ *
+ * The posting RULES live in ./draft-entries.ts (no I/O, so the whole rulebook is
+ * unit-testable without a database); this file is the database side of them.
  */
 import { eq, and, ne, inArray } from "drizzle-orm";
 import { db } from "../db";
 import {
-  jobs, expenses, investments, founderSettlements, fiscalYears,
-  journalEntries, journalLines,
-  type Job, type Expense, type Investment, type FounderSettlement,
+  jobs, expenses, investments, founderSettlements, eraInvoices, fiscalYears,
+  journalEntries, journalLines, type Job,
 } from "@shared/schema";
-import { ensureAllLedgers, ensureFiscalYear, accountsByCode, ACCOUNT, LEDGER_DEFS } from "./accounts";
-import { BRAND_BILLERS, inferBillerId } from "@shared/billers";
-import { effectiveJobTotal } from "@shared/team";
-import { sanitizeGigData, type GigData, livePayments } from "@shared/gig";
-
-function parseGig(raw: string | null): GigData | null {
-  if (!raw) return null;
-  try { return sanitizeGigData(JSON.parse(raw)); } catch { return null; }
-}
-
-const isFounder = (id?: string | null): id is string => !!id && BRAND_BILLERS.some((b) => b.id === id);
-
-interface DraftLine { accountCode: string; debitCents?: number; creditCents?: number }
-interface DraftEntry {
-  ledgerId: string;
-  date: Date;
-  description: string;
-  sourceType: "customer_invoice" | "internal_invoice" | "expense" | "investment" | "manual";
-  sourceKey: string;
-  lines: DraftLine[];
-}
-
-function assertBalanced(entry: DraftEntry) {
-  const debit = entry.lines.reduce((s, l) => s + (l.debitCents ?? 0), 0);
-  const credit = entry.lines.reduce((s, l) => s + (l.creditCents ?? 0), 0);
-  if (debit !== credit) {
-    throw new Error(`Kirjanpitovirhe: vienti ei täsmää (debet ${debit} ≠ kredit ${credit}) — ${entry.sourceKey}`);
-  }
-}
+import { ensureAllLedgers, ensureFiscalYear, accountsByCode, LEDGER_DEFS } from "./accounts";
+// Vientisäännöt asuvat omassa, kannasta riippumattomassa moduulissaan, jotta ne
+// ovat testattavissa ilman tietokantaa. Ks. ./draft-entries.ts.
+import { buildDraftEntries, type WorkerInvoiceRow } from "./draft-entries";
+export { buildDraftEntries, type WorkerInvoiceRow, type DraftEntry } from "./draft-entries";
 
 /**
- * Derive every journal entry that should exist today, from the source rows.
+ * Tekijöiden (alihankkijoiden) erälaskut kirjanpitoa varten.
  *
- * Posted automatically (see docs/talous-kirjanpito.md §"Mitä kirjataan"):
- *   1. Asiakaslaskut — every job / FR8-erä with exactly one known founder
- *      biller → Pankkitili (debet) / Myynnit (kredit), full invoiced amount.
- *   2. Kulut — the `expenses` table, attributed via the same biller rule as
- *      revenue → Muut kulut (debet) / Pankkitili (kredit).
- *   3. Hankinnat — `investments`, attributed via boughtBy (+ 50/50 splitWith)
- *      → Kalusto ja välineet (debet) / Pankkitili (kredit). Expensed in full
- *      at purchase (pienhankinnan kertapoisto) rather than depreciated.
- *   4. Yrittäjien väliset laskut — `founderSettlements` rows (a confirmed,
- *      amount-settled vastalasku): payer's real expense + payee's real
- *      revenue, both ledgers, same amount.
- *
- * Deliberately NOT posted yet (see docs for why): worker/alihankkija payouts
- * (already netted out of the founders' revenue via "kate"), palvelumaksu
- * (service-fee) revenue, startup-bonus usage.
+ * Vain ne sarakkeet joita `buildDraftEntries` lukee, ja `eraNumbers`/`rivit`
+ * parsitaan JSONista samalla tavalla kuin tasauksessa (`loadTasaus`,
+ * server/routes.ts). Rivit ovat kevyitä: ei liitteitä, ei karttablobia — tämä
+ * ajetaan joka `/api/finance/*`-pyynnöllä siinä missä muut kyselyt.
  */
-function buildDraftEntries(
-  jobRows: Job[],
-  expenseRows: Expense[],
-  investmentRows: Investment[],
-  settlementRows: FounderSettlement[],
-): DraftEntry[] {
-  const drafts: DraftEntry[] = [];
-  const jobsById = new Map(jobRows.map((j) => [j.id, j]));
-
-  for (const job of jobRows) {
-    if (job.gigData) {
-      const gig = parseGig(job.gigData);
-      const gigName = gig?.company?.name || job.description || `Keikka #${job.id}`;
-      // Mitätöityä laskutuserää ei kirjata myyntinä (ks. GigPayment.voided).
-      livePayments(gig?.payments).forEach((p, i) => {
-        if (!p?.amountCents || p.amountCents <= 0 || !isFounder(p.biller?.id)) return;
-        const date = new Date(p.t || job.scheduledAt || job.createdAt);
-        drafts.push({
-          ledgerId: p.biller!.id, date,
-          description: `Asiakaslasku — ${gigName}, erä ${i + 1}`,
-          sourceType: "customer_invoice", sourceKey: `job:${job.id}:era:${i}`,
-          lines: [
-            { accountCode: ACCOUNT.BANK, debitCents: p.amountCents },
-            { accountCode: ACCOUNT.SALES, creditCents: p.amountCents },
-          ],
-        });
-      });
-      continue; // FR8/custom-gig jobs are fully handled via their eras above.
-    }
-    if (job.isCustomGig) continue; // set up but no eras recorded yet — nothing to post.
-    if (job.status !== "done" || job.quoteStatus === "declined") continue;
-    const total = effectiveJobTotal(job);
-    if (total <= 0) continue;
-    const billerId = inferBillerId(job);
-    if (!isFounder(billerId)) continue; // unattributed — surfaced in the ALV card, never guessed here.
-    drafts.push({
-      ledgerId: billerId, date: new Date(job.scheduledAt ?? job.createdAt),
-      description: `Asiakaslasku — keikka #${job.id}`,
-      sourceType: "customer_invoice", sourceKey: `job:${job.id}`,
-      lines: [
-        { accountCode: ACCOUNT.BANK, debitCents: total },
-        { accountCode: ACCOUNT.SALES, creditCents: total },
-      ],
+async function loadWorkerInvoices(): Promise<WorkerInvoiceRow[]> {
+  try {
+    const rows = await db.select({
+      id: eraInvoices.id, jobId: eraInvoices.jobId, kind: eraInvoices.kind,
+      tila: eraInvoices.tila, senderId: eraInvoices.senderId,
+      recipientId: eraInvoices.recipientId, eraNumbers: eraInvoices.eraNumbers,
+      rivit: eraInvoices.rivit, totalCents: eraInvoices.totalCents,
+      sentAt: eraInvoices.sentAt, createdAt: eraInvoices.createdAt,
+    }).from(eraInvoices);
+    return rows.map((r) => {
+      let eraNumbers: number[] = [];
+      let rivit: WorkerInvoiceRow["rivit"] = null;
+      try { const parsed = JSON.parse(r.eraNumbers); if (Array.isArray(parsed)) eraNumbers = parsed; } catch { /* tyhjä */ }
+      try { rivit = JSON.parse(r.rivit); } catch { /* null */ }
+      return { ...r, eraNumbers, rivit };
     });
+  } catch (e: any) {
+    // Taulua ei ole vielä kannassa (db:push ajamatta) → kirjanpito rakentuu
+    // ilman alihankkijakuluja eikä kaadu. Sama suoja kuin erälaskureiteillä
+    // (server/routes.ts `isMissingTableError`), joka ei ole exportattu sieltä
+    // (routes.ts importtaa tämän moduulin — kehäriippuvuus).
+    if (e?.code !== "42P01") throw e;
+    return [];
   }
-
-  for (const exp of expenseRows) {
-    const job = jobsById.get(exp.jobId);
-    if (!job || exp.amount <= 0) continue;
-    const billerId = inferBillerId(job);
-    if (!isFounder(billerId)) continue;
-    drafts.push({
-      ledgerId: billerId, date: new Date(exp.createdAt),
-      description: `Kulu — ${exp.description}`,
-      sourceType: "expense", sourceKey: `expense:${exp.id}`,
-      lines: [
-        { accountCode: ACCOUNT.OTHER_EXPENSE, debitCents: exp.amount },
-        { accountCode: ACCOUNT.BANK, creditCents: exp.amount },
-      ],
-    });
-  }
-
-  for (const inv of investmentRows) {
-    if (inv.amount <= 0) continue;
-    const buyers = (inv.splitWith ? [inv.boughtBy, inv.splitWith] : [inv.boughtBy]).filter(isFounder);
-    if (buyers.length === 0) continue;
-    const base = Math.floor(inv.amount / buyers.length);
-    buyers.forEach((ledgerId, i) => {
-      const cents = i === 0 ? inv.amount - base * (buyers.length - 1) : base;
-      if (cents <= 0) return;
-      drafts.push({
-        ledgerId, date: new Date(inv.purchasedAt),
-        description: `Hankinta — ${inv.description}`,
-        sourceType: "investment", sourceKey: `investment:${inv.id}:${ledgerId}`,
-        lines: [
-          { accountCode: ACCOUNT.EQUIPMENT, debitCents: cents },
-          { accountCode: ACCOUNT.BANK, creditCents: cents },
-        ],
-      });
-    });
-  }
-
-  for (const s of settlementRows) {
-    if (s.cents <= 0 || !isFounder(s.fromId) || !isFounder(s.toId)) continue;
-    const date = new Date(s.createdAt);
-    const label = s.invoiceNo ? ` (${s.invoiceNo})` : "";
-    drafts.push({
-      ledgerId: s.fromId, date,
-      description: `Yrittäjien välinen lasku, maksettu${label}`,
-      sourceType: "internal_invoice", sourceKey: `settlement:${s.id}:payer`,
-      lines: [
-        { accountCode: ACCOUNT.PURCHASES_INTERNAL, debitCents: s.cents },
-        { accountCode: ACCOUNT.BANK, creditCents: s.cents },
-      ],
-    });
-    drafts.push({
-      ledgerId: s.toId, date,
-      description: `Yrittäjien välinen lasku, saatu${label}`,
-      sourceType: "internal_invoice", sourceKey: `settlement:${s.id}:payee`,
-      lines: [
-        { accountCode: ACCOUNT.BANK, debitCents: s.cents },
-        { accountCode: ACCOUNT.SALES_INTERNAL, creditCents: s.cents },
-      ],
-    });
-  }
-
-  drafts.forEach(assertBalanced);
-  return drafts;
 }
 
 /**
@@ -200,7 +83,7 @@ export function rebuildLedgers(): Promise<void> {
 async function rebuildLedgersNow(): Promise<void> {
   await ensureAllLedgers();
 
-  const [jobRows, expenseRows, investmentRows, settlementRows] = await Promise.all([
+  const [jobRows, expenseRows, investmentRows, settlementRows, workerInvoiceRows] = await Promise.all([
     // Kirjanpidon uudelleenrakennus lukee vain rahakentät ja gigData:n
     // laskutuserät. `db.select().from(jobs)` veti mukanaan allekirjoitus-PNG:t
     // ja koko karttablobin — ja tämä ajetaan JOKAISELLA /api/finance-haulla,
@@ -220,8 +103,9 @@ async function rebuildLedgersNow(): Promise<void> {
     db.select().from(expenses),
     db.select().from(investments),
     db.select().from(founderSettlements),
+    loadWorkerInvoices(),
   ]);
-  const drafts = buildDraftEntries(jobRows, expenseRows, investmentRows, settlementRows);
+  const drafts = buildDraftEntries(jobRows, expenseRows, investmentRows, settlementRows, workerInvoiceRows);
 
   for (const ledgerDef of LEDGER_DEFS) {
     const ledgerId = ledgerDef.id;

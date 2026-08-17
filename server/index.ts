@@ -75,6 +75,9 @@ app.use((req, res, next) => {
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS pending_workers  text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS payment_method   text`,
     sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS owned_by         text`,
+    // Asiakkaan laji: henkilo | yritys | ry. Nullable ilman oletusta, joten
+    // vanhat rivit säilyvät koskemattomina ja johtavat lajinsa `isYritys`ista.
+    sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS customer_type    text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS quote_token      text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS quote_status     text`,
     sql`ALTER TABLE jobs      ADD COLUMN IF NOT EXISTS suggested_times  text`,

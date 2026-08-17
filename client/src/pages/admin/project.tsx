@@ -12,7 +12,7 @@ import { api } from "@/lib/api";
 import { getAdminProfile, USERS, getPreferredWasher, setPreferredWasher } from "@/lib/admin-profile";
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import {
-  emptyProjectData, computeWorkerStats, isFr8Plans, fixedDealFor, allPoints, computeDealBilling,
+  emptyProjectData, newGigProjectData, computeWorkerStats, isFr8Plans, fixedDealFor, allPoints, computeDealBilling,
   dealInternalRateCents,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense,
 } from "@shared/project";
@@ -234,7 +234,9 @@ export default function AdminProjectPage() {
       // Backend reachable, no project yet → create a blank, editable project.
       // (No FR8 marks/plans — the crew sets up floors & maps per gig.)
       if (projRes.ok) {
-        const seeded: ProjectData = { ...emptyProjectData(), workers };
+        // A gig's FIRST project — stamp it as "not the FR8 contract" so it can
+        // never inherit the signed 6300 € deal from its plan path later.
+        const seeded: ProjectData = { ...newGigProjectData(), workers };
         const saveRes = await api.updateProject(jobId, seeded);
         if (cancelled) return;
         if (saveRes.ok && saveRes.data) {
@@ -1050,6 +1052,8 @@ export default function AdminProjectPage() {
           <FloorView
             floors={project.building.floors}
             planBase={project.building.planBase || ""}
+            building={project.building}
+            planUrlBase={api.planUrlBaseForJob(jobId)}
             pricePerWindow={effectivePrice}
             marks={project.marks}
             statuses={project.statuses}

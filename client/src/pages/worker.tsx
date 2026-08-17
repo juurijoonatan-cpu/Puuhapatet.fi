@@ -693,7 +693,11 @@ function Onboarding({ token, view, onDone, resign }: { token: string; view: Work
               <>Ennen kuin pääset omalle työpöydällesi, täytä lyhyt profiili ja allekirjoita työharjoittelusopimus. Olet harjoittelijana{view.worker.trainee ? ` ${view.worker.trainee.responsibleLeaderName}n` : ""} vastuulla — turvallisuus aina edellä.</>
             ) : (
               <>Hoidetaan ensin pari pikkujuttua kuntoon — lyhyt profiili ja sopparit — niin pääset omalle työpöydällesi.
-              Saat <strong style={{ color: "#fff" }}>{euro(view.worker.perWindowCents)}</strong> jokaisesta pesemästäsi ikkunasta.</>
+              {/* Yhteisökeikalla ei luvata ikkunakohtaista korvausta: siitä ei
+                  liiku rahaa, ja väärä lupaus on pahempi kuin ei lupausta. */}
+              {view.isCommunity
+                ? <> Tämä on <strong style={{ color: "#fff" }}>yhteisökeikka</strong> — teemme sen veloituksetta.</>
+                : <> Saat <strong style={{ color: "#fff" }}>{euro(view.worker.perWindowCents)}</strong> jokaisesta pesemästäsi ikkunasta.</>}</>
             )}
           </p>
           <div style={{ width: "100%", maxWidth: 320, marginTop: 28, position: "relative", zIndex: 3, opacity: introReady ? 1 : 0, transform: introReady ? "translateY(0)" : "translateY(8px)", transition: "opacity .5s ease, transform .5s ease", pointerEvents: introReady ? "auto" : "none" }}>
@@ -1160,7 +1164,9 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
           <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
             {view.stats.p2Washed > 0
               ? <>{fmtWindows(view.stats.p1Washed)} punaista · {fmtWindows(view.stats.p2Washed)} keltaista</>
-              : <>{fmtWindows(view.stats.washed)} ikkunaa · {euro(view.worker.perWindowCents)}/kpl</>}
+              : view.isCommunity
+                ? <>{fmtWindows(view.stats.washed)} ikkunaa · yhteisökeikka</>
+                : <>{fmtWindows(view.stats.washed)} ikkunaa · {euro(view.worker.perWindowCents)}/kpl</>}
           </p>
         </div>
       </div>
@@ -1178,6 +1184,8 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
           <FloorView
             floors={view.building.floors}
             planBase={view.building.planBase || ""}
+            building={view.building}
+            planUrlBase={api.planUrlBaseForCrew(token)}
             pricePerWindow={view.pricePerWindow}
             marks={view.marks}
             statuses={view.statuses}
@@ -1588,7 +1596,11 @@ function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
       <div style={{ marginTop: 16 }}>
         <Stat label="Tunteja" value={s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} />
       </div>
-      <PaydateProgress total={view.windowsTotal} washed={view.windowsWashed} workerId={view.worker.id} />
+      {/* Vain keikalla jolla on erälaskutus. Ennen tämä näytti "Maksuerä 1/4"
+          jokaisella keikalla — luku oli FR8:n rakenne, ei tämän keikan. */}
+      {view.hasInstalments && (
+        <PaydateProgress total={view.windowsTotal} washed={view.windowsWashed} workerId={view.worker.id} />
+      )}
       <Leaderboard view={view} />
       {!view.worker.trainee && <PathCard />}
       <InstallHint />
@@ -1607,7 +1619,7 @@ function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
  *  so they know this is the start of something, not a one-off. */
 function PathCard() {
   const steps: { n: string; title: string; body: string }[] = [
-    { n: "1", title: "Tämä on ensimmäinen keikka", body: "FR8 on ensimmäinen yhteinen keikkamme. Tee laadukasta ja luotettavaa jälkeä — sillä on merkitystä siihen, mitä seuraavaksi." },
+    { n: "1", title: "Tämä on ensimmäinen keikka", body: "Tämä on ensimmäinen yhteinen keikkamme. Tee laadukasta ja luotettavaa jälkeä — sillä on merkitystä siihen, mitä seuraavaksi." },
     { n: "2", title: "Hyvästä jäljestä jatkoon", body: "Jos työ näyttää hyvältä, voit jatkaa alihankkijana suoraan Puuhapatet-brändin alla — lisää keikkoja, etusija ja mahdollisuus parempaan korvaukseen." },
     { n: "3", title: "Mukaan järjestelmiin", body: "Silloin pääset kunnolla mukaan Puuhapatet-adminiin ja muihin järjestelmiin — et enää yhden keikan näkymään vaan koko tiimin työkaluihin." },
   ];

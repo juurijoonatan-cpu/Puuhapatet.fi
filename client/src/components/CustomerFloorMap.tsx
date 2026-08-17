@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GigPublicView, P2PublicOffer, P2PublicView } from "@/lib/api";
-import { NOTE_KINDS } from "@shared/project";
+import { NOTE_KINDS, planImageUrl, planRenderOf, floorLabel as sharedFloorLabel } from "@shared/project";
 import { eur } from "@shared/gig";
 import { p2NumbersByFloor, type P2NumberingInput } from "@shared/p2";
 import { getPoints, inCustomerScope, type CustomerPoint } from "@/lib/customer-progress";
@@ -93,8 +93,14 @@ export interface P2CustomerActions {
   requireTerms: () => void;
 }
 
-export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservationImage }: {
+export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservationImage, planUrlBase }: {
   map: MapData;
+  /**
+   * Pohjakuvareitin etuliite tälle seurantalinkille
+   * (`/api/gig/:token/plan/`). Tarvitaan vain kun kerroksella on LADATTU kuva;
+   * staattinen `planBase` toimii ilman. Ks. `api.planUrlBaseForGig`.
+   */
+  planUrlBase?: string;
   /** P2 negotiation state — pills + offer popups render only when enabled. */
   p2?: P2PublicView | null;
   p2Actions?: P2CustomerActions;
@@ -316,7 +322,9 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
   const lockedList = allYellow.filter((o) => o.offer.status === "locked");
   const allProposedSum = proposedList.reduce((s, o) => s + o.offer.priceCents, 0);
   const lockedSum = lockedList.reduce((s, o) => s + (o.offer.lockedCents ?? o.offer.priceCents), 0);
-  const floorLabel = (f: string) => (f === "K" ? "Kellari" : `${f}. kerros`);
+  // Tilan nimi tulee keikalta: yhden huoneen keikalla "1. kerros" on väärä sana.
+  const floorLabel = (f: string) => sharedFloorLabel(map.building as any, f);
+  const isPhotoPlan = planRenderOf(map.building as any) === "photo";
   // Group the open proposals BY FLOOR so the customer can review and accept
   // floor by floor (a whole floor's price at once), not scroll one flat list.
   const proposedFloors = floors
@@ -662,9 +670,24 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
         </div>
         <div style={{ position: "relative", display: "inline-block", lineHeight: 0, maxWidth: "100%", transform: `translate(${view.x}px, ${view.y}px) scale(${view.s})`, transformOrigin: "center center", transition: dragging ? "none" : "transform .15s ease-out", willChange: "transform" }}>
           <img
-            src={`${map.building.planBase}${floor}.png`}
-            alt={`Pohjapiirros, kerros ${floor}`}
-            style={{ display: "block", maxWidth: "100%", maxHeight: 560, width: "auto", height: "auto", userSelect: "none", clipPath: "inset(2%)", WebkitClipPath: "inset(2%)", filter: "invert(1)", pointerEvents: "none" } as React.CSSProperties}
+            src={planImageUrl(map.building as any, floor, planUrlBase) ?? ""}
+            alt={`Pohjakuva — ${floorLabel(floor)}`}
+            style={{
+              display: "block", maxWidth: "100%", maxHeight: 560, width: "auto", height: "auto",
+              userSelect: "none", pointerEvents: "none",
+              /**
+               * VIIVAPIIRROS vs VALOKUVA.
+               *
+               * FR8:n pohjakuvat ovat vaaleaa viivapiirrosta läpinäkyvällä
+               * pohjalla, joten `invert(1)` tekee niistä siistin vaalean kartan
+               * ja 2 % rajaus siistii reunat. Ruudunkaappaukselle tai valokuvalle
+               * molemmat ovat väärin: kuva näkyisi negatiivina ja sen reunoista
+               * leikkautuisi sisältöä. `planRender` kertoo kummasta on kyse.
+               */
+              ...(isPhotoPlan
+                ? {}
+                : { clipPath: "inset(2%)", WebkitClipPath: "inset(2%)", filter: "invert(1)" }),
+            } as React.CSSProperties}
             draggable={false}
           />
           <div

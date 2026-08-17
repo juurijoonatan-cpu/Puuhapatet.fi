@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Loader2, Users, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Search, Save, Trash2, FileText, UserPlus, X, Check, Building2 } from "lucide-react";
+import { Loader2, Users, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Search, Save, Trash2, FileText, UserPlus, X, Check, Building2, User } from "lucide-react";
 import { Link, useLocation } from "wouter";
 
 import { Card } from "@/components/ui/card";
@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/empty-state";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
+import { customerTypeOf, CUSTOMER_TYPE_LABEL, type CustomerType } from "@shared/schema";
 import { getAdminProfile, USERS } from "@/lib/admin-profile";
 import { getMyCustomerIds } from "@/lib/visibility";
 import { cn } from "@/lib/utils";
@@ -48,6 +49,7 @@ interface Customer {
   address: string;
   notes: string | null;
   isYritys?: boolean;
+  customerType?: string | null;
   companyName?: string | null;
   yTunnus?: string | null;
   createdAt: string;
@@ -73,7 +75,11 @@ export default function AdminCustomersPage() {
   const [editEmail, setEditEmail] = useState("");
   const [editAddress, setEditAddress] = useState("");
   const [editNotes, setEditNotes] = useState("");
-  const [editIsYritys, setEditIsYritys] = useState(false);
+  // Asiakaslaji on nyt kolmiarvoinen; `isYritys` johdetaan siitä, jotta kaikki
+  // sitä lukevat kohdat (tarjouspohja, kotitalousvähennys, merkit) toimivat
+  // ennallaan myös yhdistyksellä.
+  const [editType, setEditType] = useState<CustomerType>("henkilo");
+  const editIsYritys = editType !== "henkilo";
   const [editCompanyName, setEditCompanyName] = useState("");
   const [editYTunnus, setEditYTunnus] = useState("");
   const [savingCustomer, setSavingCustomer] = useState(false);
@@ -87,7 +93,8 @@ export default function AdminCustomersPage() {
   const [newEmail,   setNewEmail]       = useState("");
   const [newAddress, setNewAddress]     = useState("");
   const [newOwners, setNewOwners]       = useState<string[]>(profile?.id ? [profile.id] : []);
-  const [newIsYritys,    setNewIsYritys]    = useState(false);
+  const [newType,        setNewType]        = useState<CustomerType>("henkilo");
+  const newIsYritys = newType !== "henkilo";
   const [newCompanyName, setNewCompanyName] = useState("");
   const [newYTunnus,     setNewYTunnus]     = useState("");
   const [addingCustomer, setAddingCustomer] = useState(false);
@@ -133,7 +140,7 @@ export default function AdminCustomersPage() {
     setEditEmail(c.email ?? "");
     setEditAddress(c.address);
     setEditNotes(c.notes ?? "");
-    setEditIsYritys(c.isYritys ?? false);
+    setEditType(customerTypeOf(c));
     setEditCompanyName(c.companyName ?? "");
     setEditYTunnus(c.yTunnus ?? "");
     setDetailLoading(true);
@@ -146,7 +153,7 @@ export default function AdminCustomersPage() {
       setEditEmail(data.email ?? "");
       setEditAddress(data.address);
       setEditNotes(data.notes ?? "");
-      setEditIsYritys(data.isYritys ?? false);
+      setEditType(customerTypeOf(data));
       setEditCompanyName(data.companyName ?? "");
       setEditYTunnus(data.yTunnus ?? "");
     }
@@ -163,8 +170,14 @@ export default function AdminCustomersPage() {
       address:     editAddress.trim() || selected.address,
       notes:       editNotes.trim() || undefined,
       isYritys:    editIsYritys,
-      companyName: editIsYritys ? (editCompanyName.trim() || undefined) : undefined,
-      yTunnus:     editIsYritys ? (editYTunnus.trim() || undefined) : undefined,
+      customerType: editType,
+      // Nimi ja Y-tunnus lähetetään aina kun ne on täytetty. Ennen ne
+      // lähetettiin `undefined`ina heti kun laji ei ollut yritys — ja koska
+      // drizzle pudottaa `undefined`-avaimet, kantaan ei tosiasiassa kirjoitettu
+      // mitään, mutta paikallinen tila merkitsi ne nulliksi. Näkymä ja kanta
+      // olivat siis eri mieltä seuraavaan lataukseen asti.
+      companyName: editCompanyName.trim() || undefined,
+      yTunnus:     editYTunnus.trim() || undefined,
     });
     if (res.ok) {
       const updated: Customer = {
@@ -175,8 +188,9 @@ export default function AdminCustomersPage() {
         address:     editAddress.trim() || selected.address,
         notes:       editNotes.trim() || null,
         isYritys:    editIsYritys,
-        companyName: editIsYritys ? (editCompanyName.trim() || null) : null,
-        yTunnus:     editIsYritys ? (editYTunnus.trim() || null) : null,
+        customerType: editType,
+        companyName: editCompanyName.trim() || null,
+        yTunnus:     editYTunnus.trim() || null,
       };
       setSelected(updated);
       setCustomers((prev) => prev.map((c) => (c.id === selected.id ? updated : c)));
@@ -193,7 +207,7 @@ export default function AdminCustomersPage() {
       editEmail !== (selected.email ?? "") ||
       editAddress !== selected.address ||
       editNotes !== (selected.notes ?? "") ||
-      editIsYritys !== (selected.isYritys ?? false) ||
+      editType !== customerTypeOf(selected) ||
       editCompanyName !== (selected.companyName ?? "") ||
       editYTunnus !== (selected.yTunnus ?? "")
     : false;
@@ -211,6 +225,7 @@ export default function AdminCustomersPage() {
       address:     newAddress.trim(),
       ownedBy:     newOwners.length > 0 ? newOwners.join(",") : undefined,
       isYritys:    newIsYritys || undefined,
+      customerType: newType,
       companyName: newIsYritys ? (newCompanyName.trim() || undefined) : undefined,
       yTunnus:     newIsYritys ? (newYTunnus.trim() || undefined) : undefined,
     });
@@ -224,7 +239,7 @@ export default function AdminCustomersPage() {
       }
       setNewName(""); setNewPhone(""); setNewEmail(""); setNewAddress("");
       setNewOwners(profile?.id ? [profile.id] : []);
-      setNewIsYritys(false); setNewCompanyName(""); setNewYTunnus("");
+      setNewType("henkilo"); setNewCompanyName(""); setNewYTunnus("");
       setShowAddForm(false);
       toast({ title: "Asiakas lisätty!", description: newName.trim() });
     } else {
@@ -272,31 +287,15 @@ export default function AdminCustomersPage() {
               Yhteystiedot
             </h2>
             <div className="space-y-4">
-              {/* Yritys toggle */}
-              <button
-                type="button"
-                onClick={() => setEditIsYritys(v => !v)}
-                className={cn(
-                  "w-full flex items-center justify-between rounded-xl px-4 py-3 border transition-colors text-sm",
-                  editIsYritys ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20" : "border-border hover:bg-muted/30"
-                )}
-              >
-                <span className="flex items-center gap-2">
-                  <Building2 className={cn("w-4 h-4", editIsYritys ? "text-blue-600" : "text-muted-foreground")} />
-                  <span className={editIsYritys ? "font-semibold text-blue-700 dark:text-blue-300" : "text-muted-foreground"}>Yritysasiakas</span>
-                </span>
-                <div className={cn("w-10 h-6 rounded-full transition-colors relative shrink-0", editIsYritys ? "bg-blue-600" : "bg-muted")}>
-                  <div className={cn("absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform", editIsYritys ? "translate-x-5" : "translate-x-1")} />
-                </div>
-              </button>
+              <CustomerTypePicker value={editType} onChange={setEditType} />
 
               {/* Company fields */}
               {editIsYritys && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-xl bg-blue-50/50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-800">
                   <div>
-                    <p className="text-xs text-muted-foreground mb-1.5">Yrityksen nimi</p>
+                    <p className="text-xs text-muted-foreground mb-1.5">{editType === "ry" ? "Yhdistyksen nimi" : "Yrityksen nimi"}</p>
                     <Input value={editCompanyName} onChange={e => setEditCompanyName(e.target.value)}
-                      placeholder="Yritys Oy" className="text-sm" />
+                      placeholder={editType === "ry" ? "Yhdistys ry" : "Yritys Oy"} className="text-sm" />
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1.5">Y-tunnus</p>
@@ -506,30 +505,16 @@ export default function AdminCustomersPage() {
           <Card className="p-5 bg-card border-0 premium-shadow mb-5">
             <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-4">Uusi asiakas</h2>
 
-            {/* Yritys toggle */}
-            <button
-              type="button"
-              onClick={() => setNewIsYritys(v => !v)}
-              className={cn(
-                "w-full flex items-center justify-between rounded-xl px-4 py-3 border transition-colors text-sm mb-4",
-                newIsYritys ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20" : "border-border hover:bg-muted/30"
-              )}
-            >
-              <span className="flex items-center gap-2">
-                <Building2 className={cn("w-4 h-4", newIsYritys ? "text-blue-600" : "text-muted-foreground")} />
-                <span className={newIsYritys ? "font-semibold text-blue-700 dark:text-blue-300" : "text-muted-foreground"}>Yritysasiakas</span>
-              </span>
-              <div className={cn("w-10 h-6 rounded-full transition-colors relative shrink-0", newIsYritys ? "bg-blue-600" : "bg-muted")}>
-                <div className={cn("absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform", newIsYritys ? "translate-x-5" : "translate-x-1")} />
-              </div>
-            </button>
+            <div className="mb-4">
+              <CustomerTypePicker value={newType} onChange={setNewType} />
+            </div>
 
             {newIsYritys && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4 p-3 rounded-xl bg-blue-50/50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-800">
                 <div>
-                  <p className="text-xs text-muted-foreground mb-1.5">Yrityksen nimi</p>
+                  <p className="text-xs text-muted-foreground mb-1.5">{newType === "ry" ? "Yhdistyksen nimi" : "Yrityksen nimi"}</p>
                   <Input value={newCompanyName} onChange={e => setNewCompanyName(e.target.value)}
-                    placeholder="Yritys Oy" className="text-sm" />
+                    placeholder={newType === "ry" ? "Yhdistys ry" : "Yritys Oy"} className="text-sm" />
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground mb-1.5">Y-tunnus</p>
@@ -653,6 +638,62 @@ export default function AdminCustomersPage() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+
+/**
+ * Asiakkaan laji: henkilö / yritys / yhdistys (ry).
+ *
+ * MIKSI KOLME EIKÄ KAKSI: kaksiarvoinen "Yritysasiakas"-kytkin pakotti
+ * kirjaamaan yhdistyksen yritykseksi. Silloin järjestelmä ei tiedä miksi
+ * keikasta ei makseta — yhdistyksellä ei yleensä ole liiketoimintaa eikä
+ * rahaa, ja keikka on tyypillisesti yhteisökeikka.
+ *
+ * `isYritys` johdetaan tästä (`!== "henkilo"`) eikä sitä poistettu: jokainen
+ * sen nykyinen seuraus on oikein myös yhdistykselle (nimi + Y-tunnus
+ * käytössä, vapaa hinnoittelu tarjouksessa, ei kotitalousvähennystä).
+ */
+function CustomerTypePicker({ value, onChange }: { value: CustomerType; onChange: (v: CustomerType) => void }) {
+  const opts: { id: CustomerType; icon: typeof User }[] = [
+    { id: "henkilo", icon: User },
+    { id: "yritys", icon: Building2 },
+    { id: "ry", icon: Users },
+  ];
+  return (
+    <div>
+      <div role="radiogroup" aria-label="Asiakkaan laji" className="grid grid-cols-3 gap-2">
+        {opts.map((o) => {
+          const Icon = o.icon;
+          const active = value === o.id;
+          return (
+            <button
+              key={o.id}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              onClick={() => onChange(o.id)}
+              className={cn(
+                "flex flex-col items-center justify-center gap-1.5 rounded-xl px-2 py-3 border text-xs transition-colors",
+                active
+                  ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20 font-semibold text-blue-700 dark:text-blue-300"
+                  : "border-border text-muted-foreground hover:bg-muted/30",
+              )}
+            >
+              <Icon className={cn("w-4 h-4", active ? "text-blue-600" : "text-muted-foreground")} />
+              <span className="leading-tight text-center">{CUSTOMER_TYPE_LABEL[o.id]}</span>
+            </button>
+          );
+        })}
+      </div>
+      {value === "ry" && (
+        <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
+          Rekisteröity yhdistys. Yhdistyksellä on Y-tunnus kuten yrityksellä, mutta se ei yleensä
+          harjoita liiketoimintaa — keikka tehdään usein yhteisökeikkana ilman veloitusta. Korvaustapa
+          valitaan keikan asetuksista.
+        </p>
+      )}
     </div>
   );
 }

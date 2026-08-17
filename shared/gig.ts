@@ -75,6 +75,14 @@ export interface GigCompany {
   name?: string;         // firm / customer name
   contact?: string;      // contact person (yhteyshenkilö)
   businessId?: string;   // Y-tunnus / VAT id
+  /**
+   * Onko tilaaja yritys vai **rekisteröity yhdistys (ry)**.
+   *
+   * Molemmilla on nimi ja Y-tunnus, joten pelkistä tiedoista ei näe kummasta on
+   * kyse — ja sopimuksessa on eri asia sanoa "yritys" kuin "yhdistys".
+   * Puuttuva = yritys (vanha käytös).
+   */
+  entityType?: "yritys" | "ry";
   email?: string;
   phone?: string;
   address?: string;
@@ -122,6 +130,15 @@ export interface GigData {
   currency: "EUR";
   vatNote?: string;           // e.g. "Hintoihin ei lisätä alv (AVL 3 §)"
   customerNote?: string;      // shown on the public live view
+  /**
+   * Asiakasnäkymän ulkoasu: `"paper"` (oletus, vaalea) tai `"tech"` (tumma,
+   * tekninen). Puuttuva = paper, joten olemassa olevat keikat eivät muutu.
+   *
+   * MIKSI KEIKKAKOHTAINEN: sama näkymä palvelee hyvin erilaisia asiakkaita.
+   * Tekniselle yhteisölle mittalaitteen kieli on luontevampi kuin esite, ja
+   * toisin päin. Teema on keikan ominaisuus, ei järjestelmän asetus.
+   */
+  customerTheme?: "paper" | "tech";
   sectors: GigSector[];
   invoiceInterval: number;    // invoice roughly every N washed units (e.g. 100)
   invoicedThrough: number;    // cumulative washed-unit count already invoiced
@@ -366,6 +383,11 @@ export function sanitizeGigData(input: any): GigData {
     name: str(input.company.name, 120),
     contact: str(input.company.contact, 120),
     businessId: str(input.company.businessId, 40),
+    // HUOM: tämä objekti rakennetaan kenttä kerrallaan ilman spreadia, joten
+    // jokainen uusi `GigCompany`-kenttä on lisättävä myös tähän — muuten se
+    // katoaa hiljaa joka tallennuksessa.
+    entityType: input.company.entityType === "ry" ? "ry" as const
+      : input.company.entityType === "yritys" ? "yritys" as const : undefined,
     email: str(input.company.email, 200),
     phone: str(input.company.phone, 60),
     address: str(input.company.address, 240),
@@ -379,6 +401,8 @@ export function sanitizeGigData(input: any): GigData {
     currency: "EUR",
     vatNote: str(input.vatNote, 240),
     customerNote: str(input.customerNote, 2000),
+    customerTheme: input.customerTheme === "tech" ? "tech" as const
+      : input.customerTheme === "paper" ? "paper" as const : undefined,
     sectors,
     invoiceInterval: clampNonNeg(Number(input.invoiceInterval)) || 100,
     invoicedThrough: clampNonNeg(Number(input.invoicedThrough)),

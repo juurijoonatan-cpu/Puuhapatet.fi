@@ -5,8 +5,8 @@
  * path differ.
  */
 import { useState, useRef, useEffect, useMemo } from "react";
-import type { ProjMarksData, WindowStatus, ProjCustomMark, ProjMapNote, ProjNoteKind, ProjActiveZone, ProjWindowObservation, FixedDeal } from "@shared/project";
-import { NOTE_KINDS } from "@shared/project";
+import type { ProjMarksData, WindowStatus, ProjCustomMark, ProjMapNote, ProjNoteKind, ProjActiveZone, ProjWindowObservation, FixedDeal, ProjBuilding } from "@shared/project";
+import { NOTE_KINDS, planImageUrl, planRenderOf, hasAnyPlan, floorLabel } from "@shared/project";
 import type { P2Offer, P2NumberingInput } from "@shared/p2";
 import { P2_PRICE_PRESETS_CENTS, MAX_P2_NOTE_LEN, p2NumbersByFloor } from "@shared/p2";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -23,6 +23,19 @@ interface Point { key: string; p: 1 | 2; x: number; y: number; }
 interface Props {
   floors: string[];
   planBase: string;
+  /**
+   * Koko rakennusobjekti. Tästä luetaan LADATUT pohjakuvat
+   * (`planImages`), kuvan esitystapa (`planRender`) ja tilan nimi
+   * (`unitWord`). Valinnainen: ilman sitä käytös on ennallaan
+   * (`planBase` + kerros + ".png", FR8:n rajaus ja "N. kerros").
+   */
+  building?: ProjBuilding;
+  /**
+   * Pohjakuvareitin etuliite tälle yleisölle — admin `/api/jobs/:id/plan/`,
+   * tekijä `/api/crew/:token/plan/`. Tarvitaan vain kun kerroksella on
+   * ladattu kuva. Ks. `api.planUrlBaseForJob` / `planUrlBaseForCrew`.
+   */
+  planUrlBase?: string;
   pricePerWindow: number;
   marks: ProjMarksData | null;
   statuses: Record<string, WindowStatus>;
@@ -199,11 +212,15 @@ function floorBtnStyle(active: boolean): React.CSSProperties {
   return { minWidth: "34px", height: "34px", padding: "0 4px", borderRadius: "9px", border: "none", cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "14px", fontWeight: active ? 700 : 600, background: active ? "#fff" : "transparent", color: active ? "#0a0a0c" : "rgba(255,255,255,0.55)", transition: "all .16s" };
 }
 
-function floorLongName(floor: string): string {
-  return floor === "K" ? "Kellari" : `${floor}. kerros`;
+/** Kerroksen pitkä nimi. Jaettu `floorLabel` hoitaa myös `unitWord`in, jotta
+ *  yhden huoneen keikalla ei lue "1. kerros". */
+function floorLongName(floor: string, building?: ProjBuilding | null): string {
+  return floorLabel(building ?? null, floor);
 }
 
-function floorShortName(floor: string): string {
+function floorShortName(floor: string, building?: ProjBuilding | null): string {
+  const word = building?.unitWord?.trim();
+  if (word) return (building?.floors?.length ?? 0) > 1 ? `${word} ${floor}` : word;
   return floor === "K" ? "kellari" : `krs ${floor}`;
 }
 
@@ -235,13 +252,20 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, onLoadObservationImage, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, guided, onToggleFloorLock, onToggleWindowLock, lockedWindowKeys, floorFocus, restrictFloors }: Props) {
+export default function FloorView({ floors, planBase, building, planUrlBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, onLoadObservationImage, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, guided, onToggleFloorLock, onToggleWindowLock, lockedWindowKeys, floorFocus, restrictFloors }: Props) {
   // Discreet worker map: when restrictFloors is set, show ONLY those floors and
   // hide the rest, so a regular worker sees exactly the opened floors and nothing
   // else. Founders (restrictFloors null) always see every floor.
   const shownFloors = (restrictFloors && restrictFloors.length)
     ? floors.filter((f) => restrictFloors.includes(f))
     : floors;
+  // Pohjakuva: LADATTU kuva voittaa staattisen polun. `planImageUrl` on jaettu,
+  // joten admin, tekijä ja asiakas päättelevät osoitteen samalla säännöllä.
+  const planBuilding = building ?? { floors, planBase };
+  // Valokuva/ruudunkaappaus näytetään sellaisenaan: FR8:n `invert(1)` ja 2 %
+  // reunarajaus ovat oikein vain vaalealle viivapiirrokselle.
+  const isPhoto = planRenderOf(planBuilding) === "photo";
+  const planCrop = isPhoto ? "none" : PLAN_CROP;
   const [floor, setFloor] = useState(() =>
     (restrictFloors && restrictFloors.length && !restrictFloors.includes(initialFloor))
       ? (floors.find((f) => restrictFloors.includes(f)) ?? initialFloor)
@@ -353,12 +377,22 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
     return Math.hypot(dx, dy);
   }
   function onSceneWheel(e: React.WheelEvent) {
-    if (editMode) return;
+    /**
+     * LISÄYSTILASSAKIN SAA ZOOMATA JA LIIKUTTAA KARTTAA.
+     *
+     * Nämä käsittelijät palasivat ennen heti kun `editMode` oli päällä, joten
+     * kartta jäätyi juuri silloin kun sitä eniten tarvitsee liikuttaa: pisteitä
+     * lisätään huonetarkkuudella, eikä pientä huonetta voi osua tarkasti jos
+     * siihen ei pääse lähemmäs. Asiakaskartalla tämä oli jo korjattu samasta
+     * syystä (`CustomerFloorMap`), mutta adminin kartta jäi jälkeen.
+     *
+     * Vahinkopisteet estää `pannedRef`: veto on veto, ei napautus (ks.
+     * `onPlanClick`).
+     */
     e.preventDefault();
     zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12);
   }
   function onSceneTouchStart(e: React.TouchEvent) {
-    if (editMode) return;
     if (e.touches.length === 2) { pinchRef.current = touchDist(e.touches); panRef.current = null; }
     else if (e.touches.length === 1 && zoom > 1) {
       const p = e.touches[0];
@@ -367,7 +401,6 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
     }
   }
   function onSceneTouchMove(e: React.TouchEvent) {
-    if (editMode) return;
     if (e.touches.length === 2 && pinchRef.current != null) {
       e.preventDefault();
       const d = touchDist(e.touches);
@@ -698,6 +731,10 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
   }
 
   function onPlanClick(e: React.MouseEvent) {
+    // Kartan siirron päätteeksi ei synny pistettä: veto on veto. Ilman tätä
+    // zoomin salliminen lisäystilassa tarkoittaisi että jokainen panorointi
+    // jättää jälkeensä ylimääräisen ikkunan.
+    if (pannedRef.current) { pannedRef.current = false; return; }
     const img = planRef.current; if (!img) return;
     const r = img.getBoundingClientRect();
     const x = (e.clientX - r.left) / r.width * 100;
@@ -841,8 +878,8 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
             <button
               onClick={() => onToggleFloorLock(floor, !selectedFloorLocked)}
               title={selectedFloorLocked
-                ? `${floorLongName(floor)} on lukossa tekijöiltä — avaa se`
-                : `Piilota ${floorLongName(floor).toLowerCase()} tekijöiltä`}
+                ? `${floorLongName(floor, planBuilding)} on lukossa tekijöiltä — avaa se`
+                : `Piilota ${floorLongName(floor, planBuilding).toLowerCase()} tekijöiltä`}
               style={{
                 marginLeft: "auto", flexShrink: 0,
                 display: "inline-flex", alignItems: "center", gap: 6,
@@ -855,7 +892,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
                 transition: "all .16s",
               }}
             >
-              {selectedFloorLocked ? `Avaa ${floorShortName(floor)}` : `Lukitse ${floorShortName(floor)}`}
+              {selectedFloorLocked ? `Avaa ${floorShortName(floor, planBuilding)}` : `Lukitse ${floorShortName(floor, planBuilding)}`}
             </button>
           )}
         </div>
@@ -996,7 +1033,9 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
         onTouchStart={onSceneTouchStart}
         onTouchMove={onSceneTouchMove}
         onTouchEnd={onSceneTouchEnd}
-        style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", padding: isMobile ? "10px" : "26px", minHeight: 0, overflow: "hidden", touchAction: editMode ? "auto" : "none", background: "radial-gradient(ellipse 72% 72% at 50% 47%, rgba(125,135,170,0.07), transparent 72%)" }}
+        style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", padding: isMobile ? "10px" : "26px", minHeight: 0, overflow: "hidden", // Kartta ottaa eleet myös lisäystilassa, joten selain ei saa
+            // kaapata niitä sivun vieritykseen.
+            touchAction: "none", background: "radial-gradient(ellipse 72% 72% at 50% 47%, rgba(125,135,170,0.07), transparent 72%)" }}
       >
 
         {/* Edit banner */}
@@ -1024,7 +1063,7 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
           </div>
         )}
 
-        {!planBase ? (
+        {!hasAnyPlan(planBuilding) ? (
           <div style={{ maxWidth: "420px", textAlign: "center", padding: "30px", display: "flex", flexDirection: "column", alignItems: "center", gap: "12px" }}>
             <div style={{ width: "52px", height: "52px", borderRadius: "15px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 20 3 17V4l6 3 6-3 6 3v13l-6-3-6 3Z" /><path d="M9 7v13M15 4v13" /></svg>
@@ -1036,8 +1075,8 @@ export default function FloorView({ floors, planBase, pricePerWindow, marks, sta
           </div>
         ) : marks ? (
           <div style={{ position: "relative", display: "inline-block", lineHeight: 0, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "center center", transition: panRef.current || pinchRef.current ? "none" : "transform .18s ease", willChange: "transform" }}>
-            <img ref={planRef} src={`${planBase}${floor}.png`} alt="pohjapiirros"
-              style={{ display: "block", maxWidth: "100%", maxHeight: isMobile ? "calc(100vh - 210px)" : "calc(100vh - 240px)", width: "auto", height: "auto", userSelect: "none", WebkitClipPath: PLAN_CROP, clipPath: PLAN_CROP } as React.CSSProperties}
+            <img ref={planRef} src={planImageUrl(planBuilding, floor, planUrlBase) ?? ""} alt="pohjapiirros"
+              style={{ display: "block", maxWidth: "100%", maxHeight: isMobile ? "calc(100vh - 210px)" : "calc(100vh - 240px)", width: "auto", height: "auto", userSelect: "none", WebkitClipPath: planCrop, clipPath: planCrop } as React.CSSProperties}
               draggable={false} />
 
             {/* Orbs layer */}

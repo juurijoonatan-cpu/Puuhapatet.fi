@@ -6,12 +6,13 @@
  * link, and partial-invoice sending (the "every ~100 units" invoice button).
  */
 
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, useRoute, useLocation } from "wouter";
 import {
   ArrowLeft, Share2, Copy, Check, FileText,
   Send, AlertCircle, ChevronDown, Receipt, ExternalLink, ChevronRight,
   PenLine, ShieldCheck, Clock, Save, Download, Printer, LayoutDashboard, Users, Loader2,
+  SlidersHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -36,6 +37,16 @@ import { computeProjectTotals, fixedDealFor, computeDealBilling, dealAgreedTotal
 import { computeP2Billing } from "@shared/p2";
 import { p2InvoiceState } from "@shared/worker-payouts";
 import { downloadGigContract, openGigContractForPrint } from "@/lib/gig-contract-doc";
+
+/**
+ * Keikan työkalut (pohjakartat, kerrokset, tehokkuus).
+ *
+ * MIKSI LAZY: työkalupaneeli on koko ruudun tumma kuori omine riippuvuuksineen,
+ * eikä sitä tarvita ennen kuin nappia painetaan. Ks. `lazyRetry`-huomio
+ * docs/fr8-jarjestelma-yleiskuva.md ("Julkaisu ja Importing a module script
+ * failed") — Suspense-fallback pitää virhesivun poissa julkaisun aikana.
+ */
+const GigToolsOverlay = lazy(() => import("@/components/gig-tools/GigToolsOverlay"));
 
 const PUBLIC_BASE = "https://puuhapatet.fi";
 
@@ -76,6 +87,10 @@ export default function AdminGigTrackerPage() {
   const [jobDescription, setJobDescription] = useState("");
   const [savingDescription, setSavingDescription] = useState(false);
   const [token, setToken] = useState<string | null>(null);
+  // Keikan työkalut (pohjakartat & asetukset, tehokkuus). Tämä on se paikka
+  // josta UUSI keikka saa rakennuksensa, kerroksensa ja pohjakuvansa — ilman
+  // sitä toista keikkaa ei pysty perustamaan sovelluksen sisältä lainkaan.
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [approving, setApproving] = useState(false);
@@ -88,7 +103,7 @@ export default function AdminGigTrackerPage() {
   const [p2Terms, setP2Terms] = useState("");
   const [p2TermsOpen, setP2TermsOpen] = useState(false);
   const [savingP2Terms, setSavingP2Terms] = useState(false);
-  const [draft, setDraft] = useState({ contractId: "", contractText: "", customerNote: "", vatNote: "", requireSignature: true });
+  const [draft, setDraft] = useState({ contractId: "", contractText: "", customerNote: "", vatNote: "", requireSignature: true, customerTheme: "paper" as "paper" | "tech" });
 
   // Invoice dialog state
   const [invoiceOpen, setInvoiceOpen] = useState(false);
@@ -130,6 +145,7 @@ export default function AdminGigTrackerPage() {
           contractId: parsed.contractId ?? "",
           contractText: parsed.contractText ?? "",
           customerNote: parsed.customerNote ?? "",
+          customerTheme: parsed.customerTheme === "tech" ? "tech" as const : "paper" as const,
           vatNote: parsed.vatNote ?? "",
           requireSignature: signatureRequired(parsed),
         });
@@ -171,6 +187,7 @@ export default function AdminGigTrackerPage() {
       contractId: draft.contractId.trim() || undefined,
       contractText: draft.contractText.trim() || undefined,
       customerNote: draft.customerNote.trim() || undefined,
+      customerTheme: draft.customerTheme,
       vatNote: draft.vatNote.trim() || undefined,
       requireSignature: draft.requireSignature,
     };
@@ -694,6 +711,16 @@ export default function AdminGigTrackerPage() {
           </button>
 
           <button
+            onClick={() => setToolsOpen(true)}
+            aria-label="Keikan asetukset ja pohjakartat"
+            title="Pohjakartat, kerrokset ja keikan asetukset"
+            className="flex shrink-0 flex-col items-center justify-center gap-1 rounded-2xl w-16 sm:w-auto sm:px-5 bg-card text-foreground hover:bg-accent transition-all active:scale-[0.99] premium-shadow"
+          >
+            <SlidersHorizontal className="h-5 w-5" />
+            <span className="text-[11px] sm:text-xs font-medium">Asetukset</span>
+          </button>
+
+          <button
             onClick={() => navigate(`/admin/gig/${jobId}/tiimi`)}
             aria-label="Tiimi ja työntekijät"
             className="flex shrink-0 flex-col items-center justify-center gap-1 rounded-2xl w-16 sm:w-auto sm:px-5 bg-card text-foreground hover:bg-accent transition-all active:scale-[0.99] premium-shadow"
@@ -886,6 +913,39 @@ export default function AdminGigTrackerPage() {
                     <div className="space-y-1.5">
                       <Label className="text-xs font-medium text-muted-foreground">Asiakkaalle näytettävä huomautus</Label>
                       <Textarea rows={2} value={draft.customerNote} onChange={(e) => setDraft({ ...draft, customerNote: e.target.value })} placeholder="Esim. Maksat vain pestyistä ikkunoista…" />
+                    </div>
+
+                    {/* Asiakasnäkymän ulkoasu. Sama tieto, kaksi kieltä: vaalea
+                        esite tai tumma mittalaite. Tekninen sopii asiakkaalle
+                        jolle jälkimmäinen on tutumpi — ei koristeeksi vaan
+                        siksi että näkymä luetaan oikein. */}
+                    <div>
+                      <Label className="text-xs">Asiakasnäkymän ulkoasu</Label>
+                      <div role="radiogroup" aria-label="Asiakasnäkymän ulkoasu" className="grid grid-cols-2 gap-2 mt-1.5">
+                        {([
+                          { id: "paper" as const, title: "Vaalea", desc: "Selkeä ja rauhallinen" },
+                          { id: "tech" as const, title: "Tekninen", desc: "Tumma, mittarit ja tarkat luvut" },
+                        ]).map((o) => {
+                          const active = draft.customerTheme === o.id;
+                          return (
+                            <button
+                              key={o.id}
+                              type="button"
+                              role="radio"
+                              aria-checked={active}
+                              onClick={() => setDraft({ ...draft, customerTheme: o.id })}
+                              className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                                active
+                                  ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+                                  : "border-border hover:bg-muted/30"
+                              }`}
+                            >
+                              <p className={`text-sm ${active ? "font-semibold text-blue-700 dark:text-blue-300" : "text-foreground"}`}>{o.title}</p>
+                              <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">{o.desc}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                     <div className="space-y-1.5">
                       <Label className="text-xs font-medium text-muted-foreground">ALV-huomautus</Label>
@@ -1293,6 +1353,24 @@ export default function AdminGigTrackerPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Keikan työkalut. Täältä uusi keikka saa rakennuksen, kerrokset ja
+          pohjakuvan polun — sulkeutuessa projekti ladataan uudelleen, jotta
+          muuttunut kerroslista näkyy heti hinta-/ikkunaluvuissa. */}
+      {toolsOpen && (
+        <Suspense fallback={null}>
+          <GigToolsOverlay
+            jobId={jobId}
+            title={gig?.company?.name || "Sopimuskeikka"}
+            onClose={() => {
+              setToolsOpen(false);
+              void api.getProject(jobId).then((res) => {
+                if (res.ok && res.data?.project) setProject(res.data.project);
+              });
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

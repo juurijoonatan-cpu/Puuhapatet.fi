@@ -129,6 +129,7 @@ const WorkerPage = lazy(lazyRetry(() => import("@/pages/worker")));
 const AdminCrewPage = lazy(lazyRetry(() => import("@/pages/admin/crew")));
 const AdminCalendarPage = lazy(lazyRetry(() => import("@/pages/admin/calendar")));
 const AdminJobsPage = lazy(lazyRetry(() => import("@/pages/admin/jobs")));
+const AdminGigsPage = lazy(lazyRetry(() => import("@/pages/admin/gigs")));
 const AdminSellPage = lazy(lazyRetry(() => import("@/pages/admin/sell")));
 const AdminLeadTriagePage = lazy(lazyRetry(() => import("@/pages/admin/lead-triage")));
 const AdminPackagesPage = lazy(lazyRetry(() => import("@/pages/admin/packages")));
@@ -281,6 +282,13 @@ function Router() {
       <Route path="/admin/new-gig">
         <ProtectedRoute>
           <AdminNewGigPage />
+        </ProtectedRoute>
+      </Route>
+      {/* Urakkakeikkojen hakemisto. Ennen `/admin/gig/:id`-reittejä, jotta
+          kirjaimellinen "gigs" ei voi joutua tulkituksi keikan id:ksi. */}
+      <Route path="/admin/gigs">
+        <ProtectedRoute>
+          <AdminGigsPage />
         </ProtectedRoute>
       </Route>
       <Route path="/admin/gig/:id/projekti">

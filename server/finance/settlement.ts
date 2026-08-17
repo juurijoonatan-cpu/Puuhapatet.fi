@@ -30,10 +30,78 @@ export interface BillerTurnover {
   ok: true;
   limitEur: number;
   billers: { id: string; name: string; yTunnus?: string }[];
+  /** Koko liikevaihto per vuosi per laskuttaja = asiakaslaskut + sisäiset laskut. */
   turnoverByYear: Record<string, Record<string, number>>;
+  /**
+   * Pelkät ASIAKASLASKUT — sama luku jota tämä kortti näytti ennen. Erikseen,
+   * jotta käyttöliittymä voi kertoa mistä kokonaisluku koostuu eikä luku vain
+   * hyppää selittämättä.
+   */
+  customerByYear: Record<string, Record<string, number>>;
+  /**
+   * YRITTÄJIEN VÄLISET LASKUT jotka tämä laskuttaja on LÄHETTÄNYT.
+   *
+   * MIKSI NÄMÄ KUULUVAT TÄHÄN: johtajat jakavat urakan erät tarkoituksella
+   * keskenään, ja siirtävät rahan oikealle ansaitsijalle laskuttamalla
+   * TOISIAAN omilla Y-tunnuksillaan. Lähetetty lasku on lähettäjän omaa
+   * myyntiä ja kerryttää hänen 20 000 €:n rajaansa siinä missä asiakaslasku.
+   * Näitä ei laskettu mukaan lainkaan, joten kortti näytti kummankin
+   * liikevaihdosta vain asiakkaalle päin menevän puolen — ja juuri se
+   * mekanismi jolla raha oikeasti liikkuu oli näkymätön.
+   */
+  internalByYear: Record<string, Record<string, number>>;
   unassignedByYear: Record<string, { count: number; cents: number }>;
   unassignedEras: { jobId: number; index: number; name: string; dateMs: number | null; cents: number }[];
+  /**
+   * Kirjatut yrittäjien väliset MAKSUT (`founder_settlements`) joille ei löydy
+   * vastaavaa lähetettyä laskua. Näitä ei summata mihinkään — ne raportoidaan,
+   * koska sama tapahtuma on kahdessa taulussa ja niiden yhteenlaskeminen
+   * tuplaisi. Ks. `docs/talous-kirjanpito.md`.
+   */
+  settledWithoutInvoiceCents: number;
+  /**
+   * Yrittäjien välisiä laskuja jotka on LÄHETETTY mutta sitten HYLÄTTY.
+   *
+   * Nämä eivät ole liikevaihdossa: hylättyä laskua ei todennäköisesti makseta.
+   * Mutta lähetetty lasku on `isEraInvoiceReceipt`in mukaan yhä TOSITE (sillä on
+   * laskunumero ja lähetysaikaleima), eikä sellaista pyyhitä pois — oikea
+   * käsittely on hyvityslasku, ei hiljainen poisjättö. Raportoidaan siis
+   * erikseen, jottei summa eroa tositteista selittämättä.
+   */
+  rejectedButSentCents: number;
 }
+
+/** Yrittäjien välinen lasku sellaisena kuin liikevaihtolaskenta sen tarvitsee. */
+export interface InternalInvoiceRow {
+  senderId: string;
+  kind: string;
+  tila: string;
+  totalCents: number;
+  sentAt: Date | null;
+  createdAt: Date;
+}
+
+/**
+ * MILLÄ PÄIVÄLLÄ liikevaihto kirjautuu vuodelle.
+ *
+ * Kortti käytti kolmea eri päivää tietämättään, mikä teki vuosirajasta
+ * epämääräisen: urakkaerä laskutushetkestä (`GigPayment.t`), pikkukeikka TYÖN
+ * päivästä (`scheduledAt ?? createdAt`) ja sisäinen lasku lähetyshetkestä.
+ * Suomen kirjanpito on lähtökohtaisesti SUORITEPERUSTEINEN, joten oikea päivä
+ * on laskun/suoritteen päivä — ei työn suunniteltu päivä.
+ *
+ * Pikkukeikan kohdalla laskun päivää ei ole tallennettuna missään: `jobs`illa ei
+ * ole laskutuspäivää. Siksi työn päivä JÄÄ toistaiseksi käyttöön sille haaralle
+ * — mutta se on nyt nimetty ja näkyvä valinta eikä vahinko, ja
+ * `docs/talous-kirjanpito.md` kirjaa sen avoimena kysymyksenä kirjanpitäjälle.
+ * Jos/kun `jobs`ille lisätään laskutuspäivä, se vaihdetaan TÄSTÄ yhdestä
+ * paikasta.
+ */
+export const TURNOVER_DATE_BASIS = {
+  gigInstalment: "laskutushetki (GigPayment.t)",
+  internalInvoice: "lähetyshetki (era_invoices.sentAt)",
+  smallJob: "työn päivä (scheduledAt ?? createdAt) — ei laskun päivä, ks. docs",
+} as const;
 
 /**
  * Per-founder (biller) customer-invoice turnover by calendar year. Each
@@ -44,8 +112,24 @@ export interface BillerTurnover {
  * legal threshold counts ALL of a person's business activity, so this is a
  * floor, surfaced with that caveat in the UI.
  */
-export function computeBillerTurnover(rows: Job[]): BillerTurnover {
+export function computeBillerTurnover(
+  rows: Job[],
+  internalInvoices: InternalInvoiceRow[] = [],
+  settledCents = 0,
+): BillerTurnover {
   const byYear: Record<string, Record<string, number>> = {};
+  const customerByYear: Record<string, Record<string, number>> = {};
+  const internalByYear: Record<string, Record<string, number>> = {};
+  /** Lisää summan sekä kokonaislukuun että annettuun erittelyyn. */
+  const add = (
+    bucket: Record<string, Record<string, number>>,
+    year: string, id: string, cents: number,
+  ) => {
+    (byYear[year] ||= {});
+    byYear[year][id] = (byYear[year][id] ?? 0) + cents;
+    (bucket[year] ||= {});
+    bucket[year][id] = (bucket[year][id] ?? 0) + cents;
+  };
   const unassignedByYear: Record<string, { count: number; cents: number }> = {};
   const unassignedEras: BillerTurnover["unassignedEras"] = [];
   for (const row of rows) {
@@ -64,8 +148,7 @@ export function computeBillerTurnover(rows: Job[]): BillerTurnover {
           return;
         }
         const year = String(new Date(p.t || 0).getFullYear());
-        (byYear[year] ||= {});
-        byYear[year][billerId] = (byYear[year][billerId] ?? 0) + p.amountCents;
+        add(customerByYear, year, billerId, p.amountCents);
       });
     }
     if (!row.isCustomGig && !row.gigData && row.status === "done" && row.quoteStatus !== "declined") {
@@ -74,22 +157,57 @@ export function computeBillerTurnover(rows: Job[]): BillerTurnover {
       const year = String(new Date(row.scheduledAt ?? row.createdAt).getFullYear());
       const eff = inferBillerId(row);
       if (eff && BRAND_BILLERS.some((b) => b.id === eff)) {
-        (byYear[year] ||= {});
-        byYear[year][eff] = (byYear[year][eff] ?? 0) + total;
-      } else if (!row.billedBy) {
+        add(customerByYear, year, eff, total);
+      } else {
+        /**
+         * KAIKKI KOHDENTAMATON TÄHÄN, EI VAIN `billedBy`-tyhjä.
+         *
+         * Ehto oli aiemmin `else if (!row.billedBy)`, joten keikka jonka
+         * `billedBy` osoitti JOHONKIN MUUHUN kuin brändin laskuttajaan katosi
+         * kortilta kokonaan: se ei ollut kenenkään liikevaihdossa eikä
+         * kohdentamattomien listalla. Käyttöliittymä tarjoaa myös muita
+         * Y-tunnuksen haltijoita, joten se oli täysin mahdollinen tila —
+         * ja tulos oli hiljaa kadonnutta rahaa.
+         */
         (unassignedByYear[year] ||= { count: 0, cents: 0 });
         unassignedByYear[year].count += 1;
         unassignedByYear[year].cents += total;
       }
     }
   }
+  /**
+   * Yrittäjien väliset laskut. Vain LÄHETETYT (tai hyväksytyt): luonnos ei ole
+   * lasku eikä tosite. Vuosi luetaan lähetyshetkestä — se on laskun päivä.
+   */
+  let rejectedButSentCents = 0;
+  for (const inv of internalInvoices) {
+    if (inv.kind !== "johtaja_valinen") continue;
+    if (!BRAND_BILLERS.some((b) => b.id === inv.senderId)) continue;
+    if (!inv.totalCents || inv.totalCents <= 0) continue;
+    // Lähetetty mutta hylätty: pois summasta, mutta ei vaieten — se on tosite.
+    if (inv.tila === "hylätty" && inv.sentAt) { rejectedButSentCents += inv.totalCents; continue; }
+    if (inv.tila !== "lähetetty" && inv.tila !== "hyväksytty") continue;
+    const year = String(new Date(inv.sentAt ?? inv.createdAt).getFullYear());
+    add(internalByYear, year, inv.senderId, inv.totalCents);
+  }
+
+  // Kirjatut maksut joille ei ole laskua. EI summata: sama tapahtuma kahdessa
+  // taulussa, ja yhteenlasku tuplaisi liikevaihdon.
+  const invoicedInternal = Object.values(internalByYear)
+    .reduce((s, byId) => s + Object.values(byId).reduce((a, c) => a + c, 0), 0);
+  const settledWithoutInvoiceCents = Math.max(0, settledCents - invoicedInternal);
+
   return {
     ok: true,
     limitEur: VAT_SMALL_BUSINESS_LIMIT_EUR,
     billers: BRAND_BILLERS.map((b) => ({ id: b.id, name: b.name, yTunnus: b.yTunnus })),
     turnoverByYear: byYear,
+    customerByYear,
+    internalByYear,
     unassignedByYear,
     unassignedEras,
+    settledWithoutInvoiceCents,
+    rejectedButSentCents,
   };
 }
 

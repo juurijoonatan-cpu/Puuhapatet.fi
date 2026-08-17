@@ -85,6 +85,10 @@ export interface WorkerView {
   eraInvoices: EraInvoiceClient[];
   building: ProjBuilding;
   pricePerWindow: number;          // the worker's OWN rate (not the gig price)
+  /** Onko keikalla erälaskutus. EI hintatietoa — ohjaa vain maksuerämittarin näkymistä. */
+  hasInstalments?: boolean;
+  /** Yhteisökeikka: keikasta ei liiku rahaa, joten korvausta ei luvata. */
+  isCommunity?: boolean;
   marks: ProjMarksData;
   statuses: Record<string, WindowStatus>;
   washedBy: Record<string, string>;
@@ -395,9 +399,21 @@ export interface GigPublicView {
   paymentsCount: number;
   /** True when the gig is billed as a fixed flat-rate contract (4 equal instalments). */
   isFixedDeal: boolean;
+  /** Yhteisökeikka: euroja ei näytetä asiakkaalle lainkaan. */
+  isCommunity?: boolean;
+  /** Asiakasnäkymän ulkoasu: "paper" (oletus) | "tech" (tumma, tekninen). */
+  theme?: "paper" | "tech";
   // Read-only floor-plan map (white, customer view). Null if no plan.
   map: {
-    building: { name: string | null; address: string | null; floors: string[]; planBase: string };
+    building: {
+      name: string | null; address: string | null; floors: string[]; planBase: string;
+      /** Kerros → `job_assets`-id ladatulle pohjakuvalle. Kuva haetaan omalta reitiltään. */
+      planImages?: Record<string, number>;
+      /** "plan" (viivapiirros, käännetään + rajataan) | "photo" (näytetään sellaisenaan). */
+      planRender?: "plan" | "photo";
+      /** Korvaa sanan "kerros", esim. "tila". */
+      unitWord?: string;
+    };
     marks: ProjMarksData;
     statuses: Record<string, WindowStatus>;
     customMarks: Record<string, ProjCustomMark[]>;
@@ -627,6 +643,8 @@ export interface NewCustomer {
   notes?: string;
   ownedBy?: string;
   isYritys?: boolean;
+  /** `CustomerType` — "henkilo" | "yritys" | "ry". Ks. shared/schema.ts. */
+  customerType?: string;
   companyName?: string;
   yTunnus?: string;
 }
@@ -699,6 +717,14 @@ export const api = {
       limitEur: number;
       billers: { id: string; name: string; yTunnus?: string }[];
       turnoverByYear: Record<string, Record<string, number>>;
+      /** Pelkät asiakaslaskut — erittelyä varten. */
+      customerByYear?: Record<string, Record<string, number>>;
+      /** Yrittäjien väliset LÄHETETYT laskut. Nämä puuttuivat ennen kokonaan. */
+      internalByYear?: Record<string, Record<string, number>>;
+      /** Kirjatut yrittäjien väliset maksut joille ei löydy laskua. Ei summata. */
+      settledWithoutInvoiceCents?: number;
+      /** Lähetetty mutta hylätty sisäinen lasku — tosite, mutta ei liikevaihdossa. */
+      rejectedButSentCents?: number;
       /** Done small jobs with no biller set — attribute them or the tracker under-counts. */
       unassignedByYear: Record<string, { count: number; cents: number }>;
       /** Recorded gig instalments (urakkaerät) with no biller — in NOBODY's
@@ -771,6 +797,16 @@ export const api = {
         workerPaidCents: number;
         workerOpenCents: number;
         netByFounder: Record<string, number>;
+        /** Poikkeama johtajien keskiarvosta = kumpi on velkaa kummalle. */
+        dueByFounder?: Record<string, number>;
+        /** Mitä kumpikin johtaja on ANSAINNUT urakkakeikoista (oma työ + osuus katteesta). */
+        entitledByFounder?: Record<string, number>;
+        /** Johtajien käsissä oleva raha joka kuuluu vielä TEKIJÖILLE. Ei kummankaan katetta. */
+        reserveCents?: number;
+        /** Maksut jotka lähtivät tileiltä ilman merkintää maksajasta. */
+        unattributedPaidCents?: number;
+        /** Se summa joka pankissa oikeasti liikkuu, suuntineen. */
+        transfer?: { fromId: string; toId: string; cents: number } | null;
       };
       gigs: {
         jobId: number; name: string; invoicedCents: number; workerEarnedCents: number;
@@ -1126,7 +1162,14 @@ export const api = {
 
   // Resolve the logged-in user's personal worker dashboard link (dashboard-only users).
   getMyDashboard: () =>
-    request<{ ok: boolean; token: string | null }>("GET", "/api/admin/my-dashboard"),
+    request<{
+      ok: boolean;
+      /** Ensimmäinen osuma — säilytetty taaksepäin-yhteensopivuuden vuoksi. */
+      token: string | null;
+      /** KAIKKI keikat joilla käyttäjä on tekijänä. Kun näitä on useampi, valinta
+       *  on käyttäjän — ennen palvelin palautti satunnaisesti yhden. */
+      gigs?: { jobId: number; name: string; token: string }[];
+    }>("GET", "/api/admin/my-dashboard"),
 
   // Workers who've finished onboarding (entered the app + signed their agreements) —
   // powers the login picker and the about-page team photos so a new hire appears
@@ -1275,6 +1318,37 @@ export const api = {
     request<{ ok: boolean; project: ProjectData; totals: ProjTotals; workerStats: WorkerStat[]; p2Billing?: P2Billing; guidedState?: GuidedState }>(
       "PATCH", `/api/jobs/${jobId}/project`, { projectData },
     ),
+
+  /**
+   * KEIKAN POHJAKUVAT.
+   *
+   * Kuva lähtee data URLina JSONissa (sama kuvio kuin havaintokuvilla — ei
+   * multipartia missään) ja tallentuu `job_assets`-tauluun, EI karttablobiin.
+   * Vastauksena tulee päivitetty projekti, jonka `building.planImages` sisältää
+   * uuden viitteen — se on serverin omistama kenttä, joten sitä ei lähetetä
+   * takaisin tavallisessa tallennuksessa.
+   */
+  uploadPlanImage: (jobId: number, floor: string, dataUrl: string) =>
+    request<{ ok: boolean; project: ProjectData; assetId: number }>(
+      "POST", `/api/jobs/${jobId}/plan/${encodeURIComponent(floor)}`, { dataUrl },
+    ),
+
+  deletePlanImage: (jobId: number, floor: string) =>
+    request<{ ok: boolean; project: ProjectData }>(
+      "DELETE", `/api/jobs/${jobId}/plan/${encodeURIComponent(floor)}`,
+    ),
+
+  /**
+   * Pohjakuvan osoitteen ETULIITE per yleisö. `planImageUrl` (shared/project.ts)
+   * liittää tähän kerroksen ja versiotunnuksen.
+   *
+   * Täydellinen osoite on pakollinen: juurisuhteellinen `/api/…` osoittaisi
+   * GitHub Pagesiin, joka vastaa 404:llä (ks. docs, "Tiedostolinkit API:iin
+   * täydellä osoitteella").
+   */
+  planUrlBaseForJob:  (jobId: number) => `${API_BASE}/api/jobs/${jobId}/plan/`,
+  planUrlBaseForGig:  (token: string) => `${API_BASE}/api/gig/${encodeURIComponent(token)}/plan/`,
+  planUrlBaseForCrew: (token: string) => `${API_BASE}/api/crew/${encodeURIComponent(token)}/plan/`,
 
   /**
    * Last-chance save for the floor-plan project, used when the page is being

@@ -26,7 +26,18 @@ import { db } from "./db";
 import { jobAssets } from "@shared/schema";
 import type { ProjectData } from "@shared/project";
 
-export type AssetKind = "observation" | "expense_receipt" | "payout_receipt" | "crew_document";
+/**
+ * `floor_plan` on keikan pohjakuva (kerros → kuva). Se kuuluu tähän tauluun
+ * samasta syystä kuin muut liitteet: kuva on satoja kilotavuja, karttablobi
+ * luetaan joka ikkunanapautuksella, ja pohjakuvaa katsotaan kerran per
+ * sivunlataus. Blobiin jää vain `building.planImages[kerros]` = tämän rivin id.
+ */
+export type AssetKind =
+  | "observation" | "expense_receipt" | "payout_receipt" | "crew_document" | "floor_plan";
+
+/** Suurin talletettava pohjakuva (~2,5 MB data URL). Iso mutta kertaluonteinen:
+ *  se ei ole blobissa eikä siis mukana karttapyynnöissä. */
+export const MAX_PLAN_IMAGE_LEN = 3_500_000;
 
 /** Data URL:n mime-tyyppi, esim. "image/jpeg". Tuntematon → "application/octet-stream". */
 function mimeOf(dataUrl: string): string {
@@ -74,6 +85,45 @@ export async function resolveAsset(
 ): Promise<string | null> {
   if (ref.assetId) return getAsset(jobId, ref.assetId);
   return ref.inline ?? null;
+}
+
+/**
+ * Kerroksen pohjakuva raakana kuvana, ei JSONina.
+ *
+ * MIKSI OMA FUNKTIO: `<img src>` tarvitsee oikean `Content-Type`in ja bittejä,
+ * ei `{dataUrl}`-objektia. Data URL puretaan tässä takaisin binääriksi, jotta
+ * selain voi välimuistittaa kuvan normaalisti — muuten se kulkisi base64:na
+ * (33 % isompana) joka sivunlatauksella.
+ *
+ * Palauttaa null jos kuvaa ei ole tai se ei ole tämän keikan.
+ */
+export async function getPlanImage(
+  jobId: number, floor: string,
+): Promise<{ body: Buffer; mime: string; etag: string } | null> {
+  const [row] = await db.select({ id: jobAssets.id, mime: jobAssets.mime, data: jobAssets.data })
+    .from(jobAssets)
+    .where(and(
+      eq(jobAssets.jobId, jobId),
+      eq(jobAssets.kind, "floor_plan"),
+      eq(jobAssets.refKey, floor.slice(0, 200)),
+    ));
+  if (!row?.data) return null;
+  const comma = row.data.indexOf(",");
+  if (comma < 0) return null;
+  const body = Buffer.from(row.data.slice(comma + 1), "base64");
+  // ETag on rivin id + koko: kuva on muuttumaton kunnes se korvataan, ja
+  // korvaus muuttaa kokoa lähes aina. Riittää 304-vastauksiin.
+  return { body, mime: row.mime || "image/png", etag: `"plan-${row.id}-${body.length}"` };
+}
+
+/** Poista kerroksen pohjakuva. Palauttaa true jos rivi oli olemassa. */
+export async function deletePlanImage(jobId: number, floor: string): Promise<boolean> {
+  const gone = await db.delete(jobAssets).where(and(
+    eq(jobAssets.jobId, jobId),
+    eq(jobAssets.kind, "floor_plan"),
+    eq(jobAssets.refKey, floor.slice(0, 200)),
+  )).returning({ id: jobAssets.id });
+  return gone.length > 0;
 }
 
 /**

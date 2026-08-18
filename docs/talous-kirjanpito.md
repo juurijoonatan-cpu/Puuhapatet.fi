@@ -556,3 +556,55 @@ voinut testata ilman tietokantaa, vaikka se on puhdas funktio. Nyt:
 | `server/finance/post.ts` | rivien haku + kirjaus | kyllä |
 
 Vanhat importit toimivat ennallaan, koska `accounts.ts` re-exporttaa datan.
+
+---
+
+## Admin-etusivun avauskuva — kokonaislaskutus yhdellä silmäyksellä
+
+`client/src/components/admin/RevenueHero.tsx`, näkyy `/admin/dashboard`in
+ylimpänä vain perustajille.
+
+**Ongelma jota tämä ratkaisee:** kokonaislaskutusta ei ollut MISSÄÄN.
+Pikkukeikat asuvat `jobs.agreedPrice`issä ja tulevat `/api/stats`ista; urakat
+asuvat `gigData`-blobien maksuissa ja tulevat `/api/admin/gig-money`ista. Kaksi
+eri korttia, kaksi eri lukua, eikä niitä ollut laskettu yhteen kertaakaan.
+
+### Miksi summaa EI oteta `stats.totalRevenue`sta
+
+`/api/stats` laskee `totalRevenue`n **kaikista** valmiista keikoista, myös
+urakkakeikoista — ja urakan `agreedPrice` on sopimuksen katto, joka on jo
+mukana `gigMoney.invoicedCents`issä. Yhteenlasku olisi laskenut urakan kahdesti.
+Avauskuvan pikkukeikkaluku on siksi laskettu erikseen `/api/jobs`-riveiltä
+**urakat pois suodatettuna** (`!isCustomGig && !gigData`), samalla ehdolla kuin
+"Oma tulo" -kortti ja `server/finance/settlement.ts`.
+
+### Aikasarjan päiväperusteet
+
+Sarja on kahden virran summa kuukausittain, ja niiden päivä tulee eri paikasta:
+
+| Virta | Päivä | Miksi |
+|---|---|---|
+| Urakat | erämaksun aikaleima (`GigPayment.t`) | Maksu on se tapahtuma joka toi rahan. |
+| Pikkukeikat | `jobs.scheduledAt` | Päivä jona työ tehtiin ja lasku annettiin. Ilman aikaa rivi jätetään sarjasta pois — arvattu kuukausi olisi väärä kuukausi. |
+
+Sama huomio kuin `TURNOVER_DATE_BASIS`issa: perusteet ovat eri, ja kaistaleen
+tehtävä on näyttää rytmi — ei olla kirjanpidon jaksotus.
+
+### Muotoiluvalinnat, jotka on mitattu eikä arvattu
+
+- **Kuukaudet ovat yhtenäinen jakso** ensimmäisestä laskutuskuukaudesta tähän
+  kuukauteen (enintään 12 viimeisintä). Tyhjä kuukausi on tieto, joten se näkyy
+  tyhjänä pylväänä; jos sarjaan otettaisiin vain rahalliset kuukaudet, puolen
+  vuoden tauko näyttäisi olemattomalta.
+- **Nolla on nolla.** Yksikään piste ei syty tyhjässä kuukaudessa; pienin
+  positiivinen arvo saa aina vähintään yhden.
+- **Sammunut piste on saman rampin tummempi askel** (`CT_TECH.hair`), ei harmaa
+  — harmaa lukisi omana sarjana.
+- **Koostumusnauha mahtuu 320 pikselin puhelimeen** ilman vieritystä: 22 pistettä
+  × 7 px + 21 × 3 px = 217 px. Pisteet eivät kutistu, joten määrä ratkaisee.
+- **Kaksi sarjaa erottuvat värillä JA tekstillä** (vihreä = urakat, vaalea
+  sininen = pikkukeikat, kummankin nimi ja summa selitteessä). Väri ei ole
+  koskaan ainoa erottava tekijä.
+- **Tumma pinta on tarkoituksellinen**, ei teemavirhe: yksi kiinteäsävyinen
+  kaistale samasta paletista kuin asiakkaan tekninen teema (`CT_TECH`), jottei
+  järjestelmässä ole kahta eri tummaa.

@@ -977,10 +977,7 @@ function round2(n: number): number {
 
 const GIG_FLOOR_PALETTE = ["#D9472B", "#DFA614", "#1F3B57", "#3E7C59", "#7A4FA3", "#C2557A"];
 
-function gigFloorName(f: string): string {
-  if (f === "K") return "Kellari";
-  return `${f}. kerros`;
-}
+
 
 /**
  * Derive a gig's billing sectors from the floor-plan window project so the FR8
@@ -1037,7 +1034,10 @@ export function syncGigSectorsFromProject(gig: GigData, project: ProjectData): G
     const prevInvoiced = Math.max(0, prevById.get(id)?.invoicedWashed ?? 0);
     return {
       id,
-      name: gigFloorName(f),
+      // Sama nimi kuin kartalla: yhden tilan keikalla "Tila", ei "1. kerros".
+      // FR8:lla `unitWord` on tyhjä, joten tämä tuottaa sille tavulleen saman
+      // nimen kuin ennen ("Kellari" / "3. kerros").
+      name: floorLabel(project.building, f),
       color: GIG_FLOOR_PALETTE[i % GIG_FLOOR_PALETTE.length],
       unitLabel: "ikkuna",
       total,

@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { getAdminProfile, USERS } from "@/lib/admin-profile";
 import { DashboardBriefing } from "@/components/dashboard-briefing";
+import RevenueHero, { type HeroMonth } from "@/components/admin/RevenueHero";
 import { api, StatsResponse, WorkerStatsResponse, type MyGigWork } from "@/lib/api";
 import { isMyJob, parseWorkerIds } from "@/lib/visibility";
 import { STAFF_SERVICE_FEE_RATE, STAFF_SERVICE_FEE_PCT, HOST_SERVICE_FEE_PCT, feeRateForWorker, feePctForWorker, effectiveJobTotal } from "@shared/team";
@@ -34,6 +35,17 @@ export default function AdminDashboard() {
   const [myJobUpcoming, setMyJobUpcoming] = useState<number | null>(null);
   const [myRevenue, setMyRevenue] = useState<number | null>(null);
   const [myInvestmentShare, setMyInvestmentShare] = useState<number | null>(null);
+  /**
+   * PIKKUKEIKKOJEN laskutus koko tiimiltä, ja sama sarja kuukausittain.
+   *
+   * MIKSI TÄSTÄ EIKÄ `/api/stats`ista: `stats.totalRevenue` summaa KAIKKI
+   * valmiit keikat, myös urakkakeikat — ja urakan `agreedPrice` on sopimuksen
+   * katto, joka on jo laskettu mukaan `gigMoney.invoicedCents`iin. Avauskuvan
+   * "laskutettu yhteensä" laskisi urakan siis kahdesti. Tämä luku on
+   * nimenomaisesti urakat POIS SUODATETTUNA, joten summa on kertaalleen.
+   */
+  const [smallGigCents, setSmallGigCents] = useState<number | null>(null);
+  const [smallGigMonths, setSmallGigMonths] = useState<Record<string, number>>({});
   // Gigs where the logged-in admin is ALSO a worker (e.g. Petrus). Shows a small
   // earnings card + a button straight to their own worker dashboard.
   const [myGigWork, setMyGigWork] = useState<MyGigWork[]>([]);
@@ -65,7 +77,7 @@ export default function AdminDashboard() {
     if (profile) {
       api.getJobs().then((res) => {
         if (res.ok && res.data) {
-          const rows = res.data as { job: { assignedTo: string | null; status: string; agreedPrice: number; waiveFee?: boolean; quoteStatus?: string | null; unitCount?: number | null; isTaloyhtiio?: boolean | null; isCustomGig?: boolean | null; gigData?: string | null } }[];
+          const rows = res.data as { job: { assignedTo: string | null; status: string; agreedPrice: number; waiveFee?: boolean; quoteStatus?: string | null; unitCount?: number | null; isTaloyhtiio?: boolean | null; isCustomGig?: boolean | null; gigData?: string | null; scheduledAt?: string | null } }[];
           const mine = rows.filter(r => isMyJob(r.job.assignedTo, profile.id));
           setMyJobTotal(mine.length);
           setMyJobUpcoming(mine.filter(r => r.job.status === "scheduled").length);
@@ -86,6 +98,28 @@ export default function AdminDashboard() {
               return sum + Math.round(effectiveJobTotal(r.job) / workerCount);
             }, 0);
           setMyRevenue(rev);
+
+          // Koko tiimin pikkukeikat: sama suodatus kuin yllä (valmis, ei
+          // hylätty tarjous, ei urakka) mutta ilman "omat"-rajausta, ja ilman
+          // jakoa tekijämäärällä — tämä on laskutus, ei kenenkään osuus.
+          const small = rows.filter(
+            (r) => r.job.status === "done" && r.job.quoteStatus !== "declined"
+              && !r.job.isCustomGig && !r.job.gigData,
+          );
+          setSmallGigCents(small.reduce((sum, r) => sum + effectiveJobTotal(r.job), 0));
+          const byMonth: Record<string, number> = {};
+          for (const r of small) {
+            // Keikkapäivä on oikea päivä pikkukeikalle: se on päivä jona työ
+            // tehtiin ja lasku annettiin. Puuttuva ajankohta jätetään pois
+            // sarjasta — arvattu kuukausi olisi väärä kuukausi.
+            const iso = r.job.scheduledAt ?? null;
+            if (!iso) continue;
+            const d = new Date(iso);
+            if (Number.isNaN(d.getTime())) continue;
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+            byMonth[key] = (byMonth[key] ?? 0) + effectiveJobTotal(r.job);
+          }
+          setSmallGigMonths(byMonth);
         }
       });
       api.getInvestments().then((res) => {
@@ -116,6 +150,50 @@ export default function AdminDashboard() {
    * tekijöiden palkkaa eikä omaa tuloa.
    */
   const myGigEntitled = (profile && gigMoney?.totals.entitledByFounder?.[profile.id]) || 0;
+
+  /**
+   * AVAUSKUVAN LUVUT.
+   *
+   * Kaksi rahavirtaa lasketaan yhteen kertaalleen (ks. `smallGigCents`), ja
+   * aikasarja on molempien summa kuukausittain. Urakkaraha on perustajien
+   * tietoa (`gigMoney` haetaan vain heille), joten avauskuva näytetään vain
+   * heille — muille tervehdys ja omat kortit kuten ennen.
+   */
+  const heroGigCents = gigMoney?.totals.invoicedCents ?? 0;
+  const heroSmallCents = smallGigCents ?? 0;
+  const heroMyIncome = Math.max(0, (myRevenue ?? 0) + myGigEntitled - (myInvestmentShare ?? 0));
+  /**
+   * Kuukaudet YHTENÄISENÄ jaksona ensimmäisestä laskutuskuukaudesta tähän
+   * kuukauteen, enintään 12 viimeisintä.
+   *
+   * Yhtenäisyys on tässä koko pointti: tyhjä kuukausi on tieto ("silloin ei
+   * laskutettu mitään"), joten sen pitää näkyä tyhjänä pylväänä. Jos sarjaan
+   * otettaisiin vain ne kuukaudet joissa on rahaa, kaksi kuukautta joiden
+   * välissä on puolen vuoden tauko näyttäisivät vierekkäisiltä.
+   */
+  const heroMonths: HeroMonth[] = (() => {
+    const merged: Record<string, number> = { ...smallGigMonths };
+    for (const [k, v] of Object.entries(gigMoney?.totals.monthlyInvoicedCents ?? {})) {
+      merged[k] = (merged[k] ?? 0) + v;
+    }
+    const keys = Object.keys(merged).sort();
+    if (keys.length === 0) return [];
+    const [fy, fm] = keys[0].split("-").map(Number);
+    const now = new Date();
+    const out: HeroMonth[] = [];
+    // Kalenterikävely, ei päivämäärä-aritmetiikkaa: kuukauden lisäys
+    // päivämäärään kaatuu kuun 31. päivänä.
+    let y = fy, m = fm;
+    const endY = now.getFullYear(), endM = now.getMonth() + 1;
+    while (y < endY || (y === endY && m <= endM)) {
+      const key = `${y}-${String(m).padStart(2, "0")}`;
+      out.push({ key, cents: merged[key] ?? 0 });
+      m += 1;
+      if (m > 12) { m = 1; y += 1; }
+      if (out.length > 240) break; // vikaturva kelvottomalta aikaleimalta
+    }
+    return out.slice(-12);
+  })();
 
   const myDebt = workerStats && profile ? (workerStats.workerFees[profile.id] ?? 0) : null;
   const myJobCount = workerStats && profile ? (workerStats.workerJobCount[profile.id] ?? 0) : null;
@@ -201,6 +279,18 @@ export default function AdminDashboard() {
   return (
     <div className="min-h-screen bg-background admin-shell-pad">
       <div className="container mx-auto px-4 max-w-5xl">
+        {isHost && (
+          <RevenueHero
+            invoicedCents={heroGigCents + heroSmallCents}
+            gigCents={heroGigCents}
+            smallCents={heroSmallCents}
+            myIncomeCents={heroMyIncome}
+            myName={profile?.name?.split(" ")[0] || "Oma"}
+            months={heroMonths}
+            loading={loading || smallGigCents === null}
+          />
+        )}
+
         <div className="mb-8">
           <h1 className="text-2xl md:text-3xl font-semibold text-foreground mb-2">
             Hei, {profile?.name?.split(" ")[0] || "Ylläpitäjä"}

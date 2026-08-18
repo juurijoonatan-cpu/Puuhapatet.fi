@@ -253,6 +253,30 @@ describe("yhteisökeikka — 0 € on oikea hinta", () => {
     expect(computeTotals(gig).capCents).toBe(0);
   });
 
+  it("laskutussektorin nimi seuraa kartan yksikkösanaa", () => {
+    // Yhden tilan keikalla laskun rivi luki "1. kerros" vaikka kartalla luki
+    // "Tila". Nimi tulee nyt samasta `floorLabel`ista kuin kartan otsikko.
+    const data = newGigProjectData();
+    data.building.floors = ["Tila"];
+    data.building.unitWord = "tila";
+    data.marks = { Tila: { marks: [{ p: 1 as const, x: 0, y: 0 }] } };
+
+    const gig = syncGigSectorsFromProject(emptyGigData(), data);
+    expect(gig.sectors[0].name).toBe("Tila");
+  });
+
+  it("kerrosnimet eivät muuttuneet keikalla jolla ei ole yksikkösanaa", () => {
+    const data = newGigProjectData();
+    data.building.floors = ["K", "3"];
+    data.marks = {
+      K: { marks: [{ p: 1 as const, x: 0, y: 0 }] },
+      3: { marks: [{ p: 1 as const, x: 0, y: 0 }] },
+    };
+
+    const gig = syncGigSectorsFromProject(emptyGigData(), data);
+    expect(gig.sectors.map((s) => s.name)).toEqual(["Kellari", "3. kerros"]);
+  });
+
   it("roskakorvaustyyppi ei mene läpi", () => {
     expect(sanitizeProjectData({ compensation: "talkoo" }).compensation).toBeUndefined();
   });

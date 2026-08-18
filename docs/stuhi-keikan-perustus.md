@@ -46,24 +46,36 @@ suuntaa.
 
 ## Asetukset järjestyksessä
 
-| # | Missä | Asetus | Arvo | Miksi |
-|---|---|---|---|---|
-| 1 | `/admin/customers` | Asiakkaan laji | **Yhdistys (ry)** | Kertoo miksi keikasta ei makseta. Ei "yritys, jonka hinta on 0". |
-| 2 | ” | Nimi + Y-tunnus | yhdistyksen nimi, Y-tunnus | Yhdistyksellä on Y-tunnus kuten yrityksellä. |
-| 3 | ” | Yhteyshenkilö | Akseli | Eri kenttä kuin yhdistyksen nimi. |
-| 4 | `/admin/new-gig` | Keikka | luo keikka | Ainoa näkymä joka luo urakkakeikan. |
-| 5 | keikka → **Asetukset** | Korvaustapa | **Yhteisökeikka — ei rahaa** | Hinta aidosti 0, `agreedPrice` ei kirjaudu, asiakas ei näe euroja. |
-| 6 | ” | Kerrokset/tilat | **yksi** | Yksi kuva = yksi "kerros". Huoneet erottuvat kuvasta itsestään. |
-| 7 | ” | Tilan nimi (`unitWord`) | `tila` | Muuten lukee "1. kerros" yhden huoneen keikalla. |
-| 8 | ” | Pohjakuva | lataa kuva | Menee liitetauluun, ei karttablobiin. |
-| 9 | ” | Kuvan esitys | **Viivapiirros** | Ks. yllä — tämä on mitattu, ei arvattu. |
-| 10 | ” | Tuntiarvio / ikkuna | `1.5` | Antaa kokonaisarvion ja tuntipohjaisen ETA:n. |
-| 11 | keikka → Sopimus | Asiakasnäkymän ulkoasu | **Tekninen** | Tumma mittarinäkymä. Tekniselle yhteisölle luontevampi kieli. |
-| 12 | projektinäkymä → Kartta | Pisteet | ~15 kpl | `+` → "Punainen piste" → klikkaa kohtaa. Tila jää päälle. |
+Kaikki muu paitsi pohjakuva ja pisteet asetetaan **yhdellä kertaa**
+`/admin/new-gig`issä: se luo asiakkaan, keikan ja karttablobin samalla
+lähetyksellä. Erillistä asiakkaan luontia `/admin/customers`issa **ei tarvita**.
 
-**Huom kohta 1:** `customer_type`-sarake syntyy palvelimen käynnistyksen
-automaattimigraatiossa (`server/index.ts`). Lisää asiakas vasta kun muutos on
+| # | Missä | Kohta | Arvo | Miksi |
+|---|---|---|---|---|
+| 1 | `/admin/new-gig` | Korvaus | **Yhteisökeikka** | Hinta aidosti 0, `agreedPrice` ei kirjaudu, asiakas ei näe euroja. Hintakentät katoavat lomakkeelta. |
+| 2 | ” | Tilaaja | **Yhdistys (ry)** | Kertoo miksi keikasta ei makseta. Ei "yritys, jonka hinta on 0". |
+| 3 | ” | Asiakasnäkymän ilme | **Tekninen** | Tumma mittarinäkymä. Tekniselle yhteisölle luontevampi kieli. |
+| 4 | ” | Malli | **Pohjakuva & ikkunat** | Sektorit johdetaan kartasta. Käsin syötetyt korvautuisivat silti. |
+| 5 | ” | Kerrokset / tilat | **`Tila`** | Yksi kuva = yksi "kerros". Huoneet erottuvat kuvasta itsestään. |
+| 6 | ” | Yksikön nimi | **`tila`** | Muuten lukee "1. kerros" yhden huoneen keikalla — sekä kartalla että laskutussektorissa. |
+| 7 | ” | Ikkunoita arviolta | **15** | Antaa etenemälle nimittäjän ennen kuin pisteet on merkitty. Tarkentuu kartasta. |
+| 8 | ” | Tuntia / ikkuna | **`1,5`** | Antaa kokonaisarvion (~22,5 h) ja tuntipohjaisen ETA:n. |
+| 9 | ” | Yhdistyksen nimi | yhdistyksen virallinen nimi | Sopimus, asiakaslinkki, keikkalista. |
+| 10 | ” | Yhteyshenkilö | **Akseli Kettunen** | Eri kenttä kuin yhdistyksen nimi — molemmat näkyvät keikkalistalla. |
+| 11 | ” | Y-tunnus | yhdistyksen Y-tunnus | Yhdistyksellä on Y-tunnus kuten yrityksellä. |
+| 12 | ” | Osoite / kohde | rakennuksen osoite | Menee myös kartan otsikkoon (`building.address`). |
+| 13 | keikka → **Asetukset** | Pohjakuva | lataa kuva | Menee liitetauluun, ei karttablobiin. |
+| 14 | ” | Kuvan esitys | **Viivapiirros** | Ks. yllä — tämä on mitattu, ei arvattu. |
+| 15 | projektinäkymä → Kartta | Pisteet | ~15 kpl | `+` → "Punainen piste" → klikkaa kohtaa. Tila jää päälle. |
+
+**Huom kohta 2:** `customer_type`-sarake syntyy palvelimen käynnistyksen
+automaattimigraatiossa (`server/index.ts`). Perusta keikka vasta kun muutos on
 julkaistu, muuten laji ei tallennu.
+
+**Mitä lomakkeelle EI tarvitse laittaa:** hintaa, laskutusväliä eikä
+sopimustekstiä. Yhteisökeikalla hintakentät ovat piilossa, ja ALV-huomautus
+vaihtuu itse muotoon "Vastikkeeton yhteisötyö — ei laskutusta eikä
+arvonlisäveroa."
 
 ## Pisteiden lisääminen
 
@@ -105,7 +117,7 @@ luvata ikkunakohtaista korvausta**, ja maksuerämittari on piilossa (sitä ei ol
 
 ## Tarkistus ennen kuin linkki lähtee Akselille
 
-- [ ] Asiakkaan laji on **Yhdistys (ry)**, ei Yritys
+- [ ] Asiakkaan laji on **Yhdistys (ry)**, ei Yritys (näkyy `/admin/gigs`-listalla)
 - [ ] Korvaustapa on **Yhteisökeikka**; keikkalistassa lukee `Yhteisökeikka · 0 €`
 - [ ] `/seuranta/<token>` ei näytä yhtään euromäärää
 - [ ] Pohjakuva näkyy **kaikissa kolmessa** näkymässä (admin, tekijä, asiakas)

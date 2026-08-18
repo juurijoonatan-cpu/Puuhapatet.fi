@@ -736,3 +736,52 @@ maksamaton maksu, ja se että kirjattu siirto EI muuta tätä lukua.
 **Jäljellä tiedostettuna:** docs-ohje "tee payoutista erälasku" tuottaa
 kaksoislaskennan, koska `era_invoices`illa ei ole viitettä payoutiin eikä mikään
 mitätöi payoutia — `workerPaidCents` summaa molemmat. Sitä ei korjattu tässä.
+
+
+---
+
+## "Oma tulo" laskee LASKUTETTUA, ei kertynyttä
+
+Etusivun mittaluku näytti tulevan pelkistä pikkukeikoista, vaikka urakkakeikan
+osuus oli mukana kaavassa. Syy oli kahdessa asiassa yhtä aikaa:
+
+1. `entitledCents` (moottorin ansaintaluku) on **kertymäperusteinen**. Punaisten
+   osuus on sidottu laskutettuun pottiin — `x = p1-potti / punaiset ikkunat`, ja
+   potti syntyy vasta kun erälasku lähtee. Keltaiset EIVÄT ole: `p2OwnCents` ja
+   `workerP2EarnedCents` luetaan suoraan kartalta heti kun ikkuna on pesty ja
+   hinta lukittu. Kun keltaisista ei ole vielä laskutettu senttiäkään,
+   keltaisten **tekijäkulu vähennetään ilman vastaavaa tuloa** ja johtajan luku
+   painuu alas — usein miinukselle.
+2. `Math.max(0, …)` etusivulla **piilotti sen kokonaisuudessaan**. Negatiivinen
+   urakkaosuus leikkautui nollaan, jolloin jäljelle jäi täsmälleen
+   pikkukeikkojen summa. Luku ei ollut väärä laskutoimitus vaan väärä kysymys.
+
+`buildTasaus` palauttaa nyt myös `invoicedEntitledCents`: sama laskenta niin,
+että keltaisten puoli on skaalattu laskutetulla osuudella
+(`p2-potti / keltaisten kertymä`). Päätepisteissä se on tarkka — nolla
+laskutettua → keltaiset eivät vaikuta mitenkään, kaikki laskutettu → sama luku
+kuin `entitledCents`. Väliltä se on suhteellinen arvio, koska keltaisten lasku
+on könttäsumma eikä kanna tietoa siitä mitkä ikkunat se kattoi.
+
+| Luku | Perusta | Kuka lukee |
+|---|---|---|
+| `entitledByFounder` | kertymä (sis. laskuttamattoman keltaisen työn) | keikan tasausnäkymä — tasaus koskee myös laskuttamatonta työtä |
+| `invoicedEntitledByFounder` | vain laskutettu | etusivun "Oma tulo" |
+
+**VAIN tämä kenttä paljastetaan toisesta laskennasta, ei koko tulosta.** Toinen
+`transfer`/`reserveCents` olisi toinen vastaus kysymykseen "kuka on velkaa
+kummalle" — invariantti 19 kieltää sen, ja repo on kaatunut siihen kerran.
+
+Tiili sanoo alleen **"laskutetusta"**. Ei "saatu" eikä "tilillä": mikään kenttä
+ei tiedä onko asiakas oikeasti maksanut — `GigPayment`illa ei ole
+maksettu-lippua, ja `settlement.receivedBy` kertoo vain kummalle johtajalle erä
+on ohjattu.
+
+### Kuukausipylväät ovat valittavia
+
+Kärkiluku oli ainoa jonka arvon näki. Pylväät ovat nyt nappeja: napautus siirtää
+korostuksen ja arvomerkinnän siihen kuukauteen, napautus valittuun palauttaa
+kärjen. Merkintä **siirtyy eikä monistu** — luku joka pylväällä olisi kaaos ja
+jäisi lukematta. Merkinnässä on nyt myös kuukausi ("07 · 4 575 €"), koska
+korostus voi olla missä tahansa. Koko sarake on kosketusalue, ei pelkkä pylväs:
+pieni kuukausi on 3 px korkea eikä siihen muuten osu.

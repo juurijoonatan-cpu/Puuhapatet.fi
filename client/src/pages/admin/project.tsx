@@ -1054,6 +1054,7 @@ export default function AdminProjectPage() {
             planBase={project.building.planBase || ""}
             building={project.building}
             planUrlBase={api.planUrlBaseForJob(jobId)}
+            planAuthed
             pricePerWindow={effectivePrice}
             marks={project.marks}
             statuses={project.statuses}

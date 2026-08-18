@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Loader2, ClipboardList, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Check, CalendarClock, Save, Plus, Trash2, Receipt, Users, TrendingUp, Clock, Building2 } from "lucide-react";
+import { Loader2, ClipboardList, ArrowLeft, ArrowRight, Phone, Mail, MapPin, Check, CalendarClock, Save, Plus, Trash2, Receipt, Users, TrendingUp, Clock, Building2, User } from "lucide-react";
+import { Disclosure } from "@/components/ui/disclosure";
+import { customerTypeOf } from "@shared/schema";
 import { Link, useLocation } from "wouter";
 
 import { Card } from "@/components/ui/card";
@@ -90,6 +92,12 @@ interface JobRow {
     phone: string;
     email: string | null;
     address: string;
+    /** Nämä kolme tulevat jo palvelimelta (`/api/jobs` valitsee koko
+     *  customers-rivin); tyyppi vain ei tuntenut niitä, joten asiakkaan laji ja
+     *  organisaation nimi olivat ulottumattomissa. */
+    companyName?: string | null;
+    customerType?: string | null;
+    isYritys?: boolean | null;
   } | null;
 }
 
@@ -653,6 +661,20 @@ export default function AdminJobsPage() {
   const visibleJobs = (isHost && showAll) || !profile
     ? jobs
     : jobs.filter(r => isMyJob(r.job.assignedTo, profile.id));
+
+  /**
+   * KAKSI OSIOTA: organisaatiot (yritykset + yhdistykset) ja yksityishenkilöt.
+   *
+   * `customerTypeOf` putoaa takaisin `isYritys`iin niillä riveillä joilla
+   * `customer_type`-saraketta ei vielä ole, joten vanhat asiakkaat menevät
+   * oikeaan pinoon ilman migraatiota. Järjestys kummankin sisällä on ennallaan
+   * (palvelin: uusin ensin).
+   *
+   * HUOM: laji luetaan ASIAKKAALTA eikä keikalta. `jobs.isYritys` on eri asia —
+   * se on tarjouksen yrityslippu, ei asiakkaan laji.
+   */
+  const privateJobs = visibleJobs.filter((r) => customerTypeOf(r.customer) === "henkilo");
+  const orgJobs = visibleJobs.filter((r) => customerTypeOf(r.customer) !== "henkilo");
 
   const hasFieldChanges = selected
     ? editPrice !== String(selected.job.agreedPrice / 100) ||
@@ -2321,8 +2343,32 @@ export default function AdminJobsPage() {
         )}
 
         {!loading && visibleJobs.length > 0 && (
-          <div className="space-y-3">
-            {visibleJobs.map((row) => {
+          <div>
+            {[
+              {
+                key: "org",
+                title: `Yritykset ja yhdistykset (${orgJobs.length})`,
+                rows: orgJobs,
+                icon: <Building2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />,
+                accent: "border-l-4 border-l-emerald-500",
+              },
+              {
+                key: "private",
+                title: `Yksityishenkilöt (${privateJobs.length})`,
+                rows: privateJobs,
+                icon: <User className="w-4 h-4 text-blue-600 dark:text-blue-400" />,
+                accent: "border-l-4 border-l-blue-500",
+              },
+            ].filter((sec) => sec.rows.length > 0).map((sec) => (
+              <Disclosure
+                key={sec.key}
+                title={sec.title}
+                icon={sec.icon}
+                className={sec.accent}
+                defaultOpen
+                contentClassName="space-y-3"
+              >
+            {sec.rows.map((row) => {
               const meta = statusMeta(row.job.status);
               return (
                 <Card
@@ -2332,10 +2378,22 @@ export default function AdminJobsPage() {
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <p className="font-medium text-foreground truncate">
-                          {row.customer?.name || "Tuntematon asiakas"}
-                        </p>
+                      {/* NIMI OMALLE RIVILLEEN, merkinnät sen alle.
+                          Aiemmin nimi ja kaikki merkinnät olivat samalla
+                          rivillä, ja jokainen merkintä oli `shrink-0`. Nimi oli
+                          siis ainoa joka joustaa, ja `truncate` kutisti sen
+                          nollaan — kapealla kortilla näkyi vain värillisiä
+                          merkintöjä eikä nimeä lainkaan. */}
+                      <p className="font-medium text-foreground truncate">
+                        {row.customer?.companyName?.trim() || row.customer?.name || "Tuntematon asiakas"}
+                      </p>
+                      {row.customer?.companyName?.trim() && row.customer?.name && (
+                        // Organisaatio ja yhteyshenkilö ovat eri asia — nimi
+                        // yllä oli tähän asti YHTEYSHENKILÖ, joten yrityskeikka
+                        // näytti henkilön nimeltä.
+                        <p className="text-xs text-muted-foreground truncate">{row.customer.name}</p>
+                      )}
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1.5 mb-1">
                         <Badge className={cn("text-xs shrink-0", meta.bg, meta.color)}>
                           {meta.label}
                         </Badge>
@@ -2405,6 +2463,8 @@ export default function AdminJobsPage() {
                 </Card>
               );
             })}
+              </Disclosure>
+            ))}
           </div>
         )}
       </div>

@@ -10,6 +10,7 @@ import { NOTE_KINDS, planImageUrl, planRenderOf, hasAnyPlan, floorLabel } from "
 import type { P2Offer, P2NumberingInput } from "@shared/p2";
 import { P2_PRICE_PRESETS_CENTS, MAX_P2_NOTE_LEN, p2NumbersByFloor } from "@shared/p2";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useAuthedImage } from "@/lib/authed-image";
 
 const CIRC_S = 2 * Math.PI * 17; // mini ring
 
@@ -36,6 +37,13 @@ interface Props {
    * ladattu kuva. Ks. `api.planUrlBaseForJob` / `planUrlBaseForCrew`.
    */
   planUrlBase?: string;
+  /**
+   * Vaatiiko `planUrlBase` Bearer-tokenin. Adminin reitti vaatii, asiakkaan ja
+   * tekijän julkiset reitit eivät (token on polussa). `<img>` ei voi lähettää
+   * otsaketta, joten adminin kuva haetaan fetchillä ja näytetään object-URLina
+   * — ilman tätä juuri ladattu pohjakuva näkyi rikkinäisen kuvan merkkinä.
+   */
+  planAuthed?: boolean;
   pricePerWindow: number;
   marks: ProjMarksData | null;
   statuses: Record<string, WindowStatus>;
@@ -252,7 +260,7 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, building, planUrlBase, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, onLoadObservationImage, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, guided, onToggleFloorLock, onToggleWindowLock, lockedWindowKeys, floorFocus, restrictFloors }: Props) {
+export default function FloorView({ floors, planBase, building, planUrlBase, planAuthed = false, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, onLoadObservationImage, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, guided, onToggleFloorLock, onToggleWindowLock, lockedWindowKeys, floorFocus, restrictFloors }: Props) {
   // Discreet worker map: when restrictFloors is set, show ONLY those floors and
   // hide the rest, so a regular worker sees exactly the opened floors and nothing
   // else. Founders (restrictFloors null) always see every floor.
@@ -270,6 +278,17 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pri
     (restrictFloors && restrictFloors.length && !restrictFloors.includes(initialFloor))
       ? (floors.find((f) => restrictFloors.includes(f)) ?? initialFloor)
       : initialFloor);
+
+  /**
+   * Kerroksen pohjakuvan osoite ja siitä johdettu näytettävä `src`.
+   *
+   * Adminin reitti on Bearer-tokenin takana, joten sen kuva haetaan fetchillä ja
+   * näytetään object-URLina (`useAuthedImage`). Julkiset reitit ja staattinen
+   * `planBase` menevät suoraan.
+   */
+  const planHref = planImageUrl(planBuilding, floor, planUrlBase);
+  const authedPlan = useAuthedImage(planAuthed ? planHref : null);
+  const planSrc = planAuthed ? authedPlan.src : planHref;
   const [filter, setFilter] = useState<"all" | "unwashed" | "progress" | "done">("all");
   const [editMode, setEditMode] = useState(false);
   const [placeMode, setPlaceMode] = useState<1 | 2 | "del" | "note" | "zone" | null>(null);
@@ -1075,9 +1094,18 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pri
           </div>
         ) : marks ? (
           <div style={{ position: "relative", display: "inline-block", lineHeight: 0, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "center center", transition: panRef.current || pinchRef.current ? "none" : "transform .18s ease", willChange: "transform" }}>
-            <img ref={planRef} src={planImageUrl(planBuilding, floor, planUrlBase) ?? ""} alt="pohjapiirros"
-              style={{ display: "block", maxWidth: "100%", maxHeight: isMobile ? "calc(100vh - 210px)" : "calc(100vh - 240px)", width: "auto", height: "auto", userSelect: "none", WebkitClipPath: planCrop, clipPath: planCrop } as React.CSSProperties}
-              draggable={false} />
+            {/* TYHJÄÄ `src`:iä ei aseteta koskaan: `<img src="">` lataa nykyisen
+                sivun ja piirtyy rikkinäisen kuvan merkkinä — se näytti
+                kartalla siltä kuin kuva olisi rikki, vaikka kuvaa ei ollut. */}
+            {planSrc ? (
+              <img ref={planRef} src={planSrc} alt="pohjapiirros"
+                style={{ display: "block", maxWidth: "100%", maxHeight: isMobile ? "calc(100vh - 210px)" : "calc(100vh - 240px)", width: "auto", height: "auto", userSelect: "none", WebkitClipPath: planCrop, clipPath: planCrop } as React.CSSProperties}
+                draggable={false} />
+            ) : (
+              <div style={{ width: "min(78vw, 420px)", height: "min(62vh, 560px)", display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "24px", borderRadius: "14px", border: "1px dashed rgba(255,255,255,0.16)", background: "rgba(255,255,255,0.02)", color: "rgba(255,255,255,0.55)", fontSize: "13px", lineHeight: 1.6 }}>
+                {authedPlan.error ?? (authedPlan.loading ? "Ladataan pohjakuvaa…" : "Pohjakuvaa ei ole vielä ladattu tälle kerrokselle.")}
+              </div>
+            )}
 
             {/* Orbs layer */}
             <div onClick={onPlanClick} style={{ position: "absolute", inset: 0, cursor: (placeMode === 1 || placeMode === 2 || placeMode === "note" || placeMode === "zone") ? "crosshair" : "default" }}>

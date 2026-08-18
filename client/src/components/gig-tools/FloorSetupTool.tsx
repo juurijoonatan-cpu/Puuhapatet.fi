@@ -27,6 +27,7 @@ import {
 } from "@shared/project";
 import { api } from "@/lib/api";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useAuthedImage } from "@/lib/authed-image";
 
 interface Props {
   project: ProjectData;
@@ -134,7 +135,51 @@ function stableJson(value: unknown): string {
  * hylkää yli `MAX_PLAN_DATAURL_LEN`:n data URLin. Pienennys tehdään siis
  * täällä, jossa kuva jo on, eikä jätetä käyttäjän arvattavaksi.
  */
-async function fileToPlanDataUrl(file: File): Promise<string> {
+/**
+ * VALKOISEN PAPERIN POISTO — reunoista sisäänpäin.
+ *
+ * Talon pohjakuvat (FR8) ovat vaaleaa viivaa LÄPINÄKYVÄLLÄ pohjalla, ja koko
+ * ketju on rakennettu sille: adminin tumma kartta näyttää kuvan sellaisenaan ja
+ * asiakkaan vaalea kartta kääntää sen (`invert(1)`, joka ei koske
+ * läpinäkyvyyteen). Puhelimella kaapattu tai skannattu pohjapiirros on
+ * päinvastainen: tummaa viivaa VALKOISELLA paperilla. Sellaisenaan se on tumman
+ * kartan päällä iso kirkas arkki — juuri se mistä valkoinen tausta valitettiin.
+ *
+ * Tausta poistetaan LEVITTÄMÄLLÄ REUNOISTA, ei "kaikki valkoinen pois":
+ * jälkimmäinen söisi huoneiden sisällä olevat vaaleat tekstit ja mitat. Reunasta
+ * levitessä vain se yhtenäinen paperialue joka koskettaa kuvan reunaa muuttuu
+ * läpinäkyväksi; kaikki sisäpuolinen säilyy.
+ *
+ * Kynnys on korkea (238), jotta harmaa seinäviiva ja rasterointi jäävät jäljelle.
+ */
+function dropBorderPaper(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  const NEAR_WHITE = 238;
+  const img = ctx.getImageData(0, 0, w, h);
+  const d = img.data;
+  const seen = new Uint8Array(w * h);
+  const stack: number[] = [];
+  const push = (x: number, y: number) => {
+    if (x < 0 || y < 0 || x >= w || y >= h) return;
+    const i = y * w + x;
+    if (seen[i]) return;
+    seen[i] = 1;
+    stack.push(i);
+  };
+  for (let x = 0; x < w; x++) { push(x, 0); push(x, h - 1); }
+  for (let y = 0; y < h; y++) { push(0, y); push(w - 1, y); }
+  while (stack.length) {
+    const i = stack.pop()!;
+    const p = i * 4;
+    if (d[p] < NEAR_WHITE || d[p + 1] < NEAR_WHITE || d[p + 2] < NEAR_WHITE) continue;
+    d[p + 3] = 0;
+    const x = i % w;
+    const y = (i - x) / w;
+    push(x + 1, y); push(x - 1, y); push(x, y + 1); push(x, y - 1);
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+async function fileToPlanDataUrl(file: File, dropPaper = false): Promise<string> {
   const dataUrl: string = await new Promise((resolve, reject) => {
     const r = new FileReader();
     r.onload = () => resolve(String(r.result || ""));
@@ -149,7 +194,7 @@ async function fileToPlanDataUrl(file: File): Promise<string> {
   });
   const longEdge = Math.max(img.width, img.height);
   const scale = longEdge > 0 ? Math.min(1, PLAN_MAX_DIM / longEdge) : 1;
-  if (scale === 1 && dataUrl.startsWith("data:image/png") && dataUrl.length <= PLAN_KEEP_PNG_LEN) {
+  if (!dropPaper && scale === 1 && dataUrl.startsWith("data:image/png") && dataUrl.length <= PLAN_KEEP_PNG_LEN) {
     return dataUrl;
   }
   const w = Math.max(1, Math.round(img.width * scale));
@@ -159,6 +204,13 @@ async function fileToPlanDataUrl(file: File): Promise<string> {
   canvas.height = h;
   const ctx = canvas.getContext("2d");
   if (!ctx) return dataUrl;
+  if (dropPaper) {
+    // Läpinäkyvä pohja: EI valkoista täyttöä, ja ulostulo PNG:nä koska JPEG ei
+    // kanna alfakanavaa (läpinäkyvä alue muuttuisi siinä mustaksi laatikoksi).
+    ctx.drawImage(img, 0, 0, w, h);
+    dropBorderPaper(ctx, w, h);
+    return canvas.toDataURL("image/png");
+  }
   // Valkoinen pohja ensin: läpinäkyvä PNG muuttuisi JPEGissä mustaksi, ja
   // pohjapiirros on valkoisella paperilla.
   ctx.fillStyle = "#ffffff";
@@ -251,6 +303,33 @@ function Choice<T extends string>({ value, options, onChange, mobile, disabled }
   );
 }
 
+/**
+ * Pohjakuvan pikkukuva.
+ *
+ * Omana komponenttinaan, koska kuva haetaan hookilla eikä hookia voi kutsua
+ * `.map()`-silmukan sisällä. Adminin kuvareitti on Bearer-tokenin takana, joten
+ * `<img src>` ei voi hakea sitä suoraan — se palautti 401:n ja pikkukuva näkyi
+ * rikkinäisen kuvan merkkinä.
+ */
+function PlanThumb({ url, alt }: { url: string; alt: string }) {
+  const img = useAuthedImage(url);
+  const box: React.CSSProperties = {
+    width: "58px", height: "42px", flexShrink: 0, borderRadius: "9px",
+    border: "1px solid rgba(255,255,255,0.14)",
+  };
+  if (img.src) {
+    return <img src={img.src} alt={alt} style={{ ...box, objectFit: "cover", background: "rgba(255,255,255,0.9)" }} />;
+  }
+  return (
+    <span
+      title={img.error ?? undefined}
+      style={{ ...box, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.45)", fontSize: "9px", textAlign: "center", lineHeight: 1.2, padding: "2px" }}
+    >
+      {img.loading ? "…" : "ei näy"}
+    </span>
+  );
+}
+
 export default function FloorSetupTool({ project, saving, onSave, jobId }: Props) {
   const m = useIsMobile();
   const [draft, setDraft] = useState<ProjectData>(() => JSON.parse(JSON.stringify(project)));
@@ -282,6 +361,15 @@ export default function FloorSetupTool({ project, saving, onSave, jobId }: Props
   const wordCap = word.charAt(0).toUpperCase() + word.slice(1);
   const floorsHeading = unitWord ? unitWord.toUpperCase() : "KERROKSET";
   const planUrlBase = jobId != null ? api.planUrlBaseForJob(jobId) : null;
+  /**
+   * Poistetaanko valkoinen paperitausta latauksen yhteydessä.
+   *
+   * Oletus PÄÄLLÄ, koska talon kuvat ovat läpinäkyväpohjaisia ja koko ketju on
+   * rakennettu sille: adminin tumma kartta näyttää kuvan sellaisenaan, asiakkaan
+   * vaalea kartta kääntää sen. Puhelimella kaapattu pohjapiirros on valkoisella
+   * paperilla, ja sellaisenaan se on tumman kartan päällä iso kirkas arkki.
+   */
+  const [dropPaper, setDropPaper] = useState(true);
 
   // Compare against the persisted project (ignoring the timestamp) to know if
   // there is anything to save.
@@ -397,7 +485,7 @@ export default function FloorSetupTool({ project, saving, onSave, jobId }: Props
     setPlanError(floor, null);
     setPlanFlag(floor, true);
     try {
-      const dataUrl = await fileToPlanDataUrl(file);
+      const dataUrl = await fileToPlanDataUrl(file, dropPaper);
       if (!dataUrl.startsWith("data:image/")) {
         setPlanError(floor, "Tiedosto ei ole kuva");
         return;
@@ -628,6 +716,25 @@ export default function FloorSetupTool({ project, saving, onSave, jobId }: Props
             <span style={mono}>{floorsHeading}</span>
             <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "11px", color: "rgba(255,255,255,0.4)" }}>{draft.building.floors.length} kpl</span>
           </div>
+          {jobId != null && (
+            <label style={{ display: "flex", alignItems: "flex-start", gap: "10px", marginBottom: "14px", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={dropPaper}
+                onChange={(ev) => setDropPaper(ev.target.checked)}
+                style={{ width: 18, height: 18, flexShrink: 0, marginTop: 1, accentColor: "#5fe08a" }}
+              />
+              <span>
+                <span style={{ fontSize: "13px", color: "rgba(255,255,255,0.86)", fontWeight: 600 }}>Poista valkoinen tausta</span>
+                <span style={{ ...hintStyle, display: "block", marginTop: "3px" }}>
+                  Kartta on tumma, joten valkoisella paperilla oleva pohjapiirros on siinä iso kirkas
+                  arkki. Tämä tekee paperista läpinäkyvän reunoista sisäänpäin — huoneiden sisällä
+                  olevat tekstit ja mitat säilyvät. Ota pois päältä jos kuva on jo läpinäkyvä tai
+                  valokuva.
+                </span>
+              </span>
+            </label>
+          )}
           {jobId == null && (
             <p style={{ ...hintStyle, marginTop: 0, marginBottom: "12px" }}>
               Kuvien lataus ei ole käytettävissä täällä: tämä näkymä ei saanut keikan tunnistetta.
@@ -653,8 +760,7 @@ export default function FloorSetupTool({ project, saving, onSave, jobId }: Props
                   {jobId != null && (
                     <div style={{ display: "flex", alignItems: "center", gap: "9px", flexWrap: "wrap", paddingLeft: m ? 0 : "39px" }}>
                       {thumb ? (
-                        <img src={thumb} alt={`Pohjakuva — ${floorLabel(draft.building, f)}`}
-                          style={{ width: "58px", height: "42px", flexShrink: 0, objectFit: "cover", borderRadius: "9px", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.9)" }} />
+                        <PlanThumb url={thumb} alt={`Pohjakuva — ${floorLabel(draft.building, f)}`} />
                       ) : (
                         <span style={{ ...mono, fontSize: "9.5px" }}>EI LADATTUA KUVAA</span>
                       )}

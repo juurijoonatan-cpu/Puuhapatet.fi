@@ -141,6 +141,27 @@ projektitallennuksessa, joten arvio korjautuu itsestään.
 
 Avaa keikka → **Asetukset** (`GigToolsOverlay` → "Pohjakartat & asetukset").
 
+> **Pohjakuva ei näkynyt adminille 2026-08 asti.** Adminin API tunnistautuu
+> `Authorization: Bearer` -otsakkeella, ja `<img src>` ei voi lähettää
+> otsaketta — joten `GET /api/jobs/:id/plan/:floor` palautti 401:n ja juuri
+> ladattu pohjakuva näkyi rikkinäisen kuvan merkkinä ("?"). Kuva oli tallessa
+> koko ajan; sitä ei vain voinut näyttää. Adminin kuva haetaan nyt fetchillä ja
+> tarjoillaan object-URLina (`client/src/lib/authed-image.ts`). Asiakkaan ja
+> tekijän reitit ovat julkisia (token polussa) eivätkä koskaan olleet rikki.
+> Samalla poistui `<img src="">`: tyhjä osoite lataa nykyisen sivun ja piirtyy
+> sekin rikkinäisenä kuvana, joten pohjakuvaton kerros näytti rikkinäiseltä
+> vaikka mitään ei ollut ladattu.
+>
+> **Valkoinen paperitausta.** Talon kuvat ovat vaaleaa viivaa LÄPINÄKYVÄLLÄ
+> pohjalla, ja koko ketju on rakennettu sille: adminin tumma kartta näyttää
+> kuvan sellaisenaan, asiakkaan vaalea kartta kääntää sen (`invert(1)`, joka ei
+> koske läpinäkyvyyteen). Puhelimella kaapattu pohjapiirros on valkoisella
+> paperilla ja on tumman kartan päällä iso kirkas arkki. Latauksessa on nyt
+> valinta **"Poista valkoinen tausta"** (oletus päällä): tausta poistetaan
+> levittämällä kuvan REUNOISTA sisäänpäin, joten huoneiden sisällä olevat
+> vaaleat tekstit ja mitat säilyvät — "kaikki valkoinen pois" olisi syönyt ne.
+> Tulos tallentuu PNG:nä, koska JPEG ei kanna alfakanavaa.
+
 > **Tämä näkymä oli rikki 2026-08 asti** ja jäi ikuisesti tekstiin "Ladataan…":
 > latausefektin `loading` oli sekä varhaisen paluun ehto ETTÄ riippuvuus, joten
 > `setLoading(true)` laukaisi efektin siivouksen, joka perui kesken lentävän

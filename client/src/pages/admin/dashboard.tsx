@@ -155,11 +155,18 @@ export default function AdminDashboard() {
    * Tämä puuttui "Oma tulo" -luvusta kokonaan. Luku summasi vain
    * `status = "done"` -keikkojen `agreedPrice`ia, ja urakkakeikka on
    * `in_progress` koko kestonsa ajan — joten koko urakkatyö oli näkymätöntä.
-   * `entitledCents` on moottorin oma vastaus (oma pesutyö + omat keltaiset +
-   * tasaosuus katteesta), EI kassaan kerätty raha: kerätystä valtaosa on
-   * tekijöiden palkkaa eikä omaa tuloa.
+   * `invoicedEntitledCents` on moottorin oma vastaus (oma pesutyö + omat
+   * keltaiset + tasaosuus katteesta), EI kassaan kerätty raha: kerätystä
+   * valtaosa on tekijöiden palkkaa eikä omaa tuloa.
+   *
+   * VAIN LASKUTETUSTA. Kertymäperusteinen `entitledByFounder` vähentää
+   * keltaisten tekijäkulun heti kun ikkuna on pesty ja hinta lukittu — myös
+   * silloin kun keltaisista ei ole laskutettu senttiäkään. Luku painui siitä
+   * alas tai miinukselle, ja `Math.max(0, …)` alla piilotti sen kokonaan:
+   * "Oma tulo" näytti tulevan pelkistä pikkukeikoista. Laskuttamaton työ ei ole
+   * tuloa; se tulee mukaan sinä hetkenä kun lasku lähtee.
    */
-  const myGigEntitled = (profile && gigMoney?.totals.entitledByFounder?.[profile.id]) || 0;
+  const myGigEntitled = (profile && gigMoney?.totals.invoicedEntitledByFounder?.[profile.id]) || 0;
 
   /**
    * AVAUSKUVAN LUVUT.
@@ -252,7 +259,10 @@ export default function AdminDashboard() {
 
   const overviewFigures: OverviewFigure[] = isHost
     ? [
-        { label: "Oma tulo", value: eur0(heroMyIncome), tone: "accent" },
+        // Alaotsikko poistaa monitulkintaisuuden: luku on osuus LASKUTETUSTA
+        // rahasta, ei ansaittua eikä tilillä olevaa. Mikään kenttä ei tiedä
+        // onko asiakas oikeasti maksanut, joten "saatu" olisi väärä sana.
+        { label: "Oma tulo", value: eur0(heroMyIncome), sub: "laskutetusta", tone: "accent" },
         // Tekijöille kuuluva raha käsissä — ainoa luku tässä joka voi vaatia
         // toimenpiteen, siksi korostus vain kun se on yli nollan.
         { label: "Tekijöille", value: eur0(workerOpen), tone: workerOpen > 0 ? "warn" : "ink" },

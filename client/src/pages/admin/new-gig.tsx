@@ -538,8 +538,9 @@ export default function AdminNewGigPage() {
                 ))}
               </div>
               <Hint>
-                Sektori on laskun rivi: nimi, määrä ja yksikköhinta. Väri erottaa sektorit asiakkaan
-                näkymässä. Määrä on sovittu laajuus — asiakas maksaa vain tehdyistä yksiköistä.
+                {community
+                  ? "Sektori jakaa työn asiakkaalle näkyviin osiin: nimi ja määrä. Väri erottaa sektorit näkymässä. Yhteisökeikalla hintaa ei ole, joten sektori on pelkkä etenemän erittely."
+                  : "Sektori on laskun rivi: nimi, määrä ja yksikköhinta. Väri erottaa sektorit asiakkaan näkymässä. Määrä on sovittu laajuus — asiakas maksaa vain tehdyistä yksiköistä."}
               </Hint>
             </div>
           )}

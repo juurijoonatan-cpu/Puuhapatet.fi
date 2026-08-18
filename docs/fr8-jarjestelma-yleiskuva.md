@@ -260,7 +260,16 @@ Säännöt:
    summa. Kun näkymä luki bruttoa, se väitti "maksaa 720 €" samalla kun toinen
    näkymä samalla sivulla sanoi "Tasan". Siirtoja EI netoteta `dueCents`iin —
    sama raha vähentyisi kahdesti.
-20. **`settlement` on serverin omistama** kuten `p2` ja `guided`: geneerinen
+20. **Asiakas näkee VAIN oman keikkansa sisältöä.** Jaettu asiakaskomponentti ei
+   saa kantaa yhdenkään asiakkaan tietoja lähdekoodissa. `GigContractSign` upotti
+   sopimusasiakirjan moduulivakiosta (`/contracts/PT-2026-02.pdf`), eikä polkua
+   sidottu keikkaan mitenkään — joten toisen asiakkaan linkki näytti FR8:n
+   allekirjoitetun 8-sivuisen sopimuksen kokonaisuudessaan (tilaajan nimi,
+   Y-tunnus, yhteyshenkilö, osoite, sektorien hinnoittelu). Staattinen tiedosto
+   on aina keikkakohtaisen portin takana, ja jos keikalla ei ole omaa asiakirjaa,
+   näytetään sen oma sopimusteksti tai sanotaan ettei asiakirjaa ole — ei koskaan
+   toisen keikan paperia. Vartija: `client/src/customer-privacy.test.ts`.
+21. **`settlement` on serverin omistama** kuten `p2` ja `guided`: geneerinen
    blob-tallennus säilyttää talletetun kopion, mutaatiot vain
    `POST /api/jobs/:id/settlement` -reitin kautta.
 

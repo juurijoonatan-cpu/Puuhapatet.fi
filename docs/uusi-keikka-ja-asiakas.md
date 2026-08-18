@@ -67,6 +67,7 @@ sitten **tiedot**. Jokaisen kentän alla on sama selite myös käyttöliittymäs
 | Sopimus | **Sopimustunnus** | esim. `PT-2026-02` | Sopimusdokumentti + lasku. |
 | ” | **Työn kuvaus** | keikan nimi listoissa | Tyhjä = `"<nimi> — sopimuskeikka"`. |
 | ” | **Sopimusteksti** | koko teksti sellaisenaan | Tiimille, ei asiakkaan seurantaan. |
+| ” | **Allekirjoitus** \* | `Ensin sopimus` tai `Sopimus myöhemmin` | Ks. "Milloin asiakas allekirjoittaa" alla. |
 | ” | **ALV-huomautus** | oletus = vähäisen liiketoiminnan lauseke | Vaihtuu automaattisesti yhteisökeikan tekstiin jos sitä ei ole itse muokattu. |
 | ” | **Asiakkaalle näkyvä viesti** | | Seurantalinkin yläosa. |
 | Tekijät | **Tekijät** | ketkä pääsevät keikalle | `assignedTo` + asiakkaan `ownedBy`. |
@@ -88,6 +89,45 @@ Järjestelmässä on kaksi **aitoa** mallia, ja väärä valinta hukkaa työtä:
   yksikköhinta. Jos tällaiselle keikalle myöhemmin merkitään ikkunoita
   kartalle, sektorit korvautuvat kerroskohtaisilla.
 
+#### Milloin asiakas allekirjoittaa
+
+Kolme tilaa, ja ne ovat oikeasti kolme. Aiemmin niitä yritettiin ilmaista yhdellä
+rastilla ("Vaadi sähköinen allekirjoitus"), ja kolmas jäi tilaksi jossa asiakas ei
+nähnyt sopimusta lainkaan.
+
+| Tila | Asiakkaan linkki | Kentät |
+|---|---|---|
+| **Ensin sopimus** | avautuu allekirjoitukseen; seuranta vasta sen jälkeen | `requireSignature: true` |
+| **Seuranta auki, sopimus popuppina** | seuranta heti; sopimus nousee siihen dialogina | `requireSignature: false`, sopimusteksti olemassa |
+| **Sopimus myöhemmin** | seuranta heti; ei sopimusta vielä | `contractLater: true` |
+
+Perustuslomake tarjoaa kaksi ensimmäistä (`Ensin sopimus` / `Sopimus myöhemmin`);
+keikan **Sopimus**-kortista pääsee kaikkiin kolmeen, ja sieltä sopimus liitetään
+kun se valmistuu.
+
+**Yksi vastaus, ei kolme päättelyä:** `signaturePrompt(gig)` (`shared/gig.ts`)
+palauttaa `"none" | "gate" | "popup"`, ja sekä asiakasnäkymä, palvelimen julkinen
+projektio (`signPrompt`) että keltaisten porttiehto lukevat sitä. Ennen tätä
+jokainen näkymä päätteli tilan itse kahdesta kentästä, ja siitä syntyi kolme vikaa:
+
+1. sopimustekstin liittäminen jälkikäteen käänsi koko sivun portin päälle ja
+   heitti seurantaa katsovan asiakkaan takaisin lomakkeelle ilman selitystä,
+2. jos portti otettiin pois mutta sopimus oli olemassa, asiakas ei nähnyt
+   sopimusta missään eikä voinut allekirjoittaa sitä,
+3. keltaisten hyväksyntä ja vastatarjous (rahaan vaikuttavat toiminnot) avautuivat
+   heti kun portti oli pois päältä — myös silloin kun sopimus oli
+   allekirjoittamatta. Nyt ehto on `signaturePrompt(gig) !== "none"`.
+
+`contractLater` voittaa aina: kun sopimus tehdään myöhemmin, koko sivun portti ei
+mene päälle asiakkaan alta missään vaiheessa.
+
+**Popupin käytös:** ponnahtaa kerran (kuittaus muistetaan `localStorage`issa
+avaimella `pp.contract.<token>.<contractId>`, joten korjattu sopimus nousee kerran
+uudelleen), ja sopimukseen pääsee sen jälkeen aina nappirivin "Lue ja allekirjoita
+sopimus" -napista. Sisältönä on sama `GigContractSign` modaalimuodossa — ei toista
+toteutusta samasta lomakkeesta. Allekirjoituksen jälkeen palvelin lakkaa
+lähettämästä `signPrompt`ia, joten kehote ei voi palata.
+
 #### Sopimusarvon sääntö
 
 `jobs.agreedPrice` on perustettaessa **positiivinen** maksullisella keikalla
@@ -100,6 +140,15 @@ projektitallennuksessa, joten arvio korjautuu itsestään.
 ### 2. Projekti ja pohjakartta
 
 Avaa keikka → **Asetukset** (`GigToolsOverlay` → "Pohjakartat & asetukset").
+
+> **Tämä näkymä oli rikki 2026-08 asti** ja jäi ikuisesti tekstiin "Ladataan…":
+> latausefektin `loading` oli sekä varhaisen paluun ehto ETTÄ riippuvuus, joten
+> `setLoading(true)` laukaisi efektin siivouksen, joka perui kesken lentävän
+> pyynnön. Vastaus heitettiin pois eikä `setLoading(false)` päässyt ajoon. Portti
+> on nyt `useRef`, joka ei ole riippuvuus. Samalla korjautui yläpalkki, joka oli
+> koko sovelluksen ainoa joka ei varannut `env(safe-area-inset-top)`:ia —
+> takaisin-nappi oli puhelimen kellon alla. Vartijat:
+> `client/src/fr8-shell-hygiene.test.ts`.
 Täältä asetetaan:
 
 | Asetus | Kenttä | Huom |

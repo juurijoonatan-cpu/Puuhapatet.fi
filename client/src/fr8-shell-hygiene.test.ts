@@ -87,6 +87,50 @@ describe("FR8-kuoren mitoitus", () => {
     expect(/inset:\s*0/.test(r)).toBe(false);
   });
 
+  /**
+   * Turva-alue. Sovellus ajaa `viewport-fit=cover`illa, joten kiinteä yläpalkki
+   * piirtyy ruudun fyysiseen ylälaitaan — kellon ja akkukuvakkeen alle — ellei se
+   * varaa `env(safe-area-inset-top)`:ia. `fr8/Navbar.tsx` korjattiin tästä jo
+   * kertaalleen; `GigToolsOverlay` oli kopio samasta 62 px:n palkista tehty ennen
+   * korjausta, ja siinä takaisin-nappi oli kellon alla ja otsikko akun päällä.
+   */
+  it("jokainen kuori varaa turva-alueen yläpalkilleen", () => {
+    const offenders = SHELLS.filter((f) => {
+      const src = readFileSync(join(process.cwd(), f), "utf8");
+      return !src.includes("env(safe-area-inset-top)");
+    });
+    expect(
+      offenders,
+      `Kuori jonka yläpalkki ei varaa turva-aluetta → ${offenders.join(", ")}. `
+        + "Turva-alue kuuluu PADDINGIIN, ja korkeuteen lisätään sama inset — "
+        + "muuten sisältö valuu ruudun alalaidan ohi.",
+    ).toEqual([]);
+  });
+
+  /**
+   * Palkin korkeus ja sisällön korkeus ovat yksi luku kahdessa paikassa. Jos
+   * vain palkkia kasvatetaan insetin verran, `<main>` jää liian korkeaksi ja
+   * alimmat napit valuvat näkyvän alueen alle — sama vika jonka takia tämä
+   * tiedosto on olemassa.
+   */
+  it("GigToolsOverlayn sisältökorkeus vähentää saman insetin kuin palkki lisää", () => {
+    const src = readFileSync(join(process.cwd(), "client/src/components/gig-tools/GigToolsOverlay.tsx"), "utf8");
+    expect(src).toContain('height: "calc(62px + env(safe-area-inset-top))"');
+    expect(src).toContain('height: "calc(100% - 62px - env(safe-area-inset-top))"');
+  });
+
+  /**
+   * `loading` ei saa olla efektin riippuvuus, jos efekti itse asettaa sen: se
+   * lukitsi keikan asetusnäkymän pysyvästi tekstiin "Ladataan…" — setLoading(true)
+   * laukaisi efektin siivouksen, joka perui kesken lentävän pyynnön, eikä
+   * `setLoading(false)` päässyt koskaan ajoon.
+   */
+  it("asetusnäkymän lataus ei peru omaa pyyntöään", () => {
+    const src = readFileSync(join(process.cwd(), "client/src/components/gig-tools/GigToolsOverlay.tsx"), "utf8");
+    expect(src).toContain("startedRef");
+    expect(src).not.toMatch(/\}, \[active, jobId, project, loading\]\);/);
+  });
+
   it("dokumentin vieritys pysyy lukittuna kuoren ollessa auki", () => {
     // Täydentävä mekanismi: fixed-kuori + vierinyt dokumentti erkanee myös.
     expect(CSS).toContain("html.fr8-lock");

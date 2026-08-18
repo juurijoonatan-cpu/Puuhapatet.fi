@@ -67,6 +67,38 @@ export default function GigLivePage() {
     try { localStorage.setItem(`pp.p2invite.${token}`, "1"); } catch { /* private mode */ }
   };
 
+  /**
+   * SOPIMUS POPUPPINA.
+   *
+   * Kun sopimus tehdään vasta työn alettua (`contractLater`), seuranta on auki
+   * koko ajan eikä sopimus estä sitä. Kun sopimus sitten valmistuu, palvelin
+   * kertoo sen `signPrompt`illa ja se nousee tähän näkymään dialogina.
+   *
+   * KUITTAUS MUISTETAAN, MUTTA EI LUKITSE: kehote ponnahtaa kerran, ja sen
+   * jälkeen sopimukseen pääsee aina nappirivistä. Kuittaus on sidottu myös
+   * sopimustunnukseen, jotta korjattu sopimus nousee kerran uudelleen — ilman
+   * sitä yksi "ei nyt" olisi haudannut myös seuraavan version.
+   */
+  const [contractOpen, setContractOpen] = useState(false);
+  const [contractDismissed, setContractDismissed] = useState(false);
+  const contractKey = data ? `pp.contract.${token}.${data.contractId ?? "-"}` : null;
+  useEffect(() => {
+    if (!contractKey) return;
+    try { setContractDismissed(localStorage.getItem(contractKey) === "1"); } catch { setContractDismissed(true); }
+  }, [contractKey]);
+  const dismissContract = () => {
+    setContractOpen(false);
+    setContractDismissed(true);
+    if (contractKey) { try { localStorage.setItem(contractKey, "1"); } catch { /* private mode */ } }
+  };
+  // Escape sulkee sopimusdialogin samalla tavalla kuin ehtoikkunan.
+  useEffect(() => {
+    if (!contractOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setContractOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [contractOpen]);
+
   // Kirjasin (Onest 400–800) tulee index.html:stä, joten sitä ei haeta täällä
   // ajonaikaisesti — yksi renderöintiä estävä pyyntö vähemmän puhelimella.
   useEffect(() => { document.title = "Puuhapatet — Edistyminen"; }, []);
@@ -152,6 +184,11 @@ export default function GigLivePage() {
    * vaalea ulkoasu, joten elävän sopimusasiakkaan sivu ei muutu.
    */
   const T = customerTheme(data.theme);
+  /** Pelkkä viiva tarkoittaa "ei sopimustunnusta", ei tunnusta nimeltä "-". */
+  const contractNo = (() => {
+    const t = (data.contractId ?? "").trim();
+    return !t || t === "-" || t === "–" || t === "—" ? null : t;
+  })();
   const tech = isTechTheme(data.theme);
 
   const t = data.totals;
@@ -286,13 +323,17 @@ export default function GigLivePage() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "6px 12px", flexWrap: "wrap", marginTop: 7 }}>
             <span style={{ fontSize: 13.5, color: T.muted, overflowWrap: "anywhere" }}>
-              {data.contractId ? `${data.contractId} · ` : ""}{data.companyName}
+              {contractNo ? `${contractNo} · ` : ""}{data.companyName}
             </span>
             {data.approved
               ? <StatusBadge color="#1F3B57" label={`Hyväksytty${data.approvedAt ? " " + fmtDate(data.approvedAt) : ""}`} />
               : data.signed
                 ? <StatusBadge color="#3E7C59" label={`Allekirjoitettu${data.signedAt ? " " + fmtDate(data.signedAt) : ""}`} />
-                : null}
+                : data.signPrompt
+                  // Rehellinen tila: työ on käynnissä ja sopimus odottaa. Ei
+                  // valeväitettä allekirjoituksesta, ei tyhjää kohtaa.
+                  ? <StatusBadge color="#E0A800" label="Sopimus allekirjoitettavana" />
+                  : null}
           </div>
         </div>
 
@@ -498,6 +539,17 @@ export default function GigLivePage() {
               Lataa urakkasopimus
             </button>
           )}
+          {/* Sopimus joka odottaa allekirjoitusta. Kehote ponnahtaa kerran, mutta
+              tämä nappi on aina paikalla — kuittaus ei saa haudata sopimusta. */}
+          {data.signPrompt && (
+            <button
+              type="button"
+              onClick={() => setContractOpen(true)}
+              style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "11px 17px", borderRadius: 12, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 14, fontWeight: 700, cursor: "pointer" }}
+            >
+              Lue ja allekirjoita sopimus
+            </button>
+          )}
           {/* Keltaisten oma sopimus. Se oli tähän asti vain ehtoikkunan sisällä
               yhden napautuksen takana, eli siitä joka paikassa jossa asiakas
               hakee sopimuksiaan — tästä rivistä — se puuttui. Kaksi vaihetta,
@@ -537,9 +589,49 @@ export default function GigLivePage() {
         </p>
       </div>
 
+      {/* SOPIMUSDIALOGI. Sama kuori kuin ehtoikkunalla — yksi sisäinen
+          vierityspalkki, ei kahta päällekkäistä — ja sisältönä koko oikea
+          allekirjoituslomake (`GigContractSign` modaalimuodossa), ei toista
+          toteutusta samasta asiasta.
+
+          Avautuu itsestään kerran (`signPrompt && !contractDismissed`) ja aina
+          napista. `signPrompt` tulee palvelimelta ja on epätosi heti kun
+          allekirjoitus on olemassa, joten allekirjoittanut asiakas ei voi saada
+          tätä uudelleen. `!termsOpen` estää kahden dialogin päällekkäisyyden. */}
+      {data.signPrompt && (contractOpen || !contractDismissed) && !termsOpen && (
+        <>
+          <div onClick={dismissContract} style={{ position: "fixed", inset: 0, zIndex: 70, background: "rgba(26,26,26,0.55)" }} />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Sopimus allekirjoitettavana"
+            style={{ position: "fixed", left: "50%", top: "50%", transform: "translate(-50%,-50%)", zIndex: 71, width: "min(680px, calc(100vw - 24px))", maxHeight: "88vh", display: "flex", flexDirection: "column", background: CT.paper, borderRadius: 16, border: `1px solid ${CT.hair}`, boxShadow: "0 24px 80px rgba(0,0,0,0.45)", overflow: "hidden", fontFamily: FONT }}
+          >
+            <div style={{ flexShrink: 0, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, padding: "18px 20px 14px", borderBottom: `1px solid ${CT.hair}`, background: CT.card }}>
+              <div>
+                <p style={{ margin: 0, fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", color: CT.muted }}>SOPIMUS</p>
+                <p style={{ margin: "5px 0 0", fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", color: CT.ink }}>
+                  Sopimus on valmis allekirjoitettavaksi
+                </p>
+              </div>
+              <button
+                onClick={dismissContract}
+                aria-label="Sulje"
+                style={{ flexShrink: 0, width: 30, height: 30, borderRadius: "50%", border: `1px solid ${CT.hair}`, background: CT.paper, color: CT.muted, fontSize: 14, cursor: "pointer", lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center" }}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ minHeight: 0, overflowY: "auto", padding: "16px 16px 20px" }}>
+              <GigContractSign token={token} view={data} onSigned={() => { setContractOpen(false); reload(); }} variant="modal" />
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Vaihe 2 -kutsu: ponnahtaa kerran kun keltaisten suunnittelu avataan.
           Muuten linkki toimii täsmälleen kuten ennen. */}
-      {p2Live && !p2!.termsAccepted && !p2InviteDismissed && !termsOpen && (
+      {p2Live && !p2!.termsAccepted && !p2InviteDismissed && !termsOpen && !(data.signPrompt && (contractOpen || !contractDismissed)) && (
         <>
           <div onClick={dismissP2Invite} style={{ position: "fixed", inset: 0, zIndex: 68, background: "rgba(26,26,26,0.45)" }} />
           <div role="dialog" aria-modal="true" aria-label="Priority 2 voi alkaa" style={{ position: "fixed", left: "50%", top: "50%", transform: "translate(-50%,-50%)", zIndex: 69, width: "min(440px, calc(100vw - 32px))", background: T.card, borderRadius: 16, border: `1px solid ${T.hair}`, boxShadow: "0 24px 80px rgba(0,0,0,0.35)", padding: 26, fontFamily: FONT }}>

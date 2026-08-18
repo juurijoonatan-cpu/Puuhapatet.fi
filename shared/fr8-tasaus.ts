@@ -114,6 +114,25 @@ export interface TasausBundle {
    *  ne näkyvät katteena. Varoitus, ei laskennan osa. */
   unattributedP1Windows: number;
   /**
+   * Johtajan ansainta LASKUTETUSTA rahasta, id → senttiä.
+   *
+   * `result.rows[i].entitledCents` on ansainta KERTYMÄPERUSTEISESTI: punaisten
+   * osuus on jo sidottu laskutettuun pottiin, mutta keltaiset lasketaan suoraan
+   * kartalta heti kun ikkuna on pesty ja hinta lukittu — myös silloin kun
+   * asiakkaalta ei ole laskutettu keltaisista senttiäkään. Silloin keltaisten
+   * TEKIJÄKULU vähennetään ilman vastaavaa tuloa, ja johtajan luku painuu alas
+   * (tai miinukselle) rahasta jota kukaan ei ole vielä laskuttanut.
+   *
+   * Tämä kenttä on sama laskenta niin, että keltaisten puoli on skaalattu
+   * laskutetun osuuden mukaan: nolla laskutettua = keltaiset eivät vaikuta
+   * mitenkään, kaikki laskutettu = sama luku kuin `entitledCents`.
+   *
+   * VAIN TÄMÄ KENTTÄ paljastetaan toisesta laskennasta — ei koko tulosta.
+   * Toinen `transfer`/`reserveCents` olisi toinen vastaus kysymykseen "kuka on
+   * velkaa kummalle", ja se on invariantti 19:n vastaista.
+   */
+  invoicedEntitledCents: Record<string, number>;
+  /**
    * Käsin annetut lähtöluvut sellaisenaan, plus se mitä kartta olisi sanonut.
    * Näkymä voi näyttää molemmat rinnakkain: käsinsyötetty luku on merkittävä
    * poikkeama automatiikasta, ja se pitää näkyä eikä piiloutua.
@@ -458,15 +477,37 @@ export function buildTasaus(
     reserveOwnerId: state?.reserveOwnerId ?? null,
   };
 
+  const result = computeTasaus(input);
+
+  /**
+   * Sama laskenta keltaisten LASKUTETULLA osuudella. Osuus on suhteellinen
+   * (`laskutettu / kertynyt`), koska keltaisten lasku on könttäsumma eikä
+   * kanna tietoa siitä mitkä ikkunat se kattoi. Päätepisteissä se on tarkka:
+   * nolla laskutettua → 0, kaikki laskutettu → 1.
+   */
+  const p2AccruedCents = p2Bill.earnedCents ?? 0;
+  const p2InvoicedShare = p2AccruedCents > 0 ? Math.min(1, p2PotCents / p2AccruedCents) : 0;
+  const invoicedEntitledCents: Record<string, number> = {};
+  {
+    const scaled = computeTasaus({
+      ...input,
+      founders: input.founders.map((f) => ({ ...f, p2OwnCents: Math.round(f.p2OwnCents * p2InvoicedShare) })),
+      p2PotCents: Math.round(p2PotCents * p2InvoicedShare),
+      workerP2EarnedCents: Math.round(workerP2EarnedCents * p2InvoicedShare),
+    });
+    for (const r of scaled.rows) invoicedEntitledCents[r.id] = r.entitledCents;
+  }
+
   return {
     founders,
     eras,
     payouts,
     unattributedPaidCents: Math.max(0, unattributedPaidCents),
     input,
-    result: computeTasaus(input),
+    result,
     unassignedEraCount,
     unattributedP1Windows: wash.unattributedP1Windows,
+    invoicedEntitledCents,
     ...(man ? {
       manual: {
         active: man,

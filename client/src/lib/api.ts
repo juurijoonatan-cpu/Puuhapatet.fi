@@ -811,8 +811,12 @@ export const api = {
          * tämä kenttä väitti yhä "maksaa 720 €".
          */
         dueByFounder?: Record<string, number>;
-        /** Mitä kumpikin johtaja on ANSAINNUT urakkakeikoista (oma työ + osuus katteesta). */
+        /** Mitä kumpikin johtaja on ANSAINNUT urakkakeikoista (oma työ + osuus katteesta).
+         *  KERTYMÄPERUSTEINEN: sisältää myös laskuttamattoman keltaisen työn. */
         entitledByFounder?: Record<string, number>;
+        /** Sama, mutta vain LASKUTETUSTA rahasta. Etusivun "Oma tulo" lukee tätä:
+         *  laskuttamaton työ ei ole tuloa ennen kuin se on laskutettu. */
+        invoicedEntitledByFounder?: Record<string, number>;
         /** Johtajien käsissä oleva raha joka kuuluu vielä TEKIJÖILLE. Ei kummankaan katetta. */
         reserveCents?: number;
         /** Maksut jotka lähtivät tileiltä ilman merkintää maksajasta. */

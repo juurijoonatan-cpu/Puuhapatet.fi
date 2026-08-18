@@ -9251,6 +9251,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
        * + omat keltaiset + tasaosuus katteesta. Se on jo laskettu joka keikalle.
        */
       const entitledByFounder: Record<string, number> = {};
+      /**
+       * Sama, mutta VAIN laskutetusta rahasta (`invoicedEntitledCents`).
+       *
+       * `entitledByFounder` on kertymäperusteinen: keltaiset lasketaan heti kun
+       * ikkuna on pesty ja hinta lukittu, myös ennen kuin niistä on laskutettu
+       * senttiäkään. Silloin keltaisten tekijäkulu vähennetään ilman vastaavaa
+       * tuloa ja johtajan luku painuu alas rahasta jota kukaan ei ole laskuttanut.
+       * Etusivun "Oma tulo" lukee tätä; keikan oma tasausnäkymä lukee edelleen
+       * kertymää, koska tasaus koskee myös laskuttamatonta työtä.
+       */
+      const invoicedEntitledByFounder: Record<string, number> = {};
       let invoicedCents = 0, unassignedCents = 0;
       let workerEarnedCents = 0, workerPaidCents = 0;
       let reserveCents = 0, unattributedPaidCents = 0;
@@ -9309,6 +9320,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           netByFounder[r.id] = (netByFounder[r.id] ?? 0) + r.netCents;
           dueByFounder[r.id] = (dueByFounder[r.id] ?? 0) + r.remainingDueCents;
           entitledByFounder[r.id] = (entitledByFounder[r.id] ?? 0) + r.entitledCents;
+          invoicedEntitledByFounder[r.id] = (invoicedEntitledByFounder[r.id] ?? 0) + (t.invoicedEntitledCents[r.id] ?? 0);
         }
         reserveCents += t.result.reserveCents;
         {
@@ -9378,6 +9390,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           netByFounder,
           dueByFounder,
           entitledByFounder,
+          invoicedEntitledByFounder,
           reserveCents,
           unattributedPaidCents,
           monthlyInvoicedCents,

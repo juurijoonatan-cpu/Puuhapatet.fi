@@ -37,6 +37,7 @@
  * (`CT_TECH`), jottei järjestelmässä ole kahta eri tummaa.
  */
 
+import { useState } from "react";
 import { Link } from "wouter";
 import { CFONT } from "@/lib/customer-theme";
 
@@ -64,6 +65,9 @@ const P = {
 export interface OverviewFigure {
   label: string;
   value: string;
+  /** Yksi sana luvun alle kun pelkkä nimi on monitulkintainen (esim. onko
+   *  "Oma tulo" ansaittua vai laskutettua). Jätetään pois kun nimi riittää. */
+  sub?: string;
   /** `accent` korostaa yhden luvun; `warn` vain kun luku vaatii toimenpiteen. */
   tone?: "ink" | "accent" | "warn";
 }
@@ -139,8 +143,19 @@ export default function AdminOverview({
     ? Math.min(STRIP_DOTS, Math.max(shares[0].cents > 0 ? 1 : 0, Math.round((shares[0].cents / shareTotal) * STRIP_DOTS)))
     : 0;
 
+  /**
+   * Valittu kuukausi. Kärkiluku on oletus, ja napautus siirtää korostuksen —
+   * se EI lisää lukuja ruudulle: yksi suora arvomerkintä kerrallaan, muuten
+   * pylväikkö on numerosoppa jota ei lueta. Napautus valittuun palauttaa kärjen.
+   *
+   * Sarja rakennetaan uudelleen joka haulla ja rajataan 12 viimeiseen, joten
+   * valinta voi vierähtää ikkunan ulkopuolelle kuukauden vaihtuessa — silloin
+   * palataan kärkeen sen sijaan että merkintä katoaisi kokonaan.
+   */
+  const [pickedKey, setPickedKey] = useState<string | null>(null);
   const max = months.reduce((m, x) => Math.max(m, x.cents), 0);
   const peakKey = months.reduce<string | null>((best, m) => (m.cents > 0 && m.cents === max ? m.key : best), null);
+  const shownKey = pickedKey && months.some((m) => m.key === pickedKey) ? pickedKey : peakKey;
 
   return (
     <section
@@ -237,6 +252,11 @@ export default function AdminOverview({
               >
                 {loading ? "—" : f.value}
               </p>
+              {f.sub && !loading && (
+                <p style={{ margin: "3px 0 0", fontSize: 10, color: P.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {f.sub}
+                </p>
+              )}
             </div>
           ))}
         </div>
@@ -244,7 +264,9 @@ export default function AdminOverview({
 
       {/* Kehitys. Pylväät eivätkä pisterivit: kuusi pisterivistöä oli sekava
           eikä muoto lukenut kertaakaan ensi silmäyksellä. Yksi arvo on suoraan
-          merkitty (korkein) — luku joka pylväällä olisi kaaos ja jäisi lukematta. */}
+          merkitty — oletuksena korkein, mutta pylvästä napauttamalla minkä
+          tahansa kuukauden. Luku joka pylväällä olisi kaaos ja jäisi lukematta,
+          joten korostus SIIRTYY eikä monistu. */}
       {months.length > 0 && (
         <div style={{ marginTop: 22 }}>
           <div style={{ display: "flex", gap: 6, alignItems: "flex-end", height: TREND_H + 16 }}>
@@ -252,28 +274,47 @@ export default function AdminOverview({
               // Nolla ei saa piirtää pylvästä; pienin positiivinen saa 3 px,
               // jottei olemassa oleva laskutus näytä tyhjältä kuukaudelta.
               const h = m.cents <= 0 || max <= 0 ? 0 : Math.max(3, Math.round((m.cents / max) * TREND_H));
-              const isPeak = m.key === peakKey;
+              const isShown = m.key === shownKey;
               return (
-                <div key={m.key} style={{ flex: "1 1 0", minWidth: 14, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>
-                  {isPeak && (
+                // Koko sarake on kosketusalue (72 px korkea), ei pelkkä pylväs —
+                // pieni kuukausi on 3 px korkea eikä siihen muuten osu. Natiivi
+                // <button> hoitaa myös näppäimistön (Enter/väli) ja tab-kierron.
+                <button
+                  key={m.key}
+                  type="button"
+                  aria-pressed={m.key === pickedKey}
+                  aria-label={`${tick(m.key)}/${m.key.slice(0, 4)}: ${exact(m.cents)}`}
+                  onClick={() => setPickedKey((k) => (k === m.key ? null : m.key))}
+                  style={{
+                    flex: "1 1 0", minWidth: 14, height: "100%",
+                    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end",
+                    border: 0, padding: 0, margin: 0, background: "transparent", font: "inherit", color: "inherit",
+                    appearance: "none", cursor: "pointer",
+                    touchAction: "manipulation",
+                    WebkitTapHighlightColor: "transparent",
+                    outlineColor: P.accent, outlineOffset: 2,
+                  }}
+                >
+                  {isShown && (
+                    // Kuukausi mukaan lukuun: kun korostus voi olla missä tahansa,
+                    // pelkkä euromäärä ei kerro minkä kuukauden se on.
                     <span style={{ fontSize: 10, color: P.muted, marginBottom: 4, whiteSpace: "nowrap" }}>
-                      {fmt(m.cents)}
+                      {tick(m.key)} · {fmt(m.cents)}
                     </span>
                   )}
                   <span
-                    role="img"
-                    aria-label={`${tick(m.key)}/${m.key.slice(0, 4)}: ${exact(m.cents)}`}
+                    aria-hidden="true"
                     style={{
                       width: "100%",
                       maxWidth: 24,
                       height: h,
                       // 3 px pyöristys datan päässä, suora perusviivalla.
                       borderRadius: "3px 3px 0 0",
-                      background: isPeak ? P.accent : P.accent2,
+                      background: isShown ? P.accent : P.accent2,
                       display: "block",
                     }}
                   />
-                </div>
+                </button>
               );
             })}
           </div>

@@ -797,7 +797,15 @@ export const api = {
         workerPaidCents: number;
         workerOpenCents: number;
         netByFounder: Record<string, number>;
-        /** Poikkeama johtajien keskiarvosta = kumpi on velkaa kummalle. */
+        /**
+         * Kumpi on velkaa kummalle — VIELÄ maksamatta, kirjatut siirrot
+         * huomioituna (`TasausFounderRow.remainingDueCents`). Nolla kaikilla kun
+         * tasaus on tehty ja kirjattu.
+         *
+         * Tämä oli aiemmin `dueCents`, eli laskettu ero ENNEN siirtoja: kun raha
+         * oli siirretty ja kirjattu, keikan oma tasausnäkymä sanoi "Tasan" ja
+         * tämä kenttä väitti yhä "maksaa 720 €".
+         */
         dueByFounder?: Record<string, number>;
         /** Mitä kumpikin johtaja on ANSAINNUT urakkakeikoista (oma työ + osuus katteesta). */
         entitledByFounder?: Record<string, number>;
@@ -813,6 +821,8 @@ export const api = {
       gigs: {
         jobId: number; name: string; invoicedCents: number; workerEarnedCents: number;
         workerPaidCents: number; unassignedEraCount: number;
+        /** Merkitsemättä jäänyt laskutus euroina, ei vain erien kappalemääränä. */
+        unassignedCents: number;
         transfer: { fromId: string; toId: string; cents: number } | null;
       }[];
     }>("GET", "/api/admin/gig-money"),

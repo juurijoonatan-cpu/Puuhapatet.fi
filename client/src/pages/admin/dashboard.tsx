@@ -7,19 +7,10 @@ import { Link } from "wouter";
 import { Card } from "@/components/ui/card";
 import { Disclosure } from "@/components/ui/disclosure";
 import { Button } from "@/components/ui/button";
-import {
-  Briefcase,
-  Clock,
-  TrendingUp,
-  Banknote,
-  Plus,
-  ArrowRight,
-  List,
-  Users,
-} from "lucide-react";
+import { Banknote, ArrowRight, Users, Building2 } from "lucide-react";
 import { getAdminProfile, USERS } from "@/lib/admin-profile";
 import { DashboardBriefing } from "@/components/dashboard-briefing";
-import RevenueHero, { type HeroMonth } from "@/components/admin/RevenueHero";
+import AdminOverview, { type OverviewMonth, type OverviewFigure } from "@/components/admin/AdminOverview";
 import { api, StatsResponse, WorkerStatsResponse, type MyGigWork } from "@/lib/api";
 import { isMyJob, parseWorkerIds } from "@/lib/visibility";
 import { STAFF_SERVICE_FEE_RATE, STAFF_SERVICE_FEE_PCT, HOST_SERVICE_FEE_PCT, feeRateForWorker, feePctForWorker, effectiveJobTotal } from "@shared/team";
@@ -32,7 +23,6 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [workerStats, setWorkerStats] = useState<WorkerStatsResponse | null>(null);
   const [myJobTotal, setMyJobTotal] = useState<number | null>(null);
-  const [myJobUpcoming, setMyJobUpcoming] = useState<number | null>(null);
   const [myRevenue, setMyRevenue] = useState<number | null>(null);
   const [myInvestmentShare, setMyInvestmentShare] = useState<number | null>(null);
   /**
@@ -46,6 +36,8 @@ export default function AdminDashboard() {
    */
   const [smallGigCents, setSmallGigCents] = useState<number | null>(null);
   const [smallGigMonths, setSmallGigMonths] = useState<Record<string, number>>({});
+  /** Kirjautuneen OMA laskutus kuukausittain (oma osuus, keikkapäivän mukaan). */
+  const [myMonths, setMyMonths] = useState<Record<string, number>>({});
   // Gigs where the logged-in admin is ALSO a worker (e.g. Petrus). Shows a small
   // earnings card + a button straight to their own worker dashboard.
   const [myGigWork, setMyGigWork] = useState<MyGigWork[]>([]);
@@ -80,8 +72,7 @@ export default function AdminDashboard() {
           const rows = res.data as { job: { assignedTo: string | null; status: string; agreedPrice: number; waiveFee?: boolean; quoteStatus?: string | null; unitCount?: number | null; isTaloyhtiio?: boolean | null; isCustomGig?: boolean | null; gigData?: string | null; scheduledAt?: string | null } }[];
           const mine = rows.filter(r => isMyJob(r.job.assignedTo, profile.id));
           setMyJobTotal(mine.length);
-          setMyJobUpcoming(mine.filter(r => r.job.status === "scheduled").length);
-          const rev = mine
+          const mineDone = mine
             // A declined quote earned nothing — keep it out of personal income.
             // URAKKAKEIKAT POIS. Niiden `agreedPrice` on sopimuksen KATTO, ei
             // ansaittua rahaa, eikä se jakaudu tekijämäärällä. Jos urakkakeikka
@@ -91,7 +82,8 @@ export default function AdminDashboard() {
             // (server/finance/settlement.ts, post.ts); tämä oli ainoa joka ei.
             // Urakkakeikkojen oma ansio tulee `entitledByFounder`ista alla.
             .filter(r => r.job.status === "done" && r.job.quoteStatus !== "declined"
-              && !r.job.isCustomGig && !r.job.gigData)
+              && !r.job.isCustomGig && !r.job.gigData);
+          const rev = mineDone
             .reduce((sum, r) => {
               const workerCount = Math.max(1, parseWorkerIds(r.job.assignedTo).length);
               // taloyhtiö gigs bill per apartment × unitCount — use the full total.
@@ -120,6 +112,21 @@ export default function AdminDashboard() {
             byMonth[key] = (byMonth[key] ?? 0) + effectiveJobTotal(r.job);
           }
           setSmallGigMonths(byMonth);
+
+          // OMA sarja kuukausittain, samalla jaolla kuin `rev` yllä. Brändin
+          // koko sarja on perustajien tietoa, joten muu ylläpito näkee vain
+          // omansa — mutta näkee sen, eikä pelkkiä lukuja ilman kehitystä.
+          const mineByMonth: Record<string, number> = {};
+          for (const r of mineDone) {
+            const iso = r.job.scheduledAt ?? null;
+            if (!iso) continue;
+            const d = new Date(iso);
+            if (Number.isNaN(d.getTime())) continue;
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+            const workerCount = Math.max(1, parseWorkerIds(r.job.assignedTo).length);
+            mineByMonth[key] = (mineByMonth[key] ?? 0) + Math.round(effectiveJobTotal(r.job) / workerCount);
+          }
+          setMyMonths(mineByMonth);
         }
       });
       api.getInvestments().then((res) => {
@@ -138,6 +145,9 @@ export default function AdminDashboard() {
 
   const fmt = (cents: number) =>
     (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+  /** Yleisnäkymän muotoilu: kokonaisia euroja. Sentit eivät kuulu avausnäkymään
+   *  — ne ovat erittelyissä ja kirjanpidossa, joissa niillä on merkitys. */
+  const eur0 = (cents: number) => Math.round(cents / 100).toLocaleString("fi-FI") + " €";
 
   /**
    * Oma ansio URAKKAKEIKOISTA.
@@ -167,20 +177,20 @@ export default function AdminDashboard() {
    * kuukauteen, enintään 12 viimeisintä.
    *
    * Yhtenäisyys on tässä koko pointti: tyhjä kuukausi on tieto ("silloin ei
-   * laskutettu mitään"), joten sen pitää näkyä tyhjänä pylväänä. Jos sarjaan
-   * otettaisiin vain ne kuukaudet joissa on rahaa, kaksi kuukautta joiden
-   * välissä on puolen vuoden tauko näyttäisivät vierekkäisiltä.
+   * laskutettu mitään"), joten sen pitää näkyä tyhjänä. Jos sarjaan otettaisiin
+   * vain ne kuukaudet joissa on rahaa, kaksi kuukautta joiden välissä on puolen
+   * vuoden tauko näyttäisivät vierekkäisiltä.
    */
-  const heroMonths: HeroMonth[] = (() => {
-    const merged: Record<string, number> = { ...smallGigMonths };
-    for (const [k, v] of Object.entries(gigMoney?.totals.monthlyInvoicedCents ?? {})) {
-      merged[k] = (merged[k] ?? 0) + v;
+  const monthSeries = (...sources: Record<string, number>[]): OverviewMonth[] => {
+    const merged: Record<string, number> = {};
+    for (const src of sources) {
+      for (const [k, v] of Object.entries(src)) merged[k] = (merged[k] ?? 0) + v;
     }
     const keys = Object.keys(merged).sort();
     if (keys.length === 0) return [];
     const [fy, fm] = keys[0].split("-").map(Number);
     const now = new Date();
-    const out: HeroMonth[] = [];
+    const out: OverviewMonth[] = [];
     // Kalenterikävely, ei päivämäärä-aritmetiikkaa: kuukauden lisäys
     // päivämäärään kaatuu kuun 31. päivänä.
     let y = fy, m = fm;
@@ -193,128 +203,91 @@ export default function AdminDashboard() {
       if (out.length > 240) break; // vikaturva kelvottomalta aikaleimalta
     }
     return out.slice(-12);
-  })();
+  };
 
   const myDebt = workerStats && profile ? (workerStats.workerFees[profile.id] ?? 0) : null;
-  const myJobCount = workerStats && profile ? (workerStats.workerJobCount[profile.id] ?? 0) : null;
 
-  const cards = isHost
+  /**
+   * YLEISNÄKYMÄN LUVUT.
+   *
+   * Perustaja näkee brändin laskutuksen kärkilukuna ja oman tulonsa
+   * mittalukuna; muu ylläpito näkee vain omat lukunsa — brändin summat ja
+   * urakkaraha ovat perustajien tietoa (palvelin rajaa myös itse).
+   */
+  const workerOpen = gigMoney?.totals.workerOpenCents ?? 0;
+  const heroLabel = isHost ? "Laskutettu" : "Bruttotulo";
+  const heroValue = isHost
+    ? eur0(heroGigCents + heroSmallCents)
+    : eur0(Math.max(0, (myRevenue ?? 0) - (myInvestmentShare ?? 0)));
+  /**
+   * HUOMIORIVI — enintään yksi, ja vain kun jotain on OIKEASTI tekemättä.
+   *
+   * Tässä oli aiemmin viisi kappaletta selittävää tekstiä joista neljä kertoi
+   * saman asian eri sanoin. Tärkeysjärjestys: ensin raha joka pitää siirtää,
+   * sitten raha jonka saaja on merkitsemättä, sitten raha jonka maksaja on
+   * merkitsemättä. Kun kaikki on kunnossa, rivi ei ole olemassa — ei "Tasan",
+   * ei "ei huomioita", ei mitään.
+   *
+   * Siirtoluku on nyt `result.transfer`ista johdettu (ks. palvelimen
+   * `dueByFounder`), joten kirjattu siirto todella kuittaa tämän pois.
+   */
+  const overviewAlert: { text: string; href: string } | null = (() => {
+    if (!isHost || !gigMoney) return null;
+    const moneyGigs = gigMoney.gigs ?? [];
+    // Yhden rahakeikan tapauksessa mennään suoraan sen tasausnäkymään; useamman
+    // kanssa keikkalistaan, koska rivi koskee useaa keikkaa.
+    const href = moneyGigs.length === 1 ? `/admin/gig/${moneyGigs[0].jobId}/projekti` : "/admin/gigs";
+    const tr = gigMoney.totals.transfer;
+    // Alle euron siirto on pyöristyskohinaa, ei velka.
+    if (tr && tr.cents >= 100) {
+      const nameOf = (id: string) => (gigMoney.founders.find((x) => x.id === id)?.name ?? id).split(" ")[0];
+      return { text: `Tasaus ${eur0(tr.cents)}: ${nameOf(tr.fromId)} → ${nameOf(tr.toId)}`, href };
+    }
+    const unassigned = gigMoney.totals.unassignedCents;
+    if (unassigned > 0) return { text: `${eur0(unassigned)} laskutettu ilman merkintää saajasta`, href };
+    const unattributed = gigMoney.totals.unattributedPaidCents ?? 0;
+    if (unattributed > 0) return { text: `${eur0(unattributed)} maksettu ilman maksajamerkintää`, href };
+    return null;
+  })();
+
+  const overviewFigures: OverviewFigure[] = isHost
     ? [
-        {
-          title: "Omat keikat",
-          value: myJobTotal === null ? "…" : String(myJobTotal),
-          icon: Briefcase,
-          description: "Kaikki omat kirjatut keikat",
-          color: "text-blue-600 dark:text-blue-400",
-          bgColor: "bg-blue-100 dark:bg-blue-900/30",
-        },
-        {
-          title: "Tulevat keikat",
-          value: myJobUpcoming === null ? "…" : String(myJobUpcoming),
-          icon: Clock,
-          description: "Aikataulutettu (omat)",
-          color: "text-orange-600 dark:text-orange-400",
-          bgColor: "bg-orange-100 dark:bg-orange-900/30",
-        },
-        {
-          title: "Oma tulo",
-          value: myRevenue === null ? "…" : fmt(Math.max(0, myRevenue + myGigEntitled - (myInvestmentShare ?? 0))),
-          icon: TrendingUp,
-          // Kolme osaa erikseen, koska yksi luku ilman erittelyä oli juuri se
-          // mikä ei täsmännyt millään: urakkakeikkojen ansio puuttui kokonaan.
-          description: [
-            `Pikkukeikat ${myRevenue !== null ? fmt(myRevenue) : "…"}`,
-            myGigEntitled > 0 ? `urakat ${fmt(myGigEntitled)}` : null,
-            myInvestmentShare ? `− investoinnit ${fmt(myInvestmentShare)}` : null,
-          ].filter(Boolean).join(" + ").replace("+ −", "−"),
-          color: "text-green-600 dark:text-green-400",
-          bgColor: "bg-green-100 dark:bg-green-900/30",
-        },
-        {
-          title: "Oma palveluvelka",
-          value: myDebt === null ? "…" : fmt(myDebt),
-          icon: Banknote,
-          description: `${HOST_SERVICE_FEE_PCT} % brändille — maksamatta`,
-          color: "text-purple-600 dark:text-purple-400",
-          bgColor: "bg-purple-100 dark:bg-purple-900/30",
-        },
+        { label: "Oma tulo", value: eur0(heroMyIncome), tone: "accent" },
+        // Tekijöille kuuluva raha käsissä — ainoa luku tässä joka voi vaatia
+        // toimenpiteen, siksi korostus vain kun se on yli nollan.
+        { label: "Tekijöille", value: eur0(workerOpen), tone: workerOpen > 0 ? "warn" : "ink" },
+        // EI keikkamäärää: se on lukumäärä eikä rahaa, se on keikkalistan
+        // otsikossa ("N keikkaa (omat)") ja navipalkissa yhden napautuksen
+        // päässä. Avausnäkymään mahtuu vain tärkein.
       ]
     : [
-        {
-          title: "Omat keikat",
-          value: myJobTotal === null ? "…" : String(myJobTotal),
-          icon: Briefcase,
-          description: "Kaikki omat kirjatut keikat",
-          color: "text-blue-600 dark:text-blue-400",
-          bgColor: "bg-blue-100 dark:bg-blue-900/30",
-        },
-        {
-          title: "Tulevat keikat",
-          value: myJobUpcoming === null ? "…" : String(myJobUpcoming),
-          icon: Clock,
-          description: "Aikataulutettu (omat)",
-          color: "text-orange-600 dark:text-orange-400",
-          bgColor: "bg-orange-100 dark:bg-orange-900/30",
-        },
-        {
-          title: "Bruttotulo",
-          value: myRevenue === null ? "…" : fmt(Math.max(0, myRevenue - (myInvestmentShare ?? 0))),
-          icon: TrendingUp,
-          description: myInvestmentShare
-            ? `Keikat ${myRevenue !== null ? fmt(myRevenue) : "…"} − investoinnit ${fmt(myInvestmentShare)} (ennen palvelumaksua)`
-            : `${myJobCount ?? "…"} valmistunutta keikkaa — ennen kuluja ja palvelumaksua`,
-          color: "text-green-600 dark:text-green-400",
-          bgColor: "bg-green-100 dark:bg-green-900/30",
-        },
-        {
-          title: "Palveluvelka",
-          value: myDebt === null ? "…" : fmt(myDebt),
-          icon: Banknote,
-          description: `${STAFF_SERVICE_FEE_PCT} % brändille — maksamatta`,
-          color: "text-purple-600 dark:text-purple-400",
-          bgColor: "bg-purple-100 dark:bg-purple-900/30",
-        },
+        { label: "Keikat", value: myJobTotal === null ? "…" : String(myJobTotal) },
+        // Palvelumaksuvelka näkyy muulle ylläpidolle VAIN täällä
+        // (`/admin/settings` palvelumaksukortti on perustajaportin takana),
+        // joten tämä tiili ei ole poistettavissa.
+        { label: "Velka", value: myDebt === null ? "…" : eur0(myDebt), tone: (myDebt ?? 0) > 0 ? "warn" : "ink" },
       ];
 
   return (
     <div className="min-h-screen bg-background admin-shell-pad">
       <div className="container mx-auto px-4 max-w-5xl">
-        {isHost && (
-          <RevenueHero
-            invoicedCents={heroGigCents + heroSmallCents}
-            gigCents={heroGigCents}
-            smallCents={heroSmallCents}
-            myIncomeCents={heroMyIncome}
-            myName={profile?.name?.split(" ")[0] || "Oma"}
-            months={heroMonths}
-            loading={loading || smallGigCents === null}
-          />
-        )}
-
-        <div className="mb-8">
-          <h1 className="text-2xl md:text-3xl font-semibold text-foreground mb-2">
-            Hei, {profile?.name?.split(" ")[0] || "Ylläpitäjä"}
-          </h1>
-          <p className="text-muted-foreground">Tervetuloa Puuhapatet-ylläpitoon</p>
-        </div>
-
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-          {cards.map((stat, index) => {
-            const Icon = stat.icon;
-            return (
-              <Card key={index} className="p-4 md:p-5 bg-card border-0 premium-shadow">
-                <div className="flex items-start justify-between mb-3">
-                  <div className={`w-10 h-10 rounded-xl ${stat.bgColor} flex items-center justify-center`}>
-                    <Icon className={`w-5 h-5 ${stat.color}`} />
-                  </div>
-                </div>
-                <p className="text-2xl font-semibold text-foreground mb-1">{stat.value}</p>
-                <p className="text-sm text-foreground">{stat.title}</p>
-                <p className="text-xs text-muted-foreground mt-1">{stat.description}</p>
-              </Card>
-            );
-          })}
-        </div>
+        <AdminOverview
+          eyebrow={`${profile?.name?.split(" ")[0] || "Ylläpito"} · Puuhapatet`}
+          heroLabel={heroLabel}
+          heroValue={heroValue}
+          shares={isHost ? [
+            { label: "Urakat", cents: heroGigCents, text: eur0(heroGigCents) },
+            { label: "Pikkukeikat", cents: heroSmallCents, text: eur0(heroSmallCents) },
+          ] : undefined}
+          figures={overviewFigures}
+          months={isHost
+            ? monthSeries(smallGigMonths, gigMoney?.totals.monthlyInvoicedCents ?? {})
+            : monthSeries(myMonths)}
+          fmt={eur0}
+          fmtExact={fmt}
+          alert={overviewAlert}
+          loading={loading || (isHost && smallGigCents === null)}
+        />
 
         {/* Gigs where this admin also works (e.g. Petrus): own earnings + a
             button straight to the worker dashboard. Limited on purpose — no gig
@@ -355,201 +328,75 @@ export default function AdminDashboard() {
           </Card>
         ))}
 
-        {/* URAKKAKEIKKOJEN RAHA — laskutettu, saatu ja tekijöille siirtämättä.
-            Perustajille. Klikkaus vie keikan omaan Maksut-näkymään, jossa
-            tasaus tehdään; tämä kortti on tilannekuva, ei toimintoja. */}
-        {isHost && gigMoney && gigMoney.totals.invoicedCents > 0 && (
-          <Card className="p-5 bg-card border-0 premium-shadow mb-6">
-            <div className="flex items-start justify-between gap-3 mb-4">
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
-                  Urakkakeikat — raha
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  Asiakkailta laskutettu ja tekijöille siirretty
-                </p>
-              </div>
-              <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center shrink-0">
-                <Banknote className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-              </div>
-            </div>
+        <DashboardBriefing />
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        {/* Tilitys — pudotusvalikon takana. Luvut ovat oikeat, mutta ne ovat
+            erittely eivätkä tilannekuva: yleisnäkymä kertoo bruttotulon, ja
+            palvelumaksun jälkeinen arvio kiinnostaa kertaa kuussa. */}
+        {!isHost && myRevenue !== null && myRevenue > 0 && (() => {
+          const brutto = Math.max(0, myRevenue - (myInvestmentShare ?? 0));
+          const rate = profile ? feeRateForWorker(profile.id) : STAFF_SERVICE_FEE_RATE;
+          const netto = Math.round(brutto * (1 - rate));
+          return (
+            <Disclosure
+              className="mb-6"
+              title="Tilitys"
+              right={<span className="text-sm font-bold tabular-nums text-green-600 dark:text-green-400">{fmt(netto)}</span>}
+            >
+              <div className="space-y-1.5 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Bruttotulo</span>
+                  <span className="font-medium text-foreground tabular-nums">{fmt(brutto)}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">− Palvelumaksu ~{profile ? feePctForWorker(profile.id) : STAFF_SERVICE_FEE_PCT} %</span>
+                  <span className="text-purple-600 dark:text-purple-400 tabular-nums">−{fmt(Math.round(brutto * rate))}</span>
+                </div>
+                <div className="flex justify-between border-t border-border pt-1.5 mt-1">
+                  <span className="text-muted-foreground">≈ Nettotulo</span>
+                  <span className="font-bold text-green-600 dark:text-green-400 tabular-nums">{fmt(netto)}</span>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground mt-3">
+                Arvio. Tarkat luvut: Verotuloste.
+              </p>
+            </Disclosure>
+          );
+        })()}
+
+        {/* Tiimin talous — pudotusvalikon takana. Nämä neljä lukua eivät ole
+            missään muualla (`/api/stats` on tämän sivun oma reitti), joten niitä
+            ei poisteta — mutta ne ovat erittely, eivät avausluku.
+
+            HUOM: `totalRevenue` sisälsi aiemmin valmiin urakkakeikan
+            `agreedPrice`-katon, jolloin urakka laskettiin kahdesti (kerran täällä,
+            kerran gig-money-reitillä). Reitti suodattaa urakat nyt pois. */}
+        {!loading && stats && isHost && (
+          <Disclosure
+            className="mb-6"
+            title="Tiimin talous"
+            right={<span className="text-sm font-bold tabular-nums text-green-600 dark:text-green-400">{fmt(stats.netIncome)}</span>}
+          >
+            <div className="grid grid-cols-3 gap-4">
               {[
-                { label: "Laskutettu", value: fmt(gigMoney.totals.invoicedCents), tone: "text-foreground" },
-                { label: "Tekijöille maksettu", value: fmt(gigMoney.totals.workerPaidCents), tone: "text-foreground" },
-                {
-                  label: "Tekijöille siirtämättä",
-                  value: fmt(gigMoney.totals.workerOpenCents),
-                  tone: gigMoney.totals.workerOpenCents > 0
-                    ? "text-amber-600 dark:text-amber-400"
-                    : "text-muted-foreground",
-                },
-                {
-                  label: "Jää meille",
-                  value: fmt(gigMoney.totals.invoicedCents - gigMoney.totals.workerEarnedCents),
-                  tone: "text-green-600 dark:text-green-400",
-                },
-              ].map((t) => (
-                <div key={t.label} className="rounded-xl bg-muted/40 py-2.5 px-3 min-w-0">
-                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground truncate">{t.label}</p>
-                  <p className={`text-base font-bold tabular-nums ${t.tone}`}>{t.value}</p>
+                { label: "Tulot", value: stats.totalRevenue },
+                { label: "Kulut", value: stats.totalExpenses },
+                { label: "Palvelumaksu", value: stats.serviceFeeTotal },
+              ].map((x) => (
+                <div key={x.label}>
+                  <p className="text-xs text-muted-foreground mb-0.5">{x.label}</p>
+                  <p className="text-lg font-semibold text-foreground tabular-nums">{fmt(x.value)}</p>
                 </div>
               ))}
             </div>
-
-            {/* Kumpi johtaja on kerännyt mitäkin — ja kumpi on velkaa kummalle.
-                HUOM: velan mitta on `dueByFounder` (poikkeama keskiarvosta), EI
-                `netByFounder`. Netto on `käsissä − oma osuus`, ja rivien
-                nettojen summa on määritelmällisesti tekijöille kuuluva varaus
-                (invariantti 17). Kun tässä näytettiin nettoa, MOLEMMAT johtajat
-                lukivat "pitää liikaa" yhtä aikaa — velkalukemana mahdotonta —
-                ja luku oli oikeasti kummankin puolikas tekijöiden rahoista. */}
-            <div className="space-y-1.5 border-t border-border pt-3">
-              {gigMoney.founders.map((f) => {
-                const received = gigMoney.totals.receivedByFounder[f.id] ?? 0;
-                const due = gigMoney.totals.dueByFounder?.[f.id] ?? 0;
-                return (
-                  <div key={f.id} className="flex items-center justify-between gap-3 text-sm">
-                    <span className="text-muted-foreground truncate">{f.name}</span>
-                    <span className="flex items-center gap-3 shrink-0">
-                      <span className="tabular-nums text-foreground">{fmt(received)}</span>
-                      {Math.abs(due) >= 100 && (
-                        <span className={`text-xs tabular-nums ${due > 0 ? "text-amber-600 dark:text-amber-400" : "text-green-600 dark:text-green-400"}`}>
-                          {due > 0 ? `maksaa ${fmt(due)}` : `saa ${fmt(-due)}`}
-                        </span>
-                      )}
-                    </span>
-                  </div>
-                );
-              })}
-
-              {/* Yksi lause siitä mitä pankissa oikeasti liikkuu — ja polku sinne
-                  missä sen voi kuitata. Luku ilman toimintoa on umpikuja: siirto
-                  merkitään tehdyksi keikan Maksut-näkymän tasausosiossa
-                  ("Merkitse siirretyksi"), eikä sinne päässyt tästä mitenkään. */}
-              {(() => {
-                const tr = gigMoney.totals.transfer;
-                const nameOf = (id: string) => gigMoney.founders.find((x) => x.id === id)?.name ?? id;
-                const moneyGigs = gigMoney.gigs ?? [];
-                const settleHref = moneyGigs.length === 1
-                  ? `/admin/gig/${moneyGigs[0].jobId}/projekti`
-                  : "/admin/gigs";
-                if (!tr || tr.cents < 100) {
-                  return <p className="text-xs text-green-600 dark:text-green-400 pt-1">Tasan</p>;
-                }
-                return (
-                  <Link
-                    href={settleHref}
-                    className="block text-xs text-amber-600 dark:text-amber-400 pt-1 hover:underline"
-                  >
-                    Tasaus {fmt(tr.cents)}: {nameOf(tr.fromId)} → {nameOf(tr.toId)} · merkitse tehdyksi →
-                  </Link>
-                );
-              })()}
-
-              {/* Tekijöiden raha erikseen, jottei sitä lueta johtajien katteeksi. */}
-              {(gigMoney.totals.reserveCents ?? 0) > 0 && (
-                <p className="text-xs text-muted-foreground pt-1">
-                  Tekijöille kuuluvaa käsissä {fmt(gigMoney.totals.reserveCents ?? 0)}
-                </p>
-              )}
-
-              {/* Maksut ilman maksajaa vääristävät yllä olevia lukuja. Keikan oma
-                  tasausnäkymä varoittaa tästä; etusivu ei varoittanut lainkaan. */}
-              {(gigMoney.totals.unattributedPaidCents ?? 0) > 0 && (
-                <Link
-                  href={(gigMoney.gigs ?? []).length === 1 ? `/admin/gig/${(gigMoney.gigs ?? [])[0].jobId}/projekti` : "/admin/gigs"}
-                  className="block text-xs text-amber-600 dark:text-amber-400 pt-1 hover:underline"
-                >
-                  {fmt(gigMoney.totals.unattributedPaidCents ?? 0)} maksettu ilman maksajamerkintää →
-                </Link>
-              )}
-              {gigMoney.totals.unassignedCents > 0 && (
-                <p className="text-xs text-amber-600 dark:text-amber-400 pt-1">
-                  {fmt(gigMoney.totals.unassignedCents)} laskutettu ilman merkintää siitä kuka rahat sai.
-                </p>
-              )}
-            </div>
-
-            {/* Per keikka — vain ne joissa on jotain kesken. */}
-            {gigMoney.gigs.filter((g) => g.transfer || g.unassignedEraCount > 0).length > 0 && (
-              <div className="mt-3 pt-3 border-t border-border space-y-2">
-                {gigMoney.gigs.filter((g) => g.transfer || g.unassignedEraCount > 0).map((g) => (
-                  <Link key={g.jobId} href={`/admin/gig/${g.jobId}/projekti`}>
-                    <div className="flex items-center justify-between gap-3 text-sm cursor-pointer hover:opacity-80 transition-opacity">
-                      <span className="text-foreground truncate">{g.name}</span>
-                      <span className="text-xs text-muted-foreground shrink-0">
-                        {g.transfer
-                          // Suunta mukaan: `fromId`/`toId` tulivat jo mukana,
-                          // mutta rivi näytti pelkän summan — eli sen ainoan
-                          // paikan joka tiesi kuka maksaa, ei kertonut sitä.
-                          ? `${gigMoney.founders.find((x) => x.id === g.transfer!.fromId)?.name?.split(" ")[0] ?? g.transfer.fromId} maksaa ${fmt(g.transfer.cents)} →`
-                          : `${g.unassignedEraCount} erää merkitsemättä →`}
-                      </span>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </Card>
-        )}
-
-        <DashboardBriefing />
-
-        {/* STAFF: personal earnings breakdown note */}
-        {!isHost && myRevenue !== null && myRevenue > 0 && (
-          <Card className="p-4 bg-card border-0 premium-shadow mb-6">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-              Tilitys — erittely
-            </p>
-            <div className="space-y-1.5 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Bruttotulo (keikat)</span>
-                <span className="font-medium text-foreground">{fmt(Math.max(0, myRevenue - (myInvestmentShare ?? 0)))}</span>
-              </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">− Palvelumaksu ~{profile ? feePctForWorker(profile.id) : STAFF_SERVICE_FEE_PCT} %</span>
-                <span className="text-purple-600 dark:text-purple-400">−{fmt(Math.round(Math.max(0, myRevenue - (myInvestmentShare ?? 0)) * (profile ? feeRateForWorker(profile.id) : STAFF_SERVICE_FEE_RATE)))}</span>
-              </div>
-              <div className="flex justify-between border-t pt-1.5 mt-1">
-                <span className="text-muted-foreground">≈ Nettotulo</span>
-                <span className="font-bold text-green-600 dark:text-green-400">
-                  {fmt(Math.round(Math.max(0, myRevenue - (myInvestmentShare ?? 0)) * (1 - (profile ? feeRateForWorker(profile.id) : STAFF_SERVICE_FEE_RATE))))}
-                </span>
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground mt-3">
-              Arvio — tarkka netto riippuu kirjatuista kuluista. Katso täsmälliset luvut Verotulosteesta.
-            </p>
-          </Card>
-        )}
-
-        {/* Revenue breakdown — HOST: team view, STAFF: personal earnings link */}
-        {!loading && stats && isHost && (
-          <Card className="p-4 bg-card border-0 premium-shadow mb-8">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-              Talous — erittely (tiimi)
-            </p>
-            <div className="grid grid-cols-3 gap-4">
-              <div>
-                <p className="text-xs text-muted-foreground mb-0.5">Tulot</p>
-                <p className="text-lg font-semibold text-foreground">{fmt(stats.totalRevenue)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground mb-0.5">Kulut</p>
-                <p className="text-lg font-semibold text-foreground">{fmt(stats.totalExpenses)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground mb-0.5">Palvelumaksu</p>
-                <p className="text-lg font-semibold text-foreground">{fmt(stats.serviceFeeTotal)}</p>
-              </div>
-            </div>
             <div className="mt-3 pt-3 border-t border-border flex items-center justify-between">
               <p className="text-sm text-muted-foreground">Nettotulo</p>
-              <p className="text-lg font-bold text-green-600 dark:text-green-400">{fmt(stats.netIncome)}</p>
+              <p className="text-lg font-bold text-green-600 dark:text-green-400 tabular-nums">{fmt(stats.netIncome)}</p>
             </div>
-          </Card>
+            <p className="text-xs text-muted-foreground mt-3">
+              Pikkukeikat, koko tiimi. Urakat: Urakkakeikat-sivu.
+            </p>
+          </Disclosure>
         )}
         {!isHost && (
           <Link href="/admin/talous">
@@ -625,65 +472,34 @@ export default function AdminDashboard() {
           </Disclosure>
         )}
 
-        <Link href="/admin/new">
-          <Card className="p-6 bg-primary text-primary-foreground border-0 mb-8 cursor-pointer hover:opacity-95 transition-opacity">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center">
-                  <Plus className="w-6 h-6" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-semibold">Uusi keikka</h2>
-                  <p className="text-primary-foreground/80 text-sm">
-                    Aloita uuden asiakkaan palveluprosessi
-                  </p>
-                </div>
-              </div>
-              <ArrowRight className="w-6 h-6" />
-            </div>
-          </Card>
-        </Link>
-
+        {/* Kaksi sisäänkäyntiä, ei enempää. "Uusi keikka" ja "Keikat" olivat
+            omina kortteinaan, vaikka molemmat ovat navipalkissa sekä
+            puhelimessa että työpöydällä. Asiakkaat EI ole puhelimen
+            navipalkissa, joten se kortti on siellä ainoa reitti. */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-          <Link href="/admin/jobs">
-            <Card className="p-5 bg-card border-0 premium-shadow cursor-pointer hover:opacity-95 transition-opacity h-full">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center">
-                    <List className="w-5 h-5 text-muted-foreground" />
+          {[
+            { href: "/admin/customers", icon: Users, title: "Asiakkaat" },
+            { href: "/admin/gigs", icon: Building2, title: "Urakkakeikat" },
+          ].map((x) => {
+            const Icon = x.icon;
+            return (
+              <Link key={x.href} href={x.href}>
+                <Card className="p-5 bg-card border-0 premium-shadow cursor-pointer hover:opacity-95 transition-opacity h-full">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center">
+                        <Icon className="w-5 h-5 text-muted-foreground" />
+                      </div>
+                      <h3 className="font-semibold text-foreground">{x.title}</h3>
+                    </div>
+                    <ArrowRight className="w-5 h-5 text-muted-foreground" />
                   </div>
-                  <div>
-                    <h3 className="font-semibold text-foreground">Keikat</h3>
-                    <p className="text-sm text-muted-foreground">Selaa ja hae keikkoja</p>
-                  </div>
-                </div>
-                <ArrowRight className="w-5 h-5 text-muted-foreground" />
-              </div>
-            </Card>
-          </Link>
-          <Link href="/admin/customers">
-            <Card className="p-5 bg-card border-0 premium-shadow cursor-pointer hover:opacity-95 transition-opacity h-full">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center">
-                    <Users className="w-5 h-5 text-muted-foreground" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-foreground">Asiakkaat</h3>
-                    <p className="text-sm text-muted-foreground">Asiakasrekisteri</p>
-                  </div>
-                </div>
-                <ArrowRight className="w-5 h-5 text-muted-foreground" />
-              </div>
-            </Card>
-          </Link>
+                </Card>
+              </Link>
+            );
+          })}
         </div>
 
-        {profile?.role && (
-          <div className="text-center text-xs text-muted-foreground">
-            Rooli: {profile.role}
-          </div>
-        )}
       </div>
     </div>
   );

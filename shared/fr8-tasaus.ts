@@ -53,8 +53,15 @@ export interface TasausEraRow {
 
 /** Tekijälle mennyt maksu sellaisena kuin tasaus sen näkee. */
 export interface TasausPayoutRow {
-  /** Erälaskun id, tai `manual:<workerId>` käsin kirjatuille. */
+  /** Erälaskun id, tai `manual:<workerId>:<payoutId>` käsin kirjatuille.
+   *
+   *  AVAIN ON PER MAKSU, ei per tekijä. Vanha avain (`manual:<workerId>`) kattoi
+   *  tekijän KAIKKI maksut yhtenä rivinä, joten kahden johtajan maksamaa tekijää
+   *  ei voinut kohdentaa oikein — koko summa oli pakko antaa toiselle. Vanhat
+   *  kirjatut ohitukset luetaan silti (ks. `paidBy`-haku alla). */
   key: string;
+  /** Käsin kirjatun maksun id (`CrewPayout.id`); null erälaskuriveillä. */
+  payoutId?: string | null;
   invoiceId: number | null;
   workerId: string;
   workerName: string;
@@ -334,35 +341,56 @@ export function buildTasaus(
     });
   }
 
-  // Käsin kirjatut payoutit (vanha kanava): raha on liikkunut, mutta kanava ei
-  // tallenna maksajaa. Ne näkyvät omana rivinään eikä niitä arvata kummallekaan.
+  /**
+   * KÄSIN KIRJATUT MAKSUT (`CrewPayout`) — maksaja luetaan, ei kysytä.
+   *
+   * Tämä laski aiemmin jokaisen maksetun payoutin "kohdentamattomaksi rahaksi"
+   * perusteluna että "vanha kanava ei tallenna maksajaa". Se ei ollut totta:
+   * `CrewPayout.buyer` (`BuyerSnapshot.billerId`) on tallentanut maksajan
+   * maksun luonnista asti, ja hallintanäkymä pakottaa valitsemaan sen
+   * (`BRAND_BILLERS`-valitsin). Etusivu siis vaati kirjaamaan samaa tietoa
+   * TOISEEN kenttään (`settlement.paidBy`) ja valitti siihen asti summasta
+   * jonka vastaus oli jo samassa blobissa.
+   *
+   * ETUSIJAJÄRJESTYS on sama kuin erälaskuilla: käsin kirjattu ohitus voittaa,
+   * sitten kirjattu ostaja, ja vasta sen jälkeen rivi on kohdentamaton.
+   *
+   * KIRJATTU OSTAJA ON TOSIASIA, EI ARVAUS — invariantti 18 kiellää arvaamisen,
+   * ei tallennetun tiedon lukemista. Siksi hyväksytään vain johtajan id:
+   * `"company"`-ostaja ja puuttuva `buyer` (payout vanhemmasta ajasta) jäävät
+   * kohdentamattomiksi ja varoittavat edelleen.
+   *
+   * PER MAKSU, EI PER TEKIJÄ: sama tekijä voi olla saanut rahaa kummaltakin
+   * johtajalta, joten yhtä yhteissummaa ei voi kohdentaa oikein kummallekaan.
+   */
   let unattributedPaidCents = 0;
   for (const member of crew) {
     if (member.role === "host") continue;
-    const paid = (member.payouts || []).filter((p) => p.status === "maksettu").reduce((s, p) => s + p.amountCents, 0);
-    if (paid <= 0) continue;
-    unattributedPaidCents += paid;
-    payouts.push({
-      key: `manual:${member.id}`,
-      invoiceId: null,
-      workerId: member.id,
-      workerName: member.name || member.id,
-      amountCents: paid,
-      recipientId: null,
-      paidById: paidBy[`manual:${member.id}`] && founderIds.has(paidBy[`manual:${member.id}`])
-        ? paidBy[`manual:${member.id}`] : null,
-      overridden: !!paidBy[`manual:${member.id}`],
-      scope: "p1",
-      eraNumbers: [],
-      unattributed: !paidBy[`manual:${member.id}`],
-    });
-  }
-  for (const row of payouts) {
-    if (row.invoiceId != null || !row.paidById) continue;
-    // Käsin kirjattu payout joka on kohdennettu → lasketaan maksajalle ja
-    // poistetaan kohdentamattomien summasta.
-    paidByFounder[row.paidById] = (paidByFounder[row.paidById] || 0) + row.amountCents;
-    unattributedPaidCents -= row.amountCents;
+    for (const p of member.payouts || []) {
+      if (p.status !== "maksettu" || !(p.amountCents > 0)) continue;
+      const key = `manual:${member.id}:${p.id}`;
+      // Vanha per-tekijä-avain luetaan yhä, jottei jo tehty kohdennus katoa.
+      const manual = paidBy[key] ?? paidBy[`manual:${member.id}`];
+      const recorded = p.buyer?.billerId;
+      const recipientId = recorded && founderIds.has(recorded) ? recorded : null;
+      const paidById = manual && founderIds.has(manual) ? manual : recipientId;
+      if (paidById) paidByFounder[paidById] = (paidByFounder[paidById] || 0) + p.amountCents;
+      else unattributedPaidCents += p.amountCents;
+      payouts.push({
+        key,
+        payoutId: p.id,
+        invoiceId: null,
+        workerId: member.id,
+        workerName: member.name || member.id,
+        amountCents: p.amountCents,
+        recipientId,
+        paidById,
+        overridden: !!paidById && !!manual && manual !== recipientId,
+        scope: "p1",
+        eraNumbers: [],
+        unattributed: !paidById,
+      });
+    }
   }
 
   // ── 3. Tekijöiden ansainta (kulupuoli) ─────────────────────────────────────

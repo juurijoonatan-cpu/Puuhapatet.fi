@@ -244,10 +244,23 @@ Säännöt:
    Σ kassa − Σ ansainta. Sitä ei jaeta: siirto tasaa vain johtajien keskinäisen
    eron, ja varaus jää molemmille yhtä suurena.
 18. **Kohdentamaton raha ei kuulu kenellekään.** Erä ilman `receivedBy`tä ja
-   käsin kirjattu payout ilman maksajaa raportoidaan omina varoituksinaan
+   maksu jonka maksajaa ei tiedetä raportoidaan omina varoituksinaan
    (`unassignedEraCount`, `unattributedPaidCents`) eikä arvata kummallekaan —
    arvaus vääristäisi tasausta satojen eurojen verran.
-19. **`settlement` on serverin omistama** kuten `p2` ja `guided`: geneerinen
+   **TARKENNUS: tallennettu tieto ei ole arvaus.** `CrewPayout.buyer.billerId`
+   on maksun maksaja, kirjattuna sen syntyhetkellä. Sen lukeminen on faktan
+   lukemista, ja moottori tekee sen (etusija: käsin kirjattu ohitus → tallennettu
+   ostaja → kohdentamaton). Portti on `founderIds`: `"company"`-ostaja ja
+   puuttuva `buyer` jäävät kohdentamattomiksi, koska niistä maksaja ei selviä.
+   Aiemmin tätä kenttää ei luettu lainkaan, joten järjestelmä pyysi kirjaamaan
+   saman tiedon toiseen kenttään ja varoitti siihen asti.
+19. **Velan mitta on `remainingDueCents`, ei `dueCents`.** `dueCents` on
+   laskettu ero ENNEN kirjattuja siirtoja (`pickTransfer`in syöte);
+   `remainingDueCents` on `result.transfer`ista johdettu vielä maksamatta oleva
+   summa. Kun näkymä luki bruttoa, se väitti "maksaa 720 €" samalla kun toinen
+   näkymä samalla sivulla sanoi "Tasan". Siirtoja EI netoteta `dueCents`iin —
+   sama raha vähentyisi kahdesti.
+20. **`settlement` on serverin omistama** kuten `p2` ja `guided`: geneerinen
    blob-tallennus säilyttää talletetun kopion, mutaatiot vain
    `POST /api/jobs/:id/settlement` -reitin kautta.
 

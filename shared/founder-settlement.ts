@@ -297,8 +297,27 @@ export interface TasausFounderRow {
   /** holds − entitled. Positiivinen = pitää liikaa, negatiivinen = jäi vajaaksi. */
   netCents: number;
   /** Kuinka paljon tämän johtajan pitää maksaa (+) tai saada (−) jotta kaikkien
-   *  netto on yhtä suuri. Summa on aina 0. */
+   *  netto on yhtä suuri. Summa on aina 0.
+   *
+   *  HUOM: BRUTTO, eli laskettu ero ENNEN kirjattuja siirtoja. `pickTransfer`
+   *  johtaa `grossTransfer`in tästä, ja kirjatut siirrot vähennetään vasta
+   *  siitä. Tämä luku EI siis kuittaudu nollille kun siirto on tehty — käytä
+   *  näytössä `remainingDueCents`iä. */
   dueCents: number;
+  /**
+   * Kuinka paljon tästä on VIELÄ maksamatta (+) tai saamatta (−), kun kirjatut
+   * siirrot (`settlement.transfers`) ja käsin sovittu summa on otettu huomioon.
+   * Nolla kaikilla kun `transfer` on null.
+   *
+   * MIKSI TÄMÄ ON OLEMASSA: `dueCents` on brutto, ja jokainen näkymä johti
+   * "kuka on velkaa" -luvun siitä itse. Kun johtajat olivat siirtäneet rahan ja
+   * kirjanneet sen, keikan oma tasausnäkymä luki `result.transfer`in ja sanoi
+   * "Tasan ✓" — mutta SAMAN SIVUN johtajakortti ja etusivun rahakortti lukivat
+   * bruttoa ja sanoivat yhä "maksaa 720,00 €". Sama luku kahdesta kentästä,
+   * kaksi eri vastausta. Nyt moottori vastaa itse, eikä kutsujan tarvitse
+   * päätellä mitään.
+   */
+  remainingDueCents: number;
 }
 
 export interface TasausResult {
@@ -399,7 +418,8 @@ export function computeTasaus(input: TasausInput): TasausResult {
       expensesCents: expenses,
       holdsCents,
       netCents: holdsCents - entitledCents,
-      dueCents: 0, // täytetään alla
+      dueCents: 0,           // täytetään alla
+      remainingDueCents: 0,  // täytetään kun `transfer` on ratkennut
     };
   });
 
@@ -471,6 +491,21 @@ export function computeTasaus(input: TasausInput): TasausResult {
   } else {
     // Ei laskettua eroa, mutta siirtoja on voitu silti tehdä → ne pitää palauttaa.
     transfer = reverseOf(transfers, founders);
+  }
+
+  // Vielä maksamatta per johtaja. Tämä johdetaan `transfer`ista — EI
+  // `dueCents`istä ja EI `grossTransfer`ista: vain `transfer` on käynyt läpi
+  // kirjatut siirrot, käsin sovitun summan, ylisiirron ja väärään suuntaan
+  // tehdyn siirron. Kaikkien muiden johtajien luku on nolla, koska siirto
+  // koskee aina täsmälleen kahta.
+  if (transfer) {
+    for (const row of rows) {
+      row.remainingDueCents = row.id === transfer.fromId
+        ? transfer.cents
+        : row.id === transfer.toId
+          ? -transfer.cents
+          : 0;
+    }
   }
 
   return {

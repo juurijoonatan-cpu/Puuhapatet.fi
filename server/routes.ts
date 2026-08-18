@@ -2192,7 +2192,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         .leftJoin(expenses, eq(expenses.jobId, jobs.id))
         // Completed jobs only — but a declined quote means the job never
         // happened, so exclude those even if a stale status lingers.
-        .where(and(eq(jobs.status, "done"), sql`${jobs.quoteStatus} is distinct from 'declined'`))
+        //
+        // URAKKAKEIKAT POIS. Urakan `agreedPrice` on sopimuksen KATTO, ei
+        // laskutettua rahaa, eikä se ole tässä taulussa oikeaa liikevaihtoa:
+        // urakan raha asuu `gigData`n maksuissa ja tulee omalta reitiltään
+        // (`/api/admin/gig-money`). Kun urakka merkitään valmiiksi, tämä luku
+        // hyppäsi kattoon — ja jokainen näkymä joka summaa molemmat lähteet
+        // laski urakan kahdesti. Kaikki muut tämän taulun lukijat
+        // (server/finance/settlement.ts, post.ts, etusivun oma tulo) suodattavat
+        // urakat pois; tämä oli ainoa joka ei.
+        .where(and(
+          eq(jobs.status, "done"),
+          sql`${jobs.quoteStatus} is distinct from 'declined'`,
+          sql`coalesce(${jobs.isCustomGig}, false) = false`,
+          sql`${jobs.gigData} is null`,
+        ))
         .groupBy(jobs.id, jobs.agreedPrice, jobs.unitCount, jobs.isTaloyhtiio, jobs.waiveFee, jobs.assignedTo);
 
       let totalRevenue = 0, totalExpenses = 0, serviceFeeTotal = 0;
@@ -9195,9 +9209,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
        * puolikkaat näytettiin per johtaja, molemmat näyttivät "pitävän liikaa"
        * yhtä aikaa, mikä on velkalukemana mahdotonta.
        *
-       * `dueCents` on poikkeama johtajien keskiarvosta ja `transfer` se summa
-       * joka pankissa oikeasti liikkuu. Ne olivat jo laskettuna; tämä reitti
-       * vain ei palauttanut niitä.
+       * MITTA ON `remainingDueCents`, EI `dueCents`. `dueCents` on laskettu ero
+       * ENNEN kirjattuja siirtoja, joten se ei kuittaudu nollille vaikka raha
+       * on siirretty ja siirto kirjattu — juuri siksi tämä kortti väitti
+       * "maksaa 720,00 €" samalla kun keikan oma tasausnäkymä sanoi "Tasan".
+       * `remainingDueCents` johdetaan `result.transfer`ista, eli samasta
+       * kentästä jonka keikan näkymä lukee, ja on siis määritelmällisesti sama
+       * vastaus.
        */
       const dueByFounder: Record<string, number> = {};
       /**
@@ -9228,10 +9246,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Nettosiirto kaikkien keikkojen yli, etumerkillisenä yhden johtajan
       // suuntaan. Kootaan `dueByFounder`ista, jotta suunta säilyy.
       let transferHint: { fromId: string; toId: string; cents: number } | null = null;
+      /** Keikkojen `result.transfer`ien summa, etumerkki `founders[0]`:n suuntaan
+       *  (positiivinen = hän maksaa). Ks. koonti alempana. */
+      let signedTransferCents = 0;
       const gigs: {
         jobId: number; name: string; invoicedCents: number; workerEarnedCents: number;
         workerPaidCents: number; transfer: { fromId: string; toId: string; cents: number } | null;
         unassignedEraCount: number;
+        /** Euroina, ei vain kappaleina. Kappalemäärä ei kerro onko kyse
+         *  kahdesta kympistä vai kahdesta tuhannesta — ja tämä oli koko
+         *  sovelluksessa vain etusivun rahakortissa, joka on nyt purettu. */
+        unassignedCents: number;
       }[] = [];
 
       for (const job of rows) {
@@ -9262,16 +9287,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         for (const r of t.result.rows) {
           receivedByFounder[r.id] = (receivedByFounder[r.id] ?? 0) + r.receivedCents;
           netByFounder[r.id] = (netByFounder[r.id] ?? 0) + r.netCents;
-          dueByFounder[r.id] = (dueByFounder[r.id] ?? 0) + r.dueCents;
+          dueByFounder[r.id] = (dueByFounder[r.id] ?? 0) + r.remainingDueCents;
           entitledByFounder[r.id] = (entitledByFounder[r.id] ?? 0) + r.entitledCents;
         }
         reserveCents += t.result.reserveCents;
-        // Kirjatut maksut joilla ei ole maksajaa: ne ovat oikeasti lähteneet
-        // tileiltä, mutta moottori ei voi vähentää niitä keneltäkään (se ei
-        // arvaa — invariantti 18). Ilman tätä lukua näkymä ei kerro MIKSI
-        // luvut eivät täsmää.
+        {
+          const tr = t.result.transfer;
+          const anchor = founders[0]?.id;
+          if (tr && anchor) {
+            if (tr.fromId === anchor) signedTransferCents += tr.cents;
+            else if (tr.toId === anchor) signedTransferCents -= tr.cents;
+          }
+        }
+        // Maksut joilta maksaja EI ole tiedossa mistään: ei käsin kirjattua
+        // kohdennusta eikä tallennettua ostajaa (`CrewPayout.buyer.billerId`).
+        // Moottori lukee nyt tallennetun ostajan, joten tähän jää vain se mitä
+        // oikeasti ei tiedetä — ei enää jokainen käsin kirjattu maksu.
+        // Arvaamista ei tehdä (invariantti 18).
         unattributedPaidCents += t.unattributedPaidCents;
-        unassignedCents += t.eras.filter((e) => !e.receivedById).reduce((s, e) => s + e.amountCents, 0);
+        const gigUnassignedCents = t.eras.filter((e) => !e.receivedById).reduce((s, e) => s + e.amountCents, 0);
+        unassignedCents += gigUnassignedCents;
 
         gigs.push({
           jobId: job.id,
@@ -9281,20 +9316,32 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           workerPaidCents: gigWorkerPaid,
           transfer: t.result.transfer,
           unassignedEraCount: t.unassignedEraCount,
+          unassignedCents: gigUnassignedCents,
         });
       }
       gigs.sort((a, b) => b.invoicedCents - a.invoicedCents);
 
-      // Kokonaissiirto: se johtaja jonka `due` on positiivinen maksaa sille
-      // jonka `due` on negatiivinen. Summataan keikkojen yli, jotta kortti voi
-      // sanoa yhden lauseen ("A maksaa B:lle X €") eikä jätä lukijaa
-      // päättelemään suuntaa itse.
+      /**
+       * Kokonaissiirto = keikkojen `result.transfer`ien summa YHDESSÄ suunnassa.
+       *
+       * Tämä johdettiin aiemmin `dueByFounder`ista etsimällä positiivinen ja
+       * negatiivinen rivi. Kaksi vikaa: (1) `dueCents` oli brutto, joten jo
+       * tehty siirto näkyi tässä ikuisesti (ks. `dueByFounder`in selite yllä),
+       * ja (2) summa laskettiin keikkojen yli ENNEN suunnan valintaa, joten
+       * kaksi tasattua keikkaa saattoi ristiin netottuen synnyttää siirron jota
+       * kummallakaan keikalla ei ole. `result.transfer` on keikkakohtainen ja
+       * käynyt läpi kirjatut siirrot, käsin sovitun summan sekä ylisiirron.
+       *
+       * Etumerkki kiinnitetään ENSIMMÄISEEN johtajaan, jotta vastakkaiset
+       * siirrot kumoavat toisensa oikein eikä suunta riipu iterointijärjestyksestä.
+       */
       {
-        const entries = Object.entries(dueByFounder).filter(([, v]) => v !== 0);
-        const payer = entries.find(([, v]) => v > 0);
-        const payee = entries.find(([, v]) => v < 0);
-        if (payer && payee) {
-          transferHint = { fromId: payer[0], toId: payee[0], cents: Math.min(payer[1], -payee[1]) };
+        const anchor = founders[0]?.id;
+        const other = founders.find((f) => f.id !== anchor)?.id;
+        if (anchor && other && signedTransferCents !== 0) {
+          transferHint = signedTransferCents > 0
+            ? { fromId: anchor, toId: other, cents: signedTransferCents }
+            : { fromId: other, toId: anchor, cents: -signedTransferCents };
         }
       }
 

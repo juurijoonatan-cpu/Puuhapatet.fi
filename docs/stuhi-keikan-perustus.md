@@ -60,6 +60,7 @@ lähetyksellä. Erillistä asiakkaan luontia `/admin/customers`issa **ei tarvita
 | 6 | ” | Yksikön nimi | **`tila`** | Muuten lukee "1. kerros" yhden huoneen keikalla — sekä kartalla että laskutussektorissa. |
 | 7 | ” | Ikkunoita arviolta | **15** | Antaa etenemälle nimittäjän ennen kuin pisteet on merkitty. Tarkentuu kartasta. |
 | 8 | ” | Tuntia / ikkuna | **`1,5`** | Antaa kokonaisarvion (~22,5 h) ja tuntipohjaisen ETA:n. |
+| 8b | ” | Allekirjoitus | **Sopimus myöhemmin** | Työ alkaa ennen paperia: asiakkaan linkki avautuu suoraan seurantaan. Kun sopimus valmistuu, liitä se keikan Sopimus-kortista — se nousee asiakkaalle popuppina luettavaksi ja allekirjoitettavaksi eikä sulje seurantaa. |
 | 9 | ” | Yhdistyksen nimi | yhdistyksen virallinen nimi | Sopimus, asiakaslinkki, keikkalista. |
 | 10 | ” | Yhteyshenkilö | **Akseli Kettunen** | Eri kenttä kuin yhdistyksen nimi — molemmat näkyvät keikkalistalla. |
 | 11 | ” | Y-tunnus | yhdistyksen Y-tunnus | Yhdistyksellä on Y-tunnus kuten yrityksellä. |
@@ -71,6 +72,10 @@ lähetyksellä. Erillistä asiakkaan luontia `/admin/customers`issa **ei tarvita
 **Huom kohta 2:** `customer_type`-sarake syntyy palvelimen käynnistyksen
 automaattimigraatiossa (`server/index.ts`). Perusta keikka vasta kun muutos on
 julkaistu, muuten laji ei tallennu.
+
+**Sopimustunnus:** jätä tyhjäksi jos tunnusta ei ole. Pelkkä viiva ("-") oli
+aiemmin arvo kuten mikä tahansa muu, ja se näkyi asiakkaalle otsikkona
+"- · Tarjous & sopimus"; viiva tulkitaan nyt tyhjäksi, mutta tyhjä on selvempää.
 
 **Mitä lomakkeelle EI tarvitse laittaa:** hintaa, laskutusväliä eikä
 sopimustekstiä. Yhteisökeikalla hintakentät ovat piilossa, ja ALV-huomautus

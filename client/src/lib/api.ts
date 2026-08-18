@@ -426,6 +426,10 @@ export interface GigPublicView {
   // Contract & signing gate
   contractText: string | null;
   requireSignature: boolean;
+  /** Sopimus on olemassa, portti ei ole päällä → näytä se popuppina seurannassa.
+   *  Johdettu palvelimella `signaturePrompt`illa, joten allekirjoittanut asiakas
+   *  ei saa kehotetta uudelleen. */
+  signPrompt: boolean;
   status: "draft" | "signed" | "approved";
   signed: boolean;
   signedAt: number | null;

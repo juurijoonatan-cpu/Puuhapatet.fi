@@ -146,6 +146,22 @@ export interface GigData {
   payments: GigPayment[];
   log: GigLogEntry[];
   requireSignature?: boolean; // gate the customer live view until signed
+  /**
+   * SOPIMUS TEHDÄÄN VASTA MYÖHEMMIN.
+   *
+   * Työ aloitetaan ennen paperia: asiakkaan linkki avautuu suoraan
+   * seurantanäkymään, eikä sopimus estä sitä missään vaiheessa. Kun sopimus
+   * sitten valmistuu ja se liitetään keikalle, se nousee samassa näkymässä
+   * popuppina luettavaksi ja allekirjoitettavaksi — se EI enää heitä
+   * seurantaa katsovaa asiakasta takaisin koko sivun allekirjoituslomakkeeseen.
+   *
+   * Ilman tätä lippua sopimustekstin liittäminen jälkikäteen teki juuri sen:
+   * `signatureRequired` kääntyi päälle ja `gig-live` palautti asiakkaan
+   * lomakkeelle ilman mitään selitystä.
+   *
+   * Puuttuva = vanha käytös.
+   */
+  contractLater?: boolean;
   signature?: GigSignature | null; // customer's electronic signature
   approval?: GigApproval | null;   // admin approval of the signed gig
   updatedAt: number;          // epoch ms
@@ -161,9 +177,39 @@ export function gigStatus(gig: Pick<GigData, "signature" | "approval">): GigStat
 /**
  * Whether the customer live view should be gated behind signing. Defaults to
  * "gate it when there is a contract to sign" unless explicitly overridden.
+ *
+ * `contractLater` voittaa kaiken: kun sopimus tehdään vasta myöhemmin, koko
+ * sivun portti ei ole koskaan päällä — ei ennen sopimusta eikä sen jälkeen.
  */
-export function signatureRequired(gig: Pick<GigData, "requireSignature" | "contractText">): boolean {
+export function signatureRequired(gig: Pick<GigData, "requireSignature" | "contractText" | "contractLater">): boolean {
+  if (gig.contractLater) return false;
   return gig.requireSignature ?? !!(gig.contractText && gig.contractText.trim());
+}
+
+/** Miten allekirjoitusta pyydetään asiakkaalta. */
+export type SignaturePrompt =
+  /** Ei mitään pyydettävää: ei sopimusta, tai se on jo allekirjoitettu. */
+  | "none"
+  /** Koko sivun portti: seuranta avautuu vasta allekirjoituksesta. */
+  | "gate"
+  /** Seuranta on auki, ja sopimus nousee siihen popuppina. */
+  | "popup";
+
+/**
+ * Yksi vastaus siihen mitä asiakkaalle näytetään sopimuksesta — ennen tätä
+ * jokainen näkymä päätteli sen itse kahdesta kentästä.
+ */
+export function signaturePrompt(
+  gig: Pick<GigData, "requireSignature" | "contractText" | "contractLater" | "signature">,
+): SignaturePrompt {
+  if (gig.signature?.signedAt) return "none";
+  if (signatureRequired(gig)) return "gate";
+  // Sopimus valmis mutta portti pois päältä = popup. Tämä kattaa sekä
+  // `contractLater`-keikan että sen tilanteen jossa ylläpito on nimenomaisesti
+  // ottanut portin pois mutta sopimus on silti olemassa — aiemmin siinä
+  // tilanteessa asiakas ei nähnyt sopimusta ollenkaan eikä voinut allekirjoittaa.
+  if (gig.contractText && gig.contractText.trim()) return "popup";
+  return "none";
 }
 
 // ─── Defaults ────────────────────────────────────────────────────────────────
@@ -410,6 +456,10 @@ export function sanitizeGigData(input: any): GigData {
     payments,
     log,
     requireSignature: typeof input.requireSignature === "boolean" ? input.requireSignature : undefined,
+    // HUOM: tämä objekti rakennetaan kenttä kerrallaan ilman spreadia, joten
+    // uusi kenttä on lisättävä myös TÄHÄN — muuten se katoaa hiljaa joka
+    // tallennuksessa, myös siinä tallennuksessa jonka allekirjoitus itse tekee.
+    contractLater: typeof input.contractLater === "boolean" ? input.contractLater : undefined,
     signature,
     approval,
     updatedAt: Date.now(),

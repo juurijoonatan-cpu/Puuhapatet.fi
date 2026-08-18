@@ -48,7 +48,7 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import {
-  ArrowLeft, Plus, Trash2, Building2, FileText, Layers, Users, Map, HeartHandshake, Euro,
+  ArrowLeft, Plus, Trash2, Building2, FileText, Layers, Users, Map, HeartHandshake, Euro, Clock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -73,6 +73,9 @@ type GigKind = "paid" | "community";
 
 /** Ks. tiedoston alun kohta 2. */
 type PricingModel = "plan" | "sectors";
+
+/** Merkinnät joilla käyttäjä tarkoittaa "ei mitään". Ks. `contractId` alla. */
+const DASHES = new Set(["-", "–", "—"]);
 
 const VAT_PAID = "Hintoihin ei lisätä arvonlisäveroa (AVL 3 §, vähäinen liiketoiminta).";
 const VAT_COMMUNITY = "Vastikkeeton yhteisötyö — ei laskutusta eikä arvonlisäveroa.";
@@ -171,6 +174,20 @@ export default function AdminNewGigPage() {
   const [description, setDescription] = useState("");
   const [contractId, setContractId] = useState("");
   const [contractText, setContractText] = useState("");
+  /**
+   * Milloin asiakas allekirjoittaa.
+   *
+   *  - `first` asiakkaan linkki avautuu allekirjoitukseen, ja seuranta vasta sen
+   *            jälkeen. Näin FR8 tehtiin.
+   *  - `later` työ alkaa ilman sopimusta: linkki menee suoraan seurantaan, ja kun
+   *            sopimus valmistuu se nousee samaan näkymään popuppina.
+   *
+   * MIKSI TÄMÄ ON VALINTA: aiemmin sitä ei valittu vaan se seurasi siitä, oliko
+   * sopimusteksti-kenttään liitetty jotain. Tyhjä kenttä = ei porttia; teksti =
+   * portti. Kumpaakaan ei kerrottu missään, ja sopimuksen liittäminen jälkikäteen
+   * heitti seurantaa katsovan asiakkaan takaisin lomakkeelle.
+   */
+  const [signMode, setSignMode] = useState<"first" | "later">("first");
   const [vatNote, setVatNote] = useState(VAT_PAID);
   /** Käyttäjän itse kirjoittamaa ALV-huomautusta ei ylikirjoiteta lajin vaihdosta. */
   const [vatTouched, setVatTouched] = useState(false);
@@ -274,12 +291,18 @@ export default function AdminNewGigPage() {
       };
       const gig: GigData = {
         ...emptyGigData(),
-        contractId: contractId.trim() || undefined,
+        // Pelkkä viiva tarkoittaa "ei tunnusta", ei tunnusta nimeltä "-".
+        // Ilman tätä asiakkaan sopimusnäkymän otsikoksi tuli "- · Tarjous & sopimus".
+        contractId: DASHES.has(contractId.trim()) ? undefined : contractId.trim() || undefined,
         company: { ...company, entityType },
         contractText: contractText.trim() || undefined,
         vatNote: vatNote.trim() || undefined,
         customerNote: customerNote.trim() || undefined,
         customerTheme: theme,
+        // Kirjataan NIMENOMAISESTI molemmat, jottei portin tila jää riippumaan
+        // siitä sattuiko sopimusteksti-kenttään tulemaan merkkejä.
+        requireSignature: signMode === "first" && !!contractText.trim(),
+        contractLater: signMode === "later",
         sectors: model === "plan"
           ? [planSector]
           : sectors.map((s, i) => ({ ...s, unitPriceCents: community ? 0 : s.unitPriceCents, priority: i + 1 })),
@@ -634,7 +657,34 @@ export default function AdminNewGigPage() {
           </div>
           <Label className="text-xs">Sopimusteksti</Label>
           <Textarea rows={6} value={contractText} onChange={(e) => setContractText(e.target.value)} placeholder="Liitä koko sopimus tähän…" className="font-mono text-xs" />
-          <Hint>Liitä sovittu teksti sellaisenaan. Näkyy tiimille ja sopimusdokumentissa — ei asiakkaan seurantanäkymässä.</Hint>
+          <Hint>
+            Liitä sovittu teksti sellaisenaan. Näkyy tiimille, sopimusdokumentissa
+            JA asiakkaalle allekirjoitettavana — tyhjä kenttä on täysin ok, jos
+            sopimus tehdään myöhemmin.
+          </Hint>
+
+          <div className="mt-4">
+            <Choice<"first" | "later">
+              label="Allekirjoitus"
+              value={signMode}
+              onChange={setSignMode}
+              options={[
+                { id: "first", title: "Ensin sopimus", icon: FileText },
+                { id: "later", title: "Sopimus myöhemmin", icon: Clock },
+              ]}
+            />
+            <Hint>
+              {signMode === "later"
+                ? "Asiakkaan linkki avautuu suoraan seurantaan, eikä sopimus estä sitä missään vaiheessa. Kun liität sopimuksen myöhemmin keikan Sopimus-kortista, se nousee asiakkaalle samaan näkymään popuppina luettavaksi ja allekirjoitettavaksi."
+                : "Asiakas lukee sopimuksen ja allekirjoittaa sen ennen kuin seuranta avautuu. Vaatii sopimustekstin yllä."}
+            </Hint>
+            {signMode === "first" && !contractText.trim() && (
+              <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400 leading-snug">
+                Sopimusteksti on tyhjä, joten allekirjoitettavaa ei ole — linkki avautuu
+                suoraan seurantaan. Valitse "Sopimus myöhemmin", jos se on tarkoitus.
+              </p>
+            )}
+          </div>
           <div className="mt-3">
             <Label className="text-xs">ALV-huomautus</Label>
             <Input value={vatNote} onChange={(e) => { setVatTouched(true); setVatNote(e.target.value); }} />

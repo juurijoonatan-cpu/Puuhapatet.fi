@@ -28,7 +28,7 @@ import {
   CUSTOM_PRICING_SUMMARY, SQM_RANGES, HOUSE_TYPES,
   type HouseKey, type TierKey, type HeightKey, type AreaKey, type AddonKey, type DifficultyKey,
 } from "@shared/pricing";
-import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, gigStatus, livePayments, type GigData } from "@shared/gig";
+import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, signaturePrompt, gigStatus, livePayments, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
@@ -5609,6 +5609,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         // Contract & signing gate — the live view opens only after the customer signs.
         contractText: gig.contractText ?? null,
         requireSignature: signatureRequired(gig),
+        /**
+         * Sopimus on olemassa mutta portti ei ole päällä → seuranta on auki ja
+         * sopimus nousee siihen popuppina.
+         *
+         * Johdettu palvelimella (`signaturePrompt`), koska "onko allekirjoitettu"
+         * on `gig.signature`in totuus eikä selaimen lippu: näin jo
+         * allekirjoittanut asiakas ei voi saada kehotetta uudelleen.
+         */
+        signPrompt: signaturePrompt(gig) === "popup",
         status: gigStatus(gig),
         signed: !!gig.signature?.signedAt,
         signedAt: gig.signature?.signedAt ?? null,
@@ -7031,7 +7040,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!row || !row.job.isCustomGig) return { ok: false, code: 404, error: "Seurantaa ei löydy" };
     const gig = parseGig(row.job.gigData);
     if (!gig) return { ok: false, code: 404, error: "Seurantaa ei löydy" };
-    if (signatureRequired(gig) && !gig.signature?.signedAt) {
+    /**
+     * Rahaan vaikuttavat asiakastoiminnot (keltaisten hyväksyntä ja vastatarjous)
+     * vaativat että sopimusta ei ole odottamassa allekirjoitusta.
+     *
+     * Ehto oli `signatureRequired`, joka on koko sivun portti. Kun sopimus
+     * tehdään vasta myöhemmin, portti on pois päältä — eikä pelkkä portin
+     * puuttuminen voi olla lupa hyväksyä hintoja sopimuksella jota ei ole
+     * allekirjoitettu. `signaturePrompt` kattaa molemmat muodot: "gate" ja
+     * "popup" estävät, "none" ei. Keikalla jolla sopimusta ei ole lainkaan
+     * käytös on ennallaan.
+     */
+    if (signaturePrompt(gig) !== "none") {
       return { ok: false, code: 403, error: "Allekirjoita sopimus ensin" };
     }
     const project = parseProject(row.job.projectData ?? null);

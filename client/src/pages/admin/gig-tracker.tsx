@@ -37,6 +37,7 @@ import { computeProjectTotals, fixedDealFor, computeDealBilling, dealAgreedTotal
 import { computeP2Billing } from "@shared/p2";
 import { p2InvoiceState } from "@shared/worker-payouts";
 import { downloadGigContract, openGigContractForPrint } from "@/lib/gig-contract-doc";
+import { cn } from "@/lib/utils";
 
 /**
  * Keikan työkalut (pohjakartat, kerrokset, tehokkuus).
@@ -103,7 +104,19 @@ export default function AdminGigTrackerPage() {
   const [p2Terms, setP2Terms] = useState("");
   const [p2TermsOpen, setP2TermsOpen] = useState(false);
   const [savingP2Terms, setSavingP2Terms] = useState(false);
-  const [draft, setDraft] = useState({ contractId: "", contractText: "", customerNote: "", vatNote: "", requireSignature: true, customerTheme: "paper" as "paper" | "tech" });
+  /**
+   * `signMode` korvaa yksittäisen "Vaadi sähköinen allekirjoitus" -rastin.
+   *
+   *  - `first` seuranta avautuu vasta allekirjoituksesta (vanha rasti päällä)
+   *  - `popup` seuranta on auki, ja sopimus nousee siihen popuppina (rasti pois)
+   *  - `later` sopimusta ei ole vielä lainkaan
+   *
+   * Rasti ei riittänyt: se kertoi vain onko portti päällä. Kun se otettiin pois
+   * ja sopimus liitettiin silti, asiakas ei nähnyt sopimusta MISSÄÄN eikä voinut
+   * allekirjoittaa sitä — ja päälle jättäminen heitti seurantaa katsovan
+   * asiakkaan takaisin koko sivun lomakkeeseen ilman selitystä.
+   */
+  const [draft, setDraft] = useState({ contractId: "", contractText: "", customerNote: "", vatNote: "", signMode: "first" as "first" | "popup" | "later", customerTheme: "paper" as "paper" | "tech" });
 
   // Invoice dialog state
   const [invoiceOpen, setInvoiceOpen] = useState(false);
@@ -157,7 +170,9 @@ export default function AdminGigTrackerPage() {
           customerNote: parsed.customerNote ?? "",
           customerTheme: parsed.customerTheme === "tech" ? "tech" as const : "paper" as const,
           vatNote: parsed.vatNote ?? "",
-          requireSignature: signatureRequired(parsed),
+          signMode: parsed.contractLater
+            ? "later" as const
+            : signatureRequired(parsed) ? "first" as const : "popup" as const,
         });
         const startBiller = resolveBrandBiller(defaultBillerId);
         const savedEInvoice = parsed.signature?.customer?.eInvoice ?? "";
@@ -199,7 +214,11 @@ export default function AdminGigTrackerPage() {
       customerNote: draft.customerNote.trim() || undefined,
       customerTheme: draft.customerTheme,
       vatNote: draft.vatNote.trim() || undefined,
-      requireSignature: draft.requireSignature,
+      // Molemmat kentät kirjataan tilasta, jottei kumpikaan jää roikkumaan
+      // vanhaan arvoon. `later` sulkee portin aina (`signatureRequired` palauttaa
+      // silloin false joka tapauksessa) — kirjataan silti nimenomaisesti.
+      requireSignature: draft.signMode === "first",
+      contractLater: draft.signMode === "later",
     };
     const res = await api.updateGig(jobId, updated);
     setSavingContract(false);
@@ -903,13 +922,52 @@ export default function AdminGigTrackerPage() {
                 ) : (
                   /* Draft → still editable until the customer signs. */
                   <>
-                    <label className="flex items-center justify-between gap-3 rounded-xl border border-border p-3">
-                      <span className="text-sm">
-                        Vaadi sähköinen allekirjoitus
-                        <span className="block text-xs text-muted-foreground">Asiakas allekirjoittaa ennen kuin live-näkymä avautuu.</span>
-                      </span>
-                      <input type="checkbox" className="h-5 w-5 accent-foreground" checked={draft.requireSignature} onChange={(e) => setDraft({ ...draft, requireSignature: e.target.checked })} />
-                    </label>
+                    {/* Allekirjoituksen ajoitus. Kolme tilaa, koska niitä on
+                        oikeasti kolme — rasti pystyi ilmaisemaan vain kaksi ja
+                        jätti kolmannen (sopimus olemassa, portti pois) tilaan
+                        jossa asiakas ei nähnyt sopimusta lainkaan. */}
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground mb-1.5">Allekirjoitus</p>
+                      <div role="radiogroup" aria-label="Allekirjoitus" className="grid grid-cols-1 gap-2">
+                        {([
+                          { id: "first", title: "Ensin sopimus", sub: "Seuranta avautuu asiakkaalle vasta allekirjoituksesta." },
+                          { id: "popup", title: "Seuranta auki, sopimus popuppina", sub: "Asiakas näkee edistymisen heti ja allekirjoittaa samassa näkymässä." },
+                          { id: "later", title: "Sopimus tehdään myöhemmin", sub: "Ei sopimusta vielä. Liitä teksti alle kun se on valmis." },
+                        ] as const).map((o) => {
+                          const active = draft.signMode === o.id;
+                          return (
+                            <button
+                              key={o.id}
+                              type="button"
+                              role="radio"
+                              aria-checked={active}
+                              onClick={() => setDraft({ ...draft, signMode: o.id })}
+                              className={cn(
+                                "text-left rounded-xl border p-3 transition-colors",
+                                active
+                                  ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+                                  : "border-border hover:bg-muted/30",
+                              )}
+                            >
+                              <span className={cn("text-sm", active && "font-semibold text-blue-700 dark:text-blue-300")}>{o.title}</span>
+                              <span className="block text-xs text-muted-foreground mt-0.5">{o.sub}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {draft.signMode !== "later" && !draft.contractText.trim() && (
+                        <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
+                          Sopimusteksti on tyhjä, joten allekirjoitettavaa ei ole. Asiakas näkee
+                          seurannan, mutta ei sopimusta.
+                        </p>
+                      )}
+                      {draft.signMode === "later" && draft.contractText.trim() && (
+                        <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
+                          Sopimusteksti on jo liitetty. Valitse "sopimus popuppina", niin asiakas
+                          näkee ja voi allekirjoittaa sen.
+                        </p>
+                      )}
+                    </div>
                     <div className="space-y-1.5">
                       <Label className="text-xs font-medium text-muted-foreground">Sopimustunnus</Label>
                       <Input value={draft.contractId} onChange={(e) => setDraft({ ...draft, contractId: e.target.value })} placeholder="Esim. PT-2026-02" />

@@ -12,18 +12,58 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type GigPublicView, type GigSignPayload } from "@/lib/api";
+import { downloadGigContract } from "@/lib/gig-contract-doc";
 import { CT, CFONT } from "@/lib/customer-theme";
 
 const T = CT;
 const FONT = CFONT;
 
-// The physical signed contract, served from the client's public folder.
-const CONTRACT_PDF_URL = "/contracts/PT-2026-02.pdf";
+/**
+ * SE YKSI FYYSINEN SOPIMUS-PDF joka tässä repossa on: FR8:n PT-2026-02.
+ *
+ * TÄMÄ OLI TIETOVUOTO. Polku oli moduulitason vakio jota EI sidottu keikkaan
+ * lainkaan, ja `gig-live.tsx` ohjaa tähän komponenttiin JOKAISEN keikan jonka
+ * sopimus on allekirjoittamatta. Uuden asiakkaan (yhdistys) linkki näytti siis
+ * FR8:n allekirjoitetun 8-sivuisen sopimuksen kokonaisuudessaan: tilaajan nimi,
+ * Y-tunnus, yhteyshenkilö, osoite, sektorien hinnoittelu. Ympäröivä React-teksti
+ * luki oikein keikan omaa blobia, joten vika ei näkynyt kuin dokumentissa.
+ *
+ * Portti on `contractId`, koska tämä tiedosto ON tuo sopimus. Sama kuvio kuin
+ * P2-sopimuksella `gig-live.tsx`:ssä (`data.isFixedDeal`) ja tilaajan
+ * esitäytöllä alla. Jos toinen keikka joskus saa oman PDF:n, silloin on aika
+ * lisätä `GigData`lle kenttä — ei ennen: kenttä ilman syöttöpaikkaa olisi
+ * pudottanut FR8:n oman sopimuksen näkyvistä.
+ */
+const FR8_CONTRACT_ID = "PT-2026-02";
+const FR8_CONTRACT_PDF_URL = "/contracts/PT-2026-02.pdf";
+const FR8_CONTRACT_PAGES = 8;
+
+/**
+ * Sopimustunnus näytettäväksi. Kenttään on kirjoitettu myös pelkkä viiva
+ * ("-"), ja se päätyi otsikkoon muodossa "- · Tarjous & sopimus". Viiva
+ * tarkoittaa "ei tunnusta", ei tunnusta nimeltä "-".
+ */
+function displayContractId(raw?: string | null): string | null {
+  const t = (raw ?? "").trim();
+  if (!t || t === "-" || t === "–" || t === "—") return null;
+  return t;
+}
 
 interface Props {
   token: string;
   view: GigPublicView;
   onSigned: () => void;
+  /**
+   * `page`  koko sivu: asiakkaan linkki avautuu tähän eikä seurantaan (portti).
+   * `modal` sama sisältö dialogin sisällä, kun seuranta on jo auki ja sopimus
+   *         nousee siihen popuppina. Kuori ja otsikko tulevat silloin
+   *         dialogilta, joten ne jätetään tästä pois.
+   *
+   * PINTA PYSYY VAALEANA MYÖS TUMMALLA TEEMALLA, tarkoituksella: tämä on
+   * allekirjoitettava asiakirja, ja paperi on oikea metafora sille. Tumman
+   * teeman keikalla dialogi on tumman taustan päällä oleva vaalea arkki.
+   */
+  variant?: "page" | "modal";
 }
 
 /** Drawable signature field (mouse + touch). */
@@ -125,26 +165,30 @@ const inputCss: React.CSSProperties = {
   background: T.paper, color: T.ink, fontSize: 14, fontFamily: FONT, outline: "none",
 };
 
-// FR8 (sopimus PT-2026-02) tilaaja — esitäyttö, jos keikalle ei ole vielä
-// tallennettu yritystä. Tilaaja (sopimusosapuoli) on yhtiö, jonka puolesta
-// yhteyshenkilö allekirjoittaa. Julkista yritystietoa.
-const FR8_TILAAJA = {
-  name: "FAFO Capital Oy",
-  businessId: "3547969-9",
-  contact: "Niilo Rajamäki",
-  address: "Aleksanterinkatu 23",
-  email: "niilo@fr8.so",
-};
+/**
+ * POISTETTU: FR8:n tilaajan esitäyttö (nimi, Y-tunnus, yhteyshenkilö, osoite,
+ * sähköposti kovakoodattuna). Se oli toisen asiakkaan tietoa tässä
+ * komponentissa, ja käytännössä kuollutta koodia: palvelin lähettää `company`n
+ * aina (`name` putoaa takaisin asiakasrivin nimeen), joten varahaara ei
+ * laukennut. Keikan omat tiedot tulevat blobista kuten pitääkin.
+ */
+
 /** Pull a clean person name out of a "Nimi, +358…" contact string. */
 function cleanSignerName(s?: string | null): string {
   return (s || "").replace(/[·,;|].*$/, "").replace(/\+?\d[\d\s-]{4,}/g, "").trim();
 }
 
-export default function GigContractSign({ token, view, onSigned }: Props) {
-  const c = view.company;
-  // Prefer the gig's saved company; fall back to the known FR8 tilaaja so the
-  // link is ready to send even before the company is saved on the gig.
-  const base = (c && (c.name || c.businessId)) ? c : (view.contractId === "PT-2026-02" ? FR8_TILAAJA : c);
+export default function GigContractSign({ token, view, onSigned, variant = "page" }: Props) {
+  const isModal = variant === "modal";
+  const base = view.company;
+  const contractNo = displayContractId(view.contractId);
+  /**
+   * Sopimusasiakirja. Etusija: keikan oma PDF (vain FR8:lla on sellainen) →
+   * keikan oma sopimusteksti → ei asiakirjaa. Toisen keikan tiedostoa ei
+   * näytetä koskaan.
+   */
+  const pdfUrl = view.contractId === FR8_CONTRACT_ID ? FR8_CONTRACT_PDF_URL : null;
+  const hasOwnText = !!view.contractText?.trim();
   const [customer, setCustomer] = useState({
     legalName: base?.name ?? "",
     businessId: base?.businessId ?? "",
@@ -157,7 +201,9 @@ export default function GigContractSign({ token, view, onSigned }: Props) {
   // the company (legalName).
   const [signerName, setSignerName] = useState(cleanSignerName(base?.contact));
   const [signerTitle, setSignerTitle] = useState(base?.contact ? "Tilaajan edustaja" : "");
-  const [place, setPlace] = useState("Helsinki");
+  // Allekirjoituspaikka: asiakas kirjoittaa oman. Oletus oli "Helsinki",
+  // eli FR8:n kaupunki jokaisen keikan lomakkeella.
+  const [place, setPlace] = useState("");
   const [signatureDataUrl, setSignatureDataUrl] = useState("");
   const [agreed, setAgreed] = useState(false);
   const [showContract, setShowContract] = useState(false);
@@ -199,22 +245,26 @@ export default function GigContractSign({ token, view, onSigned }: Props) {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: T.paper, fontFamily: FONT, color: T.ink, padding: "28px 16px 64px" }}>
+    <div style={isModal
+      ? { background: T.paper, fontFamily: FONT, color: T.ink }
+      : { minHeight: "100vh", background: T.paper, fontFamily: FONT, color: T.ink, padding: "28px 16px 64px" }}>
       <style>{`@keyframes ppRise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}.pp-rise{animation:ppRise .45s ease both}`}</style>
       <div style={{ maxWidth: 640, margin: "0 auto" }}>
 
-        {/* Header */}
+        {/* Header — dialogissa otsikko on dialogin oma. */}
+        {!isModal && (
         <div className="pp-rise" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
           <div>
             <p style={{ margin: 0, fontSize: 22, fontWeight: 800, letterSpacing: "-0.3px" }}>Puuhapatet</p>
             <p style={{ margin: "4px 0 0", fontSize: 13, color: T.muted }}>
-              {view.contractId ? `${view.contractId} · ` : ""}Tarjous & sopimus
+              {contractNo ? `${contractNo} · ` : ""}Tarjous & sopimus
             </p>
           </div>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: T.navy, letterSpacing: "0.06em", border: `1px solid ${T.hair}`, borderRadius: 999, padding: "5px 10px", background: T.card }}>
             ALLEKIRJOITETTAVANA
           </span>
         </div>
+        )}
 
         <Panel style={{ animationDelay: ".04s" }}>
           <p style={{ margin: 0, fontSize: 14, lineHeight: 1.7 }}>
@@ -222,47 +272,106 @@ export default function GigContractSign({ token, view, onSigned }: Props) {
             {view.companyName
               ? <>Tämä on <strong>{view.companyName}</strong>:n ja Puuhapatetin välinen ikkunanpesusopimus.</>
               : <>Tämä on Puuhapatetin ikkunanpesusopimus.</>}{" "}
-            Lue sopimus, täytä tilaajan tiedot ja allekirjoita alla. Hyväksynnän jälkeen pääset suoraan
-            reaaliaikaiseen seurantapaneeliin, jossa näet työn etenemisen ja kertyvän summan suhteessa
-            sovittuun kokonaishintaan.
+            {isModal
+              ? "Työ on jo käynnissä ja näet sen etenemisen tämän ikkunan takana. Lue sopimus, täytä tilaajan tiedot ja allekirjoita alla — seuranta jatkuu koko ajan auki."
+              : "Lue sopimus, täytä tilaajan tiedot ja allekirjoita alla. Hyväksynnän jälkeen pääset suoraan reaaliaikaiseen seurantapaneeliin, jossa näet työn etenemisen ja kertyvän summan suhteessa sovittuun kokonaishintaan."}
           </p>
         </Panel>
 
-        {/* Physical contract PDF — embedded scrollable viewer + download. */}
-        <Panel>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
-            <div>
-              <p style={mono}>SOPIMUSASIAKIRJA</p>
-              <p style={{ margin: "4px 0 0", fontSize: 13, color: T.muted }}>
-                {view.contractId ? `${view.contractId} · ` : ""}Ikkunanpesusopimus (8 sivua)
-              </p>
+        {/* ── SOPIMUSASIAKIRJA ────────────────────────────────────────────
+            Kolme tapausta, tässä järjestyksessä. Toisen keikan tiedostoa ei
+            näytetä koskaan — se oli tämän kohdan vika. */}
+
+        {/* 1. Keikalla on oma PDF (vain FR8). */}
+        {pdfUrl && (
+          <Panel>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+              <div>
+                <p style={mono}>SOPIMUSASIAKIRJA</p>
+                <p style={{ margin: "4px 0 0", fontSize: 13, color: T.muted }}>
+                  {contractNo ? `${contractNo} · ` : ""}Ikkunanpesusopimus ({FR8_CONTRACT_PAGES} sivua)
+                </p>
+              </div>
+              <a
+                href={pdfUrl}
+                // Tiedostonimi keikan mukaan: yleisnimellä "Puuhapatet-sopimus.pdf"
+                // asiakas tallensi sopimuksen josta ei näe kenen se on.
+                download={`Puuhapatet-sopimus-${contractNo ?? view.companyName ?? "keikka"}.pdf`}
+                style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 14px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, color: T.ink, fontFamily: FONT, fontSize: 13, fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap" }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={T.navy} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
+                Lataa PDF
+              </a>
             </div>
-            <a
-              href={CONTRACT_PDF_URL}
-              download="Puuhapatet-sopimus.pdf"
-              style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 14px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, color: T.ink, fontFamily: FONT, fontSize: 13, fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap" }}
+            <object
+              data={`${pdfUrl}#view=FitH`}
+              type="application/pdf"
+              style={{ width: "100%", height: 520, borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, display: "block" }}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={T.navy} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
-              Lataa PDF
-            </a>
-          </div>
-          <object
-            data={`${CONTRACT_PDF_URL}#view=FitH`}
-            type="application/pdf"
-            style={{ width: "100%", height: 520, borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, display: "block" }}
-          >
-            <div style={{ padding: 24, textAlign: "center", fontSize: 13.5, color: T.muted }}>
-              Selaimesi ei näytä PDF:ää suoraan.{" "}
-              <a href={CONTRACT_PDF_URL} target="_blank" rel="noreferrer" style={{ color: T.navy, fontWeight: 600 }}>Avaa sopimus tästä</a>.
-            </div>
-          </object>
-          <p style={{ margin: "10px 0 0", fontSize: 12, color: T.muted, lineHeight: 1.6 }}>
-            Lue sopimus huolellisesti. Allekirjoittamalla alla vahvistat hyväksyväsi tämän asiakirjan ehdot.
-          </p>
-        </Panel>
+              <div style={{ padding: 24, textAlign: "center", fontSize: 13.5, color: T.muted }}>
+                Selaimesi ei näytä PDF:ää suoraan.{" "}
+                <a href={pdfUrl} target="_blank" rel="noreferrer" style={{ color: T.navy, fontWeight: 600 }}>Avaa sopimus tästä</a>.
+              </div>
+            </object>
+            <p style={{ margin: "10px 0 0", fontSize: 12, color: T.muted, lineHeight: 1.6 }}>
+              Lue sopimus huolellisesti. Allekirjoittamalla alla vahvistat hyväksyväsi tämän asiakirjan ehdot.
+            </p>
+          </Panel>
+        )}
 
-        {/* Contract text — collapsed by default to keep the screen calm */}
-        {view.contractText && (
+        {/* 2. Ei PDF:ää, mutta keikan oma sopimusteksti — se ON tässä
+               tapauksessa asiakirja, joten se näytetään auki eikä
+               pudotusvalikon takana, ja siitä saa oman kopion. */}
+        {!pdfUrl && hasOwnText && (
+          <Panel>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+              <div>
+                <p style={mono}>SOPIMUSASIAKIRJA</p>
+                <p style={{ margin: "4px 0 0", fontSize: 13, color: T.muted }}>
+                  {contractNo ? `${contractNo} · ` : ""}Ikkunanpesusopimus
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => downloadGigContract({
+                  contractId: contractNo,
+                  companyName: view.companyName,
+                  description: view.description,
+                  vatNote: view.vatNote,
+                  customerNote: view.customerNote,
+                  contractText: view.contractText,
+                  sectors: view.sectors.map((x) => ({ name: x.name, unitLabel: x.unitLabel, total: x.total, unitPriceCents: x.unitPriceCents })),
+                  capCents: view.sectors.reduce((sum, x) => sum + x.total * x.unitPriceCents, 0),
+                })}
+                style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 14px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, color: T.ink, fontFamily: FONT, fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}
+              >
+                Lataa sopimus
+              </button>
+            </div>
+            <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontFamily: FONT, fontSize: 13.5, lineHeight: 1.7, color: T.ink, maxHeight: 520, overflowY: "auto" }}>
+              {view.contractText}
+            </pre>
+            <p style={{ margin: "10px 0 0", fontSize: 12, color: T.muted, lineHeight: 1.6 }}>
+              Lue sopimus huolellisesti. Allekirjoittamalla alla vahvistat hyväksyväsi nämä ehdot.
+            </p>
+          </Panel>
+        )}
+
+        {/* 3. Ei asiakirjaa lainkaan. Sanotaan se suoraan sen sijaan että
+               näytettäisiin jonkun toisen paperi. */}
+        {!pdfUrl && !hasOwnText && (
+          <Panel>
+            <p style={mono}>SOPIMUSASIAKIRJA</p>
+            <p style={{ margin: "8px 0 0", fontSize: 13.5, color: T.muted, lineHeight: 1.7 }}>
+              Sopimusasiakirja toimitetaan erikseen. Alla hyväksyt työn tehtäväksi tässä
+              näkymässä esitetyillä ehdoilla.
+            </p>
+          </Panel>
+        )}
+
+        {/* Koko sopimusteksti — vain kun asiakirja on PDF. Tapauksessa 2 teksti
+            ON asiakirja ja se näkyy jo yllä, joten sitä ei toisteta. */}
+        {pdfUrl && view.contractText && (
           <Panel>
             <button
               type="button"
@@ -286,7 +395,7 @@ export default function GigContractSign({ token, view, onSigned }: Props) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginTop: 12 }}>
             <div style={{ gridColumn: "1 / -1" }}>
               <label style={labelCss}>Tilaajan virallinen nimi *</label>
-              <input style={inputCss} value={customer.legalName} onChange={set("legalName")} placeholder="Esim. Fr8 Oy" />
+              <input style={inputCss} value={customer.legalName} onChange={set("legalName")} placeholder="Yrityksen tai yhdistyksen virallinen nimi" />
             </div>
             <div>
               <label style={labelCss}>Y-tunnus</label>
@@ -348,7 +457,7 @@ export default function GigContractSign({ token, view, onSigned }: Props) {
           <label style={{ display: "flex", gap: 11, alignItems: "flex-start", fontSize: 13.5, color: T.ink, cursor: "pointer", marginTop: 16, lineHeight: 1.5 }}>
             <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} style={{ marginTop: 2, width: 16, height: 16, accentColor: T.green, flexShrink: 0 }} />
             <span>
-              Vahvistan tilaajan tiedot oikeiksi ja hyväksyn tämän tarjouksen ja sopimuksen{view.contractId ? ` (${view.contractId})` : ""} sisällön.
+              Vahvistan tilaajan tiedot oikeiksi ja hyväksyn tämän tarjouksen ja sopimuksen{contractNo ? ` (${contractNo})` : ""} sisällön.
               Allekirjoitan {customer.legalName ? <>tilaajan <strong>{customer.legalName}</strong> puolesta</> : "tilaajan puolesta"} sen
               valtuutettuna edustajana. Hyväksyntä vastaa fyysistä allekirjoitusta, muodostaa tilaajan ja Puuhapatetin
               välisen sitovan sopimuksen ja valtuuttaa Puuhapatetin tekemään työn tämän asiakirjan mukaisesti.

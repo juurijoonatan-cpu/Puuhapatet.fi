@@ -6,7 +6,7 @@
  * Route-kind tools (the projektinäkymä) navigate away; panel-kind tools render
  * in place and share a single lazily-loaded copy of the project data.
  */
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useLocation } from "wouter";
 import { ArrowLeft, X, ChevronRight } from "lucide-react";
 import { api } from "@/lib/api";
@@ -53,10 +53,32 @@ export default function GigToolsOverlay({ jobId, title, initialToolId = null, on
     setActive(id);
   }, [jobId, navigate]);
 
-  // Lazily load the project once a panel tool needs it (shared between tools).
+  /**
+   * Projektin laiska lataus, kun paneelityökalu sitä tarvitsee (jaettu työkalujen kesken).
+   *
+   * `loading` EI OLE EIKÄ SAA OLLA RIIPPUVUUS. Se oli sekä varhaisen paluun
+   * ehto ETTÄ riippuvuus, ja se lukitsi näkymän pysyvästi tekstiin "Ladataan…":
+   *
+   *   1. `setLoading(true)` käynnisti pyynnön,
+   *   2. sama `setLoading(true)` muutti riippuvuutta, joten React ajoi efektin
+   *      SIIVOUKSEN — eli `cancelled = true` — kesken lentävälle pyynnölle,
+   *   3. vastaus saapui, `if (cancelled) return` heitti sen pois, eikä
+   *      `setLoading(false)` eikä `setProject` ehtinyt koskaan ajoon.
+   *
+   * Lopputila oli `loading === true`, `project === null`, `error === null`
+   * ikuisesti. Virheilmoituksen puuttuminen oli itse asiassa vihje: kaikki
+   * oikeat virhehaarat asettavat tekstin.
+   *
+   * `startedRef` on portti `loading`in tilalla, koska ref ei ole riippuvuus eikä
+   * siis voi laukaista efektiä uudelleen. `cancelled`-suojaa EI poisteta — se on
+   * oikea suoja myöhäiselle vastaukselle (työkalun vaihto tai overlayn sulkeminen
+   * kesken lennon), ja vika oli riippuvuuslistassa eikä siinä.
+   */
+  const startedRef = useRef(false);
   useEffect(() => {
     const tool = active ? getGigTool(active) : null;
-    if (!tool || tool.kind !== "panel" || project || loading) return;
+    if (!tool || tool.kind !== "panel" || project || startedRef.current) return;
+    startedRef.current = true;
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -71,7 +93,7 @@ export default function GigToolsOverlay({ jobId, title, initialToolId = null, on
       setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [active, jobId, project, loading]);
+  }, [active, jobId, project]);
 
   const saveProject = useCallback(async (next: ProjectData) => {
     setProject(next);            // optimistic
@@ -99,8 +121,20 @@ export default function GigToolsOverlay({ jobId, title, initialToolId = null, on
     <div className="fr8-root" style={{ position: "fixed", inset: 0, zIndex: 90, background: "#060607", color: "#fff", overflow: "hidden", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>
       <div style={{ position: "absolute", top: "-35%", left: "50%", transform: "translateX(-50%)", width: "1000px", height: "620px", background: "radial-gradient(ellipse at center, rgba(120,124,150,0.05), transparent 68%)", pointerEvents: "none" }} />
 
-      {/* Top bar */}
-      <nav style={{ position: "relative", zIndex: 20, height: "62px", display: "flex", alignItems: "center", gap: "14px", padding: "0 16px", borderBottom: "1px solid rgba(255,255,255,0.07)", background: "rgba(8,8,10,0.55)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)" }}>
+      {/* Yläpalkki.
+
+          TURVA-ALUE ON PADDINGISSA, EI KORKEUDESSA: rivi pysyy 62 px:nä ja palkki
+          kasvaa vain sen verran kuin loveus vaatii. Tämä palkki oli kopio
+          `fr8/Navbar.tsx`:n palkista tehty ENNEN kuin sama vika korjattiin
+          sinne, joten se oli ainoa yläpalkki koko sovelluksessa joka ei varannut
+          `env(safe-area-inset-top)`:ia — sovellus ajaa `viewport-fit=cover`illa,
+          joten takaisin-nappi jäi kellon alle ja otsikko akkukuvakkeen päälle.
+          Sivujen inset koskee vaakatasoa (iPhone kyljellään).
+
+          HUOM: jos tätä korkeutta muuttaa, alla oleva `<main>` on muutettava
+          samalla — muuten sisältö valuu ruudun alareunan ohi ja alimmat napit
+          menevät tavoittamattomiin. */}
+      <nav style={{ position: "relative", zIndex: 20, height: "calc(62px + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)", display: "flex", alignItems: "center", gap: "14px", paddingLeft: "max(16px, env(safe-area-inset-left))", paddingRight: "max(16px, env(safe-area-inset-right))", borderBottom: "1px solid rgba(255,255,255,0.07)", background: "rgba(8,8,10,0.55)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)" }}>
         <button onClick={back} title={active ? "Takaisin työkaluihin" : "Sulje"}
           style={{ display: "flex", alignItems: "center", gap: "7px", flexShrink: 0, padding: "8px 12px", borderRadius: "10px", cursor: "pointer", border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.78)", fontSize: "12.5px", fontWeight: 600 }}>
           <ArrowLeft style={{ width: 14, height: 14 }} /> {active ? "Työkalut" : "Keikka"}
@@ -119,7 +153,8 @@ export default function GigToolsOverlay({ jobId, title, initialToolId = null, on
         </button>
       </nav>
 
-      <main style={{ position: "relative", zIndex: 10, height: "calc(100% - 62px)" }}>
+      {/* Sama luku kuin yläpalkissa, turva-alue mukaan lukien. */}
+      <main style={{ position: "relative", zIndex: 10, height: "calc(100% - 62px - env(safe-area-inset-top))" }}>
         {/* Launcher grid */}
         {!active && (
           <div style={{ height: "100%", overflowY: "auto", padding: "26px 20px 44px" }}>

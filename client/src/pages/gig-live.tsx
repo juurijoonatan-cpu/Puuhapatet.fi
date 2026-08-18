@@ -413,7 +413,7 @@ export default function GigLivePage() {
         {data.map && (
           <Panel theme={T}>
             <p style={{ margin: "0 0 14px", ...label }}>Pohjapiirros</p>
-            <CustomerFloorMap map={data.map} p2={p2} p2Actions={p2Live ? p2Actions : undefined} onLoadObservationImage={loadObservationImage} planUrlBase={api.planUrlBaseForGig(token)} />
+            <CustomerFloorMap map={data.map} p2={p2} p2Actions={p2Live ? p2Actions : undefined} onLoadObservationImage={loadObservationImage} planUrlBase={api.planUrlBaseForGig(token)} theme={T} />
           </Panel>
         )}
 

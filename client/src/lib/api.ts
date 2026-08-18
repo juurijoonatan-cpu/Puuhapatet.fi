@@ -807,6 +807,8 @@ export const api = {
         unattributedPaidCents?: number;
         /** Se summa joka pankissa oikeasti liikkuu, suuntineen. */
         transfer?: { fromId: string; toId: string; cents: number } | null;
+        /** Laskutus kuukausittain ("YYYY-MM" → senttiä) — aito aikasarja trendille. */
+        monthlyInvoicedCents?: Record<string, number>;
       };
       gigs: {
         jobId: number; name: string; invoicedCents: number; workerEarnedCents: number;
@@ -1224,7 +1226,8 @@ export const api = {
     paymentNumber?: number;
     sendMethod?: "email" | "verkkolasku";
     /** "p2" = lisäikkunoiden (keltaiset) lasku — ei koske P1:n eriin. */
-    scope?: "p2";
+    /** Kumpaa rahaa lasku koskee. Puuttuva = punaisten erä (vanha käytös). */
+    scope?: "p1" | "p2";
     /** P2: eksplisiittinen summa (oletus: koko laskuttamaton P2-kertymä). */
     amountCents?: number;
   }) => request<{ ok: boolean; id?: string; amountCents: number; gigData: GigData }>(

@@ -2,10 +2,16 @@
  * Read-only floor-plan map for the customer live view (/seuranta/:token).
  *
  * Deliberately a separate, lightweight component from the worker/admin
- * FloorView (which is dark-themed and fully editable). This one is WHITE,
- * read-only — no drag, no add/delete, no status popovers — so the customer
- * can only watch which windows have been washed. It shares the exact same
- * dot coordinate scheme as FloorView so the markers line up identically.
+ * FloorView (which is dark-themed and fully editable). This one is read-only
+ * — no drag, no add/delete, no status popovers — so the customer can only
+ * watch which windows have been washed. It shares the exact same dot
+ * coordinate scheme as FloorView so the markers line up identically.
+ *
+ * TEEMA. Ympäröivä kromi — työkalurivi, kortit, päätöslista, selite ja kuplat —
+ * seuraa `theme`-propia, joten sama kartta istuu sekä vaalealle paperille että
+ * tekniselle tummalle pinnalle. Oletus on `CT`, eli ilman propia näkymä on
+ * täsmälleen entinen. Itse pohjapiirroksen pinta on tästä tietoinen poikkeus:
+ * ks. `PLAN_SURFACE_DARK`.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -14,7 +20,7 @@ import { NOTE_KINDS, planImageUrl, planRenderOf, floorLabel as sharedFloorLabel 
 import { eur } from "@shared/gig";
 import { p2NumbersByFloor, type P2NumberingInput } from "@shared/p2";
 import { getPoints, inCustomerScope, type CustomerPoint } from "@/lib/customer-progress";
-import { CT, CFONT } from "@/lib/customer-theme";
+import { CT, CFONT, type CustomerTheme } from "@/lib/customer-theme";
 
 /** Position a fixed popup near an on-screen anchor rect, flipping above/below and
  *  clamping to the viewport so it's never clipped (mobile-friendly). */
@@ -31,8 +37,72 @@ function popupStyle(rect: DOMRect | null, width: number, height: number): React.
   return { position: "fixed", left: `${left}px`, top: `${top}px`, zIndex: 60 };
 }
 
-const T = CT;
 const FONT = CFONT;
+
+/** `#RRGGBB` → kanavat. Yhteinen jäsennys alla oleville kahdelle apurille. */
+function rgbOf(hex: string): [number, number, number] {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/**
+ * Vesileima teeman omasta sävystä.
+ *
+ * Korostukset (ambran hehku listarivillä, vihreä laatikko, navyn vihje) olivat
+ * kovakoodattuja `rgba(...)`-merkkijonoja, jotka on laskettu VAALEAN paletin
+ * sävyistä. Tummalla pinnalla ne katoavat, koska sävy on väärä eikä peitto.
+ * Kun sama peitto lasketaan teeman sävystä, korostus säilyy molemmilla
+ * pinnoilla — ja vaalealla se osuu tavuilleen entisiin arvoihin.
+ */
+function rgba(hex: string, a: number): string {
+  const [r, g, b] = rgbOf(hex);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+/**
+ * Onko teeman pinta tumma?
+ *
+ * Komponentti saa vain paletin, ei teeman tunnusta — eikä sen kuulukaan tietää
+ * teemojen nimiä. Tummuus luetaan siis paletista, jolloin mahdollinen kolmas
+ * teema toimii ilman muutosta tänne. Kaava on tavallinen havaittu kirkkaus;
+ * tarkempi WCAG-luminanssi antaisi näillä paleteilla saman vastauksen.
+ */
+function isDarkSurface(hex: string): boolean {
+  const [r, g, b] = rgbOf(hex);
+  return (r * 299 + g * 587 + b * 114) / 1000 < 128;
+}
+
+/**
+ * POHJAPIIRROKSEN PINTA PYSYY VAALEANA MYÖS TUMMASSA TEEMASSA.
+ *
+ * Kaksi syytä, kumpikin sitova:
+ *
+ * 1. KUVA. Viivapiirros on vaaleaa viivaa LÄPINÄKYVÄLLÄ pohjalla, ja se
+ *    käännetään (`invert(1)`) mustaksi viivaksi. Käännös ei koske
+ *    läpinäkyvyyttä, joten tummalla alustalla tuloksena olisi mustaa viivaa
+ *    mustalla — kartta katoaisi kokonaan. Valokuvapohja taas on lähes aina
+ *    vaalea ruudunkaappaus, joten sekin haluaa vaalean alustan ympärilleen.
+ *    Vaihtoehto olisi jättää käännös tekemättä tummassa teemassa (kuten
+ *    tekijän näkymässä tehdään), mutta silloin `planRender`in merkitys
+ *    muuttuisi ehdosta "millainen kuva" ehdoksi "millainen kuva ja teema" —
+ *    eikä se auttaisi valokuvapohjaa lainkaan.
+ *
+ * 2. MERKIT. Pisteiden värit (pesty / kesken / pesemättä sekä 1. ja 2.
+ *    prioriteetti) on valittu ja tarkistettu värinäön häiriöiden kannalta
+ *    NIMENOMAAN vaaleaa vasten: vaalea roosa ja khaki eivät erotu toisistaan
+ *    lähes mustalla. Sama koskee valkoisia renkaita, kuplia ja zoomausnappeja.
+ *    Kun alusta pysyy vaaleana, koko merkkikerros säilyy sellaisena kuin se on
+ *    tarkistettu — eikä sitä tarvitse teemata lainkaan.
+ *
+ * Tummassa teemassa pinta himmennetään lämpimäksi paperiksi: lähes mustan
+ * sivun vieressä puhdas valkoinen häikäisee. Himmennettynäkin se kantaa mustan
+ * viivan yli 16:1 kontrastilla, joten piirros ei kärsi.
+ */
+const PLAN_SURFACE_DARK = "#E8E5DD";
+
+/** Kartan pinnan päällä olevat merkit ja ohjaimet käyttävät AINA vaaleaa
+ *  palettia — pinta on vaalea kummassakin teemassa, ks. yllä. */
+const PLAN = CT;
 
 const MIN_SCALE = 1, MAX_SCALE = 5;
 const clampScale = (s: number) => Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
@@ -65,15 +135,18 @@ const LEGEND_P2: { label: string; color: string }[] = [
   { label: "Ehdottamasi (odottaa hintaa)", color: "#FFFFFF" },
 ];
 
-/** P2 numbered-badge colors by negotiation state ("none" = priced not yet). */
+/** P2 numbered-badge colors by negotiation state ("none" = priced not yet).
+ *  Merkit istuvat pohjapiirroksen vaalealla alustalla, joten ne käyttävät
+ *  `PLAN`-palettia eivätkä teemaa: teeman tumma navy on VAALEA aksentti, ja
+ *  siitä tulisi vaalealle alustalle valkoinen numero vaalealla pohjalla. */
 type P2BadgeState = P2PublicOffer["status"] | "none";
 function p2BadgeStyle(state: P2BadgeState): { bg: string; fg: string; border: string } {
   switch (state) {
-    case "proposed":  return { bg: T.navy,    fg: "#fff",     border: "#fff" };
+    case "proposed":  return { bg: PLAN.navy, fg: "#fff",     border: "#fff" };
     case "countered": return { bg: "#E0A800", fg: "#1A1A1A",  border: "#fff" };
     case "locked":    return { bg: "#3E7C59", fg: "#fff",     border: "#fff" };
     case "declined":  return { bg: "#EDEBE4", fg: "#9A988F",  border: "#fff" };
-    default:          return { bg: "#FFFFFF", fg: T.navy,     border: T.navy }; // not priced yet
+    default:          return { bg: "#FFFFFF", fg: PLAN.navy,  border: PLAN.navy }; // not priced yet
   }
 }
 
@@ -93,8 +166,13 @@ export interface P2CustomerActions {
   requireTerms: () => void;
 }
 
-export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservationImage, planUrlBase }: {
+export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservationImage, planUrlBase, theme = CT }: {
   map: MapData;
+  /**
+   * Asiakasnäkymän paletti. Oletus `CT` = entinen vaalea paperi, joten ilman
+   * tätä propia mikään ei muutu. Seurantasivu antaa keikan oman teeman.
+   */
+  theme?: CustomerTheme;
   /**
    * Pohjakuvareitin etuliite tälle seurantalinkille
    * (`/api/gig/:token/plan/`). Tarvitaan vain kun kerroksella on LADATTU kuva;
@@ -111,6 +189,52 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
    */
   onLoadObservationImage?: (key: string) => Promise<string | undefined>;
 }) {
+  // `T` on tämän tiedoston vakiintunut lyhenne paletille; se osoittaa nyt
+  // propiin moduulitason vakion sijaan, joten kaikki alla oleva kromi seuraa
+  // teemaa ilman että jokaista käyttöä tarvitsi nimetä uudelleen.
+  const T = theme;
+  /**
+   * TEEMAN JOHDANNAISET.
+   *
+   * Nämä ovat kohtia joissa pelkkä poletin vaihto ei riitä, koska sävyn ROOLI
+   * kääntyy pinnan mukana. Jokainen arvo on vaalealla teemalla täsmälleen se
+   * merkkijono joka tiedostossa ennen luki, joten paperiteema ei muutu.
+   */
+  const dark = isDarkSurface(T.paper);
+  /**
+   * Teksti täytetyn aksenttinapin päällä. Vaalean teeman navy ja vihreä ovat
+   * TUMMIA täyttöjä (valkoinen teksti); tumman teeman samat poletit ovat
+   * VAALEITA aksentteja, joilla valkoinen teksti jäisi lukukelvottomaksi —
+   * niiden päällä teksti on lähes musta (kontrasti ~10:1).
+   */
+  const onAccent = dark ? T.paper : "#fff";
+  /** Kohotettu pinta: kupla ei saa olla samaa sävyä kuin sen alla oleva sivu. */
+  const raisedBg = dark ? T.fill : T.card;
+  /** Valitun kerrosvälilehden pinta. Vaalealla kortti NOUSEE täytöstä; tummalla
+   *  nouseminen tarkoittaa vaaleampaa askelta, joten valinta on `hair`. */
+  const tabActiveBg = dark ? T.hair : T.card;
+  const tabActiveShadow = dark ? "0 1px 3px rgba(0,0,0,0.5)" : "0 1px 3px rgba(0,0,0,0.10)";
+  const popupShadow = dark ? "0 18px 50px rgba(0,0,0,0.72)" : "0 14px 40px rgba(0,0,0,0.22)";
+  /** Vahvistusta odottavan vihreän napin toinen askel: vaalealla tummempi,
+   *  tummalla vaaleampi — kummallakin "painettu" erottuu perustilasta. */
+  const greenArmed = dark ? "#7CE8A4" : "#2f6347";
+  /** Ambran teksti. Vaalean teeman tumma oliivi katoaisi mustalle. */
+  const amberText = dark ? T.amber : "#8A6A00";
+  /** Vihreä ilmoituspinta (työn alla nyt / sovitut). Vaalealla opaakki minttu
+   *  kuten ennen; tummalla läpikuultava vihreä, koska minttu olisi valolaikku. */
+  const greenBg = dark ? rgba(T.green, 0.12) : "#EAF6EE";
+  const greenEdge = dark ? rgba(T.green, 0.32) : "#BFE3CC";
+  const greenText = dark ? T.green : "#1F5B36";
+  /** Virheteksti. Vaalean teeman syvä punainen jää tummalla kortilla 2,9:1 —
+   *  virheilmoitus on juuri se teksti jota ei saa joutua arvaamaan. */
+  const danger = dark ? "#FF8A80" : "#B4231F";
+  /**
+   * Lomakekentän pinta tummassa teemassa. Vaalealla teemalla tämä on tyhjä,
+   * jolloin kentät piirtyvät täsmälleen kuten ennen (osa niistä nojaa selaimen
+   * oletukseen). Levitetään kentän omien tyylien JÄLKEEN.
+   */
+  const darkField: React.CSSProperties = dark ? { background: T.fill, color: T.ink } : {};
+
   const floors = map.building.floors.length ? map.building.floors : ["1"];
   const activeZone = map.activeZone ?? null;
   // Open on the floor where work is happening now, if any.
@@ -397,9 +521,9 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
   // One open-proposal row (accept / counter / decline). Extracted so the floor
   // groups below stay readable.
   const renderProposedRow = (o: { key: string; floor: string; idx: number; offer: P2PublicOffer }) => (
-    <div key={o.key} ref={(el) => { listRowRefs.current[o.key] = el; }} style={{ padding: "10px 12px", borderRadius: 11, background: hiRow === o.key ? "rgba(224,168,0,0.16)" : T.paper, border: `1px solid ${hiRow === o.key ? "#E0A800" : T.hair}`, transition: "background .4s, border-color .4s", scrollMarginTop: 12 }}>
+    <div key={o.key} ref={(el) => { listRowRefs.current[o.key] = el; }} style={{ padding: "10px 12px", borderRadius: 11, background: hiRow === o.key ? rgba(T.amber, 0.16) : T.paper, border: `1px solid ${hiRow === o.key ? T.amber : T.hair}`, transition: "background .4s, border-color .4s", scrollMarginTop: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <span style={{ width: 26, height: 26, flexShrink: 0, borderRadius: "50%", background: T.navy, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{p2Number[o.key] ?? o.idx + 1}</span>
+        <span style={{ width: 26, height: 26, flexShrink: 0, borderRadius: "50%", background: T.navy, color: onAccent, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{p2Number[o.key] ?? o.idx + 1}</span>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600 }}>Ikkuna {p2Number[o.key] ?? o.idx + 1}{customerAdded.has(o.key) ? " · sinun" : ""}</div>
           <div style={{ fontSize: 15, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{eur(o.offer.priceCents)}<span style={{ fontSize: 11.5, color: T.muted, fontWeight: 500 }}> / ikkuna</span></div>
@@ -408,17 +532,17 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
       </div>
       {listCounterKey === o.key ? (
         <div style={{ display: "flex", gap: 6, marginTop: 9 }}>
-          <input type="number" inputMode="decimal" min={1} step="0.5" autoFocus value={listCounterVal} onChange={(e) => setListCounterVal(e.target.value)} placeholder="€ / ikkuna"
-            style={{ flex: 1, minWidth: 0, padding: "9px 10px", borderRadius: 9, border: `1px solid ${T.hair}`, fontFamily: FONT, fontSize: 14, fontVariantNumeric: "tabular-nums" }} />
+          <input type="number" inputMode="decimal" min={1} step="0.5" autoFocus value={listCounterVal} onChange={(e) => setListCounterVal(e.target.value)} placeholder="€ / ikkuna" data-cfm-field=""
+            style={{ flex: 1, minWidth: 0, padding: "9px 10px", borderRadius: 9, border: `1px solid ${T.hair}`, fontFamily: FONT, fontSize: 14, fontVariantNumeric: "tabular-nums", ...darkField }} />
           <button disabled={p2Busy || !(Number(listCounterVal.replace(",", ".")) > 0)}
             onClick={() => { const v = Number(listCounterVal.replace(",", ".")); if (!(v > 0)) return; void runP2(p2Actions!.counter, o.key, Math.round(v * 100), o.offer.version).then(() => { setListCounterKey(null); setListCounterVal(""); }); }}
-            style={{ padding: "9px 13px", borderRadius: 9, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}>Lähetä</button>
+            style={{ padding: "9px 13px", borderRadius: 9, border: "none", background: T.navy, color: onAccent, fontFamily: FONT, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}>Lähetä</button>
           <button disabled={p2Busy} onClick={() => { setListCounterKey(null); setListCounterVal(""); }} style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${T.hair}`, background: T.card, color: T.muted, fontFamily: FONT, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>✕</button>
         </div>
       ) : (
         <div style={{ display: "flex", gap: 6, marginTop: 9 }}>
           <button disabled={p2Busy} onClick={() => void runP2(p2Actions!.accept, [{ key: o.key, priceCents: o.offer.priceCents, version: o.offer.version }])}
-            style={{ flex: 2, padding: "9px", borderRadius: 9, border: "none", background: "#3E7C59", color: "#fff", fontFamily: FONT, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}>Hyväksy</button>
+            style={{ flex: 2, padding: "9px", borderRadius: 9, border: "none", background: T.green, color: onAccent, fontFamily: FONT, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}>Hyväksy</button>
           <button disabled={p2Busy} onClick={() => { if (!p2!.termsAccepted) { p2Actions!.requireTerms(); return; } setListCounterKey(o.key); setListCounterVal(""); }}
             style={{ flex: 1, padding: "9px", borderRadius: 9, border: `1px solid ${T.hair}`, background: T.card, color: T.ink, fontFamily: FONT, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Vastatarjous</button>
           <button disabled={p2Busy} onClick={() => void runP2Free(p2Actions!.decline, o.key, o.offer.version)}
@@ -487,7 +611,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
   const quickAcceptPanel = p2?.enabled && p2Actions && quickAccept.rows.length > 0 ? (
     <div style={{
       marginBottom: 16, padding: "18px 18px 16px", borderRadius: 20,
-      background: "rgba(62,124,89,0.07)", border: `1px solid rgba(62,124,89,0.28)`,
+      background: rgba(T.green, 0.07), border: `1px solid ${rgba(T.green, 0.28)}`,
     }}>
       {/* Yksi selkeä laatikko: montako ikkunaa ja mitä ne maksavat. Tämän
           ylin rivi kertoo että työ on JO TEHTY — muuten hylkääminen näyttää
@@ -515,7 +639,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
           onClick={() => { if (!p2.termsAccepted) { p2Actions.requireTerms(); return; } armed === "all" ? void acceptGroup("all") : setArmed("all"); }}
           style={{
             padding: "10px 15px", borderRadius: 10, border: "none",
-            background: armed === "all" ? "#2f6347" : "#3E7C59", color: "#fff",
+            background: armed === "all" ? greenArmed : T.green, color: onAccent,
             fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1,
           }}
         >
@@ -566,6 +690,11 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
         @media (prefers-reduced-motion: reduce){
           [data-cfm-anim]{animation:none !important}
         }
+        /* Selaimen oletusvihjeteksti on laskettu vaaleaa kenttää varten ja jää
+           tummalla pinnalla alle 4:1. Sitä ei voi asettaa tyylimääreenä, joten
+           se tulee tästä — ja vain tummassa teemassa, jotta vaalea pysyy
+           ennallaan. */
+        ${dark ? `[data-cfm-field]::placeholder{color:${T.muted};opacity:1}` : ""}
       `}</style>
 
       {/* Kokonaisluku ei ole enää täällä: se on sivun pääkortissa (yksi luku,
@@ -574,11 +703,11 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
 
       {/* "Work happening here now" banner */}
       {activeZone && (
-        <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 12, padding: "9px 13px", borderRadius: 11, background: "#EAF6EE", border: "1px solid #BFE3CC", color: "#1F5B36", fontSize: 13 }}>
-          <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#3E7C59", animation: "ppPulse 1.8s ease-in-out infinite", flexShrink: 0 }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 12, padding: "9px 13px", borderRadius: 11, background: greenBg, border: `1px solid ${greenEdge}`, color: greenText, fontSize: 13 }}>
+          <span style={{ width: 9, height: 9, borderRadius: "50%", background: T.green, animation: "ppPulse 1.8s ease-in-out infinite", flexShrink: 0 }} />
           <span>Työn alla juuri nyt{activeZone.label ? `: ${activeZone.label}` : ""} — <strong>kerros {activeZone.floor}</strong></span>
           {floor !== activeZone.floor && (
-            <button onClick={() => setFloor(activeZone.floor)} style={{ marginLeft: "auto", border: "none", background: "transparent", color: "#1F5B36", fontWeight: 700, fontSize: 12.5, cursor: "pointer", textDecoration: "underline", fontFamily: FONT }}>
+            <button onClick={() => setFloor(activeZone.floor)} style={{ marginLeft: "auto", border: "none", background: "transparent", color: greenText, fontWeight: 700, fontSize: 12.5, cursor: "pointer", textDecoration: "underline", fontFamily: FONT }}>
               Näytä
             </button>
           )}
@@ -597,7 +726,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
               <button
                 key={f}
                 onClick={() => setFloor(f)}
-                style={{ minWidth: 38, height: 34, padding: "0 10px", borderRadius: 10, border: "none", cursor: "pointer", fontFamily: FONT, fontSize: 14, fontWeight: active ? 700 : 600, letterSpacing: "-0.01em", background: active ? T.card : "transparent", color: active ? T.ink : T.muted, boxShadow: active ? "0 1px 3px rgba(0,0,0,0.10)" : "none", transition: "all .15s", flexShrink: 0 }}
+                style={{ minWidth: 38, height: 34, padding: "0 10px", borderRadius: 10, border: "none", cursor: "pointer", fontFamily: FONT, fontSize: 14, fontWeight: active ? 700 : 600, letterSpacing: "-0.01em", background: active ? tabActiveBg : "transparent", color: active ? T.ink : T.muted, boxShadow: active ? tabActiveShadow : "none", transition: "all .15s", flexShrink: 0 }}
               >
                 {f}
               </button>
@@ -611,9 +740,9 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
             <button
               onClick={() => setOnlyYellow((v) => !v)}
               title="Näytä kartalla vain Priority 2 -ikkunat (keltaiset)"
-              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 13px", borderRadius: 999, cursor: "pointer", fontFamily: FONT, fontSize: 12.5, fontWeight: 600, border: `1px solid ${onlyYellow ? "#E0A800" : T.hair}`, background: onlyYellow ? "rgba(224,168,0,0.14)" : T.card, color: onlyYellow ? "#8A6A00" : T.muted, flexShrink: 0 }}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 13px", borderRadius: 999, cursor: "pointer", fontFamily: FONT, fontSize: 12.5, fontWeight: 600, border: `1px solid ${onlyYellow ? T.amber : T.hair}`, background: onlyYellow ? rgba(T.amber, 0.14) : T.card, color: onlyYellow ? amberText : T.muted, flexShrink: 0 }}
             >
-              <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#E0A800" }} />
+              <span style={{ width: 9, height: 9, borderRadius: "50%", background: T.amber }} />
               {onlyYellow ? "Näytä kaikki" : "Vain Priority 2"}
             </button>
           ) : <span />}
@@ -623,17 +752,21 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
         </div>
       </div>
 
-      {/* Plan + dots — white background, black walls. The plan PNG is a light
+      {/* Plan + dots — light background, black walls. The plan PNG is a light
           line drawing on a transparent background (built to read on the dark
-          worker view), so on this light view we invert it to draw the walls in
-          black on white for clear contrast. */}
+          worker view), so on this view we invert it to draw the walls in
+          black on light for clear contrast.
+
+          Alusta pysyy vaaleana myös tummassa teemassa (himmennettynä), ja sen
+          päällä olevat merkit ja ohjaimet käyttävät siksi `PLAN`-palettia
+          teeman sijaan. Perustelut: ks. `PLAN_SURFACE_DARK`. */}
       <div
         ref={mapRef}
         onPointerDown={onPtrDown}
         onPointerMove={onPtrMove}
         onPointerUp={onPtrUp}
         onPointerCancel={onPtrUp}
-        style={{ position: "relative", borderRadius: 12, border: `1px solid ${T.hair}`, background: "#FFFFFF", padding: 12, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", scrollMarginTop: 12, touchAction: "none", cursor: addMode ? undefined : dragging ? "grabbing" : "grab" }}
+        style={{ position: "relative", borderRadius: 12, border: `1px solid ${T.hair}`, background: dark ? PLAN_SURFACE_DARK : "#FFFFFF", padding: 12, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", scrollMarginTop: 12, touchAction: "none", cursor: addMode ? undefined : dragging ? "grabbing" : "grab" }}
       >
         {/* LISÄYSTILAN OHJAIN KARTAN PÄÄLLÄ. Ohje ja lopetus ovat siellä missä
             katse on — kartalla — eivätkä sen alapuolella, jonne piti vierittää
@@ -644,6 +777,11 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
           // PÄÄLLÄ, ja ilman tätä sen alle jäävät ikkunat olisivat lisäystilassa
           // tavoittamattomissa — juuri ne ylimmän rivin ikkunat. Napautus menee
           // palkin läpi kartalle; vain "Valmis" ottaa painalluksen vastaan.
+          //
+          // Värit eivät seuraa teemaa: palkki leijuu pohjapiirroksen päällä, ja
+          // se pinta on vaalea kummassakin teemassa. Tumma navy + valkoinen
+          // teksti on siis oikein molemmilla; teeman `navy` on tummassa
+          // paletissa vaalea aksentti, jolla valkoinen teksti katoaisi.
           <div style={{ position: "absolute", top: 10, left: 10, right: 56, zIndex: 21, display: "flex", alignItems: "center", gap: 8, padding: "9px 11px", borderRadius: 11, background: "rgba(31,59,87,0.94)", color: "#fff", boxShadow: "0 2px 10px rgba(0,0,0,0.28)", pointerEvents: "none" }}>
             <span style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.35, minWidth: 0 }}>
               {addedCount > 0
@@ -662,10 +800,10 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
 
         {/* Zoom controls — pinch/wheel also work; these are the always-visible fallback. */}
         <div style={{ position: "absolute", top: 10, right: 10, zIndex: 20, display: "flex", flexDirection: "column", gap: 6 }}>
-          <button onClick={() => zoomBy(1.35)} aria-label="Lähennä" title="Lähennä" style={{ width: 34, height: 34, borderRadius: 9, border: `1px solid ${T.hair}`, background: "rgba(255,255,255,0.95)", color: T.ink, fontSize: 19, fontWeight: 700, cursor: "pointer", lineHeight: 1, boxShadow: "0 1px 4px rgba(0,0,0,0.12)" }}>+</button>
-          <button onClick={() => zoomBy(1 / 1.35)} aria-label="Loitonna" title="Loitonna" style={{ width: 34, height: 34, borderRadius: 9, border: `1px solid ${T.hair}`, background: "rgba(255,255,255,0.95)", color: T.ink, fontSize: 19, fontWeight: 700, cursor: "pointer", lineHeight: 1, boxShadow: "0 1px 4px rgba(0,0,0,0.12)" }}>−</button>
+          <button onClick={() => zoomBy(1.35)} aria-label="Lähennä" title="Lähennä" style={{ width: 34, height: 34, borderRadius: 9, border: `1px solid ${PLAN.hair}`, background: "rgba(255,255,255,0.95)", color: PLAN.ink, fontSize: 19, fontWeight: 700, cursor: "pointer", lineHeight: 1, boxShadow: "0 1px 4px rgba(0,0,0,0.12)" }}>+</button>
+          <button onClick={() => zoomBy(1 / 1.35)} aria-label="Loitonna" title="Loitonna" style={{ width: 34, height: 34, borderRadius: 9, border: `1px solid ${PLAN.hair}`, background: "rgba(255,255,255,0.95)", color: PLAN.ink, fontSize: 19, fontWeight: 700, cursor: "pointer", lineHeight: 1, boxShadow: "0 1px 4px rgba(0,0,0,0.12)" }}>−</button>
           {zoomed && (
-            <button onClick={resetView} aria-label="Palauta" title="Palauta näkymä" style={{ width: 34, height: 34, borderRadius: 9, border: `1px solid ${T.hair}`, background: "rgba(255,255,255,0.95)", color: T.muted, fontSize: 15, cursor: "pointer", lineHeight: 1, boxShadow: "0 1px 4px rgba(0,0,0,0.12)" }}>⟲</button>
+            <button onClick={resetView} aria-label="Palauta" title="Palauta näkymä" style={{ width: 34, height: 34, borderRadius: 9, border: `1px solid ${PLAN.hair}`, background: "rgba(255,255,255,0.95)", color: PLAN.muted, fontSize: 15, cursor: "pointer", lineHeight: 1, boxShadow: "0 1px 4px rgba(0,0,0,0.12)" }}>⟲</button>
           )}
         </div>
         <div style={{ position: "relative", display: "inline-block", lineHeight: 0, maxWidth: "100%", transform: `translate(${view.x}px, ${view.y}px) scale(${view.s})`, transformOrigin: "center center", transition: dragging ? "none" : "transform .15s ease-out", willChange: "transform" }}>
@@ -803,7 +941,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
                 style={{
                   position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`, transform: "translate(2px, -14px)",
                   width: 16, height: 16, borderRadius: "50%", padding: 0, cursor: "pointer",
-                  background: "#fff", border: `1.5px solid ${T.navy}`, color: T.navy,
+                  background: "#fff", border: `1.5px solid ${PLAN.navy}`, color: PLAN.navy,
                   display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, lineHeight: 1,
                   boxShadow: "0 1px 4px rgba(0,0,0,0.25)", zIndex: 4,
                 }}
@@ -821,7 +959,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
                 style={{
                   position: "absolute", left: `${n.x}%`, top: `${n.y}%`, transform: "translate(-50%,-50%)",
                   width: 22, height: 22, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 12, background: "#FFFFFF", border: `1.5px solid ${n.kind === "warning" ? "#E0A800" : T.hair}`,
+                  fontSize: 12, background: "#FFFFFF", border: `1.5px solid ${n.kind === "warning" ? PLAN.amber : PLAN.hair}`,
                   boxShadow: "0 1px 4px rgba(0,0,0,0.18)",
                 }}
               >
@@ -857,7 +995,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
         border: `1.5px solid ${T.navy}44`, boxShadow: "0 2px 10px rgba(0,0,0,0.06)",
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
-            <span style={{ width: 20, height: 20, flexShrink: 0, borderRadius: "50%", background: T.navy, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10.5, fontWeight: 800 }}>
+            <span style={{ width: 20, height: 20, flexShrink: 0, borderRadius: "50%", background: T.navy, color: onAccent, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10.5, fontWeight: 800 }}>
               {p2Number[wishFor] ?? "•"}
             </span>
             <span style={{ fontSize: 12.5, fontWeight: 700, color: T.ink }}>Ikkuna lisätty</span>
@@ -876,7 +1014,8 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
               inputMode="decimal"
               placeholder="Hinta-arvio"
               aria-label="Hinta-arvio euroina (valinnainen)"
-              style={{ width: 96, flexShrink: 0, padding: "9px 10px", borderRadius: 9, border: `1px solid ${T.hair}`, background: "#fff", color: T.ink, fontFamily: FONT, fontSize: 13, outline: "none" }}
+              data-cfm-field=""
+              style={{ width: 96, flexShrink: 0, padding: "9px 10px", borderRadius: 9, border: `1px solid ${T.hair}`, background: "#fff", color: T.ink, fontFamily: FONT, fontSize: 13, outline: "none", ...darkField }}
             />
             <span style={{ fontSize: 13, color: T.muted, flexShrink: 0 }}>€</span>
             <input
@@ -885,7 +1024,8 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
               placeholder="Viesti (valinnainen)"
               aria-label="Viesti tästä ikkunasta (valinnainen)"
               maxLength={500}
-              style={{ flex: 1, minWidth: 0, padding: "9px 10px", borderRadius: 9, border: `1px solid ${T.hair}`, background: "#fff", color: T.ink, fontFamily: FONT, fontSize: 13, outline: "none" }}
+              data-cfm-field=""
+              style={{ flex: 1, minWidth: 0, padding: "9px 10px", borderRadius: 9, border: `1px solid ${T.hair}`, background: "#fff", color: T.ink, fontFamily: FONT, fontSize: 13, outline: "none", ...darkField }}
             />
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
@@ -899,7 +1039,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
               style={{
                 marginLeft: "auto", flexShrink: 0, padding: "8px 15px", borderRadius: 9, border: "none",
                 background: (!wishPrice.trim() && !wishNote.trim()) ? T.fill : T.navy,
-                color: (!wishPrice.trim() && !wishNote.trim()) ? T.muted : "#fff",
+                color: (!wishPrice.trim() && !wishNote.trim()) ? T.muted : onAccent,
                 fontFamily: FONT, fontSize: 12.5, fontWeight: 800,
                 cursor: (wishBusy || (!wishPrice.trim() && !wishNote.trim())) ? "default" : "pointer",
               }}
@@ -917,7 +1057,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 15px", borderBottom: `1px solid ${T.hair}`, flexWrap: "wrap" }}>
             <span style={{ fontSize: 13.5, fontWeight: 700 }}>Priority 2 -ikkunat</span>
             {lockedList.length > 0 && (
-              <span style={{ marginLeft: "auto", fontSize: 12.5, color: "#3E7C59", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+              <span style={{ marginLeft: "auto", fontSize: 12.5, color: T.green, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
                 {lockedList.length} sovittu · {eur(lockedSum)}
               </span>
             )}
@@ -936,7 +1076,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
                   <button
                     disabled={p2Busy}
                     onClick={() => void runP2(p2Actions!.accept, proposedList.map((o) => ({ key: o.key, priceCents: o.offer.priceCents, version: o.offer.version })))}
-                    style={{ marginLeft: "auto", padding: "7px 12px", borderRadius: 9, border: `1px solid ${T.hair}`, background: T.card, color: "#3E7C59", fontFamily: FONT, fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}
+                    style={{ marginLeft: "auto", padding: "7px 12px", borderRadius: 9, border: `1px solid ${T.hair}`, background: T.card, color: T.green, fontFamily: FONT, fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1 }}
                   >
                     Hyväksy kaikki ({proposedList.length} · {eur(allProposedSum)})
                   </button>
@@ -966,7 +1106,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
                         <button
                           disabled={p2Busy}
                           onClick={() => void runP2(p2Actions!.accept, g.items.map((o) => ({ key: o.key, priceCents: o.offer.priceCents, version: o.offer.version })))}
-                          style={{ marginLeft: "auto", padding: "7px 12px", borderRadius: 9, border: "none", background: "#3E7C59", color: "#fff", fontFamily: FONT, fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1, whiteSpace: "nowrap" }}
+                          style={{ marginLeft: "auto", padding: "7px 12px", borderRadius: 9, border: "none", background: T.green, color: onAccent, fontFamily: FONT, fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: p2Busy ? 0.6 : 1, whiteSpace: "nowrap" }}
                         >
                           Hyväksy kerros ({g.items.length} · {eur(floorSum)})
                         </button>
@@ -985,13 +1125,16 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
           {/* Vastatarjouksesi — odottaa meidän vastausta */}
           {counteredList.length > 0 && (
             <div style={{ padding: "12px 15px", borderBottom: lockedList.length ? `1px solid ${T.hair}` : "none" }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "#8A6A00", marginBottom: 10 }}>
-                <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#E0A800" }} /> Vastatarjouksesi · {counteredList.length}
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: amberText, marginBottom: 10 }}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: T.amber }} /> Vastatarjouksesi · {counteredList.length}
               </span>
               <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
                 {counteredList.map((o) => (
-                  <div key={o.key} ref={(el) => { listRowRefs.current[o.key] = el; }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 11, background: hiRow === o.key ? "rgba(224,168,0,0.16)" : T.paper, border: `1px solid ${hiRow === o.key ? "#E0A800" : T.hair}`, flexWrap: "wrap", transition: "background .4s, border-color .4s", scrollMarginTop: 12 }}>
-                    <span style={{ width: 26, height: 26, flexShrink: 0, borderRadius: "50%", background: "#E0A800", color: "#1A1A1A", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{p2Number[o.key] ?? o.idx + 1}</span>
+                  <div key={o.key} ref={(el) => { listRowRefs.current[o.key] = el; }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 11, background: hiRow === o.key ? rgba(T.amber, 0.16) : T.paper, border: `1px solid ${hiRow === o.key ? T.amber : T.hair}`, flexWrap: "wrap", transition: "background .4s, border-color .4s", scrollMarginTop: 12 }}>
+                    {/* Ambran päällä teksti on tumma kummassakin teemassa: ambra
+                        on vaalea täyttö myös tummassa paletissa, joten `onAccent`
+                        olisi tässä väärä. */}
+                    <span style={{ width: 26, height: 26, flexShrink: 0, borderRadius: "50%", background: T.amber, color: "#1A1A1A", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{p2Number[o.key] ?? o.idx + 1}</span>
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: 13, fontWeight: 600 }}>{floorLabel(o.floor)} · ikkuna {p2Number[o.key] ?? o.idx + 1}</div>
                       <div style={{ fontSize: 12.5, color: T.muted, fontVariantNumeric: "tabular-nums" }}>Ehdotus {eur(o.offer.priceCents)} · sinun {eur(o.offer.counterCents ?? 0)}</div>
@@ -1006,7 +1149,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
           {/* Sovitut — lukitut hinnat (tiivis yhteenveto) */}
           {lockedList.length > 0 && (
             <div style={{ padding: "12px 15px", display: "flex", alignItems: "center", gap: 9 }}>
-              <span style={{ width: 22, height: 22, flexShrink: 0, borderRadius: "50%", background: "#EAF6EE", border: "1px solid #BFE3CC", display: "flex", alignItems: "center", justifyContent: "center", color: "#3E7C59", fontSize: 13, fontWeight: 800 }}>✓</span>
+              <span style={{ width: 22, height: 22, flexShrink: 0, borderRadius: "50%", background: greenBg, border: `1px solid ${greenEdge}`, display: "flex", alignItems: "center", justifyContent: "center", color: T.green, fontSize: 13, fontWeight: 800 }}>✓</span>
               <span style={{ fontSize: 13, color: T.ink }}>
                 <strong>{lockedList.length}</strong> sovittua Priority 2 -ikkunaa · yhteensä <strong style={{ fontVariantNumeric: "tabular-nums" }}>{eur(lockedSum)}</strong>
               </span>
@@ -1015,7 +1158,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
           {/* Virheet listatoiminnoista (esim. hinta ehti muuttua) — näkyy vain
               kun offer-popup ei ole auki (muuten virhe näkyy siellä). */}
           {p2Error && !openOffer && (
-            <div style={{ padding: "0 15px 12px", fontSize: 12.5, color: "#B4231F", lineHeight: 1.5 }}>{p2Error}</div>
+            <div style={{ padding: "0 15px 12px", fontSize: 12.5, color: danger, lineHeight: 1.5 }}>{p2Error}</div>
           )}
         </div>
       )}
@@ -1030,7 +1173,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
           {/* Lisäystilassa ohjain on kartan päällä, joten tähän ei tarvita
               toista nappia — se olisi vain sama toiminto kahdessa paikassa. */}
           {!addMode && (
-            <div style={{ borderRadius: 12, border: `1.5px dashed ${T.navy}55`, background: "linear-gradient(160deg, rgba(31,59,87,0.05), rgba(224,168,0,0.06))", padding: 14 }}>
+            <div style={{ borderRadius: 12, border: `1.5px dashed ${T.navy}55`, background: `linear-gradient(160deg, ${rgba(T.navy, 0.05)}, ${rgba(T.amber, 0.06)})`, padding: 14 }}>
               <p style={{ margin: "0 0 10px", fontSize: 12.5, color: T.muted, lineHeight: 1.55 }}>
                 Merkitse kartalta ikkunat jotka haluat mukaan — hinnoittelemme jokaisen erikseen.
                 Voit merkitä niin monta kuin haluat peräkkäin.
@@ -1039,7 +1182,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
                 disabled={p2Busy}
                 data-cfm-anim=""
                 onClick={() => { setAddMode(true); setSessionKeys([]); }}
-                style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 18px", borderRadius: 11, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 14, fontWeight: 700, cursor: "pointer", animation: anyYellowActivity ? undefined : "cfmAddNudge 2.4s ease-in-out infinite" }}
+                style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 18px", borderRadius: 11, border: "none", background: T.navy, color: onAccent, fontFamily: FONT, fontSize: 14, fontWeight: 700, cursor: "pointer", animation: anyYellowActivity ? undefined : "cfmAddNudge 2.4s ease-in-out infinite" }}
               >
                 <span style={{ fontSize: 17, lineHeight: 1 }}>➕</span> Lisää ikkunoita
               </button>
@@ -1056,6 +1199,9 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
         </summary>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 18px", marginTop: 8, alignItems: "center" }}>
         {(p2On ? LEGEND_P2 : LEGEND).map((l) => (
+          // Selitteen pallo jäljittelee merkkiä sellaisena kuin se kartalla on,
+          // valkoinen rengas mukaan lukien — muuten selite kuvaisi jotain muuta
+          // kuin mitä ruudulla näkyy. Vain teksti seuraa teemaa.
           <span key={l.label} style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, color: T.muted }}>
             <span style={{ width: 11, height: 11, borderRadius: "50%", background: l.color, border: "2px solid #fff", boxShadow: `0 0 0 1px ${T.hair}` }} />
             {l.label}
@@ -1072,9 +1218,12 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
       {p2On && openOffer && (
         <>
           <div onClick={closeOffer} style={{ position: "fixed", inset: 0, zIndex: 55 }} />
-          <div style={{ ...popupStyle(openOffer.rect, 260, 170), width: 260, background: T.card, border: `1px solid ${T.hair}`, borderRadius: 14, boxShadow: "0 14px 40px rgba(0,0,0,0.22)", padding: 16, fontFamily: FONT }}>
+          {/* Kupla käyttää kohotettua pintaa: tummassa teemassa kortin sävy on
+              lähes sama kuin sivun, jolloin leijuva laatikko ei erottuisi
+              taustastaan — varjot eivät tummalla tee sitä työtä. */}
+          <div style={{ ...popupStyle(openOffer.rect, 260, 170), width: 260, background: raisedBg, border: `1px solid ${T.hair}`, borderRadius: 14, boxShadow: popupShadow, padding: 16, fontFamily: FONT }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-              <span style={{ width: 22, height: 22, borderRadius: "50%", background: T.navy, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{p2Number[openOffer.key] ?? "?"}</span>
+              <span style={{ width: 22, height: 22, borderRadius: "50%", background: T.navy, color: onAccent, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{p2Number[openOffer.key] ?? "?"}</span>
               <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: T.navy }}>{floorLabel(openOffer.key.split("#")[0])} · ikkuna {p2Number[openOffer.key] ?? "?"}</span>
               <button onClick={closeOffer} aria-label="Sulje" style={{ marginLeft: "auto", width: 24, height: 24, borderRadius: "50%", border: "none", background: T.paper, color: T.muted, fontSize: 13, cursor: "pointer", lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
             </div>
@@ -1103,7 +1252,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
             {openOfferData?.note && (
               <p style={{
                 margin: "0 0 10px", padding: "8px 10px", borderRadius: 9,
-                background: "rgba(31,59,87,0.06)", border: `1px solid ${T.hair}`,
+                background: rgba(T.navy, 0.06), border: `1px solid ${T.hair}`,
                 fontSize: 12.5, lineHeight: 1.5, color: T.ink,
               }}>
                 {openOfferData.note}
@@ -1113,7 +1262,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
             {openOfferData?.status === "locked" && (
               <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>
                 Sovittu hinta <strong style={{ fontVariantNumeric: "tabular-nums" }}>{eur(openOfferData.lockedCents ?? openOfferData.priceCents)}</strong>
-                <span style={{ color: "#3E7C59", fontWeight: 700 }}> ✓</span><br />
+                <span style={{ color: T.green, fontWeight: 700 }}> ✓</span><br />
                 <span style={{ fontSize: 12.5, color: T.muted }}>
                   {map.statuses[openOffer.key] === "pesty" ? "Ikkuna on pesty." : "Ikkuna on työjonossa."}
                 </span>
@@ -1151,7 +1300,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
                 </p>
                 <button
                   onClick={() => jumpToList(openOffer.key)}
-                  style={{ width: "100%", padding: "11px", borderRadius: 10, border: "none", background: T.navy, color: "#fff", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}
+                  style={{ width: "100%", padding: "11px", borderRadius: 10, border: "none", background: T.navy, color: onAccent, fontFamily: FONT, fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}
                 >
                   Näytä listassa ↓
                 </button>
@@ -1182,7 +1331,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
             })()}
 
             {p2Error && (
-              <p style={{ margin: "10px 0 0", fontSize: 12.5, color: "#B4231F", lineHeight: 1.5 }}>{p2Error}</p>
+              <p style={{ margin: "10px 0 0", fontSize: 12.5, color: danger, lineHeight: 1.5 }}>{p2Error}</p>
             )}
           </div>
         </>
@@ -1192,7 +1341,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
       {openObs && openObservation && (
         <>
           <div onClick={() => setOpenObs(null)} style={{ position: "fixed", inset: 0, zIndex: 55 }} />
-          <div style={{ ...popupStyle(openObs.rect, 250, (openObservation.imageDataUrl || openObservation.hasImage) ? 280 : 130), width: 250, background: T.card, border: `1px solid ${T.hair}`, borderRadius: 14, boxShadow: "0 14px 40px rgba(0,0,0,0.22)", padding: 14, fontFamily: FONT }}>
+          <div style={{ ...popupStyle(openObs.rect, 250, (openObservation.imageDataUrl || openObservation.hasImage) ? 280 : 130), width: 250, background: raisedBg, border: `1px solid ${T.hair}`, borderRadius: 14, boxShadow: popupShadow, padding: 14, fontFamily: FONT }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
               <span style={{ fontSize: 15 }}>💬</span>
               <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: T.navy }}>Huomio ikkunasta</span>

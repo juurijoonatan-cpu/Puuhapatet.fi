@@ -107,6 +107,16 @@ export default function AdminGigTrackerPage() {
 
   // Invoice dialog state
   const [invoiceOpen, setInvoiceOpen] = useState(false);
+  /**
+   * Kumpaa rahaa dialogi lähettää: punaisten erä vai keltaisten kertymä.
+   *
+   * Keltaisten lasku lähti ennen pelkän `confirm()`in takaa kirjautuneen
+   * käyttäjän nimissä — ei laskuttajan valintaa, ei verkkolaskuosoitetta, ei
+   * ALV-tekstiä. Juuri se lasku on keikan suurin, ja sen laskuttaja ratkaisee
+   * kenen 20 000 €:n rajaa se kerryttää. Nyt molemmat kulkevat saman dialogin
+   * läpi, jossa nuo valitaan.
+   */
+  const [invoiceScope, setInvoiceScope] = useState<"p1" | "p2">("p1");
   const [sending, setSending] = useState(false);
   const [p2Sending, setP2Sending] = useState(false);
   const [reporting, setReporting] = useState(false);
@@ -339,16 +349,19 @@ export default function AdminGigTrackerPage() {
       message: invForm.message || undefined,
       isFinal: invForm.isFinal,
       eInvoice: invForm.eInvoice || undefined,
-      paymentNumber: deal ? invForm.paymentNumber : undefined,
+      // Keltaisilla ei ole eränumeroa — ne eivät kuluta punaisten erälaskuria.
+      paymentNumber: invoiceScope === "p1" && deal ? invForm.paymentNumber : undefined,
       sendMethod: invForm.sendMethod,
+      scope: invoiceScope,
     });
     setSending(false);
     if (res.ok && res.data) {
       setGig(res.data.gigData);
       setInvoiceOpen(false);
+      const what = invoiceScope === "p2" ? "Keltaisten lasku" : "Lasku";
       toast(invForm.sendMethod === "verkkolasku"
-        ? { title: "Vahvistus lähetetty", description: `${eur(res.data.amountCents)} → ${recipients} (muista lähettää itse varsinainen verkkolasku)` }
-        : { title: "Lasku lähetetty", description: `${eur(res.data.amountCents)} → ${recipients}` });
+        ? { title: `${what} — vahvistus lähetetty`, description: `${eur(res.data.amountCents)} → ${recipients} (muista lähettää itse varsinainen verkkolasku)` }
+        : { title: `${what} lähetetty`, description: `${eur(res.data.amountCents)} → ${recipients}` });
     } else {
       toast({ variant: "destructive", title: "Lähetys epäonnistui", description: res.error });
     }
@@ -357,18 +370,11 @@ export default function AdminGigTrackerPage() {
   // Priority 2 (keltaiset) -lasku — erillinen scope:"p2"-haara, ei koske P1:n
   // eriin. Summa = laskuttamaton P2-kertymä. Sama kevyt lähetys kuin mustassa
   // dashissa (billerId = kirjautunut perustaja).
-  const sendP2 = async () => {
+  /** Avaa laskudialogin keltaisten kertymälle. Lähetys tapahtuu `sendInvoice`ssa. */
+  const sendP2 = () => {
     if (p2RemainingCents <= 0) return;
-    if (!confirm(`Lähetetäänkö P2-lasku laskuttamattomasta kertymästä? (${eur(p2RemainingCents)})`)) return;
-    setP2Sending(true);
-    const res = await api.sendGigInvoice(jobId, { scope: "p2", billerId: profile?.id });
-    setP2Sending(false);
-    if (res.ok && res.data) {
-      setGig(res.data.gigData);
-      toast({ title: "P2-lasku lähetetty", description: eur(res.data.amountCents) });
-    } else {
-      toast({ variant: "destructive", title: "P2-laskun lähetys epäonnistui", description: res.error });
-    }
+    setInvoiceScope("p2");
+    setInvoiceOpen(true);
   };
 
   const saveP2Terms = async () => {
@@ -401,6 +407,8 @@ export default function AdminGigTrackerPage() {
     // jälkeen edelle, joten dialogi tarjosi seuraavaksi eräksi jo laskutettua
     // numeroa ja esikatselu näytti 1575 € vaikka jäljellä oli vähemmän.
     setInvForm((f) => ({ ...f, paymentNumber: (gig?.payments ?? []).filter((p) => !p.voided).length + 1 }));
+    // Nollaa scope: keltaisten lähetyksen jälkeen dialogi jäisi muuten P2-tilaan.
+    setInvoiceScope("p1");
     setInvoiceOpen(true);
   };
 
@@ -1154,15 +1162,19 @@ export default function AdminGigTrackerPage() {
       <Dialog open={invoiceOpen} onOpenChange={setInvoiceOpen}>
         <DialogContent className="max-w-md max-h-[88vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Lähetä lasku</DialogTitle>
+            <DialogTitle>{invoiceScope === "p2" ? "Lähetä keltaisten lasku" : "Lähetä lasku"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div className="rounded-xl bg-muted p-3 text-center">
               <p className="text-xs text-muted-foreground">
-                {deal ? `Maksuerä ${invForm.paymentNumber}/4 — kiinteähintainen sopimus` : "Laskutettava summa"}
+                {invoiceScope === "p2"
+                  ? "Keltaiset ikkunat — laskuttamaton kertymä"
+                  : deal ? `Maksuerä ${invForm.paymentNumber}/4 — kiinteähintainen sopimus` : "Laskutettava summa"}
               </p>
               <p className="text-2xl font-bold text-foreground tabular-nums">
-                {deal ? eur2(fixedInstallmentCents) : eur2(totals.uninvoicedCents)}
+                {invoiceScope === "p2"
+                  ? eur2(p2RemainingCents)
+                  : deal ? eur2(fixedInstallmentCents) : eur2(totals.uninvoicedCents)}
               </p>
             </div>
             <div>

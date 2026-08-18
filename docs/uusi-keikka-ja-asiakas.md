@@ -25,16 +25,77 @@ Mitä **ei** kestänyt, ja mikä on nyt korjattu, on lueteltu alempana kohdassa
 
 ### 1. Asiakas ja keikka
 
-`/admin/new-gig` (AdminNewGigPage) luo asiakkaan ja keikan samalla kertaa. Se
-on **ainoa** näkymä joka asettaa `isCustomGig: true` clientistä. Se vaatii
-tällä hetkellä yrityksen nimen ja että joka sektorilla on `total > 0` ja
-`unitPriceCents > 0` — eli **maksullisen keikan muodon**. Yhteisökeikka
-(alla) asetetaan sen jälkeen keikan asetuksista.
+`/admin/new-gig` (AdminNewGigPage) on **ainoa** näkymä joka luo urakkakeikan
+(`isCustomGig: true`). Yhdellä lähetyksellä syntyy neljä asiaa:
 
-Asiakkaan yhteyshenkilö tallentuu `customers.name`iin ja yrityksen nimi
+1. **asiakas** (`customers`-rivi, `customerType` = yritys tai ry)
+2. **keikka** (`jobs`-rivi + `gigData`-blobi + `quoteToken`)
+3. **karttablobi** (`projectData`, leimattuna `dealKind: "none"`)
+4. **asiakaslinkki** `/seuranta/<token>`
+
+Asiakkaan yhteyshenkilö tallentuu `customers.name`iin ja organisaation nimi
 `customers.companyName`iin. Huomaa että laskutus- ja sopimuspolut lukevat
 **`GigData.company`-objektia**, eivät `customers`-taulun yrityskenttiä — ne
 kaksi eivät ole kytköksissä toisiinsa.
+
+#### Lomake kenttä kentältä
+
+Lomake on kolmessa osassa: ensin **valinnat** jotka ratkaisevat muun muodon,
+sitten **tiedot**. Jokaisen kentän alla on sama selite myös käyttöliittymässä.
+
+| Kohta | Kenttä | Mitä siihen laitetaan | Vaikutus |
+|---|---|---|---|
+| Keikan laji | **Korvaus** \* | `Maksullinen` tai `Yhteisökeikka` | Yhteisökeikalla kaikki hinnat ovat 0 €, `agreedPrice` = 0, eikä asiakas näe euroja missään. |
+| ” | **Tilaaja** \* | `Yritys` tai `Yhdistys (ry)` | `customers.customerType` + `GigData.company.entityType`. `isYritys` on tosi molemmilla. |
+| ” | **Asiakasnäkymän ilme** | `Vaalea` / `Tekninen` | `GigData.customerTheme`. Vaihdettavissa myöhemmin. |
+| Laajuus | **Malli** \* | `Pohjakuva & ikkunat` tai `Sektorit käsin` | Ks. "Kaksi hinnoittelumallia" alla — tämä ei ole makuasia. |
+| Pohjakuvamalli | **Kerrokset / tilat** \* | pilkkulista, esim. `K, 1, 2` tai `Tila` | `building.floors`. Yksi nimi = yksi pohjakuva = yksi laskutussektori. |
+| ” | **Yksikön nimi** | `tila`, `siipi`, tyhjä = kerros | `building.unitWord`. Ohjaa sekä kartan otsikkoa että laskutussektorin nimeä. |
+| ” | **Ikkunoita arviolta** \* | kokonaisluku | Etenemän nimittäjä ennen kuin kartta on piirretty; tarkentuu itsestään. |
+| ” | **Hinta / ikkuna** \* | € (piilossa yhteisökeikalla) | `pricePerWindow`. Keikan **ainoa** ikkunahinta. |
+| ” | **Tuntia / ikkuna** | esim. `1,5`, vapaaehtoinen | `estimatedHoursPerWindow` → tehokkuusnäkymän ETA. |
+| Sektorimalli | **Sektorin nimi / väri** | laskun rivin nimi | Näkyy asiakkaalle. |
+| ” | **Määrä** \* | sovittu laajuus | Asiakas maksaa vain tehdyistä. |
+| ” | **Hinta / yksikkö** \* | € (piilossa yhteisökeikalla) | |
+| Laskutus | **Laskuta n. joka** | yksikkömäärä | Muistutus, ei automatiikkaa. Piilossa yhteisökeikalla. |
+| Tilaaja | **Nimi** \* | virallinen nimi | Sopimus, lasku, asiakaslinkki, keikkalista. |
+| ” | **Yhteyshenkilö** | ihminen | `customers.name`. Eri asia kuin organisaation nimi. |
+| ” | **Y-tunnus** | `1234567-8` | Myös yhdistyksellä on Y-tunnus. |
+| ” | **Sähköposti / puhelin** | | Tyhjä puhelin tallentuu muodossa `-`. |
+| ” | **Osoite / kohde** | työn tekopaikka | Myös `building.address`. |
+| ” | **Laskutustiedot** | verkkolaskuosoite, viite | Vain sisäinen. |
+| Sopimus | **Sopimustunnus** | esim. `PT-2026-02` | Sopimusdokumentti + lasku. |
+| ” | **Työn kuvaus** | keikan nimi listoissa | Tyhjä = `"<nimi> — sopimuskeikka"`. |
+| ” | **Sopimusteksti** | koko teksti sellaisenaan | Tiimille, ei asiakkaan seurantaan. |
+| ” | **ALV-huomautus** | oletus = vähäisen liiketoiminnan lauseke | Vaihtuu automaattisesti yhteisökeikan tekstiin jos sitä ei ole itse muokattu. |
+| ” | **Asiakkaalle näkyvä viesti** | | Seurantalinkin yläosa. |
+| Tekijät | **Tekijät** | ketkä pääsevät keikalle | `assignedTo` + asiakkaan `ownedBy`. |
+
+\* = pakollinen. Nappi kertoo nimeltä mikä puuttuu ("Puuttuu: tilaajan nimi,
+hinta / ikkuna") — ei enää yhtä yleistä lausetta joka oli usein väärä.
+
+#### Kaksi hinnoittelumallia
+
+Järjestelmässä on kaksi **aitoa** mallia, ja väärä valinta hukkaa työtä:
+
+- **Pohjakuva & ikkunat.** Palvelin JOHTAA laskutussektorit kartasta
+  (`syncGigSectorsFromProject`) heti kun kartalla on yksikin ikkuna: yksi
+  sektori per kerros, yksi yhteinen ikkunahinta. Käsin syötetyt sektorit
+  **korvataan**, joten niitä ei tässä mallissa edes kysytä. Perustuksessa
+  kirjataan yksi arviosektori (arvioitu ikkunamäärä), jotta asiakasnäkymällä on
+  etenemän nimittäjä jo ennen kartan piirtämistä.
+- **Sektorit käsin.** Ei pohjakuvaa: jokainen sektori on oma määrä ja oma
+  yksikköhinta. Jos tällaiselle keikalle myöhemmin merkitään ikkunoita
+  kartalle, sektorit korvautuvat kerroskohtaisilla.
+
+#### Sopimusarvon sääntö
+
+`jobs.agreedPrice` on perustettaessa **positiivinen** maksullisella keikalla
+(arvio × hinta, tai sektorien katto) ja **nolla** yhteisökeikalla. Keikkalista
+`/admin/gigs` lukee nollan yhteisökeikan tunnusmerkiksi, koska se ei lue
+raskaita blobeja — jos maksullinen keikka syntyisi nollalla, se näkyisi
+listalla vastikkeettomana. Palvelin laskee arvon uudelleen joka
+projektitallennuksessa, joten arvio korjautuu itsestään.
 
 ### 2. Projekti ja pohjakartta
 
@@ -52,9 +113,16 @@ Täältä asetetaan:
 | Korvaustapa | `compensation` | `"community"` = ei rahaa |
 | Tuntiarvio / ikkuna | `estimatedHoursPerWindow` | Esim. `1.5` |
 
-Projekti (`project_data`) syntyy laiskasti: se luodaan kun
-`/admin/gig/:id/projekti` avataan ensimmäisen kerran. Silloin siihen leimataan
-`dealKind: "none"` (`newGigProjectData()`), ks. alla.
+Projekti (`project_data`) **syntyy jo perustuksessa**: `/admin/new-gig`
+kirjoittaa sen heti keikan luonnin jälkeen, leimattuna `dealKind: "none"`
+(`newGigProjectData()`, ks. alla) ja täytettynä niillä tiedoilla jotka lomake
+juuri kysyi (nimi, osoite, kerrokset, yksikön nimi, ikkunahinta, tuntiarvio).
+Asetuksissa siis **täydennetään** projektia, ei luoda sitä tyhjästä — käytännössä
+sinne jää vain pohjakuvien lataus.
+
+Jos projektin kirjoitus epäonnistuu, keikka on silti olemassa ja toimii: näkymä
+kertoo siitä ("Keikka luotu, kartan alustus ei") ja kaikki kentät ovat
+muokattavissa Asetuksista.
 
 ### 3. Ikkunapisteet kartalle
 
@@ -63,10 +131,12 @@ piste" → klikkaa pohjakuvaa. Lisäystila jää päälle, joten jokainen seuraa
 piste on yksi klikkaus. Pisteitä siirretään "Siirrä pisteitä" -tilassa ja
 poistetaan "Poista piste" -tilassa.
 
-**Zoom ja panorointi ovat pois päältä lisäystilassa** (`FloorView`:
-`onSceneWheel`/`onSceneTouchStart`/`onSceneTouchMove` palaavat heti kun
-`editMode` on päällä). Asiakaskartalla ne on tarkoituksella jätetty päälle;
-adminin kartalla tätä ei ole vielä muutettu.
+**Zoom ja panorointi toimivat myös lisäystilassa.** Ne olivat aiemmin
+jäädytettyjä juuri silloin kun niitä eniten tarvitsee (pieneen huoneeseen ei osu
+tarkasti jos siihen ei pääse lähemmäs): `FloorView`:n
+`onSceneWheel`/`onSceneTouchStart`/`onSceneTouchMove` palasivat heti kun
+`editMode` oli päällä. Panorointi ei jätä jälkeensä pistettä — `onPlanClick`
+tarkistaa `pannedRef`in ja ohittaa napautuksen jos sormi liikkui.
 
 ### 4. Linkit
 
@@ -202,10 +272,10 @@ Nämä eivät estä keikan perustamista, mutta ne kannattaa tietää:
 
 1. **`quoteToken`illa ei ole unique-indeksiä** eikä palvelinpuolen generointia
    (`POST /api/jobs`). Törmäys näyttäisi väärän keikan.
-2. **`GET /api/admin/my-dashboard`** käy läpi kaikki keikat ilman
-   järjestystä ja palauttaa **ensimmäisen** osuman. Kun perustaja on tekijänä
-   kahdella keikalla, admin-kirjautuminen voi ohjata satunnaisesti väärään
-   työpöytään.
+2. ~~`GET /api/admin/my-dashboard` palauttaa ensimmäisen osuman.~~
+   **KORJATTU:** reitti palauttaa nyt `gigs[]` — kaikki keikat joilla
+   kirjautunut on tekijänä — ja etusivu listaa ne erikseen. Yhden osuman
+   arvonta on poissa.
 3. **Julkinen tiimilista** (`/api/team-roster`) yhdistää tekijät **kaikilta**
    keikoilta ja dedupoi `linkedUserId || etunimi` -parilla. Uuden keikan
    tekijät ilmestyisivät julkiselle /meistä-sivulle, ja saman henkilön
@@ -214,10 +284,11 @@ Nämä eivät estä keikan perustamista, mutta ne kannattaa tietää:
    my-dashboard, tiimilista, `reconcileMissingPayoutSyncs` 30 min välein)
    lukevat yhden `project_data`-blobin **per keikka**. Jokainen uusi keikka
    kasvattaa niiden siirtokustannusta lineaarisesti.
-5. **Ei keikkalistaa eikä keikanvalitsinta.** Keikat löytyvät vain
-   `/admin/jobs`-listalta. `Section.tsx`:n kokoontilat (`fr8.section.<id>`)
-   eivät ole keikkakohtaisia, joten osion sulkeminen yhdellä keikalla sulkee
-   sen myös toisella samassa selaimessa.
+5. ~~Ei keikkalistaa eikä keikanvalitsinta.~~ **KORJATTU:** `/admin/gigs`
+   listaa urakkakeikat (käynnissä auki, valmiit ja peruutetut dropdownien
+   takana), rahaluvut liitettynä perustajille. **Jäljellä:** `Section.tsx`:n
+   kokoontilat (`fr8.section.<id>`) eivät ole keikkakohtaisia, joten osion
+   sulkeminen yhdellä keikalla sulkee sen myös toisella samassa selaimessa.
 6. **`eraRecipientFounderId`** palauttaa kovakoodatut `"joonatan"`/`"matias"`
    ja haarautuu erän numerolla 4 — mikä tahansa toinen keikka joka käyttäisi
    erälaskutusta reitittyisi FR8:n laskutusjärjestelyyn.

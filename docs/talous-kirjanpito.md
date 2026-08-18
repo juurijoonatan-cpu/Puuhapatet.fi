@@ -559,52 +559,180 @@ Vanhat importit toimivat ennallaan, koska `accounts.ts` re-exporttaa datan.
 
 ---
 
-## Admin-etusivun avauskuva — kokonaislaskutus yhdellä silmäyksellä
+## Admin-etusivun yleisnäkymä
 
-`client/src/components/admin/RevenueHero.tsx`, näkyy `/admin/dashboard`in
-ylimpänä vain perustajille.
+`client/src/components/admin/AdminOverview.tsx`, `/admin/dashboard`in ylin
+osa. Sama paneeli molemmille rooleille, eri luvuilla.
 
-**Ongelma jota tämä ratkaisee:** kokonaislaskutusta ei ollut MISSÄÄN.
-Pikkukeikat asuvat `jobs.agreedPrice`issä ja tulevat `/api/stats`ista; urakat
-asuvat `gigData`-blobien maksuissa ja tulevat `/api/admin/gig-money`ista. Kaksi
-eri korttia, kaksi eri lukua, eikä niitä ollut laskettu yhteen kertaakaan.
+**Ongelma jota tämä ratkaisee (kaksi):**
+
+1. Kokonaislaskutusta ei ollut MISSÄÄN. Pikkukeikat asuvat `jobs.agreedPrice`issä
+   ja tulevat `/api/stats`ista; urakat asuvat `gigData`-blobien maksuissa ja
+   tulevat `/api/admin/gig-money`ista. Kaksi eri korttia, eikä niitä ollut
+   laskettu yhteen kertaakaan.
+2. Etusivu oli **neljä samannäköistä pikkukorttia + kaksi kappaletekstillä
+   varustettua rahakorttia**, joissa samat luvut toistuivat kahdesti. "Oma tulo"
+   oli merkki merkiltä sama lauseke kahdessa paikassa samalla sivulla.
+
+### Mitä paneelissa on — ja mitä ei
+
+| Osa | Sisältö |
+|---|---|
+| Kärkiluku | perustaja: laskutettu yhteensä · muu ylläpito: oma bruttotulo |
+| Koostumus | pisterivi + kaksi selitettä (urakat / pikkukeikat) — vain perustajalle |
+| Mittaluvut | **kaksi**: perustaja oma tulo + tekijöille siirtämättä · muu keikat + palvelumaksuvelka |
+| Kehitys | laskutus kuukausittain pylväinä, korkein suoraan merkittynä |
+| Huomiorivi | **enintään yksi**, ja vain kun jotain on oikeasti tekemättä |
+
+Ei toimintoja, ei selittäviä kappaleita, ei kolmatta lukua. Kaikki muu on
+alempana pudotusvalikoissa tai omilla sivuillaan.
 
 ### Miksi summaa EI oteta `stats.totalRevenue`sta
 
-`/api/stats` laskee `totalRevenue`n **kaikista** valmiista keikoista, myös
-urakkakeikoista — ja urakan `agreedPrice` on sopimuksen katto, joka on jo
-mukana `gigMoney.invoicedCents`issä. Yhteenlasku olisi laskenut urakan kahdesti.
-Avauskuvan pikkukeikkaluku on siksi laskettu erikseen `/api/jobs`-riveiltä
-**urakat pois suodatettuna** (`!isCustomGig && !gigData`), samalla ehdolla kuin
-"Oma tulo" -kortti ja `server/finance/settlement.ts`.
+`/api/stats` laski `totalRevenue`n **kaikista** valmiista keikoista, myös
+urakkakeikoista — ja urakan `agreedPrice` on sopimuksen katto, joka on jo mukana
+`gigMoney.invoicedCents`issä. Yhteenlasku olisi laskenut urakan kahdesti.
+
+Reitti **suodattaa urakat nyt pois** (`isCustomGig`/`gigData`), samalla ehdolla
+kuin `server/finance/settlement.ts`, `post.ts` ja etusivun oma tulo. Sen jälkeen
+`stats.totalRevenue` on aidosti pikkukeikkojen liikevaihto, eikä sekään enää
+hyppää kattoon kun urakka merkitään valmiiksi. Avauskuvan pikkukeikkaluku
+lasketaan silti erikseen `/api/jobs`-riveiltä, koska se tarvitsee myös
+kuukausijakauman.
 
 ### Aikasarjan päiväperusteet
-
-Sarja on kahden virran summa kuukausittain, ja niiden päivä tulee eri paikasta:
 
 | Virta | Päivä | Miksi |
 |---|---|---|
 | Urakat | erämaksun aikaleima (`GigPayment.t`) | Maksu on se tapahtuma joka toi rahan. |
 | Pikkukeikat | `jobs.scheduledAt` | Päivä jona työ tehtiin ja lasku annettiin. Ilman aikaa rivi jätetään sarjasta pois — arvattu kuukausi olisi väärä kuukausi. |
 
-Sama huomio kuin `TURNOVER_DATE_BASIS`issa: perusteet ovat eri, ja kaistaleen
+Sama huomio kuin `TURNOVER_DATE_BASIS`issa: perusteet ovat eri, ja paneelin
 tehtävä on näyttää rytmi — ei olla kirjanpidon jaksotus.
 
 ### Muotoiluvalinnat, jotka on mitattu eikä arvattu
 
-- **Kuukaudet ovat yhtenäinen jakso** ensimmäisestä laskutuskuukaudesta tähän
-  kuukauteen (enintään 12 viimeisintä). Tyhjä kuukausi on tieto, joten se näkyy
-  tyhjänä pylväänä; jos sarjaan otettaisiin vain rahalliset kuukaudet, puolen
-  vuoden tauko näyttäisi olemattomalta.
-- **Nolla on nolla.** Yksikään piste ei syty tyhjässä kuukaudessa; pienin
-  positiivinen arvo saa aina vähintään yhden.
-- **Sammunut piste on saman rampin tummempi askel** (`CT_TECH.hair`), ei harmaa
-  — harmaa lukisi omana sarjana.
-- **Koostumusnauha mahtuu 320 pikselin puhelimeen** ilman vieritystä: 22 pistettä
-  × 7 px + 21 × 3 px = 217 px. Pisteet eivät kutistu, joten määrä ratkaisee.
-- **Kaksi sarjaa erottuvat värillä JA tekstillä** (vihreä = urakat, vaalea
-  sininen = pikkukeikat, kummankin nimi ja summa selitteessä). Väri ei ole
-  koskaan ainoa erottava tekijä.
+- **YKSI iso luku per näkymä.** Kaksi 40 px:n lukua rinnakkain oli kaksi
+  kilpailevaa otsikkoa eikä kärkeä.
+- **YKSI SÄVY.** Koko paneeli piirretään yhdellä vihreällä rampilla
+  (OKLCH L 0,813 → 0,565 → 0,332, sävy 152–156° = aito sekventiaalinen ramppi) ja
+  neutraaleilla. Kahden eri sävyn pari (vihreä + sininen) EI läpäissyt tummalla
+  pinnalla vaaleusvyötä (L-vyö 0,48–0,67) ja tritan-erottelu jäi 7,4:ään eli
+  rajatapaukseksi. Sama sävy kahdessa askeleessa on yksinkertaisempi JA
+  mitattavasti turvallisempi.
+- **Kontrastit pintaa (#08090A) vasten, mitattu:** aksentti `#5FE08A` 11,9:1,
+  toinen askel `#27714A` 3,4:1 (≥ 3:1 datamerkille), ura `#173F28` 1,7:1 — ura ei
+  ole dataa vaan saman rampin sammunut askel.
+- **Pylväät, ei pisterivistöjä.** Kuusi 7-pisteen pystyriviä oli sekava eikä
+  muoto lukenut kertaakaan ensi silmäyksellä. Pylväs: ≤ 24 px paksu, 3 px
+  pyöristys datan päässä, suora perusviivalla, yksi hiusviiva perustana.
+- **Yksi suora arvomerkintä** (korkein kuukausi). Luku joka pylväällä olisi
+  kaaos ja jäisi lukematta.
+- **Nolla on nolla.** Tyhjä kuukausi ei piirrä pylvästä; pienin positiivinen saa
+  3 px, jottei olemassa oleva laskutus näytä tyhjältä.
+- **Kuukaudet yhtenäisenä jaksona** ensimmäisestä laskutuskuukaudesta tähän
+  kuukauteen (enintään 12). Tyhjä kuukausi on tieto.
+- **Koostumusnauhan leveys on katolla (300 px).** Levealla ruudulla
+  `space-between` venytti 22 pistettä koko paneelin mitalle, jolloin askeleen
+  vaihtumiskohta oli 30 px:n välien takana eikä sitä nähnyt.
+- **Mittaluvut: `minmax(118px, 1fr)` + ruudukon `maxWidth`.** Sarakemäärä
+  lasketaan minimistä, joten yläraja EI kuulu `minmax`iin: `minmax(118px, 220px)`
+  pudotti puhelimen yhteen sarakkeeseen. 118 px on mitattu alaraja jolla
+  nelinumeroinen euroluku mahtuu 20 px:n leikkauksella.
+- **Kokonaisia euroja.** Sentit eivät kuulu avausnäkymään; ne ovat erittelyissä
+  ja kirjanpidossa. Ruudunlukijalle annetaan silti tarkka luku (`fmtExact`).
+- **Väri ei ole koskaan ainoa erottaja:** kummallakin osuudella on selitteessä
+  nimi ja summa, ja jokaisella pylväällä koneluettava arvo.
 - **Tumma pinta on tarkoituksellinen**, ei teemavirhe: yksi kiinteäsävyinen
-  kaistale samasta paletista kuin asiakkaan tekninen teema (`CT_TECH`), jottei
-  järjestelmässä ole kahta eri tummaa.
+  paneeli samasta paletista kuin asiakkaan tekninen teema (`CT_TECH`).
+
+### Mitä etusivulta poistettiin — ja minne luvut menivät
+
+| Poistettu | Missä luku on nyt |
+|---|---|
+| Neljä tilastokorttia | Oma tulo ja velka ovat paneelin mittalukuja; keikkamäärä `/admin/jobs`in otsikossa; tulevat `/admin/calendar`issa |
+| "Urakkakeikat — raha" -kortti | Laskutettu ja tekijöille paneelissa; per keikka `/admin/gigs`issa; johtajien tilanne keikan omassa tasausnäkymässä |
+| Johtajakohtainen kerätty/velka | Keikan tasausnäkymä (`TasausView`) — ainoa paikka jossa se on myös kuitattavissa |
+| "Tekijöille kuuluvaa käsissä" | Keikan tasausnäkymä. Invariantti 17 ei ole enää vaarassa etusivulla, koska etusivu ei näytä johtajien käsissä olevaa rahaa lainkaan |
+| Merkitsemätön laskutus euroina | `/admin/gigs`, per keikka — summa lisättiin sinne (`unassignedCents`), koska aiemmin siellä oli vain erien kappalemäärä |
+| Tervehdys + "Rooli: HOST" | Poistettu. Etunimi on paneelin yläkulmassa |
+| "Uusi keikka" -CTA ja "Keikat" -kortti | Navipalkissa sekä puhelimessa että työpöydällä. **Asiakkaat jäi**, koska se EI ole puhelimen navipalkissa |
+| Talous- ja tilityserittelyt | Samat luvut, pudotusvalikon takana |
+
+---
+
+## Kaksi vikaa jotka näyttivät "valittavan turhaan"
+
+Käyttäjä oli tehnyt tasauksen pankissa ja kirjannut sen, ja maksanut tekijät —
+mutta etusivu väitti yhä `maksaa 720,00 €` ja `380,00 € maksettu ilman
+maksajamerkintää`. Kumpikaan ei ollut laskuvirhe: molemmissa **moottori tiesi
+vastauksen jo, mutta näkymä luki väärää kenttää.**
+
+### 1. Tasaus 720 € — brutto näytettiin velkana
+
+`TasausFounderRow.dueCents` on laskettu ero **ennen** kirjattuja siirtoja:
+`pickTransfer` johtaa siitä `grossTransfer`in, ja `settlement.transfers`
+vähennetään vasta siitä (`alreadyTransferredCents` → `result.transfer`).
+
+Keikan oma tasausnäkymä luki `result.transfer`in ja sanoi **"Tasan ✓"**. Samalla
+sivulla oleva johtajakortti ja etusivun rahakortti lukivat `dueCents`iä ja
+sanoivat **"maksaa 720,00 €"**. Sama luku kahdesta kentästä, kaksi eri vastausta.
+
+`dueCents`iä **ei** korjattu netottamalla siirrot siihen: se olisi vähentänyt
+saman rahan kahdesti (`grossTransfer` johdetaan siitä) ja kääntänyt tasatun
+keikan päinvastaiseen haamusiirtoon. Sen sijaan moottori vastaa nyt itse:
+
+| Kenttä | Merkitys |
+|---|---|
+| `dueCents` | laskettu ero, BRUTTO — `pickTransfer`in syöte |
+| `remainingDueCents` | **vielä maksamatta**, johdettu `result.transfer`ista |
+
+`remainingDueCents` on nolla kaikilla kun `transfer` on null, ja se perii
+oikein myös käsin sovitun summan (`overrideCents`), ylisiirron ja väärään
+suuntaan tehdyn siirron — koska se johdetaan `transfer`ista eikä
+`grossTransfer`ista. `TasausView`n johtajakortti ja `/api/admin/gig-money`in
+`dueByFounder` lukevat nyt sitä.
+
+**Kolmas, itsenäinen vika samassa lohkossa:** `transferHint` muodostettiin
+summaamalla `dueByFounder` KAIKKIEN keikkojen yli ja valitsemalla suunta vasta
+sen jälkeen. Kaksi tasattua keikkaa saattoi siis ristiin netottuen synnyttää
+siirron jota kummallakaan keikalla ei ole. Nyt summataan keikkakohtaiset
+`result.transfer`it yhdessä suunnassa (etumerkki kiinnitetty `founders[0]`:aan).
+
+Testit: `shared/founder-settlement.test.ts` — kuittautuminen nollille, osasiirto,
+ylisiirto, käsin sovittu summa, ja invariantti `Σ remainingDueCents === 0`.
+
+### 2. "380 € ilman maksajamerkintää" — kysyttiin tietoa joka oli jo tallessa
+
+`buildTasaus` laski jokaisen maksetun `CrewPayout`in kohdentamattomaksi rahaksi
+perustelulla *"vanha kanava ei tallenna maksajaa"*. Se ei ollut totta:
+`CrewPayout.buyer.billerId` on tallentanut maksajan maksun luonnista asti, ja
+hallintanäkymä pakottaa valitsemaan sen (`BRAND_BILLERS`-valitsin). Etusivu siis
+vaati kirjaamaan saman tiedon **toiseen** kenttään (`settlement.paidBy`) ja
+valitti siihen asti.
+
+Etusijajärjestys on nyt sama kuin erälaskuilla:
+
+1. käsin kirjattu ohitus (`settlement.paidBy`)
+2. **tallennettu ostaja** (`payout.buyer.billerId`)
+3. vasta sitten kohdentamaton
+
+**Invariantti 18 ei löysty:** se kieltää arvaamisen, ei tallennetun tiedon
+lukemista. Hyväksytään vain johtajan id — `"company"`-ostaja ja puuttuva `buyer`
+(payout vanhemmasta ajasta) jäävät kohdentamattomiksi ja varoittavat edelleen.
+`resolveBuyer` voi palauttaa oletuksena `DEFAULT_BILLER_ID`:n, joten kenttä
+luetaan vain `founderIds`-portin läpi.
+
+**Rivi on nyt per MAKSU, ei per tekijä.** Vanha avain `manual:<workerId>` kattoi
+tekijän kaikki maksut yhtenä summana, joten kahden johtajan maksamaa tekijää ei
+voinut kohdentaa oikein kummallekaan — koko summa oli pakko antaa toiselle. Uusi
+avain on `manual:<workerId>:<payoutId>`, ja vanha avain luetaan yhä, jottei jo
+tehty kohdennus katoa.
+
+Testit: `shared/fr8-tasaus.test.ts` — tallennettu ostaja, puuttuva ostaja,
+yritysostaja, ohituksen etusija, vanha avain, kaksi maksajaa samalle tekijälle,
+maksamaton maksu, ja se että kirjattu siirto EI muuta tätä lukua.
+
+**Jäljellä tiedostettuna:** docs-ohje "tee payoutista erälasku" tuottaa
+kaksoislaskennan, koska `era_invoices`illa ei ole viitettä payoutiin eikä mikään
+mitätöi payoutia — `workerPaidCents` summaa molemmat. Sitä ei korjattu tässä.

@@ -232,8 +232,12 @@ function GigRow({
           <p className="mt-2 flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-400">
             <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />
             <span>
-              {m.unassignedEraCount} erä{m.unassignedEraCount === 1 ? "" : "ä"} ilman merkintää siitä
-              kumpi rahat sai — kohdentamaton raha ei kuulu kenellekään eikä ole tasauksessa mukana.
+              {/* SUMMA MUKAAN. Kappalemäärä ei kerro onko kyse kahdesta kympistä
+                  vai kahdesta tuhannesta, ja euroluku oli koko sovelluksessa
+                  vain etusivun rahakortissa — joka on nyt purettu. */}
+              {fmt(m.unassignedCents)} ({m.unassignedEraCount} erä{m.unassignedEraCount === 1 ? "" : "ä"}) ilman
+              merkintää siitä kumpi rahat sai — kohdentamaton raha ei kuulu kenellekään eikä ole
+              tasauksessa mukana.
             </span>
           </p>
         )}

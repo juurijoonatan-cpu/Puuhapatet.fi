@@ -215,6 +215,79 @@ describe("computeTasaus — jo tehdyt siirrot ja käsin asetettu summa", () => {
     expect(res.transfer).toEqual({ fromId: "matias", toId: "joonatan", cents: 40_790 });
   });
 
+  /**
+   * SE VIKA JOKA KÄYTTÄJÄ NÄKI: raha oli siirretty ja siirto kirjattu, mutta
+   * kolme näkymää neljästä väitti yhä "maksaa 720,00 €".
+   *
+   * `dueCents` on BRUTTO (laskettu ero ennen siirtoja) — se ei kuittaudu eikä
+   * pidäkään, koska `pickTransfer` johtaa siitä `grossTransfer`in ja kirjatut
+   * siirrot vähennetään vasta siitä. Jos `dueCents` netotettaisiin, sama raha
+   * vähennettäisiin kahdesti. Siksi moottori kertoo jäljellä olevan ERIKSEEN.
+   */
+  it("remainingDueCents kuittautuu nollille kun koko siirto on kirjattu — dueCents ei", () => {
+    const settled = computeTasaus({
+      ...base,
+      transfers: [{ fromId: "joonatan", toId: "matias", cents: 109_210 }],
+    });
+    expect(settled.transfer).toBeNull();
+
+    const j = settled.rows.find((r) => r.id === "joonatan")!;
+    const m = settled.rows.find((r) => r.id === "matias")!;
+    // Brutto säilyy — se on laskettu ero, ei velka.
+    expect(j.dueCents).toBe(109_210);
+    expect(m.dueCents).toBe(-109_210);
+    // Velka on nolla, koska raha on siirretty.
+    expect(j.remainingDueCents).toBe(0);
+    expect(m.remainingDueCents).toBe(0);
+  });
+
+  it("remainingDueCents on osasiirron jälkeen täsmälleen jäljellä oleva summa", () => {
+    const res = computeTasaus({
+      ...base,
+      transfers: [{ fromId: "joonatan", toId: "matias", cents: 91_170 }],
+    });
+    expect(res.transfer).toEqual({ fromId: "joonatan", toId: "matias", cents: 18_040 });
+    expect(res.rows.find((r) => r.id === "joonatan")!.remainingDueCents).toBe(18_040);
+    expect(res.rows.find((r) => r.id === "matias")!.remainingDueCents).toBe(-18_040);
+  });
+
+  it("liikaa siirretty kääntää myös remainingDueCentsin etumerkit", () => {
+    const res = computeTasaus({
+      ...base,
+      transfers: [{ fromId: "joonatan", toId: "matias", cents: 150_000 }],
+    });
+    expect(res.transfer).toEqual({ fromId: "matias", toId: "joonatan", cents: 40_790 });
+    // Nyt Matias maksaa takaisin, joten etumerkit ovat toisin päin kuin bruttossa.
+    expect(res.rows.find((r) => r.id === "matias")!.remainingDueCents).toBe(40_790);
+    expect(res.rows.find((r) => r.id === "joonatan")!.remainingDueCents).toBe(-40_790);
+  });
+
+  it("remainingDueCents seuraa käsin sovittua summaa, ei laskettua", () => {
+    const res = computeTasaus({
+      ...base,
+      overrideCents: 50_000,
+      overrideFromId: "joonatan",
+      transfers: [{ fromId: "joonatan", toId: "matias", cents: 50_000 }],
+    });
+    // Sovittu 500 € on siirretty kokonaan → ei mitään jäljellä, vaikka laskettu
+    // brutto (1092,10 €) on yhä iso.
+    expect(res.transfer).toBeNull();
+    expect(res.rows.every((r) => r.remainingDueCents === 0)).toBe(true);
+    expect(res.rows.find((r) => r.id === "joonatan")!.dueCents).toBe(109_210);
+  });
+
+  it("remainingDueCentsien summa on aina nolla", () => {
+    for (const transfers of [
+      [],
+      [{ fromId: "joonatan", toId: "matias", cents: 40_000 }],
+      [{ fromId: "matias", toId: "joonatan", cents: 10_000 }],
+      [{ fromId: "joonatan", toId: "matias", cents: 150_000 }],
+    ]) {
+      const res = computeTasaus({ ...base, transfers });
+      expect(res.rows.reduce((sum, r) => sum + r.remainingDueCents, 0)).toBe(0);
+    }
+  });
+
   it("käsin asetettu summa ohittaa lasketun ja merkitään ohitetuksi", () => {
     const res = computeTasaus({ ...base, overrideCents: 100_000 });
     expect(res.overridden).toBe(true);

@@ -453,16 +453,21 @@ export default function TasausView({ jobId, canEdit = true }: {
       {/* ── 2. KUMMANKIN TILANNE ──────────────────────────────────────────── */}
       <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(260px, 1fr))`, gap: T.space.md }}>
         {result.rows.map((row) => {
-          const owes = row.dueCents > 0;
+          // VIELÄ maksamatta, ei laskettu brutto. Tämä kortti luki `dueCents`iä,
+          // joka on ero ENNEN kirjattuja siirtoja — joten kun siirto oli tehty
+          // ja kirjattu, yläreunan mittari sanoi "Tasan ✓" ja tämä kortti sanoi
+          // samalla ruudulla "maksaa 720,00 €".
+          const due = row.remainingDueCents;
+          const owes = due > 0;
           return (
             <div key={row.id} style={{ ...card, padding: T.space.lg + 2 }}>
               <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: T.space.sm, marginBottom: T.space.md }}>
                 <span style={{ fontFamily: T.font, fontSize: T.size.title - 3, fontWeight: 700, color: T.text.primary }}>{row.name}</span>
                 <span style={chip(
-                  row.dueCents === 0 ? T.tone.goodSoft : owes ? T.tone.warn : T.tone.info,
-                  row.dueCents === 0 ? T.tone.goodBg : owes ? T.tone.warnBg : T.tone.infoBg,
+                  due === 0 ? T.tone.goodSoft : owes ? T.tone.warn : T.tone.info,
+                  due === 0 ? T.tone.goodBg : owes ? T.tone.warnBg : T.tone.infoBg,
                 )}>
-                  {row.dueCents === 0 ? "tasan" : owes ? `maksaa ${eur(row.dueCents)}` : `saa ${eur(-row.dueCents)}`}
+                  {due === 0 ? "tasan" : owes ? `maksaa ${eur(due)}` : `saa ${eur(-due)}`}
                 </span>
               </div>
 

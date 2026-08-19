@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type GigPublicView, type GigSignPayload } from "@/lib/api";
 import { downloadGigContract } from "@/lib/gig-contract-doc";
 import { CT, CFONT } from "@/lib/customer-theme";
+import { FR8_CONTRACT_ID } from "@shared/gig";
 
 const T = CT;
 const FONT = CFONT;
@@ -40,7 +41,6 @@ const FONT = CFONT;
  * Tämä yksi jää siksi, että FR8:n sopimus on jo täällä ja sen pudottaminen
  * näkyvistä olisi vienyt asiakkaalta hänen oman asiakirjansa.
  */
-const FR8_CONTRACT_ID = "PT-2026-02";
 const FR8_CONTRACT_PDF_URL = "/contracts/PT-2026-02.pdf";
 const FR8_CONTRACT_PAGES = 8;
 

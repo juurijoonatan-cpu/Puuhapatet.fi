@@ -31,7 +31,7 @@ import { BRAND_BILLERS, resolveBrandBiller, DEFAULT_BILLER_ID } from "@shared/bi
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import {
   emptyGigData, computeTotals, nextInvoiceThreshold, invoiceDue, eur, eur2,
-  sanitizeGigData, gigStatus, signatureRequired, type GigData, type GigCompany,
+  sanitizeGigData, gigStatus, signatureRequired, FR8_CONTRACT_ID, type GigData, type GigCompany,
 } from "@shared/gig";
 import { computeProjectTotals, fixedDealFor, computeDealBilling, dealAgreedTotalCents, eurFromCents, type ProjectData } from "@shared/project";
 import { computeP2Billing } from "@shared/p2";
@@ -174,6 +174,7 @@ export default function AdminGigTrackerPage() {
             ? "later" as const
             : signatureRequired(parsed) ? "first" as const : "popup" as const,
         });
+        setContractTextOpen(!!parsed.contractText?.trim());
         const startBiller = resolveBrandBiller(defaultBillerId);
         const savedEInvoice = parsed.signature?.customer?.eInvoice ?? "";
         setInvForm((f) => ({
@@ -215,6 +216,19 @@ export default function AdminGigTrackerPage() {
    */
   const [contractFileBusy, setContractFileBusy] = useState(false);
   const contractFileInput = useRef<HTMLInputElement>(null);
+  /**
+   * SOPIMUSTEKSTI-KENTTÄ ON PIILOSSA OLETUKSENA.
+   *
+   * Sopimus on PDF. Tekstikenttä oli lomakkeen isoin elementti ja se paikka
+   * johon koko sopimus liimattiin plain textinä — muoto joka hukkaa taulukot,
+   * liitteet ja allekirjoitussivun. Se ei ole poistettu (FR8:n sopimus on
+   * tekstinä, ja ladattava sopimusdokumentti koostuu siitä), mutta se ei ole
+   * enää se mitä lomake ehdottaa ensimmäisenä.
+   *
+   * AUKEAA ITSESTÄÄN JOS TEKSTIÄ ON, koska muuten keikan olemassa oleva
+   * sopimusteksti näyttäisi kadonneen tallennuksen mukana.
+   */
+  const [contractTextOpen, setContractTextOpen] = useState(false);
 
   const pickContractFile = async (file: File | null | undefined) => {
     if (!file || !jobId) return;
@@ -843,6 +857,15 @@ export default function AdminGigTrackerPage() {
            * koska se tallentuu heti valittaessa eikä ole osa luonnosta.
            */
           const hasDoc = !!gig.contractFile || !!draft.contractText.trim();
+          /**
+           * Onko tunnukseksi kirjoitettu FR8:n tunnus keikalle joka ei ole FR8.
+           *
+           * Ehdossa on toinen puoli (`gig.contractId !== FR8`) jotta FR8:n oma
+           * keikka ei saa varoitusta omasta tunnuksestaan — varoitus koskee
+           * tunnuksen VAIHTAMISTA FR8:n tunnukseksi, ei sen omistamista.
+           */
+          const fr8IdClash = draft.contractId.trim() === FR8_CONTRACT_ID
+            && (gig.contractId ?? "") !== FR8_CONTRACT_ID;
           const statusPill = (
             <span
               className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-full px-2.5 py-1 ${
@@ -1111,12 +1134,50 @@ export default function AdminGigTrackerPage() {
                     </div>
                     <div className="space-y-1.5">
                       <Label className="text-xs font-medium text-muted-foreground">Sopimustunnus</Label>
-                      <Input value={draft.contractId} onChange={(e) => setDraft({ ...draft, contractId: e.target.value })} placeholder="Esim. PT-2026-02" />
+                      {/* PLACEHOLDER EI OLE ENÄÄ FR8:N OIKEA TUNNUS.
+                          Kenttä ehdotti "Esim. PT-2026-02", joka on FR8:n tunnus
+                          ja samalla portti FR8:n sopimus-PDF:ään. Esimerkin
+                          kopioiminen olisi näyttänyt toiselle asiakkaalle FR8:n
+                          allekirjoitetun sopimuksen — juuri sen vuodon jonka
+                          keikkakohtainen portti korjasi. */}
+                      <Input value={draft.contractId} onChange={(e) => setDraft({ ...draft, contractId: e.target.value })} placeholder="Esim. PT-2026-04" />
+                      {fr8IdClash ? (
+                        <p className="text-xs text-red-600 dark:text-red-400 leading-snug">
+                          {FR8_CONTRACT_ID} on FR8:n sopimustunnus, ja tällä tunnuksella asiakkaan
+                          näkymä avaa FR8:n sopimus-PDF:n. Anna tälle keikalle oma tunnus.
+                        </p>
+                      ) : (
+                        <p className="text-[11px] text-muted-foreground leading-snug">
+                          Vapaaehtoinen. Näkyy asiakkaalle otsikossa ja hyväksyntälauseessa, ja
+                          laskunumero muodostuu siitä ({draft.contractId.trim() || "PT-2026-04"}-01).
+                          Muoto on vapaa — käytä omaa juoksevaa numerointia.
+                        </p>
+                      )}
                     </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-medium text-muted-foreground">Sopimusteksti (asiakas näkee ja allekirjoittaa)</Label>
-                      <Textarea rows={8} value={draft.contractText} onChange={(e) => setDraft({ ...draft, contractText: e.target.value })} className="font-mono text-xs" placeholder="Liitä koko sopimus tähän…" />
-                    </div>
+                    {/* Sopimusteksti — vaihtoehto PDF:lle, ei rinnakkainen
+                        pääkenttä. Ks. `contractTextOpen`. */}
+                    {contractTextOpen ? (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <Label className="text-xs font-medium text-muted-foreground">Sopimusteksti (asiakas näkee ja allekirjoittaa)</Label>
+                          {/* Piilotus vain tyhjänä: kirjoitetun sopimustekstin
+                              piilottaminen olisi sisällön piilottamista, ei
+                              lomakkeen siistimistä. */}
+                          {!draft.contractText.trim() && (
+                            <button type="button" onClick={() => setContractTextOpen(false)}
+                              className="text-[11px] text-muted-foreground underline underline-offset-2 shrink-0">
+                              Piilota
+                            </button>
+                          )}
+                        </div>
+                        <Textarea rows={8} value={draft.contractText} onChange={(e) => setDraft({ ...draft, contractText: e.target.value })} className="font-mono text-xs" placeholder="Liitä koko sopimus tähän…" />
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => setContractTextOpen(true)}
+                        className="text-xs text-muted-foreground underline underline-offset-2 self-start">
+                        tai liitä sopimus tekstinä
+                      </button>
+                    )}
                     <div className="space-y-1.5">
                       <Label className="text-xs font-medium text-muted-foreground">Asiakkaalle näytettävä huomautus</Label>
                       <Textarea rows={2} value={draft.customerNote} onChange={(e) => setDraft({ ...draft, customerNote: e.target.value })} placeholder="Esim. Maksat vain pestyistä ikkunoista…" />

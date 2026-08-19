@@ -114,6 +114,29 @@ describe("asiakasnäkymien tietoraja", () => {
     }
   });
 
+  /**
+   * LOMAKE EI SAA EHDOTTAA FR8:N TUNNUSTA.
+   *
+   * `contractId` on portti: `GigContractSign` näyttää FR8:n committatun
+   * sopimus-PDF:n silloin kun keikan tunnus on `PT-2026-02`. Adminin kentän
+   * placeholder luki "Esim. PT-2026-02", eli lomake ehdotti esimerkkinä juuri
+   * sitä arvoa joka avaa TOISEN asiakkaan sopimuksen. Esimerkin kopioiminen on
+   * tavallisin tapa täyttää kenttä josta ei tiedä mitä siihen kuuluu.
+   *
+   * Jos tämä kaatuu: vaihda esimerkki, älä testiä.
+   */
+  it("adminin lomake ei ehdota FR8:n sopimustunnusta esimerkkinä", () => {
+    const FR8_ID = "PT-2026-02";
+    for (const f of ["client/src/pages/admin/gig-tracker.tsx", "client/src/pages/admin/new-gig.tsx"]) {
+      const placeholders = [...read(f).matchAll(/placeholder="([^"]*)"/g)].map((m) => m[1]);
+      const offenders = placeholders.filter((v) => v.includes(FR8_ID));
+      expect(
+        offenders,
+        `${f}: placeholder ehdottaa ${FR8_ID}, joka avaa asiakkaalle FR8:n sopimus-PDF:n.`,
+      ).toEqual([]);
+    }
+  });
+
   it("tunnistaa paluun vuotoon (vartija toimii)", () => {
     const regressed = `const CONTRACT_PDF_URL = "/contracts/PT-2026-02.pdf";\n<object data={\`\${CONTRACT_PDF_URL}#view=FitH\`} />`;
     expect(/const fr8PdfUrl = view\.contractId === FR8_CONTRACT_ID/.test(regressed)).toBe(false);

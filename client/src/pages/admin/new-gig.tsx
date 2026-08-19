@@ -646,7 +646,10 @@ export default function AdminNewGigPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
             <div>
               <Label className="text-xs">Sopimustunnus</Label>
-              <Input value={contractId} onChange={(e) => setContractId(e.target.value)} placeholder="Esim. PT-2026-02" />
+              {/* Esimerkki EI ole FR8:n oikea tunnus (PT-2026-02): se on portti
+                  FR8:n sopimus-PDF:ään, joten esimerkin kopioiminen olisi
+                  näyttänyt uudelle asiakkaalle FR8:n allekirjoitetun sopimuksen. */}
+              <Input value={contractId} onChange={(e) => setContractId(e.target.value)} placeholder="Esim. PT-2026-04" />
               <Hint>Oma viitteemme. Näkyy sopimusdokumentissa ja laskulla.</Hint>
             </div>
             <div>

@@ -205,6 +205,20 @@ export interface GigData {
   updatedAt: number;          // epoch ms
 }
 
+/**
+ * FR8:n SOPIMUSTUNNUS — ainoa tunnus jolla on toiminnallinen merkitys.
+ *
+ * `GigContractSign` näyttää repoon committatun `contracts/PT-2026-02.pdf`:n
+ * silloin ja vain silloin kun keikan tunnus on tämä. Tunnus on siis portti
+ * yhteen asiakirjaan, ei pelkkä otsikkoteksti: jos se kirjoitetaan toisen
+ * keikan lomakkeelle, se asiakas näkee FR8:n allekirjoitetun sopimuksen.
+ *
+ * Siksi tunnus on TÄÄLLÄ eikä komponentin sisällä: myös adminin lomake tarvitsee
+ * sen voidakseen varoittaa törmäyksestä, ja kaksi kopiota merkkijonosta
+ * tarkoittaisi että toinen niistä jää joskus päivittämättä.
+ */
+export const FR8_CONTRACT_ID = "PT-2026-02";
+
 /** Derive the gig's lifecycle status from its signature + approval. */
 export function gigStatus(gig: Pick<GigData, "signature" | "approval">): GigStatus {
   if (gig.approval?.approvedAt) return "approved";

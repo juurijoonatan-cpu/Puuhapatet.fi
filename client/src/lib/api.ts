@@ -437,6 +437,13 @@ export interface GigPublicView {
   signPrompt: boolean;
   /** Sopimus on valmistelussa ("allekirjoitetaan myöhemmin") — se on tulossa. */
   contractPending: boolean;
+  /**
+   * Keikan oma sopimus PDF:nä. Null = ei tiedostoa (sopimus voi silti olla
+   * tekstinä `contractText`issä). Tiedosto itse haetaan
+   * `api.contractFileUrlForGig(token)`ista — tässä on vain nimi ja koko, jotta
+   * näkymä voi kertoa mitä se on ennen kuin sitä ladataan.
+   */
+  contractFile: { name: string; bytes: number; uploadedAt: number } | null;
   /** Tuntiarvio per ikkuna. Null = arviota ei ole → mittaria ei piirretä. */
   estHoursPerWindow: number | null;
   status: "draft" | "signed" | "approved";
@@ -1227,6 +1234,49 @@ export const api = {
   // ─── Custom gigs (cap-pricing) ──────────────────────────────────────────────
   getGig: (token: string) =>
     request<GigPublicView>("GET", `/api/gig/${token}`),
+
+  /**
+   * Asiakkaan sopimus-PDF:n osoite. Token on itsessään autentikointi, joten
+   * osoitteen voi antaa suoraan `<object data>`iin ja latauslinkkiin.
+   *
+   * `dl=1` = lataus tiedostona. ERILLINEN OSOITE EIKÄ `<a download>`, koska
+   * asiakkaan sivu ja API ovat eri originissa (Pages ↔ Render) ja selain
+   * jättää `download`-attribuutin huomiotta originin yli — tiedostonimi voi
+   * tulla vain palvelimen `Content-Disposition`-otsikosta.
+   */
+  contractFileUrlForGig: (token: string, opts?: { download?: boolean }) =>
+    `${API_BASE}/api/gig/${token}/contract-file${opts?.download ? "?dl=1" : ""}`,
+
+  /**
+   * Sama tiedosto ADMINILLE — blobina, ei osoitteena.
+   *
+   * Adminin reitti tunnistautuu `Authorization: Bearer` -otsakkeella, ja
+   * `<a href>` ei voi lähettää otsaketta: suora linkki avaisi uuden välilehden
+   * jossa on `{"error":"Kirjautuminen vaaditaan"}`. Sama rakenteellinen vika
+   * kuin pohjakuvilla `<img>`-elementissä (ks. `lib/authed-image.ts`), sama
+   * kierto: hae otsakkeen kanssa ja avaa object-URLina.
+   *
+   * Asiakkaan puoli ei tarvitse tätä — siellä token on polussa, joten osoite
+   * toimii sellaisenaan upotuksessa ja latauslinkissä.
+   */
+  fetchGigContractFile: async (jobId: number): Promise<{ ok: boolean; blob?: Blob; error?: string }> => {
+    try {
+      const res = await fetch(`${API_BASE}/api/jobs/${jobId}/contract-file`, { headers: withAuth() });
+      if (res.status === 401) { handleUnauthorized(); return { ok: false, error: "Kirjautuminen vaaditaan" }; }
+      if (!res.ok) return { ok: false, error: res.status === 404 ? "Sopimustiedostoa ei löydy" : `HTTP ${res.status}` };
+      return { ok: true, blob: await res.blob() };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "Network error" };
+    }
+  },
+
+  /** Admin: liitä keikan sopimus PDF:nä. `dataUrl` = "data:application/pdf;base64,…". */
+  uploadGigContractFile: (jobId: number, dataUrl: string, name: string) =>
+    request<{ ok: boolean; gigData: GigData }>("POST", `/api/jobs/${jobId}/contract-file`, { dataUrl, name }),
+
+  /** Admin: poista keikan sopimustiedosto. Sopimusteksti jää ennalleen. */
+  deleteGigContractFile: (jobId: number) =>
+    request<{ ok: boolean; gigData: GigData }>("DELETE", `/api/jobs/${jobId}/contract-file`),
 
   /**
    * Asiakkaan laajuusvastaus yhteen keltaiseen ikkunaan. `null` peruu vastauksen.

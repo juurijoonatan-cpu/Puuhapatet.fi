@@ -38,7 +38,9 @@ import { fail } from "./errors";
 import {
   putAsset, getAsset, resolveAsset, assetStats, migrateJobAssets,
   getPlanImage, deletePlanImage, MAX_PLAN_IMAGE_LEN,
+  getContractFile, deleteContractFile, MAX_CONTRACT_FILE_LEN, CONTRACT_REF_KEY,
 } from "./assets";
+import { contentDispositionFor } from "./http-headers";
 import { buildTasaus, type TasausEraInvoice, type TasausPayment } from "@shared/fr8-tasaus";
 import { p2InvoiceState, computeWorkerSettlements, eraSettlementByWorker, sumWorkerSettlements, type EraInvoiceLike } from "@shared/worker-payouts";
 import {
@@ -647,6 +649,10 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   // avain) — ilman tätä riviä asiakkaan kartta olisi rikkinäinen kuva ja portti
   // heittäisi hänet meidän kirjautumisruudullemme, kuten observation-imagelle kävi.
   { method: "GET",  re: /^\/api\/gig\/[^/]+\/plan\/[^/]*$/ },
+  // Sopimus-PDF asiakkaan omalla seurantatokenilla. Sama syy kuin pohjakuvalla:
+  // ilman tätä riviä portti vastaisi 401, ja selain tulkitsee 401:n "sessio
+  // vanhentui" -tilanteeksi ja heittää ASIAKKAAN meidän kirjautumissivullemme.
+  { method: "GET",  re: /^\/api\/gig\/[^/]+\/contract-file$/ },
   { method: "POST", re: /^\/api\/gig\/[^/]+\/sign$/ },
   // P2 (keltaiset ikkunat): asiakkaan hintaneuvottelu seurantalinkistä. Token
   // on avain; jokainen reitti validoi lisäksi vaiheen + allekirjoitusportin.
@@ -1660,6 +1666,149 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       return await sendPlanImage(req, res, row.id, planFloorParam(req.params.floor));
     } catch (e) {
       return fail(res, e, "GET /api/gig/:token/plan/:floor");
+    }
+  });
+
+  /**
+   * KEIKAN SOPIMUS PDF:NÄ.
+   *
+   * Ennen tätä sopimusasiakirjan sai asiakkaan näkyviin kahdella tavalla:
+   * liittämällä sen PLAIN TEXTinä (`contractText`), jolloin taulukot,
+   * allekirjoituskohdat ja liitteet katoavat, tai committaamalla PDF:n
+   * `client/public/contracts/`iin ja julkaisemalla frontendin uudelleen. Se
+   * jälkimmäinen tarkoitti koodimuutosta per asiakas, ja sitä polkua ei ollut
+   * kuin FR8:lla — muut keikat eivät voineet saada sopimustaan mihinkään.
+   *
+   * TIEDOSTO MENEE `job_assets`-TAULUUN, ei gigData-blobiin. Blobiin jää vain
+   * `contractFile` = rivin id + nimi ja koko. Sama sääntö kuin pohjakuvilla:
+   * gigData luetaan joka kerta kun asiakas avaa seurannan, sopimus luetaan
+   * kerran.
+   *
+   * MIKSI KANTAAN EIKÄ STAATTISEKSI TIEDOSTOKSI: `client/public/` on julkinen
+   * verkkosivu ja tämä repo on julkinen. Sopimus on asiakkaan tieto, joten se
+   * kuuluu tokenin taakse — ei osoitteeseen jonka voi arvata eikä versiohallinnan
+   * historiaan josta sitä ei saa enää pois.
+   */
+  const CONTRACT_DL_NAME = (gig: GigData | null, jobId: number) =>
+    (gig?.contractFile?.name || `Puuhapatet-sopimus-${gig?.contractId ?? jobId}.pdf`)
+      // Lainausmerkit ja rivinvaihdot pois: nimi menee Content-Disposition
+      // -otsikkoon, ja otsikon rikkominen olisi lataus joka epäonnistuu
+      // selittämättä.
+      .replace(/["\r\n]/g, "").slice(0, 200);
+
+  /**
+   * Yhteinen PDF-vastaus. `?dl=1` = lataus tiedostona, muuten upotettavaksi.
+   *
+   * MIKSI KAKSI MUOTOA SAMASTA REITISTÄ: asiakkaan sivu on eri originissa kuin
+   * API (Pages ↔ Render), ja `<a download>` EI toimi originin yli — selain
+   * jättää attribuutin huomiotta ja navigoi tiedostoon. Ainoa tapa saada
+   * lataukselle oikea nimi on `Content-Disposition`, eli palvelimen kertoma nimi.
+   */
+  async function sendContractFile(req: any, res: any, jobId: number, gig: GigData | null) {
+    const doc = await getContractFile(jobId);
+    if (!doc) return res.status(404).json({ error: "Sopimustiedostoa ei löydy" });
+    const name = CONTRACT_DL_NAME(gig, jobId);
+    res.setHeader("ETag", doc.etag);
+    // Sopimus on muuttumaton kunnes se korvataan (jolloin ETag muuttuu).
+    res.setHeader("Cache-Control", "private, max-age=300, must-revalidate");
+    res.setHeader("Content-Type", doc.mime || "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      contentDispositionFor(req.query?.dl ? "attachment" : "inline", name),
+    );
+    if (req.headers["if-none-match"] === doc.etag) return res.status(304).end();
+    return res.end(doc.body);
+  }
+
+  /** Admin: liitä keikan sopimus PDF:nä (data URL JSONissa, ei multipartia). */
+  app.post("/api/jobs/:id/contract-file", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const dataUrl = String(req.body?.dataUrl ?? "");
+      if (!dataUrl.startsWith("data:application/pdf")) {
+        return res.status(400).json({ error: "Liitä sopimus PDF-tiedostona" });
+      }
+      if (dataUrl.length > MAX_CONTRACT_FILE_LEN) {
+        return res.status(413).json({ error: "Tiedosto on liian suuri (yli ~5 MB)" });
+      }
+      const job = await loadJobRow(id);
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const gig = parseGig(job.gigData);
+      if (!gig) return res.status(400).json({ error: "Keikalla ei ole seurantadataa" });
+      /**
+       * ALLEKIRJOITETTUA SOPIMUSTA EI VAIHDETA. Asiakas on allekirjoittanut
+       * juuri sen asiakirjan joka silloin oli näkyvissä; toisen tiedoston
+       * pudottaminen sen tilalle tarkoittaisi allekirjoitusta asiakirjaan jota
+       * kukaan ei ole hyväksynyt.
+       */
+      if (gig.signature?.signedAt) {
+        return res.status(409).json({ error: "Sopimus on allekirjoitettu — asiakirjaa ei voi enää vaihtaa" });
+      }
+      const assetId = await putAsset(id, "contract_doc", CONTRACT_REF_KEY, dataUrl);
+      const rawName = String(req.body?.name ?? "").trim();
+      gig.contractFile = {
+        assetId,
+        name: (rawName || `Puuhapatet-sopimus-${gig.contractId ?? id}.pdf`).slice(0, 200),
+        mime: "application/pdf",
+        // Data URL on base64, eli noin 4/3 tiedoston koosta. Näytetään asiakkaalle
+        // ja adminille tiedoston oma koko, ei talletetun merkkijonon pituus.
+        bytes: Math.round((dataUrl.length - dataUrl.indexOf(",") - 1) * 0.75),
+        uploadedAt: Date.now(),
+      };
+      const saved = await saveGig(id, gig);
+      res.json({ ok: true, gigData: saved });
+    } catch (e) {
+      return fail(res, e, "POST /api/jobs/:id/contract-file");
+    }
+  });
+
+  /** Admin: poista keikan sopimustiedosto (sopimusteksti jää ennalleen). */
+  app.delete("/api/jobs/:id/contract-file", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const job = await loadJobRow(id);
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const gig = parseGig(job.gigData);
+      if (!gig) return res.status(400).json({ error: "Keikalla ei ole seurantadataa" });
+      if (gig.signature?.signedAt) {
+        return res.status(409).json({ error: "Sopimus on allekirjoitettu — asiakirjaa ei voi enää poistaa" });
+      }
+      await deleteContractFile(id);
+      delete gig.contractFile;
+      const saved = await saveGig(id, gig);
+      res.json({ ok: true, gigData: saved });
+    } catch (e) {
+      return fail(res, e, "DELETE /api/jobs/:id/contract-file");
+    }
+  });
+
+  /** Admin: sopimus PDF:nä (esikatselu adminin näkymässä). */
+  app.get("/api/jobs/:id/contract-file", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const job = await loadJobRow(id);
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      return await sendContractFile(req, res, id, parseGig(job.gigData));
+    } catch (e) {
+      return fail(res, e, "GET /api/jobs/:id/contract-file");
+    }
+  });
+
+  /**
+   * Asiakas: OMA sopimuksensa seurantalinkin tokenilla.
+   *
+   * Token on avain, ja se rajaa asiakirjan yhteen keikkaan — tästä reitistä ei
+   * ole polkua toisen keikan tiedostoon. Juuri se raja puuttui siitä
+   * staattisesta PDF:stä jonka jokainen keikka näytti.
+   */
+  app.get("/api/gig/:token/contract-file", async (req, res) => {
+    try {
+      const [row] = await db.select({ id: jobs.id, isCustomGig: jobs.isCustomGig, gigData: jobs.gigData })
+        .from(jobs).where(eq(jobs.quoteToken, String(req.params.token)));
+      if (!row || !row.isCustomGig) return res.status(404).json({ error: "Seurantaa ei löydy" });
+      return await sendContractFile(req, res, row.id, parseGig(row.gigData));
+    } catch (e) {
+      return fail(res, e, "GET /api/gig/:token/contract-file");
     }
   });
 
@@ -5635,6 +5784,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
          */
         contractPending: contractPending(gig),
         /**
+         * SOPIMUS TIEDOSTONA. Vain nimi, koko ja aika — `assetId` EI kuulu
+         * asiakkaalle: tiedosto haetaan `/api/gig/:token/contract-file`sta,
+         * jossa token rajaa sen tähän keikkaan. Id olisi vihje polusta jota ei
+         * ole olemassa.
+         */
+        contractFile: gig.contractFile
+          ? { name: gig.contractFile.name, bytes: gig.contractFile.bytes, uploadedAt: gig.contractFile.uploadedAt }
+          : null,
+        /**
          * TUNTIARVIO per ikkuna — ei kokonaistunteja.
          *
          * Kokonaistunnit laskettaisiin täällä `computeProjectTotals`in
@@ -5889,6 +6047,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const job = await loadJobRow(id);
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const gig = sanitizeGigData(req.body?.gigData ?? req.body);
+      /**
+       * SOPIMUSTIEDOSTO ON SERVERIN OMISTAMA — sama sääntö kuin projektin
+       * `p2`/`scope`/`planImages`-kentillä, ja tämä on sen ainoa geneerinen
+       * kirjoituspolku.
+       *
+       * Ilman tätä sopimuksen liittäminen olisi kestänyt siihen asti kun admin
+       * seuraavan kerran painaa "Tallenna sopimus": lomake lähettää oman
+       * kopionsa koko blobista, ja siinä kopiossa ei ole `contractFile`ä, joten
+       * viite katoaisi — tiedosto jäisi kantaan mutta asiakkaan sivulta
+       * hävisi sopimus ja "sopimus valmistelussa" -huomautus palaisi.
+       *
+       * Viite syntyy ja katoaa vain `/contract-file`-reiteillä.
+       */
+      const storedGig = parseGig(job.gigData);
+      if (storedGig?.contractFile) gig.contractFile = storedGig.contractFile;
+      else delete gig.contractFile;
       const totals = computeTotals(gig);
       // Keep agreedPrice in sync with the cap so dashboards/exports stay correct.
       await db.update(jobs)
@@ -7654,6 +7828,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     while (used.has(t) && guard++ < 50) t = newCrewToken();
     used.add(t);
     return t;
+  }
+
+  /**
+   * Kirjoita keikan gigData ja pidä `agreedPrice` samassa tahdissa.
+   *
+   * MIKSI OMA FUNKTIO: sopimustiedoston liittäminen ja poisto ovat gigDatan
+   * mutaatioita, ja ilman tätä molemmat toistaisivat saman kolmen kentän
+   * update-lauseen. `agreedPrice` on se kenttä joka valuu tilastoihin ja
+   * verotulosteeseen, joten se ei saa jäädä jälkeen yhdessäkään kirjoituspolussa.
+   */
+  async function saveGig(jobId: number, gig: GigData): Promise<GigData> {
+    const clean = sanitizeGigData(gig);
+    await db.update(jobs)
+      .set({ gigData: JSON.stringify(clean), agreedPrice: computeTotals(clean).capCents, updatedAt: new Date() })
+      .where(eq(jobs.id, jobId));
+    return clean;
   }
 
   async function saveProject(

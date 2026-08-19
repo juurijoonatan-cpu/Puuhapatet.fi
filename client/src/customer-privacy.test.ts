@@ -77,21 +77,51 @@ describe("asiakasnäkymien tietoraja", () => {
 
   it("staattinen sopimus-PDF on keikkakohtaisen portin takana", () => {
     const src = read("client/src/components/GigContractSign.tsx");
-    // Ainoa polku dokumenttiin kulkee `pdfUrl`in kautta, ja se on portti.
+    // Vakio luetaan VAIN portin läpi, joka vertaa keikan omaa sopimustunnusta.
     expect(
       src,
-      "PDF:n osoite pitää johtaa keikan sopimustunnuksesta, ei moduulivakiosta.",
-    ).toMatch(/const pdfUrl = view\.contractId === FR8_CONTRACT_ID/);
-    // Upotus ja lataus lukevat `pdfUrl`ia, eivät vakiota suoraan.
-    expect(src).toContain("data={`${pdfUrl}#view=FitH`}");
-    expect(src).toContain("href={pdfUrl}");
+      "Staattisen PDF:n osoite pitää johtaa keikan sopimustunnuksesta, ei moduulivakiosta.",
+    ).toMatch(/const fr8PdfUrl = view\.contractId === FR8_CONTRACT_ID/);
     // Portin ulkopuolella vakiota ei käytetä: määrittely + portti = 2 osumaa.
     expect((src.match(/FR8_CONTRACT_PDF_URL/g) ?? []).length).toBe(2);
+    // Upotus ja lataus lukevat johdettua osoitetta, eivät vakiota suoraan.
+    expect(src).toContain("data={`${pdfUrl}#view=FitH`}");
+  });
+
+  /**
+   * LIITETTY SOPIMUS HAETAAN TOKENILLA — sillä samalla jolla asiakas on sivulla.
+   *
+   * Tämä on sama sääntö kuin staattisella PDF:llä, mutta uudelle polulle
+   * (`GigData.contractFile`): asiakirjan osoite ei saa johtua mistään muusta
+   * kuin tämän asiakkaan omasta tokenista. Adminin polku kulkee keikan
+   * numeerisella id:llä ja admin-sessiolla — jos se ilmestyy asiakkaan
+   * näkymään, osoite on arvattavissa eikä enää sidottu tähän keikkaan.
+   */
+  it("liitetty sopimus haetaan asiakkaan omalla tokenilla", () => {
+    const src = read("client/src/components/GigContractSign.tsx");
+    expect(src).toMatch(/api\.contractFileUrlForGig\(token\)/);
+    // Adminin id-pohjaiset haut nimeltä. Molemmat nimet ovat listalla, jotta
+    // vanhan nimen palauttaminen ei livahda ohi vartijasta.
+    const ADMIN_BY_ID = ["fetchGigContractFile", "contractFileUrlForJob"];
+    for (const f of SHARED_CUSTOMER_VIEWS) {
+      const src2 = stripComments(read(f));
+      for (const helper of ADMIN_BY_ID) {
+        expect(
+          src2,
+          `${f}: asiakasnäkymä ei saa hakea sopimusta adminin id-reitiltä (${helper}).`,
+        ).not.toContain(helper);
+      }
+    }
   });
 
   it("tunnistaa paluun vuotoon (vartija toimii)", () => {
     const regressed = `const CONTRACT_PDF_URL = "/contracts/PT-2026-02.pdf";\n<object data={\`\${CONTRACT_PDF_URL}#view=FitH\`} />`;
-    expect(/const pdfUrl = view\.contractId === FR8_CONTRACT_ID/.test(regressed)).toBe(false);
+    expect(/const fr8PdfUrl = view\.contractId === FR8_CONTRACT_ID/.test(regressed)).toBe(false);
+    // Ja sama toiselle polulle: keikan id:llä haettu sopimus ei ole tokenilla
+    // haettu sopimus, vaikka se näyttäisi samalta koodissa.
+    expect(/api\.contractFileUrlForGig\(token\)/.test(
+      `const url = api.contractFileUrlForJob(view.jobId);`,
+    )).toBe(false);
   });
 });
 

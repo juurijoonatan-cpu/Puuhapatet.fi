@@ -82,6 +82,35 @@ sopimustekstiä. Yhteisökeikalla hintakentät ovat piilossa, ja ALV-huomautus
 vaihtuu itse muotoon "Vastikkeeton yhteisötyö — ei laskutusta eikä
 arvonlisäveroa."
 
+## Sopimuksen liittäminen (PDF)
+
+Keikan **Sopimus & asiakasnäkymä** -kortissa on **Sopimus tiedostona (PDF)** →
+*Valitse PDF-tiedosto*. Tiedosto tallentuu heti valittaessa, enintään noin 5 MB.
+
+Mitä sen jälkeen tapahtuu:
+
+- Asiakas näkee sopimuksen **omassa näkymässään selattavana upotuksena**, lataa
+  sen omalla nimellään ja **allekirjoittaa sen samasta paikasta**.
+- **"Sopimus valmistelussa" -huomautukset katoavat** — sekä otsikkorivin
+  tilamerkki, huomautusnauha että "Tiedotteet ja ohjeet" -kappale. Liitetty
+  tiedosto on sopimus siinä missä sopimusteksti: se lopettaa lupauksen
+  "toimitetaan lähipäivinä", koska se on nyt toimitettu.
+- Adminin varoitus "allekirjoitettavaa ei ole" sammuu samasta syystä.
+- Allekirjoituksen jälkeen tiedostoa **ei voi enää vaihtaa eikä poistaa**:
+  asiakas on allekirjoittanut juuri sen asiakirjan. Asiakas saa sen itselleen
+  jälkikäteen napista **Lataa sopimus (PDF)**.
+
+**Valitse allekirjoitustavaksi** "Seuranta auki, sopimus popuppina", jos työ on
+jo käynnissä — sopimus nousee seurannan päälle eikä sulje sitä. "Ensin sopimus"
+sopii kun linkki lähtee ennen työn alkua.
+
+**Sopimusteksti-kenttä** jää vaihtoehdoksi ja tiedoston rinnalle: PDF säilyttää
+sen mitä tekstikenttä ei — taulukot, liitteet ja allekirjoitussivun.
+
+**Tiedosto ei ole repossa vaan kannassa** (`job_assets`), asiakkaan oman tokenin
+takana. `client/public/`iin ei viedä sopimuksia: se on julkinen verkkosivu ja
+repo on julkinen, joten sinne vietyä sopimusta ei saa enää pois.
+
 ## Pisteiden lisääminen
 
 Projektinäkymä → **Kartta** → `+` → "Punainen piste" → klikkaa pohjakuvaa.
@@ -121,6 +150,9 @@ piirissä sellaisenaan.
 - **"Sopimus valmistelussa"** — tilamerkki otsikkorivillä ja huomautusnauha,
   kun keikka aloitettiin valinnalla "allekirjoitetaan myöhemmin". Kun sopimus
   valmistuu, se nousee samaan näkymään popuppina allekirjoitettavaksi.
+- **Sopimus PDF:nä** — kun tiedosto on liitetty (ks. yllä), asiakas selaa sen
+  näkymässä, avaa sen koko näytölle ja allekirjoittaa sen samasta paikasta.
+  Kaikki "sopimus valmistelussa" -huomautukset katoavat samalla.
 - **Laajuuskysely**: keltaista ikkunaa napauttamalla Akseli vastaa
   **Pestään** / **Ei tarvitse**. Hyväksytty ikkuna tulee mukaan työn
   laajuuteen, prosenttiin ja työmääräarvioon. Vastauksen voi vaihtaa milloin
@@ -150,5 +182,7 @@ eikä ohjaisi työtä.
 - [ ] Tervehdys lukee "Hyvää … , Akseli" (yhteyshenkilö on täytetty)
 - [ ] Työmäärämittari näkyy ja kertoo oikean kokonaisarvion (ikkunat × mitoitus)
 - [ ] Jos sopimus on vielä tekemättä: näkymässä lukee **Sopimus valmistelussa**
+- [ ] Kun sopimus on liitetty PDF:nä: se näkyy asiakkaan näkymässä selattavana,
+      "Sopimus valmistelussa" on **kadonnut**, ja allekirjoitus onnistuu
 - [ ] Keltaista napauttamalla avautuu **Pestäänkö tämä ikkuna?** ja vastaus tallentuu
 - [ ] Hyväksytty keltainen näkyy tekijän kartalla vihreällä ✓:llä

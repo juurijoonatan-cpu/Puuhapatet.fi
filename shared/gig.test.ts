@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyGigData, sanitizeGigData, signatureRequired, signaturePrompt, contractPending, type GigData } from "./gig";
+import { emptyGigData, sanitizeGigData, signatureRequired, signaturePrompt, contractPending, hasContractDoc, sanitizeContractFile, type GigData } from "./gig";
 
 /**
  * SOPIMUKSEN AJOITUS.
@@ -125,5 +125,68 @@ describe("contractPending", () => {
   it("säilyy tallennuksen läpi (sanitizeGigData ei pudota lippua)", () => {
     const saved = sanitizeGigData({ ...emptyGigData(), contractLater: true });
     expect(contractPending(saved)).toBe(true);
+  });
+});
+
+/**
+ * SOPIMUS TIEDOSTONA (`contractFile`).
+ *
+ * Sopimus on käytännössä aina PDF. Ennen tätä kenttää järjestelmä tunsi vain
+ * `contractText`in, ja jokainen sopimustilaa laskeva funktio kysyi sitä
+ * erikseen. Nämä testit pitävät kiinni siitä että liitetty tiedosto on
+ * asiakirja SAMALLA tavalla kuin teksti — ei puolittain:
+ *
+ *   - sen voi allekirjoittaa (`signaturePrompt` ≠ "none"),
+ *   - se sammuttaa "sopimus valmistelussa" -lupauksen (`contractPending`),
+ *   - se säilyy tallennuksen läpi (`sanitizeGigData`).
+ *
+ * Jos yksi näistä jää jälkeen, syntyy keikka jolla on sopimus mutta jota ei voi
+ * allekirjoittaa — tai jonka asiakas näkee sopimuksensa ja sen vieressä
+ * lupauksen että sopimus toimitetaan myöhemmin.
+ */
+describe("sopimus tiedostona", () => {
+  const file = { assetId: 12, name: "STUHI_Ikkunanpesu_PT202604.pdf", mime: "application/pdf", bytes: 546_076, uploadedAt: 1 };
+  const withFile = (over: Partial<GigData> = {}): GigData => ({ ...emptyGigData(), contractFile: file, ...over });
+
+  it("tiedosto on asiakirja, ihan kuten teksti", () => {
+    expect(hasContractDoc(withFile())).toBe(true);
+    expect(hasContractDoc(gig({ contractText: "Ehdot…" }))).toBe(true);
+    expect(hasContractDoc(gig({}))).toBe(false);
+    // Tyhjä teksti EI ole asiakirja, mutta tiedosto tyhjän tekstin rinnalla on.
+    expect(hasContractDoc(gig({ contractText: "   " }))).toBe(false);
+    expect(hasContractDoc(withFile({ contractText: "   " }))).toBe(true);
+  });
+
+  it("pelkkä tiedosto riittää allekirjoitettavaksi", () => {
+    // Ei sopimustekstiä lainkaan: ennen tätä portti oli pois ja popup ei
+    // noussut, eli asiakas ei nähnyt sopimustaan missään.
+    expect(signatureRequired(withFile())).toBe(true);
+    expect(signaturePrompt(withFile())).toBe("gate");
+    // "Sopimus tehdään myöhemmin" -keikalla sama tiedosto nousee popuppina eikä
+    // heitä seurantaa katsovaa asiakasta lomakkeelle.
+    expect(signaturePrompt(withFile({ contractLater: true }))).toBe("popup");
+  });
+
+  it("liitetty tiedosto sammuttaa 'sopimus valmistelussa' -lupauksen", () => {
+    expect(contractPending(gig({ contractLater: true }))).toBe(true);
+    expect(contractPending(withFile({ contractLater: true }))).toBe(false);
+  });
+
+  it("säilyy tallennuksen läpi", () => {
+    const saved = sanitizeGigData(withFile({ contractLater: true }));
+    expect(saved.contractFile).toEqual(file);
+    expect(contractPending(saved)).toBe(false);
+  });
+
+  it("kelvoton viite pudotetaan kokonaan — luvattu sopimus jota ei ole on pahempi kuin ei sopimusta", () => {
+    expect(sanitizeContractFile(undefined)).toBeUndefined();
+    expect(sanitizeContractFile({ name: "sopimus.pdf" })).toBeUndefined();      // ei assetId:tä
+    expect(sanitizeContractFile({ assetId: 0, name: "x.pdf" })).toBeUndefined();
+    expect(sanitizeContractFile({ assetId: -3 })).toBeUndefined();
+    expect(sanitizeContractFile({ assetId: 1.5 })).toBeUndefined();
+    // Nimetön mutta kelvollinen viite saa oletusnimen — tiedosto on oikeasti olemassa.
+    expect(sanitizeContractFile({ assetId: 7 })?.name).toBe("sopimus.pdf");
+    // Ja liian pitkä nimi katkaistaan sen sijaan että rivi hylättäisiin.
+    expect(sanitizeContractFile({ assetId: 7, name: "a".repeat(400) })?.name.length).toBe(200);
   });
 });

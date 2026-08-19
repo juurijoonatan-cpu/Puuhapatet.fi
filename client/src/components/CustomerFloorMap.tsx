@@ -137,6 +137,23 @@ function legendFor(fixedDeal: boolean): { label: string; color: string }[] {
   ];
 }
 
+/**
+ * Laajuuskyselyn selite (yhteisökeikka). Keltainen ei ole tässä "ei sovittu"
+ * vaan kysymys jota odotetaan asiakkaalta, joten selite sanoo sen suoraan.
+ */
+const LEGEND_SCOPE: { label: string; color: string }[] = [
+  { label: "Pesemättä", color: "#F4A6C0" },
+  { label: "Kesken", color: "#7C5CD6" },
+  { label: "Pesty", color: "#E03B3B" },
+  { label: "Odottaa vastaustasi", color: "#D9C97E" },
+  // YKSI VÄRI, YKSI MERKITYS: vihreä = tämä ikkuna kuuluu työhön. Väkänen
+  // kertoo että se on jo pesty. Jos pesty keltainen olisi oma värinsä, se
+  // olisi joko sama vahva keltainen kuin vastaamaton (sekoittuu) tai neljäs
+  // sävy samalle asialle.
+  { label: "Pestään (✓ = pesty)", color: "#3E7C59" },
+  { label: "Ei pestä", color: "#EDEBE4" },
+];
+
 // Phase-2 legend describes the NUMBERED badge colours (map shows numbers, not
 // prices — the euros live in the list below).
 const LEGEND_P2: { label: string; color: string }[] = [
@@ -161,6 +178,21 @@ function p2BadgeStyle(state: P2BadgeState): { bg: string; fg: string; border: st
   }
 }
 
+/**
+ * LAAJUUSKYSELY — yhteisökeikan vastine keltaisten hyväksynnälle.
+ *
+ * Kysymys on "pestäänkö tämä", ei "kelpaako tämä hinta": vastikkeettomalla
+ * keikalla ei ole hintaa hyväksyttäväksi. Siksi tämä ei ole `P2CustomerActions`in
+ * variantti vaan oma, paljon pienempi rajapinta — yksi vastaus per ikkuna,
+ * jonka voi vaihtaa.
+ */
+export interface ScopeCustomerState {
+  /** Ikkuna-avain → asiakkaan vastaus. Puuttuva = ei vastausta. */
+  votes: Record<string, "yes" | "no">;
+  /** Tallenna vastaus. `null` peruu sen. Palauttaa virheen tai null. */
+  vote: (key: string, answer: "yes" | "no" | null) => Promise<string | null>;
+}
+
 /** Actions the customer can take on P2 offers — wired to the API by the parent.
  *  Each returns an error message to show inline, or null on success. */
 export interface P2CustomerActions {
@@ -177,7 +209,7 @@ export interface P2CustomerActions {
   requireTerms: () => void;
 }
 
-export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservationImage, planUrlBase, theme = CT, fixedDeal = false }: {
+export default function CustomerFloorMap({ map, p2, p2Actions, scope, onLoadObservationImage, planUrlBase, theme = CT, fixedDeal = false }: {
   map: MapData;
   /**
    * Asiakasnäkymän paletti. Oletus `CT` = entinen vaalea paperi, joten ilman
@@ -196,6 +228,13 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
   /** P2 negotiation state — pills + offer popups render only when enabled. */
   p2?: P2PublicView | null;
   p2Actions?: P2CustomerActions;
+  /**
+   * Laajuuskysely (yhteisökeikka). Puuttuva = keltaiset ovat pelkkiä
+   * pisteitä kuten ennen. Ei koskaan yhtä aikaa `p2`:n kanssa — kaksi
+   * laajuuskanavaa samalla kartalla tarkoittaisi kaksi eri vastausta
+   * kysymykseen "mitä pestään".
+   */
+  scope?: ScopeCustomerState | null;
   /**
    * Hae yhden havainnon kuva pyynnöstä. Seurantasivu pollaa itseään, joten kuvat
    * eivät tule mukana joka kierroksella — vain `hasImage`-lippu. Ilman tätä
@@ -279,13 +318,41 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
   // Kerroksen oma luku lasketaan samalla laajuussäännöllä kuin sivun
   // kokonaisluku (`inCustomerScope`), jotteivät ne voi olla eri mieltä samalla
   // ruudulla: keltaiset ovat mukana vasta kun vaihe 2 on auki.
-  const scoped = points.filter((pt) => inCustomerScope(pt, p2, map.statuses[pt.key] === "pesty"));
+  // Sama laajuussääntö kuin sivun kokonaisluvulla — myös laajuuskyselyn osalta,
+  // jotta kerroksen luku ja sivun luku eivät voi olla eri mieltä samalla ruudulla.
+  const scoped = points.filter((pt) => inCustomerScope(pt, p2, map.statuses[pt.key] === "pesty", scope));
   const washed = scoped.filter((p) => map.statuses[p.key] === "pesty").length;
   const total = scoped.length;
   const pct = total > 0 ? Math.round((washed / total) * 100) : 0;
 
   // ── P2 negotiation state ──────────────────────────────────────────────────
   const p2On = !!(p2?.enabled && p2Actions);
+  /**
+   * LAAJUUSKYSELY. P2 voittaa aina: jos hintaneuvottelu on käynnissä, laajuus
+   * sovitaan hinnan kanssa yhdessä eikä erikseen. Palvelin ei lähetä näitä
+   * yhtä aikaa, mutta ehto on tässä myös, jottei yksi tuleva virhe kahdessa
+   * kohdassa tuota karttaa jossa samasta ikkunasta kysytään kaksi eri asiaa.
+   */
+  const scopeOn = !!scope && !p2On;
+  const [openScope, setOpenScope] = useState<{ key: string; rect: DOMRect } | null>(null);
+  const [scopeBusy, setScopeBusy] = useState<string | null>(null);
+  const [scopeError, setScopeError] = useState<string | null>(null);
+  useEffect(() => { wantObservationImage(openScope?.key); }, [openScope?.key, wantObservationImage]);
+  const closeScope = () => { setOpenScope(null); setScopeError(null); };
+  /**
+   * Yksi vastaus. Sama napautus toiseen kertaan PERUU vastauksen — se on
+   * ainoa tapa palata "en tiedä vielä" -tilaan, ja ilman sitä väärä napautus
+   * olisi lopullinen.
+   */
+  const sendVote = async (key: string, answer: "yes" | "no") => {
+    if (!scope || scopeBusy) return;
+    const next = scope.votes[key] === answer ? null : answer;
+    setScopeBusy(key); setScopeError(null);
+    const err = await scope.vote(key, next);
+    setScopeBusy(null);
+    if (err) { setScopeError(err); return; }
+    setOpenScope(null);
+  };
   const [openOffer, setOpenOffer] = useState<{ key: string; rect: DOMRect } | null>(null);
   // Sekä 💬-kupla että hintakupla näyttävät saman havainnon, joten kuva haetaan
   // aina kun jompikumpi avautuu — ei koskaan etukäteen.
@@ -921,6 +988,61 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
                 );
               }
 
+              /**
+               * ── LAAJUUSKYSELY: keltainen ikkuna on KYSYMYS, ei piste.
+               *
+               * Numeroitu merkki kuten P2:ssa, mutta väri ja glyfi kertovat
+               * asiakkaan oman vastauksen — ei neuvottelun tilaa. Odottava
+               * ikkuna sykkii hiljaa: se on ainoa asia tällä kartalla joka
+               * odottaa asiakkaalta jotain.
+               */
+              if (scopeOn && isYellow) {
+                const vote = scope!.votes[pt.key];
+                const done = status === "pesty";
+                const num = p2Number[pt.key];
+                const style = done
+                  // Pesty keltainen on vihreä väkäsellä — sama väri kuin
+                  // hyväksytyllä, koska merkitys on sama ("kuuluu työhön"), ja
+                  // väkänen erottaa tehdyn tekemättömästä.
+                  ? { bg: "#3E7C59", fg: "#fff", border: "#fff", glyph: "✓" }
+                  : vote === "yes"
+                    ? { bg: "#3E7C59", fg: "#fff", border: "#fff", glyph: String(num ?? "✓") }
+                    : vote === "no"
+                      ? { bg: "#EDEBE4", fg: "#9A988F", border: "#fff", glyph: "–" }
+                      : { bg: "#D9C97E", fg: "#3D3410", border: "#fff", glyph: String(num ?? "?") };
+                return (
+                  <button
+                    key={pt.key}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                      setOpenScope({ key: pt.key, rect: r });
+                      setScopeError(null);
+                    }}
+                    title={done
+                      ? "Pesty"
+                      : vote === "yes" ? "Pestään — napauta muuttaaksesi"
+                      : vote === "no" ? "Ei pestä — napauta muuttaaksesi"
+                      : "Pestäänkö tämä? Napauta ja vastaa"}
+                    style={{
+                      position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`,
+                      transform: "translate(-50%, -50%)",
+                      minWidth: 20, height: 20, padding: "0 4px", borderRadius: 999,
+                      background: style.bg, color: style.fg, border: `2px solid ${style.border}`,
+                      fontFamily: FONT, fontSize: 11, fontWeight: 800, lineHeight: 1,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      cursor: "pointer", fontVariantNumeric: "tabular-nums",
+                      boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
+                      zIndex: vote ? 5 : 7,
+                      opacity: vote === "no" ? 0.75 : 1,
+                      animation: !vote && !done ? "cfmMineHalo 2.4s ease-in-out infinite" : undefined,
+                    }}
+                  >
+                    {style.glyph}
+                  </button>
+                );
+              }
+
               // ── Priority 1 (red) windows — plain status dot; faded right back
               //    during phase-2 so the numbered extra windows carry the map.
               const color = dotColor(pt.p, status);
@@ -935,6 +1057,10 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
                     width: 13, height: 13, borderRadius: "50%", background: color,
                     border: "2px solid #fff",
                     boxShadow: done ? `0 0 0 1px ${color}, 0 1px 3px rgba(0,0,0,0.25)` : "0 1px 2px rgba(0,0,0,0.18)",
+                    // Laajuustilassa punaiset EIVÄT himmene: ne ovat se työ jota
+                    // tehdään, ja keltainen on vain kysymys sen rinnalla. P2:ssa
+                    // himmennys on oikein, koska siellä koko näkymän aihe on
+                    // lisäikkunoiden hinnoittelu.
                     opacity: addMode ? 0.1 : p2On ? 0.3 : status === "ei" ? 0.8 : 1,
                     transition: "opacity .3s",
                   }}
@@ -1212,7 +1338,9 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
           Mitä värit tarkoittavat?
         </summary>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 18px", marginTop: 8, alignItems: "center" }}>
-        {(p2On ? LEGEND_P2 : legendFor(fixedDeal)).map((l) => (
+        {/* Laajuusselite vain kun kartalla on oikeasti keltaisia: muuten selite
+            lupaisi kolme merkkiä joita tällä kerroksella ei ole. */}
+        {(p2On ? LEGEND_P2 : scopeOn && points.some((pt) => pt.p === 2) ? LEGEND_SCOPE : legendFor(fixedDeal)).map((l) => (
           // Selitteen pallo jäljittelee merkkiä sellaisena kuin se kartalla on,
           // valkoinen rengas mukaan lukien — muuten selite kuvaisi jotain muuta
           // kuin mitä ruudulla näkyy. Vain teksti seuraa teemaa.
@@ -1224,6 +1352,89 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
         <span style={{ marginLeft: "auto", fontSize: 11.5, color: T.muted }}>Päivittyy automaattisesti</span>
       </div>
       </details>
+
+      {/* LAAJUUSKUPLA — yhteisökeikan "pestäänkö tämä".
+          Kaksi nappia, ei hintaa, ei versiota. Vastauksen voi vaihtaa
+          napauttamalla uudestaan, ja saman vastauksen napautus peruu sen. */}
+      {scopeOn && openScope && (
+        <>
+          <div onClick={closeScope} style={{ position: "fixed", inset: 0, zIndex: 55 }} />
+          <div style={{ ...popupStyle(openScope.rect, 268, 200), width: 268, background: raisedBg, border: `1px solid ${T.hair}`, borderRadius: 14, boxShadow: popupShadow, padding: 16, fontFamily: FONT }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <span style={{ width: 22, height: 22, borderRadius: "50%", background: T.amber, color: "#1A1A1A", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                {p2Number[openScope.key] ?? "?"}
+              </span>
+              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: T.muted }}>
+                {floorLabel(openScope.key.split("#")[0])} · ikkuna {p2Number[openScope.key] ?? "?"}
+              </span>
+              <button onClick={closeScope} aria-label="Sulje" style={{ marginLeft: "auto", width: 24, height: 24, borderRadius: "50%", border: "none", background: T.paper, color: T.muted, fontSize: 13, cursor: "pointer", lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+            </div>
+
+            {map.statuses[openScope.key] === "pesty" ? (
+              <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: greenText, fontWeight: 600 }}>
+                Tämä ikkuna on pesty.
+              </p>
+            ) : (
+              <>
+                <p style={{ margin: "0 0 4px", fontSize: 14.5, fontWeight: 700, color: T.ink }}>Pestäänkö tämä ikkuna?</p>
+                <p style={{ margin: "0 0 12px", fontSize: 12.5, lineHeight: 1.5, color: T.muted }}>
+                  Vastauksesi ohjaa työtä. Voit muuttaa sen milloin tahansa.
+                </p>
+
+                {/* Tekijän huomio tästä ikkunasta luetaan ENNEN vastausta:
+                    esim. vaikea pääsy on juuri se tieto joka ratkaisee. */}
+                {observations[openScope.key]?.text && (
+                  <p style={{ margin: "0 0 12px", padding: "8px 10px", borderRadius: 9, background: rgba(T.navy, 0.06), border: `1px solid ${T.hair}`, fontSize: 12.5, lineHeight: 1.5, color: T.ink }}>
+                    {observations[openScope.key]!.text}
+                  </p>
+                )}
+
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    disabled={!!scopeBusy}
+                    onClick={() => void sendVote(openScope.key, "yes")}
+                    aria-pressed={scope!.votes[openScope.key] === "yes"}
+                    style={{
+                      flex: 1, padding: "11px 8px", borderRadius: 10, cursor: "pointer",
+                      fontFamily: FONT, fontSize: 13.5, fontWeight: 700,
+                      border: scope!.votes[openScope.key] === "yes" ? `2px solid ${T.green}` : `1px solid ${T.hair}`,
+                      background: scope!.votes[openScope.key] === "yes" ? T.green : T.card,
+                      color: scope!.votes[openScope.key] === "yes" ? onAccent : T.ink,
+                      opacity: scopeBusy ? 0.6 : 1,
+                    }}
+                  >
+                    ✓ Pestään
+                  </button>
+                  <button
+                    disabled={!!scopeBusy}
+                    onClick={() => void sendVote(openScope.key, "no")}
+                    aria-pressed={scope!.votes[openScope.key] === "no"}
+                    style={{
+                      flex: 1, padding: "11px 8px", borderRadius: 10, cursor: "pointer",
+                      fontFamily: FONT, fontSize: 13.5, fontWeight: 600,
+                      border: scope!.votes[openScope.key] === "no" ? `2px solid ${T.muted}` : `1px solid ${T.hair}`,
+                      background: scope!.votes[openScope.key] === "no" ? T.fill : T.card,
+                      color: T.muted,
+                      opacity: scopeBusy ? 0.6 : 1,
+                    }}
+                  >
+                    Ei tarvitse
+                  </button>
+                </div>
+                {scope!.votes[openScope.key] && (
+                  <p style={{ margin: "9px 0 0", fontSize: 11.5, color: T.muted, textAlign: "center" }}>
+                    Vastasit: {scope!.votes[openScope.key] === "yes" ? "pestään" : "ei tarvitse"} — napauta samaa uudelleen peruuttaaksesi.
+                  </p>
+                )}
+              </>
+            )}
+
+            {scopeError && (
+              <p style={{ margin: "10px 0 0", fontSize: 12.5, color: danger, lineHeight: 1.45 }}>{scopeError}</p>
+            )}
+          </div>
+        </>
+      )}
 
       {/* P2 window popup — PLANNING ONLY. Tapping a numbered badge tells you which
           window it is and its current state; the actual price decisions (accept /

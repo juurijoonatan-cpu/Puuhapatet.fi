@@ -1092,6 +1092,11 @@ export default function AdminProjectPage() {
                voi johtaa mihinkään. Ilman `onP2Propose`ia FloorView jättää sen
                piirtämättä. */
             onP2Propose={isCommunityGig(project) ? undefined : onP2Propose}
+            /* Asiakkaan laajuusvastaukset kartalle. Yhteisökeikalla asiakas
+               vastaa keltaisiin "pestään / ei pestä" omasta linkistään, ja se
+               vastaus ohjaa työtä — joten sen on näyttävä siellä missä työ
+               tehdään. */
+            scopeVotes={project.scope ? Object.fromEntries(Object.entries(project.scope.votes).map(([k, v]) => [k, v.answer])) : null}
             /* Kartta tarvitsee vain tiedon avoimista kerroksista — "seuraava ikkuna"
                -ohjaus on poistettu. */
             guided={project.guided?.enabled ? (() => { const g = computeGuided(project); return { enabled: true, activeFloor: g.activeFloor, activeFloors: g.activeFloors, lockedFloors: g.lockedFloors, nextKey: null }; })() : null}

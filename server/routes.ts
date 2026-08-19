@@ -30,7 +30,7 @@ import {
 } from "@shared/pricing";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, signaturePrompt, contractPending, gigStatus, livePayments, withoutDashOnly, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
@@ -651,6 +651,10 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   // P2 (keltaiset ikkunat): asiakkaan hintaneuvottelu seurantalinkistä. Token
   // on avain; jokainen reitti validoi lisäksi vaiheen + allekirjoitusportin.
   { method: "POST", re: /^\/api\/gig\/[^/]+\/p2\/(terms|accept|counter|decline|add-point|remove-point|wish)$/ },
+  // Laajuuskysely (yhteisökeikka): asiakkaan "pestäänkö tämä ikkuna" samasta
+  // tokenista. Ei rahaa, joten ei ehtoja eikä allekirjoitusporttia — reitti
+  // tarkistaa itse että keikka on yhteisökeikka ja piste on keltainen.
+  { method: "POST", re: /^\/api\/gig\/[^/]+\/scope$/ },
   { method: "GET",  re: /^\/api\/crew\/[^/]+$/ },
   // Sama vika tekijän puolella: kuvan haku omalla tokenilla vastasi 401 ja
   // heitti tekijän adminin kirjautumiseen kesken työpäivän.
@@ -1374,6 +1378,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     message: { error: "Liian monta pyyntöä. Hetki ja yritä uudelleen." },
   });
   app.use("/api/gig/:token/p2", p2Limiter);
+  // Sama kohtelu laajuuskyselylle: se on asiakkaan kirjoitusreitti julkisella
+  // tokenilla, aivan kuten keltaisten hintatoiminnot.
+  app.use("/api/gig/:token/scope", p2Limiter);
 
   // Brute-force protection for the login endpoint.
   const loginLimiter = rateLimit({
@@ -5640,6 +5647,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
          * peruste, eivät asiakkaan tietoa.
          */
         estHoursPerWindow: proj ? estHoursPerWindowOf(proj) : null,
+        /**
+         * LAAJUUSKYSELY. Vain yhteisökeikalla ja vain kun keltaiset EIVÄT ole
+         * hintaneuvottelussa: kaksi rinnakkaista laajuuskanavaa samalla keikalla
+         * tarkoittaisi kaksi eri vastausta kysymykseen "mitä pestään".
+         */
+        scope: proj && !proj.p2?.enabled ? publicScope(proj) : null,
         status: gigStatus(gig),
         signed: !!gig.signature?.signedAt,
         signedAt: gig.signature?.signedAt ?? null,
@@ -5686,6 +5699,64 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json({ imageDataUrl: img });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * LAAJUUSVASTAUS — asiakas kertoo pestäänkö yksi keltainen ikkuna.
+   *
+   * Tämä on YHTEISÖKEIKAN vastine keltaisten hyväksynnälle. Vastikkeettomalla
+   * keikalla ei ole hintaa hyväksyttäväksi, joten P2:n hintaneuvottelu on
+   * väärä mekanismi (ja rakenteellisesti mahdoton: `validPrice` vaatii hinnan
+   * yli nollan ja `sanitizeP2State` pudottaa nollahintaisen tarjouksen).
+   * Kysymys on eri: "pestäänkö tämä", ei "kelpaako tämä hinta".
+   *
+   * EI EHTOJA EIKÄ ALLEKIRJOITUSPORTTIA. Vastaus ei sido asiakasta rahaan
+   * — keikka on veloitukseton — joten sen takana ei ole mitään mitä
+   * allekirjoitus suojaisi. Sopimus voi olla vielä valmistelussa, ja juuri
+   * silloin laajuuden kertominen on hyödyllisintä.
+   *
+   * VAIN YHTEISÖKEIKALLA. Maksavalla keikalla laajuus JA hinta sovitaan
+   * yhdessä, ja se mekanismi on P2. Kaksi rinnakkaista laajuuskanavaa samalla
+   * keikalla tarkoittaisi kaksi eri vastausta kysymykseen "mitä pestään".
+   */
+  app.post("/api/gig/:token/scope", async (req, res) => {
+    try {
+      const [row] = await db.select({ job: jobs }).from(jobs).where(eq(jobs.quoteToken, String(req.params.token)));
+      if (!row || !row.job.isCustomGig) return res.status(404).json({ error: "Seurantaa ei löydy" });
+      if (!parseGig(row.job.gigData)) return res.status(404).json({ error: "Seurantaa ei löydy" });
+      const project = parseProject(row.job.projectData ?? null);
+      if (!project) return res.status(400).json({ error: "Keikalla ei ole pohjakarttaa" });
+      if (!isCommunityGig(project)) {
+        return res.status(403).json({ error: "Laajuuskysely ei ole käytössä tällä keikalla" });
+      }
+      if (project.p2?.enabled) {
+        return res.status(409).json({ error: "Keltaiset ovat hintaneuvottelussa — vastaa ehdotuksiin listasta" });
+      }
+
+      const key = String(req.body?.key ?? "").slice(0, 64);
+      if (!key) return res.status(400).json({ error: "key puuttuu" });
+      if (pointPriority(project, key) !== 2) return res.status(404).json({ error: "Ei keltainen ikkuna" });
+      // Pestyä ikkunaa ei voi enää rajata pois: työ on tehty.
+      if (project.statuses[key] === "pesty" && req.body?.answer === "no") {
+        return res.status(409).json({ error: "Ikkuna on jo pesty" });
+      }
+      const answer = req.body?.answer;
+      if (answer !== "yes" && answer !== "no" && answer !== null) {
+        return res.status(400).json({ error: "Virheellinen vastaus" });
+      }
+
+      const votes = { ...(project.scope?.votes ?? {}) };
+      if (answer === null) delete votes[key];
+      else {
+        const by = String(req.body?.by ?? "").trim().slice(0, 80);
+        votes[key] = { answer, at: Date.now(), ...(by ? { by } : {}) };
+      }
+      project.scope = { votes };
+      const saved = await saveProject(row.job, project, { scopeMutation: true });
+      res.json({ ok: true, scope: publicScope(saved) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
     }
   });
 
@@ -7083,6 +7154,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     return { ok: true, job: row.job, project, p2: project.p2 };
   }
 
+  /**
+   * Asiakkaalle palautettava laajuustila: vain vastaukset, ei aikaleimoja eikä
+   * vastaajan nimeä. Näkymä tarvitsee tietää mitä ITSE on vastannut, ei
+   * kirjausta siitä kuka yhteyshenkilöistä painoi nappia.
+   *
+   * Vastaus palautetaan vain elävistä keltaisista pisteistä: poistetun ikkunan
+   * vanha vastaus ei saa jäädä näkymään.
+   */
+  function publicScope(project: ProjectData): { votes: Record<string, "yes" | "no"> } | null {
+    if (!isCommunityGig(project)) return null;
+    const sum = scopeSummary(project);
+    const votes: Record<string, "yes" | "no"> = {};
+    for (const k of sum.yes) votes[k] = "yes";
+    for (const k of sum.no) votes[k] = "no";
+    return { votes };
+  }
+
   /** Asiakkaalle palautettava p2-tila (vain hinnat, ei tekijätietoja). */
   function publicP2(project: ProjectData) {
     const p2 = project.p2!;
@@ -7559,7 +7647,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   async function saveProject(
     job: typeof jobs.$inferSelect,
     project: ProjectData,
-    opts?: { p2Mutation?: boolean; guidedMutation?: boolean; settlementMutation?: boolean; planMutation?: boolean },
+    opts?: { p2Mutation?: boolean; guidedMutation?: boolean; settlementMutation?: boolean; planMutation?: boolean; scopeMutation?: boolean },
   ): Promise<ProjectData> {
     const clean = sanitizeProjectData(project);
     // P2-neuvottelutila, ohjattu eteneminen (guided) ja johtajien tasaus ovat
@@ -7569,7 +7657,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     // samaan aikaan lukitsemaa hintaa, perustajan ohjausasetusta eikä
     // rahankirjausta siitä kuka sai erän ja kuka maksoi tekijän.
     let stored: ProjectData | null = null;
-    if (!opts?.p2Mutation || !opts?.guidedMutation || !opts?.settlementMutation || !opts?.planMutation) {
+    if (!opts?.p2Mutation || !opts?.guidedMutation || !opts?.settlementMutation || !opts?.planMutation || !opts?.scopeMutation) {
       /**
        * VAIN KOLME KENTTÄÄ, EI KOKO BLOBIA.
        *
@@ -7588,13 +7676,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
        * Jos poiminta epäonnistuu (esim. vioittunut JSON), pudotaan takaisin
        * koko blobin lukuun — hitaampi mutta varma.
        */
-      let picked: { p2?: unknown; guided?: unknown; settlement?: unknown; planImages?: unknown } | null = null;
+      let picked: { p2?: unknown; guided?: unknown; settlement?: unknown; planImages?: unknown; scope?: unknown } | null = null;
       try {
         const r: any = await db.execute(sql`
           select project_data::jsonb -> 'p2'                        as p2,
                  project_data::jsonb -> 'guided'                    as guided,
                  project_data::jsonb -> 'settlement'                as settlement,
-                 project_data::jsonb -> 'building' -> 'planImages'  as "planImages"
+                 project_data::jsonb -> 'building' -> 'planImages'  as "planImages",
+                 project_data::jsonb -> 'scope'                     as scope
           from jobs where id = ${job.id} and project_data is not null
         `);
         const row = (r?.rows ?? r)?.[0];
@@ -7606,7 +7695,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const [fresh] = await db.select({ projectData: jobs.projectData }).from(jobs).where(eq(jobs.id, job.id));
         stored = fresh ? parseProject(fresh.projectData ?? null) : null;
         picked = stored
-          ? { p2: stored.p2, guided: stored.guided, settlement: stored.settlement, planImages: stored.building?.planImages }
+          ? { p2: stored.p2, guided: stored.guided, settlement: stored.settlement, planImages: stored.building?.planImages, scope: stored.scope }
           : {};
       }
       if (!opts?.p2Mutation) {
@@ -7625,6 +7714,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const storedPlans = picked.planImages ?? undefined;
         if (storedPlans) clean.building.planImages = storedPlans as ProjectData["building"]["planImages"];
         else delete clean.building.planImages;
+      }
+      if (!opts?.scopeMutation) {
+        // Asiakkaan laajuusvastaukset. Tekijä napauttaa ikkunoita samaan aikaan
+        // kun asiakas vastaa kysymykseen "pestäänkö tämä" — ilman tätä tekijän
+        // merkintä kirjoittaisi vastauksen pois kannasta.
+        const storedScope = picked.scope ?? undefined;
+        if (storedScope) clean.scope = storedScope as ProjectData["scope"]; else delete clean.scope;
       }
     }
     const nextProjectJson = JSON.stringify(clean);
@@ -7883,6 +7979,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
         return { enabled: true, lockedKeys, pendingKeys, payoutByKey };
       })() : null,
+      /**
+       * ASIAKKAAN LAAJUUSVASTAUKSET keltaisiin (yhteisökeikka).
+       *
+       * Tekijän on nähtävä nämä kartalta: asiakkaan "pestään" on juuri se tieto
+       * jonka takia kysely on olemassa. Ilman tätä vastaus jäisi asiakkaan ja
+       * palvelimen väliin, ja tekijä pesisi keltaisia arvaamalla.
+       *
+       * Pelkkä vastaus, ei aikaleimaa eikä vastaajan nimeä — tekijä ei tarvitse
+       * kirjausta siitä kuka yhteyshenkilöistä painoi nappia.
+       */
+      scopeVotes: project.scope
+        ? Object.fromEntries(Object.entries(project.scope.votes).map(([k, v]) => [k, v.answer]))
+        : null,
       // Ohjattu eteneminen (guided): kun perustaja on kytkenyt sen päälle, tekijä
       // näkee vain aktiivisen kerroksen auki, muut lukossa, ja "Seuraavaksi"-kortti
       // ohjaa täsmälleen seuraavaan pestävään ikkunaan. Puhtaasti johdettua tilaa

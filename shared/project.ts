@@ -309,7 +309,41 @@ export interface ProjectData {
    *  tasaus lukee pelkän laskudatan. Mutatoidaan VAIN /settlement-reitin kautta —
    *  geneerinen blob-tallennus säilyttää talletetun kopion, kuten p2/guided. */
   settlement?: FounderSettlementState;
+  /**
+   * LAAJUUSKYSELY — asiakkaan kyllä/ei per keltainen ikkuna, ilman hintoja.
+   *
+   * MIKSI TÄMÄ EI OLE P2. `p2` on hintaneuvottelu: sen tilakone, sanitoija ja
+   * laskutus pyörivät sentteinä, `validPrice` vaatii hinnan olevan yli nollan,
+   * ja `sanitizeP2State` PUDOTTAA tarjouksen jonka hinta on 0. Vastikkeettomalla
+   * keikalla nolla on oikea hinta, joten P2:ta ei voi käyttää — ja sen
+   * taivuttaminen tarkoittaisi rahan tilakoneen muuttamista, jota FR8:n maksava
+   * urakka käyttää samaan aikaan.
+   *
+   * Kysymys on myös eri: P2 kysyy "kelpaako tämä hinta", tämä kysyy "pestäänkö
+   * tämä". Siksi tässä ei ole versioita, lukituksia eikä tapahtumalogia — yksi
+   * vastaus per ikkuna, jonka asiakas voi vaihtaa.
+   *
+   * SERVERIN OMISTAMA kuten `p2`/`guided`/`settlement`: asiakas kirjoittaa tähän
+   * omalta reitiltään, joten tekijän ikkunamerkintä ei saa yliajaa sitä.
+   * Geneerinen blob-tallennus säilyttää talletetun kopion.
+   */
+  scope?: ProjScopeState;
   updatedAt: number;                                // epoch ms
+}
+
+/** Asiakkaan vastaus yhteen keltaiseen ikkunaan. */
+export type ProjScopeAnswer = "yes" | "no";
+
+export interface ProjScopeVote {
+  answer: ProjScopeAnswer;
+  at: number;
+  /** Vastaajan nimi jos tiedossa (keikan yhteyshenkilö). Vapaaehtoinen. */
+  by?: string;
+}
+
+export interface ProjScopeState {
+  /** Ikkuna-avain → vastaus. Puuttuva avain = ei vastausta. */
+  votes: Record<string, ProjScopeVote>;
 }
 
 // ─── Defaults ────────────────────────────────────────────────────────────────
@@ -1352,8 +1386,61 @@ export function sanitizeProjectData(input: any): ProjectData {
     ...(input.p2 !== undefined ? (() => { const p2 = sanitizeP2State(input.p2); return p2 ? { p2 } : {}; })() : {}),
     ...(input.guided !== undefined ? (() => { const g = sanitizeGuidedWork(input.guided); return g ? { guided: g } : {}; })() : {}),
     ...(input.settlement !== undefined ? (() => { const s = sanitizeFounderSettlementState(input.settlement); return s ? { settlement: s } : {}; })() : {}),
+    ...(input.scope !== undefined ? (() => { const sc = sanitizeScopeState(input.scope); return sc ? { scope: sc } : {}; })() : {}),
     updatedAt: Date.now(),
   };
+}
+
+/**
+ * Laajuuskyselyn siivous. Tuntematon vastaus tai kelvoton aikaleima pudottaa
+ * koko äänen: "ei vastausta" on turvallinen tila, arvattu vastaus ei ole.
+ */
+export function sanitizeScopeState(input: any): ProjScopeState | null {
+  if (!input || typeof input !== "object") return null;
+  const src = input.votes && typeof input.votes === "object" ? input.votes : {};
+  const votes: Record<string, ProjScopeVote> = {};
+  for (const [rawKey, rawVote] of Object.entries(src).slice(0, 5000)) {
+    const key = String(rawKey).slice(0, 64);
+    const v: any = rawVote;
+    if (!key || !v || typeof v !== "object") continue;
+    if (v.answer !== "yes" && v.answer !== "no") continue;
+    const at = Number(v.at);
+    votes[key] = {
+      answer: v.answer,
+      at: Number.isFinite(at) && at > 0 ? Math.round(at) : Date.now(),
+      ...(typeof v.by === "string" && v.by.trim() ? { by: v.by.trim().slice(0, 80) } : {}),
+    };
+  }
+  return { votes };
+}
+
+/**
+ * Keltaisten ikkunoiden laajuustilanne: mistä asiakas on sanonut kyllä, mistä
+ * ei, ja mikä on vielä avoin.
+ *
+ * Vastaukset luetaan vain ELÄVISTÄ keltaisista pisteistä: poistetun tai
+ * punaiseksi vaihdetun ikkunan vanha vastaus ei saa jäädä lukuihin roikkumaan.
+ */
+export interface ScopeSummary {
+  yes: string[];
+  no: string[];
+  open: string[];
+  /** Eläviä keltaisia ikkunoita yhteensä. */
+  total: number;
+}
+
+export function scopeSummary(data: ProjectData): ScopeSummary {
+  const votes = data.scope?.votes ?? {};
+  const out: ScopeSummary = { yes: [], no: [], open: [], total: 0 };
+  for (const pt of allPoints(data)) {
+    if (pt.p !== 2) continue;
+    out.total += 1;
+    const a = votes[pt.key]?.answer;
+    if (a === "yes") out.yes.push(pt.key);
+    else if (a === "no") out.no.push(pt.key);
+    else out.open.push(pt.key);
+  }
+  return out;
 }
 
 // ─── Formatting helpers ──────────────────────────────────────────────────────

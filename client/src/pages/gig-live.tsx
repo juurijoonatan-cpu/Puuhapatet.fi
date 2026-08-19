@@ -14,7 +14,7 @@ import { api, type GigPublicView } from "@/lib/api";
 import { eur } from "@shared/gig";
 import { floorLabel } from "@shared/project";
 import GigContractSign from "@/components/GigContractSign";
-import CustomerFloorMap, { type P2CustomerActions } from "@/components/CustomerFloorMap";
+import CustomerFloorMap, { type P2CustomerActions, type ScopeCustomerState } from "@/components/CustomerFloorMap";
 import CustomerProgressHero, { type HeroTile } from "@/components/CustomerProgressHero";
 import LoadingOrb from "@/components/LoadingOrb";
 import { downloadGigContract } from "@/lib/gig-contract-doc";
@@ -167,7 +167,7 @@ export default function GigLivePage() {
   // pois) — sama funktio jota kartta itse käyttää, jotta luvut eivät voi olla
   // eri mieltä. useMemo on tässä, ennen varhaisia paluita, jotta hook-järjestys
   // pysyy samana joka renderillä.
-  const mapProgress = useMemo(() => customerProgress(data?.map, data?.p2), [data]);
+  const mapProgress = useMemo(() => customerProgress(data?.map, data?.p2, data?.scope), [data]);
 
   if (status === "loading") return <LoadingOrb label="Ladataan seurantaa" theme="light" />;
   if (status === "error" || !data) return <Centered>Seurantaa ei löytynyt.</Centered>;
@@ -285,6 +285,25 @@ export default function GigLivePage() {
     requireTerms: () => { setTermsError(null); setTermsOpen(true); },
   };
 
+  /**
+   * LAAJUUSKYSELY — yhteisökeikan "pestäänkö tämä" per keltainen ikkuna.
+   *
+   * Tämä ei ole P2:n variantti: vastikkeettomalla keikalla ei ole hintaa
+   * hyväksyttäväksi, joten kysymys on eri ("pestäänkö tämä", ei "kelpaako tämä
+   * hinta") eikä siihen kuulu ehtoja, versioita tai lukituksia.
+   *
+   * Palvelin päättää onko kysely käytössä (`scope !== null`), joten tässä ei
+   * toisteta ehtoa yhteisökeikasta — yksi paikka jossa se ratkaistaan.
+   */
+  const scopeState: ScopeCustomerState | null = data.scope ? {
+    votes: data.scope.votes,
+    vote: async (key, answer) => {
+      const res = await api.gigScopeVote(token, key, answer);
+      await reload();
+      return res.ok ? null : (res.error ?? "Tallennus epäonnistui — yritä uudelleen");
+    },
+  } : null;
+
   const acceptTerms = async () => {
     const name = termsName.trim();
     if (!name) { setTermsError("Kirjoita nimesi (nimenselvennys)."); return; }
@@ -316,6 +335,18 @@ export default function GigLivePage() {
   }
   if (data.isFixedDeal && invoicesSent > 0) {
     heroTiles.push({ label: "Laskuja lähetetty", value: `${invoicesSent} kpl` });
+  }
+  /**
+   * LAAJUUSKYSELY pääkortissa. Oma ruutu eikä pääkortin "Odottaa" -rivi, koska
+   * se rivi lukee "odottaa hyväksyntääsi" — hinnan hyväksyntää. Tässä odotetaan
+   * vastausta kysymykseen pestäänkö ikkuna, mikä on eri asia, ja väärä etiketti
+   * on tällä sivulla pahempi kuin yksi ruutu enemmän.
+   */
+  if (mapProgress.scopeOpen > 0) {
+    heroTiles.push({ label: "Odottaa vastaustasi", value: `${mapProgress.scopeOpen} ikkunaa`, tone: "amber" });
+  }
+  if (mapProgress.scopeYes > 0) {
+    heroTiles.push({ label: "Lisätty työhön", value: `${mapProgress.scopeYes} ikkunaa`, tone: "green" });
   }
 
   return (
@@ -401,6 +432,18 @@ export default function GigLivePage() {
             Turvallisuus- ja sopimusehdot toimitetaan tähän näkymään lähipäivinä.
             Saat siitä kehotteen tälle sivulle, ja voit allekirjoittaa sen suoraan tästä.
             Työtä tehdään siihen asti sovitussa laajuudessa.
+          </Notice>
+        )}
+
+        {/* LAAJUUSKYSELY — kutsu vastaamaan.
+            Kartalla oleva keltainen merkki on helppo lukea koristeeksi, joten
+            kysymys sanotaan myös tekstinä ja lukuna. Näkyy vain kun jotain
+            oikeasti odottaa vastausta. */}
+        {mapProgress.scopeOpen > 0 && (
+          <Notice theme={T} tone={T.amber} lead={`${mapProgress.scopeOpen} ikkunaa odottaa vastaustasi.`}>
+            Kartalla keltaisella merkityistä ikkunoista ei ole vielä sovittu. Napauta
+            ikkunaa ja kerro pestäänkö se — vastaus ei sido mihinkään, ja voit muuttaa
+            sen milloin tahansa.
           </Notice>
         )}
 
@@ -523,7 +566,7 @@ export default function GigLivePage() {
         {data.map && (
           <Panel theme={T}>
             <p style={{ margin: "0 0 14px", ...label }}>Pohjapiirros</p>
-            <CustomerFloorMap map={data.map} p2={p2} p2Actions={p2Live ? p2Actions : undefined} onLoadObservationImage={loadObservationImage} planUrlBase={api.planUrlBaseForGig(token)} theme={T} fixedDeal={data.isFixedDeal} />
+            <CustomerFloorMap map={data.map} p2={p2} p2Actions={p2Live ? p2Actions : undefined} scope={scopeState} onLoadObservationImage={loadObservationImage} planUrlBase={api.planUrlBaseForGig(token)} theme={T} fixedDeal={data.isFixedDeal} />
           </Panel>
         )}
 
@@ -555,7 +598,9 @@ export default function GigLivePage() {
                       sopimukseen jota ei ole. */}
                   {p2Live
                     ? "Kartalla keltaisella merkityt ovat Priority 2 -ikkunoita: jokainen hinnoitellaan ikkunakohtaisesti. Vastaa ehdotuksiin listasta tai napauta ikkunaa kartalta."
-                    : data.isFixedDeal
+                    : data.scope
+                      ? "Kartalla keltaisella merkityt ikkunat ovat niitä, joiden pesemisestä ei ole vielä sovittu. Napauta ikkunaa ja kerro pestäänkö se: vastauksesi ohjaa työtä, se ei sido sinua mihinkään, ja voit muuttaa sen milloin tahansa. Hyväksymäsi ikkunat tulevat mukaan työn laajuuteen ja aika-arvioon."
+                      : data.isFixedDeal
                       ? "Kartalla keltaisella merkityt ikkunat eivät kuulu tähän sopimukseen — niiden tilanne katsotaan seuraavassa sopimuksessa."
                       : "Kartalla keltaisella merkityt ikkunat ovat Priority 2: niiden pesemisestä ei ole vielä sovittu. Ne eivät ole poissa laskuista — katsomme ne yhdessä kun ensimmäinen kierros on tehty."}
                 </p>

@@ -112,6 +112,20 @@ piirissä sellaisenaan.
 - **Kartta**: pohjakuva, pisteet ja niiden tilat reaaliaikaisesti.
 - **Ei euroja missään.** Ei sektorikortteja, ei "kertynyt", ei laskuja.
   Oletusteksti kertoo että työ tehdään veloituksetta.
+- **Tervehdys** kellonajan mukaan ja nimellä, kirjoituskoneena: "Hyvää iltaa,
+  Akseli". Nimi tulee keikan yhteyshenkilöstä ja vain jos se näyttää nimeltä —
+  sähköpostista tai numerosta ei keksitä nimeä.
+- **Työmäärämittari**: 240°:n kaari, jonka asteikko on tunteja (0 h → koko
+  keikan arvio, esim. 22,5 h kun 15 ikkunaa × 1,5 h). Ei prosenttia — se on jo
+  pääkortissa. Näkyy vain jos keikalle on annettu mitoitus.
+- **"Sopimus valmistelussa"** — tilamerkki otsikkorivillä ja huomautusnauha,
+  kun keikka aloitettiin valinnalla "allekirjoitetaan myöhemmin". Kun sopimus
+  valmistuu, se nousee samaan näkymään popuppina allekirjoitettavaksi.
+- **Laajuuskysely**: keltaista ikkunaa napauttamalla Akseli vastaa
+  **Pestään** / **Ei tarvitse**. Hyväksytty ikkuna tulee mukaan työn
+  laajuuteen, prosenttiin ja työmääräarvioon. Vastauksen voi vaihtaa milloin
+  tahansa. Ei hintoja missään vaiheessa — kysymys on "pestäänkö tämä", ei
+  "kelpaako tämä hinta".
 
 Linkki toimii ilman kirjautumista — se on tarkoitettu jaettavaksi yhteisölle.
 
@@ -119,6 +133,10 @@ Linkki toimii ilman kirjautumista — se on tarkoitettu jaettavaksi yhteisölle.
 
 `/tyo/<token>` — sama kartta, omat merkinnät, tunnit. Yhteisökeikalla **ei
 luvata ikkunakohtaista korvausta**, ja maksuerämittari on piilossa (sitä ei ole).
+
+Keltaisissa näkyy **Akselin vastaus** merkkinä pisteen päällä: vihreä ✓ =
+pestään, harmaa – = ei pestä. Ilman sitä vastaus jäisi järjestelmän sisään
+eikä ohjaisi työtä.
 
 ## Tarkistus ennen kuin linkki lähtee Akselille
 
@@ -129,3 +147,8 @@ luvata ikkunakohtaista korvausta**, ja maksuerämittari on piilossa (sitä ei ol
 - [ ] Pisteitä on ~15 ja ne osuvat oikeisiin huoneisiin
 - [ ] Tilan nimi lukee "Tila", ei "1. kerros"
 - [ ] Keikka **ei** näy FR8:n rahaluvuissa (etusivun urakkakortti, ALV-raja)
+- [ ] Tervehdys lukee "Hyvää … , Akseli" (yhteyshenkilö on täytetty)
+- [ ] Työmäärämittari näkyy ja kertoo oikean kokonaisarvion (ikkunat × mitoitus)
+- [ ] Jos sopimus on vielä tekemättä: näkymässä lukee **Sopimus valmistelussa**
+- [ ] Keltaista napauttamalla avautuu **Pestäänkö tämä ikkuna?** ja vastaus tallentuu
+- [ ] Hyväksytty keltainen näkyy tekijän kartalla vihreällä ✓:llä

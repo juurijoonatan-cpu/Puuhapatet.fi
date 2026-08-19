@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
+import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
 import { emptyGigData, computeTotals } from "./gig";
 
 // Kohta 6.1 — kokonaistilanteen ikkunamäärän täsmäytys. Ks. docs/fr8-era-laskutus-plan.md.
@@ -408,5 +408,99 @@ describe("estHoursPerWindowOf", () => {
   it("on sama luku jonka computeEfficiency raportoi — yksi määritelmä", () => {
     const p: ProjectData = { ...emptyProjectData(), estimatedHoursPerWindow: 1.5 };
     expect(computeEfficiency(p).estHoursPerWindow).toBe(estHoursPerWindowOf(p));
+  });
+});
+
+/**
+ * LAAJUUSKYSELY — yhteisökeikan kyllä/ei per keltainen ikkuna.
+ *
+ * Tämä on asiakkaan kirjoittama tila, joka OHJAA TYÖTÄ: tekijä pesee keltaisen
+ * vain koska asiakas sanoi niin. Siksi tuntematon vastaus ei saa muuttua
+ * arvaukseksi, eikä poistetun ikkunan vanha vastaus saa jäädä lukuihin.
+ */
+describe("sanitizeScopeState", () => {
+  it("säilyttää kelvolliset vastaukset", () => {
+    const sc = sanitizeScopeState({ votes: { "1#0": { answer: "yes", at: 1000 }, "1#1": { answer: "no", at: 2000 } } });
+    expect(sc?.votes["1#0"]).toEqual({ answer: "yes", at: 1000 });
+    expect(sc?.votes["1#1"].answer).toBe("no");
+  });
+
+  it("pudottaa tuntemattoman vastauksen kokonaan — ei arvausta", () => {
+    const sc = sanitizeScopeState({ votes: {
+      "1#0": { answer: "maybe", at: 1 },
+      "1#1": { answer: true, at: 1 },
+      "1#2": { at: 1 },
+      "1#3": "yes",
+    } });
+    expect(Object.keys(sc?.votes ?? {})).toEqual([]);
+  });
+
+  it("korjaa kelvottoman aikaleiman mutta säilyttää vastauksen", () => {
+    const sc = sanitizeScopeState({ votes: { "1#0": { answer: "yes", at: "roska" } } });
+    expect(sc?.votes["1#0"].answer).toBe("yes");
+    expect(sc?.votes["1#0"].at).toBeGreaterThan(0);
+  });
+
+  it("null kelvottomasta syötteestä", () => {
+    expect(sanitizeScopeState(null)).toBeNull();
+    expect(sanitizeScopeState("yes")).toBeNull();
+  });
+
+  it("selviää tallennuksen läpi sanitizeProjectDatassa", () => {
+    const p = sanitizeProjectData({
+      ...emptyProjectData(),
+      scope: { votes: { "1#0": { answer: "yes", at: 5 } } },
+    });
+    expect(p.scope?.votes["1#0"].answer).toBe("yes");
+  });
+
+  it("puuttuva scope pysyy puuttuvana — vanhat blobit eivät kasva", () => {
+    expect(sanitizeProjectData(emptyProjectData()).scope).toBeUndefined();
+  });
+});
+
+describe("scopeSummary", () => {
+  /** Kaksi keltaista ja yksi punainen samalla kerroksella. */
+  const base = (): ProjectData => ({
+    ...emptyProjectData(),
+    building: { ...emptyProjectData().building, floors: ["1"] },
+    marks: { "1": { marks: [{ p: 1, x: 10, y: 10 }, { p: 2, x: 20, y: 20 }, { p: 2, x: 30, y: 30 }] } } as any,
+  });
+
+  it("jakaa keltaiset vastauksen mukaan; punaiset eivät kuulu kyselyyn", () => {
+    const p = { ...base(), scope: { votes: { "1#1": { answer: "yes" as const, at: 1 } } } };
+    const s = scopeSummary(p);
+    expect(s.total).toBe(2);
+    expect(s.yes).toEqual(["1#1"]);
+    expect(s.no).toEqual([]);
+    expect(s.open).toEqual(["1#2"]);
+  });
+
+  it("poistetun ikkunan vastaus ei jää lukuihin", () => {
+    const p = {
+      ...base(),
+      deleted: { "1#1": true },
+      scope: { votes: { "1#1": { answer: "yes" as const, at: 1 } } },
+    };
+    const s = scopeSummary(p);
+    expect(s.total).toBe(1);
+    expect(s.yes).toEqual([]);
+    expect(s.open).toEqual(["1#2"]);
+  });
+
+  it("punaiseksi vaihdetun ikkunan vanha vastaus ei jää lukuihin", () => {
+    const p = base();
+    p.marks["1"].marks[1].p = 1;
+    p.scope = { votes: { "1#1": { answer: "yes", at: 1 } } };
+    const s = scopeSummary(p);
+    expect(s.total).toBe(1);
+    expect(s.yes).toEqual([]);
+  });
+
+  it("ilman kyselyä kaikki keltaiset ovat avoimia", () => {
+    const s = scopeSummary(base());
+    expect(s.open).toEqual(["1#1", "1#2"]);
+    expect(s.yes).toEqual([]);
+    expect(s.no).toEqual([]);
   });
 });

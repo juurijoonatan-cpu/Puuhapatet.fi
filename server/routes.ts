@@ -6565,6 +6565,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const storedPlans = stored?.building?.planImages;
       if (storedPlans) project.building.planImages = storedPlans;
       else delete project.building.planImages;
+      /**
+       * Asiakkaan laajuusvastaukset (`scope`) ovat samalla tavalla serverin
+       * omistamia. TÄMÄ ON OMA SUOJAUSPOLKUNSA: `saveProject` suojaa samat
+       * kentät, mutta tämä reitti ei kutsu sitä vaan kirjoittaa itse — joten
+       * `scopeMutation` siellä ei kata tätä lainkaan.
+       *
+       * Ilman tätä riviä adminin karttamuokkaus olisi pyyhkinyt asiakkaan
+       * vastaukset: autosave lähettää koko blobin 700 ms jokaisen muutoksen
+       * jälkeen, ja selaimen kopio on siltä osin aina vanhentunut.
+       */
+      const storedScope = stored?.scope;
+      if (storedScope) project.scope = storedScope; else delete project.scope;
       const totals = computeProjectTotals(project);
 
       // Auto-sync the gig's billing sectors from the toolkit (FR8 = source of

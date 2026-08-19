@@ -280,7 +280,11 @@ Säännöt:
    lähettää `scope`n vain kun `isCommunityGig(project) && !p2.enabled`, ja
    selain varmistaa saman (`scopeOn = !!scope && !p2On`). `scope` on serverin
    omistama kuten kohta 21 — asiakas kirjoittaa siihen omalta reitiltään, joten
-   tekijän ikkunanapautus ei saa yliajaa sitä.
+   tekijän ikkunanapautus ei saa yliajaa sitä. **Suojaus on KAHDESSA polussa**:
+   `saveProject` (kaikki reitit) ja `PATCH /api/jobs/:id/project` (adminin
+   autosave, joka ei kutsu `saveProject`ia vaan kirjoittaa itse). Vartija:
+   `server/server-owned-fields.test.ts` — se löysi juuri tämän aukon `scope`lta.
+
 23. **Asiakkaalle ei koskaan lähetetä toteutuneita työtunteja.** Ne ovat tekijän
    palkan peruste (`hours`, `computeEfficiency.totalHours`,
    `actualHoursPerWindow`). Julkinen näkymä saa vain suunnitellun kertoimen

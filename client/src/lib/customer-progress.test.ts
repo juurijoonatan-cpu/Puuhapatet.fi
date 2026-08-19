@@ -62,7 +62,7 @@ describe("customerProgress", () => {
     );
     // Punaiset 2/2 = 100 %. Keltainen ei nosta eikä laske lukua, eikä siitä
     // väitetä "odottaa hyväksyntääsi" kun neuvottelua ei ole olemassa.
-    expect(customerProgress(map, null)).toEqual({ total: 2, done: 2, awaiting: 0, pct: 100, p2AccruedCents: 0, p2AccruedCount: 0 });
+    expect(customerProgress(map, null)).toEqual({ total: 2, done: 2, awaiting: 0, pct: 100, p2AccruedCents: 0, p2AccruedCount: 0, scopeOpen: 0, scopeYes: 0 });
   });
 
   it("hyväksymätön keltainen on mukana sekä pestynä että kokonaismäärässä", () => {
@@ -152,7 +152,67 @@ describe("customerProgress", () => {
   });
 
   it("tyhjä kartta ei kaadu eikä jaa nollalla", () => {
-    expect(customerProgress(null, null)).toEqual({ total: 0, done: 0, awaiting: 0, pct: 0, p2AccruedCents: 0, p2AccruedCount: 0 });
+    expect(customerProgress(null, null)).toEqual({ total: 0, done: 0, awaiting: 0, pct: 0, p2AccruedCents: 0, p2AccruedCount: 0, scopeOpen: 0, scopeYes: 0 });
     expect(customerProgress(mapWith([], {}), null)).toMatchObject({ total: 0, pct: 0 });
+  });
+});
+
+/**
+ * LAAJUUSKYSELY EDISTYMISESSÄ (yhteisökeikka).
+ *
+ * Koko kyselyn tarkoitus on että asiakkaan "pestään" MUUTTAA työn laajuutta.
+ * Jos vastaus ei näkyisi näissä luvuissa, asiakas voisi hyväksyä kymmenen
+ * ikkunaa ilman että sivulla muuttuu mikään — ja työmääräarvio, joka lasketaan
+ * samasta ikkunamäärästä, olisi väärä koko keikan ajan.
+ *
+ * Ilman kyselyä (`scope` puuttuu) käytös on TÄSMÄLLEEN entinen: keltaiset ovat
+ * laajuuden ulkopuolella. Se on tärkeää, koska sama funktio laskee FR8:n
+ * maksavan urakan luvut.
+ */
+describe("customerProgress + laajuuskysely", () => {
+  const map = mapWith(
+    [{ p: 1 }, { p: 1 }, { p: 2 }, { p: 2 }, { p: 2 }],
+    { "1#0": "pesty" },
+  );
+
+  it("hyväksytty keltainen tulee mukaan laajuuteen", () => {
+    const r = customerProgress(map, null, { votes: { "1#2": "yes" } });
+    // 2 punaista + 1 hyväksytty keltainen = 3; pesty 1 → 33 %.
+    expect(r).toMatchObject({ total: 3, done: 1, pct: 33, scopeYes: 1, scopeOpen: 2 });
+  });
+
+  it("\"ei tarvitse\" jää ulkopuolelle eikä paina prosenttia", () => {
+    const r = customerProgress(map, null, { votes: { "1#2": "no", "1#3": "no", "1#4": "no" } });
+    expect(r).toMatchObject({ total: 2, done: 1, pct: 50, scopeYes: 0, scopeOpen: 0 });
+  });
+
+  it("vastaamattomat lasketaan odottaviksi mutta eivät laajuuteen", () => {
+    const r = customerProgress(map, null, { votes: {} });
+    expect(r).toMatchObject({ total: 2, scopeOpen: 3, scopeYes: 0 });
+  });
+
+  it("pesty keltainen on mukana vaikka vastausta ei ole — työtä ei voi perua", () => {
+    const washed = mapWith([{ p: 1 }, { p: 2 }], { "1#1": "pesty" });
+    const r = customerProgress(washed, null, { votes: {} });
+    expect(r).toMatchObject({ total: 2, done: 1 });
+    // Pestystä ei ole enää mitään kysyttävää.
+    expect(r.scopeOpen).toBe(0);
+  });
+
+  it("ILMAN kyselyä käytös on ennallaan — keltaiset eivät ole mukana", () => {
+    expect(customerProgress(map, null)).toMatchObject({ total: 2, done: 1, scopeOpen: 0, scopeYes: 0 });
+    // Myös pesty keltainen jää ulkopuolelle kuten ennen.
+    const washed = mapWith([{ p: 1 }, { p: 2 }], { "1#1": "pesty" });
+    expect(customerProgress(washed, null)).toMatchObject({ total: 1, done: 0 });
+  });
+
+  it("P2 voittaa laajuuskyselyn — kaksi kanavaa ei voi olla yhtä aikaa", () => {
+    // Jos molemmat jostain syystä tulisivat mukana, hintaneuvottelu ratkaisee:
+    // laajuus sovitaan hinnan kanssa yhdessä eikä erikseen.
+    const r = customerProgress(map, offers({ "1#2": "declined" }), { votes: { "1#2": "yes" } });
+    expect(r.scopeOpen).toBe(0);
+    expect(r.scopeYes).toBe(0);
+    // Hylätty pesemätön keltainen jää ulkopuolelle, muut kaksi keltaista mukaan.
+    expect(r.total).toBe(4);
   });
 });

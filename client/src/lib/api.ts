@@ -137,6 +137,11 @@ export interface WorkerView {
   /** Ohjattu eteneminen (guided): the open floor + the next window to guide to.
    *  Null when the founder hasn't enabled it — then the map is fully open. */
   guided: GuidedWorkerView | null;
+  /**
+   * Asiakkaan laajuusvastaukset keltaisiin (yhteisökeikka): "pestään" / "ei
+   * pestä". Näkyvät kartalla merkkinä pisteen päällä. Null = kyselyä ei ole.
+   */
+  scopeVotes: Record<string, "yes" | "no"> | null;
 }
 
 /** Guided-progression view for a worker: which floor is open, what's locked, and
@@ -430,6 +435,10 @@ export interface GigPublicView {
    *  Johdettu palvelimella `signaturePrompt`illa, joten allekirjoittanut asiakas
    *  ei saa kehotetta uudelleen. */
   signPrompt: boolean;
+  /** Sopimus on valmistelussa ("allekirjoitetaan myöhemmin") — se on tulossa. */
+  contractPending: boolean;
+  /** Tuntiarvio per ikkuna. Null = arviota ei ole → mittaria ei piirretä. */
+  estHoursPerWindow: number | null;
   status: "draft" | "signed" | "approved";
   signed: boolean;
   signedAt: number | null;
@@ -452,6 +461,12 @@ export interface GigPublicView {
   } | null;
   /** P2 (keltaiset ikkunat): per-window price negotiation. Null until priced. */
   p2: P2PublicView | null;
+  /**
+   * LAAJUUSKYSELY (yhteisökeikka): asiakkaan kyllä/ei per keltainen ikkuna,
+   * ilman hintoja. Null muilla keikoilla ja aina kun keltaiset ovat P2:n
+   * hintaneuvottelussa — silloin laajuus sovitaan hinnan kanssa yhdessä.
+   */
+  scope: { votes: Record<string, "yes" | "no"> } | null;
 }
 
 export interface GigSignPayload {
@@ -1212,6 +1227,15 @@ export const api = {
   // ─── Custom gigs (cap-pricing) ──────────────────────────────────────────────
   getGig: (token: string) =>
     request<GigPublicView>("GET", `/api/gig/${token}`),
+
+  /**
+   * Asiakkaan laajuusvastaus yhteen keltaiseen ikkunaan. `null` peruu vastauksen.
+   * Palauttaa koko laajuustilan, jotta kartta päivittyy ilman erillistä hakua.
+   */
+  gigScopeVote: (token: string, key: string, answer: "yes" | "no" | null) =>
+    request<{ ok: boolean; scope: { votes: Record<string, "yes" | "no"> } | null }>(
+      "POST", `/api/gig/${token}/scope`, { key, answer },
+    ),
 
   signGig: (token: string, payload: GigSignPayload) =>
     request<{ ok: boolean; signedAt: number }>("POST", `/api/gig/${token}/sign`, payload),

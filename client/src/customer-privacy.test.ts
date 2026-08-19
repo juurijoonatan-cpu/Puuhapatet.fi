@@ -94,3 +94,68 @@ describe("asiakasnäkymien tietoraja", () => {
     expect(/const pdfUrl = view\.contractId === FR8_CONTRACT_ID/.test(regressed)).toBe(false);
   });
 });
+
+/**
+ * VARTIJA: LÄHDEKOODIN KOMMENTTI EI OLE ASIAKKAAN TEKSTIÄ.
+ *
+ * JSX:ssä `/* … *\/` ilman aaltosulkeita EI ole kommentti vaan elementin LAPSI,
+ * ja React piirtää sen sellaisenaan. Asiakkaan seurantasivulla luki näin koko
+ * sisäinen selitys: "juuri vastikkeeton keikka sai eurokortit — 0,00 € /
+ * 525,00 € asiakkaalle joka ei maksa mitään".
+ *
+ * Tämä testi etsii samaa muotoa asiakasnäkymistä: lohkokommentti joka on
+ * sisennetty kuin JSX:n lapsi ja jota EI ole kirjoitettu `{/* … *\/}` -muotoon,
+ * eikä se ole JSX-attribuuttien välissä (siellä muoto on laillinen) eikä
+ * `<style>`-lohkon CSS:ssä.
+ */
+describe("asiakasnäkymien kommentit eivät päädy ruudulle", () => {
+  /** Rivi jonka jälkeen lohkokommentti on laillinen: attribuuttilista tai
+   *  lauseke, ei lapsipaikka. */
+  const OPENS_EXPRESSION = /[{(,;:?]$|=>$|&&$|\}$|\)$|>$/;
+
+  function bareBlockCommentsInChildren(src: string): string[] {
+    const lines = src.split("\n");
+    const out: string[] = [];
+    let inStyle = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.includes("<style>")) inStyle = true;
+      if (inStyle) { if (line.includes("</style>")) inStyle = false; continue; }
+      const m = /^(\s{6,})\/\*/.exec(line);
+      if (!m || line.includes("{/*")) continue;
+      // Attribuuttipaikka: edellinen ei-tyhjä rivi päättyy attribuuttiin tai
+      // avaavaan merkkiin. Lapsipaikassa se päättyy JSX-elementtiin tai
+      // lausekelohkoon `}`/`)`, jotka OPENS_EXPRESSION hyväksyy — siksi
+      // tarkistetaan erikseen ollaanko elementin sisällä.
+      const prev = [...lines.slice(Math.max(0, i - 6), i)].reverse().find((l) => l.trim()) ?? "";
+      const inAttributes = /^\s*[a-zA-Z-]+=/.test(prev) || prev.trim().endsWith("(") || prev.trim().endsWith("{");
+      if (inAttributes) continue;
+      if (!OPENS_EXPRESSION.test(prev.trim())) continue;
+      out.push(`rivi ${i + 1}: ${line.trim().slice(0, 60)}`);
+    }
+    return out;
+  }
+
+  it("tunnistaa aaltosulkeettoman lohkokommentin (vartija toimii)", () => {
+    const regressed = [
+      "        })()}",
+      "        /**",
+      "         * Selitys joka piirtyisi asiakkaalle.",
+      "         */",
+      "        {data.sectors.map((s) => (",
+    ].join("\n");
+    expect(bareBlockCommentsInChildren(regressed).length).toBe(1);
+  });
+
+  it("asiakasnäkymissä ei ole kommenttia lapsipaikassa", () => {
+    const offenders: string[] = [];
+    for (const f of SHARED_CUSTOMER_VIEWS) {
+      for (const hit of bareBlockCommentsInChildren(read(f))) offenders.push(`${f} ${hit}`);
+    }
+    expect(
+      offenders,
+      "Lohkokommentti JSX:n lapsipaikassa piirtyy asiakkaalle tekstinä. "
+        + `Kirjoita se muodossa {/* … */}. → ${offenders.join(" | ")}`,
+    ).toEqual([]);
+  });
+});

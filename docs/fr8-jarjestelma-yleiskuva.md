@@ -272,6 +272,23 @@ Säännöt:
 21. **`settlement` on serverin omistama** kuten `p2` ja `guided`: geneerinen
    blob-tallennus säilyttää talletetun kopion, mutaatiot vain
    `POST /api/jobs/:id/settlement` -reitin kautta.
+22. **Yksi keikka, yksi laajuuskanava.** Keltaisten laajuus sovitaan JOKO P2:n
+   hintaneuvottelussa (maksava keikka: laajuus ja hinta yhdessä) TAI
+   laajuuskyselyllä (`scope`, yhteisökeikka: pelkkä kyllä/ei, ei hintaa) —
+   ei koskaan molemmilla. Kaksi rinnakkaista kanavaa samalla keikalla
+   tarkoittaisi kaksi eri vastausta kysymykseen "mitä pestään". Palvelin
+   lähettää `scope`n vain kun `isCommunityGig(project) && !p2.enabled`, ja
+   selain varmistaa saman (`scopeOn = !!scope && !p2On`). `scope` on serverin
+   omistama kuten kohta 21 — asiakas kirjoittaa siihen omalta reitiltään, joten
+   tekijän ikkunanapautus ei saa yliajaa sitä. **Suojaus on KAHDESSA polussa**:
+   `saveProject` (kaikki reitit) ja `PATCH /api/jobs/:id/project` (adminin
+   autosave, joka ei kutsu `saveProject`ia vaan kirjoittaa itse). Vartija:
+   `server/server-owned-fields.test.ts` — se löysi juuri tämän aukon `scope`lta.
+
+23. **Asiakkaalle ei koskaan lähetetä toteutuneita työtunteja.** Ne ovat tekijän
+   palkan peruste (`hours`, `computeEfficiency.totalHours`,
+   `actualHoursPerWindow`). Julkinen näkymä saa vain suunnitellun kertoimen
+   `estHoursPerWindow`, josta selain laskee työmäärämittarin asteikon.
 
 ### Missä mikä toiminto asuu (ei duplikaatteja)
 
@@ -290,6 +307,8 @@ Säännöt:
 | Urakkarahat koko brändin tasolla | Puuhapatet-adminin etusivu → "Urakkakeikat — raha" |
 | Keltaisten sopimusteksti | keikkanäkymän **Sopimus & asiakasnäkymä** (ei P2-paneelissa) |
 | Kerrosten lukitus | mustan dashin **KERROSTEN LUKITUS** (alalaita) |
+| Keltaisten laajuus **yhteisökeikalla** | asiakkaan seurantakartta → napauta keltaista (`scope`) |
+| Asiakkaan laajuusvastaus tekijälle | `FloorView` → merkki pisteen päällä (`scopeVotes`) |
 
 ### Edistymisprosentti
 

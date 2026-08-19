@@ -306,6 +306,95 @@ ikkunalle) → `computeEfficiency` palauttaa:
 Ilman arviota kaikki neljä ovat `null` — mikään näkymä ei keksi lukua tyhjästä.
 Pelkkä suunnittelutieto: ei vaikuta rahaan eikä palkkoihin.
 
+### Asiakkaan työmäärämittari
+
+Asiakkaan seurantanäkymässä arvio näkyy omana mittarina (`WorkloadGauge`):
+240°:n segmentoitu kaari, jonka **asteikko on tunteja** (0 h → koko keikan
+arvio) eikä prosentteja. Se ei ole toinen prosenttirengas — pääkortti vastaa
+"kuinka pitkällä", tämä vastaa "paljonko työtä on jäljellä".
+
+Palvelin lähettää julkiseen näkymään **vain kertoimen**
+(`estHoursPerWindow`), ei kokonaistunteja. Syy: selain laskee edistymisensä
+`customerProgress`illa, joka jättää laajuuden ulkopuoliset keltaiset pois. Jos
+palvelin laskisi kokonaistunnit `computeProjectTotals`in ikkunajoukosta,
+mittari ja edistymisluku voisivat olla eri mieltä samasta keikasta. Yksi
+kerroin, ja selain kertoo sillä ne ikkunat jotka se itse näyttää.
+
+**Toteutuneita työtunteja ei lähetetä asiakkaalle koskaan** (`totalHours`,
+`actualHoursPerWindow`): ne ovat tekijän palkan peruste.
+
+## Laajuuskysely — yhteisökeikan "pestäänkö tämä"
+
+Asiakkaan seurantanäkymässä keltainen ikkuna on **kysymys**, ei piste: asiakas
+napauttaa sitä ja vastaa **Pestään** / **Ei tarvitse**. Vastauksen voi vaihtaa,
+ja saman napautus peruu sen.
+
+### Miksi tämä ei ole P2
+
+`p2` on hintaneuvottelu. Sen tilakone, sanitoija ja laskutus pyörivät
+sentteinä:
+
+- `validPrice` (shared/p2.ts) vaatii `priceCents > 0`;
+- `sanitizeP2State` **pudottaa** tarjouksen jonka hinta on ≤ 0 — eli
+  nollahintainen tarjous katoaisi joka tallennuksessa.
+
+Vastikkeettomalla keikalla nolla on **oikea** hinta, joten P2:ta ei voi
+käyttää, ja sen taivuttaminen tarkoittaisi rahan tilakoneen muuttamista — jota
+FR8:n maksava urakka käyttää samaan aikaan. Kysymys on myös eri: P2 kysyy
+"kelpaako tämä hinta", laajuuskysely kysyy "pestäänkö tämä". Siksi tässä ei ole
+versioita, lukituksia, tapahtumalogia eikä ehtoja.
+
+### Rakenne
+
+| Paikka | Mitä |
+|---|---|
+| `ProjectData.scope.votes[key]` | `{ answer: "yes" \| "no", at, by? }` |
+| `sanitizeScopeState` | tuntematon vastaus → **ääni pudotetaan** (ei arvausta) |
+| `scopeSummary(project)` | `yes` / `no` / `open` / `total` — vain **elävistä** keltaisista |
+| `POST /api/gig/:token/scope` | asiakkaan vastaus (`{ key, answer }`; `null` peruu) |
+| `GigPublicView.scope` | `{ votes }` — vain vastaus, ei aikaleimaa eikä nimeä |
+| `CrewWorkerView.scopeVotes` | sama tekijälle → merkki kartalla |
+
+`scope` on **serverin omistama** kenttä kuten `p2`/`guided`/`settlement`:
+asiakas kirjoittaa siihen omalta reitiltään, joten geneerinen blob-tallennus
+lukee kannan tuoreimman arvon juuri ennen kirjoitusta (`saveProject`,
+`scopeMutation`). Ilman sitä tekijän ikkunanapautus pyyhkisi asiakkaan
+vastauksen.
+
+### Ehdot
+
+- **Vain yhteisökeikalla** (`isCommunityGig`). Maksavalla keikalla laajuus ja
+  hinta sovitaan yhdessä, ja se mekanismi on P2. Kaksi rinnakkaista
+  laajuuskanavaa samalla keikalla = kaksi eri vastausta kysymykseen "mitä
+  pestään".
+- **Ei jos P2 on päällä.** Palvelin ei lähetä `scope`a silloin, ja selain
+  varmistaa saman (`scopeOn = !!scope && !p2On`).
+- **Ei allekirjoitusporttia eikä tilausehtoja.** Vastaus ei sido asiakasta
+  rahaan, joten sen takana ei ole mitään mitä allekirjoitus suojaisi — ja
+  sopimus voi olla vielä valmistelussa, jolloin laajuuden kertominen on
+  hyödyllisintä.
+- Pestyä ikkunaa **ei voi rajata pois** (`answer: "no"` → 409). Työ on tehty.
+
+### Vastaus muuttaa laajuutta
+
+`inCustomerScope` ottaa hyväksytyn keltaisen mukaan työhön. Se on koko kyselyn
+tarkoitus: prosentti, ikkunamäärä **ja työmääräarvio** lasketaan samasta
+joukosta, joten hyväksyntä näkyy heti kaikissa kolmessa. Ilman `scope`a
+funktion käytös on **täsmälleen entinen** (keltaiset laajuuden ulkopuolella) —
+sama funktio laskee FR8:n maksavan urakan luvut.
+
+`customerProgress` palauttaa lisäksi `scopeOpen` (montako odottaa vastausta) ja
+`scopeYes` (montako hyväksytty). Ne ohjaavat pääkortin ruudut ja
+huomautusnauhan.
+
+### Tekijä näkee vastauksen
+
+Merkki pisteen päälle `FloorView`ssä (`scopeVotes`): vihreä ✓ = pestään,
+harmaa – = ei pestä. **Merkki, ei uusi väri** — tämä on asiakkaan toive, ei
+ikkunan tila, eivätkä ne kaksi saa näyttää samalta. Ilman tätä asiakkaan
+vastaus jäisi järjestelmän sisään eikä ohjaisi työtä, mikä on kyselyn ainoa
+tarkoitus.
+
 ## Mikä oli FR8-kohtaista — ja mikä siitä on korjattu
 
 | Asia | Ennen | Nyt |

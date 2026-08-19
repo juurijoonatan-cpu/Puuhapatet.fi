@@ -117,6 +117,16 @@ interface Props {
   /** Admin: bulk price proposal for selected yellow windows — enables the
    *  "€ Hinnoittele" multi-select mode. */
   onP2Propose?: (keys: string[], priceCents: number, note?: string) => void;
+  /**
+   * LAAJUUSKYSELYN VASTAUKSET (yhteisökeikka): ikkuna-avain → asiakkaan
+   * "pestään" / "ei pestä".
+   *
+   * Tekijän on nähtävä tämä kartalta, muuten asiakkaan vastaus jää järjestelmän
+   * sisään eikä ohjaa työtä — mikä on koko kyselyn ainoa tarkoitus. Vain merkki
+   * pisteen päälle; itse pisteen väri ja toiminnot ovat ennallaan, koska tämä on
+   * asiakkaan toive eikä ikkunan tila.
+   */
+  scopeVotes?: Record<string, "yes" | "no"> | null;
   /** Ohjattu eteneminen (guided): the open floor + which floors are locked + the
    *  single next window to wash. Drives the locked-floor tabs and the pulsing
    *  "next" ring. Null/absent = no guidance (map fully open). */
@@ -260,7 +270,7 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, building, planUrlBase, planAuthed = false, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, onLoadObservationImage, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, guided, onToggleFloorLock, onToggleWindowLock, lockedWindowKeys, floorFocus, restrictFloors }: Props) {
+export default function FloorView({ floors, planBase, building, planUrlBase, planAuthed = false, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, onLoadObservationImage, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, scopeVotes, guided, onToggleFloorLock, onToggleWindowLock, lockedWindowKeys, floorFocus, restrictFloors }: Props) {
   // Discreet worker map: when restrictFloors is set, show ONLY those floors and
   // hide the rest, so a regular worker sees exactly the opened floors and nothing
   // else. Founders (restrictFloors null) always see every floor.
@@ -1164,6 +1174,32 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                   </svg>
                 </span>
               ))}
+
+              {/* LAAJUUSVASTAUKSET — asiakkaan "pestään" / "ei pestä" keltaisista.
+                  Merkki pisteen päälle, ei uusi väri: tämä on asiakkaan toive,
+                  ei ikkunan tila, ja ne kaksi eivät saa näyttää samalta. Ilman
+                  tätä vastaus jäisi järjestelmän sisään eikä ohjaisi työtä. */}
+              {scopeVotes && points.map((pt) => {
+                const v = pt.p === 2 ? scopeVotes[pt.key] : undefined;
+                if (!v) return null;
+                const yes = v === "yes";
+                return (
+                  <span key={`scope-${pt.key}`} aria-hidden
+                    title={yes ? "Asiakas: pestään" : "Asiakas: ei pestä"}
+                    style={{
+                      position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`,
+                      transform: "translate(4px, -12px)", pointerEvents: "none",
+                      minWidth: 14, height: 14, padding: "0 3px", borderRadius: 999,
+                      background: yes ? "#1d3624" : "#1b1b1f",
+                      border: `1.5px solid ${yes ? "#5FE08A" : "#6B6F76"}`,
+                      color: yes ? "#5FE08A" : "#8A929C",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 8.5, fontWeight: 800, lineHeight: 1, zIndex: 6,
+                    }}>
+                    {yes ? "✓" : "–"}
+                  </span>
+                );
+              })}
 
               {/* SEURAAVA IKKUNA — ohjatun etenemisen opastin.
                   `computeGuided` on laskenut `nextKey`:n koko ajan (kesken-työt

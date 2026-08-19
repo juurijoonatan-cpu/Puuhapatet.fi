@@ -91,8 +91,9 @@ export default function TechHero({
             pct={shown}
             color={theme.green}
             // Rata on saman sävyn tummempi askel — ei harmaa. Näin tila luetaan
-            // koko renkaasta eikä vain täytetystä osasta.
-            trackColor="rgba(95,224,138,0.16)"
+            // koko renkaasta eikä vain täytetystä osasta. Poletti teemassa,
+            // jotta työmäärämittarin rata on täsmälleen sama askel.
+            trackColor={theme.meterTrack}
             ink={theme.ink}
             mutedInk={theme.muted}
             size={196}

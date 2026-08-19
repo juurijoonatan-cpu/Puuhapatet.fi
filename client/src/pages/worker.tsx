@@ -1216,6 +1216,10 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
             onLoadObservationImage={loadObservationImage}
             activeZone={view.activeZone}
             p2={view.p2 ? { enabled: view.p2.enabled, lockedKeys: view.p2.lockedKeys, payoutByKey: view.p2.payoutByKey } : null}
+            /* Asiakkaan laajuusvastaukset keltaisiin. Ilman näitä tekijä pesisi
+               yhteisökeikan keltaisia arvaamalla, vaikka asiakas on jo kertonut
+               mitkä pestään. */
+            scopeVotes={view.scopeVotes ?? null}
             guided={guided ? { enabled: guided.enabled, activeFloor: guided.activeFloor, activeFloors: guided.activeFloors, lockedFloors: guided.lockedFloors, nextKey: guided.nextKey } : null}
             /* Johtajan piilottamat ikkunat katoavat tekijän kartalta kokonaan.
                Piste jota ei voi painaa näyttäisi rikkinäiseltä sovellukselta,

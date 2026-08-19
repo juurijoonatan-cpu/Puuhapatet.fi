@@ -13,7 +13,7 @@ import { getAdminProfile, USERS, getPreferredWasher, setPreferredWasher } from "
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import {
   emptyProjectData, newGigProjectData, computeWorkerStats, isFr8Plans, fixedDealFor, allPoints, computeDealBilling,
-  dealInternalRateCents,
+  dealInternalRateCents, isCommunityGig,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense,
 } from "@shared/project";
 import { computeP2Billing, customerAddedKeys, p2FounderOpts, p2CustomerLocksSince, p2Itemisation, p2WashedYellows, p2WorkerSplit, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule, type P2WashedState } from "@shared/p2";
@@ -1087,7 +1087,16 @@ export default function AdminProjectPage() {
             onClearActiveZone={onClearActiveZone}
             deal={deal}
             p2={project.p2 ? { enabled: project.p2.enabled, offers: project.p2.offers } : null}
-            onP2Propose={onP2Propose}
+            /* Keltaisten hinnoittelu ei kuulu yhteisökeikalle: siinä ei ole
+               hintaa neuvoteltavaksi, joten "€ Hinnoittele" oli nappi joka ei
+               voi johtaa mihinkään. Ilman `onP2Propose`ia FloorView jättää sen
+               piirtämättä. */
+            onP2Propose={isCommunityGig(project) ? undefined : onP2Propose}
+            /* Asiakkaan laajuusvastaukset kartalle. Yhteisökeikalla asiakas
+               vastaa keltaisiin "pestään / ei pestä" omasta linkistään, ja se
+               vastaus ohjaa työtä — joten sen on näyttävä siellä missä työ
+               tehdään. */
+            scopeVotes={project.scope ? Object.fromEntries(Object.entries(project.scope.votes).map(([k, v]) => [k, v.answer])) : null}
             /* Kartta tarvitsee vain tiedon avoimista kerroksista — "seuraava ikkuna"
                -ohjaus on poistettu. */
             guided={project.guided?.enabled ? (() => { const g = computeGuided(project); return { enabled: true, activeFloor: g.activeFloor, activeFloors: g.activeFloors, lockedFloors: g.lockedFloors, nextKey: null }; })() : null}

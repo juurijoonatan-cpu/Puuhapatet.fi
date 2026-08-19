@@ -12,6 +12,9 @@ export type CustomerMap = NonNullable<GigPublicView["map"]>;
 
 export interface CustomerPoint { key: string; p: 1 | 2; x: number; y: number }
 
+/** Laajuuskyselyn julkinen muoto (`GigPublicView.scope`). */
+export type CustomerScope = NonNullable<GigPublicView["scope"]>;
+
 /** Yhden kerroksen näkyvät ikkunapisteet: pohjapisteet + lisätyt, poistetut pois,
  *  siirretyt omilla koordinaateillaan. Sama järjestys kuin tekijöiden kartassa. */
 export function getPoints(floor: string, map: CustomerMap): CustomerPoint[] {
@@ -48,6 +51,14 @@ export interface CustomerProgress {
   p2AccruedCents: number;
   /** Kertyneiden lisätyöikkunoiden lukumäärä. */
   p2AccruedCount: number;
+  /**
+   * LAAJUUSKYSELY: keltaisia ikkunoita joista asiakas ei ole vielä vastannut
+   * (pestyjä ei lasketa — niistä ei ole enää mitään kysyttävää). 0 kun kyselyä
+   * ei ole käytössä.
+   */
+  scopeOpen: number;
+  /** Keltaisia joista asiakas on sanonut "pestään". */
+  scopeYes: number;
 }
 
 /**
@@ -83,25 +94,51 @@ export interface CustomerProgress {
  * `washed` on pakollinen juuri siksi että hylätyn kohtalo riippuu siitä: ilman
  * sitä laajuus ei voi olla yhtä mieltä hyväksyntälaatikon kanssa.
  */
-export function inCustomerScope(pt: CustomerPoint, p2: P2PublicView | null | undefined, washed: boolean): boolean {
+export function inCustomerScope(
+  pt: CustomerPoint,
+  p2: P2PublicView | null | undefined,
+  washed: boolean,
+  scope?: CustomerScope | null,
+): boolean {
   if (pt.p !== 2) return true;
-  if (!p2?.enabled) return false;
-  if (p2.offers[pt.key]?.status !== "declined") return true;
-  return washed;
+  if (p2?.enabled) {
+    if (p2.offers[pt.key]?.status !== "declined") return true;
+    return washed;
+  }
+  /**
+   * LAAJUUSKYSELY (yhteisökeikka): asiakkaan "pestään" tuo keltaisen työhön.
+   *
+   * Tämä on koko kyselyn tarkoitus: kun asiakas sanoo kyllä, ikkuna on osa
+   * työtä ja sen kuuluu näkyä sekä nimittäjässä että työmääräarviossa. Vastaus
+   * "ei tarvitse" ja vastaamaton jäävät ulkopuolelle kuten ennen — pesty
+   * ikkuna kuitenkin aina mukaan, koska työtä ei voi perua jälkikäteen.
+   */
+  if (scope?.votes[pt.key] === "yes") return true;
+  return washed && scope != null;
 }
 
 export function customerProgress(
   map: CustomerMap | null | undefined,
   p2?: P2PublicView | null,
+  scope?: CustomerScope | null,
 ): CustomerProgress {
-  if (!map) return { total: 0, done: 0, awaiting: 0, pct: 0, p2AccruedCents: 0, p2AccruedCount: 0 };
+  if (!map) return { total: 0, done: 0, awaiting: 0, pct: 0, p2AccruedCents: 0, p2AccruedCount: 0, scopeOpen: 0, scopeYes: 0 };
   const p2Live = !!p2?.enabled;
+  const scopeLive = !p2Live && !!scope;
   const floors = map.building.floors.length ? map.building.floors : ["1"];
   let total = 0, done = 0, awaiting = 0, p2AccruedCents = 0, p2AccruedCount = 0;
+  let scopeOpen = 0, scopeYes = 0;
   for (const f of floors) {
     for (const pt of getPoints(f, map)) {
       const washed = map.statuses[pt.key] === "pesty";
-      if (!inCustomerScope(pt, p2, washed)) continue;
+      // Laajuusluvut lasketaan KAIKISTA keltaisista, myös laajuuden ulkopuolelle
+      // jäävistä: "montako odottaa vastaustasi" on nimenomaan niiden luku.
+      if (scopeLive && pt.p === 2) {
+        const v = scope!.votes[pt.key];
+        if (v === "yes") scopeYes += 1;
+        else if (!v && !washed) scopeOpen += 1;
+      }
+      if (!inCustomerScope(pt, p2, washed, scope)) continue;
       const offer = pt.p === 2 ? p2?.offers[pt.key] : undefined;
       total += 1;
       if (!washed) continue;
@@ -122,5 +159,6 @@ export function customerProgress(
     total, done, awaiting,
     pct: total > 0 ? Math.round((done / total) * 100) : 0,
     p2AccruedCents, p2AccruedCount,
+    scopeOpen, scopeYes,
   };
 }

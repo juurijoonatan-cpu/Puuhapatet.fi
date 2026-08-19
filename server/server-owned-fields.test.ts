@@ -88,3 +88,62 @@ describe("serverin omistamat projektikentät on suojattu molemmissa tallennuspol
     expect(saveBody).toMatch(/opts\?\.planMutation/);
   });
 });
+
+/**
+ * VARTIJA — SOPIMUSTIEDOSTO on serverin omistama gigDatassa.
+ *
+ * `GigData.contractFile` on viite `job_assets`-riviin, ja se syntyy vain
+ * `/contract-file`-reiteillä. Adminin sopimuslomake lähettää oman kopionsa koko
+ * gigDatasta joka kerta kun tunnus, ALV-teksti tai sopimusteksti tallennetaan —
+ * ja siinä kopiossa EI ole `contractFile`ä, koska lomake ei koske siihen.
+ *
+ * Ilman tätä suojausta liitetty sopimus katosi asiakkaan näkymästä seuraavalla
+ * "Tallenna sopimus" -painalluksella: tiedosto jäi kantaan, mutta viite pyyhkiytyi
+ * ja asiakkaan sivulle palasi "sopimus valmistelussa". Sama vika kuin projektin
+ * `scope`-kentässä, eri blobissa.
+ *
+ * Jos tämä kaatuu: palauta talletettu arvo `PATCH /api/jobs/:id/gig`issä. Älä
+ * poista kenttää tältä listalta.
+ */
+describe("sopimustiedosto on suojattu geneerisessä gigData-tallennuksessa", () => {
+  /** `PATCH /api/jobs/:id/gig` -käsittelijän runko. */
+  function gigPatchBody(): string {
+    const start = SRC.indexOf('app.patch("/api/jobs/:id/gig"');
+    expect(start).toBeGreaterThan(0);
+    const next = SRC.indexOf("\n  app.", start + 10);
+    return SRC.slice(start, next > 0 ? next : SRC.length);
+  }
+
+  const body = gigPatchBody();
+
+  it("runko löytyi (testi itse ei saa olla tyhjä lupaus)", () => {
+    expect(body.length).toBeGreaterThan(300);
+    expect(body).toContain("sanitizeGigData");
+  });
+
+  it("talletettu viite luetaan ja palautetaan", () => {
+    expect(body).toMatch(/parseGig\(job\.gigData\)/);
+    expect(body).toMatch(/gig\.contractFile = storedGig\.contractFile/);
+  });
+
+  it("puuttuva viite POISTETAAN — selaimen vanhentunut kopio ei saa jäädä", () => {
+    expect(body).toMatch(/delete gig\.contractFile/);
+  });
+
+  it("tiedosto itse ei ole blobissa vaan liitetaulussa", () => {
+    // `putAsset(..., "contract_doc", ...)` on ainoa tapa jolla sisältö tallentuu.
+    expect(SRC).toMatch(/putAsset\(\s*id,\s*"contract_doc"/);
+    // Ja blobiin kirjoitetaan vain viite: assetId, nimi, koko, aika.
+    expect(SRC).toMatch(/gig\.contractFile = \{/);
+  });
+
+  it("allekirjoitettua sopimusta ei voi vaihtaa eikä poistaa", () => {
+    // Asiakas on allekirjoittanut juuri sen asiakirjan joka silloin näkyi.
+    const uploads = SRC.split('app.post("/api/jobs/:id/contract-file"')[1] ?? "";
+    const removes = SRC.split('app.delete("/api/jobs/:id/contract-file"')[1] ?? "";
+    for (const [name, chunk] of [["POST", uploads], ["DELETE", removes]] as const) {
+      expect(chunk.slice(0, 2000), `${name} /contract-file: allekirjoitusportti puuttuu`)
+        .toMatch(/gig\.signature\?\.signedAt/);
+    }
+  });
+});

@@ -30,9 +30,15 @@ const FONT = CFONT;
  *
  * Portti on `contractId`, koska tämä tiedosto ON tuo sopimus. Sama kuvio kuin
  * P2-sopimuksella `gig-live.tsx`:ssä (`data.isFixedDeal`) ja tilaajan
- * esitäytöllä alla. Jos toinen keikka joskus saa oman PDF:n, silloin on aika
- * lisätä `GigData`lle kenttä — ei ennen: kenttä ilman syöttöpaikkaa olisi
- * pudottanut FR8:n oman sopimuksen näkyvistä.
+ * esitäytöllä alla.
+ *
+ * TÄMÄ ON PERINTÖTAPAUS, EI MALLI. Muut keikat saavat sopimuksensa liittämällä
+ * PDF:n adminissa (`GigData.contractFile`), jolloin tiedosto on kannassa ja
+ * asiakkaan oman tokenin takana. Committattua PDF:ää ei enää tarvita eikä uutta
+ * pidä lisätä: `client/public/` on julkinen verkkosivu ja tämä repo on julkinen,
+ * eli sinne viety sopimus on kenen tahansa luettavissa ilman mitään linkkiä.
+ * Tämä yksi jää siksi, että FR8:n sopimus on jo täällä ja sen pudottaminen
+ * näkyvistä olisi vienyt asiakkaalta hänen oman asiakirjansa.
  */
 const FR8_CONTRACT_ID = "PT-2026-02";
 const FR8_CONTRACT_PDF_URL = "/contracts/PT-2026-02.pdf";
@@ -183,11 +189,22 @@ export default function GigContractSign({ token, view, onSigned, variant = "page
   const base = view.company;
   const contractNo = displayContractId(view.contractId);
   /**
-   * Sopimusasiakirja. Etusija: keikan oma PDF (vain FR8:lla on sellainen) →
-   * keikan oma sopimusteksti → ei asiakirjaa. Toisen keikan tiedostoa ei
+   * Sopimusasiakirja. Etusija: keikalle LIITETTY PDF → FR8:n vanha staattinen
+   * PDF → keikan oma sopimusteksti → ei asiakirjaa. Toisen keikan tiedostoa ei
    * näytetä koskaan.
+   *
+   * LIITETTY TIEDOSTO VOITTAA STAATTISEN. Jos FR8:lle joskus liitetään sopimus
+   * tätä kautta, se on tuoreempi kuin repoon committattu PDF, ja kaksi eri
+   * asiakirjaa samasta sopimuksesta on pahempi kuin kumpikaan yksin.
    */
-  const pdfUrl = view.contractId === FR8_CONTRACT_ID ? FR8_CONTRACT_PDF_URL : null;
+  const fr8PdfUrl = view.contractId === FR8_CONTRACT_ID ? FR8_CONTRACT_PDF_URL : null;
+  /**
+   * Keikan oma liitetty sopimus. Osoite johdetaan TOKENISTA, joten se ei voi
+   * osoittaa toisen keikan tiedostoon — palvelin hakee sen sillä samalla
+   * tokenilla jolla asiakas on tällä sivulla.
+   */
+  const ownPdfUrl = view.contractFile ? api.contractFileUrlForGig(token) : null;
+  const pdfUrl = ownPdfUrl ?? fr8PdfUrl;
   const hasOwnText = !!view.contractText?.trim();
   const [customer, setCustomer] = useState({
     legalName: base?.name ?? "",
@@ -289,14 +306,25 @@ export default function GigContractSign({ token, view, onSigned, variant = "page
               <div>
                 <p style={mono}>SOPIMUSASIAKIRJA</p>
                 <p style={{ margin: "4px 0 0", fontSize: 13, color: T.muted }}>
-                  {contractNo ? `${contractNo} · ` : ""}Ikkunanpesusopimus ({FR8_CONTRACT_PAGES} sivua)
+                  {contractNo ? `${contractNo} · ` : ""}Ikkunanpesusopimus
+                  {/* Sivumäärä vain siitä yhdestä tiedostosta jonka sivumäärän
+                      tiedämme. Liitetystä PDF:stä kerrotaan koko: sivumäärää ei
+                      lueta tiedostosta, eikä arvattu luku kuulu sopimuksen
+                      viereen. */}
+                  {ownPdfUrl
+                    ? view.contractFile!.bytes > 0 ? ` (${fmtBytes(view.contractFile!.bytes)})` : ""
+                    : ` (${FR8_CONTRACT_PAGES} sivua)`}
                 </p>
               </div>
               <a
-                href={pdfUrl}
+                // Liitetty tiedosto: lataus kulkee palvelimen kautta (`dl=1`),
+                // koska `download`-attribuutti ei toimi originin yli — nimi
+                // tulee `Content-Disposition`ista. Staattinen FR8:n PDF on
+                // samassa originissa, joten siellä attribuutti riittää.
+                href={ownPdfUrl ? api.contractFileUrlForGig(token, { download: true }) : pdfUrl}
                 // Tiedostonimi keikan mukaan: yleisnimellä "Puuhapatet-sopimus.pdf"
                 // asiakas tallensi sopimuksen josta ei näe kenen se on.
-                download={`Puuhapatet-sopimus-${contractNo ?? view.companyName ?? "keikka"}.pdf`}
+                download={ownPdfUrl ? undefined : `Puuhapatet-sopimus-${contractNo ?? view.companyName ?? "keikka"}.pdf`}
                 style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 14px", borderRadius: 10, border: `1px solid ${T.hair}`, background: T.paper, color: T.ink, fontFamily: FONT, fontSize: 13, fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap" }}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={T.navy} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
@@ -313,6 +341,17 @@ export default function GigContractSign({ token, view, onSigned, variant = "page
                 <a href={pdfUrl} target="_blank" rel="noreferrer" style={{ color: T.navy, fontWeight: 600 }}>Avaa sopimus tästä</a>.
               </div>
             </object>
+            {/* KOKO NÄYTÖLLE. Upotus on 520 px korkea ruutu, ja puhelimessa
+                monisivuinen sopimus on siinä neulansilmä — moni selain ei
+                myöskään vieritä upotettua PDF:ää lainkaan. Linkki avaa saman
+                tiedoston selaimen omaan näyttäjään, jossa sivut selaa
+                normaalisti. Ei korvaa upotusta: sopimus näkyy heti, tämä on
+                lisätie sille joka haluaa lukea sen kunnolla. */}
+            <p style={{ margin: "10px 0 0", fontSize: 12.5 }}>
+              <a href={pdfUrl} target="_blank" rel="noreferrer" style={{ color: T.navy, fontWeight: 600, textDecoration: "none" }}>
+                Avaa koko näytöllä →
+              </a>
+            </p>
             <p style={{ margin: "10px 0 0", fontSize: 12, color: T.muted, lineHeight: 1.6 }}>
               Lue sopimus huolellisesti. Allekirjoittamalla alla vahvistat hyväksyväsi tämän asiakirjan ehdot.
             </p>
@@ -489,6 +528,12 @@ export default function GigContractSign({ token, view, onSigned, variant = "page
       </div>
     </div>
   );
+}
+
+/** Tiedostokoko luettavana: "0,5 MB", "96 kB". */
+function fmtBytes(b: number): string {
+  if (b >= 1_000_000) return `${(b / 1_000_000).toLocaleString("fi-FI", { maximumFractionDigits: 1 })} MB`;
+  return `${Math.max(1, Math.round(b / 1000))} kB`;
 }
 
 const mono: React.CSSProperties = {

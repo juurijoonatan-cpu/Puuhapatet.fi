@@ -122,6 +122,22 @@ export interface GigApproval {
 /** High-level lifecycle of a gig, derived from signature + approval. */
 export type GigStatus = "draft" | "signed" | "approved";
 
+/**
+ * Keikan oma sopimustiedosto (PDF) — viite liitetauluun, ei itse tiedosto.
+ *
+ * `name` on asiakkaan näkemä tiedostonimi ja se on TARKOITUKSELLA talletettu:
+ * lataus yleisnimellä "sopimus.pdf" antaa asiakkaalle tiedoston josta ei näe
+ * kenen sopimus se on.
+ */
+export interface GigContractFile {
+  /** `job_assets`-rivin id. Tiedoston sisältö haetaan vain sitä katsottaessa. */
+  assetId: number;
+  name: string;
+  mime: string;
+  bytes: number;
+  uploadedAt: number;
+}
+
 export interface GigData {
   version: 1;
   contractId?: string;        // e.g. "PT-2026-02"
@@ -162,6 +178,28 @@ export interface GigData {
    * Puuttuva = vanha käytös.
    */
   contractLater?: boolean;
+  /**
+   * SOPIMUS TIEDOSTONA — keikan oma PDF.
+   *
+   * MIKSI TÄMÄ ON OLEMASSA: sopimus on käytännössä aina PDF. Ennen tätä kenttää
+   * järjestelmään sai sopimusasiakirjan vain kahdella tavalla: liittämällä sen
+   * PLAIN TEXTinä `contractText`iin (allekirjoitukset, taulukot ja liitteet
+   * katoavat) tai committaamalla PDF:n `client/public/contracts/`iin ja
+   * julkaisemalla frontendin uudelleen. Jälkimmäinen tarkoitti että jokainen
+   * uusi asiakas vaati koodimuutoksen — eikä sitä polkua ollut kuin FR8:lla.
+   *
+   * TIEDOSTO EI OLE TÄSSÄ BLOBISSA, vain viite: `assetId` osoittaa
+   * `job_assets`-tauluun, aivan kuten pohjakuvat ja havaintokuvat. Sama syy:
+   * gigData luetaan joka kerta kun asiakas avaa seurannan, ja megatavun PDF
+   * blobin sisällä maksaisi joka kierroksella vaikka sopimus luetaan kerran.
+   *
+   * SERVERIN OMISTAMA kuten `p2`/`scope` projektissa: viite syntyy vain
+   * `/contract-file`-reitiltä, ja geneerinen gigData-tallennus (adminin
+   * "Tallenna sopimus") säilyttää talletetun arvon. Ilman sitä sopimuksen
+   * liittäminen ja sen jälkeen mikä tahansa lomakkeen tallennus olisi
+   * pudottanut tiedoston pois näkyvistä.
+   */
+  contractFile?: GigContractFile;
   signature?: GigSignature | null; // customer's electronic signature
   approval?: GigApproval | null;   // admin approval of the signed gig
   updatedAt: number;          // epoch ms
@@ -181,9 +219,27 @@ export function gigStatus(gig: Pick<GigData, "signature" | "approval">): GigStat
  * `contractLater` voittaa kaiken: kun sopimus tehdään vasta myöhemmin, koko
  * sivun portti ei ole koskaan päällä — ei ennen sopimusta eikä sen jälkeen.
  */
-export function signatureRequired(gig: Pick<GigData, "requireSignature" | "contractText" | "contractLater">): boolean {
+export function signatureRequired(
+  gig: Pick<GigData, "requireSignature" | "contractText" | "contractLater" | "contractFile">,
+): boolean {
   if (gig.contractLater) return false;
-  return gig.requireSignature ?? !!(gig.contractText && gig.contractText.trim());
+  return gig.requireSignature ?? hasContractDoc(gig);
+}
+
+/**
+ * ONKO KEIKALLA ASIAKIRJA JONKA VOI ALLEKIRJOITTAA — tiedosto TAI teksti.
+ *
+ * YKSI PAIKKA, KOLME KYSYJÄÄ. `signatureRequired`, `signaturePrompt` ja
+ * `contractPending` kysyvät kaikki samaa asiaa, ja ennen tätä ne kysyivät sitä
+ * kolmella rinnakkaisella `contractText`-ehdolla. Kun sopimus voi olla myös
+ * PDF, kolme rinnakkaista ehtoa tarkoittaisi kolme paikkaa jossa tiedosto
+ * muistetaan lisätä — ja se joka jäisi unohtumaan tuottaisi keikan jolla on
+ * sopimus mutta jota ei voi allekirjoittaa (tai päinvastoin: "sopimus tulossa"
+ * -lupauksen sopimuksesta joka on jo liitetty).
+ */
+export function hasContractDoc(gig: Pick<GigData, "contractText" | "contractFile">): boolean {
+  if (gig.contractFile) return true;
+  return !!(gig.contractText && gig.contractText.trim());
 }
 
 /** Miten allekirjoitusta pyydetään asiakkaalta. */
@@ -200,7 +256,7 @@ export type SignaturePrompt =
  * jokainen näkymä päätteli sen itse kahdesta kentästä.
  */
 export function signaturePrompt(
-  gig: Pick<GigData, "requireSignature" | "contractText" | "contractLater" | "signature">,
+  gig: Pick<GigData, "requireSignature" | "contractText" | "contractLater" | "contractFile" | "signature">,
 ): SignaturePrompt {
   if (gig.signature?.signedAt) return "none";
   if (signatureRequired(gig)) return "gate";
@@ -208,7 +264,7 @@ export function signaturePrompt(
   // `contractLater`-keikan että sen tilanteen jossa ylläpito on nimenomaisesti
   // ottanut portin pois mutta sopimus on silti olemassa — aiemmin siinä
   // tilanteessa asiakas ei nähnyt sopimusta ollenkaan eikä voinut allekirjoittaa.
-  if (gig.contractText && gig.contractText.trim()) return "popup";
+  if (hasContractDoc(gig)) return "popup";
   return "none";
 }
 
@@ -225,11 +281,11 @@ export function signaturePrompt(
  * ole antanut. Vain nimenomainen `contractLater` tarkoittaa "tulossa".
  */
 export function contractPending(
-  gig: Pick<GigData, "contractLater" | "contractText" | "signature">,
+  gig: Pick<GigData, "contractLater" | "contractText" | "contractFile" | "signature">,
 ): boolean {
   if (!gig.contractLater) return false;
   if (gig.signature?.signedAt) return false;
-  return !(gig.contractText && gig.contractText.trim());
+  return !hasContractDoc(gig);
 }
 
 // ─── Defaults ────────────────────────────────────────────────────────────────
@@ -371,6 +427,31 @@ export function clampSector(s: GigSector): GigSector {
 }
 
 /** Sanitize an incoming gigData object (server-side validation). */
+/**
+ * Sopimustiedoston viitteen siivous.
+ *
+ * KELVOTON `assetId` PUDOTTAA KOKO VIITTEEN. Viite ilman riviä liitetaulussa
+ * olisi keikka joka väittää sopimuksen olevan olemassa: asiakas näkisi
+ * "SOPIMUSASIAKIRJA" ja sen alla rikkinäisen upotuksen, ja "sopimus
+ * valmistelussa" -huomautus olisi jo kadonnut. Puuttuva tiedosto on
+ * turvallisempi tila kuin luvattu tiedosto jota ei ole.
+ */
+export function sanitizeContractFile(input: any): GigContractFile | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const assetId = Number(input.assetId);
+  if (!Number.isInteger(assetId) || assetId <= 0) return undefined;
+  const name = String(input.name ?? "").trim().slice(0, 200) || "sopimus.pdf";
+  const bytes = Number(input.bytes);
+  const at = Number(input.uploadedAt);
+  return {
+    assetId,
+    name,
+    mime: String(input.mime ?? "application/pdf").slice(0, 100),
+    bytes: Number.isFinite(bytes) && bytes > 0 ? Math.round(bytes) : 0,
+    uploadedAt: Number.isFinite(at) && at > 0 ? Math.round(at) : Date.now(),
+  };
+}
+
 export function sanitizeGigData(input: any): GigData {
   const base = emptyGigData();
   if (!input || typeof input !== "object") return base;
@@ -494,6 +575,7 @@ export function sanitizeGigData(input: any): GigData {
     // uusi kenttä on lisättävä myös TÄHÄN — muuten se katoaa hiljaa joka
     // tallennuksessa, myös siinä tallennuksessa jonka allekirjoitus itse tekee.
     contractLater: typeof input.contractLater === "boolean" ? input.contractLater : undefined,
+    contractFile: sanitizeContractFile(input.contractFile),
     signature,
     approval,
     updatedAt: Date.now(),

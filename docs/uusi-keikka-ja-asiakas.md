@@ -98,7 +98,7 @@ nähnyt sopimusta lainkaan.
 | Tila | Asiakkaan linkki | Kentät |
 |---|---|---|
 | **Ensin sopimus** | avautuu allekirjoitukseen; seuranta vasta sen jälkeen | `requireSignature: true` |
-| **Seuranta auki, sopimus popuppina** | seuranta heti; sopimus nousee siihen dialogina | `requireSignature: false`, sopimusteksti olemassa |
+| **Seuranta auki, sopimus popuppina** | seuranta heti; sopimus nousee siihen dialogina | `requireSignature: false`, sopimus olemassa |
 | **Sopimus myöhemmin** | seuranta heti; ei sopimusta vielä | `contractLater: true` |
 
 Perustuslomake tarjoaa kaksi ensimmäistä (`Ensin sopimus` / `Sopimus myöhemmin`);
@@ -127,6 +127,54 @@ uudelleen), ja sopimukseen pääsee sen jälkeen aina nappirivin "Lue ja allekir
 sopimus" -napista. Sisältönä on sama `GigContractSign` modaalimuodossa — ei toista
 toteutusta samasta lomakkeesta. Allekirjoituksen jälkeen palvelin lakkaa
 lähettämästä `signPrompt`ia, joten kehote ei voi palata.
+
+#### Sopimusasiakirja: PDF vai teksti
+
+Sopimus voi olla keikalla **kahdessa muodossa**, ja molemmat kelpaavat
+allekirjoitettavaksi:
+
+| Muoto | Kenttä | Mihin se tallentuu | Mitä asiakas näkee |
+|---|---|---|---|
+| **PDF-tiedosto** (suositus) | `GigData.contractFile` | `job_assets`-taulu, viite blobissa | selattava upotus + "Avaa koko näytöllä" + lataus omalla nimellä |
+| **Sopimusteksti** | `GigData.contractText` | gigData-blobi | teksti auki näkymässä + koottu sopimusdokumentti |
+
+**Liittäminen:** keikan **Sopimus & asiakasnäkymä** -kortti → *Sopimus tiedostona
+(PDF)* → *Valitse PDF-tiedosto*. Tallentuu heti valittaessa (ei "Tallenna
+sopimus" -napin takana, jota painamatta juuri valittu tiedosto olisi hukkunut).
+Enintään noin 5 MB.
+
+**Yksi kysymys, yksi vastaus:** `hasContractDoc(gig)` kertoo onko keikalla
+asiakirja — tiedosto TAI teksti. `signatureRequired`, `signaturePrompt` ja
+`contractPending` lukevat kaikki sitä. Ennen tätä ne kysyivät `contractText`iä
+kolmessa paikassa erikseen, ja kolmesta rinnakkaisesta ehdosta se joka jäisi
+jälkeen tuottaisi keikan jolla on sopimus mutta jota ei voi allekirjoittaa —
+tai asiakkaan joka näkee sopimuksensa ja sen vieressä lupauksen että sopimus
+toimitetaan lähipäivinä.
+
+**Liitetty tiedosto sammuttaa "Sopimus valmistelussa" -huomautukset** kaikkialta
+kerralla (otsikkorivin tilamerkki, huomautusnauha, "Tiedotteet ja ohjeet"
+-kappale, adminin varoitus). Se on koko pointti: sopimus on toimitettu.
+
+**Allekirjoituksen jälkeen tiedostoa ei voi vaihtaa eikä poistaa** (409). Asiakas
+allekirjoitti juuri sen asiakirjan, ja toisen pudottaminen sen tilalle olisi
+allekirjoitus asiakirjaan jota kukaan ei ole hyväksynyt. Asiakas saa sen
+jälkikäteen napista **Lataa sopimus (PDF)**; sen viereinen koottu dokumentti
+nimetään silloin **allekirjoitustodistukseksi**, jottei kaksi eri asiakirjaa ole
+saman nimen takana.
+
+**Miksi kantaan eikä `client/public/`iin:** `client/public/` on julkinen
+verkkosivu ja tämä repo on julkinen. FR8:n vanha `contracts/PT-2026-02.pdf` on
+committattu sinne — se on **perintötapaus, ei malli**: kenen tahansa luettavissa
+ilman linkkiä eikä poistettavissa versiohistoriasta. Kannassa oleva tiedosto on
+asiakkaan oman tokenin takana (`GET /api/gig/:token/contract-file`), ja token
+rajaa sen yhteen keikkaan.
+
+**Serverin omistama kenttä:** `contractFile` syntyy ja katoaa vain
+`/contract-file`-reiteillä. `PATCH /api/jobs/:id/gig` (sopimuslomakkeen tallennus)
+palauttaa talletetun viitteen, koska lomakkeen kopiossa blobista sitä ei ole —
+ilman sitä sopimuksen liittäminen olisi kestänyt seuraavaan tallennukseen asti.
+Sama sääntö kuin projektin `p2`/`scope`/`planImages`-kentillä; vartija:
+`server/server-owned-fields.test.ts`.
 
 #### Sopimusarvon sääntö
 
@@ -455,6 +503,12 @@ Nämä eivät estä keikan perustamista, mutta ne kannattaa tietää:
 8. **Tekijän kovakoodattu ovikoodi ja apunumerot** (`worker.tsx`) näkyvät joka
    keikalla. Sattuu olemaan oikein niin kauan kuin keikat ovat samassa
    rakennuksessa.
+9. **Sopimus-PDF:n sivumäärää ei lueta tiedostosta.** Asiakkaalle näytetään
+   tiedoston koko; ainoa "N sivua" -teksti on FR8:n staattisella PDF:llä, jonka
+   sivumäärä on tiedossa vakiona.
+10. **Upotettu PDF on selaimen varassa.** `<object>` ei vieritä monisivuista
+    sopimusta kaikissa mobiiliselaimissa, minkä takia vieressä on aina "Avaa
+    koko näytöllä" -linkki. Omaa PDF-näyttäjää (pdf.js) ei ole.
 
 ## Verifiointi
 

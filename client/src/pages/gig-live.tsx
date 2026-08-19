@@ -80,10 +80,17 @@ export default function GigLivePage() {
    * jälkeen sopimukseen pääsee aina nappirivistä. Kuittaus on sidottu myös
    * sopimustunnukseen, jotta korjattu sopimus nousee kerran uudelleen — ilman
    * sitä yksi "ei nyt" olisi haudannut myös seuraavan version.
+   *
+   * SAMASTA SYYSTÄ AVAIMESSA ON LIITETYN TIEDOSTON AIKALEIMA: korjattu sopimus
+   * vaihdetaan useimmiten liittämällä uusi PDF, EIKÄ sopimustunnus muutu siinä
+   * lainkaan. Ilman aikaleimaa yksi "ei nyt" olisi haudannut myös sen version
+   * jonka asiakas oikeasti odotti.
    */
   const [contractOpen, setContractOpen] = useState(false);
   const [contractDismissed, setContractDismissed] = useState(false);
-  const contractKey = data ? `pp.contract.${token}.${data.contractId ?? "-"}` : null;
+  const contractKey = data
+    ? `pp.contract.${token}.${data.contractId ?? "-"}.${data.contractFile?.uploadedAt ?? "-"}`
+    : null;
   useEffect(() => {
     if (!contractKey) return;
     try { setContractDismissed(localStorage.getItem(contractKey) === "1"); } catch { setContractDismissed(true); }
@@ -666,8 +673,26 @@ export default function GigLivePage() {
               })}
               style={{ padding: "11px 17px", borderRadius: 12, border: `1px solid ${T.hair}`, background: T.fill, color: T.ink, fontFamily: FONT, fontSize: 14, fontWeight: 600, cursor: "pointer" }}
             >
-              Lataa urakkasopimus
+              {/* NIMI RIIPPUU SIITÄ MITÄ MUUTA ON SAATAVILLA. Tämä tiedosto
+                  kootaan keikan tiedoista ja se kantaa allekirjoituksen. Kun
+                  sopimus on liitetty PDF:nä, PDF on se sopimus — ja kaksi
+                  nappia nimeltä "sopimus" olisi kaksi eri asiakirjaa samalla
+                  nimellä. */}
+              {data.contractFile ? "Lataa allekirjoitustodistus" : "Lataa urakkasopimus"}
             </button>
+          )}
+          {/* ALLEKIRJOITETTU SOPIMUS PYSYY SAATAVILLA.
+              Asiakas allekirjoitti tämän tiedoston, joten hänen on saatava se
+              itselleen myös jälkikäteen — ei vain siinä yhdessä näkymässä joka
+              sulkeutui allekirjoituksen jälkeen. Lataus kulkee palvelimen kautta
+              (`dl=1`), joka kertoo tiedostonimen. */}
+          {data.signature && data.contractFile && (
+            <a
+              href={api.contractFileUrlForGig(token, { download: true })}
+              style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "11px 17px", borderRadius: 12, border: `1px solid ${T.hair}`, background: T.fill, color: T.ink, fontFamily: FONT, fontSize: 14, fontWeight: 600, textDecoration: "none" }}
+            >
+              Lataa sopimus (PDF)
+            </a>
           )}
           {/* Sopimus joka odottaa allekirjoitusta. Kehote ponnahtaa kerran, mutta
               tämä nappi on aina paikalla — kuittaus ei saa haudata sopimusta. */}

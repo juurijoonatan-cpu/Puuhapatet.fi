@@ -660,7 +660,9 @@ export default function AdminNewGigPage() {
           <Hint>
             Liitä sovittu teksti sellaisenaan. Näkyy tiimille, sopimusdokumentissa
             JA asiakkaalle allekirjoitettavana — tyhjä kenttä on täysin ok, jos
-            sopimus tehdään myöhemmin.
+            sopimus tehdään myöhemmin. Jos sopimus on PDF, liitä se tiedostona
+            keikan Sopimus-kortista perustamisen jälkeen: PDF säilyttää taulukot,
+            liitteet ja allekirjoitussivun, joita tämä kenttä ei säilytä.
           </Hint>
 
           <div className="mt-4">
@@ -681,7 +683,8 @@ export default function AdminNewGigPage() {
             {signMode === "first" && !contractText.trim() && (
               <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400 leading-snug">
                 Sopimusteksti on tyhjä, joten allekirjoitettavaa ei ole — linkki avautuu
-                suoraan seurantaan. Valitse "Sopimus myöhemmin", jos se on tarkoitus.
+                suoraan seurantaan. Valitse "Sopimus myöhemmin", jos se on tarkoitus, tai
+                liitä sopimus PDF:nä keikan Sopimus-kortista heti perustamisen jälkeen.
               </p>
             )}
           </div>

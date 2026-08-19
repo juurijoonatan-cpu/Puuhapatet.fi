@@ -6,7 +6,7 @@
  * link, and partial-invoice sending (the "every ~100 units" invoice button).
  */
 
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link, useRoute, useLocation } from "wouter";
 import {
   ArrowLeft, Share2, Copy, Check, FileText,
@@ -202,6 +202,78 @@ export default function AdminGigTrackerPage() {
     navigator.clipboard?.writeText(shareUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
+  };
+
+  /**
+   * SOPIMUS TIEDOSTONA.
+   *
+   * Tiedosto EI kulje `saveContract`in mukana vaan omalla reitillään: se on
+   * megatavuja, ja lomakkeen tallennus lähtee joka kerta kun tunnus tai
+   * ALV-teksti muuttuu. Siksi se myös tallentuu heti valittaessa — ei
+   * "Tallenna sopimus" -napin takana, jonka painamatta jättäminen olisi
+   * hukannut juuri valitun tiedoston.
+   */
+  const [contractFileBusy, setContractFileBusy] = useState(false);
+  const contractFileInput = useRef<HTMLInputElement>(null);
+
+  const pickContractFile = async (file: File | null | undefined) => {
+    if (!file || !jobId) return;
+    if (file.type !== "application/pdf") {
+      toast({ variant: "destructive", title: "Vain PDF", description: "Liitä sopimus PDF-tiedostona." });
+      return;
+    }
+    setContractFileBusy(true);
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result ?? ""));
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(file);
+    }).catch(() => "");
+    if (!dataUrl) {
+      setContractFileBusy(false);
+      toast({ variant: "destructive", title: "Tiedostoa ei voitu lukea" });
+      return;
+    }
+    const res = await api.uploadGigContractFile(jobId, dataUrl, file.name);
+    setContractFileBusy(false);
+    if (res.ok && res.data) {
+      setGig(res.data.gigData);
+      toast({ title: "Sopimus liitetty", description: "Asiakas näkee sen omassa näkymässään." });
+    } else {
+      toast({ variant: "destructive", title: "Liittäminen epäonnistui", description: res.error });
+    }
+  };
+
+  /**
+   * Esikatselu adminille. Tiedosto haetaan blobina eikä linkitetä suoraan:
+   * adminin reitti vaatii Bearer-otsakkeen, jota `<a href>` ei lähetä — suora
+   * linkki avaisi välilehden jossa lukee "Kirjautuminen vaaditaan".
+   */
+  const openContractFile = async () => {
+    if (!jobId) return;
+    setContractFileBusy(true);
+    const res = await api.fetchGigContractFile(jobId);
+    setContractFileBusy(false);
+    if (res.ok && res.blob) {
+      const url = URL.createObjectURL(res.blob);
+      window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } else {
+      toast({ variant: "destructive", title: "Sopimusta ei voitu avata", description: res.error });
+    }
+  };
+
+  const removeContractFile = async () => {
+    if (!jobId) return;
+    setContractFileBusy(true);
+    const res = await api.deleteGigContractFile(jobId);
+    setContractFileBusy(false);
+    if (res.ok && res.data) {
+      setGig(res.data.gigData);
+      toast({ title: "Sopimustiedosto poistettu" });
+    } else {
+      toast({ variant: "destructive", title: "Poisto epäonnistui", description: res.error });
+    }
   };
 
   const saveContract = async () => {
@@ -762,6 +834,15 @@ export default function AdminGigTrackerPage() {
           const status = gigStatus(gig);
           const sig = gig.signature;
           const appr = gig.approval;
+          /**
+           * Onko allekirjoitettavaa: liitetty PDF TAI luonnoksen sopimusteksti.
+           *
+           * Teksti luetaan `draft`ista eikä `gig`istä, jotta varoitus vastaa
+           * sitä mitä ruudulla juuri nyt on — kirjoittaminen sammuttaa sen
+           * heti, ei vasta tallennuksen jälkeen. Tiedosto luetaan `gig`istä,
+           * koska se tallentuu heti valittaessa eikä ole osa luonnosta.
+           */
+          const hasDoc = !!gig.contractFile || !!draft.contractText.trim();
           const statusPill = (
             <span
               className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-full px-2.5 py-1 ${
@@ -955,18 +1036,78 @@ export default function AdminGigTrackerPage() {
                           );
                         })}
                       </div>
-                      {draft.signMode !== "later" && !draft.contractText.trim() && (
+                      {/* HUOMAUTUKSET LUKEVAT MOLEMMAT ASIAKIRJAN MUODOT.
+                          Ennen ne katsoivat vain sopimustekstiä, joten liitetty
+                          PDF ei kelpatessaankaan sammuttanut varoitusta: admin
+                          näki "allekirjoitettavaa ei ole" sopimuksesta joka oli
+                          juuri liitetty, ja asiakas näki samaan aikaan sen
+                          sopimuksen omassa näkymässään. */}
+                      {draft.signMode !== "later" && !hasDoc && (
                         <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
-                          Sopimusteksti on tyhjä, joten allekirjoitettavaa ei ole. Asiakas näkee
-                          seurannan, mutta ei sopimusta.
+                          Sopimusta ei ole vielä liitetty (ei tiedostoa eikä tekstiä), joten
+                          allekirjoitettavaa ei ole. Asiakas näkee seurannan, mutta ei sopimusta.
                         </p>
                       )}
-                      {draft.signMode === "later" && draft.contractText.trim() && (
+                      {draft.signMode === "later" && hasDoc && (
                         <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
-                          Sopimusteksti on jo liitetty. Valitse "sopimus popuppina", niin asiakas
+                          Sopimus on jo liitetty. Valitse "sopimus popuppina", niin asiakas
                           näkee ja voi allekirjoittaa sen.
                         </p>
                       )}
+                    </div>
+
+                    {/* ── SOPIMUS TIEDOSTONA ─────────────────────────────────
+                        Tämä on se tapa jolla sopimus oikeasti liitetään: se on
+                        PDF. Tekstikenttä alla jää vaihtoehdoksi (ja tiedoston
+                        rinnalle lisätiedoksi), mutta PDF säilyttää sen mitä
+                        teksti ei: taulukot, liitteet ja allekirjoitussivun. */}
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                        <FileText className="w-3.5 h-3.5" /> Sopimus tiedostona (PDF)
+                      </Label>
+                      <input
+                        ref={contractFileInput}
+                        type="file"
+                        accept="application/pdf,.pdf"
+                        className="hidden"
+                        onChange={(e) => { void pickContractFile(e.target.files?.[0]); e.currentTarget.value = ""; }}
+                      />
+                      {gig.contractFile ? (
+                        <div className="rounded-xl border border-border p-3 space-y-2">
+                          <div className="flex items-start gap-2">
+                            <FileText className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+                            <div className="min-w-0">
+                              <p className="text-sm text-foreground break-all">{gig.contractFile.name}</p>
+                              <p className="text-[11px] text-muted-foreground tabular-nums">
+                                {Math.max(1, Math.round(gig.contractFile.bytes / 1000))} kB · liitetty{" "}
+                                {new Date(gig.contractFile.uploadedAt).toLocaleDateString("fi-FI")}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Button variant="outline" size="sm" disabled={contractFileBusy} onClick={openContractFile}>
+                              Avaa
+                            </Button>
+                            <Button variant="outline" size="sm" disabled={contractFileBusy}
+                              onClick={() => contractFileInput.current?.click()}>
+                              Korvaa
+                            </Button>
+                            <Button variant="outline" size="sm" disabled={contractFileBusy} onClick={removeContractFile}>
+                              Poista
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <Button variant="outline" className="w-full" disabled={contractFileBusy}
+                          onClick={() => contractFileInput.current?.click()}>
+                          <FileText className="w-4 h-4 mr-2" />
+                          {contractFileBusy ? "Liitetään…" : "Valitse PDF-tiedosto"}
+                        </Button>
+                      )}
+                      <p className="text-[11px] text-muted-foreground leading-snug">
+                        Asiakas näkee tiedoston omassa näkymässään selattavana ja allekirjoittaa
+                        sen samasta paikasta. Tallentuu heti valittaessa — enintään noin 5 MB.
+                      </p>
                     </div>
                     <div className="space-y-1.5">
                       <Label className="text-xs font-medium text-muted-foreground">Sopimustunnus</Label>

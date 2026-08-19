@@ -33,11 +33,35 @@ import type { ProjectData } from "@shared/project";
  * sivunlataus. Blobiin jää vain `building.planImages[kerros]` = tämän rivin id.
  */
 export type AssetKind =
-  | "observation" | "expense_receipt" | "payout_receipt" | "crew_document" | "floor_plan";
+  | "observation" | "expense_receipt" | "payout_receipt" | "crew_document" | "floor_plan"
+  /**
+   * `contract_doc` on keikan sopimus PDF:nä (yksi per keikka, `refKey` =
+   * "contract"). Kuuluu tähän tauluun samasta syystä kuin pohjakuva: gigData
+   * luetaan joka kerta kun asiakas avaa seurannan, sopimus luetaan kerran.
+   */
+  | "contract_doc";
 
 /** Suurin talletettava pohjakuva (~2,5 MB data URL). Iso mutta kertaluonteinen:
  *  se ei ole blobissa eikä siis mukana karttapyynnöissä. */
 export const MAX_PLAN_IMAGE_LEN = 3_500_000;
+
+/**
+ * Suurin talletettava sopimus-PDF: ~7 MB data URL ≈ 5 MB tiedosto.
+ *
+ * Sopimus on skannattuna ja allekirjoitettuna helposti megatavuja, ja sen
+ * pienentäminen ennen latausta ei ole asia jota kenenkään pitäisi tehdä
+ * sopimukselle. Sama perustelu kuin pohjakuvalla: tiedosto ei ole blobissa,
+ * joten se maksaa vain silloin kun se luetaan.
+ *
+ * MIKSI EI 8 MB: `express.json` hyväksyy 8 MiB, ja data URL kulkee JSONin
+ * sisällä (`{"dataUrl":"…","name":"…"}`). Tasan rajalla oleva tiedosto
+ * kaatuisi bodyn kokorajaan ennen kuin tämä tarkistus ehtii vastata siitä
+ * selkeästi — ja asiakas näkisi vain "413" ilman selitystä.
+ */
+export const MAX_CONTRACT_FILE_LEN = 7_000_000;
+
+/** Keikan sopimustiedoston `refKey`: yksi sopimus per keikka. */
+export const CONTRACT_REF_KEY = "contract";
 
 /** Data URL:n mime-tyyppi, esim. "image/jpeg". Tuntematon → "application/octet-stream". */
 function mimeOf(dataUrl: string): string {
@@ -100,20 +124,45 @@ export async function resolveAsset(
 export async function getPlanImage(
   jobId: number, floor: string,
 ): Promise<{ body: Buffer; mime: string; etag: string } | null> {
+  return rawAsset(jobId, "floor_plan", floor, "image/png", "plan");
+}
+
+/**
+ * Keikan sopimus-PDF raakana tiedostona.
+ *
+ * SAMA POLKU KUIN POHJAKUVALLA, tarkoituksella: selain osaa näyttää PDF:n
+ * `<object>`-upotuksessa vain jos se saa oikean `Content-Type`in ja bitit, ei
+ * `{dataUrl}`-objektia. Yksi funktio molemmille, jotta base64:n purku,
+ * ETag-muoto ja "ei löydy" -tila ovat samat kummallekin — kaksi kopiota
+ * tarkoittaisi kaksi paikkaa jossa 304-vastaus voi mennä eri tavalla rikki.
+ */
+export async function getContractFile(
+  jobId: number,
+): Promise<{ body: Buffer; mime: string; etag: string } | null> {
+  return rawAsset(jobId, "contract_doc", CONTRACT_REF_KEY, "application/pdf", "contract");
+}
+
+/**
+ * Liitteen sisältö raakana: base64 purettuna, oikea mime ja ETag.
+ *
+ * ETag on rivin id + koko: liite on muuttumaton kunnes se korvataan, ja korvaus
+ * muuttaa kokoa lähes aina. Riittää 304-vastauksiin.
+ */
+async function rawAsset(
+  jobId: number, kind: AssetKind, refKey: string, fallbackMime: string, etagTag: string,
+): Promise<{ body: Buffer; mime: string; etag: string } | null> {
   const [row] = await db.select({ id: jobAssets.id, mime: jobAssets.mime, data: jobAssets.data })
     .from(jobAssets)
     .where(and(
       eq(jobAssets.jobId, jobId),
-      eq(jobAssets.kind, "floor_plan"),
-      eq(jobAssets.refKey, floor.slice(0, 200)),
+      eq(jobAssets.kind, kind),
+      eq(jobAssets.refKey, refKey.slice(0, 200)),
     ));
   if (!row?.data) return null;
   const comma = row.data.indexOf(",");
   if (comma < 0) return null;
   const body = Buffer.from(row.data.slice(comma + 1), "base64");
-  // ETag on rivin id + koko: kuva on muuttumaton kunnes se korvataan, ja
-  // korvaus muuttaa kokoa lähes aina. Riittää 304-vastauksiin.
-  return { body, mime: row.mime || "image/png", etag: `"plan-${row.id}-${body.length}"` };
+  return { body, mime: row.mime || fallbackMime, etag: `"${etagTag}-${row.id}-${body.length}"` };
 }
 
 /** Poista kerroksen pohjakuva. Palauttaa true jos rivi oli olemassa. */
@@ -122,6 +171,16 @@ export async function deletePlanImage(jobId: number, floor: string): Promise<boo
     eq(jobAssets.jobId, jobId),
     eq(jobAssets.kind, "floor_plan"),
     eq(jobAssets.refKey, floor.slice(0, 200)),
+  )).returning({ id: jobAssets.id });
+  return gone.length > 0;
+}
+
+/** Poista keikan sopimustiedosto. Palauttaa true jos rivi oli olemassa. */
+export async function deleteContractFile(jobId: number): Promise<boolean> {
+  const gone = await db.delete(jobAssets).where(and(
+    eq(jobAssets.jobId, jobId),
+    eq(jobAssets.kind, "contract_doc"),
+    eq(jobAssets.refKey, CONTRACT_REF_KEY),
   )).returning({ id: jobAssets.id });
   return gone.length > 0;
 }

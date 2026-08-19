@@ -21,6 +21,8 @@ import { downloadGigContract } from "@/lib/gig-contract-doc";
 import { customerProgress } from "@/lib/customer-progress";
 import { CT, CFONT, eyebrow, customerTheme, isTechTheme, eyebrowOn } from "@/lib/customer-theme";
 import TechHero from "@/components/customer/TechHero";
+import WorkloadGauge from "@/components/customer/WorkloadGauge";
+import Greeting from "@/components/customer/Greeting";
 
 const FONT = CFONT;
 /** Oletusteema. Käytössä latausruudulla, jossa keikan teemaa ei vielä tiedetä. */
@@ -218,6 +220,17 @@ export default function GigLivePage() {
   // luvata mitään sellaista.
   const INSTALMENTS = 4;
   const invoicesSent = data.paymentsCount;
+  /**
+   * TYÖMÄÄRÄMITTARIN IKKUNAMÄÄRÄ.
+   *
+   * Sama joukko jonka pääkortti näyttää: kartta jos se on olemassa, muuten
+   * sopimuksen sektorit. Palvelin lähettää vain kertoimen (h/ikkuna) juuri
+   * tästä syystä — jos se laskisi kokonaistunnit omasta ikkunajoukostaan,
+   * mittari ja edistymisluku voisivat olla eri mieltä samasta keikasta.
+   */
+  const gaugeTotal = hasMapProgress ? mapProgress.total : sectorsTotal;
+  const gaugeDone = hasMapProgress ? mapProgress.done : sectorsWashed;
+  const showWorkload = !!data.estHoursPerWindow && gaugeTotal > 0;
   const updated = new Date(data.updatedAt).toLocaleString("fi-FI", {
     day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit",
   });
@@ -332,8 +345,20 @@ export default function GigLivePage() {
                 : data.signPrompt
                   // Rehellinen tila: työ on käynnissä ja sopimus odottaa. Ei
                   // valeväitettä allekirjoituksesta, ei tyhjää kohtaa.
-                  ? <StatusBadge color="#E0A800" label="Sopimus allekirjoitettavana" />
-                  : null}
+                  ? <StatusBadge color="#E0A800" label="Sopimus allekirjoitettavana" icon="dot" />
+                  // Valittiin "allekirjoitetaan myöhemmin": sopimusta ei ole
+                  // vielä olemassa, ja se pitää lukea näkymästä. Ilman tätä
+                  // kohta oli tyhjä ja sivu vaikutti sopimuksettomalta.
+                  : data.contractPending
+                    ? <StatusBadge color={T.navy} label="Sopimus valmistelussa" icon="dot" />
+                    : null}
+          </div>
+          {/* TERVEHDYS. Kellonajan mukaan ja nimellä, kirjoituskoneena — tämä on
+              se yksi kohta jossa näkymä saa tuntua ihmisen tekemältä. Nimi tulee
+              keikan yhteyshenkilöstä; ilman nimeä tervehditään ilman nimeä eikä
+              keksitä mitään. */}
+          <div style={{ marginTop: 13 }}>
+            <Greeting contact={data.company?.contact} theme={T} />
           </div>
         </div>
 
@@ -365,15 +390,59 @@ export default function GigLivePage() {
             : <CustomerProgressHero {...heroProps} />;
         })()}
 
-        /**
-         * Sektorien eurokortit.
-         *
-         * Piilossa kiinteähintaisella urakalla (yksi kokonaishinta, ei
-         * sektorikohtaista laskutusta) JA yhteisökeikalla. Jälkimmäinen oli
-         * ennen pahin oletus koko sivulla: ehto oli pelkkä `!isFixedDeal`, joten
-         * juuri vastikkeeton keikka sai eurokortit — "0,00 € / 525,00 €"
-         * asiakkaalle joka ei maksa mitään.
-         */
+        {/* SOPIMUS ON TULOSSA.
+            Kun keikka on aloitettu valinnalla "allekirjoitetaan myöhemmin",
+            asiakas saa tämän linkin ennen sopimusta. Ilman tätä huomautusta
+            sivulla ei ole sopimuksesta mitään merkkiä, ja se lukee kuin
+            sopimusta ei olisi tarkoitus tehdä lainkaan. Tämä on näkyvillä
+            ilman että mitään tarvitsee avata — se on lupaus, ei ohje. */}
+        {data.contractPending && (
+          <Notice theme={T} tone={T.navy} lead="Sopimus valmistelussa.">
+            Turvallisuus- ja sopimusehdot toimitetaan tähän näkymään lähipäivinä.
+            Saat siitä kehotteen tälle sivulle, ja voit allekirjoittaa sen suoraan tästä.
+            Työtä tehdään siihen asti sovitussa laajuudessa.
+          </Notice>
+        )}
+
+        {/* TYÖMÄÄRÄN ARVIO.
+            Oma mittari, koska se vastaa eri kysymykseen kuin pääkortti:
+            pääkortti kertoo kuinka pitkällä työ on, tämä kertoo paljonko työtä
+            on — tunneissa. Siksi tässä mittarissa ei ole prosenttilukua.
+            Piirretään vain jos keikalle on annettu mitoitus (h/ikkuna) ja
+            ikkunoita on; ilman arviota lukua ei keksitä. */}
+        {showWorkload && (
+          <Panel theme={T}>
+            {/* Pelkkä yläotsikko. Ikkunamäärä ja mitoitus lukevat mittarin omassa
+                luentataulukossa, joten niiden toistaminen tässä oli sama tieto
+                kahdesti kahden sentin päässä toisistaan. */}
+            <p style={{ margin: "0 0 16px", ...eyebrowOn(T) }}>Työmäärä · arvio</p>
+            <WorkloadGauge
+              theme={T}
+              hoursPerWindow={data.estHoursPerWindow!}
+              totalWindows={gaugeTotal}
+              doneWindows={gaugeDone}
+            />
+            <p style={{ margin: "16px 0 0", fontSize: 12.5, color: T.muted, lineHeight: 1.6 }}>
+              Arvio työmäärästä keikan mitoituksen mukaan — ei sitova aikataulu. Isot
+              monilohkoiset ikkunat viedään yksi kerrallaan, ja mittari liikkuu sitä mukaa
+              kun ikkunoita merkitään pestyiksi.
+            </p>
+          </Panel>
+        )}
+
+        {/*
+          * Sektorien eurokortit.
+          *
+          * Piilossa kiinteähintaisella urakalla (yksi kokonaishinta, ei
+          * sektorikohtaista laskutusta) JA yhteisökeikalla. Jälkimmäinen oli
+          * ennen pahin oletus koko sivulla: ehto oli pelkkä `!isFixedDeal`, joten
+          * juuri vastikkeeton keikka sai eurokortit — "0,00 € / 525,00 €"
+          * asiakkaalle joka ei maksa mitään.
+          *
+          * HUOM AALTOSULKEET: ilman niitä tämä ei ole kommentti vaan JSX:n
+          * LAPSI, ja React piirsi koko tekstin asiakkaan sivulle sellaisenaan.
+          * Asiakas luki sivultaan "juuri vastikkeeton keikka sai eurokortit".
+          */}
         {!data.isFixedDeal && !data.isCommunity && data.sectors.map((s) => {
           const accrued = s.washed * s.unitPriceCents;
           const cap = s.total * s.unitPriceCents;
@@ -454,7 +523,7 @@ export default function GigLivePage() {
         {data.map && (
           <Panel theme={T}>
             <p style={{ margin: "0 0 14px", ...label }}>Pohjapiirros</p>
-            <CustomerFloorMap map={data.map} p2={p2} p2Actions={p2Live ? p2Actions : undefined} onLoadObservationImage={loadObservationImage} planUrlBase={api.planUrlBaseForGig(token)} theme={T} />
+            <CustomerFloorMap map={data.map} p2={p2} p2Actions={p2Live ? p2Actions : undefined} onLoadObservationImage={loadObservationImage} planUrlBase={api.planUrlBaseForGig(token)} theme={T} fixedDeal={data.isFixedDeal} />
           </Panel>
         )}
 
@@ -469,7 +538,7 @@ export default function GigLivePage() {
               Tiedotteet ja ohjeet
             </summary>
             <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 12, fontSize: 13.5, lineHeight: 1.7, color: T.ink }}>
-              <p style={{ margin: 0 }}>{data.description}</p>
+              {data.description && <p style={{ margin: 0 }}>{data.description}</p>}
               <p style={{ margin: 0 }}>
                 {data.customerNote || (data.isCommunity
                   ? "Tämä on yhteisökeikka: teemme työn veloituksetta, joten näkymässä ei ole hintoja eikä laskuja — vain työn tilanne. Voit seurata edistymistä reaaliaikaisesti."
@@ -477,9 +546,18 @@ export default function GigLivePage() {
               </p>
               {data.map && (
                 <p style={{ margin: 0, color: T.muted }}>
+                  {/* KELTAINEN = "EI VIELÄ PÄÄTETTY", EI "EI KUULU MEILLE".
+                      Vanha teksti sanoi että keltaiset "eivät kuulu tähän
+                      sopimukseen", mikä on FR8:n kiinteän urakan totuus mutta
+                      väärä muualla: keltainen tarkoittaa ikkunaa jonka
+                      pesemisestä ei ole vielä varmuutta. Sopimuksettomalla
+                      keikalla lause oli suorastaan absurdi — se viittasi
+                      sopimukseen jota ei ole. */}
                   {p2Live
                     ? "Kartalla keltaisella merkityt ovat Priority 2 -ikkunoita: jokainen hinnoitellaan ikkunakohtaisesti. Vastaa ehdotuksiin listasta tai napauta ikkunaa kartalta."
-                    : "Kartalla keltaisella merkityt ikkunat eivät kuulu tähän sopimukseen — niiden tilanne katsotaan seuraavassa sopimuksessa."}
+                    : data.isFixedDeal
+                      ? "Kartalla keltaisella merkityt ikkunat eivät kuulu tähän sopimukseen — niiden tilanne katsotaan seuraavassa sopimuksessa."
+                      : "Kartalla keltaisella merkityt ikkunat ovat Priority 2: niiden pesemisestä ei ole vielä sovittu. Ne eivät ole poissa laskuista — katsomme ne yhdessä kun ensimmäinen kierros on tehty."}
                 </p>
               )}
               {p2Live && (
@@ -493,6 +571,13 @@ export default function GigLivePage() {
                 <p style={{ margin: 0, color: T.muted }}>
                   Sopimus laskutetaan {INSTALMENTS} yhtä suuressa erässä työn edetessä.
                   “Laskuja lähetetty” kertoo, montako laskua olemme tähän mennessä lähettäneet.
+                </p>
+              )}
+              {data.contractPending && (
+                <p style={{ margin: 0, color: T.muted }}>
+                  Sopimusasiakirja (työn laajuus, turvallisuus ja ehdot) on valmistelussa ja
+                  toimitetaan tähän näkymään allekirjoitettavaksi. Se ei estä työn aloittamista:
+                  laajuus on sovittu erikseen, ja sopimus kirjaa sen.
                 </p>
               )}
               <p style={{ margin: 0, color: T.muted }}>
@@ -778,17 +863,53 @@ function fmtDate(ts: number) {
   return new Date(ts).toLocaleDateString("fi-FI", { day: "numeric", month: "numeric", year: "numeric" });
 }
 
-/** Signed / approved marking shown in the header. */
-function StatusBadge({ color, label }: { color: string; label: string }) {
+/**
+ * Sopimuksen tila otsikkorivillä.
+ *
+ * KAKSI MERKKIÄ, KAKSI MERKITYSTÄ: väkänen tarkoittaa "tehty" (allekirjoitettu,
+ * hyväksytty), piste tarkoittaa "odottaa" (allekirjoitettavana, valmistelussa).
+ * Väkänen oli aiemmin myös odottavassa tilassa, eli sivu näytti kuitatun
+ * merkin asiasta jota kukaan ei ollut vielä tehnyt.
+ */
+function StatusBadge({ color, label, icon = "check" }: { color: string; label: string; icon?: "check" | "dot" }) {
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color, letterSpacing: "0.04em", border: `1px solid ${color}33`, borderRadius: 999, padding: "5px 10px", background: `${color}12`, whiteSpace: "nowrap" }}>
-      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+      {icon === "check"
+        ? <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><polyline points="20 6 9 17 4 12" /></svg>
+        : <span aria-hidden style={{ width: 7, height: 7, borderRadius: 999, background: color, flexShrink: 0 }} />}
       {label}
     </span>
   );
 }
 
 const label: React.CSSProperties = eyebrow;
+
+/**
+ * Yhden asian huomautusnauha.
+ *
+ * Ohuempi kuin kortti ja lihavampi kuin leipäteksti: tämä on tarkoitettu
+ * asialle jonka asiakkaan pitää nähdä avaamatta mitään, mutta joka ei ole
+ * mittari. Piste kantaa värin, teksti kantaa merkityksen — väri ei koskaan
+ * yksin (vihreä/keltainen ovat CVD-erottelultaan rajatapaus).
+ */
+function Notice({ theme, tone, lead, children }: { theme: typeof CT; tone: string; lead: string; children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        display: "flex", gap: 11, alignItems: "flex-start",
+        background: theme.card, border: `1px solid ${theme.hair}`,
+        borderLeft: `3px solid ${tone}`, borderRadius: 14,
+        padding: "13px 16px", marginBottom: 16,
+      }}
+    >
+      <span aria-hidden style={{ width: 8, height: 8, borderRadius: 999, background: tone, flexShrink: 0, marginTop: 6 }} />
+      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: theme.muted }}>
+        <strong style={{ color: theme.ink, fontWeight: 700 }}>{lead}</strong>{" "}
+        {children}
+      </p>
+    </div>
+  );
+}
 
 function Panel({ children, theme = CT }: { children: React.ReactNode; theme?: typeof CT }) {
   return (

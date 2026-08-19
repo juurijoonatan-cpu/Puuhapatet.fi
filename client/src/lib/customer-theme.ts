@@ -26,6 +26,20 @@ export const CT = {
   navy: "#1F3B57",
   green: "#3E7C59",
   amber: "#E0A800",
+  /**
+   * MITTARIN RATA — saman sävyn askel, ei harmaa.
+   *
+   * Dataviz-sääntö: rata on samaa ramppia kuin täyttö, jotta koko asteikko
+   * luetaan mittarista eikä vain täytetystä osasta. Harmaa rata lukee "ei
+   * mitään" ja mittari kutistuu palkiksi.
+   *
+   * PEITTÄVÄ HEX EIKÄ LÄPINÄKYVÄ: läpinäkyvän radan lopullinen väri riippuu
+   * siitä minkä pinnan päälle mittari sattuu piirtymään, joten sen kontrastia
+   * ei voi mitata — ja mitattuna se oli 1,22:1 valkoista korttia vasten, eli
+   * mittarin tyhjä osa katosi käytännössä näkyvistä. Tämä askel on **mitattu**:
+   * 2,19:1 vs `card` (#FFFFFF), ja ΔL täyttöön (`green`) yli 0,06.
+   */
+  meterTrack: "#94B7A4",
 } as const;
 
 /**
@@ -58,6 +72,12 @@ export const CT_TECH = {
   navy: "#8FB4FF",
   green: "#5FE08A",
   amber: "#FFCE28",
+  /**
+   * Sama askel tummalla pinnalla. Mitattu: 2,29:1 vs `card` (#101215).
+   * Entinen `rgba(95,224,138,0.16)` oli 1,39:1 — rengasmittarin tyhjä osa oli
+   * lähes näkymätön, eli asteikko luettiin vain täytetystä kaaresta.
+   */
+  meterTrack: "#2B583D",
 } as const;
 
 /** Asiakasnäkymien teemat. `CT` on oletus; `tech` on tumma tekninen. */

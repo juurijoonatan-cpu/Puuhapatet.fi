@@ -891,6 +891,19 @@ function dayKey(ts: number): string {
 }
 
 /**
+ * Tuntiarvio per ikkuna, siivottuna — tai null jos arviota ei ole.
+ *
+ * MIKSI OMA FUNKTIO: sama luku luetaan kahdesta paikasta (`computeEfficiency`
+ * ja asiakkaan julkinen projektio). Kaksi rinnakkaista `Number.isFinite`-ehtoa
+ * olisi kaksi paikkaa jossa nolla, tyhjä merkkijono tai NaN käsitellään eri
+ * tavalla, ja asiakkaan sivulle päätyisi "0 h" arvion puuttumisen sijaan.
+ */
+export function estHoursPerWindowOf(data: Pick<ProjectData, "estimatedHoursPerWindow">): number | null {
+  const est = Number(data.estimatedHoursPerWindow);
+  return Number.isFinite(est) && est > 0 ? est : null;
+}
+
+/**
  * Derive pace / projection stats for a project so the gig-tools "Tehokkuus"
  * view can show throughput and an ETA. Pace is based on the retained activity
  * log (capped), so it is an estimate — the long-running totals (washed, revenue)
@@ -936,8 +949,7 @@ export function computeEfficiency(data: ProjectData): GigEfficiency {
 
   // Tuntiarvio (esim. 1,5 h per iso monilohkoinen ikkuna). Puuttuva arvio →
   // kaikki tuntiluvut ovat null, eikä mikään näkymä keksi lukua tyhjästä.
-  const est = data.estimatedHoursPerWindow;
-  const estHoursPerWindow = Number.isFinite(est) && (est as number) > 0 ? (est as number) : null;
+  const estHoursPerWindow = estHoursPerWindowOf(data);
   const estTotalHours = estHoursPerWindow !== null ? round2(estHoursPerWindow * totals.total) : null;
   const estRemainingHours = estHoursPerWindow !== null ? round2(estHoursPerWindow * remaining) : null;
   const actualHoursPerWindow = totalHours > 0 && totals.washed > 0 ? round2(totalHours / totals.washed) : null;

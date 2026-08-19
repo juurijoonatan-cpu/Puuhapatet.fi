@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyGigData, sanitizeGigData, signatureRequired, signaturePrompt, type GigData } from "./gig";
+import { emptyGigData, sanitizeGigData, signatureRequired, signaturePrompt, contractPending, type GigData } from "./gig";
 
 /**
  * SOPIMUKSEN AJOITUS.
@@ -86,5 +86,44 @@ describe("sanitizeGigData", () => {
 
   it("roska ei mene läpi lippuna", () => {
     expect(sanitizeGigData({ ...emptyGigData(), contractLater: "kyllä" as any }).contractLater).toBeUndefined();
+  });
+});
+
+/**
+ * SOPIMUS ON VALMISTELUSSA.
+ *
+ * Asiakkaan näkymässä lukee "sopimus valmistelussa · toimitetaan lähipäivinä".
+ * Se on LUPAUS, joten se ei saa näkyä keikalla jolle sopimusta ei ole tarkoitus
+ * tehdä lainkaan — pelkkä puuttuva sopimusteksti ei riitä ehdoksi.
+ */
+describe("contractPending", () => {
+  const gig = (over: Partial<GigData>): GigData => ({ ...emptyGigData(), ...over });
+
+  it("tosi vain kun sopimus on nimenomaisesti myöhemmin JA sitä ei vielä ole", () => {
+    expect(contractPending(gig({ contractLater: true }))).toBe(true);
+  });
+
+  it("epätosi keikalla jolle sopimusta ei ole tarkoitus tehdä", () => {
+    // Tämä on se väärä lupaus jota vältetään: ei sopimustekstiä, mutta ei myöskään
+    // valintaa "tehdään myöhemmin" → sivulla ei saa lukea että sopimus on tulossa.
+    expect(contractPending(gig({}))).toBe(false);
+  });
+
+  it("epätosi heti kun sopimusteksti on olemassa", () => {
+    expect(contractPending(gig({ contractLater: true, contractText: "1 § Työn kohde…" }))).toBe(false);
+    // Pelkkä välilyönti ei ole sopimus.
+    expect(contractPending(gig({ contractLater: true, contractText: "   " }))).toBe(true);
+  });
+
+  it("epätosi kun sopimus on allekirjoitettu", () => {
+    expect(contractPending(gig({
+      contractLater: true,
+      signature: { signerName: "Akseli Kettunen", signedAt: 1, signatureDataUrl: "x", customer: { legalName: "Stuhi ry" } },
+    }))).toBe(false);
+  });
+
+  it("säilyy tallennuksen läpi (sanitizeGigData ei pudota lippua)", () => {
+    const saved = sanitizeGigData({ ...emptyGigData(), contractLater: true });
+    expect(contractPending(saved)).toBe(true);
   });
 });

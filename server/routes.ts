@@ -28,9 +28,9 @@ import {
   CUSTOM_PRICING_SUMMARY, SQM_RANGES, HOUSE_TYPES,
   type HouseKey, type TierKey, type HeightKey, type AreaKey, type AddonKey, type DifficultyKey,
 } from "@shared/pricing";
-import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, signaturePrompt, gigStatus, livePayments, type GigData } from "@shared/gig";
+import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, signaturePrompt, contractPending, gigStatus, livePayments, withoutDashOnly, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
@@ -5555,7 +5555,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json({
         contractId: gig.contractId ?? null,
         companyName: gig.company?.name ?? row.customer.name,
-        description: row.job.description,
+        // Viiva tarkoittaa "ei kuvausta", ei kuvausta nimeltä "-" — se päätyi
+        // asiakkaan sivulle omaksi kappaleekseen.
+        description: withoutDashOnly(row.job.description) ?? null,
         currency: gig.currency,
         vatNote: gig.vatNote ?? null,
         customerNote: gig.customerNote ?? null,
@@ -5618,6 +5620,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
          * allekirjoittanut asiakas ei voi saada kehotetta uudelleen.
          */
         signPrompt: signaturePrompt(gig) === "popup",
+        /**
+         * Sopimus on VALMISTELUSSA (valinta "allekirjoitetaan myöhemmin"),
+         * eli asiakkaan näkymässä pitää lukea että se on tulossa. Johdettu
+         * palvelimella, koska pelkkä puuttuva sopimusteksti on tosi myös
+         * keikalla jolle sopimusta ei ole tarkoitus tehdä lainkaan.
+         */
+        contractPending: contractPending(gig),
+        /**
+         * TUNTIARVIO per ikkuna — ei kokonaistunteja.
+         *
+         * Kokonaistunnit laskettaisiin täällä `computeProjectTotals`in
+         * ikkunamäärästä, mutta asiakkaan näkymä laskee edistymisensä
+         * `customerProgress`illa, joka jättää hylätyt keltaiset pois. Kaksi eri
+         * ikkunajoukkoa = mittari ja edistymisluku eri mieltä samasta keikasta.
+         * Yksi kerroin, ja selain kertoo sillä ne ikkunat jotka se itse näyttää.
+         *
+         * Toteutuneita työtunteja ei lähetetä koskaan: ne ovat tekijän palkan
+         * peruste, eivät asiakkaan tietoa.
+         */
+        estHoursPerWindow: proj ? estHoursPerWindowOf(proj) : null,
         status: gigStatus(gig),
         signed: !!gig.signature?.signedAt,
         signedAt: gig.signature?.signedAt ?? null,

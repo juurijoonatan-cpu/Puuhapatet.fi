@@ -430,6 +430,10 @@ export interface GigPublicView {
    *  Johdettu palvelimella `signaturePrompt`illa, joten allekirjoittanut asiakas
    *  ei saa kehotetta uudelleen. */
   signPrompt: boolean;
+  /** Sopimus on valmistelussa ("allekirjoitetaan myöhemmin") — se on tulossa. */
+  contractPending: boolean;
+  /** Tuntiarvio per ikkuna. Null = arviota ei ole → mittaria ei piirretä. */
+  estHoursPerWindow: number | null;
   status: "draft" | "signed" | "approved";
   signed: boolean;
   signedAt: number | null;

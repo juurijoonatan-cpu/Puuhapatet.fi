@@ -212,7 +212,41 @@ export function signaturePrompt(
   return "none";
 }
 
+/**
+ * SOPIMUS ON VALMISTELUSSA — ei "ei sopimusta".
+ *
+ * Kun keikka luodaan valinnalla "allekirjoitetaan myöhemmin", asiakas saa
+ * linkin ennen kuin sopimusta on olemassa. Näkymässä ei silloin ole mitään
+ * merkkiä sopimuksesta, ja se lukee kuin sopimusta ei tulisi lainkaan.
+ *
+ * MIKSI TÄMÄ EIKÄ `!contractText` SELAIMESSA: pelkkä puuttuva sopimusteksti on
+ * tosi myös keikalla jolle sopimusta EI ole tarkoitus tehdä (pieni yksityinen
+ * pesu). Sille asiakkaalle "sopimus toimitetaan pian" on lupaus jota kukaan ei
+ * ole antanut. Vain nimenomainen `contractLater` tarkoittaa "tulossa".
+ */
+export function contractPending(
+  gig: Pick<GigData, "contractLater" | "contractText" | "signature">,
+): boolean {
+  if (!gig.contractLater) return false;
+  if (gig.signature?.signedAt) return false;
+  return !(gig.contractText && gig.contractText.trim());
+}
+
 // ─── Defaults ────────────────────────────────────────────────────────────────
+
+/**
+ * VIIVA TARKOITTAA "EI MITÄÄN", EI TEKSTIÄ NIMELTÄ "-".
+ *
+ * Vapaisiin tekstikenttiin kirjoitetaan viiva kun kenttään ei ole mitään
+ * sanottavaa. Se oli kuitenkin arvo kuten mikä tahansa muu, ja päätyi
+ * asiakkaan sivulle: sopimustunnukseksi otsikkoon ("- · Tarjous & sopimus") ja
+ * omaksi kappaleekseen "Tiedotteet ja ohjeet" -osioon.
+ */
+export function withoutDashOnly(v: string | null | undefined): string | undefined {
+  const t = (v ?? "").trim();
+  if (!t || t === "-" || t === "–" || t === "—") return undefined;
+  return t;
+}
 
 export function emptyGigData(): GigData {
   return {
@@ -441,12 +475,12 @@ export function sanitizeGigData(input: any): GigData {
   } : undefined;
   return {
     version: 1,
-    contractId: str(input.contractId, 60),
+    contractId: withoutDashOnly(str(input.contractId, 60)),
     company,
-    contractText: str(input.contractText, 60000),
+    contractText: withoutDashOnly(str(input.contractText, 60000)),
     currency: "EUR",
-    vatNote: str(input.vatNote, 240),
-    customerNote: str(input.customerNote, 2000),
+    vatNote: withoutDashOnly(str(input.vatNote, 240)),
+    customerNote: withoutDashOnly(str(input.customerNote, 2000)),
     customerTheme: input.customerTheme === "tech" ? "tech" as const
       : input.customerTheme === "paper" ? "paper" as const : undefined,
     sectors,

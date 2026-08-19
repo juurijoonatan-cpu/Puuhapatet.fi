@@ -119,12 +119,23 @@ function dotColor(p: 1 | 2, status: WindowStatus): string {
   return p === 1 ? "#F4A6C0" : "#D9C97E";
 }
 
-const LEGEND: { label: string; color: string }[] = [
-  { label: "Pesemättä", color: "#F4A6C0" },
-  { label: "Kesken", color: "#7C5CD6" },
-  { label: "Pesty", color: "#E03B3B" },
-  { label: "Ei tässä sopimuksessa", color: "#D9C97E" },
-];
+/**
+ * Kartan selite.
+ *
+ * KELTAISEN NIMI RIIPPUU KEIKASTA. FR8:lla se on totta: kiinteä urakka koskee
+ * punaisia, ja keltaiset katsotaan erikseen — "ei tässä sopimuksessa". Muualla
+ * lause on väärä ja sopimuksettomalla keikalla suorastaan absurdi: se viittaa
+ * sopimukseen jota ei ole. Keltainen tarkoittaa silloin sitä mitä se oikeasti
+ * on: ikkuna jonka pesemisestä ei ole vielä sovittu.
+ */
+function legendFor(fixedDeal: boolean): { label: string; color: string }[] {
+  return [
+    { label: "Pesemättä", color: "#F4A6C0" },
+    { label: "Kesken", color: "#7C5CD6" },
+    { label: "Pesty", color: "#E03B3B" },
+    { label: fixedDeal ? "Ei tässä sopimuksessa" : "Ei vielä sovittu", color: "#D9C97E" },
+  ];
+}
 
 // Phase-2 legend describes the NUMBERED badge colours (map shows numbers, not
 // prices — the euros live in the list below).
@@ -166,7 +177,7 @@ export interface P2CustomerActions {
   requireTerms: () => void;
 }
 
-export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservationImage, planUrlBase, theme = CT }: {
+export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservationImage, planUrlBase, theme = CT, fixedDeal = false }: {
   map: MapData;
   /**
    * Asiakasnäkymän paletti. Oletus `CT` = entinen vaalea paperi, joten ilman
@@ -179,6 +190,9 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
    * staattinen `planBase` toimii ilman. Ks. `api.planUrlBaseForGig`.
    */
   planUrlBase?: string;
+  /** Kiinteähintainen urakka (FR8). Ratkaisee keltaisen selitteen sanamuodon —
+   *  ks. `legendFor`. */
+  fixedDeal?: boolean;
   /** P2 negotiation state — pills + offer popups render only when enabled. */
   p2?: P2PublicView | null;
   p2Actions?: P2CustomerActions;
@@ -1198,7 +1212,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, onLoadObservation
           Mitä värit tarkoittavat?
         </summary>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 18px", marginTop: 8, alignItems: "center" }}>
-        {(p2On ? LEGEND_P2 : LEGEND).map((l) => (
+        {(p2On ? LEGEND_P2 : legendFor(fixedDeal)).map((l) => (
           // Selitteen pallo jäljittelee merkkiä sellaisena kuin se kartalla on,
           // valkoinen rengas mukaan lukien — muuten selite kuvaisi jotain muuta
           // kuin mitä ruudulla näkyy. Vain teksti seuraa teemaa.

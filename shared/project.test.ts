@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
+import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
 import { emptyGigData, computeTotals } from "./gig";
 
 // Kohta 6.1 — kokonaistilanteen ikkunamäärän täsmäytys. Ks. docs/fr8-era-laskutus-plan.md.
@@ -382,5 +382,31 @@ describe("newGigProjectData — yhdistyskeikan oletus", () => {
     d.compensation = "money";
     d.pricePerWindow = 35;
     expect(pricePerWindowOf(d)).toBe(35);
+  });
+});
+
+/**
+ * TUNTIARVIO. Asiakkaan näkymässä on työmäärämittari, jonka koko asteikko
+ * lasketaan tästä kertoimesta. Nolla, tyhjä tai roska ei saa muuttua "0 h":ksi
+ * — silloin mittari väittäisi keikan olevan olematon. Puuttuva arvio = null =
+ * mittaria ei piirretä lainkaan.
+ */
+describe("estHoursPerWindowOf", () => {
+  it("palauttaa annetun arvion", () => {
+    expect(estHoursPerWindowOf({ estimatedHoursPerWindow: 1.5 })).toBe(1.5);
+  });
+
+  it("null puuttuvalle, nollalle, negatiiviselle ja roskalle", () => {
+    expect(estHoursPerWindowOf({})).toBeNull();
+    expect(estHoursPerWindowOf({ estimatedHoursPerWindow: 0 })).toBeNull();
+    expect(estHoursPerWindowOf({ estimatedHoursPerWindow: -2 })).toBeNull();
+    expect(estHoursPerWindowOf({ estimatedHoursPerWindow: NaN })).toBeNull();
+    expect(estHoursPerWindowOf({ estimatedHoursPerWindow: Infinity })).toBeNull();
+    expect(estHoursPerWindowOf({ estimatedHoursPerWindow: undefined })).toBeNull();
+  });
+
+  it("on sama luku jonka computeEfficiency raportoi — yksi määritelmä", () => {
+    const p: ProjectData = { ...emptyProjectData(), estimatedHoursPerWindow: 1.5 };
+    expect(computeEfficiency(p).estHoursPerWindow).toBe(estHoursPerWindowOf(p));
   });
 });

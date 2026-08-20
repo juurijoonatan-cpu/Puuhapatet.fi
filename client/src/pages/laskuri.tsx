@@ -4,11 +4,25 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowRight, Send, Loader2, CheckCircle2, Info } from "lucide-react";
+import { ArrowRight, Send, Loader2, CheckCircle2, Info, Clock, Sparkles } from "lucide-react";
 import { Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
+import {
+  estimateCleaning, SEGMENTS, SCOPES, FREQUENCIES, CLEANING_ADDONS,
+  type CleaningSegment, type CleaningScopeKey, type CleaningFrequencyKey, type CleaningAddonKey,
+} from "@shared/cleaning";
 
 const KOTITALOUS_PCT = 0.35;
+
+// ─── SIIVOUS (tulossa) ───────────────────────────────────────────────────────
+// Malli ja luvut: shared/cleaning.ts. Tämä välilehti antaa ENNAKKOARVION eikä
+// ota tilausta — palvelu on vielä avaamassa, ja se sanotaan näkymässä ääneen.
+
+/** Valmiit neliövalinnat: nopeampi kuin näppäillä, ja arvio on silti arvio. */
+const CLEAN_SQM_PRESETS: Record<CleaningSegment, number[]> = {
+  koti:   [40, 60, 80, 100, 120, 160, 200],
+  yritys: [80, 150, 250, 400, 600, 900, 1400],
+};
 
 const CAR_SIZES = [
   { key: "small",  labelKey: "laskuri.car.small",  subKey: "laskuri.car.small.sub",  price: 30 },
@@ -336,8 +350,19 @@ const sizeLabel = (label: string, lang: "fi" | "en") =>
 
 export default function LaskuriPage() {
   const { t, lang } = useI18n();
-  const [tab, setTab] = useState<"nelio" | "nurmikko" | "auto">("nelio");
+  const [tab, setTab] = useState<"nelio" | "siivous" | "nurmikko" | "auto">("nelio");
   const [carSize, setCarSize] = useState<CarSize | null>(null);
+
+  // Siivous-tila. `cleanSqm` on null kunnes käyttäjä valitsee tai näppäilee
+  // neliöt — ilman sitä yhteenveto näyttäisi minimikäynnin hinnan kohteelle
+  // josta ei tiedetä mitään.
+  const [cleanSeg, setCleanSeg] = useState<CleaningSegment>("koti");
+  const [cleanSqm, setCleanSqm] = useState<number | null>(null);
+  const [cleanScope, setCleanScope] = useState<CleaningScopeKey>("yllapito");
+  const [cleanFreq, setCleanFreq] = useState<CleaningFrequencyKey>("kaksiviikko");
+  const [cleanAddons, setCleanAddons] = useState<Record<CleaningAddonKey, boolean>>(
+    Object.fromEntries(CLEANING_ADDONS.map(a => [a.key, false])) as Record<CleaningAddonKey, boolean>,
+  );
 
   // Nurmikko state
   const [lawnSizeIdx, setLawnSizeIdx] = useState<number | null>(null);
@@ -393,9 +418,32 @@ export default function LaskuriPage() {
   const lawnSavings = lawnBase * lawnVisits - lawnTotal;
   const lawnMonthly = lawnVisits > 1 ? Math.round(lawnTotal / 5) : 0; // ~5 month season
 
-  const activeTotal = tab === "auto" ? carPrice : tab === "nurmikko" ? lawnTotal : sqmTotal;
-  const hasResult = tab === "auto" ? carSize !== null : tab === "nurmikko" ? lawnSizeIdx !== null : sqmIdx !== null;
-  const kotitalous = kvEligible ? Math.round(activeTotal * KOTITALOUS_PCT) : 0;
+  // Siivouslaskenta. Aluekerroin on sama kuin ikkunanpesussa (postinumero),
+  // koska sama kohteen sijainti vaikuttaa samalla tavalla.
+  const cleanScopeObj = SCOPES.find(s => s.key === cleanScope)!;
+  const cleanFreqObj = FREQUENCIES.find(f => f.key === cleanFreq)!;
+  const cleanAddonKeys = CLEANING_ADDONS.filter(a => cleanAddons[a.key]).map(a => a.key);
+  const cleanEst = estimateCleaning({
+    segment: cleanSeg,
+    sqm: cleanSqm ?? 0,
+    scope: cleanScope,
+    frequency: cleanFreq,
+    addons: cleanAddonKeys,
+    areaMult: region.mult,
+  });
+
+  const activeTotal = tab === "auto" ? carPrice
+    : tab === "nurmikko" ? lawnTotal
+    : tab === "siivous" ? cleanEst.perVisitEur
+    : sqmTotal;
+  const hasResult = tab === "auto" ? carSize !== null
+    : tab === "nurmikko" ? lawnSizeIdx !== null
+    : tab === "siivous" ? cleanSqm !== null && cleanSqm > 0
+    : sqmIdx !== null;
+  // Yrityssiivous ei ole kotitalousvähennyskelpoista, joten vähennystä ei
+  // näytetä sille edes silloin kun kytkin on päällä.
+  const kvApplies = kvEligible && (tab !== "siivous" || SEGMENTS[cleanSeg].householdDeductible);
+  const kotitalous = kvApplies ? Math.round(activeTotal * KOTITALOUS_PCT) : 0;
   const afterKotitalous = activeTotal - kotitalous;
 
   const handleSend = async () => {
@@ -407,14 +455,27 @@ export default function LaskuriPage() {
       const houseLabel = t(HOUSE_TYPES.find(h => h.key === houseType)!.labelKey);
       const sqmLabel = sqmIdx !== null ? sizeLabel(SQM_RANGES[houseType][sqmIdx].label, lang) : "";
       const addonsList = ADDONS.filter(a => addons[a.key]).map(a => t(a.labelKey)).join(", ") || "—";
-      const serviceDesc = tab === "auto"
+      const cleanDesc = () => {
+        const addonList = CLEANING_ADDONS.filter(a => cleanAddons[a.key]).map(a => t(`laskuri.clean.addon.${a.key}`)).join(", ") || "—";
+        return [
+          `SIIVOUS — ENNAKKOILMOITTAUTUMINEN (palvelu ei ole vielä avattu, ei tilaus)`,
+          `${t(`laskuri.clean.seg.${cleanSeg}`)}, ${cleanSqm} m², ${t(`laskuri.clean.scope.${cleanScope}`)}, ${t(`laskuri.clean.freq.${cleanFreq}`)}`,
+          `Arvio: ${cleanEst.hours} h × ${SEGMENTS[cleanSeg].eurPerHour} €/h = ${cleanEst.perVisitEur} €/käynti${cleanEst.perMonthEur > 0 ? ` (~${cleanEst.perMonthEur} €/kk)` : ""}`,
+          `Lisät: ${addonList}. ${t("laskuri.area")}: ${regionLabel(region, t)} (${region.mult}×). ${postalCode || "—"}`,
+        ].join("\n");
+      };
+      const serviceDesc = tab === "siivous"
+        ? cleanDesc()
+        : tab === "auto"
         ? `${t("laskuri.tab.car")} — ${t(CAR_SIZES.find(c => c.key === carSize)!.labelKey)} (${carPrice} €). ${t("laskuri.car.includes")}: ${CAR_INCLUDES_KEYS.map(t).join(", ")}.`
         : tab === "nurmikko"
         ? `${t("laskuri.lawn.title")} — ${lawnSizeIdx !== null ? sizeLabel(LAWN_SIZES[lawnSizeIdx].label, lang) : ""}, ${lawnVisits}× (${t(lawnPlan.descKey)}). ${lawnPricePerVisit} €${t("laskuri.lawn.perVisit")}, ${t("laskuri.lawn.total")} ${lawnTotal} €${lawnSavings > 0 ? `, ${t("laskuri.lawn.save")} ${lawnSavings} €` : ""}.`
         : `${t("laskuri.tab.windows")} — ${houseLabel} ${sqmLabel}, ${t(tierObj.labelKey)}. ${t("laskuri.addons")}: ${addonsList}. ×${combinedDiffMult.toFixed(2)}. ${t("laskuri.area")}: ${regionLabel(region, t)} (${region.mult}×). ${postalCode || "—"}`;
       const fullMessage = [
         `Palvelu: ${serviceDesc}`,
-        `Hinta-arvio: ${activeTotal} € (kotitalousväh. jälkeen ~${afterKotitalous} €)`,
+        tab === "siivous"
+          ? `Hinta-arvio: ${activeTotal} € / käynti${kvApplies ? ` (kotitalousväh. jälkeen ~${afterKotitalous} €)` : ""}`
+          : `Hinta-arvio: ${activeTotal} € (kotitalousväh. jälkeen ~${afterKotitalous} €)`,
         form.message ? `Lisätiedot: ${form.message}` : "",
       ].filter(Boolean).join("\n");
       const res = await fetch("https://puuhapatet-fi.onrender.com/api/contact", {
@@ -444,7 +505,9 @@ export default function LaskuriPage() {
           <CheckCircle2 className="w-8 h-8 text-primary" />
         </div>
         <h1 className="text-2xl font-semibold text-foreground mb-3">{t("laskuri.sent.title")}</h1>
-        <p className="text-muted-foreground leading-relaxed mb-8">{t("laskuri.sent.desc")}</p>
+        <p className="text-muted-foreground leading-relaxed mb-8">
+          {t(tab === "siivous" ? "laskuri.clean.sent.desc" : "laskuri.sent.desc")}
+        </p>
         <Button variant="outline" onClick={() => { setSent(false); setShowForm(false); }}>{t("laskuri.sent.again")}</Button>
       </div>
     </div>
@@ -551,12 +614,21 @@ export default function LaskuriPage() {
           </p>
         </div>
 
-        {/* Tab */}
-        <div className="flex rounded-2xl bg-muted p-1 mb-6 max-w-xl mx-auto">
-          {(["nelio", "nurmikko", "auto"] as const).map(tabKey => (
+        {/* Tab — neljä välilehteä ei mahdu kapealle puhelimelle yhdelle riville
+            luettavassa koossa, joten mobiilissa 2×2 ja työpöydällä yksi rivi. */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-1 rounded-2xl bg-muted p-1 mb-6 max-w-xl mx-auto">
+          {(["nelio", "siivous", "nurmikko", "auto"] as const).map(tabKey => (
             <button key={tabKey} onClick={() => { setTab(tabKey); setShowForm(false); }}
-              className={`flex-1 py-2.5 px-2 rounded-xl text-xs md:text-sm font-medium transition-all ${tab === tabKey ? "bg-card premium-shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-              {t(tabKey === "nelio" ? "laskuri.tab.windows" : tabKey === "nurmikko" ? "laskuri.tab.lawn" : "laskuri.tab.car")}
+              className={`relative py-2.5 px-2 rounded-xl text-xs md:text-sm font-medium transition-all ${tab === tabKey ? "bg-card premium-shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+              {t(tabKey === "nelio" ? "laskuri.tab.windows"
+                : tabKey === "siivous" ? "laskuri.tab.cleaning"
+                : tabKey === "nurmikko" ? "laskuri.tab.lawn"
+                : "laskuri.tab.car")}
+              {tabKey === "siivous" && (
+                <span className="ml-1 align-middle text-[9px] font-bold uppercase tracking-wide text-primary">
+                  {t("laskuri.clean.soon")}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -744,6 +816,242 @@ export default function LaskuriPage() {
 
                 <p className="text-[10px] text-muted-foreground text-center pt-1">
                   {t("laskuri.disclaimer")}
+                </p>
+              </div>
+            )}
+
+            {/* ── SIIVOUS (tulossa) ── */}
+            {tab === "siivous" && (
+              <div className="space-y-5">
+
+                {/* REHELLISYYS ENSIN. Tämä laatikko on välilehden ensimmäinen
+                    asia, koska palvelua ei voi vielä tilata. Arvio saa näkyä,
+                    tilausnappia ei ole — alempi CTA kerää kiinnostuksen. */}
+                <div className="rounded-2xl bg-primary/5 border border-primary/20 px-4 py-3.5">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Sparkles className="w-4 h-4 text-primary flex-shrink-0" />
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-primary">
+                      {t("laskuri.clean.soon")}
+                    </p>
+                  </div>
+                  <p className="text-base font-bold text-foreground">{t("laskuri.clean.title")}</p>
+                  <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{t("laskuri.clean.notice")}</p>
+                </div>
+
+                {/* Segmentti */}
+                <div>
+                  <p className="text-sm font-medium text-foreground mb-3">{t("laskuri.clean.seg")}</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(["koti", "yritys"] as const).map(seg => (
+                      <button key={seg}
+                        onClick={() => { setCleanSeg(seg); setCleanSqm(null); }}
+                        className={`p-3.5 rounded-2xl border-2 text-left transition-all ${cleanSeg === seg ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"}`}
+                        data-testid={`clean-seg-${seg}`}
+                      >
+                        <p className="text-xs font-semibold text-foreground">{t(`laskuri.clean.seg.${seg}`)}</p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{t(`laskuri.clean.seg.${seg}.sub`)}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Alue — sama postinumero kuin ikkunanpesussa */}
+                <button
+                  onClick={() => { setPcInput(postalCode); setShowPcModal(true); }}
+                  className="w-full p-3 rounded-2xl border border-border bg-card hover:border-primary/50 flex items-center justify-between transition-all"
+                >
+                  <div className="text-left">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{t("laskuri.area")}</p>
+                    <p className="text-sm font-semibold text-foreground">
+                      {postalCode ? `${postalCode} · ${regionLabel(region, t)}` : t("laskuri.area.enter")}
+                    </p>
+                  </div>
+                  <span className="text-xs text-primary font-medium">{t("laskuri.change")}</span>
+                </button>
+
+                {/* Kotitalousvähennys — vain kotisiivouksessa */}
+                {SEGMENTS[cleanSeg].householdDeductible ? (
+                  <button
+                    onClick={() => setKvEligible(v => !v)}
+                    className={`w-full flex items-center justify-between p-3 rounded-2xl border transition-all ${kvEligible ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/30"}`}
+                  >
+                    <div className="text-left">
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{t("laskuri.kv.label")}</p>
+                      <p className="text-sm font-semibold text-foreground">
+                        {kvEligible ? t("laskuri.kv.active") : t("laskuri.kv.inactive")}
+                      </p>
+                    </div>
+                    <div className={`w-10 h-6 rounded-full relative transition-colors shrink-0 ${kvEligible ? "bg-primary" : "bg-muted-foreground/30"}`}>
+                      <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-all shadow-sm ${kvEligible ? "left-5" : "left-1"}`} />
+                    </div>
+                  </button>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground px-1">{t("laskuri.clean.noKv")}</p>
+                )}
+
+                {/* Neliöt */}
+                <div>
+                  <p className="text-sm font-medium text-foreground mb-1">{t("laskuri.clean.sqm")}</p>
+                  <p className="text-[10px] text-muted-foreground mb-3">{t("laskuri.clean.sqm.hint")}</p>
+                  <div className="grid grid-cols-4 md:grid-cols-7 gap-2 mb-3">
+                    {CLEAN_SQM_PRESETS[cleanSeg].map(v => (
+                      <button key={v}
+                        onClick={() => setCleanSqm(v)}
+                        className={`py-2.5 rounded-xl border-2 text-center transition-all ${cleanSqm === v ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"}`}
+                        data-testid={`clean-sqm-${v}`}
+                      >
+                        <span className="text-xs font-semibold text-foreground tabular-nums">{v}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={5000}
+                    placeholder={t("laskuri.clean.sqm.placeholder")}
+                    value={cleanSqm ?? ""}
+                    onChange={e => {
+                      const n = parseInt(e.target.value, 10);
+                      setCleanSqm(Number.isFinite(n) && n > 0 ? Math.min(n, 5000) : null);
+                    }}
+                    className="h-11 text-center font-semibold tabular-nums"
+                    data-testid="clean-sqm-input"
+                  />
+                </div>
+
+                {/* Laajuus */}
+                <div>
+                  <p className="text-sm font-medium text-foreground mb-3">{t("laskuri.clean.scope")}</p>
+                  <div className="space-y-2">
+                    {SCOPES.map(s => (
+                      <button key={s.key}
+                        onClick={() => {
+                          setCleanScope(s.key);
+                          // Kertaluontoinen työ ei ole sopimus: tiheys nollataan,
+                          // ettei yhteenveto lupaa kuukausihintaa muuttosiivoukselle.
+                          if (!s.recurring) setCleanFreq("kerta");
+                        }}
+                        className={`w-full p-3.5 rounded-2xl border-2 text-left flex items-center gap-3 transition-all ${cleanScope === s.key ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"}`}
+                        data-testid={`clean-scope-${s.key}`}
+                      >
+                        <div className={`w-3 h-3 rounded-full flex-shrink-0 ${cleanScope === s.key ? "bg-primary" : "bg-muted-foreground/30"}`} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-foreground">{t(`laskuri.clean.scope.${s.key}`)}</p>
+                          <p className="text-xs text-muted-foreground">{t(`laskuri.clean.scope.${s.key}.sub`)}</p>
+                        </div>
+                        {cleanSqm !== null && (
+                          <span className="text-xs font-semibold text-primary tabular-nums flex-shrink-0">
+                            {/* Kertaluontoinen työ hinnoitellaan aina kertakäyntinä:
+                                muuten nappi näyttäisi toistuvuusalennetun hinnan,
+                                jota napin painaminen ei anna. */}
+                            {estimateCleaning({ segment: cleanSeg, sqm: cleanSqm, scope: s.key, frequency: s.recurring ? cleanFreq : "kerta", addons: cleanAddonKeys, areaMult: region.mult }).perVisitEur} €
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Käyntitiheys — vain jatkuvassa ylläpidossa */}
+                {cleanScopeObj.recurring && (
+                  <div>
+                    <p className="text-sm font-medium text-foreground mb-3">{t("laskuri.clean.freq")}</p>
+                    <div className="space-y-2">
+                      {FREQUENCIES.map(f => {
+                        const est = cleanSqm !== null
+                          ? estimateCleaning({ segment: cleanSeg, sqm: cleanSqm, scope: cleanScope, frequency: f.key, addons: cleanAddonKeys, areaMult: region.mult })
+                          : null;
+                        const selected = cleanFreq === f.key;
+                        return (
+                          <button key={f.key}
+                            onClick={() => setCleanFreq(f.key)}
+                            className={`w-full p-3.5 rounded-2xl border-2 text-left flex items-center gap-3 transition-all ${selected ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"}`}
+                            data-testid={`clean-freq-${f.key}`}
+                          >
+                            <div className={`w-3 h-3 rounded-full flex-shrink-0 ${selected ? "bg-primary" : "bg-muted-foreground/30"}`} />
+                            <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+                              <p className="text-sm font-medium text-foreground">{t(`laskuri.clean.freq.${f.key}`)}</p>
+                              {f.discount > 0 && (
+                                <span className="text-[10px] font-bold text-green-700 bg-green-100 dark:bg-green-900/50 dark:text-green-400 px-1.5 py-0.5 rounded-full">
+                                  −{Math.round(f.discount * 100)} %
+                                </span>
+                              )}
+                            </div>
+                            {est && (
+                              <div className="text-right shrink-0">
+                                <p className="text-sm font-bold text-primary tabular-nums">
+                                  {est.perVisitEur} €<span className="text-[10px] font-normal text-muted-foreground">{t("laskuri.clean.perVisit")}</span>
+                                </p>
+                                {est.perMonthEur > 0 && (
+                                  <p className="text-[10px] text-muted-foreground tabular-nums">~{est.perMonthEur} €/kk</p>
+                                )}
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Lisätyöt */}
+                <div>
+                  <p className="text-sm font-medium text-foreground mb-3">{t("laskuri.clean.addons")}</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {CLEANING_ADDONS.map(({ key, price }) => (
+                      <button key={key}
+                        onClick={() => setCleanAddons(p => ({ ...p, [key]: !p[key] }))}
+                        className={`p-3 rounded-xl border-2 text-left flex items-center justify-between gap-2 transition-all ${cleanAddons[key] ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"}`}
+                        data-testid={`clean-addon-${key}`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${cleanAddons[key] ? "border-primary bg-primary" : "border-muted-foreground/40"}`}>
+                            {cleanAddons[key] && <CheckCircle2 className="w-3 h-3 text-white" />}
+                          </div>
+                          <span className="text-xs font-medium text-foreground">{t(`laskuri.clean.addon.${key}`)}</span>
+                        </div>
+                        <span className="text-xs font-semibold text-primary">+{price} €</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* MISTÄ LUKU TULEE. Aikaperusteinen malli kannattaa näyttää:
+                    asiakas näkee ettei hinta ole arvattu vaan laskettu. */}
+                {cleanSqm !== null && (
+                  <div className="rounded-2xl border border-border bg-card p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Clock className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                      <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                        {t("laskuri.clean.model")}
+                      </p>
+                    </div>
+                    <p className="text-sm font-semibold text-foreground tabular-nums">
+                      {cleanEst.hours.toLocaleString("fi-FI")} {t("laskuri.clean.hours")} × {SEGMENTS[cleanSeg].eurPerHour} €/h
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
+                      {t("laskuri.clean.model.desc")
+                        .replace("{sqmh}", String(SEGMENTS[cleanSeg].sqmPerHour))
+                        .replace("{eurh}", String(SEGMENTS[cleanSeg].eurPerHour))
+                        .replace("{min}", String(SEGMENTS[cleanSeg].minHours))}
+                    </p>
+                    {cleanEst.atMinimum && (
+                      <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-2 font-medium">
+                        {t("laskuri.clean.min").replace("{min}", String(SEGMENTS[cleanSeg].minHours))}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Sovellus — vain se mikä on totta tänään, ja mikä tulee avautuessa. */}
+                <div className="rounded-2xl border border-dashed border-primary/30 p-4">
+                  <p className="text-sm font-semibold text-foreground mb-1">{t("laskuri.clean.app")}</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">{t("laskuri.clean.app.desc")}</p>
+                </div>
+
+                <p className="text-[10px] text-muted-foreground text-center">
+                  {t("laskuri.clean.disclaimer")}
                 </p>
               </div>
             )}
@@ -966,6 +1274,40 @@ export default function LaskuriPage() {
                   </div>
                 )}
 
+                {tab === "siivous" && cleanSqm !== null && (
+                  <div className="space-y-1.5 mb-3">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground truncate mr-2">
+                        {t(`laskuri.clean.seg.${cleanSeg}`)} · {cleanSqm} m²
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">{t(`laskuri.clean.scope.${cleanScope}`)}</span>
+                      <span className="text-foreground font-medium tabular-nums">
+                        {cleanEst.hours.toLocaleString("fi-FI")} {t("laskuri.clean.hours")}
+                      </span>
+                    </div>
+                    {CLEANING_ADDONS.filter(a => cleanAddons[a.key]).map(a => (
+                      <div key={a.key} className="flex justify-between text-xs">
+                        <span className="text-muted-foreground truncate mr-2">{t(`laskuri.clean.addon.${a.key}`)}</span>
+                        <span className="text-foreground font-medium">+{a.price} €</span>
+                      </div>
+                    ))}
+                    {cleanEst.discountEur > 0 && (
+                      <div className="flex justify-between text-xs text-green-600">
+                        <span>{t(`laskuri.clean.freq.${cleanFreq}`)}</span>
+                        <span className="font-medium">−{cleanEst.discountEur} €</span>
+                      </div>
+                    )}
+                    {cleanEst.perMonthEur > 0 && (
+                      <div className="flex justify-between text-xs border-t border-border pt-1.5 mt-1.5">
+                        <span className="text-muted-foreground">{t("laskuri.clean.perMonth")}</span>
+                        <span className="font-medium tabular-nums">~{cleanEst.perMonthEur} €</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {tab === "nelio" && sqmIdx !== null && (
                   <div className="space-y-1.5 mb-3">
                     <div className="flex justify-between text-xs">
@@ -995,7 +1337,7 @@ export default function LaskuriPage() {
                 {hasResult && (
                   <div className="border-t border-border pt-3 space-y-2">
                     <div className="bg-primary/5 rounded-xl px-3 py-2.5 text-center">
-                      {kvEligible ? (
+                      {kvApplies ? (
                         <>
                           <p className="text-[10px] text-muted-foreground mb-0.5">{t("laskuri.priceAfterKv")}</p>
                           <p className="text-2xl font-bold text-primary">~{afterKotitalous} €</p>
@@ -1008,7 +1350,7 @@ export default function LaskuriPage() {
                         </>
                       )}
                     </div>
-                    {kvEligible && (
+                    {kvApplies && (
                       <div className="flex justify-between items-center">
                         <span className="text-[10px] text-muted-foreground">{t("laskuri.priceNormal")}</span>
                         <span className="text-xs font-medium text-muted-foreground line-through">{activeTotal} €</span>
@@ -1019,7 +1361,7 @@ export default function LaskuriPage() {
 
                 {hasResult && !showForm && (
                   <Button className="w-full mt-4" size="sm" onClick={() => setShowForm(true)}>
-                    {t("laskuri.submit")}
+                    {t(tab === "siivous" ? "laskuri.clean.cta" : "laskuri.submit")}
                     <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
                   </Button>
                 )}
@@ -1043,7 +1385,14 @@ export default function LaskuriPage() {
         {/* Order form */}
         {showForm && hasResult && (
           <Card className="mt-6 p-5 bg-card border-0 premium-shadow max-w-lg mx-auto space-y-4">
-            <h2 className="text-base font-semibold text-foreground">{t("laskuri.form.title")}</h2>
+            <h2 className="text-base font-semibold text-foreground">
+              {t(tab === "siivous" ? "laskuri.clean.form.title" : "laskuri.form.title")}
+            </h2>
+            {tab === "siivous" && (
+              <p className="text-xs text-muted-foreground leading-relaxed -mt-1">
+                {t("laskuri.clean.form.desc")}
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2 md:col-span-1">
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("form.name")} *</label>
@@ -1092,7 +1441,7 @@ export default function LaskuriPage() {
             {sendError && <p className="text-xs text-destructive">{sendError}</p>}
             <Button className="w-full h-12 text-sm font-semibold rounded-2xl"
               disabled={sending || !form.name || !form.phone || !form.address} onClick={handleSend}>
-              {sending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{t("form.submitting")}</> : <><Send className="w-4 h-4 mr-2" />{t("laskuri.submit")}</>}
+              {sending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{t("form.submitting")}</> : <><Send className="w-4 h-4 mr-2" />{t(tab === "siivous" ? "laskuri.clean.cta" : "laskuri.submit")}</>}
             </Button>
           </Card>
         )}

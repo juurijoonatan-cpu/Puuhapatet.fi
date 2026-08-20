@@ -1060,15 +1060,15 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
     (view.payouts || []).filter((p) => p.status === "ilmoitettu").length +
     (view.eraInvoices || []).filter((inv) => inv.tila === "luonnos").length;
 
-  // Lock page zoom so pinch zooms only the map (like the admin tool), and let the
-  // dark UI extend under the notch / home indicator (viewport-fit=cover) — the
-  // header and bottom nav below add safe-area padding so nothing is clipped.
-  useEffect(() => {
-    const vp = document.querySelector('meta[name="viewport"]');
-    const prev = vp?.getAttribute("content") ?? null;
-    vp?.setAttribute("content", "width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover");
-    return () => { if (vp && prev != null) vp.setAttribute("content", prev); };
-  }, []);
+  // Sivun zoomin lukko tehdään CSS:llä (`.fr8-root { touch-action: pan-x pan-y }`),
+  // ei kirjoittamalla viewport-metaa uudelleen: ajonaikainen metan muutos otetaan
+  // iOS:llä käyttöön vasta seuraavassa uudelleenasettelussa, jolloin turva-alueesta
+  // laskettu yläpalkki piirtyy ja osumatestataan eri geometrialla — se oli
+  // projektinäkymän "nappi ei rekisteröi ennen kuin käännän puhelimen" -vika.
+  // `viewport-fit=cover` tulee index.html:stä, joten tumma käyttöliittymä ulottuu
+  // loveuksen alle ilman erillistä asetusta. Ks. admin/project.tsx.
+
+
 
   // Paint the page (html/body) dark while the worker app is open, so no white
   // strip shows behind the fixed app in the home-indicator / overscroll area.

@@ -44,6 +44,13 @@
     <priority>0.6</priority>
   </url>
 
+  <!-- Digipalvelut (CV-verkkosivut) -->
+  <url>
+    <loc>https://puuhapatet.fi/it</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+
   <!-- Käyttöehdot -->
   <url>
     <loc>https://puuhapatet.fi/ehdot</loc>

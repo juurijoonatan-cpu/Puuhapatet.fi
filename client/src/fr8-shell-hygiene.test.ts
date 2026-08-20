@@ -131,6 +131,36 @@ describe("FR8-kuoren mitoitus", () => {
     expect(src).not.toMatch(/\}, \[active, jobId, project, loading\]\);/);
   });
 
+  /**
+   * NELJÄS MEKANISMI: viewport-metaa ei kirjoiteta ajonaikaisesti uudelleen.
+   *
+   * Projektinäkymä lukitsi sivun zoomin metan kautta ja pudotti samalla
+   * `viewport-fit=cover`in. Silloin `env(safe-area-inset-top)` on 0 — juuri se
+   * arvo josta yläpalkin korkeus lasketaan — ja iOS ottaa metan muutoksen
+   * käyttöön vasta seuraavassa uudelleenasettelussa, joten palkki piirtyi
+   * uudella ja osumatestattiin vanhalla geometrialla. Oire: yläpalkin nappi
+   * rekisteröi vasta kun puhelin käännetään vaakaan.
+   *
+   * Zoomin lukko on nyt CSS:ssä (`.fr8-root { touch-action: pan-x pan-y }`),
+   * eikä yksikään kuori kirjoita metaa.
+   */
+  it("yksikään kuori ei kirjoita viewport-metaa uudelleen", () => {
+    const offenders = SHELLS.filter((f) =>
+      /meta\[name="viewport"\]/.test(readFileSync(join(process.cwd(), f), "utf8")),
+    );
+    expect(
+      offenders,
+      `Kuori kirjoittaa viewport-metan uudelleen → ${offenders.join(", ")}. `
+        + "iOS ottaa muutoksen käyttöön vasta uudelleenasettelussa, joten yläpalkki "
+        + "piirtyy ja osumatestataan eri geometrialla. Lukitse zoom CSS:n "
+        + "touch-actionilla.",
+    ).toEqual([]);
+  });
+
+  it("kuori lukitsee nipistyszoomin CSS:llä", () => {
+    expect(shellRule(CSS)).toMatch(/touch-action:\s*pan-x pan-y/);
+  });
+
   it("dokumentin vieritys pysyy lukittuna kuoren ollessa auki", () => {
     // Täydentävä mekanismi: fixed-kuori + vierinyt dokumentti erkanee myös.
     expect(CSS).toContain("html.fr8-lock");

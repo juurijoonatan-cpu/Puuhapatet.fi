@@ -10,7 +10,7 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import { useI18n } from "@/lib/i18n";
 
-type ServiceKey = "windows" | "signs" | "gutters";
+type ServiceKey = "windows" | "signs" | "gutters" | "cleaning";
 
 export default function ServicesPage() {
   const { t } = useI18n();
@@ -50,6 +50,22 @@ export default function ServicesPage() {
       popupDescKey: "service.gutters.popup",
       bullets: ["service.gutters.1", "service.gutters.2", "service.gutters.3"],
     },
+    {
+      // SIIVOUS ON AVAAMASSA. `soon` vaihtaa kortin merkinnän, napin tekstin ja
+      // kohteen: tilauslomakkeelle ei ohjata palvelusta jota ei voi tilata,
+      // vaan laskuriin jossa arvio ja ilmoittautuminen ovat.
+      key: "cleaning" as ServiceKey,
+      photo: "/work-tools.jpg",
+      icon: Sparkles,
+      iconColor: "text-sky-300",
+      titleKey: "service.cleaning.title",
+      descKey: "service.cleaning.desc",
+      popupDescKey: "service.cleaning.popup",
+      bullets: ["service.cleaning.1", "service.cleaning.2", "service.cleaning.3", "service.cleaning.4"],
+      soon: true,
+      ctaKey: "service.cleaning.cta",
+      ctaHref: "/laskuri",
+    },
   ];
 
   const active = mainServices.find(s => s.key === activeService) ?? null;
@@ -71,7 +87,7 @@ export default function ServicesPage() {
         {/* ── Main services ── */}
         <div className="mb-10">
           <h2 className="text-lg font-semibold text-foreground mb-4">{t("services.main.title")}</h2>
-          <div className="grid md:grid-cols-3 gap-4">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {mainServices.map((svc) => {
               const Icon = svc.icon;
               return (
@@ -94,6 +110,11 @@ export default function ServicesPage() {
                       {svc.badge && (
                         <span className="ml-auto text-[9px] font-bold text-primary bg-white rounded-full px-2 py-0.5 flex-shrink-0">
                           {svc.badge}
+                        </span>
+                      )}
+                      {"soon" in svc && svc.soon && (
+                        <span className="ml-auto text-[9px] font-bold text-sky-950 bg-sky-200 rounded-full px-2 py-0.5 flex-shrink-0 uppercase tracking-wide">
+                          {t("services.soon")}
                         </span>
                       )}
                     </div>
@@ -424,11 +445,19 @@ export default function ServicesPage() {
                 </ul>
               </div>
 
-              {/* CTA */}
+              {/* CTA — avaamaton palvelu ei ohjaa tilaukseen. */}
               <div className="p-5 border-t border-border flex-shrink-0">
-                <Link href="/tilaus" onClick={() => setActiveService(null)}>
+                {"soon" in active && active.soon && (
+                  <p className="text-[11px] text-muted-foreground mb-3 leading-relaxed">
+                    {t("laskuri.clean.notice")}
+                  </p>
+                )}
+                <Link
+                  href={("ctaHref" in active && active.ctaHref) || "/tilaus"}
+                  onClick={() => setActiveService(null)}
+                >
                   <Button className="w-full">
-                    {t("hero.cta")}
+                    {t(("ctaKey" in active && active.ctaKey) || "hero.cta")}
                     <ArrowRight className="w-4 h-4 ml-2" />
                   </Button>
                 </Link>

@@ -564,6 +564,22 @@
   inset: 0;
   display: flex;
   flex-direction: column;
+  /* NAPPI EI OSU — NELJÄS MEKANISMI: VIEWPORT-METAN AJONAIKAINEN MUUTOS.
+     ("yläpalkin nappi rekisteröi vasta kun puhelin käännetään vaakaan")
+
+     Projektinäkymä lukitsi sivun zoomin kirjoittamalla viewport-metan
+     uudelleen — ja pudotti samalla `viewport-fit=cover`in. Silloin
+     `env(safe-area-inset-top)` on 0, eli juuri se arvo josta yläpalkin korkeus
+     lasketaan; ja iOS ottaa ajonaikaisen metan muutoksen käyttöön vasta
+     seuraavassa täydessä uudelleenasettelussa, joten palkki piirtyi uudella ja
+     osumatestattiin vanhalla geometrialla. Kääntäminen pakotti asettelun.
+
+     Zoomin lukko kuuluu tänne, ei metaan: `pan-x pan-y` sallii vierityksen
+     mutta estää nipistyszoomin kuoren sisällä. Pohjakuvalla on tiukempi
+     `touch-action: none`, ja koska selain leikkaa arvot koko
+     esivanhempaketjusta, kartan oma zoom toimii ennallaan.
+     Vartija: client/src/fr8-shell-hygiene.test.ts. */
+  touch-action: pan-x pan-y;
 }
 /* Navbar pysyy kiinteänä, sisältö saa loput — ei calc(100% - 62px) -arvausta,
    joka meni pieleen heti kun navbar kasvoi rivinvaihdon takia. */

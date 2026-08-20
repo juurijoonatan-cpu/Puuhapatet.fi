@@ -154,13 +154,40 @@ export default function AdminProjectPage() {
   // lost in the debounce window (the cause of "dots reset after refresh").
   const dirty = useRef(false);
 
-  // Lock browser page-zoom while the tool is open so pinch/scroll gestures zoom
-  // only the floor-plan map (which has its own in-app zoom) — not the whole
-  // page and its stats. The previous viewport is restored on unmount.
+  /**
+   * NAPPI EI OSU — NELJÄS JA VIIMEINEN MEKANISMI: VIEWPORT-METAN UUDELLEENKIRJOITUS.
+   * ("yläpalkin nappi ei rekisteröi ennen kuin käännän puhelimen vaakaan, ja
+   *   aina heti näkymän avaamisen jälkeen")
+   *
+   * Tämä efekti kirjoitti auettuaan viewport-metan uudelleen lukitsemaan sivun
+   * zoomin — ja pudotti samalla `viewport-fit=cover`in, joka on index.html:ssä.
+   * Kaksi seurausta, jotka yhdessä selittävät oireen täsmälleen:
+   *
+   *   1. Ilman `viewport-fit=cover`ia `env(safe-area-inset-top)` on 0. Se on
+   *      juuri se arvo josta yläpalkin korkeus ja yläpaddingi lasketaan
+   *      (fr8/Navbar.tsx: `calc(58px + env(safe-area-inset-top))`). Yläpalkki
+   *      on siis SIVUN AINOA elementti jonka geometria muuttuu tästä — ja
+   *      nimenomaan sen napit olivat kuolleita.
+   *   2. iOS ei ota ajonaikaista viewport-metan muutosta käyttöön heti vaan
+   *      vasta seuraavassa täydessä uudelleenasettelussa. Siihen asti palkki
+   *      PIIRRETÄÄN uudella ja OSUMATESTATAAN vanhalla geometrialla. Puhelimen
+   *      kääntäminen pakottaa sen asettelun — siksi vaakataso "korjaa" vian.
+   *
+   * Tekijän näkymä (worker.tsx) säilytti `viewport-fit=cover`in eikä oireillut
+   * samalla tavalla. Metaa ei kuitenkaan kirjoiteta enää kummassakaan: alla
+   * oleva tarkoitus toteutuu jo ilman sitä.
+   *
+   * ZOOMIN LUKKO ILMAN METAA: `user-scalable=no` / `maximum-scale=1` ei tehoa
+   * iOS Safarissa lainkaan (ohitettu iOS 10:stä), eli juuri sillä laitteella
+   * jolla vika ilmeni override ei estänyt mitään. Sama asia tehdään nyt
+   * CSS:llä: `.fr8-root { touch-action: pan-x pan-y }` (index.css) estää
+   * nipistyszoomin kuoren sisällä, ja pohjakuva pitää oman
+   * `touch-action: none`insa, joten kartan oma zoom toimii ennallaan.
+   *
+   * ÄLÄ palauta viewport-metan kirjoitusta tähän. Vartija:
+   * client/src/fr8-shell-hygiene.test.ts.
+   */
   useEffect(() => {
-    const vp = document.querySelector('meta[name="viewport"]');
-    const prev = vp?.getAttribute("content") ?? null;
-    vp?.setAttribute("content", "width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no");
     // Lukitse dokumentin vieritys niin kauan kuin musta kuori on auki. Syy on
     // osumatestissä, ei ulkoasussa: iOS piirtää position:fixed -elementit
     // visuaalisen viewportin mukaan mutta osumatestaa layout-viewportin mukaan,
@@ -170,7 +197,6 @@ export default function AdminProjectPage() {
     window.scrollTo(0, 0);
     document.documentElement.classList.add("fr8-lock");
     return () => {
-      if (vp && prev != null) vp.setAttribute("content", prev);
       document.documentElement.classList.remove("fr8-lock");
     };
   }, []);

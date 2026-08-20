@@ -77,7 +77,7 @@
             "priceSpecification": {
               "@type": "PriceSpecification",
               "priceCurrency": "EUR",
-              "minPrice": 89,
+              "minPrice": 99,
               "maxPrice": 669,
               "description": "Hinta riippuu kohteen koosta ja palvelupaketista"
             }
@@ -109,6 +109,16 @@
           },
           {
             "@type": "Offer",
+            "availability": "https://schema.org/PreOrder",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Siivouspalvelu (avautuu pian)",
+              "description": "Kotisiivous ja yritystilojen siivous Espoossa ja Helsingissä: ylläpitosiivous sopimuksella, perusteellinen siivous ja muuttosiivous. Palvelu avautuu pian eikä ole vielä tilattavissa — puuhapatet.fi/laskuri antaa ennakkoarvion ja ottaa kiinnostuneiden yhteystiedot.",
+              "areaServed": "Espoo, Helsinki, Vantaa"
+            }
+          },
+          {
+            "@type": "Offer",
             "itemOffered": {
               "@type": "Service",
               "name": "Auton sisäpesu",
@@ -135,7 +145,7 @@
           "name": "Paljonko ikkunanpesu maksaa Espoossa tai Helsingissä?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Ikkunanpesun hinta riippuu kohteen koosta. Kerrostalohuoneistossa alle 40 m² hinta alkaa 99 eurosta. Omakotitalossa alle 60 m² hinta alkaa 139 eurosta. Rivitalossa alle 40 m² hinta on 89 eurosta. Hinnat sisältävät sisä- ja ulkopintojen pesun. Kotitalousvähennyksen jälkeen maksat noin 35 % vähemmän."
+            "text": "Ikkunanpesun hinta riippuu kohteen koosta. Kerrostalo- ja rivitalohuoneistossa alle 40 m² hinta alkaa 99 eurosta. Omakotitalossa alle 60 m² hinta alkaa 139 eurosta. Hinnat sisältävät sisä- ja ulkopintojen pesun. Kotitalousvähennyksen jälkeen maksat noin 35 % vähemmän työn osuudesta."
           }
         },
         {
@@ -151,7 +161,7 @@
           "name": "Onko ikkunanpesu kotitalousvähennyskelpoinen?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Kyllä, ikkunanpesu on kotitalousvähennyskelpoinen palvelu. Voit vähentää 40 % työn osuudesta verotuksessa, enintään 2 250 euroa per henkilö per vuosi. Kuitti toimii dokumenttina veroilmoitukseen."
+            "text": "Kyllä, ikkunanpesu on kotitalousvähennyskelpoinen palvelu. Verovuosina 2025–2026 vähennys on 35 % yrityksen laskun työn osuudesta, enintään 1 600 euroa per henkilö per vuosi, ja omavastuu on 150 euroa vuodessa. Vähennystä haetaan itse OmaVerossa, ja lasku toimii dokumenttina."
           }
         },
         {
@@ -168,6 +178,14 @@
           "acceptedAnswer": {
             "@type": "Answer",
             "text": "Tilaa helposti osoitteessa puuhapatet.fi/tilaus tai käytä laskuri-sivua hinta-arvion laskemiseen. Voit myös soittaa suoraan numeroon +358 400 389 999. Vastaamme nopeasti ja sovimme ajankohdan joustavasti."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Tarjoaako Puuhapatet siivousta?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Siivouspalvelu on valmistelussa eikä ole vielä tilattavissa, eikä avauspäivää ole vielä päätetty. Osoitteessa puuhapatet.fi/laskuri on Siivous-välilehti, josta saa ennakkoarvion kotisiivouksesta ja yritystilojen siivouksesta ja voi jättää yhteystiedot — ilmoitamme heti kun palvelu avautuu. Ikkunanpesun, nurmikon leikkuun ja pihatyöt voi tilata normaalisti nyt."
           }
         },
         {

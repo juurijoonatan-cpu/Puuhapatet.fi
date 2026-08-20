@@ -15,6 +15,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { HOUSEHOLD_DEDUCTION_RATE, fmtHouseholdCap, fmtPct } from "@shared/tax";
+import { CLEANING_PRICING_SUMMARY } from "@shared/cleaning";
 
 export const AI_ENABLED = !!process.env.AI_API_KEY;
 const AI_BASE_URL = (process.env.AI_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/$/, "");
@@ -296,6 +297,18 @@ Nuottaniemi, Tapiola, Westend. Muutkin alueet onnistuvat — kannattaa kysyä.
   lasikate, rännien puhdistus.
 - Taloyhtiöt, kerrostalot ja liiketilat sopimuksen mukaan. Varusteet jopa 10 m
   korkeisiin kohteisiin.
+
+## Siivous — TULOSSA, EI VIELÄ TILATTAVISSA (tärkeä: älä lupaa tätä palveluna)
+- Siivouspalvelua (kotisiivous ja yritys-/taloyhtiösiivous) valmistellaan, mutta
+  sitä EI voi vielä tilata eikä varata. ÄLÄ sano että siivous onnistuu, ÄLÄ ehdota
+  siivousajan varaamista ja ÄLÄ anna siivouksen hintaa lopullisena.
+- Avauspäivää ei ole päätetty. Jos kysytään milloin: kerro rehellisesti ettei
+  päivää ole vielä lyöty lukkoon.
+- Mitä voit tehdä: kerro että palvelu on tulossa, ohjaa laskurin
+  Siivous-välilehdelle (/laskuri) jossa on ENNAKKOARVIO, ja tarjoa yhteystietojen
+  jättämistä — ilmoitamme heti kun palvelu avautuu.
+- Hinnoittelumalli (vain suuntaa-antavaan arvioon, ei tarjous):
+${CLEANING_PRICING_SUMMARY}
 
 ## Hinnoittelu (suuntaa-antava — lopullinen hinta sovitaan aina etukäteen)
 - Hinta määräytyy kohteen koon, ikkonamäärän ja alueen mukaan. Ei yllätyksiä:

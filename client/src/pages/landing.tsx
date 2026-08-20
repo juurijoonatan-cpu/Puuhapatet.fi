@@ -245,6 +245,36 @@ export default function LandingPage() {
                 </Button>
               </Link>
             </div>
+
+            {/* SIIVOUS — oma nauha, ei kausikorttien joukossa.
+                Syy on rehellisyys eikä sommittelu: kausikortit ovat palveluita
+                jotka voi tilata tänään, ja siivousta ei voi. Merkintä ja teksti
+                sanovat sen suoraan, ja linkki vie laskuriin (arvio +
+                ilmoittautuminen) eikä tilauslomakkeelle. */}
+            <Link href="/laskuri">
+              <Card className="mt-6 p-5 md:p-6 bg-card border-0 premium-shadow hover:premium-shadow-hover hover:-translate-y-0.5 transition-all duration-200 cursor-pointer">
+                <div className="flex items-start gap-4">
+                  <div className="w-11 h-11 rounded-xl bg-sky-500/10 flex items-center justify-center flex-shrink-0">
+                    <Sparkles className="w-5 h-5 text-sky-600 dark:text-sky-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <h3 className="font-semibold text-foreground">{t("service.cleaning.title")}</h3>
+                      <span className="text-[9px] font-bold uppercase tracking-wide text-sky-950 bg-sky-200 rounded-full px-2 py-0.5">
+                        {t("services.soon")}
+                      </span>
+                    </div>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
+                      {t("service.cleaning.desc")}
+                    </p>
+                    <span className="inline-flex items-center gap-1.5 mt-3 text-sm font-medium text-primary">
+                      {t("service.cleaning.cta")}
+                      <ArrowRight className="w-4 h-4" />
+                    </span>
+                  </div>
+                </div>
+              </Card>
+            </Link>
           </div>
         </div>
       </section>

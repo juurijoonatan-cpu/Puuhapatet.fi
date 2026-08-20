@@ -42,7 +42,7 @@ export const USERS: AdminProfile[] = [
     id: "joonatan",
     name: "Joonatan Juuri",
     role: "HOST",
-    photoUrl: "/joonatan.jpg.jpeg",
+    photoUrl: "/joonatan.jpg.jpeg?v=2",
     photoObjectPosition: "50% 35%",
     phone: "+358400389999",
     email: "joonatan@puuhapatet.fi",

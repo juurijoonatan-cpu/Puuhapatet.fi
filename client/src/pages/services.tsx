@@ -55,7 +55,7 @@ export default function ServicesPage() {
       // kohteen: tilauslomakkeelle ei ohjata palvelusta jota ei voi tilata,
       // vaan laskuriin jossa arvio ja ilmoittautuminen ovat.
       key: "cleaning" as ServiceKey,
-      photo: "/work-tools.jpg",
+      photo: "/clean-hero.jpg",
       icon: Sparkles,
       iconColor: "text-sky-300",
       titleKey: "service.cleaning.title",

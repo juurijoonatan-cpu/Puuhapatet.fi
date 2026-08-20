@@ -257,7 +257,7 @@ export default function LandingPage() {
                   <div className="w-11 h-11 rounded-xl bg-sky-500/10 flex items-center justify-center flex-shrink-0">
                     <Sparkles className="w-5 h-5 text-sky-600 dark:text-sky-400" />
                   </div>
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <h3 className="font-semibold text-foreground">{t("service.cleaning.title")}</h3>
                       <span className="text-[9px] font-bold uppercase tracking-wide text-sky-950 bg-sky-200 rounded-full px-2 py-0.5">
@@ -271,6 +271,14 @@ export default function LandingPage() {
                       {t("service.cleaning.cta")}
                       <ArrowRight className="w-4 h-4" />
                     </span>
+                  </div>
+                  <div className="hidden sm:block w-40 flex-shrink-0 rounded-xl overflow-hidden aspect-[4/3]">
+                    <img
+                      src="/clean-hero.jpg"
+                      alt={t("service.cleaning.title")}
+                      loading="lazy"
+                      className="w-full h-full object-cover"
+                    />
                   </div>
                 </div>
               </Card>

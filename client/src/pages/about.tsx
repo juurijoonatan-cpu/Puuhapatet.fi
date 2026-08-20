@@ -28,8 +28,10 @@ const team = [
     roleKey: "about.founder.role" as const,
     school: "Otaniemen lukio",
     bioKey: "about.joonatan.bio" as const,
-    photo: "/joonatan.jpg.jpeg",
-    photoPosition: "50% 35%",
+    photo: "/joonatan.jpg.jpeg?v=2",
+    // 80×80 neliö rajaa pystykuvasta vain kaistaleen: 35 % leikkasi leuan pois
+    // uudesta kuvasta. 58 % keskittää kasvot lakinlippa mukaan lukien.
+    photoPosition: "50% 58%",
     initials: "JJ",
     linkedin: "https://www.linkedin.com/in/joonatan-juuri-575857255",
     phone: "+358400389999",

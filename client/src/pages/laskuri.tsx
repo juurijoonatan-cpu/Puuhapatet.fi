@@ -824,9 +824,20 @@ export default function LaskuriPage() {
             {tab === "siivous" && (
               <div className="space-y-5">
 
+                {/* Kuva ennen tekstiä: välilehti kertoo mistä on kyse yhdellä
+                    silmäyksellä. Matala kaistale, jotta itse laskuri ei jää
+                    taitteen alle puhelimella. */}
+                <div className="rounded-2xl overflow-hidden aspect-[21/9] md:aspect-[3/1]">
+                  <img
+                    src="/clean-hero.jpg"
+                    alt={t("laskuri.clean.title")}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+
                 {/* REHELLISYYS ENSIN. Tämä laatikko on välilehden ensimmäinen
-                    asia, koska palvelua ei voi vielä tilata. Arvio saa näkyä,
-                    tilausnappia ei ole — alempi CTA kerää kiinnostuksen. */}
+                    tekstisisältö, koska palvelua ei voi vielä tilata. Arvio saa
+                    näkyä, tilausnappia ei ole — alempi CTA kerää kiinnostuksen. */}
                 <div className="rounded-2xl bg-primary/5 border border-primary/20 px-4 py-3.5">
                   <div className="flex items-center gap-2 mb-1">
                     <Sparkles className="w-4 h-4 text-primary flex-shrink-0" />

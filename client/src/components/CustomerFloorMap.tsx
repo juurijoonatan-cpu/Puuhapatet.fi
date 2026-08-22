@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GigPublicView, P2PublicOffer, P2PublicView } from "@/lib/api";
 import { NOTE_KINDS, planImageUrl, planRenderOf, floorLabel as sharedFloorLabel } from "@shared/project";
+import type { PublicLampPoint, PublicDoorPoint } from "@shared/project";
 import { eur } from "@shared/gig";
 import { p2NumbersByFloor, type P2NumberingInput } from "@shared/p2";
 import { getPoints, inCustomerScope, type CustomerPoint } from "@/lib/customer-progress";
@@ -117,6 +118,25 @@ function dotColor(p: 1 | 2, status: WindowStatus): string {
   if (status === "pesty") return p === 1 ? "#E03B3B" : "#E0A800";
   if (status === "kesken") return "#7C5CD6";
   return p === 1 ? "#F4A6C0" : "#D9C97E";
+}
+
+/** Sama tähtimerkki kuin tekijän kartalla — lamppu ei ole ikkuna, eikä se saa
+ *  näyttää siltä. */
+const STAR_CLIP = "polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)";
+
+/**
+ * Lampun ja oven värit ASIAKKAAN vaalealla pohjalla.
+ *
+ * Tekijän tumman kartan sävyt eivät kelpaa sellaisenaan: vaalea vihreä ja
+ * amber katoavat valkoista vasten. Nämä ovat samat merkitykset (tehty =
+ * vihreä, huomio = amber, rikki = punainen) mutta paperille tarkistettuina.
+ */
+const FIX_DONE = "#3E7C59", FIX_NOTE = "#B8860B", FIX_BROKEN = "#C0392B";
+
+function lampCustomerColor(l: PublicLampPoint): string {
+  if (l.condition === "rikki") return FIX_BROKEN;
+  if (l.status === "vaihdettu") return FIX_DONE;
+  return FIX_NOTE;
 }
 
 /**
@@ -296,6 +316,14 @@ export default function CustomerFloorMap({ map, p2, p2Actions, scope, onLoadObse
 
   const points = useMemo(() => getPoints(floor, map), [floor, map]);
   const floorNotes = map.notes?.[floor] ?? [];
+  // Lamput ja ovet: palvelin lähettää VAIN ne joista on jotain kerrottavaa
+  // (`publicLampView`/`publicDoorView`), joten tässä ei suodateta mitään muuta
+  // kuin kerros. Kartoitusdata ei tule tänne asti.
+  const floorLamps = useMemo(() => (map.lamps ?? []).filter((l) => l.floor === floor), [map.lamps, floor]);
+  const floorDoors = useMemo(() => (map.doors ?? []).filter((d) => d.floor === floor), [map.doors, floor]);
+  const [openFixture, setOpenFixture] = useState<
+    { kind: "lamp"; point: PublicLampPoint; rect: DOMRect } | { kind: "door"; point: PublicDoorPoint; rect: DOMRect } | null
+  >(null);
   const observations = map.observations ?? {};
   // The window whose observation popup is open (+ the badge rect to anchor it).
   const [openObs, setOpenObs] = useState<{ key: string; rect: DOMRect } | null>(null);
@@ -1107,6 +1135,51 @@ export default function CustomerFloorMap({ map, p2, p2Actions, scope, onLoadObse
               </span>
             ))}
 
+            {/* LAMPUT & OVET — vain ne joista on asiakkaalle kerrottavaa.
+                Piilossa hinnoitteluvaiheessa kuten muistiinpanotkin: silloin
+                näkymän aihe on lisäikkunoiden hinta, ei kalusteet. */}
+            {!p2On && !addMode && floorLamps.map((l) => (
+              <button
+                key={`lamp-${l.key}`}
+                onClick={(e) => { e.stopPropagation(); setOpenFixture({ kind: "lamp", point: l, rect: e.currentTarget.getBoundingClientRect() }); }}
+                title={`Lamppu · ${l.status === "vaihdettu" ? "Vaihdettu" : l.condition === "rikki" ? "Ei toimi" : "Huomio"}${l.note ? ` — ${l.note}` : ""}`}
+                aria-label="Näytä lampun tiedot"
+                style={{
+                  position: "absolute", left: `${l.x}%`, top: `${l.y}%`, transform: "translate(-50%,-50%)",
+                  width: 18, height: 18, padding: 0, border: "none", background: "transparent", cursor: "pointer", zIndex: 5,
+                }}
+              >
+                <span aria-hidden style={{ display: "block", width: "100%", height: "100%", clipPath: STAR_CLIP, background: lampCustomerColor(l) }} />
+                {!!l.note && (
+                  <span aria-hidden style={{ position: "absolute", right: -2, top: -2, width: 7, height: 7, borderRadius: "50%", background: "#fff", border: `1.5px solid ${lampCustomerColor(l)}` }} />
+                )}
+              </button>
+            ))}
+            {!p2On && !addMode && floorDoors.map((d) => (
+              <button
+                key={`door-${d.key}`}
+                onClick={(e) => { e.stopPropagation(); setOpenFixture({ kind: "door", point: d, rect: e.currentTarget.getBoundingClientRect() }); }}
+                title={`${d.label || "Ovi"} · ${d.status === "tehty" ? "Tehty" : "Huomio"}${d.note ? ` — ${d.note}` : ""}`}
+                aria-label="Näytä oven tiedot"
+                style={{
+                  position: "absolute", left: `${d.x}%`, top: `${d.y}%`, transform: "translate(-50%,-50%)",
+                  width: 18, height: 18, padding: 0, border: "none", background: "transparent", cursor: "pointer", zIndex: 5,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+              >
+                <span aria-hidden style={{
+                  display: "inline-flex", alignItems: "center", justifyContent: "flex-end", boxSizing: "border-box",
+                  width: 13, height: 18, paddingRight: 2, borderRadius: "3px 3px 1px 1px",
+                  background: d.status === "tehty" ? FIX_DONE : FIX_NOTE, border: "1px solid rgba(0,0,0,0.18)",
+                }}>
+                  <span style={{ width: 3, height: 3, borderRadius: "50%", background: "rgba(255,255,255,0.9)" }} />
+                </span>
+                {!!d.note && (
+                  <span aria-hidden style={{ position: "absolute", right: 0, top: -2, width: 7, height: 7, borderRadius: "50%", background: "#fff", border: `1.5px solid ${d.status === "tehty" ? FIX_DONE : FIX_NOTE}` }} />
+                )}
+              </button>
+            ))}
+
             {/* Active work zone — pulsing highlight of where work is happening now */}
             {activeZone && activeZone.floor === floor && (
               <span
@@ -1349,6 +1422,18 @@ export default function CustomerFloorMap({ map, p2, p2Actions, scope, onLoadObse
             {l.label}
           </span>
         ))}
+        {floorLamps.length > 0 && (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, color: T.muted }}>
+            <span aria-hidden style={{ width: 12, height: 12, clipPath: STAR_CLIP, background: FIX_DONE, display: "inline-block" }} />
+            Lamppu — vaihdettu tai huomautettu
+          </span>
+        )}
+        {floorDoors.length > 0 && (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, color: T.muted }}>
+            <span aria-hidden style={{ width: 9, height: 12, borderRadius: "2px 2px 1px 1px", background: FIX_DONE, display: "inline-block" }} />
+            Ovi — tehty tai huomautettu
+          </span>
+        )}
         <span style={{ marginLeft: "auto", fontSize: 11.5, color: T.muted }}>Päivittyy automaattisesti</span>
       </div>
       </details>
@@ -1557,6 +1642,35 @@ export default function CustomerFloorMap({ map, p2, p2Actions, scope, onLoadObse
 
             {p2Error && (
               <p style={{ margin: "10px 0 0", fontSize: 12.5, color: danger, lineHeight: 1.5 }}>{p2Error}</p>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Lampun / oven kupla — sama pieni, suljettava muoto kuin havainnolla.
+          Tekijän nimeä ei ole: asiakkaalle kerrotaan mitä tehtiin, ei kuka. */}
+      {openFixture && (
+        <>
+          <div onClick={() => setOpenFixture(null)} style={{ position: "fixed", inset: 0, zIndex: 55 }} />
+          <div style={{ ...popupStyle(openFixture.rect, 250, 150), width: 250, background: raisedBg, border: `1px solid ${T.hair}`, borderRadius: 14, boxShadow: popupShadow, padding: 14, fontFamily: FONT }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              {openFixture.kind === "lamp" ? (
+                <span aria-hidden style={{ width: 14, height: 14, clipPath: STAR_CLIP, background: lampCustomerColor(openFixture.point), display: "inline-block" }} />
+              ) : (
+                <span aria-hidden style={{ width: 10, height: 14, borderRadius: "2px 2px 1px 1px", background: openFixture.point.status === "tehty" ? FIX_DONE : FIX_NOTE, display: "inline-block" }} />
+              )}
+              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: T.navy, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {openFixture.kind === "lamp" ? "Lamppu" : (openFixture.point.label || "Ovi")}
+              </span>
+              <button onClick={() => setOpenFixture(null)} aria-label="Sulje" style={{ marginLeft: "auto", width: 24, height: 24, borderRadius: "50%", border: "none", background: T.paper, color: T.muted, fontSize: 13, cursor: "pointer", lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>
+              {openFixture.kind === "lamp"
+                ? (openFixture.point.status === "vaihdettu" ? "Vaihdettu" : openFixture.point.condition === "rikki" ? "Ei toimi" : "Tarkastettu")
+                : (openFixture.point.status === "tehty" ? "Tehty" : "Tekemättä")}
+            </div>
+            {openFixture.point.note && (
+              <p style={{ margin: "8px 0 0", fontSize: 13.5, lineHeight: 1.55, color: T.ink, whiteSpace: "pre-wrap" }}>{openFixture.point.note}</p>
             )}
           </div>
         </>

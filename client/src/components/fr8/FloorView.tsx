@@ -5,8 +5,8 @@
  * path differ.
  */
 import { useState, useRef, useEffect, useMemo } from "react";
-import type { ProjMarksData, WindowStatus, ProjCustomMark, ProjMapNote, ProjNoteKind, ProjActiveZone, ProjWindowObservation, FixedDeal, ProjBuilding, LampStatus, ProjLampMark } from "@shared/project";
-import { NOTE_KINDS, planImageUrl, planRenderOf, hasAnyPlan, floorLabel } from "@shared/project";
+import type { ProjMarksData, WindowStatus, ProjCustomMark, ProjMapNote, ProjNoteKind, ProjActiveZone, ProjWindowObservation, FixedDeal, ProjBuilding, LampStatus, LampCondition, ProjLampMark, ProjFixtureNote, DoorStatus, ProjDoorMark } from "@shared/project";
+import { NOTE_KINDS, planImageUrl, planRenderOf, hasAnyPlan, floorLabel, MAX_FIXTURE_NOTE_LEN, MAX_DOOR_LABEL_LEN } from "@shared/project";
 import type { P2Offer, P2NumberingInput } from "@shared/p2";
 import { P2_PRICE_PRESETS_CENTS, MAX_P2_NOTE_LEN, p2NumbersByFloor } from "@shared/p2";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -22,6 +22,53 @@ const PLAN_CROP = "inset(2%)";
 /** Viisisakarainen tähti, CSS clip-pathina — lamppupisteiden merkki kartalla,
  *  jotta ne erottuvat ikkunoiden pyöreistä pisteistä yhdellä silmäyksellä. */
 const STAR_CLIP = "polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)";
+
+/** Lampun väri: vaihdettu = vihreä, rikki = punainen, muuten amber. Rikki
+ *  voittaa vaihtamattomuuden, koska se on se tieto joka vaatii toimenpiteen. */
+function lampRgb(status: LampStatus, condition?: LampCondition): string {
+  if (status === "vaihdettu") return "124,224,166";
+  if (condition === "rikki") return "255,116,116";
+  return "255,196,90";
+}
+
+/** Oven väri: tehty = vihreä, tekemättä = sininen (ei amber, jottei sekoitu
+ *  vaihtamattomaan lamppuun samalla kartalla). */
+function doorRgb(status: DoorStatus): string {
+  return status === "tehty" ? "124,224,166" : "156,193,255";
+}
+
+/**
+ * Ovimerkki — kapea oviliuska ja ripa.
+ *
+ * Kartalla on kolme merkkilajia: ikkuna on ympyrä, lamppu on tähti, ovi on
+ * tämä. Muoto eikä väri erottaa ne, koska värit kertovat jo tilan.
+ */
+function DoorGlyph({ rgb, size = 18, glow = true }: { rgb: string; size?: number; glow?: boolean }) {
+  const r = Math.max(2, Math.round(size * 0.16));
+  const knob = Math.max(2, Math.round(size * 0.14));
+  return (
+    <span aria-hidden style={{
+      display: "inline-flex", alignItems: "center", justifyContent: "flex-end", boxSizing: "border-box",
+      width: Math.round(size * 0.72), height: size, paddingRight: Math.max(1, Math.round(size * 0.12)),
+      borderRadius: `${r}px ${r}px 2px 2px`,
+      background: `linear-gradient(135deg, rgba(255,255,255,0.92), rgba(${rgb},0.95) 55%, rgba(${rgb},0.85))`,
+      border: `1px solid rgba(${rgb},0.9)`,
+      ...(glow ? { filter: `drop-shadow(0 0 5px rgba(${rgb},0.6))` } : {}),
+    }}>
+      <span style={{ width: knob, height: knob, borderRadius: "50%", background: "rgba(18,18,24,0.72)" }} />
+    </span>
+  );
+}
+
+/** "2 min sitten" -tyylinen lyhyt aikaleima kalustehuomautuksille. */
+function fixtureAgo(ts?: number): string {
+  if (!ts) return "";
+  const s = (Date.now() - ts) / 1000;
+  if (s < 60) return "juuri nyt";
+  if (s < 3600) return `${Math.floor(s / 60)} min sitten`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h sitten`;
+  return `${Math.floor(s / 86400)} pv sitten`;
+}
 
 interface Point { key: string; p: 1 | 2; x: number; y: number; }
 
@@ -182,6 +229,93 @@ interface Props {
   /** Merkitse lamppu vaihdetuksi/ei-vaihdetuksi, valinnaisesti kenen puolesta
    *  (johtaja voi valita tekijän — sama kuva kuin ikkunan "kuka pesi"). */
   onSetLampStatus?: (key: string, status: LampStatus, changedById?: string) => void;
+  /** Lampun avain → toimiiko se. Puuttuva merkintä = ei tarkastettu. */
+  lampConditions?: Record<string, LampCondition>;
+  /** Lampun avain → huomautus. */
+  lampNotes?: Record<string, ProjFixtureNote>;
+  /** Aseta lampun kunto; `null` palauttaa "ei tarkastettu" -tilaan. */
+  onSetLampCondition?: (key: string, condition: LampCondition | null) => void;
+  /** Kirjoita/tyhjennä lampun huomautus. Tyhjä teksti poistaa huomautuksen. */
+  onSetLampNote?: (key: string, text: string) => void;
+  /**
+   * OVET — sama kevyt malli kuin lampuilla, mutta piste on tehtävä: se on joko
+   * tekemättä tai tehty, ja sillä voi olla lyhyt tehtävänimi. Kaikki
+   * valinnaisia — ilman `doors`-proppia ovikerros ei piirry lainkaan.
+   */
+  doors?: Record<string, ProjDoorMark[]>;
+  doorStatuses?: Record<string, DoorStatus>;
+  /** Oven avain → tekijän id joka merkitsi sen tehdyksi. */
+  doorDoneBy?: Record<string, string>;
+  doorNotes?: Record<string, ProjFixtureNote>;
+  /** Lisää uusi ovi kartalle (johtaja). Puuttuessaan "Ovi" ei näy lisäysvalikossa. */
+  onAddDoor?: (floor: string, x: number, y: number) => void;
+  onDeleteDoor?: (key: string) => void;
+  onSetDoorStatus?: (key: string, status: DoorStatus, doneById?: string) => void;
+  onSetDoorNote?: (key: string, text: string) => void;
+  /** Oven lyhyt tehtävänimi, esim. "karmit + lasi". */
+  onSetDoorLabel?: (key: string, label: string) => void;
+}
+
+/**
+ * Huomautuslohko lamppu- ja ovipopovereihin.
+ *
+ * Sama pieni tilakone molemmille: katselutila näyttää tekstin, kirjoittajan ja
+ * ajan; napautus avaa tekstikentän. `draft === null` on katselutila, jotta
+ * tyhjäksi pyyhitty teksti (= poista huomautus) eroaa "ei muokkauksessa"
+ * -tilasta.
+ */
+function FixtureNoteBlock({ note, draft, setDraft, onSave, canWrite, workerNames, placeholder }: {
+  note?: ProjFixtureNote;
+  draft: string | null;
+  setDraft: (v: string | null) => void;
+  onSave: () => void;
+  canWrite: boolean;
+  workerNames?: Record<string, string>;
+  placeholder: string;
+}) {
+  const editing = draft !== null;
+  return (
+    <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+      <div style={{ fontSize: "9.5px", letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.38)", padding: "0 4px 6px" }}>Huomautus</div>
+      {editing ? (
+        <>
+          <textarea
+            value={draft ?? ""}
+            onChange={(e) => setDraft(e.target.value.slice(0, MAX_FIXTURE_NOTE_LEN))}
+            placeholder={placeholder}
+            autoFocus
+            rows={3}
+            style={{ width: "100%", resize: "none", padding: "8px 10px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(0,0,0,0.35)", color: "#fff", fontSize: "12.5px", outline: "none", fontFamily: "var(--font-onest, system-ui, sans-serif)", boxSizing: "border-box" }}
+          />
+          <div style={{ display: "flex", gap: "7px", marginTop: "8px" }}>
+            <button onClick={() => setDraft(null)} style={{ padding: "7px 11px", borderRadius: "9px", border: "1px solid rgba(255,255,255,0.14)", background: "transparent", color: "rgba(255,255,255,0.7)", fontSize: "12px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>Peru</button>
+            <button onClick={onSave} style={{ flex: 1, padding: "7px 11px", borderRadius: "9px", border: "none", background: "#fff", color: "#0a0a0c", fontSize: "12px", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>
+              {draft!.trim() ? "Tallenna" : "Poista huomautus"}
+            </button>
+          </div>
+        </>
+      ) : note?.text ? (
+        <div>
+          <div style={{ fontSize: "12.5px", lineHeight: 1.45, color: "rgba(255,255,255,0.88)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{note.text}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "5px", fontSize: "10.5px", color: "rgba(255,255,255,0.42)" }}>
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {note.by ? (workerNames?.[note.by] ?? note.by) : "—"}{note.ts ? ` · ${fixtureAgo(note.ts)}` : ""}
+            </span>
+            {canWrite && (
+              <button onClick={() => setDraft(note.text)} style={{ marginLeft: "auto", flexShrink: 0, background: "transparent", border: "none", color: "rgba(156,193,255,0.95)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", padding: "2px 4px" }}>Muokkaa</button>
+            )}
+          </div>
+        </div>
+      ) : canWrite ? (
+        <button className="status-opt-btn" onClick={() => setDraft("")} style={{ color: "rgba(255,255,255,0.78)" }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" style={{ flexShrink: 0 }}><path d="M12 5v14M5 12h14" /></svg>
+          <span style={{ flex: 1, textAlign: "left" }}>Lisää huomautus</span>
+        </button>
+      ) : (
+        <div style={{ fontSize: "12px", color: "rgba(255,255,255,0.35)", padding: "0 4px" }}>Ei huomautusta.</div>
+      )}
+    </div>
+  );
 }
 
 /** A minimal on-screen anchor (viewport coords) for positioning a fixed popover. */
@@ -291,7 +425,7 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, building, planUrlBase, planAuthed = false, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, onLoadObservationImage, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, scopeVotes, guided, onToggleFloorLock, onToggleWindowLock, lockedWindowKeys, floorFocus, restrictFloors, lamps, lampStatuses, lampChangedBy, onAddLamp, onDeleteLamp, onSetLampStatus }: Props) {
+export default function FloorView({ floors, planBase, building, planUrlBase, planAuthed = false, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, onLoadObservationImage, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, scopeVotes, guided, onToggleFloorLock, onToggleWindowLock, lockedWindowKeys, floorFocus, restrictFloors, lamps, lampStatuses, lampChangedBy, onAddLamp, onDeleteLamp, onSetLampStatus, lampConditions, lampNotes, onSetLampCondition, onSetLampNote, doors, doorStatuses, doorDoneBy, doorNotes, onAddDoor, onDeleteDoor, onSetDoorStatus, onSetDoorNote, onSetDoorLabel }: Props) {
   // Discreet worker map: when restrictFloors is set, show ONLY those floors and
   // hide the rest, so a regular worker sees exactly the opened floors and nothing
   // else. Founders (restrictFloors null) always see every floor.
@@ -322,7 +456,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
   const planSrc = planAuthed ? authedPlan.src : planHref;
   const [filter, setFilter] = useState<"all" | "unwashed" | "progress" | "done">("all");
   const [editMode, setEditMode] = useState(false);
-  const [placeMode, setPlaceMode] = useState<1 | 2 | "del" | "note" | "zone" | "lamp" | null>(null);
+  const [placeMode, setPlaceMode] = useState<1 | 2 | "del" | "note" | "zone" | "lamp" | "door" | null>(null);
   const [noteKind, setNoteKind] = useState<ProjNoteKind>("ladder");
   const [dragging, setDragging] = useState<string | null>(null);
   const [activeOrb, setActiveOrb] = useState<string | null>(null);
@@ -336,6 +470,15 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
   const [activeLamp, setActiveLamp] = useState<string | null>(null);
   const [lampAnchor, setLampAnchor] = useState<Anchor | null>(null);
   const [showLampChangerPicker, setShowLampChangerPicker] = useState(false);
+  // Huomautusluonnos: `null` = katselutila, merkkijono = kirjoitustila. Tyhjä
+  // merkkijono on siis eri asia kuin ei-muokkauksessa, joten null on oikea tyhjä.
+  const [lampNoteDraft, setLampNoteDraft] = useState<string | null>(null);
+  // Ovi-popover — sama malli kuin lampulla, plus tehtävänimen muokkaus.
+  const [activeDoor, setActiveDoor] = useState<string | null>(null);
+  const [doorAnchor, setDoorAnchor] = useState<Anchor | null>(null);
+  const [showDoorDonePicker, setShowDoorDonePicker] = useState(false);
+  const [doorNoteDraft, setDoorNoteDraft] = useState<string | null>(null);
+  const [doorLabelDraft, setDoorLabelDraft] = useState<string | null>(null);
   // Per-window observation editor (text + optional photo) inside the status popover.
   const [obsDraft, setObsDraft] = useState("");
   const [obsImage, setObsImage] = useState<string | undefined>(undefined);
@@ -368,6 +511,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
   const notesCanEdit = !!onAddNote;
   const zoneCanEdit = !!onSetActiveZone;
   const lampsCanEdit = !!onAddLamp;
+  const doorsCanEdit = !!onAddDoor;
   const dragKeyRef = useRef<string | null>(null);
   const movedRef = useRef(false);
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -575,6 +719,8 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
   const activeNoteObj = activeNote ? floorNotes.find((n) => n.key === activeNote) ?? null : null;
   const lampPts: ProjLampMark[] = lamps?.[floor] || [];
   const activeLampPt = activeLamp ? lampPts.find((l) => l.key === activeLamp) ?? null : null;
+  const doorPts: ProjDoorMark[] = doors?.[floor] || [];
+  const activeDoorPt = activeDoor ? doorPts.find((d) => d.key === activeDoor) ?? null : null;
 
   function matchFilter(status: WindowStatus) {
     if (filter === "all") return true;
@@ -675,7 +821,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
       // fixed overlay (never clipped by the zoom/pan scene) and stays tappable.
       setOrbAnchor(next ? rectToAnchor((e.currentTarget as HTMLElement).getBoundingClientRect()) : null);
       setActiveNote(null);
-      setActiveLamp(null); setLampAnchor(null);
+      setActiveLamp(null); setActiveDoor(null); setLampAnchor(null);
       setShowWasherPicker(false); // names stay hidden until "Vaihda" is tapped
       setShowSplitPicker(false);
       // Load any existing observation for this window into the editor. Kuva tulee
@@ -745,7 +891,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
     setNoteAnchor(next ? rectToAnchor((e.currentTarget as HTMLElement).getBoundingClientRect()) : null);
     setNoteDraft(next ? (note.text || "") : "");
     setActiveOrb(null);
-    setActiveLamp(null); setLampAnchor(null);
+    setActiveLamp(null); setActiveDoor(null); setLampAnchor(null);
     setActiveNote(next);
   }
 
@@ -771,7 +917,40 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
     setActiveOrb(null); setOrbAnchor(null);
     setActiveNote(null); setNoteAnchor(null);
     setShowLampChangerPicker(false);
+    setLampNoteDraft(null);
+    setActiveDoor(null); setDoorAnchor(null);
     setActiveLamp(next);
+  }
+
+  /** Oven napautus — sama ohitussääntö kuin lampulla. */
+  function onDoorClick(dr: ProjDoorMark, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (pannedRef.current) { pannedRef.current = false; return; }
+    if (editMode && placeMode) return;
+    const next = activeDoor === dr.key ? null : dr.key;
+    setDoorAnchor(next ? rectToAnchor((e.currentTarget as HTMLElement).getBoundingClientRect()) : null);
+    setActiveOrb(null); setOrbAnchor(null);
+    setActiveNote(null); setNoteAnchor(null);
+    setActiveLamp(null); setLampAnchor(null);
+    setShowDoorDonePicker(false);
+    setDoorNoteDraft(null); setDoorLabelDraft(null);
+    setActiveDoor(next);
+  }
+
+  /** Kirjoita lampun huomautus talteen ja palaa katselutilaan. */
+  function saveLampNote() {
+    if (activeLamp && lampNoteDraft !== null) onSetLampNote?.(activeLamp, lampNoteDraft.slice(0, MAX_FIXTURE_NOTE_LEN));
+    setLampNoteDraft(null);
+  }
+
+  function saveDoorNote() {
+    if (activeDoor && doorNoteDraft !== null) onSetDoorNote?.(activeDoor, doorNoteDraft.slice(0, MAX_FIXTURE_NOTE_LEN));
+    setDoorNoteDraft(null);
+  }
+
+  function saveDoorLabel() {
+    if (activeDoor && doorLabelDraft !== null) onSetDoorLabel?.(activeDoor, doorLabelDraft.slice(0, MAX_DOOR_LABEL_LEN));
+    setDoorLabelDraft(null);
   }
 
   function onOrbPointerDown(pt: Point, e: React.PointerEvent) {
@@ -835,38 +1014,48 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
       onAddLamp?.(floor, +x.toFixed(2), +y.toFixed(2));
       return;
     }
+    if (placeMode === "door") {
+      onAddDoor?.(floor, +x.toFixed(2), +y.toFixed(2));
+      return;
+    }
     if (placeMode !== 1 && placeMode !== 2) return;
     onAddCustomMark(floor, +x.toFixed(2), +y.toFixed(2), placeMode as 1 | 2);
   }
 
   function toggleEdit() {
     setEditMode((e) => !e);
-    setPlaceMode(null); setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null); setActiveLamp(null); setDragging(null);
+    setPlaceMode(null); setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null); setActiveLamp(null); setActiveDoor(null); setDragging(null);
   }
 
   function chooseAdd(mode: 1 | 2 | "del") {
     setEditMode(true);
     setPlaceMode(placeMode === mode ? null : mode);
-    setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null); setActiveLamp(null);
+    setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null); setActiveLamp(null); setActiveDoor(null);
   }
 
   function chooseNoteKind(kind: ProjNoteKind) {
     setEditMode(true);
     setNoteKind(kind);
     setPlaceMode("note");
-    setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null); setActiveLamp(null);
+    setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null); setActiveLamp(null); setActiveDoor(null);
   }
 
   function chooseZone() {
     setEditMode(true);
     setPlaceMode("zone");
-    setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null); setActiveLamp(null);
+    setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null); setActiveLamp(null); setActiveDoor(null);
   }
 
   function chooseLamp() {
     setEditMode(true);
     setPlaceMode(placeMode === "lamp" ? null : "lamp");
-    setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null); setActiveLamp(null);
+    setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null); setActiveLamp(null); setActiveDoor(null);
+  }
+
+  function chooseDoor() {
+    setEditMode(true);
+    setPlaceMode(placeMode === "door" ? null : "door");
+    setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null); setActiveLamp(null); setActiveDoor(null);
   }
 
   // Onko juuri valittu kerros lukossa tekijöiltä? Ohjaa lukkonapin tekstin.
@@ -878,6 +1067,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
     : placeMode === "note" ? `Lisää merkintä (${NOTE_KINDS[noteKind].label}) — klikkaa pohjapiirrosta. Voit kirjoittaa muistiinpanon heti.`
     : placeMode === "zone" ? "Merkitse työn alla -alue — klikkaa kohtaa, jossa juuri nyt työskennellään. Asiakas näkee tämän."
     : placeMode === "lamp" ? "Lisää lamppu — klikkaa pohjapiirrosta haluttuun kohtaan."
+    : placeMode === "door" ? "Lisää ovi — klikkaa pohjapiirrosta. Ovi on tehtävä: sen voi nimetä ja kuitata tehdyksi."
     : "Muokkaustila — raahaa pisteet oikeille kohdille. Tallentuu automaattisesti.";
 
   return (
@@ -899,7 +1089,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
             const gLocked = !!guided?.enabled && (guided.lockedFloors || []).includes(f);
             const st = floorBtnStyle(f === floor);
             return (
-              <button key={f} onClick={() => { setFloor(f); setActiveOrb(null); setActiveLamp(null); }}
+              <button key={f} onClick={() => { setFloor(f); setActiveOrb(null); setActiveLamp(null); setActiveDoor(null); }}
                 title={gLocked ? "Lukossa tekijöiltä — sinä näet sen silti" : undefined}
                 style={{
                   ...st,
@@ -1069,17 +1259,28 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                   {/* LAMPUT — sama lisäystapa kuin ikkunapisteillä, mutta oma tähtimerkki
                       eikä hintaa. Vain johtajille (canEdit), koska tekijät eivät
                       rakenna karttaa — he vain merkitsevät vaihdetuksi pisteen popoverista. */}
-                  {canEdit && lampsCanEdit && (
+                  {canEdit && (lampsCanEdit || doorsCanEdit) && (
                     <>
                       <div style={{ height: "1px", background: "rgba(255,255,255,0.08)", margin: "6px 4px" }} />
-                      <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.4)", padding: "2px 8px 7px" }}>LAMPUT</div>
-                      <button className="add-menu-btn" onClick={chooseLamp} style={{ border: `1px solid ${placeMode === "lamp" ? "rgba(255,196,90,0.4)" : "transparent"}`, background: placeMode === "lamp" ? "rgba(255,196,90,0.12)" : "transparent" }}>
-                        <span aria-hidden style={{ width: "15px", height: "15px", flexShrink: 0, display: "inline-block", clipPath: STAR_CLIP, background: "rgb(255,196,90)" }} />
-                        <span style={{ flex: 1 }}>
-                          <span style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#fff" }}>Lamppu</span>
-                          <span style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.45)" }}>Merkitse lamppu kartalle</span>
-                        </span>
-                      </button>
+                      <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.4)", padding: "2px 8px 7px" }}>LAMPUT & OVET</div>
+                      {lampsCanEdit && (
+                        <button className="add-menu-btn" onClick={chooseLamp} style={{ border: `1px solid ${placeMode === "lamp" ? "rgba(255,196,90,0.4)" : "transparent"}`, background: placeMode === "lamp" ? "rgba(255,196,90,0.12)" : "transparent" }}>
+                          <span aria-hidden style={{ width: "15px", height: "15px", flexShrink: 0, display: "inline-block", clipPath: STAR_CLIP, background: "rgb(255,196,90)" }} />
+                          <span style={{ flex: 1 }}>
+                            <span style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#fff" }}>Lamppu</span>
+                            <span style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.45)" }}>Kartoita — näkyy asiakkaalle vasta vaihdosta tai huomautuksesta</span>
+                          </span>
+                        </button>
+                      )}
+                      {doorsCanEdit && (
+                        <button className="add-menu-btn" onClick={chooseDoor} style={{ border: `1px solid ${placeMode === "door" ? "rgba(156,193,255,0.4)" : "transparent"}`, background: placeMode === "door" ? "rgba(156,193,255,0.12)" : "transparent" }}>
+                          <span style={{ width: "15px", flexShrink: 0, display: "flex", justifyContent: "center" }}><DoorGlyph rgb="156,193,255" size={15} glow={false} /></span>
+                          <span style={{ flex: 1 }}>
+                            <span style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#fff" }}>Ovi</span>
+                            <span style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.45)" }}>Tehtävä­piste — nimeä ja kuittaa tehdyksi</span>
+                          </span>
+                        </button>
+                      )}
                     </>
                   )}
 
@@ -1191,7 +1392,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
             )}
 
             {/* Orbs layer */}
-            <div onClick={onPlanClick} style={{ position: "absolute", inset: 0, cursor: (placeMode === 1 || placeMode === 2 || placeMode === "note" || placeMode === "zone" || placeMode === "lamp") ? "crosshair" : "default" }}>
+            <div onClick={onPlanClick} style={{ position: "absolute", inset: 0, cursor: (placeMode === 1 || placeMode === 2 || placeMode === "note" || placeMode === "zone" || placeMode === "lamp" || placeMode === "door") ? "crosshair" : "default" }}>
               {/* Active work zone — pulsing coloured highlight of current work. */}
               {activeZone && activeZone.floor === floor && (
                 <span aria-label="Työn alla nyt" title={activeZone.label ? `Työn alla: ${activeZone.label}` : "Työn alla nyt"}
@@ -1334,12 +1535,12 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                   sama sääntö kuin ikkunapisteillä lisäystilassa. */}
               {lampPts.map((lp) => {
                 const changed = (lampStatuses?.[lp.key] || "ei") === "vaihdettu";
-                const rgb = changed ? "124,224,166" : "255,196,90";
+                const rgb = lampRgb(changed ? "vaihdettu" : "ei", lampConditions?.[lp.key]);
                 return (
                   <button key={lp.key}
                     data-fr8-dot
                     onClick={(e) => onLampClick(lp, e)}
-                    title={`Lamppu · ${changed ? "Vaihdettu" : "Ei vaihdettu"}`}
+                    title={`Lamppu · ${changed ? "Vaihdettu" : "Ei vaihdettu"}${lampConditions?.[lp.key] === "rikki" ? " · Ei toimi" : lampConditions?.[lp.key] === "toimiva" ? " · Toimii" : ""}${lampNotes?.[lp.key]?.text ? ` · ${lampNotes[lp.key]!.text}` : ""}`}
                     style={{
                       position: "absolute", left: `${lp.x}%`, top: `${lp.y}%`,
                       transform: "translate(-50%,-50%)", width: "18px", height: "18px",
@@ -1353,6 +1554,38 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                       background: `radial-gradient(circle at 35% 30%, rgba(255,255,255,0.95), rgba(${rgb},0.95) 55%, rgba(${rgb},0.85))`,
                       filter: `drop-shadow(0 0 5px rgba(${rgb},${changed ? 0.85 : 0.6}))`,
                     }} />
+                    {/* Huomautusmerkki — pieni piste tähden kulmassa, jotta
+                        kartalta näkee ilman napautusta mistä on kirjoitettu. */}
+                    {!!lampNotes?.[lp.key]?.text && (
+                      <span aria-hidden style={{ position: "absolute", right: "-3px", top: "-3px", width: "7px", height: "7px", borderRadius: "50%", background: "#fff", border: "1.5px solid rgba(16,16,20,0.9)" }} />
+                    )}
+                  </button>
+                );
+              })}
+
+              {/* Ovet — omana kerroksenaan lamppujen rinnalla. Sama
+                  lisäystilan ohitus kuin muillakin merkeillä. */}
+              {doorPts.map((dr) => {
+                const st: DoorStatus = doorStatuses?.[dr.key] || "ei";
+                const rgb = doorRgb(st);
+                return (
+                  <button key={dr.key}
+                    data-fr8-dot
+                    onClick={(e) => onDoorClick(dr, e)}
+                    title={`Ovi${dr.label ? ` · ${dr.label}` : ""} · ${st === "tehty" ? "Tehty" : "Tekemättä"}`}
+                    style={{
+                      position: "absolute", left: `${dr.x}%`, top: `${dr.y}%`,
+                      transform: "translate(-50%,-50%)", width: "18px", height: "18px",
+                      padding: 0, border: "none", background: "transparent", cursor: "pointer",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      pointerEvents: (editMode && placeMode === "door") ? "none" : "auto",
+                      zIndex: 6, touchAction: "none",
+                    }}
+                  >
+                    <DoorGlyph rgb={rgb} size={18} />
+                    {!!doorNotes?.[dr.key]?.text && (
+                      <span aria-hidden style={{ position: "absolute", right: "0px", top: "-3px", width: "7px", height: "7px", borderRadius: "50%", background: "#fff", border: "1.5px solid rgba(16,16,20,0.9)" }} />
+                    )}
                   </button>
                 );
               })}
@@ -1749,11 +1982,18 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
           prioriteettia: lampulla on vain kaksi tilaa. */}
       {activeLamp && activeLampPt && (
         <>
-          <div onClick={() => { setActiveLamp(null); setLampAnchor(null); }} style={{ position: "fixed", inset: 0, zIndex: 1100 }} />
+          {/* Taustan napautus tallentaa keskeneräisen huomautuksen — sama käytös
+              kuin muistiinpanopopoverissa, jottei juuri kirjoitettu teksti katoa. */}
+          <div onClick={() => { saveLampNote(); setActiveLamp(null); setActiveDoor(null); setLampAnchor(null); }} style={{ position: "fixed", inset: 0, zIndex: 1100 }} />
           <div data-fr8-pop="menu" style={{ ...fixedPopoverStyle(lampAnchor, 210, 230), width: "210px", maxHeight: "min(78vh, 420px)", overflowY: "auto", padding: "11px", background: "rgba(16,16,20,0.92)", border: "1px solid rgba(255,255,255,0.16)", borderRadius: "15px", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 20px 50px rgba(0,0,0,0.7)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "2px 4px 9px", borderBottom: "1px solid rgba(255,255,255,0.08)", marginBottom: "7px" }}>
-              <span aria-hidden style={{ width: "10px", height: "10px", flexShrink: 0, display: "inline-block", clipPath: STAR_CLIP, background: (lampStatuses?.[activeLamp] || "ei") === "vaihdettu" ? "rgb(124,224,166)" : "rgb(255,196,90)" }} />
+              <span aria-hidden style={{ width: "10px", height: "10px", flexShrink: 0, display: "inline-block", clipPath: STAR_CLIP, background: `rgb(${lampRgb(lampStatuses?.[activeLamp] || "ei", lampConditions?.[activeLamp])})` }} />
               <span style={{ fontSize: "12px", fontWeight: 600 }}>Lamppu</span>
+              {/* Näkyykö tämä asiakkaalle? Sama sääntö kuin `lampIsPublic`:
+                  kartoitettu lamppu ei näy, vaihdettu/rikki/huomautettu näkyy. */}
+              <span style={{ marginLeft: "auto", flexShrink: 0, fontSize: "9.5px", letterSpacing: "0.05em", textTransform: "uppercase", color: ((lampStatuses?.[activeLamp] || "ei") === "vaihdettu" || lampConditions?.[activeLamp] === "rikki" || !!lampNotes?.[activeLamp]?.text) ? "rgba(124,224,166,0.9)" : "rgba(255,255,255,0.32)" }}>
+                {((lampStatuses?.[activeLamp] || "ei") === "vaihdettu" || lampConditions?.[activeLamp] === "rikki" || !!lampNotes?.[activeLamp]?.text) ? "Näkyy asiakkaalle" : "Vain meille"}
+              </span>
             </div>
 
             {(["ei", "vaihdettu"] as LampStatus[]).map((s) => {
@@ -1770,7 +2010,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                       return;
                     }
                     onSetLampStatus?.(activeLamp, s);
-                    setActiveLamp(null); setLampAnchor(null);
+                    setActiveLamp(null); setActiveDoor(null); setLampAnchor(null);
                   }}
                   style={{ border: `1px solid ${isActive ? "rgba(255,255,255,0.16)" : "transparent"}`, background: isActive ? "rgba(255,255,255,0.08)" : "transparent", fontWeight: isActive ? 600 : 500 }}>
                   <span aria-hidden style={{ width: "9px", height: "9px", flexShrink: 0, display: "inline-block", clipPath: STAR_CLIP, background: `rgb(${rgb})` }} />
@@ -1779,6 +2019,44 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                 </button>
               );
             })}
+
+            {/* TOIMIIKO LAMPPU. Oma kysymyksensä vaihtamisen rinnalla: rikkinäinen
+                lamppu voi olla vaihtamatta, ja vaihdettu voi olla jo tarkastettu
+                toimivaksi. Saman valinnan napautus peruu sen takaisin
+                "ei tarkastettu" -tilaan. */}
+            {onSetLampCondition && (
+              <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                <div style={{ fontSize: "9.5px", letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.38)", padding: "0 4px 6px" }}>Toimiiko?</div>
+                {([["toimiva", "Toimii", "124,224,166"], ["rikki", "Ei toimi", "255,116,116"]] as [LampCondition, string, string][]).map(([c, label, rgb]) => {
+                  const picked = lampConditions?.[activeLamp] === c;
+                  return (
+                    <button key={c} className="status-opt-btn"
+                      onClick={() => onSetLampCondition(activeLamp, picked ? null : c)}
+                      style={{ border: `1px solid ${picked ? `rgba(${rgb},0.4)` : "transparent"}`, background: picked ? `rgba(${rgb},0.12)` : "transparent", fontWeight: picked ? 600 : 500 }}>
+                      <span aria-hidden style={{ width: "9px", height: "9px", flexShrink: 0, borderRadius: "50%", background: `rgb(${rgb})` }} />
+                      <span style={{ flex: 1, textAlign: "left" }}>{label}</span>
+                      {picked && <span style={{ fontSize: "11px" }}>✓</span>}
+                    </button>
+                  );
+                })}
+                {!lampConditions?.[activeLamp] && (
+                  <div style={{ fontSize: "10.5px", color: "rgba(255,255,255,0.35)", padding: "3px 4px 0" }}>Ei vielä tarkastettu.</div>
+                )}
+              </div>
+            )}
+
+            {/* Huomautus tästä lampusta — vapaa teksti, kirjoittaja ja aika. */}
+            {(onSetLampNote || lampNotes?.[activeLamp]?.text) && (
+              <FixtureNoteBlock
+                note={lampNotes?.[activeLamp]}
+                draft={lampNoteDraft}
+                setDraft={setLampNoteDraft}
+                onSave={saveLampNote}
+                canWrite={!!onSetLampNote}
+                workerNames={workerNames}
+                placeholder="Esim. ”Kupu rikki, uusi tilattava”"
+              />
+            )}
 
             {/* Kuka vaihtoi — sama malli kuin ikkunan "kuka pesi". */}
             {(lampStatuses?.[activeLamp] || "ei") === "vaihdettu" && (lampChangedBy?.[activeLamp] || (canEdit && workers && workers.length > 0)) && (
@@ -1818,12 +2096,140 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                   onClick={() => {
                     if (typeof window === "undefined" || window.confirm("Poistetaanko tämä lamppu kartalta?")) {
                       onDeleteLamp(activeLamp);
-                      setActiveLamp(null); setLampAnchor(null);
+                      setActiveLamp(null); setActiveDoor(null); setLampAnchor(null);
                     }
                   }}
                   style={{ color: "#ff9b9b" }}>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ff9b9b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
                   <span style={{ flex: 1, textAlign: "left" }}>Poista lamppu kartalta</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Ovi-popover — tehtävänimi, tila (tekemättä/tehty), kuka teki,
+          huomautus ja poisto. Sama rakenne kuin lampulla; ero on että ovella
+          on nimi, koska "ovi 3" ei kerro mitä sille pitää tehdä. */}
+      {activeDoor && activeDoorPt && (
+        <>
+          <div onClick={() => { saveDoorNote(); saveDoorLabel(); setActiveDoor(null); setDoorAnchor(null); }} style={{ position: "fixed", inset: 0, zIndex: 1100 }} />
+          <div data-fr8-pop="menu" style={{ ...fixedPopoverStyle(doorAnchor, 218, 260), width: "218px", maxHeight: "min(78vh, 460px)", overflowY: "auto", padding: "11px", background: "rgba(16,16,20,0.92)", border: "1px solid rgba(255,255,255,0.16)", borderRadius: "15px", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 20px 50px rgba(0,0,0,0.7)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "2px 4px 9px", borderBottom: "1px solid rgba(255,255,255,0.08)", marginBottom: "7px" }}>
+              <DoorGlyph rgb={doorRgb(doorStatuses?.[activeDoor] || "ei")} size={13} glow={false} />
+              <span style={{ fontSize: "12px", fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {activeDoorPt.label || "Ovi"}
+              </span>
+              <span style={{ marginLeft: "auto", flexShrink: 0, fontSize: "9.5px", letterSpacing: "0.05em", textTransform: "uppercase", color: ((doorStatuses?.[activeDoor] || "ei") === "tehty" || !!doorNotes?.[activeDoor]?.text) ? "rgba(124,224,166,0.9)" : "rgba(255,255,255,0.32)" }}>
+                {((doorStatuses?.[activeDoor] || "ei") === "tehty" || !!doorNotes?.[activeDoor]?.text) ? "Näkyy asiakkaalle" : "Vain meille"}
+              </span>
+            </div>
+
+            {/* Tehtävänimi — mitä tälle ovelle pitää tehdä. */}
+            {onSetDoorLabel && (
+              doorLabelDraft !== null ? (
+                <div style={{ marginBottom: "8px" }}>
+                  <input
+                    value={doorLabelDraft}
+                    onChange={(e) => setDoorLabelDraft(e.target.value.slice(0, MAX_DOOR_LABEL_LEN))}
+                    onKeyDown={(e) => { if (e.key === "Enter") saveDoorLabel(); }}
+                    placeholder="Esim. ”Pääovi · karmit + lasi”"
+                    autoFocus
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.14)", background: "rgba(0,0,0,0.35)", color: "#fff", fontSize: "12.5px", outline: "none", fontFamily: "var(--font-onest, system-ui, sans-serif)", boxSizing: "border-box" }}
+                  />
+                  <div style={{ display: "flex", gap: "7px", marginTop: "7px" }}>
+                    <button onClick={() => setDoorLabelDraft(null)} style={{ padding: "7px 11px", borderRadius: "9px", border: "1px solid rgba(255,255,255,0.14)", background: "transparent", color: "rgba(255,255,255,0.7)", fontSize: "12px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>Peru</button>
+                    <button onClick={saveDoorLabel} style={{ flex: 1, padding: "7px 11px", borderRadius: "9px", border: "none", background: "#fff", color: "#0a0a0c", fontSize: "12px", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>Tallenna</button>
+                  </div>
+                </div>
+              ) : (
+                <button className="status-opt-btn" onClick={() => setDoorLabelDraft(activeDoorPt.label ?? "")} style={{ color: "rgba(255,255,255,0.72)", marginBottom: "3px" }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+                  <span style={{ flex: 1, textAlign: "left" }}>{activeDoorPt.label ? "Muuta tehtävää" : "Nimeä tehtävä"}</span>
+                </button>
+              )
+            )}
+
+            {(["ei", "tehty"] as DoorStatus[]).map((st) => {
+              const cur = doorStatuses?.[activeDoor] || "ei";
+              const isActive = cur === st;
+              const rgb = doorRgb(st);
+              const hasCrew = st === "tehty" && !!workers && workers.length > 0;
+              return (
+                <button key={st} className="status-opt-btn"
+                  onClick={() => {
+                    if (hasCrew) {
+                      onSetDoorStatus?.(activeDoor, "tehty", doorDoneBy?.[activeDoor] ?? currentWorkerId);
+                      setShowDoorDonePicker(false);
+                      return;
+                    }
+                    onSetDoorStatus?.(activeDoor, st);
+                    if (st === "ei") setShowDoorDonePicker(false);
+                  }}
+                  style={{ border: `1px solid ${isActive ? "rgba(255,255,255,0.16)" : "transparent"}`, background: isActive ? "rgba(255,255,255,0.08)" : "transparent", fontWeight: isActive ? 600 : 500 }}>
+                  <span aria-hidden style={{ width: "9px", height: "9px", flexShrink: 0, borderRadius: "50%", background: `rgb(${rgb})` }} />
+                  <span style={{ flex: 1, textAlign: "left" }}>{st === "tehty" ? "Tehty" : "Tekemättä"}</span>
+                  {isActive && <span style={{ fontSize: "11px" }}>✓</span>}
+                </button>
+              );
+            })}
+
+            {/* Kuka teki — sama malli kuin lampun "kuka vaihtoi". */}
+            {(doorStatuses?.[activeDoor] || "ei") === "tehty" && (doorDoneBy?.[activeDoor] || (canEdit && workers && workers.length > 0)) && (
+              showDoorDonePicker && canEdit && workers && workers.length > 0 ? (
+                <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                  <div style={{ fontSize: "9.5px", letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.38)", padding: "0 4px 6px" }}>Kuka teki?</div>
+                  {workers.map((w) => {
+                    const picked = (doorDoneBy?.[activeDoor] ?? currentWorkerId) === w.id;
+                    return (
+                      <button key={w.id} className="status-opt-btn"
+                        onClick={() => { onSetDoorStatus?.(activeDoor, "tehty", w.id); setShowDoorDonePicker(false); }}
+                        style={{ border: `1px solid ${picked ? "rgba(255,255,255,0.16)" : "transparent"}`, background: picked ? "rgba(255,255,255,0.08)" : "transparent", fontWeight: picked ? 600 : 500 }}>
+                        <span style={{ width: "18px", height: "18px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "9px", fontWeight: 700, background: "rgba(124,224,166,0.16)", color: "rgba(124,224,166,0.95)", flexShrink: 0 }}>{w.name.charAt(0).toUpperCase()}</span>
+                        <span style={{ flex: 1, textAlign: "left" }}>{w.name}</span>
+                        {picked && <span style={{ fontSize: "11px" }}>✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)", fontSize: "11.5px", color: "rgba(255,255,255,0.7)" }}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(124,224,166,0.9)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+                  <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    Teki <strong style={{ color: "#fff", fontWeight: 600 }}>{workerNames?.[doorDoneBy?.[activeDoor] ?? currentWorkerId ?? ""] ?? (doorDoneBy?.[activeDoor] ?? currentWorkerId)}</strong>
+                  </span>
+                  {canEdit && workers && workers.length > 0 && (
+                    <button onClick={() => setShowDoorDonePicker(true)} style={{ marginLeft: "auto", flexShrink: 0, background: "transparent", border: "none", color: "rgba(124,224,166,0.95)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", padding: "2px 4px" }}>Vaihda</button>
+                  )}
+                </div>
+              )
+            )}
+
+            {(onSetDoorNote || doorNotes?.[activeDoor]?.text) && (
+              <FixtureNoteBlock
+                note={doorNotes?.[activeDoor]}
+                draft={doorNoteDraft}
+                setDraft={setDoorNoteDraft}
+                onSave={saveDoorNote}
+                canWrite={!!onSetDoorNote}
+                workerNames={workerNames}
+                placeholder="Esim. ”Lukko jumittaa, ilmoitettu isännöitsijälle”"
+              />
+            )}
+
+            {canEdit && onDeleteDoor && (
+              <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                <button className="status-opt-btn"
+                  onClick={() => {
+                    if (typeof window === "undefined" || window.confirm("Poistetaanko tämä ovi kartalta?")) {
+                      onDeleteDoor(activeDoor);
+                      setActiveDoor(null); setDoorAnchor(null);
+                    }
+                  }}
+                  style={{ color: "#ff9b9b" }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ff9b9b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+                  <span style={{ flex: 1, textAlign: "left" }}>Poista ovi kartalta</span>
                 </button>
               </div>
             )}

@@ -32,16 +32,68 @@ export interface ProjCustomMark { key: string; p: 1 | 2; x: number; y: number; }
 /**
  * Lamput (lamppupisteet) — sama logiikka kuin ikkunoilla mutta oma, kevyempi
  * järjestelmä: EI hintaa, EI seedattuja pisteitä. Jokainen lamppu on käsin
- * lisätty (`"<krs>#lamp<rand>"`), ja sillä on vain kaksi tilaa (vaihdettu /
- * ei). Poisto on aina lopullinen (ei `deleted`-hautakiveä kuten ikkunoilla),
- * koska lampuilla ei ole laskutusta joka tarvitsisi historiaa.
+ * lisätty (`"<krs>#lamp<rand>"`). Poisto on aina lopullinen (ei
+ * `deleted`-hautakiveä kuten ikkunoilla), koska lampuilla ei ole laskutusta
+ * joka tarvitsisi historiaa.
+ *
+ * Lampulla on KOLME toisistaan riippumatonta tietoa:
+ *   1. `LampStatus`    — onko se vaihdettu (+ `lampChangedBy`: kuka, milloin)
+ *   2. `LampCondition` — toimiiko se (puuttuva = ei vielä tarkastettu)
+ *   3. huomautus       — vapaa teksti (`lampNotes`), esim. "kupu rikki"
+ *
+ * Ne ovat erillisiä koska ne vastaavat eri kysymykseen: rikkinäinen lamppu voi
+ * olla vaihtamatta, ja vaihdettu lamppu voi silti kaivata huomautuksen.
  */
 export type LampStatus = "ei" | "vaihdettu";
 
+/**
+ * Toimiiko lamppu. PUUTTUVA merkintä ei tarkoita "toimii" vaan "ei tarkastettu"
+ * — siksi tälle ei ole kolmatta arvoa: tarkastamaton lamppu jätetään pois
+ * `lampConditions`ista täsmälleen kuten pesemätön ikkuna jätetään pois
+ * `statuses`ista.
+ */
+export type LampCondition = "toimiva" | "rikki";
+
+export function toLampCondition(v: any): LampCondition | undefined {
+  return v === "toimiva" || v === "rikki" ? v : undefined;
+}
+
 export interface ProjLampMark { key: string; x: number; y: number; }
 
+/** Kuka ja milloin teki merkinnän (lampun vaihto, oven kuittaus, pisteen lisäys). */
+export interface ProjMarkBy { by: string; ts: number; }
+
 /** Kuka ja milloin merkitsi lampun vaihdetuksi. */
-export interface ProjLampChange { by: string; ts: number; }
+export type ProjLampChange = ProjMarkBy;
+
+/**
+ * Huomautus yhdestä lampusta tai ovesta: teksti, kirjoittaja ja aikaleima.
+ *
+ * MIKSI OMA TYYPPI EIKÄ `ProjWindowObservation`: havainnolla on kuva, ja kuva
+ * on se mikä kerran söi siirtokiintiön (ks. `stripObservationImages`).
+ * Kalustehuomautus on tarkoituksella pelkkää tekstiä, joten se saa kulkea
+ * jokaisessa vastauksessa ilman erillistä laiskaa latausta.
+ */
+export interface ProjFixtureNote { text: string; by?: string; ts: number; }
+
+/** Kalustehuomautuksen enimmäispituus. */
+export const MAX_FIXTURE_NOTE_LEN = 400;
+
+/**
+ * Ovipisteet — kartalle merkittyjä ovia, joista jokainen on TEHTÄVÄ: se on joko
+ * tekemättä tai tehty, sillä voi olla lyhyt tehtävänimi (`label`, esim.
+ * "karmit + lasi") ja huomautus.
+ *
+ * Sama kevyt malli kuin lampuilla: ei rahaa, ei seedattuja pisteitä, ei
+ * hautakiveä. Ikkunalaskenta, hinnoittelu ja edistymä eivät näe näitä
+ * lainkaan — ovi ei ole ikkuna.
+ */
+export type DoorStatus = "ei" | "tehty";
+
+export interface ProjDoorMark { key: string; x: number; y: number; label?: string; }
+
+/** Oven tehtävänimen enimmäispituus. */
+export const MAX_DOOR_LABEL_LEN = 60;
 
 /**
  * A non-window map marker: important rooms / navigation aids the crew place on a
@@ -286,6 +338,23 @@ export interface ProjectData {
   lampStatuses?: Record<string, LampStatus>;
   /** Lampun avain → kuka ja milloin merkitsi sen vaihdetuksi. */
   lampChangedBy?: Record<string, ProjLampChange>;
+  /** Lampun avain → toimiiko se. Puuttuva = ei tarkastettu (ks. `LampCondition`). */
+  lampConditions?: Record<string, LampCondition>;
+  /** Lampun avain → vapaa huomautus (kuka kirjoitti, milloin). */
+  lampNotes?: Record<string, ProjFixtureNote>;
+  /** Lampun avain → kuka lisäsi pisteen kartalle ja milloin. Pelkkä jälki:
+   *  lisääminen ei ole työsuoritus eikä se näy asiakkaalle (ks. `lampIsPublic`). */
+  lampAddedBy?: Record<string, ProjMarkBy>;
+  /** Ovet: floor → käsin lisätyt ovipisteet. Sama kevyt malli kuin lampuilla. */
+  doors?: Record<string, ProjDoorMark[]>;
+  /** Oven avain → tehtävätila ("ei" jätetään pois, kuten `statuses`). */
+  doorStatuses?: Record<string, DoorStatus>;
+  /** Oven avain → kuka merkitsi tehdyksi ja milloin. */
+  doorDoneBy?: Record<string, ProjMarkBy>;
+  /** Oven avain → vapaa huomautus. */
+  doorNotes?: Record<string, ProjFixtureNote>;
+  /** Oven avain → kuka lisäsi pisteen kartalle ja milloin. */
+  doorAddedBy?: Record<string, ProjMarkBy>;
   notes?: Record<string, ProjMapNote[]>;           // floor → navigation markers / notes
   observations?: Record<string, ProjWindowObservation>; // window key → worker's observation
   activeZone?: ProjActiveZone | null;              // where work is happening right now
@@ -768,12 +837,22 @@ export function checkWindowAttribution(data: ProjectData): WindowAttributionChec
   return { dotCount, attributedSum, diff, matches: Math.abs(diff) < 1e-6 };
 }
 
-// ─── Lamput (lamppupisteet) ─────────────────────────────────────────────────────
+// ─── Lamput ja ovet (kalustepisteet) ──────────────────────────────────────────
 //
 // Sama merkintälogiikka kuin ikkunoilla — lisää/poista/merkitse — mutta EI rahaa
-// eikä seedattuja pisteitä: kaikki lamput ovat käsin lisättyjä, ja poisto on aina
+// eikä seedattuja pisteitä: kaikki ovat käsin lisättyjä, ja poisto on aina
 // lopullinen (ei tarvitse `deleted`-hautakiveä, koska mitään ei lasketa summaan
-// jälkikäteen). Kartalla lamput näkyvät tähtinä, ikkunoiden pisteiden sijaan.
+// jälkikäteen). Kartalla lamput näkyvät tähtinä ja ovet oviliuskoina,
+// ikkunoiden pyöreiden pisteiden sijaan.
+//
+// ASIAKKAAN NÄKYMÄ ON ERI ASIA KUIN JOHTAJAN. Kartoitus — "tässä huoneessa on
+// kuusi lamppua" — on meidän työkalumme, ei asiakkaan uutinen: jos jokainen
+// lisätty piste ilmestyisi seurantasivulle, kartoituskierros näyttäisi
+// asiakkaalle kymmeniä uusia merkkejä joista yksikään ei kerro mitään tehdystä
+// työstä. Siksi piste nousee asiakkaan karttaan vasta kun siitä on jotain
+// SANOTTAVAA: lamppu on vaihdettu, se on todettu rikkinäiseksi, tai siitä on
+// kirjoitettu huomautus (ovella: tehty tai huomautettu). Ks. `lampIsPublic` /
+// `doorIsPublic` — ne ovat se yksi paikka jossa raja määritellään.
 
 export interface ProjLampPoint {
   floor: string;
@@ -783,6 +862,13 @@ export interface ProjLampPoint {
   status: LampStatus;
   changedBy?: string;
   changedAt?: number;
+  /** Toimiiko lamppu. Puuttuva = ei tarkastettu. */
+  condition?: LampCondition;
+  /** Huomautus tästä lampusta. */
+  note?: ProjFixtureNote;
+  /** Kuka lisäsi pisteen kartalle (ja milloin) — sisäinen jälki. */
+  addedBy?: string;
+  addedAt?: number;
 }
 
 /** Kaikki lamput joka kerrokselta, litistettynä yhdeksi listaksi. */
@@ -792,9 +878,13 @@ export function allLampPoints(data: ProjectData): ProjLampPoint[] {
   const lamps = data.lamps ?? {};
   const statuses = data.lampStatuses ?? {};
   const changedBy = data.lampChangedBy ?? {};
+  const conditions = data.lampConditions ?? {};
+  const notes = data.lampNotes ?? {};
+  const addedBy = data.lampAddedBy ?? {};
   for (const f of floors) {
     for (const lm of lamps[f] || []) {
       const change = changedBy[lm.key];
+      const added = addedBy[lm.key];
       out.push({
         floor: f,
         key: lm.key,
@@ -803,10 +893,29 @@ export function allLampPoints(data: ProjectData): ProjLampPoint[] {
         status: statuses[lm.key] || "ei",
         changedBy: change?.by,
         changedAt: change?.ts,
+        condition: conditions[lm.key],
+        note: notes[lm.key],
+        addedBy: added?.by,
+        addedAt: added?.ts,
       });
     }
   }
   return out;
+}
+
+/**
+ * Näkyykö tämä lamppu asiakkaalle?
+ *
+ * Kolme ehtoa, kaikki "meillä on tästä jotain kerrottavaa": vaihdettu, rikki,
+ * tai huomautettu. Pelkkä kartoitettu lamppu ei näy — ks. osion alun perustelu.
+ */
+export function lampIsPublic(p: ProjLampPoint): boolean {
+  return p.status === "vaihdettu" || p.condition === "rikki" || !!p.note?.text;
+}
+
+/** Lamput jotka asiakkaan seurantakartta saa näyttää. */
+export function publicLampPoints(data: ProjectData): ProjLampPoint[] {
+  return allLampPoints(data).filter(lampIsPublic);
 }
 
 export interface LampTotals {
@@ -814,6 +923,16 @@ export interface LampTotals {
   changed: number;
   unchanged: number;
   pct: number; // 0..100
+  /** Rikkinäiseksi merkityt. */
+  broken: number;
+  /** Toimivaksi merkityt. */
+  working: number;
+  /** Ei vielä tarkastetut (ei kunto-merkintää). */
+  unchecked: number;
+  /** Lamput joilla on huomautus. */
+  noted: number;
+  /** Montako lamppua näkyy asiakkaalle (`lampIsPublic`). */
+  visible: number;
 }
 
 /** Kokonaistilanne dashia varten: montako lamppua merkattu, montako vaihdettu. */
@@ -821,25 +940,239 @@ export function computeLampTotals(data: ProjectData): LampTotals {
   const pts = allLampPoints(data);
   const total = pts.length;
   const changed = pts.filter((p) => p.status === "vaihdettu").length;
-  return { total, changed, unchanged: total - changed, pct: total > 0 ? (changed / total) * 100 : 0 };
+  const broken = pts.filter((p) => p.condition === "rikki").length;
+  const working = pts.filter((p) => p.condition === "toimiva").length;
+  return {
+    total,
+    changed,
+    unchanged: total - changed,
+    pct: total > 0 ? (changed / total) * 100 : 0,
+    broken,
+    working,
+    unchecked: total - broken - working,
+    noted: pts.filter((p) => !!p.note?.text).length,
+    visible: pts.filter(lampIsPublic).length,
+  };
 }
 
 export interface LampWorkerStat {
   worker: string;
   changed: number; // montako lamppua tämä tekijä on merkinnyt vaihdetuksi
+  /** Montako huomautusta tämä tekijä on kirjoittanut lampuista. */
+  noted: number;
 }
 
 /** Per-tekijä lamppulaskuri johtajien näkymää varten — puhdas laskuri, ei rahaa. */
 export function computeLampWorkerStats(data: ProjectData): LampWorkerStat[] {
   const pts = allLampPoints(data);
-  const counts = new Map<string, number>();
+  const by = new Map<string, LampWorkerStat>();
+  const row = (w: string) => {
+    let r = by.get(w);
+    if (!r) { r = { worker: w, changed: 0, noted: 0 }; by.set(w, r); }
+    return r;
+  };
   for (const p of pts) {
-    if (p.status !== "vaihdettu" || !p.changedBy) continue;
-    counts.set(p.changedBy, (counts.get(p.changedBy) || 0) + 1);
+    if (p.status === "vaihdettu" && p.changedBy) row(p.changedBy).changed += 1;
+    if (p.note?.text && p.note.by) row(p.note.by).noted += 1;
   }
-  return Array.from(counts.entries())
-    .map(([worker, changed]) => ({ worker, changed }))
-    .sort((a, b) => b.changed - a.changed);
+  return Array.from(by.values()).sort((a, b) => (b.changed - a.changed) || (b.noted - a.noted));
+}
+
+// ─── Ovet (ovipisteet) ────────────────────────────────────────────────────────
+
+export interface ProjDoorPoint {
+  floor: string;
+  key: string;
+  x: number;
+  y: number;
+  /** Lyhyt tehtävänimi, esim. "karmit + lasi". */
+  label?: string;
+  status: DoorStatus;
+  doneBy?: string;
+  doneAt?: number;
+  note?: ProjFixtureNote;
+  addedBy?: string;
+  addedAt?: number;
+}
+
+/** Kaikki ovet joka kerrokselta, litistettynä yhdeksi listaksi. */
+export function allDoorPoints(data: ProjectData): ProjDoorPoint[] {
+  const out: ProjDoorPoint[] = [];
+  const floors = data.building.floors.length ? data.building.floors : DEFAULT_FLOORS;
+  const doors = data.doors ?? {};
+  const statuses = data.doorStatuses ?? {};
+  const doneBy = data.doorDoneBy ?? {};
+  const notes = data.doorNotes ?? {};
+  const addedBy = data.doorAddedBy ?? {};
+  for (const f of floors) {
+    for (const dr of doors[f] || []) {
+      const done = doneBy[dr.key];
+      const added = addedBy[dr.key];
+      out.push({
+        floor: f,
+        key: dr.key,
+        x: dr.x,
+        y: dr.y,
+        label: dr.label,
+        status: statuses[dr.key] || "ei",
+        doneBy: done?.by,
+        doneAt: done?.ts,
+        note: notes[dr.key],
+        addedBy: added?.by,
+        addedAt: added?.ts,
+      });
+    }
+  }
+  return out;
+}
+
+/** Näkyykö tämä ovi asiakkaalle? Sama sääntö kuin lampuilla. */
+export function doorIsPublic(p: ProjDoorPoint): boolean {
+  return p.status === "tehty" || !!p.note?.text;
+}
+
+/** Ovet jotka asiakkaan seurantakartta saa näyttää. */
+export function publicDoorPoints(data: ProjectData): ProjDoorPoint[] {
+  return allDoorPoints(data).filter(doorIsPublic);
+}
+
+export interface DoorTotals {
+  total: number;
+  done: number;
+  open: number;
+  pct: number; // 0..100
+  noted: number;
+  visible: number;
+}
+
+export function computeDoorTotals(data: ProjectData): DoorTotals {
+  const pts = allDoorPoints(data);
+  const total = pts.length;
+  const done = pts.filter((p) => p.status === "tehty").length;
+  return {
+    total,
+    done,
+    open: total - done,
+    pct: total > 0 ? (done / total) * 100 : 0,
+    noted: pts.filter((p) => !!p.note?.text).length,
+    visible: pts.filter(doorIsPublic).length,
+  };
+}
+
+export interface DoorWorkerStat { worker: string; done: number; noted: number; }
+
+/** Per-tekijä ovilaskuri — kuka on kuitannut mitkä ovet tehdyiksi. */
+export function computeDoorWorkerStats(data: ProjectData): DoorWorkerStat[] {
+  const pts = allDoorPoints(data);
+  const by = new Map<string, DoorWorkerStat>();
+  const row = (w: string) => {
+    let r = by.get(w);
+    if (!r) { r = { worker: w, done: 0, noted: 0 }; by.set(w, r); }
+    return r;
+  };
+  for (const p of pts) {
+    if (p.status === "tehty" && p.doneBy) row(p.doneBy).done += 1;
+    if (p.note?.text && p.note.by) row(p.note.by).noted += 1;
+  }
+  return Array.from(by.values()).sort((a, b) => (b.done - a.done) || (b.noted - a.noted));
+}
+
+/**
+ * ASIAKKAAN kartalle menevä lamppu/ovi.
+ *
+ * Kaksi eroa sisäiseen pisteeseen, kummallakin oma syy:
+ *   1. TEKIJÄN NIMEÄ EI OLE. Asiakkaan kartta ei kerro kuka pesi minkäkin
+ *      ikkunan, eikä sen pidä kertoa kuka vaihtoi minkäkin lampun — sama raja.
+ *      Johtajat näkevät tekijän dashista.
+ *   2. VAIN JULKISET PISTEET. Suodatus tapahtuu `publicLampView`issä, ei
+ *      selaimessa: kartoitetut pisteet eivät saa lähteä verkkoon lainkaan,
+ *      muuten "ei näytetä" olisi pelkkä käyttöliittymäsopimus.
+ */
+export interface PublicLampPoint {
+  floor: string;
+  key: string;
+  x: number;
+  y: number;
+  status: LampStatus;
+  condition?: LampCondition;
+  note?: string;
+  noteAt?: number;
+  changedAt?: number;
+}
+
+export function publicLampView(data: ProjectData): PublicLampPoint[] {
+  return publicLampPoints(data).map((p) => ({
+    floor: p.floor, key: p.key, x: p.x, y: p.y, status: p.status,
+    ...(p.condition ? { condition: p.condition } : {}),
+    ...(p.note?.text ? { note: p.note.text, noteAt: p.note.ts } : {}),
+    ...(p.changedAt ? { changedAt: p.changedAt } : {}),
+  }));
+}
+
+export interface PublicDoorPoint {
+  floor: string;
+  key: string;
+  x: number;
+  y: number;
+  label?: string;
+  status: DoorStatus;
+  note?: string;
+  noteAt?: number;
+  doneAt?: number;
+}
+
+export function publicDoorView(data: ProjectData): PublicDoorPoint[] {
+  return publicDoorPoints(data).map((p) => ({
+    floor: p.floor, key: p.key, x: p.x, y: p.y, status: p.status,
+    ...(p.label ? { label: p.label } : {}),
+    ...(p.note?.text ? { note: p.note.text, noteAt: p.note.ts } : {}),
+    ...(p.doneAt ? { doneAt: p.doneAt } : {}),
+  }));
+}
+
+/**
+ * Yksi rivi "mistä on huomautettavaa" -paneeliin (dashin ylälaita).
+ *
+ * Kokoaa lamput ja ovet SAMAAN listaan, koska johtaja ei kysy "mitä lampuille
+ * kuuluu" vaan "mistä pitää tietää". Järjestys on kiireellisyys: rikki ennen
+ * huomautusta, huomautus ennen tekemätöntä, tehdyt viimeisenä.
+ */
+export interface FixtureAttentionRow {
+  kind: "lamp" | "door";
+  floor: string;
+  key: string;
+  /** Näytettävä nimi, esim. "Lamppu · krs 2" tai oven `label`. */
+  label?: string;
+  /** Onko tästä pisteestä jotain kerrottavaa asiakkaalle asti. */
+  public: boolean;
+  status: LampStatus | DoorStatus;
+  condition?: LampCondition;
+  note?: ProjFixtureNote;
+  by?: string;
+  at?: number;
+}
+
+/** Kiireellisyysjärjestys: pienempi = ylemmäs. */
+function attentionRank(r: FixtureAttentionRow): number {
+  if (r.condition === "rikki") return 0;
+  if (r.note?.text) return 1;
+  if (r.status === "ei") return 2;
+  return 3;
+}
+
+export function fixtureAttentionRows(data: ProjectData): FixtureAttentionRow[] {
+  const rows: FixtureAttentionRow[] = [
+    ...allLampPoints(data).map((p): FixtureAttentionRow => ({
+      kind: "lamp", floor: p.floor, key: p.key, public: lampIsPublic(p),
+      status: p.status, condition: p.condition, note: p.note,
+      by: p.changedBy, at: p.changedAt,
+    })),
+    ...allDoorPoints(data).map((p): FixtureAttentionRow => ({
+      kind: "door", floor: p.floor, key: p.key, label: p.label, public: doorIsPublic(p),
+      status: p.status, note: p.note, by: p.doneBy, at: p.doneAt,
+    })),
+  ];
+  return rows.sort((a, b) => attentionRank(a) - attentionRank(b) || a.floor.localeCompare(b.floor, "fi"));
 }
 
 // ─── Per-erä (instalment) debt attribution ─────────────────────────────────────
@@ -1215,6 +1548,36 @@ function cleanKey(v: any): string {
   return String(v ?? "").slice(0, 64);
 }
 
+/** Lampun/oven huomautuskartta: tyhjä teksti = ei huomautusta, joten se putoaa. */
+function sanitizeFixtureNotes(input: any): Record<string, ProjFixtureNote> {
+  const out: Record<string, ProjFixtureNote> = {};
+  if (!input || typeof input !== "object") return out;
+  for (const k of Object.keys(input).slice(0, 20000)) {
+    const n = input[k];
+    if (!n || typeof n !== "object") continue;
+    const text = String(n.text ?? "").trim().slice(0, MAX_FIXTURE_NOTE_LEN);
+    if (!text) continue;
+    out[cleanKey(k)] = {
+      text,
+      ...(n.by ? { by: String(n.by).slice(0, 40) } : {}),
+      ts: Number(n.ts) || Date.now(),
+    };
+  }
+  return out;
+}
+
+/** `{ by, ts }` -kartta (kuka lisäsi / kuka kuittasi). Nimetön merkintä putoaa. */
+function sanitizeMarkBy(input: any): Record<string, ProjMarkBy> {
+  const out: Record<string, ProjMarkBy> = {};
+  if (!input || typeof input !== "object") return out;
+  for (const k of Object.keys(input).slice(0, 20000)) {
+    const c = input[k];
+    const by = c && typeof c === "object" ? String(c.by ?? "").slice(0, 40) : "";
+    if (by) out[cleanKey(k)] = { by, ts: Number(c.ts) || Date.now() };
+  }
+  return out;
+}
+
 /** Sanitize an incoming projectData object so a bad client can't corrupt the DB. */
 export function sanitizeProjectData(input: any): ProjectData {
   const base = emptyProjectData();
@@ -1305,6 +1668,48 @@ export function sanitizeProjectData(input: any): ProjectData {
       }
     }
   }
+
+  const lampConditions: Record<string, LampCondition> = {};
+  if (input.lampConditions && typeof input.lampConditions === "object") {
+    for (const k of Object.keys(input.lampConditions).slice(0, 20000)) {
+      const c = toLampCondition(input.lampConditions[k]);
+      if (c) lampConditions[cleanKey(k)] = c;
+    }
+  }
+
+  const lampNotes = sanitizeFixtureNotes(input.lampNotes);
+  // "Kuka lisäsi" on pelkkä jälki, ei tila: se säilyy vaikka lamppu palautetaan
+  // vaihtamattomaksi, toisin kuin `lampChangedBy`.
+  const lampAddedBy = sanitizeMarkBy(input.lampAddedBy);
+
+  const doors: Record<string, ProjDoorMark[]> = {};
+  if (input.doors && typeof input.doors === "object") {
+    for (const f of Object.keys(input.doors).slice(0, 40)) {
+      const arr = Array.isArray(input.doors[f]) ? input.doors[f] : [];
+      doors[String(f).slice(0, 8)] = arr.slice(0, 2000).map((d: any) => ({
+        key: cleanKey(d?.key),
+        x: clampPct(Number(d?.x)),
+        y: clampPct(Number(d?.y)),
+        ...(d?.label ? { label: String(d.label).slice(0, MAX_DOOR_LABEL_LEN) } : {}),
+      })).filter((d: ProjDoorMark) => d.key);
+    }
+  }
+
+  const doorStatuses: Record<string, DoorStatus> = {};
+  if (input.doorStatuses && typeof input.doorStatuses === "object") {
+    for (const k of Object.keys(input.doorStatuses).slice(0, 20000)) {
+      if (input.doorStatuses[k] === "tehty") doorStatuses[cleanKey(k)] = "tehty";
+    }
+  }
+
+  // Sama sääntö kuin lampuilla: kuittaus puretaan → tekijätieto lähtee mukana.
+  const doorDoneBy: Record<string, ProjMarkBy> = {};
+  for (const [key, v] of Object.entries(sanitizeMarkBy(input.doorDoneBy))) {
+    if (doorStatuses[key] === "tehty") doorDoneBy[key] = v;
+  }
+
+  const doorNotes = sanitizeFixtureNotes(input.doorNotes);
+  const doorAddedBy = sanitizeMarkBy(input.doorAddedBy);
 
   const notes: Record<string, ProjMapNote[]> = {};
   if (input.notes && typeof input.notes === "object") {
@@ -1506,6 +1911,16 @@ export function sanitizeProjectData(input: any): ProjectData {
     lamps,
     lampStatuses,
     lampChangedBy,
+    // Uudet kalustekentät kirjoitetaan VAIN kun niissä on sisältöä, jotta vanha
+    // tallennettu blobi (FR8) pyörähtää läpi tavu tavulta entisellään.
+    ...(Object.keys(lampConditions).length ? { lampConditions } : {}),
+    ...(Object.keys(lampNotes).length ? { lampNotes } : {}),
+    ...(Object.keys(lampAddedBy).length ? { lampAddedBy } : {}),
+    ...(Object.keys(doors).length ? { doors } : {}),
+    ...(Object.keys(doorStatuses).length ? { doorStatuses } : {}),
+    ...(Object.keys(doorDoneBy).length ? { doorDoneBy } : {}),
+    ...(Object.keys(doorNotes).length ? { doorNotes } : {}),
+    ...(Object.keys(doorAddedBy).length ? { doorAddedBy } : {}),
     notes,
     observations,
     activeZone,

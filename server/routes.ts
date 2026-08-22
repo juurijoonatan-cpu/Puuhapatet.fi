@@ -30,7 +30,7 @@ import {
 } from "@shared/pricing";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, signaturePrompt, contractPending, gigStatus, livePayments, withoutDashOnly, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
@@ -661,6 +661,10 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   // tokenista. Ei rahaa, joten ei ehtoja eikä allekirjoitusporttia — reitti
   // tarkistaa itse että keikka on yhteisökeikka ja piste on keltainen.
   { method: "POST", re: /^\/api\/gig\/[^/]+\/scope$/ },
+  // Asiakkaan hintaehdotus lampuista ja ovikytkimistä. Sama tokenperiaate kuin
+  // laajuuskyselyllä: ei rahaa liiku, asiakas vain kertoo mitä olisi valmis
+  // maksamaan. Reitti tarkistaa itse että keikalla on kalusteita.
+  { method: "POST", re: /^\/api\/gig\/[^/]+\/fixture-quote$/ },
   { method: "GET",  re: /^\/api\/crew\/[^/]+$/ },
   // Sama vika tekijän puolella: kuvan haku omalla tokenilla vastasi 401 ja
   // heitti tekijän adminin kirjautumiseen kesken työpäivän.
@@ -5720,6 +5724,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         lamps: publicLampView(proj),
         doors: publicDoorView(proj),
       } : null;
+      // Kalustetilanne EI ole kartan sisällä: se on olemassa myös silloin kun
+      // keikalla ei ole pohjakuvaa lainkaan (`map` on null), ja asiakkaan
+      // näkymä näyttää sen omana osionaan kartasta riippumatta.
+      const fixtures = proj ? publicFixtures(proj) : null;
       // Only expose what the customer is meant to see — no internal billing notes.
       res.json({
         contractId: gig.contractId ?? null,
@@ -5824,6 +5832,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
          * tarkoittaisi kaksi eri vastausta kysymykseen "mitä pestään".
          */
         scope: proj && !proj.p2?.enabled ? publicScope(proj) : null,
+        // Lamppu-/ovitilanne, ostotieto ja asiakkaan oma hintaehdotus.
+        fixtures,
         status: gigStatus(gig),
         signed: !!gig.signature?.signedAt,
         signedAt: gig.signature?.signedAt ?? null,
@@ -5926,6 +5936,40 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       project.scope = { votes };
       const saved = await saveProject(row.job, project, { scopeMutation: true });
       res.json({ ok: true, scope: publicScope(saved) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  /**
+   * ASIAKKAAN HINTAEHDOTUS lampuista ja ovikytkimistä.
+   *
+   * Ei sitova tarjous eikä laskutustapahtuma: asiakas kertoo mitä olisi valmis
+   * maksamaan per polttimo ja per kytkin, ja johtaja näkee sen dashissaan.
+   * Siksi tässä EI ole P2:n tilakonetta, hyväksyntää eikä allekirjoitusporttia
+   * — ne kuuluvat rahaan, ja raha liikkuu vasta kun tästä sovitaan erikseen.
+   *
+   * Tyhjä runko (ei hintoja, ei viestiä) pyyhkii ehdotuksen: asiakas saa perua
+   * sen sanomatta mitään.
+   */
+  app.post("/api/gig/:token/fixture-quote", async (req, res) => {
+    try {
+      const [row] = await db.select({ job: jobs }).from(jobs).where(eq(jobs.quoteToken, String(req.params.token)));
+      if (!row || !row.job.isCustomGig) return res.status(404).json({ error: "Seurantaa ei löydy" });
+      if (!parseGig(row.job.gigData)) return res.status(404).json({ error: "Seurantaa ei löydy" });
+      const project = parseProject(row.job.projectData ?? null);
+      if (!project) return res.status(400).json({ error: "Keikalla ei ole pohjakarttaa" });
+      // Ilman kalusteita ehdotuksella ei ole kohdetta — eikä lomaketta näytetä.
+      const inv = computeLampInventory(project);
+      const hasDoors = (project.doors && Object.values(project.doors).some((a) => a.length > 0)) || false;
+      if (inv.total === 0 && !hasDoors) {
+        return res.status(409).json({ error: "Keikalla ei ole lamppuja eikä ovia" });
+      }
+
+      const quote = sanitizeFixtureQuote({ ...(req.body ?? {}), at: Date.now() });
+      if (quote) project.fixtureQuote = quote; else delete project.fixtureQuote;
+      const saved = await saveProject(row.job, project, { fixtureQuoteMutation: true });
+      res.json({ ok: true, fixtures: publicFixtures(saved) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -6764,6 +6808,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
        */
       const storedScope = stored?.scope;
       if (storedScope) project.scope = storedScope; else delete project.scope;
+      // Asiakkaan hintaehdotus (`fixtureQuote`) on samalla tavalla serverin
+      // omistama, ja tämä on sen toinen suojauspolku — ks. yllä oleva perustelu.
+      const storedQuote = stored?.fixtureQuote;
+      if (storedQuote) project.fixtureQuote = storedQuote; else delete project.fixtureQuote;
       const totals = computeProjectTotals(project);
 
       // Auto-sync the gig's billing sectors from the toolkit (FR8 = source of
@@ -7370,6 +7418,46 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     return { votes };
   }
 
+  /**
+   * ASIAKKAALLE palautettava kalustetilanne: montako lamppua ei toimi, montako
+   * on jo vaihdettu, kerroksittainen jakauma, ostotieto (malli + määrä) ja
+   * asiakkaan oma hintaehdotus.
+   *
+   * Kerroksittainen jakauma on tässä koska se on juuri se mitä kiinteistön
+   * omistaja kysyy: "missä ne rikkinäiset ovat". Tekijätietoa ei ole — sama
+   * raja kuin muullakin asiakasdatalla.
+   *
+   * Null kun keikalla ei ole yhtään lamppua eikä ovea: silloin näkymä ei piirrä
+   * osiota lainkaan.
+   */
+  function publicFixtures(project: ProjectData) {
+    const inv = computeLampInventory(project);
+    const doors = computeDoorFloorStats(project);
+    if (inv.total === 0 && doors.length === 0) return null;
+    const order = resolveFixtureOrder(project);
+    return {
+      lamps: {
+        total: inv.total,
+        needsBulbs: inv.needsBulbs,
+        fixed: inv.fixed,
+        working: inv.working,
+        unchecked: inv.unchecked,
+        functional: inv.functional,
+        byFloor: inv.byFloor,
+      },
+      doors: { total: doors.reduce((n, r) => n + r.total, 0), done: doors.reduce((n, r) => n + r.done, 0), byFloor: doors },
+      order: {
+        ...(order.lampModel ? { lampModel: order.lampModel } : {}),
+        bulbs: order.bulbs,
+        ...(order.switchModel ? { switchModel: order.switchModel } : {}),
+        switches: order.switches,
+        ...(order.note ? { note: order.note } : {}),
+      },
+      quote: order.quote ?? null,
+      quotedTotalCents: order.quotedTotalCents,
+    };
+  }
+
   /** Asiakkaalle palautettava p2-tila (vain hinnat, ei tekijätietoja). */
   function publicP2(project: ProjectData) {
     const p2 = project.p2!;
@@ -7862,7 +7950,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   async function saveProject(
     job: typeof jobs.$inferSelect,
     project: ProjectData,
-    opts?: { p2Mutation?: boolean; guidedMutation?: boolean; settlementMutation?: boolean; planMutation?: boolean; scopeMutation?: boolean },
+    opts?: { p2Mutation?: boolean; guidedMutation?: boolean; settlementMutation?: boolean; planMutation?: boolean; scopeMutation?: boolean; fixtureQuoteMutation?: boolean },
   ): Promise<ProjectData> {
     const clean = sanitizeProjectData(project);
     // P2-neuvottelutila, ohjattu eteneminen (guided) ja johtajien tasaus ovat
@@ -7872,7 +7960,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     // samaan aikaan lukitsemaa hintaa, perustajan ohjausasetusta eikä
     // rahankirjausta siitä kuka sai erän ja kuka maksoi tekijän.
     let stored: ProjectData | null = null;
-    if (!opts?.p2Mutation || !opts?.guidedMutation || !opts?.settlementMutation || !opts?.planMutation || !opts?.scopeMutation) {
+    if (!opts?.p2Mutation || !opts?.guidedMutation || !opts?.settlementMutation || !opts?.planMutation || !opts?.scopeMutation || !opts?.fixtureQuoteMutation) {
       /**
        * VAIN KOLME KENTTÄÄ, EI KOKO BLOBIA.
        *
@@ -7891,14 +7979,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
        * Jos poiminta epäonnistuu (esim. vioittunut JSON), pudotaan takaisin
        * koko blobin lukuun — hitaampi mutta varma.
        */
-      let picked: { p2?: unknown; guided?: unknown; settlement?: unknown; planImages?: unknown; scope?: unknown } | null = null;
+      let picked: { p2?: unknown; guided?: unknown; settlement?: unknown; planImages?: unknown; scope?: unknown; fixtureQuote?: unknown } | null = null;
       try {
         const r: any = await db.execute(sql`
           select project_data::jsonb -> 'p2'                        as p2,
                  project_data::jsonb -> 'guided'                    as guided,
                  project_data::jsonb -> 'settlement'                as settlement,
                  project_data::jsonb -> 'building' -> 'planImages'  as "planImages",
-                 project_data::jsonb -> 'scope'                     as scope
+                 project_data::jsonb -> 'scope'                     as scope,
+                 project_data::jsonb -> 'fixtureQuote'              as "fixtureQuote"
           from jobs where id = ${job.id} and project_data is not null
         `);
         const row = (r?.rows ?? r)?.[0];
@@ -7910,7 +7999,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const [fresh] = await db.select({ projectData: jobs.projectData }).from(jobs).where(eq(jobs.id, job.id));
         stored = fresh ? parseProject(fresh.projectData ?? null) : null;
         picked = stored
-          ? { p2: stored.p2, guided: stored.guided, settlement: stored.settlement, planImages: stored.building?.planImages, scope: stored.scope }
+          ? { p2: stored.p2, guided: stored.guided, settlement: stored.settlement, planImages: stored.building?.planImages, scope: stored.scope, fixtureQuote: stored.fixtureQuote }
           : {};
       }
       if (!opts?.p2Mutation) {
@@ -7936,6 +8025,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         // merkintä kirjoittaisi vastauksen pois kannasta.
         const storedScope = picked.scope ?? undefined;
         if (storedScope) clean.scope = storedScope as ProjectData["scope"]; else delete clean.scope;
+      }
+      if (!opts?.fixtureQuoteMutation) {
+        // Asiakkaan hintaehdotus lampuista ja ovikytkimistä. Sama vika uhkaisi
+        // tätä kuin `scope`a: tekijä merkitsee lamppuja samaan aikaan kun
+        // asiakas kirjoittaa hintaansa, ja merkintä kirjoittaisi sen pois.
+        const storedQuote = picked.fixtureQuote ?? undefined;
+        if (storedQuote) clean.fixtureQuote = storedQuote as ProjectData["fixtureQuote"]; else delete clean.fixtureQuote;
       }
     }
     const nextProjectJson = JSON.stringify(clean);

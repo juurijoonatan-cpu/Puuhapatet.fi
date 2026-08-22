@@ -3,7 +3,7 @@
  */
 
 import type { GigData, GigTotals } from "@shared/gig";
-import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding, FixedDeal, EraDebtBreakdown, ProjLampMark, LampStatus, LampCondition, ProjFixtureNote, ProjDoorMark, DoorStatus, PublicLampPoint, PublicDoorPoint } from "@shared/project";
+import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding, FixedDeal, EraDebtBreakdown, ProjLampMark, LampStatus, LampCondition, ProjFixtureNote, ProjDoorMark, DoorStatus, PublicLampPoint, PublicDoorPoint, LampFloorStat, DoorFloorStat, FixtureQuote } from "@shared/project";
 import type { MemberAgreementSignature } from "@shared/member-agreement";
 import type { CrewMember, CrewMemberStats, CrewProfile, CrewAgreementSignature } from "@shared/crew";
 import type { WorkerAgreement } from "@shared/worker-agreements";
@@ -451,6 +451,25 @@ export interface GigPublicView {
     /** Ovet jotka on tehty tai joista on huomautettu. Sama sääntö. */
     doors?: PublicDoorPoint[];
   } | null;
+  /**
+   * Lamppu- ja ovitilanne asiakkaalle: montako ei toimi, montako on korjattu,
+   * kerroksittainen jakauma, ostotieto ja asiakkaan oma hintaehdotus. Null kun
+   * keikalla ei ole kalusteita — silloin näkymä ei piirrä osiota lainkaan.
+   *
+   * Ei kartan sisällä, koska tämä on olemassa myös ilman pohjakuvaa.
+   */
+  fixtures: {
+    lamps: {
+      total: number; needsBulbs: number; fixed: number; working: number;
+      unchecked: number; functional: number; byFloor: LampFloorStat[];
+    };
+    doors: { total: number; done: number; byFloor: DoorFloorStat[] };
+    order: { lampModel?: string; bulbs: number; switchModel?: string; switches: number; note?: string };
+    quote: FixtureQuote | null;
+    /** Asiakkaan omalla hinnalla laskettu summa (senttiä). Null ilman hintaa. */
+    quotedTotalCents: number | null;
+  } | null;
+
   // Contract & signing gate
   contractText: string | null;
   requireSignature: boolean;
@@ -1517,6 +1536,16 @@ export const api = {
 
   // Sama lamppujen merkintä (ei rahaa, ei prioriteettia) — kuka vaihtoi tulee
   // servlerissä aina kirjautuneesta tekijästä itsestään.
+  /**
+   * ASIAKKAAN hintaehdotus lampuista ja ovikytkimistä. Ei sitova tarjous —
+   * asiakas kertoo mitä olisi valmis maksamaan, ja johtaja näkee sen dashissa.
+   * Tyhjä runko pyyhkii ehdotuksen.
+   */
+  gigSetFixtureQuote: (
+    token: string,
+    body: { bulbPriceCents?: number; switchPriceCents?: number; note?: string },
+  ) => request<{ ok: boolean; fixtures: GigPublicView["fixtures"] }>("POST", `/api/gig/${token}/fixture-quote`, body),
+
   crewMarkLamp: (token: string, key: string, status: LampStatus) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, status }),
 

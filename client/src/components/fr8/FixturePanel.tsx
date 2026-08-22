@@ -1,34 +1,57 @@
 /**
- * LAMPUT & OVET — dashin ylälaidan huomautuspaneeli.
+ * LAMPUT & OVET — dashin ylälaidan paneeli.
  *
- * MIKÄ ONGELMA TÄMÄ RATKAISEE. Lamppu- ja ovipisteet elävät pohjapiirroksella,
- * ja huomautus kirjoitetaan pisteen popoverista. Se on oikea paikka merkitä
- * työtä sitä tehdessä, mutta väärä paikka lukea sitä: johtaja joutuisi
- * kiertämään kartan kerros kerrokselta löytääkseen mistä on huomautettu. Tämä
- * paneeli on sama tieto toisin päin — yksi lista siitä mikä kaipaa huomiota,
- * heti keltaisten vieressä dashin alussa, ja huomautuksen voi kirjoittaa
- * suoraan riviltä ilman kartalle menoa.
+ * Neljä asiaa, tässä järjestyksessä, koska tämä on se järjestys jossa niitä
+ * kysytään:
  *
- * JÄRJESTYS ON KIIREELLISYYS, ei kerros: rikki → huomautettu → tekemättä →
- * valmis (`fixtureAttentionRows`). Oletuksena näkyvät vain huomiota kaipaavat
- * rivit; "Näytä kaikki" avaa loput.
+ *   1. LUVUT      — montako ei toimi, montako on korjattu, mikä on kunnossa.
+ *   2. KERROKSET  — missä ne rikkinäiset ovat (`LampFloorChart`).
+ *   3. OSTETTAVAA — malli ja määrä, ja asiakkaan hintaehdotus sen vieressä.
+ *   4. HUOMIOTA   — rivit jotka vaativat toimenpiteen, huomautus kirjoitettavissa
+ *                   suoraan riviltä ilman kartalle menoa.
  *
- * Paneeli piirtyy vain kun keikalla on lamppuja tai ovia, joten kalusteettomalla
- * keikalla dash on tavu tavulta entinen.
+ * MIKSI PANEELI ON DASHIN ALUSSA. Huomautus kirjoitetaan pisteen popoverista —
+ * oikea paikka merkitä työtä sitä tehdessä, väärä paikka lukea sitä: johtaja
+ * joutuisi kiertämään kartan kerros kerrokselta löytääkseen mistä on
+ * huomautettu. Tämä on sama tieto toisin päin.
+ *
+ * Paneeli piirtyy tyhjänä (null) kun keikalla ei ole lamppuja eikä ovia, joten
+ * kalusteettomalla keikalla dash on tavu tavulta entinen.
  */
 import { useMemo, useState } from "react";
 import {
-  fixtureAttentionRows, computeLampTotals, computeDoorTotals, floorLabel,
-  MAX_FIXTURE_NOTE_LEN,
-  type ProjectData, type FixtureAttentionRow, type LampStatus, type LampCondition, type DoorStatus,
+  fixtureAttentionRows, computeLampInventory, computeDoorTotals, computeLampTotals,
+  resolveFixtureOrder, floorLabel, eurFromCents,
+  MAX_FIXTURE_NOTE_LEN, MAX_FIXTURE_MODEL_LEN, MAX_FIXTURE_ORDER_NOTE_LEN,
+  type ProjectData, type FixtureAttentionRow, type FixtureOrder,
+  type LampStatus, type LampCondition, type DoorStatus,
 } from "@shared/project";
 import { useIsMobile } from "@/hooks/use-mobile";
 import Section from "./Section";
+import LampFloorChart, { type LampChartTheme } from "@/components/LampFloorChart";
 import { T, inset, mono } from "./tokens";
 
-/** Viisisakarainen tähti — sama merkki kuin kartalla, jotta rivi ja piste
- *  tunnistaa toisikseen ilman selitystä. */
+/** Sama tähtimerkki kuin kartalla, jotta rivi ja piste tunnistaa toisikseen. */
 const STAR_CLIP = "polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)";
+
+/**
+ * Kuvion sävyt FR8:n tummalle kortille (#141416).
+ *
+ * MITATTU, ei valittu silmällä: CVD-erottelu 14,1 ΔE ja normaalinäön erottelu
+ * 19,6 ΔE pahimmalla vierekkäisellä parilla, kaikki neljä yli 3:1 pintaa
+ * vasten. "Toimii" on harmaa tarkoituksella — se tarkoittaa "ei tehtävää", ja
+ * kuvion pitää nostaa esiin se mikä vaatii työtä.
+ */
+const CHART_DARK: LampChartTheme = {
+  broken: "#ff7474",
+  unchecked: "#ffc45a",
+  working: "#969baa",
+  changed: "#7ce0a6",
+  surface: "rgba(255,255,255,0.07)",
+  text: T.text.primary,
+  muted: T.text.faint,
+  font: T.font,
+};
 
 function ago(ts?: number): string {
   if (!ts) return "";
@@ -44,28 +67,37 @@ function needsAttention(r: FixtureAttentionRow): boolean {
   return r.condition === "rikki" || !!r.note?.text || r.status === "ei";
 }
 
+const fieldStyle: React.CSSProperties = {
+  width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: T.radius.sm,
+  border: T.border.strong, background: T.surface.sunken, color: T.text.primary,
+  fontFamily: T.font, fontSize: T.size.sm, outline: "none",
+};
+
 interface Props {
   project: ProjectData;
   workerName: (id: string) => string;
-  /** Hyppy kartalle oikeaan kerrokseen. */
   onGoToFloor: (floor: string) => void;
   onSetLampStatus?: (key: string, status: LampStatus) => void;
   onSetLampCondition?: (key: string, condition: LampCondition | null) => void;
   onSetLampNote?: (key: string, text: string) => void;
   onSetDoorStatus?: (key: string, status: DoorStatus) => void;
   onSetDoorNote?: (key: string, text: string) => void;
+  /** Ostotieto (malli, määrä). Ilman tätä ostoslohko on lukunäkymä. */
+  onSetFixtureOrder?: (patch: Partial<FixtureOrder>) => void;
 }
 
 export default function FixturePanel({
   project, workerName, onGoToFloor,
   onSetLampStatus, onSetLampCondition, onSetLampNote, onSetDoorStatus, onSetDoorNote,
+  onSetFixtureOrder,
 }: Props) {
   const m = useIsMobile();
   const rows = useMemo(() => fixtureAttentionRows(project), [project]);
+  const inv = useMemo(() => computeLampInventory(project), [project]);
+  const order = useMemo(() => resolveFixtureOrder(project), [project]);
   const lampT = computeLampTotals(project);
   const doorT = computeDoorTotals(project);
   const [showAll, setShowAll] = useState(false);
-  /** Avoin huomautuskenttä: `null` = ei mikään, muuten pisteen avain. */
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
 
@@ -74,52 +106,170 @@ export default function FixturePanel({
   const attention = rows.filter(needsAttention);
   const shown = showAll ? rows : attention;
 
-  function startEdit(r: FixtureAttentionRow) {
-    setEditing(r.key);
-    setDraft(r.note?.text ?? "");
-  }
-
+  function startEdit(r: FixtureAttentionRow) { setEditing(r.key); setDraft(r.note?.text ?? ""); }
   function saveEdit(r: FixtureAttentionRow) {
     const text = draft.slice(0, MAX_FIXTURE_NOTE_LEN);
-    if (r.kind === "lamp") onSetLampNote?.(r.key, text);
-    else onSetDoorNote?.(r.key, text);
-    setEditing(null);
-    setDraft("");
+    if (r.kind === "lamp") onSetLampNote?.(r.key, text); else onSetDoorNote?.(r.key, text);
+    setEditing(null); setDraft("");
   }
 
-  // Tiivistelmä palkkiin: mikä kaipaa huomiota, ei mikä on tehty.
+  // Palkin tiivistelmä kertoo mikä kaipaa huomiota, ei mikä on tehty.
   const summary = [
-    lampT.broken > 0 ? `${lampT.broken} rikki` : null,
+    inv.needsBulbs > 0 ? `${inv.needsBulbs} lamppua ei toimi` : null,
     doorT.open > 0 ? `${doorT.open} ovea kesken` : null,
     lampT.noted + doorT.noted > 0 ? `${lampT.noted + doorT.noted} huomautusta` : null,
-  ].filter(Boolean).join(" · ") || `${lampT.changed}/${lampT.total} lamppua vaihdettu`;
+  ].filter(Boolean).join(" · ") || `${inv.fixed}/${inv.total} lamppua vaihdettu`;
 
   return (
-    <Section
-      id="fixtures"
-      label="LAMPUT & OVET"
-      summary={summary}
-      animClass="anim-fadeUp-2"
-      defaultOpen={attention.length > 0}
-    >
-      {/* Yläriville se mitä asiakas näkee. Ilman tätä lukua "näkyykö tämä
-          asiakkaalle" jäisi pisteen popoverin sisään, eikä johtaja tietäisi
-          mitä seurantasivu juuri nyt kertoo. */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(132px, 1fr))", gap: m ? T.space.sm : T.space.md, marginBottom: T.space.lg }}>
+    <Section id="fixtures" label="LAMPUT & OVET" summary={summary} animClass="anim-fadeUp-2" defaultOpen={attention.length > 0}>
+      {/* 1. LUVUT. "Ostettava" on ensimmäisenä koska se on se luku jonka takia
+          tätä paneelia katsotaan — siitä tehdään kauppalista. */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(128px, 1fr))", gap: m ? T.space.sm : T.space.md, marginBottom: T.space.lg }}>
         {([
-          ["Lamppuja", `${lampT.total}`, `${lampT.changed} vaihdettu · ${lampT.broken} rikki`],
-          ["Ovia", `${doorT.total}`, `${doorT.done} tehty · ${doorT.open} kesken`],
-          ["Huomautuksia", `${lampT.noted + doorT.noted}`, "kaikilta tekijöiltä"],
-          ["Asiakas näkee", `${lampT.visible + doorT.visible}`, "vaihdetut, rikki & huomautetut"],
-        ] as [string, string, string][]).map(([label, val, sub]) => (
+          ["Ei toimi", `${inv.needsBulbs}`, "polttimoa ostettava", inv.needsBulbs > 0 ? T.tone.bad : T.text.muted],
+          ["Vaihdettu", `${inv.fixed}`, "tähän mennessä", T.tone.goodSoft],
+          ["Kunnossa", `${inv.functional}/${inv.checked}`, `tarkastetuista · ${Math.round(inv.functionalPct)} %`, T.text.primary],
+          ["Tarkastamatta", `${inv.unchecked}`, `${inv.total} lamppua yhteensä`, inv.unchecked > 0 ? T.tone.warn : T.text.muted],
+        ] as [string, string, string, string][]).map(([label, val, sub, tone]) => (
           <div key={label} style={inset}>
             <div style={{ ...mono, color: T.text.faint }}>{label}</div>
-            <div style={{ fontFamily: T.font, fontSize: m ? T.size.lg : T.size.title, fontWeight: 700 }}>{val}</div>
+            <div style={{ fontFamily: T.font, fontSize: m ? T.size.lg : T.size.title, fontWeight: 700, color: tone }}>{val}</div>
             <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint }}>{sub}</div>
           </div>
         ))}
       </div>
 
+      {/* 2. KERROKSITTAIN — missä työ on. */}
+      {inv.byFloor.length > 0 && (
+        <div style={{ ...inset, padding: T.space.lg, marginBottom: T.space.lg }}>
+          <LampFloorChart
+            rows={inv.byFloor}
+            theme={CHART_DARK}
+            title="Lamput kerroksittain"
+            floorLabel={(f) => floorLabel(project.building, f)}
+            onFloorClick={onGoToFloor}
+          />
+        </div>
+      )}
+
+      {/* 3. OSTETTAVAA. Määrä on LASKETTU oletuksena: käsin ylläpidetty luku
+          vanhenisi joka kerta kun tekijä merkitsee uuden rikkinäisen. Johtaja
+          voi silti korjata sen (varalamput, pakkauskoko), ja silloin näkymä
+          sanoo että luku on hänen. */}
+      <div style={{ ...inset, padding: T.space.lg, marginBottom: T.space.lg }}>
+        <div style={{ ...mono, color: T.text.faint, marginBottom: T.space.md }}>OSTETTAVAA</div>
+        <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1fr auto", gap: T.space.md, alignItems: "end" }}>
+          <label style={{ display: "block" }}>
+            <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Lampun malli</span>
+            <input
+              defaultValue={order.lampModel ?? ""}
+              key={`lm-${order.lampModel ?? ""}`}
+              placeholder="Esim. E27 LED 9W 2700K"
+              maxLength={MAX_FIXTURE_MODEL_LEN}
+              disabled={!onSetFixtureOrder}
+              onBlur={(e) => onSetFixtureOrder?.({ lampModel: e.target.value })}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              style={fieldStyle}
+            />
+          </label>
+          <div style={{ minWidth: 132 }}>
+            <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Kappaletta</span>
+            <input
+              type="number" min={0}
+              defaultValue={order.bulbs}
+              key={`lb-${order.bulbs}-${order.bulbsManual}`}
+              disabled={!onSetFixtureOrder}
+              onBlur={(e) => onSetFixtureOrder?.({ bulbsNeeded: e.target.value === "" ? undefined : Number(e.target.value) })}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              style={{ ...fieldStyle, fontVariantNumeric: "tabular-nums" }}
+            />
+            <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginTop: T.space.xs }}>
+              {order.bulbsManual ? (
+                <>käsin · kartalta {order.bulbsAuto}{onSetFixtureOrder && (
+                  <button onClick={() => onSetFixtureOrder({ bulbsNeeded: undefined })}
+                    style={{ marginLeft: 6, background: "transparent", border: "none", padding: 0, color: T.tone.info, fontFamily: T.font, fontSize: T.size.xs, fontWeight: 600, cursor: "pointer" }}>
+                    palauta
+                  </button>
+                )}</>
+              ) : "laskettu kartalta"}
+            </div>
+          </div>
+        </div>
+
+        {doorT.total > 0 && (
+          <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1fr auto", gap: T.space.md, alignItems: "end", marginTop: T.space.md }}>
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Ovikytkimen malli</span>
+              <input
+                defaultValue={order.switchModel ?? ""}
+                key={`sm-${order.switchModel ?? ""}`}
+                placeholder="Esim. Jussi-kytkin, valkoinen"
+                maxLength={MAX_FIXTURE_MODEL_LEN}
+                disabled={!onSetFixtureOrder}
+                onBlur={(e) => onSetFixtureOrder?.({ switchModel: e.target.value })}
+                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                style={fieldStyle}
+              />
+            </label>
+            <div style={{ minWidth: 132 }}>
+              <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Kappaletta</span>
+              <input
+                type="number" min={0}
+                defaultValue={order.switches}
+                key={`sw-${order.switches}-${order.switchesManual}`}
+                disabled={!onSetFixtureOrder}
+                onBlur={(e) => onSetFixtureOrder?.({ switchesNeeded: e.target.value === "" ? undefined : Number(e.target.value) })}
+                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                style={{ ...fieldStyle, fontVariantNumeric: "tabular-nums" }}
+              />
+              <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginTop: T.space.xs }}>
+                {order.switchesManual ? `käsin · kartalta ${order.switchesAuto}` : "tekemättömät ovet"}
+              </div>
+            </div>
+          </div>
+        )}
+
+        <label style={{ display: "block", marginTop: T.space.md }}>
+          <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Huomio tilauksesta — näkyy asiakkaalle</span>
+          <input
+            defaultValue={order.note ?? ""}
+            key={`on-${order.note ?? ""}`}
+            placeholder="Esim. ”Tilataan kun asiakas vahvistaa hinnan”"
+            maxLength={MAX_FIXTURE_ORDER_NOTE_LEN}
+            disabled={!onSetFixtureOrder}
+            onBlur={(e) => onSetFixtureOrder?.({ note: e.target.value })}
+            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+            style={fieldStyle}
+          />
+        </label>
+
+        {/* Asiakkaan hintaehdotus. Luettavaa, ei muokattavaa: se on hänen
+            sanansa, ja johtajan muokkaamana se ei enää olisi sitä. */}
+        {order.quote ? (
+          <div style={{ marginTop: T.space.md, padding: `${T.space.sm + 2}px ${T.space.md}px`, borderRadius: T.radius.sm, background: T.tone.infoBg, border: `1px solid ${T.tone.infoBorder}` }}>
+            <div style={{ ...mono, color: "rgba(190,205,255,0.85)", marginBottom: T.space.xs }}>ASIAKKAAN HINTAEHDOTUS · {ago(order.quote.at)} sitten</div>
+            <div style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.secondary }}>
+              {order.quote.bulbPriceCents != null && <>Lamppu <b style={{ color: T.text.primary, fontWeight: 700 }}>{eurFromCents(order.quote.bulbPriceCents)}</b>/kpl</>}
+              {order.quote.bulbPriceCents != null && order.quote.switchPriceCents != null && " · "}
+              {order.quote.switchPriceCents != null && <>Kytkin <b style={{ color: T.text.primary, fontWeight: 700 }}>{eurFromCents(order.quote.switchPriceCents)}</b>/kpl</>}
+              {order.quotedTotalCents != null && (
+                <span style={{ display: "block", marginTop: 2, color: T.tone.info }}>
+                  Yhteensä tällä hinnalla <b style={{ fontWeight: 700 }}>{eurFromCents(order.quotedTotalCents)}</b>
+                </span>
+              )}
+            </div>
+            {order.quote.note && (
+              <div style={{ marginTop: T.space.sm, fontFamily: T.font, fontSize: T.size.sm, color: T.text.secondary, whiteSpace: "pre-wrap" }}>{order.quote.note}</div>
+            )}
+          </div>
+        ) : (
+          <div style={{ marginTop: T.space.md, fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint }}>
+            Asiakas ei ole vielä ehdottanut hintaa. Lomake on hänen seurantasivullaan.
+          </div>
+        )}
+      </div>
+
+      {/* 4. HUOMIOTA KAIPAAVAT — sama lista kuin ennen. */}
       {shown.length === 0 ? (
         <div style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.faint }}>
           Ei huomiota kaipaavia lamppuja tai ovia.
@@ -148,14 +298,14 @@ export default function FixturePanel({
                   </button>
 
                   <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: T.space.xs + 2, flexWrap: "wrap" }}>
-                    {/* Tila yhtenä napautuksena — sama merkintä kuin kartalla. */}
                     <button
                       onClick={() => (lamp
                         ? onSetLampStatus?.(r.key, done ? "ei" : "vaihdettu")
                         : onSetDoorStatus?.(r.key, done ? "ei" : "tehty"))}
                       disabled={lamp ? !onSetLampStatus : !onSetDoorStatus}
                       style={{
-                        padding: `${T.space.xs}px ${T.space.sm + 2}px`, borderRadius: T.radius.pill, cursor: (lamp ? onSetLampStatus : onSetDoorStatus) ? "pointer" : "default",
+                        padding: `${T.space.xs}px ${T.space.sm + 2}px`, borderRadius: T.radius.pill,
+                        cursor: (lamp ? onSetLampStatus : onSetDoorStatus) ? "pointer" : "default",
                         border: `1px solid ${done ? T.tone.goodBorder : "rgba(255,255,255,0.14)"}`,
                         background: done ? T.tone.goodBg : "transparent",
                         color: done ? T.tone.goodSoft : T.text.muted,
@@ -194,9 +344,8 @@ export default function FixturePanel({
                       value={draft}
                       onChange={(e) => setDraft(e.target.value.slice(0, MAX_FIXTURE_NOTE_LEN))}
                       placeholder={lamp ? "Esim. ”Kupu rikki, uusi tilattava”" : "Esim. ”Lukko jumittaa”"}
-                      autoFocus
-                      rows={2}
-                      style={{ width: "100%", boxSizing: "border-box", resize: "none", padding: `${T.space.sm}px ${T.space.md - 2}px`, borderRadius: T.radius.sm, border: T.border.strong, background: T.surface.sunken, color: T.text.primary, fontFamily: T.font, fontSize: T.size.sm, outline: "none" }}
+                      autoFocus rows={2}
+                      style={{ ...fieldStyle, resize: "none" }}
                     />
                     <div style={{ display: "flex", gap: T.space.sm, marginTop: T.space.sm }}>
                       <button onClick={() => { setEditing(null); setDraft(""); }}

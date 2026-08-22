@@ -2,7 +2,7 @@
  * FR8 projektinäkymä — overview dashboard (ported from fr8-ikkunat prototype).
  * Adds a per-worker "TEKIJÄT" strip (window counts + €/h optimisation).
  */
-import { allPoints, computeDealBilling, checkWindowAttribution, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, type ProjectData, type WindowStatus, type WorkerStat, type FixedDeal, type LampStatus, type LampCondition, type DoorStatus } from "@shared/project";
+import { allPoints, computeDealBilling, checkWindowAttribution, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, type ProjectData, type WindowStatus, type WorkerStat, type FixedDeal, type LampStatus, type LampCondition, type DoorStatus, type FixtureOrder } from "@shared/project";
 import { computeP2Billing, p2FounderOpts } from "@shared/p2";
 import type { GigBillingState } from "@/lib/api";
 import { dashboardPhase } from "@/lib/dashboard-phase";
@@ -98,6 +98,8 @@ interface Props {
   onSetLampNote?: (key: string, text: string) => void;
   onSetDoorStatus?: (key: string, status: DoorStatus) => void;
   onSetDoorNote?: (key: string, text: string) => void;
+  /** Ostotieto (lampun malli, ostettava määrä) — `FixturePanel`in ostoslohko. */
+  onSetFixtureOrder?: (patch: Partial<FixtureOrder>) => void;
 }
 
 function fmt(n: number) { return Math.round(n).toLocaleString("fi-FI"); }
@@ -166,7 +168,7 @@ function RedFold({ label, value, children }: { label: string; value?: string; ch
   );
 }
 
-export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot, founderInvoiceSlot, gigBilling, workerLaborP2Cents, workerOpenP1Cents, onGoToMaksut, p2Slot, settingsSlot, onSetLampStatus, onSetLampCondition, onSetLampNote, onSetDoorStatus, onSetDoorNote }: Props) {
+export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot, founderInvoiceSlot, gigBilling, workerLaborP2Cents, workerOpenP1Cents, onGoToMaksut, p2Slot, settingsSlot, onSetLampStatus, onSetLampCondition, onSetLampNote, onSetDoorStatus, onSetDoorNote, onSetFixtureOrder }: Props) {
   const m = useIsMobile();
   const [editId, setEditId] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
@@ -768,6 +770,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
           onSetLampNote={onSetLampNote}
           onSetDoorStatus={onSetDoorStatus}
           onSetDoorNote={onSetDoorNote}
+          onSetFixtureOrder={onSetFixtureOrder}
         />
 
         {/* Collapsible "dropdown bar" sections — everything below the hero folds

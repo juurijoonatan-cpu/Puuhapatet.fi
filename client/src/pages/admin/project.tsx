@@ -15,7 +15,7 @@ import {
   emptyProjectData, newGigProjectData, computeWorkerStats, isFr8Plans, fixedDealFor, allPoints, computeDealBilling,
   dealInternalRateCents, isCommunityGig,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense, type LampStatus,
-  type LampCondition, type DoorStatus,
+  type LampCondition, type DoorStatus, type FixtureOrder,
 } from "@shared/project";
 import { computeP2Billing, customerAddedKeys, p2FounderOpts, p2CustomerLocksSince, p2Itemisation, p2WashedYellows, p2WorkerSplit, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule, type P2WashedState } from "@shared/p2";
 import { computeGuided, type GuidedWork } from "@shared/guided";
@@ -581,6 +581,23 @@ export default function AdminProjectPage() {
     });
   }, [mutate, currentWorker]);
 
+  /**
+   * Ostotieto. Tyhjä kenttä POISTAA arvon eikä tallenna tyhjää merkkijonoa,
+   * jotta "ei asetettu" ja "asetettu tyhjäksi" eivät eroa toisistaan kannassa —
+   * ja jotta laskettu määrä palaa käyttöön kun käsin asetettu luku tyhjennetään.
+   */
+  const onSetFixtureOrder = useCallback((patch: Partial<FixtureOrder>) => {
+    mutate((d) => {
+      const next: FixtureOrder = { ...(d.fixtureOrder ?? {}) };
+      for (const [k, v] of Object.entries(patch) as [keyof FixtureOrder, any][]) {
+        const empty = v === undefined || v === null || (typeof v === "string" && !v.trim());
+        if (empty) delete next[k];
+        else (next as any)[k] = typeof v === "string" ? v.trim() : v;
+      }
+      if (Object.keys(next).length) d.fixtureOrder = next; else delete d.fixtureOrder;
+    });
+  }, [mutate]);
+
   const onSetDoorLabel = useCallback((key: string, label: string) => {
     mutate((d) => {
       const f = key.split("#")[0];
@@ -1117,6 +1134,7 @@ export default function AdminProjectPage() {
             onSetLampNote={onSetLampNote}
             onSetDoorStatus={onSetDoorStatus}
             onSetDoorNote={onSetDoorNote}
+            onSetFixtureOrder={onSetFixtureOrder}
             p2Slot={deal ? (
               <P2AdminPanel
                 project={project}

@@ -96,6 +96,54 @@ export interface ProjDoorMark { key: string; x: number; y: number; label?: strin
 export const MAX_DOOR_LABEL_LEN = 60;
 
 /**
+ * TILAUS — mitä pitää ostaa, ja mitä asiakas siitä maksaisi.
+ *
+ * Tämä on jaettu KAHTEEN objektiin, ja jako on tarkoituksellinen: ne ovat eri
+ * ihmisten kirjoittamia, ja niillä on siksi eri omistaja tallennuspolussa.
+ *
+ *   `fixtureOrder` — JOHTAJAN. Malli ja määrä. Kulkee tavallisen blob-
+ *                    tallennuksen mukana kuten muukin karttadata.
+ *   `fixtureQuote` — ASIAKKAAN. Hintaehdotus. SERVERIN OMISTAMA kuten `scope`
+ *                    ja `p2`: sitä mutatoidaan vain omalta reitiltään, ja
+ *                    jokainen blob-tallennus palauttaa kannan tuoreimman
+ *                    arvon. Ilman tätä johtajan yksi pistesiirto pyyhkisi
+ *                    asiakkaan juuri antaman hinnan — sama vika joka `scope`illa
+ *                    kerran oli.
+ */
+export interface FixtureOrder {
+  /** Lampun malli, esim. "E27 LED 9W 2700K". */
+  lampModel?: string;
+  /** Käsin asetettu ostettava määrä. Puuttuva = laskettu rikkinäisten määrä. */
+  bulbsNeeded?: number;
+  /** Mitä oviin menee, esim. "EPDM D-tiiviste, valkoinen". Vapaa teksti, koska
+   *  ovipiste on yleinen tehtäväpiste eikä aina tiivistys. */
+  doorMaterial?: string;
+  /** Käsin asetettu ovimäärä. Puuttuva = laskettu tekemättömien ovien määrä. */
+  doorsNeeded?: number;
+  /** Johtajan huomio tilauksesta — näkyy asiakkaalle. */
+  note?: string;
+}
+
+/** Asiakkaan hintaehdotus. Ei sitova tarjous, vaan asiakkaan oma ehdotus. */
+export interface FixtureQuote {
+  /** Asiakkaan ehdotus per lamppu (senttiä). */
+  bulbPriceCents?: number;
+  /** Asiakkaan ehdotus per OVI (senttiä) — ei per tiiviste tai muu tarvike:
+   *  ovi on se yksikkö jonka asiakas laskee ja josta hinta sovitaan. */
+  doorPriceCents?: number;
+  /** Vapaa viesti hinnoista. */
+  note?: string;
+  /** Milloin asiakas viimeksi tallensi ehdotuksen. */
+  at: number;
+}
+
+export const MAX_FIXTURE_MODEL_LEN = 80;
+export const MAX_FIXTURE_ORDER_NOTE_LEN = 300;
+export const MAX_FIXTURE_QUOTE_NOTE_LEN = 500;
+/** Yläraja yksikköhinnalle (2 000 €), jottei kirjoitusvirhe tee miljoonatarjousta. */
+export const MAX_FIXTURE_UNIT_PRICE_CENTS = 200_000;
+
+/**
  * A non-window map marker: important rooms / navigation aids the crew place on a
  * floor plan so the building is easier to move around (ladder location, entrance,
  * water point, a hazard, or a free-text note). Kept separate from window marks so
@@ -355,6 +403,12 @@ export interface ProjectData {
   doorNotes?: Record<string, ProjFixtureNote>;
   /** Oven avain → kuka lisäsi pisteen kartalle ja milloin. */
   doorAddedBy?: Record<string, ProjMarkBy>;
+  /** Johtajan ostotieto: malli ja määrä (`FixtureOrder`). */
+  fixtureOrder?: FixtureOrder;
+  /** Asiakkaan hintaehdotus (`FixtureQuote`). SERVERIN OMISTAMA — mutatoidaan
+   *  vain /fixture-quote-reitiltä, geneerinen blob-tallennus säilyttää talletetun
+   *  kopion kuten `p2`/`guided`/`scope`. */
+  fixtureQuote?: FixtureQuote;
   notes?: Record<string, ProjMapNote[]>;           // floor → navigation markers / notes
   observations?: Record<string, ProjWindowObservation>; // window key → worker's observation
   activeZone?: ProjActiveZone | null;              // where work is happening right now
@@ -978,6 +1032,188 @@ export function computeLampWorkerStats(data: ProjectData): LampWorkerStat[] {
   return Array.from(by.values()).sort((a, b) => (b.changed - a.changed) || (b.noted - a.noted));
 }
 
+// ─── Lamppuvarasto: mitä pitää ostaa ja mikä on jo kunnossa ───────────────────
+//
+// NELJÄ TOISENSA POISSULKEVAA ÄMPÄRIÄ. Lampulla on kaksi erillistä kenttää
+// (vaihdettu / kunto), mutta raportti tarvitsee yhden tilan per lamppu — muuten
+// summat eivät täsmää ja "rikki" laskettaisiin kahdesti. Järjestys on
+// tarkoituksellinen ja ratkaisee päällekkäisyydet:
+//
+//   1. VAIHDETTU   — me korjasimme sen. Voittaa kunnon: rikkinäinen lamppu joka
+//                    on vaihdettu EI enää tarvitse polttimoa.
+//   2. RIKKI       — todettu rikkinäiseksi eikä vaihdettu → tähän ostetaan.
+//   3. TOIMIVA     — tarkastettu, ei tehtävää.
+//   4. EI TARKASTETTU — vielä käymättä.
+//
+// Neljä ämpäriä summautuu aina lamppujen kokonaismäärään, joten pinopalkki
+// kertoo koko kerroksen ilman jäännöstä.
+
+/** Tarvitseeko lamppu uuden polttimon: rikki eikä vielä vaihdettu. */
+export function lampNeedsBulb(p: ProjLampPoint): boolean {
+  return p.status !== "vaihdettu" && p.condition === "rikki";
+}
+
+/** Onko lamppu kunnossa juuri nyt (vaihdettu tai todettu toimivaksi)? */
+export function lampIsFunctional(p: ProjLampPoint): boolean {
+  return p.status === "vaihdettu" || p.condition === "toimiva";
+}
+
+/** Yhden lampun raportointitila — täsmälleen yksi neljästä. */
+export type LampBucket = "vaihdettu" | "rikki" | "toimiva" | "tarkastamatta";
+
+export function lampBucket(p: ProjLampPoint): LampBucket {
+  if (p.status === "vaihdettu") return "vaihdettu";
+  if (p.condition === "rikki") return "rikki";
+  if (p.condition === "toimiva") return "toimiva";
+  return "tarkastamatta";
+}
+
+export interface LampFloorStat {
+  floor: string;
+  total: number;
+  /** Vaihdetut — me korjasimme. */
+  changed: number;
+  /** Rikki eikä vaihdettu → tälle kerrokselle ostettava määrä. */
+  needsBulb: number;
+  /** Tarkastettu toimivaksi. */
+  working: number;
+  /** Ei vielä tarkastettu. */
+  unchecked: number;
+}
+
+/** Kerroksittainen lamppujakauma — pinopalkin ja ostolistan lähde. */
+export function computeLampFloorStats(data: ProjectData): LampFloorStat[] {
+  const floors = data.building.floors.length ? data.building.floors : DEFAULT_FLOORS;
+  const rows = new Map<string, LampFloorStat>(
+    floors.map((f) => [f, { floor: f, total: 0, changed: 0, needsBulb: 0, working: 0, unchecked: 0 }]),
+  );
+  for (const p of allLampPoints(data)) {
+    const row = rows.get(p.floor);
+    if (!row) continue;
+    row.total += 1;
+    const b = lampBucket(p);
+    if (b === "vaihdettu") row.changed += 1;
+    else if (b === "rikki") row.needsBulb += 1;
+    else if (b === "toimiva") row.working += 1;
+    else row.unchecked += 1;
+  }
+  // Kerrokseton kerros ei kuulu raporttiin: tyhjä rivi on kohinaa, ei tietoa.
+  return floors.map((f) => rows.get(f)!).filter((r) => r.total > 0);
+}
+
+/**
+ * Koko keikan lamppuvarasto — se yksi luku josta ostos tehdään, ja se toinen
+ * josta asiakas näkee edistymän.
+ *
+ * `total` ON KARTALLE MERKITTYJEN LAMPPUJEN MÄÄRÄ, EI KIINTEISTÖN LAMPPUJEN
+ * MÄÄRÄ. Nämä kaksi eivät ole sama luku eivätkä lähene toisiaan itsestään:
+ * kartoitus on käsityötä, ja merkitsemätön lamppu on tälle laskennalle
+ * olematon — ei "tarkastamaton" vaan tuntematon. Jos näkymä sanoo "5 lamppua",
+ * se tarkoittaa "5 merkittyä", ja asiakas voi lukea sen "talossa on 5 lamppua"
+ * ellei sitä sanota ääneen. Siksi jokainen luku esitetään näkymissä sanoin
+ * "merkityistä" — ks. `FixturePanel` ja asiakkaan `FixturesPanel`.
+ */
+export interface LampInventory {
+  /** Kartalle MERKITYT lamput. Ei kiinteistön kokonaismäärä — ks. yllä. */
+  total: number;
+  /** Montako polttimoa pitää ostaa (= rikki, vaihtamatta). */
+  needsBulbs: number;
+  /** Montako on jo vaihdettu. */
+  fixed: number;
+  /** Kunnossa juuri nyt: vaihdetut + toimivaksi todetut. */
+  functional: number;
+  /** Kunnossa olevien osuus tarkastetuista (0..100). Tarkastamattomat eivät ole
+   *  nimittäjässä — muuten luku putoaisi joka kerta kun kartalle lisätään piste. */
+  functionalPct: number;
+  /** Tarkastetut yhteensä (= total - tarkastamattomat). */
+  checked: number;
+  unchecked: number;
+  working: number;
+  byFloor: LampFloorStat[];
+}
+
+export function computeLampInventory(data: ProjectData): LampInventory {
+  const byFloor = computeLampFloorStats(data);
+  const sum = (pick: (r: LampFloorStat) => number) => byFloor.reduce((n, r) => n + pick(r), 0);
+  const total = sum((r) => r.total);
+  const needsBulbs = sum((r) => r.needsBulb);
+  const fixed = sum((r) => r.changed);
+  const working = sum((r) => r.working);
+  const unchecked = sum((r) => r.unchecked);
+  const checked = total - unchecked;
+  const functional = fixed + working;
+  return {
+    total, needsBulbs, fixed, working, unchecked, checked, functional,
+    functionalPct: checked > 0 ? (functional / checked) * 100 : 0,
+    byFloor,
+  };
+}
+
+/** Kerroksittainen ovijakauma — sama muoto kuin lampuilla, kaksi tilaa. */
+export interface DoorFloorStat { floor: string; total: number; done: number; open: number; }
+
+export function computeDoorFloorStats(data: ProjectData): DoorFloorStat[] {
+  const floors = data.building.floors.length ? data.building.floors : DEFAULT_FLOORS;
+  const rows = new Map<string, DoorFloorStat>(floors.map((f) => [f, { floor: f, total: 0, done: 0, open: 0 }]));
+  for (const p of allDoorPoints(data)) {
+    const row = rows.get(p.floor);
+    if (!row) continue;
+    row.total += 1;
+    if (p.status === "tehty") row.done += 1; else row.open += 1;
+  }
+  return floors.map((f) => rows.get(f)!).filter((r) => r.total > 0);
+}
+
+/**
+ * OSTOLISTA — laskettu määrä, johtajan mahdollinen korjaus, ja asiakkaan hinta.
+ *
+ * Määrä on LASKETTU oletuksena eikä käsin syötetty luku: kartta tietää jo
+ * montako lamppua on rikki, ja käsin ylläpidetty luku ehtisi vanhentua joka
+ * kerta kun tekijä merkitsee uuden rikkinäisen. Johtaja voi silti korjata sen
+ * (varalamppuja, pakkauskoko), ja silloin `bulbsManual` kertoo että luku on
+ * hänen — jottei näkymä väitä laskeneensa sitä.
+ */
+export interface ResolvedFixtureOrder {
+  lampModel?: string;
+  /** Efektiivinen ostettava lamppumäärä. */
+  bulbs: number;
+  /** Kartasta laskettu määrä. */
+  bulbsAuto: number;
+  bulbsManual: boolean;
+  doorMaterial?: string;
+  /** Efektiivinen ovimäärä. */
+  doorCount: number;
+  doorCountAuto: number;
+  doorCountManual: boolean;
+  note?: string;
+  quote?: FixtureQuote;
+  /** Asiakkaan ehdotuksella laskettu summa (senttiä). Null kun hintaa ei ole. */
+  quotedTotalCents: number | null;
+}
+
+export function resolveFixtureOrder(data: ProjectData): ResolvedFixtureOrder {
+  const inv = computeLampInventory(data);
+  const doorsOpen = computeDoorFloorStats(data).reduce((n, r) => n + r.open, 0);
+  const o = data.fixtureOrder ?? {};
+  const bulbsManual = Number.isFinite(o.bulbsNeeded as number) && (o.bulbsNeeded as number) >= 0;
+  const doorCountManual = Number.isFinite(o.doorsNeeded as number) && (o.doorsNeeded as number) >= 0;
+  const bulbs = bulbsManual ? Math.round(o.bulbsNeeded as number) : inv.needsBulbs;
+  const doorCount = doorCountManual ? Math.round(o.doorsNeeded as number) : doorsOpen;
+  const q = data.fixtureQuote;
+  const bulbCents = q?.bulbPriceCents ?? 0;
+  const doorCents = q?.doorPriceCents ?? 0;
+  const hasPrice = !!q && (q.bulbPriceCents != null || q.doorPriceCents != null);
+  return {
+    ...(o.lampModel ? { lampModel: o.lampModel } : {}),
+    bulbs, bulbsAuto: inv.needsBulbs, bulbsManual,
+    ...(o.doorMaterial ? { doorMaterial: o.doorMaterial } : {}),
+    doorCount, doorCountAuto: doorsOpen, doorCountManual,
+    ...(o.note ? { note: o.note } : {}),
+    ...(q ? { quote: q } : {}),
+    quotedTotalCents: hasPrice ? bulbs * bulbCents + doorCount * doorCents : null,
+  };
+}
+
 // ─── Ovet (ovipisteet) ────────────────────────────────────────────────────────
 
 export interface ProjDoorPoint {
@@ -1566,6 +1802,55 @@ function sanitizeFixtureNotes(input: any): Record<string, ProjFixtureNote> {
   return out;
 }
 
+/** Positiivinen kokonaisluku tai undefined — käsin asetetut kappalemäärät. */
+function toCount(v: any): number | undefined {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  return Math.min(100_000, Math.round(n));
+}
+
+/** Yksikköhinta sentteinä. Nolla on kelvollinen hinta ("veloituksetta"). */
+function toUnitPriceCents(v: any): number | undefined {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  return Math.min(MAX_FIXTURE_UNIT_PRICE_CENTS, Math.round(n));
+}
+
+/** Johtajan ostotieto. Tyhjä objekti pudotetaan kokonaan. */
+export function sanitizeFixtureOrder(input: any): FixtureOrder | null {
+  if (!input || typeof input !== "object") return null;
+  const out: FixtureOrder = {};
+  const model = String(input.lampModel ?? "").trim().slice(0, MAX_FIXTURE_MODEL_LEN);
+  if (model) out.lampModel = model;
+  const doorMat = String(input.doorMaterial ?? "").trim().slice(0, MAX_FIXTURE_MODEL_LEN);
+  if (doorMat) out.doorMaterial = doorMat;
+  const bulbs = toCount(input.bulbsNeeded);
+  if (bulbs !== undefined) out.bulbsNeeded = bulbs;
+  const doorsNeeded = toCount(input.doorsNeeded);
+  if (doorsNeeded !== undefined) out.doorsNeeded = doorsNeeded;
+  const note = String(input.note ?? "").trim().slice(0, MAX_FIXTURE_ORDER_NOTE_LEN);
+  if (note) out.note = note;
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * Asiakkaan hintaehdotus. Pudotetaan kokonaan jos siinä ei ole yhtään hintaa
+ * eikä viestiä — tyhjä ehdotus ei ole ehdotus, ja tyhjä objekti näyttäisi
+ * näkymässä siltä kuin asiakas olisi vastannut.
+ */
+export function sanitizeFixtureQuote(input: any): FixtureQuote | null {
+  if (!input || typeof input !== "object") return null;
+  const out: FixtureQuote = { at: Number(input.at) || Date.now() };
+  const bulb = toUnitPriceCents(input.bulbPriceCents);
+  if (bulb !== undefined) out.bulbPriceCents = bulb;
+  const dp = toUnitPriceCents(input.doorPriceCents);
+  if (dp !== undefined) out.doorPriceCents = dp;
+  const note = String(input.note ?? "").trim().slice(0, MAX_FIXTURE_QUOTE_NOTE_LEN);
+  if (note) out.note = note;
+  const hasContent = out.bulbPriceCents != null || out.doorPriceCents != null || !!out.note;
+  return hasContent ? out : null;
+}
+
 /** `{ by, ts }` -kartta (kuka lisäsi / kuka kuittasi). Nimetön merkintä putoaa. */
 function sanitizeMarkBy(input: any): Record<string, ProjMarkBy> {
   const out: Record<string, ProjMarkBy> = {};
@@ -1921,6 +2206,8 @@ export function sanitizeProjectData(input: any): ProjectData {
     ...(Object.keys(doorDoneBy).length ? { doorDoneBy } : {}),
     ...(Object.keys(doorNotes).length ? { doorNotes } : {}),
     ...(Object.keys(doorAddedBy).length ? { doorAddedBy } : {}),
+    ...(input.fixtureOrder !== undefined ? (() => { const o = sanitizeFixtureOrder(input.fixtureOrder); return o ? { fixtureOrder: o } : {}; })() : {}),
+    ...(input.fixtureQuote !== undefined ? (() => { const q = sanitizeFixtureQuote(input.fixtureQuote); return q ? { fixtureQuote: q } : {}; })() : {}),
     notes,
     observations,
     activeZone,

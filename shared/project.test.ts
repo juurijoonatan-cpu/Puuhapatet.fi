@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
+import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
 import { emptyGigData, computeTotals } from "./gig";
 
 // Kohta 6.1 — kokonaistilanteen ikkunamäärän täsmäytys. Ks. docs/fr8-era-laskutus-plan.md.
@@ -707,5 +707,222 @@ describe("kalusteiden sanitointi", () => {
     for (const k of ["lampConditions", "lampNotes", "lampAddedBy", "doors", "doorStatuses", "doorDoneBy", "doorNotes", "doorAddedBy"]) {
       expect(k in clean).toBe(false);
     }
+  });
+});
+
+
+describe("lamppuvarasto — mitä ostetaan ja mikä on kunnossa", () => {
+  /** Neljä lamppua, yksi kutakin ämpäriä. */
+  function stocked(): ProjectData {
+    const p = emptyProjectData();
+    p.building.floors = ["1", "2"];
+    p.lamps = {
+      "1": [
+        { key: "1#a", x: 1, y: 1 },   // vaihdettu
+        { key: "1#b", x: 2, y: 2 },   // rikki  → ostettava
+        { key: "1#c", x: 3, y: 3 },   // toimiva
+        { key: "1#d", x: 4, y: 4 },   // tarkastamatta
+      ],
+      "2": [{ key: "2#a", x: 5, y: 5 }],  // rikki → ostettava
+    };
+    p.lampStatuses = { "1#a": "vaihdettu" };
+    p.lampChangedBy = { "1#a": { by: "jani", ts: 1 } };
+    p.lampConditions = { "1#b": "rikki", "1#c": "toimiva", "2#a": "rikki" };
+    return p;
+  }
+
+  it("vaihdettu voittaa kunnon — korjattu lamppu ei enää tarvitse polttimoa", () => {
+    const p = stocked();
+    // Sama lamppu on sekä rikki ETTÄ vaihdettu: se on korjattu, ei ostettava.
+    p.lampConditions!["1#a"] = "rikki";
+    const pt = allLampPoints(p).find((x) => x.key === "1#a")!;
+    expect(lampBucket(pt)).toBe("vaihdettu");
+    expect(lampNeedsBulb(pt)).toBe(false);
+    expect(computeLampInventory(p).needsBulbs).toBe(2);
+  });
+
+  it("neljä ämpäriä summautuu aina kokonaismäärään", () => {
+    for (const row of computeLampFloorStats(stocked())) {
+      expect(row.changed + row.needsBulb + row.working + row.unchecked).toBe(row.total);
+    }
+  });
+
+  it("laskee ostettavan määrän kerroksittain", () => {
+    const rows = computeLampFloorStats(stocked());
+    expect(rows.map((r) => [r.floor, r.total, r.needsBulb])).toEqual([["1", 4, 1], ["2", 1, 1]]);
+  });
+
+  it("lamputon kerros jätetään pois raportista", () => {
+    const p = stocked();
+    p.building.floors = ["1", "2", "3"];
+    expect(computeLampFloorStats(p).map((r) => r.floor)).toEqual(["1", "2"]);
+  });
+
+  it("kunnossa-osuus lasketaan TARKASTETUISTA, ei kaikista", () => {
+    const inv = computeLampInventory(stocked());
+    expect(inv.total).toBe(5);
+    expect(inv.unchecked).toBe(1);
+    expect(inv.checked).toBe(4);
+    // Kunnossa = vaihdettu (1) + toimiva (1) = 2, neljästä tarkastetusta.
+    expect(inv.functional).toBe(2);
+    expect(inv.functionalPct).toBe(50);
+  });
+
+  it("uuden pisteen lisääminen kartalle ei pudota kunnossa-prosenttia", () => {
+    const before = computeLampInventory(stocked()).functionalPct;
+    const p = stocked();
+    p.lamps!["1"].push({ key: "1#e", x: 9, y: 9 });
+    expect(computeLampInventory(p).functionalPct).toBe(before);
+  });
+
+  it("lamputon keikka ei jaa nollalla", () => {
+    const inv = computeLampInventory(emptyProjectData());
+    expect(inv).toMatchObject({ total: 0, needsBulbs: 0, functionalPct: 0 });
+    expect(inv.byFloor).toEqual([]);
+  });
+});
+
+describe("ostoslista ja asiakkaan hintaehdotus", () => {
+  function withOrder(): ProjectData {
+    const p = emptyProjectData();
+    p.building.floors = ["1"];
+    p.lamps = { "1": [{ key: "1#a", x: 1, y: 1 }, { key: "1#b", x: 2, y: 2 }] };
+    p.lampConditions = { "1#a": "rikki", "1#b": "rikki" };
+    p.doors = { "1": [{ key: "1#d1", x: 3, y: 3 }, { key: "1#d2", x: 4, y: 4 }] };
+    p.doorStatuses = { "1#d1": "tehty" };
+    return p;
+  }
+
+  it("määrä lasketaan kartalta oletuksena", () => {
+    const o = resolveFixtureOrder(withOrder());
+    expect(o.bulbs).toBe(2);
+    expect(o.bulbsManual).toBe(false);
+    // Ovia on tehtävänä yksi (kaksi merkittyä, joista yksi jo tehty).
+    expect(o.doorCount).toBe(1);
+    expect(o.doorCountManual).toBe(false);
+  });
+
+  it("johtajan käsin asettama määrä voittaa lasketun, ja laskettu jää näkyviin", () => {
+    const p = withOrder();
+    p.fixtureOrder = { bulbsNeeded: 10, lampModel: "E27 LED 9W" };
+    const o = resolveFixtureOrder(p);
+    expect(o.bulbs).toBe(10);
+    expect(o.bulbsAuto).toBe(2);
+    expect(o.bulbsManual).toBe(true);
+    expect(o.lampModel).toBe("E27 LED 9W");
+  });
+
+  it("nolla on kelvollinen käsin asetettu määrä (ei pudota takaisin laskettuun)", () => {
+    const p = withOrder();
+    p.fixtureOrder = { bulbsNeeded: 0 };
+    const o = resolveFixtureOrder(p);
+    expect(o.bulbs).toBe(0);
+    expect(o.bulbsManual).toBe(true);
+  });
+
+  it("asiakkaan hinnalla laskettu summa käyttää efektiivistä määrää", () => {
+    const p = withOrder();
+    p.fixtureQuote = { bulbPriceCents: 450, doorPriceCents: 1200, at: 1 };
+    // 2 polttimoa × 4,50 € + 1 ovi × 12,00 € = 21,00 €
+    expect(resolveFixtureOrder(p).quotedTotalCents).toBe(2100);
+  });
+
+  it("ovihinta lasketaan OVEA kohti, ei tarvikkeita kohti", () => {
+    const p = withOrder();
+    // Neljä ovea tehtävänä, hinta 15 € / ovi → 60 €. Materiaali on vapaa
+    // teksti eikä vaikuta laskentaan lainkaan.
+    p.fixtureOrder = { doorsNeeded: 4, doorMaterial: "EPDM D-tiiviste" };
+    p.fixtureQuote = { doorPriceCents: 1500, at: 1 };
+    const o = resolveFixtureOrder(p);
+    expect(o.doorCount).toBe(4);
+    expect(o.doorMaterial).toBe("EPDM D-tiiviste");
+    expect(o.quotedTotalCents).toBe(6000);
+  });
+
+  it("ilman hintaa summaa ei ole (nolla olisi eri väite kuin ei mitään)", () => {
+    expect(resolveFixtureOrder(withOrder()).quotedTotalCents).toBeNull();
+    const p = withOrder();
+    p.fixtureQuote = { note: "Palataan asiaan", at: 1 };
+    expect(resolveFixtureOrder(p).quotedTotalCents).toBeNull();
+  });
+
+  it("pelkkä viesti ilman hintoja on kelvollinen ehdotus", () => {
+    expect(sanitizeFixtureQuote({ note: "Kysytään taloyhtiöltä", at: 5 })).toMatchObject({ note: "Kysytään taloyhtiöltä" });
+  });
+
+  it("tyhjä ehdotus pudotetaan kokonaan", () => {
+    expect(sanitizeFixtureQuote({ note: "   ", at: 5 })).toBeNull();
+    expect(sanitizeFixtureQuote({})).toBeNull();
+  });
+
+  it("negatiivinen hinta pudotetaan, ylisuuri leikataan", () => {
+    const q = sanitizeFixtureQuote({ bulbPriceCents: -500, doorPriceCents: 9_999_999, at: 1 })!;
+    expect(q.bulbPriceCents).toBeUndefined();
+    expect(q.doorPriceCents).toBe(200_000);
+  });
+
+  it("nolla on kelvollinen hinta (veloituksetta)", () => {
+    expect(sanitizeFixtureQuote({ bulbPriceCents: 0, at: 1 })?.bulbPriceCents).toBe(0);
+  });
+
+  it("tyhjä ostotieto pudotetaan, tekstit trimmataan", () => {
+    expect(sanitizeFixtureOrder({ lampModel: "   " })).toBeNull();
+    expect(sanitizeFixtureOrder({ lampModel: "  E27  " })).toEqual({ lampModel: "E27" });
+  });
+
+  it("kalusteeton keikka ei saa tilauskenttiä sanitoinnissa", () => {
+    const clean = sanitizeProjectData(emptyProjectData());
+    expect("fixtureOrder" in clean).toBe(false);
+    expect("fixtureQuote" in clean).toBe(false);
+  });
+
+  it("ovien kerrosjakauma laskee tehdyt ja tekemättömät", () => {
+    expect(computeDoorFloorStats(withOrder())).toEqual([{ floor: "1", total: 2, done: 1, open: 1 }]);
+  });
+});
+
+
+describe("laskuri lupaa vain sen mitä kartalle on merkitty", () => {
+  it("merkitsemätön lamppu ei ole missään luvussa — ei edes tarkastamattomissa", () => {
+    const p = emptyProjectData();
+    p.building.floors = ["1"];
+    p.lamps = { "1": [{ key: "1#a", x: 1, y: 1 }, { key: "1#b", x: 2, y: 2 }] };
+    p.lampConditions = { "1#a": "toimiva" };
+
+    const inv = computeLampInventory(p);
+    // Kaksi merkittyä: yksi tarkastettu, yksi ei. Kiinteistössä voi olla
+    // kymmeniä muita — ne EIVÄT saa näkyä minään lukuna.
+    expect(inv.total).toBe(2);
+    expect(inv.unchecked).toBe(1);
+    expect(inv.checked).toBe(1);
+    expect(inv.total).toBe(inv.byFloor.reduce((n, r) => n + r.total, 0));
+  });
+
+  it("kaikki luvut summautuvat merkittyjen määrään, eivät mihinkään suurempaan", () => {
+    const p = emptyProjectData();
+    p.building.floors = ["1", "2"];
+    p.lamps = {
+      "1": [{ key: "1#a", x: 1, y: 1 }, { key: "1#b", x: 2, y: 2 }, { key: "1#c", x: 3, y: 3 }],
+      "2": [{ key: "2#a", x: 4, y: 4 }],
+    };
+    p.lampStatuses = { "1#a": "vaihdettu" };
+    p.lampChangedBy = { "1#a": { by: "jani", ts: 1 } };
+    p.lampConditions = { "1#b": "rikki", "1#c": "toimiva" };
+
+    const inv = computeLampInventory(p);
+    expect(inv.fixed + inv.needsBulbs + inv.working + inv.unchecked).toBe(inv.total);
+    expect(inv.total).toBe(4);
+    // "Kunnossa" ei voi ylittää merkittyjen määrää.
+    expect(inv.functional).toBeLessThanOrEqual(inv.total);
+    expect(inv.functionalPct).toBeLessThanOrEqual(100);
+  });
+
+  it("kartoittamaton keikka näyttää nollaa, ei tyhjää lupausta", () => {
+    const p = emptyProjectData();
+    p.doors = { "1": [{ key: "1#d", x: 1, y: 1 }] };
+    const inv = computeLampInventory(p);
+    expect(inv.total).toBe(0);
+    expect(inv.needsBulbs).toBe(0);
+    expect(inv.functionalPct).toBe(0);
   });
 });

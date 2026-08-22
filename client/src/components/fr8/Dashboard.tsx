@@ -2,12 +2,12 @@
  * FR8 projektinäkymä — overview dashboard (ported from fr8-ikkunat prototype).
  * Adds a per-worker "TEKIJÄT" strip (window counts + €/h optimisation).
  */
-import { allPoints, computeDealBilling, checkWindowAttribution, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, type ProjectData, type WindowStatus, type WorkerStat, type FixedDeal, type LampStatus, type LampCondition, type DoorStatus } from "@shared/project";
+import { allPoints, computeDealBilling, checkWindowAttribution, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, type ProjectData, type WindowStatus, type WorkerStat, type FixedDeal, type LampStatus, type LampCondition, type DoorStatus, type FixtureOrder } from "@shared/project";
 import { computeP2Billing, p2FounderOpts } from "@shared/p2";
 import type { GigBillingState } from "@/lib/api";
 import { dashboardPhase } from "@/lib/dashboard-phase";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Section from "./Section";
 import FixturePanel from "./FixturePanel";
 import Toggle from "./Toggle";
@@ -98,6 +98,8 @@ interface Props {
   onSetLampNote?: (key: string, text: string) => void;
   onSetDoorStatus?: (key: string, status: DoorStatus) => void;
   onSetDoorNote?: (key: string, text: string) => void;
+  /** Ostotieto (lampun malli, ostettava määrä) — `FixturePanel`in ostoslohko. */
+  onSetFixtureOrder?: (patch: Partial<FixtureOrder>) => void;
 }
 
 function fmt(n: number) { return Math.round(n).toLocaleString("fi-FI"); }
@@ -166,7 +168,7 @@ function RedFold({ label, value, children }: { label: string; value?: string; ch
   );
 }
 
-export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot, founderInvoiceSlot, gigBilling, workerLaborP2Cents, workerOpenP1Cents, onGoToMaksut, p2Slot, settingsSlot, onSetLampStatus, onSetLampCondition, onSetLampNote, onSetDoorStatus, onSetDoorNote }: Props) {
+export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot, founderInvoiceSlot, gigBilling, workerLaborP2Cents, workerOpenP1Cents, onGoToMaksut, p2Slot, settingsSlot, onSetLampStatus, onSetLampCondition, onSetLampNote, onSetDoorStatus, onSetDoorNote, onSetFixtureOrder }: Props) {
   const m = useIsMobile();
   const [editId, setEditId] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
@@ -362,10 +364,13 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   // Lamput — sama tekijälista kuin ikkunoilla, mutta ei rahaa. Osio piirretään
   // vain kun keikalla on ylipäätään lamppuja merkattuna, joten lamputtomalla
   // keikalla dash näyttää täysin samalta kuin ennen.
-  const lampTotals = computeLampTotals(project);
-  const lampWorkerStats = computeLampWorkerStats(project);
-  const doorTotals = computeDoorTotals(project);
-  const doorWorkerStats = computeDoorWorkerStats(project);
+  // Muistissa, koska dash renderöityy 30 s välein kellon takia (`now`) ja lisäksi
+  // jokaisesta avaamattomasta kortista. Jokainen näistä käy kaikki kartan lamput
+  // ja ovet läpi, eikä yksikään niistä riipu kellosta.
+  const lampTotals = useMemo(() => computeLampTotals(project), [project]);
+  const lampWorkerStats = useMemo(() => computeLampWorkerStats(project), [project]);
+  const doorTotals = useMemo(() => computeDoorTotals(project), [project]);
+  const doorWorkerStats = useMemo(() => computeDoorWorkerStats(project), [project]);
 
   // Founders' combined earnings — shown as the collapsed summary on the
   // "PERUSTAJIEN ANSIOT" bar so the headline figure is glanceable while folded.
@@ -768,6 +773,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
           onSetLampNote={onSetLampNote}
           onSetDoorStatus={onSetDoorStatus}
           onSetDoorNote={onSetDoorNote}
+          onSetFixtureOrder={onSetFixtureOrder}
         />
 
         {/* Collapsible "dropdown bar" sections — everything below the hero folds

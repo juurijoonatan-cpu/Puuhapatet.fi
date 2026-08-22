@@ -6,11 +6,12 @@
  */
 import { useState, useRef, useEffect, useMemo } from "react";
 import type { ProjMarksData, WindowStatus, ProjCustomMark, ProjMapNote, ProjNoteKind, ProjActiveZone, ProjWindowObservation, FixedDeal, ProjBuilding, LampStatus, LampCondition, ProjLampMark, ProjFixtureNote, DoorStatus, ProjDoorMark } from "@shared/project";
-import { NOTE_KINDS, planImageUrl, planRenderOf, hasAnyPlan, floorLabel, MAX_FIXTURE_NOTE_LEN, MAX_DOOR_LABEL_LEN } from "@shared/project";
+import { NOTE_KINDS, planImageUrl, planRenderOf, hasAnyPlan, floorLabel, lampBucket, MAX_FIXTURE_NOTE_LEN, MAX_DOOR_LABEL_LEN } from "@shared/project";
 import type { P2Offer, P2NumberingInput } from "@shared/p2";
 import { P2_PRICE_PRESETS_CENTS, MAX_P2_NOTE_LEN, p2NumbersByFloor } from "@shared/p2";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAuthedImage } from "@/lib/authed-image";
+import { STAR_CLIP } from "@/lib/fixture-marks";
 
 const CIRC_S = 2 * Math.PI * 17; // mini ring
 
@@ -19,16 +20,29 @@ const CIRC_S = 2 * Math.PI * 17; // mini ring
 // plan image only, never the dots layer, so interior markers stay fully visible.
 const PLAN_CROP = "inset(2%)";
 
-/** Viisisakarainen tähti, CSS clip-pathina — lamppupisteiden merkki kartalla,
- *  jotta ne erottuvat ikkunoiden pyöreistä pisteistä yhdellä silmäyksellä. */
-const STAR_CLIP = "polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)";
 
-/** Lampun väri: vaihdettu = vihreä, rikki = punainen, muuten amber. Rikki
- *  voittaa vaihtamattomuuden, koska se on se tieto joka vaatii toimenpiteen. */
+/**
+ * Lampun väri — NELJÄ tilaa, sama järjestys kuin raportin ämpärit
+ * (`lampBucket`): vaihdettu voittaa kunnon, rikki voittaa loput.
+ *
+ * "Toimiva" on tarkoituksella HARMAA eikä vihreä: se tarkoittaa "käyty,
+ * ei tehtävää", ja kartan pitää nostaa esiin se mikä vaatii työtä. Kolme
+ * kirkasta väriä kolmelle toimenpiteelle ja yksi vaimea "ei mitään" lukee
+ * yhdellä silmäyksellä; neljä kirkasta ei lukisi.
+ */
 function lampRgb(status: LampStatus, condition?: LampCondition): string {
-  if (status === "vaihdettu") return "124,224,166";
-  if (condition === "rikki") return "255,116,116";
-  return "255,196,90";
+  if (status === "vaihdettu") return "124,224,166";  // vaihdettu — me korjasimme
+  if (condition === "rikki") return "255,116,116";   // rikki — ostettava
+  if (condition === "toimiva") return "150,155,165"; // toimiva — ei tehtävää
+  return "255,196,90";                                // ei tarkastettu
+}
+
+/** Lampun tila sanoina. Väri ei kanna merkitystä yksin — ks. `LampFloorChart`. */
+function lampStateLabel(status: LampStatus, condition?: LampCondition): string {
+  if (status === "vaihdettu") return "Vaihdettu";
+  if (condition === "rikki") return "Ei toimi";
+  if (condition === "toimiva") return "Toimii";
+  return "Ei tarkastettu";
 }
 
 /** Oven väri: tehty = vihreä, tekemättä = sininen (ei amber, jottei sekoitu
@@ -455,6 +469,21 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
   const authedPlan = useAuthedImage(planAuthed ? planHref : null);
   const planSrc = planAuthed ? authedPlan.src : planHref;
   const [filter, setFilter] = useState<"all" | "unwashed" | "progress" | "done">("all");
+  /**
+   * KERROKSET (näytettävät merkkilajit).
+   *
+   * Kartalla on nyt neljä merkkilajia päällekkäin, ja niiden yhteinen tiheys
+   * on se mikä tekee uuden pisteen osumasta vaikeaa. Tämä on tavallinen
+   * karttatasojen näkyvyys: valitse mitä katsot. EI suodatin tilan päälle —
+   * `filter` hoitaa ikkunan pesutilan, tämä hoitaa merkkilajin.
+   *
+   * Ei tallenneta selaimeen: piilotettu taso jonka on unohtanut piilottaneensa
+   * näyttää rikkinäiseltä kartalta seuraavalla käynnillä. Palkin nappi kertoo
+   * aina kun jotain on piilossa.
+   */
+  const [layers, setLayers] = useState({ p1: true, p2: true, lamps: true, doors: true, notes: true });
+  const [layersOpen, setLayersOpen] = useState(false);
+  const layersHidden = Object.values(layers).filter((v) => !v).length;
   const [editMode, setEditMode] = useState(false);
   const [placeMode, setPlaceMode] = useState<1 | 2 | "del" | "note" | "zone" | "lamp" | "door" | null>(null);
   const [noteKind, setNoteKind] = useState<ProjNoteKind>("ladder");
@@ -630,6 +659,32 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
   const points = onToggleWindowLock
     ? allFloorPoints
     : allFloorPoints.filter((pt) => !lockedKeySet.has(pt.key));
+  /**
+   * NÄKYVÄT pisteet. Kerrosvalinta (`layers`) koskee VAIN piirtoa: kaikki
+   * laskurit alla käyttävät yhä `points`ia, joten palkin luvut eivät muutu kun
+   * jokin taso piilotetaan. Piilotettu taso on katselusuodatin, ei tila.
+   */
+  const visiblePoints = points.filter((pt) => (pt.p === 1 ? layers.p1 : layers.p2));
+
+  /**
+   * PAIKANNUSFOKUS. Uuden pisteen osuminen oikeaan kohtaan on vaikeaa kun
+   * kartalla on jo satoja merkkejä päällekkäin. Kun jotain lisätään, kaikki
+   * MUUT merkkilajit himmenevät pois tieltä ja lakkaavat ottamasta
+   * napautuksia vastaan — pohjapiirros jää näkyviin, merkit eivät ole tiellä.
+   * Poistotila (`del`) on tarkoituksella ulkopuolella: siinä pitää nähdä ja
+   * osua kaikkeen.
+   */
+  const placingLayer: "window" | "lamp" | "door" | "note" | null =
+    placeMode === 1 || placeMode === 2 ? "window"
+    : placeMode === "lamp" ? "lamp"
+    : placeMode === "door" ? "door"
+    : placeMode === "note" ? "note"
+    : null;
+  const dimOther = (layer: "window" | "lamp" | "door" | "note"): React.CSSProperties | null =>
+    placingLayer && placingLayer !== layer
+      ? { opacity: 0.1, pointerEvents: "none", transition: "opacity .18s" }
+      : null;
+
   // Keltaisten numerot samasta funktiosta kuin asiakkaan näkymä ja laskun
   // erittely — kartta ei laske niitä omalla tavallaan.
   const p2Numbers = useMemo(
@@ -719,6 +774,29 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
   const activeNoteObj = activeNote ? floorNotes.find((n) => n.key === activeNote) ?? null : null;
   const lampPts: ProjLampMark[] = lamps?.[floor] || [];
   const activeLampPt = activeLamp ? lampPts.find((l) => l.key === activeLamp) ?? null : null;
+  /**
+   * TÄMÄN KERROKSEN lamppujakauma. Sama neljän ämpärin sääntö kuin raportissa
+   * (`lampBucket`), jottei kartta ja dash voi olla eri mieltä samasta
+   * kerroksesta. Näkyy palkissa sirunä, koska "montako tästä kerroksesta vielä
+   * puuttuu" on se kysymys joka syntyy juuri kun karttaa katsotaan.
+   */
+  const floorLamps = useMemo(() => {
+    const pts = lamps?.[floor] || [];
+    const tally = { total: pts.length, changed: 0, broken: 0, working: 0, unchecked: 0 };
+    for (const l of pts) {
+      const b = lampBucket({
+        floor, key: l.key, x: l.x, y: l.y,
+        status: lampStatuses?.[l.key] || "ei",
+        condition: lampConditions?.[l.key],
+      });
+      if (b === "vaihdettu") tally.changed += 1;
+      else if (b === "rikki") tally.broken += 1;
+      else if (b === "toimiva") tally.working += 1;
+      else tally.unchecked += 1;
+    }
+    return tally;
+  }, [lamps, lampStatuses, lampConditions, floor]);
+
   const doorPts: ProjDoorMark[] = doors?.[floor] || [];
   const activeDoorPt = activeDoor ? doorPts.find((d) => d.key === activeDoor) ?? null : null;
 
@@ -1022,6 +1100,15 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
     onAddCustomMark(floor, +x.toFixed(2), +y.toFixed(2), placeMode as 1 | 2);
   }
 
+  /** Sulje kaikki pistepopoverit. Käytössä siellä missä pisteet voivat kadota
+   *  näkyvistä alta (tason piilotus) — auki jäänyt popover näyttäisi rikkinäiseltä. */
+  function closeAllPopovers() {
+    setActiveOrb(null); setOrbAnchor(null);
+    setActiveNote(null); setNoteAnchor(null);
+    setActiveLamp(null); setLampAnchor(null);
+    setActiveDoor(null); setDoorAnchor(null);
+  }
+
   function toggleEdit() {
     setEditMode((e) => !e);
     setPlaceMode(null); setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null); setActiveLamp(null); setActiveDoor(null); setDragging(null);
@@ -1178,6 +1265,91 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
             <button key={fi.id} onClick={() => { setFilter(fi.id); setActiveOrb(null); }} style={filterBtnStyle(filter === fi.id)}>{fi.label}</button>
           ))}
         </div>
+
+        {/* NÄYTÄ — karttatasojen näkyvyys. Yksi nappi ja pieni lista, ei viittä
+            lisäsirua palkkiin: oletustila on "kaikki näkyy", eikä oletusta
+            tarvitse selittää joka kerta. Nappi kertoo aina kun jotain on
+            piilossa, jottei kartta näytä tyhjentyneen itsestään. */}
+        <div style={{ position: "relative" }}>
+          <button
+            onClick={() => setLayersOpen((v) => !v)}
+            title="Valitse mitkä merkit kartalla näkyvät"
+            style={{
+              display: "flex", alignItems: "center", gap: "7px", padding: "7px 11px", borderRadius: "11px", cursor: "pointer",
+              border: `1px solid ${layersHidden ? "rgba(255,196,90,0.4)" : "rgba(255,255,255,0.12)"}`,
+              background: layersHidden ? "rgba(255,196,90,0.12)" : "rgba(255,255,255,0.04)",
+              color: layersHidden ? "#ffce28" : "rgba(255,255,255,0.62)",
+              fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px", fontWeight: 600,
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 2 9 5-9 5-9-5 9-5Z" /><path d="m3 12 9 5 9-5" /><path d="m3 17 9 5 9-5" /></svg>
+            {layersHidden ? `Näytä · ${layersHidden} piilossa` : "Näytä"}
+          </button>
+          {layersOpen && (
+            <>
+              <div onClick={() => setLayersOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 44 }} />
+              <div data-fr8-pop="menu" style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 46, width: "196px", padding: "7px", background: "rgba(16,16,20,0.94)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: "14px", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 20px 50px rgba(0,0,0,0.7)" }}>
+                <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.4)", padding: "3px 8px 7px" }}>NÄYTÄ KARTALLA</div>
+                {([
+                  ["p1", "Punaiset ikkunat", "rgb(255,140,178)", "dot"],
+                  ["p2", "Keltaiset ikkunat", "rgb(240,226,150)", "dot"],
+                  ["lamps", "Lamput", "rgb(255,196,90)", "star"],
+                  ["doors", "Ovet", "rgb(156,193,255)", "door"],
+                  ["notes", "Merkinnät", "rgba(255,255,255,0.7)", "dot"],
+                ] as [keyof typeof layers, string, string, "dot" | "star" | "door"][]).map(([id, label, color, shape]) => {
+                  const on = layers[id];
+                  return (
+                    <button key={id} className="status-opt-btn"
+                      onClick={() => {
+                        // Piilotetun tason piste jättäisi popoverinsa auki
+                        // tyhjän kohdan päälle — sulje ne kaikki tason mukana.
+                        closeAllPopovers();
+                        setLayers((cur) => ({ ...cur, [id]: !cur[id] }));
+                      }}
+                      style={{ opacity: on ? 1 : 0.45 }}>
+                      {shape === "star" ? (
+                        <span aria-hidden style={{ width: "11px", height: "11px", flexShrink: 0, display: "inline-block", clipPath: STAR_CLIP, background: color }} />
+                      ) : shape === "door" ? (
+                        <span style={{ width: "11px", flexShrink: 0, display: "flex", justifyContent: "center" }}><DoorGlyph rgb="156,193,255" size={11} glow={false} /></span>
+                      ) : (
+                        <span aria-hidden style={{ width: "11px", height: "11px", flexShrink: 0, borderRadius: "50%", background: color }} />
+                      )}
+                      <span style={{ flex: 1, textAlign: "left" }}>{label}</span>
+                      <span style={{ fontSize: "11px", color: on ? "#7CE0A6" : "rgba(255,255,255,0.3)" }}>{on ? "✓" : "○"}</span>
+                    </button>
+                  );
+                })}
+                {/* Yksi napautus takaisin oletukseen — tärkeämpi kuin miltä
+                    kuulostaa: piiloon jäänyt taso on helppo unohtaa. */}
+                <button className="status-opt-btn"
+                  onClick={() => { closeAllPopovers(); setLayers({ p1: true, p2: true, lamps: true, doors: true, notes: true }); }}
+                  style={{ marginTop: "4px", borderTop: "1px solid rgba(255,255,255,0.08)", borderRadius: 0, color: "rgba(255,255,255,0.7)" }}>
+                  <span style={{ flex: 1, textAlign: "left" }}>Näytä kaikki</span>
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* TÄMÄN KERROKSEN LAMPUT — kolme lukua siitä mitä tällä kerroksella on
+            jäljellä. Vain kun kerroksella oikeasti on lamppuja ja taso on
+            näkyvissä, joten lamputon keikka ei näe tätä lainkaan.
+            Väri ei kanna merkitystä yksin: jokaisella luvulla on sana. */}
+        {layers.lamps && floorLamps.total > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: "9px", padding: "6px 11px", borderRadius: "11px", border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.04)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: "12px" }}>
+            <span aria-hidden style={{ width: "11px", height: "11px", flexShrink: 0, display: "inline-block", clipPath: STAR_CLIP, background: "rgba(255,255,255,0.5)" }} />
+            {([
+              [floorLamps.broken, "ei toimi", "rgb(255,116,116)"],
+              [floorLamps.unchecked, "tarkastamatta", "rgb(255,196,90)"],
+              [floorLamps.changed + floorLamps.working, "kunnossa", "rgb(124,224,166)"],
+            ] as [number, string, string][]).map(([n, label, color]) => (
+              <span key={label} style={{ display: "inline-flex", alignItems: "baseline", gap: "4px", color: n > 0 ? color : "rgba(255,255,255,0.32)" }}>
+                <b style={{ fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{n}</b>
+                <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.45)" }}>{label}</span>
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* Active work zone chip — jump to the floor where work is happening now. */}
         {activeZone && (
@@ -1400,7 +1572,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                   🎯
                 </span>
               )}
-              {points.map((pt) => {
+              {visiblePoints.map((pt) => {
                 const status = statuses[pt.key] || "ei";
                 const isDragging = dragging === pt.key;
                 // Lukittu näkyy vain johtajalle (tekijältä se on jo suodatettu
@@ -1413,6 +1585,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                     style={{
                       ...orbStyle(pt, status, isDragging),
                       ...(locked ? { opacity: 0.34, filter: "grayscale(1)", borderStyle: "dashed" } : null),
+                      ...dimOther("window"),
                     }}
                     onClick={(e) => onOrbClick(pt, e)}
                     onPointerDown={(e) => onOrbPointerDown(pt, e)}
@@ -1430,7 +1603,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                   pisteitä (pesemättömät, toisen prioriteetin), joten "onko tuo
                   piilotettu vai ei" jäi arvailuksi. Merkki on yksiselitteinen
                   ja näkyy vain johtajalle — tekijältä koko piste on poissa. */}
-              {onToggleWindowLock && points.filter((pt) => lockedKeySet.has(pt.key)).map((pt) => (
+              {onToggleWindowLock && visiblePoints.filter((pt) => lockedKeySet.has(pt.key)).map((pt) => (
                 <span
                   key={`lock-${pt.key}`}
                   aria-hidden
@@ -1453,7 +1626,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                   Merkki pisteen päälle, ei uusi väri: tämä on asiakkaan toive,
                   ei ikkunan tila, ja ne kaksi eivät saa näyttää samalta. Ilman
                   tätä vastaus jäisi järjestelmän sisään eikä ohjaisi työtä. */}
-              {scopeVotes && points.map((pt) => {
+              {scopeVotes && visiblePoints.map((pt) => {
                 const v = pt.p === 2 ? scopeVotes[pt.key] : undefined;
                 if (!v) return null;
                 const yes = v === "yes";
@@ -1502,7 +1675,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                   asiakas hyväksynyt, sininen = odottaa hyväksyntää. */}
 
               {/* Observation badges — a small marker on windows that carry a note */}
-              {points.map((pt) => observations?.[pt.key] ? (
+              {visiblePoints.map((pt) => observations?.[pt.key] ? (
                 <span key={`obs-${pt.key}`} aria-hidden
                   style={{ position: "absolute", left: `${pt.x}%`, top: `${pt.y}%`, transform: "translate(3px, -13px)", pointerEvents: "none", width: "13px", height: "13px", borderRadius: "50%", background: "#1b1b1f", border: "1.5px solid #7CE0A6", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "7px", lineHeight: 1, zIndex: 5 }}>
                   💬
@@ -1510,7 +1683,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
               ) : null)}
 
               {/* Navigation markers / notes layer */}
-              {floorNotes.map((n) => (
+              {(layers.notes ? floorNotes : []).map((n) => (
                 <button key={n.key}
                   onClick={(e) => openNote(n, e)}
                   title={`${NOTE_KINDS[n.kind].label}${n.text ? " — " + n.text : ""}`}
@@ -1523,6 +1696,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                     boxShadow: "0 2px 10px rgba(0,0,0,0.55)",
                     cursor: editMode && placeMode === "del" ? "pointer" : "pointer",
                     zIndex: 7, touchAction: "none",
+                    ...dimOther("note"),
                   }}
                 >
                   {NOTE_KINDS[n.kind].glyph}
@@ -1533,20 +1707,21 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                   Lisäystilan aikana ne ohittavat klikkaukset (pointerEvents: none),
                   jotta uuden lampun paikannus ei osu vahingossa vanhan päälle —
                   sama sääntö kuin ikkunapisteillä lisäystilassa. */}
-              {lampPts.map((lp) => {
+              {(layers.lamps ? lampPts : []).map((lp) => {
                 const changed = (lampStatuses?.[lp.key] || "ei") === "vaihdettu";
                 const rgb = lampRgb(changed ? "vaihdettu" : "ei", lampConditions?.[lp.key]);
                 return (
                   <button key={lp.key}
                     data-fr8-dot
                     onClick={(e) => onLampClick(lp, e)}
-                    title={`Lamppu · ${changed ? "Vaihdettu" : "Ei vaihdettu"}${lampConditions?.[lp.key] === "rikki" ? " · Ei toimi" : lampConditions?.[lp.key] === "toimiva" ? " · Toimii" : ""}${lampNotes?.[lp.key]?.text ? ` · ${lampNotes[lp.key]!.text}` : ""}`}
+                    title={`Lamppu · ${lampStateLabel(changed ? "vaihdettu" : "ei", lampConditions?.[lp.key])}${lampNotes?.[lp.key]?.text ? ` · ${lampNotes[lp.key]!.text}` : ""}`}
                     style={{
                       position: "absolute", left: `${lp.x}%`, top: `${lp.y}%`,
                       transform: "translate(-50%,-50%)", width: "18px", height: "18px",
                       padding: 0, border: "none", background: "transparent", cursor: "pointer",
                       pointerEvents: (editMode && placeMode === "lamp") ? "none" : "auto",
                       zIndex: 6, touchAction: "none",
+                      ...dimOther("lamp"),
                     }}
                   >
                     <span aria-hidden style={{
@@ -1565,7 +1740,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
 
               {/* Ovet — omana kerroksenaan lamppujen rinnalla. Sama
                   lisäystilan ohitus kuin muillakin merkeillä. */}
-              {doorPts.map((dr) => {
+              {(layers.doors ? doorPts : []).map((dr) => {
                 const st: DoorStatus = doorStatuses?.[dr.key] || "ei";
                 const rgb = doorRgb(st);
                 return (
@@ -1580,6 +1755,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                       display: "flex", alignItems: "center", justifyContent: "center",
                       pointerEvents: (editMode && placeMode === "door") ? "none" : "auto",
                       zIndex: 6, touchAction: "none",
+                      ...dimOther("door"),
                     }}
                   >
                     <DoorGlyph rgb={rgb} size={18} />

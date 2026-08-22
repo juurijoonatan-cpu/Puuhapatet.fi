@@ -31,7 +31,7 @@ import { join } from "path";
 const SRC = readFileSync(join(process.cwd(), "server/routes.ts"), "utf8");
 
 /** Serverin omistamat kentät ja se `stored?.x` -muoto jolla ne palautetaan. */
-const OWNED = ["p2", "guided", "settlement", "scope"] as const;
+const OWNED = ["p2", "guided", "settlement", "scope", "fixtureQuote"] as const;
 
 /** `PATCH /api/jobs/:id/project` -käsittelijän runko. */
 function adminProjectPatchBody(): string {

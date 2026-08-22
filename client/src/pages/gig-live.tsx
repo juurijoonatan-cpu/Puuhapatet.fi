@@ -15,6 +15,7 @@ import { eur } from "@shared/gig";
 import { floorLabel } from "@shared/project";
 import GigContractSign from "@/components/GigContractSign";
 import CustomerFloorMap, { type P2CustomerActions, type ScopeCustomerState } from "@/components/CustomerFloorMap";
+import FixturesPanel from "@/components/customer/FixturesPanel";
 import CustomerProgressHero, { type HeroTile } from "@/components/CustomerProgressHero";
 import LoadingOrb from "@/components/LoadingOrb";
 import { downloadGigContract } from "@/lib/gig-contract-doc";
@@ -302,6 +303,20 @@ export default function GigLivePage() {
    * Palvelin päättää onko kysely käytössä (`scope !== null`), joten tässä ei
    * toisteta ehtoa yhteisökeikasta — yksi paikka jossa se ratkaistaan.
    */
+  /**
+   * Hintaehdotuksen tallennus. Palvelin palauttaa tuoreen kalustetilanteen,
+   * joka kirjoitetaan suoraan näkymään — niin asiakas näkee oman ehdotuksensa
+   * ja sen summan ilman että koko sivu haetaan uudestaan.
+   */
+  const saveFixtureQuote = async (body: { bulbPriceCents?: number; doorPriceCents?: number; note?: string }) => {
+    const res = await api.gigSetFixtureQuote(token, body);
+    if (res.ok && res.data) {
+      setData((cur) => (cur ? { ...cur, fixtures: res.data!.fixtures } : cur));
+      return null;
+    }
+    return res.error || "Tallennus ei onnistunut. Yritä hetken kuluttua uudelleen.";
+  };
+
   const scopeState: ScopeCustomerState | null = data.scope ? {
     votes: data.scope.votes,
     vote: async (key, answer) => {
@@ -574,6 +589,21 @@ export default function GigLivePage() {
           <Panel theme={T}>
             <p style={{ margin: "0 0 14px", ...label }}>Pohjapiirros</p>
             <CustomerFloorMap map={data.map} p2={p2} p2Actions={p2Live ? p2Actions : undefined} scope={scopeState} onLoadObservationImage={loadObservationImage} planUrlBase={api.planUrlBaseForGig(token)} theme={T} fixedDeal={data.isFixedDeal} />
+          </Panel>
+        )}
+
+        {/* LAMPUT JA OVET — kalustetilanne, ostettava määrä ja asiakkaan oma
+            hintaehdotus. Kartan JÄLKEEN: kartta kertoo missä, tämä kertoo
+            paljonko. Osio puuttuu kokonaan kun keikalla ei ole kalusteita. */}
+        {data.fixtures && (data.fixtures.lamps.total > 0 || data.fixtures.doors.total > 0) && (
+          <Panel theme={T}>
+            <p style={{ margin: "0 0 14px", ...label }}>Lamput ja ovet</p>
+            <FixturesPanel
+              fixtures={data.fixtures}
+              theme={T}
+              floorLabel={(f) => floorLabel(data.map?.building as any, f)}
+              onSaveQuote={saveFixtureQuote}
+            />
           </Panel>
         )}
 

@@ -6,7 +6,8 @@
  *
  *   1. LUVUT      — montako ei toimi, montako on korjattu, mikä on kunnossa.
  *   2. KERROKSET  — missä ne rikkinäiset ovat (`LampFloorChart`).
- *   3. OSTETTAVAA — malli ja määrä, ja asiakkaan hintaehdotus sen vieressä.
+ *   3. TYÖT      — montako vaihtoa, mitä tarviketta niihin menee, ja mitä
+ *                   asiakas maksaisi yhdestä vaihdosta.
  *   4. HUOMIOTA   — rivit jotka vaativat toimenpiteen, huomautus kirjoitettavissa
  *                   suoraan riviltä ilman kartalle menoa.
  *
@@ -127,7 +128,7 @@ export default function FixturePanel({
           tätä paneelia katsotaan — siitä tehdään kauppalista. */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(128px, 1fr))", gap: m ? T.space.sm : T.space.md, marginBottom: T.space.lg }}>
         {([
-          ["Ei toimi", `${inv.needsBulbs}`, "polttimoa ostettava", inv.needsBulbs > 0 ? T.tone.bad : T.text.muted],
+          ["Ei toimi", `${inv.needsBulbs}`, "vaihtoa tehtävänä", inv.needsBulbs > 0 ? T.tone.bad : T.text.muted],
           ["Vaihdettu", `${inv.fixed}`, "tähän mennessä", T.tone.goodSoft],
           ["Kunnossa", `${inv.functional}/${inv.checked}`, `tarkastetuista · ${Math.round(inv.functionalPct)} %`, T.text.primary],
           ["Tarkastamatta", `${inv.unchecked}`, `${inv.total} merkitystä lampusta`, inv.unchecked > 0 ? T.tone.warn : T.text.muted],
@@ -164,15 +165,18 @@ export default function FixturePanel({
         </div>
       )}
 
-      {/* 3. OSTETTAVAA. Määrä on LASKETTU oletuksena: käsin ylläpidetty luku
+      {/* 3. TYÖT. Määrä on LASKETTU oletuksena: käsin ylläpidetty luku
           vanhenisi joka kerta kun tekijä merkitsee uuden rikkinäisen. Johtaja
           voi silti korjata sen (varalamput, pakkauskoko), ja silloin näkymä
           sanoo että luku on hänen. */}
       <div style={{ ...inset, padding: T.space.lg, marginBottom: T.space.lg }}>
-        <div style={{ ...mono, color: T.text.faint, marginBottom: T.space.md }}>OSTETTAVAA</div>
+        <div style={{ ...mono, color: T.text.faint, marginBottom: T.space.md }}>TEHTÄVÄT TYÖT JA TARVIKKEET</div>
+        {/* Sama luku on samaan aikaan ostettavien tarvikkeiden määrä JA
+            vaihtotöiden määrä — jokainen rikkinäinen lamppu on yksi polttimo ja
+            yksi vaihto. Asiakkaan hinta koskee VAIHTOA, ei tarviketta. */}
         <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1fr auto", gap: T.space.md, alignItems: "end" }}>
           <label style={{ display: "block" }}>
-            <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Lampun malli</span>
+            <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Lampun malli — mitä kohteeseen menee</span>
             <input
               defaultValue={order.lampModel ?? ""}
               key={`lm-${order.lampModel ?? ""}`}
@@ -185,7 +189,7 @@ export default function FixturePanel({
             />
           </label>
           <div style={{ minWidth: 132 }}>
-            <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Kappaletta</span>
+            <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Vaihtoa</span>
             <input
               type="number" min={0}
               defaultValue={order.bulbs}
@@ -211,7 +215,7 @@ export default function FixturePanel({
         {doorT.total > 0 && (
           <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1fr auto", gap: T.space.md, alignItems: "end", marginTop: T.space.md }}>
             <label style={{ display: "block" }}>
-              <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Oviin menevä materiaali</span>
+              <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Oven tiiviste — mitä kohteeseen menee</span>
               <input
                 defaultValue={order.doorMaterial ?? ""}
                 key={`dm-${order.doorMaterial ?? ""}`}
@@ -224,7 +228,7 @@ export default function FixturePanel({
               />
             </label>
             <div style={{ minWidth: 132 }}>
-              <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Ovea</span>
+              <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Vaihtoa</span>
               <input
                 type="number" min={0}
                 defaultValue={order.doorCount}
@@ -261,12 +265,12 @@ export default function FixturePanel({
           <div style={{ marginTop: T.space.md, padding: `${T.space.sm + 2}px ${T.space.md}px`, borderRadius: T.radius.sm, background: T.tone.infoBg, border: `1px solid ${T.tone.infoBorder}` }}>
             <div style={{ ...mono, color: "rgba(190,205,255,0.85)", marginBottom: T.space.xs }}>ASIAKKAAN HINTAEHDOTUS · {ago(order.quote.at)} sitten</div>
             <div style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.secondary }}>
-              {order.quote.bulbPriceCents != null && <>Lamppu <b style={{ color: T.text.primary, fontWeight: 700 }}>{eurFromCents(order.quote.bulbPriceCents)}</b>/kpl</>}
-              {order.quote.bulbPriceCents != null && order.quote.doorPriceCents != null && " · "}
-              {order.quote.doorPriceCents != null && <>Ovi <b style={{ color: T.text.primary, fontWeight: 700 }}>{eurFromCents(order.quote.doorPriceCents)}</b>/kpl</>}
+              {order.quote.lampWorkPriceCents != null && <>Lampun vaihto <b style={{ color: T.text.primary, fontWeight: 700 }}>{eurFromCents(order.quote.lampWorkPriceCents)}</b>/kpl</>}
+              {order.quote.lampWorkPriceCents != null && order.quote.doorWorkPriceCents != null && " · "}
+              {order.quote.doorWorkPriceCents != null && <>Tiivisteen vaihto <b style={{ color: T.text.primary, fontWeight: 700 }}>{eurFromCents(order.quote.doorWorkPriceCents)}</b>/kpl</>}
               {order.quotedTotalCents != null && (
                 <span style={{ display: "block", marginTop: 2, color: T.tone.info }}>
-                  Yhteensä tällä hinnalla <b style={{ fontWeight: 700 }}>{eurFromCents(order.quotedTotalCents)}</b>
+                  Työt yhteensä tällä hinnalla <b style={{ fontWeight: 700 }}>{eurFromCents(order.quotedTotalCents)}</b>
                 </span>
               )}
             </div>

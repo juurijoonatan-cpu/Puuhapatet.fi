@@ -115,8 +115,8 @@ export interface FixtureOrder {
   lampModel?: string;
   /** Käsin asetettu ostettava määrä. Puuttuva = laskettu rikkinäisten määrä. */
   bulbsNeeded?: number;
-  /** Mitä oviin menee, esim. "EPDM D-tiiviste, valkoinen". Vapaa teksti, koska
-   *  ovipiste on yleinen tehtäväpiste eikä aina tiivistys. */
+  /** Mitä oviin menee, esim. "EPDM D-tiiviste, valkoinen". Saatetieto: kertoo
+   *  mitä kohteeseen asennetaan, ei vaikuta hintaan. */
   doorMaterial?: string;
   /** Käsin asetettu ovimäärä. Puuttuva = laskettu tekemättömien ovien määrä. */
   doorsNeeded?: number;
@@ -124,13 +124,19 @@ export interface FixtureOrder {
   note?: string;
 }
 
-/** Asiakkaan hintaehdotus. Ei sitova tarjous, vaan asiakkaan oma ehdotus. */
+/**
+ * Asiakkaan hintaehdotus. Ei sitova tarjous, vaan asiakkaan oma ehdotus.
+ *
+ * HINTA ON TYÖSTÄ, EI TARVIKKEESTA. Asiakas ei osta meiltä polttimoa vaan sen
+ * vaihtamisen, eikä tiivistettä vaan sen vaihtamisen — molemmat per kohde.
+ * Tarvikkeen malli (`lampModel`, `doorMaterial`) on saatetieto siitä mitä
+ * kohteeseen menee, eikä se vaikuta hintaan lainkaan.
+ */
 export interface FixtureQuote {
-  /** Asiakkaan ehdotus per lamppu (senttiä). */
-  bulbPriceCents?: number;
-  /** Asiakkaan ehdotus per OVI (senttiä) — ei per tiiviste tai muu tarvike:
-   *  ovi on se yksikkö jonka asiakas laskee ja josta hinta sovitaan. */
-  doorPriceCents?: number;
+  /** Asiakkaan ehdotus yhden lampun VAIHTAMISESTA (senttiä). */
+  lampWorkPriceCents?: number;
+  /** Asiakkaan ehdotus yhden oven TIIVISTEEN VAIHTAMISESTA (senttiä). */
+  doorWorkPriceCents?: number;
   /** Vapaa viesti hinnoista. */
   note?: string;
   /** Milloin asiakas viimeksi tallensi ehdotuksen. */
@@ -140,7 +146,8 @@ export interface FixtureQuote {
 export const MAX_FIXTURE_MODEL_LEN = 80;
 export const MAX_FIXTURE_ORDER_NOTE_LEN = 300;
 export const MAX_FIXTURE_QUOTE_NOTE_LEN = 500;
-/** Yläraja yksikköhinnalle (2 000 €), jottei kirjoitusvirhe tee miljoonatarjousta. */
+/** Yläraja yhden vaihtotyön hinnalle (2 000 €), jottei kirjoitusvirhe tee
+ *  miljoonatarjousta. */
 export const MAX_FIXTURE_UNIT_PRICE_CENTS = 200_000;
 
 /**
@@ -1165,13 +1172,21 @@ export function computeDoorFloorStats(data: ProjectData): DoorFloorStat[] {
 }
 
 /**
- * OSTOLISTA — laskettu määrä, johtajan mahdollinen korjaus, ja asiakkaan hinta.
+ * TYÖLISTA — montako kohdetta, mitä niihin menee, ja mitä asiakas maksaisi.
  *
- * Määrä on LASKETTU oletuksena eikä käsin syötetty luku: kartta tietää jo
- * montako lamppua on rikki, ja käsin ylläpidetty luku ehtisi vanhentua joka
- * kerta kun tekijä merkitsee uuden rikkinäisen. Johtaja voi silti korjata sen
+ * YKSI LUKU, KAKSI KÄYTTÖÄ. `bulbs` on samaan aikaan ostettavien polttimoiden
+ * määrä JA vaihtotöiden määrä: jokainen rikkinäinen lamppu on yksi polttimo ja
+ * yksi vaihto. Sama pätee oviin. Siksi lukuja on yksi eikä kahta — kaksi lukua
+ * ehtisi erkaantua, eikä kumpikaan olisi sen jälkeen oikeassa.
+ *
+ * Määrä on LASKETTU oletuksena eikä käsin syötetty: kartta tietää jo montako
+ * lamppua on rikki, ja käsin ylläpidetty luku ehtisi vanhentua joka kerta kun
+ * tekijä merkitsee uuden rikkinäisen. Johtaja voi silti korjata sen
  * (varalamppuja, pakkauskoko), ja silloin `bulbsManual` kertoo että luku on
  * hänen — jottei näkymä väitä laskeneensa sitä.
+ *
+ * `quotedTotalCents` on TYÖN hinta: kohteiden määrä × asiakkaan ehdottama
+ * hinta per vaihto. Tarvikkeet eivät ole siinä mukana.
  */
 export interface ResolvedFixtureOrder {
   lampModel?: string;
@@ -1200,9 +1215,9 @@ export function resolveFixtureOrder(data: ProjectData): ResolvedFixtureOrder {
   const bulbs = bulbsManual ? Math.round(o.bulbsNeeded as number) : inv.needsBulbs;
   const doorCount = doorCountManual ? Math.round(o.doorsNeeded as number) : doorsOpen;
   const q = data.fixtureQuote;
-  const bulbCents = q?.bulbPriceCents ?? 0;
-  const doorCents = q?.doorPriceCents ?? 0;
-  const hasPrice = !!q && (q.bulbPriceCents != null || q.doorPriceCents != null);
+  const bulbCents = q?.lampWorkPriceCents ?? 0;
+  const doorCents = q?.doorWorkPriceCents ?? 0;
+  const hasPrice = !!q && (q.lampWorkPriceCents != null || q.doorWorkPriceCents != null);
   return {
     ...(o.lampModel ? { lampModel: o.lampModel } : {}),
     bulbs, bulbsAuto: inv.needsBulbs, bulbsManual,
@@ -1841,13 +1856,13 @@ export function sanitizeFixtureOrder(input: any): FixtureOrder | null {
 export function sanitizeFixtureQuote(input: any): FixtureQuote | null {
   if (!input || typeof input !== "object") return null;
   const out: FixtureQuote = { at: Number(input.at) || Date.now() };
-  const bulb = toUnitPriceCents(input.bulbPriceCents);
-  if (bulb !== undefined) out.bulbPriceCents = bulb;
-  const dp = toUnitPriceCents(input.doorPriceCents);
-  if (dp !== undefined) out.doorPriceCents = dp;
+  const lampWork = toUnitPriceCents(input.lampWorkPriceCents);
+  if (lampWork !== undefined) out.lampWorkPriceCents = lampWork;
+  const doorWork = toUnitPriceCents(input.doorWorkPriceCents);
+  if (doorWork !== undefined) out.doorWorkPriceCents = doorWork;
   const note = String(input.note ?? "").trim().slice(0, MAX_FIXTURE_QUOTE_NOTE_LEN);
   if (note) out.note = note;
-  const hasContent = out.bulbPriceCents != null || out.doorPriceCents != null || !!out.note;
+  const hasContent = out.lampWorkPriceCents != null || out.doorWorkPriceCents != null || !!out.note;
   return hasContent ? out : null;
 }
 

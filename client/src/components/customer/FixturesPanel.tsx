@@ -134,7 +134,7 @@ export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQu
       </p>
 
       {/* 2. KERROKSITTAIN. */}
-      {lamps.byFloor.length > 0 && (
+      {lamps.byFloor.length > 1 && (
         <div style={{ padding: 14, borderRadius: 12, background: T.fill, marginBottom: 18 }}>
           <LampFloorChart rows={lamps.byFloor} theme={chartTheme} title="Merkityt lamput kerroksittain" floorLabel={floorLabel} />
         </div>

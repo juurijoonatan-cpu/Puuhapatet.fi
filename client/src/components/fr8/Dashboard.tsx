@@ -7,7 +7,7 @@ import { computeP2Billing, p2FounderOpts } from "@shared/p2";
 import type { GigBillingState } from "@/lib/api";
 import { dashboardPhase } from "@/lib/dashboard-phase";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Section from "./Section";
 import FixturePanel from "./FixturePanel";
 import Toggle from "./Toggle";
@@ -364,10 +364,13 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   // Lamput — sama tekijälista kuin ikkunoilla, mutta ei rahaa. Osio piirretään
   // vain kun keikalla on ylipäätään lamppuja merkattuna, joten lamputtomalla
   // keikalla dash näyttää täysin samalta kuin ennen.
-  const lampTotals = computeLampTotals(project);
-  const lampWorkerStats = computeLampWorkerStats(project);
-  const doorTotals = computeDoorTotals(project);
-  const doorWorkerStats = computeDoorWorkerStats(project);
+  // Muistissa, koska dash renderöityy 30 s välein kellon takia (`now`) ja lisäksi
+  // jokaisesta avaamattomasta kortista. Jokainen näistä käy kaikki kartan lamput
+  // ja ovet läpi, eikä yksikään niistä riipu kellosta.
+  const lampTotals = useMemo(() => computeLampTotals(project), [project]);
+  const lampWorkerStats = useMemo(() => computeLampWorkerStats(project), [project]);
+  const doorTotals = useMemo(() => computeDoorTotals(project), [project]);
+  const doorWorkerStats = useMemo(() => computeDoorWorkerStats(project), [project]);
 
   // Founders' combined earnings — shown as the collapsed summary on the
   // "PERUSTAJIEN ANSIOT" bar so the headline figure is glanceable while folded.

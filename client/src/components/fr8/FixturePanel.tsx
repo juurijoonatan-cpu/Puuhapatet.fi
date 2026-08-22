@@ -20,7 +20,7 @@
  */
 import { useMemo, useState } from "react";
 import {
-  fixtureAttentionRows, computeLampInventory, computeDoorTotals, computeLampTotals,
+  fixtureAttentionRows, computeLampInventory, computeDoorTotals,
   resolveFixtureOrder, floorLabel, eurFromCents,
   MAX_FIXTURE_NOTE_LEN, MAX_FIXTURE_MODEL_LEN, MAX_FIXTURE_ORDER_NOTE_LEN,
   type ProjectData, type FixtureAttentionRow, type FixtureOrder,
@@ -29,10 +29,9 @@ import {
 import { useIsMobile } from "@/hooks/use-mobile";
 import Section from "./Section";
 import LampFloorChart, { type LampChartTheme } from "@/components/LampFloorChart";
+import { STAR_CLIP } from "@/lib/fixture-marks";
 import { T, inset, mono } from "./tokens";
 
-/** Sama tähtimerkki kuin kartalla, jotta rivi ja piste tunnistaa toisikseen. */
-const STAR_CLIP = "polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)";
 
 /**
  * Kuvion sävyt FR8:n tummalle kortille (#141416).
@@ -95,8 +94,10 @@ export default function FixturePanel({
   const rows = useMemo(() => fixtureAttentionRows(project), [project]);
   const inv = useMemo(() => computeLampInventory(project), [project]);
   const order = useMemo(() => resolveFixtureOrder(project), [project]);
-  const lampT = computeLampTotals(project);
-  const doorT = computeDoorTotals(project);
+  const doorT = useMemo(() => computeDoorTotals(project), [project]);
+  // Huomautusten määrä luetaan `rows`ista eikä omalla kierroksellaan: rows on jo
+  // laskettu ja sisältää täsmälleen samat pisteet.
+  const notedCount = useMemo(() => rows.filter((r) => !!r.note?.text).length, [rows]);
   const [showAll, setShowAll] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -117,7 +118,7 @@ export default function FixturePanel({
   const summary = [
     inv.needsBulbs > 0 ? `${inv.needsBulbs} lamppua ei toimi` : null,
     doorT.open > 0 ? `${doorT.open} ovea kesken` : null,
-    lampT.noted + doorT.noted > 0 ? `${lampT.noted + doorT.noted} huomautusta` : null,
+    notedCount > 0 ? `${notedCount} huomautusta` : null,
   ].filter(Boolean).join(" · ") || `${inv.fixed}/${inv.total} lamppua vaihdettu`;
 
   return (
@@ -149,7 +150,9 @@ export default function FixturePanel({
       </p>
 
       {/* 2. KERROKSITTAIN — missä työ on. */}
-      {inv.byFloor.length > 0 && (
+      {/* Kortti vain kun kuviolla on vertailtavaa (≥ 2 kerrosta) — sama raja
+          kuin `LampFloorChart`issa, jottei tyhjä laatikko jää jäljelle. */}
+      {inv.byFloor.length > 1 && (
         <div style={{ ...inset, padding: T.space.lg, marginBottom: T.space.lg }}>
           <LampFloorChart
             rows={inv.byFloor}

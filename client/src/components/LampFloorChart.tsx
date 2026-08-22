@@ -62,7 +62,16 @@ interface Props {
 
 export default function LampFloorChart({ rows, theme, floorLabel, onFloorClick, title }: Props) {
   const [asTable, setAsTable] = useState(false);
-  if (rows.length === 0) return null;
+
+  /**
+   * YHDEN RIVIN KUVIOTA EI PIIRRETÄ.
+   *
+   * Yhden kerroksen keikalla tämä olisi yhden palkin pylväskuvio, ja sellainen
+   * on tilastotiili: luku ON kuvio. Molemmilla kutsujilla on jo tiilet luvuista
+   * heti tämän yläpuolella, joten yksi palkki toistaisi ne kuvana eikä kertoisi
+   * mitään uutta. Kuvio ansaitsee paikkansa vasta kun kerroksia on vertailtavaksi.
+   */
+  if (rows.length < 2) return null;
 
   // Yhteinen asteikko kaikille kerroksille: rivit ovat vertailukelpoisia vain
   // jos 10 lampun kerros on kaksi kertaa 5 lampun kerroksen levyinen.

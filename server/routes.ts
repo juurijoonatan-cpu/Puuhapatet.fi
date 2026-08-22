@@ -661,7 +661,7 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   // tokenista. Ei rahaa, joten ei ehtoja eikä allekirjoitusporttia — reitti
   // tarkistaa itse että keikka on yhteisökeikka ja piste on keltainen.
   { method: "POST", re: /^\/api\/gig\/[^/]+\/scope$/ },
-  // Asiakkaan hintaehdotus lampuista ja ovikytkimistä. Sama tokenperiaate kuin
+  // Asiakkaan hintaehdotus lampuista ja ovista. Sama tokenperiaate kuin
   // laajuuskyselyllä: ei rahaa liiku, asiakas vain kertoo mitä olisi valmis
   // maksamaan. Reitti tarkistaa itse että keikalla on kalusteita.
   { method: "POST", re: /^\/api\/gig\/[^/]+\/fixture-quote$/ },
@@ -5942,10 +5942,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   /**
-   * ASIAKKAAN HINTAEHDOTUS lampuista ja ovikytkimistä.
+   * ASIAKKAAN HINTAEHDOTUS lampuista ja ovista.
    *
    * Ei sitova tarjous eikä laskutustapahtuma: asiakas kertoo mitä olisi valmis
-   * maksamaan per polttimo ja per kytkin, ja johtaja näkee sen dashissaan.
+   * maksamaan per polttimo ja per ovi, ja johtaja näkee sen dashissaan.
    * Siksi tässä EI ole P2:n tilakonetta, hyväksyntää eikä allekirjoitusporttia
    * — ne kuuluvat rahaan, ja raha liikkuu vasta kun tästä sovitaan erikseen.
    *
@@ -5959,10 +5959,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!parseGig(row.job.gigData)) return res.status(404).json({ error: "Seurantaa ei löydy" });
       const project = parseProject(row.job.projectData ?? null);
       if (!project) return res.status(400).json({ error: "Keikalla ei ole pohjakarttaa" });
-      // Ilman kalusteita ehdotuksella ei ole kohdetta — eikä lomaketta näytetä.
-      const inv = computeLampInventory(project);
-      const hasDoors = (project.doors && Object.values(project.doors).some((a) => a.length > 0)) || false;
-      if (inv.total === 0 && !hasDoors) {
+      /**
+       * Ilman kalusteita ehdotuksella ei ole kohdetta — eikä lomaketta näytetä.
+       *
+       * Portti käyttää SAMAA laskentaa kuin näkymä (`publicFixtures`): kumpikin
+       * lukee pisteet `building.floors`in kautta, joten poistetulle kerrokselle
+       * jäänyt ovi ei voi avata lomaketta jota asiakas ei näe.
+       */
+      if (!publicFixtures(project)) {
         return res.status(409).json({ error: "Keikalla ei ole lamppuja eikä ovia" });
       }
 

@@ -11,6 +11,7 @@ import type { P2Offer, P2NumberingInput } from "@shared/p2";
 import { P2_PRICE_PRESETS_CENTS, MAX_P2_NOTE_LEN, p2NumbersByFloor } from "@shared/p2";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAuthedImage } from "@/lib/authed-image";
+import { STAR_CLIP } from "@/lib/fixture-marks";
 
 const CIRC_S = 2 * Math.PI * 17; // mini ring
 
@@ -19,9 +20,6 @@ const CIRC_S = 2 * Math.PI * 17; // mini ring
 // plan image only, never the dots layer, so interior markers stay fully visible.
 const PLAN_CROP = "inset(2%)";
 
-/** Viisisakarainen tähti, CSS clip-pathina — lamppupisteiden merkki kartalla,
- *  jotta ne erottuvat ikkunoiden pyöreistä pisteistä yhdellä silmäyksellä. */
-const STAR_CLIP = "polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)";
 
 /**
  * Lampun väri — NELJÄ tilaa, sama järjestys kuin raportin ämpärit
@@ -1102,6 +1100,15 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
     onAddCustomMark(floor, +x.toFixed(2), +y.toFixed(2), placeMode as 1 | 2);
   }
 
+  /** Sulje kaikki pistepopoverit. Käytössä siellä missä pisteet voivat kadota
+   *  näkyvistä alta (tason piilotus) — auki jäänyt popover näyttäisi rikkinäiseltä. */
+  function closeAllPopovers() {
+    setActiveOrb(null); setOrbAnchor(null);
+    setActiveNote(null); setNoteAnchor(null);
+    setActiveLamp(null); setLampAnchor(null);
+    setActiveDoor(null); setDoorAnchor(null);
+  }
+
   function toggleEdit() {
     setEditMode((e) => !e);
     setPlaceMode(null); setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null); setActiveLamp(null); setActiveDoor(null); setDragging(null);
@@ -1293,7 +1300,12 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                   const on = layers[id];
                   return (
                     <button key={id} className="status-opt-btn"
-                      onClick={() => setLayers((cur) => ({ ...cur, [id]: !cur[id] }))}
+                      onClick={() => {
+                        // Piilotetun tason piste jättäisi popoverinsa auki
+                        // tyhjän kohdan päälle — sulje ne kaikki tason mukana.
+                        closeAllPopovers();
+                        setLayers((cur) => ({ ...cur, [id]: !cur[id] }));
+                      }}
                       style={{ opacity: on ? 1 : 0.45 }}>
                       {shape === "star" ? (
                         <span aria-hidden style={{ width: "11px", height: "11px", flexShrink: 0, display: "inline-block", clipPath: STAR_CLIP, background: color }} />
@@ -1310,7 +1322,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                 {/* Yksi napautus takaisin oletukseen — tärkeämpi kuin miltä
                     kuulostaa: piiloon jäänyt taso on helppo unohtaa. */}
                 <button className="status-opt-btn"
-                  onClick={() => setLayers({ p1: true, p2: true, lamps: true, doors: true, notes: true })}
+                  onClick={() => { closeAllPopovers(); setLayers({ p1: true, p2: true, lamps: true, doors: true, notes: true }); }}
                   style={{ marginTop: "4px", borderTop: "1px solid rgba(255,255,255,0.08)", borderRadius: 0, color: "rgba(255,255,255,0.7)" }}>
                   <span style={{ flex: 1, textAlign: "left" }}>Näytä kaikki</span>
                 </button>

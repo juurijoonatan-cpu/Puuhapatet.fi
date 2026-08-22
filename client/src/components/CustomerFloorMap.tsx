@@ -21,6 +21,7 @@ import type { PublicLampPoint, PublicDoorPoint } from "@shared/project";
 import { eur } from "@shared/gig";
 import { p2NumbersByFloor, type P2NumberingInput } from "@shared/p2";
 import { getPoints, inCustomerScope, type CustomerPoint } from "@/lib/customer-progress";
+import { STAR_CLIP } from "@/lib/fixture-marks";
 import { CT, CFONT, type CustomerTheme } from "@/lib/customer-theme";
 
 /** Position a fixed popup near an on-screen anchor rect, flipping above/below and
@@ -120,9 +121,6 @@ function dotColor(p: 1 | 2, status: WindowStatus): string {
   return p === 1 ? "#F4A6C0" : "#D9C97E";
 }
 
-/** Sama tähtimerkki kuin tekijän kartalla — lamppu ei ole ikkuna, eikä se saa
- *  näyttää siltä. */
-const STAR_CLIP = "polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)";
 
 /**
  * Lampun ja oven värit ASIAKKAAN vaalealla pohjalla.

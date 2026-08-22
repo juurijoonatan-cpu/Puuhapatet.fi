@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
+import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
 import { emptyGigData, computeTotals } from "./gig";
 
 // Kohta 6.1 — kokonaistilanteen ikkunamäärän täsmäytys. Ks. docs/fr8-era-laskutus-plan.md.
@@ -524,7 +524,10 @@ describe("lamput — merkintä, poisto ja per-tekijä laskuri (ei rahaa)", () =>
 
   it("ei lamppuja → nolla eikä jako nollalla", () => {
     const totals = computeLampTotals(emptyProjectData());
-    expect(totals).toEqual({ total: 0, changed: 0, unchanged: 0, pct: 0 });
+    expect(totals).toEqual({
+      total: 0, changed: 0, unchanged: 0, pct: 0,
+      broken: 0, working: 0, unchecked: 0, noted: 0, visible: 0,
+    });
   });
 
   it("per-tekijä laskuri näyttää kuka on vaihtanut montako", () => {
@@ -533,7 +536,7 @@ describe("lamput — merkintä, poisto ja per-tekijä laskuri (ei rahaa)", () =>
     p.lampStatuses!["1#lampC"] = "vaihdettu";
     p.lampChangedBy!["1#lampC"] = { by: "jani", ts: 2 };
     const stats = computeLampWorkerStats(p);
-    expect(stats).toEqual([{ worker: "jani", changed: 2 }]);
+    expect(stats).toEqual([{ worker: "jani", changed: 2, noted: 0 }]);
   });
 
   it("sanitointi säilyttää vaihdetun lampun muuttajan", () => {
@@ -565,5 +568,144 @@ describe("lamput — merkintä, poisto ja per-tekijä laskuri (ei rahaa)", () =>
     const totals = computeLampTotals(p);
     expect(totals.total).toBe(1);
     expect(totals.changed).toBe(0);
+  });
+
+  it("kunto ja huomautus ovat eri tieto kuin vaihto — eivätkä sotke toisiaan", () => {
+    const p = withLamps();
+    p.lampConditions = { "1#lampB": "rikki" };
+    p.lampNotes = { "1#lampB": { text: "Kupu rikki", by: "matias", ts: 5 } };
+    const totals = computeLampTotals(p);
+    // lampB on rikki JA huomautettu, mutta yhä vaihtamatta.
+    expect(totals.changed).toBe(1);
+    expect(totals.broken).toBe(1);
+    expect(totals.working).toBe(0);
+    expect(totals.unchecked).toBe(1);
+    expect(totals.noted).toBe(1);
+  });
+
+  it("huomautuksen kirjoittaja näkyy per-tekijä laskurissa vaihtajan rinnalla", () => {
+    const p = withLamps();
+    p.lampNotes = { "1#lampB": { text: "Kupu rikki", by: "matias", ts: 5 } };
+    const stats = computeLampWorkerStats(p);
+    expect(stats).toEqual([
+      { worker: "jani", changed: 1, noted: 0 },
+      { worker: "matias", changed: 0, noted: 1 },
+    ]);
+  });
+});
+
+describe("kalusteet asiakkaan näkymässä — kartoitus ei ole uutinen", () => {
+  function mapped(): ProjectData {
+    const p = emptyProjectData();
+    p.lamps = { "1": [
+      { key: "1#lampA", x: 10, y: 10 },   // pelkkä kartoitettu
+      { key: "1#lampB", x: 20, y: 20 },   // vaihdettu
+      { key: "1#lampC", x: 30, y: 30 },   // rikki
+      { key: "1#lampD", x: 40, y: 40 },   // huomautettu
+    ] };
+    p.lampStatuses = { "1#lampB": "vaihdettu" };
+    p.lampChangedBy = { "1#lampB": { by: "jani", ts: 7 } };
+    p.lampConditions = { "1#lampC": "rikki" };
+    p.lampNotes = { "1#lampD": { text: "Vilkkuu", by: "matias", ts: 9 } };
+    return p;
+  }
+
+  it("pelkkä kartalle merkitty lamppu EI näy asiakkaalle", () => {
+    const pts = allLampPoints(mapped());
+    const a = pts.find((x) => x.key === "1#lampA")!;
+    expect(lampIsPublic(a)).toBe(false);
+  });
+
+  it("vaihdettu, rikki ja huomautettu näkyvät — kartoitettu ei", () => {
+    const view = publicLampView(mapped());
+    expect(view.map((v) => v.key).sort()).toEqual(["1#lampB", "1#lampC", "1#lampD"]);
+    expect(computeLampTotals(mapped()).visible).toBe(3);
+  });
+
+  it("asiakkaalle ei lähde tekijän henkilöllisyyttä", () => {
+    const raw = JSON.stringify(publicLampView(mapped()));
+    expect(raw).not.toContain("jani");
+    expect(raw).not.toContain("matias");
+    // Huomautuksen TEKSTI on tarkoitus näyttää — vain nimi jää pois.
+    expect(raw).toContain("Vilkkuu");
+  });
+
+  it("ovi näkyy vasta tehtynä tai huomautettuna", () => {
+    const p = emptyProjectData();
+    p.doors = { "1": [
+      { key: "1#doorA", x: 5, y: 5, label: "Pääovi" },
+      { key: "1#doorB", x: 6, y: 6 },
+      { key: "1#doorC", x: 7, y: 7 },
+    ] };
+    p.doorStatuses = { "1#doorB": "tehty" };
+    p.doorDoneBy = { "1#doorB": { by: "jani", ts: 3 } };
+    p.doorNotes = { "1#doorC": { text: "Lukko jumittaa", by: "jani", ts: 4 } };
+
+    const totals = computeDoorTotals(p);
+    expect(totals.total).toBe(3);
+    expect(totals.done).toBe(1);
+    expect(totals.open).toBe(2);
+    expect(totals.noted).toBe(1);
+    expect(totals.visible).toBe(2);
+
+    expect(publicDoorView(p).map((d) => d.key).sort()).toEqual(["1#doorB", "1#doorC"]);
+    expect(doorIsPublic({ floor: "1", key: "1#doorA", x: 5, y: 5, status: "ei" })).toBe(false);
+    expect(computeDoorWorkerStats(p)).toEqual([{ worker: "jani", done: 1, noted: 1 }]);
+  });
+
+  it("huomiolista nostaa rikkinäisen ja huomautetun ylimmäksi, valmiit viimeiseksi", () => {
+    const p = mapped();
+    const rows = fixtureAttentionRows(p);
+    expect(rows[0].key).toBe("1#lampC");           // rikki
+    expect(rows[1].key).toBe("1#lampD");           // huomautettu
+    expect(rows[rows.length - 1].key).toBe("1#lampB"); // vaihdettu, ei huomautettavaa
+    expect(rows.find((r) => r.key === "1#lampB")!.public).toBe(true);
+    expect(rows.find((r) => r.key === "1#lampA")!.public).toBe(false);
+  });
+});
+
+describe("kalusteiden sanitointi", () => {
+  it("säilyttää kunnon, huomautuksen ja oven tehtävänimen", () => {
+    const clean = sanitizeProjectData({
+      lamps: { "1": [{ key: "1#lampA", x: 5, y: 5 }] },
+      lampConditions: { "1#lampA": "rikki" },
+      lampNotes: { "1#lampA": { text: "  Kupu rikki  ", by: "matias", ts: 42 } },
+      lampAddedBy: { "1#lampA": { by: "jani", ts: 41 } },
+      doors: { "1": [{ key: "1#doorA", x: 6, y: 6, label: "Pääovi" }] },
+      doorStatuses: { "1#doorA": "tehty" },
+      doorDoneBy: { "1#doorA": { by: "matias", ts: 43 } },
+      doorNotes: { "1#doorA": { text: "Karmit maalattu", ts: 44 } },
+    });
+    expect(clean.lampConditions?.["1#lampA"]).toBe("rikki");
+    expect(clean.lampNotes?.["1#lampA"]).toEqual({ text: "Kupu rikki", by: "matias", ts: 42 });
+    expect(clean.lampAddedBy?.["1#lampA"]).toEqual({ by: "jani", ts: 41 });
+    expect(clean.doors?.["1"]).toEqual([{ key: "1#doorA", x: 6, y: 6, label: "Pääovi" }]);
+    expect(clean.doorDoneBy?.["1#doorA"]).toEqual({ by: "matias", ts: 43 });
+    expect(clean.doorNotes?.["1#doorA"]?.text).toBe("Karmit maalattu");
+  });
+
+  it("tyhjä huomautus ja tuntematon kunto pudotetaan", () => {
+    const clean = sanitizeProjectData({
+      lamps: { "1": [{ key: "1#lampA", x: 5, y: 5 }] },
+      lampConditions: { "1#lampA": "ehkä" },
+      lampNotes: { "1#lampA": { text: "   ", by: "matias", ts: 1 } },
+    });
+    expect(clean.lampConditions).toBeUndefined();
+    expect(clean.lampNotes).toBeUndefined();
+  });
+
+  it("kuittaamattomalle ovelle ei jää roikkumaan tekijätietoa", () => {
+    const clean = sanitizeProjectData({
+      doors: { "1": [{ key: "1#doorA", x: 6, y: 6 }] },
+      doorDoneBy: { "1#doorA": { by: "matias", ts: 43 } },
+    });
+    expect(clean.doorDoneBy).toBeUndefined();
+  });
+
+  it("kalusteeton keikka ei saa uusia kenttiä — vanha blobi pyörähtää entisellään", () => {
+    const clean = sanitizeProjectData(emptyProjectData());
+    for (const k of ["lampConditions", "lampNotes", "lampAddedBy", "doors", "doorStatuses", "doorDoneBy", "doorNotes", "doorAddedBy"]) {
+      expect(k in clean).toBe(false);
+    }
   });
 });

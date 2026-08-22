@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRoute } from "wouter";
 import { api, warmBackend, type WorkerView, type GuidedWorkerView } from "@/lib/api";
-import type { WindowStatus, LampStatus } from "@shared/project";
+import type { WindowStatus, LampStatus, LampCondition, DoorStatus } from "@shared/project";
 import {
   ALL_AGREEMENTS, PROFILE_QUESTIONS, PROFILE_REQUIRED_IDS, WORKER_AGREEMENT_VERSION,
   INSURANCE_QUESTION, INSURANCE_LATER_NOTE, RISK_ACK_TEXT, INSURANCE_ANSWER_KEY, RISK_ACK_KEY,
@@ -1103,6 +1103,28 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
     if (res.ok && res.data?.view) setView(res.data.view);
   }, [token, setView]);
 
+  // Toimiiko lamppu — oma kysymyksensä vaihtamisen rinnalla.
+  const setLampCondition = useCallback(async (key: string, condition: LampCondition | null) => {
+    const res = await api.crewSetLampCondition(token, key, condition);
+    if (res.ok && res.data?.view) setView(res.data.view);
+  }, [token, setView]);
+
+  const setLampNote = useCallback(async (key: string, text: string) => {
+    const res = await api.crewSetLampNote(token, key, text);
+    if (res.ok && res.data?.view) setView(res.data.view);
+  }, [token, setView]);
+
+  // Ovi — tehtäväpiste: tekijä kuittaa tehdyksi ja voi huomauttaa siitä.
+  const markDoor = useCallback(async (key: string, status: DoorStatus) => {
+    const res = await api.crewMarkDoor(token, key, status);
+    if (res.ok && res.data?.view) setView(res.data.view);
+  }, [token, setView]);
+
+  const setDoorNote = useCallback(async (key: string, text: string) => {
+    const res = await api.crewSetDoorNote(token, key, text);
+    if (res.ok && res.data?.view) setView(res.data.view);
+  }, [token, setView]);
+
 
   // Per-window observation (text + optional photo) the worker leaves on a window.
   const setObservation = useCallback(async (key: string, text: string, imageDataUrl?: string) => {
@@ -1225,6 +1247,16 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
             lampStatuses={view.lampStatuses}
             lampChangedBy={view.lampChangedBy}
             onSetLampStatus={markLamp}
+            lampConditions={view.lampConditions}
+            lampNotes={view.lampNotes}
+            onSetLampCondition={setLampCondition}
+            onSetLampNote={setLampNote}
+            doors={view.doors}
+            doorStatuses={view.doorStatuses}
+            doorDoneBy={view.doorDoneBy}
+            doorNotes={view.doorNotes}
+            onSetDoorStatus={markDoor}
+            onSetDoorNote={setDoorNote}
             p2={view.p2 ? { enabled: view.p2.enabled, lockedKeys: view.p2.lockedKeys, payoutByKey: view.p2.payoutByKey } : null}
             /* Asiakkaan laajuusvastaukset keltaisiin. Ilman näitä tekijä pesisi
                yhteisökeikan keltaisia arvaamalla, vaikka asiakas on jo kertonut

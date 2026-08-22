@@ -3,7 +3,7 @@
  */
 
 import type { GigData, GigTotals } from "@shared/gig";
-import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding, FixedDeal, EraDebtBreakdown } from "@shared/project";
+import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding, FixedDeal, EraDebtBreakdown, ProjLampMark, LampStatus } from "@shared/project";
 import type { MemberAgreementSignature } from "@shared/member-agreement";
 import type { CrewMember, CrewMemberStats, CrewProfile, CrewAgreementSignature } from "@shared/crew";
 import type { WorkerAgreement } from "@shared/worker-agreements";
@@ -104,6 +104,12 @@ export interface WorkerView {
   customMarks: Record<string, ProjCustomMark[]>;
   posOverrides: Record<string, { x: number; y: number }>;
   deleted: Record<string, boolean>;
+  /** Lamput: sama merkintälogiikka kuin ikkunoilla, mutta ei rahaa. Tekijä voi
+   *  merkitä vaihdetuksi; lisäys/poisto on vain johtajien projektinäkymässä. */
+  lamps: Record<string, ProjLampMark[]>;
+  lampStatuses: Record<string, LampStatus>;
+  /** Lampun avain → tekijän id joka merkitsi sen vaihdetuksi. */
+  lampChangedBy: Record<string, string>;
   hours: number;
   stats: CrewMemberStats;
   /** Johtajan yksitellen piilottamat ikkunat — eivät näy tekijän kartalla eikä
@@ -1491,6 +1497,11 @@ export const api = {
 
   crewMarkWindow: (token: string, key: string, status: WindowStatus, p?: 1 | 2) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/window`, { key, status, p }),
+
+  // Sama lamppujen merkintä (ei rahaa, ei prioriteettia) — kuka vaihtoi tulee
+  // servlerissä aina kirjautuneesta tekijästä itsestään.
+  crewMarkLamp: (token: string, key: string, status: LampStatus) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, status }),
 
   crewAddHours: (token: string, delta: number) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/hours`, { delta }),

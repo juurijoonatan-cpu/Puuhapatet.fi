@@ -14,7 +14,7 @@ import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import {
   emptyProjectData, newGigProjectData, computeWorkerStats, isFr8Plans, fixedDealFor, allPoints, computeDealBilling,
   dealInternalRateCents, isCommunityGig,
-  type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense,
+  type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense, type LampStatus,
 } from "@shared/project";
 import { computeP2Billing, customerAddedKeys, p2FounderOpts, p2CustomerLocksSince, p2Itemisation, p2WashedYellows, p2WorkerSplit, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule, type P2WashedState } from "@shared/p2";
 import { computeGuided, type GuidedWork } from "@shared/guided";
@@ -473,6 +473,40 @@ export default function AdminProjectPage() {
       d.notes[floor] = d.notes[floor].filter((n) => n.key !== key);
     });
   }, [mutate]);
+
+  // ── Lamput ───────────────────────────────────────────────────────────────────
+  // Sama merkintälogiikka kuin ikkunoilla, mutta ei rahaa: lisää/poista/merkitse.
+  const onAddLamp = useCallback((floor: string, x: number, y: number) => {
+    mutate((d) => {
+      const key = `${floor}#lamp${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`;
+      if (!d.lamps) d.lamps = {};
+      d.lamps[floor] = [...(d.lamps[floor] || []), { key, x, y }];
+    });
+  }, [mutate]);
+
+  const onDeleteLamp = useCallback((key: string) => {
+    mutate((d) => {
+      const f = key.split("#")[0];
+      if (d.lamps?.[f]) d.lamps[f] = d.lamps[f].filter((l) => l.key !== key);
+      if (d.lampStatuses) delete d.lampStatuses[key];
+      if (d.lampChangedBy) delete d.lampChangedBy[key];
+    });
+  }, [mutate]);
+
+  const onSetLampStatus = useCallback((key: string, status: LampStatus, changedById?: string) => {
+    const changer = changedById ?? defaultWasher ?? currentWorker;
+    mutate((d) => {
+      if (!d.lampStatuses) d.lampStatuses = {};
+      if (!d.lampChangedBy) d.lampChangedBy = {};
+      if (status === "vaihdettu") {
+        d.lampStatuses[key] = "vaihdettu";
+        d.lampChangedBy[key] = { by: changer, ts: Date.now() };
+      } else {
+        delete d.lampStatuses[key];
+        delete d.lampChangedBy[key];
+      }
+    });
+  }, [mutate, currentWorker, defaultWasher]);
 
   // Per-window observation (text + optional photo). Empty clears it.
   const onSetObservation = useCallback((key: string, text: string, imageDataUrl?: string) => {
@@ -1111,6 +1145,12 @@ export default function AdminProjectPage() {
             activeZone={project.activeZone}
             onSetActiveZone={onSetActiveZone}
             onClearActiveZone={onClearActiveZone}
+            lamps={project.lamps}
+            lampStatuses={project.lampStatuses}
+            lampChangedBy={project.lampChangedBy ? Object.fromEntries(Object.entries(project.lampChangedBy).map(([k, v]) => [k, v.by])) : undefined}
+            onAddLamp={onAddLamp}
+            onDeleteLamp={onDeleteLamp}
+            onSetLampStatus={onSetLampStatus}
             deal={deal}
             p2={project.p2 ? { enabled: project.p2.enabled, offers: project.p2.offers } : null}
             /* Keltaisten hinnoittelu ei kuulu yhteisökeikalle: siinä ei ole

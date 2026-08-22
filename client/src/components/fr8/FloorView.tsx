@@ -5,7 +5,7 @@
  * path differ.
  */
 import { useState, useRef, useEffect, useMemo } from "react";
-import type { ProjMarksData, WindowStatus, ProjCustomMark, ProjMapNote, ProjNoteKind, ProjActiveZone, ProjWindowObservation, FixedDeal, ProjBuilding } from "@shared/project";
+import type { ProjMarksData, WindowStatus, ProjCustomMark, ProjMapNote, ProjNoteKind, ProjActiveZone, ProjWindowObservation, FixedDeal, ProjBuilding, LampStatus, ProjLampMark } from "@shared/project";
 import { NOTE_KINDS, planImageUrl, planRenderOf, hasAnyPlan, floorLabel } from "@shared/project";
 import type { P2Offer, P2NumberingInput } from "@shared/p2";
 import { P2_PRICE_PRESETS_CENTS, MAX_P2_NOTE_LEN, p2NumbersByFloor } from "@shared/p2";
@@ -18,6 +18,10 @@ const CIRC_S = 2 * Math.PI * 17; // mini ring
 // off the floor-plan image's sides are simply cut off (no fade). Applied to the
 // plan image only, never the dots layer, so interior markers stay fully visible.
 const PLAN_CROP = "inset(2%)";
+
+/** Viisisakarainen tähti, CSS clip-pathina — lamppupisteiden merkki kartalla,
+ *  jotta ne erottuvat ikkunoiden pyöreistä pisteistä yhdellä silmäyksellä. */
+const STAR_CLIP = "polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)";
 
 interface Point { key: string; p: 1 | 2; x: number; y: number; }
 
@@ -161,6 +165,23 @@ interface Props {
    *  the rest entirely — a discreet worker map that reveals just the opened
    *  floors. Founders pass null/undefined to see every floor. */
   restrictFloors?: string[] | null;
+  /**
+   * LAMPUT — sama merkintälogiikka kuin ikkunoilla, mutta EI rahaa: vapaasti
+   * lisättäviä pisteitä, näkyvät tähtinä. `lamps` = kerroksen pisteet,
+   * `lampStatuses`/`lampChangedBy` = tila ja kuka vaihtoi. Kaikki valinnaisia —
+   * puuttuessaan lamppukerros ei piirry lainkaan (ei muutosta olemassa olevaan).
+   */
+  lamps?: Record<string, ProjLampMark[]>;
+  lampStatuses?: Record<string, LampStatus>;
+  /** Lampun avain → tekijän id joka merkitsi sen vaihdetuksi. */
+  lampChangedBy?: Record<string, string>;
+  /** Lisää uusi lamppu kartalle (johtaja). Puuttuessaan "+ Lamppu" -valintaa ei näytetä. */
+  onAddLamp?: (floor: string, x: number, y: number) => void;
+  /** Poista lamppu kartalta kokonaan (johtaja). */
+  onDeleteLamp?: (key: string) => void;
+  /** Merkitse lamppu vaihdetuksi/ei-vaihdetuksi, valinnaisesti kenen puolesta
+   *  (johtaja voi valita tekijän — sama kuva kuin ikkunan "kuka pesi"). */
+  onSetLampStatus?: (key: string, status: LampStatus, changedById?: string) => void;
 }
 
 /** A minimal on-screen anchor (viewport coords) for positioning a fixed popover. */
@@ -270,7 +291,7 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, building, planUrlBase, planAuthed = false, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, onLoadObservationImage, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, scopeVotes, guided, onToggleFloorLock, onToggleWindowLock, lockedWindowKeys, floorFocus, restrictFloors }: Props) {
+export default function FloorView({ floors, planBase, building, planUrlBase, planAuthed = false, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, onLoadObservationImage, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, scopeVotes, guided, onToggleFloorLock, onToggleWindowLock, lockedWindowKeys, floorFocus, restrictFloors, lamps, lampStatuses, lampChangedBy, onAddLamp, onDeleteLamp, onSetLampStatus }: Props) {
   // Discreet worker map: when restrictFloors is set, show ONLY those floors and
   // hide the rest, so a regular worker sees exactly the opened floors and nothing
   // else. Founders (restrictFloors null) always see every floor.
@@ -301,7 +322,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
   const planSrc = planAuthed ? authedPlan.src : planHref;
   const [filter, setFilter] = useState<"all" | "unwashed" | "progress" | "done">("all");
   const [editMode, setEditMode] = useState(false);
-  const [placeMode, setPlaceMode] = useState<1 | 2 | "del" | "note" | "zone" | null>(null);
+  const [placeMode, setPlaceMode] = useState<1 | 2 | "del" | "note" | "zone" | "lamp" | null>(null);
   const [noteKind, setNoteKind] = useState<ProjNoteKind>("ladder");
   const [dragging, setDragging] = useState<string | null>(null);
   const [activeOrb, setActiveOrb] = useState<string | null>(null);
@@ -311,6 +332,10 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
   const [activeNote, setActiveNote] = useState<string | null>(null);
   const [noteAnchor, setNoteAnchor] = useState<Anchor | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
+  // Lamppu-popover (tila + kuka vaihtoi + poisto) — sama malli kuin muistiinpanoilla.
+  const [activeLamp, setActiveLamp] = useState<string | null>(null);
+  const [lampAnchor, setLampAnchor] = useState<Anchor | null>(null);
+  const [showLampChangerPicker, setShowLampChangerPicker] = useState(false);
   // Per-window observation editor (text + optional photo) inside the status popover.
   const [obsDraft, setObsDraft] = useState("");
   const [obsImage, setObsImage] = useState<string | undefined>(undefined);
@@ -342,6 +367,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
   const planRef = useRef<HTMLImageElement>(null);
   const notesCanEdit = !!onAddNote;
   const zoneCanEdit = !!onSetActiveZone;
+  const lampsCanEdit = !!onAddLamp;
   const dragKeyRef = useRef<string | null>(null);
   const movedRef = useRef(false);
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -547,6 +573,8 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
   }
   const floorNotes = notes?.[floor] || [];
   const activeNoteObj = activeNote ? floorNotes.find((n) => n.key === activeNote) ?? null : null;
+  const lampPts: ProjLampMark[] = lamps?.[floor] || [];
+  const activeLampPt = activeLamp ? lampPts.find((l) => l.key === activeLamp) ?? null : null;
 
   function matchFilter(status: WindowStatus) {
     if (filter === "all") return true;
@@ -647,6 +675,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
       // fixed overlay (never clipped by the zoom/pan scene) and stays tappable.
       setOrbAnchor(next ? rectToAnchor((e.currentTarget as HTMLElement).getBoundingClientRect()) : null);
       setActiveNote(null);
+      setActiveLamp(null); setLampAnchor(null);
       setShowWasherPicker(false); // names stay hidden until "Vaihda" is tapped
       setShowSplitPicker(false);
       // Load any existing observation for this window into the editor. Kuva tulee
@@ -716,6 +745,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
     setNoteAnchor(next ? rectToAnchor((e.currentTarget as HTMLElement).getBoundingClientRect()) : null);
     setNoteDraft(next ? (note.text || "") : "");
     setActiveOrb(null);
+    setActiveLamp(null); setLampAnchor(null);
     setActiveNote(next);
   }
 
@@ -727,6 +757,21 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
   function deleteActiveNote() {
     if (activeNote) onDeleteNote?.(floor, activeNote);
     setActiveNote(null); setNoteAnchor(null);
+  }
+
+  /** Lampun napautus — avaa/sulkee sen popoverin. Sama ohitus kuin muillakin
+   *  pisteillä: minkä tahansa lisäystilan aikana napautus ei tee mitään, jottei
+   *  uuden pisteen paikannus mene tahattomasti olemassa olevan lampun päälle. */
+  function onLampClick(lp: ProjLampMark, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (pannedRef.current) { pannedRef.current = false; return; }
+    if (editMode && placeMode) return;
+    const next = activeLamp === lp.key ? null : lp.key;
+    setLampAnchor(next ? rectToAnchor((e.currentTarget as HTMLElement).getBoundingClientRect()) : null);
+    setActiveOrb(null); setOrbAnchor(null);
+    setActiveNote(null); setNoteAnchor(null);
+    setShowLampChangerPicker(false);
+    setActiveLamp(next);
   }
 
   function onOrbPointerDown(pt: Point, e: React.PointerEvent) {
@@ -786,32 +831,42 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
       setPlaceMode(null);
       return;
     }
+    if (placeMode === "lamp") {
+      onAddLamp?.(floor, +x.toFixed(2), +y.toFixed(2));
+      return;
+    }
     if (placeMode !== 1 && placeMode !== 2) return;
     onAddCustomMark(floor, +x.toFixed(2), +y.toFixed(2), placeMode as 1 | 2);
   }
 
   function toggleEdit() {
     setEditMode((e) => !e);
-    setPlaceMode(null); setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null); setDragging(null);
+    setPlaceMode(null); setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null); setActiveLamp(null); setDragging(null);
   }
 
   function chooseAdd(mode: 1 | 2 | "del") {
     setEditMode(true);
     setPlaceMode(placeMode === mode ? null : mode);
-    setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null);
+    setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null); setActiveLamp(null);
   }
 
   function chooseNoteKind(kind: ProjNoteKind) {
     setEditMode(true);
     setNoteKind(kind);
     setPlaceMode("note");
-    setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null);
+    setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null); setActiveLamp(null);
   }
 
   function chooseZone() {
     setEditMode(true);
     setPlaceMode("zone");
-    setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null);
+    setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null); setActiveLamp(null);
+  }
+
+  function chooseLamp() {
+    setEditMode(true);
+    setPlaceMode(placeMode === "lamp" ? null : "lamp");
+    setAddMenuOpen(false); setActiveOrb(null); setActiveNote(null); setActiveLamp(null);
   }
 
   // Onko juuri valittu kerros lukossa tekijöiltä? Ohjaa lukkonapin tekstin.
@@ -822,6 +877,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
     : placeMode === "del" ? "Poistotila — klikkaa pisteitä tai merkintöjä jotka haluat poistaa."
     : placeMode === "note" ? `Lisää merkintä (${NOTE_KINDS[noteKind].label}) — klikkaa pohjapiirrosta. Voit kirjoittaa muistiinpanon heti.`
     : placeMode === "zone" ? "Merkitse työn alla -alue — klikkaa kohtaa, jossa juuri nyt työskennellään. Asiakas näkee tämän."
+    : placeMode === "lamp" ? "Lisää lamppu — klikkaa pohjapiirrosta haluttuun kohtaan."
     : "Muokkaustila — raahaa pisteet oikeille kohdille. Tallentuu automaattisesti.";
 
   return (
@@ -843,7 +899,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
             const gLocked = !!guided?.enabled && (guided.lockedFloors || []).includes(f);
             const st = floorBtnStyle(f === floor);
             return (
-              <button key={f} onClick={() => { setFloor(f); setActiveOrb(null); }}
+              <button key={f} onClick={() => { setFloor(f); setActiveOrb(null); setActiveLamp(null); }}
                 title={gLocked ? "Lukossa tekijöiltä — sinä näet sen silti" : undefined}
                 style={{
                   ...st,
@@ -1010,6 +1066,23 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                   ))}
                   </>}
 
+                  {/* LAMPUT — sama lisäystapa kuin ikkunapisteillä, mutta oma tähtimerkki
+                      eikä hintaa. Vain johtajille (canEdit), koska tekijät eivät
+                      rakenna karttaa — he vain merkitsevät vaihdetuksi pisteen popoverista. */}
+                  {canEdit && lampsCanEdit && (
+                    <>
+                      <div style={{ height: "1px", background: "rgba(255,255,255,0.08)", margin: "6px 4px" }} />
+                      <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: "9px", letterSpacing: "0.12em", color: "rgba(255,255,255,0.4)", padding: "2px 8px 7px" }}>LAMPUT</div>
+                      <button className="add-menu-btn" onClick={chooseLamp} style={{ border: `1px solid ${placeMode === "lamp" ? "rgba(255,196,90,0.4)" : "transparent"}`, background: placeMode === "lamp" ? "rgba(255,196,90,0.12)" : "transparent" }}>
+                        <span aria-hidden style={{ width: "15px", height: "15px", flexShrink: 0, display: "inline-block", clipPath: STAR_CLIP, background: "rgb(255,196,90)" }} />
+                        <span style={{ flex: 1 }}>
+                          <span style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#fff" }}>Lamppu</span>
+                          <span style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.45)" }}>Merkitse lamppu kartalle</span>
+                        </span>
+                      </button>
+                    </>
+                  )}
+
                   {/* Navigation markers / notes — ladders, entrances, hazards, free notes. */}
                   {notesCanEdit && (
                     <>
@@ -1118,7 +1191,7 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
             )}
 
             {/* Orbs layer */}
-            <div onClick={onPlanClick} style={{ position: "absolute", inset: 0, cursor: (placeMode === 1 || placeMode === 2 || placeMode === "note" || placeMode === "zone") ? "crosshair" : "default" }}>
+            <div onClick={onPlanClick} style={{ position: "absolute", inset: 0, cursor: (placeMode === 1 || placeMode === 2 || placeMode === "note" || placeMode === "zone" || placeMode === "lamp") ? "crosshair" : "default" }}>
               {/* Active work zone — pulsing coloured highlight of current work. */}
               {activeZone && activeZone.floor === floor && (
                 <span aria-label="Työn alla nyt" title={activeZone.label ? `Työn alla: ${activeZone.label}` : "Työn alla nyt"}
@@ -1254,6 +1327,35 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                   {NOTE_KINDS[n.kind].glyph}
                 </button>
               ))}
+
+              {/* Lamput — tähtinä, oma kerroksensa ikkunapisteiden yläpuolella.
+                  Lisäystilan aikana ne ohittavat klikkaukset (pointerEvents: none),
+                  jotta uuden lampun paikannus ei osu vahingossa vanhan päälle —
+                  sama sääntö kuin ikkunapisteillä lisäystilassa. */}
+              {lampPts.map((lp) => {
+                const changed = (lampStatuses?.[lp.key] || "ei") === "vaihdettu";
+                const rgb = changed ? "124,224,166" : "255,196,90";
+                return (
+                  <button key={lp.key}
+                    data-fr8-dot
+                    onClick={(e) => onLampClick(lp, e)}
+                    title={`Lamppu · ${changed ? "Vaihdettu" : "Ei vaihdettu"}`}
+                    style={{
+                      position: "absolute", left: `${lp.x}%`, top: `${lp.y}%`,
+                      transform: "translate(-50%,-50%)", width: "18px", height: "18px",
+                      padding: 0, border: "none", background: "transparent", cursor: "pointer",
+                      pointerEvents: (editMode && placeMode === "lamp") ? "none" : "auto",
+                      zIndex: 6, touchAction: "none",
+                    }}
+                  >
+                    <span aria-hidden style={{
+                      display: "block", width: "100%", height: "100%", clipPath: STAR_CLIP,
+                      background: `radial-gradient(circle at 35% 30%, rgba(255,255,255,0.95), rgba(${rgb},0.95) 55%, rgba(${rgb},0.85))`,
+                      filter: `drop-shadow(0 0 5px rgba(${rgb},${changed ? 0.85 : 0.6}))`,
+                    }} />
+                  </button>
+                );
+              })}
             </div>
           </div>
         ) : (
@@ -1636,6 +1738,93 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
             ) : (
               <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.8)", lineHeight: 1.5, minHeight: "20px" }}>
                 {activeNoteObj.text || <span style={{ color: "rgba(255,255,255,0.4)" }}>Ei muistiinpanoa.</span>}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Lamppu-popover — tila (ei/vaihdettu) + kuka vaihtoi + poisto. Sama
+          rakenne kuin ikkunan status-popoverissa, mutta ei rahaa eikä
+          prioriteettia: lampulla on vain kaksi tilaa. */}
+      {activeLamp && activeLampPt && (
+        <>
+          <div onClick={() => { setActiveLamp(null); setLampAnchor(null); }} style={{ position: "fixed", inset: 0, zIndex: 1100 }} />
+          <div data-fr8-pop="menu" style={{ ...fixedPopoverStyle(lampAnchor, 210, 230), width: "210px", maxHeight: "min(78vh, 420px)", overflowY: "auto", padding: "11px", background: "rgba(16,16,20,0.92)", border: "1px solid rgba(255,255,255,0.16)", borderRadius: "15px", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "0 20px 50px rgba(0,0,0,0.7)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "2px 4px 9px", borderBottom: "1px solid rgba(255,255,255,0.08)", marginBottom: "7px" }}>
+              <span aria-hidden style={{ width: "10px", height: "10px", flexShrink: 0, display: "inline-block", clipPath: STAR_CLIP, background: (lampStatuses?.[activeLamp] || "ei") === "vaihdettu" ? "rgb(124,224,166)" : "rgb(255,196,90)" }} />
+              <span style={{ fontSize: "12px", fontWeight: 600 }}>Lamppu</span>
+            </div>
+
+            {(["ei", "vaihdettu"] as LampStatus[]).map((s) => {
+              const cur = lampStatuses?.[activeLamp] || "ei";
+              const isActive = cur === s;
+              const rgb = s === "vaihdettu" ? "124,224,166" : "255,196,90";
+              const hasCrew = s === "vaihdettu" && !!workers && workers.length > 0;
+              return (
+                <button key={s} className="status-opt-btn"
+                  onClick={() => {
+                    if (hasCrew) {
+                      onSetLampStatus?.(activeLamp, "vaihdettu", lampChangedBy?.[activeLamp] ?? currentWorkerId);
+                      setShowLampChangerPicker(false);
+                      return;
+                    }
+                    onSetLampStatus?.(activeLamp, s);
+                    setActiveLamp(null); setLampAnchor(null);
+                  }}
+                  style={{ border: `1px solid ${isActive ? "rgba(255,255,255,0.16)" : "transparent"}`, background: isActive ? "rgba(255,255,255,0.08)" : "transparent", fontWeight: isActive ? 600 : 500 }}>
+                  <span aria-hidden style={{ width: "9px", height: "9px", flexShrink: 0, display: "inline-block", clipPath: STAR_CLIP, background: `rgb(${rgb})` }} />
+                  <span style={{ flex: 1, textAlign: "left" }}>{s === "vaihdettu" ? "Vaihdettu" : "Ei vaihdettu"}</span>
+                  {isActive && <span style={{ fontSize: "11px" }}>✓</span>}
+                </button>
+              );
+            })}
+
+            {/* Kuka vaihtoi — sama malli kuin ikkunan "kuka pesi". */}
+            {(lampStatuses?.[activeLamp] || "ei") === "vaihdettu" && (lampChangedBy?.[activeLamp] || (canEdit && workers && workers.length > 0)) && (
+              showLampChangerPicker && canEdit && workers && workers.length > 0 ? (
+                <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                  <div style={{ fontSize: "9.5px", letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.38)", padding: "0 4px 6px" }}>Kuka vaihtoi?</div>
+                  {workers.map((w) => {
+                    const picked = (lampChangedBy?.[activeLamp] ?? currentWorkerId) === w.id;
+                    return (
+                      <button key={w.id} className="status-opt-btn"
+                        onClick={() => { onSetLampStatus?.(activeLamp, "vaihdettu", w.id); setShowLampChangerPicker(false); }}
+                        style={{ border: `1px solid ${picked ? "rgba(255,255,255,0.16)" : "transparent"}`, background: picked ? "rgba(255,255,255,0.08)" : "transparent", fontWeight: picked ? 600 : 500 }}>
+                        <span style={{ width: "18px", height: "18px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "9px", fontWeight: 700, background: "rgba(124,224,166,0.16)", color: "rgba(124,224,166,0.95)", flexShrink: 0 }}>{w.name.charAt(0).toUpperCase()}</span>
+                        <span style={{ flex: 1, textAlign: "left" }}>{w.name}</span>
+                        {picked && <span style={{ fontSize: "11px" }}>✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)", fontSize: "11.5px", color: "rgba(255,255,255,0.7)" }}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(124,224,166,0.9)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+                  <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    Vaihtoi <strong style={{ color: "#fff", fontWeight: 600 }}>{workerNames?.[lampChangedBy?.[activeLamp] ?? currentWorkerId ?? ""] ?? (lampChangedBy?.[activeLamp] ?? currentWorkerId)}</strong>
+                  </span>
+                  {canEdit && workers && workers.length > 0 && (
+                    <button onClick={() => setShowLampChangerPicker(true)} style={{ marginLeft: "auto", flexShrink: 0, background: "transparent", border: "none", color: "rgba(124,224,166,0.95)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", padding: "2px 4px" }}>Vaihda</button>
+                  )}
+                </div>
+              )
+            )}
+
+            {/* Poista lamppu — johtajat vain. */}
+            {canEdit && onDeleteLamp && (
+              <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                <button className="status-opt-btn"
+                  onClick={() => {
+                    if (typeof window === "undefined" || window.confirm("Poistetaanko tämä lamppu kartalta?")) {
+                      onDeleteLamp(activeLamp);
+                      setActiveLamp(null); setLampAnchor(null);
+                    }
+                  }}
+                  style={{ color: "#ff9b9b" }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ff9b9b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+                  <span style={{ flex: 1, textAlign: "left" }}>Poista lamppu kartalta</span>
+                </button>
               </div>
             )}
           </div>

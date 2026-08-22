@@ -2,7 +2,7 @@
  * FR8 projektinäkymä — overview dashboard (ported from fr8-ikkunat prototype).
  * Adds a per-worker "TEKIJÄT" strip (window counts + €/h optimisation).
  */
-import { allPoints, computeDealBilling, checkWindowAttribution, type ProjectData, type WindowStatus, type WorkerStat, type FixedDeal } from "@shared/project";
+import { allPoints, computeDealBilling, checkWindowAttribution, computeLampTotals, computeLampWorkerStats, type ProjectData, type WindowStatus, type WorkerStat, type FixedDeal } from "@shared/project";
 import { computeP2Billing, p2FounderOpts } from "@shared/p2";
 import type { GigBillingState } from "@/lib/api";
 import { dashboardPhase } from "@/lib/dashboard-phase";
@@ -347,6 +347,12 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   const allWorkers: DashWorkerStat[] = [...workerStats, ...zeroStats].sort((a, b) => b.washed - a.washed);
   const activeWorkers = allWorkers.filter((s) => s.washed > 0 || s.hours > 0);
   const shownWorkers = showActiveOnly ? activeWorkers : allWorkers;
+
+  // Lamput — sama tekijälista kuin ikkunoilla, mutta ei rahaa. Osio piirretään
+  // vain kun keikalla on ylipäätään lamppuja merkattuna, joten lamputtomalla
+  // keikalla dash näyttää täysin samalta kuin ennen.
+  const lampTotals = computeLampTotals(project);
+  const lampWorkerStats = computeLampWorkerStats(project);
 
   // Founders' combined earnings — shown as the collapsed summary on the
   // "PERUSTAJIEN ANSIOT" bar so the headline figure is glanceable while folded.
@@ -1186,6 +1192,36 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                 );
               })}
             </div>
+          </Section>
+        )}
+
+        {/* Lamput — sama merkintälogiikka kuin ikkunoilla (lisää/poista/merkitse
+            pohjapiirrokselta, tähtinä), mutta ei rahaa. Osio näkyy vain kun
+            keikalla on ylipäätään lamppuja, joten lamputtomalla keikalla dash
+            ei muutu lainkaan. */}
+        {lampTotals.total > 0 && (
+          <Section id="lamps" label="LAMPUT" summary={`${lampTotals.changed}/${lampTotals.total} vaihdettu`} animClass="anim-fadeUp-5">
+            <div style={{ display: "flex", alignItems: "center", gap: T.space.lg, flexWrap: "wrap", marginBottom: T.space.md }}>
+              <div>
+                <div style={{ fontFamily: T.font, fontSize: T.size.display, fontWeight: 700, lineHeight: 1 }}>
+                  {lampTotals.changed} <span style={{ fontSize: T.size.sm, fontWeight: 500, color: T.text.faint }}>/ {lampTotals.total} vaihdettu</span>
+                </div>
+                <div style={{ fontFamily: T.mono, fontSize: T.size.xs, color: T.text.faint, marginTop: 2 }}>{Math.round(lampTotals.pct)} %</div>
+              </div>
+              <div style={{ flex: 1, minWidth: 120, height: 6, borderRadius: T.radius.xs, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+                <div style={{ width: `${lampTotals.pct.toFixed(1)}%`, height: "100%", borderRadius: T.radius.xs, background: "linear-gradient(90deg,rgba(124,224,166,0.5),#7CE0A6)", transition: "width .6s" }} />
+              </div>
+            </div>
+            {lampWorkerStats.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${m ? 140 : 180}px, 1fr))`, gap: m ? T.space.sm + 2 : T.space.md }}>
+                {lampWorkerStats.map((s) => (
+                  <div key={s.worker} style={{ ...inset, padding: T.space.md + 2, display: "flex", alignItems: "center", justifyContent: "space-between", gap: T.space.sm, minWidth: 0 }}>
+                    <span style={{ fontFamily: T.font, fontSize: T.size.body, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{workerName(s.worker)}</span>
+                    <span style={{ ...mono, fontWeight: 700, flexShrink: 0 }}>{s.changed}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </Section>
         )}
 

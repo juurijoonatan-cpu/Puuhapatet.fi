@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRoute } from "wouter";
 import { api, warmBackend, type WorkerView, type GuidedWorkerView } from "@/lib/api";
-import type { WindowStatus } from "@shared/project";
+import type { WindowStatus, LampStatus } from "@shared/project";
 import {
   ALL_AGREEMENTS, PROFILE_QUESTIONS, PROFILE_REQUIRED_IDS, WORKER_AGREEMENT_VERSION,
   INSURANCE_QUESTION, INSURANCE_LATER_NOTE, RISK_ACK_TEXT, INSURANCE_ANSWER_KEY, RISK_ACK_KEY,
@@ -1097,6 +1097,12 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
     }
   }, [token, setView]);
 
+  // Lamppu — sama merkintä kuin ikkunalla, mutta ei rahaa eikä pesuporttia.
+  const markLamp = useCallback(async (key: string, status: LampStatus) => {
+    const res = await api.crewMarkLamp(token, key, status);
+    if (res.ok && res.data?.view) setView(res.data.view);
+  }, [token, setView]);
+
 
   // Per-window observation (text + optional photo) the worker leaves on a window.
   const setObservation = useCallback(async (key: string, text: string, imageDataUrl?: string) => {
@@ -1215,6 +1221,10 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
             onSetObservation={setObservation}
             onLoadObservationImage={loadObservationImage}
             activeZone={view.activeZone}
+            lamps={view.lamps}
+            lampStatuses={view.lampStatuses}
+            lampChangedBy={view.lampChangedBy}
+            onSetLampStatus={markLamp}
             p2={view.p2 ? { enabled: view.p2.enabled, lockedKeys: view.p2.lockedKeys, payoutByKey: view.p2.payoutByKey } : null}
             /* Asiakkaan laajuusvastaukset keltaisiin. Ilman näitä tekijä pesisi
                yhteisökeikan keltaisia arvaamalla, vaikka asiakas on jo kertonut

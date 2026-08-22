@@ -667,7 +667,7 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   { method: "GET",  re: /^\/api\/crew\/[^/]+\/observation-image$/ },
   // Pohjakuva tekijän työlinkistä — sama aukko kuin yllä.
   { method: "GET",  re: /^\/api\/crew\/[^/]+\/plan\/[^/]*$/ },
-  { method: "POST", re: /^\/api\/crew\/[^/]+\/(password|onboard|window|hours|note|map-note|shift|expense)$/ },
+  { method: "POST", re: /^\/api\/crew\/[^/]+\/(password|onboard|window|lamp|hours|note|map-note|shift|expense)$/ },
   // Nämä neljä olivat samassa aukossa kuin observation-image: jokainen
   // tunnistaa tekijän `findJobByCrewToken`illa täsmälleen kuten yllä olevat,
   // mutta portti vastasi niihin 401 → tekijä lensi adminin kirjautumiseen
@@ -8151,6 +8151,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       customMarks: project.customMarks,
       posOverrides: project.posOverrides,
       deleted: project.deleted,
+      // Lamput: sama merkintälogiikka kuin ikkunoilla, mutta ei rahaa. Tekijä
+      // saa merkitä vaihdetuksi (attribuutio itseensä); lisäys/poisto on vain
+      // johtajien projektinäkymässä.
+      lamps: project.lamps ?? {},
+      lampStatuses: project.lampStatuses ?? {},
+      lampChangedBy: Object.fromEntries(Object.entries(project.lampChangedBy ?? {}).map(([k, v]) => [k, v.by])),
       hours: stats.hours,
       stats,
       // P2 (keltaiset ikkunat): tekijän OMA palkkio per ikkuna. Asiakashintaa tai
@@ -8462,6 +8468,40 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Lokin prioriteetti kartasta (luotettava); clientin p vain fallbackina.
       const p: 1 | 2 = mapPriority ?? (req.body?.p === 2 ? 2 : 1);
       project.log = [{ floor, key, p, status, ts: Date.now(), by: member.id }, ...(project.log || [])].slice(0, 200);
+
+      const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Worker marks a LAMP (vaihdettu / ei), attributed to themselves only. Sama
+  // sopimustarkistus kuin ikkunoilla, mutta ei P2- tai guided-pesuporttia —
+  // lampuilla ei ole rahaa eikä kerroslukitusta.
+  app.post("/api/crew/:token/lamp", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      if (!isCrewTrainee(member) && WORKER_AGREEMENTS_GATED && !hasSignedAllAgreements(member, requiredAgreementIdsForSet(resolveAgreementSet(member)), WORKER_AGREEMENT_VERSION)) {
+        return res.status(403).json({ error: "Lue lisätiedot ja allekirjoita sopimukset ensin" });
+      }
+      const key = String(req.body?.key ?? "").slice(0, 64);
+      const status = req.body?.status === "vaihdettu" ? "vaihdettu" : "ei";
+      if (!key) return res.status(400).json({ error: "key puuttuu" });
+
+      if (!project.lampStatuses) project.lampStatuses = {};
+      if (!project.lampChangedBy) project.lampChangedBy = {};
+      if (status === "vaihdettu") {
+        project.lampStatuses[key] = "vaihdettu";
+        project.lampChangedBy[key] = { by: member.id, ts: Date.now() };
+      } else if (!project.lampChangedBy[key] || project.lampChangedBy[key].by === member.id) {
+        // Only clear a lamp the worker owns (or that nobody owns) — same rule as windows.
+        delete project.lampStatuses[key];
+        delete project.lampChangedBy[key];
+      }
 
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;

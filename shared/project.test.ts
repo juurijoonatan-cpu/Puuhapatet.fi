@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
+import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
 import { emptyGigData, computeTotals } from "./gig";
 
 // Kohta 6.1 — kokonaistilanteen ikkunamäärän täsmäytys. Ks. docs/fr8-era-laskutus-plan.md.
@@ -502,5 +502,68 @@ describe("scopeSummary", () => {
     expect(s.open).toEqual(["1#1", "1#2"]);
     expect(s.yes).toEqual([]);
     expect(s.no).toEqual([]);
+  });
+});
+
+describe("lamput — merkintä, poisto ja per-tekijä laskuri (ei rahaa)", () => {
+  function withLamps(): ProjectData {
+    const p = emptyProjectData();
+    p.lamps = { "1": [{ key: "1#lampA", x: 10, y: 10 }, { key: "1#lampB", x: 20, y: 20 }] };
+    p.lampStatuses = { "1#lampA": "vaihdettu" };
+    p.lampChangedBy = { "1#lampA": { by: "jani", ts: 1 } };
+    return p;
+  }
+
+  it("laskee kokonaistilanteen (yhteensä / vaihdettu / %)", () => {
+    const totals = computeLampTotals(withLamps());
+    expect(totals.total).toBe(2);
+    expect(totals.changed).toBe(1);
+    expect(totals.unchanged).toBe(1);
+    expect(totals.pct).toBe(50);
+  });
+
+  it("ei lamppuja → nolla eikä jako nollalla", () => {
+    const totals = computeLampTotals(emptyProjectData());
+    expect(totals).toEqual({ total: 0, changed: 0, unchanged: 0, pct: 0 });
+  });
+
+  it("per-tekijä laskuri näyttää kuka on vaihtanut montako", () => {
+    const p = withLamps();
+    p.lamps!["1"].push({ key: "1#lampC", x: 30, y: 30 });
+    p.lampStatuses!["1#lampC"] = "vaihdettu";
+    p.lampChangedBy!["1#lampC"] = { by: "jani", ts: 2 };
+    const stats = computeLampWorkerStats(p);
+    expect(stats).toEqual([{ worker: "jani", changed: 2 }]);
+  });
+
+  it("sanitointi säilyttää vaihdetun lampun muuttajan", () => {
+    const clean = sanitizeProjectData({
+      lamps: { "1": [{ key: "1#lampA", x: 5, y: 5 }] },
+      lampStatuses: { "1#lampA": "vaihdettu" },
+      lampChangedBy: { "1#lampA": { by: "matias", ts: 123 } },
+    });
+    expect(clean.lamps?.["1"]).toEqual([{ key: "1#lampA", x: 5, y: 5 }]);
+    expect(clean.lampStatuses?.["1#lampA"]).toBe("vaihdettu");
+    expect(clean.lampChangedBy?.["1#lampA"]).toEqual({ by: "matias", ts: 123 });
+  });
+
+  it("changedBy ilman vastaavaa vaihdettu-statusta ei jää roikkumaan (sama sääntö kuin keskenBy:llä)", () => {
+    const clean = sanitizeProjectData({
+      lamps: { "1": [{ key: "1#lampA", x: 5, y: 5 }] },
+      // Ei lampStatuses-merkintää lainkaan tälle avaimelle ("ei"-tila) —
+      // silti clientiltä tulee kuka-vaihtoi-tieto (esim. vanhentunut kopio).
+      lampChangedBy: { "1#lampA": { by: "matias", ts: 123 } },
+    });
+    expect(clean.lampChangedBy?.["1#lampA"]).toBeUndefined();
+  });
+
+  it("poisto (splice) ei jätä statusta tai attribuutiota roikkumaan", () => {
+    const p = withLamps();
+    p.lamps!["1"] = p.lamps!["1"].filter((l) => l.key !== "1#lampA");
+    delete p.lampStatuses!["1#lampA"];
+    delete p.lampChangedBy!["1#lampA"];
+    const totals = computeLampTotals(p);
+    expect(totals.total).toBe(1);
+    expect(totals.changed).toBe(0);
   });
 });

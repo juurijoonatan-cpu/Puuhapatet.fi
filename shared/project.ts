@@ -30,6 +30,20 @@ export type ProjMarksData = Record<string, ProjFloorData>;
 export interface ProjCustomMark { key: string; p: 1 | 2; x: number; y: number; }
 
 /**
+ * Lamput (lamppupisteet) — sama logiikka kuin ikkunoilla mutta oma, kevyempi
+ * järjestelmä: EI hintaa, EI seedattuja pisteitä. Jokainen lamppu on käsin
+ * lisätty (`"<krs>#lamp<rand>"`), ja sillä on vain kaksi tilaa (vaihdettu /
+ * ei). Poisto on aina lopullinen (ei `deleted`-hautakiveä kuten ikkunoilla),
+ * koska lampuilla ei ole laskutusta joka tarvitsisi historiaa.
+ */
+export type LampStatus = "ei" | "vaihdettu";
+
+export interface ProjLampMark { key: string; x: number; y: number; }
+
+/** Kuka ja milloin merkitsi lampun vaihdetuksi. */
+export interface ProjLampChange { by: string; ts: number; }
+
+/**
  * A non-window map marker: important rooms / navigation aids the crew place on a
  * floor plan so the building is easier to move around (ladder location, entrance,
  * water point, a hazard, or a free-text note). Kept separate from window marks so
@@ -265,6 +279,13 @@ export interface ProjectData {
   washedBy2?: Record<string, string>;
   keskenBy?: Record<string, string>;               // key → worker id who marked it "kesken"
   customMarks: Record<string, ProjCustomMark[]>;   // floor → manually added marks
+  /** Lamput: floor → käsin lisätyt lamppupisteet (tähtinä kartalla). Ei
+   *  seedattuja — kaikki lisätään manuaalisesti, samaan tapaan kuin `customMarks`. */
+  lamps?: Record<string, ProjLampMark[]>;
+  /** Lampun avain → tila ("ei" jätetään pois, kuten `statuses`). */
+  lampStatuses?: Record<string, LampStatus>;
+  /** Lampun avain → kuka ja milloin merkitsi sen vaihdetuksi. */
+  lampChangedBy?: Record<string, ProjLampChange>;
   notes?: Record<string, ProjMapNote[]>;           // floor → navigation markers / notes
   observations?: Record<string, ProjWindowObservation>; // window key → worker's observation
   activeZone?: ProjActiveZone | null;              // where work is happening right now
@@ -562,6 +583,9 @@ export function emptyProjectData(): ProjectData {
     washedBy: {},
     washedBy2: {},
     customMarks: {},
+    lamps: {},
+    lampStatuses: {},
+    lampChangedBy: {},
     notes: {},
     observations: {},
     activeZone: null,
@@ -742,6 +766,80 @@ export function checkWindowAttribution(data: ProjectData): WindowAttributionChec
   const attributedSum = computeWorkerStats(data).reduce((s, w) => s + w.washed, 0);
   const diff = dotCount - attributedSum;
   return { dotCount, attributedSum, diff, matches: Math.abs(diff) < 1e-6 };
+}
+
+// ─── Lamput (lamppupisteet) ─────────────────────────────────────────────────────
+//
+// Sama merkintälogiikka kuin ikkunoilla — lisää/poista/merkitse — mutta EI rahaa
+// eikä seedattuja pisteitä: kaikki lamput ovat käsin lisättyjä, ja poisto on aina
+// lopullinen (ei tarvitse `deleted`-hautakiveä, koska mitään ei lasketa summaan
+// jälkikäteen). Kartalla lamput näkyvät tähtinä, ikkunoiden pisteiden sijaan.
+
+export interface ProjLampPoint {
+  floor: string;
+  key: string;
+  x: number;
+  y: number;
+  status: LampStatus;
+  changedBy?: string;
+  changedAt?: number;
+}
+
+/** Kaikki lamput joka kerrokselta, litistettynä yhdeksi listaksi. */
+export function allLampPoints(data: ProjectData): ProjLampPoint[] {
+  const out: ProjLampPoint[] = [];
+  const floors = data.building.floors.length ? data.building.floors : DEFAULT_FLOORS;
+  const lamps = data.lamps ?? {};
+  const statuses = data.lampStatuses ?? {};
+  const changedBy = data.lampChangedBy ?? {};
+  for (const f of floors) {
+    for (const lm of lamps[f] || []) {
+      const change = changedBy[lm.key];
+      out.push({
+        floor: f,
+        key: lm.key,
+        x: lm.x,
+        y: lm.y,
+        status: statuses[lm.key] || "ei",
+        changedBy: change?.by,
+        changedAt: change?.ts,
+      });
+    }
+  }
+  return out;
+}
+
+export interface LampTotals {
+  total: number;
+  changed: number;
+  unchanged: number;
+  pct: number; // 0..100
+}
+
+/** Kokonaistilanne dashia varten: montako lamppua merkattu, montako vaihdettu. */
+export function computeLampTotals(data: ProjectData): LampTotals {
+  const pts = allLampPoints(data);
+  const total = pts.length;
+  const changed = pts.filter((p) => p.status === "vaihdettu").length;
+  return { total, changed, unchanged: total - changed, pct: total > 0 ? (changed / total) * 100 : 0 };
+}
+
+export interface LampWorkerStat {
+  worker: string;
+  changed: number; // montako lamppua tämä tekijä on merkinnyt vaihdetuksi
+}
+
+/** Per-tekijä lamppulaskuri johtajien näkymää varten — puhdas laskuri, ei rahaa. */
+export function computeLampWorkerStats(data: ProjectData): LampWorkerStat[] {
+  const pts = allLampPoints(data);
+  const counts = new Map<string, number>();
+  for (const p of pts) {
+    if (p.status !== "vaihdettu" || !p.changedBy) continue;
+    counts.set(p.changedBy, (counts.get(p.changedBy) || 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([worker, changed]) => ({ worker, changed }))
+    .sort((a, b) => b.changed - a.changed);
 }
 
 // ─── Per-erä (instalment) debt attribution ─────────────────────────────────────
@@ -1174,6 +1272,40 @@ export function sanitizeProjectData(input: any): ProjectData {
     }
   }
 
+  const lamps: Record<string, ProjLampMark[]> = {};
+  if (input.lamps && typeof input.lamps === "object") {
+    for (const f of Object.keys(input.lamps).slice(0, 40)) {
+      const arr = Array.isArray(input.lamps[f]) ? input.lamps[f] : [];
+      lamps[String(f).slice(0, 8)] = arr.slice(0, 2000).map((l: any) => ({
+        key: cleanKey(l?.key),
+        x: clampPct(Number(l?.x)),
+        y: clampPct(Number(l?.y)),
+      })).filter((l: ProjLampMark) => l.key);
+    }
+  }
+
+  const lampStatuses: Record<string, LampStatus> = {};
+  if (input.lampStatuses && typeof input.lampStatuses === "object") {
+    for (const k of Object.keys(input.lampStatuses).slice(0, 20000)) {
+      if (input.lampStatuses[k] === "vaihdettu") lampStatuses[cleanKey(k)] = "vaihdettu";
+    }
+  }
+
+  // Vain vaihdetuille lampuille: puretulla merkinnällä (status palautettu "ei")
+  // ei saa jäädä roikkumaan vanhaa "kuka vaihtoi" -tietoa, samaan tapaan kuin
+  // ikkunoiden keskenBy vain kesken-tilaisille.
+  const lampChangedBy: Record<string, ProjLampChange> = {};
+  if (input.lampChangedBy && typeof input.lampChangedBy === "object") {
+    for (const k of Object.keys(input.lampChangedBy).slice(0, 20000)) {
+      const key = cleanKey(k);
+      const c = input.lampChangedBy[k];
+      const by = c && typeof c === "object" ? String(c.by ?? "").slice(0, 40) : "";
+      if (by && lampStatuses[key] === "vaihdettu") {
+        lampChangedBy[key] = { by, ts: Number(c.ts) || Date.now() };
+      }
+    }
+  }
+
   const notes: Record<string, ProjMapNote[]> = {};
   if (input.notes && typeof input.notes === "object") {
     for (const f of Object.keys(input.notes).slice(0, 40)) {
@@ -1371,6 +1503,9 @@ export function sanitizeProjectData(input: any): ProjectData {
     washedBy2,
     keskenBy,
     customMarks,
+    lamps,
+    lampStatuses,
+    lampChangedBy,
     notes,
     observations,
     activeZone,

@@ -797,8 +797,9 @@ describe("ostoslista ja asiakkaan hintaehdotus", () => {
     const o = resolveFixtureOrder(withOrder());
     expect(o.bulbs).toBe(2);
     expect(o.bulbsManual).toBe(false);
-    // Kytkimiä tarvitaan tekemättömiin oviin (1 kahdesta on jo tehty).
-    expect(o.switches).toBe(1);
+    // Ovia on tehtävänä yksi (kaksi merkittyä, joista yksi jo tehty).
+    expect(o.doorCount).toBe(1);
+    expect(o.doorCountManual).toBe(false);
   });
 
   it("johtajan käsin asettama määrä voittaa lasketun, ja laskettu jää näkyviin", () => {
@@ -821,9 +822,21 @@ describe("ostoslista ja asiakkaan hintaehdotus", () => {
 
   it("asiakkaan hinnalla laskettu summa käyttää efektiivistä määrää", () => {
     const p = withOrder();
-    p.fixtureQuote = { bulbPriceCents: 450, switchPriceCents: 1200, at: 1 };
-    // 2 polttimoa × 4,50 € + 1 kytkin × 12,00 € = 21,00 €
+    p.fixtureQuote = { bulbPriceCents: 450, doorPriceCents: 1200, at: 1 };
+    // 2 polttimoa × 4,50 € + 1 ovi × 12,00 € = 21,00 €
     expect(resolveFixtureOrder(p).quotedTotalCents).toBe(2100);
+  });
+
+  it("ovihinta lasketaan OVEA kohti, ei tarvikkeita kohti", () => {
+    const p = withOrder();
+    // Neljä ovea tehtävänä, hinta 15 € / ovi → 60 €. Materiaali on vapaa
+    // teksti eikä vaikuta laskentaan lainkaan.
+    p.fixtureOrder = { doorsNeeded: 4, doorMaterial: "EPDM D-tiiviste" };
+    p.fixtureQuote = { doorPriceCents: 1500, at: 1 };
+    const o = resolveFixtureOrder(p);
+    expect(o.doorCount).toBe(4);
+    expect(o.doorMaterial).toBe("EPDM D-tiiviste");
+    expect(o.quotedTotalCents).toBe(6000);
   });
 
   it("ilman hintaa summaa ei ole (nolla olisi eri väite kuin ei mitään)", () => {
@@ -843,9 +856,9 @@ describe("ostoslista ja asiakkaan hintaehdotus", () => {
   });
 
   it("negatiivinen hinta pudotetaan, ylisuuri leikataan", () => {
-    const q = sanitizeFixtureQuote({ bulbPriceCents: -500, switchPriceCents: 9_999_999, at: 1 })!;
+    const q = sanitizeFixtureQuote({ bulbPriceCents: -500, doorPriceCents: 9_999_999, at: 1 })!;
     expect(q.bulbPriceCents).toBeUndefined();
-    expect(q.switchPriceCents).toBe(200_000);
+    expect(q.doorPriceCents).toBe(200_000);
   });
 
   it("nolla on kelvollinen hinta (veloituksetta)", () => {
@@ -865,5 +878,51 @@ describe("ostoslista ja asiakkaan hintaehdotus", () => {
 
   it("ovien kerrosjakauma laskee tehdyt ja tekemättömät", () => {
     expect(computeDoorFloorStats(withOrder())).toEqual([{ floor: "1", total: 2, done: 1, open: 1 }]);
+  });
+});
+
+
+describe("laskuri lupaa vain sen mitä kartalle on merkitty", () => {
+  it("merkitsemätön lamppu ei ole missään luvussa — ei edes tarkastamattomissa", () => {
+    const p = emptyProjectData();
+    p.building.floors = ["1"];
+    p.lamps = { "1": [{ key: "1#a", x: 1, y: 1 }, { key: "1#b", x: 2, y: 2 }] };
+    p.lampConditions = { "1#a": "toimiva" };
+
+    const inv = computeLampInventory(p);
+    // Kaksi merkittyä: yksi tarkastettu, yksi ei. Kiinteistössä voi olla
+    // kymmeniä muita — ne EIVÄT saa näkyä minään lukuna.
+    expect(inv.total).toBe(2);
+    expect(inv.unchecked).toBe(1);
+    expect(inv.checked).toBe(1);
+    expect(inv.total).toBe(inv.byFloor.reduce((n, r) => n + r.total, 0));
+  });
+
+  it("kaikki luvut summautuvat merkittyjen määrään, eivät mihinkään suurempaan", () => {
+    const p = emptyProjectData();
+    p.building.floors = ["1", "2"];
+    p.lamps = {
+      "1": [{ key: "1#a", x: 1, y: 1 }, { key: "1#b", x: 2, y: 2 }, { key: "1#c", x: 3, y: 3 }],
+      "2": [{ key: "2#a", x: 4, y: 4 }],
+    };
+    p.lampStatuses = { "1#a": "vaihdettu" };
+    p.lampChangedBy = { "1#a": { by: "jani", ts: 1 } };
+    p.lampConditions = { "1#b": "rikki", "1#c": "toimiva" };
+
+    const inv = computeLampInventory(p);
+    expect(inv.fixed + inv.needsBulbs + inv.working + inv.unchecked).toBe(inv.total);
+    expect(inv.total).toBe(4);
+    // "Kunnossa" ei voi ylittää merkittyjen määrää.
+    expect(inv.functional).toBeLessThanOrEqual(inv.total);
+    expect(inv.functionalPct).toBeLessThanOrEqual(100);
+  });
+
+  it("kartoittamaton keikka näyttää nollaa, ei tyhjää lupausta", () => {
+    const p = emptyProjectData();
+    p.doors = { "1": [{ key: "1#d", x: 1, y: 1 }] };
+    const inv = computeLampInventory(p);
+    expect(inv.total).toBe(0);
+    expect(inv.needsBulbs).toBe(0);
+    expect(inv.functionalPct).toBe(0);
   });
 });

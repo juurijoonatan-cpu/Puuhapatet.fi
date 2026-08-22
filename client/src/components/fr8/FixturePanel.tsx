@@ -129,7 +129,7 @@ export default function FixturePanel({
           ["Ei toimi", `${inv.needsBulbs}`, "polttimoa ostettava", inv.needsBulbs > 0 ? T.tone.bad : T.text.muted],
           ["Vaihdettu", `${inv.fixed}`, "tähän mennessä", T.tone.goodSoft],
           ["Kunnossa", `${inv.functional}/${inv.checked}`, `tarkastetuista · ${Math.round(inv.functionalPct)} %`, T.text.primary],
-          ["Tarkastamatta", `${inv.unchecked}`, `${inv.total} lamppua yhteensä`, inv.unchecked > 0 ? T.tone.warn : T.text.muted],
+          ["Tarkastamatta", `${inv.unchecked}`, `${inv.total} merkitystä lampusta`, inv.unchecked > 0 ? T.tone.warn : T.text.muted],
         ] as [string, string, string, string][]).map(([label, val, sub, tone]) => (
           <div key={label} style={inset}>
             <div style={{ ...mono, color: T.text.faint }}>{label}</div>
@@ -139,13 +139,22 @@ export default function FixturePanel({
         ))}
       </div>
 
+      {/* MITÄ LUVUT KOSKEVAT. Merkitsemätön lamppu on tälle laskennalle
+          olematon — ei "tarkastamaton" vaan tuntematon. Ilman tätä lausetta
+          "5 lamppua" luetaan "talossa on 5 lamppua", ja se lupaus menee
+          sellaisenaan myös asiakkaan sivulle. */}
+      <p style={{ margin: `0 0 ${T.space.lg}px`, fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, lineHeight: 1.6 }}>
+        Luvut koskevat vain kartalle merkittyjä lamppuja ({inv.total} kpl) — eivät kiinteistön kaikkia lamppuja.
+        Sama teksti näkyy asiakkaalle.
+      </p>
+
       {/* 2. KERROKSITTAIN — missä työ on. */}
       {inv.byFloor.length > 0 && (
         <div style={{ ...inset, padding: T.space.lg, marginBottom: T.space.lg }}>
           <LampFloorChart
             rows={inv.byFloor}
             theme={CHART_DARK}
-            title="Lamput kerroksittain"
+            title="Merkityt lamput kerroksittain"
             floorLabel={(f) => floorLabel(project.building, f)}
             onFloorClick={onGoToFloor}
           />
@@ -199,31 +208,31 @@ export default function FixturePanel({
         {doorT.total > 0 && (
           <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1fr auto", gap: T.space.md, alignItems: "end", marginTop: T.space.md }}>
             <label style={{ display: "block" }}>
-              <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Ovikytkimen malli</span>
+              <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Oviin menevä materiaali</span>
               <input
-                defaultValue={order.switchModel ?? ""}
-                key={`sm-${order.switchModel ?? ""}`}
-                placeholder="Esim. Jussi-kytkin, valkoinen"
+                defaultValue={order.doorMaterial ?? ""}
+                key={`dm-${order.doorMaterial ?? ""}`}
+                placeholder="Esim. EPDM D-tiiviste, valkoinen"
                 maxLength={MAX_FIXTURE_MODEL_LEN}
                 disabled={!onSetFixtureOrder}
-                onBlur={(e) => onSetFixtureOrder?.({ switchModel: e.target.value })}
+                onBlur={(e) => onSetFixtureOrder?.({ doorMaterial: e.target.value })}
                 onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                 style={fieldStyle}
               />
             </label>
             <div style={{ minWidth: 132 }}>
-              <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Kappaletta</span>
+              <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Ovea</span>
               <input
                 type="number" min={0}
-                defaultValue={order.switches}
-                key={`sw-${order.switches}-${order.switchesManual}`}
+                defaultValue={order.doorCount}
+                key={`dc-${order.doorCount}-${order.doorCountManual}`}
                 disabled={!onSetFixtureOrder}
-                onBlur={(e) => onSetFixtureOrder?.({ switchesNeeded: e.target.value === "" ? undefined : Number(e.target.value) })}
+                onBlur={(e) => onSetFixtureOrder?.({ doorsNeeded: e.target.value === "" ? undefined : Number(e.target.value) })}
                 onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                 style={{ ...fieldStyle, fontVariantNumeric: "tabular-nums" }}
               />
               <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginTop: T.space.xs }}>
-                {order.switchesManual ? `käsin · kartalta ${order.switchesAuto}` : "tekemättömät ovet"}
+                {order.doorCountManual ? `käsin · kartalta ${order.doorCountAuto}` : "tekemättömät ovet"}
               </div>
             </div>
           </div>
@@ -250,8 +259,8 @@ export default function FixturePanel({
             <div style={{ ...mono, color: "rgba(190,205,255,0.85)", marginBottom: T.space.xs }}>ASIAKKAAN HINTAEHDOTUS · {ago(order.quote.at)} sitten</div>
             <div style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.secondary }}>
               {order.quote.bulbPriceCents != null && <>Lamppu <b style={{ color: T.text.primary, fontWeight: 700 }}>{eurFromCents(order.quote.bulbPriceCents)}</b>/kpl</>}
-              {order.quote.bulbPriceCents != null && order.quote.switchPriceCents != null && " · "}
-              {order.quote.switchPriceCents != null && <>Kytkin <b style={{ color: T.text.primary, fontWeight: 700 }}>{eurFromCents(order.quote.switchPriceCents)}</b>/kpl</>}
+              {order.quote.bulbPriceCents != null && order.quote.doorPriceCents != null && " · "}
+              {order.quote.doorPriceCents != null && <>Ovi <b style={{ color: T.text.primary, fontWeight: 700 }}>{eurFromCents(order.quote.doorPriceCents)}</b>/kpl</>}
               {order.quotedTotalCents != null && (
                 <span style={{ display: "block", marginTop: 2, color: T.tone.info }}>
                   Yhteensä tällä hinnalla <b style={{ fontWeight: 700 }}>{eurFromCents(order.quotedTotalCents)}</b>

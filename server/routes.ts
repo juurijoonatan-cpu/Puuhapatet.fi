@@ -7449,8 +7449,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       order: {
         ...(order.lampModel ? { lampModel: order.lampModel } : {}),
         bulbs: order.bulbs,
-        ...(order.switchModel ? { switchModel: order.switchModel } : {}),
-        switches: order.switches,
+        ...(order.doorMaterial ? { doorMaterial: order.doorMaterial } : {}),
+        doorCount: order.doorCount,
         ...(order.note ? { note: order.note } : {}),
       },
       quote: order.quote ?? null,

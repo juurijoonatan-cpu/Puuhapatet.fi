@@ -308,7 +308,7 @@ export default function GigLivePage() {
    * joka kirjoitetaan suoraan näkymään — niin asiakas näkee oman ehdotuksensa
    * ja sen summan ilman että koko sivu haetaan uudestaan.
    */
-  const saveFixtureQuote = async (body: { bulbPriceCents?: number; switchPriceCents?: number; note?: string }) => {
+  const saveFixtureQuote = async (body: { bulbPriceCents?: number; doorPriceCents?: number; note?: string }) => {
     const res = await api.gigSetFixtureQuote(token, body);
     if (res.ok && res.data) {
       setData((cur) => (cur ? { ...cur, fixtures: res.data!.fixtures } : cur));

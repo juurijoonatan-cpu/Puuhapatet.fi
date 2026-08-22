@@ -464,7 +464,7 @@ export interface GigPublicView {
       unchecked: number; functional: number; byFloor: LampFloorStat[];
     };
     doors: { total: number; done: number; byFloor: DoorFloorStat[] };
-    order: { lampModel?: string; bulbs: number; switchModel?: string; switches: number; note?: string };
+    order: { lampModel?: string; bulbs: number; doorMaterial?: string; doorCount: number; note?: string };
     quote: FixtureQuote | null;
     /** Asiakkaan omalla hinnalla laskettu summa (senttiä). Null ilman hintaa. */
     quotedTotalCents: number | null;
@@ -1543,7 +1543,7 @@ export const api = {
    */
   gigSetFixtureQuote: (
     token: string,
-    body: { bulbPriceCents?: number; switchPriceCents?: number; note?: string },
+    body: { bulbPriceCents?: number; doorPriceCents?: number; note?: string },
   ) => request<{ ok: boolean; fixtures: GigPublicView["fixtures"] }>("POST", `/api/gig/${token}/fixture-quote`, body),
 
   crewMarkLamp: (token: string, key: string, status: LampStatus) =>

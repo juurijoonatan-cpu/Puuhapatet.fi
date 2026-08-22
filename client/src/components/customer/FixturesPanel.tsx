@@ -7,7 +7,7 @@
  *   3. Mitä pitää ostaa — ja mitä asiakas olisi valmis maksamaan.
  *
  * Kohta 3 on se joka tekee tästä muutakin kuin raportin: asiakas kirjoittaa
- * oman hintaehdotuksensa per polttimo ja per ovikytkin, ja se näkyy meidän
+ * oman hintaehdotuksensa per polttimo ja per ovi, ja se näkyy meidän
  * dashissamme. Ei sitova tarjous eikä lasku — hinnasta sovitaan erikseen, ja
  * lomake sanoo sen ääneen, jottei kenttään kirjoitettu luku tunnu tilaukselta.
  *
@@ -64,7 +64,7 @@ interface Props {
   theme: CustomerTheme;
   floorLabel: (floor: string) => string;
   /** Tallenna asiakkaan hintaehdotus. Palauttaa virheen tekstinä tai null. */
-  onSaveQuote: (body: { bulbPriceCents?: number; switchPriceCents?: number; note?: string }) => Promise<string | null>;
+  onSaveQuote: (body: { bulbPriceCents?: number; doorPriceCents?: number; note?: string }) => Promise<string | null>;
 }
 
 export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQuote }: Props) {
@@ -74,7 +74,7 @@ export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQu
 
   const { lamps, doors, order, quote, quotedTotalCents } = fixtures;
   const [bulb, setBulb] = useState(() => fmtEuroInput(quote?.bulbPriceCents));
-  const [sw, setSw] = useState(() => fmtEuroInput(quote?.switchPriceCents));
+  const [doorPrice, setDoorPrice] = useState(() => fmtEuroInput(quote?.doorPriceCents));
   const [note, setNote] = useState(quote?.note ?? "");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -82,16 +82,16 @@ export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQu
 
   // Elävä summa kirjoittaessa — asiakas näkee heti mitä ehdotus tarkoittaa.
   const liveTotal = (() => {
-    const b = parseEuro(bulb), s = parseEuro(sw);
-    if (b == null && s == null) return null;
-    return order.bulbs * (b ?? 0) + order.switches * (s ?? 0);
+    const b = parseEuro(bulb), d = parseEuro(doorPrice);
+    if (b == null && d == null) return null;
+    return order.bulbs * (b ?? 0) + order.doorCount * (d ?? 0);
   })();
 
   async function save() {
     setBusy(true); setErr(null); setMsg(null);
     const error = await onSaveQuote({
       bulbPriceCents: parseEuro(bulb),
-      switchPriceCents: parseEuro(sw),
+      doorPriceCents: parseEuro(doorPrice),
       note: note.trim() || undefined,
     });
     setBusy(false);
@@ -114,7 +114,7 @@ export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQu
         {([
           ["Ei toimi", `${lamps.needsBulbs}`, "lamppua", lamps.needsBulbs > 0 ? (dark ? "#ff7474" : "#C0392B") : T.muted],
           ["Vaihdettu", `${lamps.fixed}`, "tähän mennessä", T.green],
-          ["Kunnossa", `${lamps.functional}`, `${lamps.total} lampusta`, T.ink],
+          ["Kunnossa", `${lamps.functional}`, `${lamps.total} merkitystä`, T.ink],
           ...(doors.total > 0 ? [["Ovet", `${doors.done}/${doors.total}`, "tehty", T.ink] as [string, string, string, string]] : []),
         ] as [string, string, string, string][]).map(([l, v, sub, tone]) => (
           <div key={l} style={{ padding: "12px 14px", borderRadius: 12, background: T.fill }}>
@@ -125,10 +125,18 @@ export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQu
         ))}
       </div>
 
+      {/* MITÄ LUVUT KOSKEVAT. Ilman tätä lausetta "5 lamppua" luetaan "talossa
+          on 5 lamppua" — ja se on lupaus jota emme ole antaneet: merkitsemätön
+          lamppu ei ole näissä luvuissa lainkaan. */}
+      <p style={{ margin: "0 0 18px", fontSize: 12.5, color: T.muted, lineHeight: 1.6 }}>
+        Luvut koskevat kartalle merkittyjä lamppuja ({lamps.total} kpl). Kaikkia kiinteistön
+        lamppuja ei välttämättä ole vielä käyty läpi.
+      </p>
+
       {/* 2. KERROKSITTAIN. */}
       {lamps.byFloor.length > 0 && (
         <div style={{ padding: 14, borderRadius: 12, background: T.fill, marginBottom: 18 }}>
-          <LampFloorChart rows={lamps.byFloor} theme={chartTheme} title="Lamput kerroksittain" floorLabel={floorLabel} />
+          <LampFloorChart rows={lamps.byFloor} theme={chartTheme} title="Merkityt lamput kerroksittain" floorLabel={floorLabel} />
         </div>
       )}
 
@@ -142,8 +150,8 @@ export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQu
           </span>
           {doors.total > 0 && (
             <span>
-              <b style={{ fontWeight: 700 }}>{order.switches}</b> ovikytkintä
-              {order.switchModel && <span style={{ color: T.muted }}> · {order.switchModel}</span>}
+              <b style={{ fontWeight: 700 }}>{order.doorCount}</b> ovea
+              {order.doorMaterial && <span style={{ color: T.muted }}> · {order.doorMaterial}</span>}
             </span>
           )}
         </div>
@@ -164,8 +172,8 @@ export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQu
           </label>
           {doors.total > 0 && (
             <label style={{ display: "block" }}>
-              <span style={{ display: "block", fontSize: 12.5, color: T.muted, marginBottom: 5 }}>€ / ovikytkin</span>
-              <input value={sw} onChange={(e) => setSw(e.target.value)} inputMode="decimal" placeholder="0,00" style={field} />
+              <span style={{ display: "block", fontSize: 12.5, color: T.muted, marginBottom: 5 }}>€ / ovi</span>
+              <input value={doorPrice} onChange={(e) => setDoorPrice(e.target.value)} inputMode="decimal" placeholder="0,00" style={field} />
             </label>
           )}
         </div>
@@ -182,7 +190,7 @@ export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQu
         {liveTotal != null && (
           <p style={{ margin: "12px 0 0", fontSize: 13.5, color: T.ink }}>
             Tällä hinnalla yhteensä <b style={{ fontWeight: 700 }}>{eurFromCents(liveTotal)}</b>
-            <span style={{ color: T.muted }}> ({order.bulbs} polttimoa{doors.total > 0 ? `, ${order.switches} kytkintä` : ""})</span>
+            <span style={{ color: T.muted }}> ({order.bulbs} polttimoa{doors.total > 0 ? `, ${order.doorCount} ovea` : ""})</span>
           </p>
         )}
 

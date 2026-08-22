@@ -115,10 +115,11 @@ export interface FixtureOrder {
   lampModel?: string;
   /** Käsin asetettu ostettava määrä. Puuttuva = laskettu rikkinäisten määrä. */
   bulbsNeeded?: number;
-  /** Ovikytkimen malli. */
-  switchModel?: string;
-  /** Käsin asetettu kytkinmäärä. Puuttuva = laskettu tekemättömien ovien määrä. */
-  switchesNeeded?: number;
+  /** Mitä oviin menee, esim. "EPDM D-tiiviste, valkoinen". Vapaa teksti, koska
+   *  ovipiste on yleinen tehtäväpiste eikä aina tiivistys. */
+  doorMaterial?: string;
+  /** Käsin asetettu ovimäärä. Puuttuva = laskettu tekemättömien ovien määrä. */
+  doorsNeeded?: number;
   /** Johtajan huomio tilauksesta — näkyy asiakkaalle. */
   note?: string;
 }
@@ -127,8 +128,9 @@ export interface FixtureOrder {
 export interface FixtureQuote {
   /** Asiakkaan ehdotus per lamppu (senttiä). */
   bulbPriceCents?: number;
-  /** Asiakkaan ehdotus per ovikytkin (senttiä). */
-  switchPriceCents?: number;
+  /** Asiakkaan ehdotus per OVI (senttiä) — ei per tiiviste tai muu tarvike:
+   *  ovi on se yksikkö jonka asiakas laskee ja josta hinta sovitaan. */
+  doorPriceCents?: number;
   /** Vapaa viesti hinnoista. */
   note?: string;
   /** Milloin asiakas viimeksi tallensi ehdotuksen. */
@@ -1102,8 +1104,17 @@ export function computeLampFloorStats(data: ProjectData): LampFloorStat[] {
 /**
  * Koko keikan lamppuvarasto — se yksi luku josta ostos tehdään, ja se toinen
  * josta asiakas näkee edistymän.
+ *
+ * `total` ON KARTALLE MERKITTYJEN LAMPPUJEN MÄÄRÄ, EI KIINTEISTÖN LAMPPUJEN
+ * MÄÄRÄ. Nämä kaksi eivät ole sama luku eivätkä lähene toisiaan itsestään:
+ * kartoitus on käsityötä, ja merkitsemätön lamppu on tälle laskennalle
+ * olematon — ei "tarkastamaton" vaan tuntematon. Jos näkymä sanoo "5 lamppua",
+ * se tarkoittaa "5 merkittyä", ja asiakas voi lukea sen "talossa on 5 lamppua"
+ * ellei sitä sanota ääneen. Siksi jokainen luku esitetään näkymissä sanoin
+ * "merkityistä" — ks. `FixturePanel` ja asiakkaan `FixturesPanel`.
  */
 export interface LampInventory {
+  /** Kartalle MERKITYT lamput. Ei kiinteistön kokonaismäärä — ks. yllä. */
   total: number;
   /** Montako polttimoa pitää ostaa (= rikki, vaihtamatta). */
   needsBulbs: number;
@@ -1169,10 +1180,11 @@ export interface ResolvedFixtureOrder {
   /** Kartasta laskettu määrä. */
   bulbsAuto: number;
   bulbsManual: boolean;
-  switchModel?: string;
-  switches: number;
-  switchesAuto: number;
-  switchesManual: boolean;
+  doorMaterial?: string;
+  /** Efektiivinen ovimäärä. */
+  doorCount: number;
+  doorCountAuto: number;
+  doorCountManual: boolean;
   note?: string;
   quote?: FixtureQuote;
   /** Asiakkaan ehdotuksella laskettu summa (senttiä). Null kun hintaa ei ole. */
@@ -1184,21 +1196,21 @@ export function resolveFixtureOrder(data: ProjectData): ResolvedFixtureOrder {
   const doorsOpen = computeDoorFloorStats(data).reduce((n, r) => n + r.open, 0);
   const o = data.fixtureOrder ?? {};
   const bulbsManual = Number.isFinite(o.bulbsNeeded as number) && (o.bulbsNeeded as number) >= 0;
-  const switchesManual = Number.isFinite(o.switchesNeeded as number) && (o.switchesNeeded as number) >= 0;
+  const doorCountManual = Number.isFinite(o.doorsNeeded as number) && (o.doorsNeeded as number) >= 0;
   const bulbs = bulbsManual ? Math.round(o.bulbsNeeded as number) : inv.needsBulbs;
-  const switches = switchesManual ? Math.round(o.switchesNeeded as number) : doorsOpen;
+  const doorCount = doorCountManual ? Math.round(o.doorsNeeded as number) : doorsOpen;
   const q = data.fixtureQuote;
   const bulbCents = q?.bulbPriceCents ?? 0;
-  const switchCents = q?.switchPriceCents ?? 0;
-  const hasPrice = !!q && (q.bulbPriceCents != null || q.switchPriceCents != null);
+  const doorCents = q?.doorPriceCents ?? 0;
+  const hasPrice = !!q && (q.bulbPriceCents != null || q.doorPriceCents != null);
   return {
     ...(o.lampModel ? { lampModel: o.lampModel } : {}),
     bulbs, bulbsAuto: inv.needsBulbs, bulbsManual,
-    ...(o.switchModel ? { switchModel: o.switchModel } : {}),
-    switches, switchesAuto: doorsOpen, switchesManual,
+    ...(o.doorMaterial ? { doorMaterial: o.doorMaterial } : {}),
+    doorCount, doorCountAuto: doorsOpen, doorCountManual,
     ...(o.note ? { note: o.note } : {}),
     ...(q ? { quote: q } : {}),
-    quotedTotalCents: hasPrice ? bulbs * bulbCents + switches * switchCents : null,
+    quotedTotalCents: hasPrice ? bulbs * bulbCents + doorCount * doorCents : null,
   };
 }
 
@@ -1810,12 +1822,12 @@ export function sanitizeFixtureOrder(input: any): FixtureOrder | null {
   const out: FixtureOrder = {};
   const model = String(input.lampModel ?? "").trim().slice(0, MAX_FIXTURE_MODEL_LEN);
   if (model) out.lampModel = model;
-  const sModel = String(input.switchModel ?? "").trim().slice(0, MAX_FIXTURE_MODEL_LEN);
-  if (sModel) out.switchModel = sModel;
+  const doorMat = String(input.doorMaterial ?? "").trim().slice(0, MAX_FIXTURE_MODEL_LEN);
+  if (doorMat) out.doorMaterial = doorMat;
   const bulbs = toCount(input.bulbsNeeded);
   if (bulbs !== undefined) out.bulbsNeeded = bulbs;
-  const switches = toCount(input.switchesNeeded);
-  if (switches !== undefined) out.switchesNeeded = switches;
+  const doorsNeeded = toCount(input.doorsNeeded);
+  if (doorsNeeded !== undefined) out.doorsNeeded = doorsNeeded;
   const note = String(input.note ?? "").trim().slice(0, MAX_FIXTURE_ORDER_NOTE_LEN);
   if (note) out.note = note;
   return Object.keys(out).length ? out : null;
@@ -1831,11 +1843,11 @@ export function sanitizeFixtureQuote(input: any): FixtureQuote | null {
   const out: FixtureQuote = { at: Number(input.at) || Date.now() };
   const bulb = toUnitPriceCents(input.bulbPriceCents);
   if (bulb !== undefined) out.bulbPriceCents = bulb;
-  const sw = toUnitPriceCents(input.switchPriceCents);
-  if (sw !== undefined) out.switchPriceCents = sw;
+  const dp = toUnitPriceCents(input.doorPriceCents);
+  if (dp !== undefined) out.doorPriceCents = dp;
   const note = String(input.note ?? "").trim().slice(0, MAX_FIXTURE_QUOTE_NOTE_LEN);
   if (note) out.note = note;
-  const hasContent = out.bulbPriceCents != null || out.switchPriceCents != null || !!out.note;
+  const hasContent = out.bulbPriceCents != null || out.doorPriceCents != null || !!out.note;
   return hasContent ? out : null;
 }
 

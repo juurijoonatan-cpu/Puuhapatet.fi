@@ -21,7 +21,7 @@
  * Näin julkaisu ei koskaan liikuta dataa itsestään.
  */
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, notInArray, sql } from "drizzle-orm";
 import { db } from "./db";
 import { jobAssets } from "@shared/schema";
 import type { ProjectData } from "@shared/project";
@@ -39,7 +39,17 @@ export type AssetKind =
    * "contract"). Kuuluu tähän tauluun samasta syystä kuin pohjakuva: gigData
    * luetaan joka kerta kun asiakas avaa seurannan, sopimus luetaan kerran.
    */
-  | "contract_doc";
+  | "contract_doc"
+  /**
+   * `contract_page` on sopimuksen yksi sivu KUVANA (`refKey` = "1".."N").
+   *
+   * Alkuperäinen PDF (`contract_doc`) säilytetään aina — se on se tiedosto
+   * jonka asiakas lataa. Sivukuvat ovat lukupinta: `<object type="application/pdf">`
+   * on selaimen liitännäinen, joka puhelimessa on kiinteän korkuinen
+   * neulansilmä eikä monessa selaimessa vierity lainkaan. Kuvat piirtyvät joka
+   * selaimessa samalla tavalla, ilman JS:ää ja ilman CORS-ehtoa.
+   */
+  | "contract_page";
 
 /** Suurin talletettava pohjakuva (~2,5 MB data URL). Iso mutta kertaluonteinen:
  *  se ei ole blobissa eikä siis mukana karttapyynnöissä. */
@@ -77,11 +87,19 @@ function mimeOf(dataUrl: string): string {
 export async function putAsset(
   jobId: number, kind: AssetKind, refKey: string, dataUrl: string,
 ): Promise<number> {
+  return putAssetWith(db, jobId, kind, refKey, dataUrl);
+}
+
+/** Sama kirjoitus annetulla yhteydellä — `db` tai transaktio. */
+async function putAssetWith(
+  conn: Pick<typeof db, "insert">,
+  jobId: number, kind: AssetKind, refKey: string, dataUrl: string,
+): Promise<number> {
   const row = {
     jobId, kind, refKey: refKey.slice(0, 200),
     mime: mimeOf(dataUrl), bytes: dataUrl.length, data: dataUrl,
   };
-  const [saved] = await db.insert(jobAssets).values(row)
+  const [saved] = await conn.insert(jobAssets).values(row)
     .onConflictDoUpdate({
       target: [jobAssets.jobId, jobAssets.kind, jobAssets.refKey],
       set: { mime: row.mime, bytes: row.bytes, data: row.data },
@@ -143,6 +161,54 @@ export async function getContractFile(
 }
 
 /**
+ * Sopimuksen yksi sivu kuvana. Sama `rawAsset`-polku kuin PDF:llä ja
+ * pohjakuvalla, joten base64:n purku, ETag-muoto ja "ei löydy" -tila ovat
+ * kaikille samat.
+ */
+export async function getContractPage(
+  jobId: number, page: number,
+): Promise<{ body: Buffer; mime: string; etag: string } | null> {
+  return rawAsset(jobId, "contract_page", String(page), "image/jpeg", "cpage");
+}
+
+/**
+ * Talleta sopimuksen sivukuvat YHDESSÄ transaktiossa.
+ *
+ * MIKSI TRANSAKTIO: ilman sitä katkos kesken kirjoitusta (Neonin yhteys,
+ * lauseen aikakatkos, palvelimen uudelleenkäynnistys) jättäisi kantaan kaksi
+ * sopimusta limittäin — uuden alkusivut ja vanhan loppusivut — ja karsinta
+ * ajamatta. Asiakas lukisi asiakirjaa jota ei ole koskaan ollut olemassa.
+ *
+ * Ylimääräiset sivut karsitaan "ei kuulu säilytettäviin" -ehdolla eikä
+ * `refKey::int > N`:llä: cast kaataisi koko poiston jos tauluun olisi jostain
+ * päätynyt ei-numeerinen `refKey`, eikä SQL takaa että `AND`in vasen ehto
+ * suojaa oikeaa.
+ */
+export async function putContractPages(jobId: number, pageDataUrls: string[]): Promise<number> {
+  await db.transaction(async (tx) => {
+    for (let i = 0; i < pageDataUrls.length; i++) {
+      await putAssetWith(tx, jobId, "contract_page", String(i + 1), pageDataUrls[i]);
+    }
+    const keep = pageDataUrls.map((_, i) => String(i + 1));
+    await tx.delete(jobAssets).where(and(
+      eq(jobAssets.jobId, jobId),
+      eq(jobAssets.kind, "contract_page"),
+      keep.length ? notInArray(jobAssets.refKey, keep) : sql`true`,
+    ));
+  });
+  return pageDataUrls.length;
+}
+
+/** Poista sopimuksen sivukuvat. Palauttaa poistettujen määrän. */
+export async function deleteContractPages(jobId: number): Promise<number> {
+  const gone = await db.delete(jobAssets).where(and(
+    eq(jobAssets.jobId, jobId),
+    eq(jobAssets.kind, "contract_page"),
+  )).returning({ id: jobAssets.id });
+  return gone.length;
+}
+
+/**
  * Liitteen sisältö raakana: base64 purettuna, oikea mime ja ETag.
  *
  * ETag on rivin id + koko: liite on muuttumaton kunnes se korvataan, ja korvaus
@@ -175,13 +241,20 @@ export async function deletePlanImage(jobId: number, floor: string): Promise<boo
   return gone.length > 0;
 }
 
-/** Poista keikan sopimustiedosto. Palauttaa true jos rivi oli olemassa. */
+/**
+ * Poista keikan sopimustiedosto JA sen sivukuvat. Palauttaa true jos PDF-rivi
+ * oli olemassa.
+ *
+ * Sivut poistetaan samalla: jäljelle jäänyt sivujoukko olisi luettavissa
+ * julkiselta reitiltä vielä senkin jälkeen kun sopimus on poistettu.
+ */
 export async function deleteContractFile(jobId: number): Promise<boolean> {
   const gone = await db.delete(jobAssets).where(and(
     eq(jobAssets.jobId, jobId),
     eq(jobAssets.kind, "contract_doc"),
     eq(jobAssets.refKey, CONTRACT_REF_KEY),
   )).returning({ id: jobAssets.id });
+  await deleteContractPages(jobId);
   return gone.length > 0;
 }
 

@@ -40,6 +40,18 @@ export const CT = {
    * 2,19:1 vs `card` (#FFFFFF), ja ΔL täyttöön (`green`) yli 0,06.
    */
   meterTrack: "#94B7A4",
+  /**
+   * Teksti TÄYTETYN aksenttinapin päällä (navy/green täyttö).
+   *
+   * MIKSI POLETTI EIKÄ `theme.green === …` -vertailu: teeman värit ovat
+   * literaalityyppejä, joten vertailu on käännösvirhe — ja ehto olisi väärässä
+   * paikassa muutenkin. Vaalealla teemalla navy ja vihreä ovat TUMMIA täyttöjä
+   * (valkoinen teksti); tummalla samat poletit ovat VAALEITA aksentteja, joilla
+   * valkoinen teksti jäisi lukukelvottomaksi.
+   */
+  onAccent: "#FFFFFF",
+  /** Upotetun pinnan (syvennyksen) sisävarjo. */
+  wellShadow: "inset 0 2px 6px rgba(26,26,26,0.10)",
 } as const;
 
 /**
@@ -78,6 +90,10 @@ export const CT_TECH = {
    * lähes näkymätön, eli asteikko luettiin vain täytetystä kaaresta.
    */
   meterTrack: "#2B583D",
+  /** Tummalla teemalla aksentit ovat vaaleita, joten teksti niiden päällä on
+   *  lähes musta (kontrasti ~10:1). */
+  onAccent: "#08090A",
+  wellShadow: "inset 0 2px 6px rgba(0,0,0,0.5)",
 } as const;
 
 /** Asiakasnäkymien teemat. `CT` on oletus; `tech` on tumma tekninen. */

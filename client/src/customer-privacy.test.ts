@@ -102,7 +102,7 @@ describe("asiakasnäkymien tietoraja", () => {
     expect(src).toMatch(/api\.contractFileUrlForGig\(token\)/);
     // Adminin id-pohjaiset haut nimeltä. Molemmat nimet ovat listalla, jotta
     // vanhan nimen palauttaminen ei livahda ohi vartijasta.
-    const ADMIN_BY_ID = ["fetchGigContractFile", "contractFileUrlForJob"];
+    const ADMIN_BY_ID = ["fetchGigContractFile", "contractFileUrlForJob", "contractPageUrlForJob"];
     for (const f of SHARED_CUSTOMER_VIEWS) {
       const src2 = stripComments(read(f));
       for (const helper of ADMIN_BY_ID) {
@@ -111,6 +111,30 @@ describe("asiakasnäkymien tietoraja", () => {
           `${f}: asiakasnäkymä ei saa hakea sopimusta adminin id-reitiltä (${helper}).`,
         ).not.toContain(helper);
       }
+    }
+  });
+
+  /**
+   * SOPIMUKSEN SIVUT — sama sääntö, uusi polku.
+   *
+   * Sivut ovat kuvia joita `<img>` hakee suoraan. Osoite johdetaan tokenista
+   * täsmälleen kuten tiedoston osoite; keikan numeerinen id olisi arvattavissa.
+   * Lisäksi lukukomponentti EI rakenna osoitteita itse vaan saa ne propina,
+   * jotta yksi paikka päättää mistä asiakirja tulee.
+   */
+  it("sopimuksen sivut haetaan asiakkaan omalla tokenilla", () => {
+    const sign = stripComments(read("client/src/components/GigContractSign.tsx"));
+    expect(sign).toContain("api.contractPageUrlForGig(token, n)");
+
+    const doc = "client/src/components/customer/ContractDocument.tsx";
+    const reader = stripComments(read(doc));
+    expect(reader, `${doc}: lukukomponentti ei saa rakentaa API-osoitteita itse`)
+      .not.toContain("API_BASE");
+    expect(reader, `${doc}: lukukomponentti ei saa tuntea API-polkuja`)
+      .not.toMatch(/\/api\//);
+    for (const helper of ["contractPageUrlForJob", "contractFileUrlForJob", "fetchGigContractFile"]) {
+      expect(reader, `${doc}: adminin id-reitti ei kuulu asiakkaan lukukomponenttiin (${helper})`)
+        .not.toContain(helper);
     }
   });
 
@@ -144,6 +168,10 @@ describe("asiakasnäkymien tietoraja", () => {
     // haettu sopimus, vaikka se näyttäisi samalta koodissa.
     expect(/api\.contractFileUrlForGig\(token\)/.test(
       `const url = api.contractFileUrlForJob(view.jobId);`,
+    )).toBe(false);
+    // Sivupolku samalla säännöllä: id-pohjainen osoite ei ole tokenilla haettu.
+    expect(/api\.contractPageUrlForGig\(token, n\)/.test(
+      `<img src={api.contractPageUrlForJob(jobId, n)} />`,
     )).toBe(false);
   });
 });

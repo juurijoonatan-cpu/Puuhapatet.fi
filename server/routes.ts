@@ -28,7 +28,7 @@ import {
   CUSTOM_PRICING_SUMMARY, SQM_RANGES, HOUSE_TYPES,
   type HouseKey, type TierKey, type HeightKey, type AreaKey, type AddonKey, type DifficultyKey,
 } from "@shared/pricing";
-import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, signaturePrompt, contractPending, gigStatus, livePayments, withoutDashOnly, type GigData } from "@shared/gig";
+import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, signaturePrompt, contractPending, gigStatus, livePayments, withoutDashOnly, type GigData, MAX_CONTRACT_PAGES, MAX_CONTRACT_UPLOAD_LEN } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
@@ -39,6 +39,7 @@ import {
   putAsset, getAsset, resolveAsset, assetStats, migrateJobAssets,
   getPlanImage, deletePlanImage, MAX_PLAN_IMAGE_LEN,
   getContractFile, deleteContractFile, MAX_CONTRACT_FILE_LEN, CONTRACT_REF_KEY,
+  getContractPage, putContractPages, deleteContractPages,
 } from "./assets";
 import { contentDispositionFor } from "./http-headers";
 import { buildTasaus, type TasausEraInvoice, type TasausPayment } from "@shared/fr8-tasaus";
@@ -653,6 +654,10 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   // ilman tätä riviä portti vastaisi 401, ja selain tulkitsee 401:n "sessio
   // vanhentui" -tilanteeksi ja heittää ASIAKKAAN meidän kirjautumissivullemme.
   { method: "GET",  re: /^\/api\/gig\/[^/]+\/contract-file$/ },
+  // Sopimuksen sivut kuvina. Sama tunnistus kuin `contract-file`llä. Ilman tätä
+  // riviä portti vastaisi 401, jonka selain tulkitsee vanhentuneeksi
+  // ADMIN-sessioksi ja heittäisi asiakkaan meidän kirjautumisruudullemme.
+  { method: "GET",  re: /^\/api\/gig\/[^/]+\/contract-page\/[^/]*$/ },
   { method: "POST", re: /^\/api\/gig\/[^/]+\/sign$/ },
   // P2 (keltaiset ikkunat): asiakkaan hintaneuvottelu seurantalinkistä. Token
   // on avain; jokainen reitti validoi lisäksi vaiheen + allekirjoitusportin.
@@ -1744,6 +1749,38 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (gig.signature?.signedAt) {
         return res.status(409).json({ error: "Sopimus on allekirjoitettu — asiakirjaa ei voi enää vaihtaa" });
       }
+      /**
+       * SIVUKUVAT samassa pyynnössä, valinnaisina.
+       *
+       * Asiakirja on yksi, joten se myös tallennetaan yhtenä: erillisillä
+       * pyynnöillä keskeytynyt lataus jättäisi keikalle sopimuksen josta puuttuu
+       * sivuja. Valinnaisuus pitää vanhan asiakkaan (ilman rasterointia)
+       * toimivana — se saa entisen upotuksen.
+       *
+       * VAIN RASTERIKUVAT: `data:image/` yksin päästäisi läpi myös
+       * `data:image/svg+xml`, ja SVG on skriptattava dokumentti jonka reitti
+       * palauttaisi `image/svg+xml`-otsakkeella — suoraan avattuna se ajaisi
+       * skriptiä API-originin kontekstissa.
+       */
+      const pages: string[] = Array.isArray(req.body?.pages)
+        ? req.body.pages.map((x: any) => String(x ?? "")) : [];
+      if (pages.length > MAX_CONTRACT_PAGES) {
+        return res.status(400).json({ error: `Sopimuksessa on liikaa sivuja (enintään ${MAX_CONTRACT_PAGES})` });
+      }
+      if (pages.some((x) => !/^data:image\/(jpeg|png|webp);/.test(x))) {
+        return res.status(400).json({ error: "Sivukuva ei ole tuettu kuvamuoto (JPEG, PNG tai WebP)" });
+      }
+      const uploadTotal = dataUrl.length + pages.reduce((n, x) => n + x.length, 0);
+      if (uploadTotal > MAX_CONTRACT_UPLOAD_LEN) {
+        return res.status(413).json({ error: "Sopimus ja sivukuvat ovat yhdessä liian suuret — pakkaa PDF ennen latausta" });
+      }
+      /**
+       * SIVUT ENNEN PDF:ÄÄ ja `contractFile`-viitettä. Viite on se joka kytkee
+       * sopimuksen päälle asiakkaan näkymässä (`hasContractDoc`), joten
+       * keskeytynyt lataus ei saa jättää porttia päälle ilman luettavia sivuja.
+       */
+      if (pages.length) await putContractPages(id, pages);
+      else await deleteContractPages(id);
       const assetId = await putAsset(id, "contract_doc", CONTRACT_REF_KEY, dataUrl);
       const rawName = String(req.body?.name ?? "").trim();
       gig.contractFile = {
@@ -1754,6 +1791,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         // ja adminille tiedoston oma koko, ei talletetun merkkijonon pituus.
         bytes: Math.round((dataUrl.length - dataUrl.indexOf(",") - 1) * 0.75),
         uploadedAt: Date.now(),
+        // Sivumäärä = lukupinta. Puuttuva → asiakas saa entisen upotuksen.
+        ...(pages.length ? { pages: pages.length } : {}),
       };
       const saved = await saveGig(id, gig);
       res.json({ ok: true, gigData: saved });
@@ -1809,6 +1848,59 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       return await sendContractFile(req, res, row.id, parseGig(row.gigData));
     } catch (e) {
       return fail(res, e, "GET /api/gig/:token/contract-file");
+    }
+  });
+
+  /** Sivunumero polusta: 1..MAX_CONTRACT_PAGES, muu → null. */
+  const contractPageParam = (v: unknown): number | null => {
+    const n = Number(String(v ?? "").slice(0, 3));
+    if (!Number.isInteger(n) || n < 1 || n > MAX_CONTRACT_PAGES) return null;
+    return n;
+  };
+
+  /** Yhteinen sivuvastaus: oikea mime, ETag, 304 ja `nosniff`. */
+  async function sendContractPage(req: any, res: any, jobId: number, page: number) {
+    const img = await getContractPage(jobId, page);
+    if (!img) return res.status(404).json({ error: "Sivua ei löydy" });
+    res.setHeader("ETag", img.etag);
+    res.setHeader("Cache-Control", "private, max-age=300, must-revalidate");
+    res.setHeader("Content-Type", img.mime);
+    // Selain ei saa arvata tyyppiä otsakkeen ohi; latausvaiheen mime-rajaus ja
+    // tämä pitävät sivun kuvana eikä dokumenttina.
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    if (req.headers["if-none-match"] === img.etag) return res.status(304).end();
+    return res.end(img.body);
+  }
+
+  /** Admin: sopimuksen sivu kuvana (esikatselu). */
+  app.get("/api/jobs/:id/contract-page/:n", async (req, res) => {
+    try {
+      const n = contractPageParam(req.params.n);
+      if (!n) return res.status(404).json({ error: "Sivua ei löydy" });
+      return await sendContractPage(req, res, Number(req.params.id), n);
+    } catch (e) {
+      return fail(res, e, "GET /api/jobs/:id/contract-page/:n");
+    }
+  });
+
+  /**
+   * Asiakas: sopimuksen sivu kuvana seurantalinkin tokenilla.
+   *
+   * Tämä on se reitti josta asiakkaan sopimusnäkymä piirtyy. `<img src>` ei voi
+   * lähettää Bearer-otsaketta eikä tarvitse CORSia, joten polussa oleva token
+   * on ainoa tunnistus — sama raja kuin `contract-file`ssä: tästä ei ole polkua
+   * toisen keikan asiakirjaan.
+   */
+  app.get("/api/gig/:token/contract-page/:n", async (req, res) => {
+    try {
+      const n = contractPageParam(req.params.n);
+      if (!n) return res.status(404).json({ error: "Sivua ei löydy" });
+      const [row] = await db.select({ id: jobs.id, isCustomGig: jobs.isCustomGig })
+        .from(jobs).where(eq(jobs.quoteToken, String(req.params.token)));
+      if (!row || !row.isCustomGig) return res.status(404).json({ error: "Seurantaa ei löydy" });
+      return await sendContractPage(req, res, row.id, n);
+    } catch (e) {
+      return fail(res, e, "GET /api/gig/:token/contract-page/:n");
     }
   });
 
@@ -5803,7 +5895,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
          * ole olemassa.
          */
         contractFile: gig.contractFile
-          ? { name: gig.contractFile.name, bytes: gig.contractFile.bytes, uploadedAt: gig.contractFile.uploadedAt }
+          ? {
+              name: gig.contractFile.name, bytes: gig.contractFile.bytes,
+              uploadedAt: gig.contractFile.uploadedAt,
+              // Sivumäärä ratkaisee lukupinnan: sivut kuvina vai entinen upotus.
+              pages: gig.contractFile.pages ?? 0,
+            }
           : null,
         /**
          * TUNTIARVIO per ikkuna — ei kokonaistunteja.

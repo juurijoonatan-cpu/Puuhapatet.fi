@@ -136,6 +136,21 @@ export interface GigContractFile {
   mime: string;
   bytes: number;
   uploadedAt: number;
+  /**
+   * SIVUJEN MÄÄRÄ, jos sopimus on rasteroitu sivukuviksi latausvaiheessa.
+   *
+   * MIKSI SIVUKUVAT: `<object type="application/pdf">` on selaimen liitännäinen
+   * eikä lukupinta. Puhelimessa se on 520 px:n neulansilmä, ja moni selain ei
+   * vieritä upotettua PDF:ää lainkaan — juuri se ongelma jonka upotuksen oma
+   * kommentti myöntää. Sivut kuvina piirtyvät joka selaimessa samalla tavalla,
+   * ilman JS:ää ja ilman CORS-ehtoa (`<img>` ei tarvitse sitä), ja rasterointi
+   * tehdään kertaalleen perustajan koneella.
+   *
+   * PUUTTUVA = ENNEN TÄTÄ LADATTU SOPIMUS. Silloin näytetään entinen upotus
+   * sellaisenaan; uusi lataus tuo sivut mukanaan. Alkuperäinen PDF säilytetään
+   * aina, ja se on se tiedosto jonka asiakas lataa.
+   */
+  pages?: number;
 }
 
 export interface GigData {
@@ -450,6 +465,28 @@ export function clampSector(s: GigSector): GigSector {
  * valmistelussa" -huomautus olisi jo kadonnut. Puuttuva tiedosto on
  * turvallisempi tila kuin luvattu tiedosto jota ei ole.
  */
+/**
+ * Enintään näin monta sivua. Sopimus ei ole kirja.
+ *
+ * TÄÄLLÄ EIKÄ PALVELIMELLA, koska selain tarvitsee saman luvun: se rasteroi
+ * sivut ja pienentää niitä kunnes lataus mahtuu. Kaksi kopiota rajasta
+ * tarkoittaisi että selain lähettää sen mikä sen mielestä mahtuu ja palvelin
+ * hylkää sen.
+ */
+export const MAX_CONTRACT_PAGES = 40;
+
+/**
+ * Sopimuslatauksen yhteiskatto: alkuperäinen PDF + kaikki sivukuvat samassa
+ * pyynnössä. Asiakirja on yksi, joten se myös tallennetaan yhtenä — erillisillä
+ * pyynnöillä keskeytynyt lataus jättäisi keikalle sopimuksen josta puuttuu
+ * sivuja, ja asiakas allekirjoittaisi asiakirjan jota ei ole kokonaan olemassa.
+ *
+ * Mitoitus: nelisivuinen sopimus on ~0,7 MB PDF:nä ja ~0,9 MB sivukuvina data
+ * URLeina. Katto jää selvästi alle `express.json({limit:"8mb"})`in, jotta ylitys
+ * tulee omana suomenkielisenä virheenään eikä bodyparserin 413:na.
+ */
+export const MAX_CONTRACT_UPLOAD_LEN = 7_000_000;
+
 export function sanitizeContractFile(input: any): GigContractFile | undefined {
   if (!input || typeof input !== "object") return undefined;
   const assetId = Number(input.assetId);
@@ -463,6 +500,11 @@ export function sanitizeContractFile(input: any): GigContractFile | undefined {
     mime: String(input.mime ?? "application/pdf").slice(0, 100),
     bytes: Number.isFinite(bytes) && bytes > 0 ? Math.round(bytes) : 0,
     uploadedAt: Number.isFinite(at) && at > 0 ? Math.round(at) : Date.now(),
+    // Sivumäärä on valinnainen: ennen rasterointia ladatuilla sopimuksilla sitä
+    // ei ole, ja niiden pitää round-trippailla muuttumattomina.
+    ...(Number.isInteger(Number(input.pages)) && Number(input.pages) > 0
+      ? { pages: Math.min(MAX_CONTRACT_PAGES, Number(input.pages)) }
+      : {}),
   };
 }
 

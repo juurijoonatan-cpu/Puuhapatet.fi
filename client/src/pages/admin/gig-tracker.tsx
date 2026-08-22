@@ -215,6 +215,9 @@ export default function AdminGigTrackerPage() {
    * hukannut juuri valitun tiedoston.
    */
   const [contractFileBusy, setContractFileBusy] = useState(false);
+  /** Rasteroinnin edistyminen. Monisivuinen sopimus kestää sekunteja, ja pelkkä
+   *  "Liitetään…" on juuri se palaute josta ei tiedä onko mitään tapahtumassa. */
+  const [contractPageProgress, setContractPageProgress] = useState<{ done: number; total: number } | null>(null);
   const contractFileInput = useRef<HTMLInputElement>(null);
   /**
    * SOPIMUSTEKSTI-KENTTÄ ON PIILOSSA OLETUKSENA.
@@ -237,7 +240,33 @@ export default function AdminGigTrackerPage() {
       return;
     }
     setContractFileBusy(true);
-    const dataUrl = await new Promise<string>((resolve, reject) => {
+    setContractPageProgress(null);
+    /**
+     * SIVUT RASTEROIDAAN TÄSSÄ SELAIMESSA (pdf.js, dynaamisesti tuotu).
+     *
+     * MIKSI: asiakkaan lukupinta on puhelin, jossa `<object type="application/pdf">`
+     * on kiinteän korkuinen neulansilmä eikä monessa selaimessa vierity
+     * lainkaan. Sivut kuvina piirtyvät joka selaimessa samalla tavalla, ilman
+     * JS:ää ja ilman CORS-ehtoa. Rasterointi tehdään kertaalleen perustajan
+     * koneella — palvelimella ei ole PDF-renderöijää eikä asiakkaan
+     * puhelimelle haluta lähettää sellaista.
+     *
+     * EPÄONNISTUMINEN EI ESTÄ LIITTÄMISTÄ: jos rasterointi kaatuu (vioittunut
+     * tai salasanasuojattu PDF), sopimus liitetään silti ja asiakas saa entisen
+     * upotuksen. Puolittainen lukupinta on parempi kuin ei sopimusta.
+     */
+    let pages: string[] = [];
+    let pdfFromRaster = "";
+    try {
+      const { rasterizePdf } = await import("@/lib/pdf-raster");
+      const out = await rasterizePdf(file, (done, total) => setContractPageProgress({ done, total }));
+      pages = out.pages;
+      pdfFromRaster = out.pdfDataUrl;
+    } catch (err) {
+      console.warn("Sopimuksen rasterointi ei onnistunut — liitetään ilman sivukuvia", err);
+    }
+    setContractPageProgress(null);
+    const dataUrl = pdfFromRaster || await new Promise<string>((resolve, reject) => {
       const r = new FileReader();
       r.onload = () => resolve(String(r.result ?? ""));
       r.onerror = () => reject(r.error);
@@ -248,11 +277,16 @@ export default function AdminGigTrackerPage() {
       toast({ variant: "destructive", title: "Tiedostoa ei voitu lukea" });
       return;
     }
-    const res = await api.uploadGigContractFile(jobId, dataUrl, file.name);
+    const res = await api.uploadGigContractFile(jobId, dataUrl, file.name, pages);
     setContractFileBusy(false);
     if (res.ok && res.data) {
       setGig(res.data.gigData);
-      toast({ title: "Sopimus liitetty", description: "Asiakas näkee sen omassa näkymässään." });
+      toast({
+        title: "Sopimus liitetty",
+        description: pages.length
+          ? `${pages.length} ${pages.length === 1 ? "sivu" : "sivua"} — asiakas selaa sopimuksen suoraan näkymässään.`
+          : "Asiakas näkee sen omassa näkymässään.",
+      });
     } else {
       toast({ variant: "destructive", title: "Liittäminen epäonnistui", description: res.error });
     }
@@ -1104,6 +1138,13 @@ export default function AdminGigTrackerPage() {
                               <p className="text-[11px] text-muted-foreground tabular-nums">
                                 {Math.max(1, Math.round(gig.contractFile.bytes / 1000))} kB · liitetty{" "}
                                 {new Date(gig.contractFile.uploadedAt).toLocaleDateString("fi-FI")}
+                                {/* Sivumäärä kertoo onko asiakkaalla selattava
+                                    lukupinta vai entinen upotus. Ennen tätä
+                                    liitetyillä sopimuksilla sivuja ei ole —
+                                    uudelleenliittäminen tuo ne. */}
+                                {gig.contractFile.pages
+                                  ? ` · ${gig.contractFile.pages} ${gig.contractFile.pages === 1 ? "sivu" : "sivua"} selattavana`
+                                  : " · ei sivukuvia (liitä uudelleen, niin asiakas voi selata sopimusta)"}
                               </p>
                             </div>
                           </div>
@@ -1124,7 +1165,11 @@ export default function AdminGigTrackerPage() {
                         <Button variant="outline" className="w-full" disabled={contractFileBusy}
                           onClick={() => contractFileInput.current?.click()}>
                           <FileText className="w-4 h-4 mr-2" />
-                          {contractFileBusy ? "Liitetään…" : "Valitse PDF-tiedosto"}
+                          {contractFileBusy
+                            ? contractPageProgress
+                              ? `Käsitellään sivua ${contractPageProgress.done} / ${contractPageProgress.total}…`
+                              : "Liitetään…"
+                            : "Valitse PDF-tiedosto"}
                         </Button>
                       )}
                       <p className="text-[11px] text-muted-foreground leading-snug">

@@ -449,7 +449,7 @@ export interface GigPublicView {
    * `api.contractFileUrlForGig(token)`ista — tässä on vain nimi ja koko, jotta
    * näkymä voi kertoa mitä se on ennen kuin sitä ladataan.
    */
-  contractFile: { name: string; bytes: number; uploadedAt: number } | null;
+  contractFile: { name: string; bytes: number; uploadedAt: number; pages: number } | null;
   /** Tuntiarvio per ikkuna. Null = arviota ei ole → mittaria ei piirretä. */
   estHoursPerWindow: number | null;
   status: "draft" | "signed" | "approved";
@@ -1250,6 +1250,15 @@ export const api = {
    * jättää `download`-attribuutin huomiotta originin yli — tiedostonimi voi
    * tulla vain palvelimen `Content-Disposition`-otsikosta.
    */
+  /**
+   * Sopimuksen yksi sivu kuvana. Osoite johdetaan TOKENISTA kuten tiedoston
+   * osoite: `<img>` ei voi lähettää Bearer-otsaketta eikä tarvitse CORSia.
+   */
+  contractPageUrlForGig: (token: string, page: number) =>
+    `${API_BASE}/api/gig/${encodeURIComponent(token)}/contract-page/${page}`,
+  contractPageUrlForJob: (jobId: number, page: number) =>
+    `${API_BASE}/api/jobs/${jobId}/contract-page/${page}`,
+
   contractFileUrlForGig: (token: string, opts?: { download?: boolean }) =>
     `${API_BASE}/api/gig/${token}/contract-file${opts?.download ? "?dl=1" : ""}`,
 
@@ -1277,8 +1286,8 @@ export const api = {
   },
 
   /** Admin: liitä keikan sopimus PDF:nä. `dataUrl` = "data:application/pdf;base64,…". */
-  uploadGigContractFile: (jobId: number, dataUrl: string, name: string) =>
-    request<{ ok: boolean; gigData: GigData }>("POST", `/api/jobs/${jobId}/contract-file`, { dataUrl, name }),
+  uploadGigContractFile: (jobId: number, dataUrl: string, name: string, pages?: string[]) =>
+    request<{ ok: boolean; gigData: GigData }>("POST", `/api/jobs/${jobId}/contract-file`, { dataUrl, name, pages }),
 
   /** Admin: poista keikan sopimustiedosto. Sopimusteksti jää ennalleen. */
   deleteGigContractFile: (jobId: number) =>

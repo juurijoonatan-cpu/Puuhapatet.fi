@@ -178,7 +178,10 @@ eikä ohjaisi työtä.
 - [ ] Pohjakuva näkyy **kaikissa kolmessa** näkymässä (admin, tekijä, asiakas)
 - [ ] Pisteitä on ~15 ja ne osuvat oikeisiin huoneisiin
 - [ ] Tilan nimi lukee "Tila", ei "1. kerros"
-- [ ] Keikka **ei** näy FR8:n rahaluvuissa (etusivun urakkakortti, ALV-raja)
+- [ ] Keikka **ei** näy FR8:n rahaluvuissa
+- [ ] Sopimus-PDF liitetty, ja keikkanäkymässä lukee "N sivua selattavana"
+- [ ] `/seuranta/<token>` näyttää sopimuksen sivut syvennyksessä (ei PDF-laatikkoa)
+- [ ] Sivun napautus avaa tarkan lukukerroksen; "Lataa PDF" antaa alkuperäisen (etusivun urakkakortti, ALV-raja)
 - [ ] Tervehdys lukee "Hyvää … , Akseli" (yhteyshenkilö on täytetty)
 - [ ] Työmäärämittari näkyy ja kertoo oikean kokonaisarvion (ikkunat × mitoitus)
 - [ ] Jos sopimus on vielä tekemättä: näkymässä lukee **Sopimus valmistelussa**

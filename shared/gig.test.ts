@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyGigData, sanitizeGigData, signatureRequired, signaturePrompt, contractPending, hasContractDoc, sanitizeContractFile, type GigData } from "./gig";
+import { emptyGigData, sanitizeGigData, signatureRequired, signaturePrompt, contractPending, hasContractDoc, sanitizeContractFile, MAX_CONTRACT_PAGES, type GigData } from "./gig";
 
 /**
  * SOPIMUKSEN AJOITUS.
@@ -188,5 +188,46 @@ describe("sopimus tiedostona", () => {
     expect(sanitizeContractFile({ assetId: 7 })?.name).toBe("sopimus.pdf");
     // Ja liian pitkä nimi katkaistaan sen sijaan että rivi hylättäisiin.
     expect(sanitizeContractFile({ assetId: 7, name: "a".repeat(400) })?.name.length).toBe(200);
+  });
+});
+
+/**
+ * SIVUMÄÄRÄ RATKAISEE LUKUPINNAN.
+ *
+ * `contractFile.pages` kertoo onko sopimus rasteroitu sivukuviksi. Se on
+ * VALINNAINEN tarkoituksella: ennen rasterointia liitetyt sopimukset ovat
+ * kannassa ilman sitä, ja niiden pitää round-trippailla muuttumattomina —
+ * muuten olemassa oleva sopimus näyttäisi kadonneen. Puuttuva sivumäärä =
+ * asiakas saa entisen upotuksen.
+ */
+describe("sopimustiedoston sivumäärä", () => {
+  const base = { assetId: 7, name: "sopimus.pdf", mime: "application/pdf", bytes: 1000, uploadedAt: 5 };
+
+  it("säilyttää kelvollisen sivumäärän", () => {
+    expect(sanitizeContractFile({ ...base, pages: 4 })?.pages).toBe(4);
+  });
+
+  it("puuttuva sivumäärä pysyy puuttuvana — vanha liite ei muutu", () => {
+    const out = sanitizeContractFile(base);
+    expect(out).toBeDefined();
+    expect("pages" in (out as object)).toBe(false);
+  });
+
+  it("pudottaa roskan ja nollan sen sijaan että arvaisi", () => {
+    for (const bad of [0, -3, 1.5, NaN, Infinity, "neljä", null, {}]) {
+      const out = sanitizeContractFile({ ...base, pages: bad });
+      expect("pages" in (out as object), `pages=${String(bad)}`).toBe(false);
+    }
+  });
+
+  it("rajaa kattoon eikä luota selaimeen", () => {
+    expect(sanitizeContractFile({ ...base, pages: 9999 })?.pages).toBe(MAX_CONTRACT_PAGES);
+  });
+
+  it("selviää koko gig-blobin tallennuksen läpi", () => {
+    const saved = sanitizeGigData({ ...emptyGigData(), contractFile: { ...base, pages: 4 } });
+    expect(saved.contractFile?.pages).toBe(4);
+    // Ja liitetty tiedosto on edelleen allekirjoitettava asiakirja.
+    expect(signaturePrompt(saved)).toBe("gate");
   });
 });

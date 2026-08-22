@@ -1,8 +1,8 @@
 /**
  * LAMPUT KERROKSITTAIN — pinopalkki, yksi rivi per kerros.
  *
- * MIKÄ KYSYMYS TÄHÄN VASTATAAN. "Montako polttimoa pitää ostaa, ja mihin
- * kerrokseen." Siksi rikkinäiset ovat pinon VASEMMASSA päässä, kiinni
+ * MIKÄ KYSYMYS TÄHÄN VASTATAAN. "Montako lamppua pitää vaihtaa, ja missä
+ * kerroksessa." Siksi rikkinäiset ovat pinon VASEMMASSA päässä, kiinni
  * perusviivassa: silmä lukee yhden pystysuoran reunan alas ja näkee heti missä
  * työ on. Jos vaihdetut olisivat ensin, sama tieto pitäisi etsiä joka riviltä
  * eri kohdasta.

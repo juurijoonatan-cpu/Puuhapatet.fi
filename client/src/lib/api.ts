@@ -1537,13 +1537,13 @@ export const api = {
   // Sama lamppujen merkintä (ei rahaa, ei prioriteettia) — kuka vaihtoi tulee
   // servlerissä aina kirjautuneesta tekijästä itsestään.
   /**
-   * ASIAKKAAN hintaehdotus lampuista ja ovikytkimistä. Ei sitova tarjous —
-   * asiakas kertoo mitä olisi valmis maksamaan, ja johtaja näkee sen dashissa.
-   * Tyhjä runko pyyhkii ehdotuksen.
+   * ASIAKKAAN hintaehdotus VAIHTOTÖISTÄ (lamppu, oven tiiviste) — per kohde,
+   * ei per tarvike. Ei sitova tarjous: asiakas kertoo mitä olisi valmis
+   * maksamaan, ja johtaja näkee sen dashissa. Tyhjä runko pyyhkii ehdotuksen.
    */
   gigSetFixtureQuote: (
     token: string,
-    body: { bulbPriceCents?: number; doorPriceCents?: number; note?: string },
+    body: { lampWorkPriceCents?: number; doorWorkPriceCents?: number; note?: string },
   ) => request<{ ok: boolean; fixtures: GigPublicView["fixtures"] }>("POST", `/api/gig/${token}/fixture-quote`, body),
 
   crewMarkLamp: (token: string, key: string, status: LampStatus) =>

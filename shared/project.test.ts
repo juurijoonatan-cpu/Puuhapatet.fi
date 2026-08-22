@@ -822,21 +822,34 @@ describe("ostoslista ja asiakkaan hintaehdotus", () => {
 
   it("asiakkaan hinnalla laskettu summa käyttää efektiivistä määrää", () => {
     const p = withOrder();
-    p.fixtureQuote = { bulbPriceCents: 450, doorPriceCents: 1200, at: 1 };
-    // 2 polttimoa × 4,50 € + 1 ovi × 12,00 € = 21,00 €
+    p.fixtureQuote = { lampWorkPriceCents: 450, doorWorkPriceCents: 1200, at: 1 };
+    // 2 lampunvaihtoa × 4,50 € + 1 tiivisteenvaihto × 12,00 € = 21,00 €
     expect(resolveFixtureOrder(p).quotedTotalCents).toBe(2100);
   });
 
-  it("ovihinta lasketaan OVEA kohti, ei tarvikkeita kohti", () => {
+  it("hinta on VAIHTOTYÖSTÄ per kohde — tarvike ei vaikuta summaan", () => {
     const p = withOrder();
-    // Neljä ovea tehtävänä, hinta 15 € / ovi → 60 €. Materiaali on vapaa
-    // teksti eikä vaikuta laskentaan lainkaan.
+    // Neljä ovea tehtävänä, 15 € / tiivisteen vaihto → 60 €. Materiaali on
+    // saatetieto siitä mitä kohteeseen menee, eikä se ole summassa mukana.
     p.fixtureOrder = { doorsNeeded: 4, doorMaterial: "EPDM D-tiiviste" };
-    p.fixtureQuote = { doorPriceCents: 1500, at: 1 };
+    p.fixtureQuote = { doorWorkPriceCents: 1500, at: 1 };
     const o = resolveFixtureOrder(p);
     expect(o.doorCount).toBe(4);
     expect(o.doorMaterial).toBe("EPDM D-tiiviste");
     expect(o.quotedTotalCents).toBe(6000);
+
+    // Tarvikkeen vaihtaminen ei muuta summaa lainkaan.
+    p.fixtureOrder = { doorsNeeded: 4, doorMaterial: "Silikonitiiviste, musta" };
+    expect(resolveFixtureOrder(p).quotedTotalCents).toBe(6000);
+  });
+
+  it("sama luku ajaa sekä tarvikemäärän että vaihtojen määrän", () => {
+    const p = withOrder();
+    p.fixtureQuote = { lampWorkPriceCents: 1000, at: 1 };
+    const o = resolveFixtureOrder(p);
+    // Kaksi rikkinäistä lamppua = kaksi polttimoa JA kaksi vaihtoa.
+    expect(o.bulbs).toBe(2);
+    expect(o.quotedTotalCents).toBe(2000);
   });
 
   it("ilman hintaa summaa ei ole (nolla olisi eri väite kuin ei mitään)", () => {
@@ -856,13 +869,13 @@ describe("ostoslista ja asiakkaan hintaehdotus", () => {
   });
 
   it("negatiivinen hinta pudotetaan, ylisuuri leikataan", () => {
-    const q = sanitizeFixtureQuote({ bulbPriceCents: -500, doorPriceCents: 9_999_999, at: 1 })!;
-    expect(q.bulbPriceCents).toBeUndefined();
-    expect(q.doorPriceCents).toBe(200_000);
+    const q = sanitizeFixtureQuote({ lampWorkPriceCents: -500, doorWorkPriceCents: 9_999_999, at: 1 })!;
+    expect(q.lampWorkPriceCents).toBeUndefined();
+    expect(q.doorWorkPriceCents).toBe(200_000);
   });
 
   it("nolla on kelvollinen hinta (veloituksetta)", () => {
-    expect(sanitizeFixtureQuote({ bulbPriceCents: 0, at: 1 })?.bulbPriceCents).toBe(0);
+    expect(sanitizeFixtureQuote({ lampWorkPriceCents: 0, at: 1 })?.lampWorkPriceCents).toBe(0);
   });
 
   it("tyhjä ostotieto pudotetaan, tekstit trimmataan", () => {

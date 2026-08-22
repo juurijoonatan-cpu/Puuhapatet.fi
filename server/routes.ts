@@ -661,7 +661,7 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   // tokenista. Ei rahaa, joten ei ehtoja eikä allekirjoitusporttia — reitti
   // tarkistaa itse että keikka on yhteisökeikka ja piste on keltainen.
   { method: "POST", re: /^\/api\/gig\/[^/]+\/scope$/ },
-  // Asiakkaan hintaehdotus lampuista ja ovista. Sama tokenperiaate kuin
+  // Asiakkaan hintaehdotus vaihtotöistä. Sama tokenperiaate kuin
   // laajuuskyselyllä: ei rahaa liiku, asiakas vain kertoo mitä olisi valmis
   // maksamaan. Reitti tarkistaa itse että keikalla on kalusteita.
   { method: "POST", re: /^\/api\/gig\/[^/]+\/fixture-quote$/ },
@@ -5942,10 +5942,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   /**
-   * ASIAKKAAN HINTAEHDOTUS lampuista ja ovista.
+   * ASIAKKAAN HINTAEHDOTUS VAIHTOTÖISTÄ.
    *
    * Ei sitova tarjous eikä laskutustapahtuma: asiakas kertoo mitä olisi valmis
-   * maksamaan per polttimo ja per ovi, ja johtaja näkee sen dashissaan.
+   * maksamaan yhdestä lampun vaihdosta ja yhdestä oven tiivisteen vaihdosta —
+   * työstä per kohde, ei tarvikkeesta — ja johtaja näkee sen dashissaan.
    * Siksi tässä EI ole P2:n tilakonetta, hyväksyntää eikä allekirjoitusporttia
    * — ne kuuluvat rahaan, ja raha liikkuu vasta kun tästä sovitaan erikseen.
    *

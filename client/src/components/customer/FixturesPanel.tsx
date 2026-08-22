@@ -4,12 +4,16 @@
  * Kolme kysymystä, tässä järjestyksessä:
  *   1. Montako lamppua ei toimi, ja montako on jo vaihdettu.
  *   2. Missä kerroksissa ne ovat (`LampFloorChart`).
- *   3. Mitä pitää ostaa — ja mitä asiakas olisi valmis maksamaan.
+ *   3. Mitä on tehtävänä — ja mitä asiakas maksaisi yhdestä vaihdosta.
  *
  * Kohta 3 on se joka tekee tästä muutakin kuin raportin: asiakas kirjoittaa
- * oman hintaehdotuksensa per polttimo ja per ovi, ja se näkyy meidän
- * dashissamme. Ei sitova tarjous eikä lasku — hinnasta sovitaan erikseen, ja
- * lomake sanoo sen ääneen, jottei kenttään kirjoitettu luku tunnu tilaukselta.
+ * oman hintaehdotuksensa per vaihtotyö, ja se näkyy meidän dashissamme. Ei
+ * sitova tarjous eikä lasku — hinnasta sovitaan erikseen, ja lomake sanoo sen
+ * ääneen, jottei kenttään kirjoitettu luku tunnu tilaukselta.
+ *
+ * HINTA ON TYÖSTÄ. Asiakas ei osta meiltä polttimoa vaan sen vaihtamisen, eikä
+ * tiivistettä vaan sen vaihtamisen. Tarvikkeen malli on saatetieto siitä mitä
+ * kohteeseen menee; se ei ole hinnoiteltava rivi eikä se kuulu summaan.
  *
  * Tekijöiden nimiä ei ole missään: asiakkaalle kerrotaan mitä tehtiin, ei kuka.
  */
@@ -64,7 +68,7 @@ interface Props {
   theme: CustomerTheme;
   floorLabel: (floor: string) => string;
   /** Tallenna asiakkaan hintaehdotus. Palauttaa virheen tekstinä tai null. */
-  onSaveQuote: (body: { bulbPriceCents?: number; doorPriceCents?: number; note?: string }) => Promise<string | null>;
+  onSaveQuote: (body: { lampWorkPriceCents?: number; doorWorkPriceCents?: number; note?: string }) => Promise<string | null>;
 }
 
 export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQuote }: Props) {
@@ -73,8 +77,8 @@ export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQu
   const chartTheme: LampChartTheme = { ...base, surface: T.fill, text: T.ink, muted: T.muted };
 
   const { lamps, doors, order, quote, quotedTotalCents } = fixtures;
-  const [bulb, setBulb] = useState(() => fmtEuroInput(quote?.bulbPriceCents));
-  const [doorPrice, setDoorPrice] = useState(() => fmtEuroInput(quote?.doorPriceCents));
+  const [lampWork, setLampWork] = useState(() => fmtEuroInput(quote?.lampWorkPriceCents));
+  const [doorWork, setDoorWork] = useState(() => fmtEuroInput(quote?.doorWorkPriceCents));
   const [note, setNote] = useState(quote?.note ?? "");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -82,16 +86,16 @@ export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQu
 
   // Elävä summa kirjoittaessa — asiakas näkee heti mitä ehdotus tarkoittaa.
   const liveTotal = (() => {
-    const b = parseEuro(bulb), d = parseEuro(doorPrice);
-    if (b == null && d == null) return null;
-    return order.bulbs * (b ?? 0) + order.doorCount * (d ?? 0);
+    const l = parseEuro(lampWork), d = parseEuro(doorWork);
+    if (l == null && d == null) return null;
+    return order.bulbs * (l ?? 0) + order.doorCount * (d ?? 0);
   })();
 
   async function save() {
     setBusy(true); setErr(null); setMsg(null);
     const error = await onSaveQuote({
-      bulbPriceCents: parseEuro(bulb),
-      doorPriceCents: parseEuro(doorPrice),
+      lampWorkPriceCents: parseEuro(lampWork),
+      doorWorkPriceCents: parseEuro(doorWork),
       note: note.trim() || undefined,
     });
     setBusy(false);
@@ -140,17 +144,17 @@ export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQu
         </div>
       )}
 
-      {/* 3. OSTETTAVAA + HINTAEHDOTUS. */}
+      {/* 3. TEHTÄVÄT TYÖT + HINTAEHDOTUS. */}
       <div style={{ padding: 16, borderRadius: 12, border: `1px solid ${T.hair}`, background: T.card }}>
-        <div style={{ ...label, marginBottom: 10 }}>Ostettavaa</div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 20px", fontSize: 14, marginBottom: 4 }}>
+        <div style={{ ...label, marginBottom: 10 }}>Tehtävät työt</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 14, marginBottom: 4 }}>
           <span>
-            <b style={{ fontWeight: 700 }}>{order.bulbs}</b> polttimoa
+            <b style={{ fontWeight: 700 }}>{order.bulbs}</b> lampun vaihtoa
             {order.lampModel && <span style={{ color: T.muted }}> · {order.lampModel}</span>}
           </span>
           {doors.total > 0 && (
             <span>
-              <b style={{ fontWeight: 700 }}>{order.doorCount}</b> ovea
+              <b style={{ fontWeight: 700 }}>{order.doorCount}</b> oven tiivisteen vaihtoa
               {order.doorMaterial && <span style={{ color: T.muted }}> · {order.doorMaterial}</span>}
             </span>
           )}
@@ -161,19 +165,20 @@ export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQu
 
         <div style={{ ...label, marginBottom: 4 }}>Hintaehdotuksesi</div>
         <p style={{ margin: "0 0 12px", fontSize: 13, color: T.muted, lineHeight: 1.6 }}>
-          Kerro mitä olisit valmis maksamaan. Tämä ei ole tilaus eikä sitova sopimus —
-          hinnasta sovitaan erikseen, ja näemme ehdotuksesi heti.
+          Kerro mitä olisit valmis maksamaan yhdestä vaihdosta. Hinta on tehdystä
+          työstä per kohde — tarvike tulee erikseen. Tämä ei ole tilaus eikä sitova
+          sopimus: hinnasta sovitaan erikseen, ja näemme ehdotuksesi heti.
         </p>
 
         <div style={{ display: "grid", gridTemplateColumns: doors.total > 0 ? "repeat(auto-fit, minmax(150px, 1fr))" : "1fr", gap: 12 }}>
           <label style={{ display: "block" }}>
-            <span style={{ display: "block", fontSize: 12.5, color: T.muted, marginBottom: 5 }}>€ / polttimo</span>
-            <input value={bulb} onChange={(e) => setBulb(e.target.value)} inputMode="decimal" placeholder="0,00" style={field} />
+            <span style={{ display: "block", fontSize: 12.5, color: T.muted, marginBottom: 5 }}>€ / lampun vaihto</span>
+            <input value={lampWork} onChange={(e) => setLampWork(e.target.value)} inputMode="decimal" placeholder="0,00" style={field} />
           </label>
           {doors.total > 0 && (
             <label style={{ display: "block" }}>
-              <span style={{ display: "block", fontSize: 12.5, color: T.muted, marginBottom: 5 }}>€ / ovi</span>
-              <input value={doorPrice} onChange={(e) => setDoorPrice(e.target.value)} inputMode="decimal" placeholder="0,00" style={field} />
+              <span style={{ display: "block", fontSize: 12.5, color: T.muted, marginBottom: 5 }}>€ / oven tiivisteen vaihto</span>
+              <input value={doorWork} onChange={(e) => setDoorWork(e.target.value)} inputMode="decimal" placeholder="0,00" style={field} />
             </label>
           )}
         </div>
@@ -182,15 +187,15 @@ export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQu
           <span style={{ display: "block", fontSize: 12.5, color: T.muted, marginBottom: 5 }}>Viesti (vapaaehtoinen)</span>
           <textarea
             value={note} onChange={(e) => setNote(e.target.value.slice(0, 500))} rows={3}
-            placeholder="Esim. ”Käykö tämä hinta, jos hoidatte myös asennuksen?”"
+            placeholder="Esim. ”Käykö tämä hinta, jos teette kaikki kerralla?”"
             style={{ ...field, resize: "vertical" }}
           />
         </label>
 
         {liveTotal != null && (
           <p style={{ margin: "12px 0 0", fontSize: 13.5, color: T.ink }}>
-            Tällä hinnalla yhteensä <b style={{ fontWeight: 700 }}>{eurFromCents(liveTotal)}</b>
-            <span style={{ color: T.muted }}> ({order.bulbs} polttimoa{doors.total > 0 ? `, ${order.doorCount} ovea` : ""})</span>
+            Tällä hinnalla työt yhteensä <b style={{ fontWeight: 700 }}>{eurFromCents(liveTotal)}</b>
+            <span style={{ color: T.muted }}> ({order.bulbs} lampun vaihtoa{doors.total > 0 ? `, ${order.doorCount} tiivisteen vaihtoa` : ""})</span>
           </p>
         )}
 

@@ -3,7 +3,7 @@
  */
 
 import type { GigData, GigTotals } from "@shared/gig";
-import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding, FixedDeal, EraDebtBreakdown, ProjLampMark, LampStatus } from "@shared/project";
+import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding, FixedDeal, EraDebtBreakdown, ProjLampMark, LampStatus, LampCondition, ProjFixtureNote, ProjDoorMark, DoorStatus, PublicLampPoint, PublicDoorPoint } from "@shared/project";
 import type { MemberAgreementSignature } from "@shared/member-agreement";
 import type { CrewMember, CrewMemberStats, CrewProfile, CrewAgreementSignature } from "@shared/crew";
 import type { WorkerAgreement } from "@shared/worker-agreements";
@@ -110,6 +110,17 @@ export interface WorkerView {
   lampStatuses: Record<string, LampStatus>;
   /** Lampun avain → tekijän id joka merkitsi sen vaihdetuksi. */
   lampChangedBy: Record<string, string>;
+  /** Lampun avain → toimiiko se. Puuttuva = ei tarkastettu. */
+  lampConditions: Record<string, LampCondition>;
+  /** Lampun avain → huomautus (teksti, kirjoittaja, aika). */
+  lampNotes: Record<string, ProjFixtureNote>;
+  /** Ovet: tehtäväpisteet kartalla. Tekijä kuittaa ja huomauttaa; lisäys ja
+   *  nimeäminen ovat johtajien projektinäkymässä. */
+  doors: Record<string, ProjDoorMark[]>;
+  doorStatuses: Record<string, DoorStatus>;
+  /** Oven avain → tekijän id joka merkitsi sen tehdyksi. */
+  doorDoneBy: Record<string, string>;
+  doorNotes: Record<string, ProjFixtureNote>;
   hours: number;
   stats: CrewMemberStats;
   /** Johtajan yksitellen piilottamat ikkunat — eivät näy tekijän kartalla eikä
@@ -433,6 +444,12 @@ export interface GigPublicView {
     notes?: Record<string, import("@shared/project").ProjMapNote[]>;
     observations?: Record<string, import("@shared/project").ProjWindowObservation>;
     activeZone?: import("@shared/project").ProjActiveZone | null;
+    /** Lamput joista on asiakkaalle jotain kerrottavaa: vaihdettu, rikki tai
+     *  huomautettu. Pelkkä kartalle merkitty lamppu EI tule tänne — ks.
+     *  `publicLampView`. Tekijän nimi ei ole mukana. */
+    lamps?: PublicLampPoint[];
+    /** Ovet jotka on tehty tai joista on huomautettu. Sama sääntö. */
+    doors?: PublicDoorPoint[];
   } | null;
   // Contract & signing gate
   contractText: string | null;
@@ -1511,6 +1528,22 @@ export const api = {
   // servlerissä aina kirjautuneesta tekijästä itsestään.
   crewMarkLamp: (token: string, key: string, status: LampStatus) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, status }),
+
+  /**
+   * Lampun kunto ja huomautus — sama reitti kuin vaihtomerkinnällä, mutta eri
+   * kenttä. Reitti koskee VAIN lähetettyihin kenttiin, joten kunnon
+   * merkitseminen ei pyyhi vaihtomerkintää (eikä toisinpäin).
+   */
+  crewSetLampCondition: (token: string, key: string, condition: LampCondition | null) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, condition }),
+  crewSetLampNote: (token: string, key: string, note: string) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, note }),
+
+  // Ovet: tekijä kuittaa tehtäväpisteen tehdyksi tai huomauttaa siitä.
+  crewMarkDoor: (token: string, key: string, status: DoorStatus) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/door`, { key, status }),
+  crewSetDoorNote: (token: string, key: string, note: string) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/door`, { key, note }),
 
   crewAddHours: (token: string, delta: number) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/hours`, { delta }),

@@ -15,6 +15,7 @@ import {
   emptyProjectData, newGigProjectData, computeWorkerStats, isFr8Plans, fixedDealFor, allPoints, computeDealBilling,
   dealInternalRateCents, isCommunityGig,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense, type LampStatus,
+  type LampCondition, type DoorStatus,
 } from "@shared/project";
 import { computeP2Billing, customerAddedKeys, p2FounderOpts, p2CustomerLocksSince, p2Itemisation, p2WashedYellows, p2WorkerSplit, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule, type P2WashedState } from "@shared/p2";
 import { computeGuided, type GuidedWork } from "@shared/guided";
@@ -480,9 +481,12 @@ export default function AdminProjectPage() {
     mutate((d) => {
       const key = `${floor}#lamp${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`;
       if (!d.lamps) d.lamps = {};
+      if (!d.lampAddedBy) d.lampAddedBy = {};
       d.lamps[floor] = [...(d.lamps[floor] || []), { key, x, y }];
+      // Pelkkä jälki: kartoitus ei ole työsuoritus eikä se näy asiakkaalle.
+      d.lampAddedBy[key] = { by: currentWorker, ts: Date.now() };
     });
-  }, [mutate]);
+  }, [mutate, currentWorker]);
 
   const onDeleteLamp = useCallback((key: string) => {
     mutate((d) => {
@@ -490,6 +494,9 @@ export default function AdminProjectPage() {
       if (d.lamps?.[f]) d.lamps[f] = d.lamps[f].filter((l) => l.key !== key);
       if (d.lampStatuses) delete d.lampStatuses[key];
       if (d.lampChangedBy) delete d.lampChangedBy[key];
+      if (d.lampConditions) delete d.lampConditions[key];
+      if (d.lampNotes) delete d.lampNotes[key];
+      if (d.lampAddedBy) delete d.lampAddedBy[key];
     });
   }, [mutate]);
 
@@ -507,6 +514,81 @@ export default function AdminProjectPage() {
       }
     });
   }, [mutate, currentWorker, defaultWasher]);
+
+  /** Toimiiko lamppu. `null` palauttaa "ei tarkastettu" -tilaan (kenttä pois). */
+  const onSetLampCondition = useCallback((key: string, condition: LampCondition | null) => {
+    mutate((d) => {
+      if (!d.lampConditions) d.lampConditions = {};
+      if (condition) d.lampConditions[key] = condition;
+      else delete d.lampConditions[key];
+    });
+  }, [mutate]);
+
+  /** Lampun huomautus. Tyhjä teksti poistaa sen — sama sääntö kuin havainnolla. */
+  const onSetLampNote = useCallback((key: string, text: string) => {
+    mutate((d) => {
+      if (!d.lampNotes) d.lampNotes = {};
+      const t = text.trim();
+      if (t) d.lampNotes[key] = { text: t, by: currentWorker, ts: Date.now() };
+      else delete d.lampNotes[key];
+    });
+  }, [mutate, currentWorker]);
+
+  // ── Ovet ─────────────────────────────────────────────────────────────────────
+  // Sama kevyt malli kuin lampuilla, mutta piste on tehtävä: nimi + tehty/ei.
+  const onAddDoor = useCallback((floor: string, x: number, y: number) => {
+    mutate((d) => {
+      const key = `${floor}#door${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`;
+      if (!d.doors) d.doors = {};
+      if (!d.doorAddedBy) d.doorAddedBy = {};
+      d.doors[floor] = [...(d.doors[floor] || []), { key, x, y }];
+      d.doorAddedBy[key] = { by: currentWorker, ts: Date.now() };
+    });
+  }, [mutate, currentWorker]);
+
+  const onDeleteDoor = useCallback((key: string) => {
+    mutate((d) => {
+      const f = key.split("#")[0];
+      if (d.doors?.[f]) d.doors[f] = d.doors[f].filter((x) => x.key !== key);
+      if (d.doorStatuses) delete d.doorStatuses[key];
+      if (d.doorDoneBy) delete d.doorDoneBy[key];
+      if (d.doorNotes) delete d.doorNotes[key];
+      if (d.doorAddedBy) delete d.doorAddedBy[key];
+    });
+  }, [mutate]);
+
+  const onSetDoorStatus = useCallback((key: string, status: DoorStatus, doneById?: string) => {
+    const doer = doneById ?? defaultWasher ?? currentWorker;
+    mutate((d) => {
+      if (!d.doorStatuses) d.doorStatuses = {};
+      if (!d.doorDoneBy) d.doorDoneBy = {};
+      if (status === "tehty") {
+        d.doorStatuses[key] = "tehty";
+        d.doorDoneBy[key] = { by: doer, ts: Date.now() };
+      } else {
+        delete d.doorStatuses[key];
+        delete d.doorDoneBy[key];
+      }
+    });
+  }, [mutate, currentWorker, defaultWasher]);
+
+  const onSetDoorNote = useCallback((key: string, text: string) => {
+    mutate((d) => {
+      if (!d.doorNotes) d.doorNotes = {};
+      const t = text.trim();
+      if (t) d.doorNotes[key] = { text: t, by: currentWorker, ts: Date.now() };
+      else delete d.doorNotes[key];
+    });
+  }, [mutate, currentWorker]);
+
+  const onSetDoorLabel = useCallback((key: string, label: string) => {
+    mutate((d) => {
+      const f = key.split("#")[0];
+      if (!d.doors?.[f]) return;
+      const t = label.trim();
+      d.doors[f] = d.doors[f].map((x) => (x.key === key ? { ...x, ...(t ? { label: t } : { label: undefined }) } : x));
+    });
+  }, [mutate]);
 
   // Per-window observation (text + optional photo). Empty clears it.
   const onSetObservation = useCallback((key: string, text: string, imageDataUrl?: string) => {
@@ -1028,6 +1110,13 @@ export default function AdminProjectPage() {
       <main style={{ position: "relative", zIndex: 10, minHeight: 0 }}>
         {tab === "dashboard" && (
           <Dashboard project={project} workerStats={workerStats} workerName={resolveName} onGoToFloor={onGoToFloor} deal={deal} onSetEarnings={setWorkerEarnings} founderEarnings={founderEarnings} workerLaborCents={workerLaborCents} workerLaborP2Cents={workerLaborP2Cents} founderRateEur={internalKateCents / 100}
+            /* Lamppu- ja ovimerkinnät suoraan dashista — sama data kuin
+               kartalla, jotta huomautuksen voi kirjoittaa etsimättä pistettä. */
+            onSetLampStatus={onSetLampStatus}
+            onSetLampCondition={onSetLampCondition}
+            onSetLampNote={onSetLampNote}
+            onSetDoorStatus={onSetDoorStatus}
+            onSetDoorNote={onSetDoorNote}
             p2Slot={deal ? (
               <P2AdminPanel
                 project={project}
@@ -1151,6 +1240,19 @@ export default function AdminProjectPage() {
             onAddLamp={onAddLamp}
             onDeleteLamp={onDeleteLamp}
             onSetLampStatus={onSetLampStatus}
+            lampConditions={project.lampConditions}
+            lampNotes={project.lampNotes}
+            onSetLampCondition={onSetLampCondition}
+            onSetLampNote={onSetLampNote}
+            doors={project.doors}
+            doorStatuses={project.doorStatuses}
+            doorDoneBy={project.doorDoneBy ? Object.fromEntries(Object.entries(project.doorDoneBy).map(([k, v]) => [k, v.by])) : undefined}
+            doorNotes={project.doorNotes}
+            onAddDoor={onAddDoor}
+            onDeleteDoor={onDeleteDoor}
+            onSetDoorStatus={onSetDoorStatus}
+            onSetDoorNote={onSetDoorNote}
+            onSetDoorLabel={onSetDoorLabel}
             deal={deal}
             p2={project.p2 ? { enabled: project.p2.enabled, offers: project.p2.offers } : null}
             /* Keltaisten hinnoittelu ei kuulu yhteisökeikalle: siinä ei ole

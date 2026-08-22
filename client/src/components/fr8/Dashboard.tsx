@@ -2,13 +2,14 @@
  * FR8 projektinäkymä — overview dashboard (ported from fr8-ikkunat prototype).
  * Adds a per-worker "TEKIJÄT" strip (window counts + €/h optimisation).
  */
-import { allPoints, computeDealBilling, checkWindowAttribution, computeLampTotals, computeLampWorkerStats, type ProjectData, type WindowStatus, type WorkerStat, type FixedDeal } from "@shared/project";
+import { allPoints, computeDealBilling, checkWindowAttribution, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, type ProjectData, type WindowStatus, type WorkerStat, type FixedDeal, type LampStatus, type LampCondition, type DoorStatus } from "@shared/project";
 import { computeP2Billing, p2FounderOpts } from "@shared/p2";
 import type { GigBillingState } from "@/lib/api";
 import { dashboardPhase } from "@/lib/dashboard-phase";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useState, useEffect } from "react";
 import Section from "./Section";
+import FixturePanel from "./FixturePanel";
 import Toggle from "./Toggle";
 import {
   T, card as tokenCard, inset, mono as tokenMono, statLabel, subLabel,
@@ -87,6 +88,16 @@ interface Props {
   p2Slot?: React.ReactNode;
   /** Apuasetukset (kerrosten lukitus) — dashin alalaitaan, pois päänäkymästä. */
   settingsSlot?: React.ReactNode;
+  /**
+   * Lamppujen ja ovien merkinnät suoraan dashista (`FixturePanel`). Samat
+   * käsittelijät kuin kartalla — ilman niitä paneeli on pelkkä lukunäkymä,
+   * joten tekijän työpöytä voi käyttää samaa dashia ilman muutosta.
+   */
+  onSetLampStatus?: (key: string, status: LampStatus) => void;
+  onSetLampCondition?: (key: string, condition: LampCondition | null) => void;
+  onSetLampNote?: (key: string, text: string) => void;
+  onSetDoorStatus?: (key: string, status: DoorStatus) => void;
+  onSetDoorNote?: (key: string, text: string) => void;
 }
 
 function fmt(n: number) { return Math.round(n).toLocaleString("fi-FI"); }
@@ -155,7 +166,7 @@ function RedFold({ label, value, children }: { label: string; value?: string; ch
   );
 }
 
-export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot, founderInvoiceSlot, gigBilling, workerLaborP2Cents, workerOpenP1Cents, onGoToMaksut, p2Slot, settingsSlot }: Props) {
+export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot, founderInvoiceSlot, gigBilling, workerLaborP2Cents, workerOpenP1Cents, onGoToMaksut, p2Slot, settingsSlot, onSetLampStatus, onSetLampCondition, onSetLampNote, onSetDoorStatus, onSetDoorNote }: Props) {
   const m = useIsMobile();
   const [editId, setEditId] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
@@ -353,6 +364,8 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
   // keikalla dash näyttää täysin samalta kuin ennen.
   const lampTotals = computeLampTotals(project);
   const lampWorkerStats = computeLampWorkerStats(project);
+  const doorTotals = computeDoorTotals(project);
+  const doorWorkerStats = computeDoorWorkerStats(project);
 
   // Founders' combined earnings — shown as the collapsed summary on the
   // "PERUSTAJIEN ANSIOT" bar so the headline figure is glanceable while folded.
@@ -740,6 +753,22 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             ja josta lasku syntyy — käynnissä oleva työ. Se kuuluu ylös, ei
             suljetun urakan taakse. */}
         {p2Slot && yellowLed && <div className="anim-fadeUp-2">{p2Slot}</div>}
+
+        {/* LAMPUT & OVET heti keltaisten viereen. Sama peruste kuin keltaisilla:
+            tämä on tieto joka vaatii toimenpiteen NYT (rikki lamppu, tekemätön
+            ovi, tekijän kirjoittama huomautus), joten se kuuluu ylös eikä
+            kymmenen taittuvan osion alle. Paneeli piirtyy itse tyhjänä null-
+            arvona, joten kalusteettomalla keikalla tässä ei ole mitään. */}
+        <FixturePanel
+          project={project}
+          workerName={workerName}
+          onGoToFloor={onGoToFloor}
+          onSetLampStatus={onSetLampStatus}
+          onSetLampCondition={onSetLampCondition}
+          onSetLampNote={onSetLampNote}
+          onSetDoorStatus={onSetDoorStatus}
+          onSetDoorNote={onSetDoorNote}
+        />
 
         {/* Collapsible "dropdown bar" sections — everything below the hero folds
             away, each bar keeping its headline figure visible while closed. */}
@@ -1200,7 +1229,7 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
             keikalla on ylipäätään lamppuja, joten lamputtomalla keikalla dash
             ei muutu lainkaan. */}
         {lampTotals.total > 0 && (
-          <Section id="lamps" label="LAMPUT" summary={`${lampTotals.changed}/${lampTotals.total} vaihdettu`} animClass="anim-fadeUp-5">
+          <Section id="lamps" label="LAMPUT" summary={`${lampTotals.changed}/${lampTotals.total} vaihdettu${lampTotals.broken > 0 ? ` · ${lampTotals.broken} rikki` : ""}`} animClass="anim-fadeUp-5">
             <div style={{ display: "flex", alignItems: "center", gap: T.space.lg, flexWrap: "wrap", marginBottom: T.space.md }}>
               <div>
                 <div style={{ fontFamily: T.font, fontSize: T.size.display, fontWeight: 700, lineHeight: 1 }}>
@@ -1212,12 +1241,61 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                 <div style={{ width: `${lampTotals.pct.toFixed(1)}%`, height: "100%", borderRadius: T.radius.xs, background: "linear-gradient(90deg,rgba(124,224,166,0.5),#7CE0A6)", transition: "width .6s" }} />
               </div>
             </div>
+            {/* Kunto on eri kysymys kuin vaihto: rikkinäinen lamppu voi olla
+                vaihtamatta, ja tarkastamaton ei ole sama kuin toimiva. */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: m ? T.space.sm : T.space.md, marginBottom: T.space.md }}>
+              {([
+                ["Toimii", `${lampTotals.working}`, T.tone.goodSoft],
+                ["Ei toimi", `${lampTotals.broken}`, T.tone.bad],
+                ["Ei tarkastettu", `${lampTotals.unchecked}`, T.text.muted],
+                ["Huomautuksia", `${lampTotals.noted}`, T.tone.warn],
+              ] as [string, string, string][]).map(([label, val, tone]) => (
+                <div key={label} style={inset}>
+                  <div style={{ ...mono, color: T.text.faint }}>{label}</div>
+                  <div style={{ fontFamily: T.font, fontSize: m ? T.size.lg : T.size.title, fontWeight: 700, color: tone }}>{val}</div>
+                </div>
+              ))}
+            </div>
             {lampWorkerStats.length > 0 && (
               <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${m ? 140 : 180}px, 1fr))`, gap: m ? T.space.sm + 2 : T.space.md }}>
                 {lampWorkerStats.map((s) => (
                   <div key={s.worker} style={{ ...inset, padding: T.space.md + 2, display: "flex", alignItems: "center", justifyContent: "space-between", gap: T.space.sm, minWidth: 0 }}>
                     <span style={{ fontFamily: T.font, fontSize: T.size.body, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{workerName(s.worker)}</span>
-                    <span style={{ ...mono, fontWeight: 700, flexShrink: 0 }}>{s.changed}</span>
+                    <span style={{ display: "flex", alignItems: "baseline", gap: T.space.sm, flexShrink: 0 }}>
+                      <span style={{ ...mono, fontWeight: 700 }}>{s.changed}</span>
+                      {s.noted > 0 && <span style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.tone.warn }}>{s.noted} huom.</span>}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Section>
+        )}
+
+        {/* Ovet — tehtäväpisteet. Sama muoto kuin lampuilla, mutta luku on
+            "tehty / kaikki": ovi ei ole kalusteen tila vaan tehtävä. */}
+        {doorTotals.total > 0 && (
+          <Section id="doors" label="OVET" summary={`${doorTotals.done}/${doorTotals.total} tehty`} animClass="anim-fadeUp-5">
+            <div style={{ display: "flex", alignItems: "center", gap: T.space.lg, flexWrap: "wrap", marginBottom: T.space.md }}>
+              <div>
+                <div style={{ fontFamily: T.font, fontSize: T.size.display, fontWeight: 700, lineHeight: 1 }}>
+                  {doorTotals.done} <span style={{ fontSize: T.size.sm, fontWeight: 500, color: T.text.faint }}>/ {doorTotals.total} tehty</span>
+                </div>
+                <div style={{ fontFamily: T.mono, fontSize: T.size.xs, color: T.text.faint, marginTop: 2 }}>{Math.round(doorTotals.pct)} %</div>
+              </div>
+              <div style={{ flex: 1, minWidth: 120, height: 6, borderRadius: T.radius.xs, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+                <div style={{ width: `${doorTotals.pct.toFixed(1)}%`, height: "100%", borderRadius: T.radius.xs, background: "linear-gradient(90deg,rgba(124,224,166,0.5),#7CE0A6)", transition: "width .6s" }} />
+              </div>
+            </div>
+            {doorWorkerStats.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${m ? 140 : 180}px, 1fr))`, gap: m ? T.space.sm + 2 : T.space.md }}>
+                {doorWorkerStats.map((s) => (
+                  <div key={s.worker} style={{ ...inset, padding: T.space.md + 2, display: "flex", alignItems: "center", justifyContent: "space-between", gap: T.space.sm, minWidth: 0 }}>
+                    <span style={{ fontFamily: T.font, fontSize: T.size.body, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{workerName(s.worker)}</span>
+                    <span style={{ display: "flex", alignItems: "baseline", gap: T.space.sm, flexShrink: 0 }}>
+                      <span style={{ ...mono, fontWeight: 700 }}>{s.done}</span>
+                      {s.noted > 0 && <span style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.tone.warn }}>{s.noted} huom.</span>}
+                    </span>
                   </div>
                 ))}
               </div>

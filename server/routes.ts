@@ -30,7 +30,7 @@ import {
 } from "@shared/pricing";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, signaturePrompt, contractPending, gigStatus, livePayments, withoutDashOnly, type GigData, MAX_CONTRACT_PAGES, MAX_CONTRACT_UPLOAD_LEN } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
@@ -672,7 +672,7 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   { method: "GET",  re: /^\/api\/crew\/[^/]+\/observation-image$/ },
   // Pohjakuva tekijän työlinkistä — sama aukko kuin yllä.
   { method: "GET",  re: /^\/api\/crew\/[^/]+\/plan\/[^/]*$/ },
-  { method: "POST", re: /^\/api\/crew\/[^/]+\/(password|onboard|window|lamp|hours|note|map-note|shift|expense)$/ },
+  { method: "POST", re: /^\/api\/crew\/[^/]+\/(password|onboard|window|lamp|door|hours|note|map-note|shift|expense)$/ },
   // Nämä neljä olivat samassa aukossa kuin observation-image: jokainen
   // tunnistaa tekijän `findJobByCrewToken`illa täsmälleen kuten yllä olevat,
   // mutta portti vastasi niihin 401 → tekijä lensi adminin kirjautumiseen
@@ -5798,6 +5798,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         // (`/api/gig/:token/observation-image`).
         observations: stripObservationImages(proj.observations),
         activeZone: proj.activeZone ?? null,
+        /**
+         * Lamput ja ovet — VAIN ne joista on asiakkaalle jotain kerrottavaa.
+         *
+         * Kartoituskierros merkitsee kymmeniä lamppuja kartalle. Yksikään niistä
+         * ei ole uutinen asiakkaalle: piste nousee tähän vasta kun lamppu on
+         * vaihdettu, todettu rikkinäiseksi tai siitä on kirjoitettu huomautus
+         * (ovella: tehty tai huomautettu). Suodatus tehdään TÄSSÄ eikä
+         * selaimessa, joten kartoitusdata ei lähde verkkoon lainkaan.
+         *
+         * Tekijän nimi ei tule mukaan — sama raja kuin ikkunoiden `washedBy`illä.
+         */
+        lamps: publicLampView(proj),
+        doors: publicDoorView(proj),
       } : null;
       // Only expose what the customer is meant to see — no internal billing notes.
       res.json({
@@ -8254,6 +8267,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       lamps: project.lamps ?? {},
       lampStatuses: project.lampStatuses ?? {},
       lampChangedBy: Object.fromEntries(Object.entries(project.lampChangedBy ?? {}).map(([k, v]) => [k, v.by])),
+      // Kunto ja huomautus ovat pelkkää tekstiä (ks. `ProjFixtureNote`), joten
+      // ne saavat kulkea joka vastauksessa — toisin kuin havaintokuvat.
+      lampConditions: project.lampConditions ?? {},
+      lampNotes: project.lampNotes ?? {},
+      // Ovet: tekijä saa kuitata tehdyksi ja kirjoittaa huomautuksen; lisäys,
+      // poisto ja tehtävän nimeäminen ovat johtajien projektinäkymässä.
+      doors: project.doors ?? {},
+      doorStatuses: project.doorStatuses ?? {},
+      doorDoneBy: Object.fromEntries(Object.entries(project.doorDoneBy ?? {}).map(([k, v]) => [k, v.by])),
+      doorNotes: project.doorNotes ?? {},
       hours: stats.hours,
       stats,
       // P2 (keltaiset ikkunat): tekijän OMA palkkio per ikkuna. Asiakashintaa tai
@@ -8586,18 +8609,101 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(403).json({ error: "Lue lisätiedot ja allekirjoita sopimukset ensin" });
       }
       const key = String(req.body?.key ?? "").slice(0, 64);
-      const status = req.body?.status === "vaihdettu" ? "vaihdettu" : "ei";
       if (!key) return res.status(400).json({ error: "key puuttuu" });
 
-      if (!project.lampStatuses) project.lampStatuses = {};
-      if (!project.lampChangedBy) project.lampChangedBy = {};
-      if (status === "vaihdettu") {
-        project.lampStatuses[key] = "vaihdettu";
-        project.lampChangedBy[key] = { by: member.id, ts: Date.now() };
-      } else if (!project.lampChangedBy[key] || project.lampChangedBy[key].by === member.id) {
-        // Only clear a lamp the worker owns (or that nobody owns) — same rule as windows.
-        delete project.lampStatuses[key];
-        delete project.lampChangedBy[key];
+      /**
+       * Kolme toisistaan riippumatonta merkintää samalla reitillä: vaihdettu,
+       * toimiiko, huomautus. Yksikin kenttä kerrallaan riittää — puuttuva
+       * kenttä EI ole "ei" vaan "älä koske", muuten kunnon merkitseminen
+       * pyyhkisi vaihtomerkinnän vahingossa.
+       */
+      const wantsStatus = req.body?.status !== undefined;
+      const wantsCondition = req.body?.condition !== undefined;
+      const wantsNote = req.body?.note !== undefined;
+      if (!wantsStatus && !wantsCondition && !wantsNote) {
+        return res.status(400).json({ error: "Ei muutettavaa" });
+      }
+
+      if (wantsStatus) {
+        const status = req.body?.status === "vaihdettu" ? "vaihdettu" : "ei";
+        if (!project.lampStatuses) project.lampStatuses = {};
+        if (!project.lampChangedBy) project.lampChangedBy = {};
+        if (status === "vaihdettu") {
+          project.lampStatuses[key] = "vaihdettu";
+          project.lampChangedBy[key] = { by: member.id, ts: Date.now() };
+        } else if (!project.lampChangedBy[key] || project.lampChangedBy[key].by === member.id) {
+          // Only clear a lamp the worker owns (or that nobody owns) — same rule as windows.
+          delete project.lampStatuses[key];
+          delete project.lampChangedBy[key];
+        }
+      }
+
+      if (wantsCondition) {
+        // `null` = "ei tarkastettu" -tilaan takaisin.
+        const cond = toLampCondition(req.body?.condition);
+        if (!project.lampConditions) project.lampConditions = {};
+        if (cond) project.lampConditions[key] = cond;
+        else delete project.lampConditions[key];
+      }
+
+      if (wantsNote) {
+        /**
+         * Huomautus on JAETTU tieto, ei työn attribuutio: kuka tahansa keikan
+         * tekijä saa kirjoittaa sen ja kuka tahansa saa pyyhkiä sen. Vaihdon
+         * omistajuussääntö (yllä) on eri asia — se suojaa sitä kuka teki työn.
+         * Kirjoittaja ja aika tallentuvat aina, joten jälki säilyy.
+         */
+        const text = String(req.body?.note ?? "").trim().slice(0, MAX_FIXTURE_NOTE_LEN);
+        if (!project.lampNotes) project.lampNotes = {};
+        if (text) project.lampNotes[key] = { text, by: member.id, ts: Date.now() };
+        else delete project.lampNotes[key];
+      }
+
+      const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Worker marks a DOOR (tehty / ei) and/or leaves a note about it. Ovi on
+  // tehtäväpiste: tekijä kuittaa sen tehdyksi ja voi huomauttaa siitä, mutta
+  // pisteiden lisääminen, poisto ja tehtävän nimeäminen ovat johtajien työtä.
+  app.post("/api/crew/:token/door", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      if (!isCrewTrainee(member) && WORKER_AGREEMENTS_GATED && !hasSignedAllAgreements(member, requiredAgreementIdsForSet(resolveAgreementSet(member)), WORKER_AGREEMENT_VERSION)) {
+        return res.status(403).json({ error: "Lue lisätiedot ja allekirjoita sopimukset ensin" });
+      }
+      const key = String(req.body?.key ?? "").slice(0, 64);
+      if (!key) return res.status(400).json({ error: "key puuttuu" });
+
+      const wantsStatus = req.body?.status !== undefined;
+      const wantsNote = req.body?.note !== undefined;
+      if (!wantsStatus && !wantsNote) return res.status(400).json({ error: "Ei muutettavaa" });
+
+      if (wantsStatus) {
+        const status = req.body?.status === "tehty" ? "tehty" : "ei";
+        if (!project.doorStatuses) project.doorStatuses = {};
+        if (!project.doorDoneBy) project.doorDoneBy = {};
+        if (status === "tehty") {
+          project.doorStatuses[key] = "tehty";
+          project.doorDoneBy[key] = { by: member.id, ts: Date.now() };
+        } else if (!project.doorDoneBy[key] || project.doorDoneBy[key].by === member.id) {
+          delete project.doorStatuses[key];
+          delete project.doorDoneBy[key];
+        }
+      }
+
+      if (wantsNote) {
+        // Sama sääntö kuin lampun huomautuksella: jaettu tieto, ei attribuutio.
+        const text = String(req.body?.note ?? "").trim().slice(0, MAX_FIXTURE_NOTE_LEN);
+        if (!project.doorNotes) project.doorNotes = {};
+        if (text) project.doorNotes[key] = { text, by: member.id, ts: Date.now() };
+        else delete project.doorNotes[key];
       }
 
       const saved = await saveProject(job, project);

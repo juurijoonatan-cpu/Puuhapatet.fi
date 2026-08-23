@@ -100,6 +100,9 @@ interface Props {
   onSetDoorNote?: (key: string, text: string) => void;
   /** Ostotieto (lampun malli, ostettava määrä) — `FixturePanel`in ostoslohko. */
   onSetFixtureOrder?: (patch: Partial<FixtureOrder>) => void;
+  /** Lamppumallien ylläpito — lista on keikan asetus, ei pisteen ominaisuus. */
+  onAddLampModel?: (name: string) => void;
+  onRemoveLampModel?: (id: string) => void;
 }
 
 function fmt(n: number) { return Math.round(n).toLocaleString("fi-FI"); }
@@ -168,7 +171,7 @@ function RedFold({ label, value, children }: { label: string; value?: string; ch
   );
 }
 
-export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot, founderInvoiceSlot, gigBilling, workerLaborP2Cents, workerOpenP1Cents, onGoToMaksut, p2Slot, settingsSlot, onSetLampStatus, onSetLampCondition, onSetLampNote, onSetDoorStatus, onSetDoorNote, onSetFixtureOrder }: Props) {
+export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot, founderInvoiceSlot, gigBilling, workerLaborP2Cents, workerOpenP1Cents, onGoToMaksut, p2Slot, settingsSlot, onSetLampStatus, onSetLampCondition, onSetLampNote, onSetDoorStatus, onSetDoorNote, onSetFixtureOrder, onAddLampModel, onRemoveLampModel }: Props) {
   const m = useIsMobile();
   const [editId, setEditId] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
@@ -774,6 +777,8 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
           onSetDoorStatus={onSetDoorStatus}
           onSetDoorNote={onSetDoorNote}
           onSetFixtureOrder={onSetFixtureOrder}
+          onAddLampModel={onAddLampModel}
+          onRemoveLampModel={onRemoveLampModel}
         />
 
         {/* Collapsible "dropdown bar" sections — everything below the hero folds

@@ -5,7 +5,7 @@
  * path differ.
  */
 import { useState, useRef, useEffect, useMemo } from "react";
-import type { ProjMarksData, WindowStatus, ProjCustomMark, ProjMapNote, ProjNoteKind, ProjActiveZone, ProjWindowObservation, FixedDeal, ProjBuilding, LampStatus, LampCondition, ProjLampMark, ProjFixtureNote, DoorStatus, ProjDoorMark } from "@shared/project";
+import type { ProjMarksData, WindowStatus, ProjCustomMark, ProjMapNote, ProjNoteKind, ProjActiveZone, ProjWindowObservation, FixedDeal, ProjBuilding, LampStatus, LampCondition, ProjLampMark, ProjFixtureNote, DoorStatus, ProjDoorMark, LampModel } from "@shared/project";
 import { NOTE_KINDS, planImageUrl, planRenderOf, hasAnyPlan, floorLabel, lampBucket, MAX_FIXTURE_NOTE_LEN, MAX_DOOR_LABEL_LEN } from "@shared/project";
 import type { P2Offer, P2NumberingInput } from "@shared/p2";
 import { P2_PRICE_PRESETS_CENTS, MAX_P2_NOTE_LEN, p2NumbersByFloor } from "@shared/p2";
@@ -249,6 +249,12 @@ interface Props {
   lampNotes?: Record<string, ProjFixtureNote>;
   /** Aseta lampun kunto; `null` palauttaa "ei tarkastettu" -tilaan. */
   onSetLampCondition?: (key: string, condition: LampCondition | null) => void;
+  /** Keikan lamppumallit valittavaksi pisteen popoverista. */
+  lampModels?: LampModel[];
+  /** Lampun avain → mallin id. */
+  lampModelOf?: Record<string, string>;
+  /** Aseta lampun malli; `null` poistaa merkinnän ("ei mallia"). */
+  onSetLampModel?: (key: string, modelId: string | null) => void;
   /** Kirjoita/tyhjennä lampun huomautus. Tyhjä teksti poistaa huomautuksen. */
   onSetLampNote?: (key: string, text: string) => void;
   /**
@@ -439,7 +445,7 @@ const ADD_ITEMS: { id: PlaceMode; label: string; desc: string; dotBg: string; gl
   { id: "del", label: "Poista piste", desc: "Klikkaa poistettavaa", dotBg: "rgba(255,90,90,0.16)", glyph: "✕" },
 ];
 
-export default function FloorView({ floors, planBase, building, planUrlBase, planAuthed = false, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, onLoadObservationImage, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, scopeVotes, guided, onToggleFloorLock, onToggleWindowLock, lockedWindowKeys, floorFocus, restrictFloors, lamps, lampStatuses, lampChangedBy, onAddLamp, onDeleteLamp, onSetLampStatus, lampConditions, lampNotes, onSetLampCondition, onSetLampNote, doors, doorStatuses, doorDoneBy, doorNotes, onAddDoor, onDeleteDoor, onSetDoorStatus, onSetDoorNote, onSetDoorLabel }: Props) {
+export default function FloorView({ floors, planBase, building, planUrlBase, planAuthed = false, pricePerWindow, marks, statuses, posOverrides, customMarks, deleted, initialFloor, onStatusChange, onAddCustomMark, onDeleteMark, onMoveMark, onMoveMarkCommit, onResetFloor, canEdit = true, canAddNotes = false, hideMoney = false, washedBy, washedBy2, onSetSplit, keskenBy, workerNames, workers, currentWorkerId, notes, onAddNote, onUpdateNote, onDeleteNote, observations, canObserve = false, onSetObservation, onLoadObservationImage, activeZone, onSetActiveZone, onClearActiveZone, deal, p2, onP2Propose, scopeVotes, guided, onToggleFloorLock, onToggleWindowLock, lockedWindowKeys, floorFocus, restrictFloors, lamps, lampStatuses, lampChangedBy, onAddLamp, onDeleteLamp, onSetLampStatus, lampConditions, lampNotes, onSetLampCondition, onSetLampNote, lampModels, lampModelOf, onSetLampModel, doors, doorStatuses, doorDoneBy, doorNotes, onAddDoor, onDeleteDoor, onSetDoorStatus, onSetDoorNote, onSetDoorLabel }: Props) {
   // Discreet worker map: when restrictFloors is set, show ONLY those floors and
   // hide the rest, so a regular worker sees exactly the opened floors and nothing
   // else. Founders (restrictFloors null) always see every floor.
@@ -2217,6 +2223,31 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                 })}
                 {!lampConditions?.[activeLamp] && (
                   <div style={{ fontSize: "10.5px", color: "rgba(255,255,255,0.35)", padding: "3px 4px 0" }}>Ei vielä tarkastettu.</div>
+                )}
+              </div>
+            )}
+
+            {/* LAMPUN MALLI. Kaikki lamput eivät ole samaa mallia, ja ostoslista
+                on väärä jos se sanoo pelkän kokonaismäärän. Lista tulee keikan
+                malleista; uuden mallin lisääminen on johtajan dashissa, koska
+                se on keikan asetus eikä yhden pisteen ominaisuus. */}
+            {onSetLampModel && (lampModels?.length ?? 0) > 0 && (
+              <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                <div style={{ fontSize: "9.5px", letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.38)", padding: "0 4px 6px" }}>Lampun malli</div>
+                {lampModels!.map((mdl) => {
+                  const picked = lampModelOf?.[activeLamp] === mdl.id;
+                  return (
+                    <button key={mdl.id} className="status-opt-btn"
+                      onClick={() => onSetLampModel(activeLamp, picked ? null : mdl.id)}
+                      style={{ border: `1px solid ${picked ? "rgba(255,255,255,0.16)" : "transparent"}`, background: picked ? "rgba(255,255,255,0.08)" : "transparent", fontWeight: picked ? 600 : 500 }}>
+                      <span aria-hidden style={{ width: "9px", height: "9px", flexShrink: 0, borderRadius: "2px", background: picked ? "rgb(156,193,255)" : "rgba(255,255,255,0.25)" }} />
+                      <span style={{ flex: 1, textAlign: "left", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{mdl.name}</span>
+                      {picked && <span style={{ fontSize: "11px" }}>✓</span>}
+                    </button>
+                  );
+                })}
+                {!lampModelOf?.[activeLamp] && (
+                  <div style={{ fontSize: "10.5px", color: "rgba(255,255,255,0.35)", padding: "3px 4px 0" }}>Ei mallia — ei vielä ostoslistalla.</div>
                 )}
               </div>
             )}

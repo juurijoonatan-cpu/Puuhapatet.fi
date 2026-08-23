@@ -1,15 +1,16 @@
 /**
  * LAMPUT & OVET — dashin ylälaidan paneeli.
  *
- * Neljä asiaa, tässä järjestyksessä, koska tämä on se järjestys jossa niitä
- * kysytään:
+ * KAKSI TASOA, EI YHTÄ MUURIA. Paneeli oli kasvanut niin että se mitä piti
+ * TEHDÄ oli kolmen taustatietolohkon takana. Yhdellä ruudulla luetaan yksi
+ * asia, joten näkyvissä on vain se:
  *
- *   1. LUVUT      — montako ei toimi, montako on korjattu, mikä on kunnossa.
- *   2. KERROKSET  — missä ne rikkinäiset ovat (`LampFloorChart`).
- *   3. TYÖT      — montako vaihtoa, mitä tarviketta niihin menee, ja mitä
- *                   asiakas maksaisi yhdestä vaihdosta.
- *   4. HUOMIOTA   — rivit jotka vaativat toimenpiteen, huomautus kirjoitettavissa
- *                   suoraan riviltä ilman kartalle menoa.
+ *   1. LUVUT     — montako ei toimi, montako on korjattu, mikä on kunnossa.
+ *   2. HUOMIOTA  — rivit jotka vaativat toimenpiteen, huomautus kirjoitettavissa
+ *                  suoraan riviltä ilman kartalle menoa.
+ *
+ * Painalluksen takana odottavat harvemmin tarvittavat: kerroskuvio (missä
+ * rikkinäiset ovat), lamppumallit (mitä ostetaan) ja työlomake hintoineen.
  *
  * MIKSI PANEELI ON DASHIN ALUSSA. Huomautus kirjoitetaan pisteen popoverista —
  * oikea paikka merkitä työtä sitä tehdessä, väärä paikka lukea sitä: johtaja
@@ -22,9 +23,9 @@
 import { useMemo, useState } from "react";
 import {
   fixtureAttentionRows, computeLampInventory, computeDoorTotals,
-  resolveFixtureOrder, floorLabel, eurFromCents,
+  resolveFixtureOrder, computeLampModelStats, floorLabel, eurFromCents, MAX_LAMP_MODELS,
   MAX_FIXTURE_NOTE_LEN, MAX_FIXTURE_MODEL_LEN, MAX_FIXTURE_ORDER_NOTE_LEN,
-  type ProjectData, type FixtureAttentionRow, type FixtureOrder,
+  type ProjectData, type FixtureAttentionRow, type FixtureOrder, type LampModel,
   type LampStatus, type LampCondition, type DoorStatus,
 } from "@shared/project";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -84,18 +85,24 @@ interface Props {
   onSetDoorNote?: (key: string, text: string) => void;
   /** Ostotieto (malli, määrä). Ilman tätä ostoslohko on lukunäkymä. */
   onSetFixtureOrder?: (patch: Partial<FixtureOrder>) => void;
+  /** Lisää keikalle lamppumalli. Palauttaa uuden mallin id:n. */
+  onAddLampModel?: (name: string) => void;
+  /** Poista malli. Sitä käyttävät lamput palaavat "ei mallia" -tilaan. */
+  onRemoveLampModel?: (id: string) => void;
 }
 
 export default function FixturePanel({
   project, workerName, onGoToFloor,
   onSetLampStatus, onSetLampCondition, onSetLampNote, onSetDoorStatus, onSetDoorNote,
-  onSetFixtureOrder,
+  onSetFixtureOrder, onAddLampModel, onRemoveLampModel,
 }: Props) {
   const m = useIsMobile();
   const rows = useMemo(() => fixtureAttentionRows(project), [project]);
   const inv = useMemo(() => computeLampInventory(project), [project]);
   const order = useMemo(() => resolveFixtureOrder(project), [project]);
   const doorT = useMemo(() => computeDoorTotals(project), [project]);
+  const modelStats = useMemo(() => computeLampModelStats(project), [project]);
+  const [newModel, setNewModel] = useState("");
   // Huomautusten määrä luetaan `rows`ista eikä omalla kierroksellaan: rows on jo
   // laskettu ja sisältää täsmälleen samat pisteet.
   const notedCount = useMemo(() => rows.filter((r) => !!r.note?.text).length, [rows]);
@@ -150,142 +157,10 @@ export default function FixturePanel({
         Sama teksti näkyy asiakkaalle.
       </p>
 
-      {/* 2. KERROKSITTAIN — missä työ on. */}
-      {/* Kortti vain kun kuviolla on vertailtavaa (≥ 2 kerrosta) — sama raja
-          kuin `LampFloorChart`issa, jottei tyhjä laatikko jää jäljelle. */}
-      {inv.byFloor.length > 1 && (
-        <div style={{ ...inset, padding: T.space.lg, marginBottom: T.space.lg }}>
-          <LampFloorChart
-            rows={inv.byFloor}
-            theme={CHART_DARK}
-            title="Merkityt lamput kerroksittain"
-            floorLabel={(f) => floorLabel(project.building, f)}
-            onFloorClick={onGoToFloor}
-          />
-        </div>
-      )}
-
-      {/* 3. TYÖT. Määrä on LASKETTU oletuksena: käsin ylläpidetty luku
-          vanhenisi joka kerta kun tekijä merkitsee uuden rikkinäisen. Johtaja
-          voi silti korjata sen (varalamput, pakkauskoko), ja silloin näkymä
-          sanoo että luku on hänen. */}
-      <div style={{ ...inset, padding: T.space.lg, marginBottom: T.space.lg }}>
-        <div style={{ ...mono, color: T.text.faint, marginBottom: T.space.md }}>TEHTÄVÄT TYÖT JA TARVIKKEET</div>
-        {/* Sama luku on samaan aikaan ostettavien tarvikkeiden määrä JA
-            vaihtotöiden määrä — jokainen rikkinäinen lamppu on yksi polttimo ja
-            yksi vaihto. Asiakkaan hinta koskee VAIHTOA, ei tarviketta. */}
-        <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1fr auto", gap: T.space.md, alignItems: "end" }}>
-          <label style={{ display: "block" }}>
-            <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Lampun malli — mitä kohteeseen menee</span>
-            <input
-              defaultValue={order.lampModel ?? ""}
-              key={`lm-${order.lampModel ?? ""}`}
-              placeholder="Esim. E27 LED 9W 2700K"
-              maxLength={MAX_FIXTURE_MODEL_LEN}
-              disabled={!onSetFixtureOrder}
-              onBlur={(e) => onSetFixtureOrder?.({ lampModel: e.target.value })}
-              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-              style={fieldStyle}
-            />
-          </label>
-          <div style={{ minWidth: 132 }}>
-            <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Vaihtoa</span>
-            <input
-              type="number" min={0}
-              defaultValue={order.bulbs}
-              key={`lb-${order.bulbs}-${order.bulbsManual}`}
-              disabled={!onSetFixtureOrder}
-              onBlur={(e) => onSetFixtureOrder?.({ bulbsNeeded: e.target.value === "" ? undefined : Number(e.target.value) })}
-              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-              style={{ ...fieldStyle, fontVariantNumeric: "tabular-nums" }}
-            />
-            <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginTop: T.space.xs }}>
-              {order.bulbsManual ? (
-                <>käsin · kartalta {order.bulbsAuto}{onSetFixtureOrder && (
-                  <button onClick={() => onSetFixtureOrder({ bulbsNeeded: undefined })}
-                    style={{ marginLeft: 6, background: "transparent", border: "none", padding: 0, color: T.tone.info, fontFamily: T.font, fontSize: T.size.xs, fontWeight: 600, cursor: "pointer" }}>
-                    palauta
-                  </button>
-                )}</>
-              ) : "laskettu kartalta"}
-            </div>
-          </div>
-        </div>
-
-        {doorT.total > 0 && (
-          <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1fr auto", gap: T.space.md, alignItems: "end", marginTop: T.space.md }}>
-            <label style={{ display: "block" }}>
-              <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Oven tiiviste — mitä kohteeseen menee</span>
-              <input
-                defaultValue={order.doorMaterial ?? ""}
-                key={`dm-${order.doorMaterial ?? ""}`}
-                placeholder="Esim. EPDM D-tiiviste, valkoinen"
-                maxLength={MAX_FIXTURE_MODEL_LEN}
-                disabled={!onSetFixtureOrder}
-                onBlur={(e) => onSetFixtureOrder?.({ doorMaterial: e.target.value })}
-                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                style={fieldStyle}
-              />
-            </label>
-            <div style={{ minWidth: 132 }}>
-              <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Vaihtoa</span>
-              <input
-                type="number" min={0}
-                defaultValue={order.doorCount}
-                key={`dc-${order.doorCount}-${order.doorCountManual}`}
-                disabled={!onSetFixtureOrder}
-                onBlur={(e) => onSetFixtureOrder?.({ doorsNeeded: e.target.value === "" ? undefined : Number(e.target.value) })}
-                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                style={{ ...fieldStyle, fontVariantNumeric: "tabular-nums" }}
-              />
-              <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginTop: T.space.xs }}>
-                {order.doorCountManual ? `käsin · kartalta ${order.doorCountAuto}` : "tekemättömät ovet"}
-              </div>
-            </div>
-          </div>
-        )}
-
-        <label style={{ display: "block", marginTop: T.space.md }}>
-          <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Huomio tilauksesta — näkyy asiakkaalle</span>
-          <input
-            defaultValue={order.note ?? ""}
-            key={`on-${order.note ?? ""}`}
-            placeholder="Esim. ”Tilataan kun asiakas vahvistaa hinnan”"
-            maxLength={MAX_FIXTURE_ORDER_NOTE_LEN}
-            disabled={!onSetFixtureOrder}
-            onBlur={(e) => onSetFixtureOrder?.({ note: e.target.value })}
-            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-            style={fieldStyle}
-          />
-        </label>
-
-        {/* Asiakkaan hintaehdotus. Luettavaa, ei muokattavaa: se on hänen
-            sanansa, ja johtajan muokkaamana se ei enää olisi sitä. */}
-        {order.quote ? (
-          <div style={{ marginTop: T.space.md, padding: `${T.space.sm + 2}px ${T.space.md}px`, borderRadius: T.radius.sm, background: T.tone.infoBg, border: `1px solid ${T.tone.infoBorder}` }}>
-            <div style={{ ...mono, color: "rgba(190,205,255,0.85)", marginBottom: T.space.xs }}>ASIAKKAAN HINTAEHDOTUS · {ago(order.quote.at)} sitten</div>
-            <div style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.secondary }}>
-              {order.quote.lampWorkPriceCents != null && <>Lampun vaihto <b style={{ color: T.text.primary, fontWeight: 700 }}>{eurFromCents(order.quote.lampWorkPriceCents)}</b>/kpl</>}
-              {order.quote.lampWorkPriceCents != null && order.quote.doorWorkPriceCents != null && " · "}
-              {order.quote.doorWorkPriceCents != null && <>Tiivisteen vaihto <b style={{ color: T.text.primary, fontWeight: 700 }}>{eurFromCents(order.quote.doorWorkPriceCents)}</b>/kpl</>}
-              {order.quotedTotalCents != null && (
-                <span style={{ display: "block", marginTop: 2, color: T.tone.info }}>
-                  Työt yhteensä tällä hinnalla <b style={{ fontWeight: 700 }}>{eurFromCents(order.quotedTotalCents)}</b>
-                </span>
-              )}
-            </div>
-            {order.quote.note && (
-              <div style={{ marginTop: T.space.sm, fontFamily: T.font, fontSize: T.size.sm, color: T.text.secondary, whiteSpace: "pre-wrap" }}>{order.quote.note}</div>
-            )}
-          </div>
-        ) : (
-          <div style={{ marginTop: T.space.md, fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint }}>
-            Asiakas ei ole vielä ehdottanut hintaa. Lomake on hänen seurantasivullaan.
-          </div>
-        )}
-      </div>
-
-      {/* 4. HUOMIOTA KAIPAAVAT — sama lista kuin ennen. */}
+      {/* 2. MIKÄ KAIPAA HUOMIOTA. Tämä on se lista jonka takia paneeli
+          avataan, joten se tulee heti lukujen jälkeen — ei kolmen lohkon
+          takaa kuten ennen. Kerroskuvio, mallit ja työt ovat tarpeellisia
+          mutta harvemmin, joten ne odottavat painalluksen takana alla. */}
       {shown.length === 0 ? (
         <div style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.faint }}>
           Ei huomiota kaipaavia lamppuja tai ovia.
@@ -407,6 +282,228 @@ export default function FixturePanel({
           {showAll ? "Näytä vain huomiota kaipaavat" : `Näytä kaikki (${rows.length})`}
         </button>
       )}
+
+      {/* LOPUT PAINALLUKSEN TAAKSE.
+
+          Paneeli oli kasvanut muuriksi: neljä tiiltä, saate, kerroskuvio,
+          mallilista, työlomake ja vasta sitten se mitä piti tehdä. Kaikki
+          tarpeellista, mutta ei yhtä aikaa — yhdellä ruudulla luetaan yksi
+          asia. Natiivi <details> on sama kuvio kuin asiakkaan kartan
+          selitteessä, eikä se tuo uutta komponenttia mukanaan. */}
+      <details style={{ marginTop: T.space.lg }}>
+        <summary style={{ cursor: "pointer", listStyle: "none", display: "flex", alignItems: "center", gap: T.space.sm, padding: `${T.space.sm}px 0`, fontFamily: T.font, fontSize: T.size.sm, fontWeight: 600, color: T.text.muted }}>
+          <span aria-hidden style={{ fontSize: T.size.xs }}>▸</span>
+          Kerrokset, mallit ja työt
+        </summary>
+        <div style={{ marginTop: T.space.md }}>
+        {/* KERROKSITTAIN — missä työ on. */}
+        {/* Kortti vain kun kuviolla on vertailtavaa (≥ 2 kerrosta) — sama raja
+            kuin `LampFloorChart`issa, jottei tyhjä laatikko jää jäljelle. */}
+        {inv.byFloor.length > 1 && (
+          <div style={{ ...inset, padding: T.space.lg, marginBottom: T.space.lg }}>
+            <LampFloorChart
+              rows={inv.byFloor}
+              theme={CHART_DARK}
+              title="Merkityt lamput kerroksittain"
+              floorLabel={(f) => floorLabel(project.building, f)}
+              onFloorClick={onGoToFloor}
+            />
+          </div>
+        )}
+
+        {/* LAMPPUMALLIT. Kaikki lamput eivät ole samaa mallia, ja kokonaismäärä
+            ei kelpaa ostoksiin: seitsemän rikkinäistä voi olla neljä E27:ää ja
+            kolme G9:ää. Johtaja ylläpitää listaa tässä; malli osoitetaan
+            lampulle kartalta sen popoverista.
+
+            Mallittomat näkyvät omana rivinään eivätkä katoa summaan — ne ovat se
+            osa listaa jota ei voi vielä ostaa. */}
+        {inv.total > 0 && (onAddLampModel || modelStats.length > 0) && (
+          <div style={{ ...inset, padding: T.space.lg, marginBottom: T.space.lg }}>
+            <div style={{ ...mono, color: T.text.faint, marginBottom: T.space.md }}>LAMPPUMALLIT</div>
+
+            {modelStats.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: T.space.sm, marginBottom: T.space.md }}>
+                {modelStats.map((mdl) => (
+                  <div key={mdl.id ?? "none"} style={{ display: "flex", alignItems: "center", gap: T.space.sm, padding: `${T.space.sm}px ${T.space.md - 2}px`, borderRadius: T.radius.sm, background: T.surface.raised, border: mdl.id ? T.border.subtle : `1px dashed ${T.tone.warnBorder}` }}>
+                    <span style={{ flex: 1, minWidth: 0, fontFamily: T.font, fontSize: T.size.sm, fontWeight: 600, color: mdl.id ? T.text.primary : T.tone.warn, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {mdl.name}
+                    </span>
+                    <span style={{ flexShrink: 0, fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, fontVariantNumeric: "tabular-nums" }}>
+                      {mdl.total} lamppua
+                    </span>
+                    <span style={{ flexShrink: 0, minWidth: 76, textAlign: "right", fontFamily: T.font, fontSize: T.size.sm, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: mdl.needsBulb > 0 ? T.tone.bad : T.text.faint }}>
+                      {mdl.needsBulb > 0 ? `${mdl.needsBulb} ostettava` : "—"}
+                    </span>
+                    {mdl.id && onRemoveLampModel && (
+                      <button
+                        onClick={() => {
+                          if (typeof window === "undefined" || window.confirm(`Poistetaanko malli "${mdl.name}"? Sitä käyttävät lamput jäävät ilman mallia.`)) {
+                            onRemoveLampModel(mdl.id!);
+                          }
+                        }}
+                        title="Poista malli"
+                        style={{ flexShrink: 0, background: "transparent", border: "none", padding: `2px ${T.space.xs}px`, color: T.tone.bad, fontFamily: T.font, fontSize: T.size.sm, fontWeight: 700, cursor: "pointer", lineHeight: 1 }}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={{ margin: `0 0 ${T.space.md}px`, fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, lineHeight: 1.6 }}>
+                Ei malleja. Lisää ne tähän, niin voit osoittaa kullekin lampulle oman mallinsa
+                kartalta — ostoslista eritellään mallin mukaan.
+              </p>
+            )}
+
+            {onAddLampModel && (modelStats.filter((m) => m.id).length < MAX_LAMP_MODELS) && (
+              <div style={{ display: "flex", gap: T.space.sm }}>
+                <input
+                  value={newModel}
+                  onChange={(e) => setNewModel(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && newModel.trim()) { onAddLampModel(newModel.trim()); setNewModel(""); }
+                  }}
+                  placeholder="Lisää malli, esim. E27 LED 9W 2700K"
+                  maxLength={80}
+                  style={{ ...fieldStyle, flex: 1 }}
+                />
+                <button
+                  onClick={() => { if (newModel.trim()) { onAddLampModel(newModel.trim()); setNewModel(""); } }}
+                  disabled={!newModel.trim()}
+                  style={{ flexShrink: 0, padding: `0 ${T.space.lg}px`, borderRadius: T.radius.sm, border: "none", background: newModel.trim() ? "#fff" : T.surface.raised, color: newModel.trim() ? "#0a0a0c" : T.text.faint, fontFamily: T.font, fontSize: T.size.xs, fontWeight: 700, cursor: newModel.trim() ? "pointer" : "default" }}
+                >
+                  Lisää
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TYÖT JA TARVIKKEET. Määrä on LASKETTU oletuksena: käsin ylläpidetty luku
+            vanhenisi joka kerta kun tekijä merkitsee uuden rikkinäisen. Johtaja
+            voi silti korjata sen (varalamput, pakkauskoko), ja silloin näkymä
+            sanoo että luku on hänen. */}
+        <div style={{ ...inset, padding: T.space.lg, marginBottom: T.space.lg }}>
+          <div style={{ ...mono, color: T.text.faint, marginBottom: T.space.md }}>TEHTÄVÄT TYÖT JA TARVIKKEET</div>
+          {/* Sama luku on samaan aikaan ostettavien tarvikkeiden määrä JA
+              vaihtotöiden määrä — jokainen rikkinäinen lamppu on yksi polttimo ja
+              yksi vaihto. Asiakkaan hinta koskee VAIHTOA, ei tarviketta. */}
+          <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1fr auto", gap: T.space.md, alignItems: "end" }}>
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Lampun malli — mitä kohteeseen menee</span>
+              <input
+                defaultValue={order.lampModel ?? ""}
+                key={`lm-${order.lampModel ?? ""}`}
+                placeholder="Esim. E27 LED 9W 2700K"
+                maxLength={MAX_FIXTURE_MODEL_LEN}
+                disabled={!onSetFixtureOrder}
+                onBlur={(e) => onSetFixtureOrder?.({ lampModel: e.target.value })}
+                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                style={fieldStyle}
+              />
+            </label>
+            <div style={{ minWidth: 132 }}>
+              <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Vaihtoa</span>
+              <input
+                type="number" min={0}
+                defaultValue={order.bulbs}
+                key={`lb-${order.bulbs}-${order.bulbsManual}`}
+                disabled={!onSetFixtureOrder}
+                onBlur={(e) => onSetFixtureOrder?.({ bulbsNeeded: e.target.value === "" ? undefined : Number(e.target.value) })}
+                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                style={{ ...fieldStyle, fontVariantNumeric: "tabular-nums" }}
+              />
+              <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginTop: T.space.xs }}>
+                {order.bulbsManual ? (
+                  <>käsin · kartalta {order.bulbsAuto}{onSetFixtureOrder && (
+                    <button onClick={() => onSetFixtureOrder({ bulbsNeeded: undefined })}
+                      style={{ marginLeft: 6, background: "transparent", border: "none", padding: 0, color: T.tone.info, fontFamily: T.font, fontSize: T.size.xs, fontWeight: 600, cursor: "pointer" }}>
+                      palauta
+                    </button>
+                  )}</>
+                ) : "laskettu kartalta"}
+              </div>
+            </div>
+          </div>
+
+          {doorT.total > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1fr auto", gap: T.space.md, alignItems: "end", marginTop: T.space.md }}>
+              <label style={{ display: "block" }}>
+                <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Oven tiiviste — mitä kohteeseen menee</span>
+                <input
+                  defaultValue={order.doorMaterial ?? ""}
+                  key={`dm-${order.doorMaterial ?? ""}`}
+                  placeholder="Esim. EPDM D-tiiviste, valkoinen"
+                  maxLength={MAX_FIXTURE_MODEL_LEN}
+                  disabled={!onSetFixtureOrder}
+                  onBlur={(e) => onSetFixtureOrder?.({ doorMaterial: e.target.value })}
+                  onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                  style={fieldStyle}
+                />
+              </label>
+              <div style={{ minWidth: 132 }}>
+                <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Vaihtoa</span>
+                <input
+                  type="number" min={0}
+                  defaultValue={order.doorCount}
+                  key={`dc-${order.doorCount}-${order.doorCountManual}`}
+                  disabled={!onSetFixtureOrder}
+                  onBlur={(e) => onSetFixtureOrder?.({ doorsNeeded: e.target.value === "" ? undefined : Number(e.target.value) })}
+                  onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                  style={{ ...fieldStyle, fontVariantNumeric: "tabular-nums" }}
+                />
+                <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginTop: T.space.xs }}>
+                  {order.doorCountManual ? `käsin · kartalta ${order.doorCountAuto}` : "tekemättömät ovet"}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <label style={{ display: "block", marginTop: T.space.md }}>
+            <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted, marginBottom: T.space.xs }}>Huomio tilauksesta — näkyy asiakkaalle</span>
+            <input
+              defaultValue={order.note ?? ""}
+              key={`on-${order.note ?? ""}`}
+              placeholder="Esim. ”Tilataan kun asiakas vahvistaa hinnan”"
+              maxLength={MAX_FIXTURE_ORDER_NOTE_LEN}
+              disabled={!onSetFixtureOrder}
+              onBlur={(e) => onSetFixtureOrder?.({ note: e.target.value })}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              style={fieldStyle}
+            />
+          </label>
+
+          {/* Asiakkaan hintaehdotus. Luettavaa, ei muokattavaa: se on hänen
+              sanansa, ja johtajan muokkaamana se ei enää olisi sitä. */}
+          {order.quote ? (
+            <div style={{ marginTop: T.space.md, padding: `${T.space.sm + 2}px ${T.space.md}px`, borderRadius: T.radius.sm, background: T.tone.infoBg, border: `1px solid ${T.tone.infoBorder}` }}>
+              <div style={{ ...mono, color: "rgba(190,205,255,0.85)", marginBottom: T.space.xs }}>ASIAKKAAN HINTAEHDOTUS · {ago(order.quote.at)} sitten</div>
+              <div style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.secondary }}>
+                {order.quote.lampWorkPriceCents != null && <>Lampun vaihto <b style={{ color: T.text.primary, fontWeight: 700 }}>{eurFromCents(order.quote.lampWorkPriceCents)}</b>/kpl</>}
+                {order.quote.lampWorkPriceCents != null && order.quote.doorWorkPriceCents != null && " · "}
+                {order.quote.doorWorkPriceCents != null && <>Tiivisteen vaihto <b style={{ color: T.text.primary, fontWeight: 700 }}>{eurFromCents(order.quote.doorWorkPriceCents)}</b>/kpl</>}
+                {order.quotedTotalCents != null && (
+                  <span style={{ display: "block", marginTop: 2, color: T.tone.info }}>
+                    Työt yhteensä tällä hinnalla <b style={{ fontWeight: 700 }}>{eurFromCents(order.quotedTotalCents)}</b>
+                  </span>
+                )}
+              </div>
+              {order.quote.note && (
+                <div style={{ marginTop: T.space.sm, fontFamily: T.font, fontSize: T.size.sm, color: T.text.secondary, whiteSpace: "pre-wrap" }}>{order.quote.note}</div>
+              )}
+            </div>
+          ) : (
+            <div style={{ marginTop: T.space.md, fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint }}>
+              Asiakas ei ole vielä ehdottanut hintaa. Lomake on hänen seurantasivullaan.
+            </div>
+          )}
+        </div>
+
+        </div>
+      </details>
     </Section>
   );
 }

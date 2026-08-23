@@ -3,7 +3,7 @@
  */
 
 import type { GigData, GigTotals } from "@shared/gig";
-import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding, FixedDeal, EraDebtBreakdown, ProjLampMark, LampStatus, LampCondition, ProjFixtureNote, ProjDoorMark, DoorStatus, PublicLampPoint, PublicDoorPoint, LampFloorStat, DoorFloorStat, FixtureQuote } from "@shared/project";
+import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding, FixedDeal, EraDebtBreakdown, ProjLampMark, LampStatus, LampCondition, ProjFixtureNote, ProjDoorMark, DoorStatus, PublicLampPoint, PublicDoorPoint, LampFloorStat, DoorFloorStat, FixtureQuote, LampModel } from "@shared/project";
 import type { MemberAgreementSignature } from "@shared/member-agreement";
 import type { CrewMember, CrewMemberStats, CrewProfile, CrewAgreementSignature } from "@shared/crew";
 import type { WorkerAgreement } from "@shared/worker-agreements";
@@ -114,6 +114,10 @@ export interface WorkerView {
   lampConditions: Record<string, LampCondition>;
   /** Lampun avain → huomautus (teksti, kirjoittaja, aika). */
   lampNotes: Record<string, ProjFixtureNote>;
+  /** Keikan lamppumallit — tekijä valitsee näistä, ei lisää uusia. */
+  lampModels: LampModel[];
+  /** Lampun avain → mallin id. */
+  lampModelOf: Record<string, string>;
   /** Ovet: tehtäväpisteet kartalla. Tekijä kuittaa ja huomauttaa; lisäys ja
    *  nimeäminen ovat johtajien projektinäkymässä. */
   doors: Record<string, ProjDoorMark[]>;
@@ -464,7 +468,11 @@ export interface GigPublicView {
       unchecked: number; functional: number; byFloor: LampFloorStat[];
     };
     doors: { total: number; done: number; byFloor: DoorFloorStat[] };
-    order: { lampModel?: string; bulbs: number; doorMaterial?: string; doorCount: number; note?: string };
+    order: {
+      lampModel?: string; bulbs: number; doorMaterial?: string; doorCount: number; note?: string;
+      /** Mallikohtainen erittely ostettavista. Tyhjä kun malleja ei ole määritelty. */
+      byModel: { name: string; needsBulb: number }[];
+    };
     quote: FixtureQuote | null;
     /** Asiakkaan omalla hinnalla laskettu summa (senttiä). Null ilman hintaa. */
     quotedTotalCents: number | null;
@@ -534,6 +542,25 @@ export interface GigSignPayload {
   };
 }
 
+/**
+ * Odotusaika pyynnölle, millisekunteina.
+ *
+ * OLETUS ON PITKÄ SYYSTÄ: ilmainen Render-taso nukahtaa ~15 min jälkeen, ja
+ * ensimmäinen pyyntö maksaa ~50 s kylmäkäynnistyksen. Latauksen pitää siis
+ * jaksaa odottaa se.
+ *
+ * MUTTA NOPEA MERKINTÄ EI SAA ODOTTAA SITÄ. Tekijän lamppunapautus menee jo
+ * hereillä olevalle palvelimelle: jos yhteys pätkii, 70 sekunnin tuijotus ennen
+ * virheilmoitusta on käytännössä sama kuin ei ilmoitusta lainkaan — ja
+ * uusinnan kanssa se oli yli kaksi minuuttia. Lyhyt katko kuuluu näkyä
+ * sekunneissa, jotta napautuksen voi toistaa.
+ */
+export const REQUEST_TIMEOUT_MS = 70_000;
+/** Nopea merkintä työpöydältä — virhe näkyviin sekunneissa, ei minuuteissa. */
+export const QUICK_TIMEOUT_MS = 15_000;
+/** Valmis optio-objekti nopeille merkintäreiteille. */
+const QUICK = { timeoutMs: QUICK_TIMEOUT_MS } as const;
+
 interface ApiResponse<T> {
   ok: boolean;
   data?: T;
@@ -550,11 +577,12 @@ async function request<T>(
   method: string,
   path: string,
   body?: unknown,
+  opts?: { timeoutMs?: number },
 ): Promise<ApiResponse<T>> {
   // Abort timeout so a sleeping/cold backend can't hang the UI indefinitely.
   // No retry here — these calls can be non-idempotent (e.g. createJob).
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 70000);
+  const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? REQUEST_TIMEOUT_MS);
   try {
     const res = await fetch(`${API_BASE}${path}`, {
       method,
@@ -1532,10 +1560,8 @@ export const api = {
     request<{ ok: boolean; username?: string }>("POST", `/api/crew/${token}/password`, { password }),
 
   crewMarkWindow: (token: string, key: string, status: WindowStatus, p?: 1 | 2) =>
-    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/window`, { key, status, p }),
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/window`, { key, status, p }, QUICK),
 
-  // Sama lamppujen merkintä (ei rahaa, ei prioriteettia) — kuka vaihtoi tulee
-  // servlerissä aina kirjautuneesta tekijästä itsestään.
   /**
    * ASIAKKAAN hintaehdotus VAIHTOTÖISTÄ (lamppu, oven tiiviste) — per kohde,
    * ei per tarvike. Ei sitova tarjous: asiakas kertoo mitä olisi valmis
@@ -1546,8 +1572,10 @@ export const api = {
     body: { lampWorkPriceCents?: number; doorWorkPriceCents?: number; note?: string },
   ) => request<{ ok: boolean; fixtures: GigPublicView["fixtures"] }>("POST", `/api/gig/${token}/fixture-quote`, body),
 
+  // Sama lamppujen merkintä (ei rahaa, ei prioriteettia) — kuka vaihtoi tulee
+  // palvelimella aina kirjautuneesta tekijästä itsestään.
   crewMarkLamp: (token: string, key: string, status: LampStatus) =>
-    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, status }),
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, status }, QUICK),
 
   /**
    * Lampun kunto ja huomautus — sama reitti kuin vaihtomerkinnällä, mutta eri
@@ -1555,15 +1583,19 @@ export const api = {
    * merkitseminen ei pyyhi vaihtomerkintää (eikä toisinpäin).
    */
   crewSetLampCondition: (token: string, key: string, condition: LampCondition | null) =>
-    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, condition }),
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, condition }, QUICK),
   crewSetLampNote: (token: string, key: string, note: string) =>
-    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, note }),
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, note }, QUICK),
+  /** Lampun malli. `null` poistaa merkinnän. Tekijä valitsee keikan malleista;
+   *  tuntematon id hylätään palvelimella. */
+  crewSetLampModel: (token: string, key: string, modelId: string | null) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, modelId }, QUICK),
 
   // Ovet: tekijä kuittaa tehtäväpisteen tehdyksi tai huomauttaa siitä.
   crewMarkDoor: (token: string, key: string, status: DoorStatus) =>
-    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/door`, { key, status }),
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/door`, { key, status }, QUICK),
   crewSetDoorNote: (token: string, key: string, note: string) =>
-    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/door`, { key, note }),
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/door`, { key, note }, QUICK),
 
   crewAddHours: (token: string, delta: number) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/hours`, { delta }),

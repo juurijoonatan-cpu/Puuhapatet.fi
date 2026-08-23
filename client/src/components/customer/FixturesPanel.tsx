@@ -150,8 +150,20 @@ export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQu
         <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 14, marginBottom: 4 }}>
           <span>
             <b style={{ fontWeight: 700 }}>{order.bulbs}</b> lampun vaihtoa
-            {order.lampModel && <span style={{ color: T.muted }}> · {order.lampModel}</span>}
+            {order.byModel.length === 0 && order.lampModel && <span style={{ color: T.muted }}> · {order.lampModel}</span>}
           </span>
+          {/* Mallikohtainen erittely: kokonaismäärä ei kerro mitä hankitaan,
+              jos portaikossa on kolmea eri lamppua. Näkyy vain kun malleja on
+              määritelty — muuten yksi luku riittää. */}
+          {order.byModel.length > 0 && (
+            <span style={{ display: "flex", flexDirection: "column", gap: 3, paddingLeft: 12, borderLeft: `2px solid ${T.hair}` }}>
+              {order.byModel.map((mdl) => (
+                <span key={mdl.name} style={{ fontSize: 13.5, color: T.muted }}>
+                  <b style={{ fontWeight: 700, color: T.ink }}>{mdl.needsBulb}</b> × {mdl.name}
+                </span>
+              ))}
+            </span>
+          )}
           {doors.total > 0 && (
             <span>
               <b style={{ fontWeight: 700 }}>{order.doorCount}</b> oven tiivisteen vaihtoa

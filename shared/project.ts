@@ -143,6 +143,28 @@ export interface FixtureQuote {
   at: number;
 }
 
+/**
+ * LAMPPUMALLIT — kaikki lamput eivät ole samaa mallia.
+ *
+ * Yksi `fixtureOrder.lampModel` riitti kun keikalla oli yhtä lamppua; oikeassa
+ * kiinteistössä on E27:ää, G9:ää ja loisteputkea samassa portaikossa, ja
+ * ostoslista on väärä jos se sanoo pelkän kokonaismäärän. Malli on siis LISTA
+ * jota johtaja ylläpitää (lisää/poistaa), ja jokainen lamppu voi osoittaa
+ * yhteen niistä (`lampModelOf`).
+ *
+ * MALLITON LAMPPU ON SALLITTU TILA eikä virhe: kartoitus on nopeaa ja malli
+ * katsotaan usein vasta jälkikäteen. Malliton putoaa omaan "Ei mallia"
+ * -riviinsä, jotta se näkyy eikä katoa summaan.
+ */
+export interface LampModel {
+  /** Vakaa tunnus, `"m<rand>"`. Nimi voi muuttua, tunnus ei. */
+  id: string;
+  name: string;
+}
+
+/** Kuinka monta mallia yhdellä keikalla — käytännön yläraja, ei tekninen. */
+export const MAX_LAMP_MODELS = 24;
+
 export const MAX_FIXTURE_MODEL_LEN = 80;
 export const MAX_FIXTURE_ORDER_NOTE_LEN = 300;
 export const MAX_FIXTURE_QUOTE_NOTE_LEN = 500;
@@ -412,6 +434,10 @@ export interface ProjectData {
   doorAddedBy?: Record<string, ProjMarkBy>;
   /** Johtajan ostotieto: malli ja määrä (`FixtureOrder`). */
   fixtureOrder?: FixtureOrder;
+  /** Keikan lamppumallit (`LampModel`). Johtaja ylläpitää listaa. */
+  lampModels?: LampModel[];
+  /** Lampun avain → mallin id. Puuttuva = malli katsomatta. */
+  lampModelOf?: Record<string, string>;
   /** Asiakkaan hintaehdotus (`FixtureQuote`). SERVERIN OMISTAMA — mutatoidaan
    *  vain /fixture-quote-reitiltä, geneerinen blob-tallennus säilyttää talletetun
    *  kopion kuten `p2`/`guided`/`scope`. */
@@ -1156,6 +1182,57 @@ export function computeLampInventory(data: ProjectData): LampInventory {
   };
 }
 
+/**
+ * MALLIKOHTAINEN OSTOSLISTA — se lista jolla rautakaupassa käydään.
+ *
+ * Kokonaismäärä ei kelpaa ostoksiin: seitsemän rikkinäistä lamppua voi olla
+ * neljä E27:ää ja kolme G9:ää, eikä kumpaakaan saa oikean määrän arvaamalla.
+ *
+ * MALLITTOMAT EIVÄT KATOA. Ne kootaan omaksi riivikseen (`id: null`), koska
+ * niistä pitää nimenomaan tietää: ne ovat se osa listaa jota ei voi vielä
+ * ostaa. Rivi jätetään pois vain kun mallittomia ei ole yhtään.
+ *
+ * Järjestys on ostettavien määrä laskevasti — suurin erä ensin.
+ */
+export interface LampModelStat {
+  /** Mallin id, tai null kun mallia ei ole katsottu. */
+  id: string | null;
+  name: string;
+  /** Montako lamppua tällä mallilla on merkitty. */
+  total: number;
+  /** Montako niistä pitää vaihtaa → ostettava määrä tätä mallia. */
+  needsBulb: number;
+  /** Montako on jo vaihdettu. */
+  changed: number;
+}
+
+export function computeLampModelStats(data: ProjectData): LampModelStat[] {
+  const models = data.lampModels ?? [];
+  const nameById = new Map(models.map((m) => [m.id, m.name]));
+  const assigned = data.lampModelOf ?? {};
+  const rows = new Map<string, LampModelStat>();
+  const row = (id: string | null, name: string) => {
+    const k = id ?? "";
+    let r = rows.get(k);
+    if (!r) { r = { id, name, total: 0, needsBulb: 0, changed: 0 }; rows.set(k, r); }
+    return r;
+  };
+  for (const p of allLampPoints(data)) {
+    const id = assigned[p.key];
+    // Poistettuun malliin osoittava lamppu kohdellaan mallittomana: viite on
+    // vanhentunut, eikä poistettua mallia saa herättää henkiin listalle.
+    const known = id && nameById.has(id) ? id : null;
+    const r = row(known, known ? nameById.get(known)! : "Ei mallia");
+    r.total += 1;
+    if (lampNeedsBulb(p)) r.needsBulb += 1;
+    if (p.status === "vaihdettu") r.changed += 1;
+  }
+  // Käyttämätön malli näkyy nollarivinä: johtaja lisäsi sen syystä, ja tyhjä
+  // rivi kertoo että sitä ei ole vielä osoitettu yhdellekään lampulle.
+  for (const m of models) if (!rows.has(m.id)) row(m.id, m.name);
+  return Array.from(rows.values()).sort((a, b) => (b.needsBulb - a.needsBulb) || (b.total - a.total));
+}
+
 /** Kerroksittainen ovijakauma — sama muoto kuin lampuilla, kaksi tilaa. */
 export interface DoorFloorStat { floor: string; total: number; done: number; open: number; }
 
@@ -1204,6 +1281,12 @@ export interface ResolvedFixtureOrder {
   quote?: FixtureQuote;
   /** Asiakkaan ehdotuksella laskettu summa (senttiä). Null kun hintaa ei ole. */
   quotedTotalCents: number | null;
+  /**
+   * Mallikohtainen erittely ostettavista. Mukana VAIN rivit joilla on jotain
+   * ostettavaa: nollarivi kuuluu johtajan hallintanäkymään, ei ostoslistaan.
+   * Tyhjä kun malleja ei ole määritelty lainkaan — silloin lista on yksi luku.
+   */
+  byModel: LampModelStat[];
 }
 
 export function resolveFixtureOrder(data: ProjectData): ResolvedFixtureOrder {
@@ -1226,6 +1309,13 @@ export function resolveFixtureOrder(data: ProjectData): ResolvedFixtureOrder {
     ...(o.note ? { note: o.note } : {}),
     ...(q ? { quote: q } : {}),
     quotedTotalCents: hasPrice ? bulbs * bulbCents + doorCount * doorCents : null,
+    // Erittely vain kun malleja on MÄÄRITELTY. Ilman niitä ainoa rivi olisi
+    // "Ei mallia", joka toistaisi kokonaisluvun eri sanoin — se on kohinaa,
+    // ei erittelyä. Mallittomat kuuluvat listalle vasta kun on jotain mistä
+    // ne erottuvat.
+    byModel: (data.lampModels?.length ?? 0) > 0
+      ? computeLampModelStats(data).filter((m) => m.needsBulb > 0)
+      : [],
   };
 }
 
@@ -1831,6 +1921,21 @@ function toUnitPriceCents(v: any): number | undefined {
   return Math.min(MAX_FIXTURE_UNIT_PRICE_CENTS, Math.round(n));
 }
 
+/** Keikan lamppumallit. Nimetön tai tunnukseton malli putoaa. */
+export function sanitizeLampModels(input: any): LampModel[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const out: LampModel[] = [];
+  for (const m of input.slice(0, MAX_LAMP_MODELS)) {
+    const id = String(m?.id ?? "").trim().slice(0, 40);
+    const name = String(m?.name ?? "").trim().slice(0, MAX_FIXTURE_MODEL_LEN);
+    if (!id || !name || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, name });
+  }
+  return out;
+}
+
 /** Johtajan ostotieto. Tyhjä objekti pudotetaan kokonaan. */
 export function sanitizeFixtureOrder(input: any): FixtureOrder | null {
   if (!input || typeof input !== "object") return null;
@@ -1974,6 +2079,19 @@ export function sanitizeProjectData(input: any): ProjectData {
     for (const k of Object.keys(input.lampConditions).slice(0, 20000)) {
       const c = toLampCondition(input.lampConditions[k]);
       if (c) lampConditions[cleanKey(k)] = c;
+    }
+  }
+
+  const lampModels = sanitizeLampModels(input.lampModels);
+  // Viite poistettuun malliin pudotetaan tässä: muuten kartta kantaisi
+  // roikkuvia tunnuksia, ja "ei mallia" pääteltäisiin joka lukupaikassa
+  // erikseen. Ks. `computeLampModelStats`, joka noudattaa samaa sääntöä.
+  const knownModelIds = new Set(lampModels.map((m) => m.id));
+  const lampModelOf: Record<string, string> = {};
+  if (input.lampModelOf && typeof input.lampModelOf === "object") {
+    for (const k of Object.keys(input.lampModelOf).slice(0, 20000)) {
+      const id = String(input.lampModelOf[k] ?? "").trim().slice(0, 40);
+      if (id && knownModelIds.has(id)) lampModelOf[cleanKey(k)] = id;
     }
   }
 
@@ -2221,6 +2339,8 @@ export function sanitizeProjectData(input: any): ProjectData {
     ...(Object.keys(doorDoneBy).length ? { doorDoneBy } : {}),
     ...(Object.keys(doorNotes).length ? { doorNotes } : {}),
     ...(Object.keys(doorAddedBy).length ? { doorAddedBy } : {}),
+    ...(lampModels.length ? { lampModels } : {}),
+    ...(Object.keys(lampModelOf).length ? { lampModelOf } : {}),
     ...(input.fixtureOrder !== undefined ? (() => { const o = sanitizeFixtureOrder(input.fixtureOrder); return o ? { fixtureOrder: o } : {}; })() : {}),
     ...(input.fixtureQuote !== undefined ? (() => { const q = sanitizeFixtureQuote(input.fixtureQuote); return q ? { fixtureQuote: q } : {}; })() : {}),
     notes,

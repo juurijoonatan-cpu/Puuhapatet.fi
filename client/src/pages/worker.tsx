@@ -1155,6 +1155,12 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
     await runMark("Huomautuksen tallennus", () => api.crewSetLampNote(token, key, text));
   }, [token, runMark]);
 
+  // Lampun malli — tekijä näkee kohteen ja tietää mikä lamppu siinä on, joten
+  // hän on oikea merkitsemään sen. Mallilistan ylläpito on johtajan puolella.
+  const setLampModel = useCallback(async (key: string, modelId: string | null) => {
+    await runMark("Mallin merkintä", () => api.crewSetLampModel(token, key, modelId));
+  }, [token, runMark]);
+
   // Ovi — tehtäväpiste: tekijä kuittaa tehdyksi ja voi huomauttaa siitä.
   const markDoor = useCallback(async (key: string, status: DoorStatus) => {
     await runMark("Oven merkintä", () => api.crewMarkDoor(token, key, status));
@@ -1281,6 +1287,9 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
             onSetLampStatus={markLamp}
             lampConditions={view.lampConditions}
             lampNotes={view.lampNotes}
+            lampModels={view.lampModels}
+            lampModelOf={view.lampModelOf}
+            onSetLampModel={setLampModel}
             onSetLampCondition={setLampCondition}
             onSetLampNote={setLampNote}
             doors={view.doors}

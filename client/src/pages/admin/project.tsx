@@ -15,7 +15,7 @@ import {
   emptyProjectData, newGigProjectData, computeWorkerStats, isFr8Plans, fixedDealFor, allPoints, computeDealBilling,
   dealInternalRateCents, isCommunityGig,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense, type LampStatus,
-  type LampCondition, type DoorStatus, type FixtureOrder,
+  type LampCondition, type DoorStatus, type FixtureOrder, type LampModel,
 } from "@shared/project";
 import { computeP2Billing, customerAddedKeys, p2FounderOpts, p2CustomerLocksSince, p2Itemisation, p2WashedYellows, p2WorkerSplit, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule, type P2WashedState } from "@shared/p2";
 import { computeGuided, type GuidedWork } from "@shared/guided";
@@ -497,6 +497,7 @@ export default function AdminProjectPage() {
       if (d.lampConditions) delete d.lampConditions[key];
       if (d.lampNotes) delete d.lampNotes[key];
       if (d.lampAddedBy) delete d.lampAddedBy[key];
+      if (d.lampModelOf) delete d.lampModelOf[key];
     });
   }, [mutate]);
 
@@ -595,6 +596,39 @@ export default function AdminProjectPage() {
         else (next as any)[k] = typeof v === "string" ? v.trim() : v;
       }
       if (Object.keys(next).length) d.fixtureOrder = next; else delete d.fixtureOrder;
+    });
+  }, [mutate]);
+
+  // ── Lamppumallit ─────────────────────────────────────────────────────────────
+  const onAddLampModel = useCallback((name: string) => {
+    mutate((d) => {
+      const t = name.trim();
+      if (!t) return;
+      if (!d.lampModels) d.lampModels = [];
+      // Sama nimi kahdesti olisi kaksi riviä ostoslistalla samasta lampusta.
+      if (d.lampModels.some((m) => m.name.toLowerCase() === t.toLowerCase())) return;
+      const id = `m${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`;
+      d.lampModels = [...d.lampModels, { id, name: t }];
+    });
+  }, [mutate]);
+
+  const onRemoveLampModel = useCallback((id: string) => {
+    mutate((d) => {
+      d.lampModels = (d.lampModels ?? []).filter((m) => m.id !== id);
+      // Mallia käyttäneet lamput palaavat "ei mallia" -tilaan. Roikkuva viite
+      // olisi sama asia mutta hämärämpänä, ja sanitointi pudottaisi sen silti.
+      if (d.lampModelOf) {
+        for (const [k, v] of Object.entries(d.lampModelOf)) if (v === id) delete d.lampModelOf[k];
+      }
+      if (!d.lampModels.length) delete d.lampModels;
+    });
+  }, [mutate]);
+
+  const onSetLampModel = useCallback((key: string, modelId: string | null) => {
+    mutate((d) => {
+      if (!d.lampModelOf) d.lampModelOf = {};
+      if (modelId) d.lampModelOf[key] = modelId;
+      else delete d.lampModelOf[key];
     });
   }, [mutate]);
 
@@ -1135,6 +1169,8 @@ export default function AdminProjectPage() {
             onSetDoorStatus={onSetDoorStatus}
             onSetDoorNote={onSetDoorNote}
             onSetFixtureOrder={onSetFixtureOrder}
+            onAddLampModel={onAddLampModel}
+            onRemoveLampModel={onRemoveLampModel}
             p2Slot={deal ? (
               <P2AdminPanel
                 project={project}
@@ -1262,6 +1298,9 @@ export default function AdminProjectPage() {
             lampNotes={project.lampNotes}
             onSetLampCondition={onSetLampCondition}
             onSetLampNote={onSetLampNote}
+            lampModels={project.lampModels}
+            lampModelOf={project.lampModelOf}
+            onSetLampModel={onSetLampModel}
             doors={project.doors}
             doorStatuses={project.doorStatuses}
             doorDoneBy={project.doorDoneBy ? Object.fromEntries(Object.entries(project.doorDoneBy).map(([k, v]) => [k, v.by])) : undefined}

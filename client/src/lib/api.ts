@@ -3,7 +3,7 @@
  */
 
 import type { GigData, GigTotals } from "@shared/gig";
-import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding, FixedDeal, EraDebtBreakdown, ProjLampMark, LampStatus, LampCondition, ProjFixtureNote, ProjDoorMark, DoorStatus, PublicLampPoint, PublicDoorPoint, LampFloorStat, DoorFloorStat, FixtureQuote } from "@shared/project";
+import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding, FixedDeal, EraDebtBreakdown, ProjLampMark, LampStatus, LampCondition, ProjFixtureNote, ProjDoorMark, DoorStatus, PublicLampPoint, PublicDoorPoint, LampFloorStat, DoorFloorStat, FixtureQuote, LampModel } from "@shared/project";
 import type { MemberAgreementSignature } from "@shared/member-agreement";
 import type { CrewMember, CrewMemberStats, CrewProfile, CrewAgreementSignature } from "@shared/crew";
 import type { WorkerAgreement } from "@shared/worker-agreements";
@@ -114,6 +114,10 @@ export interface WorkerView {
   lampConditions: Record<string, LampCondition>;
   /** Lampun avain → huomautus (teksti, kirjoittaja, aika). */
   lampNotes: Record<string, ProjFixtureNote>;
+  /** Keikan lamppumallit — tekijä valitsee näistä, ei lisää uusia. */
+  lampModels: LampModel[];
+  /** Lampun avain → mallin id. */
+  lampModelOf: Record<string, string>;
   /** Ovet: tehtäväpisteet kartalla. Tekijä kuittaa ja huomauttaa; lisäys ja
    *  nimeäminen ovat johtajien projektinäkymässä. */
   doors: Record<string, ProjDoorMark[]>;
@@ -464,7 +468,11 @@ export interface GigPublicView {
       unchecked: number; functional: number; byFloor: LampFloorStat[];
     };
     doors: { total: number; done: number; byFloor: DoorFloorStat[] };
-    order: { lampModel?: string; bulbs: number; doorMaterial?: string; doorCount: number; note?: string };
+    order: {
+      lampModel?: string; bulbs: number; doorMaterial?: string; doorCount: number; note?: string;
+      /** Mallikohtainen erittely ostettavista. Tyhjä kun malleja ei ole määritelty. */
+      byModel: { name: string; needsBulb: number }[];
+    };
     quote: FixtureQuote | null;
     /** Asiakkaan omalla hinnalla laskettu summa (senttiä). Null ilman hintaa. */
     quotedTotalCents: number | null;
@@ -1578,6 +1586,10 @@ export const api = {
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, condition }, QUICK),
   crewSetLampNote: (token: string, key: string, note: string) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, note }, QUICK),
+  /** Lampun malli. `null` poistaa merkinnän. Tekijä valitsee keikan malleista;
+   *  tuntematon id hylätään palvelimella. */
+  crewSetLampModel: (token: string, key: string, modelId: string | null) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, modelId }, QUICK),
 
   // Ovet: tekijä kuittaa tehtäväpisteen tehdyksi tai huomauttaa siitä.
   crewMarkDoor: (token: string, key: string, status: DoorStatus) =>

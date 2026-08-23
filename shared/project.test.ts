@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
+import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
 import { emptyGigData, computeTotals } from "./gig";
 
 // Kohta 6.1 — kokonaistilanteen ikkunamäärän täsmäytys. Ks. docs/fr8-era-laskutus-plan.md.
@@ -937,5 +937,109 @@ describe("laskuri lupaa vain sen mitä kartalle on merkitty", () => {
     expect(inv.total).toBe(0);
     expect(inv.needsBulbs).toBe(0);
     expect(inv.functionalPct).toBe(0);
+  });
+});
+
+
+describe("lamppumallit — kaikki lamput eivät ole samaa mallia", () => {
+  function mixed(): ProjectData {
+    const p = emptyProjectData();
+    p.building.floors = ["1"];
+    p.lamps = { "1": [
+      { key: "1#a", x: 1, y: 1 },  // E27, rikki
+      { key: "1#b", x: 2, y: 2 },  // E27, rikki
+      { key: "1#c", x: 3, y: 3 },  // G9,  rikki
+      { key: "1#d", x: 4, y: 4 },  // E27, vaihdettu
+      { key: "1#e", x: 5, y: 5 },  // ei mallia, rikki
+    ] };
+    p.lampModels = [{ id: "m1", name: "E27 LED 9W" }, { id: "m2", name: "G9 halogeeni" }];
+    p.lampModelOf = { "1#a": "m1", "1#b": "m1", "1#c": "m2", "1#d": "m1" };
+    p.lampConditions = { "1#a": "rikki", "1#b": "rikki", "1#c": "rikki", "1#e": "rikki" };
+    p.lampStatuses = { "1#d": "vaihdettu" };
+    p.lampChangedBy = { "1#d": { by: "jani", ts: 1 } };
+    return p;
+  }
+
+  it("erittelee ostettavat mallin mukaan, suurin erä ensin", () => {
+    const rows = computeLampModelStats(mixed());
+    expect(rows.map((r) => [r.name, r.needsBulb])).toEqual([
+      ["E27 LED 9W", 2],
+      ["G9 halogeeni", 1],
+      ["Ei mallia", 1],
+    ]);
+  });
+
+  it("malliton lamppu ei katoa summaan vaan saa oman rivinsä", () => {
+    const none = computeLampModelStats(mixed()).find((r) => r.id === null)!;
+    expect(none.total).toBe(1);
+    expect(none.needsBulb).toBe(1);
+  });
+
+  it("mallikohtaiset summat täsmäävät kokonaismäärään", () => {
+    const p = mixed();
+    const rows = computeLampModelStats(p);
+    expect(rows.reduce((n, r) => n + r.total, 0)).toBe(computeLampInventory(p).total);
+    expect(rows.reduce((n, r) => n + r.needsBulb, 0)).toBe(computeLampInventory(p).needsBulbs);
+  });
+
+  it("vaihdettu ei ole ostettavaa, mutta näkyy mallin rivillä", () => {
+    const e27 = computeLampModelStats(mixed()).find((r) => r.id === "m1")!;
+    expect(e27.total).toBe(3);
+    expect(e27.needsBulb).toBe(2);
+    expect(e27.changed).toBe(1);
+  });
+
+  it("käyttämätön malli näkyy nollarivinä — johtaja lisäsi sen syystä", () => {
+    const p = mixed();
+    p.lampModels!.push({ id: "m3", name: "Loisteputki T8" });
+    const row = computeLampModelStats(p).find((r) => r.id === "m3")!;
+    expect(row).toMatchObject({ total: 0, needsBulb: 0 });
+  });
+
+  it("poistettuun malliin osoittava lamppu on malliton, ei haamurivi", () => {
+    const p = mixed();
+    p.lampModels = p.lampModels!.filter((m) => m.id !== "m2");
+    const rows = computeLampModelStats(p);
+    expect(rows.some((r) => r.name === "G9 halogeeni")).toBe(false);
+    // G9:n lamppu siirtyi mallittomiin — se on yhä rikki ja yhä ostettava.
+    expect(rows.find((r) => r.id === null)!.needsBulb).toBe(2);
+  });
+
+  it("ostoslista erittelee vain rivit joilla on ostettavaa", () => {
+    const p = mixed();
+    p.lampModels!.push({ id: "m3", name: "Loisteputki T8" });
+    expect(resolveFixtureOrder(p).byModel.map((r) => r.name)).toEqual([
+      "E27 LED 9W", "G9 halogeeni", "Ei mallia",
+    ]);
+  });
+
+  it("ilman malleja erittelyä ei ole — yksi luku riittää", () => {
+    const p = emptyProjectData();
+    p.lamps = { "1": [{ key: "1#a", x: 1, y: 1 }] };
+    p.lampConditions = { "1#a": "rikki" };
+    expect(resolveFixtureOrder(p).byModel).toEqual([]);
+  });
+
+  it("sanitointi pudottaa nimettömän mallin ja kaksoistunnuksen", () => {
+    const clean = sanitizeLampModels([
+      { id: "m1", name: "E27" }, { id: "m1", name: "Kaksoiskappale" },
+      { id: "m2", name: "  " }, { id: "", name: "Tunnukseton" },
+    ]);
+    expect(clean).toEqual([{ id: "m1", name: "E27" }]);
+  });
+
+  it("sanitointi pudottaa viitteen malliin jota ei ole", () => {
+    const clean = sanitizeProjectData({
+      lamps: { "1": [{ key: "1#a", x: 1, y: 1 }, { key: "1#b", x: 2, y: 2 }] },
+      lampModels: [{ id: "m1", name: "E27" }],
+      lampModelOf: { "1#a": "m1", "1#b": "poistettu" },
+    });
+    expect(clean.lampModelOf).toEqual({ "1#a": "m1" });
+  });
+
+  it("malliton keikka ei saa mallikenttiä", () => {
+    const clean = sanitizeProjectData(emptyProjectData());
+    expect("lampModels" in clean).toBe(false);
+    expect("lampModelOf" in clean).toBe(false);
   });
 });

@@ -7457,6 +7457,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ...(order.doorMaterial ? { doorMaterial: order.doorMaterial } : {}),
         doorCount: order.doorCount,
         ...(order.note ? { note: order.note } : {}),
+        // Mallikohtainen erittely: kokonaismäärä ei kelpaa ostoksiin, koska
+        // seitsemän rikkinäistä voi olla neljä E27:ää ja kolme G9:ää.
+        byModel: order.byModel.map((m) => ({ name: m.name, needsBulb: m.needsBulb })),
       },
       quote: order.quote ?? null,
       quotedTotalCents: order.quotedTotalCents,
@@ -8275,6 +8278,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // ne saavat kulkea joka vastauksessa — toisin kuin havaintokuvat.
       lampConditions: project.lampConditions ?? {},
       lampNotes: project.lampNotes ?? {},
+      // Mallilista on keikan asetus: tekijä VALITSEE näistä, ei lisää uusia.
+      lampModels: project.lampModels ?? [],
+      lampModelOf: project.lampModelOf ?? {},
       // Ovet: tekijä saa kuitata tehdyksi ja kirjoittaa huomautuksen; lisäys,
       // poisto ja tehtävän nimeäminen ovat johtajien projektinäkymässä.
       doors: project.doors ?? {},
@@ -8624,7 +8630,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const wantsStatus = req.body?.status !== undefined;
       const wantsCondition = req.body?.condition !== undefined;
       const wantsNote = req.body?.note !== undefined;
-      if (!wantsStatus && !wantsCondition && !wantsNote) {
+      const wantsModel = req.body?.modelId !== undefined;
+      if (!wantsStatus && !wantsCondition && !wantsNote && !wantsModel) {
         return res.status(400).json({ error: "Ei muutettavaa" });
       }
 
@@ -8661,6 +8668,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         if (!project.lampNotes) project.lampNotes = {};
         if (text) project.lampNotes[key] = { text, by: member.id, ts: Date.now() };
         else delete project.lampNotes[key];
+      }
+
+      if (wantsModel) {
+        /**
+         * Malli on VALINTA keikan listasta, ei vapaa teksti: tekijä ei saa
+         * luoda uutta mallia napautuksella, koska ostoslista hajoaisi
+         * kirjoitusasuihin ("E27 LED" / "e27 led 9w"). Tuntematon id
+         * hylätään hiljaa samaan tapaan kuin sanitointi sen pudottaisi.
+         */
+        const raw = req.body?.modelId;
+        const known = new Set((project.lampModels ?? []).map((m) => m.id));
+        if (!project.lampModelOf) project.lampModelOf = {};
+        const id = raw == null ? "" : String(raw).trim().slice(0, 40);
+        if (id && known.has(id)) project.lampModelOf[key] = id;
+        else delete project.lampModelOf[key];
       }
 
       const saved = await saveProject(job, project);

@@ -482,6 +482,20 @@ export interface GigPublicView {
     quotedTotalCents: number | null;
   } | null;
 
+  /** Keikan laskutustila. Tuntikeikalla asiakkaan näkymä on eri. */
+  billingMode: "targeted" | "hourly";
+  /**
+   * Tuntikeikan tilanne: kuka on tehnyt montako tuntia ja mitä asiakkaalle on
+   * ostettu. Null kohdennetulla keikalla — siellä asiakas maksaa kohteista,
+   * ja tunnit ovat meidän sisäinen asiamme.
+   */
+  hourly: {
+    totalHours: number;
+    workers: { name: string; hours: number }[];
+    expenses: { kind: string; desc: string; amountCents: number; ts: number }[];
+    expensesTotalCents: number;
+  } | null;
+
   // Contract & signing gate
   contractText: string | null;
   requireSignature: boolean;

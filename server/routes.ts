@@ -30,7 +30,7 @@ import {
 } from "@shared/pricing";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, signaturePrompt, contractPending, gigStatus, livePayments, withoutDashOnly, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, isHourlyGig, billingModeOf, roundWorkHoursFromMinutes, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, isHourlyGig, billingModeOf, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
@@ -5728,6 +5728,27 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // keikalla ei ole pohjakuvaa lainkaan (`map` on null), ja asiakkaan
       // näkymä näyttää sen omana osionaan kartasta riippumatta.
       const fixtures = proj ? publicFixtures(proj) : null;
+      /**
+       * TUNTIKEIKAN TILANNE ASIAKKAALLE. Null kohdennetulla keikalla — siellä
+       * asiakas maksaa kohteista, ja tunnit ovat meidän sisäinen asiamme.
+       *
+       * Etunimi riittää ja on tarkoituksellinen: asiakas tunnistaa tekijänsä
+       * työmaalta etunimellä, eikä sukunimi ole hänen tarvitsemaansa tietoa.
+       */
+      const hourly = proj && isHourlyGig(proj) ? (() => {
+        const nameOf = (id: string) => {
+          const c = (proj.crew ?? []).find((x) => x.id === id);
+          return (c?.name || id).split(" ")[0];
+        };
+        const workers = customerHourRows(proj, nameOf);
+        const expenses = customerExpenses(proj);
+        return {
+          totalHours: workers.reduce((n, w) => n + w.hours, 0),
+          workers,
+          expenses,
+          expensesTotalCents: expenses.reduce((n, e) => n + e.amountCents, 0),
+        };
+      })() : null;
       // Only expose what the customer is meant to see — no internal billing notes.
       res.json({
         contractId: gig.contractId ?? null,
@@ -5834,6 +5855,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         scope: proj && !proj.p2?.enabled ? publicScope(proj) : null,
         // Lamppu-/ovitilanne, ostotieto ja asiakkaan oma hintaehdotus.
         fixtures,
+        // Keikan laskutustila: asiakkaan näkymä on tuntikeikalla eri.
+        billingMode: proj ? billingModeOf(proj) : "targeted",
+        // Tunnit ja hänelle ostetut tarvikkeet (vain tuntikeikalla).
+        hourly,
         status: gigStatus(gig),
         signed: !!gig.signature?.signedAt,
         signedAt: gig.signature?.signedAt ?? null,

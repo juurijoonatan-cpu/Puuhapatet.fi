@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, billingModeOf, isHourlyGig, roundWorkHours, roundWorkHoursFromMinutes, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
+import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, billingModeOf, isHourlyGig, roundWorkHours, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
 import { emptyGigData, computeTotals } from "./gig";
 
 // Kohta 6.1 — kokonaistilanteen ikkunamäärän täsmäytys. Ks. docs/fr8-era-laskutus-plan.md.
@@ -1086,5 +1086,61 @@ describe("tuntitila — pyöristys ja tilan oletus", () => {
     // Vanha blobi pyörähtää läpi entisellään: tilaa ei ole, eikä sellaista
     // synny sanitoinnissa.
     expect("billingMode" in sanitizeProjectData(emptyProjectData())).toBe(false);
+  });
+});
+
+
+describe("asiakkaan tuntinäkymä — mitä hän saa nähdä", () => {
+  function gig(): ProjectData {
+    const p = emptyProjectData();
+    p.billingMode = "hourly";
+    p.hours = { oona: 9, selma: 6, jani: 0 };
+    p.expenses = [
+      { id: "e1", by: "joonatan", kind: "materials", desc: "Polttimot", amountCents: 4500, ts: 300, forCustomer: true },
+      { id: "e2", by: "joonatan", kind: "transport", desc: "Bussilippu", amountCents: 320, ts: 200 },
+      { id: "e3", by: "matias", kind: "materials", desc: "Tiivisteet", amountCents: 1800, ts: 400, forCustomer: true,
+        receiptDataUrl: "data:image/png;base64,AAAA" },
+    ];
+    return p;
+  }
+
+  it("vain asiakkaalle merkityt kulut näkyvät, uusin ensin", () => {
+    expect(customerExpenses(gig()).map((e) => e.desc)).toEqual(["Tiivisteet", "Polttimot"]);
+  });
+
+  it("kuitti ei seuraa asiakkaalle koskaan — se on kirjanpitomme tosite", () => {
+    const raw = JSON.stringify(customerExpenses(gig()));
+    expect(raw).not.toContain("data:image");
+    // Eikä maksajan nimi: asiakkaalle kerrotaan mitä ostettiin, ei kuka maksoi.
+    expect(raw).not.toContain("joonatan");
+    expect(raw).not.toContain("matias");
+  });
+
+  it("nollatuntinen ei ole rivi asiakkaan listalla", () => {
+    const rows = customerHourRows(gig(), (id) => id);
+    expect(rows.map((r) => r.name)).toEqual(["oona", "selma"]);
+  });
+
+  it("tunnit järjestetään suurimmasta, ja nimi tulee nimeäjältä", () => {
+    const rows = customerHourRows(gig(), (id) => ({ oona: "Oona", selma: "Selma" }[id] ?? id));
+    expect(rows).toEqual([{ name: "Oona", hours: 9 }, { name: "Selma", hours: 6 }]);
+  });
+
+  it("merkitsemätön kulu pysyy sisäisenä myös sanitoinnin jälkeen", () => {
+    const clean = sanitizeProjectData(gig());
+    const flags = (clean.expenses ?? []).map((e) => e.forCustomer);
+    expect(flags).toEqual([true, undefined, true]);
+  });
+
+  it("roskainen tai false-arvoinen lippu ei avaa kulua asiakkaalle", () => {
+    const clean = sanitizeProjectData({
+      expenses: [
+        { id: "a", by: "x", kind: "other", desc: "a", amountCents: 100, ts: 1, forCustomer: "kyllä" },
+        { id: "b", by: "x", kind: "other", desc: "b", amountCents: 100, ts: 2, forCustomer: false },
+        { id: "c", by: "x", kind: "other", desc: "c", amountCents: 100, ts: 3, forCustomer: 1 },
+      ],
+    });
+    expect((clean.expenses ?? []).every((e) => e.forCustomer === undefined)).toBe(true);
+    expect(customerExpenses(clean)).toEqual([]);
   });
 });

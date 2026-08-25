@@ -1083,17 +1083,32 @@ export default function AdminProjectPage() {
     return workerName(id);
   };
 
-  const addBoardEntry = useCallback(async (kind: "task" | "note", text: string) => {
+  /**
+   * TÄSSÄ EI SAA OLLA HOOKEJA — koko sivu kaatui tähän.
+   *
+   * Nämä olivat `useCallback`eja, ja ne ovat `if (loading) return …`
+   * -poistumisen ALAPUOLELLA. Latauksen ajan React näki siis vähemmän hookeja
+   * kuin heti sen jälkeen, ja kun data saapui, se heitti #310 ("Rendered more
+   * hooks than during the previous render") — eli valkoisen "Jotain meni
+   * pieleen" -ruudun koko projektinäkymän tilalle.
+   *
+   * Muistiinpano ei myöskään tehnyt mitään: riippuvuutena on `resolveName`,
+   * joka on tavallinen funktio ja siis uusi joka renderillä. `useCallback`
+   * palautti uuden funktion joka kerta — kaikki haitta, ei hyötyä.
+   *
+   * Vartija: `client/src/pages/admin/project-hooks.test.ts`.
+   */
+  const addBoardEntry = async (kind: "task" | "note", text: string) => {
     const res = await api.adminAddBoardEntry(jobId, kind, text, currentWorker, resolveName(currentWorker));
     if (res.ok && res.data) setBoard(res.data.board);
     else setError(res.error || "Tallennus ei onnistunut.");
-  }, [jobId, currentWorker, resolveName]);
+  };
 
-  const toggleBoardTask = useCallback(async (id: string, done: boolean) => {
+  const toggleBoardTask = async (id: string, done: boolean) => {
     const res = await api.adminToggleBoardTask(jobId, id, done, currentWorker, resolveName(currentWorker));
     if (res.ok && res.data) setBoard(res.data.board);
     else setError(res.error || "Kuittaus ei onnistunut.");
-  }, [jobId, currentWorker, resolveName]);
+  };
 
 
   // Harjoittelijat koottuna vastuujohtajan alle: ikkunamäärä + hänen oma summansa
@@ -1242,7 +1257,7 @@ export default function AdminProjectPage() {
           // se mikä ajoi edellisen version sisällön iOS:n tilapalkin alle.
           position: "relative", zIndex: 10, overflowY: "auto", overflowX: "hidden",
           boxSizing: "border-box",
-          padding: "calc(24px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom))",
+          padding: "calc(32px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-left)) calc(24px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-right))",
         }}
       >
         <ModeChooser
@@ -1275,7 +1290,7 @@ export default function AdminProjectPage() {
         style={{
           position: "relative", zIndex: 10, overflowY: "auto", overflowX: "hidden",
           overscrollBehavior: "contain", boxSizing: "border-box",
-          padding: "calc(16px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom))",
+          padding: "calc(20px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-left)) calc(24px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-right))",
         }}
       >
         <div style={{ maxWidth: 860, margin: "0 auto", width: "100%", boxSizing: "border-box" }}>

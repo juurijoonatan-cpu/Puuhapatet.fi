@@ -64,17 +64,26 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, { error: Error | null;
     if (this.state.error) {
       if (this.state.healing) {
         return (
-          <div style={{ padding: 32, fontFamily: "sans-serif", textAlign: "center" }}>
-            <p style={{ color: "#888" }}>Päivitetään uuteen versioon…</p>
+          <div style={{ ...errorShell, justifyContent: "center" }}>
+            <p style={{ margin: 0, color: "#888" }}>Päivitetään uuteen versioon…</p>
           </div>
         );
       }
       return (
-        <div style={{ padding: 32, fontFamily: "sans-serif", textAlign: "center" }}>
-          <p style={{ marginBottom: 16, color: "#888" }}>Jotain meni pieleen.</p>
-          <p style={{ fontSize: 12, color: "#aaa", marginBottom: 24, wordBreak: "break-all" }}>
-            {this.state.error.message}
+        <div style={errorShell}>
+          <p style={{ margin: "0 0 12px", fontSize: 19, fontWeight: 600, color: "#333" }}>Jotain meni pieleen.</p>
+          <p style={{ margin: "0 0 20px", fontSize: 13.5, color: "#777", lineHeight: 1.55, maxWidth: 420 }}>
+            Sivu ei latautunut oikein. Lataa uudelleen — jos se ei auta, kerro Joonatanille mitä olit tekemässä.
           </p>
+          {/* Tekninen viesti on mukana, koska sen avulla vika jäljitettiin
+              kerran etänä ilman konsolia. Se ei silti ole se mitä käyttäjä
+              ensimmäisenä lukee, joten se on pienenä ja alempana. */}
+          <details style={{ marginBottom: 20, maxWidth: 420, width: "100%" }}>
+            <summary style={{ fontSize: 12, color: "#999", cursor: "pointer", listStyle: "none" }}>Tekniset tiedot</summary>
+            <p style={{ fontSize: 11.5, color: "#aaa", wordBreak: "break-word", textAlign: "left", lineHeight: 1.5, marginTop: 8 }}>
+              {this.state.error.message}
+            </p>
+          </details>
           {/* Tyhjennä välimuisti ennen latausta: pelkkä reload tarjoili ennen
               saman rikkinäisen palasen uudelleen. Siivous kestää jopa 1,5 s,
               joten nappi kuittaa painalluksen heti — muuten se näyttää
@@ -87,7 +96,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, { error: Error | null;
             {this.state.reloading ? "Päivitetään…" : "Lataa uudelleen"}
           </button>
           {/* Varapoistumistie: jos yksi sivu on rikki, etusivulle pääsee aina. */}
-          <p style={{ marginTop: 16 }}>
+          <p style={{ margin: "16px 0 0" }}>
             <a href="/" style={{ fontSize: 13, color: "#888" }}>Etusivulle</a>
           </p>
         </div>
@@ -96,6 +105,27 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, { error: Error | null;
     return this.props.children;
   }
 }
+
+/**
+ * Virhesivun kuori.
+ *
+ * TURVA-ALUE JA KESKITYS. Aiemmin tässä oli pelkkä `padding: 32`, joten
+ * asennetussa sovelluksessa otsikko piirtyi iOS:n tilapalkin ja kellon alle —
+ * ja koko muu sisältö tunki ruudun ylälaitaan valtavan tyhjän alle. Sama
+ * `env(safe-area-inset-*)` kuin jokaisella muulla tämän sovelluksen sivulla,
+ * ja sisältö keskelle ruutua sen sijaan että se roikkuisi yläreunasta.
+ */
+const errorShell: React.CSSProperties = {
+  minHeight: "100dvh",
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
+  textAlign: "center",
+  fontFamily: "var(--font-onest, system-ui, sans-serif)",
+  padding: "calc(32px + env(safe-area-inset-top)) calc(24px + env(safe-area-inset-right)) calc(32px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left))",
+  boxSizing: "border-box",
+};
 
 /** ErrorBoundary joka nollautuu reitinvaihdossa. */
 function RouteErrorBoundary({ children }: { children: ReactNode }) {

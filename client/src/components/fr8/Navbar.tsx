@@ -30,7 +30,7 @@ import { ArrowLeft, Maximize2, Minimize2, ChevronDown, Check } from "lucide-reac
 import { useIsMobile } from "@/hooks/use-mobile";
 import { T, mono } from "./tokens";
 
-export type Fr8Tab = "dashboard" | "floor" | "maksut";
+export type Fr8Tab = "dashboard" | "floor" | "hours" | "maksut";
 
 interface NavbarProps {
   activeTab: Fr8Tab;
@@ -51,9 +51,22 @@ interface NavbarProps {
   showMaksutTab?: boolean;
 }
 
+/**
+ * TUNNIT ON VÄLILEHTI, EI TILA.
+ *
+ * Ensimmäinen yritys teki kohdennetusta ja tuntihinnoittelusta toisensa
+ * poissulkevan valinnan, joka piti tehdä ennen kuin näkymään pääsi. Se oli
+ * väärä malli: kumpikin puoli on aina olemassa samalla keikalla, ja johtaja
+ * vain päättää kumpaa hän katsoo juuri nyt. Sama keikka voi hyvin olla
+ * tuntitöissä ja silti tarvita kartan.
+ *
+ * Siksi tunnit ovat tässä muiden välilehtien rinnalla: aina saatavilla, yhden
+ * napautuksen päässä, eikä mikään estä palaamasta.
+ */
 const TABS: { id: Fr8Tab; label: string; short: string }[] = [
   { id: "dashboard", label: "Kokonaistilanne", short: "Tilanne" },
   { id: "floor", label: "Tilanne kerroksittain", short: "Kerrokset" },
+  { id: "hours", label: "Tunnit", short: "Tunnit" },
   { id: "maksut", label: "Maksut", short: "Maksut" },
 ];
 

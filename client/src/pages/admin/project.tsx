@@ -26,7 +26,7 @@ import { traineeForUserId, traineeForName } from "@shared/trainees";
 import { DEFAULT_WORKER_PER_WINDOW_CENTS } from "@shared/crew";
 import Dashboard from "@/components/fr8/Dashboard";
 import HourlyPanel from "@/components/fr8/HourlyPanel";
-import ModeChooser from "@/components/fr8/ModeChooser";
+import Toggle from "@/components/fr8/Toggle";
 import FounderEraInvoiceDialog from "@/components/fr8/FounderEraInvoiceDialog";
 import MaksutView from "@/components/fr8/MaksutView";
 import type { GigBillingState, EraInvoiceClient } from "@/lib/api";
@@ -106,13 +106,12 @@ export default function AdminProjectPage() {
 
   // Syvälinkki `?tab=maksut` — keikkanäkymän "Tekijöiden maksut" hyppää suoraan
   // Maksut-välilehdelle, ettei samaa osiota tarvitse toistaa kahdessa näkymässä.
-  /** Näytetäänkö tilanvalinta vaikka tila on jo valittu ("Vaihda tila"). */
-  const [showModes, setShowModes] = useState(false);
   const [tab, setTab] = useState<Fr8Tab>(() => {
     if (typeof window === "undefined") return "dashboard";
     const t = new URLSearchParams(window.location.search).get("tab");
-    return t === "maksut" || t === "floor" ? t : "dashboard";
+    return t === "maksut" || t === "floor" || t === "hours" ? t : "dashboard";
   });
+  const landedRef = useRef(false);
   const [activeFloor, setActiveFloor] = useState("K");
   // Who new "pesty" markings are attributed to by default. Defaults to the
   // logged-in admin, but each admin can pick a preferred default washer per gig
@@ -651,6 +650,18 @@ export default function AdminProjectPage() {
     });
   }, [mutate]);
 
+  /**
+   * Tuntikeikka aukeaa Tunnit-välilehdelle. Kerran per avaus: jos johtaja
+   * vaihtaa välilehteä, häntä ei heitetä takaisin — valinta on hänen.
+   * Syvälinkki (`?tab=`) voittaa, koska se on nimenomainen pyyntö.
+   */
+  useEffect(() => {
+    if (landedRef.current || !project) return;
+    landedRef.current = true;
+    if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tab")) return;
+    if (billingModeOf(project) === "hourly") setTab("hours");
+  }, [project]);
+
   const onSetBillingMode = useCallback((mode: BillingMode) => {
     mutate((d) => { d.billingMode = mode; });
   }, [mutate]);
@@ -1131,67 +1142,24 @@ export default function AdminProjectPage() {
   const effectiveWasher = gigWorkers.some((w) => w.id === defaultWasher) ? defaultWasher : currentWorker;
 
   /**
-   * TILAN VALINTA ON NÄKYMÄN ENSIMMÄINEN KYSYMYS.
+   * LASKUTUSTILA EI OLE LUKKO VAAN OLETUS.
    *
-   * Valikko näkyy kun keikalla EI OLE valittua tilaa — silloin emme tiedä
-   * kumpaa näkymää hän on tullut katsomaan. Kun tila on valittu, avaaminen
-   * menee suoraan siihen: valikko joka kysyy saman asian joka kerta olisi este.
+   * Ensimmäinen yritys pakotti valitsemaan kohdennetun ja tuntihinnoittelun
+   * väliltä ennen kuin näkymään pääsi, ja piilotti toisen puolen kokonaan. Se
+   * oli väärä malli: kumpikin puoli on aina olemassa samalla keikalla, ja
+   * johtaja vain päättää kumpaa katsoo juuri nyt. Tuntikeikkakin tarvitsee
+   * kartan.
    *
-   * FR8 ja kaikki olemassa olevat keikat ovat ilman merkintää "targeted"
-   * (`billingModeOf`), joten ne eivät näe valikkoa lainkaan eivätkä muutu.
-   * Valikkoon pääsee takaisin `showModes`-tilalla.
+   * Nyt tunnit ovat välilehti muiden rinnalla (aina saatavilla), ja
+   * `billingMode` ratkaisee enää kaksi asiaa:
+   *   1. mille välilehdelle keikka aukeaa, ja
+   *   2. mitä ASIAKAS näkee seurantasivullaan.
+   *
+   * Toinen niistä on se tärkeä, ja siksi sitä ei aseteta ohimennen
+   * välilehteä vaihtamalla vaan omalla kytkimellään Tunnit-välilehdellä.
    */
   const mode = billingModeOf(project);
-  const modeChosen = !!project.billingMode;
   const canAdjustHours = isFounderView;
-
-  if (!modeChosen || showModes) {
-    return shell(
-      <ModeChooser
-        gigName={project.building.name || gigName || undefined}
-        current={modeChosen ? mode : null}
-        onChoose={(next) => { onSetBillingMode(next); setShowModes(false); }}
-        onCancel={modeChosen ? () => setShowModes(false) : undefined}
-      />,
-    );
-  }
-
-  /**
-   * TUNTITILA ON OMA NÄKYMÄNSÄ, EI DASHIN VÄLILEHTI.
-   *
-   * Kohdennetun tilan navigaatio (kartta, ansiot, maksut, tasaus) vastaa
-   * kysymyksiin joita tuntikeikalla ei ole. Sen näyttäminen tyhjänä olisi
-   * juuri sitä sekaannusta jota tämä tila välttää, joten tuntikeikalla on oma
-   * kevyt kuorensa: yksi paluu, yksi tilanvaihto, yksi lista.
-   */
-  if (mode === "hourly") {
-    return shell(
-      <div style={{ maxWidth: 860, margin: "0 auto", padding: 20, paddingTop: 24 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
-          <button onClick={backToGig}
-            style={{ background: "transparent", border: "none", padding: 0, color: "rgba(255,255,255,0.5)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-            ← Takaisin
-          </button>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 10, letterSpacing: "0.12em", color: "rgba(255,255,255,0.38)" }}>TUNTIHINNOITTELU</div>
-            <div style={{ fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 19, fontWeight: 700, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {project.building.name || gigName || "Keikka"}
-            </div>
-          </div>
-          <button onClick={() => setShowModes(true)}
-            style={{ flexShrink: 0, padding: "8px 14px", borderRadius: 11, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.7)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
-            Vaihda tila
-          </button>
-        </div>
-        <HourlyPanel
-          project={project}
-          workerName={resolveName}
-          crew={crew}
-          onAdjustHours={canAdjustHours ? onAdjustHours : undefined}
-        />
-      </div>,
-    );
-  }
 
   return shell(
     <>
@@ -1337,6 +1305,56 @@ export default function AdminProjectPage() {
         {/* Maksut — koko rahaliikenne (asiakaslaskutus + tekijöiden maksettava),
             vain FR8 + johtajat. Navbar näyttää välilehden vain johtajille; tämä
             ehto on sama tuplavarmistus. */}
+        {/* TUNNIT. Aina saatavilla, myös kohdennetulla keikalla — tunteja
+            kirjataan siellä yhtä lailla, ne eivät vain ole laskutuksen peruste.
+            Kytkin alalaidassa ratkaisee mitä ASIAKAS näkee; se on eri asia kuin
+            se mitä välilehteä johtaja katsoo, eikä sitä siksi aseteta
+            välilehteä vaihtamalla. */}
+        {tab === "hours" && (
+          // Sama kuori kuin dashilla: `main` hoitaa palkin alle jäämisen ja
+          // turva-alueen, joten tässä ei mitoiteta viewportia uudelleen. Juuri
+          // sen tekeminen omin päin ajoi edellisen version sisällön iOS:n
+          // tilapalkin alle.
+          <div
+            data-fr8-pane
+            style={{
+              height: "100%", overflowY: "auto", overflowX: "hidden", overscrollBehavior: "contain",
+              boxSizing: "border-box",
+              padding: "20px 16px calc(24px + env(safe-area-inset-bottom))",
+            }}
+          >
+            <div style={{ maxWidth: 860, margin: "0 auto", width: "100%", boxSizing: "border-box" }}>
+              <HourlyPanel
+                project={project}
+                workerName={resolveName}
+                crew={crew}
+                onAdjustHours={canAdjustHours ? onAdjustHours : undefined}
+              />
+              {canAdjustHours && (
+                <div style={{ marginTop: 16, padding: 18, borderRadius: 18, background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.09)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 14, fontWeight: 700, color: "#fff" }}>
+                        Laskutetaan tunneista
+                      </div>
+                      <div style={{ fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 12.5, color: "rgba(255,255,255,0.5)", lineHeight: 1.55, marginTop: 3 }}>
+                        {mode === "hourly"
+                          ? "Asiakas näkee tunnit ja hankinnat ensimmäisenä, eikä häneltä kysytä kohdehintoja. Keikka aukeaa tälle välilehdelle."
+                          : "Asiakas näkee ikkunapesun edistymän ja kohdehinnat. Kytke päälle kun tämä keikka laskutetaan tunneista."}
+                      </div>
+                    </div>
+                    <Toggle
+                      checked={mode === "hourly"}
+                      onChange={(v) => onSetBillingMode(v ? "hourly" : "targeted")}
+                      ariaLabel="Laskutetaan tunneista"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {tab === "maksut" && deal && (profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")) && (
           <MaksutView
             jobId={jobId}

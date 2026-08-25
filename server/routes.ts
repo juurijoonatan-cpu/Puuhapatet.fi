@@ -30,7 +30,7 @@ import {
 } from "@shared/pricing";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, signaturePrompt, contractPending, gigStatus, livePayments, withoutDashOnly, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, isHourlyGig, billingModeOf, roundWorkHoursFromMinutes, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
@@ -671,7 +671,7 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   { method: "GET",  re: /^\/api\/crew\/[^/]+\/observation-image$/ },
   // Pohjakuva tekijän työlinkistä — sama aukko kuin yllä.
   { method: "GET",  re: /^\/api\/crew\/[^/]+\/plan\/[^/]*$/ },
-  { method: "POST", re: /^\/api\/crew\/[^/]+\/(password|onboard|window|lamp|door|hours|note|map-note|shift|expense)$/ },
+  { method: "POST", re: /^\/api\/crew\/[^/]+\/(password|onboard|window|lamp|door|hours|note|map-note|shift|shift-target|expense)$/ },
   // Nämä neljä olivat samassa aukossa kuin observation-image: jokainen
   // tunnistaa tekijän `findJobByCrewToken`illa täsmälleen kuten yllä olevat,
   // mutta portti vastasi niihin 401 → tekijä lensi adminin kirjautumiseen
@@ -8200,6 +8200,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         // a "under <leader>'s responsibility" note instead. null for normal workers.
         trainee: trainee ? { responsibleLeaderName: trainee.responsibleLeaderName } : null,
         activeShiftAt: member.activeShiftAt ?? null,
+        /** Tekijän oma tavoiteaika tälle vuorolle (tunteina), jos asetettu. */
+        shiftTargetHours: member.shiftTargetHours ?? null,
         shiftStartWashed: member.shiftStartWashed ?? null,
         sessions: (member.sessions || []).slice(-30).reverse(), // newest-first
         profile: member.profile ?? null,
@@ -8250,6 +8252,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
        */
       hasInstalments: !!payDeal,
       isCommunity: isCommunityGig(project),
+      /**
+       * Keikan laskutustila. Tuntitilassa tekijän työpöytä on eri: ei
+       * ikkunahintoja eikä kertyneitä tunteja, vain ajastin ja oma tavoite.
+       * Ks. `BillingMode`.
+       */
+      billingMode: billingModeOf(project),
       marks: project.marks,
       // Workers see the full live map: which windows are washed and (on tap) WHO
       // washed them, plus the host's info notes (ladders, hazards, storage, …) and
@@ -8858,11 +8866,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const { job, project, member } = found;
       const start = req.body?.start === true;
       const nowWashed = crewMemberStats(project, member).washed;
+      const hourly = isHourlyGig(project);
+      /**
+       * Tekijän oma tavoiteaika tälle vuorolle. Tulee mukana vuoron
+       * aloituksessa tai erikseen kesken vuoron (`start` puuttuu, `target`
+       * mukana) — ks. reitin alla oleva haara.
+       */
+      const target = req.body?.targetHours;
       let endedSession: { start: number; end: number; minutes: number; windows: number; earnedCents: number } | null = null;
+      let creditedHours = 0;
       project.crew = (project.crew || []).map((m) => {
         if (m.id !== member.id) return m;
         if (start) {
-          return { ...m, activeShiftAt: Date.now(), shiftStartWashed: nowWashed };
+          return {
+            ...m,
+            activeShiftAt: Date.now(),
+            shiftStartWashed: nowWashed,
+            // Uusi vuoro alkaa aina puhtaalta tavoitteelta: edellisen päivän
+            // tavoite ei ole tämän päivän lupaus.
+            shiftTargetHours: target != null ? Math.max(0, Number(target) || 0) || undefined : undefined,
+          };
         }
         // End the shift → record the session.
         const startedAt = m.activeShiftAt || Date.now();
@@ -8871,8 +8894,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const minutes = Math.max(0, Math.round(Number(req.body?.minutes) || (Date.now() - startedAt) / 60000));
         endedSession = { start: startedAt, end: Date.now(), minutes, windows, earnedCents: windows * m.perWindowCents };
         const sessions = [...(m.sessions || []), endedSession].slice(-200);
-        return { ...m, activeShiftAt: undefined, shiftStartWashed: undefined, sessions };
+        if (hourly) creditedHours = roundWorkHoursFromMinutes(minutes);
+        return { ...m, activeShiftAt: undefined, shiftStartWashed: undefined, shiftTargetHours: undefined, sessions };
       });
+
+      /**
+       * TUNTITILASSA VUORON PÄÄTÖS ON SE PAIKKA JOSSA TUNNIT SYNTYVÄT.
+       *
+       * Kohdennetussa tilassa selain lähettää tunnit erikseen `/hours`-reitille
+       * ja tunnit ovat tarkkoja seurantatietoa. Tuntitilassa ne ovat PALKKA,
+       * joten kaksi asiaa muuttuu:
+       *
+       *   1. Palvelin laskee ne itse vuoron kestosta. Selaimen lähettämä luku
+       *      ei kelpaa palkan perusteeksi, ja kaksi erillistä pyyntöä voisi
+       *      onnistua eri tavoin — vuoro kirjautuisi ilman tunteja.
+       *   2. Ne pyöristetään lähimpään täyteen tuntiin (`roundWorkHours`).
+       *
+       * Sama tallennus kuin vuorokin, joten kumpikin menee läpi tai ei kumpikaan.
+       */
+      if (hourly && creditedHours > 0) {
+        project.hours = project.hours ?? {};
+        project.hours[member.id] = Math.round(((project.hours[member.id] || 0) + creditedHours) * 100) / 100;
+        project.hourLog = [
+          { worker: member.id, delta: creditedHours, ts: Date.now(), by: member.id },
+          ...(project.hourLog || []),
+        ].slice(0, 200);
+      }
+
       const saved = await saveProject(job, project);
       const savedMember = findCrewByToken(saved, member.token)!;
       // Email the worker a clean day summary (best-effort; never blocks the response).
@@ -8881,6 +8929,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           (e) => console.warn("session summary email failed:", e?.message),
         );
       }
+      res.json({ ok: true, view: await workerView(job, saved, savedMember), creditedHours });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  /**
+   * Tekijän tavoiteaika kesken vuoron. Oma reittinsä eikä vuoron aloituksen
+   * kenttä, koska tavoite asetetaan usein vasta kun työ on jo käynnissä.
+   */
+  app.post("/api/crew/:token/shift-target", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const raw = Number(req.body?.targetHours);
+      const target = Number.isFinite(raw) && raw > 0 ? Math.min(24, Math.round(raw * 2) / 2) : undefined;
+      project.crew = (project.crew || []).map((m) => (m.id === member.id ? { ...m, shiftTargetHours: target } : m));
+      const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
       res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });

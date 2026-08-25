@@ -231,6 +231,18 @@ export interface CrewMember {
   /** Washed-window count captured when the current shift started (for the
    *  end-of-day session summary: windows this session = now − this). */
   shiftStartWashed?: number;
+  /**
+   * Tekijän itselleen asettama TAVOITEAIKA tunteina tälle vuorolle.
+   *
+   * Tuntitilassa tekijä ei näe kertyneitä tuntejaan (ks. `BillingMode`), joten
+   * hän tarvitsee jonkin mittarin päivälleen. Tavoite on se: "kolme tuntia",
+   * ja kun se täyttyy, näkymä sanoo sen. Se ei rajoita mitään eikä vaikuta
+   * palkkaan — pelkkä oma merkkipaalu.
+   *
+   * Elää palvelimella eikä selaimessa, jotta se kestää sivun päivityksen
+   * samoin kuin `activeShiftAt`.
+   */
+  shiftTargetHours?: number;
   /** Completed work sessions (newest-last), for the per-session/day log. */
   sessions?: CrewSession[];
   notes: CrewNote[];
@@ -597,6 +609,11 @@ export function sanitizeCrewMember(input: any): CrewMember | null {
     onboardedAt: input.onboardedAt ? Number(input.onboardedAt) || undefined : undefined,
     activeShiftAt: input.activeShiftAt ? Number(input.activeShiftAt) || undefined : undefined,
     shiftStartWashed: input.shiftStartWashed != null ? Math.max(0, Math.floor(Number(input.shiftStartWashed)) || 0) : undefined,
+    // Tavoite on tekijän oma merkkipaalu: rajattu järkeväksi (enintään 24 h),
+    // puolen tunnin tarkkuudella. Nolla tarkoittaa "ei tavoitetta".
+    shiftTargetHours: input.shiftTargetHours != null
+      ? (Math.min(24, Math.max(0, Math.round((Number(input.shiftTargetHours) || 0) * 2) / 2)) || undefined)
+      : undefined,
     sessions: (Array.isArray(input.sessions) ? input.sessions : [])
       .slice(-200)
       .map((s: any) => ({

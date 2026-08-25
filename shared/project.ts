@@ -358,6 +358,19 @@ export interface ProjExpense {
   /** Optional photo of the receipt (kuitti), downscaled data URL. Kirjanpitoa
    *  varten: jokaisesta kulusta talletetaan kuitti + aikaleima. */
   receiptDataUrl?: string;
+  /**
+   * Näytetäänkö tämä kulu ASIAKKAALLE hänen seurantasivullaan.
+   *
+   * OLETUS ON EI, ja se on tarkoituksellinen. Valtaosa kuluista on meidän
+   * sisäisiä — tekijän bussilippu, oma kalusto, polttoaine — eivätkä ne kuulu
+   * asiakkaalle. Asiakkaalle näytetään vain se mitä on ostettu HÄNTÄ VARTEN:
+   * polttimot, tiivisteet, tarvikkeet. Siksi tämä on merkintä jonka johtaja
+   * tekee kululle erikseen, ei suodatin jonka voi unohtaa väärin päin.
+   *
+   * Kuitti EI seuraa mukana asiakkaalle missään tapauksessa: se on
+   * kirjanpitomme tosite, ei asiakkaan asiakirja.
+   */
+  forCustomer?: boolean;
 }
 
 /**
@@ -1473,6 +1486,48 @@ export function computeDoorWorkerStats(data: ProjectData): DoorWorkerStat[] {
 }
 
 /**
+ * Kulut jotka asiakas saa nähdä: vain nimenomaisesti merkityt, ja ilman
+ * kuittia (`ProjExpense.forCustomer`). Kuitti on kirjanpitomme tosite eikä
+ * asiakkaan asiakirja, joten sitä ei ole tässä muodossa lainkaan.
+ */
+export interface PublicExpense {
+  kind: ProjExpenseKind;
+  desc: string;
+  amountCents: number;
+  ts: number;
+}
+
+export function customerExpenses(data: ProjectData): PublicExpense[] {
+  return (data.expenses ?? [])
+    .filter((e) => e.forCustomer === true)
+    .map((e) => ({ kind: e.kind, desc: e.desc, amountCents: e.amountCents, ts: e.ts }))
+    .sort((a, b) => b.ts - a.ts);
+}
+
+/**
+ * TUNTIKEIKAN TILANNE ASIAKKAALLE: kuka on tehnyt montako tuntia, ja mitä
+ * hänelle on ostettu.
+ *
+ * TEKIJÖIDEN NIMET NÄKYVÄT TÄSSÄ, toisin kuin ikkunoiden pesijät tai lamppujen
+ * vaihtajat. Ero ei ole epäjohdonmukaisuus vaan laskutustavan seuraus:
+ * tuntikeikalla asiakas maksaa nimenomaan näiden ihmisten ajasta, joten hänen
+ * kuuluu nähdä kenen. Kohdennetussa tilassa hän maksaa kohteista, ja silloin
+ * tekijä on meidän sisäinen asiamme.
+ *
+ * NOLLATUNTINEN EI OLE RIVI. Nimi jolla ei ole tunteja ei kerro asiakkaalle
+ * mitään — se vain kasvattaa listaa nimillä joilla ei ole tekemistä keikan
+ * kanssa.
+ */
+export interface CustomerHourRow { name: string; hours: number; }
+
+export function customerHourRows(data: ProjectData, nameOf: (id: string) => string): CustomerHourRow[] {
+  return Object.entries(data.hours ?? {})
+    .filter(([, h]) => h > 0)
+    .map(([id, hours]) => ({ name: nameOf(id), hours }))
+    .sort((a, b) => b.hours - a.hours);
+}
+
+/**
  * ASIAKKAAN kartalle menevä lamppu/ovi.
  *
  * Kaksi eroa sisäiseen pisteeseen, kummallakin oma syy:
@@ -2344,6 +2399,9 @@ export function sanitizeProjectData(input: any): ProjectData {
         ...(typeof e?.forWhom === "string" && e.forWhom.trim() ? { forWhom: e.forWhom.trim().slice(0, 40) } : {}),
         receiptDataUrl: typeof e?.receiptDataUrl === "string" && e.receiptDataUrl.startsWith("data:image/")
           ? e.receiptDataUrl.slice(0, MAX_EXPENSE_RECEIPT_LEN) : undefined,
+        // Vain nimenomainen `true` näyttää kulun asiakkaalle. Puuttuva,
+        // roskainen tai "false" jää sisäiseksi — oletus on aina yksityinen.
+        ...(e?.forCustomer === true ? { forCustomer: true as const } : {}),
       })).filter((e: ProjExpense) => e.id && e.by)
     : [];
 

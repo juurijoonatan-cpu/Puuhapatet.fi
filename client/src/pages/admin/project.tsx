@@ -642,6 +642,15 @@ export default function AdminProjectPage() {
    * avaaminen menee suoraan oikeaan näkymään — valikko joka kysyy saman asian
    * joka kerta olisi este, ei valinta.
    */
+  /** Merkitse kulu asiakkaalle näkyväksi (tai piilota). Vain perustajat. */
+  const onToggleExpenseForCustomer = useCallback((expenseId: string, forCustomer: boolean) => {
+    mutate((d) => {
+      d.expenses = (d.expenses ?? []).map((e) =>
+        e.id === expenseId ? (forCustomer ? { ...e, forCustomer: true } : { ...e, forCustomer: undefined }) : e,
+      );
+    });
+  }, [mutate]);
+
   const onSetBillingMode = useCallback((mode: BillingMode) => {
     mutate((d) => { d.billingMode = mode; });
   }, [mutate]);
@@ -1296,6 +1305,7 @@ export default function AdminProjectPage() {
                 resolveName={resolveName}
                 onAdd={addExpense}
                 onDelete={deleteExpense}
+                onToggleForCustomer={isFounderView ? onToggleExpenseForCustomer : undefined}
               />
             }
             founderInvoiceSlot={(founderId) => {
@@ -2295,7 +2305,7 @@ async function fileToReceiptDataUrl(file: File): Promise<string> {
 }
 
 function ExpensesView({
-  expenses, workers, currentWorker, resolveName, onAdd, onDelete,
+  expenses, workers, currentWorker, resolveName, onAdd, onDelete, onToggleForCustomer,
 }: {
   expenses: ProjExpense[];
   workers: { id: string; name: string }[];
@@ -2303,6 +2313,8 @@ function ExpensesView({
   resolveName: (id: string) => string;
   onAdd: (data: { kind: string; desc: string; amountCents: number; by: string; forWhom?: string; receiptDataUrl?: string }) => Promise<void>;
   onDelete: (expenseId: string) => Promise<void>;
+  /** Merkitse kulu asiakkaalle näkyväksi. Puuttuessaan merkintää ei voi tehdä. */
+  onToggleForCustomer?: (expenseId: string, forCustomer: boolean) => void;
 }) {
   const m = useIsMobile();
   const [kind, setKind] = useState("transport");
@@ -2469,6 +2481,25 @@ function ExpensesView({
                   </div>
                 </div>
                 <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 14, fontWeight: 700, color: "#ff9b6e", flexShrink: 0 }}>{fmtEur(exp.amountCents)}</span>
+                {/* NÄKYYKÖ ASIAKKAALLE. Oletus on ei: valtaosa kuluista on
+                    meidän sisäisiä (matkat, oma kalusto). Asiakkaalle merkitään
+                    vain se mikä on ostettu HÄNTÄ VARTEN — polttimot, tiivisteet.
+                    Kuitti ei seuraa mukana koskaan. */}
+                {onToggleForCustomer && (
+                  <button
+                    onClick={() => onToggleForCustomer(exp.id, !exp.forCustomer)}
+                    title={exp.forCustomer ? "Näkyy asiakkaalle — piilota" : "Näytä asiakkaalle hankintana"}
+                    style={{
+                      flexShrink: 0, padding: "5px 10px", borderRadius: 999, cursor: "pointer",
+                      fontFamily: "inherit", fontSize: 11.5, fontWeight: 600,
+                      border: `1px solid ${exp.forCustomer ? "rgba(95,224,138,0.4)" : "rgba(255,255,255,0.12)"}`,
+                      background: exp.forCustomer ? "rgba(95,224,138,0.12)" : "transparent",
+                      color: exp.forCustomer ? "#9ff0bd" : "rgba(255,255,255,0.4)",
+                    }}
+                  >
+                    {exp.forCustomer ? "Asiakkaalle ✓" : "Vain meille"}
+                  </button>
+                )}
                 <button
                   onClick={() => onDelete(exp.id)}
                   title="Poista kulu"

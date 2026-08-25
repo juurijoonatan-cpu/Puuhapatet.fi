@@ -66,12 +66,22 @@ function fmtEuroInput(cents?: number | null): string {
 interface Props {
   fixtures: Fixtures;
   theme: CustomerTheme;
+  /**
+   * TUNTIKEIKALLA HINTAA EI KYSYTÄ. Työn hinta tulee tunneista, joten
+   * kysymys "paljonko maksaisit yhdestä vaihdosta" olisi väärä kysymys —
+   * ja kaksi rinnakkaista hinnoittelutapaa samalla keikalla olisi kaksi eri
+   * vastausta siihen mitä työ maksaa.
+   *
+   * Viestikenttä jää: se ei ole hinta vaan kanava, ja asiakkaalla on
+   * toiveita myös silloin kun hinnasta ei neuvotella.
+   */
+  hourlyGig?: boolean;
   floorLabel: (floor: string) => string;
   /** Tallenna asiakkaan hintaehdotus. Palauttaa virheen tekstinä tai null. */
   onSaveQuote: (body: { lampWorkPriceCents?: number; doorWorkPriceCents?: number; note?: string }) => Promise<string | null>;
 }
 
-export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQuote }: Props) {
+export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQuote, hourlyGig = false }: Props) {
   const dark = isDark(T.card);
   const base = dark ? CHART_DARK : CHART_LIGHT;
   const chartTheme: LampChartTheme = { ...base, surface: T.fill, text: T.ink, muted: T.muted };
@@ -93,11 +103,16 @@ export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQu
 
   async function save() {
     setBusy(true); setErr(null); setMsg(null);
-    const error = await onSaveQuote({
-      lampWorkPriceCents: parseEuro(lampWork),
-      doorWorkPriceCents: parseEuro(doorWork),
-      note: note.trim() || undefined,
-    });
+    // Tuntikeikalla lähtee VAIN viesti. Kentät ovat piilossa, mutta tila voi
+    // yhä kantaa aiemmin tallennettua hintaa — sen uudelleenlähetys kirjaisi
+    // hinnan jota asiakas ei juuri nyt esittänyt.
+    const error = await onSaveQuote(hourlyGig
+      ? { note: note.trim() || undefined }
+      : {
+          lampWorkPriceCents: parseEuro(lampWork),
+          doorWorkPriceCents: parseEuro(doorWork),
+          note: note.trim() || undefined,
+        });
     setBusy(false);
     if (error) setErr(error);
     else setMsg("Ehdotus tallennettu — näemme sen heti.");
@@ -175,13 +190,14 @@ export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQu
 
         <div style={{ height: 1, background: T.hair, margin: "16px 0" }} />
 
-        <div style={{ ...label, marginBottom: 4 }}>Hintaehdotuksesi</div>
+        <div style={{ ...label, marginBottom: 4 }}>{hourlyGig ? "Toiveet ja huomiot" : "Hintaehdotuksesi"}</div>
         <p style={{ margin: "0 0 12px", fontSize: 13, color: T.muted, lineHeight: 1.6 }}>
-          Kerro mitä olisit valmis maksamaan yhdestä vaihdosta. Hinta on tehdystä
-          työstä per kohde — tarvike tulee erikseen. Tämä ei ole tilaus eikä sitova
-          sopimus: hinnasta sovitaan erikseen, ja näemme ehdotuksesi heti.
+          {hourlyGig
+            ? "Kerro toiveesi tai huomiosi näistä töistä — näemme viestisi heti. Työn hinta lasketaan tehdyistä tunneista, joten erillistä hintaa ei tarvitse arvioida."
+            : "Kerro mitä olisit valmis maksamaan yhdestä vaihdosta. Hinta on tehdystä työstä per kohde — tarvike tulee erikseen. Tämä ei ole tilaus eikä sitova sopimus: hinnasta sovitaan erikseen, ja näemme ehdotuksesi heti."}
         </p>
 
+        {!hourlyGig && (
         <div style={{ display: "grid", gridTemplateColumns: doors.total > 0 ? "repeat(auto-fit, minmax(150px, 1fr))" : "1fr", gap: 12 }}>
           <label style={{ display: "block" }}>
             <span style={{ display: "block", fontSize: 12.5, color: T.muted, marginBottom: 5 }}>€ / lampun vaihto</span>
@@ -194,17 +210,20 @@ export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQu
             </label>
           )}
         </div>
+        )}
 
-        <label style={{ display: "block", marginTop: 12 }}>
-          <span style={{ display: "block", fontSize: 12.5, color: T.muted, marginBottom: 5 }}>Viesti (vapaaehtoinen)</span>
+        <label style={{ display: "block", marginTop: hourlyGig ? 0 : 12 }}>
+          <span style={{ display: "block", fontSize: 12.5, color: T.muted, marginBottom: 5 }}>{hourlyGig ? "Viestisi" : "Viesti (vapaaehtoinen)"}</span>
           <textarea
             value={note} onChange={(e) => setNote(e.target.value.slice(0, 500))} rows={3}
-            placeholder="Esim. ”Käykö tämä hinta, jos teette kaikki kerralla?”"
+            placeholder={hourlyGig
+              ? "Esim. ”Voisitteko katsoa myös kellarin lamput samalla?”"
+              : "Esim. ”Käykö tämä hinta, jos teette kaikki kerralla?”"}
             style={{ ...field, resize: "vertical" }}
           />
         </label>
 
-        {liveTotal != null && (
+        {!hourlyGig && liveTotal != null && (
           <p style={{ margin: "12px 0 0", fontSize: 13.5, color: T.ink }}>
             Tällä hinnalla työt yhteensä <b style={{ fontWeight: 700 }}>{eurFromCents(liveTotal)}</b>
             <span style={{ color: T.muted }}> ({order.bulbs} lampun vaihtoa{doors.total > 0 ? `, ${order.doorCount} tiivisteen vaihtoa` : ""})</span>
@@ -216,11 +235,11 @@ export default function FixturesPanel({ fixtures, theme: T, floorLabel, onSaveQu
             onClick={save} disabled={busy}
             style={{ padding: "11px 18px", borderRadius: 10, border: "none", background: T.navy, color: dark ? "#0b0d10" : "#fff", fontFamily: CFONT, fontSize: 13.5, fontWeight: 700, cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}
           >
-            {busy ? "Tallennetaan…" : quote ? "Päivitä ehdotus" : "Lähetä ehdotus"}
+            {busy ? "Tallennetaan…" : hourlyGig ? (quote ? "Päivitä viesti" : "Lähetä viesti") : (quote ? "Päivitä ehdotus" : "Lähetä ehdotus")}
           </button>
           {msg && <span style={{ fontSize: 13, color: T.green, fontWeight: 600 }}>{msg}</span>}
           {err && <span style={{ fontSize: 13, color: dark ? "#ff7474" : "#C0392B", fontWeight: 600 }}>{err}</span>}
-          {quote && !msg && !err && (
+          {quote && !msg && !err && !hourlyGig && (
             <span style={{ fontSize: 12.5, color: T.muted }}>
               Ehdotettu aiemmin{quotedTotalCents != null ? ` · ${eurFromCents(quotedTotalCents)}` : ""}
             </span>

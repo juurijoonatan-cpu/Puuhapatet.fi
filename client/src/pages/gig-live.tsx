@@ -16,6 +16,7 @@ import { floorLabel } from "@shared/project";
 import GigContractSign from "@/components/GigContractSign";
 import CustomerFloorMap, { type P2CustomerActions, type ScopeCustomerState } from "@/components/CustomerFloorMap";
 import FixturesPanel from "@/components/customer/FixturesPanel";
+import HourlySummary from "@/components/customer/HourlySummary";
 import CustomerProgressHero, { type HeroTile } from "@/components/CustomerProgressHero";
 import LoadingOrb from "@/components/LoadingOrb";
 import { downloadGigContract } from "@/lib/gig-contract-doc";
@@ -200,6 +201,12 @@ export default function GigLivePage() {
     return !t || t === "-" || t === "–" || t === "—" ? null : t;
   })();
   const tech = isTechTheme(data.theme);
+  /**
+   * Tuntikeikka. Asiakkaan näkymän painotus kääntyy: tunnit ylös, ikkunapesun
+   * edistymä painalluksen taakse — ikkunapesu on tauolla ja tuntityö on se
+   * mikä käy. Ks. `BillingMode`.
+   */
+  const hourlyGig = data.billingMode === "hourly";
 
   const t = data.totals;
   // Customer view shows ACTUAL work progress (washed windows / scope), never euros.
@@ -415,6 +422,16 @@ export default function GigLivePage() {
           </div>
         </div>
 
+        {/* TUNTIKEIKAN PÄÄKORTTI.
+            Tuntikeikalla asiakkaan tärkein luku on tehdyt tunnit, ei
+            pesuprosentti — ikkunapesu on tauolla ja tuntityö on se mikä käy.
+            Siksi tämä on ensimmäisenä ja pesun edistymä alempana taitteessa. */}
+        {hourlyGig && data.hourly && (
+          <Panel theme={T}>
+            <HourlySummary hourly={data.hourly} theme={T} />
+          </Panel>
+        )}
+
         {/* PÄÄKORTTI. Yksi luku, yksi palkki, muutama ruutu. Ei euroja
             urakkahinnasta — sovittu hinta asuu allekirjoitetussa sopimuksessa.
             Kaikki selittävä teksti on siirretty sivun alaosan taittuvaan
@@ -423,6 +440,7 @@ export default function GigLivePage() {
             eikä lippu vanhassa: vaalea on käytössä elävällä sopimusasiakkaalla,
             eikä sitä haluta testata uudelleen joka kerta kun tummaa muutetaan. */}
         {(() => {
+          const hero = (() => {
           const heroProps = {
             pct,
             done: hasMapProgress ? mapProgress.done : undefined,
@@ -441,6 +459,24 @@ export default function GigLivePage() {
           return tech
             ? <TechHero theme={T} {...heroProps} />
             : <CustomerProgressHero {...heroProps} />;
+          })();
+          // Tuntikeikalla pesun edistymä ei ole väärää tietoa — se on vain
+          // väärässä paikassa. Taitteen takana se on saatavilla sitä
+          // kysyttäessä eikä ensimmäisenä joka kerta.
+          //
+          // Rivikommentti eikä lohko: tämä on JSX:n lapsipaikan välittömässä
+          // läheisyydessä, ja `customer-privacy.test.ts` vartioi juuri sitä —
+          // lohkokommentti on kerran päätynyt asiakkaan ruudulle tekstinä.
+          if (!hourlyGig) return hero;
+          return (
+            <details>
+              <summary style={{ cursor: "pointer", listStyle: "none", display: "flex", alignItems: "center", gap: 8, padding: "10px 2px", fontSize: 13.5, fontWeight: 600, color: T.muted, fontFamily: FONT }}>
+                <span aria-hidden style={{ fontSize: 11 }}>▸</span>
+                Ikkunapesun tilanne {pct > 0 ? `· ${Math.round(pct)} %` : ""}
+              </summary>
+              <div style={{ marginTop: 10 }}>{hero}</div>
+            </details>
+          );
         })()}
 
         {/* SOPIMUS ON TULOSSA.
@@ -603,6 +639,7 @@ export default function GigLivePage() {
               theme={T}
               floorLabel={(f) => floorLabel(data.map?.building as any, f)}
               onSaveQuote={saveFixtureQuote}
+              hourlyGig={hourlyGig}
             />
           </Panel>
         )}

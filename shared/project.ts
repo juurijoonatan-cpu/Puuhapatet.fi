@@ -80,6 +80,57 @@ export interface ProjFixtureNote { text: string; by?: string; ts: number; }
 export const MAX_FIXTURE_NOTE_LEN = 400;
 
 /**
+ * LASKUTUSTILA — kaksi tapaa tehdä keikkaa, ja ne eivät saa sekoittua.
+ *
+ *   "targeted" — KOHDENNETTU HINNOITTELU. Kaikki mitä tähän asti on ollut:
+ *                ikkunapisteet, hinta per ikkuna, urakka, erät, keltaisten
+ *                neuvottelu. FR8 on tämä.
+ *   "hourly"   — TUNTIHINNOITTELU. Vain tehdyt tunnit. Ei ikkunahintaa, ei
+ *                urakkaa, ei per-kohde-hinnoittelua.
+ *
+ * PUUTTUVA ARVO ON "targeted", eikä sitä kirjoiteta talteen. Se on ainoa tapa
+ * jolla FR8:n ja jokaisen olemassa olevan keikan käytös pysyy tavu tavulta
+ * entisellään: mitään ei ole valittu, joten mikään ei muutu. Tila kirjoitetaan
+ * vasta kun joku valitsee sen.
+ */
+export type BillingMode = "targeted" | "hourly";
+
+export function toBillingMode(v: any): BillingMode | undefined {
+  return v === "targeted" || v === "hourly" ? v : undefined;
+}
+
+/** Keikan laskutustila. Puuttuva = "targeted" (ks. yllä). */
+export function billingModeOf(data: ProjectData | null | undefined): BillingMode {
+  return toBillingMode(data?.billingMode) ?? "targeted";
+}
+
+/** Onko keikka tuntitilassa? Lyhenne luettavuuden vuoksi. */
+export function isHourlyGig(data: ProjectData | null | undefined): boolean {
+  return billingModeOf(data) === "hourly";
+}
+
+/**
+ * TUNTITILAN PYÖRISTYS — lähimpään täyteen tuntiin, puolikas ylös.
+ *
+ * 30 min → 1 h, 20 min → 0 h. Jälkimmäinen on tarkoitus eikä sivuvaikutus:
+ * lyhyt piipahdus ei kerrytä tuntia, joten työaikaa ei kannata aloittaa ja
+ * lopettaa saman tien. Johtaja voi aina korjata luvun käsin, joten pyöristys
+ * ei ole viimeinen sana vaan lähtökohta.
+ *
+ * Koskee VAIN tuntitilaa. Kohdennetussa tilassa tunnit ovat tarkkoja kuten
+ * ennenkin — siellä ne ovat seurantatietoa, eivät laskutuksen perusta.
+ */
+export function roundWorkHours(hours: number): number {
+  if (!Number.isFinite(hours) || hours <= 0) return 0;
+  return Math.round(hours);
+}
+
+/** Sama pyöristys minuuteista, jottei kutsupaikoissa jaeta kuudellakymmenellä. */
+export function roundWorkHoursFromMinutes(minutes: number): number {
+  return roundWorkHours((Number(minutes) || 0) / 60);
+}
+
+/**
  * Ovipisteet — kartalle merkittyjä ovia, joista jokainen on TEHTÄVÄ: se on joko
  * tekemättä tai tehty, sillä voi olla lyhyt tehtävänimi (`label`, esim.
  * "karmit + lasi") ja huomautus.
@@ -432,6 +483,9 @@ export interface ProjectData {
   doorNotes?: Record<string, ProjFixtureNote>;
   /** Oven avain → kuka lisäsi pisteen kartalle ja milloin. */
   doorAddedBy?: Record<string, ProjMarkBy>;
+  /** Keikan laskutustila (`BillingMode`). Puuttuva = "targeted" — ks. tyypin
+   *  dokumentaatio siitä miksi sitä ei kirjoiteta oletuksena. */
+  billingMode?: BillingMode;
   /** Johtajan ostotieto: malli ja määrä (`FixtureOrder`). */
   fixtureOrder?: FixtureOrder;
   /** Keikan lamppumallit (`LampModel`). Johtaja ylläpitää listaa. */
@@ -2339,6 +2393,9 @@ export function sanitizeProjectData(input: any): ProjectData {
     ...(Object.keys(doorDoneBy).length ? { doorDoneBy } : {}),
     ...(Object.keys(doorNotes).length ? { doorNotes } : {}),
     ...(Object.keys(doorAddedBy).length ? { doorAddedBy } : {}),
+    // Vain valittu tila kirjoitetaan: puuttuva on "targeted", ja vanha blobi
+    // pyörähtää läpi entisellään.
+    ...(toBillingMode(input.billingMode) ? { billingMode: toBillingMode(input.billingMode)! } : {}),
     ...(lampModels.length ? { lampModels } : {}),
     ...(Object.keys(lampModelOf).length ? { lampModelOf } : {}),
     ...(input.fixtureOrder !== undefined ? (() => { const o = sanitizeFixtureOrder(input.fixtureOrder); return o ? { fixtureOrder: o } : {}; })() : {}),

@@ -70,6 +70,8 @@ export interface WorkerView {
     trainee: { responsibleLeaderName: string } | null;
     /** Epoch ms when the work-hour timer was started (null if not running). */
     activeShiftAt: number | null;
+    /** Tekijän oma tavoiteaika tälle vuorolle (tunteina). Null = ei tavoitetta. */
+    shiftTargetHours?: number | null;
     /** Washed count when the current shift started (for the live session counter). */
     shiftStartWashed: number | null;
     /** Completed work sessions, newest-first. */
@@ -89,6 +91,8 @@ export interface WorkerView {
   hasInstalments?: boolean;
   /** Yhteisökeikka: keikasta ei liiku rahaa, joten korvausta ei luvata. */
   isCommunity?: boolean;
+  /** Keikan laskutustila. Tuntitilassa työpöytä on eri — ks. `BillingMode`. */
+  billingMode?: "targeted" | "hourly";
   marks: ProjMarksData;
   statuses: Record<string, WindowStatus>;
   washedBy: Record<string, string>;
@@ -1606,8 +1610,16 @@ export const api = {
 
   // Start/end the work-hour timer. On end, pass worked minutes (breaks deducted)
   // so the session log records the right duration.
-  crewShift: (token: string, start: boolean, minutes?: number) =>
-    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/shift`, { start, minutes }),
+  /** Tekijän tavoiteaika kesken vuoron. `null` poistaa tavoitteen. */
+  crewSetShiftTarget: (token: string, targetHours: number | null) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/shift-target`, { targetHours }, QUICK),
+
+  /** Vuoron aloitus/lopetus. `creditedHours` kertoo tuntitilassa montako
+   *  tuntia palvelin kirjasi (pyöristettynä) — kohdennetussa tilassa 0. */
+  crewShift: (token: string, start: boolean, minutes?: number, targetHours?: number | null) =>
+    request<{ ok: boolean; view: WorkerView; creditedHours?: number }>(
+      "POST", `/api/crew/${token}/shift`, { start, minutes, targetHours }, QUICK,
+    ),
 
   crewAddNote: (token: string, text: string) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/note`, { text }),

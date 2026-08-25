@@ -16,6 +16,7 @@ import {
   dealInternalRateCents, isCommunityGig,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense, type LampStatus,
   type LampCondition, type DoorStatus, type FixtureOrder, type LampModel,
+  billingModeOf, type BillingMode,
 } from "@shared/project";
 import { computeP2Billing, customerAddedKeys, p2FounderOpts, p2CustomerLocksSince, p2Itemisation, p2WashedYellows, p2WorkerSplit, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule, type P2WashedState } from "@shared/p2";
 import { computeGuided, type GuidedWork } from "@shared/guided";
@@ -24,6 +25,8 @@ import { splitCentsEvenly, FOUNDER_IDS } from "@shared/team";
 import { traineeForUserId, traineeForName } from "@shared/trainees";
 import { DEFAULT_WORKER_PER_WINDOW_CENTS } from "@shared/crew";
 import Dashboard from "@/components/fr8/Dashboard";
+import HourlyPanel from "@/components/fr8/HourlyPanel";
+import ModeChooser from "@/components/fr8/ModeChooser";
 import FounderEraInvoiceDialog from "@/components/fr8/FounderEraInvoiceDialog";
 import MaksutView from "@/components/fr8/MaksutView";
 import type { GigBillingState, EraInvoiceClient } from "@/lib/api";
@@ -103,6 +106,8 @@ export default function AdminProjectPage() {
 
   // Syvälinkki `?tab=maksut` — keikkanäkymän "Tekijöiden maksut" hyppää suoraan
   // Maksut-välilehdelle, ettei samaa osiota tarvitse toistaa kahdessa näkymässä.
+  /** Näytetäänkö tilanvalinta vaikka tila on jo valittu ("Vaihda tila"). */
+  const [showModes, setShowModes] = useState(false);
   const [tab, setTab] = useState<Fr8Tab>(() => {
     if (typeof window === "undefined") return "dashboard";
     const t = new URLSearchParams(window.location.search).get("tab");
@@ -632,6 +637,33 @@ export default function AdminProjectPage() {
     });
   }, [mutate]);
 
+  /**
+   * KEIKAN LASKUTUSTILA. Valinta kirjoitetaan keikalle, jotta seuraava
+   * avaaminen menee suoraan oikeaan näkymään — valikko joka kysyy saman asian
+   * joka kerta olisi este, ei valinta.
+   */
+  const onSetBillingMode = useCallback((mode: BillingMode) => {
+    mutate((d) => { d.billingMode = mode; });
+  }, [mutate]);
+
+  /**
+   * KÄSIN TUNTIKORJAUS — vain perustajille (ks. `canAdjustHours` alla).
+   *
+   * Pyöristys on lähtökohta eikä viimeinen sana: ajastin voi jäädä päälle,
+   * unohtua kokonaan, tai työ on tehty ennen kuin linkki otettiin käyttöön.
+   * Korjaus kirjautuu `hourLog`iin kuten kaikki muukin, joten jälki säilyy.
+   */
+  const onAdjustHours = useCallback((workerId: string, delta: number) => {
+    mutate((d) => {
+      const cur = d.hours?.[workerId] ?? 0;
+      const next = Math.max(0, Math.round((cur + delta) * 100) / 100);
+      if (next === cur) return;
+      d.hours = d.hours ?? {};
+      d.hours[workerId] = next;
+      d.hourLog = [{ worker: workerId, delta: next - cur, ts: Date.now(), by: currentWorker }, ...(d.hourLog ?? [])].slice(0, 200);
+    });
+  }, [mutate, currentWorker]);
+
   const onSetDoorLabel = useCallback((key: string, label: string) => {
     mutate((d) => {
       const f = key.split("#")[0];
@@ -1088,6 +1120,69 @@ export default function AdminProjectPage() {
   // The default washer the picker shows is the saved preference if it's still a
   // valid worker, else the logged-in admin.
   const effectiveWasher = gigWorkers.some((w) => w.id === defaultWasher) ? defaultWasher : currentWorker;
+
+  /**
+   * TILAN VALINTA ON NÄKYMÄN ENSIMMÄINEN KYSYMYS.
+   *
+   * Valikko näkyy kun keikalla EI OLE valittua tilaa — silloin emme tiedä
+   * kumpaa näkymää hän on tullut katsomaan. Kun tila on valittu, avaaminen
+   * menee suoraan siihen: valikko joka kysyy saman asian joka kerta olisi este.
+   *
+   * FR8 ja kaikki olemassa olevat keikat ovat ilman merkintää "targeted"
+   * (`billingModeOf`), joten ne eivät näe valikkoa lainkaan eivätkä muutu.
+   * Valikkoon pääsee takaisin `showModes`-tilalla.
+   */
+  const mode = billingModeOf(project);
+  const modeChosen = !!project.billingMode;
+  const canAdjustHours = isFounderView;
+
+  if (!modeChosen || showModes) {
+    return shell(
+      <ModeChooser
+        gigName={project.building.name || gigName || undefined}
+        current={modeChosen ? mode : null}
+        onChoose={(next) => { onSetBillingMode(next); setShowModes(false); }}
+        onCancel={modeChosen ? () => setShowModes(false) : undefined}
+      />,
+    );
+  }
+
+  /**
+   * TUNTITILA ON OMA NÄKYMÄNSÄ, EI DASHIN VÄLILEHTI.
+   *
+   * Kohdennetun tilan navigaatio (kartta, ansiot, maksut, tasaus) vastaa
+   * kysymyksiin joita tuntikeikalla ei ole. Sen näyttäminen tyhjänä olisi
+   * juuri sitä sekaannusta jota tämä tila välttää, joten tuntikeikalla on oma
+   * kevyt kuorensa: yksi paluu, yksi tilanvaihto, yksi lista.
+   */
+  if (mode === "hourly") {
+    return shell(
+      <div style={{ maxWidth: 860, margin: "0 auto", padding: 20, paddingTop: 24 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
+          <button onClick={backToGig}
+            style={{ background: "transparent", border: "none", padding: 0, color: "rgba(255,255,255,0.5)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+            ← Takaisin
+          </button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 10, letterSpacing: "0.12em", color: "rgba(255,255,255,0.38)" }}>TUNTIHINNOITTELU</div>
+            <div style={{ fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 19, fontWeight: 700, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {project.building.name || gigName || "Keikka"}
+            </div>
+          </div>
+          <button onClick={() => setShowModes(true)}
+            style={{ flexShrink: 0, padding: "8px 14px", borderRadius: 11, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.7)", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
+            Vaihda tila
+          </button>
+        </div>
+        <HourlyPanel
+          project={project}
+          workerName={resolveName}
+          crew={crew}
+          onAdjustHours={canAdjustHours ? onAdjustHours : undefined}
+        />
+      </div>,
+    );
+  }
 
   return shell(
     <>

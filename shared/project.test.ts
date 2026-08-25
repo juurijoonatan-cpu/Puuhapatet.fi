@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
+import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, billingModeOf, isHourlyGig, roundWorkHours, roundWorkHoursFromMinutes, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
 import { emptyGigData, computeTotals } from "./gig";
 
 // Kohta 6.1 — kokonaistilanteen ikkunamäärän täsmäytys. Ks. docs/fr8-era-laskutus-plan.md.
@@ -1041,5 +1041,50 @@ describe("lamppumallit — kaikki lamput eivät ole samaa mallia", () => {
     const clean = sanitizeProjectData(emptyProjectData());
     expect("lampModels" in clean).toBe(false);
     expect("lampModelOf" in clean).toBe(false);
+  });
+});
+
+
+describe("tuntitila — pyöristys ja tilan oletus", () => {
+  it("puolikas tunti pyöristyy ylös, sitä lyhyempi nollaan", () => {
+    // Tämä on se pidäke jonka takia sääntö on olemassa: puolen tunnin
+    // piipahdus kirjaa tunnin, sitä lyhyempi ei kirjaa mitään.
+    expect(roundWorkHoursFromMinutes(30)).toBe(1);
+    expect(roundWorkHoursFromMinutes(29)).toBe(0);
+    expect(roundWorkHoursFromMinutes(20)).toBe(0);
+    expect(roundWorkHoursFromMinutes(0)).toBe(0);
+  });
+
+  it("pyöristää lähimpään täyteen tuntiin molempiin suuntiin", () => {
+    expect(roundWorkHoursFromMinutes(89)).toBe(1);   // 1 h 29 min → 1 h
+    expect(roundWorkHoursFromMinutes(90)).toBe(2);   // 1 h 30 min → 2 h
+    expect(roundWorkHoursFromMinutes(455)).toBe(8);  // 7 h 35 min → 8 h
+  });
+
+  it("kelvoton tai negatiivinen kesto on nolla, ei NaN eikä miinustunti", () => {
+    expect(roundWorkHours(Number.NaN)).toBe(0);
+    expect(roundWorkHours(-3)).toBe(0);
+    expect(roundWorkHoursFromMinutes(-90)).toBe(0);
+  });
+
+  it("puuttuva tila on kohdennettu — FR8 ja vanhat keikat eivät muutu", () => {
+    const p = emptyProjectData();
+    expect(billingModeOf(p)).toBe("targeted");
+    expect(isHourlyGig(p)).toBe(false);
+    expect(billingModeOf(null)).toBe("targeted");
+  });
+
+  it("valittu tila säilyy sanitoinnissa, tuntematon pudotetaan oletukseen", () => {
+    expect(sanitizeProjectData({ billingMode: "hourly" }).billingMode).toBe("hourly");
+    expect(sanitizeProjectData({ billingMode: "targeted" }).billingMode).toBe("targeted");
+    const bogus = sanitizeProjectData({ billingMode: "kuukausi" });
+    expect("billingMode" in bogus).toBe(false);
+    expect(billingModeOf(bogus)).toBe("targeted");
+  });
+
+  it("valitsematon tila ei kirjoita kenttää lainkaan", () => {
+    // Vanha blobi pyörähtää läpi entisellään: tilaa ei ole, eikä sellaista
+    // synny sanitoinnissa.
+    expect("billingMode" in sanitizeProjectData(emptyProjectData())).toBe(false);
   });
 });

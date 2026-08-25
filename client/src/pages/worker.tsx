@@ -1680,10 +1680,16 @@ function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
         </button>
       </div>
 
-      {/* Total hours only — no €/h average (the per-hour read-out isn't shown to workers). */}
-      <div style={{ marginTop: 16 }}>
-        <Stat label="Tunteja" value={s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} />
-      </div>
+      {/* Total hours only — no €/h average (the per-hour read-out isn't shown to workers).
+          TUNTITILASSA EI EDES TÄTÄ: siellä tunnit ovat palkka, ja johtajat
+          päättävät luvun (pyöristys + käsin korjaus). Jos tekijä näkisi
+          juoksevan summan, hän tekisi siitä omat johtopäätöksensä ennen kuin
+          johtaja on sen tarkistanut. Ks. `BillingMode`. */}
+      {view.billingMode !== "hourly" && (
+        <div style={{ marginTop: 16 }}>
+          <Stat label="Tunteja" value={s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} />
+        </div>
+      )}
       {/* Vain keikalla jolla on erälaskutus. Ennen tämä näytti "Maksuerä 1/4"
           jokaisella keikalla — luku oli FR8:n rakenne, ei tämän keikan. */}
       {view.hasInstalments && (
@@ -2358,6 +2364,37 @@ function HoursTab({ token, view, setView, notify }: { token: string; view: Worke
   const [onBreak, setOnBreak] = useState<number | null>(null); // break start ms, if paused
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);          // brief "tallennettu" confirmation
+  const hourly = view.billingMode === "hourly";
+  /** Tuntitilassa: montako tuntia palvelin kirjasi juuri päättyneestä vuorosta. */
+  const [credited, setCredited] = useState<number | null>(null);
+  const [targetBusy, setTargetBusy] = useState(false);
+  const target = view.worker.shiftTargetHours ?? null;
+  /**
+   * Kello tikittää minuutin välein VAIN tavoitteen tarkistusta varten — tekijä
+   * ei näe kuluvaa aikaa (ks. `BillingMode`), joten tiheämpi päivitys ei
+   * hyödyttäisi mitään ja söisi akkua työmaalla.
+   */
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!running || !target) return;
+    const t = window.setInterval(() => setTick((n) => n + 1), 60_000);
+    return () => window.clearInterval(t);
+  }, [running, target]);
+  /** Tavoite täynnä? Tauot eivät kerrytä työaikaa, joten ne vähennetään. */
+  const targetReached = (() => {
+    void tick;
+    if (!running || !target) return false;
+    const worked = Date.now() - running - (breakMs + (onBreak ? Date.now() - onBreak : 0));
+    return worked >= target * 3_600_000;
+  })();
+
+  const setTargetHours = async (h: number | null) => {
+    setTargetBusy(true);
+    const res = await api.crewSetShiftTarget(token, h);
+    setTargetBusy(false);
+    if (res.ok && res.data?.view) setView(res.data.view);
+    else notify(res.error || "Tavoitteen tallennus ei onnistunut.");
+  };
 
   // Keep the running flag in sync with the server (shift started/ended elsewhere,
   // and a clean reset once work is ended).
@@ -2425,7 +2462,18 @@ function HoursTab({ token, view, setView, notify }: { token: string; view: Worke
     const totalBreak = breakMs + (onBreak ? Date.now() - onBreak : 0);
     const minutes = Math.max(0, Math.round((Date.now() - running - totalBreak) / 60000));
     const hours = Math.round((minutes / 60) * 100) / 100;
-    const hoursRes = hours > 0 ? await api.crewAddHours(token, hours) : null;  // tuntikirjanpito johtajille
+    /**
+     * TUNTITILASSA TUNNIT SYNTYVÄT PALVELIMELLA, EI TÄÄLLÄ.
+     *
+     * Ne ovat siellä palkka, ja palkan perusteeksi ei kelpaa selaimen lähettämä
+     * luku — eikä kaksi erillistä pyyntöä, joista toinen voi onnistua ja toinen
+     * ei (vuoro kirjautuisi ilman tunteja). Vuoron päätös kirjaa molemmat
+     * samassa tallennuksessa ja pyöristää lähimpään täyteen tuntiin.
+     *
+     * Kohdennetussa tilassa käytös on ennallaan: tarkat tunnit omalla
+     * pyynnöllään, seurantatietona.
+     */
+    const hoursRes = !hourly && hours > 0 ? await api.crewAddHours(token, hours) : null;
     const res = await api.crewShift(token, false, minutes);                    // vuoro + kesto
     setBusy(false);
     if (!res.ok || !res.data?.view) {
@@ -2442,7 +2490,8 @@ function HoursTab({ token, view, setView, notify }: { token: string; view: Worke
       return;
     }
     setSaved(true);
-    setTimeout(() => setSaved(false), 4000);
+    setCredited(hourly ? (res.data.creditedHours ?? 0) : null);
+    setTimeout(() => { setSaved(false); setCredited(null); }, 6000);
   };
 
   const statusLabel = onBreak ? "Tauolla" : running ? "Työaika käynnissä" : "Et ole töissä";
@@ -2476,12 +2525,61 @@ function HoursTab({ token, view, setView, notify }: { token: string; view: Worke
           )}
         </div>
 
+        {/* OMA TAVOITE. Tuntitilassa tekijä ei näe kertyneitä tunteja, joten
+            päivällä ei olisi mittaria lainkaan. Tavoite on se mittari: se ei
+            rajoita mitään eikä vaikuta palkkaan — se vain sanoo kun sovittu
+            määrä on täynnä. Näkyy vain vuoron ollessa käynnissä, koska se
+            koskee tätä vuoroa eikä ole pysyvä asetus. */}
+        {hourly && running && (
+          <div style={{ marginTop: 20, paddingTop: 18, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+            {targetReached ? (
+              <div style={{ padding: "12px 14px", borderRadius: 12, background: "rgba(124,224,166,0.12)", border: "1px solid rgba(124,224,166,0.4)" }}>
+                <p style={{ margin: 0, color: "#7CE0A6", fontSize: 14.5, fontWeight: 700 }}>✓ Tavoite saavutettu</p>
+                <p style={{ margin: "4px 0 0", color: "rgba(255,255,255,0.55)", fontSize: 12.5, lineHeight: 1.5 }}>
+                  {target} h täynnä. Voit jatkaa tai päättää työajan.
+                </p>
+              </div>
+            ) : (
+              <>
+                <p style={{ margin: "0 0 10px", color: "rgba(255,255,255,0.5)", fontSize: 12.5 }}>
+                  {target ? `Tavoite tälle päivälle: ${target} h` : "Aseta tavoite tälle päivälle (vapaaehtoinen)"}
+                </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+                  {[2, 3, 4, 6, 8].map((h) => {
+                    const on = target === h;
+                    return (
+                      <button key={h} disabled={targetBusy}
+                        onClick={() => setTargetHours(on ? null : h)}
+                        style={{
+                          padding: "8px 15px", borderRadius: 999, cursor: "pointer",
+                          fontFamily: FONT, fontSize: 13.5, fontWeight: 700,
+                          border: `1px solid ${on ? "rgba(124,224,166,0.5)" : "rgba(255,255,255,0.16)"}`,
+                          background: on ? "rgba(124,224,166,0.14)" : "rgba(255,255,255,0.04)",
+                          color: on ? "#7CE0A6" : "rgba(255,255,255,0.7)",
+                          opacity: targetBusy ? 0.6 : 1,
+                        }}>
+                        {h} h
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 12.5, marginTop: 18, lineHeight: 1.55 }}>
           Aloita työaika kun saavut työmaalle ja päätä se kun lähdet. Pidä tauko esimerkiksi
           ruokatauon ajaksi — tauot eivät kerry työaikaan. Aika tallentuu automaattisesti.
+          {hourly && " Työaika pyöristetään lähimpään täyteen tuntiin."}
         </p>
         {saved && (
-          <p style={{ color: "#7CE0A6", fontSize: 13, fontWeight: 700, marginTop: 12 }}>✓ Työaika tallennettu</p>
+          <p style={{ color: "#7CE0A6", fontSize: 13, fontWeight: 700, marginTop: 12 }}>
+            ✓ Työaika tallennettu
+            {credited != null && (credited > 0
+              ? ` — ${credited} h kirjattu`
+              : " — alle puoli tuntia, ei kirjattua tuntia")}
+          </p>
         )}
       </div>
 

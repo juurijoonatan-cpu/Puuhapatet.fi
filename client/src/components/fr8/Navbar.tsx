@@ -30,7 +30,7 @@ import { ArrowLeft, Maximize2, Minimize2, ChevronDown, Check } from "lucide-reac
 import { useIsMobile } from "@/hooks/use-mobile";
 import { T, mono } from "./tokens";
 
-export type Fr8Tab = "dashboard" | "floor" | "hours" | "maksut";
+export type Fr8Tab = "dashboard" | "floor" | "maksut";
 
 interface NavbarProps {
   activeTab: Fr8Tab;
@@ -52,21 +52,21 @@ interface NavbarProps {
 }
 
 /**
- * TUNNIT ON VÄLILEHTI, EI TILA.
+ * TÄMÄ PALKKI ON PROJEKTIPUOLEN PALKKI — TUNNIT EIVÄT OLE TÄÄLLÄ.
  *
- * Ensimmäinen yritys teki kohdennetusta ja tuntihinnoittelusta toisensa
- * poissulkevan valinnan, joka piti tehdä ennen kuin näkymään pääsi. Se oli
- * väärä malli: kumpikin puoli on aina olemassa samalla keikalla, ja johtaja
- * vain päättää kumpaa hän katsoo juuri nyt. Sama keikka voi hyvin olla
- * tuntitöissä ja silti tarvita kartan.
+ * Tunnit olivat hetken välilehti näiden rinnalla, ja se oli väärin kahdesta
+ * syystä. Ensinnäkin ne kaksi puolta eivät kysy samaa kysymystä: projektipuoli
+ * kysyy MITÄ ON TEHTY (ikkunat, lamput, ovet, kartta, urakka), tuntipuoli
+ * kysyy PALJONKO ON TEHTY TUNTEJA. Toiseksi — ja tämä oli se näkyvä vika —
+ * välilehti näytti samalla keikalla vanhan projektityökalun tuntisummat,
+ * satoja tunteja muilta töiltä, aivan kuin ne olisivat tämän työn tunteja.
  *
- * Siksi tunnit ovat tässä muiden välilehtien rinnalla: aina saatavilla, yhden
- * napautuksen päässä, eikä mikään estä palaamasta.
+ * Nyt puoli valitaan ovella (`ModeChooser`) ja kummallakin on omat lukunsa.
+ * Valinta ei ole lukko: takaisin pääsee aina yhdellä napautuksella.
  */
 const TABS: { id: Fr8Tab; label: string; short: string }[] = [
   { id: "dashboard", label: "Kokonaistilanne", short: "Tilanne" },
   { id: "floor", label: "Tilanne kerroksittain", short: "Kerrokset" },
-  { id: "hours", label: "Tunnit", short: "Tunnit" },
   { id: "maksut", label: "Maksut", short: "Maksut" },
 ];
 

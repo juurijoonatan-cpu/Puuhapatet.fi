@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, billingModeOf, isHourlyGig, roundWorkHours, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, sanitizeBoard, sortedBoard, openTaskCount, BOARD_CUSTOMER, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
+import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, billingModeOf, isHourlyGig, roundWorkHours, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, sanitizeBoard, sortedBoard, openTaskCount, BOARD_CUSTOMER, sanitizeShifts, computeShiftStats, shiftHoursOf, dayKey, isDayKey, fmtDayLabel, MAX_SHIFTS, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
 import { emptyGigData, computeTotals } from "./gig";
 
 // Kohta 6.1 — kokonaistilanteen ikkunamäärän täsmäytys. Ks. docs/fr8-era-laskutus-plan.md.
@@ -1094,7 +1094,17 @@ describe("asiakkaan tuntinäkymä — mitä hän saa nähdä", () => {
   function gig(): ProjectData {
     const p = emptyProjectData();
     p.billingMode = "hourly";
-    p.hours = { oona: 9, selma: 6, jani: 0 };
+    // VANHAT tunnit — projektityökalun juokseva summa. Nämä eivät saa näkyä
+    // asiakkaalle: ne on tehty muille töille ennen kuin tämä keikka alkoi.
+    p.hours = { milja: 78, petrus: 47 };
+    // Tämän työn tunnit: päivätty vuorokirjanpito.
+    p.shifts = [
+      { id: "s1", worker: "oona", day: "2026-08-24", hours: 5, at: 100 },
+      { id: "s2", worker: "oona", day: "2026-08-25", hours: 4, at: 200 },
+      { id: "s3", worker: "selma", day: "2026-08-25", hours: 6, at: 300 },
+      { id: "s4", worker: "jani", day: "2026-08-25", hours: 1, at: 400 },
+      { id: "s5", worker: "jani", day: "2026-08-25", hours: -1, at: 500, by: "joonatan" },
+    ];
     p.expenses = [
       { id: "e1", by: "joonatan", kind: "materials", desc: "Polttimot", amountCents: 4500, ts: 300, forCustomer: true },
       { id: "e2", by: "joonatan", kind: "transport", desc: "Bussilippu", amountCents: 320, ts: 200 },
@@ -1117,8 +1127,20 @@ describe("asiakkaan tuntinäkymä — mitä hän saa nähdä", () => {
   });
 
   it("nollatuntinen ei ole rivi asiakkaan listalla", () => {
+    // Janille kirjattiin tunti ja se korjattiin pois — nollaan päätynyt tekijä
+    // ei ole rivi.
     const rows = customerHourRows(gig(), (id) => id);
     expect(rows.map((r) => r.name)).toEqual(["oona", "selma"]);
+  });
+
+  it("VANHAT projektitunnit eivät vuoda asiakkaan tuntilistalle", () => {
+    // Tämä on koko tuntitilan tärkein raja. `hours` on vanhan työkalun
+    // juokseva summa (FR8:lla satoja tunteja muilta töiltä); tuntitilan luku
+    // on asiakkaan lasku. Jos nämä sekoittuvat, laskutamme väärin.
+    const rows = customerHourRows(gig(), (id) => id);
+    expect(rows.map((r) => r.name)).not.toContain("milja");
+    expect(rows.map((r) => r.name)).not.toContain("petrus");
+    expect(rows.reduce((a, r) => a + r.hours, 0)).toBe(15);
   });
 
   it("tunnit järjestetään suurimmasta, ja nimi tulee nimeäjältä", () => {
@@ -1214,5 +1236,105 @@ describe("työtaulu — yksi lista, kolme kirjoittajaa", () => {
     // Asiakas ei ole crew-listassa, joten nimeä ei voi jälkikäteen selvittää.
     const clean = sanitizeBoard([{ id: "a", kind: "task", text: "x", by: BOARD_CUSTOMER, byName: "Niilo", at: 1 }]);
     expect(clean[0].byName).toBe("Niilo");
+  });
+});
+
+
+/**
+ * TUNTITILAN VUOROKIRJANPITO.
+ *
+ * Nämä testit vartioivat yhtä rajaa: tuntitilan luku ei saa olla peräisin
+ * vanhasta `hours`-summasta. Se vika oli tuotannossa — tuntinäkymä avautui
+ * näyttäen 255 tuntia joita kukaan ei ollut tehnyt sille työlle — ja koska
+ * tuntitilassa luku on lasku ja palkka, se ei ollut kosmeettinen.
+ */
+describe("tuntitilan vuorokirjanpito — oma kirjanpito, päivätty", () => {
+  const shifts = [
+    { id: "a", worker: "oona", day: "2026-08-24", hours: 5, at: 10 },
+    { id: "b", worker: "oona", day: "2026-08-25", hours: 4, at: 20 },
+    { id: "c", worker: "selma", day: "2026-08-25", hours: 6, at: 30 },
+  ];
+
+  it("summat lasketaan riveistä, ja päivä ratkaisee mikä on tänään", () => {
+    const st = computeShiftStats(shifts, "2026-08-25");
+    expect(st.totalHours).toBe(15);
+    expect(st.todayHours).toBe(10);
+    expect(st.byWorker).toEqual([
+      { id: "oona", hours: 9, days: 2, lastAt: 20 },
+      { id: "selma", hours: 6, days: 1, lastAt: 30 },
+    ]);
+  });
+
+  it("päivät tulevat uusin ensin ja jokaisella on tekijänsä", () => {
+    const st = computeShiftStats(shifts, "2026-08-25");
+    expect(st.byDay.map((d) => d.day)).toEqual(["2026-08-25", "2026-08-24"]);
+    expect(st.byDay[0]).toEqual({
+      day: "2026-08-25", hours: 10,
+      workers: [{ id: "selma", hours: 6 }, { id: "oona", hours: 4 }],
+    });
+  });
+
+  it("korjaus on oma rivinsä eikä summan muokkaus", () => {
+    const withFix = [...shifts, { id: "d", worker: "selma", day: "2026-08-25", hours: -2, at: 40, by: "joonatan" }];
+    expect(shiftHoursOf(withFix, "selma")).toBe(4);
+    expect(computeShiftStats(withFix, "2026-08-25").totalHours).toBe(13);
+  });
+
+  it("tekijä ei päädy miinukselle eikä nollarivi ole rivi", () => {
+    const over = [
+      { id: "a", worker: "jani", day: "2026-08-25", hours: 1, at: 10 },
+      { id: "b", worker: "jani", day: "2026-08-25", hours: -4, at: 20, by: "joonatan" },
+    ];
+    expect(shiftHoursOf(over, "jani")).toBe(0);
+    expect(computeShiftStats(over, "2026-08-25").byWorker).toEqual([]);
+  });
+
+  it("sanitointi pudottaa rivin jolta puuttuu tekijä, tunnit tai tunniste", () => {
+    const clean = sanitizeShifts([
+      { id: "a", worker: "oona", day: "2026-08-25", hours: 4, at: 1 },
+      { id: "b", worker: "", day: "2026-08-25", hours: 4, at: 2 },
+      { id: "c", worker: "selma", day: "2026-08-25", hours: 0, at: 3 },
+      { id: "", worker: "selma", day: "2026-08-25", hours: 2, at: 4 },
+      { id: "a", worker: "selma", day: "2026-08-25", hours: 9, at: 5 },
+    ]);
+    expect(clean.map((s) => s.id)).toEqual(["a"]);
+  });
+
+  it("kelvoton päivä johdetaan kirjaushetkestä — rivi ei jää päivättömäksi", () => {
+    const at = new Date(2026, 7, 25, 13, 0, 0).getTime();
+    const [row] = sanitizeShifts([{ id: "a", worker: "oona", day: "eilen", hours: 3, at }]);
+    expect(row.day).toBe("2026-08-25");
+  });
+
+  it("päiväavain on paikallinen — yötyö ei siirry edelliselle päivälle", () => {
+    // 01:30 paikallista aikaa: UTC-päivä olisi Suomessa vielä edellinen.
+    const at = new Date(2026, 7, 25, 1, 30, 0).getTime();
+    expect(dayKey(at)).toBe("2026-08-25");
+    expect(isDayKey(dayKey(at))).toBe(true);
+    expect(isDayKey("25.8.2026")).toBe(false);
+  });
+
+  it("päivämäärä näytetään viikonpäivän kanssa", () => {
+    expect(fmtDayLabel("2026-08-25")).toBe("ti 25.8.");
+  });
+
+  it("lista ei kasva rajatta — vanhin putoaa", () => {
+    const many = Array.from({ length: MAX_SHIFTS + 25 }, (_, i) => ({
+      id: `s${i}`, worker: "oona", day: "2026-08-25", hours: 1, at: i,
+    }));
+    const clean = sanitizeShifts(many);
+    expect(clean.length).toBe(MAX_SHIFTS);
+    expect(clean[0].id).toBe("s25");
+  });
+
+  it("tyhjä kirjanpito ei kirjoita kenttää — vanhat blobit pysyvät ennallaan", () => {
+    const p = emptyProjectData();
+    expect("shifts" in sanitizeProjectData(p)).toBe(false);
+  });
+
+  it("kirjanpito säilyy sanitoinnin läpi", () => {
+    const p = emptyProjectData();
+    p.shifts = shifts;
+    expect(sanitizeProjectData(p).shifts?.map((s) => s.id)).toEqual(["a", "b", "c"]);
   });
 });

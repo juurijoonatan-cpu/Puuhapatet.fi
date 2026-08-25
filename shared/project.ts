@@ -225,6 +225,192 @@ export function roundWorkHoursFromMinutes(minutes: number): number {
 }
 
 /**
+ * TUNTITILAN TYÖVUOROT — oma kirjanpitonsa, ei `hours`-kentän jatkoa.
+ *
+ * MIKSI OMA KENTTÄ. `hours` on vanhan projektityökalun juokseva summa: sinne on
+ * vuosien varrella kertynyt tunteja ikkunapesukeikoilta, ja FR8:lla se on
+ * satoja tunteja. Jos tuntitila lukisi samaa kenttää, tuntinäkymä avautuisi
+ * ensimmäisellä kerralla näyttäen 255 tuntia joita kukaan ei ole tehnyt TÄLLE
+ * työlle — ja koska tuntitilassa tunnit ovat LASKU, väärä luku ei ole
+ * kosmeettinen vaan väärä lasku.
+ *
+ * Siksi tuntitila ei lue eikä kirjoita `hours`ia lainkaan. Se pitää omaa
+ * päiväkirjaansa: jokainen rivi on yksi kirjattu vuoro, jolla on päivä. Vanha
+ * puoli jatkaa `hours`illa täsmälleen kuten ennen, eikä kumpikaan näe toisen
+ * lukuja.
+ *
+ * PÄIVÄ TALLENNETAAN TEKSTINÄ (`day`, "2026-08-25") eikä johdeta `at`-hetkestä
+ * lukuhetkellä. Vuoro kuuluu siihen päivään jona se tehtiin, myös silloin kun
+ * se kirjataan jälkikäteen tai kun lukija on eri aikavyöhykkeellä.
+ *
+ * SERVERIN OMISTAMA. Kirjoittajia on kaksi — tekijän ajastin ja johtajan käsin
+ * korjaus — ja johtajan karttamuokkauksen autosave pyyhkisi juuri päättyneen
+ * vuoron, ellei tallennus lukisi kannan tuoreinta arvoa. Sama vika joka
+ * `scope`illa kerran oli; täällä se maksaisi jonkun palkkaa.
+ */
+export interface ProjShift {
+  id: string;
+  /** Tekijän id. */
+  worker: string;
+  /** Kalenteripäivä "YYYY-MM-DD" — ks. yllä. */
+  day: string;
+  /** Tunnit. Negatiivinen = johtajan korjaus (`by` kertoo kuka korjasi). */
+  hours: number;
+  /** Kirjaushetki (epoch ms). Järjestää saman päivän rivit. */
+  at: number;
+  /** Ajastimen alkuhetki, kun vuoro ajettiin ajastimella. */
+  startedAt?: number;
+  /** Kuka kirjasi, jos joku muu kuin tekijä itse. */
+  by?: string;
+  /** Vapaa selite, esim. korjauksen syy. */
+  note?: string;
+}
+
+/** Vuorolistan pituusraja. Vanhin putoaa, kuten lokeilla muutenkin. */
+export const MAX_SHIFTS = 500;
+export const MAX_SHIFT_NOTE_LEN = 120;
+
+/**
+ * Kalenteripäivä "YYYY-MM-DD" paikallisessa ajassa.
+ *
+ * EI `toISOString()`, joka antaa UTC-päivän: Suomessa kello 01:30 kirjattu
+ * vuoro kuuluisi silloin edelliselle päivälle. Ilta- ja yötyö on tällä alalla
+ * tavallista, joten se ei ole reunatapaus.
+ */
+export function dayKey(ms: number = Date.now()): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** Onko merkkijono kelvollinen päiväavain. */
+export function isDayKey(v: any): boolean {
+  return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+}
+
+/** "ma 25.8." — lyhyt päivämäärä listalle. */
+export function fmtDayLabel(day: string): string {
+  if (!isDayKey(day)) return day;
+  const [y, mo, d] = day.split("-").map(Number);
+  const dt = new Date(y, mo - 1, d);
+  const wd = ["su", "ma", "ti", "ke", "to", "pe", "la"][dt.getDay()];
+  return `${wd} ${d}.${mo}.`;
+}
+
+/** Tunnit ihmisen luettavaksi: 7 → "7", 7.5 → "7,5". */
+export function fmtShiftHours(h: number): string {
+  return h.toLocaleString("fi-FI", { maximumFractionDigits: 1 });
+}
+
+export function sanitizeShifts(input: any): ProjShift[] {
+  if (!Array.isArray(input)) return [];
+  const out: ProjShift[] = [];
+  const seen = new Set<string>();
+  for (const s of input.slice(-MAX_SHIFTS)) {
+    const id = String(s?.id ?? "").trim().slice(0, 40);
+    const worker = String(s?.worker ?? "").trim().slice(0, 40);
+    const hours = Math.round((Number(s?.hours) || 0) * 100) / 100;
+    if (!id || !worker || !hours || seen.has(id)) continue;
+    seen.add(id);
+    const at = Number(s?.at) || Date.now();
+    out.push({
+      id, worker, hours, at,
+      // Kelvoton päivä johdetaan kirjaushetkestä: rivi ilman päivää ei kuuluisi
+      // mihinkään päivään, ja koko näkymä on päivien varassa.
+      day: isDayKey(s?.day) ? s.day : dayKey(at),
+      ...(Number(s?.startedAt) ? { startedAt: Number(s.startedAt) } : {}),
+      ...(s?.by ? { by: String(s.by).trim().slice(0, 40) } : {}),
+      ...(s?.note ? { note: String(s.note).trim().slice(0, MAX_SHIFT_NOTE_LEN) } : {}),
+    });
+  }
+  return out;
+}
+
+export interface ShiftWorkerRow {
+  id: string;
+  hours: number;
+  /** Montako eri päivää tekijällä on kirjauksia. */
+  days: number;
+  /** Viimeisin kirjaushetki. */
+  lastAt: number;
+}
+
+export interface ShiftDayRow {
+  day: string;
+  hours: number;
+  /** Tekijöiden id:t tälle päivälle, tunnit suurimmasta pienimpään. */
+  workers: { id: string; hours: number }[];
+}
+
+export interface ShiftStats {
+  totalHours: number;
+  /** Tunnit kuluvalle kalenteripäivälle. */
+  todayHours: number;
+  byWorker: ShiftWorkerRow[];
+  /** Päivät uusimmasta vanhimpaan. */
+  byDay: ShiftDayRow[];
+}
+
+/**
+ * Tuntitilan tilasto. Kaikki mitä näkymä tarvitsee lasketaan tässä yhdessä
+ * paikassa, jottei johtajan ja asiakkaan luku voi erota toisistaan.
+ *
+ * NEGATIIVISET RIVIT (johtajan korjaukset) lasketaan mukaan summiin mutta
+ * tekijän kokonaisluku ei mene alle nollan: miinukselle mennyt palkkarivi
+ * olisi virhe jota ei voi lukea, ja korjaus on aina korjaus johonkin.
+ */
+export function computeShiftStats(shifts: ProjShift[] | undefined, today: string = dayKey()): ShiftStats {
+  const list = shifts ?? [];
+  const wSum = new Map<string, { hours: number; days: Set<string>; lastAt: number }>();
+  const dSum = new Map<string, Map<string, number>>();
+  let todayHours = 0;
+
+  for (const s of list) {
+    const w = wSum.get(s.worker) ?? { hours: 0, days: new Set<string>(), lastAt: 0 };
+    w.hours += s.hours;
+    w.days.add(s.day);
+    w.lastAt = Math.max(w.lastAt, s.at);
+    wSum.set(s.worker, w);
+
+    const d = dSum.get(s.day) ?? new Map<string, number>();
+    d.set(s.worker, (d.get(s.worker) ?? 0) + s.hours);
+    dSum.set(s.day, d);
+
+    if (s.day === today) todayHours += s.hours;
+  }
+
+  const byWorker: ShiftWorkerRow[] = Array.from(wSum.entries())
+    .map(([id, v]) => ({ id, hours: Math.max(0, Math.round(v.hours * 100) / 100), days: v.days.size, lastAt: v.lastAt }))
+    .filter((r) => r.hours > 0)
+    .sort((a, b) => b.hours - a.hours || a.id.localeCompare(b.id));
+
+  const byDay: ShiftDayRow[] = Array.from(dSum.entries())
+    .map(([day, m]) => ({
+      day,
+      hours: Math.max(0, Math.round(Array.from(m.values()).reduce((a, h) => a + h, 0) * 100) / 100),
+      workers: Array.from(m.entries())
+        .map(([id, hours]) => ({ id, hours: Math.round(hours * 100) / 100 }))
+        .filter((x) => x.hours > 0)
+        .sort((a, b) => b.hours - a.hours || a.id.localeCompare(b.id)),
+    }))
+    .filter((d) => d.hours > 0)
+    .sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : 0));
+
+  return {
+    totalHours: Math.round(byWorker.reduce((a, r) => a + r.hours, 0) * 100) / 100,
+    todayHours: Math.max(0, Math.round(todayHours * 100) / 100),
+    byWorker,
+    byDay,
+  };
+}
+
+/** Tekijän tunnit tuntitilassa. Käsin korjaus ei saa viedä alle nollan. */
+export function shiftHoursOf(shifts: ProjShift[] | undefined, worker: string): number {
+  const sum = (shifts ?? []).filter((s) => s.worker === worker).reduce((a, s) => a + s.hours, 0);
+  return Math.max(0, Math.round(sum * 100) / 100);
+}
+
+/**
  * Ovipisteet — kartalle merkittyjä ovia, joista jokainen on TEHTÄVÄ: se on joko
  * tekemättä tai tehty, sillä voi olla lyhyt tehtävänimi (`label`, esim.
  * "karmit + lasi") ja huomautus.
@@ -596,6 +782,9 @@ export interface ProjectData {
   /** Työtaulu: keikan yhteinen tehtävä- ja viestilista (`ProjBoardEntry`).
    *  SERVERIN OMISTAMA — kolme kirjoittajaa, ks. tyypin dokumentaatio. */
   board?: ProjBoardEntry[];
+  /** Tuntitilan työvuorot (`ProjShift`). Oma kirjanpitonsa, EI `hours`-kentän
+   *  jatke — ks. tyypin dokumentaatio siitä miksi. SERVERIN OMISTAMA. */
+  shifts?: ProjShift[];
   /** Johtajan ostotieto: malli ja määrä (`FixtureOrder`). */
   fixtureOrder?: FixtureOrder;
   /** Keikan lamppumallit (`LampModel`). Johtaja ylläpitää listaa. */
@@ -1618,9 +1807,11 @@ export function customerExpenses(data: ProjectData): PublicExpense[] {
 export interface CustomerHourRow { name: string; hours: number; }
 
 export function customerHourRows(data: ProjectData, nameOf: (id: string) => string): CustomerHourRow[] {
-  return Object.entries(data.hours ?? {})
-    .filter(([, h]) => h > 0)
-    .map(([id, hours]) => ({ name: nameOf(id), hours }))
+  // Luku tulee tuntitilan omasta vuorokirjanpidosta (`shifts`), EI vanhasta
+  // `hours`-summasta. Muuten asiakas näkisi laskullaan tunteja jotka on tehty
+  // jollekin muulle työlle ennen kuin tämä keikka edes alkoi. Ks. `ProjShift`.
+  return computeShiftStats(data.shifts).byWorker
+    .map((r) => ({ name: nameOf(r.id), hours: r.hours }))
     .sort((a, b) => b.hours - a.hours);
 }
 
@@ -1896,8 +2087,10 @@ export interface GigEfficiency {
   actualHoursPerWindow: number | null;
 }
 
-/** Local YYYY-MM-DD key for grouping log events by calendar day. */
-function dayKey(ts: number): string {
+/** Ryhmittelyavain lokitapahtumille. EI sama kuin `dayKey`: tämä on pelkkä
+ *  ryhmittelyyn kelpaava avain (kuukausi 0-pohjainen, ei nollattu), eikä sitä
+ *  näytetä eikä talleteta missään. `dayKey` on se joka menee kirjanpitoon. */
+function logDayGroupKey(ts: number): string {
   const d = new Date(ts);
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
@@ -1934,7 +2127,7 @@ export function computeEfficiency(data: ProjectData): GigEfficiency {
 
   for (const l of data.log) {
     if (l.status !== "pesty") continue;
-    const k = dayKey(l.ts);
+    const k = logDayGroupKey(l.ts);
     // Count each window once per day to avoid double-counting status flips.
     let seen = seenKeysPerDay.get(k);
     if (!seen) { seen = new Set(); seenKeysPerDay.set(k, seen); }
@@ -2572,6 +2765,7 @@ export function sanitizeProjectData(input: any): ProjectData {
     ...(input.settlement !== undefined ? (() => { const s = sanitizeFounderSettlementState(input.settlement); return s ? { settlement: s } : {}; })() : {}),
     ...(input.scope !== undefined ? (() => { const sc = sanitizeScopeState(input.scope); return sc ? { scope: sc } : {}; })() : {}),
     ...(input.board !== undefined ? (() => { const b = sanitizeBoard(input.board); return b.length ? { board: b } : {}; })() : {}),
+    ...(input.shifts !== undefined ? (() => { const s = sanitizeShifts(input.shifts); return s.length ? { shifts: s } : {}; })() : {}),
     updatedAt: Date.now(),
   };
 }

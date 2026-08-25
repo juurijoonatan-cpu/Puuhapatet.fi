@@ -80,6 +80,100 @@ export interface ProjFixtureNote { text: string; by?: string; ts: number; }
 export const MAX_FIXTURE_NOTE_LEN = 400;
 
 /**
+ * TYÖTAULU — keikan yhteinen tehtävä- ja viestilista.
+ *
+ * YKSI LISTA, KAKSI LAJIA. Tehtävä on jotain joka odottaa tekemistä ja jonka
+ * voi kuitata; merkintä on jotain joka on jo tehty tai sanottu. Ne ovat samassa
+ * listassa koska ne ovat samaa keskustelua: "vaihtakaa kellarin lamput" ja
+ * "kellarin lamput vaihdettu" kuuluvat vierekkäin, eivät kahteen eri näkymään
+ * joita pitää lukea rinnakkain.
+ *
+ * KOLME KIRJOITTAJAA, YKSI TAULU. Asiakas lisää tehtäviä seurantasivultaan,
+ * tekijä kuittaa niitä ja kirjaa mitä teki, johtaja tekee kumpaakin. Siksi
+ * tämä on SERVERIN OMISTAMA kenttä kuten `scope` ja `fixtureQuote`: kolme
+ * kirjoittajaa samaan listaan tarkoittaa, että johtajan karttamuokkauksen
+ * autosave pyyhkisi asiakkaan juuri lisäämän tehtävän, ellei tallennus lue
+ * kannan tuoreinta arvoa.
+ *
+ * NIMI TALLENNETAAN KIRJOITUSHETKELLÄ (`byName`). Asiakas ei ole
+ * crew-listassa, joten hänen nimeään ei voi jälkikäteen selvittää id:stä —
+ * ja tekijänkin nimi voi muuttua, jolloin vanha rivi väittäisi väärää.
+ */
+export type ProjBoardKind = "task" | "note";
+
+export interface ProjBoardEntry {
+  id: string;
+  kind: ProjBoardKind;
+  text: string;
+  /** Kirjoittaja: tekijän id, tai `"customer"` kun kirjoittaja on asiakas. */
+  by: string;
+  /** Näyttönimi kirjoitushetkellä — ks. yllä. */
+  byName?: string;
+  at: number;
+  /** Vain tehtävällä: kuka kuittasi tehdyksi ja milloin. */
+  done?: { by: string; byName?: string; at: number };
+}
+
+/** Asiakkaan kirjoittajatunnus. Ei ole eikä voi olla tekijän id. */
+export const BOARD_CUSTOMER = "customer";
+
+export const MAX_BOARD_TEXT_LEN = 600;
+/** Taulun pituusraja. Vanhin putoaa pois, kuten lokeilla muutenkin. */
+export const MAX_BOARD_ENTRIES = 300;
+
+export function toBoardKind(v: any): ProjBoardKind {
+  return v === "task" ? "task" : "note";
+}
+
+/**
+ * Työtaulun siivous. Tekstitön rivi putoaa: tyhjä viesti ei ole viesti, ja
+ * tyhjä tehtävä ei ole tehtävä.
+ */
+export function sanitizeBoard(input: any): ProjBoardEntry[] {
+  if (!Array.isArray(input)) return [];
+  const out: ProjBoardEntry[] = [];
+  const seen = new Set<string>();
+  for (const e of input.slice(-MAX_BOARD_ENTRIES)) {
+    const id = String(e?.id ?? "").trim().slice(0, 40);
+    const text = String(e?.text ?? "").trim().slice(0, MAX_BOARD_TEXT_LEN);
+    const by = String(e?.by ?? "").trim().slice(0, 40);
+    if (!id || !text || !by || seen.has(id)) continue;
+    seen.add(id);
+    const kind = toBoardKind(e?.kind);
+    const doneBy = e?.done && typeof e.done === "object" ? String(e.done.by ?? "").trim().slice(0, 40) : "";
+    out.push({
+      id, kind, text, by,
+      ...(e?.byName ? { byName: String(e.byName).slice(0, 60) } : {}),
+      at: Number(e?.at) || Date.now(),
+      // Kuittaus vain tehtävällä: merkinnällä ei ole mitään kuitattavaa, ja
+      // sinne eksynyt kuittaus näyttäisi listalla tehdyltä tehtävältä.
+      ...(kind === "task" && doneBy
+        ? { done: {
+            by: doneBy,
+            ...(e.done.byName ? { byName: String(e.done.byName).slice(0, 60) } : {}),
+            at: Number(e.done.at) || Date.now(),
+          } }
+        : {}),
+    });
+  }
+  return out;
+}
+
+/** Avoimet tehtävät ensin, uusin ylimmäksi; kuitatut ja merkinnät perässä. */
+export function sortedBoard(entries: ProjBoardEntry[]): ProjBoardEntry[] {
+  return [...entries].sort((a, b) => {
+    const aOpen = a.kind === "task" && !a.done ? 0 : 1;
+    const bOpen = b.kind === "task" && !b.done ? 0 : 1;
+    return aOpen - bOpen || b.at - a.at;
+  });
+}
+
+/** Montako tehtävää odottaa kuittausta. */
+export function openTaskCount(entries: ProjBoardEntry[] | undefined): number {
+  return (entries ?? []).filter((e) => e.kind === "task" && !e.done).length;
+}
+
+/**
  * LASKUTUSTILA — kaksi tapaa tehdä keikkaa, ja ne eivät saa sekoittua.
  *
  *   "targeted" — KOHDENNETTU HINNOITTELU. Kaikki mitä tähän asti on ollut:
@@ -499,6 +593,9 @@ export interface ProjectData {
   /** Keikan laskutustila (`BillingMode`). Puuttuva = "targeted" — ks. tyypin
    *  dokumentaatio siitä miksi sitä ei kirjoiteta oletuksena. */
   billingMode?: BillingMode;
+  /** Työtaulu: keikan yhteinen tehtävä- ja viestilista (`ProjBoardEntry`).
+   *  SERVERIN OMISTAMA — kolme kirjoittajaa, ks. tyypin dokumentaatio. */
+  board?: ProjBoardEntry[];
   /** Johtajan ostotieto: malli ja määrä (`FixtureOrder`). */
   fixtureOrder?: FixtureOrder;
   /** Keikan lamppumallit (`LampModel`). Johtaja ylläpitää listaa. */
@@ -2474,6 +2571,7 @@ export function sanitizeProjectData(input: any): ProjectData {
     ...(input.guided !== undefined ? (() => { const g = sanitizeGuidedWork(input.guided); return g ? { guided: g } : {}; })() : {}),
     ...(input.settlement !== undefined ? (() => { const s = sanitizeFounderSettlementState(input.settlement); return s ? { settlement: s } : {}; })() : {}),
     ...(input.scope !== undefined ? (() => { const sc = sanitizeScopeState(input.scope); return sc ? { scope: sc } : {}; })() : {}),
+    ...(input.board !== undefined ? (() => { const b = sanitizeBoard(input.board); return b.length ? { board: b } : {}; })() : {}),
     updatedAt: Date.now(),
   };
 }

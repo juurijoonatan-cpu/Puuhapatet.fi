@@ -30,7 +30,7 @@ import {
 } from "@shared/pricing";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, signaturePrompt, contractPending, gigStatus, livePayments, withoutDashOnly, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, isHourlyGig, billingModeOf, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, isHourlyGig, billingModeOf, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, sanitizeBoard, sortedBoard, BOARD_CUSTOMER, MAX_BOARD_TEXT_LEN, MAX_BOARD_ENTRIES, toBoardKind, type ProjBoardEntry, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
@@ -665,13 +665,15 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   // laajuuskyselyllä: ei rahaa liiku, asiakas vain kertoo mitä olisi valmis
   // maksamaan. Reitti tarkistaa itse että keikalla on kalusteita.
   { method: "POST", re: /^\/api\/gig\/[^/]+\/fixture-quote$/ },
+  // Työtaulu: asiakas lisää tehtävän tai viestin omalta seurantalinkiltään.
+  { method: "POST", re: /^\/api\/gig\/[^/]+\/board$/ },
   { method: "GET",  re: /^\/api\/crew\/[^/]+$/ },
   // Sama vika tekijän puolella: kuvan haku omalla tokenilla vastasi 401 ja
   // heitti tekijän adminin kirjautumiseen kesken työpäivän.
   { method: "GET",  re: /^\/api\/crew\/[^/]+\/observation-image$/ },
   // Pohjakuva tekijän työlinkistä — sama aukko kuin yllä.
   { method: "GET",  re: /^\/api\/crew\/[^/]+\/plan\/[^/]*$/ },
-  { method: "POST", re: /^\/api\/crew\/[^/]+\/(password|onboard|window|lamp|door|hours|note|map-note|shift|shift-target|expense)$/ },
+  { method: "POST", re: /^\/api\/crew\/[^/]+\/(password|onboard|window|lamp|door|hours|note|map-note|shift|shift-target|board|expense)$/ },
   // Nämä neljä olivat samassa aukossa kuin observation-image: jokainen
   // tunnistaa tekijän `findJobByCrewToken`illa täsmälleen kuten yllä olevat,
   // mutta portti vastasi niihin 401 → tekijä lensi adminin kirjautumiseen
@@ -5859,6 +5861,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         billingMode: proj ? billingModeOf(proj) : "targeted",
         // Tunnit ja hänelle ostetut tarvikkeet (vain tuntikeikalla).
         hourly,
+        // Työtaulu: keikan yhteinen tehtävä- ja viestilista.
+        board: proj ? sortedBoard(proj.board ?? []) : [],
         status: gigStatus(gig),
         signed: !!gig.signature?.signedAt,
         signedAt: gig.signature?.signedAt ?? null,
@@ -5978,6 +5982,36 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
    * Tyhjä runko (ei hintoja, ei viestiä) pyyhkii ehdotuksen: asiakas saa perua
    * sen sanomatta mitään.
    */
+  /**
+   * TYÖTAULU — ASIAKAS. Hän lisää tehtäviä ("vaihtakaa kellarin lamput") ja
+   * kirjoittaa viestejä. Hän EI kuittaa tehtäviä tehdyiksi: kuittaus on väite
+   * tehdystä työstä, ja sen tekee se joka työn teki.
+   */
+  app.post("/api/gig/:token/board", async (req, res) => {
+    try {
+      const [row] = await db
+        .select({ job: jobs, customer: customers })
+        .from(jobs)
+        .innerJoin(customers, eq(jobs.customerId, customers.id))
+        .where(eq(jobs.quoteToken, String(req.params.token)));
+      if (!row || !row.job.isCustomGig) return res.status(404).json({ error: "Seurantaa ei löydy" });
+      const gig = parseGig(row.job.gigData);
+      if (!gig) return res.status(404).json({ error: "Seurantaa ei löydy" });
+      const project = parseProject(row.job.projectData ?? null) ?? emptyProjectData();
+
+      const name = (gig.company?.contact || row.customer.name || "Asiakas").split(" ")[0];
+      project.board = applyBoardAction(
+        project.board ?? [],
+        { add: { kind: req.body?.kind, text: req.body?.text } },
+        { id: BOARD_CUSTOMER, name },
+      );
+      const saved = await saveProject(row.job, project, { boardMutation: true });
+      res.json({ ok: true, board: sortedBoard(saved.board ?? []) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
   app.post("/api/gig/:token/fixture-quote", async (req, res) => {
     try {
       const [row] = await db.select({ job: jobs }).from(jobs).where(eq(jobs.quoteToken, String(req.params.token)));
@@ -6793,6 +6827,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // Replace the project data (mapping + statuses + hours). Server validates & clamps.
+  /**
+   * TYÖTAULU — JOHTAJA. Sama toiminto kuin tekijällä, mutta admin-tunnuksella
+   * ja työpöydältä. Oma reittinsä eikä blob-tallennus, koska taulu on serverin
+   * omistama: geneerinen tallennus palauttaisi kannan arvon ja pyyhkisi juuri
+   * kirjoitetun rivin.
+   */
+  app.post("/api/jobs/:id/board", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const [job] = await db.select(CREW_JOB_COLS).from(jobs).where(eq(jobs.id, id)) as typeof jobs.$inferSelect[];
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const project = parseProject(job.projectData ?? null) ?? emptyProjectData();
+      const who = String(req.body?.by ?? "").trim().slice(0, 40) || "host";
+      const name = String(req.body?.byName ?? "").trim().slice(0, 60);
+      project.board = applyBoardAction(
+        project.board ?? [],
+        req.body?.id != null
+          ? { toggle: { id: req.body.id, done: req.body?.done !== false } }
+          : { add: { kind: req.body?.kind, text: req.body?.text } },
+        { id: who, ...(name ? { name } : {}) },
+      );
+      const saved = await saveProject(job, project, { boardMutation: true });
+      res.json({ ok: true, board: sortedBoard(saved.board ?? []) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
   app.patch("/api/jobs/:id/project", async (req, res) => {
     try {
       const id = Number(req.params.id);
@@ -6842,6 +6904,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // omistama, ja tämä on sen toinen suojauspolku — ks. yllä oleva perustelu.
       const storedQuote = stored?.fixtureQuote;
       if (storedQuote) project.fixtureQuote = storedQuote; else delete project.fixtureQuote;
+      // Työtaulu on samalla tavalla serverin omistama, ja tämä on sen toinen
+      // suojauspolku — ks. yllä oleva perustelu.
+      const storedBoard = stored?.board;
+      if (storedBoard) project.board = storedBoard; else delete project.board;
       const totals = computeProjectTotals(project);
 
       // Auto-sync the gig's billing sectors from the toolkit (FR8 = source of
@@ -7491,6 +7557,47 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     };
   }
 
+  /**
+   * TYÖTAULUN MUUTOS — yksi funktio kaikille kolmelle kirjoittajalle.
+   *
+   * Asiakas, tekijä ja johtaja kirjoittavat samaan listaan, ja jokaisen
+   * kohdalla pätevät samat säännöt: teksti ei saa olla tyhjä, lista ei kasva
+   * rajatta, ja kuittauksen voi tehdä vain tehtävälle. Kolmena kopiona nuo
+   * säännöt ehtisivät erkaantua ensimmäisessä korjauksessa.
+   *
+   * Palauttaa uuden taulun tai heittää selkokielisen virheen.
+   */
+  function applyBoardAction(
+    board: ProjBoardEntry[],
+    action: { add?: { kind: unknown; text: unknown }; toggle?: { id: unknown; done: boolean } },
+    who: { id: string; name?: string },
+  ): ProjBoardEntry[] {
+    if (action.add) {
+      const text = String(action.add.text ?? "").trim().slice(0, MAX_BOARD_TEXT_LEN);
+      if (!text) throw new Error("Teksti puuttuu");
+      const entry: ProjBoardEntry = {
+        id: `b${Date.now().toString(36)}${Math.floor(Math.random() * 100000).toString(36)}`,
+        kind: toBoardKind(action.add.kind),
+        text,
+        by: who.id,
+        ...(who.name ? { byName: who.name } : {}),
+        at: Date.now(),
+      };
+      // Vanhin putoaa pois, kuten lokeilla muutenkin.
+      return [...board, entry].slice(-MAX_BOARD_ENTRIES);
+    }
+    if (action.toggle) {
+      const id = String(action.toggle.id ?? "");
+      const found = board.find((e) => e.id === id);
+      if (!found) throw new Error("Riviä ei löytynyt");
+      if (found.kind !== "task") throw new Error("Merkintää ei voi kuitata");
+      return board.map((e) => (e.id !== id ? e : action.toggle!.done
+        ? { ...e, done: { by: who.id, ...(who.name ? { byName: who.name } : {}), at: Date.now() } }
+        : { ...e, done: undefined }));
+    }
+    throw new Error("Ei toimintoa");
+  }
+
   /** Asiakkaalle palautettava p2-tila (vain hinnat, ei tekijätietoja). */
   function publicP2(project: ProjectData) {
     const p2 = project.p2!;
@@ -7983,7 +8090,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   async function saveProject(
     job: typeof jobs.$inferSelect,
     project: ProjectData,
-    opts?: { p2Mutation?: boolean; guidedMutation?: boolean; settlementMutation?: boolean; planMutation?: boolean; scopeMutation?: boolean; fixtureQuoteMutation?: boolean },
+    opts?: { p2Mutation?: boolean; guidedMutation?: boolean; settlementMutation?: boolean; planMutation?: boolean; scopeMutation?: boolean; fixtureQuoteMutation?: boolean; boardMutation?: boolean },
   ): Promise<ProjectData> {
     const clean = sanitizeProjectData(project);
     // P2-neuvottelutila, ohjattu eteneminen (guided) ja johtajien tasaus ovat
@@ -7993,7 +8100,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     // samaan aikaan lukitsemaa hintaa, perustajan ohjausasetusta eikä
     // rahankirjausta siitä kuka sai erän ja kuka maksoi tekijän.
     let stored: ProjectData | null = null;
-    if (!opts?.p2Mutation || !opts?.guidedMutation || !opts?.settlementMutation || !opts?.planMutation || !opts?.scopeMutation || !opts?.fixtureQuoteMutation) {
+    if (!opts?.p2Mutation || !opts?.guidedMutation || !opts?.settlementMutation || !opts?.planMutation || !opts?.scopeMutation || !opts?.fixtureQuoteMutation || !opts?.boardMutation) {
       /**
        * VAIN KOLME KENTTÄÄ, EI KOKO BLOBIA.
        *
@@ -8012,7 +8119,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
        * Jos poiminta epäonnistuu (esim. vioittunut JSON), pudotaan takaisin
        * koko blobin lukuun — hitaampi mutta varma.
        */
-      let picked: { p2?: unknown; guided?: unknown; settlement?: unknown; planImages?: unknown; scope?: unknown; fixtureQuote?: unknown } | null = null;
+      let picked: { p2?: unknown; guided?: unknown; settlement?: unknown; planImages?: unknown; scope?: unknown; fixtureQuote?: unknown; board?: unknown } | null = null;
       try {
         const r: any = await db.execute(sql`
           select project_data::jsonb -> 'p2'                        as p2,
@@ -8020,7 +8127,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
                  project_data::jsonb -> 'settlement'                as settlement,
                  project_data::jsonb -> 'building' -> 'planImages'  as "planImages",
                  project_data::jsonb -> 'scope'                     as scope,
-                 project_data::jsonb -> 'fixtureQuote'              as "fixtureQuote"
+                 project_data::jsonb -> 'fixtureQuote'              as "fixtureQuote",
+                 project_data::jsonb -> 'board'                     as board
           from jobs where id = ${job.id} and project_data is not null
         `);
         const row = (r?.rows ?? r)?.[0];
@@ -8032,7 +8140,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const [fresh] = await db.select({ projectData: jobs.projectData }).from(jobs).where(eq(jobs.id, job.id));
         stored = fresh ? parseProject(fresh.projectData ?? null) : null;
         picked = stored
-          ? { p2: stored.p2, guided: stored.guided, settlement: stored.settlement, planImages: stored.building?.planImages, scope: stored.scope, fixtureQuote: stored.fixtureQuote }
+          ? { p2: stored.p2, guided: stored.guided, settlement: stored.settlement, planImages: stored.building?.planImages, scope: stored.scope, fixtureQuote: stored.fixtureQuote, board: stored.board }
           : {};
       }
       if (!opts?.p2Mutation) {
@@ -8058,6 +8166,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         // merkintä kirjoittaisi vastauksen pois kannasta.
         const storedScope = picked.scope ?? undefined;
         if (storedScope) clean.scope = storedScope as ProjectData["scope"]; else delete clean.scope;
+      }
+      if (!opts?.boardMutation) {
+        // Työtaulu: kolme kirjoittajaa samaan listaan. Ilman tätä johtajan
+        // karttamuokkauksen autosave pyyhkisi asiakkaan juuri lisäämän
+        // tehtävän — sama vika joka `scope`illa kerran oli.
+        const storedBoard = picked.board ?? undefined;
+        if (storedBoard) clean.board = storedBoard as ProjectData["board"]; else delete clean.board;
       }
       if (!opts?.fixtureQuoteMutation) {
         // Asiakkaan hintaehdotus lampuista ja ovikytkimistä. Sama vika uhkaisi
@@ -8320,6 +8435,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       doorStatuses: project.doorStatuses ?? {},
       doorDoneBy: Object.fromEntries(Object.entries(project.doorDoneBy ?? {}).map(([k, v]) => [k, v.by])),
       doorNotes: project.doorNotes ?? {},
+      // Työtaulu: tekijä kuittaa tehtäviä ja kirjaa mitä teki.
+      board: sortedBoard(project.board ?? []),
       hours: stats.hours,
       stats,
       // P2 (keltaiset ikkunat): tekijän OMA palkkio per ikkuna. Asiakashintaa tai
@@ -8719,6 +8836,31 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
 
       const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  /**
+   * TYÖTAULU — TEKIJÄ. Hän kuittaa tehtäviä tehdyiksi ja kirjaa mitä teki.
+   * Hän saa myös lisätä tehtävän: työmaalla huomaa asioita joita kukaan ei
+   * osannut listata etukäteen.
+   */
+  app.post("/api/crew/:token/board", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      project.board = applyBoardAction(
+        project.board ?? [],
+        req.body?.id != null
+          ? { toggle: { id: req.body.id, done: req.body?.done !== false } }
+          : { add: { kind: req.body?.kind, text: req.body?.text } },
+        { id: member.id, name: (member.name || member.id).split(" ")[0] },
+      );
+      const saved = await saveProject(job, project, { boardMutation: true });
       const savedMember = findCrewByToken(saved, member.token)!;
       res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {

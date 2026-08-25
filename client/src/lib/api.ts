@@ -3,7 +3,7 @@
  */
 
 import type { GigData, GigTotals } from "@shared/gig";
-import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding, FixedDeal, EraDebtBreakdown, ProjLampMark, LampStatus, LampCondition, ProjFixtureNote, ProjDoorMark, DoorStatus, PublicLampPoint, PublicDoorPoint, LampFloorStat, DoorFloorStat, FixtureQuote, LampModel } from "@shared/project";
+import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding, FixedDeal, EraDebtBreakdown, ProjLampMark, LampStatus, LampCondition, ProjFixtureNote, ProjDoorMark, DoorStatus, PublicLampPoint, PublicDoorPoint, LampFloorStat, DoorFloorStat, FixtureQuote, LampModel, ProjBoardEntry } from "@shared/project";
 import type { MemberAgreementSignature } from "@shared/member-agreement";
 import type { CrewMember, CrewMemberStats, CrewProfile, CrewAgreementSignature } from "@shared/crew";
 import type { WorkerAgreement } from "@shared/worker-agreements";
@@ -129,6 +129,8 @@ export interface WorkerView {
   /** Oven avain → tekijän id joka merkitsi sen tehdyksi. */
   doorDoneBy: Record<string, string>;
   doorNotes: Record<string, ProjFixtureNote>;
+  /** Työtaulu: keikan yhteinen tehtävä- ja viestilista. */
+  board: ProjBoardEntry[];
   hours: number;
   stats: CrewMemberStats;
   /** Johtajan yksitellen piilottamat ikkunat — eivät näy tekijän kartalla eikä
@@ -495,6 +497,8 @@ export interface GigPublicView {
     expenses: { kind: string; desc: string; amountCents: number; ts: number }[];
     expensesTotalCents: number;
   } | null;
+  /** Työtaulu: keikan yhteinen tehtävä- ja viestilista. */
+  board: ProjBoardEntry[];
 
   // Contract & signing gate
   contractText: string | null;
@@ -1592,6 +1596,23 @@ export const api = {
 
   // Sama lamppujen merkintä (ei rahaa, ei prioriteettia) — kuka vaihtoi tulee
   // palvelimella aina kirjautuneesta tekijästä itsestään.
+  /** Työtaulu — asiakas lisää tehtävän tai viestin. */
+  gigAddBoardEntry: (token: string, kind: "task" | "note", text: string) =>
+    request<{ ok: boolean; board: ProjBoardEntry[] }>("POST", `/api/gig/${token}/board`, { kind, text }),
+
+  /** Työtaulu — tekijä lisää rivin. */
+  crewAddBoardEntry: (token: string, kind: "task" | "note", text: string) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/board`, { kind, text }, QUICK),
+  /** Työtaulu — tekijä kuittaa tehtävän tehdyksi (tai purkaa kuittauksen). */
+  crewToggleBoardTask: (token: string, id: string, done: boolean) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/board`, { id, done }, QUICK),
+
+  /** Työtaulu — johtaja lisää rivin tai kuittaa tehtävän. */
+  adminAddBoardEntry: (jobId: number, kind: "task" | "note", text: string, by: string, byName?: string) =>
+    request<{ ok: boolean; board: ProjBoardEntry[] }>("POST", `/api/jobs/${jobId}/board`, { kind, text, by, byName }),
+  adminToggleBoardTask: (jobId: number, id: string, done: boolean, by: string, byName?: string) =>
+    request<{ ok: boolean; board: ProjBoardEntry[] }>("POST", `/api/jobs/${jobId}/board`, { id, done, by, byName }),
+
   crewMarkLamp: (token: string, key: string, status: LampStatus) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, status }, QUICK),
 

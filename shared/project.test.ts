@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, billingModeOf, isHourlyGig, roundWorkHours, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
+import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, billingModeOf, isHourlyGig, roundWorkHours, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, sanitizeBoard, sortedBoard, openTaskCount, BOARD_CUSTOMER, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
 import { emptyGigData, computeTotals } from "./gig";
 
 // Kohta 6.1 — kokonaistilanteen ikkunamäärän täsmäytys. Ks. docs/fr8-era-laskutus-plan.md.
@@ -1142,5 +1142,77 @@ describe("asiakkaan tuntinäkymä — mitä hän saa nähdä", () => {
     });
     expect((clean.expenses ?? []).every((e) => e.forCustomer === undefined)).toBe(true);
     expect(customerExpenses(clean)).toEqual([]);
+  });
+});
+
+
+describe("työtaulu — yksi lista, kolme kirjoittajaa", () => {
+  const entries = [
+    { id: "a", kind: "task" as const, text: "Vaihtakaa kellarin lamput", by: BOARD_CUSTOMER, byName: "Niilo", at: 100 },
+    { id: "b", kind: "note" as const, text: "Kellarin lamput vaihdettu", by: "oona", byName: "Oona", at: 300 },
+    { id: "c", kind: "task" as const, text: "Tarkistakaa 3. kerros", by: "matias", at: 200,
+      done: { by: "selma", byName: "Selma", at: 400 } },
+    { id: "d", kind: "task" as const, text: "Ovien tiivisteet", by: BOARD_CUSTOMER, at: 50 },
+  ];
+
+  it("avoimet tehtävät ensin, uusin ylimmäksi; kuitatut ja merkinnät perässä", () => {
+    expect(sortedBoard(entries).map((e) => e.id)).toEqual(["a", "d", "b", "c"]);
+  });
+
+  it("avoimet tehtävät lasketaan, merkinnät ja kuitatut eivät", () => {
+    expect(openTaskCount(entries)).toBe(2);
+    expect(openTaskCount([])).toBe(0);
+    expect(openTaskCount(undefined)).toBe(0);
+  });
+
+  it("tekstitön rivi putoaa — tyhjä viesti ei ole viesti", () => {
+    const clean = sanitizeBoard([
+      { id: "x", kind: "note", text: "   ", by: "oona", at: 1 },
+      { id: "y", kind: "note", text: "OK", by: "oona", at: 2 },
+      { id: "", kind: "note", text: "tunnukseton", by: "oona", at: 3 },
+      { id: "z", kind: "note", text: "kirjoittajaton", by: "", at: 4 },
+    ]);
+    expect(clean.map((e) => e.id)).toEqual(["y"]);
+  });
+
+  it("kaksoistunnus pudotetaan — sama rivi ei saa esiintyä kahdesti", () => {
+    const clean = sanitizeBoard([
+      { id: "a", kind: "note", text: "eka", by: "oona", at: 1 },
+      { id: "a", kind: "note", text: "toka", by: "oona", at: 2 },
+    ]);
+    expect(clean.map((e) => e.text)).toEqual(["eka"]);
+  });
+
+  it("kuittaus kuuluu vain tehtävälle — merkinnälle eksynyt pudotetaan", () => {
+    const clean = sanitizeBoard([
+      { id: "n", kind: "note", text: "juttu", by: "oona", at: 1, done: { by: "selma", at: 2 } },
+      { id: "t", kind: "task", text: "tehtävä", by: "oona", at: 1, done: { by: "selma", at: 2 } },
+    ]);
+    // Merkinnällä ei ole mitään kuitattavaa; sinne eksynyt kuittaus saisi sen
+    // näyttämään listalla tehdyltä tehtävältä.
+    expect(clean.find((e) => e.id === "n")!.done).toBeUndefined();
+    expect(clean.find((e) => e.id === "t")!.done).toMatchObject({ by: "selma" });
+  });
+
+  it("tuntematon laji on merkintä, ei tehtävä — arvattu tehtävä jäisi ikuisesti auki", () => {
+    expect(sanitizeBoard([{ id: "q", kind: "kysymys", text: "?", by: "oona", at: 1 }])[0].kind).toBe("note");
+  });
+
+  it("taulu ei kasva rajatta, ja vanhin putoaa", () => {
+    const many = Array.from({ length: 320 }, (_, i) => ({ id: `e${i}`, kind: "note", text: `t${i}`, by: "oona", at: i }));
+    const clean = sanitizeBoard(many);
+    expect(clean.length).toBe(300);
+    expect(clean[0].id).toBe("e20");
+  });
+
+  it("tyhjä taulu ei kirjoita kenttää lainkaan", () => {
+    expect("board" in sanitizeProjectData(emptyProjectData())).toBe(false);
+    expect("board" in sanitizeProjectData({ board: [] })).toBe(false);
+  });
+
+  it("kirjoittajan nimi säilyy tallennushetkeltä", () => {
+    // Asiakas ei ole crew-listassa, joten nimeä ei voi jälkikäteen selvittää.
+    const clean = sanitizeBoard([{ id: "a", kind: "task", text: "x", by: BOARD_CUSTOMER, byName: "Niilo", at: 1 }]);
+    expect(clean[0].byName).toBe("Niilo");
   });
 });

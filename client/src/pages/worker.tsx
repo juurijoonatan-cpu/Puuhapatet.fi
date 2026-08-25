@@ -13,6 +13,7 @@
  * Built mobile-first; works on phone and laptop.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import TaskBoard from "@/components/TaskBoard";
 import { useRoute } from "wouter";
 import { api, warmBackend, type WorkerView, type GuidedWorkerView } from "@/lib/api";
 import type { WindowStatus, LampStatus, LampCondition, DoorStatus } from "@shared/project";
@@ -1155,6 +1156,15 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
     await runMark("Huomautuksen tallennus", () => api.crewSetLampNote(token, key, text));
   }, [token, runMark]);
 
+  // Työtaulu: tekijä kuittaa tehtäviä ja kirjaa mitä teki. Sama lista jonka
+  // asiakas näkee — yksi keskustelu, ei kaksi.
+  const addBoardEntry = useCallback(async (kind: "task" | "note", text: string) => {
+    await runMark("Tallennus", () => api.crewAddBoardEntry(token, kind, text));
+  }, [token, runMark]);
+  const toggleBoardTask = useCallback(async (id: string, done: boolean) => {
+    await runMark("Kuittaus", () => api.crewToggleBoardTask(token, id, done));
+  }, [token, runMark]);
+
   // Lampun malli — tekijä näkee kohteen ja tietää mikä lamppu siinä on, joten
   // hän on oikea merkitsemään sen. Mallilistan ylläpito on johtajan puolella.
   const setLampModel = useCallback(async (key: string, modelId: string | null) => {
@@ -1335,6 +1345,9 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
           <HomeTab
             view={view}
             setTab={setTab}
+            board={view.board}
+            onAddBoardEntry={addBoardEntry}
+            onToggleBoardTask={toggleBoardTask}
             pendingPayouts={pendingPayouts}
             onOpenPayouts={() => setSub("payouts")}
             onOpenInfo={() => setSub("notes")}
@@ -1493,7 +1506,10 @@ function WindowDoneBurst({ onDone }: { onDone: () => void }) {
 /** Worker home / overview — the motivating landing screen: clear team progress on
  *  the contract (red) windows, your own windows + earnings, quick actions, and the
  *  team standings. Replaces "just a map" as the first thing a worker sees. */
-function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
+function HomeTab({ view, setTab, board, onAddBoardEntry, onToggleBoardTask, pendingPayouts, onOpenPayouts, onOpenInfo }: {
+  board: import("@shared/project").ProjBoardEntry[];
+  onAddBoardEntry: (kind: "task" | "note", text: string) => Promise<void>;
+  onToggleBoardTask: (id: string, done: boolean) => Promise<void>;
   view: WorkerView; setTab: (t: Tab) => void;
   pendingPayouts: number; onOpenPayouts: () => void; onOpenInfo: () => void;
 }) {
@@ -1685,6 +1701,25 @@ function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
           päättävät luvun (pyöristys + käsin korjaus). Jos tekijä näkisi
           juoksevan summan, hän tekisi siitä omat johtopäätöksensä ennen kuin
           johtaja on sen tarkistanut. Ks. `BillingMode`. */}
+      {/* TYÖTAULU. Asiakkaan pyynnöt ja oma työpäiväkirja samassa listassa,
+          heti kotinäkymässä — tehtävä jota pitää etsiä valikosta ei tule
+          tehdyksi. */}
+      <div style={{ marginTop: 18, padding: 16, borderRadius: 16, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+        <p style={{ margin: "0 0 12px", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(255,255,255,0.4)" }}>
+          Tehtävät ja merkinnät
+        </p>
+        <TaskBoard
+          entries={board}
+          onAdd={onAddBoardEntry}
+          onToggle={onToggleBoardTask}
+          theme={{
+            font: FONT, ink: "#fff", muted: "rgba(255,255,255,0.5)", faint: "rgba(255,255,255,0.38)",
+            fill: "rgba(255,255,255,0.04)", card: "rgba(0,0,0,0.28)", hair: "rgba(255,255,255,0.14)",
+            accent: "#5fe08a", done: "#3E7C59",
+          }}
+        />
+      </div>
+
       {view.billingMode !== "hourly" && (
         <div style={{ marginTop: 16 }}>
           <Stat label="Tunteja" value={s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} />

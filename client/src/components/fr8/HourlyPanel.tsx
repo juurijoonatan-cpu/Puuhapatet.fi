@@ -20,7 +20,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import {
-  computeShiftStats, dayKey, fmtDayLabel, fmtShiftHours, roundWorkHours,
+  computeShiftStats, dayKey, fmtDayLabel, fmtShiftHours, roundWorkHours, shiftHoursOf,
   type ProjShift,
 } from "@shared/project";
 import type { CrewMember } from "@shared/crew";
@@ -76,11 +76,46 @@ export default function HourlyPanel({
   const today = dayKey(now);
   const stats = useMemo(() => computeShiftStats(shifts, today), [shifts, today]);
 
+  /**
+   * OMAT TUNNIT.
+   *
+   * Kaksi eri asiaa, ja ne erotellaan tarkoituksella:
+   *
+   *   · KÄSIN LISÄYS ei vaadi mitään keikalta. Vuororivi on vain tekijän
+   *     tunnus, tunnit ja päivä, joten omat tunnit voi aina kirjata.
+   *   · AJASTIN vaatii, että olen keikan tekijälistalla — käynnissä oleva
+   *     vuoro talletetaan tekijän omaan riviin, jotta se on sama tieto jonka
+   *     tekijän oma sovellus näkee. Ilman sitä riviä ajastimella ei ole
+   *     paikkaa jossa olla käynnissä.
+   *
+   * Ensimmäinen versio näytti koko kortin vain jos olin tekijälistalla, joten
+   * jos en ollut, en päässyt kirjaamaan omia tuntejani lainkaan enkä nähnyt
+   * syytä siihen. Nyt kortti on aina, ja se sanoo kumpi puoli on käytössä.
+   */
   const mine = me ? crew.find((c) => c.id === me) : undefined;
   const myShift = mine?.activeShiftAt ?? null;
+  const canTimeMyself = !!(mine && onStartShift && onStopShift);
+  const myHours = me ? shiftHoursOf(shifts, me) : 0;
+
+  /**
+   * Rivit: tunteja tehneet, juuri nyt töissä olevat, ja MINÄ aina kun saan
+   * korjata tunteja. Oma nollarivi on tarkoituksellinen poikkeus sääntöön
+   * "nollarivi ei ole tieto": ilman sitä ensimmäistä omaa tuntia ei olisi
+   * mistä napauttaa.
+   */
+  const rows = useMemo(() => {
+    const byId = new Map(stats.byWorker.map((r) => [r.id, r]));
+    for (const c of running) if (!byId.has(c.id)) byId.set(c.id, { id: c.id, hours: 0, days: 0, lastAt: 0 });
+    if (me && onAdjustHours && !byId.has(me)) byId.set(me, { id: me, hours: 0, days: 0, lastAt: 0 });
+    return Array.from(byId.values()).sort((a, b) => {
+      const ar = running.some((c) => c.id === a.id) ? 0 : 1;
+      const br = running.some((c) => c.id === b.id) ? 0 : 1;
+      return ar - br || b.hours - a.hours;
+    });
+  }, [stats.byWorker, running, me, onAdjustHours]);
 
   /** Tekijät joilla ei ole vielä yhtään tuntia — käsin lisäyksen valikko. */
-  const idle = crew.filter((c) => !stats.byWorker.some((r) => r.id === c.id) && !c.activeShiftAt);
+  const idle = crew.filter((c) => !rows.some((r) => r.id === c.id));
 
   const adjustBtn: React.CSSProperties = {
     width: 32, height: 32, flexShrink: 0, borderRadius: T.radius.sm,
@@ -103,38 +138,71 @@ export default function HourlyPanel({
         </div>
       </div>
 
-      {/* 2. OMA AJASTIN. Yksi nappi, ja se kertoo suoraan mitä se tekee. */}
-      {mine && onStartShift && onStopShift && (
+      {/* 2. OMAT TUNNIT: paljonko minulla on, miten aloitan, ja miten lisään
+          käsin. Sama kortti, koska ne ovat sama kysymys minun kannaltani. */}
+      {me && (onAdjustHours || canTimeMyself) && (
         <div style={{ ...card, padding: m ? T.space.lg : T.space.xl }}>
-          <div style={{ ...mono, color: T.text.faint, marginBottom: T.space.sm }}>OMA TYÖTUNTI</div>
-          {myShift ? (
-            <>
-              <div style={{ display: "flex", alignItems: "center", gap: T.space.sm, marginBottom: T.space.md }}>
-                <span style={{ width: 8, height: 8, borderRadius: "50%", background: T.tone.good, flexShrink: 0 }} />
-                <span style={{ fontFamily: T.font, fontSize: T.size.title, fontWeight: 700 }}>
-                  Käynnissä {fmtElapsed(myShift, now)}
-                </span>
+          <div style={{ display: "flex", alignItems: "center", gap: T.space.md, flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 140 }}>
+              <div style={{ ...mono, color: T.text.faint }}>OMAT TUNTINI</div>
+              <div style={{ fontFamily: T.font, fontSize: T.size.display, fontWeight: 700, lineHeight: 1.15, marginTop: 2 }}>
+                {fmtShiftHours(myHours)} <span style={{ fontSize: T.size.body, fontWeight: 500, color: T.text.faint }}>h</span>
               </div>
-              <button onClick={() => onStopShift(mine.id)} disabled={busy}
-                style={{ width: "100%", height: 46, borderRadius: T.radius.md, border: T.border.strong, background: "transparent", color: T.text.primary, fontFamily: T.font, fontSize: T.size.body, fontWeight: 700, cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1 }}>
-                Päätä työtunti
-              </button>
-              {/* Pyöristys sanotaan ETUKÄTEEN eikä jälkikäteen: se on syy siihen
-                  miksi 20 minuutin piipahdus ei kerrytä tuntia. */}
-              <p style={{ margin: `${T.space.sm}px 0 0`, fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, lineHeight: 1.55 }}>
-                Kirjautuu {fmtDayLabel(dayKey(myShift))} — pyöristetään lähimpään täyteen tuntiin.
-              </p>
-            </>
-          ) : (
-            <>
-              <button onClick={() => onStartShift(mine.id)} disabled={busy}
-                style={{ width: "100%", height: 46, borderRadius: T.radius.md, border: `1px solid ${T.tone.goodBorder}`, background: T.tone.goodBg, color: T.tone.goodSoft, fontFamily: T.font, fontSize: T.size.body, fontWeight: 700, cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1 }}>
-                Aloita työtunti
-              </button>
-              <p style={{ margin: `${T.space.sm}px 0 0`, fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, lineHeight: 1.55 }}>
-                Kello käy palvelimella — puhelimen voi laittaa taskuun ja sivun sulkea.
-              </p>
-            </>
+            </div>
+            {/* Käsin lisäys on tässä eikä pelkästään tekijälistalla: omien
+                tuntien kirjaaminen on se mitä tällä kortilla tullaan tekemään. */}
+            {onAdjustHours && (
+              <div style={{ display: "flex", alignItems: "center", gap: T.space.sm, flexShrink: 0 }}>
+                <button onClick={() => onAdjustHours(me, -HOUR_STEP)} disabled={busy || myHours <= 0}
+                  title="Vähennä tunti"
+                  style={{ ...adjustBtn, opacity: myHours <= 0 ? 0.35 : 1, cursor: myHours <= 0 ? "default" : "pointer" }}>−</button>
+                <span style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, minWidth: 46, textAlign: "center" }}>
+                  lisää<br />käsin
+                </span>
+                <button onClick={() => onAdjustHours(me, HOUR_STEP)} disabled={busy} title="Lisää tunti" style={adjustBtn}>+</button>
+              </div>
+            )}
+          </div>
+
+          {canTimeMyself && (
+            <div style={{ marginTop: T.space.md, paddingTop: T.space.md, borderTop: T.border.divider }}>
+              {myShift ? (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", gap: T.space.sm, marginBottom: T.space.md }}>
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: T.tone.good, flexShrink: 0 }} />
+                    <span style={{ fontFamily: T.font, fontSize: T.size.title, fontWeight: 700 }}>
+                      Käynnissä {fmtElapsed(myShift, now)}
+                    </span>
+                  </div>
+                  <button onClick={() => onStopShift!(mine!.id)} disabled={busy}
+                    style={{ width: "100%", height: 46, borderRadius: T.radius.md, border: T.border.strong, background: "transparent", color: T.text.primary, fontFamily: T.font, fontSize: T.size.body, fontWeight: 700, cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1 }}>
+                    Päätä työtunti
+                  </button>
+                  {/* Pyöristys sanotaan ETUKÄTEEN eikä jälkikäteen: se on syy
+                      siihen miksi 20 minuutin piipahdus ei kerrytä tuntia. */}
+                  <p style={{ margin: `${T.space.sm}px 0 0`, fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, lineHeight: 1.55 }}>
+                    Kirjautuu {fmtDayLabel(dayKey(myShift))} — pyöristetään lähimpään täyteen tuntiin.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <button onClick={() => onStartShift!(mine!.id)} disabled={busy}
+                    style={{ width: "100%", height: 46, borderRadius: T.radius.md, border: `1px solid ${T.tone.goodBorder}`, background: T.tone.goodBg, color: T.tone.goodSoft, fontFamily: T.font, fontSize: T.size.body, fontWeight: 700, cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1 }}>
+                    Aloita työtunti
+                  </button>
+                  <p style={{ margin: `${T.space.sm}px 0 0`, fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, lineHeight: 1.55 }}>
+                    Kello käy palvelimella — puhelimen voi laittaa taskuun ja sivun sulkea.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Syy näkyviin sen sijaan että nappi vain puuttuisi. */}
+          {!canTimeMyself && onAdjustHours && (
+            <p style={{ margin: `${T.space.md}px 0 0`, paddingTop: T.space.md, borderTop: T.border.divider, fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, lineHeight: 1.6 }}>
+              Ajastin on käytettävissä kun olet tämän keikan tekijälistalla. Tunnit voit lisätä käsin yltä.
+            </p>
           )}
         </div>
       )}
@@ -143,24 +211,23 @@ export default function HourlyPanel({
       <div style={{ ...card, padding: m ? T.space.lg : T.space.xl }}>
         <div style={{ ...mono, color: T.text.faint, marginBottom: T.space.md }}>TEKIJÄT</div>
 
-        {stats.byWorker.length === 0 && running.length === 0 ? (
+        {rows.length === 0 ? (
           <p style={{ margin: 0, fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted, lineHeight: 1.6 }}>
-            Tälle työlle ei ole vielä kirjattu tunteja. Aloita työtunti yltä tai lisää tunnit käsin alta.
+            Tälle työlle ei ole vielä kirjattu tunteja.
           </p>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: T.space.sm }}>
-            {[...stats.byWorker, ...running.filter((c) => !stats.byWorker.some((r) => r.id === c.id)).map((c) => ({ id: c.id, hours: 0, days: 0, lastAt: 0 }))]
-              .sort((a, b) => {
-                const ar = running.some((c) => c.id === a.id) ? 0 : 1;
-                const br = running.some((c) => c.id === b.id) ? 0 : 1;
-                return ar - br || b.hours - a.hours;
-              })
-              .map((r) => {
+            {rows.map((r) => {
                 const live = running.find((c) => c.id === r.id);
                 return (
                   <div key={r.id} style={{ ...inset, padding: T.space.md, display: "flex", alignItems: "center", gap: T.space.md, flexWrap: "wrap" }}>
                     <div style={{ flex: 1, minWidth: 120 }}>
-                      <div style={{ fontFamily: T.font, fontSize: T.size.body, fontWeight: 700 }}>{workerName(r.id)}</div>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: T.space.sm }}>
+                        <span style={{ fontFamily: T.font, fontSize: T.size.body, fontWeight: 700 }}>{workerName(r.id)}</span>
+                        {r.id === me && (
+                          <span style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint }}>sinä</span>
+                        )}
+                      </div>
                       {live ? (
                         <div style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 3, fontFamily: T.font, fontSize: T.size.xs, fontWeight: 600, color: T.tone.goodSoft }}>
                           <span style={{ width: 6, height: 6, borderRadius: "50%", background: T.tone.good }} />

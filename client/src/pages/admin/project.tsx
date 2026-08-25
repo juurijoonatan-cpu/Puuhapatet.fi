@@ -12,15 +12,17 @@ import { api } from "@/lib/api";
 import { getAdminProfile, USERS, getPreferredWasher, setPreferredWasher } from "@/lib/admin-profile";
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import {
-  emptyProjectData, newGigProjectData, computeWorkerStats, isFr8Plans, fixedDealFor, allPoints, computeDealBilling,
+  emptyProjectData, newGigProjectData, computeWorkerStats, computeProjectTotals, isFr8Plans, fixedDealFor, allPoints, computeDealBilling,
   dealInternalRateCents, isCommunityGig,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense, type LampStatus,
   type LampCondition, type DoorStatus, type FixtureOrder, type LampModel, type ProjBoardEntry,
-  billingModeOf, type BillingMode,
+  billingModeOf, type BillingMode, computeShiftStats, type ProjShift,
 } from "@shared/project";
+import { ArrowLeft } from "lucide-react";
 import { computeP2Billing, customerAddedKeys, p2FounderOpts, p2CustomerLocksSince, p2Itemisation, p2WashedYellows, p2WorkerSplit, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule, type P2WashedState } from "@shared/p2";
 import { computeGuided, type GuidedWork } from "@shared/guided";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
+import ModeChooser, { type GigSide } from "@/components/fr8/ModeChooser";
 import { splitCentsEvenly, FOUNDER_IDS } from "@shared/team";
 import { traineeForUserId, traineeForName } from "@shared/trainees";
 import { DEFAULT_WORKER_PER_WINDOW_CENTS } from "@shared/crew";
@@ -110,9 +112,8 @@ export default function AdminProjectPage() {
   const [tab, setTab] = useState<Fr8Tab>(() => {
     if (typeof window === "undefined") return "dashboard";
     const t = new URLSearchParams(window.location.search).get("tab");
-    return t === "maksut" || t === "floor" || t === "hours" ? t : "dashboard";
+    return t === "maksut" || t === "floor" ? t : "dashboard";
   });
-  const landedRef = useRef(false);
   const [activeFloor, setActiveFloor] = useState("K");
   // Who new "pesty" markings are attributed to by default. Defaults to the
   // logged-in admin, but each admin can pick a preferred default washer per gig
@@ -652,16 +653,18 @@ export default function AdminProjectPage() {
   }, [mutate]);
 
   /**
-   * Tuntikeikka aukeaa Tunnit-välilehdelle. Kerran per avaus: jos johtaja
-   * vaihtaa välilehteä, häntä ei heitetä takaisin — valinta on hänen.
-   * Syvälinkki (`?tab=`) voittaa, koska se on nimenomainen pyyntö.
+   * KEIKKA AUKEAA OVELLE. Kumpaan puoleen mennään on päätös, ei asetus:
+   * projektipuoli ja tuntipuoli vastaavat eri kysymyksiin eivätkä laske samaa
+   * lukua, joten valinta tehdään joka kerta uudelleen — ja takaisin ovelle
+   * pääsee kummalta puolelta tahansa yhdellä napautuksella.
+   *
+   * Syvälinkki (`?tab=`) ohittaa oven kokonaan: se on nimenomainen pyyntö
+   * päästä tiettyyn näkymään, esimerkiksi keikkasivun "Tekijöiden maksut".
    */
-  useEffect(() => {
-    if (landedRef.current || !project) return;
-    landedRef.current = true;
-    if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tab")) return;
-    if (billingModeOf(project) === "hourly") setTab("hours");
-  }, [project]);
+  const [side, setSide] = useState<GigSide | null>(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("tab") ? "targeted" : null;
+  });
 
   /**
    * TYÖTAULU. Serverin omistama kenttä, joten muutokset kulkevat omaa reittiään
@@ -676,22 +679,67 @@ export default function AdminProjectPage() {
   }, [mutate]);
 
   /**
-   * KÄSIN TUNTIKORJAUS — vain perustajille (ks. `canAdjustHours` alla).
+   * TUNTIPUOLEN KIRJAUKSET.
+   *
+   * Serverin omistama kenttä, joten nämä eivät kulje `mutate`n kautta:
+   * geneerinen blob-tallennus palauttaisi kannan arvon ja pyyhkisi juuri
+   * kirjatun vuoron. Sama kuvio kuin työtaululla — ja täällä menetetty rivi
+   * olisi jonkun maksamaton työpäivä.
+   *
+   * Ajastimen KESTOA EI LASKETA TÄÄLLÄ. Selain lähettää vain "aloita" tai
+   * "päätä"; tunnit syntyvät palvelimen kellosta ja pyöristyvät siellä.
+   */
+  const [shifts, setShifts] = useState<ProjShift[]>([]);
+  const [shiftBusy, setShiftBusy] = useState(false);
+  const [shiftError, setShiftError] = useState("");
+  useEffect(() => { setShifts(project?.shifts ?? []); }, [project?.shifts]);
+
+  const runShift = useCallback(async (
+    body: Parameters<typeof api.adminShift>[1],
+    failText: string,
+  ) => {
+    setShiftBusy(true);
+    setShiftError("");
+    const res = await api.adminShift(jobId, { ...body, by: currentWorker });
+    setShiftBusy(false);
+    if (!res.ok || !res.data) { setShiftError(res.error || failText); return; }
+    setShifts(res.data.shifts);
+    // Käynnissä olevat vuorot tulevat samasta vastauksesta, joten "töissä nyt"
+    // ei jää odottamaan seuraavaa koko blobin latausta.
+    const live = new Map(res.data.crew.map((c) => [c.id, c]));
+    setProject((prev) => prev && {
+      ...prev,
+      shifts: res.data!.shifts,
+      crew: (prev.crew ?? []).map((m) => {
+        const l = live.get(m.id);
+        return l ? { ...m, activeShiftAt: l.activeShiftAt ?? undefined, shiftTargetHours: l.shiftTargetHours ?? undefined } : m;
+      }),
+    });
+  }, [jobId, currentWorker]);
+
+  const startShift = useCallback((workerId: string) => {
+    void runShift({ action: "start", worker: workerId }, "Työtunnin aloitus ei onnistunut.");
+  }, [runShift]);
+
+  const stopShift = useCallback((workerId: string) => {
+    void runShift({ action: "stop", worker: workerId }, "Työtunnin päätös ei onnistunut.");
+  }, [runShift]);
+
+  /**
+   * KÄSIN KORJAUS — vain perustajille (ks. `canAdjustHours` alla).
    *
    * Pyöristys on lähtökohta eikä viimeinen sana: ajastin voi jäädä päälle,
    * unohtua kokonaan, tai työ on tehty ennen kuin linkki otettiin käyttöön.
-   * Korjaus kirjautuu `hourLog`iin kuten kaikki muukin, joten jälki säilyy.
+   * Korjaus on oma päivätty rivinsä eikä summan muokkaus, joten päiväkirjasta
+   * näkee mitä korjattiin ja milloin.
    */
-  const onAdjustHours = useCallback((workerId: string, delta: number) => {
-    mutate((d) => {
-      const cur = d.hours?.[workerId] ?? 0;
-      const next = Math.max(0, Math.round((cur + delta) * 100) / 100);
-      if (next === cur) return;
-      d.hours = d.hours ?? {};
-      d.hours[workerId] = next;
-      d.hourLog = [{ worker: workerId, delta: next - cur, ts: Date.now(), by: currentWorker }, ...(d.hourLog ?? [])].slice(0, 200);
-    });
-  }, [mutate, currentWorker]);
+  const adjustShiftHours = useCallback((workerId: string, delta: number) => {
+    void runShift({ action: "add", worker: workerId, hours: delta }, "Tuntien korjaus ei onnistunut.");
+  }, [runShift]);
+
+  const removeShift = useCallback((id: string) => {
+    void runShift({ action: "remove", id }, "Rivin poisto ei onnistunut.");
+  }, [runShift]);
 
   const onSetDoorLabel = useCallback((key: string, label: string) => {
     mutate((d) => {
@@ -1164,24 +1212,154 @@ export default function AdminProjectPage() {
   const effectiveWasher = gigWorkers.some((w) => w.id === defaultWasher) ? defaultWasher : currentWorker;
 
   /**
-   * LASKUTUSTILA EI OLE LUKKO VAAN OLETUS.
+   * `billingMode` EI OLE SAMA ASIA KUIN SE KUMMALLA PUOLELLA JOHTAJA ON.
    *
-   * Ensimmäinen yritys pakotti valitsemaan kohdennetun ja tuntihinnoittelun
-   * väliltä ennen kuin näkymään pääsi, ja piilotti toisen puolen kokonaan. Se
-   * oli väärä malli: kumpikin puoli on aina olemassa samalla keikalla, ja
-   * johtaja vain päättää kumpaa katsoo juuri nyt. Tuntikeikkakin tarvitsee
-   * kartan.
-   *
-   * Nyt tunnit ovat välilehti muiden rinnalla (aina saatavilla), ja
-   * `billingMode` ratkaisee enää kaksi asiaa:
-   *   1. mille välilehdelle keikka aukeaa, ja
-   *   2. mitä ASIAKAS näkee seurantasivullaan.
-   *
-   * Toinen niistä on se tärkeä, ja siksi sitä ei aseteta ohimennen
-   * välilehteä vaihtamalla vaan omalla kytkimellään Tunnit-välilehdellä.
+   * Puoli (`side`) on tämän hetken katsomiskysymys ja se kysytään ovella joka
+   * kerta. `billingMode` on keikan pysyvä asia ja se ratkaisee yhden asian:
+   * MITÄ ASIAKAS NÄKEE seurantasivullaan. Siksi sitä ei aseteta ohimennen
+   * ovelta vaan omalla kytkimellään tuntipuolen alalaidassa, jossa kytkin
+   * sanoo suoraan kumman asiakas näkee.
    */
   const mode = billingModeOf(project);
   const canAdjustHours = isFounderView;
+
+  /**
+   * OVI. Kumpi puoli avataan — ks. `side`-tilan perustelu ylempänä.
+   *
+   * Tilannerivit lasketaan tuntipuolen omasta kirjanpidosta ja projektipuolen
+   * ikkunaluvuista, jottei valintaa tarvitse tehdä muistin varassa.
+   */
+  if (side === null) {
+    const hourStats = computeShiftStats(project.shifts);
+    const pointTotals = computeProjectTotals(project);
+    const runningNow = (crew ?? []).filter((c) => c.activeShiftAt).length;
+    return shell(
+      <main
+        data-fr8-pane
+        style={{
+          // Korkeus tulee kuoren omasta säännöstä (.fr8-root > main:
+          // flex 1 1 auto + min-height 0). Oma `height: 100%` tässä oli juuri
+          // se mikä ajoi edellisen version sisällön iOS:n tilapalkin alle.
+          position: "relative", zIndex: 10, overflowY: "auto", overflowX: "hidden",
+          boxSizing: "border-box",
+          padding: "calc(24px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom))",
+        }}
+      >
+        <ModeChooser
+          gigName={project.building.name || gigName || undefined}
+          address={project.building.address}
+          suggested={mode}
+          onChoose={setSide}
+          onBack={backToGig}
+          hourlyHint={
+            hourStats.totalHours > 0 || runningNow > 0
+              ? `${hourStats.todayHours} h tänään · ${hourStats.totalHours} h yhteensä${runningNow > 0 ? ` · ${runningNow} töissä nyt` : ""}`
+              : "Ei vielä kirjattuja tunteja"
+          }
+          targetedHint={pointTotals.total > 0 ? `${pointTotals.washed} / ${pointTotals.total} pesty` : undefined}
+        />
+      </main>,
+    );
+  }
+
+  /**
+   * TUNTIPUOLI. Oma näkymänsä, ei välilehti: se ei kysy samaa kysymystä kuin
+   * projektipuoli eikä se saa näyttää projektipuolen lukuja. Sama kuori kuin
+   * dashilla (`data-fr8-pane`), joten turva-alueet hoituvat siellä missä
+   * muillakin.
+   */
+  if (side === "hourly") {
+    return shell(
+      <main
+        data-fr8-pane
+        style={{
+          position: "relative", zIndex: 10, overflowY: "auto", overflowX: "hidden",
+          overscrollBehavior: "contain", boxSizing: "border-box",
+          padding: "calc(16px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom))",
+        }}
+      >
+        <div style={{ maxWidth: 860, margin: "0 auto", width: "100%", boxSizing: "border-box" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+            <button onClick={() => setSide(null)} aria-label="Takaisin"
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, flexShrink: 0, borderRadius: 12, border: "1px solid rgba(255,255,255,0.16)", background: "transparent", color: "rgba(255,255,255,0.72)", cursor: "pointer" }}>
+              <ArrowLeft size={16} />
+            </button>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 15, fontWeight: 700, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {project.building.name || gigName || "Keikka"}
+              </div>
+              <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 10, letterSpacing: "0.12em", color: "rgba(255,255,255,0.38)" }}>
+                TUNTITYÖ
+              </div>
+            </div>
+            {shiftBusy && (
+              <span style={{ marginLeft: "auto", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 11.5, color: "rgba(255,255,255,0.38)" }}>
+                tallennetaan…
+              </span>
+            )}
+          </div>
+
+          <HourlyPanel
+            shifts={shifts}
+            crew={crew}
+            workerName={resolveName}
+            me={currentWorker}
+            onStartShift={startShift}
+            onStopShift={stopShift}
+            onAdjustHours={canAdjustHours ? adjustShiftHours : undefined}
+            onRemoveShift={canAdjustHours ? removeShift : undefined}
+            busy={shiftBusy}
+          />
+
+          {/* TYÖTAULU. Sama lista jonka asiakas ja tekijät näkevät. */}
+          <div style={{ marginTop: 16, padding: 18, borderRadius: 18, background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.09)" }}>
+            <p style={{ margin: "0 0 12px", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 10, letterSpacing: "0.12em", color: "rgba(255,255,255,0.38)" }}>
+              TEHTÄVÄT JA MERKINNÄT
+            </p>
+            <TaskBoard
+              entries={board}
+              onAdd={addBoardEntry}
+              onToggle={toggleBoardTask}
+              theme={{
+                font: "var(--font-onest, system-ui, sans-serif)", ink: "#fff",
+                muted: "rgba(255,255,255,0.5)", faint: "rgba(255,255,255,0.38)",
+                fill: "rgba(255,255,255,0.04)", card: "rgba(0,0,0,0.28)",
+                hair: "rgba(255,255,255,0.14)", accent: "#5fe08a", done: "#3E7C59",
+              }}
+            />
+          </div>
+
+          {canAdjustHours && (
+            <div style={{ marginTop: 16, padding: 18, borderRadius: 18, background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.09)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 14, fontWeight: 700, color: "#fff" }}>
+                    Asiakas näkee tunnit
+                  </div>
+                  <div style={{ fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 12.5, color: "rgba(255,255,255,0.5)", lineHeight: 1.55, marginTop: 3 }}>
+                    {mode === "hourly"
+                      ? "Asiakas näkee tunnit ja hänelle ostetut hankinnat ensimmäisenä, eikä häneltä kysytä kohdehintoja."
+                      : "Asiakas näkee ikkunapesun edistymän ja kohdehinnat. Kytke päälle kun tämä keikka laskutetaan tunneista."}
+                  </div>
+                </div>
+                <Toggle
+                  checked={mode === "hourly"}
+                  onChange={(v) => onSetBillingMode(v ? "hourly" : "targeted")}
+                  ariaLabel="Asiakas näkee tunnit"
+                />
+              </div>
+            </div>
+          )}
+
+          {shiftError && (
+            <p style={{ margin: "12px 0 0", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 12.5, color: "#ff8a8a", lineHeight: 1.55 }}>
+              {shiftError}
+            </p>
+          )}
+        </div>
+      </main>,
+    );
+  }
 
   return shell(
     <>
@@ -1192,7 +1370,7 @@ export default function AdminProjectPage() {
         buildingAddress={project.building.address}
         currentWorkerName={resolveName(effectiveWasher)}
         saving={saving}
-        onBack={backToGig}
+        onBack={() => setSide(null)}
         workers={gigWorkers}
         defaultWasherId={effectiveWasher}
         onChangeDefaultWasher={changeDefaultWasher}
@@ -1332,69 +1510,6 @@ export default function AdminProjectPage() {
             Kytkin alalaidassa ratkaisee mitä ASIAKAS näkee; se on eri asia kuin
             se mitä välilehteä johtaja katsoo, eikä sitä siksi aseteta
             välilehteä vaihtamalla. */}
-        {tab === "hours" && (
-          // Sama kuori kuin dashilla: `main` hoitaa palkin alle jäämisen ja
-          // turva-alueen, joten tässä ei mitoiteta viewportia uudelleen. Juuri
-          // sen tekeminen omin päin ajoi edellisen version sisällön iOS:n
-          // tilapalkin alle.
-          <div
-            data-fr8-pane
-            style={{
-              height: "100%", overflowY: "auto", overflowX: "hidden", overscrollBehavior: "contain",
-              boxSizing: "border-box",
-              padding: "20px 16px calc(24px + env(safe-area-inset-bottom))",
-            }}
-          >
-            <div style={{ maxWidth: 860, margin: "0 auto", width: "100%", boxSizing: "border-box" }}>
-              <HourlyPanel
-                project={project}
-                workerName={resolveName}
-                crew={crew}
-                onAdjustHours={canAdjustHours ? onAdjustHours : undefined}
-              />
-              {/* TYÖTAULU. Sama lista jonka asiakas ja tekijät näkevät. */}
-              <div style={{ marginTop: 16, padding: 18, borderRadius: 18, background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.09)" }}>
-                <p style={{ margin: "0 0 12px", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 10, letterSpacing: "0.12em", color: "rgba(255,255,255,0.38)" }}>
-                  TEHTÄVÄT JA MERKINNÄT
-                </p>
-                <TaskBoard
-                  entries={board}
-                  onAdd={addBoardEntry}
-                  onToggle={toggleBoardTask}
-                  theme={{
-                    font: "var(--font-onest, system-ui, sans-serif)", ink: "#fff",
-                    muted: "rgba(255,255,255,0.5)", faint: "rgba(255,255,255,0.38)",
-                    fill: "rgba(255,255,255,0.04)", card: "rgba(0,0,0,0.28)",
-                    hair: "rgba(255,255,255,0.14)", accent: "#5fe08a", done: "#3E7C59",
-                  }}
-                />
-              </div>
-
-              {canAdjustHours && (
-                <div style={{ marginTop: 16, padding: 18, borderRadius: 18, background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.09)" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 14, fontWeight: 700, color: "#fff" }}>
-                        Laskutetaan tunneista
-                      </div>
-                      <div style={{ fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 12.5, color: "rgba(255,255,255,0.5)", lineHeight: 1.55, marginTop: 3 }}>
-                        {mode === "hourly"
-                          ? "Asiakas näkee tunnit ja hankinnat ensimmäisenä, eikä häneltä kysytä kohdehintoja. Keikka aukeaa tälle välilehdelle."
-                          : "Asiakas näkee ikkunapesun edistymän ja kohdehinnat. Kytke päälle kun tämä keikka laskutetaan tunneista."}
-                      </div>
-                    </div>
-                    <Toggle
-                      checked={mode === "hourly"}
-                      onChange={(v) => onSetBillingMode(v ? "hourly" : "targeted")}
-                      ariaLabel="Laskutetaan tunneista"
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
         {tab === "maksut" && deal && (profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")) && (
           <MaksutView
             jobId={jobId}

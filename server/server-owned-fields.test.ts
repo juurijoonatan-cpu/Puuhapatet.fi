@@ -31,7 +31,7 @@ import { join } from "path";
 const SRC = readFileSync(join(process.cwd(), "server/routes.ts"), "utf8");
 
 /** Serverin omistamat kentät ja se `stored?.x` -muoto jolla ne palautetaan. */
-const OWNED = ["p2", "guided", "settlement", "scope", "fixtureQuote", "board"] as const;
+const OWNED = ["p2", "guided", "settlement", "scope", "fixtureQuote", "board", "shifts"] as const;
 
 /** `PATCH /api/jobs/:id/project` -käsittelijän runko. */
 function adminProjectPatchBody(): string {
@@ -145,5 +145,40 @@ describe("sopimustiedosto on suojattu geneerisessä gigData-tallennuksessa", () 
       expect(chunk.slice(0, 2000), `${name} /contract-file: allekirjoitusportti puuttuu`)
         .toMatch(/gig\.signature\?\.signedAt/);
     }
+  });
+});
+
+
+/**
+ * VARTIJA — VUOROKIRJAUS JA SEN TALLENNUS KUULUVAT YHTEEN.
+ *
+ * `shifts` on serverin omistama, eli `saveProject` palauttaa kannan arvon
+ * jokaisella tallennuksella JOKA EI ilmoita olevansa tämän kentän mutaatio.
+ * Se on suojaus — mutta se kääntyy itseään vastaan, jos reitti kirjoittaa
+ * vuoron ja unohtaa lipun: kirjaus katoaa hiljaa, vastaus on `ok`, eikä
+ * mikään yksikkötesti huomaa. Tuntitilassa kadonnut rivi on maksamaton
+ * työpäivä.
+ *
+ * Tämä testi vaatii, että jokaista `project.shifts = applyShiftAction(...)`
+ * -riviä seuraa saman käsittelijän sisällä tallennus jossa on
+ * `shiftsMutation: true`.
+ */
+describe("jokainen vuorokirjaus tallentuu mutaatiolippunsa kanssa", () => {
+  const lines = SRC.split("\n");
+  const writes = lines
+    .map((l, i) => ({ l, i }))
+    .filter(({ l }) => l.includes("project.shifts = applyShiftAction"));
+
+  it("kirjauksia löytyi (testi itse ei saa olla tyhjä lupaus)", () => {
+    expect(writes.length).toBeGreaterThan(0);
+  });
+
+  it.each(writes.map(({ i }) => i))("rivin %i kirjaus tallennetaan shiftsMutation-lipulla", (i) => {
+    const after = lines.slice(i, i + 40).join("\n");
+    const save = after.match(/await saveProject\([^)]*\)/);
+    expect(save, "kirjauksen jälkeen ei löytynyt saveProject-kutsua 40 rivin sisältä").toBeTruthy();
+    // Lippu saa olla ehdollinen (moni reitti kirjaa vuoron vain tuntitilassa),
+    // mutta sen on oltava siinä kutsussa: ilman sitä kirjaus katoaa.
+    expect(save![0]).toContain("shiftsMutation");
   });
 });

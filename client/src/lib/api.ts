@@ -3,7 +3,7 @@
  */
 
 import type { GigData, GigTotals } from "@shared/gig";
-import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding, FixedDeal, EraDebtBreakdown, ProjLampMark, LampStatus, LampCondition, ProjFixtureNote, ProjDoorMark, DoorStatus, PublicLampPoint, PublicDoorPoint, LampFloorStat, DoorFloorStat, FixtureQuote, LampModel, ProjBoardEntry } from "@shared/project";
+import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding, FixedDeal, EraDebtBreakdown, ProjLampMark, LampStatus, LampCondition, ProjFixtureNote, ProjDoorMark, DoorStatus, PublicLampPoint, PublicDoorPoint, LampFloorStat, DoorFloorStat, FixtureQuote, LampModel, ProjBoardEntry, ProjShift } from "@shared/project";
 import type { MemberAgreementSignature } from "@shared/member-agreement";
 import type { CrewMember, CrewMemberStats, CrewProfile, CrewAgreementSignature } from "@shared/crew";
 import type { WorkerAgreement } from "@shared/worker-agreements";
@@ -1612,6 +1612,20 @@ export const api = {
     request<{ ok: boolean; board: ProjBoardEntry[] }>("POST", `/api/jobs/${jobId}/board`, { kind, text, by, byName }),
   adminToggleBoardTask: (jobId: number, id: string, done: boolean, by: string, byName?: string) =>
     request<{ ok: boolean; board: ProjBoardEntry[] }>("POST", `/api/jobs/${jobId}/board`, { id, done, by, byName }),
+
+  /**
+   * TUNTITILAN VUOROKIRJANPITO — johtajan puoli. Yksi reitti neljälle
+   * toiminnolle, koska ne koskevat samaa serverin omistamaa listaa.
+   * Palvelin laskee keston omasta kellostaan; selain ei lähetä tuntimäärää
+   * ajastimen päättyessä lainkaan.
+   */
+  adminShift: (
+    jobId: number,
+    body: { action: "start" | "stop" | "add" | "remove"; worker?: string; hours?: number; day?: string; note?: string; id?: string; targetHours?: number; by?: string },
+  ) =>
+    request<{ ok: boolean; shifts: ProjShift[]; crew: { id: string; activeShiftAt: number | null; shiftTargetHours: number | null }[] }>(
+      "POST", `/api/jobs/${jobId}/shift`, body, QUICK,
+    ),
 
   crewMarkLamp: (token: string, key: string, status: LampStatus) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, status }, QUICK),

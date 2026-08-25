@@ -17,6 +17,7 @@ import GigContractSign from "@/components/GigContractSign";
 import CustomerFloorMap, { type P2CustomerActions, type ScopeCustomerState } from "@/components/CustomerFloorMap";
 import FixturesPanel from "@/components/customer/FixturesPanel";
 import HourlySummary from "@/components/customer/HourlySummary";
+import TaskBoard from "@/components/TaskBoard";
 import CustomerProgressHero, { type HeroTile } from "@/components/CustomerProgressHero";
 import LoadingOrb from "@/components/LoadingOrb";
 import { downloadGigContract } from "@/lib/gig-contract-doc";
@@ -322,6 +323,13 @@ export default function GigLivePage() {
       return null;
     }
     return res.error || "Tallennus ei onnistunut. Yritä hetken kuluttua uudelleen.";
+  };
+
+  // Työtaulu: asiakas lisää tehtäviä ja viestejä. Kuittaus ei ole hänen —
+  // se on väite tehdystä työstä, ja sen tekee se joka työn teki.
+  const addBoardEntry = async (kind: "task" | "note", text: string) => {
+    const res = await api.gigAddBoardEntry(token, kind, text);
+    if (res.ok && res.data) setData((cur) => (cur ? { ...cur, board: res.data!.board } : cur));
   };
 
   const scopeState: ScopeCustomerState | null = data.scope ? {
@@ -643,6 +651,22 @@ export default function GigLivePage() {
             />
           </Panel>
         )}
+
+        {/* TYÖTAULU. Sama lista jonka tekijät näkevät työpöydällään: asiakas
+            kirjoittaa mitä pitäisi tehdä, tekijä kuittaa sen tehdyksi ja
+            kirjaa mitä teki. Yksi keskustelu, ei kaksi. */}
+        <Panel theme={T}>
+          <p style={{ margin: "0 0 14px", ...label }}>Tehtävät ja viestit</p>
+          <TaskBoard
+            entries={data.board}
+            onAdd={addBoardEntry}
+            theme={{
+              font: FONT, ink: T.ink, muted: T.muted, faint: T.muted,
+              fill: T.fill, card: T.card, hair: T.hair, accent: T.navy, done: T.green,
+            }}
+            lead="Kirjoita tähän mitä haluat tehtävän tai kysy jotain — tekijämme näkevät sen heti työpöydällään ja kuittaavat tehtävät tehdyiksi."
+          />
+        </Panel>
 
         {/* TIEDOTTEET JA OHJEET — kaikki selittävä teksti yhdessä taittuvassa
             osiossa. Se on luettavissa kun sitä tarvitsee, muttei joka kerta

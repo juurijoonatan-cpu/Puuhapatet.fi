@@ -15,7 +15,7 @@ import {
   emptyProjectData, newGigProjectData, computeWorkerStats, isFr8Plans, fixedDealFor, allPoints, computeDealBilling,
   dealInternalRateCents, isCommunityGig,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense, type LampStatus,
-  type LampCondition, type DoorStatus, type FixtureOrder, type LampModel,
+  type LampCondition, type DoorStatus, type FixtureOrder, type LampModel, type ProjBoardEntry,
   billingModeOf, type BillingMode,
 } from "@shared/project";
 import { computeP2Billing, customerAddedKeys, p2FounderOpts, p2CustomerLocksSince, p2Itemisation, p2WashedYellows, p2WorkerSplit, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule, type P2WashedState } from "@shared/p2";
@@ -27,6 +27,7 @@ import { DEFAULT_WORKER_PER_WINDOW_CENTS } from "@shared/crew";
 import Dashboard from "@/components/fr8/Dashboard";
 import HourlyPanel from "@/components/fr8/HourlyPanel";
 import Toggle from "@/components/fr8/Toggle";
+import TaskBoard from "@/components/TaskBoard";
 import FounderEraInvoiceDialog from "@/components/fr8/FounderEraInvoiceDialog";
 import MaksutView from "@/components/fr8/MaksutView";
 import type { GigBillingState, EraInvoiceClient } from "@/lib/api";
@@ -662,6 +663,14 @@ export default function AdminProjectPage() {
     if (billingModeOf(project) === "hourly") setTab("hours");
   }, [project]);
 
+  /**
+   * TYÖTAULU. Serverin omistama kenttä, joten muutokset kulkevat omaa reittiään
+   * eivätkä `mutate`n kautta — geneerinen blob-tallennus palauttaisi kannan
+   * arvon ja pyyhkisi juuri kirjoitetun rivin.
+   */
+  const [board, setBoard] = useState<ProjBoardEntry[]>([]);
+  useEffect(() => { if (project?.board) setBoard(project.board); }, [project?.board]);
+
   const onSetBillingMode = useCallback((mode: BillingMode) => {
     mutate((d) => { d.billingMode = mode; });
   }, [mutate]);
@@ -1026,6 +1035,19 @@ export default function AdminProjectPage() {
     return workerName(id);
   };
 
+  const addBoardEntry = useCallback(async (kind: "task" | "note", text: string) => {
+    const res = await api.adminAddBoardEntry(jobId, kind, text, currentWorker, resolveName(currentWorker));
+    if (res.ok && res.data) setBoard(res.data.board);
+    else setError(res.error || "Tallennus ei onnistunut.");
+  }, [jobId, currentWorker, resolveName]);
+
+  const toggleBoardTask = useCallback(async (id: string, done: boolean) => {
+    const res = await api.adminToggleBoardTask(jobId, id, done, currentWorker, resolveName(currentWorker));
+    if (res.ok && res.data) setBoard(res.data.board);
+    else setError(res.error || "Kuittaus ei onnistunut.");
+  }, [jobId, currentWorker, resolveName]);
+
+
   // Harjoittelijat koottuna vastuujohtajan alle: ikkunamäärä + hänen oma summansa
   // + jo maksettu. EI osa johtajan lukuja — pelkkä vastuunäkymä, joka on kortilla
   // piilossa kunnes sen avaa.
@@ -1330,6 +1352,24 @@ export default function AdminProjectPage() {
                 crew={crew}
                 onAdjustHours={canAdjustHours ? onAdjustHours : undefined}
               />
+              {/* TYÖTAULU. Sama lista jonka asiakas ja tekijät näkevät. */}
+              <div style={{ marginTop: 16, padding: 18, borderRadius: 18, background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.09)" }}>
+                <p style={{ margin: "0 0 12px", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 10, letterSpacing: "0.12em", color: "rgba(255,255,255,0.38)" }}>
+                  TEHTÄVÄT JA MERKINNÄT
+                </p>
+                <TaskBoard
+                  entries={board}
+                  onAdd={addBoardEntry}
+                  onToggle={toggleBoardTask}
+                  theme={{
+                    font: "var(--font-onest, system-ui, sans-serif)", ink: "#fff",
+                    muted: "rgba(255,255,255,0.5)", faint: "rgba(255,255,255,0.38)",
+                    fill: "rgba(255,255,255,0.04)", card: "rgba(0,0,0,0.28)",
+                    hair: "rgba(255,255,255,0.14)", accent: "#5fe08a", done: "#3E7C59",
+                  }}
+                />
+              </div>
+
               {canAdjustHours && (
                 <div style={{ marginTop: 16, padding: 18, borderRadius: 18, background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.09)" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 14 }}>

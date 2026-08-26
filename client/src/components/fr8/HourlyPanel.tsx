@@ -36,8 +36,14 @@ interface Props {
   /** Käynnistä/päätä työtunti. Puuttuessaan ajastinta ei näytetä. */
   onStartShift?: (workerId: string) => void;
   onStopShift?: (workerId: string) => void;
-  /** Käsin lisäys/vähennys. Puuttuessaan paneeli on lukunäkymä (ei perustaja). */
+  /** Käsin lisäys/vähennys tälle päivälle. Puuttuessaan paneeli on
+   *  lukunäkymä (ei perustaja). */
   onAdjustHours?: (workerId: string, delta: number) => void;
+  /** Käsin kirjaus kenelle tahansa ja MILLE PÄIVÄLLE TAHANSA. */
+  onAddHours?: (workerId: string, hours: number, day: string) => void;
+  /** Kaikki kenelle tunteja voi kirjata — keikan tekijät ja johtajat. Laajempi
+   *  kuin `crew`, koska kirjaaminen ei vaadi keikan tekijälistalla oloa. */
+  people?: { id: string; name: string }[];
   /** Poista väärin kirjattu rivi päiväkirjasta. */
   onRemoveShift?: (id: string) => void;
   busy?: boolean;
@@ -50,18 +56,30 @@ function fmtElapsed(sinceMs: number, now: number): string {
   return h > 0 ? `${h} h ${min % 60} min` : `${min} min`;
 }
 
+/**
+ * Edellinen kalenteripäivä.
+ *
+ * Keskipäivän kautta eikä "miinus 24 tuntia": kellonsiirtoyönä vuorokausi on
+ * 23 tai 25 tuntia, ja suora vähennys osuisi silloin väärään päivään.
+ */
+function prevDayKey(ms: number): string {
+  const d = new Date(ms);
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() - 1);
+  return dayKey(d.getTime());
+}
+
 /** "maanantaina 25.8." — otsikon päivä, ilman vuotta (se on tänään). */
 function todayLabel(now: number): string {
   return new Date(now).toLocaleDateString("fi-FI", { weekday: "long", day: "numeric", month: "numeric" });
 }
 
 export default function HourlyPanel({
-  shifts, crew, workerName, me, onStartShift, onStopShift, onAdjustHours, onRemoveShift, busy,
+  shifts, crew, workerName, me, onStartShift, onStopShift, onAdjustHours, onAddHours, onRemoveShift, busy, people,
 }: Props) {
   const m = useIsMobile();
   const [now, setNow] = useState(() => Date.now());
   const [diaryOpen, setDiaryOpen] = useState(false);
-  const [addOpen, setAddOpen] = useState(false);
 
   const running = useMemo(() => crew.filter((c) => c.activeShiftAt), [crew]);
 
@@ -77,25 +95,24 @@ export default function HourlyPanel({
   const stats = useMemo(() => computeShiftStats(shifts, today), [shifts, today]);
 
   /**
-   * OMAT TUNNIT.
+   * OMAT TUNNIT — oma kello ja oma luku, molemmat aina käytettävissä.
    *
-   * Kaksi eri asiaa, ja ne erotellaan tarkoituksella:
+   * Ensimmäinen versio näytti tämän kortin vain jos olin keikan tekijälistalla.
+   * Se oli väärä ehto: johtaja on keikalla myös silloin kun häntä ei ole
+   * listaan lisätty, ja silloin hän ei päässyt kirjaamaan omia tuntejaan
+   * lainkaan — nappi vain puuttui, eikä mikään kertonut miksi.
    *
-   *   · KÄSIN LISÄYS ei vaadi mitään keikalta. Vuororivi on vain tekijän
-   *     tunnus, tunnit ja päivä, joten omat tunnit voi aina kirjata.
-   *   · AJASTIN vaatii, että olen keikan tekijälistalla — käynnissä oleva
-   *     vuoro talletetaan tekijän omaan riviin, jotta se on sama tieto jonka
-   *     tekijän oma sovellus näkee. Ilman sitä riviä ajastimella ei ole
-   *     paikkaa jossa olla käynnissä.
-   *
-   * Ensimmäinen versio näytti koko kortin vain jos olin tekijälistalla, joten
-   * jos en ollut, en päässyt kirjaamaan omia tuntejani lainkaan enkä nähnyt
-   * syytä siihen. Nyt kortti on aina, ja se sanoo kumpi puoli on käytössä.
+   * Käynnissä oleva vuoro talletetaan yhä tekijän omaan crew-riviin (sama
+   * tieto jonka tekijän oma sovellus näkee, ei toista rinnakkaista totuutta),
+   * mutta rivin luo nyt palvelin silloin kun johtaja käynnistää oman kellonsa.
    */
-  const mine = me ? crew.find((c) => c.id === me) : undefined;
-  const myShift = mine?.activeShiftAt ?? null;
-  const canTimeMyself = !!(mine && onStartShift && onStopShift);
+  const myShift = (me ? crew.find((c) => c.id === me)?.activeShiftAt : undefined) ?? null;
+  const canTimeMyself = !!(me && onStartShift && onStopShift);
   const myHours = me ? shiftHoursOf(shifts, me) : 0;
+  /** Oma työaika tälle päivälle — se luku jota katsotaan kesken päivän. */
+  const myToday = me
+    ? Math.max(0, (stats.byDay.find((d) => d.day === today)?.workers.find((w) => w.id === me)?.hours ?? 0))
+    : 0;
 
   /**
    * Rivit: tunteja tehneet, juuri nyt töissä olevat, ja MINÄ aina kun saan
@@ -114,8 +131,42 @@ export default function HourlyPanel({
     });
   }, [stats.byWorker, running, me, onAdjustHours]);
 
-  /** Tekijät joilla ei ole vielä yhtään tuntia — käsin lisäyksen valikko. */
-  const idle = crew.filter((c) => !rows.some((r) => r.id === c.id));
+  /**
+   * KÄSIN KIRJAUKSEN VALITTAVAT. Keikan tekijät JA johtajat — kirjaaminen ei
+   * vaadi keikan tekijälistalla oloa, koska vuororivi on vain tunnus, tunnit
+   * ja päivä. Minä itse olen aina listalla, myös uudella keikalla.
+   */
+  const pickable = useMemo(() => {
+    const seen = new Map<string, { id: string; name: string }>();
+    for (const p of people ?? []) if (p.id) seen.set(p.id, { id: p.id, name: p.name || p.id });
+    for (const c of crew) if (!seen.has(c.id)) seen.set(c.id, { id: c.id, name: workerName(c.id) });
+    if (me && !seen.has(me)) seen.set(me, { id: me, name: workerName(me) });
+    return Array.from(seen.values()).sort((a, b) => (a.id === me ? -1 : b.id === me ? 1 : a.name.localeCompare(b.name, "fi")));
+  }, [people, crew, me, workerName]);
+
+  const yesterday = prevDayKey(now);
+  const [who, setWho] = useState(() => me ?? "");
+  const [day, setDay] = useState(today);
+  const [hrs, setHrs] = useState(1);
+  // Ensimmäisellä latauksella `me` voi olla vielä tyhjä; älä jätä valintaa
+  // tyhjäksi, koska silloin "Lisää" ei tekisi mitään eikä kertoisi miksi.
+  useEffect(() => {
+    if (!who && pickable.length > 0) setWho(me ?? pickable[0].id);
+  }, [who, pickable, me]);
+
+  const fieldStyle: React.CSSProperties = {
+    height: 42, padding: `0 ${T.space.md}px`, borderRadius: T.radius.md,
+    border: T.border.strong, background: T.surface.sunken, color: T.text.primary,
+    fontFamily: T.font, fontSize: T.size.body, boxSizing: "border-box", width: "100%",
+  };
+  const chipStyle: React.CSSProperties = {
+    height: 42, padding: `0 ${T.space.lg}px`, borderRadius: T.radius.md,
+    border: T.border.strong, background: "transparent", color: T.text.secondary,
+    fontFamily: T.font, fontSize: T.size.sm, fontWeight: 600, cursor: "pointer",
+  };
+  const chipOn: React.CSSProperties = {
+    background: T.tone.goodBg, borderColor: T.tone.goodBorder, color: T.tone.goodSoft,
+  };
 
   const adjustBtn: React.CSSProperties = {
     width: 32, height: 32, flexShrink: 0, borderRadius: T.radius.sm,
@@ -148,6 +199,9 @@ export default function HourlyPanel({
               <div style={{ fontFamily: T.font, fontSize: T.size.display, fontWeight: 700, lineHeight: 1.15, marginTop: 2 }}>
                 {fmtShiftHours(myHours)} <span style={{ fontSize: T.size.body, fontWeight: 500, color: T.text.faint }}>h</span>
               </div>
+              <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginTop: 2 }}>
+                {myToday > 0 ? `tänään ${fmtShiftHours(myToday)} h` : "tänään ei vielä tunteja"}
+              </div>
             </div>
             {/* Käsin lisäys on tässä eikä pelkästään tekijälistalla: omien
                 tuntien kirjaaminen on se mitä tällä kortilla tullaan tekemään. */}
@@ -174,7 +228,7 @@ export default function HourlyPanel({
                       Käynnissä {fmtElapsed(myShift, now)}
                     </span>
                   </div>
-                  <button onClick={() => onStopShift!(mine!.id)} disabled={busy}
+                  <button onClick={() => onStopShift!(me)} disabled={busy}
                     style={{ width: "100%", height: 46, borderRadius: T.radius.md, border: T.border.strong, background: "transparent", color: T.text.primary, fontFamily: T.font, fontSize: T.size.body, fontWeight: 700, cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1 }}>
                     Päätä työtunti
                   </button>
@@ -186,7 +240,7 @@ export default function HourlyPanel({
                 </>
               ) : (
                 <>
-                  <button onClick={() => onStartShift!(mine!.id)} disabled={busy}
+                  <button onClick={() => onStartShift!(me)} disabled={busy}
                     style={{ width: "100%", height: 46, borderRadius: T.radius.md, border: `1px solid ${T.tone.goodBorder}`, background: T.tone.goodBg, color: T.tone.goodSoft, fontFamily: T.font, fontSize: T.size.body, fontWeight: 700, cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1 }}>
                     Aloita työtunti
                   </button>
@@ -198,12 +252,6 @@ export default function HourlyPanel({
             </div>
           )}
 
-          {/* Syy näkyviin sen sijaan että nappi vain puuttuisi. */}
-          {!canTimeMyself && onAdjustHours && (
-            <p style={{ margin: `${T.space.md}px 0 0`, paddingTop: T.space.md, borderTop: T.border.divider, fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, lineHeight: 1.6 }}>
-              Ajastin on käytettävissä kun olet tämän keikan tekijälistalla. Tunnit voit lisätä käsin yltä.
-            </p>
-          )}
         </div>
       )}
 
@@ -270,32 +318,54 @@ export default function HourlyPanel({
           </p>
         )}
 
-        {/* Tunnit tekijälle joka ei ole käyttänyt ajastinta lainkaan. */}
-        {onAdjustHours && idle.length > 0 && (
+        {/* KÄSIN KIRJAUS. Kenelle, minä päivänä, montako tuntia — kolme
+            valintaa yhdellä rivillä.
+
+            EILINEN ON YHTÄ TÄRKEÄ KUIN TÄNÄÄN. Ajastin unohtuu, työ tehdään
+            ennen kuin linkki otetaan käyttöön, ja päivä kirjataan usein vasta
+            seuraavana aamuna. Kirjaus ilman päivänvalintaa olisi siis usein
+            väärällä päivällä — ja päivä on koko tämän kirjanpidon perusta. */}
+        {onAddHours && pickable.length > 0 && (
           <div style={{ marginTop: T.space.md, paddingTop: T.space.md, borderTop: T.border.divider }}>
-            <button onClick={() => setAddOpen((v) => !v)}
-              style={{ display: "flex", alignItems: "center", gap: T.space.sm, width: "100%", padding: 0, background: "transparent", border: "none", cursor: "pointer", textAlign: "left" }}>
-              <span aria-hidden style={{ color: T.text.muted, fontSize: T.size.xs }}>{addOpen ? "▾" : "▸"}</span>
-              <span style={{ ...mono, color: T.text.faint }}>LISÄÄ TUNNIT TEKIJÄLLE JOKA EI OLE KIRJANNUT</span>
-            </button>
-            {addOpen && (
-              <div style={{ display: "flex", flexDirection: "column", gap: T.space.sm, marginTop: T.space.md }}>
-                {idle.map((c) => (
-                  <div key={c.id} style={{ ...inset, padding: T.space.md, display: "flex", alignItems: "center", gap: T.space.md }}>
-                    <span style={{ flex: 1, minWidth: 0, fontFamily: T.font, fontSize: T.size.sm, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {workerName(c.id)}
-                    </span>
-                    {onStartShift && (
-                      <button onClick={() => onStartShift(c.id)} disabled={busy}
-                        style={{ padding: `5px ${T.space.md}px`, borderRadius: T.radius.pill, border: T.border.strong, background: "transparent", color: T.text.muted, fontFamily: T.font, fontSize: T.size.xs, fontWeight: 600, cursor: "pointer" }}>
-                        aloita
-                      </button>
-                    )}
-                    <button onClick={() => onAdjustHours(c.id, HOUR_STEP)} disabled={busy} style={adjustBtn}>+</button>
-                  </div>
+            <div style={{ ...mono, color: T.text.faint, marginBottom: T.space.md }}>LISÄÄ TUNTEJA KÄSIN</div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: T.space.sm }}>
+              <select value={who} onChange={(e) => setWho(e.target.value)} style={fieldStyle}>
+                {pickable.map((p) => (
+                  <option key={p.id} value={p.id} style={{ background: "#141416" }}>
+                    {p.id === me ? `${p.name} (sinä)` : p.name}
+                  </option>
                 ))}
+              </select>
+
+              <div style={{ display: "flex", gap: T.space.sm, flexWrap: "wrap" }}>
+                {[{ k: today, label: "Tänään" }, { k: yesterday, label: "Eilen" }].map((d) => (
+                  <button key={d.k} onClick={() => setDay(d.k)}
+                    style={{ ...chipStyle, ...(day === d.k ? chipOn : null) }}>
+                    {d.label}
+                  </button>
+                ))}
+                {/* Muu päivä. Tulevaisuutta ei voi kirjata: tekemätöntä työtä
+                    ei ole olemassa, ja väärä painallus jäisi näkymättömäksi
+                    riviksi tulevalle viikolle. */}
+                <input type="date" value={day} max={today} onChange={(e) => e.target.value && setDay(e.target.value)}
+                  style={{ ...fieldStyle, flex: 1, minWidth: 130, colorScheme: "dark" }} />
               </div>
-            )}
+
+              <div style={{ display: "flex", alignItems: "center", gap: T.space.sm }}>
+                <button onClick={() => setHrs((h) => Math.max(1, h - 1))} disabled={hrs <= 1} style={{ ...adjustBtn, opacity: hrs <= 1 ? 0.35 : 1 }}>−</button>
+                <span style={{ minWidth: 54, textAlign: "center", fontFamily: T.font, fontSize: T.size.title, fontWeight: 700 }}>
+                  {hrs} <span style={{ fontSize: T.size.sm, fontWeight: 500, color: T.text.faint }}>h</span>
+                </span>
+                <button onClick={() => setHrs((h) => Math.min(24, h + 1))} disabled={hrs >= 24} style={adjustBtn}>+</button>
+                <button
+                  onClick={() => { onAddHours(who, hrs, day); setHrs(1); }}
+                  disabled={busy || !who}
+                  style={{ flex: 1, height: 42, borderRadius: T.radius.md, border: `1px solid ${T.tone.goodBorder}`, background: T.tone.goodBg, color: T.tone.goodSoft, fontFamily: T.font, fontSize: T.size.body, fontWeight: 700, cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1 }}>
+                  Lisää {hrs} h {day === today ? "tälle päivälle" : fmtDayLabel(day)}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

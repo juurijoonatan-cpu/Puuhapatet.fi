@@ -1300,6 +1300,17 @@ describe("tuntitilan vuorokirjanpito — oma kirjanpito, päivätty", () => {
     expect(clean.map((s) => s.id)).toEqual(["a"]);
   });
 
+  it("annettu menneisyyden päivä säilyy — eiliselle kirjaaminen ei siirry tähän päivään", () => {
+    // Ajastin unohtuu ja päivä kirjataan usein vasta seuraavana aamuna, joten
+    // kirjaushetki ja työpäivä ovat eri asioita. Jos `at` voittaisi `day`n,
+    // eiliselle kirjattu työ hyppäisi tälle päivälle.
+    const at = new Date(2026, 7, 26, 8, 0, 0).getTime();
+    const [row] = sanitizeShifts([{ id: "a", worker: "matias", day: "2026-08-25", hours: 7, at }]);
+    expect(row.day).toBe("2026-08-25");
+    expect(computeShiftStats([row], "2026-08-26").todayHours).toBe(0);
+    expect(computeShiftStats([row], "2026-08-26").totalHours).toBe(7);
+  });
+
   it("kelvoton päivä johdetaan kirjaushetkestä — rivi ei jää päivättömäksi", () => {
     const at = new Date(2026, 7, 25, 13, 0, 0).getTime();
     const [row] = sanitizeShifts([{ id: "a", worker: "oona", day: "eilen", hours: 3, at }]);

@@ -6879,16 +6879,49 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       if (action === "start" || action === "stop") {
         if (!worker) return res.status(400).json({ error: "Tekijä puuttuu" });
-        const member = (project.crew || []).find((m) => m.id === worker);
+        /**
+         * KÄYNNISSÄ OLEVA VUORO TARVITSEE RIVIN JOSSA OLLA.
+         *
+         * Se talletetaan tekijän omaan crew-riviin, jotta se on täsmälleen sama
+         * tieto jonka tekijän oma sovellus näkee — ei toista rinnakkaista
+         * "kuka on nyt töissä" -totuutta.
+         *
+         * Siksi johtaja, jota ei ole vielä lisätty tälle keikalle, saa rivinsä
+         * tässä. Ilman tätä oma työkello ei käynnistynyt lainkaan keikalla
+         * jonka tekijälistaa ei ollut pohjustettu — ja virhe ("Tekijää ei
+         * löydy keikalta") oli käyttäjälle täysin epäinformatiivinen, koska
+         * hän nimenomaan on keikalla, hän vain ei ollut listassa.
+         *
+         * Rajaus: näin syntyy rivi VAIN perustajalle tai kirjoittajalle
+         * itselleen. Kuka tahansa ei voi luoda tekijöitä tämän reitin kautta.
+         */
+        let member: CrewMember | undefined = (project.crew || []).find((m) => m.id === worker);
+        if (!member && action === "start" && (FOUNDER_IDS.includes(worker) || worker === who)) {
+          const created = sanitizeCrewMember({
+            id: worker,
+            token: await genUniqueCrewToken(),
+            name: String(req.body?.workerName ?? "").trim().slice(0, 60) || worker,
+            role: FOUNDER_IDS.includes(worker) ? "host" : "worker",
+            adminLinked: true,
+            perWindowCents: DEFAULT_WORKER_PER_WINDOW_CENTS,
+            active: true,
+            createdAt: Date.now(),
+          });
+          if (created) {
+            member = created;
+            project.crew = [...(project.crew || []), created];
+          }
+        }
         if (!member) return res.status(404).json({ error: "Tekijää ei löydy keikalta" });
+        const found: CrewMember = member;
         if (action === "start") {
-          if (member.activeShiftAt) return res.status(400).json({ error: "Työtunti on jo käynnissä" });
+          if (found.activeShiftAt) return res.status(400).json({ error: "Työtunti on jo käynnissä" });
           const rawTarget = Number(req.body?.targetHours);
           const target = Number.isFinite(rawTarget) && rawTarget > 0 ? Math.min(24, Math.round(rawTarget * 2) / 2) : undefined;
           project.crew = (project.crew || []).map((m) =>
             m.id !== worker ? m : { ...m, activeShiftAt: Date.now(), ...(target ? { shiftTargetHours: target } : { shiftTargetHours: undefined }) });
         } else {
-          const startedAt = member.activeShiftAt;
+          const startedAt = found.activeShiftAt;
           if (!startedAt) return res.status(400).json({ error: "Työtunti ei ole käynnissä" });
           const hours = roundWorkHoursFromMinutes((Date.now() - startedAt) / 60000);
           project.crew = (project.crew || []).map((m) =>

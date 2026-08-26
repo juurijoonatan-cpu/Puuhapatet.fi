@@ -717,8 +717,10 @@ export default function AdminProjectPage() {
     });
   }, [jobId, currentWorker]);
 
-  const startShift = useCallback((workerId: string) => {
-    void runShift({ action: "start", worker: workerId }, "Työtunnin aloitus ei onnistunut.");
+  const startShift = useCallback((workerId: string, workerLabel?: string) => {
+    // Nimi mukaan, jotta keikalle vasta nyt lisättävä johtaja saa rivilleen
+    // oikean nimen eikä pelkkää tunnusta.
+    void runShift({ action: "start", worker: workerId, workerName: workerLabel }, "Työtunnin aloitus ei onnistunut.");
   }, [runShift]);
 
   const stopShift = useCallback((workerId: string) => {
@@ -735,6 +737,11 @@ export default function AdminProjectPage() {
    */
   const adjustShiftHours = useCallback((workerId: string, delta: number) => {
     void runShift({ action: "add", worker: workerId, hours: delta }, "Tuntien korjaus ei onnistunut.");
+  }, [runShift]);
+
+  /** Käsin kirjaus kenelle tahansa ja mille päivälle tahansa (myös eiliselle). */
+  const addShiftHours = useCallback((workerId: string, hours: number, day: string) => {
+    void runShift({ action: "add", worker: workerId, hours, day }, "Tuntien lisäys ei onnistunut.");
   }, [runShift]);
 
   const removeShift = useCallback((id: string) => {
@@ -1239,6 +1246,20 @@ export default function AdminProjectPage() {
   const canAdjustHours = isFounderView;
 
   /**
+   * Kenelle tunteja voi kirjata: keikan tekijät, johtajat ja minä itse.
+   * Laajempi kuin keikan tekijälista, koska tuntirivi on vain tunnus, tunnit
+   * ja päivä — kirjaaminen ei vaadi keikalle lisäämistä.
+   */
+  const hourPeople = (() => {
+    const out = new Map<string, { id: string; name: string }>();
+    for (const w of gigWorkers) out.set(w.id, { id: w.id, name: w.name });
+    for (const id of [...FOUNDER_IDS, currentWorker]) {
+      if (!out.has(id)) out.set(id, { id, name: resolveName(id) });
+    }
+    return Array.from(out.values());
+  })();
+
+  /**
    * OVI. Kumpi puoli avataan — ks. `side`-tilan perustelu ylempänä.
    *
    * Tilannerivit lasketaan tuntipuolen omasta kirjanpidosta ja projektipuolen
@@ -1319,9 +1340,11 @@ export default function AdminProjectPage() {
             crew={crew}
             workerName={resolveName}
             me={currentWorker}
-            onStartShift={startShift}
+            onStartShift={(id) => startShift(id, resolveName(id))}
             onStopShift={stopShift}
             onAdjustHours={canAdjustHours ? adjustShiftHours : undefined}
+            onAddHours={canAdjustHours ? addShiftHours : undefined}
+            people={hourPeople}
             onRemoveShift={canAdjustHours ? removeShift : undefined}
             busy={shiftBusy}
           />

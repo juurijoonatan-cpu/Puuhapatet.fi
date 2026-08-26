@@ -1621,7 +1621,7 @@ export const api = {
    */
   adminShift: (
     jobId: number,
-    body: { action: "start" | "stop" | "add" | "remove"; worker?: string; hours?: number; day?: string; note?: string; id?: string; targetHours?: number; by?: string },
+    body: { action: "start" | "stop" | "add" | "remove"; worker?: string; workerName?: string; hours?: number; day?: string; note?: string; id?: string; targetHours?: number; by?: string },
   ) =>
     request<{ ok: boolean; shifts: ProjShift[]; crew: { id: string; activeShiftAt: number | null; shiftTargetHours: number | null }[] }>(
       "POST", `/api/jobs/${jobId}/shift`, body, QUICK,

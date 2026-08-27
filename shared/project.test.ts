@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, billingModeOf, isHourlyGig, roundWorkHours, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, sanitizeBoard, sortedBoard, openTaskCount, BOARD_CUSTOMER, sanitizeShifts, computeShiftStats, shiftHoursOf, dayKey, isDayKey, fmtDayLabel, MAX_SHIFTS, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
+import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, billingModeOf, isHourlyGig, roundWorkHours, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, sanitizeBoard, sortedBoard, openTaskCount, BOARD_CUSTOMER, sanitizeShifts, computeShiftStats, shiftHoursOf, dayKey, isDayKey, fmtDayLabel, MAX_SHIFTS, cappedTimerHours, MAX_TIMER_SHIFT_HOURS, addShiftEntry, shiftHoursOnDay, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
 import { emptyGigData, computeTotals } from "./gig";
 
 // Kohta 6.1 — kokonaistilanteen ikkunamäärän täsmäytys. Ks. docs/fr8-era-laskutus-plan.md.
@@ -1327,6 +1327,71 @@ describe("tuntitilan vuorokirjanpito — oma kirjanpito, päivätty", () => {
 
   it("päivämäärä näytetään viikonpäivän kanssa", () => {
     expect(fmtDayLabel("2026-08-25")).toBe("ti 25.8.");
+  });
+
+  it("saman päivän käsin kirjaukset kertyvät YHTEEN riviin", () => {
+    // Ilman tätä jokainen napautus jätti oman sirpaleensa päiväkirjaan — ja
+    // kun tunnin korjasi alas ja takaisin ylös, päivän summa ei liikkunut
+    // lainkaan. Kirjaus näytti siltä ettei se tehnyt mitään.
+    let list: any[] = [];
+    for (let i = 0; i < 3; i++) {
+      list = addShiftEntry(list, { id: `x${i}`, worker: "oona", hours: 1, day: "2026-08-25", at: 100 + i });
+    }
+    expect(list).toHaveLength(1);
+    expect(list[0].hours).toBe(3);
+  });
+
+  it("korjaus alas ja takaisin ylös näkyy lukuna, ei kahtena rivinä", () => {
+    let list: any[] = addShiftEntry([], { id: "a", worker: "oona", hours: 4, day: "2026-08-25", at: 1 });
+    list = addShiftEntry(list, { id: "b", worker: "oona", hours: -1, day: "2026-08-25", at: 2 });
+    expect(list).toHaveLength(1);
+    expect(list[0].hours).toBe(3);
+    list = addShiftEntry(list, { id: "c", worker: "oona", hours: 1, day: "2026-08-25", at: 3 });
+    expect(list).toHaveLength(1);
+    expect(list[0].hours).toBe(4);
+  });
+
+  it("nollaan kutistunut korjausrivi poistuu", () => {
+    let list: any[] = addShiftEntry([], { id: "a", worker: "oona", hours: 1, day: "2026-08-25", at: 1 });
+    list = addShiftEntry(list, { id: "b", worker: "oona", hours: -1, day: "2026-08-25", at: 2 });
+    expect(list).toEqual([]);
+  });
+
+  it("ajastimen vuoro ei yhdisty — kaksi vuoroa on kaksi vuoroa", () => {
+    let list: any[] = addShiftEntry([], { id: "a", worker: "oona", hours: 4, day: "2026-08-25", at: 1, startedAt: 1 });
+    list = addShiftEntry(list, { id: "b", worker: "oona", hours: 3, day: "2026-08-25", at: 2, startedAt: 2 });
+    expect(list).toHaveLength(2);
+    expect(shiftHoursOnDay(list, "oona", "2026-08-25")).toBe(7);
+  });
+
+  it("käsin korjaus ei vie PÄIVÄÄ miinukselle", () => {
+    // Miinukselle mennyt päivä katoaisi päiväkirjasta mutta jäisi vähentämään
+    // kokonaissummaa — päiväkirja ei täsmäisi eikä eroa voisi selittää.
+    let list: any[] = addShiftEntry([], { id: "a", worker: "oona", hours: 2, day: "2026-08-25", at: 1, startedAt: 1 });
+    list = addShiftEntry(list, { id: "b", worker: "oona", hours: -9, day: "2026-08-25", at: 2 });
+    expect(shiftHoursOnDay(list, "oona", "2026-08-25")).toBe(0);
+    expect(computeShiftStats(list, "2026-08-25").totalHours).toBe(0);
+  });
+
+  it("eri päivät pysyvät erillään", () => {
+    let list: any[] = addShiftEntry([], { id: "a", worker: "oona", hours: 4, day: "2026-08-25", at: 1 });
+    list = addShiftEntry(list, { id: "b", worker: "oona", hours: 5, day: "2026-08-26", at: 2 });
+    expect(list).toHaveLength(2);
+    expect(shiftHoursOnDay(list, "oona", "2026-08-25")).toBe(4);
+    expect(shiftHoursOnDay(list, "oona", "2026-08-26")).toBe(5);
+  });
+
+  it("unohtunut ajastin ei kirjaa vuorokausia", () => {
+    // Ajastin jää päälle yön yli. Kukaan ei tee 35 tunnin työvuoroa, joten se
+    // luku on mittausvirhe — ja tuntitilassa se menisi suoraan laskulle.
+    expect(cappedTimerHours(35)).toEqual({ hours: MAX_TIMER_SHIFT_HOURS, capped: true });
+  });
+
+  it("raja ei leikkaa todellista pitkää päivää", () => {
+    expect(cappedTimerHours(11.6)).toEqual({ hours: 12, capped: false });
+    expect(cappedTimerHours(MAX_TIMER_SHIFT_HOURS)).toEqual({ hours: MAX_TIMER_SHIFT_HOURS, capped: false });
+    // Alle puolen tunnin piipahdus ei kerrytä tuntia, kuten muutenkaan.
+    expect(cappedTimerHours(0.3)).toEqual({ hours: 0, capped: false });
   });
 
   it("lista ei kasva rajatta — vanhin putoaa", () => {

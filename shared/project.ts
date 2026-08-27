@@ -225,6 +225,29 @@ export function roundWorkHoursFromMinutes(minutes: number): number {
 }
 
 /**
+ * UNOHTUNUT AJASTIN — pisin tunti­määrä jonka yksi vuoro voi kirjata.
+ *
+ * Ajastin jää päälle. Se ei ole reunatapaus vaan se mitä tapahtuu, kun päivä
+ * loppuu kesken ja puhelin menee taskuun: seuraavana aamuna "päätä työtunti"
+ * kirjaisi 35 tuntia yhtenä vuorona. Kukaan ei tee 35 tunnin työvuoroa, joten
+ * se luku ei ole työaika vaan mittausvirhe — ja tuntitilassa se olisi menossa
+ * suoraan asiakkaan laskulle ja tekijän palkkaan.
+ *
+ * 16 tuntia on tarkoituksella reilusti pisintä oikeaa työpäivää pidempi: raja
+ * ei saa leikata todellista pitkää päivää, sen tehtävä on pysäyttää selvä
+ * virhe. Rajaan osunut vuoro merkitään (`note`), jottei kukaan joudu
+ * arvailemaan mistä luku tuli — ja johtaja korjaa sen käsin oikeaksi.
+ */
+export const MAX_TIMER_SHIFT_HOURS = 16;
+
+export function cappedTimerHours(hours: number): { hours: number; capped: boolean } {
+  const h = roundWorkHours(hours);
+  return h > MAX_TIMER_SHIFT_HOURS
+    ? { hours: MAX_TIMER_SHIFT_HOURS, capped: true }
+    : { hours: h, capped: false };
+}
+
+/**
  * TUNTITILAN TYÖVUOROT — oma kirjanpitonsa, ei `hours`-kentän jatkoa.
  *
  * MIKSI OMA KENTTÄ. `hours` on vanhan projektityökalun juokseva summa: sinne on
@@ -408,6 +431,64 @@ export function computeShiftStats(shifts: ProjShift[] | undefined, today: string
 export function shiftHoursOf(shifts: ProjShift[] | undefined, worker: string): number {
   const sum = (shifts ?? []).filter((s) => s.worker === worker).reduce((a, s) => a + s.hours, 0);
   return Math.max(0, Math.round(sum * 100) / 100);
+}
+
+/** Tekijän tunnit YHTENÄ päivänä. */
+export function shiftHoursOnDay(shifts: ProjShift[] | undefined, worker: string, day: string): number {
+  const sum = (shifts ?? []).filter((s) => s.worker === worker && s.day === day).reduce((a, s) => a + s.hours, 0);
+  return Math.round(sum * 100) / 100;
+}
+
+/**
+ * KÄSIN KIRJAUS — yksi rivi per tekijä ja päivä, ei rivi per napautus.
+ *
+ * MIKSI YHDISTETÄÄN. Ensimmäinen versio lisäsi jokaisesta napautuksesta oman
+ * rivinsä, ja se näytti ruudulla tältä:
+ *
+ *     Joonatan +35 h ×   Joonatan −1 h ×   Joonatan −1 h ×
+ *     Joonatan +1 h ×    Joonatan +1 h ×
+ *
+ * Kaksi vikaa yhdessä. Päiväkirja täyttyi sirpaleista, JA — pahempi — kun
+ * korjasi tunnin alas ja takaisin ylös, päivän summa ei liikkunut lainkaan.
+ * Kirjaus näytti siis siltä ettei se tehnyt mitään, vaikka se toimi joka
+ * kerta. Nyt saman päivän käsin kirjaukset kertyvät yhteen riviin: napautus
+ * muuttaa lukua, ja luku on se mitä ruudulla näkyy.
+ *
+ * AJASTIMEN VUORO EI YHDISTY. Sillä on `startedAt`, ja se on tieto omasta
+ * työvuorosta — ei korjaus. Kaksi eri vuoroa samana päivänä ovat kaksi
+ * vuoroa, ja niiden yhdistäminen hävittäisi alkuajat.
+ *
+ * PÄIVÄ EI MENE MIINUKSELLE. Vähennys rajataan siihen mitä sinä päivänä on:
+ * miinukselle mennyt päivä katoaisi päiväkirjasta (siellä näkyvät vain päivät
+ * joilla on tunteja) mutta jäisi vähentämään kokonaissummaa — jolloin
+ * päiväkirja ei täsmäisi summan kanssa eikä eroa voisi mistään selittää.
+ */
+export function addShiftEntry(
+  shifts: ProjShift[],
+  entry: { id: string; worker: string; hours: number; day: string; at: number; startedAt?: number; by?: string; note?: string },
+): ProjShift[] {
+  const dayCur = shiftHoursOnDay(shifts, entry.worker, entry.day);
+  const hours = entry.hours < 0 ? -Math.min(dayCur, -entry.hours) : entry.hours;
+  if (!hours) return shifts;
+
+  if (!entry.startedAt) {
+    const idx = shifts.findIndex((s) => s.worker === entry.worker && s.day === entry.day && !s.startedAt);
+    if (idx >= 0) {
+      const merged = Math.round((shifts[idx].hours + hours) * 100) / 100;
+      // Nollaan kutistunut korjausrivi poistetaan: "+0 h" ei ole kirjaus.
+      if (!merged) return shifts.filter((_, i) => i !== idx);
+      return shifts.map((s, i) => (i === idx
+        ? { ...s, hours: merged, at: entry.at, ...(entry.by ? { by: entry.by } : {}), ...(entry.note ? { note: entry.note } : {}) }
+        : s));
+    }
+  }
+
+  return [...shifts, {
+    id: entry.id, worker: entry.worker, hours, day: entry.day, at: entry.at,
+    ...(entry.startedAt ? { startedAt: entry.startedAt } : {}),
+    ...(entry.by ? { by: entry.by } : {}),
+    ...(entry.note ? { note: entry.note } : {}),
+  }].slice(-MAX_SHIFTS);
 }
 
 /**

@@ -79,7 +79,15 @@ export default function HourlyPanel({
 }: Props) {
   const m = useIsMobile();
   const [now, setNow] = useState(() => Date.now());
-  const [diaryOpen, setDiaryOpen] = useState(false);
+  /**
+   * PÄIVÄKIRJA ON AUKI OLETUKSENA.
+   *
+   * Se oli taitteen takana, ja siksi kirjaus näytti siltä ettei se tehnyt
+   * mitään: rivi syntyi, mutta ainoa paikka jossa sen näki oli suljettu. Tämä
+   * on koko näkymän tarkistuslista — se on se johon katsotaan heti kun jokin
+   * luku näyttää väärältä.
+   */
+  const [diaryOpen, setDiaryOpen] = useState(true);
 
   const running = useMemo(() => crew.filter((c) => c.activeShiftAt), [crew]);
 
@@ -148,6 +156,19 @@ export default function HourlyPanel({
   const [who, setWho] = useState(() => me ?? "");
   const [day, setDay] = useState(today);
   const [hrs, setHrs] = useState(1);
+
+  /**
+   * VALITUN HENKILÖN LUVUT NÄKYVÄT SIINÄ MISSÄ VALINTA TEHDÄÄN.
+   *
+   * Ilman näitä lomake oli sokea: kun tekijää vaihtoi, mikään ruudulla ei
+   * kertonut paljonko hänellä on tunteja — ja kun tunnin lisäsi, muuttuva luku
+   * oli ylhäällä kortin ulkopuolella, usein ruudun ulkopuolella. Kirjaus näytti
+   * siltä ettei se tehnyt mitään, vaikka rivi syntyi joka kerta.
+   */
+  const whoTotal = who ? shiftHoursOf(shifts, who) : 0;
+  const whoOnDay = who
+    ? (stats.byDay.find((d) => d.day === day)?.workers.find((w) => w.id === who)?.hours ?? 0)
+    : 0;
   // Ensimmäisellä latauksella `me` voi olla vielä tyhjä; älä jätä valintaa
   // tyhjäksi, koska silloin "Lisää" ei tekisi mitään eikä kertoisi miksi.
   useEffect(() => {
@@ -338,6 +359,23 @@ export default function HourlyPanel({
                 ))}
               </select>
 
+              {/* Valitun henkilön luvut: kokonaismäärä ja valitun päivän tunnit.
+                  Nämä päivittyvät heti kirjauksen jälkeen, joten kirjauksen
+                  vaikutuksen näkee siinä missä se tehtiin. */}
+              {who && (
+                <div style={{ ...inset, padding: T.space.md, display: "flex", alignItems: "baseline", gap: T.space.md, flexWrap: "wrap" }}>
+                  <span style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted }}>
+                    {workerName(who)} yhteensä
+                  </span>
+                  <span style={{ fontFamily: T.font, fontSize: T.size.title, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                    {fmtShiftHours(whoTotal)} <span style={{ fontSize: T.size.sm, fontWeight: 500, color: T.text.faint }}>h</span>
+                  </span>
+                  <span style={{ marginLeft: "auto", fontFamily: T.font, fontSize: T.size.sm, color: whoOnDay > 0 ? T.tone.goodSoft : T.text.faint }}>
+                    {fmtDayLabel(day)} {fmtShiftHours(whoOnDay)} h
+                  </span>
+                </div>
+              )}
+
               <div style={{ display: "flex", gap: T.space.sm, flexWrap: "wrap" }}>
                 {[{ k: today, label: "Tänään" }, { k: yesterday, label: "Eilen" }].map((d) => (
                   <button key={d.k} onClick={() => setDay(d.k)}
@@ -405,9 +443,14 @@ export default function HourlyPanel({
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: T.space.sm }}>
                       {(shifts ?? []).filter((s) => s.day === d.day).sort((a, b) => b.at - a.at).map((s) => (
                         <button key={s.id} onClick={() => onRemoveShift(s.id)} disabled={busy}
-                          title="Poista tämä kirjaus"
-                          style={{ padding: `3px ${T.space.sm}px`, borderRadius: T.radius.pill, border: T.border.subtle, background: "transparent", color: T.text.faint, fontFamily: T.font, fontSize: T.size.xs, cursor: "pointer" }}>
-                          {workerName(s.worker)} {s.hours > 0 ? "+" : "−"}{fmtShiftHours(Math.abs(s.hours))} h ✕
+                          title={s.note ? `${s.note} — poista tämä kirjaus` : "Poista tämä kirjaus"}
+                          style={{ padding: `3px ${T.space.sm}px`, borderRadius: T.radius.pill, border: s.note ? `1px solid ${T.tone.warnBorder}` : T.border.subtle, background: s.note ? T.tone.warnBg : "transparent", color: s.note ? T.tone.warn : T.text.faint, fontFamily: T.font, fontSize: T.size.xs, cursor: "pointer" }}>
+                          {/* Nimi vain kun päivällä on useampi tekijä — muuten se
+                              toistuisi joka sirpaleessa vaikka rivin yllä lukee
+                              jo kenen päivä on. */}
+                          {d.workers.length > 1 ? `${workerName(s.worker)} ` : ""}
+                          {s.hours > 0 ? "+" : "−"}{fmtShiftHours(Math.abs(s.hours))} h
+                          {s.note ? " ⚠" : ""} ✕
                         </button>
                       ))}
                     </div>

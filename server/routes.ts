@@ -30,7 +30,7 @@ import {
 } from "@shared/pricing";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, signaturePrompt, contractPending, gigStatus, livePayments, withoutDashOnly, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, isHourlyGig, billingModeOf, roundWorkHours, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, sanitizeBoard, sortedBoard, BOARD_CUSTOMER, MAX_BOARD_TEXT_LEN, MAX_BOARD_ENTRIES, toBoardKind, dayKey, isDayKey, shiftHoursOf, computeShiftStats, MAX_SHIFTS, MAX_SHIFT_NOTE_LEN, type ProjShift, type ProjBoardEntry, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, isHourlyGig, billingModeOf, roundWorkHours, roundWorkHoursFromMinutes, cappedTimerHours, customerExpenses, customerHourRows, sanitizeBoard, sortedBoard, BOARD_CUSTOMER, MAX_BOARD_TEXT_LEN, MAX_BOARD_ENTRIES, toBoardKind, dayKey, isDayKey, addShiftEntry, computeShiftStats, MAX_SHIFT_NOTE_LEN, type ProjShift, type ProjBoardEntry, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
@@ -6923,7 +6923,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         } else {
           const startedAt = found.activeShiftAt;
           if (!startedAt) return res.status(400).json({ error: "Työtunti ei ole käynnissä" });
-          const hours = roundWorkHoursFromMinutes((Date.now() - startedAt) / 60000);
+          // Unohtunut ajastin ei saa kirjata vuorokausia — ks. `cappedTimerHours`.
+          const { hours, capped } = cappedTimerHours((Date.now() - startedAt) / 3_600_000);
           project.crew = (project.crew || []).map((m) =>
             m.id !== worker ? m : { ...m, activeShiftAt: undefined, shiftTargetHours: undefined });
           /**
@@ -6936,7 +6937,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             // iltavuoro ei ole seuraavan päivän työtä.
             project.shifts = applyShiftAction(
               project.shifts ?? [],
-              { add: { worker, hours, day: dayKey(startedAt), startedAt } },
+              {
+                add: {
+                  worker, hours, day: dayKey(startedAt), startedAt,
+                  ...(capped ? { note: "ajastin jäi päälle — tarkista" } : {}),
+                },
+              },
               worker,
             );
           }
@@ -7728,28 +7734,25 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!worker) throw new Error("Tekijä puuttuu");
       const raw = Math.round((Number(action.add.hours) || 0) * 100) / 100;
       if (!raw) throw new Error("Tunnit puuttuu");
-      /**
-       * MIINUS EI VIE ALLE NOLLAN. Korjaus on aina korjaus johonkin, ja
-       * miinukselle mennyt palkkarivi olisi virhe jota kukaan ei osaa lukea.
-       * Liian iso vähennys kutistetaan siihen mitä on jäljellä; kun mitään ei
-       * ole jäljellä, riviä ei synny lainkaan.
-       */
-      const cur = shiftHoursOf(shifts, worker);
-      const hours = raw < 0 ? -Math.min(cur, -raw) : raw;
-      if (!hours) throw new Error("Ei vähennettäviä tunteja");
       const at = Date.now();
       const day = isDayKey(action.add.day) ? String(action.add.day) : dayKey(at);
       const note = String(action.add.note ?? "").trim().slice(0, MAX_SHIFT_NOTE_LEN);
-      const entry: ProjShift = {
+      /**
+       * Yhdistämis- ja rajaussäännöt ovat mallissa (`addShiftEntry`), eivät
+       * täällä: saman päivän käsin kirjaukset kertyvät yhteen riviin ja päivä
+       * ei voi mennä miinukselle. Ks. funktion dokumentaatio siitä miksi.
+       */
+      const next = addShiftEntry(shifts, {
         id: `s${at.toString(36)}${Math.floor(Math.random() * 100000).toString(36)}`,
-        worker, hours, at, day,
+        worker, hours: raw, at, day,
         ...(action.add.startedAt ? { startedAt: action.add.startedAt } : {}),
         // `by` talletetaan vain kun kirjaaja on joku muu kuin tekijä itse —
         // muuten jokaisella rivillä lukisi "kirjannut: hän itse".
         ...(by && by !== worker ? { by } : {}),
         ...(note ? { note } : {}),
-      };
-      return [...shifts, entry].slice(-MAX_SHIFTS);
+      });
+      if (next === shifts) throw new Error("Ei vähennettäviä tunteja");
+      return next;
     }
     if (action.remove) {
       const id = String(action.remove.id ?? "");
@@ -9230,7 +9233,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const minutes = Math.max(0, Math.round(Number(req.body?.minutes) || (Date.now() - startedAt) / 60000));
         endedSession = { start: startedAt, end: Date.now(), minutes, windows, earnedCents: windows * m.perWindowCents };
         const sessions = [...(m.sessions || []), endedSession].slice(-200);
-        if (hourly) creditedHours = roundWorkHoursFromMinutes(minutes);
+        // Sama unohtuneen ajastimen raja kuin johtajan puolella.
+        if (hourly) creditedHours = cappedTimerHours(minutes / 60).hours;
         return { ...m, activeShiftAt: undefined, shiftStartWashed: undefined, shiftTargetHours: undefined, sessions };
       });
 
@@ -10730,8 +10734,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       for (const job of rows) {
         const project = parseProject(job.projectData ?? null);
         if (!project) continue;
+        /**
+         * TÄMÄ LISTA ON NIILLE JOTKA MYÖS TEKEVÄT TYÖTÄ KEIKALLA (esim. Petrus).
+         *
+         * PERUSTAJA EI KUULU TÄNNE, vaikka hänellä on keikalla oma rivi
+         * (`role: "host"`). Hänen ikkunansa ovat katetta eivätkä palkkaa, eikä
+         * hän ole tekijäkanavalla — sama raja kuin päivän yhteenvetopostissa,
+         * jota hänelle ei lähetetä.
+         *
+         * Ilman tätä rajausta admin-etusivulle ilmestyi "OMA KEIKKA" -kortti,
+         * jonka "Avaa oma työpöytä" heitti johtajan TEKIJÄN sovellukseen — ja
+         * koska hän ei ole koskaan tehnyt tekijän käyttöönottoa, hän päätyi
+         * työntekijän aloitusruutuun omalla keikallaan. Rivi syntyy nyt myös
+         * automaattisesti kun johtaja käynnistää oman työkellonsa, joten
+         * rajaus on tässä eikä siinä kuka sattuu olemaan listassa.
+         */
         const member = (project.crew || []).find(
-          (m) => m.active && (m.id.toLowerCase() === sub || (m.linkedUserId ?? "").toLowerCase() === sub),
+          (m) => m.active && m.role !== "host"
+            && (m.id.toLowerCase() === sub || (m.linkedUserId ?? "").toLowerCase() === sub),
         );
         if (!member) continue;
         const stats = crewMemberStats(project, member);

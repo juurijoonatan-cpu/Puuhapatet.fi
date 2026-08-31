@@ -52,6 +52,10 @@ const team = [
   },
 ];
 
+// Hetkellisesti piilotettu tekijät-osiosta — tiedot pysyvät yllä team-listassa
+// ennallaan, poista nimi tästä joukosta kun henkilö palaa näkyviin.
+const PIILOTETUT_TEKIJOISTA = new Set(["Petrus Aalto"]);
+
 // Tekijätiimi — näytetään about-sivulla avatar-ryhmänä. Kuvat /public-kansiosta;
 // puuttuvat putoavat nimikirjaimiin.
 const TIIMI = [
@@ -131,7 +135,7 @@ export default function AboutPage() {
           {t("about.team.title")}
         </h2>
         <div className="grid md:grid-cols-2 gap-6 mb-10">
-          {team.map((f) => (
+          {team.filter((f) => !PIILOTETUT_TEKIJOISTA.has(f.name)).map((f) => (
             <Card key={f.name} className="p-6 bg-card border-0 premium-shadow flex flex-col gap-5">
               {/* Photo + name row */}
               <div className="flex items-center gap-4">

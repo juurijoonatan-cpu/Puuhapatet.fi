@@ -64,6 +64,10 @@ const TIIMI = [
   { src: "/fr8/selma.jpg", fallback: "SE", tooltip: "Selma" },
 ];
 
+// Hetkellisesti piilotettu meistä-sivulta — tiedot pysyvät yllä TIIMI-listassa
+// ennallaan, poista nimi tästä joukosta kun henkilö palaa näkyviin.
+const PIILOTETUT_TIIMISTA = new Set(["Milja", "Doma", "Oliver"]);
+
 export default function AboutPage() {
   const { t } = useI18n();
 
@@ -79,7 +83,8 @@ export default function AboutPage() {
     const discovered: AvatarGroupItem[] = roster
       .filter((w) => !known.has(w.name.trim().split(/\s+/)[0]?.toLowerCase()))
       .map((w) => ({ src: w.photoUrl, fallback: w.name.slice(0, 2).toUpperCase(), tooltip: w.name }));
-    return [...TIIMI, ...discovered];
+    const naytettavat = TIIMI.filter((a) => !PIILOTETUT_TIIMISTA.has(a.tooltip));
+    return [...naytettavat, ...discovered];
   }, [roster]);
 
   return (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, billingModeOf, isHourlyGig, roundWorkHours, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, invoiceNaming, sanitizeBoard, sortedBoard, openTaskCount, BOARD_CUSTOMER, sanitizeShifts, computeShiftStats, shiftHoursOf, dayKey, isDayKey, fmtDayLabel, shiftDay, weekOf, weekdayLetter, dayOfMonth, monthLabel, MAX_SHIFTS, cappedTimerHours, MAX_TIMER_SHIFT_HOURS, addShiftEntry, shiftHoursOnDay, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
+import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, billingModeOf, isHourlyGig, roundWorkHours, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, invoiceNaming, sanitizeBoard, sortedBoard, openTaskCount, BOARD_CUSTOMER, sanitizeShifts, computeShiftStats, shiftHoursOf, dayKey, isDayKey, fmtDayLabel, shiftDay, shiftHoursOf, weekOf, weekdayLetter, dayOfMonth, monthLabel, MAX_SHIFTS, cappedTimerHours, MAX_TIMER_SHIFT_HOURS, addShiftEntry, shiftHoursOnDay, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
 import { emptyGigData, computeTotals } from "./gig";
 
 // Kohta 6.1 — kokonaistilanteen ikkunamäärän täsmäytys. Ks. docs/fr8-era-laskutus-plan.md.
@@ -1610,5 +1610,94 @@ describe("kalenterin päivät", () => {
     expect(weekOf("")).toEqual([]);
     expect(weekdayLetter("x")).toBe("");
     expect(dayOfMonth("x")).toBe(0);
+  });
+});
+
+/**
+ * TUNTIEN KATOAMINEN — se vika jossa oma tuntisaldo näytti nollaa.
+ *
+ * Ketju oli kolmiosainen ja jokainen osa maksoi:
+ *   1. miinusnappi loi miinusrivin kun päivän tunnit olivat ajastimen
+ *      vuorossa, koska rajaus katsoi päivän saldoa mutta yhdistäminen osui
+ *      vain käsin kirjattuun riviin;
+ *   2. kun se plusrivi poistettiin, miinus jäi orvoksi velaksi;
+ *   3. tekijän elinikäinen summa painui nollaan, ja `hours > 0` -suodatin
+ *      pyyhki hänet listalta kokonaan — myös niiltä päiviltä joilla hänen
+ *      tuntinsa olivat plussalla.
+ *
+ * Ruudulla se näkyi mahdottomuutena: "viikko 28 h · yhteensä 20,5 h".
+ */
+describe("tuntisaldo ei voi kadota", () => {
+  const S = (over: Partial<ProjShift>): ProjShift =>
+    ({ id: "s", worker: "joonatan", hours: 1, day: "2026-08-26", at: 1, ...over }) as ProjShift;
+
+  it("miinus pienentää ajastimen vuoroa eikä luo miinusriviä", () => {
+    const timer = [S({ id: "t1", hours: 35, startedAt: 100 })];
+    const after = addShiftEntry(timer, { id: "x", worker: "joonatan", hours: -0.5, day: "2026-08-26", at: 2 });
+    expect(after).toHaveLength(1);
+    expect(after[0].hours).toBe(34.5);
+    expect(after.every((r) => r.hours > 0)).toBe(true);
+  });
+
+  it("miinus purkaa ensin käsin kirjatun, vasta sitten ajastimen vuoron", () => {
+    const rows = [S({ id: "t1", hours: 5, startedAt: 100, at: 1 }), S({ id: "m1", hours: 2, at: 2 })];
+    const after = addShiftEntry(rows, { id: "x", worker: "joonatan", hours: -3, day: "2026-08-26", at: 3 });
+    // Käsin kirjattu 2 h kokonaan pois, loppu 1 h ajastimen vuorosta.
+    expect(after.find((r) => r.id === "m1")).toBeUndefined();
+    expect(after.find((r) => r.id === "t1")!.hours).toBe(4);
+  });
+
+  it("vähennystä ei voi tehdä enempää kuin päivällä on", () => {
+    const rows = [S({ id: "t1", hours: 3, startedAt: 100 })];
+    const after = addShiftEntry(rows, { id: "x", worker: "joonatan", hours: -99, day: "2026-08-26", at: 3 });
+    expect(after).toHaveLength(0);
+    expect(shiftHoursOnDay(after, "joonatan", "2026-08-26")).toBe(0);
+  });
+
+  /** Vanha tallennettu velka puretaan lukiessa — se näkyy ruudulla nollana. */
+  it("orpo miinusrivi ei enää syö muiden päivien tunteja", () => {
+    const clean = sanitizeProjectData({
+      ...emptyProjectData(),
+      shifts: [
+        // Se päivä jolta +35 h poistettiin: jäljelle jäi pelkkä velka.
+        S({ id: "d1", hours: -7.5, day: "2026-08-25", at: 1 }),
+        S({ id: "d2", hours: 3.5, day: "2026-08-26", at: 2 }),
+      ],
+    });
+    expect(clean.shifts.find((r) => r.id === "d1")).toBeUndefined();
+    expect(shiftHoursOf(clean.shifts, "joonatan")).toBe(3.5);
+    const st = computeShiftStats(clean.shifts, "2026-08-26");
+    expect(st.byWorker.find((w) => w.id === "joonatan")?.hours).toBe(3.5);
+  });
+
+  it("plusrivejä ei siivota koskaan", () => {
+    const clean = sanitizeProjectData({
+      ...emptyProjectData(),
+      shifts: [S({ id: "a", hours: 4, day: "2026-08-25", at: 1 }), S({ id: "b", hours: 2, day: "2026-08-26", at: 2 })],
+    });
+    expect(clean.shifts).toHaveLength(2);
+    expect(shiftHoursOf(clean.shifts, "joonatan")).toBe(6);
+  });
+
+  /**
+   * TÄMÄ ON SE LUKU JOKA RUUDULLA OLI RISTIRIIDASSA. Viikon summa ei voi olla
+   * suurempi kuin koko keikan summa, olipa data miten rikki tahansa.
+   */
+  it("päivien summa ON tekijöiden summa — myös rikkinäisellä datalla", () => {
+    const st = computeShiftStats([
+      S({ id: "a", worker: "matias", hours: 16, day: "2026-08-25", at: 1 }),
+      S({ id: "b", worker: "matias", hours: 4.5, day: "2026-08-26", at: 2 }),
+      S({ id: "c", worker: "joonatan", hours: 3.5, day: "2026-08-26", at: 3 }),
+      S({ id: "d", worker: "oona", hours: 4, day: "2026-08-28", at: 4 }),
+      // Sanitointi ei ole ajanut tähän: raaka miinusvelka toisella päivällä.
+      S({ id: "e", worker: "joonatan", hours: -7.5, day: "2026-08-24", at: 5 }),
+    ], "2026-08-26");
+    const fromDays = st.byDay.reduce((n, d) => n + d.hours, 0);
+    const fromWorkers = st.byWorker.reduce((n, w) => n + w.hours, 0);
+    expect(fromDays).toBe(fromWorkers);
+    expect(st.totalHours).toBe(fromDays);
+    // Ja Joonatan on yhä listalla omilla plussatunneillaan.
+    expect(st.byWorker.find((w) => w.id === "joonatan")?.hours).toBe(3.5);
+    expect(st.totalHours).toBe(28);
   });
 });

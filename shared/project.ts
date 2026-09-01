@@ -402,6 +402,57 @@ export function monthLabel(days: string[]): string {
     : `${name(first)} ${year(first)} – ${name(last)} ${year(last)}`;
 }
 
+/**
+ * ASIAKKAALTA VELOITETTAVAT KULUT — YKSI SÄÄNTÖ, KAKSI LASKUVIRTAA.
+ *
+ * Tämä sääntö oli vain tuntilaskun sisällä, ja siksi kohdennetulla keikalla
+ * asiakkaalle ostetut tarvikkeet ja alihankinta eivät päätyneet YHDELLEKÄÄN
+ * laskulle: urakan erä on kiinteä 25 % sopimuksesta ja keltaisten lasku oli
+ * pelkkiä ikkunoita. Kulu kirjattiin, se näkyi asiakkaan seurantasivulla, ja
+ * sitten se jäi siihen. Sääntö on nyt täällä, ja molemmat virrat lukevat sen.
+ *
+ * Kaksi lajia eri säännöillä:
+ *   · asiakkaalle merkityt hankinnat (`forCustomer`) menevät LÄPI sellaisenaan;
+ *   · alihankinta veloitetaan AINA ja katteineen — se on määritelmällisesti
+ *     asiakkaalle välitettyä työtä, ja merkinnän unohtaminen jättäisi laskulta
+ *     satojen eurojen rivin.
+ */
+export interface CustomerChargeLine {
+  id: string;
+  kind: ProjExpenseKind;
+  /** SISÄINEN kuvaus — adminin listaa varten. EI mene asiakkaalle. */
+  desc: string;
+  /** Mitä asiakas lukee tästä rivistä. Ainoa teksti joka saa päätyä laskulle. */
+  customerLabel: string;
+  customerCents: number;
+  /** Toteutunut kulu (alihankinnassa ilman katetta). Ei mene asiakkaalle. */
+  costCents: number;
+  /** Kate (vain alihankinta). Ei mene asiakkaalle. */
+  marginCents: number;
+  /** Kuka maksoi — tarvitaan kun rahat tasataan. */
+  paidBy?: string;
+  hasReceipt: boolean;
+}
+
+export function customerChargeableExpenses(data: Pick<ProjectData, "expenses">): CustomerChargeLine[] {
+  const out: CustomerChargeLine[] = [];
+  for (const e of data.expenses ?? []) {
+    const isSub = e.kind === "subcontract";
+    if (!isSub && e.forCustomer !== true) continue;
+    const cost = Math.max(0, Math.round(e.amountCents || 0));
+    const margin = isSub ? Math.max(0, Math.round(e.marginCents || 0)) : 0;
+    const customerCents = expenseCustomerCents(e);
+    if (customerCents <= 0) continue;
+    out.push({
+      id: e.id, kind: e.kind, desc: e.desc, customerLabel: expenseCustomerLabel(e),
+      customerCents, costCents: cost, marginCents: margin,
+      paidBy: e.forWhom || e.by || undefined,
+      hasReceipt: !!((e as any).receiptAssetId || e.receiptDataUrl),
+    });
+  }
+  return out.sort((a, b) => b.customerCents - a.customerCents);
+}
+
 /** Tunnit ihmisen luettavaksi: 7 → "7", 7.5 → "7,5". */
 export function fmtShiftHours(h: number): string {
   return h.toLocaleString("fi-FI", { maximumFractionDigits: 1 });

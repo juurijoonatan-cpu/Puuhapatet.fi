@@ -32,7 +32,7 @@ import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, signat
 import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, isHourlyGig, billingModeOf, roundWorkHours, roundWorkHoursFromMinutes, cappedTimerHours, customerExpenses, customerHourRows, invoiceNaming, sanitizeBoard, sortedBoard, BOARD_CUSTOMER, MAX_BOARD_TEXT_LEN, MAX_BOARD_ENTRIES, toBoardKind, dayKey, isDayKey, addShiftEntry, computeShiftStats, MAX_SHIFT_NOTE_LEN, type ProjShift, type ProjBoardEntry, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeHourlyMoney, hourlyItemisation } from "@shared/hourly-money";
-import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
+import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2ExtraCharges, p2BillableCents, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
 import { fail } from "./errors";
@@ -6356,7 +6356,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // p2-scoped maksut eivät sotke kiinteän sopimuksen erälaskentaa. Suodatus
       // tulee jaetusta `p2InvoiceState`sta — sama funktio kuin clientillä.
       const p2b = proj ? computeP2Billing(proj) : null;
-      const invState = p2InvoiceState(p2b?.earnedCents ?? 0, gig.payments);
+      // KOKO lisätyökertymä, ei pelkät ikkunat: tarvikkeet ja alihankinta ovat
+      // osa samaa laskua (ks. `p2ExtraCharges`). Ilman tätä ne eivät päätyneet
+      // yhdellekään laskulle kohdennetulla keikalla.
+      const invState = p2InvoiceState(proj ? p2BillableCents(proj) : 0, gig.payments);
       const p1InvoicedBeforeCents = invState.p1InvoicedCents;
       const p1PaymentCount = invState.p1Payments;
       const p2InvoicedCents = invState.invoicedCents;
@@ -6541,18 +6544,46 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           </tr>`)
         : "";
 
-      const lineRows = isHoursScope
-        ? hourlyRows
-        : isP2Scope
+      /**
+       * LISÄTYÖLASKUN RIVIT: keltaiset ikkunat JA kulut.
+       *
+       * Sama kuvio kuin tuntilaskulla ja samasta syystä: erittely kertoo koko
+       * kertymän, joten osalaskulla se väittäisi veloitussarakkeessa eri
+       * summaa kuin lasku perii. Silloin rivit näytetään tietona ja veloitus
+       * on yksi rivi. Täysi lasku on ehdoton: koko kertymä, ei aiempia
+       * lisätyölaskuja.
+       */
+      const p2FullBill = !!p2Items && p2InvoicedCents === 0 && amountCents === p2Items.totalCents;
+      const p2Ink = p2FullBill ? "#1A1A1A" : "#8C8A82";
+      const p2WindowRow = p2Items && p2Items.windowsCents > 0
         ? `<tr style="border-bottom:1px solid #E4E1D7">
             <td style="padding:10px 0;color:#1A1A1A;font-size:14px">
               Lisäikkunat (2. vaihe) — ikkunakohtaisesti sovitut hinnat<br>
-              <span style="color:#8C8A82;font-size:12px">${p2b?.lockedWashedCount ?? 0} pestyä ikkunaa · kertymä ${fmtEur(p2b?.earnedCents ?? 0)}${p2InvoicedCents > 0 ? ` · aiemmin laskutettu ${fmtEur(p2InvoicedCents)}` : ""}</span>
+              <span style="color:#8C8A82;font-size:12px">${p2b?.lockedWashedCount ?? 0} pestyä ikkunaa${p2InvoicedCents > 0 ? ` · aiemmin laskutettu ${fmtEur(p2InvoicedCents)}` : ""}</span>
               ${p2PriceLines ? `<br><span style="color:#8C8A82;font-size:12px">Hinnat: ${p2PriceLines}</span>` : ""}
               ${p2FloorLines ? `<br><span style="color:#8C8A82;font-size:12px">${p2FloorLines}</span>` : ""}
             </td>
-            <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:#1A1A1A;font-variant-numeric:tabular-nums">${fmtEur(amountCents)}</td>
+            <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:${p2Ink};font-variant-numeric:tabular-nums">${fmtEur(p2Items.windowsCents)}</td>
           </tr>`
+        : "";
+      // Kulurivit asiakkaan omalla tekstillä: alihankinta on yksi luku ja
+      // yksi nimi, koska ostohintamme ja alihankkijan nimi eivät ole asiakkaan
+      // tietoa. `escHtml`, koska selite on vapaata tekstiä.
+      const p2ExtraRows = (p2Items?.extras ?? []).map((x) => `<tr style="border-bottom:1px solid #E4E1D7">
+            <td style="padding:10px 0;color:#1A1A1A;font-size:14px">${escHtml(x.customerLabel)}</td>
+            <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:${p2Ink};font-variant-numeric:tabular-nums">${fmtEur(x.customerCents)}</td>
+          </tr>`).join("");
+
+      const lineRows = isHoursScope
+        ? hourlyRows
+        : isP2Scope
+        ? p2WindowRow + p2ExtraRows + (p2FullBill ? "" : `<tr style="border-bottom:1px solid #E4E1D7">
+            <td style="padding:10px 0;color:#1A1A1A;font-size:14px">
+              Laskutetaan tällä laskulla<br>
+              <span style="color:#8C8A82;font-size:12px">kertymä yhteensä ${fmtEur(p2Items?.totalCents ?? 0)}${p2InvoicedCents > 0 ? ` · aiemmin laskutettu ${fmtEur(p2InvoicedCents)}` : ""}</span>
+            </td>
+            <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:#1A1A1A;font-variant-numeric:tabular-nums">${fmtEur(amountCents)}</td>
+          </tr>`)
         : fixedDeal
         ? `<tr style="border-bottom:1px solid #E4E1D7">
             <td style="padding:10px 0;color:#1A1A1A;font-size:14px">
@@ -7053,7 +7084,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const gigForP2 = parseGig(job.gigData);
       const p2b = computeP2Billing(project);
       const payments = livePayments(gigForP2?.payments);
-      const p2State = p2InvoiceState(p2b.earnedCents, payments);
+      const p2State = p2InvoiceState(p2BillableCents(project), payments);
       // Asiakaslaskutuksen tila samasta jaetusta laskennasta kuin laskureitillä,
       // jotta musta dash näyttää oikeat erä-statsit ilman omaa kaavaa.
       const projDeal = fixedDealFor(project);

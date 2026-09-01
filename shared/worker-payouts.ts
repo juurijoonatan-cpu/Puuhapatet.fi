@@ -408,7 +408,9 @@ function round1(n: number): number {
 
 export interface PaymentLike {
   amountCents: number;
-  scope?: "p1" | "p2" | "hours";
+  scope?: "p1" | "p2" | "hours" | "all";
+  /** Yhdistetyn laskun jako: sama maksu kuittaa kahta eri kertymää. */
+  parts?: { hours?: number; p2?: number };
   /** Mitätöity laskutuserä — säilyy tositteena, ei lasketa summiin. */
   voided?: boolean;
 }
@@ -436,7 +438,16 @@ export function p2InvoiceState(earnedCents: number, payments: PaymentLike[]) {
    * Nyt P1 on nimenomainen: puuttuva scope (vanhat erät) tai "p1".
    */
   const p1Payments = live.filter((p) => p.scope == null || p.scope === "p1");
-  const invoicedCents = p2Payments.reduce((s, p) => s + p.amountCents, 0);
+  /**
+   * YHDISTETTY LASKU kuittaa kahta kertymää yhdellä summalla, joten sen osuus
+   * luetaan `parts`ista eikä `amountCents`ista. Ilman tätä yksi 952 €:n lasku
+   * olisi joko kokonaan tuntia tai kokonaan lisätyötä — ja toinen kertymä
+   * jäisi näyttämään laskuttamatonta rahaa jonka asiakas on jo maksanut.
+   */
+  const allPayments = live.filter((p) => p.scope === "all");
+  const partSum = (key: "hours" | "p2") =>
+    allPayments.reduce((s2, p) => s2 + Math.max(0, Math.round(p.parts?.[key] ?? 0)), 0);
+  const invoicedCents = p2Payments.reduce((s, p) => s + p.amountCents, 0) + partSum("p2");
   const p1InvoicedCents = p1Payments.reduce((s, p) => s + p.amountCents, 0);
   return {
     invoicedCents,
@@ -446,8 +457,10 @@ export function p2InvoiceState(earnedCents: number, payments: PaymentLike[]) {
     p1InvoicedCents,
     p1Payments: p1Payments.length,
     /** Tuntikeikan oma virta — ei P1:n eriä eikä keltaisten kertymää. */
-    hoursInvoicedCents: live.filter((p) => p.scope === "hours").reduce((s2, p) => s2 + p.amountCents, 0),
-    hoursPayments: live.filter((p) => p.scope === "hours").length,
+    hoursInvoicedCents: live.filter((p) => p.scope === "hours").reduce((s2, p) => s2 + p.amountCents, 0) + partSum("hours"),
+    hoursPayments: live.filter((p) => p.scope === "hours").length + allPayments.filter((p) => (p.parts?.hours ?? 0) > 0).length,
+    /** Yhdistettyjen laskujen määrä — oma numerosarjansa. */
+    allPayments: allPayments.length,
   };
 }
 

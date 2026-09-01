@@ -1389,28 +1389,47 @@ export default function AdminProjectPage() {
               alihankkijaa tai kulua ilman että puoli vaihdetaan välissä.
               Näkymä lupasi luvun jota siinä ei voinut syöttää. Sama komponentti
               kuin toisella puolella, joten säännöt eivät voi erota. */}
+          {/* TUNTIPUOLEN OSIOT OVAT TAITTEITA.
+              Kaikki oli auki yhtä aikaa: kalenteri, oma kello, rahakortti
+              yhdeksän pesijän erittelyineen, kulut, työtaulu ja asetukset —
+              yhtenä pitkänä vierityksenä. Kulujen kirjaaminen oli teknisesti
+              mahdollista mutta käytännössä löytymätöntä, koska se oli
+              kolmannen ruudullisen alapuolella. Otsikkorivi kertoo silti
+              summan, joten mitään ei katoa näkyvistä — se on yhden
+              napautuksen takana kolmen vierityksen sijaan. `Section` muistaa
+              tilan, joten oma tapa säilyy avausten yli. */}
           {canAdjustHours && (
-            <div style={{ marginTop: 16, padding: 18, borderRadius: 18, background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.09)" }}>
-              <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 10, letterSpacing: "0.14em", color: "rgba(255,255,255,0.4)", marginBottom: 14 }}>
-                KULUT JA ALIHANKINTA
-              </div>
-              <ExpensesView
-                expenses={project.expenses || []}
-                workers={[...gigWorkers, ...crew.filter((c) => !gigWorkers.some((w) => w.id === c.id)).map((c) => ({ id: c.id, name: resolveName(c.id) }))]}
-                currentWorker={currentWorker}
-                resolveName={resolveName}
-                onAdd={addExpense}
-                onDelete={deleteExpense}
-                onToggleForCustomer={isFounderView ? onToggleExpenseForCustomer : undefined}
-              />
+            <div style={{ marginTop: 16 }}>
+              <Section
+                id="hourly-expenses"
+                label="🧾 KULUT JA ALIHANKINTA"
+                summary={(() => {
+                  const n = (project.expenses || []).length;
+                  const cents = (project.expenses || []).reduce((a, e) => a + (e.amountCents || 0), 0);
+                  return n === 0 ? "lisää tarvike tai alihankkija"
+                    : `${n} kpl · ${(cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+                })()}
+              >
+                <ExpensesView
+                  expenses={project.expenses || []}
+                  workers={[...gigWorkers, ...crew.filter((c) => !gigWorkers.some((w) => w.id === c.id)).map((c) => ({ id: c.id, name: resolveName(c.id) }))]}
+                  currentWorker={currentWorker}
+                  resolveName={resolveName}
+                  onAdd={addExpense}
+                  onDelete={deleteExpense}
+                  onToggleForCustomer={isFounderView ? onToggleExpenseForCustomer : undefined}
+                />
+              </Section>
             </div>
           )}
 
           {/* TYÖTAULU. Sama lista jonka asiakas ja tekijät näkevät. */}
-          <div style={{ marginTop: 16, padding: 18, borderRadius: 18, background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.09)" }}>
-            <p style={{ margin: "0 0 12px", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 10, letterSpacing: "0.12em", color: "rgba(255,255,255,0.38)" }}>
-              TEHTÄVÄT JA MERKINNÄT
-            </p>
+          <div style={{ marginTop: 16 }}>
+            <Section
+              id="hourly-board"
+              label="✅ TEHTÄVÄT JA MERKINNÄT"
+              summary={board.length === 0 ? "ei merkintöjä" : `${board.length} kpl`}
+            >
             <TaskBoard
               entries={board}
               onAdd={addBoardEntry}
@@ -1422,6 +1441,7 @@ export default function AdminProjectPage() {
                 hair: "rgba(255,255,255,0.14)", accent: "#5fe08a", done: "#3E7C59",
               }}
             />
+            </Section>
           </div>
 
           {canAdjustHours && (
@@ -2535,6 +2555,8 @@ const EXPENSE_KINDS: { id: string; label: string }[] = [
   // Alihankinta on oma lajinsa eikä "muu kulu": vain se kantaa katetta ja
   // vain se veloitetaan asiakkaalta ilman erillistä merkintää.
   { id: "subcontract", label: "Alihankinta" },
+  // Sovittu lisäveloitus laskulle — ei kulu vaan puhdasta tuottoa.
+  { id: "surcharge", label: "Lisä laskulle" },
   { id: "other", label: "Muu" },
 ];
 
@@ -2606,6 +2628,8 @@ function ExpensesView({
   const [busy, setBusy] = useState(false);
   const [showTip, setShowTip] = useState(false);
   const isSub = kind === "subcontract";
+  /** Sovittu lisä: pelkkä summa ja selite, ei kuittia eikä katetta erikseen. */
+  const isSurcharge = kind === "surcharge";
   const amountCentsLive = Math.round((parseFloat(amount.replace(",", ".")) || 0) * 100);
   const marginCentsLive = Math.max(0, Math.round((parseFloat(margin.replace(",", ".")) || 0) * 100));
 
@@ -2625,7 +2649,7 @@ function ExpensesView({
       kind, desc: desc.trim(), amountCents, by, forWhom: forWhom || undefined,
       receiptDataUrl: receipt || undefined,
       // Alihankinta veloitetaan aina — merkintä ei ole siinä valinta.
-      forCustomer: isSub ? true : forCustomer || undefined,
+      forCustomer: isSub || isSurcharge ? true : forCustomer || undefined,
       marginCents: isSub && marginCentsLive > 0 ? marginCentsLive : undefined,
       customerDesc: customerDesc.trim() || undefined,
     });
@@ -2714,13 +2738,13 @@ function ExpensesView({
           <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1fr 130px", gap: 10, marginBottom: 10 }}>
             <label style={{ display: "block" }}>
               <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>
-                {isSub ? "Kuvaus meille (ei näy asiakkaalle)" : "Kuvaus (valinnainen)"}
+                {isSub ? "Kuvaus meille (ei näy asiakkaalle)" : isSurcharge ? "Muistiinpano meille (valinnainen)" : "Kuvaus (valinnainen)"}
               </span>
               <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={isSub ? "esim. Mika, lampunvaihdot 200 €" : "esim. pesuaineet"} style={fieldStyle} />
             </label>
             <label style={{ display: "block" }}>
               <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>
-                {isSub ? "Toteutunut kulu" : "Summa"}
+                {isSub ? "Toteutunut kulu" : isSurcharge ? "Lisä laskulle" : "Summa"}
               </span>
               <input value={amount} onChange={(e) => setAmount(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} inputMode="decimal" placeholder="0,00 €" style={{ ...fieldStyle, textAlign: "right" }} />
             </label>
@@ -2731,6 +2755,36 @@ function ExpensesView({
               yllättää. Asiakkaan hinta lasketaan tähän näkyviin heti, koska se
               on ainoa luku joka päätyy laskulle: erittelyä ei näytetä
               asiakkaalle, sillä se paljastaisi ostohintamme. */}
+          {/* SOVITTU LISÄ. Yksi summa ja yksi selite, jotka menevät laskulle
+              sellaisenaan. Ei kulua eikä maksajaa: kukaan ei ole maksanut
+              siitä mitään, joten se ei ole palautettavaa rahaa vaan katetta. */}
+          {isSurcharge && (
+            <div style={{ padding: "12px 14px", marginBottom: 10, borderRadius: 12, border: "1px solid rgba(95,224,138,0.25)", background: "rgba(95,224,138,0.07)" }}>
+              <label style={{ display: "block" }}>
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Mitä asiakkaan laskulla lukee</span>
+                <input
+                  value={customerDesc}
+                  onChange={(e) => setCustomerDesc(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && submit()}
+                  placeholder="esim. Sovittu lisä"
+                  style={fieldStyle}
+                />
+              </label>
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.09)", display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", fontSize: 12.5 }}>
+                <span style={{ color: "rgba(255,255,255,0.5)" }}>Asiakas näkee</span>
+                <span style={{ color: "#fff", fontWeight: 600 }}>{customerDesc.trim() || "Sovittu lisä"}</span>
+                {amountCentsLive > 0 && (
+                  <span style={{ marginLeft: "auto", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 15, fontWeight: 700, color: "#9ff0bd" }}>
+                    {fmtEur(amountCentsLive)}
+                  </span>
+                )}
+              </div>
+              <p style={{ margin: "6px 0 0", fontSize: 11.5, lineHeight: 1.5, color: "rgba(255,255,255,0.42)" }}>
+                Menee laskulle sellaisenaan. Ei kulu — koko summa jää meille.
+              </p>
+            </div>
+          )}
+
           {isSub && (
             <div style={{ padding: "12px 14px", marginBottom: 10, borderRadius: 12, border: "1px solid rgba(156,193,255,0.25)", background: "rgba(156,193,255,0.07)" }}>
               <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1fr 130px", gap: 10, alignItems: "end" }}>
@@ -2778,7 +2832,7 @@ function ExpensesView({
               pitää muistaa tehdä jälkikäteen jää tekemättä, ja silloin
               asiakkaalle ostetut lamput jäävät laskulta pois. Kuitti ei seuraa
               asiakkaalle koskaan — se on meidän kirjanpitomme tosite. */}
-          {!isSub && (
+          {!isSub && !isSurcharge && (
             <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 12px", marginBottom: 10, borderRadius: 10, border: `1px solid ${forCustomer ? "rgba(95,224,138,0.35)" : "rgba(255,255,255,0.12)"}`, background: forCustomer ? "rgba(95,224,138,0.08)" : "rgba(255,255,255,0.03)", cursor: "pointer" }}>
               <input type="checkbox" checked={forCustomer} onChange={(e) => setForCustomer(e.target.checked)} style={{ width: 17, height: 17, accentColor: "#5fe08a", flexShrink: 0 }} />
               <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: forCustomer ? "#9ff0bd" : "rgba(255,255,255,0.6)" }}>
@@ -2794,7 +2848,12 @@ function ExpensesView({
 
           {/* Receipt photo (kuitti) — camera on mobile, file on desktop */}
           <label style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 12px", borderRadius: 10, border: "1px dashed rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.03)", cursor: "pointer", marginBottom: 12 }}>
-            <input type="file" accept="image/*" capture="environment" onChange={(e) => pickReceipt(e.target.files?.[0])} style={{ display: "none" }} />
+            {/* EI `capture`-määrettä. Se pakotti kameran auki, joten vanhaa
+                kuvaa ei voinut liittää lainkaan — kuitti oli aina otettava
+                siinä hetkessä. Kuitti kuvataan usein kaupassa ja kirjataan
+                illalla, joten galleria on se tavallinen tapaus. Puhelin
+                tarjoaa yhä kameran tästä samasta valitsimesta. */}
+            <input type="file" accept="image/*" onChange={(e) => pickReceipt(e.target.files?.[0])} style={{ display: "none" }} />
             {receipt ? (
               <img src={receipt} alt="kuitti" style={{ width: 44, height: 44, borderRadius: 8, objectFit: "cover", flexShrink: 0 }} />
             ) : (

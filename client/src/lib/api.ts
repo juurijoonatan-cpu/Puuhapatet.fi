@@ -1440,7 +1440,7 @@ export const api = {
      *   "hours" = tuntikeikan lasku (tunnit + tarvikkeet + alihankinta) — ei
      *             kuluta urakan neljää erää eikä keltaisten kertymää.
      */
-    scope?: "p1" | "p2" | "hours";
+    scope?: "p1" | "p2" | "hours" | "all";
     /** P2/tunnit: eksplisiittinen summa (oletus: koko laskuttamaton kertymä). */
     amountCents?: number;
     /**

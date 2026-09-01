@@ -57,7 +57,18 @@ export interface GigPayment {
   /** Which pricing scope this payment belongs to: "p2" = keltaisten ikkunoiden
    *  per-window billing (shared/p2.ts), kept apart from the fixed P1 instalments.
    *  Absent = P1 (the historical default). */
-  scope?: "p1" | "p2" | "hours";
+  scope?: "p1" | "p2" | "hours" | "all";
+  /**
+   * YHDISTETYN LASKUN OSAT.
+   *
+   * `scope: "all"` on YKSI lasku joka kattaa kaiken laskuttamattoman —
+   * tunnit, keltaiset ikkunat ja kulut. Asiakkaalle se on yksi summa yhdessä
+   * sähköpostissa, mutta MEIDÄN laskurimme ovat erilliset: tuntikertymä ja
+   * lisätyökertymä lasketaan kumpikin omaa laskutettua vastaan. Yksi luku ei
+   * voi kuitata kahta kertymää, joten jako talletetaan tähän sen sijaan että
+   * se arvattaisiin jälkikäteen summasta.
+   */
+  parts?: { hours?: number; p2?: number };
   /**
    * MITÄTÖITY erä. Lähetetty laskutuserä on kirjanpidon tosite (se kirjataan
    * myyntinä tilille 3000), joten sitä ei saa poistaa — virheellinen erä
@@ -556,7 +567,14 @@ export function sanitizeGigData(input: any): GigData {
         eInvoice: p?.eInvoice ? String(p.eInvoice).slice(0, 200) : undefined,
         scope: p?.scope === "p2" ? "p2" as const
           : p?.scope === "hours" ? "hours" as const
+          : p?.scope === "all" ? "all" as const
           : p?.scope === "p1" ? "p1" as const : undefined,
+        ...(p?.parts && typeof p.parts === "object" ? {
+          parts: {
+            ...(clampNonNeg(Number(p.parts.hours)) ? { hours: clampNonNeg(Number(p.parts.hours)) } : {}),
+            ...(clampNonNeg(Number(p.parts.p2)) ? { p2: clampNonNeg(Number(p.parts.p2)) } : {}),
+          },
+        } : {}),
         ...(p?.voided ? {
           voided: true as const,
           voidedAt: Number(p.voidedAt) || Date.now(),

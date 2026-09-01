@@ -690,3 +690,66 @@ describe("ikkunaraha", () => {
     expect(computeWindowMoney(d).uninvoicedWindows).toBe(0);
   });
 });
+
+/**
+ * SOVITTU LISÄ — vapaa rivi asiakkaan laskulle.
+ *
+ * "102 € sovittu lisä" ei ole kulu: kukaan ei ole maksanut siitä mitään
+ * omasta pussistaan. Jos se käsiteltäisiin kuluna, laskenta lupaisi jollekulle
+ * 102 € takaisin kulujen palautuksena rahasta jota ei ole maksettu — ja se
+ * raha lähtisi meiltä.
+ */
+describe("sovittu lisä laskulle", () => {
+  it("menee laskulle täysimääräisenä ja on kokonaan katetta", () => {
+    const m = computeHourlyMoney({
+      shifts: [],
+      expenses: [expense({ kind: "surcharge", amountCents: 10200, customerDesc: "Sovittu lisä" })],
+    });
+    expect(m.customerTotalCents).toBe(10200);
+    expect(m.subcontractMarginCents).toBe(10200);
+    // EI palautusta: kukaan ei maksanut siitä mitään.
+    expect(m.reimbursementCents).toBe(0);
+    expect(m.byPayer).toEqual([]);
+    // Ja se jää perustajille.
+    expect(m.founderTotalCents).toBe(10200);
+  });
+
+  it("näkyy laskulla annetulla selitteellä", () => {
+    const it0 = hourlyItemisation({
+      ...emptyProjectData(), shifts: [],
+      expenses: [expense({ kind: "surcharge", amountCents: 10200, desc: "sisäinen", customerDesc: "Sovittu lisä" })],
+    } as never);
+    const line = it0.lines.find((l) => l.cents === 10200)!;
+    expect(line.label).toBe("Sovittu lisä");
+    expect(it0.matchesBilling).toBe(true);
+  });
+
+  it("ilman selitettä varanimi, ei sisäistä muistiinpanoa", () => {
+    const it0 = hourlyItemisation({
+      ...emptyProjectData(), shifts: [],
+      expenses: [expense({ kind: "surcharge", amountCents: 5000, desc: "Mikan kanssa sovittu" })],
+    } as never);
+    expect(it0.lines.find((l) => l.cents === 5000)!.label).toBe("Sovittu lisä");
+    expect(JSON.stringify(it0.lines)).not.toMatch(/Mikan/);
+  });
+
+  it("veloitetaan aina — forCustomer-merkintää ei tarvita eikä odoteta", () => {
+    const m = computeHourlyMoney({
+      shifts: [],
+      expenses: [expense({ kind: "surcharge", amountCents: 3000 })],
+    });
+    expect(m.customerTotalCents).toBe(3000);
+  });
+
+  it("raha täsmää lisärivin kanssa", () => {
+    const m = computeHourlyMoney({
+      shifts: [shift("petrus", 10)],
+      expenses: [
+        expense({ kind: "surcharge", amountCents: 10200, customerDesc: "Sovittu lisä" }),
+        expense({ amountCents: 4500, desc: "lamput", forCustomer: true, by: "matias" }),
+      ],
+    });
+    expect(m.workerCostCents + m.founderTotalCents + m.reimbursementCents + m.windowsCents)
+      .toBe(m.customerTotalCents);
+  });
+});

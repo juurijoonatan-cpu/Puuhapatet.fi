@@ -1701,3 +1701,38 @@ describe("tuntisaldo ei voi kadota", () => {
     expect(st.totalHours).toBe(28);
   });
 });
+
+/**
+ * KULULAJI EI SAA VAIHTUA HILJAA.
+ *
+ * Palvelimen sallittujen lajien listasta puuttui `subcontract`, joten lomakkeen
+ * lähettämä alihankinta vaihtui lajiksi "other" — ja koska katekenttä
+ * kirjoitetaan vain alihankintariville, myös kate pudotettiin. Rivi syntyi,
+ * mutta se ei ollut alihankintaa eikä siitä jäänyt katetta, eikä mikään
+ * kertonut siitä mitään.
+ */
+describe("kululajit säilyvät", () => {
+  it("alihankinta ja lisärivi kestävät sanitoinnin katteineen", () => {
+    const clean = sanitizeProjectData({
+      ...emptyProjectData(),
+      expenses: [
+        { id: "e1", by: "joonatan", kind: "subcontract", desc: "Mika", customerDesc: "Valotyöt",
+          amountCents: 30000, marginCents: 7000, ts: 1 },
+        { id: "e2", by: "joonatan", kind: "surcharge", customerDesc: "Sovittu lisä",
+          desc: "", amountCents: 10200, ts: 2 },
+      ],
+    });
+    expect(clean.expenses[0].kind).toBe("subcontract");
+    expect(clean.expenses[0].marginCents).toBe(7000);
+    expect(clean.expenses[1].kind).toBe("surcharge");
+    expect(clean.expenses[1].customerDesc).toBe("Sovittu lisä");
+  });
+
+  it("tuntematon laji putoaa yhä turvallisesti", () => {
+    const clean = sanitizeProjectData({
+      ...emptyProjectData(),
+      expenses: [{ id: "e1", by: "joonatan", kind: "roska", desc: "x", amountCents: 100, ts: 1 }],
+    });
+    expect(clean.expenses[0].kind).toBe("other");
+  });
+});

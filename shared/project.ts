@@ -438,10 +438,19 @@ export function customerChargeableExpenses(data: Pick<ProjectData, "expenses">):
   const out: CustomerChargeLine[] = [];
   for (const e of data.expenses ?? []) {
     const isSub = e.kind === "subcontract";
-    if (!isSub && e.forCustomer !== true) continue;
-    const cost = Math.max(0, Math.round(e.amountCents || 0));
-    const margin = isSub ? Math.max(0, Math.round(e.marginCents || 0)) : 0;
-    const customerCents = expenseCustomerCents(e);
+    /**
+     * LISÄRIVI on sovittu lisäveloitus, ei kulu: "sovittu lisä 102 €".
+     * Kukaan ei ole maksanut siitä mitään omasta pussistaan, joten sen
+     * `costCents` on nolla — muuten laskenta lupaisi jollekulle 102 € takaisin
+     * kulujen palautuksena rahasta jota ei ole maksettu. Koko summa on katetta.
+     * Ja se veloitetaan aina: lisärivi ilman veloitusta ei ole lisärivi.
+     */
+    const isSurcharge = e.kind === "surcharge";
+    if (!isSub && !isSurcharge && e.forCustomer !== true) continue;
+    const gross = Math.max(0, Math.round(e.amountCents || 0));
+    const cost = isSurcharge ? 0 : gross;
+    const margin = isSub ? Math.max(0, Math.round(e.marginCents || 0)) : isSurcharge ? gross : 0;
+    const customerCents = isSurcharge ? gross : expenseCustomerCents(e);
     if (customerCents <= 0) continue;
     out.push({
       id: e.id, kind: e.kind, desc: e.desc, customerLabel: expenseCustomerLabel(e),
@@ -972,7 +981,7 @@ export interface ProjHourEntry {
  * perustaja on maksanut) ja se on eri asia kuin muut kulut kahdella tavalla:
  * se veloitetaan aina asiakkaalta, ja sen päälle lisätään kate.
  */
-export type ProjExpenseKind = "transport" | "materials" | "equipment" | "other" | "subcontract";
+export type ProjExpenseKind = "transport" | "materials" | "equipment" | "other" | "subcontract" | "surcharge";
 
 /** Max stored size for an expense receipt photo data URL (~0.5 MB base64). */
 export const MAX_EXPENSE_RECEIPT_LEN = 700_000;
@@ -1047,7 +1056,7 @@ export interface ProjExpense {
  * näkymässä juuri siksi: kopiot ehtivät erota toisistaan ennen kuin kukaan
  * huomaa, ja huomaaja olisi asiakas.
  */
-export type InvoiceScope = "p1" | "p2" | "hours";
+export type InvoiceScope = "p1" | "p2" | "hours" | "all";
 
 export interface InvoiceNaming {
   /** Lyhyt nimi: otsikkorivi, aihe, kirjaus. */
@@ -1063,6 +1072,9 @@ export function invoiceNaming(o: {
   paymentNumber?: number;
   isFinal?: boolean;
 }): InvoiceNaming {
+  // Yhdistetty lasku kattaa kaiken laskuttamattoman: tunnit, ikkunat ja kulut.
+  // Nimi ei saa luvata vain toista puolta, koska asiakas lukee sen ensin.
+  if (o.scope === "all") return { short: "Lasku", prose: "Lasku tehdystä työstä" };
   if (o.scope === "hours") return { short: "Tuntilasku", prose: "Tehdyistä tunneista tehty lasku" };
   if (o.scope === "p2") return { short: "Lisätyölasku (2. vaihe)", prose: "Lisätöiden lasku (2. vaihe)" };
   if (o.fixedDeal) {
@@ -1080,6 +1092,7 @@ const EXPENSE_KIND_CUSTOMER_LABEL: Record<ProjExpenseKind, string> = {
   materials: "Tarvikkeet",
   equipment: "Välineet",
   subcontract: "Työsuoritus",
+  surcharge: "Sovittu lisä",
   other: "Hankinta",
 };
 
@@ -1099,7 +1112,15 @@ const EXPENSE_KIND_CUSTOMER_LABEL: Record<ProjExpenseKind, string> = {
 export function expenseCustomerLabel(e: Pick<ProjExpense, "kind" | "desc" | "customerDesc">): string {
   const own = (e.customerDesc ?? "").trim();
   if (own) return own;
-  if (e.kind === "subcontract") return EXPENSE_KIND_CUSTOMER_LABEL.subcontract;
+  /**
+   * SISÄINEN KUVAUS EI VUODA NÄILLÄ LAJEILLA. Alihankinnassa se on
+   * alihankkijan nimi ja ostohintamme; lisärivillä se on muistiinpano
+   * itsellemme siitä mistä lisästä sovittiin ja kenen kanssa. Kumpikaan ei ole
+   * asiakkaan tietoa, joten tyhjä asiakasteksti antaa varanimen — ei `desc`iä.
+   */
+  if (e.kind === "subcontract" || e.kind === "surcharge") {
+    return EXPENSE_KIND_CUSTOMER_LABEL[e.kind];
+  }
   return (e.desc ?? "").trim() || EXPENSE_KIND_CUSTOMER_LABEL[e.kind] || "Hankinta";
 }
 
@@ -3156,7 +3177,7 @@ export function sanitizeProjectData(input: any): ProjectData {
     ? Array.from(new Set(input.workers.slice(0, 40).map((w: any) => String(w).slice(0, 40)))) as string[]
     : [...base.workers];
 
-  const VALID_EXPENSE_KINDS: ProjExpenseKind[] = ["transport", "materials", "equipment", "other", "subcontract"];
+  const VALID_EXPENSE_KINDS: ProjExpenseKind[] = ["transport", "materials", "equipment", "other", "subcontract", "surcharge"];
   const expenses: ProjExpense[] = Array.isArray(input.expenses)
     ? input.expenses.slice(0, 500).map((e: any) => ({
         id: String(e?.id ?? "").slice(0, 80),

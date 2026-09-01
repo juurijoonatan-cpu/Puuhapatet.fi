@@ -130,7 +130,7 @@ export default function AdminGigTrackerPage() {
    * kenen 20 000 €:n rajaa se kerryttää. Nyt molemmat kulkevat saman dialogin
    * läpi, jossa nuo valitaan.
    */
-  const [invoiceScope, setInvoiceScope] = useState<"p1" | "p2" | "hours">("p1");
+  const [invoiceScope, setInvoiceScope] = useState<"p1" | "p2" | "hours" | "all">("p1");
   const [sending, setSending] = useState(false);
   const [p2Sending, setP2Sending] = useState(false);
   const [reporting, setReporting] = useState(false);
@@ -474,7 +474,9 @@ export default function AdminGigTrackerPage() {
      * uusi palvelin torjuu eron ennen lähetystä, ja vastauksen summa
      * tarkistetaan tässä sen varalta että palvelin ei tuntenut kenttää.
      */
-    const expectAmountCents = invoiceScope === "hours" ? hoursRemainingCents : undefined;
+    const expectAmountCents = invoiceScope === "hours" ? hoursRemainingCents
+      : invoiceScope === "all" ? combinedRemainingCents
+      : undefined;
     setSending(true);
     // The laskuttaja is the biller PICKED in the dialog (not necessarily the
     // logged-in leader) — their name + Y-tunnus go on the invoice and become the
@@ -544,6 +546,21 @@ export default function AdminGigTrackerPage() {
   const sendHours = () => {
     if (hoursRemainingCents <= 0) return;
     setInvoiceScope("hours");
+    setInvoiceOpen(true);
+  };
+
+  /**
+   * YKSI LASKU KAIKESTA LASKUTTAMATTOMASTA.
+   *
+   * Keikalla saattoi olla kaksi lähetysnappia yhtä aikaa — tuntilasku ja
+   * lisätyölasku — eli asiakkaalle kaksi laskua samasta työstä samana päivänä
+   * ja meille kaksi suoritusta valvottavaksi. Tämä kokoaa ne yhdeksi:
+   * yksi summa, yksi viite, erittelyssä kaikki rivit. Laskurit pysyvät
+   * erillään, koska maksuriville talletetaan jako (`parts`).
+   */
+  const sendCombined = () => {
+    if (combinedRemainingCents <= 0) return;
+    setInvoiceScope("all");
     setInvoiceOpen(true);
   };
 
@@ -705,6 +722,12 @@ export default function AdminGigTrackerPage() {
   const hoursInvoicedCents = invState.hoursInvoicedCents;
   const hoursRemainingCents = hourlyBill
     ? Math.max(0, hourlyBill.customerTotalCents - hoursInvoicedCents) : 0;
+  /**
+   * KAIKKI LASKUTTAMATON YHTEENSÄ. Kun molemmissa kertymissä on rahaa,
+   * asiakkaalle lähtee YKSI lasku eikä kahta samana päivänä.
+   */
+  const combinedRemainingCents = hoursRemainingCents + p2RemainingCents;
+  const hasTwoPots = hoursRemainingCents > 0 && p2RemainingCents > 0;
   /** Etunimi kulun maksajalle: keikan tekijälista ensin, sitten johtajat. */
   const payerName = (id: string): string => {
     const c = (project?.crew ?? []).find((x) => x.id === id);
@@ -1349,7 +1372,10 @@ export default function AdminGigTrackerPage() {
               laskutettu {eur(hourlyBill ? hoursInvoicedCents : p1InvoicedCents + p2InvoicedCents)}
             </span>
           </div>
-          {deal && (
+          {/* Otsikko vain kun sen alla TODELLA on urakan erälaskutus.
+              Tuntitilaan siirretyllä keikalla se luki "Punaiset · kiinteä
+              urakka" tuntilaskun päällä — kaksi eri asiaa saman otsikon alla. */}
+          {deal && !hourlyBill && (
             <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
               Punaiset · kiinteä urakka
             </p>
@@ -1450,10 +1476,15 @@ export default function AdminGigTrackerPage() {
                 </p>
               )}
 
-              <Button className="w-full" disabled={hoursRemainingCents <= 0 || !hourlyBill.matchesBilling || hourlyBill.money.rateInverted} onClick={sendHours}>
-                <Send className="w-4 h-4 mr-2" />
-                {hoursRemainingCents > 0 ? `Lähetä tuntilasku (${eur(hoursRemainingCents)})` : "Kaikki tunnit laskutettu ✓"}
-              </Button>
+              {/* Kun molemmissa kertymissä on rahaa, lähetysnappi on YKSI ja
+                  se on kortin alalaidassa — kaksi nappia tarkoittaisi
+                  asiakkaalle kaksi laskua samasta työstä samana päivänä. */}
+              {!hasTwoPots && (
+                <Button className="w-full" disabled={hoursRemainingCents <= 0 || !hourlyBill.matchesBilling || hourlyBill.money.rateInverted} onClick={sendHours}>
+                  <Send className="w-4 h-4 mr-2" />
+                  {hoursRemainingCents > 0 ? `Lähetä tuntilasku (${eur(hoursRemainingCents)})` : "Kaikki tunnit laskutettu ✓"}
+                </Button>
+              )}
             </>
           ) : deal && dealBilling ? (
             p1PayCount >= 4 ? (
@@ -1615,12 +1646,44 @@ export default function AdminGigTrackerPage() {
                       {p2b.pendingWashedCount} pestyä ikkunaa odottaa asiakkaan hyväksyntää ({eur(p2b.pendingEarnedCents)}) — ei vielä laskussa.
                     </p>
                   )}
-                  <Button className="w-full" disabled={p2Sending || p2RemainingCents <= 0} onClick={sendP2}>
-                    <Send className="w-4 h-4 mr-2" />
-                    {p2Sending ? "Lähetetään…" : p2RemainingCents > 0 ? `Lähetä lisätyölasku (${eur(p2RemainingCents)})` : "Kaikki lisätyöt laskutettu ✓"}
-                  </Button>
+                  {!hasTwoPots && (
+                    <Button className="w-full" disabled={p2Sending || p2RemainingCents <= 0} onClick={sendP2}>
+                      <Send className="w-4 h-4 mr-2" />
+                      {p2Sending ? "Lähetetään…" : p2RemainingCents > 0 ? `Lähetä lisätyölasku (${eur(p2RemainingCents)})` : "Kaikki lisätyöt laskutettu ✓"}
+                    </Button>
+                  )}
                 </>
               )}
+            </div>
+          )}
+
+          {/* YKSI LASKU KAIKESTA. Näkyy vain kun laskuttamatonta on kahdessa
+              kertymässä yhtä aikaa — silloin kaksi erillistä nappia
+              tarkoittaisi asiakkaalle kaksi laskua samasta työstä samana
+              päivänä. Yksi summa, yksi viite, erittelyssä kaikki rivit. */}
+          {hasTwoPots && (
+            <div className="mt-4 pt-4 border-t">
+              <div className="mb-2 rounded-xl bg-muted/40 p-2.5">
+                <div className="flex items-baseline justify-between gap-3 py-0.5">
+                  <span className="text-[11px] text-muted-foreground">Tuntityö ja ikkunat</span>
+                  <span className="text-[11px] font-semibold tabular-nums">{eur(hoursRemainingCents)}</span>
+                </div>
+                <div className="flex items-baseline justify-between gap-3 py-0.5">
+                  <span className="text-[11px] text-muted-foreground">Lisätyöt · keltaiset, tarvikkeet ja alihankinta</span>
+                  <span className="text-[11px] font-semibold tabular-nums">{eur(p2RemainingCents)}</span>
+                </div>
+              </div>
+              <Button
+                className="w-full"
+                disabled={!hourlyBill?.matchesBilling || !!hourlyBill?.money.rateInverted}
+                onClick={sendCombined}
+              >
+                <Send className="w-4 h-4 mr-2" />
+                Lähetä lasku ({eur(combinedRemainingCents)})
+              </Button>
+              <p className="mt-1.5 text-[11px] text-muted-foreground leading-snug">
+                Yksi lasku kaikesta laskuttamattomasta — asiakas saa yhden summan ja yhden viitteen.
+              </p>
             </div>
           )}
 
@@ -1653,14 +1716,18 @@ export default function AdminGigTrackerPage() {
           <div className="space-y-3">
             <div className="rounded-xl bg-muted p-3 text-center">
               <p className="text-xs text-muted-foreground">
-                {invoiceScope === "p2"
+                {invoiceScope === "all"
+                  ? "Kaikki laskuttamaton — tunnit, ikkunat, tarvikkeet ja alihankinta"
+                  : invoiceScope === "p2"
                   ? "Lisätyöt — keltaiset, tarvikkeet ja alihankinta"
                   : invoiceScope === "hours"
                   ? "Tunnit, tarvikkeet ja alihankinta — laskuttamaton kertymä"
                   : deal ? `Maksuerä ${invForm.paymentNumber}/4 — kiinteähintainen sopimus` : "Laskutettava summa"}
               </p>
               <p className="text-2xl font-bold text-foreground tabular-nums">
-                {invoiceScope === "p2"
+                {invoiceScope === "all"
+                  ? eur2(combinedRemainingCents)
+                  : invoiceScope === "p2"
                   ? eur2(p2RemainingCents)
                   : invoiceScope === "hours"
                   ? eur2(hoursRemainingCents)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, billingModeOf, isHourlyGig, roundWorkHours, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, sanitizeBoard, sortedBoard, openTaskCount, BOARD_CUSTOMER, sanitizeShifts, computeShiftStats, shiftHoursOf, dayKey, isDayKey, fmtDayLabel, MAX_SHIFTS, cappedTimerHours, MAX_TIMER_SHIFT_HOURS, addShiftEntry, shiftHoursOnDay, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
+import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, billingModeOf, isHourlyGig, roundWorkHours, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, invoiceNaming, sanitizeBoard, sortedBoard, openTaskCount, BOARD_CUSTOMER, sanitizeShifts, computeShiftStats, shiftHoursOf, dayKey, isDayKey, fmtDayLabel, MAX_SHIFTS, cappedTimerHours, MAX_TIMER_SHIFT_HOURS, addShiftEntry, shiftHoursOnDay, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
 import { emptyGigData, computeTotals } from "./gig";
 
 // Kohta 6.1 — kokonaistilanteen ikkunamäärän täsmäytys. Ks. docs/fr8-era-laskutus-plan.md.
@@ -1118,6 +1118,51 @@ describe("asiakkaan tuntinäkymä — mitä hän saa nähdä", () => {
     expect(customerExpenses(gig()).map((e) => e.desc)).toEqual(["Tiivisteet", "Polttimot"]);
   });
 
+  /**
+   * ALIHANKKIJAN NIMI EI OLE ASIAKKAAN TIETOA — EI LASKULLA EIKÄ SEURANTASIVULLA.
+   *
+   * Sama rivi näkyy asiakkaalle kahdessa paikassa. Laskun puoli on omassa
+   * testissään (`hourly-money.test.ts`); tämä pitää huolen että seurantasivu
+   * ei ole se toinen ovi josta sisäinen kuvaus kävelee ulos.
+   */
+  it("alihankinnan sisäinen kuvaus ei näy seurantasivulla", () => {
+    const p = gig();
+    p.expenses = [
+      { id: "e9", by: "joonatan", kind: "subcontract", desc: "Mika, lampunvaihdot 200 €",
+        amountCents: 20000, marginCents: 8000, ts: 500, forCustomer: true },
+    ];
+    const seen = customerExpenses(p);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].desc).toBe("Työsuoritus");
+    expect(seen[0].amountCents).toBe(28000); // kulu + kate yhtenä lukuna
+    expect(JSON.stringify(seen)).not.toContain("Mika");
+  });
+
+  it("annettu asiakasteksti on se joka seurantasivulla näkyy", () => {
+    const p = gig();
+    p.expenses = [
+      { id: "e9", by: "joonatan", kind: "subcontract", desc: "Mika", customerDesc: "Valotyöt",
+        amountCents: 20000, marginCents: 8000, ts: 500, forCustomer: true },
+    ];
+    expect(customerExpenses(p)[0].desc).toBe("Valotyöt");
+  });
+
+  it("asiakasteksti säilyy sanitoinnin läpi", () => {
+    const clean = sanitizeProjectData({
+      ...emptyProjectData(),
+      expenses: [{ id: "e1", by: "joonatan", kind: "subcontract", desc: "Mika",
+        customerDesc: "  Valotyöt  ", amountCents: 20000, marginCents: 8000, ts: 1 }],
+    });
+    expect(clean.expenses[0].customerDesc).toBe("Valotyöt");
+    // Tyhjää ei kirjoiteta blobiin — silloin varanimi hoitaa rivin.
+    const blank = sanitizeProjectData({
+      ...emptyProjectData(),
+      expenses: [{ id: "e1", by: "joonatan", kind: "subcontract", desc: "Mika",
+        customerDesc: "   ", amountCents: 20000, ts: 1 }],
+    });
+    expect(blank.expenses[0].customerDesc).toBeUndefined();
+  });
+
   it("kuitti ei seuraa asiakkaalle koskaan — se on kirjanpitomme tosite", () => {
     const raw = JSON.stringify(customerExpenses(gig()));
     expect(raw).not.toContain("data:image");
@@ -1454,5 +1499,39 @@ describe("puolikkaat tunnit ledgerissä", () => {
     const st = computeShiftStats(shifts, "2026-09-02");
     expect(st.totalHours).toBe(2);
     expect(st.byWorker.find((w) => w.id === "mikko")!.hours).toBe(0.5);
+  });
+});
+
+/**
+ * LASKUN NIMI.
+ *
+ * Nimi luetaan asiakkaalle kuudessa kohdassa, ja ennen tätä sääntö oli
+ * kirjoitettu jokaiseen erikseen: tuntilasku puuttui neljästä ja olisi
+ * lähtenyt nimellä "Osalasku". Nyt sääntö on yksi funktio — ja tässä on
+ * testi joka kaatuu, jos joku kirjoittaa seitsemännen kopion.
+ */
+describe("laskun nimi", () => {
+  it("tuntilasku ei ole osalasku eikä loppulasku", () => {
+    const n = invoiceNaming({ scope: "hours", isFinal: true, fixedDeal: true, paymentNumber: 4 });
+    expect(n.short).toBe("Tuntilasku");
+    expect(n.prose).not.toMatch(/osalasku|loppulasku|maksuerä/i);
+  });
+
+  it("keltaisten lasku on lisätyölasku, ei urakan erä", () => {
+    expect(invoiceNaming({ scope: "p2", fixedDeal: true, paymentNumber: 2 }).short).toBe("Lisätyölasku (2. vaihe)");
+  });
+
+  it("urakan erä numeroidaan, vapaa lasku ei", () => {
+    expect(invoiceNaming({ scope: "p1", fixedDeal: true, paymentNumber: 3 }).short).toBe("Osalasku 3/4");
+    expect(invoiceNaming({ scope: "p1", isFinal: true }).short).toBe("Loppulasku");
+    expect(invoiceNaming({ scope: "p1" }).short).toBe("Osalasku");
+  });
+
+  it("jokaisella virralla on nimi kummassakin muodossa", () => {
+    for (const scope of ["p1", "p2", "hours"] as const) {
+      const n = invoiceNaming({ scope });
+      expect(n.short.trim()).not.toBe("");
+      expect(n.prose.trim()).not.toBe("");
+    }
   });
 });

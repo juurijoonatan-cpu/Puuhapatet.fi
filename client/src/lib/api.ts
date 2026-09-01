@@ -1427,6 +1427,12 @@ export const api = {
     scope?: "p1" | "p2" | "hours";
     /** P2/tunnit: eksplisiittinen summa (oletus: koko laskuttamaton kertymä). */
     amountCents?: number;
+    /**
+     * Summa jonka DIALOGI näytti. Palvelin torjuu lähetyksen jos oma
+     * laskutusperuste antaa muun luvun — selain ja palvelin julkaistaan
+     * erikseen, ja niiden välissä on ikkuna jossa toinen on vanha.
+     */
+    expectAmountCents?: number;
   }) => request<{ ok: boolean; id?: string; amountCents: number; gigData: GigData }>(
     "POST", `/api/jobs/${jobId}/gig/invoice`, data,
   ),
@@ -1754,6 +1760,8 @@ export const api = {
     forCustomer?: boolean;
     /** Alihankinnan kate euroina senttein — vain `kind: "subcontract"`. */
     marginCents?: number;
+    /** Mitä asiakas lukee rivistä. Ilman tätä alihankintarivi on "Työsuoritus". */
+    customerDesc?: string;
   }) =>
     request<{ ok: boolean; expense: import("@shared/project").ProjExpense; expenses: import("@shared/project").ProjExpense[] }>(
       "POST", `/api/jobs/${jobId}/project/expense`, data),

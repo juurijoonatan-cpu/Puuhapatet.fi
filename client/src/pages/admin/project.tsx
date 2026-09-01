@@ -16,7 +16,7 @@ import {
   dealInternalRateCents, isCommunityGig,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense, type LampStatus,
   type LampCondition, type DoorStatus, type FixtureOrder, type LampModel, type ProjBoardEntry,
-  billingModeOf, type BillingMode, computeShiftStats, isHourlyGig, type ProjShift,
+  billingModeOf, type BillingMode, computeShiftStats, isHourlyGig, expenseCustomerLabel, type ProjShift,
 } from "@shared/project";
 import { ArrowLeft } from "lucide-react";
 import { computeP2Billing, customerAddedKeys, p2FounderOpts, p2CustomerLocksSince, p2Itemisation, p2WashedYellows, p2WorkerSplit, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule, type P2WashedState } from "@shared/p2";
@@ -821,7 +821,7 @@ export default function AdminProjectPage() {
   const backToGig = useCallback(() => navigate(`/admin/gig/${jobId}`), [navigate, jobId]);
 
   // ── Expense management ──────────────────────────────────────────────────────
-  const addExpense = useCallback(async (data: { kind: string; desc: string; amountCents: number; by: string; forWhom?: string; receiptDataUrl?: string; forCustomer?: boolean; marginCents?: number }) => {
+  const addExpense = useCallback(async (data: { kind: string; desc: string; amountCents: number; by: string; forWhom?: string; receiptDataUrl?: string; forCustomer?: boolean; marginCents?: number; customerDesc?: string }) => {
     const res = await api.addProjectExpense(jobId, data);
     if (res.ok && res.data?.expenses) {
       setProject((cur) => cur ? { ...cur, expenses: res.data!.expenses } : cur);
@@ -2555,7 +2555,7 @@ function ExpensesView({
   workers: { id: string; name: string }[];
   currentWorker: string;
   resolveName: (id: string) => string;
-  onAdd: (data: { kind: string; desc: string; amountCents: number; by: string; forWhom?: string; receiptDataUrl?: string; forCustomer?: boolean; marginCents?: number }) => Promise<void>;
+  onAdd: (data: { kind: string; desc: string; amountCents: number; by: string; forWhom?: string; receiptDataUrl?: string; forCustomer?: boolean; marginCents?: number; customerDesc?: string }) => Promise<void>;
   onDelete: (expenseId: string) => Promise<void>;
   /** Merkitse kulu asiakkaalle näkyväksi. Puuttuessaan merkintää ei voi tehdä. */
   onToggleForCustomer?: (expenseId: string, forCustomer: boolean) => void;
@@ -2571,6 +2571,8 @@ function ExpensesView({
   const [forCustomer, setForCustomer] = useState(false);
   /** Alihankinnan kate EUROINA (kenttä), sentteinä vasta lähetyksessä. */
   const [margin, setMargin] = useState("");
+  /** Mitä ASIAKAS lukee tästä rivistä. `desc` jää meille. */
+  const [customerDesc, setCustomerDesc] = useState("");
   const [busy, setBusy] = useState(false);
   const [showTip, setShowTip] = useState(false);
   const isSub = kind === "subcontract";
@@ -2595,11 +2597,13 @@ function ExpensesView({
       // Alihankinta veloitetaan aina — merkintä ei ole siinä valinta.
       forCustomer: isSub ? true : forCustomer || undefined,
       marginCents: isSub && marginCentsLive > 0 ? marginCentsLive : undefined,
+      customerDesc: customerDesc.trim() || undefined,
     });
     setBusy(false);
     setDesc("");
     setAmount("");
     setMargin("");
+    setCustomerDesc("");
     setReceipt(null);
     setForCustomer(false);
   };
@@ -2679,8 +2683,10 @@ function ExpensesView({
           </div>
           <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1fr 130px", gap: 10, marginBottom: 10 }}>
             <label style={{ display: "block" }}>
-              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Kuvaus (valinnainen)</span>
-              <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="esim. pesuaineet" style={fieldStyle} />
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>
+                {isSub ? "Kuvaus meille (ei näy asiakkaalle)" : "Kuvaus (valinnainen)"}
+              </span>
+              <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={isSub ? "esim. Mika, lampunvaihdot 200 €" : "esim. pesuaineet"} style={fieldStyle} />
             </label>
             <label style={{ display: "block" }}>
               <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>
@@ -2707,14 +2713,34 @@ function ExpensesView({
                   <input value={margin} onChange={(e) => setMargin(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} inputMode="decimal" placeholder="0,00 €" style={{ ...fieldStyle, textAlign: "right" }} />
                 </label>
               </div>
-              {amountCentsLive > 0 && (
-                <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.09)", display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", fontSize: 12.5 }}>
-                  <span style={{ color: "rgba(255,255,255,0.5)" }}>Asiakkaalle yhtenä rivinä</span>
+              {/* MITÄ ASIAKAS LUKEE RIVISTÄ. Yllä oleva kuvaus on meidän
+                  muistiinpanomme — siihen kirjoitetaan alihankkijan nimi ja
+                  sovittu hinta, eikä kumpikaan kuulu asiakkaan laskulle:
+                  nimestä hän löytää ostohintamme. Siksi asiakkaan teksti on
+                  oma kenttänsä ("Valotyöt"), ja tyhjänä rivi on neutraali
+                  "Työsuoritus" — ei koskaan sisäinen kuvaus. */}
+              <label style={{ display: "block", marginTop: 10 }}>
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Mitä asiakkaan laskulla lukee</span>
+                <input
+                  value={customerDesc}
+                  onChange={(e) => setCustomerDesc(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && submit()}
+                  placeholder="esim. Valotyöt"
+                  style={fieldStyle}
+                />
+              </label>
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.09)", display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", fontSize: 12.5 }}>
+                <span style={{ color: "rgba(255,255,255,0.5)" }}>Asiakas näkee</span>
+                <span style={{ color: "#fff", fontWeight: 600 }}>{customerDesc.trim() || "Työsuoritus"}</span>
+                {amountCentsLive > 0 && (
                   <span style={{ marginLeft: "auto", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 15, fontWeight: 700, color: "#9ff0bd" }}>
                     {fmtEur(amountCentsLive + marginCentsLive)}
                   </span>
-                </div>
-              )}
+                )}
+              </div>
+              <p style={{ margin: "6px 0 0", fontSize: 11.5, lineHeight: 1.5, color: "rgba(255,255,255,0.42)" }}>
+                Yksi rivi, yksi luku. Alihankkijan nimi, ostohinta ja kate jäävät tänne — asiakkaan laskulle ne eivät mene.
+              </p>
             </div>
           )}
 
@@ -2778,6 +2804,14 @@ function ExpensesView({
                     {EXPENSE_KINDS.find((k) => k.id === exp.kind)?.label ?? exp.kind}
                     {exp.desc && <span style={{ fontWeight: 400, color: "rgba(255,255,255,0.55)", marginLeft: 8 }}>{exp.desc}</span>}
                   </div>
+                  {/* MITÄ ASIAKAS LUKEE. Sisäinen kuvaus on yllä; tämä rivi
+                      kertoo mitä siitä menee laskulle, jotta eron näkee siellä
+                      missä kulu kirjataan eikä vasta asiakkaan laskulta. */}
+                  {exp.kind === "subcontract" && (
+                    <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+                      asiakkaalle: <span style={{ color: "#9ff0bd" }}>{expenseCustomerLabel(exp)}</span>
+                    </div>
+                  )}
                   <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
                     <span title="Maksaja">maksoi: {resolveName(exp.by)}</span>
                     {exp.forWhom && exp.forWhom !== exp.by && (

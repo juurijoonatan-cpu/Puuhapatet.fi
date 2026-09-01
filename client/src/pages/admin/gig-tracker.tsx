@@ -429,6 +429,18 @@ export default function AdminGigTrackerPage() {
   };
 
   const sendInvoice = async () => {
+    /**
+     * SUMMA JONKA TÄMÄ DIALOGI NÄYTTÄÄ.
+     *
+     * Tuntilasku on uusi virta, ja selain (Pages) ja palvelin (Render)
+     * julkaistaan erikseen: niiden välissä on ikkuna jossa selain osaa
+     * `scope: "hours"`in ja palvelin ei. Vanha palvelin ei kaadu vaan tulkitsee
+     * pyynnön urakkalaskuksi — asiakkaalle lähtisi eri summa kuin tässä luki,
+     * eikä kukaan huomaisi. Luku lähtee mukaan, ja se tarkistetaan kahdesti:
+     * uusi palvelin torjuu eron ennen lähetystä, ja vastauksen summa
+     * tarkistetaan tässä sen varalta että palvelin ei tuntenut kenttää.
+     */
+    const expectAmountCents = invoiceScope === "hours" ? hoursRemainingCents : undefined;
     setSending(true);
     // The laskuttaja is the biller PICKED in the dialog (not necessarily the
     // logged-in leader) — their name + Y-tunnus go on the invoice and become the
@@ -459,9 +471,20 @@ export default function AdminGigTrackerPage() {
       paymentNumber: invoiceScope === "p1" && deal ? invForm.paymentNumber : undefined,
       sendMethod: invForm.sendMethod,
       scope: invoiceScope,
+      expectAmountCents,
     });
     setSending(false);
-    if (res.ok && res.data) {
+    if (res.ok && res.data && expectAmountCents != null && res.data.amountCents !== expectAmountCents) {
+      // Lasku on jo lähtenyt — mutta eri summalla kuin tässä luki. Se on
+      // sanottava ääneen, ei kuitattava "lähetetty"-ilmoituksella.
+      setGig(res.data.gigData);
+      setInvoiceOpen(false);
+      toast({
+        variant: "destructive",
+        title: "Lasku lähti eri summalla",
+        description: `Näkymä pyysi ${eur(expectAmountCents)}, palvelin laskutti ${eur(res.data.amountCents)}. Tarkista lasku ja päivitä sivu — palvelin voi olla vanhempaa versiota.`,
+      });
+    } else if (res.ok && res.data) {
       setGig(res.data.gigData);
       setInvoiceOpen(false);
       const what = invoiceScope === "p2" ? "Keltaisten lasku" : invoiceScope === "hours" ? "Tuntilasku" : "Lasku";

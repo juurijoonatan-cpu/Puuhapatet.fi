@@ -764,6 +764,20 @@ export interface ProjExpense {
    */
   forCustomer?: boolean;
   /**
+   * MITÄ ASIAKAS NÄKEE TÄSTÄ RIVISTÄ — laskulla ja seurantasivulla.
+   *
+   * `desc` on MEIDÄN muistiinpanomme: siihen kirjoitetaan alihankkijan nimi,
+   * mitä sovittiin, mihin hintaan. Se on juuri se tieto jota asiakkaalle ei
+   * anneta: alihankkijan nimestä hän löytää suoraan ostohintamme, ja seuraava
+   * keikka menee ohitsemme.
+   *
+   * Siksi asiakkaan rivillä on oma tekstinsä — "Valotyöt" — ja `desc` jää
+   * meille. Kenttä on vapaaehtoinen, ja kun se puuttuu, alihankintarivi saa
+   * neutraalin varanimen (`expenseCustomerLabel`) eikä `desc`iä: tyhjä kenttä
+   * ei saa olla se reitti jota myöten sisäinen teksti lipsahtaa laskulle.
+   */
+  customerDesc?: string;
+  /**
    * ALIHANKINNAN KATE senttein — vain `kind: "subcontract"` -riveillä.
    *
    * Alihankinta ei ole läpilaskutusta kuten asiakkaalle ostetut tarvikkeet:
@@ -782,6 +796,73 @@ export interface ProjExpense {
 }
 
 /** Mitä asiakas maksaa tästä kulurivistä. Alihankinnassa kulu + kate. */
+/**
+ * LASKUN NIMI — yksi sääntö, jota kaikki lukevat.
+ *
+ * Nimi päätyy asiakkaalle kuudessa kohdassa (otsikko, leipäteksti,
+ * verkkolaskuvahvistus, sähköpostin aihe, maksukirjaus, loki). Kun sääntö oli
+ * kirjoitettu jokaiseen erikseen, tuntilasku puuttui neljästä: se olisi
+ * lähtenyt nimellä "Osalasku" vaikka kyse ei ole urakan erästä lainkaan, ja
+ * maksukirjaus olisi sanonut eri asiaa kuin sähköposti. Nimi on täällä eikä
+ * näkymässä juuri siksi: kopiot ehtivät erota toisistaan ennen kuin kukaan
+ * huomaa, ja huomaaja olisi asiakas.
+ */
+export type InvoiceScope = "p1" | "p2" | "hours";
+
+export interface InvoiceNaming {
+  /** Lyhyt nimi: otsikkorivi, aihe, kirjaus. */
+  short: string;
+  /** Sama nimi lauseeseen upotettuna. */
+  prose: string;
+}
+
+export function invoiceNaming(o: {
+  scope: InvoiceScope;
+  /** Kiinteähintainen urakka: erä n/4. */
+  fixedDeal?: boolean;
+  paymentNumber?: number;
+  isFinal?: boolean;
+}): InvoiceNaming {
+  if (o.scope === "hours") return { short: "Tuntilasku", prose: "Tehdyistä tunneista tehty lasku" };
+  if (o.scope === "p2") return { short: "Lisätyölasku (2. vaihe)", prose: "Lisätöiden lasku (2. vaihe)" };
+  if (o.fixedDeal) {
+    const n = o.paymentNumber ?? 1;
+    return { short: `Osalasku ${n}/4`, prose: `Ikkunanpesu-urakan maksuerä ${n}/4` };
+  }
+  return o.isFinal
+    ? { short: "Loppulasku", prose: "Loppulasku työstä" }
+    : { short: "Osalasku", prose: "Osalasku työstä" };
+}
+
+/** Varanimi kululajille kun asiakkaan tekstiä ei ole annettu. */
+const EXPENSE_KIND_CUSTOMER_LABEL: Record<ProjExpenseKind, string> = {
+  transport: "Kuljetus",
+  materials: "Tarvikkeet",
+  equipment: "Välineet",
+  subcontract: "Työsuoritus",
+  other: "Hankinta",
+};
+
+/**
+ * MITÄ ASIAKAS LUKEE TÄSTÄ KULURIVISTÄ.
+ *
+ * Yksi funktio, koska rivi näkyy asiakkaalle kahdessa paikassa — laskulla ja
+ * seurantasivulla — ja kaksi sääntöä olisi kaksi tilaisuutta vuotaa se mitä
+ * toinen piilottaa.
+ *
+ * ALIHANKINNASSA `desc` EI KOSKAAN PÄÄDY ASIAKKAALLE. Se on sisäinen kenttä
+ * ("Mika, lampunvaihdot, 200 €"), ja alihankkijan nimi asiakkaan laskulla on
+ * ostohintamme luovuttamista. Ilman annettua asiakastekstiä rivi on
+ * "Työsuoritus" — nimetön mutta rehellinen. Muilla kululajeilla `desc` on
+ * ostettu tavara ("polttimot"), ja sen asiakas saa ja haluaakin nähdä.
+ */
+export function expenseCustomerLabel(e: Pick<ProjExpense, "kind" | "desc" | "customerDesc">): string {
+  const own = (e.customerDesc ?? "").trim();
+  if (own) return own;
+  if (e.kind === "subcontract") return EXPENSE_KIND_CUSTOMER_LABEL.subcontract;
+  return (e.desc ?? "").trim() || EXPENSE_KIND_CUSTOMER_LABEL[e.kind] || "Hankinta";
+}
+
 export function expenseCustomerCents(e: Pick<ProjExpense, "kind" | "amountCents" | "marginCents">): number {
   const base = Math.max(0, Math.round(e.amountCents || 0));
   if (e.kind !== "subcontract") return base;
@@ -1942,7 +2023,9 @@ export function customerExpenses(data: ProjectData): PublicExpense[] {
     // `expenseCustomerCents` eikä `amountCents`: alihankintarivillä asiakkaan
     // hinta on kulu + kate, ja se on YKSI luku. Erittely paljastaisi
     // ostohintamme, eikä asiakkaan lasku ole paikka jossa se kerrotaan.
-    .map((e) => ({ kind: e.kind, desc: e.desc, amountCents: expenseCustomerCents(e), ts: e.ts }))
+    // `expenseCustomerLabel` eikä `desc`: alihankintarivin kuvaus on meidän
+    // muistiinpanomme, ja siinä lukee alihankkijan nimi.
+    .map((e) => ({ kind: e.kind, desc: expenseCustomerLabel(e), amountCents: expenseCustomerCents(e), ts: e.ts }))
     .sort((a, b) => b.ts - a.ts);
 }
 
@@ -2848,6 +2931,10 @@ export function sanitizeProjectData(input: any): ProjectData {
         // Vain nimenomainen `true` näyttää kulun asiakkaalle. Puuttuva,
         // roskainen tai "false" jää sisäiseksi — oletus on aina yksityinen.
         ...(e?.forCustomer === true ? { forCustomer: true as const } : {}),
+        // Asiakkaan oma teksti riville. Tyhjää ei kirjoiteta: silloin
+        // `expenseCustomerLabel` antaa varanimen eikä sisäistä kuvausta.
+        ...(typeof e?.customerDesc === "string" && e.customerDesc.trim()
+          ? { customerDesc: e.customerDesc.trim().slice(0, 120) } : {}),
         // Kate vain alihankintariveillä ja vain kun se on annettu: muilla
         // lajeilla kenttä on merkityksetön eikä sitä kirjoiteta blobiin.
         ...(e?.kind === "subcontract" && Number(e?.marginCents) > 0

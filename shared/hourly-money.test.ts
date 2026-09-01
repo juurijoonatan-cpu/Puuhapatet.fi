@@ -259,13 +259,53 @@ describe("hourlyItemisation", () => {
   it("alihankinta on YKSI rivi — ostohintaa ei eritellä asiakkaalle", () => {
     const it = hourlyItemisation({
       ...base(),
-      expenses: [expense({ kind: "subcontract", amountCents: 20000, marginCents: 8000, desc: "Mika" })],
+      expenses: [expense({ kind: "subcontract", amountCents: 20000, marginCents: 8000, desc: "Mika", customerDesc: "Valotyöt" })],
     });
-    const sub = it.lines.find((l) => l.label.includes("Mika"))!;
+    const sub = it.lines.find((l) => l.label === "Valotyöt")!;
     expect(sub.cents).toBe(28000);
     // Kate ei saa esiintyä omana rivinään.
     expect(it.lines.some((l) => l.cents === 8000)).toBe(false);
     expect(it.lines.some((l) => /kate/i.test(l.label))).toBe(false);
+  });
+
+  /**
+   * ALIHANKKIJAN NIMI EI PÄÄDY ASIAKKAAN LASKULLE.
+   *
+   * `desc` on meidän muistiinpanomme — "Mika", "sähkömies, 300 €". Nimestä
+   * asiakas löytää alihankkijan itse ja sitä kautta ostohintamme; seuraava
+   * keikka menee silloin ohitsemme. Tämä on nimenomaan se tieto jota yksi
+   * rivi ja yksi luku suojaavat, joten se testataan eikä luoteta siihen
+   * että kukaan muistaa sen kirjoittaessaan seuraavan rivin.
+   */
+  it("sisäinen kuvaus EI vuoda asiakkaan laskulle — ei nimeä, ei ostohintaa", () => {
+    const it = hourlyItemisation({
+      ...base(),
+      expenses: [expense({
+        kind: "subcontract", amountCents: 20000, marginCents: 8000,
+        desc: "Mika Virtanen, lampunvaihdot, sovittu 200 €",
+      })],
+    });
+    const invoiceText = it.lines.map((l) => l.label).join(" | ");
+    expect(invoiceText).not.toMatch(/Mika/i);
+    expect(invoiceText).not.toMatch(/200/);
+    // Rivi on silti olemassa ja täydellä hinnalla.
+    expect(it.lines.some((l) => l.cents === 28000)).toBe(true);
+    expect(it.matchesBilling).toBe(true);
+  });
+
+  it("asiakasteksti on se joka laskulla lukee — sisäinen kuvaus jää meille", () => {
+    const it = hourlyItemisation({
+      ...base(),
+      expenses: [expense({
+        kind: "subcontract", amountCents: 30000, marginCents: 7000,
+        desc: "sähkömies Mika", customerDesc: "Valotyöt",
+      })],
+    });
+    const sub = it.lines.find((l) => l.cents === 37000)!;
+    expect(sub.label).toBe("Valotyöt");
+    // Ja rivi kantaa yhä sisäisen kuvauksen adminin listaa varten.
+    expect(it.money.costLines[0].desc).toBe("sähkömies Mika");
+    expect(it.money.costLines[0].customerLabel).toBe("Valotyöt");
   });
 
   it("tyhjä keikka ei tuota laskutettavaa", () => {
@@ -390,12 +430,25 @@ describe("laskun rivi on aina nimetty", () => {
     expect(it0.matchesBilling).toBe(true);
   });
 
-  it("kuvaukseton alihankinta ei jätä roikkuvaa erotinta", () => {
+  it("kuvaukseton alihankinta saa neutraalin varanimen, ei tyhjää eikä sisäistä", () => {
     const it0 = hourlyItemisation({
       shifts: [], expenses: [expense({ kind: "subcontract", desc: "", amountCents: 30000, marginCents: 7000 })],
     } as never);
-    expect(it0.lines[0].label).toBe("Alihankinta");
+    expect(it0.lines[0].label).toBe("Työsuoritus");
     expect(it0.lines[0].cents).toBe(37000);
+  });
+
+  /**
+   * Tyhjä asiakasteksti EI saa olla se reitti jota myöten sisäinen kuvaus
+   * lipsahtaa laskulle: varanimi on neutraali, ei `desc`.
+   */
+  it("tyhjä asiakasteksti antaa varanimen — ei sisäistä kuvausta", () => {
+    const it0 = hourlyItemisation({
+      shifts: [], expenses: [expense({
+        kind: "subcontract", desc: "Mika", customerDesc: "   ", amountCents: 30000, marginCents: 7000,
+      })],
+    } as never);
+    expect(it0.lines[0].label).toBe("Työsuoritus");
   });
 });
 

@@ -32,7 +32,7 @@
 
 import { FOUNDER_IDS, isFounder } from "./team";
 import {
-  computeShiftStats, computeProjectTotals, expenseCustomerCents, hourRateOf, workerHourRateOf,
+  computeShiftStats, computeProjectTotals, expenseCustomerCents, expenseCustomerLabel, hourRateOf, workerHourRateOf,
   type ProjectData, type ProjExpense, type ProjShift, type ShiftStats,
 } from "./project";
 
@@ -144,7 +144,10 @@ function splitEvenly(cents: number, ids: readonly string[]): Map<string, number>
 export interface HourlyCostLine {
   id: string;
   kind: ProjExpense["kind"];
+  /** SISÄINEN kuvaus — adminin listaa varten. EI mene asiakkaalle. */
   desc: string;
+  /** Mitä asiakas lukee tästä rivistä. Ainoa teksti joka saa päätyä laskulle. */
+  customerLabel: string;
   /** Mitä asiakas maksaa tästä rivistä. */
   customerCents: number;
   /** Toteutunut kulu (alihankinnassa ilman katetta). Ei mene asiakkaalle. */
@@ -221,7 +224,8 @@ export function computeHourlyMoney(
     if (isSub) { subcontractCostCents += cost; subcontractMarginCents += margin; }
     else customerCostCents += cost;
     costLines.push({
-      id: e.id, kind: e.kind, desc: e.desc, customerCents, costCents: cost, marginCents: margin,
+      id: e.id, kind: e.kind, desc: e.desc, customerLabel: expenseCustomerLabel(e),
+      customerCents, costCents: cost, marginCents: margin,
       paidBy: e.forWhom || e.by || undefined,
       hasReceipt: !!((e as any).receiptAssetId || e.receiptDataUrl),
     });
@@ -312,15 +316,6 @@ export interface HourlyItemisation {
   money: HourlyMoney;
 }
 
-/** Varanimi kulun riville kun kuvaus on jätetty tyhjäksi. */
-const COST_KIND_LABEL: Record<string, string> = {
-  transport: "Kuljetus",
-  materials: "Tarvikkeet",
-  equipment: "Välineet",
-  subcontract: "Alihankinta",
-  other: "Hankinta",
-};
-
 export function hourlyItemisation(
   data: Pick<ProjectData, "shifts" | "hourRateCents" | "workerHourCents" | "expenses"
     | "marks" | "customMarks" | "deleted" | "statuses" | "building" | "pricePerWindow">,
@@ -341,12 +336,12 @@ export function hourlyItemisation(
 
   for (const c of money.costLines) {
     // Alihankinta yhtenä lukuna: kulu + kate. Erittely paljastaisi ostohinnan.
-    // KUVAUS ON VAPAAEHTOINEN, joten laskulla ei saa olla nimetöntä riviä:
-    // ilman varanimeä asiakas näkisi tyhjän selitteen ja summan vieressä.
-    const label = c.kind === "subcontract"
-      ? (c.desc ? `Alihankinta · ${c.desc}` : "Alihankinta")
-      : (c.desc || COST_KIND_LABEL[c.kind] || "Hankinta");
-    lines.push({ label, cents: c.customerCents });
+    //
+    // JA YHTENÄ NIMENÄ, joka on aina asiakkaalle kirjoitettu: `customerLabel`
+    // tulee `expenseCustomerLabel`ista eikä `desc`istä. Sisäinen kuvaus on
+    // alihankkijan nimi ja sovittu hinta — se on juuri se mitä lasku ei kerro.
+    // Kenttä ei voi olla tyhjä, joten nimetöntä riviä ei synny.
+    lines.push({ label: c.customerLabel, cents: c.customerCents });
   }
 
   // Pestyt ikkunat TIETONA. `computeProjectTotals` on sama laskenta jota kartta

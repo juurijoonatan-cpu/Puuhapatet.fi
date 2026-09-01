@@ -34,7 +34,8 @@ import { FOUNDER_IDS, isFounder } from "./team";
 import { getCrew, DEFAULT_WORKER_PER_WINDOW_CENTS } from "./crew";
 import {
   computeShiftStats, computeProjectTotals, expenseCustomerCents, expenseCustomerLabel, hourRateOf, workerHourRateOf,
-  pricePerWindowOf, allPoints,
+  pricePerWindowOf, allPoints, customerChargeableExpenses,
+  type CustomerChargeLine,
   type ProjectData, type ProjExpense, type ProjShift, type ShiftStats,
 } from "./project";
 
@@ -153,24 +154,9 @@ function splitEvenly(cents: number, ids: readonly string[]): Map<string, number>
   return out;
 }
 
-/** Yksi kulurivi laskulla. Alihankinta on YKSI luku: kulu + kate. */
-export interface HourlyCostLine {
-  id: string;
-  kind: ProjExpense["kind"];
-  /** SISÄINEN kuvaus — adminin listaa varten. EI mene asiakkaalle. */
-  desc: string;
-  /** Mitä asiakas lukee tästä rivistä. Ainoa teksti joka saa päätyä laskulle. */
-  customerLabel: string;
-  /** Mitä asiakas maksaa tästä rivistä. */
-  customerCents: number;
-  /** Toteutunut kulu (alihankinnassa ilman katetta). Ei mene asiakkaalle. */
-  costCents: number;
-  /** Kate (vain alihankinta). Ei mene asiakkaalle. */
-  marginCents: number;
-  /** Kuka maksoi kulun — tarvitaan kun rahat tasataan perustajien kesken. */
-  paidBy?: string;
-  hasReceipt: boolean;
-}
+/** Yksi kulurivi laskulla. Alihankinta on YKSI luku: kulu + kate.
+ *  Sama tyyppi kuin lisätyölaskulla — sääntö on jaettu, joten tyyppi on myös. */
+export type HourlyCostLine = CustomerChargeLine;
 
 export function computeHourlyMoney(
   data: Pick<ProjectData, "shifts" | "hourRateCents" | "workerHourCents" | "expenses">,
@@ -225,25 +211,15 @@ export function computeHourlyMoney(
    * asiakkaalle välitettyä työtä. Merkinnän unohtaminen jättäisi laskulta
    * satojen eurojen rivin.
    */
-  const costLines: HourlyCostLine[] = [];
+  // Sääntö on `customerChargeableExpenses`issa, koska SAMA sääntö ratkaisee
+  // myös kohdennetun keikan lisätyölaskun. Kaksi kopiota tarkoittaisi kaksi
+  // laskua jotka voivat olla eri mieltä siitä mikä on asiakkaan kulu.
+  const costLines: HourlyCostLine[] = customerChargeableExpenses(data);
   let customerCostCents = 0, subcontractCostCents = 0, subcontractMarginCents = 0;
-  for (const e of data.expenses ?? []) {
-    const isSub = e.kind === "subcontract";
-    if (!isSub && e.forCustomer !== true) continue;
-    const cost = Math.max(0, Math.round(e.amountCents || 0));
-    const margin = isSub ? Math.max(0, Math.round(e.marginCents || 0)) : 0;
-    const customerCents = expenseCustomerCents(e);
-    if (customerCents <= 0) continue;
-    if (isSub) { subcontractCostCents += cost; subcontractMarginCents += margin; }
-    else customerCostCents += cost;
-    costLines.push({
-      id: e.id, kind: e.kind, desc: e.desc, customerLabel: expenseCustomerLabel(e),
-      customerCents, costCents: cost, marginCents: margin,
-      paidBy: e.forWhom || e.by || undefined,
-      hasReceipt: !!((e as any).receiptAssetId || e.receiptDataUrl),
-    });
+  for (const c of costLines) {
+    if (c.kind === "subcontract") { subcontractCostCents += c.costCents; subcontractMarginCents += c.marginCents; }
+    else customerCostCents += c.costCents;
   }
-  costLines.sort((a, b) => b.customerCents - a.customerCents);
 
   // Alihankinnan kate jaetaan samalla säännöllä kuin tuntikate.
   const marginShare = splitEvenly(marginCents + subcontractMarginCents, FOUNDER_IDS);

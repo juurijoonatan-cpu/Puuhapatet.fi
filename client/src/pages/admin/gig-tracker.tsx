@@ -35,7 +35,7 @@ import {
 } from "@shared/gig";
 import { computeProjectTotals, fixedDealFor, computeDealBilling, dealAgreedTotalCents, eurFromCents, isHourlyGig, type ProjectData } from "@shared/project";
 import { hourlyItemisation } from "@shared/hourly-money";
-import { computeP2Billing } from "@shared/p2";
+import { computeP2Billing, p2BillableCents, p2ExtraCharges } from "@shared/p2";
 import { p2InvoiceState } from "@shared/worker-payouts";
 import { downloadGigContract, openGigContractForPrint } from "@/lib/gig-contract-doc";
 import { cn } from "@/lib/utils";
@@ -521,7 +521,7 @@ export default function AdminGigTrackerPage() {
     } else if (res.ok && res.data) {
       setGig(res.data.gigData);
       setInvoiceOpen(false);
-      const what = invoiceScope === "p2" ? "Keltaisten lasku" : invoiceScope === "hours" ? "Tuntilasku" : "Lasku";
+      const what = invoiceScope === "p2" ? "Lisätyölasku" : invoiceScope === "hours" ? "Tuntilasku" : "Lasku";
       toast(invForm.sendMethod === "verkkolasku"
         ? { title: `${what} — vahvistus lähetetty`, description: `${eur(res.data.amountCents)} → ${recipients} (muista lähettää itse varsinainen verkkolasku)` }
         : { title: `${what} lähetetty`, description: `${eur(res.data.amountCents)} → ${recipients}` });
@@ -677,7 +677,13 @@ export default function AdminGigTrackerPage() {
   // P1/P2-maksujen erottelu tulee YHDESTÄ jaetusta funktiosta (shared/worker-payouts.ts)
   // — sama laskenta kuin mustassa dashissa ja serverillä, ei kolmea kopiota
   // erilaisia scope-suodatuksia.
-  const invState = p2InvoiceState(p2b?.earnedCents ?? 0, gig.payments);
+  // KOKO lisätyökertymä, ei pelkät ikkunat: tarvikkeet ja alihankinta ovat
+  // osa samaa laskua. Sama funktio kuin palvelimella, joten kortilla näkyvä
+  // laskuttamatta-luku on se jonka lähetys perii.
+  const invState = p2InvoiceState(project ? p2BillableCents(project) : 0, gig.payments);
+  /** Lisätyölaskun muut veloitukset — tarvikkeet ja alihankinta katteineen. */
+  const p2Extras = project ? p2ExtraCharges(project) : [];
+  const p2ExtrasCents = p2Extras.reduce((n, x) => n + x.customerCents, 0);
   // ELÄVÄT erät. Mitätöity rivi jää `gig.payments`iin tositteeksi, joten sen
   // pituus ei kerro montako laskua on lähetetty eikä ole peruttavissa.
   const liveGigPayments = (gig.payments ?? []).filter((p) => !p.voided);
@@ -1530,15 +1536,21 @@ export default function AdminGigTrackerPage() {
             <div className="mt-4 pt-4 border-t border-border">
               <div className="flex items-center justify-between gap-2 mb-2">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
-                  Keltaiset · 2. vaihe (lisätyö)
+                  Lisätyöt · keltaiset, tarvikkeet ja alihankinta
                 </p>
                 <span className="text-xs text-muted-foreground tabular-nums shrink-0">
                   sovittu {eur(p2b.lockedSumCents)}
                 </span>
               </div>
-              {p2b.lockedCount === 0 ? (
+              {/* EHTO KATSOO KOKO KERTYMÄÄ, EI VAIN IKKUNOITA.
+                  Pelkkä `lockedCount === 0` väitti ettei laskutettavaa ole
+                  silloinkin kun keikalla oli asiakkaalle ostettuja tarvikkeita
+                  tai alihankintaa — eikä nappia laskun lähettämiseen ollut
+                  missään. Raha oli kirjattu ja näkymätön. */}
+              {p2b.lockedCount === 0 && p2ExtrasCents === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  Asiakas ei ole vielä hyväksynyt yhtään keltaista hintaa — laskutettavaa ei siis ole.
+                  Asiakas ei ole vielä hyväksynyt yhtään keltaista hintaa eikä keikalle ole kirjattu
+                  asiakkaalta veloitettavia kuluja — laskutettavaa ei siis ole.
                   Hinnoittele keltaiset projektinäkymän kartalla.
                 </p>
               ) : (
@@ -1551,6 +1563,29 @@ export default function AdminGigTrackerPage() {
                     <span className="text-sm text-muted-foreground">Kertynyt (pesty)</span>
                     <span className="text-sm font-semibold text-foreground tabular-nums">{p2b.lockedWashedCount} kpl · {eur(p2b.earnedCents)}</span>
                   </div>
+                  {/* TARVIKKEET JA ALIHANKINTA OVAT SAMALLA LASKULLA.
+                      Ne kirjattiin, ne näkyivät asiakkaan seurantasivulla — ja
+                      sitten ne jäivät siihen: urakan erä on kiinteä 25 %
+                      sopimuksesta eikä keltaisten lasku tuntenut kuluja
+                      lainkaan. Tämä on se raha joka ei päätynyt yhdellekään
+                      laskulle. Rivit näkyvät nimeltä, jotta summan koostumus on
+                      tarkistettavissa ennen lähetystä. */}
+                  {p2ExtrasCents > 0 && (
+                    <div className="mb-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-muted-foreground">Tarvikkeet ja alihankinta</span>
+                        <span className="text-sm font-semibold text-foreground tabular-nums">{eur(p2ExtrasCents)}</span>
+                      </div>
+                      <div className="mt-1 rounded-xl bg-muted/40 p-2.5">
+                        {p2Extras.map((x) => (
+                          <div key={x.id} className="flex items-baseline justify-between gap-3 py-0.5">
+                            <span className="text-[11px] text-muted-foreground">{x.customerLabel}</span>
+                            <span className="text-[11px] font-semibold tabular-nums shrink-0">{eur(x.customerCents)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-sm text-muted-foreground">Laskutettu</span>
                     <span className="text-sm font-semibold text-green-600 tabular-nums">{eur(p2InvoicedCents)}</span>
@@ -1582,7 +1617,7 @@ export default function AdminGigTrackerPage() {
                   )}
                   <Button className="w-full" disabled={p2Sending || p2RemainingCents <= 0} onClick={sendP2}>
                     <Send className="w-4 h-4 mr-2" />
-                    {p2Sending ? "Lähetetään…" : p2RemainingCents > 0 ? `Lähetä keltaisten lasku (${eur(p2RemainingCents)})` : "Kaikki keltaiset laskutettu ✓"}
+                    {p2Sending ? "Lähetetään…" : p2RemainingCents > 0 ? `Lähetä lisätyölasku (${eur(p2RemainingCents)})` : "Kaikki lisätyöt laskutettu ✓"}
                   </Button>
                 </>
               )}
@@ -1613,13 +1648,13 @@ export default function AdminGigTrackerPage() {
       <Dialog open={invoiceOpen} onOpenChange={setInvoiceOpen}>
         <DialogContent className="max-w-md max-h-[88vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{invoiceScope === "p2" ? "Lähetä keltaisten lasku" : invoiceScope === "hours" ? "Lähetä tuntilasku" : "Lähetä lasku"}</DialogTitle>
+            <DialogTitle>{invoiceScope === "p2" ? "Lähetä lisätyölasku" : invoiceScope === "hours" ? "Lähetä tuntilasku" : "Lähetä lasku"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div className="rounded-xl bg-muted p-3 text-center">
               <p className="text-xs text-muted-foreground">
                 {invoiceScope === "p2"
-                  ? "Keltaiset ikkunat — laskuttamaton kertymä"
+                  ? "Lisätyöt — keltaiset, tarvikkeet ja alihankinta"
                   : invoiceScope === "hours"
                   ? "Tunnit, tarvikkeet ja alihankinta — laskuttamaton kertymä"
                   : deal ? `Maksuerä ${invForm.paymentNumber}/4 — kiinteähintainen sopimus` : "Laskutettava summa"}

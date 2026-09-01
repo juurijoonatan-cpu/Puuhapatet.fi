@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeP2Billing, p2Itemisation, type P2Offer, type P2State } from "./p2";
+import { computeP2Billing, p2Itemisation, p2ExtraCharges, p2ExtraChargesCents, p2BillableCents, type P2Offer, type P2State } from "./p2";
 import type { ProjectData, WindowStatus } from "./project";
 
 /**
@@ -138,5 +138,95 @@ describe("p2Itemisation", () => {
     const data = project({ "1": [{ p: 2, status: "pesty" }] }, {});
     (data as { p2?: P2State }).p2 = undefined;
     expect(p2Itemisation(data)).toMatchObject({ lines: [], totalCents: 0, earnedCents: 0, matchesBilling: true });
+  });
+});
+
+/**
+ * LISÄTYÖLASKU KANTAA KAIKEN — EI VAIN KELTAISIA IKKUNOITA.
+ *
+ * Tämä oli aito rahavika ja sama luokka kuin tuntikeikan laskuttamattomat
+ * ikkunat, käännettynä: kohdennetulla keikalla asiakkaalle ostetut tarvikkeet
+ * ja alihankinta katteineen eivät päätyneet YHDELLEKÄÄN laskulle. Urakan erä
+ * on kiinteä 25 % sopimuksesta, eikä keltaisten lasku tuntenut kuluja
+ * lainkaan. Kulu kirjattiin, se näkyi asiakkaan seurantasivulla, ja siihen se
+ * jäi.
+ */
+describe("lisätyölaskun kulut", () => {
+  const withExpenses = (base: ProjectData, expenses: any[]): ProjectData =>
+    ({ ...base, expenses } as ProjectData);
+
+  const plain = () => project({ K: [{ p: 2, status: "pesty" }] }, {
+    "K#0": { status: "locked", lockedCents: 3000, lockedAt: 1 } as P2Offer,
+  });
+
+  it("asiakkaalle merkityt tarvikkeet ja alihankinta tulevat laskulle", () => {
+    const d = withExpenses(plain(), [
+      { id: "e1", by: "joonatan", kind: "materials", desc: "Polttimot", amountCents: 4500, ts: 1, forCustomer: true },
+      { id: "e2", by: "petrus", kind: "transport", desc: "Bussilippu", amountCents: 620, ts: 2 },
+      { id: "e3", by: "joonatan", kind: "subcontract", desc: "Mika, valot 300 €",
+        customerDesc: "Valotyöt", amountCents: 30000, marginCents: 7000, ts: 3 },
+    ]);
+    const it0 = p2Itemisation(d);
+    expect(it0.windowsCents).toBe(3000);
+    // 45 € tarvikkeet + 370 € alihankinta katteineen. Bussilippu EI ole mukana.
+    expect(it0.extrasCents).toBe(4500 + 37000);
+    expect(it0.totalCents).toBe(3000 + 4500 + 37000);
+    expect(it0.matchesBilling).toBe(true);
+    expect(p2BillableCents(d)).toBe(it0.totalCents);
+  });
+
+  /** Alihankkijan nimi ja ostohinta eivät kulje laskulle täälläkään. */
+  it("alihankinta on yksi rivi ja asiakkaan oma teksti", () => {
+    const d = withExpenses(plain(), [
+      { id: "e1", by: "joonatan", kind: "subcontract", desc: "Mika Virtanen, ostohinta 300 €",
+        customerDesc: "Valotyöt", amountCents: 30000, marginCents: 7000, ts: 1 },
+    ]);
+    const x = p2ExtraCharges(d);
+    expect(x).toHaveLength(1);
+    expect(x[0].customerLabel).toBe("Valotyöt");
+    expect(x[0].customerCents).toBe(37000);
+    expect(JSON.stringify(x.map((l) => l.customerLabel))).not.toMatch(/Mika|300/);
+  });
+
+  it("ilman asiakastekstiä alihankinta on neutraali eikä sisäinen kuvaus", () => {
+    const d = withExpenses(plain(), [
+      { id: "e1", by: "joonatan", kind: "subcontract", desc: "Mika", amountCents: 20000, marginCents: 5000, ts: 1 },
+    ]);
+    expect(p2ExtraCharges(d)[0].customerLabel).toBe("Työsuoritus");
+  });
+
+  /**
+   * TUNTIKEIKALLA NOLLA. Siellä samat kulut ovat jo tuntilaskulla, ja kahdesti
+   * laskuttaminen olisi pahempi vika kuin se jota tässä korjataan.
+   */
+  it("tuntikeikalla kulut EIVÄT ole lisätyölaskulla", () => {
+    const d = withExpenses(plain(), [
+      { id: "e1", by: "joonatan", kind: "subcontract", desc: "Mika", amountCents: 20000, marginCents: 5000, ts: 1 },
+    ]);
+    const hourly = { ...d, billingMode: "hourly" } as ProjectData;
+    expect(p2ExtraChargesCents(hourly)).toBe(0);
+    expect(p2Itemisation(hourly).extrasCents).toBe(0);
+    expect(p2BillableCents(hourly)).toBe(computeP2Billing(hourly).earnedCents);
+  });
+
+  it("ilman kuluja mikään ei muutu", () => {
+    const d = plain();
+    const it0 = p2Itemisation(d);
+    expect(it0.extras).toEqual([]);
+    expect(it0.extrasCents).toBe(0);
+    expect(it0.totalCents).toBe(it0.windowsCents);
+    expect(it0.earnedCents).toBe(computeP2Billing(d).earnedCents);
+    expect(it0.matchesBilling).toBe(true);
+  });
+
+  /** Keikka jolla on VAIN kuluja on silti laskutettava. */
+  it("pelkkä kulu ilman keltaisia on laskutettavaa", () => {
+    const base = project({ K: [{ p: 2 }] }, {});
+    const d = withExpenses(base, [
+      { id: "e1", by: "joonatan", kind: "materials", desc: "Polttimot", amountCents: 4500, ts: 1, forCustomer: true },
+    ]);
+    expect(computeP2Billing(d).earnedCents).toBe(0);
+    expect(p2BillableCents(d)).toBe(4500);
+    expect(p2Itemisation(d).matchesBilling).toBe(true);
   });
 });

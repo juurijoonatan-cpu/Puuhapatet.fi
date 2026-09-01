@@ -21,7 +21,7 @@
  */
 
 import type { ProjectData } from "./project";
-import { allPoints } from "./project";
+import { allPoints, customerChargeableExpenses, isHourlyGig, type CustomerChargeLine } from "./project";
 import { FOUNDER_IDS } from "./team";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -606,6 +606,12 @@ export interface P2Itemisation {
    * yksikin väärä hinta (näppäilyvirhe) erottuu heti omana portaanaan.
    */
   byPrice: P2PriceBucket[];
+  /** Tarvikkeet ja alihankinta — kaikki mikä ei ole ikkuna. */
+  extras: CustomerChargeLine[];
+  /** Pelkkien keltaisten osuus. */
+  windowsCents: number;
+  /** Kulujen osuus. */
+  extrasCents: number;
   /** Σ rivien hinnat. */
   totalCents: number;
   /** Laskutusperusta samasta datasta laskettuna (computeP2Billing). */
@@ -632,6 +638,40 @@ export interface P2Itemisation {
  * järjestyksessä. Silloin laskun rivi ja asiakkaan näkymä puhuvat samasta
  * ikkunasta samalla nimellä.
  */
+/**
+ * LISÄTYÖLASKUN MUUT VELOITUKSET — tarvikkeet ja alihankinta.
+ *
+ * Keltaisten lasku oli pelkkiä ikkunoita, ja urakan erä on kiinteä 25 %
+ * sopimuksesta johon ei kuulu mitään muuta. Asiakkaalle ostetut tarvikkeet ja
+ * alihankinta katteineen jäivät siis kohdennetulla keikalla kokonaan
+ * laskuttamatta: ne kirjattiin, ne näkyivät asiakkaan seurantasivulla, ja
+ * siihen se jäi. Lisätyölasku on niiden oikea koti — se on jo se lasku joka
+ * kattaa kaiken kiinteän sopimuksen ulkopuolisen, ja se on summapohjainen
+ * eikä eräpohjainen, joten se ei riko urakan neljän erän laskentaa.
+ *
+ * TUNTIKEIKALLA NOLLA. Siellä samat kulut ovat jo tuntilaskulla
+ * (`hourlyItemisation`), ja kahdesti laskuttaminen olisi pahempi vika kuin se
+ * jota tässä korjataan.
+ */
+export function p2ExtraCharges(data: ProjectData): CustomerChargeLine[] {
+  return isHourlyGig(data) ? [] : customerChargeableExpenses(data);
+}
+
+export function p2ExtraChargesCents(data: ProjectData): number {
+  return p2ExtraCharges(data).reduce((n, l) => n + l.customerCents, 0);
+}
+
+/**
+ * KOKO LISÄTYÖKERTYMÄ: lukitut pestyt keltaiset + tarvikkeet + alihankinta.
+ *
+ * Tämä on se luku jota vasten laskutustila lasketaan. `earnedCents` jää
+ * ikkunoiksi, koska tekijöiden keltaispalkkio johdetaan siitä — kulut eivät
+ * ole kenenkään ikkunapalkkiota.
+ */
+export function p2BillableCents(data: ProjectData): number {
+  return computeP2Billing(data).earnedCents + p2ExtraChargesCents(data);
+}
+
 export function p2Itemisation(data: ProjectData): P2Itemisation {
   const p2 = data.p2;
   const byFloor: P2InvoiceFloorGroup[] = [];
@@ -661,9 +701,20 @@ export function p2Itemisation(data: ProjectData): P2Itemisation {
     buckets.set(l.priceCents, b);
   }
   const byPrice = Array.from(buckets.values()).sort((a, b) => b.priceCents - a.priceCents);
-  const totalCents = lines.reduce((n, l) => n + l.priceCents, 0);
-  const earnedCents = computeP2Billing(data).earnedCents;
-  return { lines, byFloor, byPrice, totalCents, earnedCents, matchesBilling: totalCents === earnedCents };
+  const windowsCents = lines.reduce((n, l) => n + l.priceCents, 0);
+  /**
+   * Kulut ovat erittelyssä omina riveinään — alihankinta yhtenä lukuna ja
+   * asiakkaalle kirjoitetulla nimellä, koska ostohintamme ja alihankkijan nimi
+   * eivät ole asiakkaan tietoa (ks. `expenseCustomerLabel`).
+   */
+  const extras = p2ExtraCharges(data);
+  const extrasCents = extras.reduce((n, l) => n + l.customerCents, 0);
+  const totalCents = windowsCents + extrasCents;
+  const earnedCents = computeP2Billing(data).earnedCents + extrasCents;
+  return {
+    lines, byFloor, byPrice, extras, windowsCents, extrasCents,
+    totalCents, earnedCents, matchesBilling: totalCents === earnedCents,
+  };
 }
 
 // ─── Hätäperuutus: asiakkaan hyväksynnät takaisin odottamaan ───────────────────

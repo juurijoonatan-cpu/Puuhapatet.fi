@@ -1645,9 +1645,13 @@ function HomeTab({ view, setTab, board, onAddBoardEntry, onToggleBoardTask, pend
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
           <div style={{ padding: 16, borderRadius: 14, background: "rgba(124,224,166,0.10)", border: "1px solid rgba(124,224,166,0.22)" }}>
             <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Kertynyt palkka</p>
-            <p style={{ margin: "4px 0 0", fontSize: 26, fontWeight: 800, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(Math.round(hourlyMe.earnedCents * grow))}</p>
+            {/* Tunnit JA ikkunat. Tuntikeikallakin pestään ikkunoita, ja ne
+                maksetaan ikkunahinnalla — pelkkä tuntiosuus tässä väittäisi
+                ne ilmaisiksi. */}
+            <p style={{ margin: "4px 0 0", fontSize: 26, fontWeight: 800, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(Math.round((hourlyMe.earnedCents + hourlyMe.windowEarnedCents) * grow))}</p>
             <p style={{ margin: "3px 0 0", fontSize: 11, color: "rgba(255,255,255,0.5)", fontVariantNumeric: "tabular-nums" }}>
               {euro(hourlyMe.perHourCents)} / h
+              {hourlyMe.windowEarnedCents > 0 && ` · ikkunat ${euro(hourlyMe.windowEarnedCents)}`}
             </p>
           </div>
           <div style={{ padding: 16, borderRadius: 14, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
@@ -2570,12 +2574,26 @@ function HoursTab({ token, view, setView, notify }: { token: string; view: Worke
           background: "linear-gradient(155deg, rgba(124,224,166,0.12), rgba(255,255,255,0.03))", border: "1px solid rgba(124,224,166,0.24)" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <p style={{ margin: 0, fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.55)" }}>Kertynyt palkka</p>
-            <p style={{ margin: "3px 0 0", fontSize: 27, fontWeight: 800, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(me.earnedCents)}</p>
+            {/* KOKO PALKKA, EI VAIN TUNTIOSUUS. Tuntikeikallakin voi pestä
+                ikkunoita, ja ne maksetaan ikkunahinnalla. Pelkkä tuntiluku
+                tässä väittäisi tekijälle että hänen pesemänsä ikkunat olivat
+                ilmaisia — erittely on heti alla. */}
+            <p style={{ margin: "3px 0 0", fontSize: 27, fontWeight: 800, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(me.earnedCents + me.windowEarnedCents)}</p>
+            {me.windowEarnedCents > 0 && (
+              <p style={{ margin: "3px 0 0", fontSize: 11.5, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
+                tunnit {euro(me.earnedCents)} · ikkunat {euro(me.windowEarnedCents)}
+              </p>
+            )}
           </div>
           <div style={{ textAlign: "right", flexShrink: 0 }}>
             <p style={{ margin: 0, fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)" }}>Tunnit</p>
             <p style={{ margin: "3px 0 0", fontSize: 20, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtShiftHours(me.hours)} h</p>
             <p style={{ margin: "2px 0 0", fontSize: 11, color: "rgba(255,255,255,0.42)", fontVariantNumeric: "tabular-nums" }}>{euro(me.perHourCents)} / h</p>
+            {me.windows > 0 && (
+              <p style={{ margin: "6px 0 0", fontSize: 11, color: "rgba(255,255,255,0.42)", fontVariantNumeric: "tabular-nums" }}>
+                {fmtShiftHours(me.windows)} ikkunaa · {euro(me.perWindowCents)} / kpl
+              </p>
+            )}
           </div>
         </div>
       )}

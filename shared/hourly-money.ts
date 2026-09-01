@@ -31,8 +31,10 @@
  */
 
 import { FOUNDER_IDS, isFounder } from "./team";
+import { getCrew, DEFAULT_WORKER_PER_WINDOW_CENTS } from "./crew";
 import {
   computeShiftStats, computeProjectTotals, expenseCustomerCents, expenseCustomerLabel, hourRateOf, workerHourRateOf,
+  pricePerWindowOf, allPoints,
   type ProjectData, type ProjExpense, type ProjShift, type ShiftStats,
 } from "./project";
 
@@ -122,6 +124,17 @@ export interface HourlyMoney {
    * jotta näkymä voi sanoa sen ääneen sen sijaan että näyttäisi miinuskatetta.
    */
   rateInverted: boolean;
+  /**
+   * IKKUNARAHA. `null` kun keikalla ei ole karttaa lainkaan.
+   *
+   * Ikkunatyö on OMA veloituksensa tuntien rinnalla, ei niiden sisällä:
+   * ikkunat on pesty ikkunahinnalla (usein ennen tuntitilaan siirtymistä),
+   * eivätkä ne ole samaa työtä kuin tunneille kirjattu aika. Laskulle menee
+   * vain laskuttamaton osa — `windowsCents`.
+   */
+  windows: WindowMoney | null;
+  /** Mitä ikkunoista veloitetaan TÄLLÄ kertymällä (laskuttamaton osuus). */
+  windowsCents: number;
 }
 
 /** Jaa sentit tasan annetuille — jakojäännös järjestyksessä, summa säilyy. */
@@ -161,7 +174,7 @@ export interface HourlyCostLine {
 
 export function computeHourlyMoney(
   data: Pick<ProjectData, "shifts" | "hourRateCents" | "workerHourCents" | "expenses">,
-  opts?: { today?: string; stats?: ShiftStats },
+  opts?: { today?: string; stats?: ShiftStats; uninvoicedWindows?: number },
 ): HourlyMoney {
   const hourRateCents = hourRateOf(data);
   const workerHourCents = workerHourRateOf(data);
@@ -263,7 +276,21 @@ export function computeHourlyMoney(
     .map(([id, cents]) => ({ id, cents }))
     .sort((a, b) => b.cents - a.cents);
 
+  /**
+   * Ikkunaraha lasketaan vain kun keikalla on kartta. Kartaton keikka
+   * (pelkkä tuntityö) ei saa kaatua siihen että ikkunalaskenta yrittää lukea
+   * kerroksia joita ei ole.
+   */
+  let windows: WindowMoney | null = null;
+  try {
+    const w = computeWindowMoney(data as ProjectData, { uninvoicedWindows: opts?.uninvoicedWindows });
+    if (w.washedTotal > 0) windows = w;
+  } catch { /* kartaton keikka: ei ikkunarahaa */ }
+  const windowsCents = windows?.uninvoicedCents ?? 0;
+
   return {
+    windows,
+    windowsCents,
     hourRateCents,
     workerHourCents,
     totalHours: Math.round((workerHours + founderHours) * 100) / 100,
@@ -279,7 +306,7 @@ export function computeHourlyMoney(
     subcontractCostCents,
     subcontractMarginCents,
     costLines,
-    customerTotalCents: billableCents + customerCostCents + subcontractCostCents + subcontractMarginCents,
+    customerTotalCents: billableCents + customerCostCents + subcontractCostCents + subcontractMarginCents + windowsCents,
     reimbursementCents,
     byPayer,
     founderTotalCents: founderWageCents + marginCents + subcontractMarginCents,
@@ -319,9 +346,9 @@ export interface HourlyItemisation {
 export function hourlyItemisation(
   data: Pick<ProjectData, "shifts" | "hourRateCents" | "workerHourCents" | "expenses"
     | "marks" | "customMarks" | "deleted" | "statuses" | "building" | "pricePerWindow">,
-  opts?: { today?: string },
+  opts?: { today?: string; uninvoicedWindows?: number },
 ): HourlyItemisation {
-  const money = computeHourlyMoney(data, { today: opts?.today });
+  const money = computeHourlyMoney(data, { today: opts?.today, uninvoicedWindows: opts?.uninvoicedWindows });
   const lines: HourlyInvoiceLine[] = [];
 
   if (money.billableCents > 0) {
@@ -344,12 +371,34 @@ export function hourlyItemisation(
     lines.push({ label: c.customerLabel, cents: c.customerCents });
   }
 
-  // Pestyt ikkunat TIETONA. `computeProjectTotals` on sama laskenta jota kartta
-  // käyttää, joten luku ei voi olla eri mieltä näkymän kanssa.
-  try {
-    const t = computeProjectTotals(data as ProjectData);
-    if (t.washed > 0) lines.push({ label: `Pesty ${t.washed} ikkunaa`, cents: null });
-  } catch { /* kartaton keikka: ei ikkunariviä */ }
+  /**
+   * PESTYT IKKUNAT — VELOITUS, EI PELKKÄ TIETO.
+   *
+   * Aiemmin tämä oli tietorivi ilman euroa, perusteena ettei samaa työtä
+   * veloiteta kahdesti: tuntikeikalla työ on jo tunneissa. Perustelu ei pidä
+   * paikkaansa silloin kun ikkunat on pesty ikkunahinnalla — usein ennen kuin
+   * keikka siirtyi tuntitilaan — eikä niistä ole kirjattu tunteja. Ne ovat eri
+   * työtä ja eri rahaa, ja tuntinäkymässä ei ollut mitään muutakaan tapaa
+   * laskuttaa niitä: urakan ja keltaisten laskunapit eivät näy tuntikeikalla.
+   *
+   * Veloitetaan siis LASKUTTAMATON osuus, ja vain se. Merkinnän pitää
+   * (`invoicedWashed`) siirtyä lähetyksessä, tai sama ikkuna laskutetaan
+   * uudelleen ensi kerralla.
+   */
+  const w = money.windows;
+  if (w && w.uninvoicedWindows > 0) {
+    const price = (w.pricePerWindowCents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    lines.push({
+      label: `Ikkunanpesu ${w.uninvoicedWindows} ikkunaa × ${price} €`,
+      cents: w.uninvoicedCents,
+    });
+    // Jo laskutetut kerrotaan tietona, ettei rivin luku näytä siltä kuin osa
+    // pesuista olisi kadonnut. Ei euroa: se on jo veloitettu aiemmin.
+    const already = Math.round(w.washedTotal) - w.uninvoicedWindows;
+    if (already > 0) lines.push({ label: `Aiemmin laskutettu ${already} ikkunaa`, cents: null });
+  } else if (w && w.washedTotal > 0) {
+    lines.push({ label: `Pesty ${Math.round(w.washedTotal)} ikkunaa · laskutettu`, cents: null });
+  }
 
   const totalCents = lines.reduce((sum, l) => sum + (l.cents ?? 0), 0);
   return {
@@ -358,5 +407,149 @@ export function hourlyItemisation(
     customerTotalCents: money.customerTotalCents,
     matchesBilling: totalCents === money.customerTotalCents,
     money,
+  };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * IKKUNARAHA TUNTIKEIKALLA
+ *
+ * Tuntikeikka ei ole pelkkä tuntikeikka. Sama kohde on voitu pestä
+ * ikkunahinnalla ennen kuin tuntitilaan siirryttiin, ja ne pesut ovat rahaa
+ * joka on yhä laskuttamatta. Ikkunapuoli on edelleen käytössä: ikkunoita
+ * merkitään pestyiksi ja ne kohdistuvat tekijöihin.
+ *
+ * TÄMÄ OLI RIKKI KAHDESTI, JA MOLEMMAT MAKSOIVAT MEILLE.
+ *
+ *   1. Tuntikeikan laskulla pestyt ikkunat olivat pelkkä TIETORIVI ilman euroa,
+ *      eikä tuntinäkymässä ollut mitään muutakaan tapaa laskuttaa niitä:
+ *      urakan ja keltaisten laskunapit eivät näy tuntikeikalla lainkaan.
+ *      Ikkunatyö ei siis päätynyt yhdellekään laskulle.
+ *   2. Pahempi: lasku kuittasi ne silti laskutetuiksi. Lähetys ajoi
+ *      `s.invoicedWashed = s.washed` kaikille muille paitsi keltaisille, joten
+ *      tuntilasku merkitsi jokaisen pestyn ikkunan laskutetuksi veloittamatta
+ *      niistä senttiäkään. Raha ei jäänyt odottamaan — se katosi.
+ *
+ * Sääntö on sama kuin tunneilla, sana vaihdettuna:
+ *   · TEKIJÄN ikkuna: hän saa oman ikkunapalkkansa, erotus on katetta ja
+ *     jaetaan tasan perustajien kesken;
+ *   · PERUSTAJAN ikkuna: katetta ei oteta lainkaan — se on omaa työtä, ja koko
+ *     ikkunahinta on hänen.
+ *
+ * Jaettu ikkuna (`washedBy2`) on puolikas kummallekin, kuten muuallakin.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export interface WindowWasherRow {
+  id: string;
+  /** Puolikkaita voi tulla: yhdessä pesty ikkuna on 0,5 kummallekin. */
+  windows: number;
+  isFounder: boolean;
+  /** Mitä tästä kuuluu hänelle. Perustajalla koko ikkunahinta, tekijällä oma. */
+  earnedCents: number;
+  /** Millä hinnalla hänen ikkunansa on laskettu — tekijän palkka tai täysi hinta. */
+  perWindowCents: number;
+}
+
+export interface WindowMoney {
+  /** Asiakkaan ikkunahinta sentteinä. Sama kuin keikan sektoreilla. */
+  pricePerWindowCents: number;
+  /** Pesty yhteensä koko keikan ajalta (kohdistettu; puolikkaat mukana). */
+  washedTotal: number;
+  /** Laskuttamatta olevat ikkunat ja niiden hinta — TÄMÄ menee laskulle. */
+  uninvoicedWindows: number;
+  uninvoicedCents: number;
+  byWasher: WindowWasherRow[];
+  /** Tekijöiden ikkunapalkka yhteensä (koko keikan ajalta). */
+  workerCostCents: number;
+  /** Perustajien omista ikkunoista suoraan heille. */
+  founderWindowCents: number;
+  /** Tekijöiden ikkunoista jäävä kate. */
+  marginCents: number;
+  byFounder: { id: string; windowCents: number; marginCents: number; totalCents: number }[];
+  /** Mitä asiakas maksaa kaikista pestyistä ikkunoista (elinikäinen kertymä). */
+  customerCents: number;
+}
+
+/**
+ * @param uninvoiced Montako pestyä ikkunaa on yhä laskuttamatta. Luku tulee
+ *   keikan sektoreilta (`washed − invoicedWashed`), koska laskutusmerkintä
+ *   elää siellä eikä projektikartalla. Puuttuessaan kaikki ovat laskuttamatta.
+ */
+export function computeWindowMoney(
+  data: Pick<ProjectData, "marks" | "customMarks" | "deleted" | "statuses" | "building" | "pricePerWindow" | "washedBy2" | "crew" | "workers">,
+  opts?: { uninvoicedWindows?: number },
+): WindowMoney {
+  const pricePerWindowCents = Math.round(pricePerWindowOf(data as ProjectData) * 100);
+  const crew = getCrew(data as ProjectData);
+  const memberOf = (id: string) => crew.find((m) => m.id === id);
+  /** Perustaja joko tiimilistan tai crew-roolin mukaan — kumpi tahansa riittää. */
+  const isFounderId = (id: string) => isFounder(id) || memberOf(id)?.role === "host";
+  const workerRateOf = (id: string) => memberOf(id)?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS;
+
+  // Kohdistus samalla säännöllä kuin `computeWorkerStats`: yhdessä pesty ikkuna
+  // on puolikas kummallekin. Eri sääntö tarkoittaisi että sama ikkuna maksetaan
+  // eri tavalla riippuen siitä mikä näkymä sen laskee.
+  const washedBy2 = (data as ProjectData).washedBy2 || {};
+  const credit = new Map<string, number>();
+  let washedTotal = 0;
+  for (const p of allPoints(data as ProjectData)) {
+    if (p.status !== "pesty") continue;
+    washedTotal += 1;
+    const second = washedBy2[p.key];
+    if (p.washedBy) credit.set(p.washedBy, (credit.get(p.washedBy) ?? 0) + (second ? 0.5 : 1));
+    if (second) credit.set(second, (credit.get(second) ?? 0) + 0.5);
+  }
+
+  const byWasher: WindowWasherRow[] = [];
+  const founderWindow = new Map<string, number>();
+  let workerCostCents = 0, founderWindowCents = 0, marginCents = 0;
+
+  for (const [id, windows] of Array.from(credit.entries())) {
+    if (windows <= 0) continue;
+    const billed = Math.round(windows * pricePerWindowCents);
+    if (isFounderId(id)) {
+      // Omaa työtä: koko ikkunahinta hänelle, ei katetta kenellekään.
+      founderWindowCents += billed;
+      founderWindow.set(id, (founderWindow.get(id) ?? 0) + billed);
+      byWasher.push({ id, windows, isFounder: true, earnedCents: billed, perWindowCents: pricePerWindowCents });
+      continue;
+    }
+    const rate = workerRateOf(id);
+    // Käänteinen hinta on kirjausvirhe eikä tulos, kuten tunneillakin: tekijä
+    // saa omansa, mutta katetta ei paineta miinukselle.
+    const pay = Math.min(billed, Math.round(windows * rate));
+    // Kate on EROTUS eikä oma pyöristyksensä — osat summautuvat senttiin asti.
+    const margin = Math.max(0, billed - pay);
+    workerCostCents += pay;
+    marginCents += margin;
+    byWasher.push({ id, windows, isFounder: false, earnedCents: pay, perWindowCents: rate });
+  }
+  byWasher.sort((a, b) => b.windows - a.windows);
+
+  const marginShare = splitEvenly(marginCents, FOUNDER_IDS);
+  const founderIds = Array.from(new Set(FOUNDER_IDS.concat(Array.from(founderWindow.keys()))));
+  const byFounder = founderIds.map((id) => {
+    const windowCents = founderWindow.get(id) ?? 0;
+    const mCents = marginShare.get(id) ?? 0;
+    return { id, windowCents, marginCents: mCents, totalCents: windowCents + mCents };
+  }).filter((r) => r.totalCents > 0);
+
+  // Laskuttamattomat: keikan sektorit tietävät merkinnän, kartta ei. Rajataan
+  // pestyihin, ettei kirjausvirhe tuota laskulle ikkunoita joita ei ole pesty.
+  const uninvoicedWindows = Math.max(0, Math.min(
+    Math.round(washedTotal),
+    opts?.uninvoicedWindows == null ? Math.round(washedTotal) : Math.round(opts.uninvoicedWindows),
+  ));
+
+  return {
+    pricePerWindowCents,
+    washedTotal,
+    uninvoicedWindows,
+    uninvoicedCents: uninvoicedWindows * pricePerWindowCents,
+    byWasher,
+    workerCostCents,
+    founderWindowCents,
+    marginCents,
+    byFounder,
+    customerCents: workerCostCents + founderWindowCents + marginCents,
   };
 }

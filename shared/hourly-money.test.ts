@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { computeHourlyMoney, hourlyItemisation } from "./hourly-money";
+import { computeHourlyMoney, hourlyItemisation, computeWindowMoney } from "./hourly-money";
 import { p2InvoiceState } from "./worker-payouts";
-import { DEFAULT_HOUR_RATE_CENTS, DEFAULT_WORKER_HOUR_CENTS, emptyProjectData, sanitizeProjectData, type ProjExpense, type ProjShift } from "./project";
+import { DEFAULT_HOUR_RATE_CENTS, DEFAULT_WORKER_HOUR_CENTS, DEFAULT_PRICE_PER_WINDOW, emptyProjectData, sanitizeProjectData, type ProjectData, type ProjExpense, type ProjShift } from "./project";
 
 /**
  * TUNTITILAN RAHA.
@@ -372,7 +372,28 @@ describe("kulujen palautus ja rahan täsmäys", () => {
         expense({ kind: "subcontract", amountCents: 30000, marginCents: 7000, desc: "sähkömies", by: "joonatan" }),
       ],
     });
-    expect(m.workerCostCents + m.founderTotalCents + m.reimbursementCents)
+    expect(m.workerCostCents + m.founderTotalCents + m.reimbursementCents + m.windowsCents)
+      .toBe(m.customerTotalCents);
+  });
+
+  /**
+   * IKKUNARAHA EI SAA REPÄISTÄ TÄSMÄYSTÄ. Kun ikkunat tulivat laskulle, ne
+   * kasvattivat asiakkaan summaa — ja jos ne olisi jätetty tästä yhtälöstä
+   * pois, näkymä olisi taas näyttänyt katoavaa rahaa, tällä kertaa
+   * ikkunahinnan verran keikkaa kohti.
+   */
+  it("tekijät + perustajat + palautukset + ikkunat = asiakkaan summa", () => {
+    const d = mapGig();
+    d.statuses["K#0"] = "pesty"; d.washedBy["K#0"] = "jani";
+    d.statuses["K#1"] = "pesty"; d.washedBy["K#1"] = "joonatan";
+    d.shifts = [shift("petrus", 10), shift("joonatan", 4)] as never;
+    d.expenses = [
+      expense({ amountCents: 10400, desc: "lamput", forCustomer: true, by: "matias" }),
+      expense({ kind: "subcontract", amountCents: 30000, marginCents: 7000, desc: "sähkömies", by: "joonatan" }),
+    ] as never;
+    const m = computeHourlyMoney(d, { uninvoicedWindows: 2 });
+    expect(m.windowsCents).toBe(Math.round(2 * DEFAULT_PRICE_PER_WINDOW * 100));
+    expect(m.workerCostCents + m.founderTotalCents + m.reimbursementCents + m.windowsCents)
       .toBe(m.customerTotalCents);
   });
 
@@ -509,5 +530,135 @@ describe("perHourCents on kunkin oma tuntihinta", () => {
     expect(m.rateInverted).toBe(true);
     expect(m.byWorker[0].perHourCents).toBe(1500);
     expect(m.marginCents).toBe(0);
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * IKKUNARAHA TUNTIKEIKALLA
+ *
+ * Tämä on rahaa joka katosi kahdesti: ikkunatyötä ei veloitettu tuntilaskulla
+ * lainkaan (erittelyssä pelkkä tietorivi, eikä tuntinäkymässä ole toista
+ * laskunappia), ja lähetys merkitsi silti kaikki pesut laskutetuiksi. Nämä
+ * testit pitävät kummankin pään kiinni.
+ * ──────────────────────────────────────────────────────────────────────────── */
+function mapGig(over?: Partial<ProjectData>): ProjectData {
+  const d = emptyProjectData();
+  d.marks = { K: { marks: [{ p: 1, x: 0, y: 0 }, { p: 1, x: 1, y: 0 }, { p: 1, x: 2, y: 0 }, { p: 1, x: 3, y: 0 }] } };
+  return { ...d, ...over } as ProjectData;
+}
+
+/** Tekijän ikkunapalkka crew-rivillä; ilman crewiä käytetään oletusta 20 €. */
+function crewOf(rows: { id: string; role?: string; perWindowCents?: number }[]) {
+  return rows.map((r) => ({
+    id: r.id, name: r.id, token: `t-${r.id}`, role: r.role ?? "worker",
+    perWindowCents: r.perWindowCents ?? 2000,
+  }));
+}
+
+describe("ikkunaraha", () => {
+  it("TEKIJÄN ikkuna: hän saa oman ikkunapalkkansa, erotus on katetta", () => {
+    const d = mapGig();
+    d.statuses["K#0"] = "pesty"; d.washedBy["K#0"] = "jani";
+    d.crew = crewOf([{ id: "jani", perWindowCents: 2000 }]) as never;
+    const w = computeWindowMoney(d);
+    const price = Math.round(DEFAULT_PRICE_PER_WINDOW * 100);
+    expect(w.pricePerWindowCents).toBe(price);
+    expect(w.workerCostCents).toBe(2000);
+    expect(w.marginCents).toBe(price - 2000);
+    expect(w.founderWindowCents).toBe(0);
+  });
+
+  /**
+   * PERUSTAJAN IKKUNA ON KOKONAAN HÄNEN. Sama sääntö kuin perustajan tunnilla,
+   * ja sama unohtamisen hinta: jos hänestä otettaisiin "kate", hänen oma
+   * palkkansa näyttäisi yhteiseltä rahalta ja hän saisi siitä vain puolet.
+   */
+  it("PERUSTAJAN ikkuna: koko ikkunahinta hänelle, ei katetta", () => {
+    const d = mapGig();
+    d.statuses["K#0"] = "pesty"; d.washedBy["K#0"] = "joonatan";
+    const w = computeWindowMoney(d);
+    const price = Math.round(DEFAULT_PRICE_PER_WINDOW * 100);
+    expect(w.founderWindowCents).toBe(price);
+    expect(w.marginCents).toBe(0);
+    expect(w.workerCostCents).toBe(0);
+    const joonatan = w.byFounder.find((f) => f.id === "joonatan")!;
+    expect(joonatan.windowCents).toBe(price);
+    // Eikä Matias saa siitä osaa: se ei ole katetta vaan Joonatanin työtä.
+    expect(w.byFounder.find((f) => f.id === "matias")?.totalCents ?? 0).toBe(0);
+  });
+
+  it("jaettu ikkuna on puolikas kummallekin", () => {
+    const d = mapGig();
+    d.statuses["K#0"] = "pesty"; d.washedBy["K#0"] = "joonatan"; d.washedBy2!["K#0"] = "jani";
+    d.crew = crewOf([{ id: "jani", perWindowCents: 2000 }]) as never;
+    const w = computeWindowMoney(d);
+    expect(w.byWasher.find((r) => r.id === "joonatan")!.windows).toBe(0.5);
+    expect(w.byWasher.find((r) => r.id === "jani")!.windows).toBe(0.5);
+    expect(w.byWasher.find((r) => r.id === "jani")!.earnedCents).toBe(1000);
+  });
+
+  it("ikkunaraha menee tasan: tekijät + perustajat = asiakkaan ikkunasumma", () => {
+    const d = mapGig();
+    d.statuses["K#0"] = "pesty"; d.washedBy["K#0"] = "jani";
+    d.statuses["K#1"] = "pesty"; d.washedBy["K#1"] = "joonatan";
+    d.statuses["K#2"] = "pesty"; d.washedBy["K#2"] = "milja";
+    d.crew = crewOf([{ id: "jani" }, { id: "milja", perWindowCents: 1750 }]) as never;
+    const w = computeWindowMoney(d);
+    const founders = w.byFounder.reduce((n, f) => n + f.totalCents, 0);
+    expect(w.workerCostCents + founders).toBe(w.customerCents);
+    expect(w.customerCents).toBe(Math.round(3 * DEFAULT_PRICE_PER_WINDOW * 100));
+  });
+
+  it("VELOITETAAN vain laskuttamattomat ikkunat", () => {
+    const d = mapGig();
+    d.statuses["K#0"] = "pesty"; d.washedBy["K#0"] = "jani";
+    d.statuses["K#1"] = "pesty"; d.washedBy["K#1"] = "jani";
+    d.statuses["K#2"] = "pesty"; d.washedBy["K#2"] = "jani";
+    const price = Math.round(DEFAULT_PRICE_PER_WINDOW * 100);
+
+    // Kaikki laskuttamatta: kolme ikkunaa laskulle.
+    const all = hourlyItemisation(d, { uninvoicedWindows: 3 });
+    const chargedAll = all.lines.find((l) => /Ikkunanpesu/.test(l.label))!;
+    expect(chargedAll.cents).toBe(3 * price);
+    expect(all.customerTotalCents).toBe(3 * price);
+    expect(all.matchesBilling).toBe(true);
+
+    // Kaksi jo laskutettu: vain yksi menee laskulle, ja se sanotaan.
+    const one = hourlyItemisation(d, { uninvoicedWindows: 1 });
+    expect(one.lines.find((l) => /Ikkunanpesu/.test(l.label))!.cents).toBe(price);
+    expect(one.customerTotalCents).toBe(price);
+    expect(one.lines.some((l) => /Aiemmin laskutettu 2 ikkunaa/.test(l.label) && l.cents === null)).toBe(true);
+    expect(one.matchesBilling).toBe(true);
+
+    // Kaikki laskutettu: ei veloitusriviä, mutta työ kerrotaan yhä.
+    const none = hourlyItemisation(d, { uninvoicedWindows: 0 });
+    expect(none.customerTotalCents).toBe(0);
+    expect(none.lines.every((l) => l.cents === null)).toBe(true);
+    expect(none.matchesBilling).toBe(true);
+  });
+
+  it("ikkunat ja tunnit ovat molemmat laskulla, eikä erittely irtoa summasta", () => {
+    const d = mapGig();
+    d.statuses["K#0"] = "pesty"; d.washedBy["K#0"] = "jani";
+    d.shifts = [{ id: "s1", worker: "jani", day: "2026-09-01", hours: 3, at: 1 }] as never;
+    const it0 = hourlyItemisation(d, { uninvoicedWindows: 1 });
+    const price = Math.round(DEFAULT_PRICE_PER_WINDOW * 100);
+    expect(it0.customerTotalCents).toBe(3 * DEFAULT_HOUR_RATE_CENTS + price);
+    expect(it0.matchesBilling).toBe(true);
+    expect(it0.lines.some((l) => /Tuntityö/.test(l.label))).toBe(true);
+    expect(it0.lines.some((l) => /Ikkunanpesu/.test(l.label))).toBe(true);
+  });
+
+  it("kartaton keikka ei saa ikkunariviä eikä kaadu", () => {
+    const m = computeHourlyMoney({ ...emptyProjectData(), shifts: [] } as never);
+    expect(m.windows).toBe(null);
+    expect(m.windowsCents).toBe(0);
+  });
+
+  it("laskuttamattomia ei voi olla enempää kuin pestyjä", () => {
+    const d = mapGig();
+    d.statuses["K#0"] = "pesty"; d.washedBy["K#0"] = "jani";
+    expect(computeWindowMoney(d, { uninvoicedWindows: 99 }).uninvoicedWindows).toBe(1);
+    expect(computeWindowMoney(d, { uninvoicedWindows: -5 }).uninvoicedWindows).toBe(0);
   });
 });

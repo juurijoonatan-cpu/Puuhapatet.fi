@@ -345,6 +345,7 @@ export default function HourlyPanel({
             {fmtShiftHours(money.totalHours)} h × {eur(money.hourRateCents)}/h
             {money.customerCostCents > 0 && ` · tarvikkeet ${eur(money.customerCostCents)}`}
             {money.subcontractCostCents > 0 && ` · alihankinta ${eur(money.subcontractCostCents + money.subcontractMarginCents)}`}
+            {money.windowsCents > 0 && ` · ikkunat ${eur(money.windowsCents)}`}
           </div>
 
           {/* Väärinpäin kirjatut hinnat sanotaan ääneen. Ilman tätä kate vain
@@ -456,6 +457,54 @@ export default function HourlyPanel({
                 </div>
               )}
             </div>
+
+            {/* IKKUNATYÖ. Oma veloituksensa tuntien rinnalla: ikkunat on pesty
+                ikkunahinnalla eikä niistä ole kirjattu tunteja, joten sama työ
+                ei ole laskulla kahdesti. Tässä se näkyy nimi kerrallaan, koska
+                ikkuna kuuluu sille joka sen pesi — ja perustajan ikkuna on
+                kokonaan hänen, kuten hänen tuntinsakin. */}
+            {money.windows && money.windows.washedTotal > 0 && (
+              <div style={{ ...inset, padding: T.space.md }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: T.space.sm }}>
+                  <span style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted }}>Ikkunatyö</span>
+                  <span style={{ marginLeft: "auto", fontFamily: T.font, fontSize: T.size.title, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                    {eur(money.windows.uninvoicedCents)}
+                  </span>
+                </div>
+                <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginTop: 3, lineHeight: 1.6 }}>
+                  {money.windows.uninvoicedWindows > 0
+                    ? `${money.windows.uninvoicedWindows} ikkunaa laskuttamatta × ${eur(money.windows.pricePerWindowCents)}`
+                    : "kaikki pestyt ikkunat on laskutettu"}
+                  {Math.round(money.windows.washedTotal) > money.windows.uninvoicedWindows
+                    && ` · pesty yhteensä ${Math.round(money.windows.washedTotal)}`}
+                </div>
+                {/* Kuka on pessyt ja mitä siitä kuuluu. Luvut ovat koko keikan
+                    ajalta, eivät vain tämän laskun osuudelta — se on se mitä
+                    kukin on ansainnut, ja se on eri kysymys kuin mitä juuri nyt
+                    laskutetaan. Sanotaan se, ettei lukuja lueta väärin. */}
+                {money.windows.byWasher.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: T.space.md, paddingTop: T.space.md, borderTop: T.border.divider }}>
+                    {money.windows.byWasher.map((r) => (
+                      <div key={r.id} style={{ display: "flex", alignItems: "baseline", gap: T.space.sm }}>
+                        <span style={{ fontFamily: T.font, fontSize: T.size.sm, fontWeight: 600 }}>
+                          {workerName(r.id)}{r.id === me ? " (sinä)" : ""}
+                        </span>
+                        <span style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint }}>
+                          {fmtShiftHours(r.windows)} ikkunaa × {eur(r.perWindowCents)}
+                          {r.isFounder ? " (oma työ, koko hinta)" : ""}
+                        </span>
+                        <span style={{ marginLeft: "auto", fontFamily: T.font, fontSize: T.size.body, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                          {eur(r.earnedCents)}
+                        </span>
+                      </div>
+                    ))}
+                    <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginTop: 2, lineHeight: 1.55 }}>
+                      Ansio koko keikan ajalta. Laskulle menee vain laskuttamaton osuus.
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* TAKAISIN MAKSAJALLE. Ilman tätä riviä kortti ei mene tasan:
                 asiakkaalta 1000, tekijöille 300, meille 400 — ja 300 jäisi

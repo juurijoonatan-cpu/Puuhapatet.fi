@@ -269,6 +269,8 @@ export interface GigBillingState {
   p1PayCount: number;
   p1InvoicedCents: number;
   p2InvoicedCents: number;
+  /** Montako pestyä ikkunaa on yhä laskuttamatta (keikan sektoreilta). */
+  uninvoicedWindows?: number;
   p2RemainingCents: number;
   agreedTotalCents: number;
   nextInstalmentCents: number;

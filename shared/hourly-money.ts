@@ -533,11 +533,24 @@ export function computeWindowMoney(
     return { id, windowCents, marginCents: mCents, totalCents: windowCents + mCents };
   }).filter((r) => r.totalCents > 0);
 
-  // Laskuttamattomat: keikan sektorit tietävät merkinnän, kartta ei. Rajataan
-  // pestyihin, ettei kirjausvirhe tuota laskulle ikkunoita joita ei ole pesty.
+  /**
+   * LASKUTTAMATTOMAT IKKUNAT. Merkintä siitä mitkä pesut on jo laskutettu elää
+   * KEIKAN sektoreilla (`invoicedWashed`), ei projektikartalla — tämä laskenta
+   * ei siis voi tietää sitä itse, vaan kutsuja kertoo sen.
+   *
+   * PUUTTUVA TIETO ON NOLLA, EI KAIKKI. Aluksi oletus oli "kaikki pestyt ovat
+   * laskuttamatta", ja se oli väärä suunta: kutsuja joka ei tunne laskutustilaa
+   * (esim. tuntipaneelin rahakortti, jolla on vain projektidata) olisi
+   * näyttänyt jo laskutetut ikkunat uudelleen laskuttamattomina — sadan pesun
+   * keikalla tuhansia euroja liikaa, ja se luku olisi näyttänyt laskun
+   * summalta. Tuntematon laskutustila ei saa keksiä veloitusta; se kysytään.
+   *
+   * Rajataan pestyihin, ettei kirjausvirhe tuota laskulle ikkunoita joita ei
+   * ole pesty.
+   */
   const uninvoicedWindows = Math.max(0, Math.min(
     Math.round(washedTotal),
-    opts?.uninvoicedWindows == null ? Math.round(washedTotal) : Math.round(opts.uninvoicedWindows),
+    Math.round(opts?.uninvoicedWindows ?? 0),
   ));
 
   return {

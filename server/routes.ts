@@ -7069,6 +7069,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         p2InvoicedCents: p2State.invoicedCents,
         /** Asiakaslaskutus yhtenä objektina — musta dash näyttää tämän statseina. */
         billing: {
+          /**
+           * MONTAKO PESTYÄ IKKUNAA ON YHÄ LASKUTTAMATTA.
+           *
+           * Merkintä elää keikan sektoreilla eikä projektidatassa, joten
+           * tuntipaneelin rahakortti ei voi tietää sitä itse. Ilman tätä lukua
+           * kortti näyttäisi ikkunarahan väärin: joko keksisi jo laskutetut
+           * ikkunat uudelleen laskutettaviksi tai jättäisi laskuttamattomat
+           * kokonaan pois.
+           */
+          uninvoicedWindows: gigForP2
+            ? (() => { const t = computeTotals(gigForP2); return Math.max(0, t.washedTotal - t.invoicedWashed); })()
+            : 0,
           p1PayCount: p2State.p1Payments,
           p1InvoicedCents: p2State.p1InvoicedCents,
           p2InvoicedCents: p2State.invoicedCents,

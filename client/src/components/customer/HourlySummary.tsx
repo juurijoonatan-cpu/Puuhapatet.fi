@@ -25,6 +25,7 @@ const KIND_LABEL: Record<string, string> = {
   transport: "Kuljetus",
   materials: "Tarvikkeet",
   equipment: "Kalusto",
+  subcontract: "Työsuoritus",
   other: "Muu",
 };
 
@@ -43,6 +44,13 @@ interface Props {
 
 export default function HourlySummary({ hourly, theme: T }: Props) {
   const { totalHours, workers, expenses, expensesTotalCents } = hourly;
+  /**
+   * Onko listalla teetettyä TYÖTÄ vai pelkkiä tavaroita. Otsikko "Hankinnat"
+   * ja lupaus "tarvikkeet jotka olemme hankkineet" ovat väärin sille riville
+   * jossa lukee "Valotyöt": työsuoritus ei ole tarvike, ja asiakas lukee
+   * otsikon ennen riviä.
+   */
+  const hasWork = expenses.some((e) => e.kind === "subcontract");
 
   const label: React.CSSProperties = {
     fontSize: 11, fontWeight: 700, letterSpacing: "0.08em",
@@ -57,10 +65,20 @@ export default function HourlySummary({ hourly, theme: T }: Props) {
         <span style={{ fontSize: 44, fontWeight: 700, lineHeight: 1.05 }}>{fmtHours(totalHours)}</span>
         <span style={{ fontSize: 18, fontWeight: 600, color: T.muted }}>h</span>
       </div>
+      {/* PYÖRISTYSLUPAUS KOSKEE VAIN AJASTINTA.
+          Tekijän kello pyöristää täysiin tunteihin, mutta käsin kirjattu aika
+          on puolen tunnin tarkkuudella — se on päätös eikä mittaus. Ehdoton
+          "pyöristetään täyteen tuntiin" olisi siis asiakkaalle epätosi juuri
+          silloin kun hän lukee riviltä 8,5 h. Sanotaan se vain kun se pitää
+          paikkansa, eli kun yksikään rivi ei ole vajaa tunti. */}
       <p style={{ margin: "6px 0 0", fontSize: 12.5, color: T.muted, lineHeight: 1.6 }}>
         {workers.length === 0
           ? "Tunteja ei ole vielä kirjattu."
-          : `${workers.length} tekijää · työaika pyöristetään lähimpään täyteen tuntiin`}
+          : `${workers.length} ${workers.length === 1 ? "tekijä" : "tekijää"}${
+              workers.every((w) => Number.isInteger(w.hours))
+                ? " · työaika pyöristetään lähimpään täyteen tuntiin"
+                : " · työaika kirjataan puolen tunnin tarkkuudella"
+            }`}
       </p>
 
       {/* Kuka on tehnyt montako. */}
@@ -89,7 +107,7 @@ export default function HourlySummary({ hourly, theme: T }: Props) {
       {expenses.length > 0 && (
         <div style={{ marginTop: 24, paddingTop: 20, borderTop: `1px solid ${T.hair}` }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-            <span style={label}>Hankinnat sinulle</span>
+            <span style={label}>{hasWork ? "Hankinnat ja työt sinulle" : "Hankinnat sinulle"}</span>
             <span style={{ marginLeft: "auto", fontSize: 16, fontWeight: 700 }}>{eurFromCents(expensesTotalCents)}</span>
           </div>
           <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
@@ -106,8 +124,9 @@ export default function HourlySummary({ hourly, theme: T }: Props) {
             ))}
           </div>
           <p style={{ margin: "10px 0 0", fontSize: 12, color: T.muted, lineHeight: 1.6 }}>
-            Tarvikkeet jotka olemme hankkineet tätä työtä varten. Työn hinta lasketaan
-            tunneista erikseen.
+            {hasWork
+              ? "Tarvikkeet ja teetetyt työt tätä keikkaa varten. Oman työmme hinta lasketaan tunneista erikseen."
+              : "Tarvikkeet jotka olemme hankkineet tätä työtä varten. Työn hinta lasketaan tunneista erikseen."}
           </p>
         </div>
       )}

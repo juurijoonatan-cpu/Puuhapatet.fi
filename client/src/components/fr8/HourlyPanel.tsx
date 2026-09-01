@@ -20,12 +20,13 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import {
-  computeShiftStats, dayKey, fmtDayLabel, fmtShiftHours, roundWorkHours, shiftHoursOf,
+  computeShiftStats, dayKey, fmtDayLabel, fmtShiftHours, shiftHoursOf,
   type ProjShift,
 } from "@shared/project";
 import type { CrewMember } from "@shared/crew";
+import type { HourlyMoney } from "@shared/hourly-money";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { T, card, inset, mono } from "./tokens";
+import { T, card, inset, mono, eur } from "./tokens";
 
 interface Props {
   shifts: ProjShift[] | undefined;
@@ -46,6 +47,19 @@ interface Props {
   people?: { id: string; name: string }[];
   /** Poista väärin kirjattu rivi päiväkirjasta. */
   onRemoveShift?: (id: string) => void;
+  /**
+   * TUNTITILAN RAHA — laskettuna kerran `computeHourlyMoney`illa, ei täällä.
+   *
+   * Puuttuessaan rahakorttia ei näytetä lainkaan: tuntipalkat, kate ja sen
+   * jako ovat perustajien tietoa, joten kutsuja antaa tämän vain heille.
+   * Paneeli ei itse päättele kuka saa nähdä mitä — pääsy on yhdessä paikassa.
+   */
+  money?: HourlyMoney | null;
+  /**
+   * Tämän keikan tuntihinnat. Puuttuessaan hinnat ovat lukemia eikä niitä voi
+   * muuttaa — sama porras kuin rahakortilla: vain perustaja saa koskea.
+   */
+  onSetRates?: (hourRateCents: number, workerHourCents: number) => void;
   busy?: boolean;
 }
 
@@ -75,7 +89,7 @@ function todayLabel(now: number): string {
 }
 
 export default function HourlyPanel({
-  shifts, crew, workerName, me, onStartShift, onStopShift, onAdjustHours, onAddHours, onRemoveShift, busy, people,
+  shifts, crew, workerName, me, onStartShift, onStopShift, onAdjustHours, onAddHours, onRemoveShift, money, onSetRates, busy, people,
 }: Props) {
   const m = useIsMobile();
   const [now, setNow] = useState(() => Date.now());
@@ -88,6 +102,18 @@ export default function HourlyPanel({
    * luku näyttää väärältä.
    */
   const [diaryOpen, setDiaryOpen] = useState(true);
+  /**
+   * HINTOJEN MUOKKAUS on oma taitteensa eikä aina auki oleva lomake.
+   *
+   * Hinta on keikan sopimusasia joka asetetaan kerran; jatkuvasti näkyvät
+   * kentät houkuttelisivat naputtelemaan sitä kesken laskutuksen. Kentät ovat
+   * tekstiä eivätkä lukuja, koska "26,5" kirjoitetaan pilkulla ja puolivalmis
+   * "2" ei saa hetkeksi muuttua keikan hinnaksi — arvo luetaan vasta kun
+   * muokkaus vahvistetaan.
+   */
+  const [ratesOpen, setRatesOpen] = useState(false);
+  const [rateDraft, setRateDraft] = useState("");
+  const [wageDraft, setWageDraft] = useState("");
 
   const running = useMemo(() => crew.filter((c) => c.activeShiftAt), [crew]);
 
@@ -189,6 +215,30 @@ export default function HourlyPanel({
     background: T.tone.goodBg, borderColor: T.tone.goodBorder, color: T.tone.goodSoft,
   };
 
+  /** "26,00" — kenttään sopiva muoto, ilman euromerkkiä. */
+  const centsToField = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const openRates = () => {
+    if (!money) return;
+    setRateDraft(centsToField(money.hourRateCents));
+    setWageDraft(centsToField(money.workerHourCents));
+    setRatesOpen(true);
+  };
+  /**
+   * Tyhjä tai kelvoton kenttä EI tallenna nollaa — se pyyhkisi keikan hinnan
+   * hiljaa. Kelvoton arvo palauttaa nykyisen hinnan, eli muokkaus ei tehnyt
+   * mitään, ja se on oikea lopputulos: hinta on liian iso asia arvattavaksi.
+   */
+  const parseRate = (text: string, fallbackCents: number): number => {
+    const n = parseFloat(text.replace(",", "."));
+    if (!Number.isFinite(n) || n <= 0) return fallbackCents;
+    return Math.round(n * 100);
+  };
+  const saveRates = () => {
+    if (!money || !onSetRates) return;
+    onSetRates(parseRate(rateDraft, money.hourRateCents), parseRate(wageDraft, money.workerHourCents));
+    setRatesOpen(false);
+  };
+
   const adjustBtn: React.CSSProperties = {
     width: 32, height: 32, flexShrink: 0, borderRadius: T.radius.sm,
     border: T.border.strong, background: "transparent", color: T.text.secondary,
@@ -229,12 +279,12 @@ export default function HourlyPanel({
             {onAdjustHours && (
               <div style={{ display: "flex", alignItems: "center", gap: T.space.sm, flexShrink: 0 }}>
                 <button onClick={() => onAdjustHours(me, -HOUR_STEP)} disabled={busy || myHours <= 0}
-                  title="Vähennä tunti"
+                  title="Vähennä puoli tuntia"
                   style={{ ...adjustBtn, opacity: myHours <= 0 ? 0.35 : 1, cursor: myHours <= 0 ? "default" : "pointer" }}>−</button>
                 <span style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, minWidth: 46, textAlign: "center" }}>
                   lisää<br />käsin
                 </span>
-                <button onClick={() => onAdjustHours(me, HOUR_STEP)} disabled={busy} title="Lisää tunti" style={adjustBtn}>+</button>
+                <button onClick={() => onAdjustHours(me, HOUR_STEP)} disabled={busy} title="Lisää puoli tuntia" style={adjustBtn}>+</button>
               </div>
             )}
           </div>
@@ -273,6 +323,161 @@ export default function HourlyPanel({
             </div>
           )}
 
+        </div>
+      )}
+
+      {/* 2.5 RAHA. Yksi kortti johon mahtuu koko kysymys: mitä asiakas maksaa,
+          mitä siitä menee tekijöille ja mitä jää meille — ja miten se jää
+          jaetaan. Luvut tulevat `computeHourlyMoney`ilta samasta laskennasta
+          jolla lasku muodostetaan, joten tässä näkyvä summa ON laskun summa.
+
+          PERUSTAJAN TUNNISTA EI OTETA KATETTA. Se on oma työ ja tuottaa koko
+          tuntihinnan tekijälleen; kate syntyy vain työntekijätunneista. Siksi
+          "oma työ" ja "kate" ovat kortilla erillisinä riveinä eivätkä yhtenä
+          summana — muuten kukaan ei näkisi kummasta raha tuli. */}
+      {money && (
+        <div style={{ ...card, padding: m ? T.space.lg : T.space.xl }}>
+          <div style={{ ...mono, color: T.text.faint }}>ASIAKKAALTA</div>
+          <div style={{ fontFamily: T.font, fontSize: m ? T.size.hero - 6 : T.size.hero, fontWeight: 700, lineHeight: 1.1, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
+            {eur(money.customerTotalCents)}
+          </div>
+          <div style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted, marginTop: T.space.xs }}>
+            {fmtShiftHours(money.totalHours)} h × {eur(money.hourRateCents)}/h
+            {money.customerCostCents > 0 && ` · tarvikkeet ${eur(money.customerCostCents)}`}
+            {money.subcontractCostCents > 0 && ` · alihankinta ${eur(money.subcontractCostCents + money.subcontractMarginCents)}`}
+          </div>
+
+          {/* Väärinpäin kirjatut hinnat sanotaan ääneen. Ilman tätä kate vain
+              katoaisi nollaan eikä mikään kertoisi miksi. */}
+          {money.rateInverted && (
+            <p style={{ margin: `${T.space.md}px 0 0`, padding: T.space.md, borderRadius: T.radius.md, border: `1px solid ${T.tone.warnBorder}`, background: T.tone.warnBg, fontFamily: T.font, fontSize: T.size.xs, color: T.tone.warn, lineHeight: 1.55 }}>
+              Tuntipalkka ({eur(money.workerHourCents)}/h) on suurempi kuin asiakkaan tuntihinta ({eur(money.hourRateCents)}/h).
+              Kate on nolla — tarkista hinnat keikan asetuksista.
+            </p>
+          )}
+
+          {/* TÄMÄN KEIKAN HINNAT. Oletukset ovat 26,00 € ja 15,00 €, mutta ne
+              ovat oletuksia eivätkä lakia: hinta sovitaan keikkakohtaisesti.
+              Muutos koskee vain tätä keikkaa ja vaikuttaa taannehtivasti jo
+              kirjattuihin tunteihin — se sanotaan ääneen, koska kesken keikan
+              tehty hinnanmuutos muuttaa myös eilisen palkan. */}
+          {onSetRates && (
+            <div style={{ marginTop: T.space.md, paddingTop: T.space.md, borderTop: T.border.divider }}>
+              {!ratesOpen ? (
+                <button onClick={openRates}
+                  style={{ display: "flex", alignItems: "center", gap: T.space.sm, width: "100%", padding: 0, background: "transparent", border: "none", cursor: "pointer", textAlign: "left" }}>
+                  <span style={{ ...mono, color: T.text.faint }}>HINNAT</span>
+                  <span style={{ marginLeft: "auto", fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted, fontVariantNumeric: "tabular-nums" }}>
+                    asiakas {eur(money.hourRateCents)}/h · tekijä {eur(money.workerHourCents)}/h
+                  </span>
+                  <span aria-hidden style={{ color: T.text.faint, fontSize: T.size.xs }}>muuta</span>
+                </button>
+              ) : (
+                <div>
+                  <div style={{ ...mono, color: T.text.faint, marginBottom: T.space.md }}>TÄMÄN KEIKAN HINNAT</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: T.space.sm }}>
+                    <label style={{ display: "block" }}>
+                      <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginBottom: 4 }}>Asiakkaalta €/h</span>
+                      <input value={rateDraft} onChange={(e) => setRateDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveRates()}
+                        inputMode="decimal" style={{ ...fieldStyle, textAlign: "right" }} />
+                    </label>
+                    <label style={{ display: "block" }}>
+                      <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginBottom: 4 }}>Tekijälle €/h</span>
+                      <input value={wageDraft} onChange={(e) => setWageDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveRates()}
+                        inputMode="decimal" style={{ ...fieldStyle, textAlign: "right" }} />
+                    </label>
+                  </div>
+                  <p style={{ margin: `${T.space.sm}px 0 0`, fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, lineHeight: 1.55 }}>
+                    Koskee vain tätä keikkaa ja myös jo kirjattuja tunteja. Pomon tunnista ei oteta katetta:
+                    hän saa koko asiakashinnan.
+                  </p>
+                  <div style={{ display: "flex", gap: T.space.sm, marginTop: T.space.md }}>
+                    <button onClick={() => setRatesOpen(false)} disabled={busy}
+                      style={{ ...chipStyle, flex: 1 }}>Peruuta</button>
+                    <button onClick={saveRates} disabled={busy}
+                      style={{ ...chipStyle, ...chipOn, flex: 1, opacity: busy ? 0.5 : 1 }}>Tallenna hinnat</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div style={{ display: "flex", flexDirection: "column", gap: T.space.sm, marginTop: T.space.md }}>
+            {/* MENEE TEKIJÖILLE. Tämä ei ole meidän rahaamme missään vaiheessa,
+                joten se on omana rivinään eikä vähennyksenä katteesta. */}
+            {money.workerCostCents > 0 && (
+              <div style={{ ...inset, padding: T.space.md }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: T.space.sm }}>
+                  <span style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted }}>Tekijöille tuntipalkkaa</span>
+                  <span style={{ marginLeft: "auto", fontFamily: T.font, fontSize: T.size.title, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                    {eur(money.workerCostCents)}
+                  </span>
+                </div>
+                <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginTop: 3 }}>
+                  {fmtShiftHours(money.workerHours)} h × {eur(money.workerHourCents)}/h
+                </div>
+              </div>
+            )}
+
+            {/* MEILLE. Oma työ ja kate erikseen, sitten kummallekin nimelle
+                oma rivi — "meidän tuottomme" ilman nimiä ei kerro kenelle. */}
+            <div style={{ ...inset, padding: T.space.md }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: T.space.sm }}>
+                <span style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted }}>Meille</span>
+                <span style={{ marginLeft: "auto", fontFamily: T.font, fontSize: T.size.title, fontWeight: 700, color: T.tone.goodSoft, fontVariantNumeric: "tabular-nums" }}>
+                  {eur(money.founderTotalCents)}
+                </span>
+              </div>
+              <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginTop: 3, lineHeight: 1.6 }}>
+                {money.founderWageCents > 0 && `oma työ ${fmtShiftHours(money.founderHours)} h = ${eur(money.founderWageCents)}`}
+                {money.founderWageCents > 0 && money.marginCents > 0 && " · "}
+                {money.marginCents > 0 && `kate työntekijätunneista ${eur(money.marginCents)}`}
+                {money.subcontractMarginCents > 0 && ` · sis. alihankinnan kate ${eur(money.subcontractMarginCents)}`}
+                {money.founderTotalCents === 0 && "ei vielä kertymää"}
+              </div>
+
+              {money.byFounder.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: T.space.md, paddingTop: T.space.md, borderTop: T.border.divider }}>
+                  {money.byFounder.map((f) => (
+                    <div key={f.id} style={{ display: "flex", alignItems: "baseline", gap: T.space.sm }}>
+                      <span style={{ fontFamily: T.font, fontSize: T.size.sm, fontWeight: 600 }}>
+                        {workerName(f.id)}{f.id === me ? " (sinä)" : ""}
+                      </span>
+                      <span style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint }}>
+                        {f.wageCents > 0 ? `oma työ ${eur(f.wageCents)}` : ""}
+                        {f.wageCents > 0 && f.marginCents > 0 ? " + " : ""}
+                        {f.marginCents > 0 ? `kate ${eur(f.marginCents)}` : ""}
+                      </span>
+                      <span style={{ marginLeft: "auto", fontFamily: T.font, fontSize: T.size.body, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                        {eur(f.totalCents)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* TAKAISIN MAKSAJALLE. Ilman tätä riviä kortti ei mene tasan:
+                asiakkaalta 1000, tekijöille 300, meille 400 — ja 300 jäisi
+                selittämättä. Se on kulu jonka joku maksoi omasta pussistaan,
+                eikä se ole kenenkään tuottoa. Kohdentamatonta ei arvata:
+                maksaja luetaan kuluriviltä, ja tuntematon jää nimeämättä. */}
+            {money.reimbursementCents > 0 && (
+              <div style={{ ...inset, padding: T.space.md }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: T.space.sm }}>
+                  <span style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted }}>Takaisin kulujen maksajalle</span>
+                  <span style={{ marginLeft: "auto", fontFamily: T.font, fontSize: T.size.title, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                    {eur(money.reimbursementCents)}
+                  </span>
+                </div>
+                <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginTop: 3, lineHeight: 1.6 }}>
+                  {money.byPayer.length > 0
+                    ? money.byPayer.map((pp) => `${workerName(pp.id)} ${eur(pp.cents)}`).join(" · ")
+                    : "maksajaa ei ole kirjattu kuluriville"}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -317,14 +522,14 @@ export default function HourlyPanel({
 
                     <div style={{ display: "flex", alignItems: "center", gap: T.space.sm, flexShrink: 0 }}>
                       {onAdjustHours && (
-                        <button onClick={() => onAdjustHours(r.id, -HOUR_STEP)} disabled={busy || r.hours <= 0} title="Vähennä tunti"
+                        <button onClick={() => onAdjustHours(r.id, -HOUR_STEP)} disabled={busy || r.hours <= 0} title="Vähennä puoli tuntia"
                           style={{ ...adjustBtn, opacity: r.hours <= 0 ? 0.35 : 1, cursor: r.hours <= 0 ? "default" : "pointer" }}>−</button>
                       )}
                       <span style={{ minWidth: 58, textAlign: "center", fontFamily: T.font, fontSize: T.size.title, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
                         {fmtShiftHours(r.hours)} <span style={{ fontSize: T.size.sm, fontWeight: 500, color: T.text.faint }}>h</span>
                       </span>
                       {onAdjustHours && (
-                        <button onClick={() => onAdjustHours(r.id, HOUR_STEP)} disabled={busy} title="Lisää tunti" style={adjustBtn}>+</button>
+                        <button onClick={() => onAdjustHours(r.id, HOUR_STEP)} disabled={busy} title="Lisää puoli tuntia" style={adjustBtn}>+</button>
                       )}
                     </div>
                   </div>
@@ -335,7 +540,8 @@ export default function HourlyPanel({
 
         {onAdjustHours && (
           <p style={{ margin: `${T.space.md}px 0 0`, fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, lineHeight: 1.6 }}>
-            Tekijä ei näe omia tuntejaan. Korjaus kirjautuu tälle päivälle ja näkyy päiväkirjassa.
+            Tekijä näkee omat tuntinsa ja niistä kertyneen palkkansa — ei muiden eikä asiakkaan hintaa.
+            Korjaus kirjautuu tälle päivälle ja näkyy päiväkirjassa.
           </p>
         )}
 
@@ -391,16 +597,17 @@ export default function HourlyPanel({
               </div>
 
               <div style={{ display: "flex", alignItems: "center", gap: T.space.sm }}>
-                <button onClick={() => setHrs((h) => Math.max(1, h - 1))} disabled={hrs <= 1} style={{ ...adjustBtn, opacity: hrs <= 1 ? 0.35 : 1 }}>−</button>
-                <span style={{ minWidth: 54, textAlign: "center", fontFamily: T.font, fontSize: T.size.title, fontWeight: 700 }}>
-                  {hrs} <span style={{ fontSize: T.size.sm, fontWeight: 500, color: T.text.faint }}>h</span>
+                <button onClick={() => setHrs((h) => Math.max(HOUR_STEP, round2(h - HOUR_STEP)))} disabled={hrs <= HOUR_STEP}
+                  style={{ ...adjustBtn, opacity: hrs <= HOUR_STEP ? 0.35 : 1 }}>−</button>
+                <span style={{ minWidth: 62, textAlign: "center", fontFamily: T.font, fontSize: T.size.title, fontWeight: 700 }}>
+                  {fmtShiftHours(hrs)} <span style={{ fontSize: T.size.sm, fontWeight: 500, color: T.text.faint }}>h</span>
                 </span>
-                <button onClick={() => setHrs((h) => Math.min(24, h + 1))} disabled={hrs >= 24} style={adjustBtn}>+</button>
+                <button onClick={() => setHrs((h) => Math.min(24, round2(h + HOUR_STEP)))} disabled={hrs >= 24} style={adjustBtn}>+</button>
                 <button
                   onClick={() => { onAddHours(who, hrs, day); setHrs(1); }}
                   disabled={busy || !who}
                   style={{ flex: 1, height: 42, borderRadius: T.radius.md, border: `1px solid ${T.tone.goodBorder}`, background: T.tone.goodBg, color: T.tone.goodSoft, fontFamily: T.font, fontSize: T.size.body, fontWeight: 700, cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1 }}>
-                  Lisää {hrs} h {day === today ? "tälle päivälle" : fmtDayLabel(day)}
+                  Lisää {fmtShiftHours(hrs)} h {day === today ? "tälle päivälle" : fmtDayLabel(day)}
                 </button>
               </div>
             </div>
@@ -467,4 +674,20 @@ export default function HourlyPanel({
 
 /** Yksi tunti kerrallaan — sama pyöristysyksikkö kuin ajastimella, jottei
  *  käsin korjaus tuota puolikkaita joita mikään muu ei tuota. */
-export const HOUR_STEP = roundWorkHours(1);
+/**
+ * SÄÄTÖASKEL — puoli tuntia.
+ *
+ * Ajastin pyöristää yhä täysiin tunteihin (`roundWorkHours`), koska se on
+ * mittaus eikä päätös. KÄSIN kirjattu aika on päätös: pomo tietää tehneensä
+ * puoli tuntia, ja ennen tätä hänen ainoa vaihtoehtonsa oli kirjata tunti tai
+ * ei mitään. Kumpikin on väärä luku laskulla ja palkassa.
+ *
+ * Palvelin on hyväksynyt kahden desimaalin tunnit koko ajan (`sanitizeShifts`
+ * ja manuaalireitin validointi) — vain käyttöliittymä oli sidottu kokonaisiin.
+ */
+export const HOUR_STEP = 0.5;
+
+/** Kaksi desimaalia — sama tarkkuus kuin `sanitizeShifts`illa, ei liukulukuroskaa. */
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}

@@ -199,6 +199,32 @@ export function billingModeOf(data: ProjectData | null | undefined): BillingMode
 }
 
 /** Onko keikka tuntitilassa? Lyhenne luettavuuden vuoksi. */
+/**
+ * Tuntitilan oletushinnat.
+ *
+ * 26,00 €/h asiakkaalta ja 15,00 €/h työntekijälle → 11,00 €/h katetta.
+ * Perustajan omasta tunnista ei oteta katetta lainkaan: hän saa koko
+ * tuntihinnan (ks. `computeHourlyMoney`).
+ */
+export const DEFAULT_HOUR_RATE_CENTS = 2600;
+export const DEFAULT_WORKER_HOUR_CENTS = 1500;
+
+/** Kelvollinen senttihinta tai oletus. Nolla ja roska eivät ole hintoja. */
+function rateOr(v: unknown, fallback: number): number {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 100_000) : fallback;
+}
+
+/** Asiakkaan tuntihinta tällä keikalla (senttiä). */
+export function hourRateOf(data: Pick<ProjectData, "hourRateCents">): number {
+  return rateOr(data?.hourRateCents, DEFAULT_HOUR_RATE_CENTS);
+}
+
+/** Työntekijän tuntipalkka tällä keikalla (senttiä). */
+export function workerHourRateOf(data: Pick<ProjectData, "workerHourCents">): number {
+  return rateOr(data?.workerHourCents, DEFAULT_WORKER_HOUR_CENTS);
+}
+
 export function isHourlyGig(data: ProjectData | null | undefined): boolean {
   return billingModeOf(data) === "hourly";
 }
@@ -701,7 +727,12 @@ export interface ProjHourEntry {
   by?: string;           // who recorded it
 }
 
-export type ProjExpenseKind = "transport" | "materials" | "equipment" | "other";
+/**
+ * Kululaji. `subcontract` on ALIHANKINTA (esim. sähkömiehen lasku jonka
+ * perustaja on maksanut) ja se on eri asia kuin muut kulut kahdella tavalla:
+ * se veloitetaan aina asiakkaalta, ja sen päälle lisätään kate.
+ */
+export type ProjExpenseKind = "transport" | "materials" | "equipment" | "other" | "subcontract";
 
 /** Max stored size for an expense receipt photo data URL (~0.5 MB base64). */
 export const MAX_EXPENSE_RECEIPT_LEN = 700_000;
@@ -732,6 +763,110 @@ export interface ProjExpense {
    * kirjanpitomme tosite, ei asiakkaan asiakirja.
    */
   forCustomer?: boolean;
+  /**
+   * MITÄ ASIAKAS NÄKEE TÄSTÄ RIVISTÄ — laskulla ja seurantasivulla.
+   *
+   * `desc` on MEIDÄN muistiinpanomme: siihen kirjoitetaan alihankkijan nimi,
+   * mitä sovittiin, mihin hintaan. Se on juuri se tieto jota asiakkaalle ei
+   * anneta: alihankkijan nimestä hän löytää suoraan ostohintamme, ja seuraava
+   * keikka menee ohitsemme.
+   *
+   * Siksi asiakkaan rivillä on oma tekstinsä — "Valotyöt" — ja `desc` jää
+   * meille. Kenttä on vapaaehtoinen, ja kun se puuttuu, alihankintarivi saa
+   * neutraalin varanimen (`expenseCustomerLabel`) eikä `desc`iä: tyhjä kenttä
+   * ei saa olla se reitti jota myöten sisäinen teksti lipsahtaa laskulle.
+   */
+  customerDesc?: string;
+  /**
+   * ALIHANKINNAN KATE senttein — vain `kind: "subcontract"` -riveillä.
+   *
+   * Alihankinta ei ole läpilaskutusta kuten asiakkaalle ostetut tarvikkeet:
+   * työ välitetään, ja siitä otetaan kate. `amountCents` on TOTEUTUNUT kulu
+   * (se mitä alihankkijalle maksettiin) ja tämä on sen päälle lisättävä osuus.
+   * Asiakkaan hinta on niiden summa.
+   *
+   * EUROINA EIKÄ PROSENTTINA: perustajien valinta. Katteen näkee suoraan
+   * numerona eikä sitä tarvitse laskea päässä, eikä pyöristys voi yllättää.
+   *
+   * ASIAKAS EI NÄE ERITTELYÄ. Laskulla alihankinta on YKSI rivi
+   * (kulu + kate), koska erittely paljastaisi ostohintamme. Ks.
+   * `subcontractCustomerCents` ja `customerExpenses`.
+   */
+  marginCents?: number;
+}
+
+/** Mitä asiakas maksaa tästä kulurivistä. Alihankinnassa kulu + kate. */
+/**
+ * LASKUN NIMI — yksi sääntö, jota kaikki lukevat.
+ *
+ * Nimi päätyy asiakkaalle kuudessa kohdassa (otsikko, leipäteksti,
+ * verkkolaskuvahvistus, sähköpostin aihe, maksukirjaus, loki). Kun sääntö oli
+ * kirjoitettu jokaiseen erikseen, tuntilasku puuttui neljästä: se olisi
+ * lähtenyt nimellä "Osalasku" vaikka kyse ei ole urakan erästä lainkaan, ja
+ * maksukirjaus olisi sanonut eri asiaa kuin sähköposti. Nimi on täällä eikä
+ * näkymässä juuri siksi: kopiot ehtivät erota toisistaan ennen kuin kukaan
+ * huomaa, ja huomaaja olisi asiakas.
+ */
+export type InvoiceScope = "p1" | "p2" | "hours";
+
+export interface InvoiceNaming {
+  /** Lyhyt nimi: otsikkorivi, aihe, kirjaus. */
+  short: string;
+  /** Sama nimi lauseeseen upotettuna. */
+  prose: string;
+}
+
+export function invoiceNaming(o: {
+  scope: InvoiceScope;
+  /** Kiinteähintainen urakka: erä n/4. */
+  fixedDeal?: boolean;
+  paymentNumber?: number;
+  isFinal?: boolean;
+}): InvoiceNaming {
+  if (o.scope === "hours") return { short: "Tuntilasku", prose: "Tehdyistä tunneista tehty lasku" };
+  if (o.scope === "p2") return { short: "Lisätyölasku (2. vaihe)", prose: "Lisätöiden lasku (2. vaihe)" };
+  if (o.fixedDeal) {
+    const n = o.paymentNumber ?? 1;
+    return { short: `Osalasku ${n}/4`, prose: `Ikkunanpesu-urakan maksuerä ${n}/4` };
+  }
+  return o.isFinal
+    ? { short: "Loppulasku", prose: "Loppulasku työstä" }
+    : { short: "Osalasku", prose: "Osalasku työstä" };
+}
+
+/** Varanimi kululajille kun asiakkaan tekstiä ei ole annettu. */
+const EXPENSE_KIND_CUSTOMER_LABEL: Record<ProjExpenseKind, string> = {
+  transport: "Kuljetus",
+  materials: "Tarvikkeet",
+  equipment: "Välineet",
+  subcontract: "Työsuoritus",
+  other: "Hankinta",
+};
+
+/**
+ * MITÄ ASIAKAS LUKEE TÄSTÄ KULURIVISTÄ.
+ *
+ * Yksi funktio, koska rivi näkyy asiakkaalle kahdessa paikassa — laskulla ja
+ * seurantasivulla — ja kaksi sääntöä olisi kaksi tilaisuutta vuotaa se mitä
+ * toinen piilottaa.
+ *
+ * ALIHANKINNASSA `desc` EI KOSKAAN PÄÄDY ASIAKKAALLE. Se on sisäinen kenttä
+ * ("Mika, lampunvaihdot, 200 €"), ja alihankkijan nimi asiakkaan laskulla on
+ * ostohintamme luovuttamista. Ilman annettua asiakastekstiä rivi on
+ * "Työsuoritus" — nimetön mutta rehellinen. Muilla kululajeilla `desc` on
+ * ostettu tavara ("polttimot"), ja sen asiakas saa ja haluaakin nähdä.
+ */
+export function expenseCustomerLabel(e: Pick<ProjExpense, "kind" | "desc" | "customerDesc">): string {
+  const own = (e.customerDesc ?? "").trim();
+  if (own) return own;
+  if (e.kind === "subcontract") return EXPENSE_KIND_CUSTOMER_LABEL.subcontract;
+  return (e.desc ?? "").trim() || EXPENSE_KIND_CUSTOMER_LABEL[e.kind] || "Hankinta";
+}
+
+export function expenseCustomerCents(e: Pick<ProjExpense, "kind" | "amountCents" | "marginCents">): number {
+  const base = Math.max(0, Math.round(e.amountCents || 0));
+  if (e.kind !== "subcontract") return base;
+  return base + Math.max(0, Math.round(e.marginCents || 0));
 }
 
 /**
@@ -860,6 +995,24 @@ export interface ProjectData {
   /** Keikan laskutustila (`BillingMode`). Puuttuva = "targeted" — ks. tyypin
    *  dokumentaatio siitä miksi sitä ei kirjoiteta oletuksena. */
   billingMode?: BillingMode;
+  /**
+   * TUNTITILAN HINNAT, keikkakohtaisina.
+   *
+   * `hourRateCents` on asiakkaan hinta jokaisesta tunnista ja
+   * `workerHourCents` se mitä TYÖNTEKIJÄ saa omasta tunnistaan. Erotus on
+   * katetta, joka jaetaan perustajien kesken.
+   *
+   * MIKSI KEIKKAKOHTAISET EIKÄ VAKIOT: `pricePerWindow` on jo keikkakohtainen,
+   * ja tuntihinta on täsmälleen samaa lajia tietoa — asiakkaan kanssa sovittu
+   * hinta. Vakio koodissa tarkoittaisi että toisen asiakkaan eri hinta vaatii
+   * julkaisun.
+   *
+   * PUUTTUVA = OLETUS (`DEFAULT_HOUR_RATE_CENTS` / `DEFAULT_WORKER_HOUR_CENTS`),
+   * eikä arvoa kirjoiteta ellei sitä ole muutettu — näin olemassa olevat keikat
+   * round-trippaavat muuttumattomina.
+   */
+  hourRateCents?: number;
+  workerHourCents?: number;
   /** Työtaulu: keikan yhteinen tehtävä- ja viestilista (`ProjBoardEntry`).
    *  SERVERIN OMISTAMA — kolme kirjoittajaa, ks. tyypin dokumentaatio. */
   board?: ProjBoardEntry[];
@@ -1867,7 +2020,12 @@ export interface PublicExpense {
 export function customerExpenses(data: ProjectData): PublicExpense[] {
   return (data.expenses ?? [])
     .filter((e) => e.forCustomer === true)
-    .map((e) => ({ kind: e.kind, desc: e.desc, amountCents: e.amountCents, ts: e.ts }))
+    // `expenseCustomerCents` eikä `amountCents`: alihankintarivillä asiakkaan
+    // hinta on kulu + kate, ja se on YKSI luku. Erittely paljastaisi
+    // ostohintamme, eikä asiakkaan lasku ole paikka jossa se kerrotaan.
+    // `expenseCustomerLabel` eikä `desc`: alihankintarivin kuvaus on meidän
+    // muistiinpanomme, ja siinä lukee alihankkijan nimi.
+    .map((e) => ({ kind: e.kind, desc: expenseCustomerLabel(e), amountCents: expenseCustomerCents(e), ts: e.ts }))
     .sort((a, b) => b.ts - a.ts);
 }
 
@@ -2758,7 +2916,7 @@ export function sanitizeProjectData(input: any): ProjectData {
     ? Array.from(new Set(input.workers.slice(0, 40).map((w: any) => String(w).slice(0, 40)))) as string[]
     : [...base.workers];
 
-  const VALID_EXPENSE_KINDS: ProjExpenseKind[] = ["transport", "materials", "equipment", "other"];
+  const VALID_EXPENSE_KINDS: ProjExpenseKind[] = ["transport", "materials", "equipment", "other", "subcontract"];
   const expenses: ProjExpense[] = Array.isArray(input.expenses)
     ? input.expenses.slice(0, 500).map((e: any) => ({
         id: String(e?.id ?? "").slice(0, 80),
@@ -2773,6 +2931,14 @@ export function sanitizeProjectData(input: any): ProjectData {
         // Vain nimenomainen `true` näyttää kulun asiakkaalle. Puuttuva,
         // roskainen tai "false" jää sisäiseksi — oletus on aina yksityinen.
         ...(e?.forCustomer === true ? { forCustomer: true as const } : {}),
+        // Asiakkaan oma teksti riville. Tyhjää ei kirjoiteta: silloin
+        // `expenseCustomerLabel` antaa varanimen eikä sisäistä kuvausta.
+        ...(typeof e?.customerDesc === "string" && e.customerDesc.trim()
+          ? { customerDesc: e.customerDesc.trim().slice(0, 120) } : {}),
+        // Kate vain alihankintariveillä ja vain kun se on annettu: muilla
+        // lajeilla kenttä on merkityksetön eikä sitä kirjoiteta blobiin.
+        ...(e?.kind === "subcontract" && Number(e?.marginCents) > 0
+          ? { marginCents: Math.round(Number(e.marginCents)) } : {}),
       })).filter((e: ProjExpense) => e.id && e.by)
     : [];
 
@@ -2825,6 +2991,12 @@ export function sanitizeProjectData(input: any): ProjectData {
     // Vain valittu tila kirjoitetaan: puuttuva on "targeted", ja vanha blobi
     // pyörähtää läpi entisellään.
     ...(toBillingMode(input.billingMode) ? { billingMode: toBillingMode(input.billingMode)! } : {}),
+    // Hinnat kirjoitetaan VAIN jos ne on annettu: puuttuva arvo tarkoittaa
+    // oletusta, eikä olemassa olevaan blobiin lisätä kenttää jota siinä ei ollut.
+    ...(Number.isFinite(Number(input.hourRateCents)) && Number(input.hourRateCents) > 0
+      ? { hourRateCents: rateOr(input.hourRateCents, DEFAULT_HOUR_RATE_CENTS) } : {}),
+    ...(Number.isFinite(Number(input.workerHourCents)) && Number(input.workerHourCents) > 0
+      ? { workerHourCents: rateOr(input.workerHourCents, DEFAULT_WORKER_HOUR_CENTS) } : {}),
     ...(lampModels.length ? { lampModels } : {}),
     ...(Object.keys(lampModelOf).length ? { lampModelOf } : {}),
     ...(input.fixtureOrder !== undefined ? (() => { const o = sanitizeFixtureOrder(input.fixtureOrder); return o ? { fixtureOrder: o } : {}; })() : {}),

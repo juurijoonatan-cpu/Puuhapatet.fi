@@ -30,7 +30,8 @@ import {
 } from "@shared/pricing";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, signaturePrompt, contractPending, gigStatus, livePayments, withoutDashOnly, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, isHourlyGig, billingModeOf, roundWorkHours, roundWorkHoursFromMinutes, cappedTimerHours, customerExpenses, customerHourRows, sanitizeBoard, sortedBoard, BOARD_CUSTOMER, MAX_BOARD_TEXT_LEN, MAX_BOARD_ENTRIES, toBoardKind, dayKey, isDayKey, addShiftEntry, computeShiftStats, MAX_SHIFT_NOTE_LEN, type ProjShift, type ProjBoardEntry, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, isHourlyGig, billingModeOf, roundWorkHours, roundWorkHoursFromMinutes, cappedTimerHours, customerExpenses, customerHourRows, invoiceNaming, sanitizeBoard, sortedBoard, BOARD_CUSTOMER, MAX_BOARD_TEXT_LEN, MAX_BOARD_ENTRIES, toBoardKind, dayKey, isDayKey, addShiftEntry, computeShiftStats, MAX_SHIFT_NOTE_LEN, type ProjShift, type ProjBoardEntry, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
+import { computeHourlyMoney, hourlyItemisation } from "@shared/hourly-money";
 import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
@@ -6235,13 +6236,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // erälaskentaan (invoicedThrough/sektorit/4 erän raja). Summa = pestyjen
       // lukittujen ikkunoiden kertymä miinus jo laskutetut p2-maksut.
       const isP2Scope = req.body?.scope === "p2";
+      /**
+       * TUNTIKEIKAN LASKU — oma virtansa.
+       *
+       * Summa on tuntityö + asiakkaalle merkityt tarvikkeet + alihankinta
+       * katteineen, ja se lasketaan `hourlyItemisation`illa: sama funktio
+       * tuottaa sekä summan että erittelyn, joten ne eivät voi erota.
+       * Se ei kuulu urakan neljään erään eikä keltaisten kertymään.
+       */
+      const isHoursScope = req.body?.scope === "hours";
 
       // For fixed-price deals (FR8) each erä is a fixed 25 % of the agreed total,
       // EXCEPT the final (4th) erä which bills the REMAINDER of the effective
       // agreed total. So if red windows were removed, the reduction (37,50 €/ikkuna)
       // lands entirely on the last invoice — the earlier erät stay at 25 %.
       const proj = parseProject(job.projectData ?? null);
-      const fixedDeal = !isP2Scope && proj ? fixedDealFor(proj) : null;
+      const fixedDeal = !isP2Scope && !isHoursScope && proj ? fixedDealFor(proj) : null;
       const rawInstalmentCents = fixedDeal ? Math.round(fixedDeal.capCents / 4) : null;
       const agreedTotalCents = fixedDeal && proj ? dealAgreedTotalCents(proj, fixedDeal) : null;
 
@@ -6262,7 +6272,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Which instalment this is. For fixed deals the admin can override the
       // number manually in the dialog (1–4); otherwise it follows the count sent.
       const reqPaymentNumber = Number(req.body?.paymentNumber);
-      const paymentNumber = isP2Scope
+      const paymentNumber = isHoursScope
+        ? invState.hoursPayments + 1
+        : isP2Scope
         ? invState.payments + 1
         : (fixedDeal && Number.isInteger(reqPaymentNumber) && reqPaymentNumber >= 1 && reqPaymentNumber <= 4)
           ? reqPaymentNumber
@@ -6271,15 +6283,86 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Final (4th) erä = effective agreed total − what P1 has already been billed,
       // so removed windows come off the last invoice; earlier erät = fixed 25 %.
       const isFinalEra = !!fixedDeal && paymentNumber >= 4;
+
+      /**
+       * LASKUN NIMI YHDESSÄ PAIKASSA.
+       *
+       * Nimi luetaan asiakkaalle kuudessa kohdassa: otsikkorivillä, leipätekstissä,
+       * verkkolaskuvahvistuksessa, sähköpostin aiheessa, maksukirjauksessa ja
+       * lokirivillä. Kun sääntö oli kirjoitettu jokaiseen erikseen, tuntilasku
+       * puuttui neljästä niistä — se olisi lähtenyt asiakkaalle nimellä
+       * "Osalasku" (tai "Loppulasku") vaikka kyse ei ole urakan erästä
+       * lainkaan, ja maksukirjaus olisi sanonut eri asiaa kuin sähköposti.
+       * Yksi lauseke, kaikki kuusi lukevat sen.
+       */
+      const { short: invoiceLabel, prose: invoiceLabelProse } = invoiceNaming({
+        scope: isHoursScope ? "hours" : isP2Scope ? "p2" : "p1",
+        fixedDeal: !!fixedDeal,
+        paymentNumber,
+        isFinal: !!isFinal,
+      });
       const installmentCents = fixedDeal
         ? (isFinalEra
             ? Math.max(0, (agreedTotalCents ?? fixedDeal.capCents) - p1InvoicedBeforeCents)
             : rawInstalmentCents!)
         : null;
 
+      /**
+       * TUNTIKEIKAN LASKUTETTAVA: koko kertymä miinus jo lähetetyt tuntilaskut.
+       * Johtaja voi laskuttaa osan (`amountCents`), mutta ei enempää kuin on
+       * kertynyt.
+       */
+      const hourly = isHoursScope && proj ? hourlyItemisation(proj) : null;
+      const hoursRemainingCents = hourly
+        ? Math.max(0, hourly.customerTotalCents - invState.hoursInvoicedCents) : 0;
+      const hoursAmountCents = hourly
+        ? Math.min(hoursRemainingCents, Number.isInteger(reqAmountCents) && reqAmountCents > 0 ? reqAmountCents : hoursRemainingCents)
+        : 0;
+
       const totalsBefore = computeTotals(gig);
-      const amountCents = isP2Scope ? p2AmountCents : (installmentCents ?? totalsBefore.uninvoicedCents);
+      const amountCents = isHoursScope ? hoursAmountCents
+        : isP2Scope ? p2AmountCents
+        : (installmentCents ?? totalsBefore.uninvoicedCents);
       if (amountCents <= 0) return res.status(400).json({ error: "Ei laskutettavaa kertymää" });
+
+      /**
+       * VERSIOERON VARTIJA.
+       *
+       * Käyttöliittymä ja palvelin julkaistaan erikseen (Pages / Render), joten
+       * niiden välissä on ikkuna jossa selain on uusi ja palvelin vanha. Vanha
+       * palvelin ei tunne `scope: "hours"`ia: se ei kaadu vaan tulkitsee pyynnön
+       * urakkalaskuksi ja lähettää asiakkaalle AIVAN ERI SUMMAN kuin dialogissa
+       * luki. Lasku on silloin jo mennyt.
+       *
+       * Siksi dialogi kertoo mitä summaa se pyytää, ja jos palvelin päätyy
+       * toiseen lukuun, lasku EI lähde. Vanha palvelin ohittaa tämän kentän
+       * tuntemattomana — sen tapauksen kiinni ottaa selaimen oma tarkistus
+       * vastauksesta.
+       */
+      const expectAmountCents = Number(req.body?.expectAmountCents);
+      if (Number.isInteger(expectAmountCents) && expectAmountCents > 0 && expectAmountCents !== amountCents) {
+        return res.status(409).json({
+          error: `Laskun summa muuttui: näkymä pyysi ${(expectAmountCents / 100).toFixed(2)} €, laskutusperuste antaa ${(amountCents / 100).toFixed(2)} €. Päivitä sivu ja tarkista luvut — laskua ei lähetetty.`,
+        });
+      }
+      /**
+       * Sama vartija kuin keltaisilla: summa ja erittely lasketaan samasta
+       * datasta samalla säännöllä, joten ero tarkoittaa vikaa. Väärää laskua ei
+       * lähetetä.
+       */
+      if (isHoursScope) {
+        if (!hourly) return res.status(400).json({ error: "Keikalla ei ole projektidataa" });
+        if (!hourly.matchesBilling) {
+          return res.status(409).json({
+            error: `Laskun erittely ei täsmää laskutusperustaan (${(hourly.totalCents / 100).toFixed(2)} € vs. ${(hourly.customerTotalCents / 100).toFixed(2)} €). Laskua ei lähetetty.`,
+          });
+        }
+        if (hourly.money.rateInverted) {
+          return res.status(409).json({
+            error: "Työntekijän tuntipalkka on yli asiakashinnan — tarkista keikan tuntihinnat ennen laskutusta.",
+          });
+        }
+      }
       // Laskun summa tulee `earnedCents`istä ja erittely omasta funktiostaan.
       // Ne lasketaan samasta datasta samalla säännöllä, joten ero tarkoittaa
       // vikaa — ja väärää laskua. Ei lähetetä.
@@ -6291,7 +6374,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           });
         }
       }
-      if (fixedDeal && p1PaymentCount >= 4) {
+      if (!isHoursScope && fixedDeal && p1PaymentCount >= 4) {
         return res.status(400).json({ error: "Kaikki neljä maksuerää on jo lähetetty." });
       }
 
@@ -6313,7 +6396,50 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         .map((b) => `${b.count} × ${fmtEur(b.priceCents)}`)
         .join(" &nbsp;·&nbsp; ") ?? "";
 
-      const lineRows = isP2Scope
+      /**
+       * TUNTIKEIKAN ERITTELY LASKULLE.
+       *
+       * Rivit tulevat `hourlyItemisation`ista, eli samasta funktiosta joka
+       * tuotti summan. Asiakas näkee tuntimäärän, tekijämäärän ja jokaisen
+       * kulurivin erikseen — mutta alihankinnasta VAIN yhden luvun, koska
+       * ostohintamme ei ole asiakkaan tietoa.
+       */
+      // Kuluselite on vapaata tekstiä ja päätyy HTML-sähköpostiin: siivotaan
+      // se tässä, ettei asiakkaan lasku voi rikkoutua yhdestä merkistä.
+      const escHtml = (t: string) => String(t)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+      /**
+       * TUNTILASKUN RIVIT SUMMAUTUVAT AINA LASKUN LOPPUSUMMAAN.
+       *
+       * Erittely kertoo KOKO kertymän. Kun lasku on osalasku — johtaja
+       * laskuttaa osan, tai osa on jo laskutettu aiemmin — täysi erittely
+       * veloitusriveinä väittäisi asiakkaalle eri summaa kuin lasku perii.
+       * Silloin erittely näytetään TIETONA (ei euroja veloitussarakkeessa) ja
+       * veloitus on yksi rivi: mitä nyt laskutetaan, ja mistä kertymästä.
+       *
+       * Täysi lasku on ehdoton: koko kertymä, eikä aiempia tuntilaskuja.
+       * Vain silloin rivit ovat itse veloitus.
+       */
+      const hoursFullBill = !!hourly
+        && invState.hoursInvoicedCents === 0
+        && amountCents === hourly.customerTotalCents;
+      const hourlyRows = hourly
+        ? hourly.lines.map((l) => `<tr style="border-bottom:1px solid #E4E1D7">
+            <td style="padding:10px 0;color:#1A1A1A;font-size:14px">${escHtml(l.label)}</td>
+            <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:${hoursFullBill ? "#1A1A1A" : "#8C8A82"};font-variant-numeric:tabular-nums">${l.cents == null ? "&mdash;" : fmtEur(l.cents)}</td>
+          </tr>`).join("")
+          + (hoursFullBill ? "" : `<tr style="border-bottom:1px solid #E4E1D7">
+            <td style="padding:10px 0;color:#1A1A1A;font-size:14px">
+              Laskutetaan tällä laskulla<br>
+              <span style="color:#8C8A82;font-size:12px">kertymä yhteensä ${fmtEur(hourly.customerTotalCents)}${invState.hoursInvoicedCents > 0 ? ` · aiemmin laskutettu ${fmtEur(invState.hoursInvoicedCents)}` : ""}</span>
+            </td>
+            <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:#1A1A1A;font-variant-numeric:tabular-nums">${fmtEur(amountCents)}</td>
+          </tr>`)
+        : "";
+
+      const lineRows = isHoursScope
+        ? hourlyRows
+        : isP2Scope
         ? `<tr style="border-bottom:1px solid #E4E1D7">
             <td style="padding:10px 0;color:#1A1A1A;font-size:14px">
               Lisäikkunat (2. vaihe) — ikkunakohtaisesti sovitut hinnat<br>
@@ -6355,8 +6481,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ? await generateFinnishBarcodeHtml({ iban, amountCents, viitenumero: refNumeric, dueDateISO: dueDate, isEn: false })
         : "";
 
+      /**
+       * LASKUNUMERO. Jokaisella virralla on OMA sarjansa, koska jokaisella on
+       * oma juoksevat numeronsa: urakan erä laskee `p1PaymentCount`ia,
+       * keltaiset `payments`ia, tunnit `hoursPayments`ia. Ilman erottavaa
+       * tunnusta tuntilasku 1 ja urakan erä 1 olisivat molemmat "PT-01" —
+       * kaksi eri laskua samalla numerolla, mikä on kirjanpidossa virhe
+       * (laskunumeron on yksilöitävä lasku).
+       */
       const invoiceNo = isP2Scope
         ? `${gig.contractId || "PT"}-P2-${paymentNumber.toString().padStart(2, "0")}`
+        : isHoursScope
+        ? `${gig.contractId || "PT"}-H-${paymentNumber.toString().padStart(2, "0")}`
         : `${gig.contractId || "PT"}-${paymentNumber.toString().padStart(2, "0")}`;
       const invoiceDate = new Date().toLocaleDateString("fi-FI"); // laskun päivämäärä (AVL 209 e §)
       const accruedSoFar = totalsBefore.accruedCents;
@@ -6372,13 +6508,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     <div style="padding:28px 32px;border-bottom:1px solid #E4E1D7">
       <p style="margin:0;color:#1A1A1A;font-size:20px;font-weight:700;letter-spacing:-0.3px">Puuhapatet</p>
       ${senderName ? `<p style="margin:4px 0 0;color:#8C8A82;font-size:12px">Myyjä: ${senderName}${senderYTunnus ? ` · Y-tunnus ${senderYTunnus}` : ""}</p>` : ""}
-      <p style="margin:4px 0 0;color:#8C8A82;font-size:13px">${fixedDeal ? `Osalasku ${paymentNumber}/4` : (isFinal ? "Loppulasku" : "Osalasku")} · ${invoiceNo}${gig.contractId ? ` · sopimus ${gig.contractId}` : ""}</p>
+      <p style="margin:4px 0 0;color:#8C8A82;font-size:13px">${invoiceLabel} · ${invoiceNo}${gig.contractId ? ` · sopimus ${gig.contractId}` : ""}</p>
     </div>
     <div style="padding:24px 32px">
       <p style="margin:0 0 16px;color:#1A1A1A;font-size:15px;font-weight:600">${gig.company?.name || job.description}${gig.company?.businessId ? ` · Y-tunnus ${gig.company.businessId}` : ""}</p>
       <p style="margin:0 0 12px;color:#1A1A1A;font-size:14px;line-height:1.7">Hei,</p>
       <p style="margin:0 0 16px;color:#1A1A1A;font-size:14px;line-height:1.7">
-        ${fixedDeal ? `Ikkunanpesu-urakan maksuerä ${paymentNumber}/4` : (isFinal ? "Loppulasku työstä" : "Osalasku työstä")}
+        ${invoiceLabelProse}
         (${fmtEur(amountCents)}) on lähetetty teille verkkolaskuna${eInvoice ? ` osoitteeseen <span style="font-weight:600">${String(eInvoice).replace(/</g, "&lt;")}</span>` : ""}.
       </p>
       <p style="margin:0 0 16px;color:#1A1A1A;font-size:14px;line-height:1.7">
@@ -6400,7 +6536,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     <div style="padding:28px 32px;border-bottom:1px solid #E4E1D7">
       <p style="margin:0;color:#1A1A1A;font-size:20px;font-weight:700;letter-spacing:-0.3px">Puuhapatet</p>
       ${senderName ? `<p style="margin:4px 0 0;color:#8C8A82;font-size:12px">Myyjä: ${senderName}${senderYTunnus ? ` · Y-tunnus ${senderYTunnus}` : ""}</p>` : ""}
-      <p style="margin:4px 0 0;color:#8C8A82;font-size:13px">${isFinal ? "Loppulasku" : "Osalasku"} · ${invoiceNo}${gig.contractId ? ` · sopimus ${gig.contractId}` : ""}</p>
+      <p style="margin:4px 0 0;color:#8C8A82;font-size:13px">${invoiceLabel} · ${invoiceNo}${gig.contractId ? ` · sopimus ${gig.contractId}` : ""}</p>
       <p style="margin:2px 0 0;color:#8C8A82;font-size:12px">Laskun päivämäärä: ${invoiceDate} · Toimituspäivä: ${invoiceDate}</p>
     </div>
     <div style="padding:24px 32px">
@@ -6454,11 +6590,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         from: FROM_EMAIL,
         to: recipientList.length === 1 ? recipientList[0] : recipientList,
         ...(bccArr.length ? { bcc: bccArr } : {}),
-        subject: isP2Scope
-          ? `Lisätyölasku (2. vaihe) · ${invoiceNo}${viaEInvoice ? " (verkkolaskuosoitteeseen)" : ` — ${fmtEur(amountCents)}`} · Puuhapatet`
-          : fixedDeal
-          ? `Osalasku ${paymentNumber}/4 · ${invoiceNo}${viaEInvoice ? " (verkkolaskuosoitteeseen)" : ` — ${fmtEur(amountCents)}`} · Puuhapatet`
-          : `${isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo}${viaEInvoice ? " (verkkolaskuosoitteeseen)" : ` — ${fmtEur(amountCents)}`} · Puuhapatet`,
+        subject: `${invoiceLabel} · ${invoiceNo}${viaEInvoice ? " (verkkolaskuosoitteeseen)" : ` — ${fmtEur(amountCents)}`} · Puuhapatet`,
         html,
       });
 
@@ -6470,15 +6602,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         gig.sectors.forEach((s) => { s.invoicedWashed = s.washed; });
       }
       const totalsAfter = computeTotals(gig);
-      if (!isP2Scope) {
+      // Tuntilasku ei liikuta ikkunalaskennan osoittimia sen enempää kuin
+      // keltaisten lasku: se on oma virtansa.
+      if (!isP2Scope && !isHoursScope) {
         gig.invoicedThrough = totalsAfter.invoicedWashed;
       }
       gig.payments.push({
         t: Date.now(),
-        countThrough: isP2Scope ? (p2b?.lockedWashedCount ?? 0) : totalsAfter.invoicedWashed,
+        // Tuntilaskulla "montako yksikköä tähän asti" on tunteja, ei ikkunoita.
+        countThrough: isHoursScope ? Math.round((hourly?.money.totalHours ?? 0) * 100) / 100
+          : isP2Scope ? (p2b?.lockedWashedCount ?? 0) : totalsAfter.invoicedWashed,
         amountCents,
         to: recipient,
-        note: isP2Scope ? "Lisätyölasku (2. vaihe)" : isFinal ? "Loppulasku" : "Osalasku",
+        note: invoiceLabel,
         emailId: result.data?.id,
         // Record WHICH leader billed the customer — their Y-tunnus becomes the buyer
         // on the alihankkija invoices funded by this instalment.
@@ -6488,21 +6624,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           yTunnus: senderYTunnus ? String(senderYTunnus).slice(0, 40) : undefined,
         } : undefined,
         eInvoice: eInvoice ? String(eInvoice).slice(0, 200) : undefined,
-        ...(isP2Scope ? { scope: "p2" as const } : {}),
+        ...(isHoursScope ? { scope: "hours" as const } : isP2Scope ? { scope: "p2" as const } : {}),
       });
       // For fixed-price contracts, invoicedCents = N completed instalments × fixed amount
       // (avoids mismatch between per-window accrual and agreed flat price).
       // P2-maksut pidetään tämän ulkopuolella (vain P1-maksut lasketaan).
-      if (!isP2Scope) {
+      if (!isP2Scope && !isHoursScope) {
         gig.invoicedCents = fixedDeal
-          ? livePayments(gig.payments).filter((p) => p.scope !== "p2").length * (installmentCents ?? 0)
+          // Erien LUKUMÄÄRÄ lasketaan vain P1-eristä: `scope !== "p2"` olisi
+          // laskenut mukaan myös tuntilaskut ja kasvattanut urakan summaa.
+          ? livePayments(gig.payments).filter((p) => p.scope == null || p.scope === "p1").length * (installmentCents ?? 0)
           : totalsAfter.invoicedCents;
       }
       gig.log.push({
         t: Date.now(),
         text: viaEInvoice
-          ? `${isP2Scope ? "Lisätyölasku (2. vaihe)" : isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} lähetetty verkkolaskuosoitteeseen: ${fmtEur(amountCents)} → ${eInvoice} (vahvistus: ${recipient})`
-          : `${isP2Scope ? "Lisätyölasku (2. vaihe)" : isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} lähetetty: ${fmtEur(amountCents)} → ${recipient}`,
+          ? `${invoiceLabel} ${invoiceNo} lähetetty verkkolaskuosoitteeseen: ${fmtEur(amountCents)} → ${eInvoice} (vahvistus: ${recipient})`
+          : `${invoiceLabel} ${invoiceNo} lähetetty: ${fmtEur(amountCents)} → ${recipient}`,
       });
       gig.updatedAt = Date.now();
       await db.update(jobs).set({ gigData: JSON.stringify(gig), updatedAt: new Date() }).where(eq(jobs.id, id));
@@ -8652,6 +8790,31 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       scopeVotes: project.scope
         ? Object.fromEntries(Object.entries(project.scope.votes).map(([k, v]) => [k, v.answer]))
         : null,
+      /**
+       * TEKIJÄN OMAT TUNNIT JA NIISTÄ KERTYNYT PALKKA.
+       *
+       * Tuntikeikalla tekijä ei nähnyt tunneistaan mitään — ei tuntimäärää
+       * eikä palkkaa — vaikka juuri ne ovat hänen työnsä tulos. Nyt hän näkee
+       * oman rivinsä.
+       *
+       * VAIN OMANSA JA VAIN OMA PALKKANSA. Asiakkaan tuntihintaa ei lähetetä
+       * tekijälle sen enempää kuin ikkunahintoja: `perHourCents` on se mitä
+       * TÄMÄ henkilö ansaitsee tunnilta. Perustajalle se on koko tuntihinta
+       * (hänen omaa työtään ei katoteta), työntekijälle hänen tuntipalkkansa —
+       * `computeHourlyMoney` ratkaisee kumpi, jottei sääntö ole kahdessa
+       * paikassa.
+       */
+      hourly: isHourlyGig(project) ? (() => {
+        const mine = computeHourlyMoney(project).byWorker.find((w) => w.id === member.id);
+        // Kolme lukua tekijän OMALTA riviltä. Kumpi tuntihinta on hänen,
+        // ratkaistaan laskennassa (`perHourCents`) — täällä ei lueta
+        // asiakkaan hintaa lainkaan, jottei sitä voi vahingossa lähettää.
+        return {
+          hours: mine?.hours ?? 0,
+          earnedCents: mine?.earnedCents ?? 0,
+          perHourCents: mine?.perHourCents ?? 0,
+        };
+      })() : null,
       // Ohjattu eteneminen (guided): kun perustaja on kytkenyt sen päälle, tekijä
       // näkee vain aktiivisen kerroksen auki, muut lukossa, ja "Seuraavaksi"-kortti
       // ohjaa täsmälleen seuraavaan pestävään ikkunaan. Puhtaasti johdettua tilaa
@@ -9788,7 +9951,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const loaded = await loadJobProject(Number(req.params.id));
       if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const { job, project } = loaded;
-      const { kind, desc, amountCents, by, forWhom, receiptDataUrl } = req.body as Record<string, any>;
+      const { kind, desc, amountCents, by, forWhom, receiptDataUrl, forCustomer, marginCents, customerDesc } = req.body as Record<string, any>;
       if (!amountCents || Number(amountCents) <= 0) {
         return res.status(400).json({ error: "Summa puuttuu tai on nolla" });
       }
@@ -9796,15 +9959,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const receipt = typeof receiptDataUrl === "string" && receiptDataUrl.startsWith("data:image/")
         ? receiptDataUrl.slice(0, MAX_EXPENSE_RECEIPT_LEN) : undefined;
       const forWhomVal = typeof forWhom === "string" && forWhom.trim() ? forWhom.trim().slice(0, 40) : undefined;
+      const kindVal: ProjExpense["kind"] = VALID_EXPENSE_KINDS.includes(kind) ? kind : "other";
+      /**
+       * ALIHANKINNAN KATE vain alihankintariville. Muulla kululajilla se olisi
+       * haamurahaa: `expenseCustomerCents` ei lue sitä, joten asiakas ei
+       * maksaisi sitä koskaan, mutta kenttä jäisi riville lupaamaan tuottoa.
+       * Pudotetaan tässä eikä hiljaa laskennassa.
+       */
+      const marginVal = kindVal === "subcontract" && Number(marginCents) > 0
+        ? Math.round(Number(marginCents)) : undefined;
       const expense: ProjExpense = {
         id: makeExpenseId(),
         by: String(by || adminSub).slice(0, 40),
-        kind: VALID_EXPENSE_KINDS.includes(kind) ? kind : "other",
+        kind: kindVal,
         desc: String(desc || "").slice(0, 300).trim(),
         amountCents: Math.round(Number(amountCents)),
         ts: Date.now(),
         ...(forWhomVal ? { forWhom: forWhomVal } : {}),
         ...(receipt ? { receiptDataUrl: receipt } : {}),
+        // Asiakkaalle näkyväksi jo kirjattaessa: merkintä joka pitää muistaa
+        // tehdä jälkikäteen jää tekemättä, ja silloin lamput jäävät laskulta.
+        ...(forCustomer === true ? { forCustomer: true } : {}),
+        ...(marginVal ? { marginCents: marginVal } : {}),
+        // Asiakkaan oma teksti riville. Tyhjää ei kirjoiteta: silloin
+        // `expenseCustomerLabel` antaa neutraalin varanimen eikä sisäistä
+        // kuvausta — alihankkijan nimi ei päädy laskulle vahingossakaan.
+        ...(typeof customerDesc === "string" && customerDesc.trim()
+          ? { customerDesc: customerDesc.trim().slice(0, 120) } : {}),
       };
       project.expenses = [...(project.expenses || []), expense];
       await saveProject(job, project);

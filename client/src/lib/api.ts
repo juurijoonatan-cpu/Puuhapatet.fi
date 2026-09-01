@@ -169,6 +169,15 @@ export interface WorkerView {
    * pestä". Näkyvät kartalla merkkinä pisteen päällä. Null = kyselyä ei ole.
    */
   scopeVotes: Record<string, "yes" | "no"> | null;
+  /**
+   * TUNTIKEIKALLA: tekijän OMAT tunnit ja niistä kertynyt palkka.
+   *
+   * `perHourCents` on se mitä TÄMÄ henkilö saa tunnilta — perustajalle koko
+   * tuntihinta, työntekijälle hänen tuntipalkkansa. Asiakkaan tuntihintaa ei
+   * lähetetä tekijälle, samoin kuin ikkunahintoja ei lähetetä.
+   * Null = keikka ei ole tuntikeikka.
+   */
+  hourly: { hours: number; earnedCents: number; perHourCents: number } | null;
 }
 
 /** Guided-progression view for a worker: which floor is open, what's locked, and
@@ -1409,11 +1418,21 @@ export const api = {
     eInvoice?: string;
     paymentNumber?: number;
     sendMethod?: "email" | "verkkolasku";
-    /** "p2" = lisäikkunoiden (keltaiset) lasku — ei koske P1:n eriin. */
-    /** Kumpaa rahaa lasku koskee. Puuttuva = punaisten erä (vanha käytös). */
-    scope?: "p1" | "p2";
-    /** P2: eksplisiittinen summa (oletus: koko laskuttamaton P2-kertymä). */
+    /**
+     * Mitä rahaa lasku koskee. Puuttuva = punaisten erä (vanha käytös).
+     *   "p2"    = lisäikkunoiden (keltaiset) lasku — ei koske P1:n eriin.
+     *   "hours" = tuntikeikan lasku (tunnit + tarvikkeet + alihankinta) — ei
+     *             kuluta urakan neljää erää eikä keltaisten kertymää.
+     */
+    scope?: "p1" | "p2" | "hours";
+    /** P2/tunnit: eksplisiittinen summa (oletus: koko laskuttamaton kertymä). */
     amountCents?: number;
+    /**
+     * Summa jonka DIALOGI näytti. Palvelin torjuu lähetyksen jos oma
+     * laskutusperuste antaa muun luvun — selain ja palvelin julkaistaan
+     * erikseen, ja niiden välissä on ikkuna jossa toinen on vanha.
+     */
+    expectAmountCents?: number;
   }) => request<{ ok: boolean; id?: string; amountCents: number; gigData: GigData }>(
     "POST", `/api/jobs/${jobId}/gig/invoice`, data,
   ),
@@ -1735,7 +1754,15 @@ export const api = {
       "DELETE", `/api/crew/${token}/expense/${expenseId}`),
 
   // Admin adds/removes project-level expenses (all workers visible).
-  addProjectExpense: (jobId: number, data: { kind: string; desc: string; amountCents: number; by?: string; forWhom?: string; receiptDataUrl?: string }) =>
+  addProjectExpense: (jobId: number, data: {
+    kind: string; desc: string; amountCents: number; by?: string; forWhom?: string; receiptDataUrl?: string;
+    /** Veloitetaanko tämä asiakkaalta (tarvikkeet). Alihankinta veloitetaan aina. */
+    forCustomer?: boolean;
+    /** Alihankinnan kate euroina senttein — vain `kind: "subcontract"`. */
+    marginCents?: number;
+    /** Mitä asiakas lukee rivistä. Ilman tätä alihankintarivi on "Työsuoritus". */
+    customerDesc?: string;
+  }) =>
     request<{ ok: boolean; expense: import("@shared/project").ProjExpense; expenses: import("@shared/project").ProjExpense[] }>(
       "POST", `/api/jobs/${jobId}/project/expense`, data),
 

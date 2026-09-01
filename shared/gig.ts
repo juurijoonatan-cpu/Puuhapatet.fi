@@ -46,10 +46,18 @@ export interface GigPayment {
   /** Customer e-invoice address (verkkolaskuosoite/OVT) this instalment was
    *  directed to, when given — recorded for the customer's routing & our records. */
   eInvoice?: string;
+  /**
+   * Which pricing scope this payment belongs to.
+   *
+   * "hours" = tuntikeikan lasku (tuntityö + kulut + alihankinta). Se on OMA
+   * laskutusvirtansa: se ei kuulu kiinteän urakan neljään erään eikä
+   * keltaisten kertymään, ja jos se laskettaisiin P1:ksi, se kasvattaisi
+   * eränumeroa ja söisi urakan erälaskennan. Ks. `p2InvoiceState`.
+   */
   /** Which pricing scope this payment belongs to: "p2" = keltaisten ikkunoiden
    *  per-window billing (shared/p2.ts), kept apart from the fixed P1 instalments.
    *  Absent = P1 (the historical default). */
-  scope?: "p1" | "p2";
+  scope?: "p1" | "p2" | "hours";
   /**
    * MITÄTÖITY erä. Lähetetty laskutuserä on kirjanpidon tosite (se kirjataan
    * myyntinä tilille 3000), joten sitä ei saa poistaa — virheellinen erä
@@ -504,7 +512,9 @@ export function sanitizeGigData(input: any): GigData {
           yTunnus: p.biller.yTunnus ? String(p.biller.yTunnus).slice(0, 40) : undefined,
         } : undefined,
         eInvoice: p?.eInvoice ? String(p.eInvoice).slice(0, 200) : undefined,
-        scope: p?.scope === "p2" ? "p2" as const : p?.scope === "p1" ? "p1" as const : undefined,
+        scope: p?.scope === "p2" ? "p2" as const
+          : p?.scope === "hours" ? "hours" as const
+          : p?.scope === "p1" ? "p1" as const : undefined,
         ...(p?.voided ? {
           voided: true as const,
           voidedAt: Number(p.voidedAt) || Date.now(),

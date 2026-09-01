@@ -109,6 +109,8 @@ export default function HourlyPanel({
    * muokkaus vahvistetaan.
    */
   const [ratesOpen, setRatesOpen] = useState(false);
+  /** Ikkunatyön pesijäerittely — pitkä lista, avataan vain tarkistettaessa. */
+  const [windowsOpen, setWindowsOpen] = useState(false);
   const [rateDraft, setRateDraft] = useState("");
   const [wageDraft, setWageDraft] = useState("");
 
@@ -704,11 +706,26 @@ export default function HourlyPanel({
                   {Math.round(money.windows.washedTotal) > money.windows.uninvoicedWindows
                     && ` · pesty yhteensä ${Math.round(money.windows.washedTotal)}`}
                 </div>
+                {/* PESIJÄKOHTAINEN ERITTELY ON TAITTEEN TAKANA.
+                    Yhdeksän nimeä ikkunamäärineen on pitkä lista rahakortin
+                    keskellä, eikä se ole se kysymys jonka takia kortti
+                    avataan — siihen vastaa yksi luku yllä. Lista on
+                    tarkistusta varten, ja tarkistus tehdään harvoin ja
+                    tarkoituksella. */}
+                {money.windows.byWasher.length > 0 && (
+                  <button onClick={() => setWindowsOpen((v) => !v)}
+                    style={{ display: "flex", alignItems: "center", gap: 6, marginTop: T.space.sm, padding: 0,
+                      background: "transparent", border: "none", cursor: "pointer", fontFamily: T.font,
+                      fontSize: T.size.xs, color: T.text.muted }}>
+                    <span aria-hidden>{windowsOpen ? "▾" : "▸"}</span>
+                    {windowsOpen ? "piilota pesijät" : `pesijät (${money.windows.byWasher.length})`}
+                  </button>
+                )}
                 {/* Kuka on pessyt ja mitä siitä kuuluu. Luvut ovat koko keikan
                     ajalta, eivät vain tämän laskun osuudelta — se on se mitä
                     kukin on ansainnut, ja se on eri kysymys kuin mitä juuri nyt
                     laskutetaan. Sanotaan se, ettei lukuja lueta väärin. */}
-                {money.windows.byWasher.length > 0 && (
+                {money.windows.byWasher.length > 0 && windowsOpen && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: T.space.md, paddingTop: T.space.md, borderTop: T.border.divider }}>
                     {money.windows.byWasher.map((r) => (
                       <div key={r.id} style={{ display: "flex", alignItems: "baseline", gap: T.space.sm }}>

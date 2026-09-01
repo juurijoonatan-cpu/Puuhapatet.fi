@@ -217,8 +217,12 @@ export function computeHourlyMoney(
   const costLines: HourlyCostLine[] = customerChargeableExpenses(data);
   let customerCostCents = 0, subcontractCostCents = 0, subcontractMarginCents = 0;
   for (const c of costLines) {
-    if (c.kind === "subcontract") { subcontractCostCents += c.costCents; subcontractMarginCents += c.marginCents; }
-    else customerCostCents += c.costCents;
+    // Alihankinta JA lisärivi ovat kate-lajeja: niistä jää meille. Lisärivin
+    // kulu on nolla, joten se ei myöskään tuota palautusta kenellekään.
+    if (c.kind === "subcontract" || c.kind === "surcharge") {
+      subcontractCostCents += c.costCents;
+      subcontractMarginCents += c.marginCents;
+    } else customerCostCents += c.costCents;
   }
 
   // Alihankinnan kate jaetaan samalla säännöllä kuin tuntikate.

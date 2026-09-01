@@ -346,6 +346,62 @@ export function fmtDayLabel(day: string): string {
   return `${wd} ${d}.${mo}.`;
 }
 
+/**
+ * PÄIVÄAVAIN SIIRRETTYNÄ. `+1` = huominen, `-7` = viikko taaksepäin.
+ *
+ * Keskipäivä eikä keskiyö: kesäajan vaihtopäivänä keskiyöhön lisätty
+ * vuorokausi osuu 23 tai 25 tunnin päähän ja päivä hyppää yli tai jää
+ * paikalleen. Kalenterissa se näkyisi puuttuvana tai kahdesti piirtyvänä
+ * päivänä kaksi kertaa vuodessa — juuri niinä päivinä joina kukaan ei epäile
+ * kalenteria vaan omaa kirjaustaan.
+ */
+export function shiftDay(day: string, delta: number): string {
+  if (!isDayKey(day)) return day;
+  const [y, mo, d] = day.split("-").map(Number);
+  const dt = new Date(y, mo - 1, d, 12, 0, 0);
+  dt.setDate(dt.getDate() + delta);
+  return dayKey(dt.getTime());
+}
+
+/** Maanantaista sunnuntaihin — se viikko johon `day` kuuluu. */
+export function weekOf(day: string): string[] {
+  if (!isDayKey(day)) return [];
+  const [y, mo, d] = day.split("-").map(Number);
+  // getDay(): su=0. Suomessa viikko alkaa maanantaista, joten sunnuntai on 6.
+  const offset = (new Date(y, mo - 1, d, 12).getDay() + 6) % 7;
+  const monday = shiftDay(day, -offset);
+  return Array.from({ length: 7 }, (_, i) => shiftDay(monday, i));
+}
+
+/** Viikonpäivän kirjain kalenteriruutuun: ma → "M". */
+export function weekdayLetter(day: string): string {
+  if (!isDayKey(day)) return "";
+  const [y, mo, d] = day.split("-").map(Number);
+  return ["S", "M", "T", "K", "T", "P", "L"][new Date(y, mo - 1, d, 12).getDay()];
+}
+
+/** Kuukauden päivä numerona kalenteriruutuun. */
+export function dayOfMonth(day: string): number {
+  return isDayKey(day) ? Number(day.split("-")[2]) : 0;
+}
+
+/** "Elokuu 2026" — kalenterin otsikko. Viikon yli menevä kuukausi molemmat. */
+export function monthLabel(days: string[]): string {
+  const valid = days.filter(isDayKey);
+  if (!valid.length) return "";
+  const MONTHS = ["tammikuu", "helmikuu", "maaliskuu", "huhtikuu", "toukokuu", "kesäkuu",
+    "heinäkuu", "elokuu", "syyskuu", "lokakuu", "marraskuu", "joulukuu"];
+  const name = (d: string) => MONTHS[Number(d.split("-")[1]) - 1];
+  const year = (d: string) => d.split("-")[0];
+  const first = valid[0], last = valid[valid.length - 1];
+  if (name(first) === name(last) && year(first) === year(last)) return `${name(first)} ${year(first)}`;
+  // Viikko voi jakautua kahdelle kuukaudelle — ja vuodenvaihteessa kahdelle
+  // vuodelle. Otsikko kertoo kummankin, ettei se väitä väärää kuukautta.
+  return year(first) === year(last)
+    ? `${name(first)}–${name(last)} ${year(last)}`
+    : `${name(first)} ${year(first)} – ${name(last)} ${year(last)}`;
+}
+
 /** Tunnit ihmisen luettavaksi: 7 → "7", 7.5 → "7,5". */
 export function fmtShiftHours(h: number): string {
   return h.toLocaleString("fi-FI", { maximumFractionDigits: 1 });

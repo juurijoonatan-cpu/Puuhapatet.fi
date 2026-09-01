@@ -80,6 +80,418 @@ export interface ProjFixtureNote { text: string; by?: string; ts: number; }
 export const MAX_FIXTURE_NOTE_LEN = 400;
 
 /**
+ * TYÖTAULU — keikan yhteinen tehtävä- ja viestilista.
+ *
+ * YKSI LISTA, KAKSI LAJIA. Tehtävä on jotain joka odottaa tekemistä ja jonka
+ * voi kuitata; merkintä on jotain joka on jo tehty tai sanottu. Ne ovat samassa
+ * listassa koska ne ovat samaa keskustelua: "vaihtakaa kellarin lamput" ja
+ * "kellarin lamput vaihdettu" kuuluvat vierekkäin, eivät kahteen eri näkymään
+ * joita pitää lukea rinnakkain.
+ *
+ * KOLME KIRJOITTAJAA, YKSI TAULU. Asiakas lisää tehtäviä seurantasivultaan,
+ * tekijä kuittaa niitä ja kirjaa mitä teki, johtaja tekee kumpaakin. Siksi
+ * tämä on SERVERIN OMISTAMA kenttä kuten `scope` ja `fixtureQuote`: kolme
+ * kirjoittajaa samaan listaan tarkoittaa, että johtajan karttamuokkauksen
+ * autosave pyyhkisi asiakkaan juuri lisäämän tehtävän, ellei tallennus lue
+ * kannan tuoreinta arvoa.
+ *
+ * NIMI TALLENNETAAN KIRJOITUSHETKELLÄ (`byName`). Asiakas ei ole
+ * crew-listassa, joten hänen nimeään ei voi jälkikäteen selvittää id:stä —
+ * ja tekijänkin nimi voi muuttua, jolloin vanha rivi väittäisi väärää.
+ */
+export type ProjBoardKind = "task" | "note";
+
+export interface ProjBoardEntry {
+  id: string;
+  kind: ProjBoardKind;
+  text: string;
+  /** Kirjoittaja: tekijän id, tai `"customer"` kun kirjoittaja on asiakas. */
+  by: string;
+  /** Näyttönimi kirjoitushetkellä — ks. yllä. */
+  byName?: string;
+  at: number;
+  /** Vain tehtävällä: kuka kuittasi tehdyksi ja milloin. */
+  done?: { by: string; byName?: string; at: number };
+}
+
+/** Asiakkaan kirjoittajatunnus. Ei ole eikä voi olla tekijän id. */
+export const BOARD_CUSTOMER = "customer";
+
+export const MAX_BOARD_TEXT_LEN = 600;
+/** Taulun pituusraja. Vanhin putoaa pois, kuten lokeilla muutenkin. */
+export const MAX_BOARD_ENTRIES = 300;
+
+export function toBoardKind(v: any): ProjBoardKind {
+  return v === "task" ? "task" : "note";
+}
+
+/**
+ * Työtaulun siivous. Tekstitön rivi putoaa: tyhjä viesti ei ole viesti, ja
+ * tyhjä tehtävä ei ole tehtävä.
+ */
+export function sanitizeBoard(input: any): ProjBoardEntry[] {
+  if (!Array.isArray(input)) return [];
+  const out: ProjBoardEntry[] = [];
+  const seen = new Set<string>();
+  for (const e of input.slice(-MAX_BOARD_ENTRIES)) {
+    const id = String(e?.id ?? "").trim().slice(0, 40);
+    const text = String(e?.text ?? "").trim().slice(0, MAX_BOARD_TEXT_LEN);
+    const by = String(e?.by ?? "").trim().slice(0, 40);
+    if (!id || !text || !by || seen.has(id)) continue;
+    seen.add(id);
+    const kind = toBoardKind(e?.kind);
+    const doneBy = e?.done && typeof e.done === "object" ? String(e.done.by ?? "").trim().slice(0, 40) : "";
+    out.push({
+      id, kind, text, by,
+      ...(e?.byName ? { byName: String(e.byName).slice(0, 60) } : {}),
+      at: Number(e?.at) || Date.now(),
+      // Kuittaus vain tehtävällä: merkinnällä ei ole mitään kuitattavaa, ja
+      // sinne eksynyt kuittaus näyttäisi listalla tehdyltä tehtävältä.
+      ...(kind === "task" && doneBy
+        ? { done: {
+            by: doneBy,
+            ...(e.done.byName ? { byName: String(e.done.byName).slice(0, 60) } : {}),
+            at: Number(e.done.at) || Date.now(),
+          } }
+        : {}),
+    });
+  }
+  return out;
+}
+
+/** Avoimet tehtävät ensin, uusin ylimmäksi; kuitatut ja merkinnät perässä. */
+export function sortedBoard(entries: ProjBoardEntry[]): ProjBoardEntry[] {
+  return [...entries].sort((a, b) => {
+    const aOpen = a.kind === "task" && !a.done ? 0 : 1;
+    const bOpen = b.kind === "task" && !b.done ? 0 : 1;
+    return aOpen - bOpen || b.at - a.at;
+  });
+}
+
+/** Montako tehtävää odottaa kuittausta. */
+export function openTaskCount(entries: ProjBoardEntry[] | undefined): number {
+  return (entries ?? []).filter((e) => e.kind === "task" && !e.done).length;
+}
+
+/**
+ * LASKUTUSTILA — kaksi tapaa tehdä keikkaa, ja ne eivät saa sekoittua.
+ *
+ *   "targeted" — KOHDENNETTU HINNOITTELU. Kaikki mitä tähän asti on ollut:
+ *                ikkunapisteet, hinta per ikkuna, urakka, erät, keltaisten
+ *                neuvottelu. FR8 on tämä.
+ *   "hourly"   — TUNTIHINNOITTELU. Vain tehdyt tunnit. Ei ikkunahintaa, ei
+ *                urakkaa, ei per-kohde-hinnoittelua.
+ *
+ * PUUTTUVA ARVO ON "targeted", eikä sitä kirjoiteta talteen. Se on ainoa tapa
+ * jolla FR8:n ja jokaisen olemassa olevan keikan käytös pysyy tavu tavulta
+ * entisellään: mitään ei ole valittu, joten mikään ei muutu. Tila kirjoitetaan
+ * vasta kun joku valitsee sen.
+ */
+export type BillingMode = "targeted" | "hourly";
+
+export function toBillingMode(v: any): BillingMode | undefined {
+  return v === "targeted" || v === "hourly" ? v : undefined;
+}
+
+/** Keikan laskutustila. Puuttuva = "targeted" (ks. yllä). */
+export function billingModeOf(data: ProjectData | null | undefined): BillingMode {
+  return toBillingMode(data?.billingMode) ?? "targeted";
+}
+
+/** Onko keikka tuntitilassa? Lyhenne luettavuuden vuoksi. */
+export function isHourlyGig(data: ProjectData | null | undefined): boolean {
+  return billingModeOf(data) === "hourly";
+}
+
+/**
+ * TUNTITILAN PYÖRISTYS — lähimpään täyteen tuntiin, puolikas ylös.
+ *
+ * 30 min → 1 h, 20 min → 0 h. Jälkimmäinen on tarkoitus eikä sivuvaikutus:
+ * lyhyt piipahdus ei kerrytä tuntia, joten työaikaa ei kannata aloittaa ja
+ * lopettaa saman tien. Johtaja voi aina korjata luvun käsin, joten pyöristys
+ * ei ole viimeinen sana vaan lähtökohta.
+ *
+ * Koskee VAIN tuntitilaa. Kohdennetussa tilassa tunnit ovat tarkkoja kuten
+ * ennenkin — siellä ne ovat seurantatietoa, eivät laskutuksen perusta.
+ */
+export function roundWorkHours(hours: number): number {
+  if (!Number.isFinite(hours) || hours <= 0) return 0;
+  return Math.round(hours);
+}
+
+/** Sama pyöristys minuuteista, jottei kutsupaikoissa jaeta kuudellakymmenellä. */
+export function roundWorkHoursFromMinutes(minutes: number): number {
+  return roundWorkHours((Number(minutes) || 0) / 60);
+}
+
+/**
+ * UNOHTUNUT AJASTIN — pisin tunti­määrä jonka yksi vuoro voi kirjata.
+ *
+ * Ajastin jää päälle. Se ei ole reunatapaus vaan se mitä tapahtuu, kun päivä
+ * loppuu kesken ja puhelin menee taskuun: seuraavana aamuna "päätä työtunti"
+ * kirjaisi 35 tuntia yhtenä vuorona. Kukaan ei tee 35 tunnin työvuoroa, joten
+ * se luku ei ole työaika vaan mittausvirhe — ja tuntitilassa se olisi menossa
+ * suoraan asiakkaan laskulle ja tekijän palkkaan.
+ *
+ * 16 tuntia on tarkoituksella reilusti pisintä oikeaa työpäivää pidempi: raja
+ * ei saa leikata todellista pitkää päivää, sen tehtävä on pysäyttää selvä
+ * virhe. Rajaan osunut vuoro merkitään (`note`), jottei kukaan joudu
+ * arvailemaan mistä luku tuli — ja johtaja korjaa sen käsin oikeaksi.
+ */
+export const MAX_TIMER_SHIFT_HOURS = 16;
+
+export function cappedTimerHours(hours: number): { hours: number; capped: boolean } {
+  const h = roundWorkHours(hours);
+  return h > MAX_TIMER_SHIFT_HOURS
+    ? { hours: MAX_TIMER_SHIFT_HOURS, capped: true }
+    : { hours: h, capped: false };
+}
+
+/**
+ * TUNTITILAN TYÖVUOROT — oma kirjanpitonsa, ei `hours`-kentän jatkoa.
+ *
+ * MIKSI OMA KENTTÄ. `hours` on vanhan projektityökalun juokseva summa: sinne on
+ * vuosien varrella kertynyt tunteja ikkunapesukeikoilta, ja FR8:lla se on
+ * satoja tunteja. Jos tuntitila lukisi samaa kenttää, tuntinäkymä avautuisi
+ * ensimmäisellä kerralla näyttäen 255 tuntia joita kukaan ei ole tehnyt TÄLLE
+ * työlle — ja koska tuntitilassa tunnit ovat LASKU, väärä luku ei ole
+ * kosmeettinen vaan väärä lasku.
+ *
+ * Siksi tuntitila ei lue eikä kirjoita `hours`ia lainkaan. Se pitää omaa
+ * päiväkirjaansa: jokainen rivi on yksi kirjattu vuoro, jolla on päivä. Vanha
+ * puoli jatkaa `hours`illa täsmälleen kuten ennen, eikä kumpikaan näe toisen
+ * lukuja.
+ *
+ * PÄIVÄ TALLENNETAAN TEKSTINÄ (`day`, "2026-08-25") eikä johdeta `at`-hetkestä
+ * lukuhetkellä. Vuoro kuuluu siihen päivään jona se tehtiin, myös silloin kun
+ * se kirjataan jälkikäteen tai kun lukija on eri aikavyöhykkeellä.
+ *
+ * SERVERIN OMISTAMA. Kirjoittajia on kaksi — tekijän ajastin ja johtajan käsin
+ * korjaus — ja johtajan karttamuokkauksen autosave pyyhkisi juuri päättyneen
+ * vuoron, ellei tallennus lukisi kannan tuoreinta arvoa. Sama vika joka
+ * `scope`illa kerran oli; täällä se maksaisi jonkun palkkaa.
+ */
+export interface ProjShift {
+  id: string;
+  /** Tekijän id. */
+  worker: string;
+  /** Kalenteripäivä "YYYY-MM-DD" — ks. yllä. */
+  day: string;
+  /** Tunnit. Negatiivinen = johtajan korjaus (`by` kertoo kuka korjasi). */
+  hours: number;
+  /** Kirjaushetki (epoch ms). Järjestää saman päivän rivit. */
+  at: number;
+  /** Ajastimen alkuhetki, kun vuoro ajettiin ajastimella. */
+  startedAt?: number;
+  /** Kuka kirjasi, jos joku muu kuin tekijä itse. */
+  by?: string;
+  /** Vapaa selite, esim. korjauksen syy. */
+  note?: string;
+}
+
+/** Vuorolistan pituusraja. Vanhin putoaa, kuten lokeilla muutenkin. */
+export const MAX_SHIFTS = 500;
+export const MAX_SHIFT_NOTE_LEN = 120;
+
+/**
+ * Kalenteripäivä "YYYY-MM-DD" paikallisessa ajassa.
+ *
+ * EI `toISOString()`, joka antaa UTC-päivän: Suomessa kello 01:30 kirjattu
+ * vuoro kuuluisi silloin edelliselle päivälle. Ilta- ja yötyö on tällä alalla
+ * tavallista, joten se ei ole reunatapaus.
+ */
+export function dayKey(ms: number = Date.now()): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** Onko merkkijono kelvollinen päiväavain. */
+export function isDayKey(v: any): boolean {
+  return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+}
+
+/** "ma 25.8." — lyhyt päivämäärä listalle. */
+export function fmtDayLabel(day: string): string {
+  if (!isDayKey(day)) return day;
+  const [y, mo, d] = day.split("-").map(Number);
+  const dt = new Date(y, mo - 1, d);
+  const wd = ["su", "ma", "ti", "ke", "to", "pe", "la"][dt.getDay()];
+  return `${wd} ${d}.${mo}.`;
+}
+
+/** Tunnit ihmisen luettavaksi: 7 → "7", 7.5 → "7,5". */
+export function fmtShiftHours(h: number): string {
+  return h.toLocaleString("fi-FI", { maximumFractionDigits: 1 });
+}
+
+export function sanitizeShifts(input: any): ProjShift[] {
+  if (!Array.isArray(input)) return [];
+  const out: ProjShift[] = [];
+  const seen = new Set<string>();
+  for (const s of input.slice(-MAX_SHIFTS)) {
+    const id = String(s?.id ?? "").trim().slice(0, 40);
+    const worker = String(s?.worker ?? "").trim().slice(0, 40);
+    const hours = Math.round((Number(s?.hours) || 0) * 100) / 100;
+    if (!id || !worker || !hours || seen.has(id)) continue;
+    seen.add(id);
+    const at = Number(s?.at) || Date.now();
+    out.push({
+      id, worker, hours, at,
+      // Kelvoton päivä johdetaan kirjaushetkestä: rivi ilman päivää ei kuuluisi
+      // mihinkään päivään, ja koko näkymä on päivien varassa.
+      day: isDayKey(s?.day) ? s.day : dayKey(at),
+      ...(Number(s?.startedAt) ? { startedAt: Number(s.startedAt) } : {}),
+      ...(s?.by ? { by: String(s.by).trim().slice(0, 40) } : {}),
+      ...(s?.note ? { note: String(s.note).trim().slice(0, MAX_SHIFT_NOTE_LEN) } : {}),
+    });
+  }
+  return out;
+}
+
+export interface ShiftWorkerRow {
+  id: string;
+  hours: number;
+  /** Montako eri päivää tekijällä on kirjauksia. */
+  days: number;
+  /** Viimeisin kirjaushetki. */
+  lastAt: number;
+}
+
+export interface ShiftDayRow {
+  day: string;
+  hours: number;
+  /** Tekijöiden id:t tälle päivälle, tunnit suurimmasta pienimpään. */
+  workers: { id: string; hours: number }[];
+}
+
+export interface ShiftStats {
+  totalHours: number;
+  /** Tunnit kuluvalle kalenteripäivälle. */
+  todayHours: number;
+  byWorker: ShiftWorkerRow[];
+  /** Päivät uusimmasta vanhimpaan. */
+  byDay: ShiftDayRow[];
+}
+
+/**
+ * Tuntitilan tilasto. Kaikki mitä näkymä tarvitsee lasketaan tässä yhdessä
+ * paikassa, jottei johtajan ja asiakkaan luku voi erota toisistaan.
+ *
+ * NEGATIIVISET RIVIT (johtajan korjaukset) lasketaan mukaan summiin mutta
+ * tekijän kokonaisluku ei mene alle nollan: miinukselle mennyt palkkarivi
+ * olisi virhe jota ei voi lukea, ja korjaus on aina korjaus johonkin.
+ */
+export function computeShiftStats(shifts: ProjShift[] | undefined, today: string = dayKey()): ShiftStats {
+  const list = shifts ?? [];
+  const wSum = new Map<string, { hours: number; days: Set<string>; lastAt: number }>();
+  const dSum = new Map<string, Map<string, number>>();
+  let todayHours = 0;
+
+  for (const s of list) {
+    const w = wSum.get(s.worker) ?? { hours: 0, days: new Set<string>(), lastAt: 0 };
+    w.hours += s.hours;
+    w.days.add(s.day);
+    w.lastAt = Math.max(w.lastAt, s.at);
+    wSum.set(s.worker, w);
+
+    const d = dSum.get(s.day) ?? new Map<string, number>();
+    d.set(s.worker, (d.get(s.worker) ?? 0) + s.hours);
+    dSum.set(s.day, d);
+
+    if (s.day === today) todayHours += s.hours;
+  }
+
+  const byWorker: ShiftWorkerRow[] = Array.from(wSum.entries())
+    .map(([id, v]) => ({ id, hours: Math.max(0, Math.round(v.hours * 100) / 100), days: v.days.size, lastAt: v.lastAt }))
+    .filter((r) => r.hours > 0)
+    .sort((a, b) => b.hours - a.hours || a.id.localeCompare(b.id));
+
+  const byDay: ShiftDayRow[] = Array.from(dSum.entries())
+    .map(([day, m]) => ({
+      day,
+      hours: Math.max(0, Math.round(Array.from(m.values()).reduce((a, h) => a + h, 0) * 100) / 100),
+      workers: Array.from(m.entries())
+        .map(([id, hours]) => ({ id, hours: Math.round(hours * 100) / 100 }))
+        .filter((x) => x.hours > 0)
+        .sort((a, b) => b.hours - a.hours || a.id.localeCompare(b.id)),
+    }))
+    .filter((d) => d.hours > 0)
+    .sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : 0));
+
+  return {
+    totalHours: Math.round(byWorker.reduce((a, r) => a + r.hours, 0) * 100) / 100,
+    todayHours: Math.max(0, Math.round(todayHours * 100) / 100),
+    byWorker,
+    byDay,
+  };
+}
+
+/** Tekijän tunnit tuntitilassa. Käsin korjaus ei saa viedä alle nollan. */
+export function shiftHoursOf(shifts: ProjShift[] | undefined, worker: string): number {
+  const sum = (shifts ?? []).filter((s) => s.worker === worker).reduce((a, s) => a + s.hours, 0);
+  return Math.max(0, Math.round(sum * 100) / 100);
+}
+
+/** Tekijän tunnit YHTENÄ päivänä. */
+export function shiftHoursOnDay(shifts: ProjShift[] | undefined, worker: string, day: string): number {
+  const sum = (shifts ?? []).filter((s) => s.worker === worker && s.day === day).reduce((a, s) => a + s.hours, 0);
+  return Math.round(sum * 100) / 100;
+}
+
+/**
+ * KÄSIN KIRJAUS — yksi rivi per tekijä ja päivä, ei rivi per napautus.
+ *
+ * MIKSI YHDISTETÄÄN. Ensimmäinen versio lisäsi jokaisesta napautuksesta oman
+ * rivinsä, ja se näytti ruudulla tältä:
+ *
+ *     Joonatan +35 h ×   Joonatan −1 h ×   Joonatan −1 h ×
+ *     Joonatan +1 h ×    Joonatan +1 h ×
+ *
+ * Kaksi vikaa yhdessä. Päiväkirja täyttyi sirpaleista, JA — pahempi — kun
+ * korjasi tunnin alas ja takaisin ylös, päivän summa ei liikkunut lainkaan.
+ * Kirjaus näytti siis siltä ettei se tehnyt mitään, vaikka se toimi joka
+ * kerta. Nyt saman päivän käsin kirjaukset kertyvät yhteen riviin: napautus
+ * muuttaa lukua, ja luku on se mitä ruudulla näkyy.
+ *
+ * AJASTIMEN VUORO EI YHDISTY. Sillä on `startedAt`, ja se on tieto omasta
+ * työvuorosta — ei korjaus. Kaksi eri vuoroa samana päivänä ovat kaksi
+ * vuoroa, ja niiden yhdistäminen hävittäisi alkuajat.
+ *
+ * PÄIVÄ EI MENE MIINUKSELLE. Vähennys rajataan siihen mitä sinä päivänä on:
+ * miinukselle mennyt päivä katoaisi päiväkirjasta (siellä näkyvät vain päivät
+ * joilla on tunteja) mutta jäisi vähentämään kokonaissummaa — jolloin
+ * päiväkirja ei täsmäisi summan kanssa eikä eroa voisi mistään selittää.
+ */
+export function addShiftEntry(
+  shifts: ProjShift[],
+  entry: { id: string; worker: string; hours: number; day: string; at: number; startedAt?: number; by?: string; note?: string },
+): ProjShift[] {
+  const dayCur = shiftHoursOnDay(shifts, entry.worker, entry.day);
+  const hours = entry.hours < 0 ? -Math.min(dayCur, -entry.hours) : entry.hours;
+  if (!hours) return shifts;
+
+  if (!entry.startedAt) {
+    const idx = shifts.findIndex((s) => s.worker === entry.worker && s.day === entry.day && !s.startedAt);
+    if (idx >= 0) {
+      const merged = Math.round((shifts[idx].hours + hours) * 100) / 100;
+      // Nollaan kutistunut korjausrivi poistetaan: "+0 h" ei ole kirjaus.
+      if (!merged) return shifts.filter((_, i) => i !== idx);
+      return shifts.map((s, i) => (i === idx
+        ? { ...s, hours: merged, at: entry.at, ...(entry.by ? { by: entry.by } : {}), ...(entry.note ? { note: entry.note } : {}) }
+        : s));
+    }
+  }
+
+  return [...shifts, {
+    id: entry.id, worker: entry.worker, hours, day: entry.day, at: entry.at,
+    ...(entry.startedAt ? { startedAt: entry.startedAt } : {}),
+    ...(entry.by ? { by: entry.by } : {}),
+    ...(entry.note ? { note: entry.note } : {}),
+  }].slice(-MAX_SHIFTS);
+}
+
+/**
  * Ovipisteet — kartalle merkittyjä ovia, joista jokainen on TEHTÄVÄ: se on joko
  * tekemättä tai tehty, sillä voi olla lyhyt tehtävänimi (`label`, esim.
  * "karmit + lasi") ja huomautus.
@@ -94,6 +506,83 @@ export interface ProjDoorMark { key: string; x: number; y: number; label?: strin
 
 /** Oven tehtävänimen enimmäispituus. */
 export const MAX_DOOR_LABEL_LEN = 60;
+
+/**
+ * TILAUS — mitä pitää ostaa, ja mitä asiakas siitä maksaisi.
+ *
+ * Tämä on jaettu KAHTEEN objektiin, ja jako on tarkoituksellinen: ne ovat eri
+ * ihmisten kirjoittamia, ja niillä on siksi eri omistaja tallennuspolussa.
+ *
+ *   `fixtureOrder` — JOHTAJAN. Malli ja määrä. Kulkee tavallisen blob-
+ *                    tallennuksen mukana kuten muukin karttadata.
+ *   `fixtureQuote` — ASIAKKAAN. Hintaehdotus. SERVERIN OMISTAMA kuten `scope`
+ *                    ja `p2`: sitä mutatoidaan vain omalta reitiltään, ja
+ *                    jokainen blob-tallennus palauttaa kannan tuoreimman
+ *                    arvon. Ilman tätä johtajan yksi pistesiirto pyyhkisi
+ *                    asiakkaan juuri antaman hinnan — sama vika joka `scope`illa
+ *                    kerran oli.
+ */
+export interface FixtureOrder {
+  /** Lampun malli, esim. "E27 LED 9W 2700K". */
+  lampModel?: string;
+  /** Käsin asetettu ostettava määrä. Puuttuva = laskettu rikkinäisten määrä. */
+  bulbsNeeded?: number;
+  /** Mitä oviin menee, esim. "EPDM D-tiiviste, valkoinen". Saatetieto: kertoo
+   *  mitä kohteeseen asennetaan, ei vaikuta hintaan. */
+  doorMaterial?: string;
+  /** Käsin asetettu ovimäärä. Puuttuva = laskettu tekemättömien ovien määrä. */
+  doorsNeeded?: number;
+  /** Johtajan huomio tilauksesta — näkyy asiakkaalle. */
+  note?: string;
+}
+
+/**
+ * Asiakkaan hintaehdotus. Ei sitova tarjous, vaan asiakkaan oma ehdotus.
+ *
+ * HINTA ON TYÖSTÄ, EI TARVIKKEESTA. Asiakas ei osta meiltä polttimoa vaan sen
+ * vaihtamisen, eikä tiivistettä vaan sen vaihtamisen — molemmat per kohde.
+ * Tarvikkeen malli (`lampModel`, `doorMaterial`) on saatetieto siitä mitä
+ * kohteeseen menee, eikä se vaikuta hintaan lainkaan.
+ */
+export interface FixtureQuote {
+  /** Asiakkaan ehdotus yhden lampun VAIHTAMISESTA (senttiä). */
+  lampWorkPriceCents?: number;
+  /** Asiakkaan ehdotus yhden oven TIIVISTEEN VAIHTAMISESTA (senttiä). */
+  doorWorkPriceCents?: number;
+  /** Vapaa viesti hinnoista. */
+  note?: string;
+  /** Milloin asiakas viimeksi tallensi ehdotuksen. */
+  at: number;
+}
+
+/**
+ * LAMPPUMALLIT — kaikki lamput eivät ole samaa mallia.
+ *
+ * Yksi `fixtureOrder.lampModel` riitti kun keikalla oli yhtä lamppua; oikeassa
+ * kiinteistössä on E27:ää, G9:ää ja loisteputkea samassa portaikossa, ja
+ * ostoslista on väärä jos se sanoo pelkän kokonaismäärän. Malli on siis LISTA
+ * jota johtaja ylläpitää (lisää/poistaa), ja jokainen lamppu voi osoittaa
+ * yhteen niistä (`lampModelOf`).
+ *
+ * MALLITON LAMPPU ON SALLITTU TILA eikä virhe: kartoitus on nopeaa ja malli
+ * katsotaan usein vasta jälkikäteen. Malliton putoaa omaan "Ei mallia"
+ * -riviinsä, jotta se näkyy eikä katoa summaan.
+ */
+export interface LampModel {
+  /** Vakaa tunnus, `"m<rand>"`. Nimi voi muuttua, tunnus ei. */
+  id: string;
+  name: string;
+}
+
+/** Kuinka monta mallia yhdellä keikalla — käytännön yläraja, ei tekninen. */
+export const MAX_LAMP_MODELS = 24;
+
+export const MAX_FIXTURE_MODEL_LEN = 80;
+export const MAX_FIXTURE_ORDER_NOTE_LEN = 300;
+export const MAX_FIXTURE_QUOTE_NOTE_LEN = 500;
+/** Yläraja yhden vaihtotyön hinnalle (2 000 €), jottei kirjoitusvirhe tee
+ *  miljoonatarjousta. */
+export const MAX_FIXTURE_UNIT_PRICE_CENTS = 200_000;
 
 /**
  * A non-window map marker: important rooms / navigation aids the crew place on a
@@ -230,6 +719,19 @@ export interface ProjExpense {
   /** Optional photo of the receipt (kuitti), downscaled data URL. Kirjanpitoa
    *  varten: jokaisesta kulusta talletetaan kuitti + aikaleima. */
   receiptDataUrl?: string;
+  /**
+   * Näytetäänkö tämä kulu ASIAKKAALLE hänen seurantasivullaan.
+   *
+   * OLETUS ON EI, ja se on tarkoituksellinen. Valtaosa kuluista on meidän
+   * sisäisiä — tekijän bussilippu, oma kalusto, polttoaine — eivätkä ne kuulu
+   * asiakkaalle. Asiakkaalle näytetään vain se mitä on ostettu HÄNTÄ VARTEN:
+   * polttimot, tiivisteet, tarvikkeet. Siksi tämä on merkintä jonka johtaja
+   * tekee kululle erikseen, ei suodatin jonka voi unohtaa väärin päin.
+   *
+   * Kuitti EI seuraa mukana asiakkaalle missään tapauksessa: se on
+   * kirjanpitomme tosite, ei asiakkaan asiakirja.
+   */
+  forCustomer?: boolean;
 }
 
 /**
@@ -355,6 +857,25 @@ export interface ProjectData {
   doorNotes?: Record<string, ProjFixtureNote>;
   /** Oven avain → kuka lisäsi pisteen kartalle ja milloin. */
   doorAddedBy?: Record<string, ProjMarkBy>;
+  /** Keikan laskutustila (`BillingMode`). Puuttuva = "targeted" — ks. tyypin
+   *  dokumentaatio siitä miksi sitä ei kirjoiteta oletuksena. */
+  billingMode?: BillingMode;
+  /** Työtaulu: keikan yhteinen tehtävä- ja viestilista (`ProjBoardEntry`).
+   *  SERVERIN OMISTAMA — kolme kirjoittajaa, ks. tyypin dokumentaatio. */
+  board?: ProjBoardEntry[];
+  /** Tuntitilan työvuorot (`ProjShift`). Oma kirjanpitonsa, EI `hours`-kentän
+   *  jatke — ks. tyypin dokumentaatio siitä miksi. SERVERIN OMISTAMA. */
+  shifts?: ProjShift[];
+  /** Johtajan ostotieto: malli ja määrä (`FixtureOrder`). */
+  fixtureOrder?: FixtureOrder;
+  /** Keikan lamppumallit (`LampModel`). Johtaja ylläpitää listaa. */
+  lampModels?: LampModel[];
+  /** Lampun avain → mallin id. Puuttuva = malli katsomatta. */
+  lampModelOf?: Record<string, string>;
+  /** Asiakkaan hintaehdotus (`FixtureQuote`). SERVERIN OMISTAMA — mutatoidaan
+   *  vain /fixture-quote-reitiltä, geneerinen blob-tallennus säilyttää talletetun
+   *  kopion kuten `p2`/`guided`/`scope`. */
+  fixtureQuote?: FixtureQuote;
   notes?: Record<string, ProjMapNote[]>;           // floor → navigation markers / notes
   observations?: Record<string, ProjWindowObservation>; // window key → worker's observation
   activeZone?: ProjActiveZone | null;              // where work is happening right now
@@ -978,6 +1499,260 @@ export function computeLampWorkerStats(data: ProjectData): LampWorkerStat[] {
   return Array.from(by.values()).sort((a, b) => (b.changed - a.changed) || (b.noted - a.noted));
 }
 
+// ─── Lamppuvarasto: mitä pitää ostaa ja mikä on jo kunnossa ───────────────────
+//
+// NELJÄ TOISENSA POISSULKEVAA ÄMPÄRIÄ. Lampulla on kaksi erillistä kenttää
+// (vaihdettu / kunto), mutta raportti tarvitsee yhden tilan per lamppu — muuten
+// summat eivät täsmää ja "rikki" laskettaisiin kahdesti. Järjestys on
+// tarkoituksellinen ja ratkaisee päällekkäisyydet:
+//
+//   1. VAIHDETTU   — me korjasimme sen. Voittaa kunnon: rikkinäinen lamppu joka
+//                    on vaihdettu EI enää tarvitse polttimoa.
+//   2. RIKKI       — todettu rikkinäiseksi eikä vaihdettu → tähän ostetaan.
+//   3. TOIMIVA     — tarkastettu, ei tehtävää.
+//   4. EI TARKASTETTU — vielä käymättä.
+//
+// Neljä ämpäriä summautuu aina lamppujen kokonaismäärään, joten pinopalkki
+// kertoo koko kerroksen ilman jäännöstä.
+
+/** Tarvitseeko lamppu uuden polttimon: rikki eikä vielä vaihdettu. */
+export function lampNeedsBulb(p: ProjLampPoint): boolean {
+  return p.status !== "vaihdettu" && p.condition === "rikki";
+}
+
+/** Onko lamppu kunnossa juuri nyt (vaihdettu tai todettu toimivaksi)? */
+export function lampIsFunctional(p: ProjLampPoint): boolean {
+  return p.status === "vaihdettu" || p.condition === "toimiva";
+}
+
+/** Yhden lampun raportointitila — täsmälleen yksi neljästä. */
+export type LampBucket = "vaihdettu" | "rikki" | "toimiva" | "tarkastamatta";
+
+export function lampBucket(p: ProjLampPoint): LampBucket {
+  if (p.status === "vaihdettu") return "vaihdettu";
+  if (p.condition === "rikki") return "rikki";
+  if (p.condition === "toimiva") return "toimiva";
+  return "tarkastamatta";
+}
+
+export interface LampFloorStat {
+  floor: string;
+  total: number;
+  /** Vaihdetut — me korjasimme. */
+  changed: number;
+  /** Rikki eikä vaihdettu → tälle kerrokselle ostettava määrä. */
+  needsBulb: number;
+  /** Tarkastettu toimivaksi. */
+  working: number;
+  /** Ei vielä tarkastettu. */
+  unchecked: number;
+}
+
+/** Kerroksittainen lamppujakauma — pinopalkin ja ostolistan lähde. */
+export function computeLampFloorStats(data: ProjectData): LampFloorStat[] {
+  const floors = data.building.floors.length ? data.building.floors : DEFAULT_FLOORS;
+  const rows = new Map<string, LampFloorStat>(
+    floors.map((f) => [f, { floor: f, total: 0, changed: 0, needsBulb: 0, working: 0, unchecked: 0 }]),
+  );
+  for (const p of allLampPoints(data)) {
+    const row = rows.get(p.floor);
+    if (!row) continue;
+    row.total += 1;
+    const b = lampBucket(p);
+    if (b === "vaihdettu") row.changed += 1;
+    else if (b === "rikki") row.needsBulb += 1;
+    else if (b === "toimiva") row.working += 1;
+    else row.unchecked += 1;
+  }
+  // Kerrokseton kerros ei kuulu raporttiin: tyhjä rivi on kohinaa, ei tietoa.
+  return floors.map((f) => rows.get(f)!).filter((r) => r.total > 0);
+}
+
+/**
+ * Koko keikan lamppuvarasto — se yksi luku josta ostos tehdään, ja se toinen
+ * josta asiakas näkee edistymän.
+ *
+ * `total` ON KARTALLE MERKITTYJEN LAMPPUJEN MÄÄRÄ, EI KIINTEISTÖN LAMPPUJEN
+ * MÄÄRÄ. Nämä kaksi eivät ole sama luku eivätkä lähene toisiaan itsestään:
+ * kartoitus on käsityötä, ja merkitsemätön lamppu on tälle laskennalle
+ * olematon — ei "tarkastamaton" vaan tuntematon. Jos näkymä sanoo "5 lamppua",
+ * se tarkoittaa "5 merkittyä", ja asiakas voi lukea sen "talossa on 5 lamppua"
+ * ellei sitä sanota ääneen. Siksi jokainen luku esitetään näkymissä sanoin
+ * "merkityistä" — ks. `FixturePanel` ja asiakkaan `FixturesPanel`.
+ */
+export interface LampInventory {
+  /** Kartalle MERKITYT lamput. Ei kiinteistön kokonaismäärä — ks. yllä. */
+  total: number;
+  /** Montako polttimoa pitää ostaa (= rikki, vaihtamatta). */
+  needsBulbs: number;
+  /** Montako on jo vaihdettu. */
+  fixed: number;
+  /** Kunnossa juuri nyt: vaihdetut + toimivaksi todetut. */
+  functional: number;
+  /** Kunnossa olevien osuus tarkastetuista (0..100). Tarkastamattomat eivät ole
+   *  nimittäjässä — muuten luku putoaisi joka kerta kun kartalle lisätään piste. */
+  functionalPct: number;
+  /** Tarkastetut yhteensä (= total - tarkastamattomat). */
+  checked: number;
+  unchecked: number;
+  working: number;
+  byFloor: LampFloorStat[];
+}
+
+export function computeLampInventory(data: ProjectData): LampInventory {
+  const byFloor = computeLampFloorStats(data);
+  const sum = (pick: (r: LampFloorStat) => number) => byFloor.reduce((n, r) => n + pick(r), 0);
+  const total = sum((r) => r.total);
+  const needsBulbs = sum((r) => r.needsBulb);
+  const fixed = sum((r) => r.changed);
+  const working = sum((r) => r.working);
+  const unchecked = sum((r) => r.unchecked);
+  const checked = total - unchecked;
+  const functional = fixed + working;
+  return {
+    total, needsBulbs, fixed, working, unchecked, checked, functional,
+    functionalPct: checked > 0 ? (functional / checked) * 100 : 0,
+    byFloor,
+  };
+}
+
+/**
+ * MALLIKOHTAINEN OSTOSLISTA — se lista jolla rautakaupassa käydään.
+ *
+ * Kokonaismäärä ei kelpaa ostoksiin: seitsemän rikkinäistä lamppua voi olla
+ * neljä E27:ää ja kolme G9:ää, eikä kumpaakaan saa oikean määrän arvaamalla.
+ *
+ * MALLITTOMAT EIVÄT KATOA. Ne kootaan omaksi riivikseen (`id: null`), koska
+ * niistä pitää nimenomaan tietää: ne ovat se osa listaa jota ei voi vielä
+ * ostaa. Rivi jätetään pois vain kun mallittomia ei ole yhtään.
+ *
+ * Järjestys on ostettavien määrä laskevasti — suurin erä ensin.
+ */
+export interface LampModelStat {
+  /** Mallin id, tai null kun mallia ei ole katsottu. */
+  id: string | null;
+  name: string;
+  /** Montako lamppua tällä mallilla on merkitty. */
+  total: number;
+  /** Montako niistä pitää vaihtaa → ostettava määrä tätä mallia. */
+  needsBulb: number;
+  /** Montako on jo vaihdettu. */
+  changed: number;
+}
+
+export function computeLampModelStats(data: ProjectData): LampModelStat[] {
+  const models = data.lampModels ?? [];
+  const nameById = new Map(models.map((m) => [m.id, m.name]));
+  const assigned = data.lampModelOf ?? {};
+  const rows = new Map<string, LampModelStat>();
+  const row = (id: string | null, name: string) => {
+    const k = id ?? "";
+    let r = rows.get(k);
+    if (!r) { r = { id, name, total: 0, needsBulb: 0, changed: 0 }; rows.set(k, r); }
+    return r;
+  };
+  for (const p of allLampPoints(data)) {
+    const id = assigned[p.key];
+    // Poistettuun malliin osoittava lamppu kohdellaan mallittomana: viite on
+    // vanhentunut, eikä poistettua mallia saa herättää henkiin listalle.
+    const known = id && nameById.has(id) ? id : null;
+    const r = row(known, known ? nameById.get(known)! : "Ei mallia");
+    r.total += 1;
+    if (lampNeedsBulb(p)) r.needsBulb += 1;
+    if (p.status === "vaihdettu") r.changed += 1;
+  }
+  // Käyttämätön malli näkyy nollarivinä: johtaja lisäsi sen syystä, ja tyhjä
+  // rivi kertoo että sitä ei ole vielä osoitettu yhdellekään lampulle.
+  for (const m of models) if (!rows.has(m.id)) row(m.id, m.name);
+  return Array.from(rows.values()).sort((a, b) => (b.needsBulb - a.needsBulb) || (b.total - a.total));
+}
+
+/** Kerroksittainen ovijakauma — sama muoto kuin lampuilla, kaksi tilaa. */
+export interface DoorFloorStat { floor: string; total: number; done: number; open: number; }
+
+export function computeDoorFloorStats(data: ProjectData): DoorFloorStat[] {
+  const floors = data.building.floors.length ? data.building.floors : DEFAULT_FLOORS;
+  const rows = new Map<string, DoorFloorStat>(floors.map((f) => [f, { floor: f, total: 0, done: 0, open: 0 }]));
+  for (const p of allDoorPoints(data)) {
+    const row = rows.get(p.floor);
+    if (!row) continue;
+    row.total += 1;
+    if (p.status === "tehty") row.done += 1; else row.open += 1;
+  }
+  return floors.map((f) => rows.get(f)!).filter((r) => r.total > 0);
+}
+
+/**
+ * TYÖLISTA — montako kohdetta, mitä niihin menee, ja mitä asiakas maksaisi.
+ *
+ * YKSI LUKU, KAKSI KÄYTTÖÄ. `bulbs` on samaan aikaan ostettavien polttimoiden
+ * määrä JA vaihtotöiden määrä: jokainen rikkinäinen lamppu on yksi polttimo ja
+ * yksi vaihto. Sama pätee oviin. Siksi lukuja on yksi eikä kahta — kaksi lukua
+ * ehtisi erkaantua, eikä kumpikaan olisi sen jälkeen oikeassa.
+ *
+ * Määrä on LASKETTU oletuksena eikä käsin syötetty: kartta tietää jo montako
+ * lamppua on rikki, ja käsin ylläpidetty luku ehtisi vanhentua joka kerta kun
+ * tekijä merkitsee uuden rikkinäisen. Johtaja voi silti korjata sen
+ * (varalamppuja, pakkauskoko), ja silloin `bulbsManual` kertoo että luku on
+ * hänen — jottei näkymä väitä laskeneensa sitä.
+ *
+ * `quotedTotalCents` on TYÖN hinta: kohteiden määrä × asiakkaan ehdottama
+ * hinta per vaihto. Tarvikkeet eivät ole siinä mukana.
+ */
+export interface ResolvedFixtureOrder {
+  lampModel?: string;
+  /** Efektiivinen ostettava lamppumäärä. */
+  bulbs: number;
+  /** Kartasta laskettu määrä. */
+  bulbsAuto: number;
+  bulbsManual: boolean;
+  doorMaterial?: string;
+  /** Efektiivinen ovimäärä. */
+  doorCount: number;
+  doorCountAuto: number;
+  doorCountManual: boolean;
+  note?: string;
+  quote?: FixtureQuote;
+  /** Asiakkaan ehdotuksella laskettu summa (senttiä). Null kun hintaa ei ole. */
+  quotedTotalCents: number | null;
+  /**
+   * Mallikohtainen erittely ostettavista. Mukana VAIN rivit joilla on jotain
+   * ostettavaa: nollarivi kuuluu johtajan hallintanäkymään, ei ostoslistaan.
+   * Tyhjä kun malleja ei ole määritelty lainkaan — silloin lista on yksi luku.
+   */
+  byModel: LampModelStat[];
+}
+
+export function resolveFixtureOrder(data: ProjectData): ResolvedFixtureOrder {
+  const inv = computeLampInventory(data);
+  const doorsOpen = computeDoorFloorStats(data).reduce((n, r) => n + r.open, 0);
+  const o = data.fixtureOrder ?? {};
+  const bulbsManual = Number.isFinite(o.bulbsNeeded as number) && (o.bulbsNeeded as number) >= 0;
+  const doorCountManual = Number.isFinite(o.doorsNeeded as number) && (o.doorsNeeded as number) >= 0;
+  const bulbs = bulbsManual ? Math.round(o.bulbsNeeded as number) : inv.needsBulbs;
+  const doorCount = doorCountManual ? Math.round(o.doorsNeeded as number) : doorsOpen;
+  const q = data.fixtureQuote;
+  const bulbCents = q?.lampWorkPriceCents ?? 0;
+  const doorCents = q?.doorWorkPriceCents ?? 0;
+  const hasPrice = !!q && (q.lampWorkPriceCents != null || q.doorWorkPriceCents != null);
+  return {
+    ...(o.lampModel ? { lampModel: o.lampModel } : {}),
+    bulbs, bulbsAuto: inv.needsBulbs, bulbsManual,
+    ...(o.doorMaterial ? { doorMaterial: o.doorMaterial } : {}),
+    doorCount, doorCountAuto: doorsOpen, doorCountManual,
+    ...(o.note ? { note: o.note } : {}),
+    ...(q ? { quote: q } : {}),
+    quotedTotalCents: hasPrice ? bulbs * bulbCents + doorCount * doorCents : null,
+    // Erittely vain kun malleja on MÄÄRITELTY. Ilman niitä ainoa rivi olisi
+    // "Ei mallia", joka toistaisi kokonaisluvun eri sanoin — se on kohinaa,
+    // ei erittelyä. Mallittomat kuuluvat listalle vasta kun on jotain mistä
+    // ne erottuvat.
+    byModel: (data.lampModels?.length ?? 0) > 0
+      ? computeLampModelStats(data).filter((m) => m.needsBulb > 0)
+      : [],
+  };
+}
+
 // ─── Ovet (ovipisteet) ────────────────────────────────────────────────────────
 
 export interface ProjDoorPoint {
@@ -1075,6 +1850,50 @@ export function computeDoorWorkerStats(data: ProjectData): DoorWorkerStat[] {
     if (p.note?.text && p.note.by) row(p.note.by).noted += 1;
   }
   return Array.from(by.values()).sort((a, b) => (b.done - a.done) || (b.noted - a.noted));
+}
+
+/**
+ * Kulut jotka asiakas saa nähdä: vain nimenomaisesti merkityt, ja ilman
+ * kuittia (`ProjExpense.forCustomer`). Kuitti on kirjanpitomme tosite eikä
+ * asiakkaan asiakirja, joten sitä ei ole tässä muodossa lainkaan.
+ */
+export interface PublicExpense {
+  kind: ProjExpenseKind;
+  desc: string;
+  amountCents: number;
+  ts: number;
+}
+
+export function customerExpenses(data: ProjectData): PublicExpense[] {
+  return (data.expenses ?? [])
+    .filter((e) => e.forCustomer === true)
+    .map((e) => ({ kind: e.kind, desc: e.desc, amountCents: e.amountCents, ts: e.ts }))
+    .sort((a, b) => b.ts - a.ts);
+}
+
+/**
+ * TUNTIKEIKAN TILANNE ASIAKKAALLE: kuka on tehnyt montako tuntia, ja mitä
+ * hänelle on ostettu.
+ *
+ * TEKIJÖIDEN NIMET NÄKYVÄT TÄSSÄ, toisin kuin ikkunoiden pesijät tai lamppujen
+ * vaihtajat. Ero ei ole epäjohdonmukaisuus vaan laskutustavan seuraus:
+ * tuntikeikalla asiakas maksaa nimenomaan näiden ihmisten ajasta, joten hänen
+ * kuuluu nähdä kenen. Kohdennetussa tilassa hän maksaa kohteista, ja silloin
+ * tekijä on meidän sisäinen asiamme.
+ *
+ * NOLLATUNTINEN EI OLE RIVI. Nimi jolla ei ole tunteja ei kerro asiakkaalle
+ * mitään — se vain kasvattaa listaa nimillä joilla ei ole tekemistä keikan
+ * kanssa.
+ */
+export interface CustomerHourRow { name: string; hours: number; }
+
+export function customerHourRows(data: ProjectData, nameOf: (id: string) => string): CustomerHourRow[] {
+  // Luku tulee tuntitilan omasta vuorokirjanpidosta (`shifts`), EI vanhasta
+  // `hours`-summasta. Muuten asiakas näkisi laskullaan tunteja jotka on tehty
+  // jollekin muulle työlle ennen kuin tämä keikka edes alkoi. Ks. `ProjShift`.
+  return computeShiftStats(data.shifts).byWorker
+    .map((r) => ({ name: nameOf(r.id), hours: r.hours }))
+    .sort((a, b) => b.hours - a.hours);
 }
 
 /**
@@ -1349,8 +2168,10 @@ export interface GigEfficiency {
   actualHoursPerWindow: number | null;
 }
 
-/** Local YYYY-MM-DD key for grouping log events by calendar day. */
-function dayKey(ts: number): string {
+/** Ryhmittelyavain lokitapahtumille. EI sama kuin `dayKey`: tämä on pelkkä
+ *  ryhmittelyyn kelpaava avain (kuukausi 0-pohjainen, ei nollattu), eikä sitä
+ *  näytetä eikä talleteta missään. `dayKey` on se joka menee kirjanpitoon. */
+function logDayGroupKey(ts: number): string {
   const d = new Date(ts);
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
@@ -1387,7 +2208,7 @@ export function computeEfficiency(data: ProjectData): GigEfficiency {
 
   for (const l of data.log) {
     if (l.status !== "pesty") continue;
-    const k = dayKey(l.ts);
+    const k = logDayGroupKey(l.ts);
     // Count each window once per day to avoid double-counting status flips.
     let seen = seenKeysPerDay.get(k);
     if (!seen) { seen = new Set(); seenKeysPerDay.set(k, seen); }
@@ -1566,6 +2387,70 @@ function sanitizeFixtureNotes(input: any): Record<string, ProjFixtureNote> {
   return out;
 }
 
+/** Positiivinen kokonaisluku tai undefined — käsin asetetut kappalemäärät. */
+function toCount(v: any): number | undefined {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  return Math.min(100_000, Math.round(n));
+}
+
+/** Yksikköhinta sentteinä. Nolla on kelvollinen hinta ("veloituksetta"). */
+function toUnitPriceCents(v: any): number | undefined {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  return Math.min(MAX_FIXTURE_UNIT_PRICE_CENTS, Math.round(n));
+}
+
+/** Keikan lamppumallit. Nimetön tai tunnukseton malli putoaa. */
+export function sanitizeLampModels(input: any): LampModel[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const out: LampModel[] = [];
+  for (const m of input.slice(0, MAX_LAMP_MODELS)) {
+    const id = String(m?.id ?? "").trim().slice(0, 40);
+    const name = String(m?.name ?? "").trim().slice(0, MAX_FIXTURE_MODEL_LEN);
+    if (!id || !name || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, name });
+  }
+  return out;
+}
+
+/** Johtajan ostotieto. Tyhjä objekti pudotetaan kokonaan. */
+export function sanitizeFixtureOrder(input: any): FixtureOrder | null {
+  if (!input || typeof input !== "object") return null;
+  const out: FixtureOrder = {};
+  const model = String(input.lampModel ?? "").trim().slice(0, MAX_FIXTURE_MODEL_LEN);
+  if (model) out.lampModel = model;
+  const doorMat = String(input.doorMaterial ?? "").trim().slice(0, MAX_FIXTURE_MODEL_LEN);
+  if (doorMat) out.doorMaterial = doorMat;
+  const bulbs = toCount(input.bulbsNeeded);
+  if (bulbs !== undefined) out.bulbsNeeded = bulbs;
+  const doorsNeeded = toCount(input.doorsNeeded);
+  if (doorsNeeded !== undefined) out.doorsNeeded = doorsNeeded;
+  const note = String(input.note ?? "").trim().slice(0, MAX_FIXTURE_ORDER_NOTE_LEN);
+  if (note) out.note = note;
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * Asiakkaan hintaehdotus. Pudotetaan kokonaan jos siinä ei ole yhtään hintaa
+ * eikä viestiä — tyhjä ehdotus ei ole ehdotus, ja tyhjä objekti näyttäisi
+ * näkymässä siltä kuin asiakas olisi vastannut.
+ */
+export function sanitizeFixtureQuote(input: any): FixtureQuote | null {
+  if (!input || typeof input !== "object") return null;
+  const out: FixtureQuote = { at: Number(input.at) || Date.now() };
+  const lampWork = toUnitPriceCents(input.lampWorkPriceCents);
+  if (lampWork !== undefined) out.lampWorkPriceCents = lampWork;
+  const doorWork = toUnitPriceCents(input.doorWorkPriceCents);
+  if (doorWork !== undefined) out.doorWorkPriceCents = doorWork;
+  const note = String(input.note ?? "").trim().slice(0, MAX_FIXTURE_QUOTE_NOTE_LEN);
+  if (note) out.note = note;
+  const hasContent = out.lampWorkPriceCents != null || out.doorWorkPriceCents != null || !!out.note;
+  return hasContent ? out : null;
+}
+
 /** `{ by, ts }` -kartta (kuka lisäsi / kuka kuittasi). Nimetön merkintä putoaa. */
 function sanitizeMarkBy(input: any): Record<string, ProjMarkBy> {
   const out: Record<string, ProjMarkBy> = {};
@@ -1674,6 +2559,19 @@ export function sanitizeProjectData(input: any): ProjectData {
     for (const k of Object.keys(input.lampConditions).slice(0, 20000)) {
       const c = toLampCondition(input.lampConditions[k]);
       if (c) lampConditions[cleanKey(k)] = c;
+    }
+  }
+
+  const lampModels = sanitizeLampModels(input.lampModels);
+  // Viite poistettuun malliin pudotetaan tässä: muuten kartta kantaisi
+  // roikkuvia tunnuksia, ja "ei mallia" pääteltäisiin joka lukupaikassa
+  // erikseen. Ks. `computeLampModelStats`, joka noudattaa samaa sääntöä.
+  const knownModelIds = new Set(lampModels.map((m) => m.id));
+  const lampModelOf: Record<string, string> = {};
+  if (input.lampModelOf && typeof input.lampModelOf === "object") {
+    for (const k of Object.keys(input.lampModelOf).slice(0, 20000)) {
+      const id = String(input.lampModelOf[k] ?? "").trim().slice(0, 40);
+      if (id && knownModelIds.has(id)) lampModelOf[cleanKey(k)] = id;
     }
   }
 
@@ -1872,6 +2770,9 @@ export function sanitizeProjectData(input: any): ProjectData {
         ...(typeof e?.forWhom === "string" && e.forWhom.trim() ? { forWhom: e.forWhom.trim().slice(0, 40) } : {}),
         receiptDataUrl: typeof e?.receiptDataUrl === "string" && e.receiptDataUrl.startsWith("data:image/")
           ? e.receiptDataUrl.slice(0, MAX_EXPENSE_RECEIPT_LEN) : undefined,
+        // Vain nimenomainen `true` näyttää kulun asiakkaalle. Puuttuva,
+        // roskainen tai "false" jää sisäiseksi — oletus on aina yksityinen.
+        ...(e?.forCustomer === true ? { forCustomer: true as const } : {}),
       })).filter((e: ProjExpense) => e.id && e.by)
     : [];
 
@@ -1921,6 +2822,13 @@ export function sanitizeProjectData(input: any): ProjectData {
     ...(Object.keys(doorDoneBy).length ? { doorDoneBy } : {}),
     ...(Object.keys(doorNotes).length ? { doorNotes } : {}),
     ...(Object.keys(doorAddedBy).length ? { doorAddedBy } : {}),
+    // Vain valittu tila kirjoitetaan: puuttuva on "targeted", ja vanha blobi
+    // pyörähtää läpi entisellään.
+    ...(toBillingMode(input.billingMode) ? { billingMode: toBillingMode(input.billingMode)! } : {}),
+    ...(lampModels.length ? { lampModels } : {}),
+    ...(Object.keys(lampModelOf).length ? { lampModelOf } : {}),
+    ...(input.fixtureOrder !== undefined ? (() => { const o = sanitizeFixtureOrder(input.fixtureOrder); return o ? { fixtureOrder: o } : {}; })() : {}),
+    ...(input.fixtureQuote !== undefined ? (() => { const q = sanitizeFixtureQuote(input.fixtureQuote); return q ? { fixtureQuote: q } : {}; })() : {}),
     notes,
     observations,
     activeZone,
@@ -1937,6 +2845,8 @@ export function sanitizeProjectData(input: any): ProjectData {
     ...(input.guided !== undefined ? (() => { const g = sanitizeGuidedWork(input.guided); return g ? { guided: g } : {}; })() : {}),
     ...(input.settlement !== undefined ? (() => { const s = sanitizeFounderSettlementState(input.settlement); return s ? { settlement: s } : {}; })() : {}),
     ...(input.scope !== undefined ? (() => { const sc = sanitizeScopeState(input.scope); return sc ? { scope: sc } : {}; })() : {}),
+    ...(input.board !== undefined ? (() => { const b = sanitizeBoard(input.board); return b.length ? { board: b } : {}; })() : {}),
+    ...(input.shifts !== undefined ? (() => { const s = sanitizeShifts(input.shifts); return s.length ? { shifts: s } : {}; })() : {}),
     updatedAt: Date.now(),
   };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
+import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, billingModeOf, isHourlyGig, roundWorkHours, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, sanitizeBoard, sortedBoard, openTaskCount, BOARD_CUSTOMER, sanitizeShifts, computeShiftStats, shiftHoursOf, dayKey, isDayKey, fmtDayLabel, MAX_SHIFTS, cappedTimerHours, MAX_TIMER_SHIFT_HOURS, addShiftEntry, shiftHoursOnDay, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
 import { emptyGigData, computeTotals } from "./gig";
 
 // Kohta 6.1 — kokonaistilanteen ikkunamäärän täsmäytys. Ks. docs/fr8-era-laskutus-plan.md.
@@ -707,5 +707,710 @@ describe("kalusteiden sanitointi", () => {
     for (const k of ["lampConditions", "lampNotes", "lampAddedBy", "doors", "doorStatuses", "doorDoneBy", "doorNotes", "doorAddedBy"]) {
       expect(k in clean).toBe(false);
     }
+  });
+});
+
+
+describe("lamppuvarasto — mitä ostetaan ja mikä on kunnossa", () => {
+  /** Neljä lamppua, yksi kutakin ämpäriä. */
+  function stocked(): ProjectData {
+    const p = emptyProjectData();
+    p.building.floors = ["1", "2"];
+    p.lamps = {
+      "1": [
+        { key: "1#a", x: 1, y: 1 },   // vaihdettu
+        { key: "1#b", x: 2, y: 2 },   // rikki  → ostettava
+        { key: "1#c", x: 3, y: 3 },   // toimiva
+        { key: "1#d", x: 4, y: 4 },   // tarkastamatta
+      ],
+      "2": [{ key: "2#a", x: 5, y: 5 }],  // rikki → ostettava
+    };
+    p.lampStatuses = { "1#a": "vaihdettu" };
+    p.lampChangedBy = { "1#a": { by: "jani", ts: 1 } };
+    p.lampConditions = { "1#b": "rikki", "1#c": "toimiva", "2#a": "rikki" };
+    return p;
+  }
+
+  it("vaihdettu voittaa kunnon — korjattu lamppu ei enää tarvitse polttimoa", () => {
+    const p = stocked();
+    // Sama lamppu on sekä rikki ETTÄ vaihdettu: se on korjattu, ei ostettava.
+    p.lampConditions!["1#a"] = "rikki";
+    const pt = allLampPoints(p).find((x) => x.key === "1#a")!;
+    expect(lampBucket(pt)).toBe("vaihdettu");
+    expect(lampNeedsBulb(pt)).toBe(false);
+    expect(computeLampInventory(p).needsBulbs).toBe(2);
+  });
+
+  it("neljä ämpäriä summautuu aina kokonaismäärään", () => {
+    for (const row of computeLampFloorStats(stocked())) {
+      expect(row.changed + row.needsBulb + row.working + row.unchecked).toBe(row.total);
+    }
+  });
+
+  it("laskee ostettavan määrän kerroksittain", () => {
+    const rows = computeLampFloorStats(stocked());
+    expect(rows.map((r) => [r.floor, r.total, r.needsBulb])).toEqual([["1", 4, 1], ["2", 1, 1]]);
+  });
+
+  it("lamputon kerros jätetään pois raportista", () => {
+    const p = stocked();
+    p.building.floors = ["1", "2", "3"];
+    expect(computeLampFloorStats(p).map((r) => r.floor)).toEqual(["1", "2"]);
+  });
+
+  it("kunnossa-osuus lasketaan TARKASTETUISTA, ei kaikista", () => {
+    const inv = computeLampInventory(stocked());
+    expect(inv.total).toBe(5);
+    expect(inv.unchecked).toBe(1);
+    expect(inv.checked).toBe(4);
+    // Kunnossa = vaihdettu (1) + toimiva (1) = 2, neljästä tarkastetusta.
+    expect(inv.functional).toBe(2);
+    expect(inv.functionalPct).toBe(50);
+  });
+
+  it("uuden pisteen lisääminen kartalle ei pudota kunnossa-prosenttia", () => {
+    const before = computeLampInventory(stocked()).functionalPct;
+    const p = stocked();
+    p.lamps!["1"].push({ key: "1#e", x: 9, y: 9 });
+    expect(computeLampInventory(p).functionalPct).toBe(before);
+  });
+
+  it("lamputon keikka ei jaa nollalla", () => {
+    const inv = computeLampInventory(emptyProjectData());
+    expect(inv).toMatchObject({ total: 0, needsBulbs: 0, functionalPct: 0 });
+    expect(inv.byFloor).toEqual([]);
+  });
+});
+
+describe("ostoslista ja asiakkaan hintaehdotus", () => {
+  function withOrder(): ProjectData {
+    const p = emptyProjectData();
+    p.building.floors = ["1"];
+    p.lamps = { "1": [{ key: "1#a", x: 1, y: 1 }, { key: "1#b", x: 2, y: 2 }] };
+    p.lampConditions = { "1#a": "rikki", "1#b": "rikki" };
+    p.doors = { "1": [{ key: "1#d1", x: 3, y: 3 }, { key: "1#d2", x: 4, y: 4 }] };
+    p.doorStatuses = { "1#d1": "tehty" };
+    return p;
+  }
+
+  it("määrä lasketaan kartalta oletuksena", () => {
+    const o = resolveFixtureOrder(withOrder());
+    expect(o.bulbs).toBe(2);
+    expect(o.bulbsManual).toBe(false);
+    // Ovia on tehtävänä yksi (kaksi merkittyä, joista yksi jo tehty).
+    expect(o.doorCount).toBe(1);
+    expect(o.doorCountManual).toBe(false);
+  });
+
+  it("johtajan käsin asettama määrä voittaa lasketun, ja laskettu jää näkyviin", () => {
+    const p = withOrder();
+    p.fixtureOrder = { bulbsNeeded: 10, lampModel: "E27 LED 9W" };
+    const o = resolveFixtureOrder(p);
+    expect(o.bulbs).toBe(10);
+    expect(o.bulbsAuto).toBe(2);
+    expect(o.bulbsManual).toBe(true);
+    expect(o.lampModel).toBe("E27 LED 9W");
+  });
+
+  it("nolla on kelvollinen käsin asetettu määrä (ei pudota takaisin laskettuun)", () => {
+    const p = withOrder();
+    p.fixtureOrder = { bulbsNeeded: 0 };
+    const o = resolveFixtureOrder(p);
+    expect(o.bulbs).toBe(0);
+    expect(o.bulbsManual).toBe(true);
+  });
+
+  it("asiakkaan hinnalla laskettu summa käyttää efektiivistä määrää", () => {
+    const p = withOrder();
+    p.fixtureQuote = { lampWorkPriceCents: 450, doorWorkPriceCents: 1200, at: 1 };
+    // 2 lampunvaihtoa × 4,50 € + 1 tiivisteenvaihto × 12,00 € = 21,00 €
+    expect(resolveFixtureOrder(p).quotedTotalCents).toBe(2100);
+  });
+
+  it("hinta on VAIHTOTYÖSTÄ per kohde — tarvike ei vaikuta summaan", () => {
+    const p = withOrder();
+    // Neljä ovea tehtävänä, 15 € / tiivisteen vaihto → 60 €. Materiaali on
+    // saatetieto siitä mitä kohteeseen menee, eikä se ole summassa mukana.
+    p.fixtureOrder = { doorsNeeded: 4, doorMaterial: "EPDM D-tiiviste" };
+    p.fixtureQuote = { doorWorkPriceCents: 1500, at: 1 };
+    const o = resolveFixtureOrder(p);
+    expect(o.doorCount).toBe(4);
+    expect(o.doorMaterial).toBe("EPDM D-tiiviste");
+    expect(o.quotedTotalCents).toBe(6000);
+
+    // Tarvikkeen vaihtaminen ei muuta summaa lainkaan.
+    p.fixtureOrder = { doorsNeeded: 4, doorMaterial: "Silikonitiiviste, musta" };
+    expect(resolveFixtureOrder(p).quotedTotalCents).toBe(6000);
+  });
+
+  it("sama luku ajaa sekä tarvikemäärän että vaihtojen määrän", () => {
+    const p = withOrder();
+    p.fixtureQuote = { lampWorkPriceCents: 1000, at: 1 };
+    const o = resolveFixtureOrder(p);
+    // Kaksi rikkinäistä lamppua = kaksi polttimoa JA kaksi vaihtoa.
+    expect(o.bulbs).toBe(2);
+    expect(o.quotedTotalCents).toBe(2000);
+  });
+
+  it("ilman hintaa summaa ei ole (nolla olisi eri väite kuin ei mitään)", () => {
+    expect(resolveFixtureOrder(withOrder()).quotedTotalCents).toBeNull();
+    const p = withOrder();
+    p.fixtureQuote = { note: "Palataan asiaan", at: 1 };
+    expect(resolveFixtureOrder(p).quotedTotalCents).toBeNull();
+  });
+
+  it("pelkkä viesti ilman hintoja on kelvollinen ehdotus", () => {
+    expect(sanitizeFixtureQuote({ note: "Kysytään taloyhtiöltä", at: 5 })).toMatchObject({ note: "Kysytään taloyhtiöltä" });
+  });
+
+  it("tyhjä ehdotus pudotetaan kokonaan", () => {
+    expect(sanitizeFixtureQuote({ note: "   ", at: 5 })).toBeNull();
+    expect(sanitizeFixtureQuote({})).toBeNull();
+  });
+
+  it("negatiivinen hinta pudotetaan, ylisuuri leikataan", () => {
+    const q = sanitizeFixtureQuote({ lampWorkPriceCents: -500, doorWorkPriceCents: 9_999_999, at: 1 })!;
+    expect(q.lampWorkPriceCents).toBeUndefined();
+    expect(q.doorWorkPriceCents).toBe(200_000);
+  });
+
+  it("nolla on kelvollinen hinta (veloituksetta)", () => {
+    expect(sanitizeFixtureQuote({ lampWorkPriceCents: 0, at: 1 })?.lampWorkPriceCents).toBe(0);
+  });
+
+  it("tyhjä ostotieto pudotetaan, tekstit trimmataan", () => {
+    expect(sanitizeFixtureOrder({ lampModel: "   " })).toBeNull();
+    expect(sanitizeFixtureOrder({ lampModel: "  E27  " })).toEqual({ lampModel: "E27" });
+  });
+
+  it("kalusteeton keikka ei saa tilauskenttiä sanitoinnissa", () => {
+    const clean = sanitizeProjectData(emptyProjectData());
+    expect("fixtureOrder" in clean).toBe(false);
+    expect("fixtureQuote" in clean).toBe(false);
+  });
+
+  it("ovien kerrosjakauma laskee tehdyt ja tekemättömät", () => {
+    expect(computeDoorFloorStats(withOrder())).toEqual([{ floor: "1", total: 2, done: 1, open: 1 }]);
+  });
+});
+
+
+describe("laskuri lupaa vain sen mitä kartalle on merkitty", () => {
+  it("merkitsemätön lamppu ei ole missään luvussa — ei edes tarkastamattomissa", () => {
+    const p = emptyProjectData();
+    p.building.floors = ["1"];
+    p.lamps = { "1": [{ key: "1#a", x: 1, y: 1 }, { key: "1#b", x: 2, y: 2 }] };
+    p.lampConditions = { "1#a": "toimiva" };
+
+    const inv = computeLampInventory(p);
+    // Kaksi merkittyä: yksi tarkastettu, yksi ei. Kiinteistössä voi olla
+    // kymmeniä muita — ne EIVÄT saa näkyä minään lukuna.
+    expect(inv.total).toBe(2);
+    expect(inv.unchecked).toBe(1);
+    expect(inv.checked).toBe(1);
+    expect(inv.total).toBe(inv.byFloor.reduce((n, r) => n + r.total, 0));
+  });
+
+  it("kaikki luvut summautuvat merkittyjen määrään, eivät mihinkään suurempaan", () => {
+    const p = emptyProjectData();
+    p.building.floors = ["1", "2"];
+    p.lamps = {
+      "1": [{ key: "1#a", x: 1, y: 1 }, { key: "1#b", x: 2, y: 2 }, { key: "1#c", x: 3, y: 3 }],
+      "2": [{ key: "2#a", x: 4, y: 4 }],
+    };
+    p.lampStatuses = { "1#a": "vaihdettu" };
+    p.lampChangedBy = { "1#a": { by: "jani", ts: 1 } };
+    p.lampConditions = { "1#b": "rikki", "1#c": "toimiva" };
+
+    const inv = computeLampInventory(p);
+    expect(inv.fixed + inv.needsBulbs + inv.working + inv.unchecked).toBe(inv.total);
+    expect(inv.total).toBe(4);
+    // "Kunnossa" ei voi ylittää merkittyjen määrää.
+    expect(inv.functional).toBeLessThanOrEqual(inv.total);
+    expect(inv.functionalPct).toBeLessThanOrEqual(100);
+  });
+
+  it("kartoittamaton keikka näyttää nollaa, ei tyhjää lupausta", () => {
+    const p = emptyProjectData();
+    p.doors = { "1": [{ key: "1#d", x: 1, y: 1 }] };
+    const inv = computeLampInventory(p);
+    expect(inv.total).toBe(0);
+    expect(inv.needsBulbs).toBe(0);
+    expect(inv.functionalPct).toBe(0);
+  });
+});
+
+
+describe("lamppumallit — kaikki lamput eivät ole samaa mallia", () => {
+  function mixed(): ProjectData {
+    const p = emptyProjectData();
+    p.building.floors = ["1"];
+    p.lamps = { "1": [
+      { key: "1#a", x: 1, y: 1 },  // E27, rikki
+      { key: "1#b", x: 2, y: 2 },  // E27, rikki
+      { key: "1#c", x: 3, y: 3 },  // G9,  rikki
+      { key: "1#d", x: 4, y: 4 },  // E27, vaihdettu
+      { key: "1#e", x: 5, y: 5 },  // ei mallia, rikki
+    ] };
+    p.lampModels = [{ id: "m1", name: "E27 LED 9W" }, { id: "m2", name: "G9 halogeeni" }];
+    p.lampModelOf = { "1#a": "m1", "1#b": "m1", "1#c": "m2", "1#d": "m1" };
+    p.lampConditions = { "1#a": "rikki", "1#b": "rikki", "1#c": "rikki", "1#e": "rikki" };
+    p.lampStatuses = { "1#d": "vaihdettu" };
+    p.lampChangedBy = { "1#d": { by: "jani", ts: 1 } };
+    return p;
+  }
+
+  it("erittelee ostettavat mallin mukaan, suurin erä ensin", () => {
+    const rows = computeLampModelStats(mixed());
+    expect(rows.map((r) => [r.name, r.needsBulb])).toEqual([
+      ["E27 LED 9W", 2],
+      ["G9 halogeeni", 1],
+      ["Ei mallia", 1],
+    ]);
+  });
+
+  it("malliton lamppu ei katoa summaan vaan saa oman rivinsä", () => {
+    const none = computeLampModelStats(mixed()).find((r) => r.id === null)!;
+    expect(none.total).toBe(1);
+    expect(none.needsBulb).toBe(1);
+  });
+
+  it("mallikohtaiset summat täsmäävät kokonaismäärään", () => {
+    const p = mixed();
+    const rows = computeLampModelStats(p);
+    expect(rows.reduce((n, r) => n + r.total, 0)).toBe(computeLampInventory(p).total);
+    expect(rows.reduce((n, r) => n + r.needsBulb, 0)).toBe(computeLampInventory(p).needsBulbs);
+  });
+
+  it("vaihdettu ei ole ostettavaa, mutta näkyy mallin rivillä", () => {
+    const e27 = computeLampModelStats(mixed()).find((r) => r.id === "m1")!;
+    expect(e27.total).toBe(3);
+    expect(e27.needsBulb).toBe(2);
+    expect(e27.changed).toBe(1);
+  });
+
+  it("käyttämätön malli näkyy nollarivinä — johtaja lisäsi sen syystä", () => {
+    const p = mixed();
+    p.lampModels!.push({ id: "m3", name: "Loisteputki T8" });
+    const row = computeLampModelStats(p).find((r) => r.id === "m3")!;
+    expect(row).toMatchObject({ total: 0, needsBulb: 0 });
+  });
+
+  it("poistettuun malliin osoittava lamppu on malliton, ei haamurivi", () => {
+    const p = mixed();
+    p.lampModels = p.lampModels!.filter((m) => m.id !== "m2");
+    const rows = computeLampModelStats(p);
+    expect(rows.some((r) => r.name === "G9 halogeeni")).toBe(false);
+    // G9:n lamppu siirtyi mallittomiin — se on yhä rikki ja yhä ostettava.
+    expect(rows.find((r) => r.id === null)!.needsBulb).toBe(2);
+  });
+
+  it("ostoslista erittelee vain rivit joilla on ostettavaa", () => {
+    const p = mixed();
+    p.lampModels!.push({ id: "m3", name: "Loisteputki T8" });
+    expect(resolveFixtureOrder(p).byModel.map((r) => r.name)).toEqual([
+      "E27 LED 9W", "G9 halogeeni", "Ei mallia",
+    ]);
+  });
+
+  it("ilman malleja erittelyä ei ole — yksi luku riittää", () => {
+    const p = emptyProjectData();
+    p.lamps = { "1": [{ key: "1#a", x: 1, y: 1 }] };
+    p.lampConditions = { "1#a": "rikki" };
+    expect(resolveFixtureOrder(p).byModel).toEqual([]);
+  });
+
+  it("sanitointi pudottaa nimettömän mallin ja kaksoistunnuksen", () => {
+    const clean = sanitizeLampModels([
+      { id: "m1", name: "E27" }, { id: "m1", name: "Kaksoiskappale" },
+      { id: "m2", name: "  " }, { id: "", name: "Tunnukseton" },
+    ]);
+    expect(clean).toEqual([{ id: "m1", name: "E27" }]);
+  });
+
+  it("sanitointi pudottaa viitteen malliin jota ei ole", () => {
+    const clean = sanitizeProjectData({
+      lamps: { "1": [{ key: "1#a", x: 1, y: 1 }, { key: "1#b", x: 2, y: 2 }] },
+      lampModels: [{ id: "m1", name: "E27" }],
+      lampModelOf: { "1#a": "m1", "1#b": "poistettu" },
+    });
+    expect(clean.lampModelOf).toEqual({ "1#a": "m1" });
+  });
+
+  it("malliton keikka ei saa mallikenttiä", () => {
+    const clean = sanitizeProjectData(emptyProjectData());
+    expect("lampModels" in clean).toBe(false);
+    expect("lampModelOf" in clean).toBe(false);
+  });
+});
+
+
+describe("tuntitila — pyöristys ja tilan oletus", () => {
+  it("puolikas tunti pyöristyy ylös, sitä lyhyempi nollaan", () => {
+    // Tämä on se pidäke jonka takia sääntö on olemassa: puolen tunnin
+    // piipahdus kirjaa tunnin, sitä lyhyempi ei kirjaa mitään.
+    expect(roundWorkHoursFromMinutes(30)).toBe(1);
+    expect(roundWorkHoursFromMinutes(29)).toBe(0);
+    expect(roundWorkHoursFromMinutes(20)).toBe(0);
+    expect(roundWorkHoursFromMinutes(0)).toBe(0);
+  });
+
+  it("pyöristää lähimpään täyteen tuntiin molempiin suuntiin", () => {
+    expect(roundWorkHoursFromMinutes(89)).toBe(1);   // 1 h 29 min → 1 h
+    expect(roundWorkHoursFromMinutes(90)).toBe(2);   // 1 h 30 min → 2 h
+    expect(roundWorkHoursFromMinutes(455)).toBe(8);  // 7 h 35 min → 8 h
+  });
+
+  it("kelvoton tai negatiivinen kesto on nolla, ei NaN eikä miinustunti", () => {
+    expect(roundWorkHours(Number.NaN)).toBe(0);
+    expect(roundWorkHours(-3)).toBe(0);
+    expect(roundWorkHoursFromMinutes(-90)).toBe(0);
+  });
+
+  it("puuttuva tila on kohdennettu — FR8 ja vanhat keikat eivät muutu", () => {
+    const p = emptyProjectData();
+    expect(billingModeOf(p)).toBe("targeted");
+    expect(isHourlyGig(p)).toBe(false);
+    expect(billingModeOf(null)).toBe("targeted");
+  });
+
+  it("valittu tila säilyy sanitoinnissa, tuntematon pudotetaan oletukseen", () => {
+    expect(sanitizeProjectData({ billingMode: "hourly" }).billingMode).toBe("hourly");
+    expect(sanitizeProjectData({ billingMode: "targeted" }).billingMode).toBe("targeted");
+    const bogus = sanitizeProjectData({ billingMode: "kuukausi" });
+    expect("billingMode" in bogus).toBe(false);
+    expect(billingModeOf(bogus)).toBe("targeted");
+  });
+
+  it("valitsematon tila ei kirjoita kenttää lainkaan", () => {
+    // Vanha blobi pyörähtää läpi entisellään: tilaa ei ole, eikä sellaista
+    // synny sanitoinnissa.
+    expect("billingMode" in sanitizeProjectData(emptyProjectData())).toBe(false);
+  });
+});
+
+
+describe("asiakkaan tuntinäkymä — mitä hän saa nähdä", () => {
+  function gig(): ProjectData {
+    const p = emptyProjectData();
+    p.billingMode = "hourly";
+    // VANHAT tunnit — projektityökalun juokseva summa. Nämä eivät saa näkyä
+    // asiakkaalle: ne on tehty muille töille ennen kuin tämä keikka alkoi.
+    p.hours = { milja: 78, petrus: 47 };
+    // Tämän työn tunnit: päivätty vuorokirjanpito.
+    p.shifts = [
+      { id: "s1", worker: "oona", day: "2026-08-24", hours: 5, at: 100 },
+      { id: "s2", worker: "oona", day: "2026-08-25", hours: 4, at: 200 },
+      { id: "s3", worker: "selma", day: "2026-08-25", hours: 6, at: 300 },
+      { id: "s4", worker: "jani", day: "2026-08-25", hours: 1, at: 400 },
+      { id: "s5", worker: "jani", day: "2026-08-25", hours: -1, at: 500, by: "joonatan" },
+    ];
+    p.expenses = [
+      { id: "e1", by: "joonatan", kind: "materials", desc: "Polttimot", amountCents: 4500, ts: 300, forCustomer: true },
+      { id: "e2", by: "joonatan", kind: "transport", desc: "Bussilippu", amountCents: 320, ts: 200 },
+      { id: "e3", by: "matias", kind: "materials", desc: "Tiivisteet", amountCents: 1800, ts: 400, forCustomer: true,
+        receiptDataUrl: "data:image/png;base64,AAAA" },
+    ];
+    return p;
+  }
+
+  it("vain asiakkaalle merkityt kulut näkyvät, uusin ensin", () => {
+    expect(customerExpenses(gig()).map((e) => e.desc)).toEqual(["Tiivisteet", "Polttimot"]);
+  });
+
+  it("kuitti ei seuraa asiakkaalle koskaan — se on kirjanpitomme tosite", () => {
+    const raw = JSON.stringify(customerExpenses(gig()));
+    expect(raw).not.toContain("data:image");
+    // Eikä maksajan nimi: asiakkaalle kerrotaan mitä ostettiin, ei kuka maksoi.
+    expect(raw).not.toContain("joonatan");
+    expect(raw).not.toContain("matias");
+  });
+
+  it("nollatuntinen ei ole rivi asiakkaan listalla", () => {
+    // Janille kirjattiin tunti ja se korjattiin pois — nollaan päätynyt tekijä
+    // ei ole rivi.
+    const rows = customerHourRows(gig(), (id) => id);
+    expect(rows.map((r) => r.name)).toEqual(["oona", "selma"]);
+  });
+
+  it("VANHAT projektitunnit eivät vuoda asiakkaan tuntilistalle", () => {
+    // Tämä on koko tuntitilan tärkein raja. `hours` on vanhan työkalun
+    // juokseva summa (FR8:lla satoja tunteja muilta töiltä); tuntitilan luku
+    // on asiakkaan lasku. Jos nämä sekoittuvat, laskutamme väärin.
+    const rows = customerHourRows(gig(), (id) => id);
+    expect(rows.map((r) => r.name)).not.toContain("milja");
+    expect(rows.map((r) => r.name)).not.toContain("petrus");
+    expect(rows.reduce((a, r) => a + r.hours, 0)).toBe(15);
+  });
+
+  it("tunnit järjestetään suurimmasta, ja nimi tulee nimeäjältä", () => {
+    const rows = customerHourRows(gig(), (id) => ({ oona: "Oona", selma: "Selma" }[id] ?? id));
+    expect(rows).toEqual([{ name: "Oona", hours: 9 }, { name: "Selma", hours: 6 }]);
+  });
+
+  it("merkitsemätön kulu pysyy sisäisenä myös sanitoinnin jälkeen", () => {
+    const clean = sanitizeProjectData(gig());
+    const flags = (clean.expenses ?? []).map((e) => e.forCustomer);
+    expect(flags).toEqual([true, undefined, true]);
+  });
+
+  it("roskainen tai false-arvoinen lippu ei avaa kulua asiakkaalle", () => {
+    const clean = sanitizeProjectData({
+      expenses: [
+        { id: "a", by: "x", kind: "other", desc: "a", amountCents: 100, ts: 1, forCustomer: "kyllä" },
+        { id: "b", by: "x", kind: "other", desc: "b", amountCents: 100, ts: 2, forCustomer: false },
+        { id: "c", by: "x", kind: "other", desc: "c", amountCents: 100, ts: 3, forCustomer: 1 },
+      ],
+    });
+    expect((clean.expenses ?? []).every((e) => e.forCustomer === undefined)).toBe(true);
+    expect(customerExpenses(clean)).toEqual([]);
+  });
+});
+
+
+describe("työtaulu — yksi lista, kolme kirjoittajaa", () => {
+  const entries = [
+    { id: "a", kind: "task" as const, text: "Vaihtakaa kellarin lamput", by: BOARD_CUSTOMER, byName: "Niilo", at: 100 },
+    { id: "b", kind: "note" as const, text: "Kellarin lamput vaihdettu", by: "oona", byName: "Oona", at: 300 },
+    { id: "c", kind: "task" as const, text: "Tarkistakaa 3. kerros", by: "matias", at: 200,
+      done: { by: "selma", byName: "Selma", at: 400 } },
+    { id: "d", kind: "task" as const, text: "Ovien tiivisteet", by: BOARD_CUSTOMER, at: 50 },
+  ];
+
+  it("avoimet tehtävät ensin, uusin ylimmäksi; kuitatut ja merkinnät perässä", () => {
+    expect(sortedBoard(entries).map((e) => e.id)).toEqual(["a", "d", "b", "c"]);
+  });
+
+  it("avoimet tehtävät lasketaan, merkinnät ja kuitatut eivät", () => {
+    expect(openTaskCount(entries)).toBe(2);
+    expect(openTaskCount([])).toBe(0);
+    expect(openTaskCount(undefined)).toBe(0);
+  });
+
+  it("tekstitön rivi putoaa — tyhjä viesti ei ole viesti", () => {
+    const clean = sanitizeBoard([
+      { id: "x", kind: "note", text: "   ", by: "oona", at: 1 },
+      { id: "y", kind: "note", text: "OK", by: "oona", at: 2 },
+      { id: "", kind: "note", text: "tunnukseton", by: "oona", at: 3 },
+      { id: "z", kind: "note", text: "kirjoittajaton", by: "", at: 4 },
+    ]);
+    expect(clean.map((e) => e.id)).toEqual(["y"]);
+  });
+
+  it("kaksoistunnus pudotetaan — sama rivi ei saa esiintyä kahdesti", () => {
+    const clean = sanitizeBoard([
+      { id: "a", kind: "note", text: "eka", by: "oona", at: 1 },
+      { id: "a", kind: "note", text: "toka", by: "oona", at: 2 },
+    ]);
+    expect(clean.map((e) => e.text)).toEqual(["eka"]);
+  });
+
+  it("kuittaus kuuluu vain tehtävälle — merkinnälle eksynyt pudotetaan", () => {
+    const clean = sanitizeBoard([
+      { id: "n", kind: "note", text: "juttu", by: "oona", at: 1, done: { by: "selma", at: 2 } },
+      { id: "t", kind: "task", text: "tehtävä", by: "oona", at: 1, done: { by: "selma", at: 2 } },
+    ]);
+    // Merkinnällä ei ole mitään kuitattavaa; sinne eksynyt kuittaus saisi sen
+    // näyttämään listalla tehdyltä tehtävältä.
+    expect(clean.find((e) => e.id === "n")!.done).toBeUndefined();
+    expect(clean.find((e) => e.id === "t")!.done).toMatchObject({ by: "selma" });
+  });
+
+  it("tuntematon laji on merkintä, ei tehtävä — arvattu tehtävä jäisi ikuisesti auki", () => {
+    expect(sanitizeBoard([{ id: "q", kind: "kysymys", text: "?", by: "oona", at: 1 }])[0].kind).toBe("note");
+  });
+
+  it("taulu ei kasva rajatta, ja vanhin putoaa", () => {
+    const many = Array.from({ length: 320 }, (_, i) => ({ id: `e${i}`, kind: "note", text: `t${i}`, by: "oona", at: i }));
+    const clean = sanitizeBoard(many);
+    expect(clean.length).toBe(300);
+    expect(clean[0].id).toBe("e20");
+  });
+
+  it("tyhjä taulu ei kirjoita kenttää lainkaan", () => {
+    expect("board" in sanitizeProjectData(emptyProjectData())).toBe(false);
+    expect("board" in sanitizeProjectData({ board: [] })).toBe(false);
+  });
+
+  it("kirjoittajan nimi säilyy tallennushetkeltä", () => {
+    // Asiakas ei ole crew-listassa, joten nimeä ei voi jälkikäteen selvittää.
+    const clean = sanitizeBoard([{ id: "a", kind: "task", text: "x", by: BOARD_CUSTOMER, byName: "Niilo", at: 1 }]);
+    expect(clean[0].byName).toBe("Niilo");
+  });
+});
+
+
+/**
+ * TUNTITILAN VUOROKIRJANPITO.
+ *
+ * Nämä testit vartioivat yhtä rajaa: tuntitilan luku ei saa olla peräisin
+ * vanhasta `hours`-summasta. Se vika oli tuotannossa — tuntinäkymä avautui
+ * näyttäen 255 tuntia joita kukaan ei ollut tehnyt sille työlle — ja koska
+ * tuntitilassa luku on lasku ja palkka, se ei ollut kosmeettinen.
+ */
+describe("tuntitilan vuorokirjanpito — oma kirjanpito, päivätty", () => {
+  const shifts = [
+    { id: "a", worker: "oona", day: "2026-08-24", hours: 5, at: 10 },
+    { id: "b", worker: "oona", day: "2026-08-25", hours: 4, at: 20 },
+    { id: "c", worker: "selma", day: "2026-08-25", hours: 6, at: 30 },
+  ];
+
+  it("summat lasketaan riveistä, ja päivä ratkaisee mikä on tänään", () => {
+    const st = computeShiftStats(shifts, "2026-08-25");
+    expect(st.totalHours).toBe(15);
+    expect(st.todayHours).toBe(10);
+    expect(st.byWorker).toEqual([
+      { id: "oona", hours: 9, days: 2, lastAt: 20 },
+      { id: "selma", hours: 6, days: 1, lastAt: 30 },
+    ]);
+  });
+
+  it("päivät tulevat uusin ensin ja jokaisella on tekijänsä", () => {
+    const st = computeShiftStats(shifts, "2026-08-25");
+    expect(st.byDay.map((d) => d.day)).toEqual(["2026-08-25", "2026-08-24"]);
+    expect(st.byDay[0]).toEqual({
+      day: "2026-08-25", hours: 10,
+      workers: [{ id: "selma", hours: 6 }, { id: "oona", hours: 4 }],
+    });
+  });
+
+  it("korjaus on oma rivinsä eikä summan muokkaus", () => {
+    const withFix = [...shifts, { id: "d", worker: "selma", day: "2026-08-25", hours: -2, at: 40, by: "joonatan" }];
+    expect(shiftHoursOf(withFix, "selma")).toBe(4);
+    expect(computeShiftStats(withFix, "2026-08-25").totalHours).toBe(13);
+  });
+
+  it("tekijä ei päädy miinukselle eikä nollarivi ole rivi", () => {
+    const over = [
+      { id: "a", worker: "jani", day: "2026-08-25", hours: 1, at: 10 },
+      { id: "b", worker: "jani", day: "2026-08-25", hours: -4, at: 20, by: "joonatan" },
+    ];
+    expect(shiftHoursOf(over, "jani")).toBe(0);
+    expect(computeShiftStats(over, "2026-08-25").byWorker).toEqual([]);
+  });
+
+  it("sanitointi pudottaa rivin jolta puuttuu tekijä, tunnit tai tunniste", () => {
+    const clean = sanitizeShifts([
+      { id: "a", worker: "oona", day: "2026-08-25", hours: 4, at: 1 },
+      { id: "b", worker: "", day: "2026-08-25", hours: 4, at: 2 },
+      { id: "c", worker: "selma", day: "2026-08-25", hours: 0, at: 3 },
+      { id: "", worker: "selma", day: "2026-08-25", hours: 2, at: 4 },
+      { id: "a", worker: "selma", day: "2026-08-25", hours: 9, at: 5 },
+    ]);
+    expect(clean.map((s) => s.id)).toEqual(["a"]);
+  });
+
+  it("annettu menneisyyden päivä säilyy — eiliselle kirjaaminen ei siirry tähän päivään", () => {
+    // Ajastin unohtuu ja päivä kirjataan usein vasta seuraavana aamuna, joten
+    // kirjaushetki ja työpäivä ovat eri asioita. Jos `at` voittaisi `day`n,
+    // eiliselle kirjattu työ hyppäisi tälle päivälle.
+    const at = new Date(2026, 7, 26, 8, 0, 0).getTime();
+    const [row] = sanitizeShifts([{ id: "a", worker: "matias", day: "2026-08-25", hours: 7, at }]);
+    expect(row.day).toBe("2026-08-25");
+    expect(computeShiftStats([row], "2026-08-26").todayHours).toBe(0);
+    expect(computeShiftStats([row], "2026-08-26").totalHours).toBe(7);
+  });
+
+  it("kelvoton päivä johdetaan kirjaushetkestä — rivi ei jää päivättömäksi", () => {
+    const at = new Date(2026, 7, 25, 13, 0, 0).getTime();
+    const [row] = sanitizeShifts([{ id: "a", worker: "oona", day: "eilen", hours: 3, at }]);
+    expect(row.day).toBe("2026-08-25");
+  });
+
+  it("päiväavain on paikallinen — yötyö ei siirry edelliselle päivälle", () => {
+    // 01:30 paikallista aikaa: UTC-päivä olisi Suomessa vielä edellinen.
+    const at = new Date(2026, 7, 25, 1, 30, 0).getTime();
+    expect(dayKey(at)).toBe("2026-08-25");
+    expect(isDayKey(dayKey(at))).toBe(true);
+    expect(isDayKey("25.8.2026")).toBe(false);
+  });
+
+  it("päivämäärä näytetään viikonpäivän kanssa", () => {
+    expect(fmtDayLabel("2026-08-25")).toBe("ti 25.8.");
+  });
+
+  it("saman päivän käsin kirjaukset kertyvät YHTEEN riviin", () => {
+    // Ilman tätä jokainen napautus jätti oman sirpaleensa päiväkirjaan — ja
+    // kun tunnin korjasi alas ja takaisin ylös, päivän summa ei liikkunut
+    // lainkaan. Kirjaus näytti siltä ettei se tehnyt mitään.
+    let list: any[] = [];
+    for (let i = 0; i < 3; i++) {
+      list = addShiftEntry(list, { id: `x${i}`, worker: "oona", hours: 1, day: "2026-08-25", at: 100 + i });
+    }
+    expect(list).toHaveLength(1);
+    expect(list[0].hours).toBe(3);
+  });
+
+  it("korjaus alas ja takaisin ylös näkyy lukuna, ei kahtena rivinä", () => {
+    let list: any[] = addShiftEntry([], { id: "a", worker: "oona", hours: 4, day: "2026-08-25", at: 1 });
+    list = addShiftEntry(list, { id: "b", worker: "oona", hours: -1, day: "2026-08-25", at: 2 });
+    expect(list).toHaveLength(1);
+    expect(list[0].hours).toBe(3);
+    list = addShiftEntry(list, { id: "c", worker: "oona", hours: 1, day: "2026-08-25", at: 3 });
+    expect(list).toHaveLength(1);
+    expect(list[0].hours).toBe(4);
+  });
+
+  it("nollaan kutistunut korjausrivi poistuu", () => {
+    let list: any[] = addShiftEntry([], { id: "a", worker: "oona", hours: 1, day: "2026-08-25", at: 1 });
+    list = addShiftEntry(list, { id: "b", worker: "oona", hours: -1, day: "2026-08-25", at: 2 });
+    expect(list).toEqual([]);
+  });
+
+  it("ajastimen vuoro ei yhdisty — kaksi vuoroa on kaksi vuoroa", () => {
+    let list: any[] = addShiftEntry([], { id: "a", worker: "oona", hours: 4, day: "2026-08-25", at: 1, startedAt: 1 });
+    list = addShiftEntry(list, { id: "b", worker: "oona", hours: 3, day: "2026-08-25", at: 2, startedAt: 2 });
+    expect(list).toHaveLength(2);
+    expect(shiftHoursOnDay(list, "oona", "2026-08-25")).toBe(7);
+  });
+
+  it("käsin korjaus ei vie PÄIVÄÄ miinukselle", () => {
+    // Miinukselle mennyt päivä katoaisi päiväkirjasta mutta jäisi vähentämään
+    // kokonaissummaa — päiväkirja ei täsmäisi eikä eroa voisi selittää.
+    let list: any[] = addShiftEntry([], { id: "a", worker: "oona", hours: 2, day: "2026-08-25", at: 1, startedAt: 1 });
+    list = addShiftEntry(list, { id: "b", worker: "oona", hours: -9, day: "2026-08-25", at: 2 });
+    expect(shiftHoursOnDay(list, "oona", "2026-08-25")).toBe(0);
+    expect(computeShiftStats(list, "2026-08-25").totalHours).toBe(0);
+  });
+
+  it("eri päivät pysyvät erillään", () => {
+    let list: any[] = addShiftEntry([], { id: "a", worker: "oona", hours: 4, day: "2026-08-25", at: 1 });
+    list = addShiftEntry(list, { id: "b", worker: "oona", hours: 5, day: "2026-08-26", at: 2 });
+    expect(list).toHaveLength(2);
+    expect(shiftHoursOnDay(list, "oona", "2026-08-25")).toBe(4);
+    expect(shiftHoursOnDay(list, "oona", "2026-08-26")).toBe(5);
+  });
+
+  it("unohtunut ajastin ei kirjaa vuorokausia", () => {
+    // Ajastin jää päälle yön yli. Kukaan ei tee 35 tunnin työvuoroa, joten se
+    // luku on mittausvirhe — ja tuntitilassa se menisi suoraan laskulle.
+    expect(cappedTimerHours(35)).toEqual({ hours: MAX_TIMER_SHIFT_HOURS, capped: true });
+  });
+
+  it("raja ei leikkaa todellista pitkää päivää", () => {
+    expect(cappedTimerHours(11.6)).toEqual({ hours: 12, capped: false });
+    expect(cappedTimerHours(MAX_TIMER_SHIFT_HOURS)).toEqual({ hours: MAX_TIMER_SHIFT_HOURS, capped: false });
+    // Alle puolen tunnin piipahdus ei kerrytä tuntia, kuten muutenkaan.
+    expect(cappedTimerHours(0.3)).toEqual({ hours: 0, capped: false });
+  });
+
+  it("lista ei kasva rajatta — vanhin putoaa", () => {
+    const many = Array.from({ length: MAX_SHIFTS + 25 }, (_, i) => ({
+      id: `s${i}`, worker: "oona", day: "2026-08-25", hours: 1, at: i,
+    }));
+    const clean = sanitizeShifts(many);
+    expect(clean.length).toBe(MAX_SHIFTS);
+    expect(clean[0].id).toBe("s25");
+  });
+
+  it("tyhjä kirjanpito ei kirjoita kenttää — vanhat blobit pysyvät ennallaan", () => {
+    const p = emptyProjectData();
+    expect("shifts" in sanitizeProjectData(p)).toBe(false);
+  });
+
+  it("kirjanpito säilyy sanitoinnin läpi", () => {
+    const p = emptyProjectData();
+    p.shifts = shifts;
+    expect(sanitizeProjectData(p).shifts?.map((s) => s.id)).toEqual(["a", "b", "c"]);
   });
 });

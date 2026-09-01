@@ -51,6 +51,19 @@ interface NavbarProps {
   showMaksutTab?: boolean;
 }
 
+/**
+ * TÄMÄ PALKKI ON PROJEKTIPUOLEN PALKKI — TUNNIT EIVÄT OLE TÄÄLLÄ.
+ *
+ * Tunnit olivat hetken välilehti näiden rinnalla, ja se oli väärin kahdesta
+ * syystä. Ensinnäkin ne kaksi puolta eivät kysy samaa kysymystä: projektipuoli
+ * kysyy MITÄ ON TEHTY (ikkunat, lamput, ovet, kartta, urakka), tuntipuoli
+ * kysyy PALJONKO ON TEHTY TUNTEJA. Toiseksi — ja tämä oli se näkyvä vika —
+ * välilehti näytti samalla keikalla vanhan projektityökalun tuntisummat,
+ * satoja tunteja muilta töiltä, aivan kuin ne olisivat tämän työn tunteja.
+ *
+ * Nyt puoli valitaan ovella (`ModeChooser`) ja kummallakin on omat lukunsa.
+ * Valinta ei ole lukko: takaisin pääsee aina yhdellä napautuksella.
+ */
 const TABS: { id: Fr8Tab; label: string; short: string }[] = [
   { id: "dashboard", label: "Kokonaistilanne", short: "Tilanne" },
   { id: "floor", label: "Tilanne kerroksittain", short: "Kerrokset" },

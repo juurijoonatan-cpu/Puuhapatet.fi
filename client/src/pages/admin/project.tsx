@@ -12,18 +12,24 @@ import { api } from "@/lib/api";
 import { getAdminProfile, USERS, getPreferredWasher, setPreferredWasher } from "@/lib/admin-profile";
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import {
-  emptyProjectData, newGigProjectData, computeWorkerStats, isFr8Plans, fixedDealFor, allPoints, computeDealBilling,
+  emptyProjectData, newGigProjectData, computeWorkerStats, computeProjectTotals, isFr8Plans, fixedDealFor, allPoints, computeDealBilling,
   dealInternalRateCents, isCommunityGig,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense, type LampStatus,
-  type LampCondition, type DoorStatus,
+  type LampCondition, type DoorStatus, type FixtureOrder, type LampModel, type ProjBoardEntry,
+  billingModeOf, type BillingMode, computeShiftStats, type ProjShift,
 } from "@shared/project";
+import { ArrowLeft } from "lucide-react";
 import { computeP2Billing, customerAddedKeys, p2FounderOpts, p2CustomerLocksSince, p2Itemisation, p2WashedYellows, p2WorkerSplit, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule, type P2WashedState } from "@shared/p2";
 import { computeGuided, type GuidedWork } from "@shared/guided";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
+import ModeChooser, { type GigSide } from "@/components/fr8/ModeChooser";
 import { splitCentsEvenly, FOUNDER_IDS } from "@shared/team";
 import { traineeForUserId, traineeForName } from "@shared/trainees";
 import { DEFAULT_WORKER_PER_WINDOW_CENTS } from "@shared/crew";
 import Dashboard from "@/components/fr8/Dashboard";
+import HourlyPanel from "@/components/fr8/HourlyPanel";
+import Toggle from "@/components/fr8/Toggle";
+import TaskBoard from "@/components/TaskBoard";
 import FounderEraInvoiceDialog from "@/components/fr8/FounderEraInvoiceDialog";
 import MaksutView from "@/components/fr8/MaksutView";
 import type { GigBillingState, EraInvoiceClient } from "@/lib/api";
@@ -497,6 +503,7 @@ export default function AdminProjectPage() {
       if (d.lampConditions) delete d.lampConditions[key];
       if (d.lampNotes) delete d.lampNotes[key];
       if (d.lampAddedBy) delete d.lampAddedBy[key];
+      if (d.lampModelOf) delete d.lampModelOf[key];
     });
   }, [mutate]);
 
@@ -580,6 +587,166 @@ export default function AdminProjectPage() {
       else delete d.doorNotes[key];
     });
   }, [mutate, currentWorker]);
+
+  /**
+   * Ostotieto. Tyhjä kenttä POISTAA arvon eikä tallenna tyhjää merkkijonoa,
+   * jotta "ei asetettu" ja "asetettu tyhjäksi" eivät eroa toisistaan kannassa —
+   * ja jotta laskettu määrä palaa käyttöön kun käsin asetettu luku tyhjennetään.
+   */
+  const onSetFixtureOrder = useCallback((patch: Partial<FixtureOrder>) => {
+    mutate((d) => {
+      const next: FixtureOrder = { ...(d.fixtureOrder ?? {}) };
+      for (const [k, v] of Object.entries(patch) as [keyof FixtureOrder, any][]) {
+        const empty = v === undefined || v === null || (typeof v === "string" && !v.trim());
+        if (empty) delete next[k];
+        else (next as any)[k] = typeof v === "string" ? v.trim() : v;
+      }
+      if (Object.keys(next).length) d.fixtureOrder = next; else delete d.fixtureOrder;
+    });
+  }, [mutate]);
+
+  // ── Lamppumallit ─────────────────────────────────────────────────────────────
+  const onAddLampModel = useCallback((name: string) => {
+    mutate((d) => {
+      const t = name.trim();
+      if (!t) return;
+      if (!d.lampModels) d.lampModels = [];
+      // Sama nimi kahdesti olisi kaksi riviä ostoslistalla samasta lampusta.
+      if (d.lampModels.some((m) => m.name.toLowerCase() === t.toLowerCase())) return;
+      const id = `m${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`;
+      d.lampModels = [...d.lampModels, { id, name: t }];
+    });
+  }, [mutate]);
+
+  const onRemoveLampModel = useCallback((id: string) => {
+    mutate((d) => {
+      d.lampModels = (d.lampModels ?? []).filter((m) => m.id !== id);
+      // Mallia käyttäneet lamput palaavat "ei mallia" -tilaan. Roikkuva viite
+      // olisi sama asia mutta hämärämpänä, ja sanitointi pudottaisi sen silti.
+      if (d.lampModelOf) {
+        for (const [k, v] of Object.entries(d.lampModelOf)) if (v === id) delete d.lampModelOf[k];
+      }
+      if (!d.lampModels.length) delete d.lampModels;
+    });
+  }, [mutate]);
+
+  const onSetLampModel = useCallback((key: string, modelId: string | null) => {
+    mutate((d) => {
+      if (!d.lampModelOf) d.lampModelOf = {};
+      if (modelId) d.lampModelOf[key] = modelId;
+      else delete d.lampModelOf[key];
+    });
+  }, [mutate]);
+
+  /**
+   * KEIKAN LASKUTUSTILA. Valinta kirjoitetaan keikalle, jotta seuraava
+   * avaaminen menee suoraan oikeaan näkymään — valikko joka kysyy saman asian
+   * joka kerta olisi este, ei valinta.
+   */
+  /** Merkitse kulu asiakkaalle näkyväksi (tai piilota). Vain perustajat. */
+  const onToggleExpenseForCustomer = useCallback((expenseId: string, forCustomer: boolean) => {
+    mutate((d) => {
+      d.expenses = (d.expenses ?? []).map((e) =>
+        e.id === expenseId ? (forCustomer ? { ...e, forCustomer: true } : { ...e, forCustomer: undefined }) : e,
+      );
+    });
+  }, [mutate]);
+
+  /**
+   * KEIKKA AUKEAA OVELLE. Kumpaan puoleen mennään on päätös, ei asetus:
+   * projektipuoli ja tuntipuoli vastaavat eri kysymyksiin eivätkä laske samaa
+   * lukua, joten valinta tehdään joka kerta uudelleen — ja takaisin ovelle
+   * pääsee kummalta puolelta tahansa yhdellä napautuksella.
+   *
+   * Syvälinkki (`?tab=`) ohittaa oven kokonaan: se on nimenomainen pyyntö
+   * päästä tiettyyn näkymään, esimerkiksi keikkasivun "Tekijöiden maksut".
+   */
+  const [side, setSide] = useState<GigSide | null>(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("tab") ? "targeted" : null;
+  });
+
+  /**
+   * TYÖTAULU. Serverin omistama kenttä, joten muutokset kulkevat omaa reittiään
+   * eivätkä `mutate`n kautta — geneerinen blob-tallennus palauttaisi kannan
+   * arvon ja pyyhkisi juuri kirjoitetun rivin.
+   */
+  const [board, setBoard] = useState<ProjBoardEntry[]>([]);
+  useEffect(() => { if (project?.board) setBoard(project.board); }, [project?.board]);
+
+  const onSetBillingMode = useCallback((mode: BillingMode) => {
+    mutate((d) => { d.billingMode = mode; });
+  }, [mutate]);
+
+  /**
+   * TUNTIPUOLEN KIRJAUKSET.
+   *
+   * Serverin omistama kenttä, joten nämä eivät kulje `mutate`n kautta:
+   * geneerinen blob-tallennus palauttaisi kannan arvon ja pyyhkisi juuri
+   * kirjatun vuoron. Sama kuvio kuin työtaululla — ja täällä menetetty rivi
+   * olisi jonkun maksamaton työpäivä.
+   *
+   * Ajastimen KESTOA EI LASKETA TÄÄLLÄ. Selain lähettää vain "aloita" tai
+   * "päätä"; tunnit syntyvät palvelimen kellosta ja pyöristyvät siellä.
+   */
+  const [shifts, setShifts] = useState<ProjShift[]>([]);
+  const [shiftBusy, setShiftBusy] = useState(false);
+  const [shiftError, setShiftError] = useState("");
+  useEffect(() => { setShifts(project?.shifts ?? []); }, [project?.shifts]);
+
+  const runShift = useCallback(async (
+    body: Parameters<typeof api.adminShift>[1],
+    failText: string,
+  ) => {
+    setShiftBusy(true);
+    setShiftError("");
+    const res = await api.adminShift(jobId, { ...body, by: currentWorker });
+    setShiftBusy(false);
+    if (!res.ok || !res.data) { setShiftError(res.error || failText); return; }
+    setShifts(res.data.shifts);
+    // Käynnissä olevat vuorot tulevat samasta vastauksesta, joten "töissä nyt"
+    // ei jää odottamaan seuraavaa koko blobin latausta.
+    const live = new Map(res.data.crew.map((c) => [c.id, c]));
+    setProject((prev) => prev && {
+      ...prev,
+      shifts: res.data!.shifts,
+      crew: (prev.crew ?? []).map((m) => {
+        const l = live.get(m.id);
+        return l ? { ...m, activeShiftAt: l.activeShiftAt ?? undefined, shiftTargetHours: l.shiftTargetHours ?? undefined } : m;
+      }),
+    });
+  }, [jobId, currentWorker]);
+
+  const startShift = useCallback((workerId: string, workerLabel?: string) => {
+    // Nimi mukaan, jotta keikalle vasta nyt lisättävä johtaja saa rivilleen
+    // oikean nimen eikä pelkkää tunnusta.
+    void runShift({ action: "start", worker: workerId, workerName: workerLabel }, "Työtunnin aloitus ei onnistunut.");
+  }, [runShift]);
+
+  const stopShift = useCallback((workerId: string) => {
+    void runShift({ action: "stop", worker: workerId }, "Työtunnin päätös ei onnistunut.");
+  }, [runShift]);
+
+  /**
+   * KÄSIN KORJAUS — vain perustajille (ks. `canAdjustHours` alla).
+   *
+   * Pyöristys on lähtökohta eikä viimeinen sana: ajastin voi jäädä päälle,
+   * unohtua kokonaan, tai työ on tehty ennen kuin linkki otettiin käyttöön.
+   * Korjaus on oma päivätty rivinsä eikä summan muokkaus, joten päiväkirjasta
+   * näkee mitä korjattiin ja milloin.
+   */
+  const adjustShiftHours = useCallback((workerId: string, delta: number) => {
+    void runShift({ action: "add", worker: workerId, hours: delta }, "Tuntien korjaus ei onnistunut.");
+  }, [runShift]);
+
+  /** Käsin kirjaus kenelle tahansa ja mille päivälle tahansa (myös eiliselle). */
+  const addShiftHours = useCallback((workerId: string, hours: number, day: string) => {
+    void runShift({ action: "add", worker: workerId, hours, day }, "Tuntien lisäys ei onnistunut.");
+  }, [runShift]);
+
+  const removeShift = useCallback((id: string) => {
+    void runShift({ action: "remove", id }, "Rivin poisto ei onnistunut.");
+  }, [runShift]);
 
   const onSetDoorLabel = useCallback((key: string, label: string) => {
     mutate((d) => {
@@ -923,6 +1090,34 @@ export default function AdminProjectPage() {
     return workerName(id);
   };
 
+  /**
+   * TÄSSÄ EI SAA OLLA HOOKEJA — koko sivu kaatui tähän.
+   *
+   * Nämä olivat `useCallback`eja, ja ne ovat `if (loading) return …`
+   * -poistumisen ALAPUOLELLA. Latauksen ajan React näki siis vähemmän hookeja
+   * kuin heti sen jälkeen, ja kun data saapui, se heitti #310 ("Rendered more
+   * hooks than during the previous render") — eli valkoisen "Jotain meni
+   * pieleen" -ruudun koko projektinäkymän tilalle.
+   *
+   * Muistiinpano ei myöskään tehnyt mitään: riippuvuutena on `resolveName`,
+   * joka on tavallinen funktio ja siis uusi joka renderillä. `useCallback`
+   * palautti uuden funktion joka kerta — kaikki haitta, ei hyötyä.
+   *
+   * Vartija: `client/src/pages/admin/project-hooks.test.ts`.
+   */
+  const addBoardEntry = async (kind: "task" | "note", text: string) => {
+    const res = await api.adminAddBoardEntry(jobId, kind, text, currentWorker, resolveName(currentWorker));
+    if (res.ok && res.data) setBoard(res.data.board);
+    else setError(res.error || "Tallennus ei onnistunut.");
+  };
+
+  const toggleBoardTask = async (id: string, done: boolean) => {
+    const res = await api.adminToggleBoardTask(jobId, id, done, currentWorker, resolveName(currentWorker));
+    if (res.ok && res.data) setBoard(res.data.board);
+    else setError(res.error || "Kuittaus ei onnistunut.");
+  };
+
+
   // Harjoittelijat koottuna vastuujohtajan alle: ikkunamäärä + hänen oma summansa
   // + jo maksettu. EI osa johtajan lukuja — pelkkä vastuunäkymä, joka on kortilla
   // piilossa kunnes sen avaa.
@@ -1038,6 +1233,172 @@ export default function AdminProjectPage() {
   // valid worker, else the logged-in admin.
   const effectiveWasher = gigWorkers.some((w) => w.id === defaultWasher) ? defaultWasher : currentWorker;
 
+  /**
+   * `billingMode` EI OLE SAMA ASIA KUIN SE KUMMALLA PUOLELLA JOHTAJA ON.
+   *
+   * Puoli (`side`) on tämän hetken katsomiskysymys ja se kysytään ovella joka
+   * kerta. `billingMode` on keikan pysyvä asia ja se ratkaisee yhden asian:
+   * MITÄ ASIAKAS NÄKEE seurantasivullaan. Siksi sitä ei aseteta ohimennen
+   * ovelta vaan omalla kytkimellään tuntipuolen alalaidassa, jossa kytkin
+   * sanoo suoraan kumman asiakas näkee.
+   */
+  const mode = billingModeOf(project);
+  const canAdjustHours = isFounderView;
+
+  /**
+   * Kenelle tunteja voi kirjata: keikan tekijät, johtajat ja minä itse.
+   * Laajempi kuin keikan tekijälista, koska tuntirivi on vain tunnus, tunnit
+   * ja päivä — kirjaaminen ei vaadi keikalle lisäämistä.
+   */
+  const hourPeople = (() => {
+    const out = new Map<string, { id: string; name: string }>();
+    for (const w of gigWorkers) out.set(w.id, { id: w.id, name: w.name });
+    for (const id of [...FOUNDER_IDS, currentWorker]) {
+      if (!out.has(id)) out.set(id, { id, name: resolveName(id) });
+    }
+    return Array.from(out.values());
+  })();
+
+  /**
+   * OVI. Kumpi puoli avataan — ks. `side`-tilan perustelu ylempänä.
+   *
+   * Tilannerivit lasketaan tuntipuolen omasta kirjanpidosta ja projektipuolen
+   * ikkunaluvuista, jottei valintaa tarvitse tehdä muistin varassa.
+   */
+  if (side === null) {
+    const hourStats = computeShiftStats(project.shifts);
+    const pointTotals = computeProjectTotals(project);
+    const runningNow = (crew ?? []).filter((c) => c.activeShiftAt).length;
+    return shell(
+      <main
+        data-fr8-pane
+        style={{
+          // Korkeus tulee kuoren omasta säännöstä (.fr8-root > main:
+          // flex 1 1 auto + min-height 0). Oma `height: 100%` tässä oli juuri
+          // se mikä ajoi edellisen version sisällön iOS:n tilapalkin alle.
+          position: "relative", zIndex: 10, overflowY: "auto", overflowX: "hidden",
+          boxSizing: "border-box",
+          padding: "calc(32px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-left)) calc(24px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-right))",
+        }}
+      >
+        <ModeChooser
+          gigName={project.building.name || gigName || undefined}
+          address={project.building.address}
+          suggested={mode}
+          onChoose={setSide}
+          onBack={backToGig}
+          hourlyHint={
+            hourStats.totalHours > 0 || runningNow > 0
+              ? `${hourStats.todayHours} h tänään · ${hourStats.totalHours} h yhteensä${runningNow > 0 ? ` · ${runningNow} töissä nyt` : ""}`
+              : "Ei vielä kirjattuja tunteja"
+          }
+          targetedHint={pointTotals.total > 0 ? `${pointTotals.washed} / ${pointTotals.total} pesty` : undefined}
+        />
+      </main>,
+    );
+  }
+
+  /**
+   * TUNTIPUOLI. Oma näkymänsä, ei välilehti: se ei kysy samaa kysymystä kuin
+   * projektipuoli eikä se saa näyttää projektipuolen lukuja. Sama kuori kuin
+   * dashilla (`data-fr8-pane`), joten turva-alueet hoituvat siellä missä
+   * muillakin.
+   */
+  if (side === "hourly") {
+    return shell(
+      <main
+        data-fr8-pane
+        style={{
+          position: "relative", zIndex: 10, overflowY: "auto", overflowX: "hidden",
+          overscrollBehavior: "contain", boxSizing: "border-box",
+          padding: "calc(20px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-left)) calc(24px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-right))",
+        }}
+      >
+        <div style={{ maxWidth: 860, margin: "0 auto", width: "100%", boxSizing: "border-box" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+            <button onClick={() => setSide(null)} aria-label="Takaisin"
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, flexShrink: 0, borderRadius: 12, border: "1px solid rgba(255,255,255,0.16)", background: "transparent", color: "rgba(255,255,255,0.72)", cursor: "pointer" }}>
+              <ArrowLeft size={16} />
+            </button>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 15, fontWeight: 700, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {project.building.name || gigName || "Keikka"}
+              </div>
+              <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 10, letterSpacing: "0.12em", color: "rgba(255,255,255,0.38)" }}>
+                TUNTITYÖ
+              </div>
+            </div>
+            {shiftBusy && (
+              <span style={{ marginLeft: "auto", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 11.5, color: "rgba(255,255,255,0.38)" }}>
+                tallennetaan…
+              </span>
+            )}
+          </div>
+
+          <HourlyPanel
+            shifts={shifts}
+            crew={crew}
+            workerName={resolveName}
+            me={currentWorker}
+            onStartShift={(id) => startShift(id, resolveName(id))}
+            onStopShift={stopShift}
+            onAdjustHours={canAdjustHours ? adjustShiftHours : undefined}
+            onAddHours={canAdjustHours ? addShiftHours : undefined}
+            people={hourPeople}
+            onRemoveShift={canAdjustHours ? removeShift : undefined}
+            busy={shiftBusy}
+          />
+
+          {/* TYÖTAULU. Sama lista jonka asiakas ja tekijät näkevät. */}
+          <div style={{ marginTop: 16, padding: 18, borderRadius: 18, background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.09)" }}>
+            <p style={{ margin: "0 0 12px", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 10, letterSpacing: "0.12em", color: "rgba(255,255,255,0.38)" }}>
+              TEHTÄVÄT JA MERKINNÄT
+            </p>
+            <TaskBoard
+              entries={board}
+              onAdd={addBoardEntry}
+              onToggle={toggleBoardTask}
+              theme={{
+                font: "var(--font-onest, system-ui, sans-serif)", ink: "#fff",
+                muted: "rgba(255,255,255,0.5)", faint: "rgba(255,255,255,0.38)",
+                fill: "rgba(255,255,255,0.04)", card: "rgba(0,0,0,0.28)",
+                hair: "rgba(255,255,255,0.14)", accent: "#5fe08a", done: "#3E7C59",
+              }}
+            />
+          </div>
+
+          {canAdjustHours && (
+            <div style={{ marginTop: 16, padding: 18, borderRadius: 18, background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.09)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 14, fontWeight: 700, color: "#fff" }}>
+                    Asiakas näkee tunnit
+                  </div>
+                  <div style={{ fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 12.5, color: "rgba(255,255,255,0.5)", lineHeight: 1.55, marginTop: 3 }}>
+                    {mode === "hourly"
+                      ? "Asiakas näkee tunnit ja hänelle ostetut hankinnat ensimmäisenä, eikä häneltä kysytä kohdehintoja."
+                      : "Asiakas näkee ikkunapesun edistymän ja kohdehinnat. Kytke päälle kun tämä keikka laskutetaan tunneista."}
+                  </div>
+                </div>
+                <Toggle
+                  checked={mode === "hourly"}
+                  onChange={(v) => onSetBillingMode(v ? "hourly" : "targeted")}
+                  ariaLabel="Asiakas näkee tunnit"
+                />
+              </div>
+            </div>
+          )}
+
+          {shiftError && (
+            <p style={{ margin: "12px 0 0", fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 12.5, color: "#ff8a8a", lineHeight: 1.55 }}>
+              {shiftError}
+            </p>
+          )}
+        </div>
+      </main>,
+    );
+  }
+
   return shell(
     <>
       <Navbar
@@ -1047,7 +1408,7 @@ export default function AdminProjectPage() {
         buildingAddress={project.building.address}
         currentWorkerName={resolveName(effectiveWasher)}
         saving={saving}
-        onBack={backToGig}
+        onBack={() => setSide(null)}
         workers={gigWorkers}
         defaultWasherId={effectiveWasher}
         onChangeDefaultWasher={changeDefaultWasher}
@@ -1117,6 +1478,9 @@ export default function AdminProjectPage() {
             onSetLampNote={onSetLampNote}
             onSetDoorStatus={onSetDoorStatus}
             onSetDoorNote={onSetDoorNote}
+            onSetFixtureOrder={onSetFixtureOrder}
+            onAddLampModel={onAddLampModel}
+            onRemoveLampModel={onRemoveLampModel}
             p2Slot={deal ? (
               <P2AdminPanel
                 project={project}
@@ -1147,6 +1511,7 @@ export default function AdminProjectPage() {
                 resolveName={resolveName}
                 onAdd={addExpense}
                 onDelete={deleteExpense}
+                onToggleForCustomer={isFounderView ? onToggleExpenseForCustomer : undefined}
               />
             }
             founderInvoiceSlot={(founderId) => {
@@ -1178,6 +1543,11 @@ export default function AdminProjectPage() {
         {/* Maksut — koko rahaliikenne (asiakaslaskutus + tekijöiden maksettava),
             vain FR8 + johtajat. Navbar näyttää välilehden vain johtajille; tämä
             ehto on sama tuplavarmistus. */}
+        {/* TUNNIT. Aina saatavilla, myös kohdennetulla keikalla — tunteja
+            kirjataan siellä yhtä lailla, ne eivät vain ole laskutuksen peruste.
+            Kytkin alalaidassa ratkaisee mitä ASIAKAS näkee; se on eri asia kuin
+            se mitä välilehteä johtaja katsoo, eikä sitä siksi aseteta
+            välilehteä vaihtamalla. */}
         {tab === "maksut" && deal && (profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")) && (
           <MaksutView
             jobId={jobId}
@@ -1244,6 +1614,9 @@ export default function AdminProjectPage() {
             lampNotes={project.lampNotes}
             onSetLampCondition={onSetLampCondition}
             onSetLampNote={onSetLampNote}
+            lampModels={project.lampModels}
+            lampModelOf={project.lampModelOf}
+            onSetLampModel={onSetLampModel}
             doors={project.doors}
             doorStatuses={project.doorStatuses}
             doorDoneBy={project.doorDoneBy ? Object.fromEntries(Object.entries(project.doorDoneBy).map(([k, v]) => [k, v.by])) : undefined}
@@ -2143,7 +2516,7 @@ async function fileToReceiptDataUrl(file: File): Promise<string> {
 }
 
 function ExpensesView({
-  expenses, workers, currentWorker, resolveName, onAdd, onDelete,
+  expenses, workers, currentWorker, resolveName, onAdd, onDelete, onToggleForCustomer,
 }: {
   expenses: ProjExpense[];
   workers: { id: string; name: string }[];
@@ -2151,6 +2524,8 @@ function ExpensesView({
   resolveName: (id: string) => string;
   onAdd: (data: { kind: string; desc: string; amountCents: number; by: string; forWhom?: string; receiptDataUrl?: string }) => Promise<void>;
   onDelete: (expenseId: string) => Promise<void>;
+  /** Merkitse kulu asiakkaalle näkyväksi. Puuttuessaan merkintää ei voi tehdä. */
+  onToggleForCustomer?: (expenseId: string, forCustomer: boolean) => void;
 }) {
   const m = useIsMobile();
   const [kind, setKind] = useState("transport");
@@ -2317,6 +2692,25 @@ function ExpensesView({
                   </div>
                 </div>
                 <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 14, fontWeight: 700, color: "#ff9b6e", flexShrink: 0 }}>{fmtEur(exp.amountCents)}</span>
+                {/* NÄKYYKÖ ASIAKKAALLE. Oletus on ei: valtaosa kuluista on
+                    meidän sisäisiä (matkat, oma kalusto). Asiakkaalle merkitään
+                    vain se mikä on ostettu HÄNTÄ VARTEN — polttimot, tiivisteet.
+                    Kuitti ei seuraa mukana koskaan. */}
+                {onToggleForCustomer && (
+                  <button
+                    onClick={() => onToggleForCustomer(exp.id, !exp.forCustomer)}
+                    title={exp.forCustomer ? "Näkyy asiakkaalle — piilota" : "Näytä asiakkaalle hankintana"}
+                    style={{
+                      flexShrink: 0, padding: "5px 10px", borderRadius: 999, cursor: "pointer",
+                      fontFamily: "inherit", fontSize: 11.5, fontWeight: 600,
+                      border: `1px solid ${exp.forCustomer ? "rgba(95,224,138,0.4)" : "rgba(255,255,255,0.12)"}`,
+                      background: exp.forCustomer ? "rgba(95,224,138,0.12)" : "transparent",
+                      color: exp.forCustomer ? "#9ff0bd" : "rgba(255,255,255,0.4)",
+                    }}
+                  >
+                    {exp.forCustomer ? "Asiakkaalle ✓" : "Vain meille"}
+                  </button>
+                )}
                 <button
                   onClick={() => onDelete(exp.id)}
                   title="Poista kulu"

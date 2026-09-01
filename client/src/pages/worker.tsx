@@ -13,6 +13,7 @@
  * Built mobile-first; works on phone and laptop.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import TaskBoard from "@/components/TaskBoard";
 import { useRoute } from "wouter";
 import { api, warmBackend, type WorkerView, type GuidedWorkerView } from "@/lib/api";
 import type { WindowStatus, LampStatus, LampCondition, DoorStatus } from "@shared/project";
@@ -1045,10 +1046,26 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
   // Oman kirjautumissalasanan asetus (myös "unohdin salasanani" -reitti):
   // linkki on henkilökohtainen avain, joten vanhaa salasanaa ei kysytä.
   const [showPassword, setShowPassword] = useState(false);
-  // Ohjattu eteneminen: "Vie minut seuraavaan" -napin kohdennusnonce +
-  // hetkellinen ilmoitus kun serveri estää lukitun kerroksen merkinnän (403).
+  // Ohjattu eteneminen: "Vie minut seuraavaan" -napin kohdennusnonce.
   const [floorFocusNonce, setFloorFocusNonce] = useState(0);
-  const [guidedNote, setGuidedNote] = useState("");
+  /**
+   * TYÖPÖYDÄN AINOA ILMOITUSKANAVA.
+   *
+   * Ennen tämä oli `guidedNote` ja se piirtyi VAIN karttavälilehdellä. Sinne
+   * ohjattiin kerroslukon esto — mutta jos sama esto (tai mikä tahansa
+   * verkkovirhe) osui tuntikirjaukseen, kuluihin tai maksuihin, viesti meni
+   * näkymään jota ei ollut ruudulla. Nyt kanava on yksi ja se piirtyy
+   * välilehdestä riippumatta, joten yksikään merkintä ei voi epäonnistua
+   * äänettömästi.
+   */
+  const [notice, setNotice] = useState("");
+  const noticeTimer = useRef<number | null>(null);
+  const showNotice = useCallback((text: string) => {
+    setNotice(text);
+    if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
+    noticeTimer.current = window.setTimeout(() => setNotice(""), 5200);
+  }, []);
+  useEffect(() => () => { if (noticeTimer.current) window.clearTimeout(noticeTimer.current); }, []);
   // Juhla jokaisesta pestystä ikkunasta. `n` on juokseva numero, jotta kahden
   // peräkkäisen merkinnän animaatio käynnistyy varmasti uudelleen.
   const [burst, setBurst] = useState<{ n: number; key: string } | null>(null);
@@ -1080,57 +1097,93 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
     return () => { html.style.background = prev.htmlBg; body.style.background = prev.bodyBg; };
   }, []);
 
+  /**
+   * YKSI PORTTI KAIKILLE TYÖPÖYDÄN MERKINNÖILLE.
+   *
+   * Jokainen merkintä teki ennen saman kolmen rivin kuvion — `if (res.ok &&
+   * res.data?.view) setView(...)` — ja jokaisessa oli samat kolme vikaa.
+   * Tekijät sanoivat että työpöytä "ei välillä toimi"; se oli tämä.
+   *
+   * 1. VIRHE KATOSI HILJAA. Epäonnistunut pyyntö putosi tyhjään else-haaraan:
+   *    napautus ei tehnyt mitään eikä kertonut mitään. Työmaalla yhteys
+   *    pätkii, joten tämä oli täsmälleen se "välillä ei toimi" — eikä tekijä
+   *    voinut tietää pitikö yrittää uudelleen.
+   *
+   * 2. VASTAUKSET SAATTOIVAT MENNÄ RISTIIN. Jokainen vastaus korvaa KOKO
+   *    näkymän. Kaksi nopeaa napautusta lähtee rinnakkain, ja jos vanhempi
+   *    vastaus laskeutuu uudemman jälkeen, se kirjoittaa näkymän tilaan jossa
+   *    jälkimmäistä merkintää ei ole — piste katosi ruudulta vaikka se oli
+   *    kannassa. Juoksevalla numerolla vain tuorein vastaus saa kirjoittaa.
+   *
+   * 3. KATKENNUT YHTEYS EI SAANUT TOISTA MAHDOLLISUUTTA. Yksi uusinta vain
+   *    verkkovirheelle ja 5xx:lle: 4xx on palvelimen PÄÄTÖS (lukittu kerros,
+   *    allekirjoittamaton sopimus), ja sen toistaminen antaisi saman vastauksen
+   *    ja piilottaisi syyn.
+   */
+  const mutSeq = useRef(0);
+  const runMark = useCallback(async (
+    what: string,
+    call: () => Promise<{ ok: boolean; data?: { view: WorkerView }; error?: string; status?: number }>,
+  ): Promise<boolean> => {
+    const seq = ++mutSeq.current;
+    let res = await call();
+    if (!res.ok && (res.status === undefined || res.status >= 500)) res = await call();
+    // Vanhentunut vastaus ei saa kirjoittaa näkymää — ks. kohta 2 yllä.
+    if (seq !== mutSeq.current) return res.ok;
+    if (res.ok && res.data?.view) { setView(res.data.view); setNotice(""); return true; }
+    showNotice(res.error || `${what} ei onnistunut. Tarkista yhteys ja yritä uudelleen.`);
+    return false;
+  }, [setView]);
+
   const markWindow = useCallback(async (key: string, st: WindowStatus) => {
-    const res = await api.crewMarkWindow(token, key, st);
-    if (res.ok && res.data?.view) {
-      setView(res.data.view);
-      setGuidedNote("");
-      // Pieni juhla jokaisesta pestystä ikkunasta. Näkymä päivittyy samalla
-      // (setView yllä), joten prosentti ja määrä nousevat serpentiinien alla.
-      if (st === "pesty") setBurst({ n: burstSeq.current++, key });
-    }
-    else if (res.error) {
-      // Pesuportti (lukittu kerros / keltainen ei vielä työn piirissä) → näytä
-      // serverin selkokielinen syy hetken ajan sen sijaan että merkintä vain epäonnistuu.
-      setGuidedNote(res.error);
-      window.setTimeout(() => setGuidedNote(""), 4200);
-    }
-  }, [token, setView]);
+    const ok = await runMark("Merkintä", () => api.crewMarkWindow(token, key, st));
+    // Pieni juhla jokaisesta pestystä ikkunasta. Näkymä on jo päivittynyt,
+    // joten prosentti ja määrä nousevat serpentiinien alla.
+    if (ok && st === "pesty") setBurst({ n: burstSeq.current++, key });
+  }, [token, runMark]);
 
   // Lamppu — sama merkintä kuin ikkunalla, mutta ei rahaa eikä pesuporttia.
   const markLamp = useCallback(async (key: string, status: LampStatus) => {
-    const res = await api.crewMarkLamp(token, key, status);
-    if (res.ok && res.data?.view) setView(res.data.view);
-  }, [token, setView]);
+    await runMark("Lampun merkintä", () => api.crewMarkLamp(token, key, status));
+  }, [token, runMark]);
 
   // Toimiiko lamppu — oma kysymyksensä vaihtamisen rinnalla.
   const setLampCondition = useCallback(async (key: string, condition: LampCondition | null) => {
-    const res = await api.crewSetLampCondition(token, key, condition);
-    if (res.ok && res.data?.view) setView(res.data.view);
-  }, [token, setView]);
+    await runMark("Kunnon merkintä", () => api.crewSetLampCondition(token, key, condition));
+  }, [token, runMark]);
 
   const setLampNote = useCallback(async (key: string, text: string) => {
-    const res = await api.crewSetLampNote(token, key, text);
-    if (res.ok && res.data?.view) setView(res.data.view);
-  }, [token, setView]);
+    await runMark("Huomautuksen tallennus", () => api.crewSetLampNote(token, key, text));
+  }, [token, runMark]);
+
+  // Työtaulu: tekijä kuittaa tehtäviä ja kirjaa mitä teki. Sama lista jonka
+  // asiakas näkee — yksi keskustelu, ei kaksi.
+  const addBoardEntry = useCallback(async (kind: "task" | "note", text: string) => {
+    await runMark("Tallennus", () => api.crewAddBoardEntry(token, kind, text));
+  }, [token, runMark]);
+  const toggleBoardTask = useCallback(async (id: string, done: boolean) => {
+    await runMark("Kuittaus", () => api.crewToggleBoardTask(token, id, done));
+  }, [token, runMark]);
+
+  // Lampun malli — tekijä näkee kohteen ja tietää mikä lamppu siinä on, joten
+  // hän on oikea merkitsemään sen. Mallilistan ylläpito on johtajan puolella.
+  const setLampModel = useCallback(async (key: string, modelId: string | null) => {
+    await runMark("Mallin merkintä", () => api.crewSetLampModel(token, key, modelId));
+  }, [token, runMark]);
 
   // Ovi — tehtäväpiste: tekijä kuittaa tehdyksi ja voi huomauttaa siitä.
   const markDoor = useCallback(async (key: string, status: DoorStatus) => {
-    const res = await api.crewMarkDoor(token, key, status);
-    if (res.ok && res.data?.view) setView(res.data.view);
-  }, [token, setView]);
+    await runMark("Oven merkintä", () => api.crewMarkDoor(token, key, status));
+  }, [token, runMark]);
 
   const setDoorNote = useCallback(async (key: string, text: string) => {
-    const res = await api.crewSetDoorNote(token, key, text);
-    if (res.ok && res.data?.view) setView(res.data.view);
-  }, [token, setView]);
-
+    await runMark("Huomautuksen tallennus", () => api.crewSetDoorNote(token, key, text));
+  }, [token, runMark]);
 
   // Per-window observation (text + optional photo) the worker leaves on a window.
   const setObservation = useCallback(async (key: string, text: string, imageDataUrl?: string) => {
-    const res = await api.crewSetWindowObservation(token, key, text, imageDataUrl);
-    if (res.ok && res.data?.view) setView(res.data.view);
-  }, [token, setView]);
+    await runMark("Havainnon tallennus", () => api.crewSetWindowObservation(token, key, text, imageDataUrl));
+  }, [token, runMark]);
 
   // Havaintokuva haetaan vasta napautuksesta — ks. stripObservationImages.
   const loadObservationImage = useCallback(async (key: string) => {
@@ -1140,19 +1193,14 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
 
   // Worker map notes — add a "huomio" / "tikkaat" marker, edit or delete own.
   const addNote = useCallback((floor: string, x: number, y: number, kind: string): void => {
-    (async () => {
-      const res = await api.crewAddMapNote(token, floor, x, y, kind);
-      if (res.ok && res.data?.view) setView(res.data.view);
-    })();
-  }, [token, setView]);
+    void runMark("Merkinnän lisäys", () => api.crewAddMapNote(token, floor, x, y, kind));
+  }, [token, runMark]);
   const updateNote = useCallback(async (floor: string, key: string, text: string) => {
-    const res = await api.crewUpdateMapNote(token, floor, key, text);
-    if (res.ok && res.data?.view) setView(res.data.view);
-  }, [token, setView]);
+    await runMark("Merkinnän tallennus", () => api.crewUpdateMapNote(token, floor, key, text));
+  }, [token, runMark]);
   const deleteNote = useCallback(async (floor: string, key: string) => {
-    const res = await api.crewDeleteMapNote(token, floor, key);
-    if (res.ok && res.data?.view) setView(res.data.view);
-  }, [token, setView]);
+    await runMark("Merkinnän poisto", () => api.crewDeleteMapNote(token, floor, key));
+  }, [token, runMark]);
 
   const noop = useCallback(() => {}, []);
 
@@ -1249,6 +1297,9 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
             onSetLampStatus={markLamp}
             lampConditions={view.lampConditions}
             lampNotes={view.lampNotes}
+            lampModels={view.lampModels}
+            lampModelOf={view.lampModelOf}
+            onSetLampModel={setLampModel}
             onSetLampCondition={setLampCondition}
             onSetLampNote={setLampNote}
             doors={view.doors}
@@ -1280,12 +1331,13 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
             }
           />
         )}
-        {/* Kerroslukon virheilmoitus (esim. "tämä kerros on lukossa") lyhyenä
-            toastina kartan alalaidassa — ei ohjauskorttia. */}
-        {!sub && tab === "map" && guidedNote && (
-          <div style={{ position: "absolute", left: 12, right: 12, bottom: 14, zIndex: 20, display: "flex", justifyContent: "center", pointerEvents: "none" }}>
+        {/* Ilmoitus lyhyenä toastina alalaidassa — KAIKILLA välilehdillä ja myös
+            alanäkymien päällä, koska merkintä voi epäonnistua missä tahansa.
+            Siksi myös zIndex on alanäkymien yläpuolella. */}
+        {notice && (
+          <div style={{ position: "absolute", left: 12, right: 12, bottom: 14, zIndex: 90, display: "flex", justifyContent: "center", pointerEvents: "none" }}>
             <span style={{ maxWidth: 420, padding: "9px 13px", borderRadius: 11, background: "rgba(28,22,8,0.95)", border: "1px solid rgba(255,205,40,0.4)", color: "#ffe08a", fontSize: 12.5, lineHeight: 1.4, textAlign: "center" }}>
-              {guidedNote}
+              {notice}
             </span>
           </div>
         )}
@@ -1293,12 +1345,15 @@ function Dashboard({ token, view, setView, reload, onLogout }: { token: string; 
           <HomeTab
             view={view}
             setTab={setTab}
+            board={view.board}
+            onAddBoardEntry={addBoardEntry}
+            onToggleBoardTask={toggleBoardTask}
             pendingPayouts={pendingPayouts}
             onOpenPayouts={() => setSub("payouts")}
             onOpenInfo={() => setSub("notes")}
           />
         )}
-        {!sub && tab === "hours" && <HoursTab token={token} view={view} setView={setView} />}
+        {!sub && tab === "hours" && <HoursTab token={token} view={view} setView={setView} notify={showNotice} />}
 
         {/* Maksut / Info as full-screen sub-views with a back header */}
         {sub && (
@@ -1451,7 +1506,10 @@ function WindowDoneBurst({ onDone }: { onDone: () => void }) {
 /** Worker home / overview — the motivating landing screen: clear team progress on
  *  the contract (red) windows, your own windows + earnings, quick actions, and the
  *  team standings. Replaces "just a map" as the first thing a worker sees. */
-function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
+function HomeTab({ view, setTab, board, onAddBoardEntry, onToggleBoardTask, pendingPayouts, onOpenPayouts, onOpenInfo }: {
+  board: import("@shared/project").ProjBoardEntry[];
+  onAddBoardEntry: (kind: "task" | "note", text: string) => Promise<void>;
+  onToggleBoardTask: (id: string, done: boolean) => Promise<void>;
   view: WorkerView; setTab: (t: Tab) => void;
   pendingPayouts: number; onOpenPayouts: () => void; onOpenInfo: () => void;
 }) {
@@ -1638,10 +1696,35 @@ function HomeTab({ view, setTab, pendingPayouts, onOpenPayouts, onOpenInfo }: {
         </button>
       </div>
 
-      {/* Total hours only — no €/h average (the per-hour read-out isn't shown to workers). */}
-      <div style={{ marginTop: 16 }}>
-        <Stat label="Tunteja" value={s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} />
+      {/* Total hours only — no €/h average (the per-hour read-out isn't shown to workers).
+          TUNTITILASSA EI EDES TÄTÄ: siellä tunnit ovat palkka, ja johtajat
+          päättävät luvun (pyöristys + käsin korjaus). Jos tekijä näkisi
+          juoksevan summan, hän tekisi siitä omat johtopäätöksensä ennen kuin
+          johtaja on sen tarkistanut. Ks. `BillingMode`. */}
+      {/* TYÖTAULU. Asiakkaan pyynnöt ja oma työpäiväkirja samassa listassa,
+          heti kotinäkymässä — tehtävä jota pitää etsiä valikosta ei tule
+          tehdyksi. */}
+      <div style={{ marginTop: 18, padding: 16, borderRadius: 16, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+        <p style={{ margin: "0 0 12px", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(255,255,255,0.4)" }}>
+          Tehtävät ja merkinnät
+        </p>
+        <TaskBoard
+          entries={board}
+          onAdd={onAddBoardEntry}
+          onToggle={onToggleBoardTask}
+          theme={{
+            font: FONT, ink: "#fff", muted: "rgba(255,255,255,0.5)", faint: "rgba(255,255,255,0.38)",
+            fill: "rgba(255,255,255,0.04)", card: "rgba(0,0,0,0.28)", hair: "rgba(255,255,255,0.14)",
+            accent: "#5fe08a", done: "#3E7C59",
+          }}
+        />
       </div>
+
+      {view.billingMode !== "hourly" && (
+        <div style={{ marginTop: 16 }}>
+          <Stat label="Tunteja" value={s.hours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} />
+        </div>
+      )}
       {/* Vain keikalla jolla on erälaskutus. Ennen tämä näytti "Maksuerä 1/4"
           jokaisella keikalla — luku oli FR8:n rakenne, ei tämän keikan. */}
       {view.hasInstalments && (
@@ -2300,7 +2383,7 @@ function PayoutsTab({ token, view, setView }: { token: string; view: WorkerView;
   );
 }
 
-function HoursTab({ token, view, setView }: { token: string; view: WorkerView; setView: (v: WorkerView) => void }) {
+function HoursTab({ token, view, setView, notify }: { token: string; view: WorkerView; setView: (v: WorkerView) => void; notify: (t: string) => void }) {
   // Deliberately simple: this view only tracks PRESENCE at the job site for the
   // bosses (total time on location). No running clock, no windows, no €/h — the
   // worker just presses "Aloita työaika" when they arrive, can pause for a break,
@@ -2316,6 +2399,37 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
   const [onBreak, setOnBreak] = useState<number | null>(null); // break start ms, if paused
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);          // brief "tallennettu" confirmation
+  const hourly = view.billingMode === "hourly";
+  /** Tuntitilassa: montako tuntia palvelin kirjasi juuri päättyneestä vuorosta. */
+  const [credited, setCredited] = useState<number | null>(null);
+  const [targetBusy, setTargetBusy] = useState(false);
+  const target = view.worker.shiftTargetHours ?? null;
+  /**
+   * Kello tikittää minuutin välein VAIN tavoitteen tarkistusta varten — tekijä
+   * ei näe kuluvaa aikaa (ks. `BillingMode`), joten tiheämpi päivitys ei
+   * hyödyttäisi mitään ja söisi akkua työmaalla.
+   */
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!running || !target) return;
+    const t = window.setInterval(() => setTick((n) => n + 1), 60_000);
+    return () => window.clearInterval(t);
+  }, [running, target]);
+  /** Tavoite täynnä? Tauot eivät kerrytä työaikaa, joten ne vähennetään. */
+  const targetReached = (() => {
+    void tick;
+    if (!running || !target) return false;
+    const worked = Date.now() - running - (breakMs + (onBreak ? Date.now() - onBreak : 0));
+    return worked >= target * 3_600_000;
+  })();
+
+  const setTargetHours = async (h: number | null) => {
+    setTargetBusy(true);
+    const res = await api.crewSetShiftTarget(token, h);
+    setTargetBusy(false);
+    if (res.ok && res.data?.view) setView(res.data.view);
+    else notify(res.error || "Tavoitteen tallennus ei onnistunut.");
+  };
 
   // Keep the running flag in sync with the server (shift started/ended elsewhere,
   // and a clean reset once work is ended).
@@ -2350,7 +2464,13 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
     setRunning(now); setBreakMs(0); setOnBreak(null); setSaved(false);
     const res = await api.crewShift(token, true);
     if (res.ok && res.data?.view) setView(res.data.view);
-    else setRunning(null); // server didn't record it → don't show a phantom shift
+    else {
+      // Palvelin ei kirjannut vuoroa → älä näytä haamukelloa. Ennen tämä
+      // peruuntui äänettömästi: kello ilmestyi ja katosi, eikä tekijä tiennyt
+      // alkoiko työaika vai ei.
+      setRunning(null);
+      notify(res.error || "Työajan aloitus ei onnistunut. Tarkista yhteys ja yritä uudelleen.");
+    }
   };
 
   const toggleBreak = () => {
@@ -2358,21 +2478,55 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
     else setOnBreak(Date.now());
   };
 
+  /**
+   * TYÖAJAN PÄÄTÖS — EI SAA NOLLATA KELLOA ENNEN KUIN PALVELIN ON KIRJANNUT SEN.
+   *
+   * Tämä nollasi ennen paikallisen tilan JA pyyhki taukotiedon localStoragesta
+   * ehdoitta, ennen kuin vastausta oli katsottu. Kahdeksan tunnin vuoron
+   * päättäminen katkenneella yhteydellä hävitti siis koko vuoron: palvelin ei
+   * kirjannut mitään, kello nollautui, eikä mikään kertonut siitä. Se on
+   * maksamatta jäänyt työpäivä, ei käyttöliittymäongelma.
+   *
+   * Nyt kello ja tauot jäävät paikalleen kunnes kirjaus on varmasti mennyt
+   * läpi, ja epäonnistuminen sanotaan ääneen — vuoron voi päättää uudelleen.
+   * Tuntikirjaus tarkistetaan myös: se meni ennen samaan tyhjyyteen.
+   */
   const endWork = async () => {
     if (!running || busy) return;
     setBusy(true);
     const totalBreak = breakMs + (onBreak ? Date.now() - onBreak : 0);
     const minutes = Math.max(0, Math.round((Date.now() - running - totalBreak) / 60000));
     const hours = Math.round((minutes / 60) * 100) / 100;
-    if (hours > 0) await api.crewAddHours(token, hours);            // hours ledger (for the bosses)
-    const res = await api.crewShift(token, false, minutes);          // record session/time
-    setBusy(false); setRunning(null); setOnBreak(null); setBreakMs(0);
-    try { localStorage.removeItem(breakKey); } catch { /* */ }
-    if (res.ok && res.data?.view) {
-      setView(res.data.view);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 4000);
+    /**
+     * TUNTITILASSA TUNNIT SYNTYVÄT PALVELIMELLA, EI TÄÄLLÄ.
+     *
+     * Ne ovat siellä palkka, ja palkan perusteeksi ei kelpaa selaimen lähettämä
+     * luku — eikä kaksi erillistä pyyntöä, joista toinen voi onnistua ja toinen
+     * ei (vuoro kirjautuisi ilman tunteja). Vuoron päätös kirjaa molemmat
+     * samassa tallennuksessa ja pyöristää lähimpään täyteen tuntiin.
+     *
+     * Kohdennetussa tilassa käytös on ennallaan: tarkat tunnit omalla
+     * pyynnöllään, seurantatietona.
+     */
+    const hoursRes = !hourly && hours > 0 ? await api.crewAddHours(token, hours) : null;
+    const res = await api.crewShift(token, false, minutes);                    // vuoro + kesto
+    setBusy(false);
+    if (!res.ok || !res.data?.view) {
+      notify(res.error || "Työajan päätös ei tallentunut. Kello jää käyntiin — yritä uudelleen.");
+      return;
     }
+    setView(res.data.view);
+    setRunning(null); setOnBreak(null); setBreakMs(0);
+    try { localStorage.removeItem(breakKey); } catch { /* */ }
+    if (hoursRes && !hoursRes.ok) {
+      // Vuoro kirjattiin mutta tunnit eivät. Kerro se: johtajan tuntilista
+      // jäisi muuten vajaaksi kenenkään huomaamatta.
+      notify("Vuoro päättyi, mutta tunnit eivät kirjautuneet. Lisää ne käsin tuntinäkymästä.");
+      return;
+    }
+    setSaved(true);
+    setCredited(hourly ? (res.data.creditedHours ?? 0) : null);
+    setTimeout(() => { setSaved(false); setCredited(null); }, 6000);
   };
 
   const statusLabel = onBreak ? "Tauolla" : running ? "Työaika käynnissä" : "Et ole töissä";
@@ -2406,12 +2560,61 @@ function HoursTab({ token, view, setView }: { token: string; view: WorkerView; s
           )}
         </div>
 
+        {/* OMA TAVOITE. Tuntitilassa tekijä ei näe kertyneitä tunteja, joten
+            päivällä ei olisi mittaria lainkaan. Tavoite on se mittari: se ei
+            rajoita mitään eikä vaikuta palkkaan — se vain sanoo kun sovittu
+            määrä on täynnä. Näkyy vain vuoron ollessa käynnissä, koska se
+            koskee tätä vuoroa eikä ole pysyvä asetus. */}
+        {hourly && running && (
+          <div style={{ marginTop: 20, paddingTop: 18, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+            {targetReached ? (
+              <div style={{ padding: "12px 14px", borderRadius: 12, background: "rgba(124,224,166,0.12)", border: "1px solid rgba(124,224,166,0.4)" }}>
+                <p style={{ margin: 0, color: "#7CE0A6", fontSize: 14.5, fontWeight: 700 }}>✓ Tavoite saavutettu</p>
+                <p style={{ margin: "4px 0 0", color: "rgba(255,255,255,0.55)", fontSize: 12.5, lineHeight: 1.5 }}>
+                  {target} h täynnä. Voit jatkaa tai päättää työajan.
+                </p>
+              </div>
+            ) : (
+              <>
+                <p style={{ margin: "0 0 10px", color: "rgba(255,255,255,0.5)", fontSize: 12.5 }}>
+                  {target ? `Tavoite tälle päivälle: ${target} h` : "Aseta tavoite tälle päivälle (vapaaehtoinen)"}
+                </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+                  {[2, 3, 4, 6, 8].map((h) => {
+                    const on = target === h;
+                    return (
+                      <button key={h} disabled={targetBusy}
+                        onClick={() => setTargetHours(on ? null : h)}
+                        style={{
+                          padding: "8px 15px", borderRadius: 999, cursor: "pointer",
+                          fontFamily: FONT, fontSize: 13.5, fontWeight: 700,
+                          border: `1px solid ${on ? "rgba(124,224,166,0.5)" : "rgba(255,255,255,0.16)"}`,
+                          background: on ? "rgba(124,224,166,0.14)" : "rgba(255,255,255,0.04)",
+                          color: on ? "#7CE0A6" : "rgba(255,255,255,0.7)",
+                          opacity: targetBusy ? 0.6 : 1,
+                        }}>
+                        {h} h
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 12.5, marginTop: 18, lineHeight: 1.55 }}>
           Aloita työaika kun saavut työmaalle ja päätä se kun lähdet. Pidä tauko esimerkiksi
           ruokatauon ajaksi — tauot eivät kerry työaikaan. Aika tallentuu automaattisesti.
+          {hourly && " Työaika pyöristetään lähimpään täyteen tuntiin."}
         </p>
         {saved && (
-          <p style={{ color: "#7CE0A6", fontSize: 13, fontWeight: 700, marginTop: 12 }}>✓ Työaika tallennettu</p>
+          <p style={{ color: "#7CE0A6", fontSize: 13, fontWeight: 700, marginTop: 12 }}>
+            ✓ Työaika tallennettu
+            {credited != null && (credited > 0
+              ? ` — ${credited} h kirjattu`
+              : " — alle puoli tuntia, ei kirjattua tuntia")}
+          </p>
         )}
       </div>
 

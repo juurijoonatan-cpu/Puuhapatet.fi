@@ -30,7 +30,7 @@ import {
 } from "@shared/pricing";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, signaturePrompt, contractPending, gigStatus, livePayments, withoutDashOnly, type GigData, MAX_CONTRACT_PAGES, MAX_CONTRACT_UPLOAD_LEN } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
-import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
+import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, isHourlyGig, billingModeOf, roundWorkHours, roundWorkHoursFromMinutes, cappedTimerHours, customerExpenses, customerHourRows, sanitizeBoard, sortedBoard, BOARD_CUSTOMER, MAX_BOARD_TEXT_LEN, MAX_BOARD_ENTRIES, toBoardKind, dayKey, isDayKey, addShiftEntry, computeShiftStats, MAX_SHIFT_NOTE_LEN, type ProjShift, type ProjBoardEntry, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
@@ -666,13 +666,19 @@ const PUBLIC_API: { method: string; re: RegExp }[] = [
   // tokenista. Ei rahaa, joten ei ehtoja eikä allekirjoitusporttia — reitti
   // tarkistaa itse että keikka on yhteisökeikka ja piste on keltainen.
   { method: "POST", re: /^\/api\/gig\/[^/]+\/scope$/ },
+  // Asiakkaan hintaehdotus vaihtotöistä. Sama tokenperiaate kuin
+  // laajuuskyselyllä: ei rahaa liiku, asiakas vain kertoo mitä olisi valmis
+  // maksamaan. Reitti tarkistaa itse että keikalla on kalusteita.
+  { method: "POST", re: /^\/api\/gig\/[^/]+\/fixture-quote$/ },
+  // Työtaulu: asiakas lisää tehtävän tai viestin omalta seurantalinkiltään.
+  { method: "POST", re: /^\/api\/gig\/[^/]+\/board$/ },
   { method: "GET",  re: /^\/api\/crew\/[^/]+$/ },
   // Sama vika tekijän puolella: kuvan haku omalla tokenilla vastasi 401 ja
   // heitti tekijän adminin kirjautumiseen kesken työpäivän.
   { method: "GET",  re: /^\/api\/crew\/[^/]+\/observation-image$/ },
   // Pohjakuva tekijän työlinkistä — sama aukko kuin yllä.
   { method: "GET",  re: /^\/api\/crew\/[^/]+\/plan\/[^/]*$/ },
-  { method: "POST", re: /^\/api\/crew\/[^/]+\/(password|onboard|window|lamp|door|hours|note|map-note|shift|expense)$/ },
+  { method: "POST", re: /^\/api\/crew\/[^/]+\/(password|onboard|window|lamp|door|hours|note|map-note|shift|shift-target|board|expense)$/ },
   // Nämä neljä olivat samassa aukossa kuin observation-image: jokainen
   // tunnistaa tekijän `findJobByCrewToken`illa täsmälleen kuten yllä olevat,
   // mutta portti vastasi niihin 401 → tekijä lensi adminin kirjautumiseen
@@ -5812,6 +5818,31 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         lamps: publicLampView(proj),
         doors: publicDoorView(proj),
       } : null;
+      // Kalustetilanne EI ole kartan sisällä: se on olemassa myös silloin kun
+      // keikalla ei ole pohjakuvaa lainkaan (`map` on null), ja asiakkaan
+      // näkymä näyttää sen omana osionaan kartasta riippumatta.
+      const fixtures = proj ? publicFixtures(proj) : null;
+      /**
+       * TUNTIKEIKAN TILANNE ASIAKKAALLE. Null kohdennetulla keikalla — siellä
+       * asiakas maksaa kohteista, ja tunnit ovat meidän sisäinen asiamme.
+       *
+       * Etunimi riittää ja on tarkoituksellinen: asiakas tunnistaa tekijänsä
+       * työmaalta etunimellä, eikä sukunimi ole hänen tarvitsemaansa tietoa.
+       */
+      const hourly = proj && isHourlyGig(proj) ? (() => {
+        const nameOf = (id: string) => {
+          const c = (proj.crew ?? []).find((x) => x.id === id);
+          return (c?.name || id).split(" ")[0];
+        };
+        const workers = customerHourRows(proj, nameOf);
+        const expenses = customerExpenses(proj);
+        return {
+          totalHours: workers.reduce((n, w) => n + w.hours, 0),
+          workers,
+          expenses,
+          expensesTotalCents: expenses.reduce((n, e) => n + e.amountCents, 0),
+        };
+      })() : null;
       // Only expose what the customer is meant to see — no internal billing notes.
       res.json({
         contractId: gig.contractId ?? null,
@@ -5921,6 +5952,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
          * tarkoittaisi kaksi eri vastausta kysymykseen "mitä pestään".
          */
         scope: proj && !proj.p2?.enabled ? publicScope(proj) : null,
+        // Lamppu-/ovitilanne, ostotieto ja asiakkaan oma hintaehdotus.
+        fixtures,
+        // Keikan laskutustila: asiakkaan näkymä on tuntikeikalla eri.
+        billingMode: proj ? billingModeOf(proj) : "targeted",
+        // Tunnit ja hänelle ostetut tarvikkeet (vain tuntikeikalla).
+        hourly,
+        // Työtaulu: keikan yhteinen tehtävä- ja viestilista.
+        board: proj ? sortedBoard(proj.board ?? []) : [],
         status: gigStatus(gig),
         signed: !!gig.signature?.signedAt,
         signedAt: gig.signature?.signedAt ?? null,
@@ -6023,6 +6062,75 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       project.scope = { votes };
       const saved = await saveProject(row.job, project, { scopeMutation: true });
       res.json({ ok: true, scope: publicScope(saved) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  /**
+   * ASIAKKAAN HINTAEHDOTUS VAIHTOTÖISTÄ.
+   *
+   * Ei sitova tarjous eikä laskutustapahtuma: asiakas kertoo mitä olisi valmis
+   * maksamaan yhdestä lampun vaihdosta ja yhdestä oven tiivisteen vaihdosta —
+   * työstä per kohde, ei tarvikkeesta — ja johtaja näkee sen dashissaan.
+   * Siksi tässä EI ole P2:n tilakonetta, hyväksyntää eikä allekirjoitusporttia
+   * — ne kuuluvat rahaan, ja raha liikkuu vasta kun tästä sovitaan erikseen.
+   *
+   * Tyhjä runko (ei hintoja, ei viestiä) pyyhkii ehdotuksen: asiakas saa perua
+   * sen sanomatta mitään.
+   */
+  /**
+   * TYÖTAULU — ASIAKAS. Hän lisää tehtäviä ("vaihtakaa kellarin lamput") ja
+   * kirjoittaa viestejä. Hän EI kuittaa tehtäviä tehdyiksi: kuittaus on väite
+   * tehdystä työstä, ja sen tekee se joka työn teki.
+   */
+  app.post("/api/gig/:token/board", async (req, res) => {
+    try {
+      const [row] = await db
+        .select({ job: jobs, customer: customers })
+        .from(jobs)
+        .innerJoin(customers, eq(jobs.customerId, customers.id))
+        .where(eq(jobs.quoteToken, String(req.params.token)));
+      if (!row || !row.job.isCustomGig) return res.status(404).json({ error: "Seurantaa ei löydy" });
+      const gig = parseGig(row.job.gigData);
+      if (!gig) return res.status(404).json({ error: "Seurantaa ei löydy" });
+      const project = parseProject(row.job.projectData ?? null) ?? emptyProjectData();
+
+      const name = (gig.company?.contact || row.customer.name || "Asiakas").split(" ")[0];
+      project.board = applyBoardAction(
+        project.board ?? [],
+        { add: { kind: req.body?.kind, text: req.body?.text } },
+        { id: BOARD_CUSTOMER, name },
+      );
+      const saved = await saveProject(row.job, project, { boardMutation: true });
+      res.json({ ok: true, board: sortedBoard(saved.board ?? []) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/gig/:token/fixture-quote", async (req, res) => {
+    try {
+      const [row] = await db.select({ job: jobs }).from(jobs).where(eq(jobs.quoteToken, String(req.params.token)));
+      if (!row || !row.job.isCustomGig) return res.status(404).json({ error: "Seurantaa ei löydy" });
+      if (!parseGig(row.job.gigData)) return res.status(404).json({ error: "Seurantaa ei löydy" });
+      const project = parseProject(row.job.projectData ?? null);
+      if (!project) return res.status(400).json({ error: "Keikalla ei ole pohjakarttaa" });
+      /**
+       * Ilman kalusteita ehdotuksella ei ole kohdetta — eikä lomaketta näytetä.
+       *
+       * Portti käyttää SAMAA laskentaa kuin näkymä (`publicFixtures`): kumpikin
+       * lukee pisteet `building.floors`in kautta, joten poistetulle kerrokselle
+       * jäänyt ovi ei voi avata lomaketta jota asiakas ei näe.
+       */
+      if (!publicFixtures(project)) {
+        return res.status(409).json({ error: "Keikalla ei ole lamppuja eikä ovia" });
+      }
+
+      const quote = sanitizeFixtureQuote({ ...(req.body ?? {}), at: Date.now() });
+      if (quote) project.fixtureQuote = quote; else delete project.fixtureQuote;
+      const saved = await saveProject(row.job, project, { fixtureQuoteMutation: true });
+      res.json({ ok: true, fixtures: publicFixtures(saved) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -6816,6 +6924,143 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // Replace the project data (mapping + statuses + hours). Server validates & clamps.
+  /**
+   * TYÖTAULU — JOHTAJA. Sama toiminto kuin tekijällä, mutta admin-tunnuksella
+   * ja työpöydältä. Oma reittinsä eikä blob-tallennus, koska taulu on serverin
+   * omistama: geneerinen tallennus palauttaisi kannan arvon ja pyyhkisi juuri
+   * kirjoitetun rivin.
+   */
+  app.post("/api/jobs/:id/board", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const [job] = await db.select(CREW_JOB_COLS).from(jobs).where(eq(jobs.id, id)) as typeof jobs.$inferSelect[];
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const project = parseProject(job.projectData ?? null) ?? emptyProjectData();
+      const who = String(req.body?.by ?? "").trim().slice(0, 40) || "host";
+      const name = String(req.body?.byName ?? "").trim().slice(0, 60);
+      project.board = applyBoardAction(
+        project.board ?? [],
+        req.body?.id != null
+          ? { toggle: { id: req.body.id, done: req.body?.done !== false } }
+          : { add: { kind: req.body?.kind, text: req.body?.text } },
+        { id: who, ...(name ? { name } : {}) },
+      );
+      const saved = await saveProject(job, project, { boardMutation: true });
+      res.json({ ok: true, board: sortedBoard(saved.board ?? []) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  /**
+   * TUNTITILA — JOHTAJAN REITTI. Neljä toimintoa samalla reitillä, koska ne
+   * kaikki koskevat samaa serverin omistamaa listaa:
+   *
+   *   start  — käynnistä työtunti (itselle tai tekijän puolesta)
+   *   stop   — päätä käynnissä oleva työtunti, kesto palvelimen kellosta
+   *   add    — lisää tai vähennä tunteja käsin (+/− tuntinäkymässä)
+   *   remove — poista väärin kirjattu rivi
+   *
+   * KESTO LASKETAAN PALVELIMELLA, ei selaimen lähettämästä luvusta. Tunnit ovat
+   * tuntitilassa palkka ja lasku; selaimen kello on käyttäjän hallinnassa.
+   */
+  app.post("/api/jobs/:id/shift", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const [job] = await db.select(CREW_JOB_COLS).from(jobs).where(eq(jobs.id, id)) as typeof jobs.$inferSelect[];
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const project = parseProject(job.projectData ?? null) ?? emptyProjectData();
+      const who = String(req.body?.by ?? "").trim().slice(0, 40) || "host";
+      const action = String(req.body?.action ?? "");
+      const worker = String(req.body?.worker ?? "").trim().slice(0, 40);
+
+      if (action === "start" || action === "stop") {
+        if (!worker) return res.status(400).json({ error: "Tekijä puuttuu" });
+        /**
+         * KÄYNNISSÄ OLEVA VUORO TARVITSEE RIVIN JOSSA OLLA.
+         *
+         * Se talletetaan tekijän omaan crew-riviin, jotta se on täsmälleen sama
+         * tieto jonka tekijän oma sovellus näkee — ei toista rinnakkaista
+         * "kuka on nyt töissä" -totuutta.
+         *
+         * Siksi johtaja, jota ei ole vielä lisätty tälle keikalle, saa rivinsä
+         * tässä. Ilman tätä oma työkello ei käynnistynyt lainkaan keikalla
+         * jonka tekijälistaa ei ollut pohjustettu — ja virhe ("Tekijää ei
+         * löydy keikalta") oli käyttäjälle täysin epäinformatiivinen, koska
+         * hän nimenomaan on keikalla, hän vain ei ollut listassa.
+         *
+         * Rajaus: näin syntyy rivi VAIN perustajalle tai kirjoittajalle
+         * itselleen. Kuka tahansa ei voi luoda tekijöitä tämän reitin kautta.
+         */
+        let member: CrewMember | undefined = (project.crew || []).find((m) => m.id === worker);
+        if (!member && action === "start" && (FOUNDER_IDS.includes(worker) || worker === who)) {
+          const created = sanitizeCrewMember({
+            id: worker,
+            token: await genUniqueCrewToken(),
+            name: String(req.body?.workerName ?? "").trim().slice(0, 60) || worker,
+            role: FOUNDER_IDS.includes(worker) ? "host" : "worker",
+            adminLinked: true,
+            perWindowCents: DEFAULT_WORKER_PER_WINDOW_CENTS,
+            active: true,
+            createdAt: Date.now(),
+          });
+          if (created) {
+            member = created;
+            project.crew = [...(project.crew || []), created];
+          }
+        }
+        if (!member) return res.status(404).json({ error: "Tekijää ei löydy keikalta" });
+        const found: CrewMember = member;
+        if (action === "start") {
+          if (found.activeShiftAt) return res.status(400).json({ error: "Työtunti on jo käynnissä" });
+          const rawTarget = Number(req.body?.targetHours);
+          const target = Number.isFinite(rawTarget) && rawTarget > 0 ? Math.min(24, Math.round(rawTarget * 2) / 2) : undefined;
+          project.crew = (project.crew || []).map((m) =>
+            m.id !== worker ? m : { ...m, activeShiftAt: Date.now(), ...(target ? { shiftTargetHours: target } : { shiftTargetHours: undefined }) });
+        } else {
+          const startedAt = found.activeShiftAt;
+          if (!startedAt) return res.status(400).json({ error: "Työtunti ei ole käynnissä" });
+          // Unohtunut ajastin ei saa kirjata vuorokausia — ks. `cappedTimerHours`.
+          const { hours, capped } = cappedTimerHours((Date.now() - startedAt) / 3_600_000);
+          project.crew = (project.crew || []).map((m) =>
+            m.id !== worker ? m : { ...m, activeShiftAt: undefined, shiftTargetHours: undefined });
+          /**
+           * ALLE PUOLEN TUNNIN VUORO PÄÄTTYY ILMAN TUNTIA. Se on pyöristyksen
+           * tarkoitus (`roundWorkHours`), ei virhe — eikä nollarivi kuulu
+           * kirjanpitoon. Vuoro silti päättyy, jottei ajastin jää päälle.
+           */
+          if (hours > 0) {
+            // Vuoro kuuluu siihen päivään jona se ALKOI: puolenyön yli mennyt
+            // iltavuoro ei ole seuraavan päivän työtä.
+            project.shifts = applyShiftAction(
+              project.shifts ?? [],
+              {
+                add: {
+                  worker, hours, day: dayKey(startedAt), startedAt,
+                  ...(capped ? { note: "ajastin jäi päälle — tarkista" } : {}),
+                },
+              },
+              worker,
+            );
+          }
+        }
+      } else if (action === "remove") {
+        project.shifts = applyShiftAction(project.shifts ?? [], { remove: { id: req.body?.id } }, who);
+      } else {
+        project.shifts = applyShiftAction(
+          project.shifts ?? [],
+          { add: { worker, hours: req.body?.hours, day: req.body?.day, note: req.body?.note } },
+          who,
+        );
+      }
+
+      const saved = await saveProject(job, project, { shiftsMutation: true });
+      res.json({ ok: true, shifts: saved.shifts ?? [], crew: (saved.crew ?? []).map((m) => ({ id: m.id, activeShiftAt: m.activeShiftAt ?? null, shiftTargetHours: m.shiftTargetHours ?? null })) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
   app.patch("/api/jobs/:id/project", async (req, res) => {
     try {
       const id = Number(req.params.id);
@@ -6861,6 +7106,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
        */
       const storedScope = stored?.scope;
       if (storedScope) project.scope = storedScope; else delete project.scope;
+      // Asiakkaan hintaehdotus (`fixtureQuote`) on samalla tavalla serverin
+      // omistama, ja tämä on sen toinen suojauspolku — ks. yllä oleva perustelu.
+      const storedQuote = stored?.fixtureQuote;
+      if (storedQuote) project.fixtureQuote = storedQuote; else delete project.fixtureQuote;
+      // Työtaulu on samalla tavalla serverin omistama, ja tämä on sen toinen
+      // suojauspolku — ks. yllä oleva perustelu.
+      const storedBoard = stored?.board;
+      if (storedBoard) project.board = storedBoard; else delete project.board;
+      // Tuntitilan vuorokirjanpito on samalla tavalla serverin omistama, ja
+      // tämä on sen toinen suojauspolku. Tekijä päättää vuoron samalla kun
+      // johtajalla on kartta auki — ilman tätä autosave pyyhkisi juuri
+      // kirjatun työpäivän, ja tuntitilassa se on jonkun palkka.
+      const storedShifts = stored?.shifts;
+      if (storedShifts) project.shifts = storedShifts; else delete project.shifts;
       const totals = computeProjectTotals(project);
 
       // Auto-sync the gig's billing sectors from the toolkit (FR8 = source of
@@ -7467,6 +7726,139 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     return { votes };
   }
 
+  /**
+   * ASIAKKAALLE palautettava kalustetilanne: montako lamppua ei toimi, montako
+   * on jo vaihdettu, kerroksittainen jakauma, ostotieto (malli + määrä) ja
+   * asiakkaan oma hintaehdotus.
+   *
+   * Kerroksittainen jakauma on tässä koska se on juuri se mitä kiinteistön
+   * omistaja kysyy: "missä ne rikkinäiset ovat". Tekijätietoa ei ole — sama
+   * raja kuin muullakin asiakasdatalla.
+   *
+   * Null kun keikalla ei ole yhtään lamppua eikä ovea: silloin näkymä ei piirrä
+   * osiota lainkaan.
+   */
+  function publicFixtures(project: ProjectData) {
+    const inv = computeLampInventory(project);
+    const doors = computeDoorFloorStats(project);
+    if (inv.total === 0 && doors.length === 0) return null;
+    const order = resolveFixtureOrder(project);
+    return {
+      lamps: {
+        total: inv.total,
+        needsBulbs: inv.needsBulbs,
+        fixed: inv.fixed,
+        working: inv.working,
+        unchecked: inv.unchecked,
+        functional: inv.functional,
+        byFloor: inv.byFloor,
+      },
+      doors: { total: doors.reduce((n, r) => n + r.total, 0), done: doors.reduce((n, r) => n + r.done, 0), byFloor: doors },
+      order: {
+        ...(order.lampModel ? { lampModel: order.lampModel } : {}),
+        bulbs: order.bulbs,
+        ...(order.doorMaterial ? { doorMaterial: order.doorMaterial } : {}),
+        doorCount: order.doorCount,
+        ...(order.note ? { note: order.note } : {}),
+        // Mallikohtainen erittely: kokonaismäärä ei kelpaa ostoksiin, koska
+        // seitsemän rikkinäistä voi olla neljä E27:ää ja kolme G9:ää.
+        byModel: order.byModel.map((m) => ({ name: m.name, needsBulb: m.needsBulb })),
+      },
+      quote: order.quote ?? null,
+      quotedTotalCents: order.quotedTotalCents,
+    };
+  }
+
+  /**
+   * TYÖTAULUN MUUTOS — yksi funktio kaikille kolmelle kirjoittajalle.
+   *
+   * Asiakas, tekijä ja johtaja kirjoittavat samaan listaan, ja jokaisen
+   * kohdalla pätevät samat säännöt: teksti ei saa olla tyhjä, lista ei kasva
+   * rajatta, ja kuittauksen voi tehdä vain tehtävälle. Kolmena kopiona nuo
+   * säännöt ehtisivät erkaantua ensimmäisessä korjauksessa.
+   *
+   * Palauttaa uuden taulun tai heittää selkokielisen virheen.
+   */
+  function applyBoardAction(
+    board: ProjBoardEntry[],
+    action: { add?: { kind: unknown; text: unknown }; toggle?: { id: unknown; done: boolean } },
+    who: { id: string; name?: string },
+  ): ProjBoardEntry[] {
+    if (action.add) {
+      const text = String(action.add.text ?? "").trim().slice(0, MAX_BOARD_TEXT_LEN);
+      if (!text) throw new Error("Teksti puuttuu");
+      const entry: ProjBoardEntry = {
+        id: `b${Date.now().toString(36)}${Math.floor(Math.random() * 100000).toString(36)}`,
+        kind: toBoardKind(action.add.kind),
+        text,
+        by: who.id,
+        ...(who.name ? { byName: who.name } : {}),
+        at: Date.now(),
+      };
+      // Vanhin putoaa pois, kuten lokeilla muutenkin.
+      return [...board, entry].slice(-MAX_BOARD_ENTRIES);
+    }
+    if (action.toggle) {
+      const id = String(action.toggle.id ?? "");
+      const found = board.find((e) => e.id === id);
+      if (!found) throw new Error("Riviä ei löytynyt");
+      if (found.kind !== "task") throw new Error("Merkintää ei voi kuitata");
+      return board.map((e) => (e.id !== id ? e : action.toggle!.done
+        ? { ...e, done: { by: who.id, ...(who.name ? { byName: who.name } : {}), at: Date.now() } }
+        : { ...e, done: undefined }));
+    }
+    throw new Error("Ei toimintoa");
+  }
+
+  /**
+   * TUNTITILAN VUOROKIRJANPITO — yksi paikka jossa `shifts` muuttuu.
+   *
+   * Kirjoittajia on kolme (tekijän ajastin, johtajan käsin korjaus, johtajan
+   * ajastin toisen puolesta) ja säännöt ovat kaikille samat: rivi on aina
+   * päivätty, nollarivejä ei synny, eikä tekijän kokonaisluku voi mennä
+   * miinukselle. Kolmena kopiona nuo erkanisivat ensimmäisessä korjauksessa.
+   */
+  function applyShiftAction(
+    shifts: ProjShift[],
+    action: {
+      add?: { worker: unknown; hours: unknown; day?: unknown; note?: unknown; startedAt?: number };
+      remove?: { id: unknown };
+    },
+    by: string,
+  ): ProjShift[] {
+    if (action.add) {
+      const worker = String(action.add.worker ?? "").trim().slice(0, 40);
+      if (!worker) throw new Error("Tekijä puuttuu");
+      const raw = Math.round((Number(action.add.hours) || 0) * 100) / 100;
+      if (!raw) throw new Error("Tunnit puuttuu");
+      const at = Date.now();
+      const day = isDayKey(action.add.day) ? String(action.add.day) : dayKey(at);
+      const note = String(action.add.note ?? "").trim().slice(0, MAX_SHIFT_NOTE_LEN);
+      /**
+       * Yhdistämis- ja rajaussäännöt ovat mallissa (`addShiftEntry`), eivät
+       * täällä: saman päivän käsin kirjaukset kertyvät yhteen riviin ja päivä
+       * ei voi mennä miinukselle. Ks. funktion dokumentaatio siitä miksi.
+       */
+      const next = addShiftEntry(shifts, {
+        id: `s${at.toString(36)}${Math.floor(Math.random() * 100000).toString(36)}`,
+        worker, hours: raw, at, day,
+        ...(action.add.startedAt ? { startedAt: action.add.startedAt } : {}),
+        // `by` talletetaan vain kun kirjaaja on joku muu kuin tekijä itse —
+        // muuten jokaisella rivillä lukisi "kirjannut: hän itse".
+        ...(by && by !== worker ? { by } : {}),
+        ...(note ? { note } : {}),
+      });
+      if (next === shifts) throw new Error("Ei vähennettäviä tunteja");
+      return next;
+    }
+    if (action.remove) {
+      const id = String(action.remove.id ?? "");
+      if (!shifts.some((s) => s.id === id)) throw new Error("Riviä ei löytynyt");
+      return shifts.filter((s) => s.id !== id);
+    }
+    throw new Error("Ei toimintoa");
+  }
+
   /** Asiakkaalle palautettava p2-tila (vain hinnat, ei tekijätietoja). */
   function publicP2(project: ProjectData) {
     const p2 = project.p2!;
@@ -7959,7 +8351,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   async function saveProject(
     job: typeof jobs.$inferSelect,
     project: ProjectData,
-    opts?: { p2Mutation?: boolean; guidedMutation?: boolean; settlementMutation?: boolean; planMutation?: boolean; scopeMutation?: boolean },
+    opts?: { p2Mutation?: boolean; guidedMutation?: boolean; settlementMutation?: boolean; planMutation?: boolean; scopeMutation?: boolean; fixtureQuoteMutation?: boolean; boardMutation?: boolean; shiftsMutation?: boolean },
   ): Promise<ProjectData> {
     const clean = sanitizeProjectData(project);
     // P2-neuvottelutila, ohjattu eteneminen (guided) ja johtajien tasaus ovat
@@ -7969,7 +8361,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     // samaan aikaan lukitsemaa hintaa, perustajan ohjausasetusta eikä
     // rahankirjausta siitä kuka sai erän ja kuka maksoi tekijän.
     let stored: ProjectData | null = null;
-    if (!opts?.p2Mutation || !opts?.guidedMutation || !opts?.settlementMutation || !opts?.planMutation || !opts?.scopeMutation) {
+    if (!opts?.p2Mutation || !opts?.guidedMutation || !opts?.settlementMutation || !opts?.planMutation || !opts?.scopeMutation || !opts?.fixtureQuoteMutation || !opts?.boardMutation || !opts?.shiftsMutation) {
       /**
        * VAIN KOLME KENTTÄÄ, EI KOKO BLOBIA.
        *
@@ -7988,14 +8380,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
        * Jos poiminta epäonnistuu (esim. vioittunut JSON), pudotaan takaisin
        * koko blobin lukuun — hitaampi mutta varma.
        */
-      let picked: { p2?: unknown; guided?: unknown; settlement?: unknown; planImages?: unknown; scope?: unknown } | null = null;
+      let picked: { p2?: unknown; guided?: unknown; settlement?: unknown; planImages?: unknown; scope?: unknown; fixtureQuote?: unknown; board?: unknown; shifts?: unknown } | null = null;
       try {
         const r: any = await db.execute(sql`
           select project_data::jsonb -> 'p2'                        as p2,
                  project_data::jsonb -> 'guided'                    as guided,
                  project_data::jsonb -> 'settlement'                as settlement,
                  project_data::jsonb -> 'building' -> 'planImages'  as "planImages",
-                 project_data::jsonb -> 'scope'                     as scope
+                 project_data::jsonb -> 'scope'                     as scope,
+                 project_data::jsonb -> 'fixtureQuote'              as "fixtureQuote",
+                 project_data::jsonb -> 'board'                     as board,
+                 project_data::jsonb -> 'shifts'                    as shifts
           from jobs where id = ${job.id} and project_data is not null
         `);
         const row = (r?.rows ?? r)?.[0];
@@ -8007,7 +8402,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const [fresh] = await db.select({ projectData: jobs.projectData }).from(jobs).where(eq(jobs.id, job.id));
         stored = fresh ? parseProject(fresh.projectData ?? null) : null;
         picked = stored
-          ? { p2: stored.p2, guided: stored.guided, settlement: stored.settlement, planImages: stored.building?.planImages, scope: stored.scope }
+          ? { p2: stored.p2, guided: stored.guided, settlement: stored.settlement, planImages: stored.building?.planImages, scope: stored.scope, fixtureQuote: stored.fixtureQuote, board: stored.board, shifts: stored.shifts }
           : {};
       }
       if (!opts?.p2Mutation) {
@@ -8033,6 +8428,27 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         // merkintä kirjoittaisi vastauksen pois kannasta.
         const storedScope = picked.scope ?? undefined;
         if (storedScope) clean.scope = storedScope as ProjectData["scope"]; else delete clean.scope;
+      }
+      if (!opts?.boardMutation) {
+        // Työtaulu: kolme kirjoittajaa samaan listaan. Ilman tätä johtajan
+        // karttamuokkauksen autosave pyyhkisi asiakkaan juuri lisäämän
+        // tehtävän — sama vika joka `scope`illa kerran oli.
+        const storedBoard = picked.board ?? undefined;
+        if (storedBoard) clean.board = storedBoard as ProjectData["board"]; else delete clean.board;
+      }
+      if (!opts?.shiftsMutation) {
+        // Tuntitilan työvuorot: tekijän ajastin ja johtajan korjaus kirjoittavat
+        // samaan listaan. Menetetty rivi ei ole kosmeettinen — se on palkka
+        // jota ei makseta.
+        const storedShifts = picked.shifts ?? undefined;
+        if (storedShifts) clean.shifts = storedShifts as ProjectData["shifts"]; else delete clean.shifts;
+      }
+      if (!opts?.fixtureQuoteMutation) {
+        // Asiakkaan hintaehdotus lampuista ja ovikytkimistä. Sama vika uhkaisi
+        // tätä kuin `scope`a: tekijä merkitsee lamppuja samaan aikaan kun
+        // asiakas kirjoittaa hintaansa, ja merkintä kirjoittaisi sen pois.
+        const storedQuote = picked.fixtureQuote ?? undefined;
+        if (storedQuote) clean.fixtureQuote = storedQuote as ProjectData["fixtureQuote"]; else delete clean.fixtureQuote;
       }
     }
     const nextProjectJson = JSON.stringify(clean);
@@ -8193,6 +8609,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         // a "under <leader>'s responsibility" note instead. null for normal workers.
         trainee: trainee ? { responsibleLeaderName: trainee.responsibleLeaderName } : null,
         activeShiftAt: member.activeShiftAt ?? null,
+        /** Tekijän oma tavoiteaika tälle vuorolle (tunteina), jos asetettu. */
+        shiftTargetHours: member.shiftTargetHours ?? null,
         shiftStartWashed: member.shiftStartWashed ?? null,
         sessions: (member.sessions || []).slice(-30).reverse(), // newest-first
         profile: member.profile ?? null,
@@ -8243,6 +8661,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
        */
       hasInstalments: !!payDeal,
       isCommunity: isCommunityGig(project),
+      /**
+       * Keikan laskutustila. Tuntitilassa tekijän työpöytä on eri: ei
+       * ikkunahintoja eikä kertyneitä tunteja, vain ajastin ja oma tavoite.
+       * Ks. `BillingMode`.
+       */
+      billingMode: billingModeOf(project),
       marks: project.marks,
       // Workers see the full live map: which windows are washed and (on tap) WHO
       // washed them, plus the host's info notes (ladders, hazards, storage, …) and
@@ -8271,12 +8695,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // ne saavat kulkea joka vastauksessa — toisin kuin havaintokuvat.
       lampConditions: project.lampConditions ?? {},
       lampNotes: project.lampNotes ?? {},
+      // Mallilista on keikan asetus: tekijä VALITSEE näistä, ei lisää uusia.
+      lampModels: project.lampModels ?? [],
+      lampModelOf: project.lampModelOf ?? {},
       // Ovet: tekijä saa kuitata tehdyksi ja kirjoittaa huomautuksen; lisäys,
       // poisto ja tehtävän nimeäminen ovat johtajien projektinäkymässä.
       doors: project.doors ?? {},
       doorStatuses: project.doorStatuses ?? {},
       doorDoneBy: Object.fromEntries(Object.entries(project.doorDoneBy ?? {}).map(([k, v]) => [k, v.by])),
       doorNotes: project.doorNotes ?? {},
+      // Työtaulu: tekijä kuittaa tehtäviä ja kirjaa mitä teki.
+      board: sortedBoard(project.board ?? []),
       hours: stats.hours,
       stats,
       // P2 (keltaiset ikkunat): tekijän OMA palkkio per ikkuna. Asiakashintaa tai
@@ -8620,7 +9049,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const wantsStatus = req.body?.status !== undefined;
       const wantsCondition = req.body?.condition !== undefined;
       const wantsNote = req.body?.note !== undefined;
-      if (!wantsStatus && !wantsCondition && !wantsNote) {
+      const wantsModel = req.body?.modelId !== undefined;
+      if (!wantsStatus && !wantsCondition && !wantsNote && !wantsModel) {
         return res.status(400).json({ error: "Ei muutettavaa" });
       }
 
@@ -8659,7 +9089,47 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         else delete project.lampNotes[key];
       }
 
+      if (wantsModel) {
+        /**
+         * Malli on VALINTA keikan listasta, ei vapaa teksti: tekijä ei saa
+         * luoda uutta mallia napautuksella, koska ostoslista hajoaisi
+         * kirjoitusasuihin ("E27 LED" / "e27 led 9w"). Tuntematon id
+         * hylätään hiljaa samaan tapaan kuin sanitointi sen pudottaisi.
+         */
+        const raw = req.body?.modelId;
+        const known = new Set((project.lampModels ?? []).map((m) => m.id));
+        if (!project.lampModelOf) project.lampModelOf = {};
+        const id = raw == null ? "" : String(raw).trim().slice(0, 40);
+        if (id && known.has(id)) project.lampModelOf[key] = id;
+        else delete project.lampModelOf[key];
+      }
+
       const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
+      res.json({ ok: true, view: await workerView(job, saved, savedMember) });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  /**
+   * TYÖTAULU — TEKIJÄ. Hän kuittaa tehtäviä tehdyiksi ja kirjaa mitä teki.
+   * Hän saa myös lisätä tehtävän: työmaalla huomaa asioita joita kukaan ei
+   * osannut listata etukäteen.
+   */
+  app.post("/api/crew/:token/board", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      project.board = applyBoardAction(
+        project.board ?? [],
+        req.body?.id != null
+          ? { toggle: { id: req.body.id, done: req.body?.done !== false } }
+          : { add: { kind: req.body?.kind, text: req.body?.text } },
+        { id: member.id, name: (member.name || member.id).split(" ")[0] },
+      );
+      const saved = await saveProject(job, project, { boardMutation: true });
       const savedMember = findCrewByToken(saved, member.token)!;
       res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
@@ -8832,11 +9302,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const { job, project, member } = found;
       const start = req.body?.start === true;
       const nowWashed = crewMemberStats(project, member).washed;
+      const hourly = isHourlyGig(project);
+      /**
+       * Tekijän oma tavoiteaika tälle vuorolle. Tulee mukana vuoron
+       * aloituksessa tai erikseen kesken vuoron (`start` puuttuu, `target`
+       * mukana) — ks. reitin alla oleva haara.
+       */
+      const target = req.body?.targetHours;
       let endedSession: { start: number; end: number; minutes: number; windows: number; earnedCents: number } | null = null;
+      let creditedHours = 0;
       project.crew = (project.crew || []).map((m) => {
         if (m.id !== member.id) return m;
         if (start) {
-          return { ...m, activeShiftAt: Date.now(), shiftStartWashed: nowWashed };
+          return {
+            ...m,
+            activeShiftAt: Date.now(),
+            shiftStartWashed: nowWashed,
+            // Uusi vuoro alkaa aina puhtaalta tavoitteelta: edellisen päivän
+            // tavoite ei ole tämän päivän lupaus.
+            shiftTargetHours: target != null ? Math.max(0, Number(target) || 0) || undefined : undefined,
+          };
         }
         // End the shift → record the session.
         const startedAt = m.activeShiftAt || Date.now();
@@ -8845,9 +9330,49 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const minutes = Math.max(0, Math.round(Number(req.body?.minutes) || (Date.now() - startedAt) / 60000));
         endedSession = { start: startedAt, end: Date.now(), minutes, windows, earnedCents: windows * m.perWindowCents };
         const sessions = [...(m.sessions || []), endedSession].slice(-200);
-        return { ...m, activeShiftAt: undefined, shiftStartWashed: undefined, sessions };
+        // Sama unohtuneen ajastimen raja kuin johtajan puolella.
+        if (hourly) creditedHours = cappedTimerHours(minutes / 60).hours;
+        return { ...m, activeShiftAt: undefined, shiftStartWashed: undefined, shiftTargetHours: undefined, sessions };
       });
-      const saved = await saveProject(job, project);
+
+      /**
+       * TUNTITILASSA VUORON PÄÄTÖS ON SE PAIKKA JOSSA TUNNIT SYNTYVÄT.
+       *
+       * Kohdennetussa tilassa selain lähettää tunnit erikseen `/hours`-reitille
+       * ja tunnit ovat tarkkoja seurantatietoa. Tuntitilassa ne ovat PALKKA,
+       * joten kaksi asiaa muuttuu:
+       *
+       *   1. Palvelin laskee ne itse vuoron kestosta. Selaimen lähettämä luku
+       *      ei kelpaa palkan perusteeksi, ja kaksi erillistä pyyntöä voisi
+       *      onnistua eri tavoin — vuoro kirjautuisi ilman tunteja.
+       *   2. Ne pyöristetään lähimpään täyteen tuntiin (`roundWorkHours`).
+       *
+       * Sama tallennus kuin vuorokin, joten kumpikin menee läpi tai ei kumpikaan.
+       */
+      if (hourly && creditedHours > 0) {
+        /**
+         * VUORO MENEE TUNTITILAN OMAAN KIRJANPITOON, EI `hours`-summaan.
+         *
+         * `hours` on vanhan projektityökalun juokseva summa, jossa FR8:lla on
+         * satoja tunteja muilta töiltä. Jos tuntitila kirjoittaisi sinne, sen
+         * luku olisi jo ensimmäisellä avauksella väärä — ja tuntitilassa se
+         * luku on asiakkaan lasku ja tekijän palkka. Ks. `ProjShift`.
+         *
+         * Päivä on vuoron ALKUPÄIVÄ: puolenyön yli mennyt iltavuoro ei ole
+         * seuraavan päivän työtä.
+         */
+        const startedAt = endedSession ? (endedSession as { start: number }).start : Date.now();
+        project.shifts = applyShiftAction(
+          project.shifts ?? [],
+          { add: { worker: member.id, hours: creditedHours, day: dayKey(startedAt), startedAt } },
+          member.id,
+        );
+      }
+
+      // Lippu vain kun vuoro oikeasti kirjautui: aloitus ja alle puolen tunnin
+      // vuoro eivät kirjoita listaan mitään, eikä niiden tallennus saa ohittaa
+      // suojausta.
+      const saved = await saveProject(job, project, { shiftsMutation: hourly && creditedHours > 0 });
       const savedMember = findCrewByToken(saved, member.token)!;
       // Email the worker a clean day summary (best-effort; never blocks the response).
       if (!start && endedSession && resend && savedMember.profile?.email) {
@@ -8855,6 +9380,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           (e) => console.warn("session summary email failed:", e?.message),
         );
       }
+      res.json({ ok: true, view: await workerView(job, saved, savedMember), creditedHours });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  /**
+   * Tekijän tavoiteaika kesken vuoron. Oma reittinsä eikä vuoron aloituksen
+   * kenttä, koska tavoite asetetaan usein vasta kun työ on jo käynnissä.
+   */
+  app.post("/api/crew/:token/shift-target", async (req, res) => {
+    try {
+      const found = await findJobByCrewToken(String(req.params.token));
+      if (!found || !found.member.active) return res.status(404).json({ error: "Linkkiä ei löytynyt" });
+      const { job, project, member } = found;
+      const raw = Number(req.body?.targetHours);
+      const target = Number.isFinite(raw) && raw > 0 ? Math.min(24, Math.round(raw * 2) / 2) : undefined;
+      project.crew = (project.crew || []).map((m) => (m.id === member.id ? { ...m, shiftTargetHours: target } : m));
+      const saved = await saveProject(job, project);
+      const savedMember = findCrewByToken(saved, member.token)!;
       res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -8869,9 +9414,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const { job, project, member } = found;
       const delta = Math.round((Number(req.body?.delta) || 0) * 100) / 100;
       if (!delta) return res.status(400).json({ error: "delta puuttuu" });
-      project.hours[member.id] = Math.max(0, +(((project.hours[member.id] || 0) + delta).toFixed(2)));
-      project.hourLog = [{ worker: member.id, delta, ts: Date.now(), by: member.id }, ...(project.hourLog || [])].slice(0, 200);
-      const saved = await saveProject(job, project);
+      /**
+       * Tuntitilassa tämä reitti ohjautuu vuorokirjanpitoon. Nykyinen selain ei
+       * kutsu tätä tuntitilassa lainkaan (tunnit syntyvät vuoron päätöksestä),
+       * mutta välimuistissa oleva vanha versio voi — ja silloin kirjaus menisi
+       * `hours`iin, jota tuntinäkymä ei lue. Tekijä luulisi kirjanneensa
+       * tuntinsa, eikä niitä olisi missään.
+       */
+      const toShifts = isHourlyGig(project);
+      if (toShifts) {
+        project.shifts = applyShiftAction(
+          project.shifts ?? [],
+          { add: { worker: member.id, hours: roundWorkHours(delta), day: dayKey() } },
+          member.id,
+        );
+      } else {
+        project.hours[member.id] = Math.max(0, +(((project.hours[member.id] || 0) + delta).toFixed(2)));
+        project.hourLog = [{ worker: member.id, delta, ts: Date.now(), by: member.id }, ...(project.hourLog || [])].slice(0, 200);
+      }
+      // Lippu VAIN kun rivi oikeasti kirjoitettiin: muuten tämä tallennus
+      // ohittaisi suojauksen turhaan ja veisi mukanaan vuoron joka ehti
+      // kirjautua sillä välin kun tätä pyyntöä käsiteltiin.
+      const saved = await saveProject(job, project, { shiftsMutation: toShifts });
       const savedMember = findCrewByToken(saved, member.token)!;
       res.json({ ok: true, view: await workerView(job, saved, savedMember) });
     } catch (e: any) {
@@ -8900,12 +9464,29 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
       const windows = todayKeys.size;
       const session = { start: end - minutes * 60000, end, minutes, windows, earnedCents: windows * member.perWindowCents, manual: true };
-      project.hours[member.id] = Math.max(0, +(((project.hours[member.id] || 0) + hours).toFixed(2)));
-      project.hourLog = [{ worker: member.id, delta: hours, ts: end, by: member.id }, ...(project.hourLog || [])].slice(0, 200);
+      /**
+       * KUMPI KIRJANPITO — SAMA JAKO KUIN AJASTIMELLA.
+       *
+       * Tuntitilassa käsin kirjattu päivä on yhtä lailla palkkaa kuin
+       * ajastimella kirjattu, joten se menee päivättynä samaan vuorolistaan.
+       * Jos se menisi `hours`iin, se ei näkyisi tuntinäkymässä lainkaan — ja
+       * tekijä luulisi kirjanneensa päivänsä.
+       */
+      const toShifts = isHourlyGig(project);
+      if (toShifts) {
+        project.shifts = applyShiftAction(
+          project.shifts ?? [],
+          { add: { worker: member.id, hours: roundWorkHours(hours), day: dayKey(end) } },
+          member.id,
+        );
+      } else {
+        project.hours[member.id] = Math.max(0, +(((project.hours[member.id] || 0) + hours).toFixed(2)));
+        project.hourLog = [{ worker: member.id, delta: hours, ts: end, by: member.id }, ...(project.hourLog || [])].slice(0, 200);
+      }
       project.crew = (project.crew || []).map((m) =>
         m.id !== member.id ? m : { ...m, sessions: [...(m.sessions || []), session].slice(-200) },
       );
-      const saved = await saveProject(job, project);
+      const saved = await saveProject(job, project, { shiftsMutation: toShifts });
       const savedMember = findCrewByToken(saved, member.token)!;
       // Same progress-update email as the timer flow — so a day logged by hand
       // afterwards still notifies the worker (and bcc's the bosses). Best-effort.
@@ -10250,8 +10831,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       for (const job of rows) {
         const project = parseProject(job.projectData ?? null);
         if (!project) continue;
+        /**
+         * TÄMÄ LISTA ON NIILLE JOTKA MYÖS TEKEVÄT TYÖTÄ KEIKALLA (esim. Petrus).
+         *
+         * PERUSTAJA EI KUULU TÄNNE, vaikka hänellä on keikalla oma rivi
+         * (`role: "host"`). Hänen ikkunansa ovat katetta eivätkä palkkaa, eikä
+         * hän ole tekijäkanavalla — sama raja kuin päivän yhteenvetopostissa,
+         * jota hänelle ei lähetetä.
+         *
+         * Ilman tätä rajausta admin-etusivulle ilmestyi "OMA KEIKKA" -kortti,
+         * jonka "Avaa oma työpöytä" heitti johtajan TEKIJÄN sovellukseen — ja
+         * koska hän ei ole koskaan tehnyt tekijän käyttöönottoa, hän päätyi
+         * työntekijän aloitusruutuun omalla keikallaan. Rivi syntyy nyt myös
+         * automaattisesti kun johtaja käynnistää oman työkellonsa, joten
+         * rajaus on tässä eikä siinä kuka sattuu olemaan listassa.
+         */
         const member = (project.crew || []).find(
-          (m) => m.active && (m.id.toLowerCase() === sub || (m.linkedUserId ?? "").toLowerCase() === sub),
+          (m) => m.active && m.role !== "host"
+            && (m.id.toLowerCase() === sub || (m.linkedUserId ?? "").toLowerCase() === sub),
         );
         if (!member) continue;
         const stats = crewMemberStats(project, member);
@@ -10549,14 +11146,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         p2Windows, p2Cents,
         manual: true,
       };
+      // Sama jako kuin tekijän käsin kirjauksessa: tuntitilassa päivä menee
+      // päivättyyn vuorolistaan, muuten vanhaan seurantasummaan. Lippu ratkeaa
+      // tästä eikä `hours > 0`:sta, jotta se on sama luku kuin tallennuksessa.
+      const toShifts = isHourlyGig(project) && hours > 0;
       if (hours > 0) {
-        project.hours[member.id] = Math.max(0, +(((project.hours[member.id] || 0) + hours).toFixed(2)));
-        project.hourLog = [{ worker: member.id, delta: hours, ts: end, by: "johtaja" }, ...(project.hourLog || [])].slice(0, 200);
+        if (toShifts) {
+          project.shifts = applyShiftAction(
+            project.shifts ?? [],
+            { add: { worker: member.id, hours: roundWorkHours(hours), day: dayKey(end) } },
+            "johtaja",
+          );
+        } else {
+          project.hours[member.id] = Math.max(0, +(((project.hours[member.id] || 0) + hours).toFixed(2)));
+          project.hourLog = [{ worker: member.id, delta: hours, ts: end, by: "johtaja" }, ...(project.hourLog || [])].slice(0, 200);
+        }
       }
       project.crew = (project.crew || []).map((m) =>
         m.id !== member.id ? m : { ...m, sessions: [...(m.sessions || []), session].slice(-200) },
       );
-      const saved = await saveProject(job, project);
+      const saved = await saveProject(job, project, { shiftsMutation: toShifts });
       const savedMember = findCrewByToken(saved, member.token)!;
       let emailed = false;
       // Deaktivoitu tekijä ei ole enää keikalla — hänelle ei lähde päivän

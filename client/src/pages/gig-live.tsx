@@ -15,6 +15,9 @@ import { eur } from "@shared/gig";
 import { floorLabel } from "@shared/project";
 import GigContractSign from "@/components/GigContractSign";
 import CustomerFloorMap, { type P2CustomerActions, type ScopeCustomerState } from "@/components/CustomerFloorMap";
+import FixturesPanel from "@/components/customer/FixturesPanel";
+import HourlySummary from "@/components/customer/HourlySummary";
+import TaskBoard from "@/components/TaskBoard";
 import CustomerProgressHero, { type HeroTile } from "@/components/CustomerProgressHero";
 import LoadingOrb from "@/components/LoadingOrb";
 import { downloadGigContract } from "@/lib/gig-contract-doc";
@@ -199,6 +202,12 @@ export default function GigLivePage() {
     return !t || t === "-" || t === "–" || t === "—" ? null : t;
   })();
   const tech = isTechTheme(data.theme);
+  /**
+   * Tuntikeikka. Asiakkaan näkymän painotus kääntyy: tunnit ylös, ikkunapesun
+   * edistymä painalluksen taakse — ikkunapesu on tauolla ja tuntityö on se
+   * mikä käy. Ks. `BillingMode`.
+   */
+  const hourlyGig = data.billingMode === "hourly";
 
   const t = data.totals;
   // Customer view shows ACTUAL work progress (washed windows / scope), never euros.
@@ -302,6 +311,27 @@ export default function GigLivePage() {
    * Palvelin päättää onko kysely käytössä (`scope !== null`), joten tässä ei
    * toisteta ehtoa yhteisökeikasta — yksi paikka jossa se ratkaistaan.
    */
+  /**
+   * Hintaehdotuksen tallennus. Palvelin palauttaa tuoreen kalustetilanteen,
+   * joka kirjoitetaan suoraan näkymään — niin asiakas näkee oman ehdotuksensa
+   * ja sen summan ilman että koko sivu haetaan uudestaan.
+   */
+  const saveFixtureQuote = async (body: { lampWorkPriceCents?: number; doorWorkPriceCents?: number; note?: string }) => {
+    const res = await api.gigSetFixtureQuote(token, body);
+    if (res.ok && res.data) {
+      setData((cur) => (cur ? { ...cur, fixtures: res.data!.fixtures } : cur));
+      return null;
+    }
+    return res.error || "Tallennus ei onnistunut. Yritä hetken kuluttua uudelleen.";
+  };
+
+  // Työtaulu: asiakas lisää tehtäviä ja viestejä. Kuittaus ei ole hänen —
+  // se on väite tehdystä työstä, ja sen tekee se joka työn teki.
+  const addBoardEntry = async (kind: "task" | "note", text: string) => {
+    const res = await api.gigAddBoardEntry(token, kind, text);
+    if (res.ok && res.data) setData((cur) => (cur ? { ...cur, board: res.data!.board } : cur));
+  };
+
   const scopeState: ScopeCustomerState | null = data.scope ? {
     votes: data.scope.votes,
     vote: async (key, answer) => {
@@ -400,6 +430,16 @@ export default function GigLivePage() {
           </div>
         </div>
 
+        {/* TUNTIKEIKAN PÄÄKORTTI.
+            Tuntikeikalla asiakkaan tärkein luku on tehdyt tunnit, ei
+            pesuprosentti — ikkunapesu on tauolla ja tuntityö on se mikä käy.
+            Siksi tämä on ensimmäisenä ja pesun edistymä alempana taitteessa. */}
+        {hourlyGig && data.hourly && (
+          <Panel theme={T}>
+            <HourlySummary hourly={data.hourly} theme={T} />
+          </Panel>
+        )}
+
         {/* PÄÄKORTTI. Yksi luku, yksi palkki, muutama ruutu. Ei euroja
             urakkahinnasta — sovittu hinta asuu allekirjoitetussa sopimuksessa.
             Kaikki selittävä teksti on siirretty sivun alaosan taittuvaan
@@ -408,6 +448,7 @@ export default function GigLivePage() {
             eikä lippu vanhassa: vaalea on käytössä elävällä sopimusasiakkaalla,
             eikä sitä haluta testata uudelleen joka kerta kun tummaa muutetaan. */}
         {(() => {
+          const hero = (() => {
           const heroProps = {
             pct,
             done: hasMapProgress ? mapProgress.done : undefined,
@@ -426,6 +467,24 @@ export default function GigLivePage() {
           return tech
             ? <TechHero theme={T} {...heroProps} />
             : <CustomerProgressHero {...heroProps} />;
+          })();
+          // Tuntikeikalla pesun edistymä ei ole väärää tietoa — se on vain
+          // väärässä paikassa. Taitteen takana se on saatavilla sitä
+          // kysyttäessä eikä ensimmäisenä joka kerta.
+          //
+          // Rivikommentti eikä lohko: tämä on JSX:n lapsipaikan välittömässä
+          // läheisyydessä, ja `customer-privacy.test.ts` vartioi juuri sitä —
+          // lohkokommentti on kerran päätynyt asiakkaan ruudulle tekstinä.
+          if (!hourlyGig) return hero;
+          return (
+            <details>
+              <summary style={{ cursor: "pointer", listStyle: "none", display: "flex", alignItems: "center", gap: 8, padding: "10px 2px", fontSize: 13.5, fontWeight: 600, color: T.muted, fontFamily: FONT }}>
+                <span aria-hidden style={{ fontSize: 11 }}>▸</span>
+                Ikkunapesun tilanne {pct > 0 ? `· ${Math.round(pct)} %` : ""}
+              </summary>
+              <div style={{ marginTop: 10 }}>{hero}</div>
+            </details>
+          );
         })()}
 
         {/* SOPIMUS ON TULOSSA.
@@ -576,6 +635,38 @@ export default function GigLivePage() {
             <CustomerFloorMap map={data.map} p2={p2} p2Actions={p2Live ? p2Actions : undefined} scope={scopeState} onLoadObservationImage={loadObservationImage} planUrlBase={api.planUrlBaseForGig(token)} theme={T} fixedDeal={data.isFixedDeal} />
           </Panel>
         )}
+
+        {/* LAMPUT JA OVET — kalustetilanne, ostettava määrä ja asiakkaan oma
+            hintaehdotus. Kartan JÄLKEEN: kartta kertoo missä, tämä kertoo
+            paljonko. Osio puuttuu kokonaan kun keikalla ei ole kalusteita. */}
+        {data.fixtures && (data.fixtures.lamps.total > 0 || data.fixtures.doors.total > 0) && (
+          <Panel theme={T}>
+            <p style={{ margin: "0 0 14px", ...label }}>Lamput ja ovet</p>
+            <FixturesPanel
+              fixtures={data.fixtures}
+              theme={T}
+              floorLabel={(f) => floorLabel(data.map?.building as any, f)}
+              onSaveQuote={saveFixtureQuote}
+              hourlyGig={hourlyGig}
+            />
+          </Panel>
+        )}
+
+        {/* TYÖTAULU. Sama lista jonka tekijät näkevät työpöydällään: asiakas
+            kirjoittaa mitä pitäisi tehdä, tekijä kuittaa sen tehdyksi ja
+            kirjaa mitä teki. Yksi keskustelu, ei kaksi. */}
+        <Panel theme={T}>
+          <p style={{ margin: "0 0 14px", ...label }}>Tehtävät ja viestit</p>
+          <TaskBoard
+            entries={data.board}
+            onAdd={addBoardEntry}
+            theme={{
+              font: FONT, ink: T.ink, muted: T.muted, faint: T.muted,
+              fill: T.fill, card: T.card, hair: T.hair, accent: T.navy, done: T.green,
+            }}
+            lead="Kirjoita tähän mitä haluat tehtävän tai kysy jotain — tekijämme näkevät sen heti työpöydällään ja kuittaavat tehtävät tehdyiksi."
+          />
+        </Panel>
 
         {/* TIEDOTTEET JA OHJEET — kaikki selittävä teksti yhdessä taittuvassa
             osiossa. Se on luettavissa kun sitä tarvitsee, muttei joka kerta

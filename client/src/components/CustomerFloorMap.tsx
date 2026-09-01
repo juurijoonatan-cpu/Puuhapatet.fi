@@ -21,6 +21,7 @@ import type { PublicLampPoint, PublicDoorPoint } from "@shared/project";
 import { eur } from "@shared/gig";
 import { p2NumbersByFloor, type P2NumberingInput } from "@shared/p2";
 import { getPoints, inCustomerScope, type CustomerPoint } from "@/lib/customer-progress";
+import { STAR_CLIP } from "@/lib/fixture-marks";
 import { CT, CFONT, type CustomerTheme } from "@/lib/customer-theme";
 
 /** Position a fixed popup near an on-screen anchor rect, flipping above/below and
@@ -120,9 +121,6 @@ function dotColor(p: 1 | 2, status: WindowStatus): string {
   return p === 1 ? "#F4A6C0" : "#D9C97E";
 }
 
-/** Sama tähtimerkki kuin tekijän kartalla — lamppu ei ole ikkuna, eikä se saa
- *  näyttää siltä. */
-const STAR_CLIP = "polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)";
 
 /**
  * Lampun ja oven värit ASIAKKAAN vaalealla pohjalla.
@@ -324,6 +322,18 @@ export default function CustomerFloorMap({ map, p2, p2Actions, scope, onLoadObse
   const [openFixture, setOpenFixture] = useState<
     { kind: "lamp"; point: PublicLampPoint; rect: DOMRect } | { kind: "door"; point: PublicDoorPoint; rect: DOMRect } | null
   >(null);
+  /**
+   * MITÄ KARTALLA NÄYTETÄÄN.
+   *
+   * Asiakkaan kartalla on kolme merkkilajia päällekkäin, ja niitä katsotaan eri
+   * kysymyksillä: "miten pesu etenee" ja "missä ne rikkinäiset lamput ovat"
+   * eivät ole sama katse. Kolme sirua sallii kummankin erikseen; oletus on
+   * "kaikki", joten kartta on ilman valintaa entisensä.
+   *
+   * Vain lajit joita kerroksella OIKEASTI on saavat sirun — tyhjä valinta
+   * lupaisi merkkejä joita ei ole.
+   */
+  const [showKinds, setShowKinds] = useState({ windows: true, lamps: true, doors: true });
   const observations = map.observations ?? {};
   // The window whose observation popup is open (+ the badge rect to anchor it).
   const [openObs, setOpenObs] = useState<{ key: string; rect: DOMRect } | null>(null);
@@ -593,6 +603,24 @@ export default function CustomerFloorMap({ map, p2, p2Actions, scope, onLoadObse
     requestAnimationFrame(() => mapRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
     window.setTimeout(() => setFocusKey((k) => (k === key ? null : k)), 2600);
   }
+  /**
+   * Lamppulistan rivi → kartta. Sama silta kuin ikkunoiden "Kartalla"
+   * (`jumpToMap`): kerros vaihtuu, kartta rullaa näkyviin ja piste sykkii.
+   *
+   * Eroja on kaksi, kummallakin syy: lamppu ei ole keltainen ikkuna, joten
+   * `onlyYellow` ei kuulu tähän — ja lamppujen taso on pakko sytyttää, koska
+   * korostus piilotetulla tasolla ei näkyisi lainkaan.
+   */
+  function jumpToLamp(lamp: PublicLampPoint) {
+    setFloor(lamp.floor);
+    resetView();
+    setOpenFixture(null);
+    setShowKinds((cur) => (cur.lamps ? cur : { ...cur, lamps: true }));
+    setFocusKey(lamp.key);
+    requestAnimationFrame(() => mapRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
+    window.setTimeout(() => setFocusKey((k) => (k === lamp.key ? null : k)), 2600);
+  }
+
   // Map badge popup → scroll down to that window's row in the decision list,
   // where accept / counter / decline live (the map itself stays planning-only).
   function jumpToList(key: string) {
@@ -1100,7 +1128,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, scope, onLoadObse
                 Näkyvät MYÖS 2. vaiheen aikana: jos ikkunasta on huomautettavaa
                 (esim. vaikea pääsy, rikkinäinen tiiviste), asiakkaan pitää nähdä
                 se juuri kun hän päättää hinnasta. Teksti näkyy myös hintakuplassa. */}
-            {!addMode && points.map((pt) => observations[pt.key] ? (
+            {!addMode && showKinds.windows && points.map((pt) => observations[pt.key] ? (
               <button
                 key={`obs-${pt.key}`}
                 onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); wantObservationImage(pt.key); setOpenObs({ key: pt.key, rect: r }); }}
@@ -1138,7 +1166,7 @@ export default function CustomerFloorMap({ map, p2, p2Actions, scope, onLoadObse
             {/* LAMPUT & OVET — vain ne joista on asiakkaalle kerrottavaa.
                 Piilossa hinnoitteluvaiheessa kuten muistiinpanotkin: silloin
                 näkymän aihe on lisäikkunoiden hinta, ei kalusteet. */}
-            {!p2On && !addMode && floorLamps.map((l) => (
+            {!p2On && !addMode && showKinds.lamps && floorLamps.map((l) => (
               <button
                 key={`lamp-${l.key}`}
                 onClick={(e) => { e.stopPropagation(); setOpenFixture({ kind: "lamp", point: l, rect: e.currentTarget.getBoundingClientRect() }); }}
@@ -1150,12 +1178,22 @@ export default function CustomerFloorMap({ map, p2, p2Actions, scope, onLoadObse
                 }}
               >
                 <span aria-hidden style={{ display: "block", width: "100%", height: "100%", clipPath: STAR_CLIP, background: lampCustomerColor(l) }} />
+                {/* Korostus listan napautuksesta: sykkivä rengas kertoo MIKÄ
+                    piste listalta juuri valittiin. Ilman sitä asiakas saa
+                    kerroksen mutta ei kohtaa. */}
+                {focusKey === l.key && (
+                  <span aria-hidden style={{
+                    position: "absolute", left: "50%", top: "50%", width: 34, height: 34,
+                    marginLeft: -17, marginTop: -17, borderRadius: "50%",
+                    border: `2px solid ${lampCustomerColor(l)}`, animation: "cfmZone 1.4s ease-in-out infinite",
+                  }} />
+                )}
                 {!!l.note && (
                   <span aria-hidden style={{ position: "absolute", right: -2, top: -2, width: 7, height: 7, borderRadius: "50%", background: "#fff", border: `1.5px solid ${lampCustomerColor(l)}` }} />
                 )}
               </button>
             ))}
-            {!p2On && !addMode && floorDoors.map((d) => (
+            {!p2On && !addMode && showKinds.doors && floorDoors.map((d) => (
               <button
                 key={`door-${d.key}`}
                 onClick={(e) => { e.stopPropagation(); setOpenFixture({ kind: "door", point: d, rect: e.currentTarget.getBoundingClientRect() }); }}
@@ -1401,6 +1439,70 @@ export default function CustomerFloorMap({ map, p2, p2Actions, scope, onLoadObse
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* MITÄ NÄYTETÄÄN — sirut vain niille lajeille joita kerroksella on.
+          Piilossa hinnoitteluvaiheessa: silloin näkymän aihe on lisäikkunoiden
+          hinta, eikä kalustesuodatin kuulu siihen keskusteluun. */}
+      {!p2On && !addMode && (floorLamps.length > 0 || floorDoors.length > 0) && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12, alignItems: "center" }}>
+          <span style={{ fontSize: 11.5, color: T.muted, marginRight: 2 }}>Näytä:</span>
+          {([
+            ["windows", "Ikkunat", points.length],
+            ["lamps", "Lamput", floorLamps.length],
+            ["doors", "Ovet", floorDoors.length],
+          ] as [keyof typeof showKinds, string, number][]).filter(([, , n]) => n > 0).map(([id, lbl, n]) => {
+            const on = showKinds[id];
+            return (
+              <button key={id}
+                onClick={() => setShowKinds((cur) => ({ ...cur, [id]: !cur[id] }))}
+                aria-pressed={on}
+                style={{
+                  padding: "6px 12px", borderRadius: 999, cursor: "pointer", fontFamily: FONT,
+                  fontSize: 12.5, fontWeight: 600,
+                  border: `1px solid ${on ? T.navy : T.hair}`,
+                  background: on ? rgba(T.navy, 0.08) : "transparent",
+                  color: on ? T.navy : T.muted,
+                }}
+              >
+                {lbl} <span style={{ fontWeight: 500, opacity: 0.7 }}>{n}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* TÄMÄN KERROKSEN LAMPUT LISTANA. Kartta kertoo missä, lista kertoo mitä
+          — ja napautus vie kartan siihen pisteeseen korostettuna. Ilman listaa
+          asiakkaan pitäisi löytää merkitty lamppu silmällä kymmenien joukosta.
+          Vain merkityt lamput ovat täällä, kuten kartallakin. */}
+      {!p2On && !addMode && showKinds.lamps && floorLamps.length > 0 && (
+        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+          {floorLamps.map((l) => {
+            const color = lampCustomerColor(l);
+            const state = l.status === "vaihdettu" ? "Vaihdettu" : l.condition === "rikki" ? "Ei toimi" : "Tarkastettu";
+            return (
+              <button key={l.key}
+                onClick={() => jumpToLamp(l)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left",
+                  padding: "9px 11px", borderRadius: 10, cursor: "pointer", fontFamily: FONT,
+                  border: `1px solid ${focusKey === l.key ? color : T.hair}`,
+                  background: focusKey === l.key ? rgba(color, 0.08) : T.card,
+                }}
+              >
+                <span aria-hidden style={{ width: 13, height: 13, flexShrink: 0, clipPath: STAR_CLIP, background: color }} />
+                <span style={{ flexShrink: 0, fontSize: 12.5, fontWeight: 700, color: T.ink }}>{state}</span>
+                {l.note && (
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {l.note}
+                  </span>
+                )}
+                <span style={{ marginLeft: "auto", flexShrink: 0, fontSize: 11.5, color: T.muted }}>Näytä kartalla</span>
+              </button>
+            );
+          })}
         </div>
       )}
 

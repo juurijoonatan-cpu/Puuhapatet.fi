@@ -3,7 +3,7 @@
  */
 
 import type { GigData, GigTotals } from "@shared/gig";
-import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding, FixedDeal, EraDebtBreakdown, ProjLampMark, LampStatus, LampCondition, ProjFixtureNote, ProjDoorMark, DoorStatus, PublicLampPoint, PublicDoorPoint } from "@shared/project";
+import type { ProjectData, ProjTotals, WorkerStat, ProjMarksData, ProjCustomMark, WindowStatus, ProjBuilding, FixedDeal, EraDebtBreakdown, ProjLampMark, LampStatus, LampCondition, ProjFixtureNote, ProjDoorMark, DoorStatus, PublicLampPoint, PublicDoorPoint, LampFloorStat, DoorFloorStat, FixtureQuote, LampModel, ProjBoardEntry, ProjShift } from "@shared/project";
 import type { MemberAgreementSignature } from "@shared/member-agreement";
 import type { CrewMember, CrewMemberStats, CrewProfile, CrewAgreementSignature } from "@shared/crew";
 import type { WorkerAgreement } from "@shared/worker-agreements";
@@ -70,6 +70,8 @@ export interface WorkerView {
     trainee: { responsibleLeaderName: string } | null;
     /** Epoch ms when the work-hour timer was started (null if not running). */
     activeShiftAt: number | null;
+    /** Tekijän oma tavoiteaika tälle vuorolle (tunteina). Null = ei tavoitetta. */
+    shiftTargetHours?: number | null;
     /** Washed count when the current shift started (for the live session counter). */
     shiftStartWashed: number | null;
     /** Completed work sessions, newest-first. */
@@ -89,6 +91,8 @@ export interface WorkerView {
   hasInstalments?: boolean;
   /** Yhteisökeikka: keikasta ei liiku rahaa, joten korvausta ei luvata. */
   isCommunity?: boolean;
+  /** Keikan laskutustila. Tuntitilassa työpöytä on eri — ks. `BillingMode`. */
+  billingMode?: "targeted" | "hourly";
   marks: ProjMarksData;
   statuses: Record<string, WindowStatus>;
   washedBy: Record<string, string>;
@@ -114,6 +118,10 @@ export interface WorkerView {
   lampConditions: Record<string, LampCondition>;
   /** Lampun avain → huomautus (teksti, kirjoittaja, aika). */
   lampNotes: Record<string, ProjFixtureNote>;
+  /** Keikan lamppumallit — tekijä valitsee näistä, ei lisää uusia. */
+  lampModels: LampModel[];
+  /** Lampun avain → mallin id. */
+  lampModelOf: Record<string, string>;
   /** Ovet: tehtäväpisteet kartalla. Tekijä kuittaa ja huomauttaa; lisäys ja
    *  nimeäminen ovat johtajien projektinäkymässä. */
   doors: Record<string, ProjDoorMark[]>;
@@ -121,6 +129,8 @@ export interface WorkerView {
   /** Oven avain → tekijän id joka merkitsi sen tehdyksi. */
   doorDoneBy: Record<string, string>;
   doorNotes: Record<string, ProjFixtureNote>;
+  /** Työtaulu: keikan yhteinen tehtävä- ja viestilista. */
+  board: ProjBoardEntry[];
   hours: number;
   stats: CrewMemberStats;
   /** Johtajan yksitellen piilottamat ikkunat — eivät näy tekijän kartalla eikä
@@ -451,6 +461,45 @@ export interface GigPublicView {
     /** Ovet jotka on tehty tai joista on huomautettu. Sama sääntö. */
     doors?: PublicDoorPoint[];
   } | null;
+  /**
+   * Lamppu- ja ovitilanne asiakkaalle: montako ei toimi, montako on korjattu,
+   * kerroksittainen jakauma, ostotieto ja asiakkaan oma hintaehdotus. Null kun
+   * keikalla ei ole kalusteita — silloin näkymä ei piirrä osiota lainkaan.
+   *
+   * Ei kartan sisällä, koska tämä on olemassa myös ilman pohjakuvaa.
+   */
+  fixtures: {
+    lamps: {
+      total: number; needsBulbs: number; fixed: number; working: number;
+      unchecked: number; functional: number; byFloor: LampFloorStat[];
+    };
+    doors: { total: number; done: number; byFloor: DoorFloorStat[] };
+    order: {
+      lampModel?: string; bulbs: number; doorMaterial?: string; doorCount: number; note?: string;
+      /** Mallikohtainen erittely ostettavista. Tyhjä kun malleja ei ole määritelty. */
+      byModel: { name: string; needsBulb: number }[];
+    };
+    quote: FixtureQuote | null;
+    /** Asiakkaan omalla hinnalla laskettu summa (senttiä). Null ilman hintaa. */
+    quotedTotalCents: number | null;
+  } | null;
+
+  /** Keikan laskutustila. Tuntikeikalla asiakkaan näkymä on eri. */
+  billingMode: "targeted" | "hourly";
+  /**
+   * Tuntikeikan tilanne: kuka on tehnyt montako tuntia ja mitä asiakkaalle on
+   * ostettu. Null kohdennetulla keikalla — siellä asiakas maksaa kohteista,
+   * ja tunnit ovat meidän sisäinen asiamme.
+   */
+  hourly: {
+    totalHours: number;
+    workers: { name: string; hours: number }[];
+    expenses: { kind: string; desc: string; amountCents: number; ts: number }[];
+    expensesTotalCents: number;
+  } | null;
+  /** Työtaulu: keikan yhteinen tehtävä- ja viestilista. */
+  board: ProjBoardEntry[];
+
   // Contract & signing gate
   contractText: string | null;
   requireSignature: boolean;
@@ -515,6 +564,25 @@ export interface GigSignPayload {
   };
 }
 
+/**
+ * Odotusaika pyynnölle, millisekunteina.
+ *
+ * OLETUS ON PITKÄ SYYSTÄ: ilmainen Render-taso nukahtaa ~15 min jälkeen, ja
+ * ensimmäinen pyyntö maksaa ~50 s kylmäkäynnistyksen. Latauksen pitää siis
+ * jaksaa odottaa se.
+ *
+ * MUTTA NOPEA MERKINTÄ EI SAA ODOTTAA SITÄ. Tekijän lamppunapautus menee jo
+ * hereillä olevalle palvelimelle: jos yhteys pätkii, 70 sekunnin tuijotus ennen
+ * virheilmoitusta on käytännössä sama kuin ei ilmoitusta lainkaan — ja
+ * uusinnan kanssa se oli yli kaksi minuuttia. Lyhyt katko kuuluu näkyä
+ * sekunneissa, jotta napautuksen voi toistaa.
+ */
+export const REQUEST_TIMEOUT_MS = 70_000;
+/** Nopea merkintä työpöydältä — virhe näkyviin sekunneissa, ei minuuteissa. */
+export const QUICK_TIMEOUT_MS = 15_000;
+/** Valmis optio-objekti nopeille merkintäreiteille. */
+const QUICK = { timeoutMs: QUICK_TIMEOUT_MS } as const;
+
 interface ApiResponse<T> {
   ok: boolean;
   data?: T;
@@ -531,11 +599,12 @@ async function request<T>(
   method: string,
   path: string,
   body?: unknown,
+  opts?: { timeoutMs?: number },
 ): Promise<ApiResponse<T>> {
   // Abort timeout so a sleeping/cold backend can't hang the UI indefinitely.
   // No retry here — these calls can be non-idempotent (e.g. createJob).
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 70000);
+  const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? REQUEST_TIMEOUT_MS);
   try {
     const res = await fetch(`${API_BASE}${path}`, {
       method,
@@ -1522,12 +1591,53 @@ export const api = {
     request<{ ok: boolean; username?: string }>("POST", `/api/crew/${token}/password`, { password }),
 
   crewMarkWindow: (token: string, key: string, status: WindowStatus, p?: 1 | 2) =>
-    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/window`, { key, status, p }),
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/window`, { key, status, p }, QUICK),
+
+  /**
+   * ASIAKKAAN hintaehdotus VAIHTOTÖISTÄ (lamppu, oven tiiviste) — per kohde,
+   * ei per tarvike. Ei sitova tarjous: asiakas kertoo mitä olisi valmis
+   * maksamaan, ja johtaja näkee sen dashissa. Tyhjä runko pyyhkii ehdotuksen.
+   */
+  gigSetFixtureQuote: (
+    token: string,
+    body: { lampWorkPriceCents?: number; doorWorkPriceCents?: number; note?: string },
+  ) => request<{ ok: boolean; fixtures: GigPublicView["fixtures"] }>("POST", `/api/gig/${token}/fixture-quote`, body),
 
   // Sama lamppujen merkintä (ei rahaa, ei prioriteettia) — kuka vaihtoi tulee
-  // servlerissä aina kirjautuneesta tekijästä itsestään.
+  // palvelimella aina kirjautuneesta tekijästä itsestään.
+  /** Työtaulu — asiakas lisää tehtävän tai viestin. */
+  gigAddBoardEntry: (token: string, kind: "task" | "note", text: string) =>
+    request<{ ok: boolean; board: ProjBoardEntry[] }>("POST", `/api/gig/${token}/board`, { kind, text }),
+
+  /** Työtaulu — tekijä lisää rivin. */
+  crewAddBoardEntry: (token: string, kind: "task" | "note", text: string) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/board`, { kind, text }, QUICK),
+  /** Työtaulu — tekijä kuittaa tehtävän tehdyksi (tai purkaa kuittauksen). */
+  crewToggleBoardTask: (token: string, id: string, done: boolean) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/board`, { id, done }, QUICK),
+
+  /** Työtaulu — johtaja lisää rivin tai kuittaa tehtävän. */
+  adminAddBoardEntry: (jobId: number, kind: "task" | "note", text: string, by: string, byName?: string) =>
+    request<{ ok: boolean; board: ProjBoardEntry[] }>("POST", `/api/jobs/${jobId}/board`, { kind, text, by, byName }),
+  adminToggleBoardTask: (jobId: number, id: string, done: boolean, by: string, byName?: string) =>
+    request<{ ok: boolean; board: ProjBoardEntry[] }>("POST", `/api/jobs/${jobId}/board`, { id, done, by, byName }),
+
+  /**
+   * TUNTITILAN VUOROKIRJANPITO — johtajan puoli. Yksi reitti neljälle
+   * toiminnolle, koska ne koskevat samaa serverin omistamaa listaa.
+   * Palvelin laskee keston omasta kellostaan; selain ei lähetä tuntimäärää
+   * ajastimen päättyessä lainkaan.
+   */
+  adminShift: (
+    jobId: number,
+    body: { action: "start" | "stop" | "add" | "remove"; worker?: string; workerName?: string; hours?: number; day?: string; note?: string; id?: string; targetHours?: number; by?: string },
+  ) =>
+    request<{ ok: boolean; shifts: ProjShift[]; crew: { id: string; activeShiftAt: number | null; shiftTargetHours: number | null }[] }>(
+      "POST", `/api/jobs/${jobId}/shift`, body, QUICK,
+    ),
+
   crewMarkLamp: (token: string, key: string, status: LampStatus) =>
-    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, status }),
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, status }, QUICK),
 
   /**
    * Lampun kunto ja huomautus — sama reitti kuin vaihtomerkinnällä, mutta eri
@@ -1535,15 +1645,19 @@ export const api = {
    * merkitseminen ei pyyhi vaihtomerkintää (eikä toisinpäin).
    */
   crewSetLampCondition: (token: string, key: string, condition: LampCondition | null) =>
-    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, condition }),
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, condition }, QUICK),
   crewSetLampNote: (token: string, key: string, note: string) =>
-    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, note }),
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, note }, QUICK),
+  /** Lampun malli. `null` poistaa merkinnän. Tekijä valitsee keikan malleista;
+   *  tuntematon id hylätään palvelimella. */
+  crewSetLampModel: (token: string, key: string, modelId: string | null) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/lamp`, { key, modelId }, QUICK),
 
   // Ovet: tekijä kuittaa tehtäväpisteen tehdyksi tai huomauttaa siitä.
   crewMarkDoor: (token: string, key: string, status: DoorStatus) =>
-    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/door`, { key, status }),
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/door`, { key, status }, QUICK),
   crewSetDoorNote: (token: string, key: string, note: string) =>
-    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/door`, { key, note }),
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/door`, { key, note }, QUICK),
 
   crewAddHours: (token: string, delta: number) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/hours`, { delta }),
@@ -1554,8 +1668,16 @@ export const api = {
 
   // Start/end the work-hour timer. On end, pass worked minutes (breaks deducted)
   // so the session log records the right duration.
-  crewShift: (token: string, start: boolean, minutes?: number) =>
-    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/shift`, { start, minutes }),
+  /** Tekijän tavoiteaika kesken vuoron. `null` poistaa tavoitteen. */
+  crewSetShiftTarget: (token: string, targetHours: number | null) =>
+    request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/shift-target`, { targetHours }, QUICK),
+
+  /** Vuoron aloitus/lopetus. `creditedHours` kertoo tuntitilassa montako
+   *  tuntia palvelin kirjasi (pyöristettynä) — kohdennetussa tilassa 0. */
+  crewShift: (token: string, start: boolean, minutes?: number, targetHours?: number | null) =>
+    request<{ ok: boolean; view: WorkerView; creditedHours?: number }>(
+      "POST", `/api/crew/${token}/shift`, { start, minutes, targetHours }, QUICK,
+    ),
 
   crewAddNote: (token: string, text: string) =>
     request<{ ok: boolean; view: WorkerView }>("POST", `/api/crew/${token}/note`, { text }),

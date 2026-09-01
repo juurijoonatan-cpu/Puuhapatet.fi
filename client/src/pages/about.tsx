@@ -52,6 +52,10 @@ const team = [
   },
 ];
 
+// Hetkellisesti piilotettu tekijät-osiosta — tiedot pysyvät yllä team-listassa
+// ennallaan, poista nimi tästä joukosta kun henkilö palaa näkyviin.
+const PIILOTETUT_TEKIJOISTA = new Set(["Petrus Aalto"]);
+
 // Tekijätiimi — näytetään about-sivulla avatar-ryhmänä. Kuvat /public-kansiosta;
 // puuttuvat putoavat nimikirjaimiin.
 const TIIMI = [
@@ -63,6 +67,10 @@ const TIIMI = [
   { src: "/fr8/doma.jpg", fallback: "DO", tooltip: "Doma" },
   { src: "/fr8/selma.jpg", fallback: "SE", tooltip: "Selma" },
 ];
+
+// Hetkellisesti piilotettu meistä-sivulta — tiedot pysyvät yllä TIIMI-listassa
+// ennallaan, poista nimi tästä joukosta kun henkilö palaa näkyviin.
+const PIILOTETUT_TIIMISTA = new Set(["Milja", "Doma", "Oliver"]);
 
 export default function AboutPage() {
   const { t } = useI18n();
@@ -79,7 +87,8 @@ export default function AboutPage() {
     const discovered: AvatarGroupItem[] = roster
       .filter((w) => !known.has(w.name.trim().split(/\s+/)[0]?.toLowerCase()))
       .map((w) => ({ src: w.photoUrl, fallback: w.name.slice(0, 2).toUpperCase(), tooltip: w.name }));
-    return [...TIIMI, ...discovered];
+    const naytettavat = TIIMI.filter((a) => !PIILOTETUT_TIIMISTA.has(a.tooltip));
+    return [...naytettavat, ...discovered];
   }, [roster]);
 
   return (
@@ -126,7 +135,7 @@ export default function AboutPage() {
           {t("about.team.title")}
         </h2>
         <div className="grid md:grid-cols-2 gap-6 mb-10">
-          {team.map((f) => (
+          {team.filter((f) => !PIILOTETUT_TEKIJOISTA.has(f.name)).map((f) => (
             <Card key={f.name} className="p-6 bg-card border-0 premium-shadow flex flex-col gap-5">
               {/* Photo + name row */}
               <div className="flex items-center gap-4">

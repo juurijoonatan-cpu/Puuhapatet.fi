@@ -680,6 +680,15 @@ export default function AdminProjectPage() {
   }, [mutate]);
 
   /**
+   * TÄMÄN KEIKAN TUNTIHINNAT. Tavallisia blob-kenttiä kuten `billingMode` —
+   * eivät serverin omistamia kuten vuorot, joten geneerinen tallennus riittää.
+   * Paneeli on jo tarkistanut arvot; nolla tai negatiivinen ei tule tänne asti.
+   */
+  const onSetHourRates = useCallback((hourRateCents: number, workerHourCents: number) => {
+    mutate((d) => { d.hourRateCents = hourRateCents; d.workerHourCents = workerHourCents; });
+  }, [mutate]);
+
+  /**
    * TUNTIPUOLEN KIRJAUKSET.
    *
    * Serverin omistama kenttä, joten nämä eivät kulje `mutate`n kautta:
@@ -1363,6 +1372,7 @@ export default function AdminProjectPage() {
             people={hourPeople}
             onRemoveShift={canAdjustHours ? removeShift : undefined}
             money={canAdjustHours ? hourlyMoney : null}
+            onSetRates={canAdjustHours ? onSetHourRates : undefined}
             busy={shiftBusy}
           />
 

@@ -55,6 +55,11 @@ interface Props {
    * Paneeli ei itse päättele kuka saa nähdä mitä — pääsy on yhdessä paikassa.
    */
   money?: HourlyMoney | null;
+  /**
+   * Tämän keikan tuntihinnat. Puuttuessaan hinnat ovat lukemia eikä niitä voi
+   * muuttaa — sama porras kuin rahakortilla: vain perustaja saa koskea.
+   */
+  onSetRates?: (hourRateCents: number, workerHourCents: number) => void;
   busy?: boolean;
 }
 
@@ -84,7 +89,7 @@ function todayLabel(now: number): string {
 }
 
 export default function HourlyPanel({
-  shifts, crew, workerName, me, onStartShift, onStopShift, onAdjustHours, onAddHours, onRemoveShift, money, busy, people,
+  shifts, crew, workerName, me, onStartShift, onStopShift, onAdjustHours, onAddHours, onRemoveShift, money, onSetRates, busy, people,
 }: Props) {
   const m = useIsMobile();
   const [now, setNow] = useState(() => Date.now());
@@ -97,6 +102,18 @@ export default function HourlyPanel({
    * luku näyttää väärältä.
    */
   const [diaryOpen, setDiaryOpen] = useState(true);
+  /**
+   * HINTOJEN MUOKKAUS on oma taitteensa eikä aina auki oleva lomake.
+   *
+   * Hinta on keikan sopimusasia joka asetetaan kerran; jatkuvasti näkyvät
+   * kentät houkuttelisivat naputtelemaan sitä kesken laskutuksen. Kentät ovat
+   * tekstiä eivätkä lukuja, koska "26,5" kirjoitetaan pilkulla ja puolivalmis
+   * "2" ei saa hetkeksi muuttua keikan hinnaksi — arvo luetaan vasta kun
+   * muokkaus vahvistetaan.
+   */
+  const [ratesOpen, setRatesOpen] = useState(false);
+  const [rateDraft, setRateDraft] = useState("");
+  const [wageDraft, setWageDraft] = useState("");
 
   const running = useMemo(() => crew.filter((c) => c.activeShiftAt), [crew]);
 
@@ -196,6 +213,30 @@ export default function HourlyPanel({
   };
   const chipOn: React.CSSProperties = {
     background: T.tone.goodBg, borderColor: T.tone.goodBorder, color: T.tone.goodSoft,
+  };
+
+  /** "26,00" — kenttään sopiva muoto, ilman euromerkkiä. */
+  const centsToField = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const openRates = () => {
+    if (!money) return;
+    setRateDraft(centsToField(money.hourRateCents));
+    setWageDraft(centsToField(money.workerHourCents));
+    setRatesOpen(true);
+  };
+  /**
+   * Tyhjä tai kelvoton kenttä EI tallenna nollaa — se pyyhkisi keikan hinnan
+   * hiljaa. Kelvoton arvo palauttaa nykyisen hinnan, eli muokkaus ei tehnyt
+   * mitään, ja se on oikea lopputulos: hinta on liian iso asia arvattavaksi.
+   */
+  const parseRate = (text: string, fallbackCents: number): number => {
+    const n = parseFloat(text.replace(",", "."));
+    if (!Number.isFinite(n) || n <= 0) return fallbackCents;
+    return Math.round(n * 100);
+  };
+  const saveRates = () => {
+    if (!money || !onSetRates) return;
+    onSetRates(parseRate(rateDraft, money.hourRateCents), parseRate(wageDraft, money.workerHourCents));
+    setRatesOpen(false);
   };
 
   const adjustBtn: React.CSSProperties = {
@@ -313,6 +354,52 @@ export default function HourlyPanel({
               Tuntipalkka ({eur(money.workerHourCents)}/h) on suurempi kuin asiakkaan tuntihinta ({eur(money.hourRateCents)}/h).
               Kate on nolla — tarkista hinnat keikan asetuksista.
             </p>
+          )}
+
+          {/* TÄMÄN KEIKAN HINNAT. Oletukset ovat 26,00 € ja 15,00 €, mutta ne
+              ovat oletuksia eivätkä lakia: hinta sovitaan keikkakohtaisesti.
+              Muutos koskee vain tätä keikkaa ja vaikuttaa taannehtivasti jo
+              kirjattuihin tunteihin — se sanotaan ääneen, koska kesken keikan
+              tehty hinnanmuutos muuttaa myös eilisen palkan. */}
+          {onSetRates && (
+            <div style={{ marginTop: T.space.md, paddingTop: T.space.md, borderTop: T.border.divider }}>
+              {!ratesOpen ? (
+                <button onClick={openRates}
+                  style={{ display: "flex", alignItems: "center", gap: T.space.sm, width: "100%", padding: 0, background: "transparent", border: "none", cursor: "pointer", textAlign: "left" }}>
+                  <span style={{ ...mono, color: T.text.faint }}>HINNAT</span>
+                  <span style={{ marginLeft: "auto", fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted, fontVariantNumeric: "tabular-nums" }}>
+                    asiakas {eur(money.hourRateCents)}/h · tekijä {eur(money.workerHourCents)}/h
+                  </span>
+                  <span aria-hidden style={{ color: T.text.faint, fontSize: T.size.xs }}>muuta</span>
+                </button>
+              ) : (
+                <div>
+                  <div style={{ ...mono, color: T.text.faint, marginBottom: T.space.md }}>TÄMÄN KEIKAN HINNAT</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: T.space.sm }}>
+                    <label style={{ display: "block" }}>
+                      <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginBottom: 4 }}>Asiakkaalta €/h</span>
+                      <input value={rateDraft} onChange={(e) => setRateDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveRates()}
+                        inputMode="decimal" style={{ ...fieldStyle, textAlign: "right" }} />
+                    </label>
+                    <label style={{ display: "block" }}>
+                      <span style={{ display: "block", fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginBottom: 4 }}>Tekijälle €/h</span>
+                      <input value={wageDraft} onChange={(e) => setWageDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveRates()}
+                        inputMode="decimal" style={{ ...fieldStyle, textAlign: "right" }} />
+                    </label>
+                  </div>
+                  <p style={{ margin: `${T.space.sm}px 0 0`, fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, lineHeight: 1.55 }}>
+                    Koskee vain tätä keikkaa ja myös jo kirjattuja tunteja. Pomon tunnista ei oteta katetta:
+                    hän saa koko asiakashinnan.
+                  </p>
+                  <div style={{ display: "flex", gap: T.space.sm, marginTop: T.space.md }}>
+                    <button onClick={() => setRatesOpen(false)} disabled={busy}
+                      style={{ ...chipStyle, flex: 1 }}>Peruuta</button>
+                    <button onClick={saveRates} disabled={busy}
+                      style={{ ...chipStyle, ...chipOn, flex: 1, opacity: busy ? 0.5 : 1 }}>Tallenna hinnat</button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           <div style={{ display: "flex", flexDirection: "column", gap: T.space.sm, marginTop: T.space.md }}>

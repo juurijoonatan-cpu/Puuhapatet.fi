@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { computeHourlyMoney, hourlyItemisation } from "./hourly-money";
 import { p2InvoiceState } from "./worker-payouts";
-import { DEFAULT_HOUR_RATE_CENTS, DEFAULT_WORKER_HOUR_CENTS, emptyProjectData, type ProjExpense, type ProjShift } from "./project";
+import { DEFAULT_HOUR_RATE_CENTS, DEFAULT_WORKER_HOUR_CENTS, emptyProjectData, sanitizeProjectData, type ProjExpense, type ProjShift } from "./project";
 
 /**
  * TUNTITILAN RAHA.
@@ -396,5 +396,36 @@ describe("laskun rivi on aina nimetty", () => {
     } as never);
     expect(it0.lines[0].label).toBe("Alihankinta");
     expect(it0.lines[0].cents).toBe(37000);
+  });
+});
+
+/**
+ * HINNAT SÄILYVÄT TALLENNUKSESSA.
+ *
+ * Sanitoija rakentaa paluuobjektin kenttä kerrallaan ilman levitystä, ja se
+ * ajetaan myös LUETTAESSA. Listasta puuttuva kenttä katoaa siis heti, ei vasta
+ * joskus — ja keikkakohtainen hinta palaisi hiljaa oletukseen kesken keikan.
+ */
+describe("keikkakohtaiset hinnat kestävät tallennuksen", () => {
+  it("asetetut hinnat säilyvät sanitoinnin läpi", () => {
+    const d = sanitizeProjectData({ ...emptyProjectData(), hourRateCents: 3000, workerHourCents: 1800 });
+    expect(d.hourRateCents).toBe(3000);
+    expect(d.workerHourCents).toBe(1800);
+    expect(computeHourlyMoney(d).hourRateCents).toBe(3000);
+  });
+
+  it("asettamaton hinta ei jähmety oletukseksi kenttään", () => {
+    const d = sanitizeProjectData(emptyProjectData());
+    expect(d.hourRateCents).toBeUndefined();
+    expect(d.workerHourCents).toBeUndefined();
+    // …mutta laskenta käyttää silti oletusta.
+    expect(computeHourlyMoney(d).hourRateCents).toBe(DEFAULT_HOUR_RATE_CENTS);
+    expect(computeHourlyMoney(d).workerHourCents).toBe(DEFAULT_WORKER_HOUR_CENTS);
+  });
+
+  it("roskahinta ei tallennu", () => {
+    const d = sanitizeProjectData({ ...emptyProjectData(), hourRateCents: 0, workerHourCents: -500 });
+    expect(d.hourRateCents).toBeUndefined();
+    expect(d.workerHourCents).toBeUndefined();
   });
 });

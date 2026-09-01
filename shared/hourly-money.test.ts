@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { computeHourlyMoney, hourlyItemisation } from "./hourly-money";
+import { p2InvoiceState } from "./worker-payouts";
 import { DEFAULT_HOUR_RATE_CENTS, DEFAULT_WORKER_HOUR_CENTS, emptyProjectData, type ProjExpense, type ProjShift } from "./project";
 
 /**
@@ -271,5 +272,44 @@ describe("hourlyItemisation", () => {
     const it = hourlyItemisation(base());
     expect(it.customerTotalCents).toBe(0);
     expect(it.matchesBilling).toBe(true);
+  });
+});
+
+/**
+ * TUNTILASKU ON OMA VIRTANSA.
+ *
+ * `p2InvoiceState` jakoi erät kahtia ehdolla `scope !== "p2"`, eli KAIKKI muu
+ * luettiin urakan P1-eräksi. Yksi tuntilasku olisi siis kasvattanut kiinteän
+ * urakan eränumeroa ja syönyt sen neljän erän laskennasta erän jota kukaan ei
+ * ole lähettänyt — ja neljännen erän loppusumma olisi laskettu väärin.
+ */
+describe("tuntilasku ei sotke urakan eriä", () => {
+  const p = (amountCents: number, scope?: "p1" | "p2" | "hours", voided?: boolean) =>
+    ({ amountCents, scope, voided });
+
+  it("tuntilasku ei ole P1-erä", () => {
+    const st = p2InvoiceState(0, [p(100000, "p1"), p(5000, "hours")]);
+    expect(st.p1Payments).toBe(1);
+    expect(st.p1InvoicedCents).toBe(100000);
+    expect(st.hoursPayments).toBe(1);
+    expect(st.hoursInvoicedCents).toBe(5000);
+  });
+
+  it("tuntilasku ei ole keltaisten laskua", () => {
+    const st = p2InvoiceState(9000, [p(5000, "hours")]);
+    expect(st.invoicedCents).toBe(0);
+    expect(st.remainingCents).toBe(9000);
+  });
+
+  it("vanha erä ilman scopea on yhä P1", () => {
+    const st = p2InvoiceState(0, [p(100000)]);
+    expect(st.p1Payments).toBe(1);
+    expect(st.hoursPayments).toBe(0);
+  });
+
+  it("mitätöity tuntilasku ei ole laskutettua rahaa", () => {
+    const st = p2InvoiceState(0, [p(5000, "hours", true), p(2500, "hours")]);
+    expect(st.hoursPayments).toBe(1);
+    expect(st.hoursInvoicedCents).toBe(2500);
   });
 });

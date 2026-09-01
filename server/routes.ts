@@ -31,6 +31,7 @@ import {
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, signaturePrompt, contractPending, gigStatus, livePayments, withoutDashOnly, type GigData } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, isHourlyGig, billingModeOf, roundWorkHours, roundWorkHoursFromMinutes, cappedTimerHours, customerExpenses, customerHourRows, sanitizeBoard, sortedBoard, BOARD_CUSTOMER, MAX_BOARD_TEXT_LEN, MAX_BOARD_ENTRIES, toBoardKind, dayKey, isDayKey, addShiftEntry, computeShiftStats, MAX_SHIFT_NOTE_LEN, type ProjShift, type ProjBoardEntry, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
+import { hourlyItemisation } from "@shared/hourly-money";
 import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
@@ -6235,13 +6236,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // erälaskentaan (invoicedThrough/sektorit/4 erän raja). Summa = pestyjen
       // lukittujen ikkunoiden kertymä miinus jo laskutetut p2-maksut.
       const isP2Scope = req.body?.scope === "p2";
+      /**
+       * TUNTIKEIKAN LASKU — oma virtansa.
+       *
+       * Summa on tuntityö + asiakkaalle merkityt tarvikkeet + alihankinta
+       * katteineen, ja se lasketaan `hourlyItemisation`illa: sama funktio
+       * tuottaa sekä summan että erittelyn, joten ne eivät voi erota.
+       * Se ei kuulu urakan neljään erään eikä keltaisten kertymään.
+       */
+      const isHoursScope = req.body?.scope === "hours";
 
       // For fixed-price deals (FR8) each erä is a fixed 25 % of the agreed total,
       // EXCEPT the final (4th) erä which bills the REMAINDER of the effective
       // agreed total. So if red windows were removed, the reduction (37,50 €/ikkuna)
       // lands entirely on the last invoice — the earlier erät stay at 25 %.
       const proj = parseProject(job.projectData ?? null);
-      const fixedDeal = !isP2Scope && proj ? fixedDealFor(proj) : null;
+      const fixedDeal = !isP2Scope && !isHoursScope && proj ? fixedDealFor(proj) : null;
       const rawInstalmentCents = fixedDeal ? Math.round(fixedDeal.capCents / 4) : null;
       const agreedTotalCents = fixedDeal && proj ? dealAgreedTotalCents(proj, fixedDeal) : null;
 
@@ -6262,7 +6272,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Which instalment this is. For fixed deals the admin can override the
       // number manually in the dialog (1–4); otherwise it follows the count sent.
       const reqPaymentNumber = Number(req.body?.paymentNumber);
-      const paymentNumber = isP2Scope
+      const paymentNumber = isHoursScope
+        ? invState.hoursPayments + 1
+        : isP2Scope
         ? invState.payments + 1
         : (fixedDeal && Number.isInteger(reqPaymentNumber) && reqPaymentNumber >= 1 && reqPaymentNumber <= 4)
           ? reqPaymentNumber
@@ -6277,9 +6289,41 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             : rawInstalmentCents!)
         : null;
 
+      /**
+       * TUNTIKEIKAN LASKUTETTAVA: koko kertymä miinus jo lähetetyt tuntilaskut.
+       * Johtaja voi laskuttaa osan (`amountCents`), mutta ei enempää kuin on
+       * kertynyt.
+       */
+      const hourly = isHoursScope && proj ? hourlyItemisation(proj) : null;
+      const hoursRemainingCents = hourly
+        ? Math.max(0, hourly.customerTotalCents - invState.hoursInvoicedCents) : 0;
+      const hoursAmountCents = hourly
+        ? Math.min(hoursRemainingCents, Number.isInteger(reqAmountCents) && reqAmountCents > 0 ? reqAmountCents : hoursRemainingCents)
+        : 0;
+
       const totalsBefore = computeTotals(gig);
-      const amountCents = isP2Scope ? p2AmountCents : (installmentCents ?? totalsBefore.uninvoicedCents);
+      const amountCents = isHoursScope ? hoursAmountCents
+        : isP2Scope ? p2AmountCents
+        : (installmentCents ?? totalsBefore.uninvoicedCents);
       if (amountCents <= 0) return res.status(400).json({ error: "Ei laskutettavaa kertymää" });
+      /**
+       * Sama vartija kuin keltaisilla: summa ja erittely lasketaan samasta
+       * datasta samalla säännöllä, joten ero tarkoittaa vikaa. Väärää laskua ei
+       * lähetetä.
+       */
+      if (isHoursScope) {
+        if (!hourly) return res.status(400).json({ error: "Keikalla ei ole projektidataa" });
+        if (!hourly.matchesBilling) {
+          return res.status(409).json({
+            error: `Laskun erittely ei täsmää laskutusperustaan (${(hourly.totalCents / 100).toFixed(2)} € vs. ${(hourly.customerTotalCents / 100).toFixed(2)} €). Laskua ei lähetetty.`,
+          });
+        }
+        if (hourly.money.rateInverted) {
+          return res.status(409).json({
+            error: "Työntekijän tuntipalkka on yli asiakashinnan — tarkista keikan tuntihinnat ennen laskutusta.",
+          });
+        }
+      }
       // Laskun summa tulee `earnedCents`istä ja erittely omasta funktiostaan.
       // Ne lasketaan samasta datasta samalla säännöllä, joten ero tarkoittaa
       // vikaa — ja väärää laskua. Ei lähetetä.
@@ -6291,7 +6335,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           });
         }
       }
-      if (fixedDeal && p1PaymentCount >= 4) {
+      if (!isHoursScope && fixedDeal && p1PaymentCount >= 4) {
         return res.status(400).json({ error: "Kaikki neljä maksuerää on jo lähetetty." });
       }
 
@@ -6313,7 +6357,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         .map((b) => `${b.count} × ${fmtEur(b.priceCents)}`)
         .join(" &nbsp;·&nbsp; ") ?? "";
 
-      const lineRows = isP2Scope
+      /**
+       * TUNTIKEIKAN ERITTELY LASKULLE.
+       *
+       * Rivit tulevat `hourlyItemisation`ista, eli samasta funktiosta joka
+       * tuotti summan. Asiakas näkee tuntimäärän, tekijämäärän ja jokaisen
+       * kulurivin erikseen — mutta alihankinnasta VAIN yhden luvun, koska
+       * ostohintamme ei ole asiakkaan tietoa.
+       */
+      // Kuluselite on vapaata tekstiä ja päätyy HTML-sähköpostiin: siivotaan
+      // se tässä, ettei asiakkaan lasku voi rikkoutua yhdestä merkistä.
+      const escHtml = (t: string) => String(t)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+      const hourlyRows = hourly
+        ? hourly.lines.map((l) => `<tr style="border-bottom:1px solid #E4E1D7">
+            <td style="padding:10px 0;color:#1A1A1A;font-size:14px">${escHtml(l.label)}</td>
+            <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:#1A1A1A;font-variant-numeric:tabular-nums">${l.cents == null ? "&mdash;" : fmtEur(l.cents)}</td>
+          </tr>`).join("")
+        : "";
+
+      const lineRows = isHoursScope
+        ? hourlyRows
+        : isP2Scope
         ? `<tr style="border-bottom:1px solid #E4E1D7">
             <td style="padding:10px 0;color:#1A1A1A;font-size:14px">
               Lisäikkunat (2. vaihe) — ikkunakohtaisesti sovitut hinnat<br>
@@ -6470,15 +6535,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         gig.sectors.forEach((s) => { s.invoicedWashed = s.washed; });
       }
       const totalsAfter = computeTotals(gig);
-      if (!isP2Scope) {
+      // Tuntilasku ei liikuta ikkunalaskennan osoittimia sen enempää kuin
+      // keltaisten lasku: se on oma virtansa.
+      if (!isP2Scope && !isHoursScope) {
         gig.invoicedThrough = totalsAfter.invoicedWashed;
       }
       gig.payments.push({
         t: Date.now(),
-        countThrough: isP2Scope ? (p2b?.lockedWashedCount ?? 0) : totalsAfter.invoicedWashed,
+        // Tuntilaskulla "montako yksikköä tähän asti" on tunteja, ei ikkunoita.
+        countThrough: isHoursScope ? Math.round((hourly?.money.totalHours ?? 0) * 100) / 100
+          : isP2Scope ? (p2b?.lockedWashedCount ?? 0) : totalsAfter.invoicedWashed,
         amountCents,
         to: recipient,
-        note: isP2Scope ? "Lisätyölasku (2. vaihe)" : isFinal ? "Loppulasku" : "Osalasku",
+        note: isHoursScope ? "Tuntilasku" : isP2Scope ? "Lisätyölasku (2. vaihe)" : isFinal ? "Loppulasku" : "Osalasku",
         emailId: result.data?.id,
         // Record WHICH leader billed the customer — their Y-tunnus becomes the buyer
         // on the alihankkija invoices funded by this instalment.
@@ -6488,21 +6557,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           yTunnus: senderYTunnus ? String(senderYTunnus).slice(0, 40) : undefined,
         } : undefined,
         eInvoice: eInvoice ? String(eInvoice).slice(0, 200) : undefined,
-        ...(isP2Scope ? { scope: "p2" as const } : {}),
+        ...(isHoursScope ? { scope: "hours" as const } : isP2Scope ? { scope: "p2" as const } : {}),
       });
       // For fixed-price contracts, invoicedCents = N completed instalments × fixed amount
       // (avoids mismatch between per-window accrual and agreed flat price).
       // P2-maksut pidetään tämän ulkopuolella (vain P1-maksut lasketaan).
-      if (!isP2Scope) {
+      if (!isP2Scope && !isHoursScope) {
         gig.invoicedCents = fixedDeal
-          ? livePayments(gig.payments).filter((p) => p.scope !== "p2").length * (installmentCents ?? 0)
+          // Erien LUKUMÄÄRÄ lasketaan vain P1-eristä: `scope !== "p2"` olisi
+          // laskenut mukaan myös tuntilaskut ja kasvattanut urakan summaa.
+          ? livePayments(gig.payments).filter((p) => p.scope == null || p.scope === "p1").length * (installmentCents ?? 0)
           : totalsAfter.invoicedCents;
       }
       gig.log.push({
         t: Date.now(),
         text: viaEInvoice
-          ? `${isP2Scope ? "Lisätyölasku (2. vaihe)" : isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} lähetetty verkkolaskuosoitteeseen: ${fmtEur(amountCents)} → ${eInvoice} (vahvistus: ${recipient})`
-          : `${isP2Scope ? "Lisätyölasku (2. vaihe)" : isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} lähetetty: ${fmtEur(amountCents)} → ${recipient}`,
+          ? `${isHoursScope ? "Tuntilasku" : isP2Scope ? "Lisätyölasku (2. vaihe)" : isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} lähetetty verkkolaskuosoitteeseen: ${fmtEur(amountCents)} → ${eInvoice} (vahvistus: ${recipient})`
+          : `${isHoursScope ? "Tuntilasku" : isP2Scope ? "Lisätyölasku (2. vaihe)" : isFinal ? "Loppulasku" : "Osalasku"} ${invoiceNo} lähetetty: ${fmtEur(amountCents)} → ${recipient}`,
       });
       gig.updatedAt = Date.now();
       await db.update(jobs).set({ gigData: JSON.stringify(gig), updatedAt: new Date() }).where(eq(jobs.id, id));

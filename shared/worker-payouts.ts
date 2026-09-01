@@ -408,7 +408,7 @@ function round1(n: number): number {
 
 export interface PaymentLike {
   amountCents: number;
-  scope?: "p1" | "p2";
+  scope?: "p1" | "p2" | "hours";
   /** Mitätöity laskutuserä — säilyy tositteena, ei lasketa summiin. */
   voided?: boolean;
 }
@@ -427,7 +427,15 @@ export function p2InvoiceState(earnedCents: number, payments: PaymentLike[]) {
   // liikevaihtoa keinotekoisesti ylhäällä.
   const live = payments.filter((p) => !p.voided);
   const p2Payments = live.filter((p) => p.scope === "p2");
-  const p1Payments = live.filter((p) => p.scope !== "p2");
+  /**
+   * P1 = urakan erät. Ehto oli `scope !== "p2"`, eli KAIKKI muu luettiin
+   * P1:ksi — myös tuntikeikan lasku, joka on oma virtansa. Yksi tuntilasku
+   * olisi siis kasvattanut kiinteän urakan eränumeroa ja syönyt sen
+   * neljän erän laskennasta erän jota kukaan ei ole lähettänyt.
+   *
+   * Nyt P1 on nimenomainen: puuttuva scope (vanhat erät) tai "p1".
+   */
+  const p1Payments = live.filter((p) => p.scope == null || p.scope === "p1");
   const invoicedCents = p2Payments.reduce((s, p) => s + p.amountCents, 0);
   const p1InvoicedCents = p1Payments.reduce((s, p) => s + p.amountCents, 0);
   return {
@@ -437,6 +445,9 @@ export function p2InvoiceState(earnedCents: number, payments: PaymentLike[]) {
     /** P1-puoli samasta suodatuksesta, jotta kutsujien ei tarvitse toistaa sitä. */
     p1InvoicedCents,
     p1Payments: p1Payments.length,
+    /** Tuntikeikan oma virta — ei P1:n eriä eikä keltaisten kertymää. */
+    hoursInvoicedCents: live.filter((p) => p.scope === "hours").reduce((s2, p) => s2 + p.amountCents, 0),
+    hoursPayments: live.filter((p) => p.scope === "hours").length,
   };
 }
 

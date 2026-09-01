@@ -727,7 +727,12 @@ export interface ProjHourEntry {
   by?: string;           // who recorded it
 }
 
-export type ProjExpenseKind = "transport" | "materials" | "equipment" | "other";
+/**
+ * Kululaji. `subcontract` on ALIHANKINTA (esim. sähkömiehen lasku jonka
+ * perustaja on maksanut) ja se on eri asia kuin muut kulut kahdella tavalla:
+ * se veloitetaan aina asiakkaalta, ja sen päälle lisätään kate.
+ */
+export type ProjExpenseKind = "transport" | "materials" | "equipment" | "other" | "subcontract";
 
 /** Max stored size for an expense receipt photo data URL (~0.5 MB base64). */
 export const MAX_EXPENSE_RECEIPT_LEN = 700_000;
@@ -758,6 +763,29 @@ export interface ProjExpense {
    * kirjanpitomme tosite, ei asiakkaan asiakirja.
    */
   forCustomer?: boolean;
+  /**
+   * ALIHANKINNAN KATE senttein — vain `kind: "subcontract"` -riveillä.
+   *
+   * Alihankinta ei ole läpilaskutusta kuten asiakkaalle ostetut tarvikkeet:
+   * työ välitetään, ja siitä otetaan kate. `amountCents` on TOTEUTUNUT kulu
+   * (se mitä alihankkijalle maksettiin) ja tämä on sen päälle lisättävä osuus.
+   * Asiakkaan hinta on niiden summa.
+   *
+   * EUROINA EIKÄ PROSENTTINA: perustajien valinta. Katteen näkee suoraan
+   * numerona eikä sitä tarvitse laskea päässä, eikä pyöristys voi yllättää.
+   *
+   * ASIAKAS EI NÄE ERITTELYÄ. Laskulla alihankinta on YKSI rivi
+   * (kulu + kate), koska erittely paljastaisi ostohintamme. Ks.
+   * `subcontractCustomerCents` ja `customerExpenses`.
+   */
+  marginCents?: number;
+}
+
+/** Mitä asiakas maksaa tästä kulurivistä. Alihankinnassa kulu + kate. */
+export function expenseCustomerCents(e: Pick<ProjExpense, "kind" | "amountCents" | "marginCents">): number {
+  const base = Math.max(0, Math.round(e.amountCents || 0));
+  if (e.kind !== "subcontract") return base;
+  return base + Math.max(0, Math.round(e.marginCents || 0));
 }
 
 /**
@@ -1911,7 +1939,10 @@ export interface PublicExpense {
 export function customerExpenses(data: ProjectData): PublicExpense[] {
   return (data.expenses ?? [])
     .filter((e) => e.forCustomer === true)
-    .map((e) => ({ kind: e.kind, desc: e.desc, amountCents: e.amountCents, ts: e.ts }))
+    // `expenseCustomerCents` eikä `amountCents`: alihankintarivillä asiakkaan
+    // hinta on kulu + kate, ja se on YKSI luku. Erittely paljastaisi
+    // ostohintamme, eikä asiakkaan lasku ole paikka jossa se kerrotaan.
+    .map((e) => ({ kind: e.kind, desc: e.desc, amountCents: expenseCustomerCents(e), ts: e.ts }))
     .sort((a, b) => b.ts - a.ts);
 }
 
@@ -2802,7 +2833,7 @@ export function sanitizeProjectData(input: any): ProjectData {
     ? Array.from(new Set(input.workers.slice(0, 40).map((w: any) => String(w).slice(0, 40)))) as string[]
     : [...base.workers];
 
-  const VALID_EXPENSE_KINDS: ProjExpenseKind[] = ["transport", "materials", "equipment", "other"];
+  const VALID_EXPENSE_KINDS: ProjExpenseKind[] = ["transport", "materials", "equipment", "other", "subcontract"];
   const expenses: ProjExpense[] = Array.isArray(input.expenses)
     ? input.expenses.slice(0, 500).map((e: any) => ({
         id: String(e?.id ?? "").slice(0, 80),
@@ -2817,6 +2848,10 @@ export function sanitizeProjectData(input: any): ProjectData {
         // Vain nimenomainen `true` näyttää kulun asiakkaalle. Puuttuva,
         // roskainen tai "false" jää sisäiseksi — oletus on aina yksityinen.
         ...(e?.forCustomer === true ? { forCustomer: true as const } : {}),
+        // Kate vain alihankintariveillä ja vain kun se on annettu: muilla
+        // lajeilla kenttä on merkityksetön eikä sitä kirjoiteta blobiin.
+        ...(e?.kind === "subcontract" && Number(e?.marginCents) > 0
+          ? { marginCents: Math.round(Number(e.marginCents)) } : {}),
       })).filter((e: ProjExpense) => e.id && e.by)
     : [];
 

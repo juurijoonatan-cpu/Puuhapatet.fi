@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { computeHourlyMoney } from "./hourly-money";
-import { DEFAULT_HOUR_RATE_CENTS, DEFAULT_WORKER_HOUR_CENTS, type ProjShift } from "./project";
+import { computeHourlyMoney, hourlyItemisation } from "./hourly-money";
+import { DEFAULT_HOUR_RATE_CENTS, DEFAULT_WORKER_HOUR_CENTS, emptyProjectData, type ProjExpense, type ProjShift } from "./project";
 
 /**
  * TUNTITILAN RAHA.
@@ -156,5 +156,120 @@ describe("computeHourlyMoney — virhetilanteet", () => {
     });
     expect(m.workerCostCents).toBeGreaterThanOrEqual(0);
     expect(m.billableCents).toBeGreaterThanOrEqual(0);
+  });
+});
+
+let e = 0;
+function expense(over: Partial<ProjExpense>): ProjExpense {
+  e += 1;
+  return {
+    id: `e${e}`, by: "joonatan", kind: "materials", desc: "kulu",
+    amountCents: 1000, ts: 1_700_000_000_000 + e, ...over,
+  } as ProjExpense;
+}
+
+/**
+ * KULUT LASKULLA.
+ *
+ * Kaksi lajia, eri säännöillä, ja molemmat on helppo saada väärin:
+ *  · tarvike menee läpi VAIN kun se on merkitty asiakkaalle,
+ *  · alihankinta veloitetaan AINA ja katteineen — merkinnän unohtaminen
+ *    jättäisi laskulta satojen eurojen rivin.
+ */
+describe("kulut ja alihankinta", () => {
+  it("asiakkaalle merkitty tarvike menee läpi sellaisenaan", () => {
+    const m = computeHourlyMoney({
+      shifts: [], expenses: [expense({ amountCents: 10400, desc: "lamput", forCustomer: true })],
+    });
+    expect(m.customerCostCents).toBe(10400);
+    expect(m.customerTotalCents).toBe(10400);
+    // Läpilaskutuksesta ei oteta katetta.
+    expect(m.subcontractMarginCents).toBe(0);
+  });
+
+  it("merkitsemätön kulu on MEIDÄN kulumme eikä päädy laskulle", () => {
+    const m = computeHourlyMoney({ shifts: [], expenses: [expense({ amountCents: 2500, desc: "bussilippu" })] });
+    expect(m.customerCostCents).toBe(0);
+    expect(m.customerTotalCents).toBe(0);
+    expect(m.costLines).toEqual([]);
+  });
+
+  it("alihankinta veloitetaan AINA, myös ilman forCustomer-merkintää", () => {
+    const m = computeHourlyMoney({
+      shifts: [],
+      expenses: [expense({ kind: "subcontract", amountCents: 20000, marginCents: 8000, desc: "lampunkorjaukset, Mika" })],
+    });
+    expect(m.subcontractCostCents).toBe(20000);
+    expect(m.subcontractMarginCents).toBe(8000);
+    expect(m.customerTotalCents).toBe(28000);
+  });
+
+  it("alihankinnan kate jaetaan perustajien kesken", () => {
+    const m = computeHourlyMoney({
+      shifts: [],
+      expenses: [expense({ kind: "subcontract", amountCents: 20000, marginCents: 8000, desc: "Mika" })],
+    });
+    expect(m.byFounder.find((f) => f.id === "joonatan")!.marginCents).toBe(4000);
+    expect(m.byFounder.find((f) => f.id === "matias")!.marginCents).toBe(4000);
+  });
+
+  it("kate ja tuntikate jaetaan yhtenä summana, sentit täsmäävät", () => {
+    const m = computeHourlyMoney({
+      shifts: [shift("petrus", 1)],
+      expenses: [expense({ kind: "subcontract", amountCents: 10000, marginCents: 1500, desc: "Mika" })],
+    });
+    const shared = m.byFounder.reduce((s, f) => s + f.marginCents, 0);
+    expect(shared).toBe(m.marginCents + m.subcontractMarginCents);
+  });
+
+  it("kuka kulun maksoi säilyy — tasaus tarvitsee sen", () => {
+    const m = computeHourlyMoney({
+      shifts: [],
+      expenses: [expense({ kind: "subcontract", amountCents: 20000, marginCents: 5000, by: "joonatan", desc: "Mika" })],
+    });
+    expect(m.costLines[0].paidBy).toBe("joonatan");
+  });
+});
+
+describe("hourlyItemisation", () => {
+  const base = () => ({ ...emptyProjectData(), shifts: [], expenses: [] as ProjExpense[] });
+
+  it("erittely täsmää laskutettavaan summaan", () => {
+    const it = hourlyItemisation({
+      ...base(),
+      shifts: [shift("petrus", 3), shift("joonatan", 1)],
+      expenses: [
+        expense({ amountCents: 10400, desc: "lamput", forCustomer: true }),
+        expense({ kind: "subcontract", amountCents: 20000, marginCents: 8000, desc: "Mika" }),
+      ],
+    });
+    expect(it.matchesBilling).toBe(true);
+    expect(it.totalCents).toBe(it.customerTotalCents);
+    // 4 h × 26 € = 10400, + lamput 10400, + alihankinta 28000
+    expect(it.customerTotalCents).toBe(10400 + 10400 + 28000);
+  });
+
+  it("erittely kertoo tunnit ja tekijämäärän", () => {
+    const it = hourlyItemisation({ ...base(), shifts: [shift("petrus", 2), shift("mikko", 1)] });
+    expect(it.lines[0].label).toContain("3 h");
+    expect(it.lines[0].label).toContain("2 tekijää");
+  });
+
+  it("alihankinta on YKSI rivi — ostohintaa ei eritellä asiakkaalle", () => {
+    const it = hourlyItemisation({
+      ...base(),
+      expenses: [expense({ kind: "subcontract", amountCents: 20000, marginCents: 8000, desc: "Mika" })],
+    });
+    const sub = it.lines.find((l) => l.label.includes("Mika"))!;
+    expect(sub.cents).toBe(28000);
+    // Kate ei saa esiintyä omana rivinään.
+    expect(it.lines.some((l) => l.cents === 8000)).toBe(false);
+    expect(it.lines.some((l) => /kate/i.test(l.label))).toBe(false);
+  });
+
+  it("tyhjä keikka ei tuota laskutettavaa", () => {
+    const it = hourlyItemisation(base());
+    expect(it.customerTotalCents).toBe(0);
+    expect(it.matchesBilling).toBe(true);
   });
 });

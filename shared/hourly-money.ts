@@ -32,8 +32,8 @@
 
 import { FOUNDER_IDS, isFounder } from "./team";
 import {
-  computeShiftStats, hourRateOf, workerHourRateOf,
-  type ProjectData, type ProjShift, type ShiftStats,
+  computeShiftStats, computeProjectTotals, expenseCustomerCents, hourRateOf, workerHourRateOf,
+  type ProjectData, type ProjExpense, type ProjShift, type ShiftStats,
 } from "./project";
 
 export interface HourlyWorkerRow {
@@ -80,6 +80,17 @@ export interface HourlyMoney {
   byWorker: HourlyWorkerRow[];
   byFounder: HourlyFounderRow[];
 
+  /** Asiakkaalle veloitettavat tarvikkeet (läpilaskutus, ei katetta). */
+  customerCostCents: number;
+  /** Alihankinnan toteutunut kulu. */
+  subcontractCostCents: number;
+  /** Alihankinnasta otettu kate. */
+  subcontractMarginCents: number;
+  /** Kulurivit laskun erittelyä varten. */
+  costLines: HourlyCostLine[];
+  /** KAIKKI mitä asiakas maksaa: tuntityö + tarvikkeet + alihankinta katteineen. */
+  customerTotalCents: number;
+
   /**
    * Tuli tuntipalkka yli asiakashinnan. Silloin kate olisi negatiivinen, ja se
    * on kirjausvirhe eikä tulos: kate rajataan nollaan ja tämä lippu nousee,
@@ -104,8 +115,24 @@ function splitEvenly(cents: number, ids: readonly string[]): Map<string, number>
   return out;
 }
 
+/** Yksi kulurivi laskulla. Alihankinta on YKSI luku: kulu + kate. */
+export interface HourlyCostLine {
+  id: string;
+  kind: ProjExpense["kind"];
+  desc: string;
+  /** Mitä asiakas maksaa tästä rivistä. */
+  customerCents: number;
+  /** Toteutunut kulu (alihankinnassa ilman katetta). Ei mene asiakkaalle. */
+  costCents: number;
+  /** Kate (vain alihankinta). Ei mene asiakkaalle. */
+  marginCents: number;
+  /** Kuka maksoi kulun — tarvitaan kun rahat tasataan perustajien kesken. */
+  paidBy?: string;
+  hasReceipt: boolean;
+}
+
 export function computeHourlyMoney(
-  data: Pick<ProjectData, "shifts" | "hourRateCents" | "workerHourCents">,
+  data: Pick<ProjectData, "shifts" | "hourRateCents" | "workerHourCents" | "expenses">,
   opts?: { today?: string; stats?: ShiftStats },
 ): HourlyMoney {
   const hourRateCents = hourRateOf(data);
@@ -145,7 +172,39 @@ export function computeHourlyMoney(
     byWorker.push({ id: row.id, hours: row.hours, isFounder: false, earnedCents: pay, billedCents: billed });
   }
 
-  const marginShare = splitEvenly(marginCents, FOUNDER_IDS);
+  /**
+   * KULUT. Kaksi lajia, eri säännöillä:
+   *
+   *   · asiakkaalle merkityt tarvikkeet (`forCustomer`) menevät LÄPI sellaisenaan
+   *     — ostimme lamput asiakkaalle, asiakas maksaa lamput;
+   *   · alihankinta (`subcontract`) veloitetaan AINA ja sen päälle tulee kate,
+   *     joka jaetaan perustajien kesken kuten tuntikate.
+   *
+   * Alihankintaa ei suodateta `forCustomer`illa: se on määritelmällisesti
+   * asiakkaalle välitettyä työtä. Merkinnän unohtaminen jättäisi laskulta
+   * satojen eurojen rivin.
+   */
+  const costLines: HourlyCostLine[] = [];
+  let customerCostCents = 0, subcontractCostCents = 0, subcontractMarginCents = 0;
+  for (const e of data.expenses ?? []) {
+    const isSub = e.kind === "subcontract";
+    if (!isSub && e.forCustomer !== true) continue;
+    const cost = Math.max(0, Math.round(e.amountCents || 0));
+    const margin = isSub ? Math.max(0, Math.round(e.marginCents || 0)) : 0;
+    const customerCents = expenseCustomerCents(e);
+    if (customerCents <= 0) continue;
+    if (isSub) { subcontractCostCents += cost; subcontractMarginCents += margin; }
+    else customerCostCents += cost;
+    costLines.push({
+      id: e.id, kind: e.kind, desc: e.desc, customerCents, costCents: cost, marginCents: margin,
+      paidBy: e.forWhom || e.by || undefined,
+      hasReceipt: !!((e as any).receiptAssetId || e.receiptDataUrl),
+    });
+  }
+  costLines.sort((a, b) => b.customerCents - a.customerCents);
+
+  // Alihankinnan kate jaetaan samalla säännöllä kuin tuntikate.
+  const marginShare = splitEvenly(marginCents + subcontractMarginCents, FOUNDER_IDS);
   // `Array.from` eikä spread: käännöskohde ei iteroi Map-avaimia suoraan.
   const founderIds = Array.from(new Set(FOUNDER_IDS.concat(Array.from(founderWage.keys()))));
   const byFounder: HourlyFounderRow[] = founderIds.map((id) => {
@@ -166,6 +225,83 @@ export function computeHourlyMoney(
     marginCents,
     byWorker,
     byFounder,
+    customerCostCents,
+    subcontractCostCents,
+    subcontractMarginCents,
+    costLines,
+    customerTotalCents: billableCents + customerCostCents + subcontractCostCents + subcontractMarginCents,
     rateInverted,
+  };
+}
+
+/**
+ * LASKUN ERITTELY tuntikeikalta — ja tarkistus että se täsmää laskutettavaan.
+ *
+ * Sama kuvio kuin keltaisten `p2Itemisation`illa, ja samasta syystä: summa ja
+ * erittely lasketaan samasta datasta samalla säännöllä, joten ero niiden
+ * välillä tarkoittaa vikaa. Silloin laskua EI lähetetä — väärä lasku on
+ * pahempi kuin lähettämätön.
+ *
+ * MERKITYT IKKUNAT OVAT ERITTELYSSÄ TIETONA, EIVÄT VELOITUKSENA. Tuntikeikalla
+ * työ on jo laskutettu tunneissa; sama työ toiseen kertaan ikkunahinnalla olisi
+ * kaksinkertainen veloitus. Luku kerrotaan silti, koska asiakas näkee siitä
+ * mitä tunneilla on saatu aikaan.
+ */
+export interface HourlyInvoiceLine {
+  label: string;
+  /** Senttiä. `null` = pelkkä tieto, ei veloitusta (esim. pestyt ikkunat). */
+  cents: number | null;
+}
+
+export interface HourlyItemisation {
+  lines: HourlyInvoiceLine[];
+  /** Veloitettavien rivien summa. */
+  totalCents: number;
+  /** Laskentakoneen kokonaissumma, johon tämän pitää täsmätä. */
+  customerTotalCents: number;
+  matchesBilling: boolean;
+  money: HourlyMoney;
+}
+
+export function hourlyItemisation(
+  data: Pick<ProjectData, "shifts" | "hourRateCents" | "workerHourCents" | "expenses"
+    | "marks" | "customMarks" | "deleted" | "statuses" | "building" | "pricePerWindow">,
+  opts?: { today?: string },
+): HourlyItemisation {
+  const money = computeHourlyMoney(data, { today: opts?.today });
+  const lines: HourlyInvoiceLine[] = [];
+
+  if (money.billableCents > 0) {
+    const people = money.byWorker.length;
+    const hours = money.totalHours.toLocaleString("fi-FI", { maximumFractionDigits: 1 });
+    const rate = (money.hourRateCents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    lines.push({
+      label: `Tuntityö ${hours} h × ${rate} € · ${people} ${people === 1 ? "tekijä" : "tekijää"}`,
+      cents: money.billableCents,
+    });
+  }
+
+  for (const c of money.costLines) {
+    // Alihankinta yhtenä lukuna: kulu + kate. Erittely paljastaisi ostohinnan.
+    lines.push({
+      label: c.kind === "subcontract" ? `Alihankinta · ${c.desc}` : c.desc,
+      cents: c.customerCents,
+    });
+  }
+
+  // Pestyt ikkunat TIETONA. `computeProjectTotals` on sama laskenta jota kartta
+  // käyttää, joten luku ei voi olla eri mieltä näkymän kanssa.
+  try {
+    const t = computeProjectTotals(data as ProjectData);
+    if (t.washed > 0) lines.push({ label: `Pesty ${t.washed} ikkunaa`, cents: null });
+  } catch { /* kartaton keikka: ei ikkunariviä */ }
+
+  const totalCents = lines.reduce((sum, l) => sum + (l.cents ?? 0), 0);
+  return {
+    lines,
+    totalCents,
+    customerTotalCents: money.customerTotalCents,
+    matchesBilling: totalCents === money.customerTotalCents,
+    money,
   };
 }

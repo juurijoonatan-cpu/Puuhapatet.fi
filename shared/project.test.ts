@@ -1414,3 +1414,45 @@ describe("tuntitilan vuorokirjanpito — oma kirjanpito, päivätty", () => {
     expect(sanitizeProjectData(p).shifts?.map((s) => s.id)).toEqual(["a", "b", "c"]);
   });
 });
+
+/**
+ * PUOLIKKAAT TUNNIT KÄSIN KIRJATTUNA.
+ *
+ * Ajastin pyöristää täysiin tunteihin, koska se on mittaus. Käsin kirjattu
+ * aika on PÄÄTÖS: pomo tietää tehneensä puoli tuntia. Ennen tätä hänen ainoa
+ * vaihtoehtonsa oli kirjata tunti tai ei mitään, ja kumpikin on väärä luku
+ * sekä laskulla että palkassa.
+ *
+ * Ledger on sietänyt kahta desimaalia koko ajan — vain käyttöliittymä oli
+ * sidottu kokonaisiin. Nämä testit pitävät ledgerin puolen paikallaan, jottei
+ * pyöristys palaa sinne "siivouksena".
+ */
+describe("puolikkaat tunnit ledgerissä", () => {
+  it("sanitoija säilyttää puolikkaan", () => {
+    const [row] = sanitizeShifts([{ id: "a", worker: "petrus", day: "2026-09-01", hours: 0.5, at: 1 }]);
+    expect(row.hours).toBe(0.5);
+  });
+
+  it("saman päivän käsinkirjaukset summautuvat puolikkaina", () => {
+    let shifts = addShiftEntry([], { id: "a", worker: "petrus", day: "2026-09-01", hours: 0.5, at: 1 });
+    shifts = addShiftEntry(shifts, { id: "b", worker: "petrus", day: "2026-09-01", hours: 0.5, at: 2 });
+    expect(shifts).toHaveLength(1);
+    expect(shifts[0].hours).toBe(1);
+  });
+
+  it("puolikas vähennys ei pyöristy pois", () => {
+    let shifts = addShiftEntry([], { id: "a", worker: "petrus", day: "2026-09-01", hours: 2, at: 1 });
+    shifts = addShiftEntry(shifts, { id: "b", worker: "petrus", day: "2026-09-01", hours: -0.5, at: 2 });
+    expect(shifts[0].hours).toBe(1.5);
+  });
+
+  it("tilasto näyttää puolikkaat sellaisenaan", () => {
+    const shifts = sanitizeShifts([
+      { id: "a", worker: "petrus", day: "2026-09-01", hours: 1.5, at: 1 },
+      { id: "b", worker: "mikko", day: "2026-09-01", hours: 0.5, at: 2 },
+    ]);
+    const st = computeShiftStats(shifts, "2026-09-02");
+    expect(st.totalHours).toBe(2);
+    expect(st.byWorker.find((w) => w.id === "mikko")!.hours).toBe(0.5);
+  });
+});

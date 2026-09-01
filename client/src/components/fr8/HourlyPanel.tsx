@@ -20,7 +20,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import {
-  computeShiftStats, dayKey, fmtDayLabel, fmtShiftHours, roundWorkHours, shiftHoursOf,
+  computeShiftStats, dayKey, fmtDayLabel, fmtShiftHours, shiftHoursOf,
   type ProjShift,
 } from "@shared/project";
 import type { CrewMember } from "@shared/crew";
@@ -229,12 +229,12 @@ export default function HourlyPanel({
             {onAdjustHours && (
               <div style={{ display: "flex", alignItems: "center", gap: T.space.sm, flexShrink: 0 }}>
                 <button onClick={() => onAdjustHours(me, -HOUR_STEP)} disabled={busy || myHours <= 0}
-                  title="Vähennä tunti"
+                  title="Vähennä puoli tuntia"
                   style={{ ...adjustBtn, opacity: myHours <= 0 ? 0.35 : 1, cursor: myHours <= 0 ? "default" : "pointer" }}>−</button>
                 <span style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, minWidth: 46, textAlign: "center" }}>
                   lisää<br />käsin
                 </span>
-                <button onClick={() => onAdjustHours(me, HOUR_STEP)} disabled={busy} title="Lisää tunti" style={adjustBtn}>+</button>
+                <button onClick={() => onAdjustHours(me, HOUR_STEP)} disabled={busy} title="Lisää puoli tuntia" style={adjustBtn}>+</button>
               </div>
             )}
           </div>
@@ -317,14 +317,14 @@ export default function HourlyPanel({
 
                     <div style={{ display: "flex", alignItems: "center", gap: T.space.sm, flexShrink: 0 }}>
                       {onAdjustHours && (
-                        <button onClick={() => onAdjustHours(r.id, -HOUR_STEP)} disabled={busy || r.hours <= 0} title="Vähennä tunti"
+                        <button onClick={() => onAdjustHours(r.id, -HOUR_STEP)} disabled={busy || r.hours <= 0} title="Vähennä puoli tuntia"
                           style={{ ...adjustBtn, opacity: r.hours <= 0 ? 0.35 : 1, cursor: r.hours <= 0 ? "default" : "pointer" }}>−</button>
                       )}
                       <span style={{ minWidth: 58, textAlign: "center", fontFamily: T.font, fontSize: T.size.title, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
                         {fmtShiftHours(r.hours)} <span style={{ fontSize: T.size.sm, fontWeight: 500, color: T.text.faint }}>h</span>
                       </span>
                       {onAdjustHours && (
-                        <button onClick={() => onAdjustHours(r.id, HOUR_STEP)} disabled={busy} title="Lisää tunti" style={adjustBtn}>+</button>
+                        <button onClick={() => onAdjustHours(r.id, HOUR_STEP)} disabled={busy} title="Lisää puoli tuntia" style={adjustBtn}>+</button>
                       )}
                     </div>
                   </div>
@@ -391,16 +391,17 @@ export default function HourlyPanel({
               </div>
 
               <div style={{ display: "flex", alignItems: "center", gap: T.space.sm }}>
-                <button onClick={() => setHrs((h) => Math.max(1, h - 1))} disabled={hrs <= 1} style={{ ...adjustBtn, opacity: hrs <= 1 ? 0.35 : 1 }}>−</button>
-                <span style={{ minWidth: 54, textAlign: "center", fontFamily: T.font, fontSize: T.size.title, fontWeight: 700 }}>
-                  {hrs} <span style={{ fontSize: T.size.sm, fontWeight: 500, color: T.text.faint }}>h</span>
+                <button onClick={() => setHrs((h) => Math.max(HOUR_STEP, round2(h - HOUR_STEP)))} disabled={hrs <= HOUR_STEP}
+                  style={{ ...adjustBtn, opacity: hrs <= HOUR_STEP ? 0.35 : 1 }}>−</button>
+                <span style={{ minWidth: 62, textAlign: "center", fontFamily: T.font, fontSize: T.size.title, fontWeight: 700 }}>
+                  {fmtShiftHours(hrs)} <span style={{ fontSize: T.size.sm, fontWeight: 500, color: T.text.faint }}>h</span>
                 </span>
-                <button onClick={() => setHrs((h) => Math.min(24, h + 1))} disabled={hrs >= 24} style={adjustBtn}>+</button>
+                <button onClick={() => setHrs((h) => Math.min(24, round2(h + HOUR_STEP)))} disabled={hrs >= 24} style={adjustBtn}>+</button>
                 <button
                   onClick={() => { onAddHours(who, hrs, day); setHrs(1); }}
                   disabled={busy || !who}
                   style={{ flex: 1, height: 42, borderRadius: T.radius.md, border: `1px solid ${T.tone.goodBorder}`, background: T.tone.goodBg, color: T.tone.goodSoft, fontFamily: T.font, fontSize: T.size.body, fontWeight: 700, cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1 }}>
-                  Lisää {hrs} h {day === today ? "tälle päivälle" : fmtDayLabel(day)}
+                  Lisää {fmtShiftHours(hrs)} h {day === today ? "tälle päivälle" : fmtDayLabel(day)}
                 </button>
               </div>
             </div>
@@ -467,4 +468,20 @@ export default function HourlyPanel({
 
 /** Yksi tunti kerrallaan — sama pyöristysyksikkö kuin ajastimella, jottei
  *  käsin korjaus tuota puolikkaita joita mikään muu ei tuota. */
-export const HOUR_STEP = roundWorkHours(1);
+/**
+ * SÄÄTÖASKEL — puoli tuntia.
+ *
+ * Ajastin pyöristää yhä täysiin tunteihin (`roundWorkHours`), koska se on
+ * mittaus eikä päätös. KÄSIN kirjattu aika on päätös: pomo tietää tehneensä
+ * puoli tuntia, ja ennen tätä hänen ainoa vaihtoehtonsa oli kirjata tunti tai
+ * ei mitään. Kumpikin on väärä luku laskulla ja palkassa.
+ *
+ * Palvelin on hyväksynyt kahden desimaalin tunnit koko ajan (`sanitizeShifts`
+ * ja manuaalireitin validointi) — vain käyttöliittymä oli sidottu kokonaisiin.
+ */
+export const HOUR_STEP = 0.5;
+
+/** Kaksi desimaalia — sama tarkkuus kuin `sanitizeShifts`illa, ei liukulukuroskaa. */
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}

@@ -199,6 +199,32 @@ export function billingModeOf(data: ProjectData | null | undefined): BillingMode
 }
 
 /** Onko keikka tuntitilassa? Lyhenne luettavuuden vuoksi. */
+/**
+ * Tuntitilan oletushinnat.
+ *
+ * 26,00 €/h asiakkaalta ja 15,00 €/h työntekijälle → 11,00 €/h katetta.
+ * Perustajan omasta tunnista ei oteta katetta lainkaan: hän saa koko
+ * tuntihinnan (ks. `computeHourlyMoney`).
+ */
+export const DEFAULT_HOUR_RATE_CENTS = 2600;
+export const DEFAULT_WORKER_HOUR_CENTS = 1500;
+
+/** Kelvollinen senttihinta tai oletus. Nolla ja roska eivät ole hintoja. */
+function rateOr(v: unknown, fallback: number): number {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 100_000) : fallback;
+}
+
+/** Asiakkaan tuntihinta tällä keikalla (senttiä). */
+export function hourRateOf(data: Pick<ProjectData, "hourRateCents">): number {
+  return rateOr(data?.hourRateCents, DEFAULT_HOUR_RATE_CENTS);
+}
+
+/** Työntekijän tuntipalkka tällä keikalla (senttiä). */
+export function workerHourRateOf(data: Pick<ProjectData, "workerHourCents">): number {
+  return rateOr(data?.workerHourCents, DEFAULT_WORKER_HOUR_CENTS);
+}
+
 export function isHourlyGig(data: ProjectData | null | undefined): boolean {
   return billingModeOf(data) === "hourly";
 }
@@ -860,6 +886,24 @@ export interface ProjectData {
   /** Keikan laskutustila (`BillingMode`). Puuttuva = "targeted" — ks. tyypin
    *  dokumentaatio siitä miksi sitä ei kirjoiteta oletuksena. */
   billingMode?: BillingMode;
+  /**
+   * TUNTITILAN HINNAT, keikkakohtaisina.
+   *
+   * `hourRateCents` on asiakkaan hinta jokaisesta tunnista ja
+   * `workerHourCents` se mitä TYÖNTEKIJÄ saa omasta tunnistaan. Erotus on
+   * katetta, joka jaetaan perustajien kesken.
+   *
+   * MIKSI KEIKKAKOHTAISET EIKÄ VAKIOT: `pricePerWindow` on jo keikkakohtainen,
+   * ja tuntihinta on täsmälleen samaa lajia tietoa — asiakkaan kanssa sovittu
+   * hinta. Vakio koodissa tarkoittaisi että toisen asiakkaan eri hinta vaatii
+   * julkaisun.
+   *
+   * PUUTTUVA = OLETUS (`DEFAULT_HOUR_RATE_CENTS` / `DEFAULT_WORKER_HOUR_CENTS`),
+   * eikä arvoa kirjoiteta ellei sitä ole muutettu — näin olemassa olevat keikat
+   * round-trippaavat muuttumattomina.
+   */
+  hourRateCents?: number;
+  workerHourCents?: number;
   /** Työtaulu: keikan yhteinen tehtävä- ja viestilista (`ProjBoardEntry`).
    *  SERVERIN OMISTAMA — kolme kirjoittajaa, ks. tyypin dokumentaatio. */
   board?: ProjBoardEntry[];
@@ -2825,6 +2869,12 @@ export function sanitizeProjectData(input: any): ProjectData {
     // Vain valittu tila kirjoitetaan: puuttuva on "targeted", ja vanha blobi
     // pyörähtää läpi entisellään.
     ...(toBillingMode(input.billingMode) ? { billingMode: toBillingMode(input.billingMode)! } : {}),
+    // Hinnat kirjoitetaan VAIN jos ne on annettu: puuttuva arvo tarkoittaa
+    // oletusta, eikä olemassa olevaan blobiin lisätä kenttää jota siinä ei ollut.
+    ...(Number.isFinite(Number(input.hourRateCents)) && Number(input.hourRateCents) > 0
+      ? { hourRateCents: rateOr(input.hourRateCents, DEFAULT_HOUR_RATE_CENTS) } : {}),
+    ...(Number.isFinite(Number(input.workerHourCents)) && Number(input.workerHourCents) > 0
+      ? { workerHourCents: rateOr(input.workerHourCents, DEFAULT_WORKER_HOUR_CENTS) } : {}),
     ...(lampModels.length ? { lampModels } : {}),
     ...(Object.keys(lampModelOf).length ? { lampModelOf } : {}),
     ...(input.fixtureOrder !== undefined ? (() => { const o = sanitizeFixtureOrder(input.fixtureOrder); return o ? { fixtureOrder: o } : {}; })() : {}),

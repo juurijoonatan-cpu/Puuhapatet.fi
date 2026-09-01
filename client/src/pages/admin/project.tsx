@@ -904,8 +904,13 @@ export default function AdminProjectPage() {
    * Ks. `project-hooks.test.ts`.
    */
   const hourlyMoney = useMemo(
-    () => (project && isHourlyGig(project) ? computeHourlyMoney(project) : null),
-    [project],
+    // `uninvoicedWindows` tulee palvelimelta: laskutusmerkintä elää keikan
+    // sektoreilla eikä projektidatassa, joten ilman sitä kortti ei voi tietää
+    // mikä osa pesuista on jo laskutettu — ja näyttäisi ikkunarahan väärin.
+    () => (project && isHourlyGig(project)
+      ? computeHourlyMoney(project, { uninvoicedWindows: billing?.uninvoicedWindows ?? 0 })
+      : null),
+    [project, billing?.uninvoicedWindows],
   );
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -1375,6 +1380,31 @@ export default function AdminProjectPage() {
             onSetRates={canAdjustHours ? onSetHourRates : undefined}
             busy={shiftBusy}
           />
+
+          {/* KULUT JA ALIHANKINTA — MYÖS TÄÄLLÄ.
+              Tuntikeikan raha koostuu tunneista, asiakkaalle ostetuista
+              tarvikkeista ja alihankinnasta katteineen, ja rahakortti yllä
+              näyttää ne kaikki. Kirjaaminen oli silti vain kohdennetulla
+              puolella: tuntikeikkaa tehdessä ei ollut mitään tapaa lisätä
+              alihankkijaa tai kulua ilman että puoli vaihdetaan välissä.
+              Näkymä lupasi luvun jota siinä ei voinut syöttää. Sama komponentti
+              kuin toisella puolella, joten säännöt eivät voi erota. */}
+          {canAdjustHours && (
+            <div style={{ marginTop: 16, padding: 18, borderRadius: 18, background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.09)" }}>
+              <div style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 10, letterSpacing: "0.14em", color: "rgba(255,255,255,0.4)", marginBottom: 14 }}>
+                KULUT JA ALIHANKINTA
+              </div>
+              <ExpensesView
+                expenses={project.expenses || []}
+                workers={[...gigWorkers, ...crew.filter((c) => !gigWorkers.some((w) => w.id === c.id)).map((c) => ({ id: c.id, name: resolveName(c.id) }))]}
+                currentWorker={currentWorker}
+                resolveName={resolveName}
+                onAdd={addExpense}
+                onDelete={deleteExpense}
+                onToggleForCustomer={isFounderView ? onToggleExpenseForCustomer : undefined}
+              />
+            </div>
+          )}
 
           {/* TYÖTAULU. Sama lista jonka asiakas ja tekijät näkevät. */}
           <div style={{ marginTop: 16, padding: 18, borderRadius: 18, background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.09)" }}>

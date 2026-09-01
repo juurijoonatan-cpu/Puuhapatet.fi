@@ -655,10 +655,38 @@ describe("ikkunaraha", () => {
     expect(m.windowsCents).toBe(0);
   });
 
+  /**
+   * TUNTEMATON LASKUTUSTILA EI SAA KEKSIÄ VELOITUSTA.
+   *
+   * Laskutusmerkintä elää keikan sektoreilla, ei projektidatassa. Aluksi
+   * puuttuva tieto tulkittiin "kaikki laskuttamatta", ja se oli väärä suunta:
+   * tuntipaneelin rahakortti näkee vain projektidatan, joten sadan jo
+   * laskutetun pesun keikalla se olisi näyttänyt tuhansia euroja ikkunarahaa
+   * joka on jo peritty — ja se luku olisi luettu laskun summana.
+   */
+  it("ilman laskutustietoa ikkunoista ei veloiteta mitään", () => {
+    const d = mapGig();
+    for (let i = 0; i < 4; i++) { d.statuses[`K#${i}`] = "pesty"; d.washedBy[`K#${i}`] = "jani"; }
+    d.crew = crewOf([{ id: "jani" }]) as never;
+
+    const blind = computeHourlyMoney(d);
+    expect(blind.windowsCents).toBe(0);
+    expect(blind.customerTotalCents).toBe(0);
+    // Ansiot näkyvät silti: kuka on pessyt ja mitä hänelle kuuluu ei riipu
+    // siitä onko asiakasta laskutettu.
+    expect(blind.windows!.byWasher[0].earnedCents).toBe(4 * 2000);
+
+    // Ja kun tila on tiedossa, veloitus on täsmälleen se.
+    expect(computeHourlyMoney(d, { uninvoicedWindows: 1 }).windowsCents)
+      .toBe(Math.round(DEFAULT_PRICE_PER_WINDOW * 100));
+  });
+
   it("laskuttamattomia ei voi olla enempää kuin pestyjä", () => {
     const d = mapGig();
     d.statuses["K#0"] = "pesty"; d.washedBy["K#0"] = "jani";
     expect(computeWindowMoney(d, { uninvoicedWindows: 99 }).uninvoicedWindows).toBe(1);
     expect(computeWindowMoney(d, { uninvoicedWindows: -5 }).uninvoicedWindows).toBe(0);
+    // Ja puuttuva tieto on nolla, ei "kaikki".
+    expect(computeWindowMoney(d).uninvoicedWindows).toBe(0);
   });
 });

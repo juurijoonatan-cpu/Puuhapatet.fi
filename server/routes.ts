@@ -6369,11 +6369,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // se tässä, ettei asiakkaan lasku voi rikkoutua yhdestä merkistä.
       const escHtml = (t: string) => String(t)
         .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+      /**
+       * TUNTILASKUN RIVIT SUMMAUTUVAT AINA LASKUN LOPPUSUMMAAN.
+       *
+       * Erittely kertoo KOKO kertymän. Kun lasku on osalasku — johtaja
+       * laskuttaa osan, tai osa on jo laskutettu aiemmin — täysi erittely
+       * veloitusriveinä väittäisi asiakkaalle eri summaa kuin lasku perii.
+       * Silloin erittely näytetään TIETONA (ei euroja veloitussarakkeessa) ja
+       * veloitus on yksi rivi: mitä nyt laskutetaan, ja mistä kertymästä.
+       *
+       * Täysi lasku on ehdoton: koko kertymä, eikä aiempia tuntilaskuja.
+       * Vain silloin rivit ovat itse veloitus.
+       */
+      const hoursFullBill = !!hourly
+        && invState.hoursInvoicedCents === 0
+        && amountCents === hourly.customerTotalCents;
       const hourlyRows = hourly
         ? hourly.lines.map((l) => `<tr style="border-bottom:1px solid #E4E1D7">
             <td style="padding:10px 0;color:#1A1A1A;font-size:14px">${escHtml(l.label)}</td>
-            <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:#1A1A1A;font-variant-numeric:tabular-nums">${l.cents == null ? "&mdash;" : fmtEur(l.cents)}</td>
+            <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:${hoursFullBill ? "#1A1A1A" : "#8C8A82"};font-variant-numeric:tabular-nums">${l.cents == null ? "&mdash;" : fmtEur(l.cents)}</td>
           </tr>`).join("")
+          + (hoursFullBill ? "" : `<tr style="border-bottom:1px solid #E4E1D7">
+            <td style="padding:10px 0;color:#1A1A1A;font-size:14px">
+              Laskutetaan tällä laskulla<br>
+              <span style="color:#8C8A82;font-size:12px">kertymä yhteensä ${fmtEur(hourly.customerTotalCents)}${invState.hoursInvoicedCents > 0 ? ` · aiemmin laskutettu ${fmtEur(invState.hoursInvoicedCents)}` : ""}</span>
+            </td>
+            <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:#1A1A1A;font-variant-numeric:tabular-nums">${fmtEur(amountCents)}</td>
+          </tr>`)
         : "";
 
       const lineRows = isHoursScope
@@ -8738,13 +8760,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
        * paikassa.
        */
       hourly: isHourlyGig(project) ? (() => {
-        const money = computeHourlyMoney(project);
-        const mine = money.byWorker.find((w) => w.id === member.id);
-        const hours = mine?.hours ?? 0;
+        const mine = computeHourlyMoney(project).byWorker.find((w) => w.id === member.id);
+        // Kolme lukua tekijän OMALTA riviltä. Kumpi tuntihinta on hänen,
+        // ratkaistaan laskennassa (`perHourCents`) — täällä ei lueta
+        // asiakkaan hintaa lainkaan, jottei sitä voi vahingossa lähettää.
         return {
-          hours,
+          hours: mine?.hours ?? 0,
           earnedCents: mine?.earnedCents ?? 0,
-          perHourCents: mine?.isFounder ? money.hourRateCents : money.workerHourCents,
+          perHourCents: mine?.perHourCents ?? 0,
         };
       })() : null,
       // Ohjattu eteneminen (guided): kun perustaja on kytkenyt sen päälle, tekijä

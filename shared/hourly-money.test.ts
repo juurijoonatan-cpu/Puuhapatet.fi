@@ -429,3 +429,32 @@ describe("keikkakohtaiset hinnat kestävät tallennuksen", () => {
     expect(d.workerHourCents).toBeUndefined();
   });
 });
+
+/**
+ * OMA TUNTIHINTA ON RIVILLÄ VALMIINA.
+ *
+ * Tekijälle vastaava koodi ei saa joutua valitsemaan asiakashinnan ja
+ * tuntipalkan väliltä: väärin päin kirjoitettuna se kertoisi tekijälle
+ * paljonko hänen tunnistaan jää meille. Rivi tietää sen itse.
+ */
+describe("perHourCents on kunkin oma tuntihinta", () => {
+  it("työntekijälle tuntipalkka, perustajalle koko asiakashinta", () => {
+    const m = computeHourlyMoney({ shifts: [shift("petrus", 3), shift("joonatan", 2)] });
+    expect(m.byWorker.find((w) => w.id === "petrus")?.perHourCents).toBe(WAGE);
+    expect(m.byWorker.find((w) => w.id === "joonatan")?.perHourCents).toBe(RATE);
+  });
+
+  it("tunnit × oma tuntihinta = oma ansio", () => {
+    const m = computeHourlyMoney({ shifts: [shift("petrus", 7.5), shift("matias", 4.5)] });
+    for (const w of m.byWorker) {
+      expect(w.earnedCents).toBe(Math.round(w.hours * w.perHourCents));
+    }
+  });
+
+  it("väärinpäin kirjatuilla hinnoilla tekijä ei saa yli asiakashinnan", () => {
+    const m = computeHourlyMoney({ shifts: [shift("petrus", 1)], hourRateCents: 1500, workerHourCents: 2600 });
+    expect(m.rateInverted).toBe(true);
+    expect(m.byWorker[0].perHourCents).toBe(1500);
+    expect(m.marginCents).toBe(0);
+  });
+});

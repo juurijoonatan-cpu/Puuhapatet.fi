@@ -140,3 +140,53 @@ describe("workerView-hygienia — raskaat kentät eivät kulje joka kyselyssä",
     expect(HEAVY.filter((f) => emitsHeavyField(body, f))).toEqual([]);
   });
 });
+
+/**
+ * VARTIJA. TEKIJÄ EI NÄE ASIAKKAAN HINTOJA.
+ *
+ * Sama sääntö kuin ikkunahinnoilla, ja tuntitilassa se on helpompi rikkoa:
+ * `computeHourlyMoney` palauttaa yhdessä oliossa sekä `workerHourCents` (mitä
+ * tekijä saa) että `hourRateCents` (mitä asiakas maksaa) — ja koko keikan
+ * katteen. Yksi huolimaton `...money` workerView'ssä kertoisi tekijälle
+ * täsmälleen paljonko hänen tunnistaan jää meille.
+ *
+ * Perustaja on poikkeus, joka ei ole poikkeus säännöstä: hänen tunnistaan ei
+ * oteta katetta, joten HÄNEN oma tuntihintansa ON asiakashinta. Siksi kenttä
+ * on `perHourCents` — "mitä tämä henkilö saa tunnilta" — eikä kumpikaan
+ * hinnoista nimeltä.
+ *
+ * Jos tämä kaatuu: älä lähetä koko `money`-oliota. Poimi tekijän oma rivi.
+ */
+describe("workerView-hygienia — tekijälle ei lähde asiakkaan hintoja eikä katetta", () => {
+  const src = readFileSync(SRC, "utf8");
+  const body = workerViewBody(src);
+
+  /** Kentät jotka kertovat asiakashinnan tai katteen — eivät kuulu tekijälle. */
+  const FOUNDER_ONLY = [
+    "hourRateCents",
+    "marginCents",
+    "founderWageCents",
+    "founderTotalCents",
+    "billableCents",
+    "byFounder",
+    "customerTotalCents",
+  ];
+
+  it("ei palauta yhtään perustajien lukua", () => {
+    // Avaimena (`x:`) tai luettuna oliosta (`.x`) — kummin päin tahansa se
+    // päätyisi vastaukseen. Pelkkä maininta kommentissa ei ole rikkomus.
+    const leaked = FOUNDER_ONLY.filter((f) =>
+      new RegExp(`(^|[^\\w.])${f}\\s*:`, "m").test(body) || new RegExp(`\\.${f}\\b`).test(body));
+    expect(leaked, `tekijälle vuotava kenttä: ${leaked.join(", ")}`).toEqual([]);
+  });
+
+  it("koko rahaoliota ei levitetä vastaukseen", () => {
+    expect(/\.\.\.\s*money\b/.test(body)).toBe(false);
+    expect(/hourly:\s*money\b/.test(body)).toBe(false);
+  });
+
+  it("tekijän oma tuntikenttä on olemassa (muuten testi vartioi tyhjää)", () => {
+    expect(body).toContain("perHourCents");
+    expect(body).toContain("earnedCents");
+  });
+});

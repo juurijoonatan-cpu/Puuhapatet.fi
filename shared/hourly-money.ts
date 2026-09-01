@@ -43,6 +43,16 @@ export interface HourlyWorkerRow {
   isFounder: boolean;
   /** Mitä TÄMÄ henkilö ansaitsee näistä tunneista. */
   earnedCents: number;
+  /**
+   * Mitä TÄMÄ henkilö saa yhdeltä tunnilta: perustajalle koko asiakashinta
+   * (omasta työstä ei oteta katetta), työntekijälle hänen tuntipalkkansa.
+   *
+   * Valmiiksi ratkaistuna rivillä, jotta tekijälle vastaavan koodin ei tarvitse
+   * lukea asiakkaan tuntihintaa päättääkseen kumpi luku on hänen. Se olisi
+   * pieni ero kirjoittaa väärin ja iso vahinko: tekijä näkisi paljonko hänen
+   * tunnistaan jää meille.
+   */
+  perHourCents: number;
   /** Mitä asiakas maksaa näistä tunneista. */
   billedCents: number;
 }
@@ -173,7 +183,7 @@ export function computeHourlyMoney(
       founderHours += row.hours;
       founderWageCents += billed;
       founderWage.set(row.id, (founderWage.get(row.id) ?? 0) + billed);
-      byWorker.push({ id: row.id, hours: row.hours, isFounder: true, earnedCents: billed, billedCents: billed });
+      byWorker.push({ id: row.id, hours: row.hours, isFounder: true, earnedCents: billed, perHourCents: hourRateCents, billedCents: billed });
       continue;
     }
 
@@ -184,7 +194,7 @@ export function computeHourlyMoney(
     workerHours += row.hours;
     workerCostCents += pay;
     marginCents += margin;
-    byWorker.push({ id: row.id, hours: row.hours, isFounder: false, earnedCents: pay, billedCents: billed });
+    byWorker.push({ id: row.id, hours: row.hours, isFounder: false, earnedCents: pay, perHourCents: effectiveWorkerCents, billedCents: billed });
   }
 
   /**

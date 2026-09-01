@@ -1266,7 +1266,9 @@ export default function AdminGigTrackerPage() {
               <h2 className="font-semibold text-foreground">Laskutus</h2>
             </div>
             <span className="text-xs text-muted-foreground tabular-nums shrink-0">
-              laskutettu {eur(p1InvoicedCents + p2InvoicedCents)}
+              {/* Tuntikeikan laskut ovat oma virtansa: urakan erien ja
+                  keltaisten summa olisi siellä aina nolla. */}
+              laskutettu {eur(hourlyBill ? hoursInvoicedCents : p1InvoicedCents + p2InvoicedCents)}
             </span>
           </div>
           {deal && (
@@ -1274,7 +1276,9 @@ export default function AdminGigTrackerPage() {
               Punaiset · kiinteä urakka
             </p>
           )}
-          {due && (
+          {/* Laskutusraja koskee ikkunoita. Tuntikeikalla se ei tarkoita
+              mitään: siellä laskutettava kertyy tunneista, ei pesuista. */}
+          {due && !hourlyBill && (
             <div className="flex items-start gap-2 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3 mb-3">
               <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
               <p className="text-sm text-amber-800 dark:text-amber-300">

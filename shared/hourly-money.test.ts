@@ -313,3 +313,88 @@ describe("tuntilasku ei sotke urakan eriä", () => {
     expect(st.hoursInvoicedCents).toBe(2500);
   });
 });
+
+/**
+ * KEIKAN RAHA MENEE TASAN — EIKÄ MITÄÄN JÄÄ ARVATTAVAKSI.
+ *
+ * Ennen palautusta laskenta jätti selittämättömän aukon: asiakkaalta 1000 €,
+ * tekijöille 300 €, meille 400 € — ja 300 € ei kuulunut kenellekään. Se 300 €
+ * on kulu jonka joku maksoi omasta pussistaan; se ei ole tuottoa vaan menee
+ * takaisin maksajalle. Nämä testit pitävät huolen että kolme osaa summautuvat
+ * aina asiakkaan kokonaissummaan, jotta näkymä ei voi näyttää katoavaa rahaa.
+ */
+describe("kulujen palautus ja rahan täsmäys", () => {
+  it("tekijät + perustajat + palautukset = asiakkaan summa", () => {
+    const m = computeHourlyMoney({
+      shifts: [shift("petrus", 10), shift("joonatan", 4)],
+      expenses: [
+        expense({ amountCents: 10400, desc: "lamput", forCustomer: true, by: "matias" }),
+        expense({ kind: "subcontract", amountCents: 30000, marginCents: 7000, desc: "sähkömies", by: "joonatan" }),
+      ],
+    });
+    expect(m.workerCostCents + m.founderTotalCents + m.reimbursementCents)
+      .toBe(m.customerTotalCents);
+  });
+
+  it("palautus kuuluu maksajalle, ei jaettavaksi", () => {
+    const m = computeHourlyMoney({
+      shifts: [],
+      expenses: [
+        expense({ kind: "subcontract", amountCents: 30000, marginCents: 7000, desc: "sähkömies", by: "joonatan" }),
+        expense({ amountCents: 10400, desc: "lamput", forCustomer: true, by: "matias" }),
+      ],
+    });
+    expect(m.reimbursementCents).toBe(40400);
+    expect(m.byPayer).toEqual([
+      { id: "joonatan", cents: 30000 },
+      { id: "matias", cents: 10400 },
+    ]);
+    // Kate jaetaan — kulu ei.
+    expect(m.byFounder.find((f) => f.id === "joonatan")?.marginCents).toBe(3500);
+    expect(m.byFounder.find((f) => f.id === "matias")?.marginCents).toBe(3500);
+  });
+
+  it("kirjanpidollinen maksaja (forWhom) menee `by`:n edelle", () => {
+    const m = computeHourlyMoney({
+      shifts: [],
+      expenses: [expense({ amountCents: 5000, forCustomer: true, by: "joonatan", forWhom: "matias" })],
+    });
+    expect(m.byPayer).toEqual([{ id: "matias", cents: 5000 }]);
+  });
+
+  it("perustajien osuus sisältää alihankinnan katteen", () => {
+    const m = computeHourlyMoney({
+      shifts: [],
+      expenses: [expense({ kind: "subcontract", amountCents: 30000, marginCents: 7000, desc: "sähkömies" })],
+    });
+    expect(m.founderTotalCents).toBe(7000);
+    // Sama luku kuin perustajarivien summa — näkymä ei laske sitä uudelleen.
+    expect(m.byFounder.reduce((s, f) => s + f.totalCents, 0)).toBe(m.founderTotalCents);
+  });
+
+  it("pelkillä tunneilla palautusta ei ole eikä maksajia", () => {
+    const m = computeHourlyMoney({ shifts: [shift("petrus", 3), shift("matias", 2)] });
+    expect(m.reimbursementCents).toBe(0);
+    expect(m.byPayer).toEqual([]);
+    expect(m.workerCostCents + m.founderTotalCents).toBe(m.customerTotalCents);
+  });
+});
+
+/** Nimetön rivi laskulla on virhe: asiakas näkisi tyhjän selitteen ja summan. */
+describe("laskun rivi on aina nimetty", () => {
+  it("kuvaukseton tarvike saa kululajin nimen", () => {
+    const it0 = hourlyItemisation({
+      shifts: [], expenses: [expense({ kind: "materials", desc: "", amountCents: 5000, forCustomer: true })],
+    } as never);
+    expect(it0.lines[0].label).toBe("Tarvikkeet");
+    expect(it0.matchesBilling).toBe(true);
+  });
+
+  it("kuvaukseton alihankinta ei jätä roikkuvaa erotinta", () => {
+    const it0 = hourlyItemisation({
+      shifts: [], expenses: [expense({ kind: "subcontract", desc: "", amountCents: 30000, marginCents: 7000 })],
+    } as never);
+    expect(it0.lines[0].label).toBe("Alihankinta");
+    expect(it0.lines[0].cents).toBe(37000);
+  });
+});

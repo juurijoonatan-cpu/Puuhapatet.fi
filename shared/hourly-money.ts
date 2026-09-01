@@ -92,6 +92,21 @@ export interface HourlyMoney {
   customerTotalCents: number;
 
   /**
+   * KULUJEN PALAUTUS: asiakkaan maksama osuus joka menee sille joka kulun
+   * maksoi — se ei ole kenenkään tuottoa vaan takaisin omasta pussista.
+   * Tarvikkeiden hankintahinta + alihankinnan toteutunut kulu.
+   */
+  reimbursementCents: number;
+  /** Kenelle palautus kuuluu. `id` on maksaja, tuntematon maksaja jää pois. */
+  byPayer: { id: string; cents: number }[];
+  /**
+   * MITÄ PERUSTAJILLE JÄÄ TÄLTÄ KEIKALTA: oma työ + tuntikate + alihankinnan
+   * kate. Sama luku kuin `byFounder`-rivien summa — näkymän ei tarvitse
+   * laskea sitä uudelleen eikä se voi silloin unohtaa alihankinnan katetta.
+   */
+  founderTotalCents: number;
+
+  /**
    * Tuli tuntipalkka yli asiakashinnan. Silloin kate olisi negatiivinen, ja se
    * on kirjausvirhe eikä tulos: kate rajataan nollaan ja tämä lippu nousee,
    * jotta näkymä voi sanoa sen ääneen sen sijaan että näyttäisi miinuskatetta.
@@ -213,6 +228,27 @@ export function computeHourlyMoney(
     return { id, wageCents, marginCents: mCents, totalCents: wageCents + mCents };
   }).filter((r) => r.totalCents > 0 || FOUNDER_IDS.includes(r.id));
 
+  /**
+   * KULUJEN PALAUTUS MAKSAJITTAIN.
+   *
+   * Ilman tätä keikan raha ei mene tasan: asiakkaalta 1000 €, tekijöille
+   * 300 €, meille 400 € — ja 300 € jää selittämättä. Se 300 € on kulu jonka
+   * joku maksoi omasta pussistaan, ja se kuuluu takaisin hänelle. Kohdentamaton
+   * raha ei ole tuottoa eikä sitä saa arvata: siksi maksaja luetaan riviltä
+   * (`paidBy`), eikä sitä jaeta kenellekään jos sitä ei tiedetä.
+   */
+  const payerTotals = new Map<string, number>();
+  let reimbursementCents = 0;
+  for (const line of costLines) {
+    const back = line.costCents;
+    if (back <= 0) continue;
+    reimbursementCents += back;
+    if (line.paidBy) payerTotals.set(line.paidBy, (payerTotals.get(line.paidBy) ?? 0) + back);
+  }
+  const byPayer = Array.from(payerTotals.entries())
+    .map(([id, cents]) => ({ id, cents }))
+    .sort((a, b) => b.cents - a.cents);
+
   return {
     hourRateCents,
     workerHourCents,
@@ -230,6 +266,9 @@ export function computeHourlyMoney(
     subcontractMarginCents,
     costLines,
     customerTotalCents: billableCents + customerCostCents + subcontractCostCents + subcontractMarginCents,
+    reimbursementCents,
+    byPayer,
+    founderTotalCents: founderWageCents + marginCents + subcontractMarginCents,
     rateInverted,
   };
 }
@@ -263,6 +302,15 @@ export interface HourlyItemisation {
   money: HourlyMoney;
 }
 
+/** Varanimi kulun riville kun kuvaus on jätetty tyhjäksi. */
+const COST_KIND_LABEL: Record<string, string> = {
+  transport: "Kuljetus",
+  materials: "Tarvikkeet",
+  equipment: "Välineet",
+  subcontract: "Alihankinta",
+  other: "Hankinta",
+};
+
 export function hourlyItemisation(
   data: Pick<ProjectData, "shifts" | "hourRateCents" | "workerHourCents" | "expenses"
     | "marks" | "customMarks" | "deleted" | "statuses" | "building" | "pricePerWindow">,
@@ -283,10 +331,12 @@ export function hourlyItemisation(
 
   for (const c of money.costLines) {
     // Alihankinta yhtenä lukuna: kulu + kate. Erittely paljastaisi ostohinnan.
-    lines.push({
-      label: c.kind === "subcontract" ? `Alihankinta · ${c.desc}` : c.desc,
-      cents: c.customerCents,
-    });
+    // KUVAUS ON VAPAAEHTOINEN, joten laskulla ei saa olla nimetöntä riviä:
+    // ilman varanimeä asiakas näkisi tyhjän selitteen ja summan vieressä.
+    const label = c.kind === "subcontract"
+      ? (c.desc ? `Alihankinta · ${c.desc}` : "Alihankinta")
+      : (c.desc || COST_KIND_LABEL[c.kind] || "Hankinta");
+    lines.push({ label, cents: c.customerCents });
   }
 
   // Pestyt ikkunat TIETONA. `computeProjectTotals` on sama laskenta jota kartta

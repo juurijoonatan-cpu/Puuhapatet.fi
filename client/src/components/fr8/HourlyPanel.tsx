@@ -338,7 +338,7 @@ export default function HourlyPanel({
               <div style={{ display: "flex", alignItems: "baseline", gap: T.space.sm }}>
                 <span style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted }}>Meille</span>
                 <span style={{ marginLeft: "auto", fontFamily: T.font, fontSize: T.size.title, fontWeight: 700, color: T.tone.goodSoft, fontVariantNumeric: "tabular-nums" }}>
-                  {eur(money.founderWageCents + money.marginCents)}
+                  {eur(money.founderTotalCents)}
                 </span>
               </div>
               <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginTop: 3, lineHeight: 1.6 }}>
@@ -346,7 +346,7 @@ export default function HourlyPanel({
                 {money.founderWageCents > 0 && money.marginCents > 0 && " · "}
                 {money.marginCents > 0 && `kate työntekijätunneista ${eur(money.marginCents)}`}
                 {money.subcontractMarginCents > 0 && ` · sis. alihankinnan kate ${eur(money.subcontractMarginCents)}`}
-                {money.founderWageCents === 0 && money.marginCents === 0 && "ei vielä kertymää"}
+                {money.founderTotalCents === 0 && "ei vielä kertymää"}
               </div>
 
               {money.byFounder.length > 0 && (
@@ -369,6 +369,27 @@ export default function HourlyPanel({
                 </div>
               )}
             </div>
+
+            {/* TAKAISIN MAKSAJALLE. Ilman tätä riviä kortti ei mene tasan:
+                asiakkaalta 1000, tekijöille 300, meille 400 — ja 300 jäisi
+                selittämättä. Se on kulu jonka joku maksoi omasta pussistaan,
+                eikä se ole kenenkään tuottoa. Kohdentamatonta ei arvata:
+                maksaja luetaan kuluriviltä, ja tuntematon jää nimeämättä. */}
+            {money.reimbursementCents > 0 && (
+              <div style={{ ...inset, padding: T.space.md }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: T.space.sm }}>
+                  <span style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted }}>Takaisin kulujen maksajalle</span>
+                  <span style={{ marginLeft: "auto", fontFamily: T.font, fontSize: T.size.title, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                    {eur(money.reimbursementCents)}
+                  </span>
+                </div>
+                <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginTop: 3, lineHeight: 1.6 }}>
+                  {money.byPayer.length > 0
+                    ? money.byPayer.map((pp) => `${workerName(pp.id)} ${eur(pp.cents)}`).join(" · ")
+                    : "maksajaa ei ole kirjattu kuluriville"}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

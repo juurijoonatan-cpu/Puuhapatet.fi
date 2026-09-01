@@ -1748,7 +1748,13 @@ export const api = {
       "DELETE", `/api/crew/${token}/expense/${expenseId}`),
 
   // Admin adds/removes project-level expenses (all workers visible).
-  addProjectExpense: (jobId: number, data: { kind: string; desc: string; amountCents: number; by?: string; forWhom?: string; receiptDataUrl?: string }) =>
+  addProjectExpense: (jobId: number, data: {
+    kind: string; desc: string; amountCents: number; by?: string; forWhom?: string; receiptDataUrl?: string;
+    /** Veloitetaanko tämä asiakkaalta (tarvikkeet). Alihankinta veloitetaan aina. */
+    forCustomer?: boolean;
+    /** Alihankinnan kate euroina senttein — vain `kind: "subcontract"`. */
+    marginCents?: number;
+  }) =>
     request<{ ok: boolean; expense: import("@shared/project").ProjExpense; expenses: import("@shared/project").ProjExpense[] }>(
       "POST", `/api/jobs/${jobId}/project/expense`, data),
 

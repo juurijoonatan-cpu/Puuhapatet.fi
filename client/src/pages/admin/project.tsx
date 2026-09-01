@@ -812,7 +812,7 @@ export default function AdminProjectPage() {
   const backToGig = useCallback(() => navigate(`/admin/gig/${jobId}`), [navigate, jobId]);
 
   // ── Expense management ──────────────────────────────────────────────────────
-  const addExpense = useCallback(async (data: { kind: string; desc: string; amountCents: number; by: string; forWhom?: string; receiptDataUrl?: string }) => {
+  const addExpense = useCallback(async (data: { kind: string; desc: string; amountCents: number; by: string; forWhom?: string; receiptDataUrl?: string; forCustomer?: boolean; marginCents?: number }) => {
     const res = await api.addProjectExpense(jobId, data);
     if (res.ok && res.data?.expenses) {
       setProject((cur) => cur ? { ...cur, expenses: res.data!.expenses } : cur);
@@ -2492,6 +2492,9 @@ const EXPENSE_KINDS: { id: string; label: string }[] = [
   { id: "transport", label: "Kuljetukset" },
   { id: "materials", label: "Tarvikkeet" },
   { id: "equipment", label: "Välineet" },
+  // Alihankinta on oma lajinsa eikä "muu kulu": vain se kantaa katetta ja
+  // vain se veloitetaan asiakkaalta ilman erillistä merkintää.
+  { id: "subcontract", label: "Alihankinta" },
   { id: "other", label: "Muu" },
 ];
 
@@ -2500,7 +2503,10 @@ const EXPENSE_TOOLTIP =
   "• Kuljetukset — polttoaine, julkinen liikenne, pysäköinti keikan takia\n" +
   "• Tarvikkeet — pesuaineet, räsyt, muut keikalla kuluvat materiaalit\n" +
   "• Välineet — työkalu tai varuste ostettu/vuokrattu tätä keikkaa varten\n" +
+  "• Alihankinta — ulkopuolinen tekijä (esim. sähkömies) jonka laskun maksoimme\n" +
   "• Muu — muu suoraan keikkaan liittyvä kulu\n\n" +
+  "Asiakkaalle ostettu (esim. lamput): merkitse \"veloitetaan asiakkaalta\" — summa siirtyy laskulle, kuitti jää meille.\n" +
+  "Alihankinta veloitetaan aina, ja sille kirjataan kate joka jaetaan tasan perustajien kesken.\n\n" +
   "Ei merkitä: yleinen toimistokulut, omat palkkakulut, myöhemmin palautettavat esineet.";
 
 /** Downscale a chosen receipt photo to a small JPEG data URL (kirjanpidon tosite). */
@@ -2539,7 +2545,7 @@ function ExpensesView({
   workers: { id: string; name: string }[];
   currentWorker: string;
   resolveName: (id: string) => string;
-  onAdd: (data: { kind: string; desc: string; amountCents: number; by: string; forWhom?: string; receiptDataUrl?: string }) => Promise<void>;
+  onAdd: (data: { kind: string; desc: string; amountCents: number; by: string; forWhom?: string; receiptDataUrl?: string; forCustomer?: boolean; marginCents?: number }) => Promise<void>;
   onDelete: (expenseId: string) => Promise<void>;
   /** Merkitse kulu asiakkaalle näkyväksi. Puuttuessaan merkintää ei voi tehdä. */
   onToggleForCustomer?: (expenseId: string, forCustomer: boolean) => void;
@@ -2551,8 +2557,15 @@ function ExpensesView({
   const [by, setBy] = useState(currentWorker);
   const [forWhom, setForWhom] = useState(currentWorker);
   const [receipt, setReceipt] = useState<string | null>(null);
+  /** Veloitetaanko tämä asiakkaalta. Alihankinnalla aina, muilla valinta. */
+  const [forCustomer, setForCustomer] = useState(false);
+  /** Alihankinnan kate EUROINA (kenttä), sentteinä vasta lähetyksessä. */
+  const [margin, setMargin] = useState("");
   const [busy, setBusy] = useState(false);
   const [showTip, setShowTip] = useState(false);
+  const isSub = kind === "subcontract";
+  const amountCentsLive = Math.round((parseFloat(amount.replace(",", ".")) || 0) * 100);
+  const marginCentsLive = Math.max(0, Math.round((parseFloat(margin.replace(",", ".")) || 0) * 100));
 
   const fmtEur = (cents: number) => (cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
   const fmtStamp = (ts: number) => new Date(ts).toLocaleString("fi-FI", { day: "numeric", month: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -2566,11 +2579,19 @@ function ExpensesView({
     const amountCents = Math.round(parseFloat(amount.replace(",", ".")) * 100);
     if (!amountCents || amountCents <= 0 || isNaN(amountCents)) return;
     setBusy(true);
-    await onAdd({ kind, desc: desc.trim(), amountCents, by, forWhom: forWhom || undefined, receiptDataUrl: receipt || undefined });
+    await onAdd({
+      kind, desc: desc.trim(), amountCents, by, forWhom: forWhom || undefined,
+      receiptDataUrl: receipt || undefined,
+      // Alihankinta veloitetaan aina — merkintä ei ole siinä valinta.
+      forCustomer: isSub ? true : forCustomer || undefined,
+      marginCents: isSub && marginCentsLive > 0 ? marginCentsLive : undefined,
+    });
     setBusy(false);
     setDesc("");
     setAmount("");
+    setMargin("");
     setReceipt(null);
+    setForCustomer(false);
   };
 
   const card: React.CSSProperties = {
@@ -2652,10 +2673,58 @@ function ExpensesView({
               <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="esim. pesuaineet" style={fieldStyle} />
             </label>
             <label style={{ display: "block" }}>
-              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Summa</span>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>
+                {isSub ? "Toteutunut kulu" : "Summa"}
+              </span>
               <input value={amount} onChange={(e) => setAmount(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} inputMode="decimal" placeholder="0,00 €" style={{ ...fieldStyle, textAlign: "right" }} />
             </label>
           </div>
+
+          {/* ALIHANKINTA: kulu + kate. Kate kysytään euroina eikä prosenttina —
+              perustajien valinta: sen näkee suoraan numerona eikä pyöristys voi
+              yllättää. Asiakkaan hinta lasketaan tähän näkyviin heti, koska se
+              on ainoa luku joka päätyy laskulle: erittelyä ei näytetä
+              asiakkaalle, sillä se paljastaisi ostohintamme. */}
+          {isSub && (
+            <div style={{ padding: "12px 14px", marginBottom: 10, borderRadius: 12, border: "1px solid rgba(156,193,255,0.25)", background: "rgba(156,193,255,0.07)" }}>
+              <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "1fr 130px", gap: 10, alignItems: "end" }}>
+                <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.62)", lineHeight: 1.5 }}>
+                  Alihankinta veloitetaan asiakkaalta aina. Kirjaa mitä maksoimme, ja se kate jonka
+                  haluamme päälle — se jaetaan tasan perustajien kesken.
+                </div>
+                <label style={{ display: "block" }}>
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Kate päälle</span>
+                  <input value={margin} onChange={(e) => setMargin(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} inputMode="decimal" placeholder="0,00 €" style={{ ...fieldStyle, textAlign: "right" }} />
+                </label>
+              </div>
+              {amountCentsLive > 0 && (
+                <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.09)", display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", fontSize: 12.5 }}>
+                  <span style={{ color: "rgba(255,255,255,0.5)" }}>Asiakkaalle yhtenä rivinä</span>
+                  <span style={{ marginLeft: "auto", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 15, fontWeight: 700, color: "#9ff0bd" }}>
+                    {fmtEur(amountCentsLive + marginCentsLive)}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* VELOITETAANKO ASIAKKAALTA. Kysytään jo kirjattaessa: merkintä joka
+              pitää muistaa tehdä jälkikäteen jää tekemättä, ja silloin
+              asiakkaalle ostetut lamput jäävät laskulta pois. Kuitti ei seuraa
+              asiakkaalle koskaan — se on meidän kirjanpitomme tosite. */}
+          {!isSub && (
+            <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 12px", marginBottom: 10, borderRadius: 10, border: `1px solid ${forCustomer ? "rgba(95,224,138,0.35)" : "rgba(255,255,255,0.12)"}`, background: forCustomer ? "rgba(95,224,138,0.08)" : "rgba(255,255,255,0.03)", cursor: "pointer" }}>
+              <input type="checkbox" checked={forCustomer} onChange={(e) => setForCustomer(e.target.checked)} style={{ width: 17, height: 17, accentColor: "#5fe08a", flexShrink: 0 }} />
+              <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: forCustomer ? "#9ff0bd" : "rgba(255,255,255,0.6)" }}>
+                Veloitetaan asiakkaalta — ostettu häntä varten (esim. lamput)
+                {forCustomer && amountCentsLive > 0 && (
+                  <span style={{ display: "block", fontSize: 11.5, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>
+                    {fmtEur(amountCentsLive)} siirtyy laskulle sellaisenaan · kuitti jää meille
+                  </span>
+                )}
+              </span>
+            </label>
+          )}
 
           {/* Receipt photo (kuitti) — camera on mobile, file on desktop */}
           <label style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 12px", borderRadius: 10, border: "1px dashed rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.03)", cursor: "pointer", marginBottom: 12 }}>
@@ -2708,12 +2777,29 @@ function ExpensesView({
                     {!exp.receiptDataUrl && <span style={{ color: "#e7a17a", marginLeft: 6 }}>· ei kuittia</span>}
                   </div>
                 </div>
-                <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 14, fontWeight: 700, color: "#ff9b6e", flexShrink: 0 }}>{fmtEur(exp.amountCents)}</span>
+                {/* ALIHANKINTARIVI näyttää KAKSI lukua: mitä maksoimme ja mitä
+                    asiakas maksaa. Pelkkä kulu kertoisi vain puolet — se rivi
+                    tuottaa rahaa, ja kate on nähtävä siellä missä se syntyy.
+                    Asiakkaan laskulla nämä ovat yksi rivi (ks. `customerExpenses`). */}
+                {exp.kind === "subcontract" && (exp.marginCents ?? 0) > 0 ? (
+                  <span style={{ textAlign: "right", flexShrink: 0 }}>
+                    <span style={{ display: "block", fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 14, fontWeight: 700, color: "#9ff0bd" }}>
+                      {fmtEur(exp.amountCents + (exp.marginCents ?? 0))}
+                    </span>
+                    <span style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 1 }}>
+                      kulu {fmtEur(exp.amountCents)} + kate {fmtEur(exp.marginCents ?? 0)}
+                    </span>
+                  </span>
+                ) : (
+                  <span style={{ fontFamily: "var(--font-jetbrains-mono, monospace)", fontSize: 14, fontWeight: 700, color: "#ff9b6e", flexShrink: 0 }}>{fmtEur(exp.amountCents)}</span>
+                )}
                 {/* NÄKYYKÖ ASIAKKAALLE. Oletus on ei: valtaosa kuluista on
                     meidän sisäisiä (matkat, oma kalusto). Asiakkaalle merkitään
                     vain se mikä on ostettu HÄNTÄ VARTEN — polttimot, tiivisteet.
                     Kuitti ei seuraa mukana koskaan. */}
-                {onToggleForCustomer && (
+                {/* Alihankinta veloitetaan aina, joten sillä ei ole tätä
+                    valintaa — kytkin lupaisi että rivin voi pitää sisäisenä. */}
+                {onToggleForCustomer && exp.kind !== "subcontract" && (
                   <button
                     onClick={() => onToggleForCustomer(exp.id, !exp.forCustomer)}
                     title={exp.forCustomer ? "Näkyy asiakkaalle — piilota" : "Näytä asiakkaalle hankintana"}

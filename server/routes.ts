@@ -9883,7 +9883,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const loaded = await loadJobProject(Number(req.params.id));
       if (!loaded) return res.status(404).json({ error: "Keikkaa ei löydy" });
       const { job, project } = loaded;
-      const { kind, desc, amountCents, by, forWhom, receiptDataUrl } = req.body as Record<string, any>;
+      const { kind, desc, amountCents, by, forWhom, receiptDataUrl, forCustomer, marginCents } = req.body as Record<string, any>;
       if (!amountCents || Number(amountCents) <= 0) {
         return res.status(400).json({ error: "Summa puuttuu tai on nolla" });
       }
@@ -9891,15 +9891,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const receipt = typeof receiptDataUrl === "string" && receiptDataUrl.startsWith("data:image/")
         ? receiptDataUrl.slice(0, MAX_EXPENSE_RECEIPT_LEN) : undefined;
       const forWhomVal = typeof forWhom === "string" && forWhom.trim() ? forWhom.trim().slice(0, 40) : undefined;
+      const kindVal: ProjExpense["kind"] = VALID_EXPENSE_KINDS.includes(kind) ? kind : "other";
+      /**
+       * ALIHANKINNAN KATE vain alihankintariville. Muulla kululajilla se olisi
+       * haamurahaa: `expenseCustomerCents` ei lue sitä, joten asiakas ei
+       * maksaisi sitä koskaan, mutta kenttä jäisi riville lupaamaan tuottoa.
+       * Pudotetaan tässä eikä hiljaa laskennassa.
+       */
+      const marginVal = kindVal === "subcontract" && Number(marginCents) > 0
+        ? Math.round(Number(marginCents)) : undefined;
       const expense: ProjExpense = {
         id: makeExpenseId(),
         by: String(by || adminSub).slice(0, 40),
-        kind: VALID_EXPENSE_KINDS.includes(kind) ? kind : "other",
+        kind: kindVal,
         desc: String(desc || "").slice(0, 300).trim(),
         amountCents: Math.round(Number(amountCents)),
         ts: Date.now(),
         ...(forWhomVal ? { forWhom: forWhomVal } : {}),
         ...(receipt ? { receiptDataUrl: receipt } : {}),
+        // Asiakkaalle näkyväksi jo kirjattaessa: merkintä joka pitää muistaa
+        // tehdä jälkikäteen jää tekemättä, ja silloin lamput jäävät laskulta.
+        ...(forCustomer === true ? { forCustomer: true } : {}),
+        ...(marginVal ? { marginCents: marginVal } : {}),
       };
       project.expenses = [...(project.expenses || []), expense];
       await saveProject(job, project);

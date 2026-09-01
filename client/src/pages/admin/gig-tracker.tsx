@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
-import { getAdminProfile } from "@/lib/admin-profile";
+import { getAdminProfile, USERS } from "@/lib/admin-profile";
 import { BRAND_BILLERS, resolveBrandBiller, DEFAULT_BILLER_ID } from "@shared/billers";
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import {
@@ -638,6 +638,14 @@ export default function AdminGigTrackerPage() {
   const hoursInvoicedCents = invState.hoursInvoicedCents;
   const hoursRemainingCents = hourlyBill
     ? Math.max(0, hourlyBill.customerTotalCents - hoursInvoicedCents) : 0;
+  /** Etunimi kulun maksajalle: keikan tekijälista ensin, sitten johtajat. */
+  const payerName = (id: string): string => {
+    const c = (project?.crew ?? []).find((x) => x.id === id);
+    if (c?.name?.trim()) return c.name.trim().split(/\s+/)[0];
+    const u = USERS.find((x) => x.id === id);
+    if (u) return u.name.split(" ")[0];
+    return id ? id.charAt(0).toUpperCase() + id.slice(1) : id;
+  };
   const agreedTotalCents = (deal && project) ? dealAgreedTotalCents(project, deal) : 0;
   const isFinalEra = !!deal && p1PayCount === 3;
   const fixedInstallmentCents = deal
@@ -1320,12 +1328,15 @@ export default function AdminGigTrackerPage() {
                   "asiakkaalta 26 €/h" ja "tekijälle 15 €/h" näytä ristiriidalta.
                   Pomojen omista tunneista ei oteta katetta: ne ovat omaa työtä
                   ja näkyvät "Teille"-sarakkeessa täytenä. */}
-              {hourlyBill.money.billableCents > 0 && (
-                <div className="mb-3 grid grid-cols-3 gap-2 rounded-xl bg-muted/40 p-2.5 text-center">
+              {hourlyBill.customerTotalCents > 0 && (
+                <div className={`mb-3 grid gap-2 rounded-xl bg-muted/40 p-2.5 text-center ${hourlyBill.money.reimbursementCents > 0 ? "grid-cols-4" : "grid-cols-3"}`}>
                   {([
-                    ["Asiakkaalta", eur(hourlyBill.money.billableCents), "text-foreground"],
+                    ["Asiakkaalta", eur(hourlyBill.customerTotalCents), "text-foreground"],
                     ["Tekijöille", eur(hourlyBill.money.workerCostCents), "text-foreground"],
-                    ["Teille", eur(hourlyBill.money.founderWageCents + hourlyBill.money.marginCents), "text-green-600"],
+                    ...(hourlyBill.money.reimbursementCents > 0
+                      ? [["Kulut takaisin", eur(hourlyBill.money.reimbursementCents), "text-foreground"] as [string, string, string]]
+                      : []),
+                    ["Teille", eur(hourlyBill.money.founderTotalCents), "text-green-600"],
                   ] as [string, string, string][]).map(([l, v, tone]) => (
                     <div key={l}>
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{l}</p>
@@ -1333,6 +1344,15 @@ export default function AdminGigTrackerPage() {
                     </div>
                   ))}
                 </div>
+              )}
+              {/* Kenelle kulut palautuvat. Kohdentamatonta rahaa ei arvata:
+                  jos maksajaa ei ole kirjattu, se sanotaan eikä jaeta. */}
+              {hourlyBill.money.reimbursementCents > 0 && (
+                <p className="mb-3 text-[11px] leading-snug text-muted-foreground">
+                  {hourlyBill.money.byPayer.length > 0
+                    ? `Kulut takaisin maksajalle: ${hourlyBill.money.byPayer.map((pp) => `${payerName(pp.id)} ${eur(pp.cents)}`).join(" · ")}`
+                    : "Kuluille ei ole kirjattu maksajaa — palautus jää kohdentamatta."}
+                </p>
               )}
 
               {/* Väärinpäin kirjatut hinnat estävät lähetyksen palvelimella;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, billingModeOf, isHourlyGig, roundWorkHours, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, invoiceNaming, sanitizeBoard, sortedBoard, openTaskCount, BOARD_CUSTOMER, sanitizeShifts, computeShiftStats, shiftHoursOf, dayKey, isDayKey, fmtDayLabel, MAX_SHIFTS, cappedTimerHours, MAX_TIMER_SHIFT_HOURS, addShiftEntry, shiftHoursOnDay, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
+import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, billingModeOf, isHourlyGig, roundWorkHours, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, invoiceNaming, sanitizeBoard, sortedBoard, openTaskCount, BOARD_CUSTOMER, sanitizeShifts, computeShiftStats, shiftHoursOf, dayKey, isDayKey, fmtDayLabel, shiftDay, weekOf, weekdayLetter, dayOfMonth, monthLabel, MAX_SHIFTS, cappedTimerHours, MAX_TIMER_SHIFT_HOURS, addShiftEntry, shiftHoursOnDay, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
 import { emptyGigData, computeTotals } from "./gig";
 
 // Kohta 6.1 — kokonaistilanteen ikkunamäärän täsmäytys. Ks. docs/fr8-era-laskutus-plan.md.
@@ -1533,5 +1533,82 @@ describe("laskun nimi", () => {
       expect(n.short.trim()).not.toBe("");
       expect(n.prose.trim()).not.toBe("");
     }
+  });
+});
+
+/**
+ * KALENTERIN PÄIVÄMATEMATIIKKA.
+ *
+ * Nämä ovat pieniä funktioita joiden virhe ei näy koodissa vaan vasta
+ * ruudulla, väärän päivän kohdalla — ja tuntikirjanpidossa päivä on koko
+ * perusta: väärälle päivälle kirjattu tunti on väärä luku palkassa ja
+ * laskulla. Siksi ne testataan erikseen eikä silmämääräisesti.
+ */
+describe("kalenterin päivät", () => {
+  it("siirtää päivää eteen ja taakse", () => {
+    expect(shiftDay("2026-09-01", 1)).toBe("2026-09-02");
+    expect(shiftDay("2026-09-01", -1)).toBe("2026-08-31");
+    expect(shiftDay("2026-09-01", -7)).toBe("2026-08-25");
+    expect(shiftDay("2026-09-01", 0)).toBe("2026-09-01");
+  });
+
+  it("kuukauden ja vuoden yli", () => {
+    expect(shiftDay("2026-12-31", 1)).toBe("2027-01-01");
+    expect(shiftDay("2027-01-01", -1)).toBe("2026-12-31");
+    // Karkausvuosi: 2028 on karkausvuosi, 2026 ei.
+    expect(shiftDay("2028-02-28", 1)).toBe("2028-02-29");
+    expect(shiftDay("2026-02-28", 1)).toBe("2026-03-01");
+  });
+
+  /**
+   * KESÄAJAN VAIHTOPÄIVÄ. Keskiyöhön lisätty vuorokausi osuu 23 tai 25 tunnin
+   * päähän, ja päivä joko hyppää yli tai jää paikalleen. Kalenterissa se olisi
+   * puuttuva tai kahdesti piirtyvä päivä — kahdesti vuodessa.
+   */
+  it("kesäajan vaihtopäivä ei hukkaa eikä kahdenna päivää", () => {
+    // EU: kesäaika alkaa maaliskuun viimeisenä sunnuntaina, päättyy lokakuun.
+    expect(shiftDay("2026-03-28", 1)).toBe("2026-03-29");
+    expect(shiftDay("2026-03-29", 1)).toBe("2026-03-30");
+    expect(shiftDay("2026-10-24", 1)).toBe("2026-10-25");
+    expect(shiftDay("2026-10-25", 1)).toBe("2026-10-26");
+    // Ja viikko molempien yli pysyy seitsemänä eri päivänä.
+    for (const start of ["2026-03-23", "2026-10-19"]) {
+      const w = weekOf(start);
+      expect(new Set(w).size).toBe(7);
+    }
+  });
+
+  it("viikko alkaa maanantaista ja päättyy sunnuntaihin", () => {
+    // 2026-09-01 on tiistai.
+    const w = weekOf("2026-09-01");
+    expect(w).toHaveLength(7);
+    expect(w[0]).toBe("2026-08-31"); // maanantai
+    expect(w[6]).toBe("2026-09-06"); // sunnuntai
+    expect(w).toContain("2026-09-01");
+    // Sunnuntai kuuluu EDELLISEEN viikkoon, ei seuraavaan.
+    expect(weekOf("2026-09-06")[0]).toBe("2026-08-31");
+    // Maanantaista laskettu viikko on sama.
+    expect(weekOf("2026-08-31")).toEqual(w);
+  });
+
+  it("viikonpäivän kirjain ja kuukauden päivä", () => {
+    expect(weekdayLetter("2026-08-31")).toBe("M"); // maanantai
+    expect(weekdayLetter("2026-09-06")).toBe("S"); // sunnuntai
+    expect(dayOfMonth("2026-09-01")).toBe(1);
+    expect(dayOfMonth("2026-09-30")).toBe(30);
+  });
+
+  it("otsikko kertoo molemmat kuukaudet kun viikko jakautuu", () => {
+    expect(monthLabel(weekOf("2026-09-15"))).toBe("syyskuu 2026");
+    expect(monthLabel(weekOf("2026-09-01"))).toBe("elokuu–syyskuu 2026");
+    expect(monthLabel(weekOf("2026-12-31"))).toBe("joulukuu 2026 – tammikuu 2027");
+    expect(monthLabel([])).toBe("");
+  });
+
+  it("roska ei kaada mitään", () => {
+    expect(shiftDay("roska", 1)).toBe("roska");
+    expect(weekOf("")).toEqual([]);
+    expect(weekdayLetter("x")).toBe("");
+    expect(dayOfMonth("x")).toBe(0);
   });
 });

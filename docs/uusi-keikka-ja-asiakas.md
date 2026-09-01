@@ -135,7 +135,7 @@ allekirjoitettavaksi:
 
 | Muoto | Kenttä | Mihin se tallentuu | Mitä asiakas näkee |
 |---|---|---|---|
-| **PDF-tiedosto** (suositus) | `GigData.contractFile` | `job_assets`-taulu, viite blobissa | selattava upotus + "Avaa koko näytöllä" + lataus omalla nimellä |
+| **PDF-tiedosto** (suositus) | `GigData.contractFile` | `job_assets`-taulu, viite blobissa | sivut kuvina puhtaassa syvennyksessä + tarkka lukukerros + lataus omalla nimellä |
 | **Sopimusteksti** | `GigData.contractText` | gigData-blobi | teksti auki näkymässä + koottu sopimusdokumentti |
 
 **Liittäminen:** keikan **Sopimus & asiakasnäkymä** -kortti → *Sopimus tiedostona
@@ -161,6 +161,57 @@ allekirjoitus asiakirjaan jota kukaan ei ole hyväksynyt. Asiakas saa sen
 jälkikäteen napista **Lataa sopimus (PDF)**; sen viereinen koottu dokumentti
 nimetään silloin **allekirjoitustodistukseksi**, jottei kaksi eri asiakirjaa ole
 saman nimen takana.
+
+##### Lukupinta: sivut kuvina, ei selaimen PDF-laatikkoa
+
+Liitetty PDF **rasteroidaan sivukuviksi latausvaiheessa** (pdf.js perustajan
+selaimessa), ja asiakas lukee ne `<img>`-sivuina syvennyksessä. Alkuperäinen
+tiedosto säilytetään aina — se on se jonka asiakas lataa.
+
+Ensimmäinen toteutus käytti `<object type="application/pdf">` -upotusta, ja sen
+oma kommentti myönsi ongelman: *"puhelimessa monisivuinen sopimus on siinä
+neulansilmä — moni selain ei myöskään vieritä upotettua PDF:ää lainkaan."*
+Kiertotienä oli "Avaa koko näytöllä" -linkki, joka luovuttaa asiakkaan selaimen
+omalle näyttäjälle kesken sopimuksen lukemista. Sivukuvilla:
+
+- piirtyvät **joka selaimessa samalla tavalla**, myös iOS Safarissa;
+- eivät tarvitse **JS:ää** eivätkä **CORSia** (`<img>` ei tarvitse, `fetch`
+  tarvitsisi — ja API on eri origin kuin sivusto);
+- ovat sivun **normaalissa virrassa**: asiakas vierittää sopimuksen läpi ja
+  allekirjoitus on sen alla, kuten paperilla. Ei sisäkkäistä vieritystä — kaksi
+  vieritystä samassa eleessä on juuri se mikä saa upotetun dokumentin tuntumaan
+  rikkinäiseltä. Pitkän asiakirjan yli pääsee napista *"Siirry
+  allekirjoitukseen ↓"*.
+
+**Asiakkaan nide ei kasva.** Mitattu julkaisusta: `pdf-raster` on oma 372 kB:n
+siru (109 kB gzip) jonka importtaa VAIN `gig-tracker`; `gig-live`issä siihen on
+nolla viittausta. Rasterointi on kertaluonteinen työ perustajan koneella —
+mitattuna 0,8 s ja 1,6 MB nelisivuiselle sopimukselle (JPEG 1400 px, q 0,86).
+
+**Tarkka lukeminen:** sivun napautus avaa sen omaan kerrokseen, oletuksena
+ruudulle **sovitettuna** ja yhdellä napautuksella **1:1** (1400 px). 1:1
+oletuksena avautui 390 px:n ruudulla noin neljäsosaan sivun leveydestä ilman
+mitään vihjettä sivuttaisvierityksestä, ja se luki rikkinäiseltä.
+
+**Sivumäärä on valinnainen** (`contractFile.pages`). Ennen rasterointia
+liitetyillä sopimuksilla sitä ei ole, ja ne saavat entisen upotuksen
+muuttumattomana — uudelleenliittäminen tuo sivut. Admin näyttää tilan suoraan:
+*"4 sivua selattavana"* tai *"ei sivukuvia (liitä uudelleen…)"*.
+
+**Rasterointi ei saa estää liittämistä:** jos se kaatuu (vioittunut tai
+salasanasuojattu PDF), sopimus liitetään silti ilman sivuja. Puolittainen
+lukupinta on parempi kuin ei sopimusta.
+
+**Sivut kirjoitetaan yhdessä transaktiossa ja ENNEN `contractFile`-viitettä.**
+Viite on se joka kytkee sopimuksen päälle (`hasContractDoc`), joten keskeytynyt
+lataus ei saa jättää allekirjoitusporttia päälle ilman luettavia sivuja. Ilman
+transaktiota katkos kesken kirjoitusta jättäisi kantaan kaksi sopimusta
+limittäin: uuden alkusivut ja vanhan loppusivut.
+
+**Vain rasterikuvat kelpaavat sivuiksi** (JPEG/PNG/WebP), ja vastauksissa on
+`X-Content-Type-Options: nosniff`. Pelkkä `data:image/` päästäisi läpi myös
+`data:image/svg+xml`, ja SVG on skriptattava dokumentti jonka reitti palauttaisi
+`image/svg+xml`-otsakkeella.
 
 **Miksi kantaan eikä `client/public/`iin:** `client/public/` on julkinen
 verkkosivu ja tämä repo on julkinen. FR8:n vanha `contracts/PT-2026-02.pdf` on

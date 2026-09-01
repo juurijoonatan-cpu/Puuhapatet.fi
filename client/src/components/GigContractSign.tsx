@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type GigPublicView, type GigSignPayload } from "@/lib/api";
 import { downloadGigContract } from "@/lib/gig-contract-doc";
 import { CT, CFONT } from "@/lib/customer-theme";
+import ContractDocument from "@/components/customer/ContractDocument";
 import { FR8_CONTRACT_ID } from "@shared/gig";
 
 const T = CT;
@@ -157,9 +158,12 @@ function SignaturePad({ onChange }: { onChange: (dataUrl: string) => void }) {
   );
 }
 
-function Panel({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
+/** Ankkurin id allekirjoituspaneelille — "Siirry allekirjoitukseen" osoittaa tähän. */
+const SIGN_ANCHOR = "pp-allekirjoitus";
+
+function Panel({ children, style, id }: { children: React.ReactNode; style?: React.CSSProperties; id?: string }) {
   return (
-    <div style={{ background: T.card, border: `1px solid ${T.hair}`, borderRadius: 14, padding: 20, marginBottom: 16, ...style }}>
+    <div id={id} style={{ background: T.card, border: `1px solid ${T.hair}`, borderRadius: 14, padding: 20, marginBottom: 16, ...style }}>
       {children}
     </div>
   );
@@ -205,6 +209,21 @@ export default function GigContractSign({ token, view, onSigned, variant = "page
    */
   const ownPdfUrl = view.contractFile ? api.contractFileUrlForGig(token) : null;
   const pdfUrl = ownPdfUrl ?? fr8PdfUrl;
+  /**
+   * SIVUT KUVINA, jos sopimus on rasteroitu latausvaiheessa.
+   *
+   * Tämä korvaa `<object type="application/pdf">` -upotuksen. Upotuksen oma
+   * kommentti myöntää ongelman: se on kiinteän korkuinen ruutu, joka on
+   * puhelimessa neulansilmä eikä monessa selaimessa vierity lainkaan — ja
+   * "Avaa koko näytöllä" luovuttaa asiakkaan selaimen omalle näyttäjälle
+   * kesken sopimuksen lukemista. Sivut kuvina ovat sivun normaalissa virrassa:
+   * asiakas vierittää sopimuksen läpi ja allekirjoitus on sen alla, kuten
+   * paperilla.
+   *
+   * PUUTTUVA SIVUMÄÄRÄ = ennen rasterointia liitetty sopimus. Silloin näytetään
+   * entinen upotus muuttumattomana; uusi lataus tuo sivut mukanaan.
+   */
+  const pagedDoc = view.contractFile && view.contractFile.pages > 0 ? view.contractFile : null;
   const hasOwnText = !!view.contractText?.trim();
   const [customer, setCustomer] = useState({
     legalName: base?.name ?? "",
@@ -299,8 +318,27 @@ export default function GigContractSign({ token, view, onSigned, variant = "page
             Kolme tapausta, tässä järjestyksessä. Toisen keikan tiedostoa ei
             näytetä koskaan — se oli tämän kohdan vika. */}
 
-        {/* 1. Keikalla on oma PDF (vain FR8). */}
-        {pdfUrl && (
+        {/* 1a. Liitetty sopimus SIVUINA — puhdas syvennys, ei selaimen
+                PDF-laatikkoa. Allekirjoitus on sivujen alla, kuten paperilla. */}
+        {pagedDoc && (
+          <Panel>
+            <ContractDocument
+              theme={T}
+              pages={pagedDoc.pages}
+              // Tiedoston koko versiotunnuksena osoitteessa: se vaihtuu kun
+              // sopimus korvataan, joten auki oleva välilehti ei jää näyttämään
+              // vanhoja sivuja välimuistista (`max-age=300`).
+              pageUrl={(n) => `${api.contractPageUrlForGig(token, n)}?v=${pagedDoc.bytes}`}
+              pdfUrl={api.contractFileUrlForGig(token, { download: true })}
+              contractId={contractNo}
+              signAnchorId={SIGN_ANCHOR}
+            />
+          </Panel>
+        )}
+
+        {/* 1b. Vanha upotus: FR8:n staattinen PDF, tai ennen rasterointia
+                liitetty sopimus. */}
+        {!pagedDoc && pdfUrl && (
           <Panel>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
               <div>
@@ -410,7 +448,7 @@ export default function GigContractSign({ token, view, onSigned, variant = "page
 
         {/* Koko sopimusteksti — vain kun asiakirja on PDF. Tapauksessa 2 teksti
             ON asiakirja ja se näkyy jo yllä, joten sitä ei toisteta. */}
-        {pdfUrl && view.contractText && (
+        {(pagedDoc || pdfUrl) && view.contractText && (
           <Panel>
             <button
               type="button"
@@ -455,8 +493,10 @@ export default function GigContractSign({ token, view, onSigned, variant = "page
           </div>
         </Panel>
 
-        {/* Signature */}
-        <Panel>
+        {/* Signature. Ankkuri, jotta pitkän asiakirjan yli pääsee yhdellä
+            napautuksella — upotettu monisivuinen sopimus on korkea, ja
+            sisäkkäinen vieritys olisi ollut väärä ratkaisu siihen. */}
+        <Panel id={SIGN_ANCHOR}>
           <p style={mono}>ALLEKIRJOITUS</p>
           {customer.legalName && (
             <p style={{ margin: "10px 0 0", fontSize: 13, color: T.ink, lineHeight: 1.6 }}>

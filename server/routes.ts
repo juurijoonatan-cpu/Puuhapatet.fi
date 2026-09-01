@@ -6409,7 +6409,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
        * Johtaja voi laskuttaa osan (`amountCents`), mutta ei enempää kuin on
        * kertynyt.
        */
-      const hourly = isHoursScope && proj ? hourlyItemisation(proj) : null;
+      /**
+       * LASKUTTAMATTOMAT IKKUNAT. Merkintä siitä mitkä pesut on jo laskutettu
+       * elää keikan sektoreilla (`invoicedWashed`), ei projektikartalla, joten
+       * luku luetaan sieltä ja annetaan laskennalle.
+       */
+      const gigTotalsNow = computeTotals(gig);
+      const uninvoicedWindows = Math.max(0, gigTotalsNow.washedTotal - gigTotalsNow.invoicedWashed);
+      const hourly = isHoursScope && proj ? hourlyItemisation(proj, { uninvoicedWindows }) : null;
       const hoursRemainingCents = hourly
         ? Math.max(0, hourly.customerTotalCents - invState.hoursInvoicedCents) : 0;
       const hoursAmountCents = hourly
@@ -6695,7 +6702,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // P2-lasku EI koske P1:n laskureihin: sektorit, invoicedThrough ja
       // invoicedCents ovat P1-käsitteitä — p2-maksu vain kirjataan listaan
       // scope-merkinnällä, ja P2:n laskutustilanne lasketaan maksuista.
-      if (!isP2Scope) {
+      /**
+       * IKKUNAMERKINNÄN SIIRTO — VAIN SILLE JOKA NE MAKSOI.
+       *
+       * Tämä ajoi aiemmin kaikille paitsi keltaisille, tuntilasku mukaan
+       * lukien. Tuntilasku ei tuolloin veloittanut ikkunoista mitään (ne olivat
+       * erittelyssä pelkkä tietorivi), joten lähetys merkitsi jokaisen pestyn
+       * ikkunan laskutetuksi perimättä niistä senttiäkään — eikä tuntinäkymässä
+       * ollut toista nappia jolla ne olisi voinut laskuttaa. Raha ei jäänyt
+       * odottamaan, se katosi.
+       *
+       * Nyt tuntilasku veloittaa laskuttamattomat ikkunat, ja merkintä siirtyy
+       * VAIN kun lasku kattaa koko jäljellä olevan kertymän. Osalasku ei siirrä
+       * sitä: silloin ikkunat jäävät kertymään ja tulevat seuraavalle laskulle.
+       * Väärä suunta tässä on aina se joka merkitsee laskuttamatta jääneen
+       * laskutetuksi.
+       */
+      const hoursCoversWholeAccrual = !!hourly && amountCents >= hoursRemainingCents;
+      if (!isP2Scope && (!isHoursScope || hoursCoversWholeAccrual)) {
         gig.sectors.forEach((s) => { s.invoicedWashed = s.washed; });
       }
       const totalsAfter = computeTotals(gig);
@@ -8902,14 +8926,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
        * paikassa.
        */
       hourly: isHourlyGig(project) ? (() => {
-        const mine = computeHourlyMoney(project).byWorker.find((w) => w.id === member.id);
-        // Kolme lukua tekijän OMALTA riviltä. Kumpi tuntihinta on hänen,
-        // ratkaistaan laskennassa (`perHourCents`) — täällä ei lueta
-        // asiakkaan hintaa lainkaan, jottei sitä voi vahingossa lähettää.
+        const hm = computeHourlyMoney(project);
+        const mine = hm.byWorker.find((w) => w.id === member.id);
+        // Tuntikeikallakin voi olla pestyjä ikkunoita, ja ne maksavat: ikkuna
+        // kuuluu sille joka sen pesi. Ilman tätä tekijä näkisi työpöydällään
+        // vain tuntipalkkansa ja luulisi pesemiensä ikkunoiden olleen ilmaisia.
+        const myWindows = hm.windows?.byWasher.find((r) => r.id === member.id);
+        // Vain OMAN rivin luvut. Kumpi tuntihinta tai ikkunahinta on hänen,
+        // ratkaistaan laskennassa (`perHourCents` / `perWindowCents`) — täällä
+        // ei lueta asiakkaan hintaa lainkaan, jottei sitä voi vahingossa
+        // lähettää. Kate ei kulje tänne missään muodossa.
         return {
           hours: mine?.hours ?? 0,
           earnedCents: mine?.earnedCents ?? 0,
           perHourCents: mine?.perHourCents ?? 0,
+          windows: myWindows?.windows ?? 0,
+          windowEarnedCents: myWindows?.earnedCents ?? 0,
+          perWindowCents: myWindows?.perWindowCents ?? 0,
         };
       })() : null,
       // Ohjattu eteneminen (guided): kun perustaja on kytkenyt sen päälle, tekijä

@@ -691,7 +691,11 @@ export default function AdminGigTrackerPage() {
    * dialogissa näkyvä luku on se joka lähtee — ei erillistä esikatselu-
    * aritmetiikkaa joka voisi ajautua siitä erilleen.
    */
-  const hourlyBill = project && isHourlyGig(project) ? hourlyItemisation(project) : null;
+  // Laskuttamattomat ikkunat luetaan keikan sektoreilta samalla säännöllä kuin
+  // palvelimella (`washed − invoicedWashed`), jotta dialogissa näkyvä summa on
+  // se joka lähtee. Eri luku tässä kaataisi lähetyksen erittelyvartijaan.
+  const uninvoicedWindows = Math.max(0, totals.washedTotal - totals.invoicedWashed);
+  const hourlyBill = project && isHourlyGig(project) ? hourlyItemisation(project, { uninvoicedWindows }) : null;
   const hoursInvoicedCents = invState.hoursInvoicedCents;
   const hoursRemainingCents = hourlyBill
     ? Math.max(0, hourlyBill.customerTotalCents - hoursInvoicedCents) : 0;

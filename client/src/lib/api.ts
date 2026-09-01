@@ -177,7 +177,12 @@ export interface WorkerView {
    * lähetetä tekijälle, samoin kuin ikkunahintoja ei lähetetä.
    * Null = keikka ei ole tuntikeikka.
    */
-  hourly: { hours: number; earnedCents: number; perHourCents: number } | null;
+  hourly: {
+    hours: number; earnedCents: number; perHourCents: number;
+    /** Tuntikeikallakin voi olla pestyjä ikkunoita, ja ne maksavat erikseen.
+     *  `perWindowCents` on se mitä TÄMÄ henkilö saa ikkunalta. */
+    windows: number; windowEarnedCents: number; perWindowCents: number;
+  } | null;
 }
 
 /** Guided-progression view for a worker: which floor is open, what's locked, and

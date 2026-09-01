@@ -33,7 +33,8 @@ import {
   emptyGigData, computeTotals, nextInvoiceThreshold, invoiceDue, eur, eur2,
   sanitizeGigData, gigStatus, signatureRequired, FR8_CONTRACT_ID, type GigData, type GigCompany,
 } from "@shared/gig";
-import { computeProjectTotals, fixedDealFor, computeDealBilling, dealAgreedTotalCents, eurFromCents, type ProjectData } from "@shared/project";
+import { computeProjectTotals, fixedDealFor, computeDealBilling, dealAgreedTotalCents, eurFromCents, isHourlyGig, type ProjectData } from "@shared/project";
+import { hourlyItemisation } from "@shared/hourly-money";
 import { computeP2Billing } from "@shared/p2";
 import { p2InvoiceState } from "@shared/worker-payouts";
 import { downloadGigContract, openGigContractForPrint } from "@/lib/gig-contract-doc";
@@ -129,7 +130,7 @@ export default function AdminGigTrackerPage() {
    * kenen 20 000 €:n rajaa se kerryttää. Nyt molemmat kulkevat saman dialogin
    * läpi, jossa nuo valitaan.
    */
-  const [invoiceScope, setInvoiceScope] = useState<"p1" | "p2">("p1");
+  const [invoiceScope, setInvoiceScope] = useState<"p1" | "p2" | "hours">("p1");
   const [sending, setSending] = useState(false);
   const [p2Sending, setP2Sending] = useState(false);
   const [reporting, setReporting] = useState(false);
@@ -463,7 +464,7 @@ export default function AdminGigTrackerPage() {
     if (res.ok && res.data) {
       setGig(res.data.gigData);
       setInvoiceOpen(false);
-      const what = invoiceScope === "p2" ? "Keltaisten lasku" : "Lasku";
+      const what = invoiceScope === "p2" ? "Keltaisten lasku" : invoiceScope === "hours" ? "Tuntilasku" : "Lasku";
       toast(invForm.sendMethod === "verkkolasku"
         ? { title: `${what} — vahvistus lähetetty`, description: `${eur(res.data.amountCents)} → ${recipients} (muista lähettää itse varsinainen verkkolasku)` }
         : { title: `${what} lähetetty`, description: `${eur(res.data.amountCents)} → ${recipients}` });
@@ -479,6 +480,13 @@ export default function AdminGigTrackerPage() {
   const sendP2 = () => {
     if (p2RemainingCents <= 0) return;
     setInvoiceScope("p2");
+    setInvoiceOpen(true);
+  };
+
+  /** Avaa laskudialogin tuntikeikan kertymälle. Lähetys tapahtuu `sendInvoice`ssa. */
+  const sendHours = () => {
+    if (hoursRemainingCents <= 0) return;
+    setInvoiceScope("hours");
     setInvoiceOpen(true);
   };
 
@@ -620,6 +628,16 @@ export default function AdminGigTrackerPage() {
   const p1InvoicedCents = invState.p1InvoicedCents;
   const p2InvoicedCents = invState.invoicedCents;
   const p2RemainingCents = invState.remainingCents;
+  /**
+   * TUNTIKEIKAN LASKUTUS. Summa JA erittely tulevat samasta
+   * `hourlyItemisation`ista jota palvelin käyttää lähetyksessä, joten
+   * dialogissa näkyvä luku on se joka lähtee — ei erillistä esikatselu-
+   * aritmetiikkaa joka voisi ajautua siitä erilleen.
+   */
+  const hourlyBill = project && isHourlyGig(project) ? hourlyItemisation(project) : null;
+  const hoursInvoicedCents = invState.hoursInvoicedCents;
+  const hoursRemainingCents = hourlyBill
+    ? Math.max(0, hourlyBill.customerTotalCents - hoursInvoicedCents) : 0;
   const agreedTotalCents = (deal && project) ? dealAgreedTotalCents(project, deal) : 0;
   const isFinalEra = !!deal && p1PayCount === 3;
   const fixedInstallmentCents = deal
@@ -1258,7 +1276,84 @@ export default function AdminGigTrackerPage() {
               </p>
             </div>
           )}
-          {deal && dealBilling ? (
+          {/* ── TUNTIKEIKKA. Oma haaransa, koska tuntikeikalla ei ole urakan
+                neljää erää eikä kohdehintoja: laskutettava on kertyneet tunnit
+                + asiakkaalle merkityt tarvikkeet + alihankinta katteineen.
+                Erittely näytetään tässä samana kuin se menee laskulle — johtaja
+                ei lähetä summaa jonka koostumusta hän ei nähnyt. */}
+          {hourlyBill ? (
+            <>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-sm text-muted-foreground">Kertynyt yhteensä</span>
+                <span className="text-sm font-semibold text-foreground tabular-nums">{eur(hourlyBill.customerTotalCents)}</span>
+              </div>
+              {hoursInvoicedCents > 0 && (
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm text-muted-foreground">Jo laskutettu</span>
+                  <span className="text-sm font-semibold text-green-600 tabular-nums">{eur(hoursInvoicedCents)}</span>
+                </div>
+              )}
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm text-muted-foreground">Laskuttamatta</span>
+                <span className={`text-lg font-bold tabular-nums ${hoursRemainingCents > 0 ? "text-foreground" : "text-muted-foreground"}`}>
+                  {eur(hoursRemainingCents)}
+                </span>
+              </div>
+
+              {/* Erittely: mistä summa koostuu. Tiedoksi-rivit (esim. pestyt
+                  ikkunat) näkyvät ilman euroa — ne eivät ole toinen veloitus
+                  vaan kertovat mitä tunneilla tehtiin. */}
+              {hourlyBill.lines.length > 0 && (
+                <div className="mb-3 rounded-xl bg-muted/40 p-2.5">
+                  {hourlyBill.lines.map((l, i) => (
+                    <div key={i} className="flex items-baseline justify-between gap-3 py-0.5">
+                      <span className="text-[11px] text-muted-foreground">{l.label}</span>
+                      <span className={`text-[11px] tabular-nums shrink-0 ${l.cents == null ? "text-muted-foreground/70" : "font-semibold text-foreground"}`}>
+                        {l.cents == null ? "—" : eur(l.cents)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Mihin raha jakautuu — sama kolmijako kuin keltaisilla, jottei
+                  "asiakkaalta 26 €/h" ja "tekijälle 15 €/h" näytä ristiriidalta.
+                  Pomojen omista tunneista ei oteta katetta: ne ovat omaa työtä
+                  ja näkyvät "Teille"-sarakkeessa täytenä. */}
+              {hourlyBill.money.billableCents > 0 && (
+                <div className="mb-3 grid grid-cols-3 gap-2 rounded-xl bg-muted/40 p-2.5 text-center">
+                  {([
+                    ["Asiakkaalta", eur(hourlyBill.money.billableCents), "text-foreground"],
+                    ["Tekijöille", eur(hourlyBill.money.workerCostCents), "text-foreground"],
+                    ["Teille", eur(hourlyBill.money.founderWageCents + hourlyBill.money.marginCents), "text-green-600"],
+                  ] as [string, string, string][]).map(([l, v, tone]) => (
+                    <div key={l}>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{l}</p>
+                      <p className={`text-sm font-bold tabular-nums ${tone}`}>{v}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Väärinpäin kirjatut hinnat estävät lähetyksen palvelimella;
+                  sanotaan se tässä ennen kuin nappia painetaan. */}
+              {hourlyBill.money.rateInverted && (
+                <p className="mb-3 text-[11px] leading-snug text-red-600 dark:text-red-400">
+                  Tuntipalkka on suurempi kuin asiakkaan tuntihinta — tarkista hinnat ennen laskutusta.
+                </p>
+              )}
+              {!hourlyBill.matchesBilling && (
+                <p className="mb-3 text-[11px] leading-snug text-red-600 dark:text-red-400">
+                  Erittely ei täsmää kokonaissummaan. Laskua ei voi lähettää ennen kuin syy on selvitetty.
+                </p>
+              )}
+
+              <Button className="w-full" disabled={hoursRemainingCents <= 0 || !hourlyBill.matchesBilling || hourlyBill.money.rateInverted} onClick={sendHours}>
+                <Send className="w-4 h-4 mr-2" />
+                {hoursRemainingCents > 0 ? `Lähetä tuntilasku (${eur(hoursRemainingCents)})` : "Kaikki tunnit laskutettu ✓"}
+              </Button>
+            </>
+          ) : deal && dealBilling ? (
             p1PayCount >= 4 ? (
               /* Kaikki neljä erää lähetetty — sopimus laskutettu. Ei haamu-
                  "seuraava erä 1575 €" eikä kuollutta lähetysnappia. */
@@ -1422,20 +1517,38 @@ export default function AdminGigTrackerPage() {
       <Dialog open={invoiceOpen} onOpenChange={setInvoiceOpen}>
         <DialogContent className="max-w-md max-h-[88vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{invoiceScope === "p2" ? "Lähetä keltaisten lasku" : "Lähetä lasku"}</DialogTitle>
+            <DialogTitle>{invoiceScope === "p2" ? "Lähetä keltaisten lasku" : invoiceScope === "hours" ? "Lähetä tuntilasku" : "Lähetä lasku"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div className="rounded-xl bg-muted p-3 text-center">
               <p className="text-xs text-muted-foreground">
                 {invoiceScope === "p2"
                   ? "Keltaiset ikkunat — laskuttamaton kertymä"
+                  : invoiceScope === "hours"
+                  ? "Tunnit, tarvikkeet ja alihankinta — laskuttamaton kertymä"
                   : deal ? `Maksuerä ${invForm.paymentNumber}/4 — kiinteähintainen sopimus` : "Laskutettava summa"}
               </p>
               <p className="text-2xl font-bold text-foreground tabular-nums">
                 {invoiceScope === "p2"
                   ? eur2(p2RemainingCents)
+                  : invoiceScope === "hours"
+                  ? eur2(hoursRemainingCents)
                   : deal ? eur2(fixedInstallmentCents) : eur2(totals.uninvoicedCents)}
               </p>
+              {/* Erittely myös dialogissa: lähetysnapin vieressä on nähtävä
+                  mistä summa koostuu, ei vain montako euroa lähtee. */}
+              {invoiceScope === "hours" && hourlyBill && hourlyBill.lines.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-border/60 text-left">
+                  {hourlyBill.lines.map((l, i) => (
+                    <div key={i} className="flex items-baseline justify-between gap-3 py-0.5">
+                      <span className="text-[11px] text-muted-foreground">{l.label}</span>
+                      <span className={`text-[11px] tabular-nums shrink-0 ${l.cents == null ? "text-muted-foreground/70" : "font-semibold text-foreground"}`}>
+                        {l.cents == null ? "—" : eur2(l.cents)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <div>
               <Label className="text-xs">Lähetystapa</Label>
@@ -1461,7 +1574,7 @@ export default function AdminGigTrackerPage() {
                   : "Puuhapatet lähettää täyden, eritellyn laskun suoraan sähköpostitse."}
               </p>
             </div>
-            {deal && (
+            {deal && invoiceScope === "p1" && (
               <div>
                 <Label className="text-xs">Maksuerä (monesko)</Label>
                 <select

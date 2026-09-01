@@ -16,11 +16,12 @@ import {
   dealInternalRateCents, isCommunityGig,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense, type LampStatus,
   type LampCondition, type DoorStatus, type FixtureOrder, type LampModel, type ProjBoardEntry,
-  billingModeOf, type BillingMode, computeShiftStats, type ProjShift,
+  billingModeOf, type BillingMode, computeShiftStats, isHourlyGig, type ProjShift,
 } from "@shared/project";
 import { ArrowLeft } from "lucide-react";
 import { computeP2Billing, customerAddedKeys, p2FounderOpts, p2CustomerLocksSince, p2Itemisation, p2WashedYellows, p2WorkerSplit, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule, type P2WashedState } from "@shared/p2";
 import { computeGuided, type GuidedWork } from "@shared/guided";
+import { computeHourlyMoney } from "@shared/hourly-money";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
 import ModeChooser, { type GigSide } from "@/components/fr8/ModeChooser";
 import { splitCentsEvenly, FOUNDER_IDS } from "@shared/team";
@@ -883,6 +884,21 @@ export default function AdminProjectPage() {
   // KERROSTEN LUKITUS -paneelilla, jotta kartta ei anna enempää oikeuksia.
   const canEditLocks = profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "");
 
+  /**
+   * TUNTITILAN RAHA yhdestä laskennasta. Sama funktio muodostaa laskun rivit
+   * palvelimella, joten tuntipaneelissa näkyvä summa ei voi olla eri kuin
+   * laskutettava — kate ja sen jako eivät ole näkymän omaa aritmetiikkaa.
+   *
+   * TÄMÄ ON POISTUMISTEN YLÄPUOLELLA. `project` on tässä vielä mahdollisesti
+   * null (lataus kesken), joten ehto on siinä eikä hookin ympärillä: hook
+   * poistumisen alapuolella tuottaisi #310:n heti kun data saapuu.
+   * Ks. `project-hooks.test.ts`.
+   */
+  const hourlyMoney = useMemo(
+    () => (project && isHourlyGig(project) ? computeHourlyMoney(project) : null),
+    [project],
+  );
+
   // ── Render ──────────────────────────────────────────────────────────────────
   const shell = (children: React.ReactNode) => (
     <div className="fr8-root" style={{ position: "fixed", inset: 0, background: "#060607", color: "#fff", overflow: "hidden", fontFamily: "var(--font-onest, system-ui, sans-serif)" }}>
@@ -1346,6 +1362,7 @@ export default function AdminProjectPage() {
             onAddHours={canAdjustHours ? addShiftHours : undefined}
             people={hourPeople}
             onRemoveShift={canAdjustHours ? removeShift : undefined}
+            money={canAdjustHours ? hourlyMoney : null}
             busy={shiftBusy}
           />
 

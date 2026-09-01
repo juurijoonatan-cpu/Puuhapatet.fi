@@ -17,6 +17,7 @@ import TaskBoard from "@/components/TaskBoard";
 import { useRoute } from "wouter";
 import { api, warmBackend, type WorkerView, type GuidedWorkerView } from "@/lib/api";
 import type { WindowStatus, LampStatus, LampCondition, DoorStatus } from "@shared/project";
+import { fmtShiftHours } from "@shared/project";
 import {
   ALL_AGREEMENTS, PROFILE_QUESTIONS, PROFILE_REQUIRED_IDS, WORKER_AGREEMENT_VERSION,
   INSURANCE_QUESTION, INSURANCE_LATER_NOTE, RISK_ACK_TEXT, INSURANCE_ANSWER_KEY, RISK_ACK_KEY,
@@ -1515,6 +1516,9 @@ function HomeTab({ view, setTab, board, onAddBoardEntry, onToggleBoardTask, pend
 }) {
   const s = view.stats;
   const todayWashed = view.todayWashed ?? 0;
+  /** Tuntikeikalla tekijän oma rivi: tehdyt tunnit + niistä kertynyt palkka.
+   *  Null muissa laskutustiloissa (silloin ansio tulee ikkunoista). */
+  const hourlyMe = view.billingMode === "hourly" ? view.hourly : null;
   // Live progress from the worker's OWN map data, so it always matches what they
   // see on the map. Punaiset (sopimus) ja keltaiset (lisätyöt) erikseen — mutta
   // iso prosentti lasketaan MOLEMMISTA. Aiemmin luku katsoi vain punaisia, joten
@@ -1632,7 +1636,26 @@ function HomeTab({ view, setTab, board, onAddBoardEntry, onToggleBoardTask, pend
         </div>
       </div>
 
-      {/* Your own contribution + earnings */}
+      {/* OMA TULOS.
+          Tuntikeikalla ansio EI tule ikkunoista vaan tunneista, joten
+          ikkunapohjainen `s.earnedCents` näyttäisi siellä väärän summan (tai
+          nollan). Tuntitilassa näytetään tekijän omat tunnit ja niistä
+          kertynyt palkka; muissa tiloissa ikkunat ja ikkuna-ansio kuten ennen. */}
+      {hourlyMe ? (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+          <div style={{ padding: 16, borderRadius: 14, background: "rgba(124,224,166,0.10)", border: "1px solid rgba(124,224,166,0.22)" }}>
+            <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Kertynyt palkka</p>
+            <p style={{ margin: "4px 0 0", fontSize: 26, fontWeight: 800, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(Math.round(hourlyMe.earnedCents * grow))}</p>
+            <p style={{ margin: "3px 0 0", fontSize: 11, color: "rgba(255,255,255,0.5)", fontVariantNumeric: "tabular-nums" }}>
+              {euro(hourlyMe.perHourCents)} / h
+            </p>
+          </div>
+          <div style={{ padding: 16, borderRadius: 14, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
+            <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Tehdyt tunnit</p>
+            <p style={{ margin: "4px 0 0", fontSize: 26, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{fmtShiftHours(hourlyMe.hours)}<span style={{ fontSize: 15, fontWeight: 600, color: "rgba(255,255,255,0.4)" }}> h</span></p>
+          </div>
+        </div>
+      ) : (
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
         <div style={{ padding: 16, borderRadius: 14, background: "rgba(124,224,166,0.10)", border: "1px solid rgba(124,224,166,0.22)" }}>
           <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Sinun ansiosi</p>
@@ -1663,6 +1686,7 @@ function HomeTab({ view, setTab, board, onAddBoardEntry, onToggleBoardTask, pend
           <p style={{ margin: "4px 0 0", fontSize: 26, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{s.washed.toLocaleString("fi-FI", { maximumFractionDigits: 1 })}</p>
         </div>
       </div>
+      )}
 
       {/* Quick actions */}
       <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
@@ -1697,10 +1721,10 @@ function HomeTab({ view, setTab, board, onAddBoardEntry, onToggleBoardTask, pend
       </div>
 
       {/* Total hours only — no €/h average (the per-hour read-out isn't shown to workers).
-          TUNTITILASSA EI EDES TÄTÄ: siellä tunnit ovat palkka, ja johtajat
-          päättävät luvun (pyöristys + käsin korjaus). Jos tekijä näkisi
-          juoksevan summan, hän tekisi siitä omat johtopäätöksensä ennen kuin
-          johtaja on sen tarkistanut. Ks. `BillingMode`. */}
+          TUNTITILASSA TÄMÄ RIVI ON TURHA: siellä tunnit ovat itse ansio ja ne
+          näkyvät jo yllä oman palkkansa kanssa, joten sama luku kahdesti vain
+          hämmentäisi. (Aiemmin tuntitila piilotti summan kokonaan; se päätös
+          on kumottu — tekijän on nähtävä oma tuloksensa.) */}
       {/* TYÖTAULU. Asiakkaan pyynnöt ja oma työpäiväkirja samassa listassa,
           heti kotinäkymässä — tehtävä jota pitää etsiä valikosta ei tule
           tehdyksi. */}
@@ -2406,8 +2430,9 @@ function HoursTab({ token, view, setView, notify }: { token: string; view: Worke
   const target = view.worker.shiftTargetHours ?? null;
   /**
    * Kello tikittää minuutin välein VAIN tavoitteen tarkistusta varten — tekijä
-   * ei näe kuluvaa aikaa (ks. `BillingMode`), joten tiheämpi päivitys ei
-   * hyödyttäisi mitään ja söisi akkua työmaalla.
+   * ei näe kuluvaa vuoroa sekuntikellona (kirjatut tunnit ja niistä kertynyt
+   * palkka näkyvät alla vasta kun vuoro on päätetty ja palvelin on kirjannut
+   * tunnit), joten tiheämpi päivitys ei hyödyttäisi mitään ja söisi akkua.
    */
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -2532,8 +2557,28 @@ function HoursTab({ token, view, setView, notify }: { token: string; view: Worke
   const statusLabel = onBreak ? "Tauolla" : running ? "Työaika käynnissä" : "Et ole töissä";
   const statusColor = onBreak ? "#E0A800" : running ? "#7CE0A6" : "rgba(255,255,255,0.55)";
 
+  /** Tuntikeikalla: tekijän omat kirjatut tunnit ja niistä kertynyt palkka. */
+  const me = hourly ? view.hourly : null;
+
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: 20 }}>
+      {/* OMA KERTYMÄ. Tuntikeikalla tunnit OVAT palkka, joten juuri siinä
+          näkymässä jossa tunnit kirjataan on kerrottava mitä niistä on tullut.
+          Vain oma rivi ja oma tuntihinta — asiakkaan hinta ei kulje tänne. */}
+      {me && (
+        <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "16px 18px", marginBottom: 14, borderRadius: 16,
+          background: "linear-gradient(155deg, rgba(124,224,166,0.12), rgba(255,255,255,0.03))", border: "1px solid rgba(124,224,166,0.24)" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.55)" }}>Kertynyt palkka</p>
+            <p style={{ margin: "3px 0 0", fontSize: 27, fontWeight: 800, color: "#7CE0A6", fontVariantNumeric: "tabular-nums" }}>{euro(me.earnedCents)}</p>
+          </div>
+          <div style={{ textAlign: "right", flexShrink: 0 }}>
+            <p style={{ margin: 0, fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)" }}>Tunnit</p>
+            <p style={{ margin: "3px 0 0", fontSize: 20, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtShiftHours(me.hours)} h</p>
+            <p style={{ margin: "2px 0 0", fontSize: 11, color: "rgba(255,255,255,0.42)", fontVariantNumeric: "tabular-nums" }}>{euro(me.perHourCents)} / h</p>
+          </div>
+        </div>
+      )}
       <div style={{ padding: "26px 20px", borderRadius: 18, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", textAlign: "center" }}>
         {/* Status — a label + dot, never a running clock */}
         <div style={{ display: "inline-flex", alignItems: "center", gap: 9, padding: "8px 16px", borderRadius: 999, background: "rgba(255,255,255,0.05)", border: `1px solid ${running ? (onBreak ? "rgba(224,168,0,0.35)" : "rgba(124,224,166,0.35)") : "rgba(255,255,255,0.12)"}` }}>
@@ -2560,11 +2605,11 @@ function HoursTab({ token, view, setView, notify }: { token: string; view: Worke
           )}
         </div>
 
-        {/* OMA TAVOITE. Tuntitilassa tekijä ei näe kertyneitä tunteja, joten
-            päivällä ei olisi mittaria lainkaan. Tavoite on se mittari: se ei
-            rajoita mitään eikä vaikuta palkkaan — se vain sanoo kun sovittu
-            määrä on täynnä. Näkyy vain vuoron ollessa käynnissä, koska se
-            koskee tätä vuoroa eikä ole pysyvä asetus. */}
+        {/* OMA TAVOITE. Kertymä yllä kertoo mitä on jo kirjattu, mutta ei
+            mitään KULUVASTA vuorosta — tavoite on sen mittari: se ei rajoita
+            mitään eikä vaikuta palkkaan, se vain sanoo kun sovittu määrä on
+            täynnä. Näkyy vain vuoron ollessa käynnissä, koska se koskee tätä
+            vuoroa eikä ole pysyvä asetus. */}
         {hourly && running && (
           <div style={{ marginTop: 20, paddingTop: 18, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
             {targetReached ? (

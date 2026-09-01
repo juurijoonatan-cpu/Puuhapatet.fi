@@ -24,8 +24,9 @@ import {
   type ProjShift,
 } from "@shared/project";
 import type { CrewMember } from "@shared/crew";
+import type { HourlyMoney } from "@shared/hourly-money";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { T, card, inset, mono } from "./tokens";
+import { T, card, inset, mono, eur } from "./tokens";
 
 interface Props {
   shifts: ProjShift[] | undefined;
@@ -46,6 +47,14 @@ interface Props {
   people?: { id: string; name: string }[];
   /** Poista väärin kirjattu rivi päiväkirjasta. */
   onRemoveShift?: (id: string) => void;
+  /**
+   * TUNTITILAN RAHA — laskettuna kerran `computeHourlyMoney`illa, ei täällä.
+   *
+   * Puuttuessaan rahakorttia ei näytetä lainkaan: tuntipalkat, kate ja sen
+   * jako ovat perustajien tietoa, joten kutsuja antaa tämän vain heille.
+   * Paneeli ei itse päättele kuka saa nähdä mitä — pääsy on yhdessä paikassa.
+   */
+  money?: HourlyMoney | null;
   busy?: boolean;
 }
 
@@ -75,7 +84,7 @@ function todayLabel(now: number): string {
 }
 
 export default function HourlyPanel({
-  shifts, crew, workerName, me, onStartShift, onStopShift, onAdjustHours, onAddHours, onRemoveShift, busy, people,
+  shifts, crew, workerName, me, onStartShift, onStopShift, onAdjustHours, onAddHours, onRemoveShift, money, busy, people,
 }: Props) {
   const m = useIsMobile();
   const [now, setNow] = useState(() => Date.now());
@@ -276,6 +285,94 @@ export default function HourlyPanel({
         </div>
       )}
 
+      {/* 2.5 RAHA. Yksi kortti johon mahtuu koko kysymys: mitä asiakas maksaa,
+          mitä siitä menee tekijöille ja mitä jää meille — ja miten se jää
+          jaetaan. Luvut tulevat `computeHourlyMoney`ilta samasta laskennasta
+          jolla lasku muodostetaan, joten tässä näkyvä summa ON laskun summa.
+
+          PERUSTAJAN TUNNISTA EI OTETA KATETTA. Se on oma työ ja tuottaa koko
+          tuntihinnan tekijälleen; kate syntyy vain työntekijätunneista. Siksi
+          "oma työ" ja "kate" ovat kortilla erillisinä riveinä eivätkä yhtenä
+          summana — muuten kukaan ei näkisi kummasta raha tuli. */}
+      {money && (
+        <div style={{ ...card, padding: m ? T.space.lg : T.space.xl }}>
+          <div style={{ ...mono, color: T.text.faint }}>ASIAKKAALTA</div>
+          <div style={{ fontFamily: T.font, fontSize: m ? T.size.hero - 6 : T.size.hero, fontWeight: 700, lineHeight: 1.1, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
+            {eur(money.customerTotalCents)}
+          </div>
+          <div style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted, marginTop: T.space.xs }}>
+            {fmtShiftHours(money.totalHours)} h × {eur(money.hourRateCents)}/h
+            {money.customerCostCents > 0 && ` · tarvikkeet ${eur(money.customerCostCents)}`}
+            {money.subcontractCostCents > 0 && ` · alihankinta ${eur(money.subcontractCostCents + money.subcontractMarginCents)}`}
+          </div>
+
+          {/* Väärinpäin kirjatut hinnat sanotaan ääneen. Ilman tätä kate vain
+              katoaisi nollaan eikä mikään kertoisi miksi. */}
+          {money.rateInverted && (
+            <p style={{ margin: `${T.space.md}px 0 0`, padding: T.space.md, borderRadius: T.radius.md, border: `1px solid ${T.tone.warnBorder}`, background: T.tone.warnBg, fontFamily: T.font, fontSize: T.size.xs, color: T.tone.warn, lineHeight: 1.55 }}>
+              Tuntipalkka ({eur(money.workerHourCents)}/h) on suurempi kuin asiakkaan tuntihinta ({eur(money.hourRateCents)}/h).
+              Kate on nolla — tarkista hinnat keikan asetuksista.
+            </p>
+          )}
+
+          <div style={{ display: "flex", flexDirection: "column", gap: T.space.sm, marginTop: T.space.md }}>
+            {/* MENEE TEKIJÖILLE. Tämä ei ole meidän rahaamme missään vaiheessa,
+                joten se on omana rivinään eikä vähennyksenä katteesta. */}
+            {money.workerCostCents > 0 && (
+              <div style={{ ...inset, padding: T.space.md }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: T.space.sm }}>
+                  <span style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted }}>Tekijöille tuntipalkkaa</span>
+                  <span style={{ marginLeft: "auto", fontFamily: T.font, fontSize: T.size.title, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                    {eur(money.workerCostCents)}
+                  </span>
+                </div>
+                <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginTop: 3 }}>
+                  {fmtShiftHours(money.workerHours)} h × {eur(money.workerHourCents)}/h
+                </div>
+              </div>
+            )}
+
+            {/* MEILLE. Oma työ ja kate erikseen, sitten kummallekin nimelle
+                oma rivi — "meidän tuottomme" ilman nimiä ei kerro kenelle. */}
+            <div style={{ ...inset, padding: T.space.md }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: T.space.sm }}>
+                <span style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted }}>Meille</span>
+                <span style={{ marginLeft: "auto", fontFamily: T.font, fontSize: T.size.title, fontWeight: 700, color: T.tone.goodSoft, fontVariantNumeric: "tabular-nums" }}>
+                  {eur(money.founderWageCents + money.marginCents)}
+                </span>
+              </div>
+              <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginTop: 3, lineHeight: 1.6 }}>
+                {money.founderWageCents > 0 && `oma työ ${fmtShiftHours(money.founderHours)} h = ${eur(money.founderWageCents)}`}
+                {money.founderWageCents > 0 && money.marginCents > 0 && " · "}
+                {money.marginCents > 0 && `kate työntekijätunneista ${eur(money.marginCents)}`}
+                {money.subcontractMarginCents > 0 && ` · sis. alihankinnan kate ${eur(money.subcontractMarginCents)}`}
+                {money.founderWageCents === 0 && money.marginCents === 0 && "ei vielä kertymää"}
+              </div>
+
+              {money.byFounder.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: T.space.md, paddingTop: T.space.md, borderTop: T.border.divider }}>
+                  {money.byFounder.map((f) => (
+                    <div key={f.id} style={{ display: "flex", alignItems: "baseline", gap: T.space.sm }}>
+                      <span style={{ fontFamily: T.font, fontSize: T.size.sm, fontWeight: 600 }}>
+                        {workerName(f.id)}{f.id === me ? " (sinä)" : ""}
+                      </span>
+                      <span style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint }}>
+                        {f.wageCents > 0 ? `oma työ ${eur(f.wageCents)}` : ""}
+                        {f.wageCents > 0 && f.marginCents > 0 ? " + " : ""}
+                        {f.marginCents > 0 ? `kate ${eur(f.marginCents)}` : ""}
+                      </span>
+                      <span style={{ marginLeft: "auto", fontFamily: T.font, fontSize: T.size.body, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                        {eur(f.totalCents)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 3. KUKA ON TEHNYT MONTAKO. Töissä olevat ylimpänä. */}
       <div style={{ ...card, padding: m ? T.space.lg : T.space.xl }}>
         <div style={{ ...mono, color: T.text.faint, marginBottom: T.space.md }}>TEKIJÄT</div>
@@ -335,7 +432,8 @@ export default function HourlyPanel({
 
         {onAdjustHours && (
           <p style={{ margin: `${T.space.md}px 0 0`, fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, lineHeight: 1.6 }}>
-            Tekijä ei näe omia tuntejaan. Korjaus kirjautuu tälle päivälle ja näkyy päiväkirjassa.
+            Tekijä näkee omat tuntinsa ja niistä kertyneen palkkansa — ei muiden eikä asiakkaan hintaa.
+            Korjaus kirjautuu tälle päivälle ja näkyy päiväkirjassa.
           </p>
         )}
 

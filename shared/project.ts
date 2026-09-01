@@ -428,6 +428,52 @@ export function sanitizeShifts(input: any): ProjShift[] {
       ...(s?.note ? { note: String(s.note).trim().slice(0, MAX_SHIFT_NOTE_LEN) } : {}),
     });
   }
+  return healShiftDebt(out);
+}
+
+/**
+ * ORVON MIINUSVELAN KORJAUS — vanhan vian jälkisiivous.
+ *
+ * `addShiftEntry` osasi ennen luoda miinusrivin silloin kun päivän tunnit
+ * olivat ajastimen vuorossa (ks. sen kommentti). Kun se plusrivi myöhemmin
+ * poistettiin, miinus jäi: tekijä+päivä jäi miinukselle, tekijän elinikäinen
+ * summa painui nollaan tai alle, ja hän katosi tekijälistalta vaikka muilla
+ * päivillä oli tunteja.
+ *
+ * Itse vika on korjattu, mutta jo tallennettu velka ei katoa itsestään —
+ * eikä sitä voi jättää odottamaan, koska se näkyy ruudulla nollana tunteina.
+ * Tämä puretaan siis lukiessa: jos tekijän yhden päivän rivit summautuvat
+ * miinukselle, miinusrivejä kutistetaan kunnes päivä on nollassa. Plusrivejä
+ * ei kosketa koskaan — oikeaa kirjattua työtä ei siivota pois.
+ *
+ * Rajaus on nollaan eikä poistoon, koska nollaan päätynyt päivä on
+ * legitiimi lopputulos (tunti kirjattiin ja korjattiin pois).
+ */
+function healShiftDebt(rows: ProjShift[]): ProjShift[] {
+  const sum = new Map<string, number>();
+  for (const s of rows) {
+    const k = `${s.worker}\u0000${s.day}`;
+    sum.set(k, (sum.get(k) ?? 0) + s.hours);
+  }
+  // Ei velkaa → ei kosketa mihinkään. Valtaosa keikoista päätyy tähän.
+  let broken = false;
+  for (const v of Array.from(sum.values())) if (v < -0.001) { broken = true; break; }
+  if (!broken) return rows;
+
+  const debt = new Map<string, number>();
+  for (const [k, v] of Array.from(sum.entries())) if (v < 0) debt.set(k, -v);
+
+  const out: ProjShift[] = [];
+  for (const s of rows) {
+    const k = `${s.worker}\u0000${s.day}`;
+    const owed = debt.get(k) ?? 0;
+    if (owed <= 0 || s.hours >= 0) { out.push(s); continue; }
+    // Miinusrivi kuittaa velkaa oman suuruutensa verran.
+    const take = Math.min(-s.hours, owed);
+    debt.set(k, Math.round((owed - take) * 100) / 100);
+    const left = Math.round((s.hours + take) * 100) / 100;
+    if (left !== 0) out.push({ ...s, hours: left });
+  }
   return out;
 }
 
@@ -466,42 +512,73 @@ export interface ShiftStats {
  */
 export function computeShiftStats(shifts: ProjShift[] | undefined, today: string = dayKey()): ShiftStats {
   const list = shifts ?? [];
-  const wSum = new Map<string, { hours: number; days: Set<string>; lastAt: number }>();
-  const dSum = new Map<string, Map<string, number>>();
-  let todayHours = 0;
+  /**
+   * KAIKKI LUVUT JOHDETAAN YHDESTÄ TAULUKOSTA: tekijä × päivä.
+   *
+   * Ennen tekijäsummat ja päiväsummat laskettiin erikseen samasta listasta, ja
+   * kumpikin rajattiin nollaan vasta lopuksi. Yksi miinusrivi riitti
+   * repäisemään ne erilleen: tekijän elinikäinen summa saattoi mennä nollaan
+   * tai alle, jolloin hän katosi tekijälistalta KOKONAAN — myös niiltä
+   * päiviltä joilla hänen tuntinsa olivat plussalla. Ruudulla se näkyi
+   * mahdottomuutena: "viikko 28 h · yhteensä 20,5 h". Viikko ei voi olla
+   * suurempi kuin koko keikka.
+   *
+   * Nyt rajaus tehdään SOLUSSA — yhden päivän miinus ei voi syödä toisen
+   * päivän tunteja — ja sekä tekijä- että päiväsummat lasketaan samasta
+   * rajatusta taulukosta. Silloin ne eivät voi olla eri mieltä.
+   */
+  const cell = new Map<string, Map<string, number>>(); // day -> worker -> hours
+  const lastAtOf = new Map<string, number>();
+  const seenWorkers = new Set<string>();
 
   for (const s of list) {
-    const w = wSum.get(s.worker) ?? { hours: 0, days: new Set<string>(), lastAt: 0 };
-    w.hours += s.hours;
-    w.days.add(s.day);
-    w.lastAt = Math.max(w.lastAt, s.at);
-    wSum.set(s.worker, w);
-
-    const d = dSum.get(s.day) ?? new Map<string, number>();
+    const d = cell.get(s.day) ?? new Map<string, number>();
     d.set(s.worker, (d.get(s.worker) ?? 0) + s.hours);
-    dSum.set(s.day, d);
+    cell.set(s.day, d);
+    lastAtOf.set(s.worker, Math.max(lastAtOf.get(s.worker) ?? 0, s.at));
+    seenWorkers.add(s.worker);
+  }
 
-    if (s.day === today) todayHours += s.hours;
+  /** Solu ei mene miinukselle: rikkinäinen korjausrivi jää omaan päiväänsä. */
+  const cellHours = (day: string, worker: string): number =>
+    Math.max(0, Math.round((cell.get(day)?.get(worker) ?? 0) * 100) / 100);
+
+  const wSum = new Map<string, { hours: number; days: Set<string> }>();
+  let todayHours = 0;
+  for (const [day, m] of Array.from(cell.entries())) {
+    for (const worker of Array.from(m.keys())) {
+      const h = cellHours(day, worker);
+      if (h <= 0) continue;
+      const w = wSum.get(worker) ?? { hours: 0, days: new Set<string>() };
+      w.hours += h;
+      w.days.add(day);
+      wSum.set(worker, w);
+      if (day === today) todayHours += h;
+    }
   }
 
   const byWorker: ShiftWorkerRow[] = Array.from(wSum.entries())
-    .map(([id, v]) => ({ id, hours: Math.max(0, Math.round(v.hours * 100) / 100), days: v.days.size, lastAt: v.lastAt }))
+    .map(([id, v]) => ({ id, hours: Math.round(v.hours * 100) / 100, days: v.days.size, lastAt: lastAtOf.get(id) ?? 0 }))
     .filter((r) => r.hours > 0)
     .sort((a, b) => b.hours - a.hours || a.id.localeCompare(b.id));
 
-  const byDay: ShiftDayRow[] = Array.from(dSum.entries())
-    .map(([day, m]) => ({
-      day,
-      hours: Math.max(0, Math.round(Array.from(m.values()).reduce((a, h) => a + h, 0) * 100) / 100),
-      workers: Array.from(m.entries())
-        .map(([id, hours]) => ({ id, hours: Math.round(hours * 100) / 100 }))
+  const byDay: ShiftDayRow[] = Array.from(cell.entries())
+    .map(([day, m]) => {
+      const workers = Array.from(m.keys())
+        .map((id) => ({ id, hours: cellHours(day, id) }))
         .filter((x) => x.hours > 0)
-        .sort((a, b) => b.hours - a.hours || a.id.localeCompare(b.id)),
-    }))
+        .sort((a, b) => b.hours - a.hours || a.id.localeCompare(b.id));
+      return {
+        day,
+        hours: Math.round(workers.reduce((a, w) => a + w.hours, 0) * 100) / 100,
+        workers,
+      };
+    })
     .filter((d) => d.hours > 0)
     .sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : 0));
 
   return {
+    // Sama taulukko molemmilta suunnilta: päivien summa ON tekijöiden summa.
     totalHours: Math.round(byWorker.reduce((a, r) => a + r.hours, 0) * 100) / 100,
     todayHours: Math.max(0, Math.round(todayHours * 100) / 100),
     byWorker,
@@ -509,10 +586,24 @@ export function computeShiftStats(shifts: ProjShift[] | undefined, today: string
   };
 }
 
-/** Tekijän tunnit tuntitilassa. Käsin korjaus ei saa viedä alle nollan. */
+/**
+ * Tekijän tunnit tuntitilassa.
+ *
+ * RAJAUS ON PÄIVÄKOHTAINEN, ei vasta lopussa. Koko listan summan rajaaminen
+ * nollaan antoi yhden miinuspäivän syödä toisten päivien tunnit: se oli se
+ * laskutapa jolla oma tuntikortti näytti "0 h" samalla kun sen alla luki
+ * "ke 26.8. 3,5 h". Sama sääntö kuin `computeShiftStats`illa, jotta kortti ja
+ * kalenteri eivät voi olla eri mieltä.
+ */
 export function shiftHoursOf(shifts: ProjShift[] | undefined, worker: string): number {
-  const sum = (shifts ?? []).filter((s) => s.worker === worker).reduce((a, s) => a + s.hours, 0);
-  return Math.max(0, Math.round(sum * 100) / 100);
+  const byDay = new Map<string, number>();
+  for (const s of shifts ?? []) {
+    if (s.worker !== worker) continue;
+    byDay.set(s.day, (byDay.get(s.day) ?? 0) + s.hours);
+  }
+  let total = 0;
+  for (const h of Array.from(byDay.values())) total += Math.max(0, Math.round(h * 100) / 100);
+  return Math.round(total * 100) / 100;
 }
 
 /** Tekijän tunnit YHTENÄ päivänä. */
@@ -552,6 +643,48 @@ export function addShiftEntry(
   const dayCur = shiftHoursOnDay(shifts, entry.worker, entry.day);
   const hours = entry.hours < 0 ? -Math.min(dayCur, -entry.hours) : entry.hours;
   if (!hours) return shifts;
+
+  /**
+   * VÄHENNYS PIENENTÄÄ OLEMASSA OLEVIA RIVEJÄ — EI LUO MIINUSRIVIÄ.
+   *
+   * Tämä oli aito rahavika. Rajaus yllä katsoo koko PÄIVÄN saldoa, mutta
+   * yhdistäminen alla osui vain käsin kirjattuun riviin. Kun päivän tunnit
+   * olivat ajastimen rivissä (`startedAt`), miinus ei siis pienentänyt mitään:
+   * se loi rinnalle uuden rivin arvolla −0,5 ja kasvatti sitä joka
+   * painalluksella. Päivän summa näytti oikealta, koska +35 ja −35 kumosivat
+   * toisensa.
+   *
+   * Sitten kun se +35 h:n rivi poistettiin, miinusrivi jäi. Tekijän
+   * elinikäinen summa meni miinukselle, `shiftHoursOf` rajasi sen nollaan, ja
+   * hän katosi tekijälistalta kokonaan — vaikka muilla päivillä oli tunteja.
+   * Juuri niin kuin ruudulla näkyi: "OMAT TUNTINI 0 h", alla "ke 26.8. 3,5 h".
+   *
+   * Nyt vähennys puretaan riveistä: ensin käsin kirjatut (ne ovat korjauksia),
+   * sitten ajastimen vuorot, uusimmasta alkaen. Nollaan kutistunut rivi
+   * poistetaan. Näin yksikään rivi ei voi jäädä miinukselle, eikä poisto voi
+   * jättää jälkeensä velkaa jota mikään ei enää kuittaa.
+   */
+  if (hours < 0) {
+    let left = -hours;
+    const order = shifts
+      .map((s, i) => ({ s, i }))
+      .filter(({ s }) => s.worker === entry.worker && s.day === entry.day && s.hours > 0)
+      // Käsin kirjatut ensin, sitten ajastimen vuorot — kummatkin uusin ensin.
+      // Ajastimen alkuaika on tietoa työvuorosta, joten sitä kosketaan vasta
+      // kun korjausrivejä ei enää ole.
+      .sort((a, b) => (a.s.startedAt ? 1 : 0) - (b.s.startedAt ? 1 : 0) || b.s.at - a.s.at);
+
+    const cut = new Map<number, number>();
+    for (const { s, i } of order) {
+      if (left <= 0) break;
+      const take = Math.min(s.hours, left);
+      cut.set(i, Math.round((s.hours - take) * 100) / 100);
+      left = Math.round((left - take) * 100) / 100;
+    }
+    return shifts
+      .map((s, i) => (cut.has(i) ? { ...s, hours: cut.get(i)! } : s))
+      .filter((s) => s.hours !== 0);
+  }
 
   if (!entry.startedAt) {
     const idx = shifts.findIndex((s) => s.worker === entry.worker && s.day === entry.day && !s.startedAt);

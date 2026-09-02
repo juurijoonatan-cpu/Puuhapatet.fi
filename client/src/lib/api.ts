@@ -1449,7 +1449,14 @@ export const api = {
      * erikseen, ja niiden välissä on ikkuna jossa toinen on vanha.
      */
     expectAmountCents?: number;
-  }) => request<{ ok: boolean; id?: string; amountCents: number; gigData: GigData }>(
+    /**
+     * KOELÄHETYS: sama lasku johtajille, ei asiakkaalle. Ei kirjaa maksua eikä
+     * siirrä laskureita — pelkkä sähköposti ulkoasun tarkistamiseen.
+     */
+    testSend?: boolean;
+    /** Kenelle koelähetys menee ensisijaisesti (painajan oma osoite). */
+    senderEmail?: string;
+  }) => request<{ ok: boolean; test?: boolean; id?: string; amountCents: number; to?: string; gigData: GigData }>(
     "POST", `/api/jobs/${jobId}/gig/invoice`, data,
   ),
 

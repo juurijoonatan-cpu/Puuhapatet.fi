@@ -462,7 +462,8 @@ export default function AdminGigTrackerPage() {
     }
   };
 
-  const sendInvoice = async () => {
+  const sendInvoice = async (opts?: { test?: boolean }) => {
+    const testSend = opts?.test === true;
     /**
      * SUMMA JONKA TÄMÄ DIALOGI NÄYTTÄÄ.
      *
@@ -508,8 +509,20 @@ export default function AdminGigTrackerPage() {
       sendMethod: invForm.sendMethod,
       scope: invoiceScope,
       expectAmountCents,
+      ...(testSend ? { testSend: true, senderEmail: profile?.email || biller?.email || undefined } : {}),
     });
     setSending(false);
+    if (testSend) {
+      // Koelähetys ei muuta mitään: dialogi jää auki, jotta luvut voi
+      // tarkistaa sähköpostista ja lähettää sitten oikeasti samasta paikasta.
+      if (res.ok && res.data) {
+        toast({ title: "Koelähetys lähti sinulle",
+          description: `${eur(res.data.amountCents)} → ${res.data.to || "johtajille"}. Asiakkaalle ei lähtenyt mitään.` });
+      } else {
+        toast({ variant: "destructive", title: "Koelähetys epäonnistui", description: res.error });
+      }
+      return;
+    }
     if (res.ok && res.data && expectAmountCents != null && res.data.amountCents !== expectAmountCents) {
       // Lasku on jo lähtenyt — mutta eri summalla kuin tässä luki. Se on
       // sanottava ääneen, ei kuitattava "lähetetty"-ilmoituksella.
@@ -728,6 +741,34 @@ export default function AdminGigTrackerPage() {
    */
   const combinedRemainingCents = hoursRemainingCents + p2RemainingCents;
   const hasTwoPots = hoursRemainingCents > 0 && p2RemainingCents > 0;
+  /**
+   * LASKUN NIMIKKEET — samasta datasta kuin itse lasku.
+   *
+   * Verkkolaskutilassa laskun kirjoittaa pomo itse omaan ohjelmaansa
+   * (Laskuguru), ja nämä ovat ne rivit jotka sinne näpytellään. Jos ne
+   * laskettaisiin tässä uudelleen omalla kaavallaan, näytöllä lukisi eri
+   * summa kuin mitä järjestelmä pitää laskutettuna — ja käsin kirjoitettu
+   * lasku olisi väärä ilman että mikään huomaa.
+   */
+  const invoiceLines: { label: string; cents: number }[] = (() => {
+    const out: { label: string; cents: number }[] = [];
+    if (invoiceScope === "hours" || invoiceScope === "all") {
+      for (const l of hourlyBill?.lines ?? []) if (l.cents != null && l.cents > 0) out.push({ label: l.label, cents: l.cents });
+    }
+    if (invoiceScope === "p2" || invoiceScope === "all") {
+      if (p2b && p2b.earnedCents > 0) out.push({ label: `Lisäikkunat (2. vaihe) — ${p2b.lockedWashedCount} kpl`, cents: p2b.earnedCents });
+      for (const x of p2Extras) out.push({ label: x.customerLabel, cents: x.customerCents });
+    }
+    return out;
+  })();
+  const invoiceLinesTotal = invoiceLines.reduce((n, l) => n + l.cents, 0);
+  /** Maksuehto päivinä eräpäivästä — Laskuguru kysyy sen erikseen. */
+  const paymentTermDays = (() => {
+    if (!invForm.dueDate) return null;
+    const d = new Date(invForm.dueDate + "T12:00:00").getTime() - new Date(new Date().toDateString()).getTime();
+    const n = Math.round(d / 86400000);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  })();
   /** Etunimi kulun maksajalle: keikan tekijälista ensin, sitten johtajat. */
   const payerName = (id: string): string => {
     const c = (project?.crew ?? []).find((x) => x.id === id);
@@ -1849,6 +1890,90 @@ export default function AdminGigTrackerPage() {
                   : "Asiakkaan antama verkkolaskuosoite. Merkitään laskulle. Itse lasku lähtee yllä olevaan sähköpostiin."}
               </p>
             </div>
+            {/* VERKKOLASKUN TIEDOT LASKUTUSOHJELMAAN.
+                Verkkolaskutilassa Puuhapatet lähettää asiakkaalle vain
+                vahvistuksen — varsinaisen laskun näpyttelee pomo itse
+                Laskuguruun. Ennen tätä ne luvut piti kaivaa kortilta ja laskea
+                käsin, ja käsin laskettu rivi on juuri se joka menee väärin.
+                Nämä ovat samat rivit jotka järjestelmä pitää laskutettuna. */}
+            {invForm.sendMethod === "verkkolasku" && (
+              <div className="rounded-xl border border-border bg-muted/30 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                  Laskutusohjelmaan syötettävät tiedot
+                </p>
+                <div className="space-y-1.5">
+                  {([
+                    ["Tilinumero", invForm.iban || "—"],
+                    ["Laskutuspäivä", new Date().toLocaleDateString("fi-FI")],
+                    ["Eräpäivä", invForm.dueDate ? new Date(invForm.dueDate + "T12:00:00").toLocaleDateString("fi-FI") : "—"],
+                    ["Maksuehto", paymentTermDays != null ? `${paymentTermDays} pv netto` : "—"],
+                    ["Viitteemme", invForm.viitenumero || "—"],
+                    ["Verkkolaskuosoite", invForm.eInvoice || "—"],
+                  ] as [string, string][]).map(([k, v]) => (
+                    <div key={k} className="flex items-baseline justify-between gap-3">
+                      <span className="text-[11px] text-muted-foreground shrink-0">{k}</span>
+                      <span className="text-xs font-medium tabular-nums text-right break-all">{v}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <p className="mt-3 mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Nimikkeet</p>
+                <div className="rounded-lg bg-background/60 p-2">
+                  {invoiceLines.length === 0 ? (
+                    <p className="text-[11px] text-muted-foreground">Ei rivejä.</p>
+                  ) : invoiceLines.map((l, i) => (
+                    <div key={i} className="flex items-baseline justify-between gap-3 py-0.5">
+                      <span className="text-[11px] text-muted-foreground">{l.label}</span>
+                      <span className="text-[11px] font-semibold tabular-nums shrink-0">{eur2(l.cents)}</span>
+                    </div>
+                  ))}
+                  <div className="mt-1 flex items-baseline justify-between gap-3 border-t pt-1">
+                    <span className="text-[11px] font-semibold">Yhteensä</span>
+                    <span className="text-xs font-bold tabular-nums">{eur2(invoiceLinesTotal)}</span>
+                  </div>
+                </div>
+
+                {/* Yksi napautus koko erittely leikepöydälle, jotta sitä ei
+                    tarvitse lukea ruudulta toiseen ikkunaan näpytellessä. */}
+                <Button
+                  type="button" variant="outline" className="w-full mt-2 h-8 text-xs"
+                  onClick={() => {
+                    const txt = [
+                      `Tilinumero: ${invForm.iban || "—"}`,
+                      `Laskutuspäivä: ${new Date().toLocaleDateString("fi-FI")}`,
+                      `Eräpäivä: ${invForm.dueDate ? new Date(invForm.dueDate + "T12:00:00").toLocaleDateString("fi-FI") : "—"}`,
+                      `Maksuehto: ${paymentTermDays != null ? `${paymentTermDays} pv netto` : "—"}`,
+                      `Viitteemme: ${invForm.viitenumero || "—"}`,
+                      `Verkkolaskuosoite: ${invForm.eInvoice || "—"}`,
+                      "",
+                      "Nimikkeet:",
+                      ...invoiceLines.map((l) => `${l.label}\t1\t${eur2(l.cents)}`),
+                      `Yhteensä\t${eur2(invoiceLinesTotal)}`,
+                    ].join("\n");
+                    navigator.clipboard?.writeText(txt).then(
+                      () => toast({ title: "Tiedot kopioitu leikepöydälle" }),
+                      () => toast({ variant: "destructive", title: "Kopiointi ei onnistunut" }),
+                    );
+                  }}
+                >
+                  Kopioi tiedot leikepöydälle
+                </Button>
+
+                {/* Tilinumero, viite ja eräpäivä ovat verkkolaskutilassa
+                    syötettäviä tietoja, joten ne ovat myös muokattavissa. */}
+                <div className="grid grid-cols-2 gap-2 mt-3">
+                  <div>
+                    <Label className="text-xs">Tilinumero</Label>
+                    <Input className="h-8 text-xs" value={invForm.iban} onChange={(e) => setInvForm({ ...invForm, iban: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Eräpäivä</Label>
+                    <Input className="h-8 text-xs" type="date" value={invForm.dueDate} onChange={(e) => setInvForm({ ...invForm, dueDate: e.target.value })} />
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* IBAN / BIC / viite / eräpäivä matter only for the email invoice
                 (barcode + payment block). In verkkolasku mode the founder's own
                 invoicing software carries all of that, so these fields do nothing
@@ -1890,14 +2015,34 @@ export default function AdminGigTrackerPage() {
               Loppulasku (työ valmis)
             </label>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setInvoiceOpen(false)}>Peruuta</Button>
+          <DialogFooter className="flex-col gap-2 sm:flex-col sm:space-x-0">
+            {/* KOELÄHETYS ENSIN. Laskun ulkoasun ja rivien tarkistaminen vaati
+                ennen sen lähettämistä asiakkaalle — virheen huomasi vasta kun
+                se oli mennyt. Tämä lähettää saman laskun sinulle, eikä kirjaa
+                mitään: kertymä ja laskurit pysyvät ennallaan. */}
             <Button
-              disabled={sending || chosenToEmails.length === 0 || (invForm.sendMethod === "verkkolasku" && !invForm.eInvoice)}
-              onClick={sendInvoice}
+              type="button"
+              variant="secondary"
+              className="w-full"
+              disabled={sending}
+              onClick={() => sendInvoice({ test: true })}
             >
-              {sending ? "Lähetetään…" : invForm.sendMethod === "verkkolasku" ? "Lähetä verkkolaskutusosoitteella" : "Lähetä lasku"}
+              <Send className="w-4 h-4 mr-2" />
+              {sending ? "Lähetetään…" : "Lähetä koelasku itselle"}
             </Button>
+            <p className="text-[11px] text-muted-foreground leading-snug -mt-1">
+              Näet laskun sähköpostissa täsmälleen sellaisena kuin asiakas sen saisi. Mitään ei kirjata.
+            </p>
+            <div className="flex w-full gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setInvoiceOpen(false)}>Peruuta</Button>
+              <Button
+                className="flex-1"
+                disabled={sending || chosenToEmails.length === 0 || (invForm.sendMethod === "verkkolasku" && !invForm.eInvoice)}
+                onClick={() => sendInvoice()}
+              >
+                {sending ? "Lähetetään…" : invForm.sendMethod === "verkkolasku" ? "Lähetä vahvistus" : "Lähetä lasku"}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

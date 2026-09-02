@@ -137,6 +137,8 @@ const FROM_EMAIL = process.env.FROM_EMAIL || "Puuhapatet <onboarding@resend.dev>
 
 const EXPENSE_KIND_LABELS: Record<string, string> = {
   transport: "Kuljetus", materials: "Tarvikkeet", equipment: "Kalusto", other: "Muu",
+  // Nämä puuttuivat, joten raportilla luki raaka avain: "subcontract — Mika…".
+  subcontract: "Alihankinta", surcharge: "Lisä laskulle",
 };
 
 /**
@@ -184,11 +186,30 @@ function buildGigReportHtml(
   // piti liikevaihtoa keinotekoisesti ylhäällä tässä raportissa ja siirsi lisäksi
   // erien numeroinnin (mitätöity sai oman "N. erä" -numeronsa).
   const paymentsLive = livePayments(gig.payments);
-  const p1Payments = paymentsLive.filter((p) => p.scope !== "p2");
+  /**
+   * LASKUTUS VIRRAT ERIKSEEN — JA "MUU" EI OLE P1.
+   *
+   * Ehto oli `scope !== "p2"`, eli kaikki muu luettiin urakan eräksi. Kun
+   * tuntilasku ja yhdistetty lasku tulivat, ne alkoivat näkyä raportilla
+   * urakan erinä: "Laskutettu asiakkaalta (5/4 erää)" ja kiinteä 6 150 €:n
+   * urakka näytti ylilaskutetulta. Sama vika joka on `p2InvoiceState`ssa jo
+   * korjattu — raportti oli jäänyt vanhaan sääntöön.
+   *
+   * Yhdistetty lasku (`scope:"all"`) kuittaa kahta kertymää yhdellä summalla,
+   * joten sen osuudet luetaan `parts`ista eikä koko summasta.
+   */
+  const p1Payments = paymentsLive.filter((p) => p.scope == null || p.scope === "p1");
   const p2Payments = paymentsLive.filter((p) => p.scope === "p2");
+  const hoursPayments = paymentsLive.filter((p) => p.scope === "hours");
+  const allPayments = paymentsLive.filter((p) => p.scope === "all");
+  const partSum = (key: "hours" | "p2") =>
+    allPayments.reduce((s2, p) => s2 + Math.max(0, Math.round((p as any).parts?.[key] ?? 0)), 0);
   const p1InvoicedCents = p1Payments.reduce((s, p) => s + p.amountCents, 0);
-  const p2InvoicedCents = p2Payments.reduce((s, p) => s + p.amountCents, 0);
-  const invoicedCents = p1InvoicedCents + p2InvoicedCents;   // total, for margin
+  const p2InvoicedCents = p2Payments.reduce((s, p) => s + p.amountCents, 0) + partSum("p2");
+  const hoursInvoicedCents = hoursPayments.reduce((s, p) => s + p.amountCents, 0) + partSum("hours");
+  // Kokonaislaskutus on maksurivien summa sellaisenaan: jokainen euro kerran,
+  // riippumatta siitä mihin virtaan se kuuluu.
+  const invoicedCents = paymentsLive.reduce((s, p) => s + p.amountCents, 0);
   // Effective agreed red total — reduced if red windows were removed below scope.
   const contractCents = deal ? dealAgreedTotalCents(project!, deal) : Math.max(invoicedCents, gig.invoicedCents || 0);
   const remainingCents = Math.max(0, contractCents - p1InvoicedCents);   // red only
@@ -203,7 +224,12 @@ function buildGigReportHtml(
   let p1Seq = 0;
   const instalmentRows = paymentsLive.length
     ? paymentsLive.map((p) => {
-        const label = p.scope === "p2" ? "Priority 2" : `${++p1Seq}. erä`;
+        // Vain urakan erä saa eränumeron. Tuntilasku tai yhdistetty lasku
+        // "5. eränä" väittäisi neljän erän sopimuksesta viidettä erää.
+        const label = p.scope === "p2" ? "Lisätyölasku"
+          : p.scope === "hours" ? "Tuntilasku"
+          : p.scope === "all" ? "Yhdistetty lasku"
+          : `${++p1Seq}. erä`;
         return `
         <tr style="border-bottom:1px solid #E4E1D7">
           <td style="padding:8px 0;font-size:13px;color:#1A1A1A">${label} · ${dt(p.t)}</td>
@@ -246,8 +272,16 @@ function buildGigReportHtml(
 
   // 3) Logged expenses (managers + workers), grouped by category.
   const expenses = project?.expenses || [];
-  const expTotal = expenses.reduce((s, e) => s + e.amountCents, 0);
-  const byKind = expenses.reduce<Record<string, number>>((acc, e) => {
+  /**
+   * SOVITTU LISÄ EI OLE KULU. "Lisä laskulle 102 €" on veloitus asiakkaalta,
+   * ei raha jonka joku maksoi omasta pussistaan. Kuluna se vähentäisi katetta
+   * summalla joka on itse asiassa katetta — eli tuplasti väärään suuntaan.
+   */
+  const isCost = (e: { kind: string }) => e.kind !== "surcharge";
+  const costExpenses = expenses.filter(isCost);
+  const surchargeCents = expenses.filter((e) => !isCost(e)).reduce((s, e) => s + e.amountCents, 0);
+  const expTotal = costExpenses.reduce((s, e) => s + e.amountCents, 0);
+  const byKind = costExpenses.reduce<Record<string, number>>((acc, e) => {
     acc[e.kind] = (acc[e.kind] || 0) + e.amountCents; return acc;
   }, {});
   const expRows = expenses.length
@@ -277,10 +311,12 @@ function buildGigReportHtml(
     <div style="padding:20px 32px">
       <p style="margin:0 0 6px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Sopimus & laskutus</p>
       <table width="100%" cellpadding="0" cellspacing="0">
-        ${sumRow(deal ? "Priority 1 -urakka (kiinteä)" : "Sopimuksen kokonaisarvo", eur(contractCents))}
-        ${sumRow(`Laskutettu asiakkaalta (${p1Payments.length}${deal ? "/4" : ""} erää)`, eur(p1InvoicedCents))}
-        ${sumRow("Laskuttamatta jäljellä", eur(remainingCents))}
-        ${p2Payments.length ? sumRow(`Priority 2 (lisätyö) laskutettu (${p2Payments.length} kpl)`, eur(p2InvoicedCents)) : ""}
+        ${sumRow(deal ? "Urakka, kiinteä sopimus" : "Sopimuksen kokonaisarvo", eur(contractCents))}
+        ${sumRow(`Urakasta laskutettu (${p1Payments.length}${deal ? "/4" : ""} erää)`, eur(p1InvoicedCents))}
+        ${remainingCents > 0 ? sumRow("Urakasta laskuttamatta", eur(remainingCents), false, "#B45309") : ""}
+        ${p2InvoicedCents > 0 ? sumRow("Lisätyöt (keltaiset, tarvikkeet, alihankinta)", eur(p2InvoicedCents)) : ""}
+        ${hoursInvoicedCents > 0 ? sumRow("Tuntityö", eur(hoursInvoicedCents)) : ""}
+        ${sumRow("Laskutettu asiakkaalta yhteensä", eur(invoicedCents), true)}
       </table>
 
       <p style="margin:22px 0 6px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Lähetetyt maksuerät</p>
@@ -306,14 +342,20 @@ function buildGigReportHtml(
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:2px">
         ${Object.entries(byKind).map(([k, v]) => sumRow(EXPENSE_KIND_LABELS[k] || k, eur(v))).join("")}
         ${sumRow("Kulut yhteensä", eur(expTotal), false, "#1A1A1A")}
+        ${surchargeCents > 0 ? sumRow("Sovitut lisät laskulla (ei kulu)", eur(surchargeCents), false, "#166534") : ""}
       </table>
 
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:18px">
         ${sumRow("Kate (laskutettu − maksetut − kulut)", eur(marginCents), true, marginCents >= 0 ? "#166534" : "#B91C1C")}
       </table>
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:6px">
+        ${sumRow("Laskutettu asiakkaalta", eur(invoicedCents))}
+        ${sumRow("− maksettu tekijöille", "−" + eur(crewPaidTotal))}
+        ${sumRow("− kirjatut kulut", "−" + eur(expTotal))}
+      </table>
       <p style="margin:14px 0 0;color:#8C8A82;font-size:11px;line-height:1.6">
-        Kate on suuntaa-antava: se vähentää laskutetusta vain jo MAKSETUT alihankkijaerät ja kirjatut kulut.
-        Avoimet alihankkijaerät (${eur(crewPendingTotal)}) eivät ole vielä mukana katteessa.
+        Kate on suuntaa-antava: se vähentää laskutetusta vain jo MAKSETUT tekijäerät ja kirjatut kulut.
+        Avoinna tekijöille ${eur(crewPendingTotal)} — kun se maksetaan, kate on ${eur(marginCents - crewPendingTotal)}.
       </p>
     </div>
     <div style="padding:14px 32px;border-top:1px solid #E4E1D7;background:#F6F4EE">
@@ -6738,6 +6780,45 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     </div>
   </div>
 </body></html>`;
+
+      /**
+       * KOELÄHETYS — SAMA LASKU, MEILLE.
+       *
+       * Laskun ulkoasun ja rivien tarkistaminen vaati aiemmin sen lähettämistä
+       * asiakkaalle: virheen huomasi vasta kun se oli jo mennyt. Nyt sama HTML
+       * voidaan lähettää ensin itselle. Koelähetys EI kirjaa maksua, ei siirrä
+       * laskureita eikä koske ikkunamerkintöihin — se on pelkkä sähköposti,
+       * jotta koeajo ei voi vahingossa muuttaa keikan rahatilannetta.
+       */
+      const isTestSend = req.body?.testSend === true;
+      if (isTestSend) {
+        const testTo = Array.from(new Set([
+          // Lähettäjän oma osoite ensin, jotta koelähetys tulee sille joka
+          // painoi nappia — ei pelkästään yhteiselle listalle.
+          ...(typeof req.body?.senderEmail === "string" && req.body.senderEmail.includes("@")
+            ? [String(req.body.senderEmail).trim()] : []),
+          ...WORKER_NOTIFICATION_EMAILS,
+        ])).filter(Boolean);
+        if (!testTo.length) {
+          return res.status(400).json({ error: "Koelähetykselle ei ole vastaanottajaa (johtajien sähköposti puuttuu)." });
+        }
+        const banner = `<div style="max-width:600px;margin:24px auto -12px;padding:12px 16px;border-radius:12px;background:#FEF3C7;border:1px solid #F59E0B;font-family:'Poppins',ui-sans-serif,system-ui,sans-serif">
+          <p style="margin:0;color:#92400E;font-size:13px;font-weight:700">KOELÄHETYS — tämä ei mennyt asiakkaalle</p>
+          <p style="margin:4px 0 0;color:#92400E;font-size:12px;line-height:1.6">
+            Näin lasku näyttää asiakkaalle. Vastaanottaja olisi: ${escHtml(recipient)}. Summa ${fmtEur(amountCents)}.
+            Mitään ei kirjattu — kertymä ja laskurit ovat ennallaan.
+          </p></div>`;
+        const testResult = await resend.emails.send({
+          from: FROM_EMAIL,
+          to: testTo.length === 1 ? testTo[0] : testTo,
+          subject: `KOELÄHETYS · ${invoiceLabel} ${invoiceNo} — ${fmtEur(amountCents)} · ${gig.company?.name || job.description || "Keikka"}`,
+          html: banner + html,
+        });
+        return res.json({
+          ok: true, test: true, id: testResult.data?.id, amountCents,
+          to: testTo.join(", "), gigData: gig,
+        });
+      }
 
       // Always BCC the team on every customer invoice — admins can also add extra
       // addresses via the bcc field (comma/space/&/;-separated). Deduplicate and

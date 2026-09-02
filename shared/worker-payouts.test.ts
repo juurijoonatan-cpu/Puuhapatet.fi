@@ -532,3 +532,56 @@ describe("p2InvoiceState — asiakaslaskutuksen P1/P2-erottelu", () => {
     expect(s.p1Payments).toBe(0);
   });
 });
+
+/**
+ * YHDISTETTY LASKU KUITTAA KAHTA KERTYMÄÄ YHDELLÄ SUMMALLA.
+ *
+ * Asiakkaalle se on yksi lasku, mutta meidän laskurimme ovat erilliset:
+ * tuntikertymä ja lisätyökertymä lasketaan kumpikin omaa laskutettua vastaan.
+ * Yksi luku ei voi kuitata kahta kertymää, joten jako talletetaan maksuriville
+ * (`parts`). Ilman sitä 952 €:n lasku olisi joko kokonaan tuntia tai kokonaan
+ * lisätyötä — ja toinen kertymä jäisi näyttämään laskuttamatonta rahaa jonka
+ * asiakas on jo maksanut.
+ */
+describe("yhdistetty lasku (scope all)", () => {
+  it("jakautuu osiinsa eikä syö urakan eriä", () => {
+    const st = p2InvoiceState(68_00, [
+      { amountCents: 952_00, scope: "all", parts: { hours: 884_00, p2: 68_00 } },
+    ]);
+    expect(st.hoursInvoicedCents).toBe(884_00);
+    expect(st.invoicedCents).toBe(68_00);
+    expect(st.remainingCents).toBe(0);
+    // Urakan erälaskuri ei liiku: yhdistetty lasku ei ole urakan erä.
+    expect(st.p1Payments).toBe(0);
+    expect(st.p1InvoicedCents).toBe(0);
+  });
+
+  it("sekoittuu oikein erillisten laskujen kanssa", () => {
+    const st = p2InvoiceState(200_00, [
+      { amountCents: 100_00, scope: "p2" },
+      { amountCents: 150_00, scope: "hours" },
+      { amountCents: 130_00, scope: "all", parts: { hours: 50_00, p2: 80_00 } },
+      { amountCents: 1575_00, scope: "p1" },
+    ]);
+    expect(st.invoicedCents).toBe(180_00);        // 100 + 80
+    expect(st.hoursInvoicedCents).toBe(200_00);   // 150 + 50
+    expect(st.remainingCents).toBe(20_00);        // 200 − 180
+    expect(st.p1InvoicedCents).toBe(1575_00);
+    expect(st.p1Payments).toBe(1);
+  });
+
+  it("mitätöity yhdistetty lasku ei kuittaa mitään", () => {
+    const st = p2InvoiceState(68_00, [
+      { amountCents: 952_00, scope: "all", parts: { hours: 884_00, p2: 68_00 }, voided: true },
+    ]);
+    expect(st.hoursInvoicedCents).toBe(0);
+    expect(st.invoicedCents).toBe(0);
+    expect(st.remainingCents).toBe(68_00);
+  });
+
+  it("osien summa ei ylitä laskun summaa käytännössä — mutta puuttuva osa on nolla", () => {
+    const st = p2InvoiceState(0, [{ amountCents: 884_00, scope: "all", parts: { hours: 884_00 } }]);
+    expect(st.hoursInvoicedCents).toBe(884_00);
+    expect(st.invoicedCents).toBe(0);
+  });
+});

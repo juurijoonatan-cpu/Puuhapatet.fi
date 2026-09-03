@@ -817,3 +817,112 @@ html.fr8-lock body {
 /* The popIn / popMenu keyframes referenced inline by the ported components */
 .fr8-root [data-fr8-pop="in"] { animation: fr8-popIn .16s ease both; }
 .fr8-root [data-fr8-pop="menu"] { animation: fr8-popMenu .15s ease both; }
+
+/* ------------------------------------------------------------------
+   Ennen / jälkeen -liuku + lehtisade (etusivu)
+   ------------------------------------------------------------------
+   Liu'un sijainti kulkee muuttujana --ba-pos, jonka komponentti kirjoittaa
+   suoraan DOMiin joka framella. Siksi täällä ei ole transitionia leikkaukselle
+   eikä kahvan vasemmalle reunalle: selain ei saa jäädä interpoloimaan arvoa
+   jonka me jo animoimme itse — se tuntui sormessa kumilenkiltä.
+   ------------------------------------------------------------------ */
+
+/* 3:4-kehys padding-tempulla eikä aspect-ratiolla. Kuvat ovat absoluuttisia,
+   joten ilman tätä säiliön korkeus olisi nolla — ja aspect-ratio putoaa pois
+   juuri niissä vanhoissa Safareissa jotka tämä build (target: safari12) yhä
+   lupaa palvella. Suhde on sama kuin kuvien rajaus: muuta molemmat yhdessä. */
+.ba-root::before {
+  content: "";
+  display: block;
+  padding-top: 133.3333%;
+}
+
+.ba-root img {
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+/* Kahvan hengittävä rengas: kutsu tarttua, ei huomiovaloa. */
+@keyframes ba-pulse {
+  0%   { transform: scale(1);    opacity: 0.85; }
+  70%  { transform: scale(1.55); opacity: 0; }
+  100% { transform: scale(1.55); opacity: 0; }
+}
+.ba-pulse { animation: ba-pulse 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite; }
+
+/* Lehti putoaa, kellahtaa sivusuunnassa ja pyörii.
+   Kaksi sisäkkäistä elementtiä, ja syy on prosenttien tulkinta: `translateY`in
+   prosentti lasketaan elementin omasta korkeudesta. Yhdellä elementillä 115 %
+   olisi 115 % lehden 18 pikselistä eli parikymmentä pikseliä — lehdet
+   nytkähtivät paikallaan. Nyt ulompi kuori on säiliön korkuinen (100 %), joten
+   sama 115 % on säiliön mitta ja lehti kulkee koko matkan. Pyöriminen on
+   sisemmässä, ettei koko kuori kierrä keskipisteensä ympäri ja heiluta lehteä
+   kaaressa. Kaikki liike on transformia + opacityä eli kompositorilla. */
+@keyframes pp-leaf-fall {
+  0%   { transform: translate3d(0, -15%, 0); opacity: 0; }
+  8%   { opacity: 0.9; }
+  85%  { opacity: 0.9; }
+  100% { transform: translate3d(var(--leaf-drift, 40px), 115%, 0); opacity: 0; }
+}
+@keyframes pp-leaf-spin {
+  0%   { transform: rotate(0deg) scale(var(--leaf-scale, 1)); }
+  100% { transform: rotate(var(--leaf-spin, 420deg)) scale(var(--leaf-scale, 1)); }
+}
+.pp-leaf {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  width: max-content;
+  display: block;
+  will-change: transform, opacity;
+  animation-name: pp-leaf-fall;
+  animation-timing-function: cubic-bezier(0.45, 0.05, 0.55, 0.95);
+  animation-iteration-count: infinite;
+  animation-fill-mode: both;
+}
+.pp-leaf > span {
+  display: block;
+  will-change: transform;
+  animation-name: pp-leaf-spin;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  animation-fill-mode: both;
+  animation-duration: inherit;
+  animation-delay: inherit;
+}
+
+/* Ponnahdusikkunan yläreunan aksentti: viiva piirtyy vasemmalta ja sen yli
+   kulkee kerran kiilto. Ennen tässä oli paksu vihreä yläreuna (border-t),
+   joka näytti irralliselta viivalta kortin päällä. */
+@keyframes pp-accent-draw {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+@keyframes pp-accent-sheen {
+  0%   { transform: translateX(-120%); }
+  55%  { transform: translateX(220%); }
+  100% { transform: translateX(220%); }
+}
+.pp-accent {
+  transform-origin: left center;
+  animation: pp-accent-draw 0.75s cubic-bezier(0.22, 1, 0.36, 1) 0.1s both;
+}
+.pp-accent::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.85), transparent);
+  animation: pp-accent-sheen 2.6s ease-in-out 1s infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ba-pulse,
+  .pp-leaf,
+  .pp-leaf > span,
+  .pp-accent,
+  .pp-accent::after {
+    animation: none !important;
+  }
+  .pp-leaf { opacity: 0 !important; }
+  .pp-accent { transform: none !important; }
+}

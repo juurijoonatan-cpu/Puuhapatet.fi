@@ -21,6 +21,12 @@ export function AnimatedCounter({
   const [isVisible, setIsVisible] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
 
+  /** Laskeva numero on liikettä siinä missä muukin: pyydettäessä vain lopputulos. */
+  const reduced =
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
   useEffect(() => {
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -40,6 +46,10 @@ export function AnimatedCounter({
 
   useEffect(() => {
     if (!isVisible) return;
+    if (reduced) {
+      setCount(end);
+      return;
+    }
 
     let startTime: number;
     let animationFrame: number;
@@ -65,7 +75,7 @@ export function AnimatedCounter({
         cancelAnimationFrame(animationFrame);
       }
     };
-  }, [isVisible, end, duration]);
+  }, [isVisible, end, duration, reduced]);
 
   const displayValue = decimals > 0 
     ? count.toFixed(decimals) 

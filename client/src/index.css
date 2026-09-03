@@ -926,3 +926,22 @@ html.fr8-lock body {
   .pp-leaf { opacity: 0 !important; }
   .pp-accent { transform: none !important; }
 }
+
+/* Valonlisä-luvun hehku: kortti syttyy kun laskuri lähtee käyntiin.
+   Sama ele kuin sisältö sanoo, eli valoa tulee lisää. Pelkkää opacityä
+   ja taustakuvaa, ei layoutia. */
+.pp-lightstat::before {
+  content: "";
+  position: absolute;
+  inset: -40% -10% auto -10%;
+  height: 180%;
+  background: radial-gradient(60% 60% at 22% 30%, rgba(245, 190, 90, 0.30), transparent 70%);
+  opacity: 0;
+  transition: opacity 1.6s cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+}
+.pp-lightstat[data-lit]::before { opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pp-lightstat::before { transition: none !important; }
+}

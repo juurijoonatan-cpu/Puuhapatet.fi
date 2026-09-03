@@ -8,6 +8,7 @@ import { Typewriter } from "@/components/typewriter";
 import { ReviewsSection } from "@/components/reviews-section";
 import { BeforeAfterSlider } from "@/components/before-after-slider";
 import { LeafFall } from "@/components/leaf-fall";
+import { LightGainStat } from "@/components/light-gain-stat";
 import { useI18n } from "@/lib/i18n";
 
 export default function LandingPage() {
@@ -158,9 +159,16 @@ export default function LandingPage() {
                 {t("ba.title")}
               </h2>
 
-              <p className="mb-6 leading-relaxed text-muted-foreground">
+              <p className="mb-5 leading-relaxed text-muted-foreground">
                 {t("ba.body")}
               </p>
+
+              {/* Mitattu luku eikä myyntipuhe: lähde on komponentin kommentissa. */}
+              <LightGainStat
+                label={t("ba.stat.label")}
+                source={t("ba.stat.source")}
+                className="mb-6"
+              />
 
               <ul className="mb-8 space-y-3">
                 {["ba.point.1", "ba.point.2", "ba.point.3"].map((key) => (

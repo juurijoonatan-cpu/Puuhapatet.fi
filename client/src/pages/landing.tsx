@@ -1,11 +1,13 @@
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { ArrowRight, Sparkles, Clock, Shield, Snowflake, Leaf, PaintBucket, Shovel, ClipboardCheck, BadgePercent, ShieldCheck, Tag, Sun } from "lucide-react";
+import { ArrowRight, Sparkles, Clock, Shield, Snowflake, Leaf, PaintBucket, Shovel, ClipboardCheck, BadgePercent, ShieldCheck, Tag, Sun, Check } from "lucide-react";
 import { SiWhatsapp, SiInstagram } from "react-icons/si";
 import { Mail } from "lucide-react";
 import { Typewriter } from "@/components/typewriter";
 import { ReviewsSection } from "@/components/reviews-section";
+import { BeforeAfterSlider } from "@/components/before-after-slider";
+import { LeafFall } from "@/components/leaf-fall";
 import { useI18n } from "@/lib/i18n";
 
 export default function LandingPage() {
@@ -118,6 +120,65 @@ export default function LandingPage() {
                 </span>
               ))}
             </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ENNEN / JÄLKEEN.
+          Sama ikkunarivi, sama kulma, sama valo — vain eri päivä. Tämä on
+          vahvin todiste mitä meillä on, joten se on heti hero-osion alla eikä
+          galleriakuvien joukossa: galleria kertoo että teemme työtä, tämä
+          kertoo mitä siitä seuraa. Kuvat ovat rajattu samaan kokoon (3:4)
+          jotta pyyhkäisy osuu kohdakkain — jos vaihdat kuvia, rajaa molemmat
+          samalla skriptillä. Pystykuva istuu puhelimeen sellaisenaan ja
+          työpöydällä teksti menee viereen, ei alle. */}
+      <section className="relative overflow-hidden py-16 md:py-24">
+        <LeafFall className="opacity-90" />
+        <div className="container relative mx-auto px-4 md:px-6">
+          <div className="mx-auto grid max-w-5xl grid-cols-1 items-center gap-8 lg:grid-cols-2 lg:gap-12">
+            <BeforeAfterSlider
+              beforeSrc="/window-before.jpg"
+              afterSrc="/window-after.jpg"
+              beforeLabel={t("ba.before")}
+              afterLabel={t("ba.after")}
+              alt={t("ba.alt")}
+              handleLabel={t("ba.handle")}
+              hint={t("ba.hint")}
+              className="mx-auto w-full max-w-[420px] lg:max-w-none"
+            />
+
+            <div className="lg:pl-2">
+              <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-amber-500/10 px-4 py-2 text-sm font-medium text-amber-700 dark:text-amber-400">
+                <Leaf className="h-4 w-4" />
+                <span>{t("ba.badge")}</span>
+              </div>
+
+              <h2 className="mb-4 text-2xl font-semibold leading-tight text-foreground text-balance md:text-3xl">
+                {t("ba.title")}
+              </h2>
+
+              <p className="mb-6 leading-relaxed text-muted-foreground">
+                {t("ba.body")}
+              </p>
+
+              <ul className="mb-8 space-y-3">
+                {["ba.point.1", "ba.point.2", "ba.point.3"].map((key) => (
+                  <li key={key} className="flex items-start gap-3">
+                    <span className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-primary/10">
+                      <Check className="h-3 w-3 text-primary" />
+                    </span>
+                    <span className="text-sm leading-relaxed text-foreground">{t(key)}</span>
+                  </li>
+                ))}
+              </ul>
+
+              <Link href="/tilaus">
+                <Button size="lg" className="w-full text-base sm:w-auto" data-testid="cta-before-after">
+                  {t("ba.cta")}
+                  <ArrowRight className="ml-2 h-5 w-5" />
+                </Button>
+              </Link>
             </div>
           </div>
         </div>

@@ -19,7 +19,7 @@ import {
 import { feeRateForWorker, effectiveJobTotal, FOUNDER_IDS, marketerCommissionCents, MARKETER_COMMISSION_RATE } from "@shared/team";
 import { randomUUID, createHmac, timingSafeEqual, scryptSync, randomBytes } from "crypto";
 import {
-  AI_ENABLED, ADMIN_AI_ENABLED, chatComplete, chatCompleteWithTools, chatCompleteWithToolsClaude,
+  AI_ENABLED, ADMIN_AI_ENABLED, getLastAiFailure, chatComplete, chatCompleteWithTools, chatCompleteWithToolsClaude,
   publicSystemPrompt, adminSystemPrompt, marketerAssistantPrompt,
   PUBLIC_FALLBACK_FI, type ChatTurn, type AiTool,
 } from "./ai";
@@ -1966,6 +1966,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       ok: true,
       ts: new Date().toISOString(),
       ai: AI_ENABLED ? "on" : "off",
+      // Avain voi olla paikallaan ja kutsu silti kaatua. Tämä kertoo kummasta
+      // on kyse: status + karkea syy, ei avainta eikä vastausrunkoa.
+      aiLastError: getLastAiFailure(),
       // Ilman mallia botti nojaa sivuston omaan vastauskoneeseen, joka vastaa
       // silti useimpiin kysymyksiin. Tämä kertoo että se on paikallaan.
       groundedAnswers: "on",

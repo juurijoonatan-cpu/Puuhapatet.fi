@@ -23,6 +23,7 @@ import {
   publicSystemPrompt, adminSystemPrompt, marketerAssistantPrompt,
   PUBLIC_FALLBACK_FI, type ChatTurn, type AiTool,
 } from "./ai";
+import { resolvePublicReply } from "./site-answers";
 import {
   computeOfferCents, computeCustomOfferCents, estimateMinutes, formatEstimate,
   CUSTOM_PRICING_SUMMARY, SQM_RANGES, HOUSE_TYPES,
@@ -1954,8 +1955,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // ─── Health ──────────────────────────────────────────────────────────────────
+  //
+  // `ai` kertoo onko chat-botin malli konfiguroitu. Tämä on tässä siksi, että
+  // kun botti tuotannossa vastasi jokaiseen kysymykseen samalla "en osaa
+  // vastata" -tekstillä, syytä ei voinut mistään päätellä: koodi näytti
+  // oikealta ja vika oli puuttuvassa AI_API_KEY:ssä Renderin asetuksissa.
+  // Pelkkä totuusarvo, ei avainta eikä sen palasia — turvallista julkisesti.
   app.get("/api/health", (_req, res) => {
-    res.json({ ok: true, ts: new Date().toISOString() });
+    res.json({
+      ok: true,
+      ts: new Date().toISOString(),
+      ai: AI_ENABLED ? "on" : "off",
+      // Ilman mallia botti nojaa sivuston omaan vastauskoneeseen, joka vastaa
+      // silti useimpiin kysymyksiin. Tämä kertoo että se on paikallaan.
+      groundedAnswers: "on",
+    });
   });
 
   /**
@@ -12137,12 +12151,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       ];
       const reply = await chatComplete(turns, { temperature: 0.3, maxTokens: 420 });
 
-      // No AI → safe canned reply, and always offer to leave a note for the team.
-      if (!reply) {
-        return res.json({ reply: PUBLIC_FALLBACK_FI, offerHandoff: true });
-      }
-      // Otherwise offer a handoff only when the visitor seems to want a person.
-      res.json({ reply, offerHandoff: wantsHuman(text) });
+      // Ei mallia (avain puuttuu, 429, katkos) → EI heti "en osaa vastata".
+      // Sivustolla on jo vastaus useimpiin kysymyksiin, joten se kokeillaan
+      // ennen luovuttamista. Päätöspuu on resolvePublicReplyssä, koska tämä
+      // reitti tarvitsee tietokannan eikä sitä voi testata täältä käsin.
+      const resolved = resolvePublicReply({
+        aiReply: reply,
+        message: text,
+        wantsHuman: wantsHuman(text),
+        fallback: PUBLIC_FALLBACK_FI,
+      });
+      res.json({ reply: resolved.reply, offerHandoff: resolved.offerHandoff });
     } catch (e: any) {
       console.error("Chat error:", e);
       res.status(500).json({ error: e.message });

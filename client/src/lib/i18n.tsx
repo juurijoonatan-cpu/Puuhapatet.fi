@@ -17,7 +17,10 @@ const translations: Record<Language, Record<string, string>> = {
     "nav.about": "Meistä",
     "nav.calculator": "Laskuri",
     
-    "hero.pill": "Kevät on täällä!",
+    "hero.pill.talvi": "Talvikiillon aika",
+    "hero.pill.kevat": "Kevätpesun aika",
+    "hero.pill.kesa": "Kesän kirkkaimmat ikkunat",
+    "hero.pill.syksy": "Syyspesun aika",
     "hero.title": "Ammattitaitoista ikkunanpesua",
     "hero.titleAccent": "sinun tarpeisiisi!",
     "hero.subtitle": "Kotitalouspalvelut, jotka oikeasti tehdään hyvin. Ikkunanpesu, pihatyöt ja paljon muuta — pääkaupunkiseudulla.",
@@ -85,7 +88,10 @@ const translations: Record<Language, Record<string, string>> = {
     "featured.title": "Ajankohtaiset palvelut",
     "featured.cta": "Katso kaikki palvelut",
 
-    "ba.badge": "Syksy saapuu, ikkunat siistiks",
+    "ba.badge.talvi": "Talvi saapuu, ikkunat siistiks",
+    "ba.badge.kevat": "Kevät saapuu, ikkunat siistiks",
+    "ba.badge.kesa": "Kesä saapuu, ikkunat siistiks",
+    "ba.badge.syksy": "Syksy saapuu, ikkunat siistiks",
     "ba.title": "Sama ikkuna, sama kulma, kaksi eri päivää.",
     "ba.body": "Vasemmalla lasi ennen pesua, oikealla saman aamun jälki. Ei uutta kuvakulmaa eikä suodattimia. Vedä jakoviivaa ja katso itse.",
     "ba.before": "Ennen",
@@ -99,6 +105,9 @@ const translations: Record<Language, Record<string, string>> = {
     "ba.point.2": "Säännöllinen pesu sovituilla aikaväleillä suoraan järjestelmästämme",
     "ba.point.3": "Kotitalousvähennys −35 % työn osuudesta",
     "ba.cta": "Sovi pesuväli",
+
+    "refs.title": "Meihin luottavat",
+    "refs.note": "Yrityksiä ja yhdistyksiä, joiden lasit ovat käyneet kädestämme.",
 
     "gallery.title": "Työtä, josta näkee laadun",
     "gallery.subtitle": "Oikeaa työtä, oikeat välineet — kentältä",
@@ -481,7 +490,10 @@ const translations: Record<Language, Record<string, string>> = {
     "nav.about": "About Us",
     "nav.calculator": "Calculator",
     
-    "hero.pill": "Professional Window Cleaning",
+    "hero.pill.talvi": "Winter glass season",
+    "hero.pill.kevat": "Time for the spring wash",
+    "hero.pill.kesa": "The year's brightest windows",
+    "hero.pill.syksy": "Time for the autumn wash",
     "hero.title": "Professional window cleaning",
     "hero.titleAccent": "for your needs!",
     "hero.subtitle": "Home services done properly. Window cleaning, yard work and more — serving the Helsinki region.",
@@ -549,7 +561,10 @@ const translations: Record<Language, Record<string, string>> = {
     "featured.title": "Current Services",
     "featured.cta": "See all services",
 
-    "ba.badge": "Autumn's here, windows made clear",
+    "ba.badge.talvi": "Winter's here, windows made clear",
+    "ba.badge.kevat": "Spring's here, windows made clear",
+    "ba.badge.kesa": "Summer's here, windows made clear",
+    "ba.badge.syksy": "Autumn's here, windows made clear",
     "ba.title": "Same window, same angle, two different days.",
     "ba.body": "On the left, the glass before the wash; on the right, the same morning after. No new angle and no filters. Drag the divider and judge it yourself.",
     "ba.before": "Before",
@@ -563,6 +578,9 @@ const translations: Record<Language, Record<string, string>> = {
     "ba.point.2": "Regular washing at agreed intervals, straight from our system",
     "ba.point.3": "Household tax deduction −35 % of the labour",
     "ba.cta": "Set a washing interval",
+
+    "refs.title": "Trusted by",
+    "refs.note": "Companies and associations whose glass has been through our hands.",
 
     "gallery.title": "Work that shows its quality",
     "gallery.subtitle": "Real work, the right tools — from the field",

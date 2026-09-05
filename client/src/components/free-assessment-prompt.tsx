@@ -21,6 +21,7 @@ import { Link, useLocation } from "wouter";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { ClipboardCheck, X, ArrowRight } from "lucide-react";
 import { LeafFall } from "@/components/leaf-fall";
+import { currentSeason } from "@shared/season";
 import { useI18n } from "@/lib/i18n";
 
 const SESSION_KEY = "pp_assessment_prompt_dismissed";
@@ -41,6 +42,10 @@ export function FreeAssessmentPrompt() {
   // Framer only honours the OS setting if we ask it to; the blur-and-spring
   // entrance below is exactly the sort of thing the setting exists to stop.
   const reduced = useReducedMotion();
+  // Sama sääntö kuin etusivun osiossa: lehdet syksyllä, lumi talvella, muuten
+  // ei mitään. Kortti ei saa kertoa eri vuodenaikaa kuin sivu sen takana.
+  const season = currentSeason();
+  const fallVariant = season === "syksy" ? "leaves" : season === "talvi" ? "snow" : null;
 
   // Keep it classy: only on the landing page, and not on conversion routes
   // where the offer is already in front of the visitor.
@@ -95,7 +100,7 @@ export function FreeAssessmentPrompt() {
 
           {/* A couple of leaves behind the copy: the same autumn cue as the
               before/after section, at a whisper so it never fights the text. */}
-          <LeafFall className="opacity-[0.18]" count={5} size={11} />
+          {fallVariant && <LeafFall className="opacity-[0.18]" count={5} size={11} variant={fallVariant} />}
 
           <button
             onClick={dismiss}

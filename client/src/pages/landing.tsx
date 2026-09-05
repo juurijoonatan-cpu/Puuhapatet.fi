@@ -9,7 +9,10 @@ import { ReviewsSection } from "@/components/reviews-section";
 import { BeforeAfterSlider } from "@/components/before-after-slider";
 import { LeafFall } from "@/components/leaf-fall";
 import { LightGainStat } from "@/components/light-gain-stat";
+import { ReferenceStrip } from "@/components/reference-strip";
+import { currentSeason, showsWinterServices } from "@shared/season";
 import { useI18n } from "@/lib/i18n";
+import { useState } from "react";
 
 export default function LandingPage() {
   const { t, lang } = useI18n();
@@ -26,8 +29,19 @@ export default function LandingPage() {
     { icon: Shield, titleKey: "trust.3.title", descKey: "trust.3.desc" },
   ];
 
-  const month = new Date().getMonth(); // 0 = Jan, 11 = Dec
-  const isWinter = month >= 10 || month <= 1; // Nov–Feb
+  // Vuodenaika luetaan @shared/seasonista eikä lasketa täällä. Ennen tätä
+  // yläreunan pilleri oli kovakoodattu "Kevät on täällä!" samaan aikaan kun
+  // alempi osio kertoi syksystä. Yksi lähde, ei ristiriitaa.
+  const season = currentSeason();
+  const isWinter = showsWinterServices();
+
+  // Putoavat hiukkaset kuuluvat vain kahteen vuodenaikaan: syksyllä lehdet,
+  // talvella lumi. Keväällä ja kesällä ei putoa mitään — kesäkuussa leijuvat
+  // syyslehdet olisivat sama virhe kuin kevätpilleri syyskuussa.
+  const fallVariant = season === "syksy" ? "leaves" : season === "talvi" ? "snow" : null;
+
+  // Videon poster piilotetaan vasta kun video on oikeasti maalannut ruudulle.
+  const [heroVideoReady, setHeroVideoReady] = useState(false);
 
   const seasonalServices = isWinter
     ? [
@@ -44,16 +58,34 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen bg-background">
       <section className="relative pt-20 md:pt-28 pb-16 md:pb-24 overflow-hidden">
-        {/* Background video with overlay */}
+        {/* Taustavideo + tummennus.
+            POSTER OLI ERI KUVA KUIN VIDEO. `hero-workers.jpg` on kuva
+            julkisivulla työskentelevistä tekijöistä, kun taas videon
+            ensimmäinen ruutu on lähikuva pesuhanskasta lasilla. Jokaisella
+            sivunlatauksella välähti siis eri kuva ennen kuin video ehti
+            maalata. Nyt poster on videon oma ensimmäinen ruutu
+            (scripts/build-hero-poster.mjs), joten vaihdos on näkymätön.
+            Varmuuden vuoksi video vielä häivytetään esiin: jos dekoodaus
+            tökkii, siirtymä on pehmeä eikä hyppy. */}
         <div className="absolute inset-0">
+          <img
+            src="/hero-poster.jpg"
+            alt=""
+            aria-hidden="true"
+            className="absolute inset-0 h-full w-full object-cover object-center"
+          />
           <video
             autoPlay
             muted
             loop
             playsInline
             preload="metadata"
-            poster="/hero-workers.jpg"
-            className="w-full h-full object-cover object-center"
+            poster="/hero-poster.jpg"
+            onPlaying={() => setHeroVideoReady(true)}
+            onLoadedData={() => setHeroVideoReady(true)}
+            className={`relative h-full w-full object-cover object-center transition-opacity duration-500 ${
+              heroVideoReady ? "opacity-100" : "opacity-0"
+            }`}
           >
             <source src="/hero-bg.mp4" type="video/mp4" />
           </video>
@@ -68,7 +100,7 @@ export default function LandingPage() {
             <div className="bg-background/55 backdrop-blur-md rounded-3xl px-6 py-10 md:px-10 shadow-lg">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium mb-6">
               <Sparkles className="w-4 h-4" />
-              <span>{t("hero.pill")}</span>
+              <span>{t(`hero.pill.${season}`)}</span>
             </div>
 
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-semibold text-foreground leading-tight mb-4 text-balance">
@@ -126,6 +158,8 @@ export default function LandingPage() {
         </div>
       </section>
 
+      <ReferenceStrip />
+
       {/* ENNEN / JÄLKEEN.
           Sama ikkunarivi, sama kulma, sama valo — vain eri päivä. Tämä on
           vahvin todiste mitä meillä on, joten se on heti hero-osion alla eikä
@@ -135,7 +169,7 @@ export default function LandingPage() {
           samalla skriptillä. Pystykuva istuu puhelimeen sellaisenaan ja
           työpöydällä teksti menee viereen, ei alle. */}
       <section className="relative overflow-hidden py-16 md:py-24">
-        <LeafFall className="opacity-90" />
+        {fallVariant && <LeafFall className="opacity-90" variant={fallVariant} />}
         <div className="container relative mx-auto px-4 md:px-6">
           <div className="mx-auto grid max-w-5xl grid-cols-1 items-center gap-8 lg:grid-cols-2 lg:gap-12">
             <BeforeAfterSlider
@@ -152,7 +186,7 @@ export default function LandingPage() {
             <div className="lg:pl-2">
               <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-amber-500/10 px-4 py-2 text-sm font-medium text-amber-700 dark:text-amber-400">
                 <Leaf className="h-4 w-4" />
-                <span>{t("ba.badge")}</span>
+                <span>{t(`ba.badge.${season}`)}</span>
               </div>
 
               <h2 className="mb-4 text-2xl font-semibold leading-tight text-foreground text-balance md:text-3xl">

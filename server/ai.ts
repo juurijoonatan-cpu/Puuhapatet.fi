@@ -38,6 +38,23 @@ export function getLastAiFailure(): AiFailure | null {
   return lastAiFailure;
 }
 
+/**
+ * Mille palvelimelle ja millä mallinimellä kutsu lähtee.
+ *
+ * 404 kertoo että osoite tai mallinimi on väärä, mutta ei kumpi. Ilman tätä
+ * sitä ei voi selvittää kuin kirjautumalla Renderin asetuksiin. Kumpikaan
+ * arvo ei ole salaisuus: isäntänimi ja mallin nimi eivät avaa mitään, ja
+ * avain ei tule mukana. Polkua ei paljasteta, koska base-URLiin voi joku
+ * päivä eksyä query-parametri.
+ */
+export function getAiTarget(): { host: string; model: string } {
+  let host = "(virheellinen AI_BASE_URL)";
+  try {
+    host = new URL(AI_BASE_URL).host;
+  } catch { /* jätetään paikkamerkki */ }
+  return { host, model: AI_MODEL };
+}
+
 function noteAiFailure(status: number | null, fallbackHint: string) {
   const hint =
     status === 401 || status === 403 ? "avain hylättiin (tarkista AI_API_KEY)"

@@ -106,7 +106,7 @@ const translations: Record<Language, Record<string, string>> = {
     "ba.point.3": "Kotitalousvähennys −35 % työn osuudesta",
     "ba.cta": "Sovi pesuväli",
 
-    "refs.title": "Meihin luottavat",
+    "refs.title": "Meihin luottavat mm.",
     "refs.note": "Yrityksiä ja yhdistyksiä, joiden lasit ovat käyneet kädestämme.",
 
     "gallery.title": "Työtä, josta näkee laadun",
@@ -579,7 +579,7 @@ const translations: Record<Language, Record<string, string>> = {
     "ba.point.3": "Household tax deduction −35 % of the labour",
     "ba.cta": "Set a washing interval",
 
-    "refs.title": "Trusted by",
+    "refs.title": "Trusted by, among others",
     "refs.note": "Companies and associations whose glass has been through our hands.",
 
     "gallery.title": "Work that shows its quality",

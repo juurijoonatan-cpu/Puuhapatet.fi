@@ -133,3 +133,53 @@ describe("etusivun taustavideo", () => {
     expect(landing()).not.toContain('poster="/hero-workers.jpg"');
   });
 });
+
+/**
+ * VARTIJA. Viiterivi hakee logon polusta `/refs/<slug>.png` ja putoaa nimeen
+ * tekstinä jos tiedostoa ei ole. Sopimus tiedostonimen ja koodin välillä on
+ * kirjoitettu vain kansion README:hen, joten se rikkoutuisi hiljaa: logo ei
+ * ilmestyisi, eikä mikään kertoisi miksi.
+ */
+describe("viiterivi", () => {
+  const strip = () =>
+    readFileSync(join(process.cwd(), "client/src/components/reference-strip.tsx"), "utf8");
+
+  it("hakee logon slugin mukaisesta polusta", () => {
+    expect(strip()).toContain("`/refs/${reference.slug}.png`");
+  });
+
+  it("putoaa nimeen tekstinä kun logotiedostoa ei ole", () => {
+    // Ilman onErroria puuttuva tiedosto näkyisi rikkinäisen kuvan ikonina.
+    expect(strip()).toContain("onError");
+  });
+
+  it("kirjoittaa teemakäännökset kokonaisina Tailwind-luokkina", () => {
+    // Koottu luokkanimi ei päädy tuotantobundleen: kääntäjä lukee lähdekoodia
+    // tekstinä eikä näe ajonaikaista yhdistelyä.
+    const src = strip();
+    expect(src).toContain('dark: "dark:invert"');
+    expect(src).toContain('light: "invert dark:invert-0"');
+    expect(src).toContain('color: ""');
+  });
+
+  it("antaa värilliselle tunnukselle alustan tummassa teemassa", () => {
+    // Tummanvihreä puu on lähes näkymätön mustaa vasten, eikä sitä voi kääntää
+    // (käännetty vihreä on magenta). Alusta on ainoa jäljelle jäävä keino.
+    expect(strip()).toContain('color: "dark:rounded-md dark:bg-white/90');
+  });
+
+  it("dokumentoi jokaisen slugin README:ssä", () => {
+    const src = strip();
+    const readme = readFileSync(join(process.cwd(), "client/public/refs/README.md"), "utf8");
+    const slugs = Array.from(src.matchAll(/slug: "([a-z0-9-]+)"/g)).map(m => m[1]);
+    expect(slugs.length).toBeGreaterThan(0);
+    for (const slug of slugs) {
+      expect(readme, `README ei mainitse tiedostoa ${slug}.png`).toContain(`${slug}.png`);
+    }
+  });
+
+  it("otsikko myöntää ettei lista ole täydellinen", () => {
+    const src = readFileSync(I18N, "utf8");
+    expect(src).toContain('"refs.title": "Meihin luottavat mm."');
+  });
+});

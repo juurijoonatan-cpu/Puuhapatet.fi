@@ -158,8 +158,6 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <ReferenceStrip />
-
       {/* ENNEN / JÄLKEEN.
           Sama ikkunarivi, sama kulma, sama valo — vain eri päivä. Tämä on
           vahvin todiste mitä meillä on, joten se on heti hero-osion alla eikä
@@ -432,6 +430,8 @@ export default function LandingPage() {
       </section>
 
       <ReviewsSection />
+
+      <ReferenceStrip />
 
       <section className="py-16 md:py-24">
         <div className="container mx-auto px-4 md:px-6">

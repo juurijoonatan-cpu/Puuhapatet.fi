@@ -18,6 +18,41 @@ import { HOUSEHOLD_DEDUCTION_RATE, fmtHouseholdCap, fmtPct } from "@shared/tax";
 import { CLEANING_PRICING_SUMMARY } from "@shared/cleaning";
 
 export const AI_ENABLED = !!process.env.AI_API_KEY;
+
+/**
+ * Viimeisin syy siihen miksi mallikutsu ei tuottanut vastausta.
+ *
+ * MIKSI TÄMÄ ON OLEMASSA. Botti vastasi tuotannossa jokaiseen kysymykseen
+ * varavastauksella. Ulkoapäin ei voinut mitenkään erottaa, puuttuuko avain,
+ * onko se väärä, onko malli poistettu käytöstä vai tuleeko pelkkää 429:ää —
+ * chatComplete nielaisee kaiken ja palauttaa nullin, ja Renderin lokeihin ei
+ * tästä istunnosta näe. Näin syy näkyy /api/healthista.
+ *
+ * Tässä on VAIN HTTP-status ja siitä johdettu karkea syy. Ei avainta, ei
+ * palveluntarjoajan vastausrunkoa, ei käyttäjän viestiä.
+ */
+export type AiFailure = { status: number | null; hint: string; at: string };
+let lastAiFailure: AiFailure | null = null;
+
+export function getLastAiFailure(): AiFailure | null {
+  return lastAiFailure;
+}
+
+function noteAiFailure(status: number | null, fallbackHint: string) {
+  const hint =
+    status === 401 || status === 403 ? "avain hylättiin (tarkista AI_API_KEY)"
+    : status === 404 ? "mallia ei löydy (tarkista AI_MODEL / AI_BASE_URL)"
+    : status === 429 ? "kiintiö tai nopeusraja täynnä"
+    : status && status >= 500 ? "palveluntarjoajan virhe"
+    : status === 400 ? "pyyntö hylättiin (usein tuntematon malli)"
+    : fallbackHint;
+  lastAiFailure = { status, hint, at: new Date().toISOString() };
+}
+
+/** Onnistunut kutsu nollaa tilan, ettei vanha vika jää haamuksi healthiin. */
+function clearAiFailure() {
+  lastAiFailure = null;
+}
 const AI_BASE_URL = (process.env.AI_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/$/, "");
 const AI_MODEL = process.env.AI_MODEL || "llama-3.3-70b-versatile";
 
@@ -97,6 +132,7 @@ export async function chatComplete(
       if (!res.ok) {
         const detail = await res.text().catch(() => "");
         console.error("AI completion failed:", res.status, detail.slice(0, 300));
+        noteAiFailure(res.status, "kutsu epäonnistui");
         if ((res.status === 429 || res.status >= 500) && attempt === 0) {
           await new Promise(r => setTimeout(r, 800));
           continue;
@@ -105,9 +141,15 @@ export async function chatComplete(
       }
       const data: any = await res.json();
       const text = data?.choices?.[0]?.message?.content;
-      return typeof text === "string" && text.trim() ? text.trim() : null;
+      if (typeof text === "string" && text.trim()) {
+        clearAiFailure();
+        return text.trim();
+      }
+      noteAiFailure(200, "vastaus oli tyhjä");
+      return null;
     } catch (e: any) {
       console.error("AI completion error:", e?.message || e);
+      noteAiFailure(null, e?.name === "AbortError" ? "aikakatkaisu" : "verkkovirhe");
       if (attempt === 0) { await new Promise(r => setTimeout(r, 800)); continue; }
       return null;
     }

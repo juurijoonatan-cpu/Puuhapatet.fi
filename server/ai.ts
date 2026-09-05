@@ -47,12 +47,58 @@ export function getLastAiFailure(): AiFailure | null {
  * avain ei tule mukana. Polkua ei paljasteta, koska base-URLiin voi joku
  * päivä eksyä query-parametri.
  */
-export function getAiTarget(): { host: string; model: string } {
+export function getAiTarget(): { host: string; model: string; configured: string; retired: string[] } {
   let host = "(virheellinen AI_BASE_URL)";
   try {
     host = new URL(AI_BASE_URL).host;
   } catch { /* jätetään paikkamerkki */ }
-  return { host, model: AI_MODEL };
+  return { host, model: activeModel(), configured: AI_MODEL, retired: Array.from(retiredModels) };
+}
+
+// ─── Mallin vaihto lennossa ───────────────────────────────────────────────────
+//
+// Ilmaispalvelut vaihtavat mallivalikoimaansa ilman varoitusta, ja kun nimi
+// katoaa, kutsu vastaa 404:llä. Juuri näin kävi tuotannossa: avain oli
+// paikallaan, osoite oikea, mutta konfiguroitu malli ei vastannut kutsuun —
+// ja koko botti meni mykäksi yhden vanhentuneen merkkijonon takia.
+//
+// Nyt 404 (tai 400, jonka jotkin tarjoajat antavat samasta syystä) merkitsee
+// mallin poistuneeksi ja kutsu uusitaan seuraavalla ehdokkaalla. Toimiva malli
+// jää muistiin prosessin ajaksi, joten hinta maksetaan kerran eikä joka
+// viestissä. Tämä EI korjaa väärää avainta: 401 ei ole mallivika eikä se
+// vaihda mallia.
+const FALLBACK_MODELS = ["llama-3.1-8b-instant", "openai/gpt-oss-20b", "openai/gpt-oss-120b"];
+
+const retiredModels = new Set<string>();
+let workingModel: string | null = null;
+
+/** Malli jota juuri nyt käytetään. */
+function activeModel(): string {
+  return workingModel ?? modelCandidates()[0] ?? AI_MODEL;
+}
+
+/**
+ * Kokeiltavat mallit järjestyksessä: konfiguroitu ensin, sitten varalla olevat.
+ * Poistuneiksi todetut jätetään pois. Puhdas funktio testejä varten.
+ */
+export function orderModelCandidates(configured: string, retired: Iterable<string>, fallbacks: string[] = FALLBACK_MODELS): string[] {
+  const dead = new Set(retired);
+  // Duplikaatti maksaisi turhan kutsun: sama malli kokeiltaisiin kahdesti
+  // ennen kuin seuraavaan päästään. Set säilyttää lisäysjärjestyksen.
+  const ordered = Array.from(new Set([configured, ...fallbacks]));
+  const alive = ordered.filter(m => !dead.has(m));
+  // Jos kaikki on merkitty kuolleiksi, palataan konfiguroituun: parempi yrittää
+  // ja epäonnistua kuin olla lähettämättä mitään.
+  return alive.length ? alive : [configured];
+}
+
+function modelCandidates(): string[] {
+  return orderModelCandidates(AI_MODEL, retiredModels);
+}
+
+/** Onko status merkki siitä että mallinimi on väärä eikä avain tai verkko? */
+export function isModelGoneStatus(status: number): boolean {
+  return status === 404 || status === 400;
 }
 
 function noteAiFailure(status: number | null, fallbackHint: string) {
@@ -129,15 +175,16 @@ export async function chatComplete(
     headers["HTTP-Referer"] = "https://puuhapatet.fi";
     headers["X-Title"] = "Puuhapatet";
   }
-  const body = JSON.stringify({
-    model: AI_MODEL,
+  const bodyFor = (model: string) => JSON.stringify({
+    model,
     messages,
     temperature: opts.temperature ?? 0.3,
     max_tokens: opts.maxTokens ?? 700,
   });
 
-  // One retry on transient failure (network / 429 / 5xx) before giving up so
-  // callers fall back to a safe reply instead of guessing.
+  // Ulompi kierros käy mallit läpi, sisempi uusii ohimenevän virheen.
+  for (const model of modelCandidates()) {
+  const body = bodyFor(model);
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const controller = new AbortController();
@@ -148,17 +195,24 @@ export async function chatComplete(
       clearTimeout(timeout);
       if (!res.ok) {
         const detail = await res.text().catch(() => "");
-        console.error("AI completion failed:", res.status, detail.slice(0, 300));
+        console.error("AI completion failed:", model, res.status, detail.slice(0, 300));
         noteAiFailure(res.status, "kutsu epäonnistui");
+        if (isModelGoneStatus(res.status)) {
+          // Mallia ei ole. Merkitse poistuneeksi ja siirry seuraavaan.
+          retiredModels.add(model);
+          if (workingModel === model) workingModel = null;
+          break;
+        }
         if ((res.status === 429 || res.status >= 500) && attempt === 0) {
           await new Promise(r => setTimeout(r, 800));
           continue;
         }
-        return null;
+        return null; // 401 tms. — mallin vaihto ei auta
       }
       const data: any = await res.json();
       const text = data?.choices?.[0]?.message?.content;
       if (typeof text === "string" && text.trim()) {
+        workingModel = model;
         clearAiFailure();
         return text.trim();
       }
@@ -170,6 +224,7 @@ export async function chatComplete(
       if (attempt === 0) { await new Promise(r => setTimeout(r, 800)); continue; }
       return null;
     }
+  }
   }
   return null;
 }

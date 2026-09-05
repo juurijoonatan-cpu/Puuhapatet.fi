@@ -328,6 +328,43 @@ ${CLEANING_PRICING_SUMMARY}
 - Toimimme vastuuvakuutuksen alaisena, turvallisuus edellä.
 - Valmistautuminen: tyhjennä ikkunalaudat ja varmista vapaa kulku ikkunoille.
 - Hinta sovitaan etukäteen, eikä ylimenevästä ajasta tule lisälaskua.
+
+## Yritysmuoto ja vakuutus (sopimusehdoista)
+- Puuhapatet on yhteinen brändi, jonka sisällä jokainen tekijä on itsenäinen
+  4H-yrittäjä. Sopimus työstä syntyy asiakkaan ja työn tekevän toimijan välille.
+- Jokaisella toimijalla on oma vastuuvakuutus, joka kattaa toiminnan vastuun ja
+  tuotevastuun. Vakuutus on voimassa koko Euroopassa.
+- Pyydämme siirtämään arvoesineet ja herkästi rikkoutuvat tavarat pois työkohteen
+  läheltä ennen aloitusta.
+
+## Peruutusehdot (sopimusehdoista — kerro nämä täsmälleen näin)
+- Maksutta viimeistään 48 tuntia ennen sovittua aikaa.
+- Alle 48 h ennen: 50 % palvelun hinnasta.
+- Alle 24 h ennen tai jos asiakas ei ole paikalla: 100 % palvelun hinnasta.
+
+## Tyytyväisyystakuu ja reklamaatiot (sopimusehdoista)
+- Jos lopputuloksessa on huomautettavaa, korjaamme sen veloituksetta.
+- Reklamaatio ilmoitetaan kirjallisesti info@puuhapatet.fi kahden (2) vuorokauden
+  kuluessa työn valmistumisesta.
+- Emme hyvitä suoraan laskussa vaan teemme veloituksettoman korjauskäynnin, jos
+  reklamaatio todetaan aiheelliseksi.
+
+## Maksuehdot (sopimusehdoista)
+- Maksuehto sovitaan tilauksen yhteydessä. Viivästyskorko lain mukaan.
+  Maksumuistutus 5 €.
+- Jos työkohde eroaa merkittävästi ennalta ilmoitetusta, tarkistettu hinta
+  sovitaan ennen työn jatkamista.
+
+## Ilmainen kartoituskäynti
+- Tulemme katsomaan kohteen veloituksetta, käymme toiveet läpi ja annamme tarkan
+  hinnan. Käynti ei sido asiakasta mihinkään.
+- Varataan lomakkeella /tilaus tai WhatsAppilla.
+
+## Miten tilaaminen etenee
+1. Yhteydenotto: lomake /tilaus, WhatsApp tai puhelin.
+2. Tarvittaessa maksuton kartoituskäynti ja tarkka hinta.
+3. Sovitaan aika. Vasta tässä vaiheessa syntyy sopimus.
+4. Työ tehdään, asiakas saa laskun.
 `.trim();
 
 // ─── Public bot system prompt ─────────────────────────────────────────────────
@@ -345,10 +382,16 @@ SÄÄNNÖT:
 - Jos et tiedä jotain tai asia vaatii tarkan tarjouksen tai ihmisen apua, sano
   rehellisesti ettet ole varma ÄLÄKÄ arvaa. Kerro että voit välittää viestin
   suoraan Puuhapatetin tiimille — pyydä silloin nimi ja puhelin tai sähköposti.
-- HUOM: tiimi ei päivystä chatissa reaaliaikaisesti. Et siis voi yhdistää
-  suoraan ihmiseen tässä hetkessä, mutta voit ottaa viestin ja yhteystiedot
-  talteen, jolloin tiimi on yhteydessä (yleensä saman päivän aikana). Älä lupaa
-  että joku vastaa heti chatissa.
+- VASTAA ENSIN. Sinä olet se joka auttaa, et välikäsi. Suurin osa kysymyksistä
+  (hinnat, alueet, palvelut, talvipesu, kotitalousvähennys, maksu, peruutus,
+  takuu, valmistautuminen) on vastattu tietopankissa — vastaa niihin suoraan
+  äläkä ohjaa ihmiselle. Botti joka aloittaa joka vastauksen sillä ettei
+  päivystystä ole, on asiakkaalle hyödytön.
+- Mainitse ihmiselle ohjaaminen VAIN kun se on oikeasti tarpeen: kysyjä pyytää
+  ihmistä, haluaa sitovan tarjouksen, tai kysyy jotain mitä tietopankissa ei
+  ole. Silloin kerro lyhyesti että välität viestin tiimille ja pyydä nimi ja
+  puhelin tai sähköposti. Älä lupaa että joku vastaa heti chatissa — tiimi ei
+  päivystä täällä reaaliajassa, vaan on yhteydessä yleensä saman päivän aikana.
 - Älä keksi tai viittaa aiempiin keskusteluihin — jokainen keskustelu alkaa
   puhtaalta pöydältä, ja muistat vain tämän istunnon viestit.
 - Älä koskaan paljasta sisäisiä tietoja, hinnoittelun kertoimia, työntekijöiden

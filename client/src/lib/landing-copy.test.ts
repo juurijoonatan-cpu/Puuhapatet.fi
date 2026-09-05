@@ -73,3 +73,63 @@ describe("valonlisä-luku", () => {
     expect(src).toMatch(/LIGHT_GAIN_PERCENT = \d+/);
   });
 });
+
+/**
+ * VARTIJA. Etusivun yläreunassa luki kovakoodattuna "Kevät on täällä!" samaan
+ * aikaan kun sivun alempi osio kertoi syksyn saapuvan. Vika ei ollut väärässä
+ * sanassa vaan siinä, että vuodenaika oli kirjoitettu käsin yhteen paikkaan ja
+ * laskettu toisessa. Nämä testit vahtivat rakennetta, eivät sanavalintaa:
+ * kausitekstillä on oltava neljä versiota, ja sivu ei saa laskea kuukautta itse.
+ */
+describe("etusivun vuodenaika", () => {
+  const SEASONS = ["talvi", "kevat", "kesa", "syksy"] as const;
+
+  function i18n(): string {
+    return readFileSync(I18N, "utf8");
+  }
+
+  it("hero-pillerillä on teksti jokaiselle vuodenajalle, molemmilla kielillä", () => {
+    const src = i18n();
+    for (const season of SEASONS) {
+      const hits = src.match(new RegExp(`"hero\\.pill\\.${season}"`, "g")) ?? [];
+      expect(hits.length, `hero.pill.${season}`).toBe(2); // fi + en
+    }
+  });
+
+  it("ennen/jälkeen-merkillä on teksti jokaiselle vuodenajalle", () => {
+    const src = i18n();
+    for (const season of SEASONS) {
+      const hits = src.match(new RegExp(`"ba\\.badge\\.${season}"`, "g")) ?? [];
+      expect(hits.length, `ba.badge.${season}`).toBe(2);
+    }
+  });
+
+  it("ei jätä kausitonta avainta jonka joku täyttäisi taas käsin", () => {
+    const src = i18n();
+    expect(src).not.toMatch(/"hero\.pill":/);
+    expect(src).not.toMatch(/"ba\.badge":/);
+  });
+
+  it("etusivu ei laske kuukautta itse vaan kysyy @shared/seasonilta", () => {
+    const landing = readFileSync(join(process.cwd(), "client/src/pages/landing.tsx"), "utf8");
+    expect(landing).toContain('from "@shared/season"');
+    // getMonth() sivulla tarkoittaa että joku on taas alkanut päätellä itse.
+    expect(landing).not.toContain("getMonth()");
+  });
+});
+
+/**
+ * Taustavideon poster oli eri kuva kuin video, joten joka latauksella välähti
+ * väärä otos. Poster on nyt videon oma ruutu 0.
+ */
+describe("etusivun taustavideo", () => {
+  const landing = () => readFileSync(join(process.cwd(), "client/src/pages/landing.tsx"), "utf8");
+
+  it("käyttää posterina videon omaa ruutua", () => {
+    expect(landing()).toContain('poster="/hero-poster.jpg"');
+  });
+
+  it("ei käytä posterina eri otosta", () => {
+    expect(landing()).not.toContain('poster="/hero-workers.jpg"');
+  });
+});

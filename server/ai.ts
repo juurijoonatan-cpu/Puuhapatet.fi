@@ -67,7 +67,11 @@ export function getAiTarget(): { host: string; model: string; configured: string
 // jää muistiin prosessin ajaksi, joten hinta maksetaan kerran eikä joka
 // viestissä. Tämä EI korjaa väärää avainta: 401 ei ole mallivika eikä se
 // vaihda mallia.
-const FALLBACK_MODELS = ["llama-3.1-8b-instant", "openai/gpt-oss-20b", "openai/gpt-oss-120b"];
+// Järjestys on laatujärjestys, ei aakkosjärjestys. Tuotannossa kokeiltiin
+// ensin pienintä mallia, ja sen suomi oli kelvotonta: se sepitti asiakkaalle
+// sanan "jääkaasu" eikä sellaista voi näyttää etusivulla. Iso ensin, pieni
+// vasta hätävarana.
+const FALLBACK_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.1-8b-instant"];
 
 const retiredModels = new Set<string>();
 let workingModel: string | null = null;

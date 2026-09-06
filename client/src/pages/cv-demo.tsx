@@ -512,9 +512,13 @@ function DesktopCanvas() {
             src={PERSON.photo}
             alt={PERSON.name}
             className="w-full h-full object-cover object-top"
-            onError={e => {
-              (e.currentTarget as HTMLImageElement).src = "/joonatan.jpg.jpeg";
-            }}
+            /* EI VARAKUVAA OIKEASTA IHMISESTÄ.
+               Varakuvana oli Joonatanin oma profiilikuva, ja koska
+               `/cv-person.jpg` puuttui kokonaan, demo-CV näytti häntä nimellä
+               "Petri Mäkinen". Demosivu ei saa lainata kenenkään oikeaa
+               kasvokuvaa keksitylle henkilölle — rikkinäinen kuva on
+               parempi kuin väärä ihminen, ja sen huomaa heti. */
+            onError={e => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }}
           />
         </div>
       </div>
@@ -550,9 +554,13 @@ function MobileLayout() {
             src={PERSON.photo}
             alt={PERSON.name}
             className="w-full h-full object-cover object-top"
-            onError={e => {
-              (e.currentTarget as HTMLImageElement).src = "/joonatan.jpg.jpeg";
-            }}
+            /* EI VARAKUVAA OIKEASTA IHMISESTÄ.
+               Varakuvana oli Joonatanin oma profiilikuva, ja koska
+               `/cv-person.jpg` puuttui kokonaan, demo-CV näytti häntä nimellä
+               "Petri Mäkinen". Demosivu ei saa lainata kenenkään oikeaa
+               kasvokuvaa keksitylle henkilölle — rikkinäinen kuva on
+               parempi kuin väärä ihminen, ja sen huomaa heti. */
+            onError={e => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }}
           />
         </div>
         <div>

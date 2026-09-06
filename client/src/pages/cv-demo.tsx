@@ -600,7 +600,9 @@ const CAREER = [
 const MARQUEE_ROW1 = [Figma, Framer, Palette, PenTool, Layers, Type, Aperture, Chrome];
 const MARQUEE_ROW2 = [Camera, Brush, Box, Wand2, Figma, Framer, Type, Layers];
 
-const VIDEO_BG   = "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260507_150203_44a5bd32-516a-47ce-a077-8acbf9aa8991.mp4";
+// Taustakortin video poistettu: siinä oli AI-generoitu ihminen, joka ei
+// esitä ketään meistä eikä kenenkään asiakasta — pelkkä keksitty kasvo
+// yrityksen sivulla. Kortti on nyt sama lasikortti kuin muutkin.
 const VIDEO_STAT = "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260507_154543_d5b83fc1-9cea-44f3-b5e8-8f325935211a.mp4";
 const VIDEO_SW   = "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260507_153148_d7a3e1dd-e5d0-4ce6-8306-00d7522ecc44.mp4";
 
@@ -688,12 +690,12 @@ function FeaturesSection() {
             className="text-[28px] sm:text-3xl md:text-4xl lg:text-[44px] font-normal tracking-tight text-white"
             style={{ lineHeight: 1.15 }}
           >
-            Hi, I'm Max Reed!
+            This is a demo — the words will be yours.
           </h2>
           <p className="mt-3 text-sm md:text-[15px] leading-[1.6] text-white/60 max-w-3xl">
-            A London-based independent creator shaping sharp visual systems, web-ready products,
-            and story-first campaigns. With a decade of craft behind me, I help ideas move with
-            focus and intention.
+            Every name, number and quote on this page is placeholder text. What is real is the
+            build: the layout, the motion and the typography, ready to carry your own work,
+            your own clients and your own story. Puuhapatet makes it, you fill it.
           </p>
         </div>
         <div className="flex-shrink-0">
@@ -706,20 +708,22 @@ function FeaturesSection() {
       {/* Bento grid */}
       <div className="flex-1 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-5 min-h-0">
 
-        {/* Column 1 — Background video + timeline */}
-        <VideoCard src={VIDEO_BG} className="min-h-[360px] lg:min-h-0">
-          <SectionLabel>Background</SectionLabel>
-          <div className="grid gap-y-3" style={{ gridTemplateColumns: "auto auto 1fr auto" }}>
-            {CAREER.map(item => (
-              <>
-                <span key={item.period + "p"} className="text-[11px] font-mono text-white/50 pr-2">{item.period}</span>
-                <Sparkle className="h-3 w-3 text-white/60 self-center mx-1" strokeWidth={1.5} />
-                <span key={item.period + "r"} className="text-[12px] text-white/80 px-1">{item.role}</span>
-                <span key={item.period + "o"} className="text-[11px] text-white/40 pl-2 text-right">{item.org}</span>
-              </>
-            ))}
+        {/* Column 1 — Background timeline */}
+        <GlassCard className="min-h-[360px] lg:min-h-0">
+          <div className="p-5 md:p-6 h-full flex flex-col justify-between gap-6">
+            <SectionLabel>Background</SectionLabel>
+            <div className="grid gap-y-3" style={{ gridTemplateColumns: "auto auto 1fr auto" }}>
+              {CAREER.map(item => (
+                <>
+                  <span key={item.period + "p"} className="text-[11px] font-mono text-white/50 pr-2">{item.period}</span>
+                  <Sparkle className="h-3 w-3 text-white/60 self-center mx-1" strokeWidth={1.5} />
+                  <span key={item.period + "r"} className="text-[12px] text-white/80 px-1">{item.role}</span>
+                  <span key={item.period + "o"} className="text-[11px] text-white/40 pl-2 text-right">{item.org}</span>
+                </>
+              ))}
+            </div>
           </div>
-        </VideoCard>
+        </GlassCard>
 
         {/* Column 2 — Client voice + stat */}
         <div className="grid grid-rows-[auto_1fr] gap-4 md:gap-5">
@@ -727,12 +731,16 @@ function FeaturesSection() {
           <GlassCard>
             <div className="p-5 md:p-6">
               <SectionLabel>Client Voice</SectionLabel>
+              {/* Keksitty suositus keksityltä henkilöltä keksityssä yrityksessä
+                  luetaan oikeana asiakaspalautteena, ellei sitä sanota ääneen.
+                  Demo saa näyttää miltä palaute näyttäisi — mutta sen on
+                  kerrottava olevansa esimerkki. */}
               <blockquote className="mt-4 text-[13px] sm:text-[13.5px] leading-[1.6] text-white/85">
-                "Max reshaped our image with a degree of finesse and vision that surpassed what
-                we'd hoped for. The process felt graceful, and the outcomes speak for themselves."
+                "This is where a real client's words go — the sentence that tells a visitor
+                what working with you is actually like."
               </blockquote>
               <p className="mt-3 text-[12px] text-white/50">
-                <strong className="text-white/80 font-medium">Elena Brooks</strong>, Creative Director — Halcyon
+                <strong className="text-white/80 font-medium">Your client, your words</strong> — example placeholder
               </p>
             </div>
           </GlassCard>

@@ -762,6 +762,17 @@ export default function AdminGigTrackerPage() {
     return out;
   })();
   const invoiceLinesTotal = invoiceLines.reduce((n, l) => n + l.cents, 0);
+  /**
+   * MITÄ TÄLLÄ LASKULLA VELOITETAAN — se luku joka näpytellään laskuohjelmaan.
+   *
+   * Nimikkeet kertovat KOKO kertymän, mutta lasku perii vain laskuttamattoman
+   * osan. Tällä keikalla keltaisista oli jo laskutettu 3 493,50 €, joten
+   * rivien summa oli 5 028,15 € vaikka lasku on 1 534,65 €. Käsin
+   * laskutusohjelmaan kirjoitettuna se olisi ollut kolme ja puoli tonnia
+   * liikaa asiakkaan laskulla — ja järjestelmä olisi silti pitänyt kertymää
+   * laskuttamattomana.
+   */
+
   /** Maksuehto päivinä eräpäivästä — Laskuguru kysyy sen erikseen. */
   const paymentTermDays = (() => {
     if (!invForm.dueDate) return null;
@@ -782,6 +793,12 @@ export default function AdminGigTrackerPage() {
   const fixedInstallmentCents = deal
     ? (isFinalEra ? Math.max(0, agreedTotalCents - p1InvoicedCents) : Math.round(deal.capCents / 4))
     : 0;
+  const invoiceAmountCents = invoiceScope === "all" ? combinedRemainingCents
+    : invoiceScope === "hours" ? hoursRemainingCents
+    : invoiceScope === "p2" ? p2RemainingCents
+    : deal ? fixedInstallmentCents : totals.uninvoicedCents;
+  /** Summautuvatko rivit laskun summaan? Jos eivät, rivit ovat tietoa. */
+  const linesAreTheCharge = invoiceLinesTotal === invoiceAmountCents;
   // The reduced final (4th) erä = effective agreed total − the three fixed 25 %
   // instalments (e.g. 6150 − 3×1575 = 1425 when red windows were removed).
   const rawInstalmentCents = deal ? Math.round(deal.capCents / 4) : 0;
@@ -1927,10 +1944,32 @@ export default function AdminGigTrackerPage() {
                       <span className="text-[11px] font-semibold tabular-nums shrink-0">{eur2(l.cents)}</span>
                     </div>
                   ))}
+                  {/* Kun rivit eivät summaudu laskun summaan, ne ovat KERTYMÄ
+                      eivätkä veloitus — ja veloitus sanotaan omalla rivillään.
+                      Muuten tähän kirjoitettu luku olisi eri kuin se jonka
+                      järjestelmä kuittaa laskutetuksi. */}
                   <div className="mt-1 flex items-baseline justify-between gap-3 border-t pt-1">
-                    <span className="text-[11px] font-semibold">Yhteensä</span>
-                    <span className="text-xs font-bold tabular-nums">{eur2(invoiceLinesTotal)}</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      {linesAreTheCharge ? "Yhteensä" : "Kertymä yhteensä"}
+                    </span>
+                    <span className={`text-[11px] tabular-nums ${linesAreTheCharge ? "text-xs font-bold" : "text-muted-foreground"}`}>
+                      {eur2(invoiceLinesTotal)}
+                    </span>
                   </div>
+                  {!linesAreTheCharge && (
+                    <>
+                      <div className="flex items-baseline justify-between gap-3 py-0.5">
+                        <span className="text-[11px] text-muted-foreground">− jo laskutettu</span>
+                        <span className="text-[11px] tabular-nums text-muted-foreground">
+                          −{eur2(Math.max(0, invoiceLinesTotal - invoiceAmountCents))}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex items-baseline justify-between gap-3 border-t pt-1">
+                        <span className="text-[11px] font-semibold">Laskutetaan nyt</span>
+                        <span className="text-xs font-bold tabular-nums">{eur2(invoiceAmountCents)}</span>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 {/* Yksi napautus koko erittely leikepöydälle, jotta sitä ei
@@ -1946,9 +1985,11 @@ export default function AdminGigTrackerPage() {
                       `Viitteemme: ${invForm.viitenumero || "—"}`,
                       `Verkkolaskuosoite: ${invForm.eInvoice || "—"}`,
                       "",
-                      "Nimikkeet:",
+                      linesAreTheCharge ? "Nimikkeet:" : "Kertymä (rivit tiedoksi):",
                       ...invoiceLines.map((l) => `${l.label}\t1\t${eur2(l.cents)}`),
-                      `Yhteensä\t${eur2(invoiceLinesTotal)}`,
+                      linesAreTheCharge
+                        ? `Yhteensä\t${eur2(invoiceLinesTotal)}`
+                        : `Kertymä yhteensä\t${eur2(invoiceLinesTotal)}\nJo laskutettu\t−${eur2(Math.max(0, invoiceLinesTotal - invoiceAmountCents))}\nLASKUTETAAN NYT\t${eur2(invoiceAmountCents)}`,
                     ].join("\n");
                     navigator.clipboard?.writeText(txt).then(
                       () => toast({ title: "Tiedot kopioitu leikepöydälle" }),

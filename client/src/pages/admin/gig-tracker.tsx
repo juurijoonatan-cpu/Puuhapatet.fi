@@ -1934,7 +1934,16 @@ export default function AdminGigTrackerPage() {
                   ))}
                 </div>
 
-                <p className="mt-3 mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Nimikkeet</p>
+                {/* Laskulle menee YKSI nimike ja erittely viestiin, joten
+                    ehdotettu nimiketeksti on tässä valmiina — muuten se
+                    kirjoitetaan joka kerta hieman eri tavalla. */}
+                <div className="mt-3 flex items-baseline justify-between gap-3">
+                  <span className="text-[11px] text-muted-foreground shrink-0">Nimike laskulle</span>
+                  <span className="text-xs font-medium text-right">
+                    {gig.contractId ? `${gig.contractId} — ` : ""}työn kokonaisuus
+                  </span>
+                </div>
+                <p className="mt-3 mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Erittely</p>
                 <div className="rounded-lg bg-background/60 p-2">
                   {invoiceLines.length === 0 ? (
                     <p className="text-[11px] text-muted-foreground">Ei rivejä.</p>
@@ -1972,32 +1981,36 @@ export default function AdminGigTrackerPage() {
                   )}
                 </div>
 
-                {/* Yksi napautus koko erittely leikepöydälle, jotta sitä ei
-                    tarvitse lukea ruudulta toiseen ikkunaan näpytellessä. */}
+                {/* KOPIO ON PELKKÄ ERITTELY — se liitetään laskun viestikenttään.
+                    Aiemmin tämä kopioi myös tilinumeron, päivät ja viitteen
+                    sarkaimilla eroteltuina. Ne luetaan yltä ruudulta omiin
+                    kenttiinsä, joten kopiossa ne olivat pelkkää roskaa, ja
+                    sarkaimet liittyivät viestikenttään sekavana koodina.
+                    Nyt tämä on se teksti joka menee viestiin sellaisenaan. */}
                 <Button
                   type="button" variant="outline" className="w-full mt-2 h-8 text-xs"
                   onClick={() => {
+                    const rows = invoiceLines.map((l) => `${l.label}: ${eur2(l.cents)}`);
                     const txt = [
-                      `Tilinumero: ${invForm.iban || "—"}`,
-                      `Laskutuspäivä: ${new Date().toLocaleDateString("fi-FI")}`,
-                      `Eräpäivä: ${invForm.dueDate ? new Date(invForm.dueDate + "T12:00:00").toLocaleDateString("fi-FI") : "—"}`,
-                      `Maksuehto: ${paymentTermDays != null ? `${paymentTermDays} pv netto` : "—"}`,
-                      `Viitteemme: ${invForm.viitenumero || "—"}`,
-                      `Verkkolaskuosoite: ${invForm.eInvoice || "—"}`,
+                      "Erittely",
                       "",
-                      linesAreTheCharge ? "Nimikkeet:" : "Kertymä (rivit tiedoksi):",
-                      ...invoiceLines.map((l) => `${l.label}\t1\t${eur2(l.cents)}`),
-                      linesAreTheCharge
-                        ? `Yhteensä\t${eur2(invoiceLinesTotal)}`
-                        : `Kertymä yhteensä\t${eur2(invoiceLinesTotal)}\nJo laskutettu\t−${eur2(Math.max(0, invoiceLinesTotal - invoiceAmountCents))}\nLASKUTETAAN NYT\t${eur2(invoiceAmountCents)}`,
+                      ...rows,
+                      "",
+                      ...(linesAreTheCharge
+                        ? [`Yhteensä: ${eur2(invoiceLinesTotal)}`]
+                        : [
+                            `Kertymä yhteensä: ${eur2(invoiceLinesTotal)}`,
+                            `Jo laskutettu: −${eur2(Math.max(0, invoiceLinesTotal - invoiceAmountCents))}`,
+                            `Laskutetaan tällä laskulla: ${eur2(invoiceAmountCents)}`,
+                          ]),
                     ].join("\n");
                     navigator.clipboard?.writeText(txt).then(
-                      () => toast({ title: "Tiedot kopioitu leikepöydälle" }),
+                      () => toast({ title: "Erittely kopioitu", description: "Liitä laskun viestikenttään." }),
                       () => toast({ variant: "destructive", title: "Kopiointi ei onnistunut" }),
                     );
                   }}
                 >
-                  Kopioi tiedot leikepöydälle
+                  Kopioi erittely viestikenttään
                 </Button>
 
                 {/* Tilinumero, viite ja eräpäivä ovat verkkolaskutilassa

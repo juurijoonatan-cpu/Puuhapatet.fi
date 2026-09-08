@@ -159,7 +159,7 @@ function splitEvenly(cents: number, ids: readonly string[]): Map<string, number>
 export type HourlyCostLine = CustomerChargeLine;
 
 export function computeHourlyMoney(
-  data: Pick<ProjectData, "shifts" | "hourRateCents" | "workerHourCents" | "expenses">,
+  data: Pick<ProjectData, "shifts" | "hourRateCents" | "workerHourCents" | "expenses" | "p2">,
   opts?: { today?: string; stats?: ShiftStats; uninvoicedWindows?: number },
 ): HourlyMoney {
   const hourRateCents = hourRateOf(data);
@@ -325,7 +325,7 @@ export interface HourlyItemisation {
 
 export function hourlyItemisation(
   data: Pick<ProjectData, "shifts" | "hourRateCents" | "workerHourCents" | "expenses"
-    | "marks" | "customMarks" | "deleted" | "statuses" | "building" | "pricePerWindow">,
+    | "marks" | "customMarks" | "deleted" | "statuses" | "building" | "pricePerWindow" | "p2">,
   opts?: { today?: string; uninvoicedWindows?: number },
 ): HourlyItemisation {
   const money = computeHourlyMoney(data, { today: opts?.today, uninvoicedWindows: opts?.uninvoicedWindows });
@@ -455,7 +455,7 @@ export interface WindowMoney {
  *   elää siellä eikä projektikartalla. Puuttuessaan kaikki ovat laskuttamatta.
  */
 export function computeWindowMoney(
-  data: Pick<ProjectData, "marks" | "customMarks" | "deleted" | "statuses" | "building" | "pricePerWindow" | "washedBy2" | "crew" | "workers">,
+  data: Pick<ProjectData, "marks" | "customMarks" | "deleted" | "statuses" | "building" | "pricePerWindow" | "washedBy2" | "crew" | "workers" | "p2">,
   opts?: { uninvoicedWindows?: number },
 ): WindowMoney {
   const pricePerWindowCents = Math.round(pricePerWindowOf(data as ProjectData) * 100);
@@ -469,10 +469,31 @@ export function computeWindowMoney(
   // on puolikas kummallekin. Eri sääntö tarkoittaisi että sama ikkuna maksetaan
   // eri tavalla riippuen siitä mikä näkymä sen laskee.
   const washedBy2 = (data as ProjectData).washedBy2 || {};
+  /**
+   * KELTAINEN IKKUNA ON P2:N RAHAA, EI IKKUNARAHAA.
+   *
+   * TÄMÄ OLI KAKSINKERTAINEN VELOITUS. Laskuttamattomat ikkunat luetaan keikan
+   * sektoreista, ja sektori ei erottele prioriteettia: kaikki pestyt ovat
+   * yhdessä luvussa. Keltainen ikkuna tuli siis laskulle KAHDESTI —
+   * ikkunarivillä perushinnalla ja toisen kerran keltaisten kertymänä sillä
+   * hinnalla jonka asiakas oli hyväksynyt. Yhdistetty lasku (`scope: "all"`)
+   * summaa juuri nämä kaksi, joten se veloitti molemmat samasta ikkunasta.
+   *
+   * Konkreettisesti: 10 punaista + 2 keltaista pestynä, ikkunahinta 30 € ja
+   * keltaiset hyväksytty 34 €:n hintaan → ikkunarivi 12 × 30 € = 360 € ja
+   * keltaisten kertymä 68 € päälle. Asiakkaalta 60 € liikaa.
+   *
+   * Kun P2 on käytössä, se OMISTAA keltaiset: niiden hinta on neuvoteltu ja
+   * niiden laskutusta seurataan omassa kertymässään. Ikkunaraha kattaa siis
+   * vain punaiset. Ilman P2:ta keltainen on pelkkä ikkuna ja veloitetaan
+   * ikkunahinnalla kuten ennenkin — muuten sen työ jäisi laskuttamatta.
+   */
+  const p2Owned = !!(data as ProjectData).p2?.enabled;
   const credit = new Map<string, number>();
   let washedTotal = 0;
   for (const p of allPoints(data as ProjectData)) {
     if (p.status !== "pesty") continue;
+    if (p2Owned && p.p === 2) continue;
     washedTotal += 1;
     const second = washedBy2[p.key];
     if (p.washedBy) credit.set(p.washedBy, (credit.get(p.washedBy) ?? 0) + (second ? 0.5 : 1));

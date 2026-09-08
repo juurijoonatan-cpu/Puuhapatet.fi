@@ -5957,6 +5957,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             version: o.version,
             lockedCents: o.lockedCents ?? null,
             lockedAt: o.lockedAt ?? null,
+            /**
+             * HINTAHUOMIO ON KIRJOITETTU NIMENOMAAN ASIAKKAALLE — se on se
+             * lause jolla hinta perustellaan ("kolmen kerroksen korkeus,
+             * nostin"). `publicP2` lähettää sen, mutta TÄMÄ on toinen
+             * asiakasprojektio samasta tilasta, ja se pudotti kentän
+             * hiljaa: kenttä oli olemassa, tallentui adminissa eikä näkynyt
+             * asiakkaalle koskaan. Kaksi projektiota on kaksi tilaisuutta
+             * unohtaa kenttä; kun lisäät kentän, lisää se molempiin.
+             */
+            note: o.note ?? null,
           }])),
           customerAddedKeys: customerAddedKeys(proj),
           billing: (({ yellowTotal, proposedCount, counteredCount, lockedCount, lockedSumCents, lockedWashedCount, earnedCents }) =>

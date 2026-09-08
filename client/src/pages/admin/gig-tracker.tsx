@@ -731,7 +731,9 @@ export default function AdminGigTrackerPage() {
   // palvelimella (`washed − invoicedWashed`), jotta dialogissa näkyvä summa on
   // se joka lähtee. Eri luku tässä kaataisi lähetyksen erittelyvartijaan.
   const uninvoicedWindows = Math.max(0, totals.washedTotal - totals.invoicedWashed);
-  const hourlyBill = project && isHourlyGig(project) ? hourlyItemisation(project, { uninvoicedWindows }) : null;
+  const hourlyBill = project && isHourlyGig(project)
+    ? hourlyItemisation(project, { uninvoicedWindows, invoicedWindows: totals.invoicedWashed })
+    : null;
   const hoursInvoicedCents = invState.hoursInvoicedCents;
   const hoursRemainingCents = hourlyBill
     ? Math.max(0, hourlyBill.customerTotalCents - hoursInvoicedCents) : 0;

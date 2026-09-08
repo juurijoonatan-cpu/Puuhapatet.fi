@@ -6492,7 +6492,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
        */
       const gigTotalsNow = computeTotals(gig);
       const uninvoicedWindows = Math.max(0, gigTotalsNow.washedTotal - gigTotalsNow.invoicedWashed);
-      const hourly = (isHoursScope || isAllScope) && proj ? hourlyItemisation(proj, { uninvoicedWindows }) : null;
+      // `invoicedWindows` mukaan, jotta vähennys tehdään samassa nimittäjässä
+      // kuin veloitettavat pestyt — sektorin luku ei erottele prioriteettia,
+      // ja pelkkä `min` niiden välillä veloitti ikkunoita joita ei ole.
+      const hourly = (isHoursScope || isAllScope) && proj
+        ? hourlyItemisation(proj, { uninvoicedWindows, invoicedWindows: gigTotalsNow.invoicedWashed })
+        : null;
       const hoursRemainingCents = hourly
         ? Math.max(0, hourly.customerTotalCents - invState.hoursInvoicedCents) : 0;
       const hoursAmountCents = hourly
@@ -7241,6 +7246,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           uninvoicedWindows: gigForP2
             ? (() => { const t = computeTotals(gigForP2); return Math.max(0, t.washedTotal - t.invoicedWashed); })()
             : 0,
+          /**
+           * JO LASKUTETTUJEN MÄÄRÄ, samasta lähteestä.
+           *
+           * Rahakortin on vähennettävä samassa nimittäjässä kuin lasku:
+           * veloitettavat pestyt miinus jo laskutetut. Pelkällä
+           * `uninvoicedWindows`illa kortti näyttäisi eri luvun kuin lasku
+           * perii heti kun keikalla on keltaisia — ja kortti on juuri se
+           * paikka josta summa tarkistetaan ennen lähetystä.
+           */
+          invoicedWindows: gigForP2 ? computeTotals(gigForP2).invoicedWashed : 0,
           p1PayCount: p2State.p1Payments,
           p1InvoicedCents: p2State.p1InvoicedCents,
           p2InvoicedCents: p2State.invoicedCents,

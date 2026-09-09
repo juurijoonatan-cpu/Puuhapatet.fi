@@ -388,7 +388,20 @@ export function settleWorker(input: {
   // valunut "ylivuotona" eteenpäin ja pienentänyt sitä 10 € — vaikka vähennys
   // sovittiin punaisista. Aitoon ylimaksuun (yli bruton) sääntö pätee edelleen.
   // Ylivuodon KOHDE ratkaistaan alempana, tuntien laskennan jälkeen.
-  const p1Overflow = Math.max(0, reservedCents - Math.max(p1PayableCents, stats.p1EarnedCents));
+  /**
+   * Kuinka paljon punainen potti IMEE ennen kuin ylivuoto jatkaa eteenpäin.
+   *
+   * Bruttosuoja koskee VAIN kohdennettuja punaisia laskuja: jos punaiset on jo
+   * laskutettu täytenä ja vähennys kirjattiin jälkikäteen, erotus ei saa valua
+   * seuraavaan pottiin (se sovittiin punaisista). Käsin kirjattu maksu on eri
+   * asia — se on tuoretta rahaa, ja kaikki maksettavan ylittävä kuuluu
+   * seuraavalle potille. Aiemmin suoja laskettiin aina brutosta, jolloin
+   * maksuehdotuksen (punaiset + tunnit) maksaminen jätti tuntivelkaa auki
+   * juuri vähennyksen verran — ja sama tuntityö tuli maksettavaksi uudelleen.
+   */
+  const eraReservedCents = eraSentCents + eraPendingCents;
+  const p1AbsorbedCents = Math.max(p1PayableCents, Math.min(stats.p1EarnedCents, eraReservedCents));
+  const p1Overflow = Math.max(0, reservedCents - p1AbsorbedCents);
   const openP1Cents = Math.max(0, p1PayableCents - p1Covered);
 
   // Punaisia ikkunoita vielä maksamatta. Kun P2 ei ole päällä, keltaiset
@@ -450,7 +463,12 @@ export function settleWorker(input: {
   // Ylivuoto ei kirjaa tunteja, joten ikkunoiden sääntö pätee tässäkin: raha on
   // lopullinen totuus ja kirjanpito vain yläraja.
   const hoursFromMoney = hourRateCents > 0 ? openHoursCents / hourRateCents : 0;
-  const openHours = openHoursCents <= 0 ? 0 : round1(Math.min(hoursFromLedger, hoursFromMoney));
+  // ALASPÄIN, EI LÄHIMPÄÄN. Esitäyttö kerrotaan tuntipalkalla, joten ylöspäin
+  // pyöristetty tuntimäärä tekisi laskun joka ylittää avoimen summan (130,00 €
+  // → 8,7 h × 15,00 € = 130,50 €) ja laukaisisi näkymän oman ylilaskutus-
+  // varoituksen koskemattomilla oletuksilla. Täysillä tunneilla — mikä on
+  // normaali tapaus, koska vuorot pyöristetään täyteen tuntiin — luku on tarkka.
+  const openHours = openHoursCents <= 0 ? 0 : floor1(Math.min(hoursFromLedger, hoursFromMoney));
 
   /**
    * YLIVUODON JÄRJESTYS: PUNAISET → TUNNIT → KELTAISET.
@@ -593,6 +611,12 @@ export function sumWorkerSettlements(rows: WorkerSettlement[]): WorkerSettlement
 /** Jaettuja ikkunoita on 0,5 — pidä yksi desimaali eikä liukulukuroskaa. */
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
+}
+
+/** Yksi desimaali ALASPÄIN. Käytetään esitäytöissä jotka kerrotaan hinnalla:
+ *  pyöristys ylöspäin tekisi laskun joka ylittää avoimen velan. */
+function floor1(n: number): number {
+  return Math.floor(n * 10) / 10;
 }
 
 // ─── P2-laskutuksen tila (asiakkaalta) ────────────────────────────────────────

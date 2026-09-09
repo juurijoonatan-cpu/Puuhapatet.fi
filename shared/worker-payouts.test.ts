@@ -306,9 +306,17 @@ describe("computeWorkerSettlements — punaiset ja keltaiset erillään", () => 
     expect(row.openP2Cents).toBe(80_00);         // EI 70 €
   });
 
-  it("aito ylimaksu (yli bruton) kuittaa yhä keltaista", () => {
-    // Vanha sääntö säilyy: käsin kirjattu liian iso maksu valuu keltaiseen.
-    // 5 punaista = 100 € brutto, maksettu 150 € → 50 € ylivuotoa keltaisiin.
+  it("käsin kirjattu ylimaksu valuu punaisten MAKSETTAVAN yli, ei bruton yli", () => {
+    // 5 punaista = 100 € brutto, sovittu vähennys −10 € → maksettava 90 €.
+    // Käsin kirjattu 150 € → punaisiin 90 €, ylivuotoa 60 € keltaisiin.
+    //
+    // Bruttosuoja (edellinen testi) koskee VAIN kohdennettuja punaisia laskuja:
+    // siellä vähennys kirjattiin täytenä laskutetun jälkeen eikä erotus ole
+    // ylimaksua. Käsin kirjattu maksu on tuoretta rahaa, ja tekijälle oltiin
+    // punaisista velkaa 90 € — kaikki sen yli on ylimaksua. Aiemmin suoja
+    // laskettiin myös tästä brutosta, jolloin vähennyksen verran rahaa jäi
+    // "punaisiin" eikä kuitannut mitään: sama velka tuli maksettavaksi toisen
+    // kerran (sama vika näkyi tuntipotissa maksuehdotuksen kanssa).
     const p = projectWith({
       workerId: "doma", red: 5, yellow: 4, lockedCents: 3750,
       crew: [member({
@@ -318,7 +326,7 @@ describe("computeWorkerSettlements — punaiset ja keltaiset erillään", () => 
     });
     const [row] = computeWorkerSettlements(p);
     expect(row.openP1Cents).toBe(0);
-    expect(row.openP2Cents).toBe(30_00);         // 80 − 50
+    expect(row.openP2Cents).toBe(20_00);         // 80 − 60
   });
 
   it("sovittu LISÄ kasvattaa siirrettävää", () => {

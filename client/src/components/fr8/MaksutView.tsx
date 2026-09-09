@@ -592,6 +592,10 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
             </div>
             {mailDone && <p style={{ ...subLabel }}>{mailDone}</p>}
             <p style={{ ...subLabel }}>
+              Kun tekijä hyväksyy laskunsa, se lukittuu ja lähtee PDF:nä sähköpostilla molemmille johtajille —
+              se on merkki siitä että raha voi liikkua, ja rivi siirtyy täältä "hoidettuihin".
+            </p>
+            <p style={{ ...subLabel }}>
               Sama raportti lähtee automaattisesti sähköpostilla molemmille johtajille aina kun asiakkaan lasku lähtee.
             </p>
           </div>

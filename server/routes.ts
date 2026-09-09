@@ -3340,6 +3340,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
       }
 
+      /**
+       * TARKISTUS ENNEN YHTÄKÄÄN KIRJOITUSTA.
+       *
+       * Erä kirjoitetaan riveittäin, joten kesken silmukan palautettu virhe
+       * jättäisi osan laskuista kantaan. Punaiset ja keltaiset selviävät siitä
+       * kaksoiskappalesuojan ansiosta (uusi yritys ohittaa jo luodut), mutta
+       * tuntipotissa suojaa ei ole — sama tuntimaksu voisi syntyä kahdesti.
+       * Siksi kaikki rivit tarkistetaan ensin ja vasta sitten kirjoitetaan.
+       */
+      if (isHoursEraSelection(eraNumbers)) {
+        for (const w of rawWorkers) {
+          const nimi = String(w?.name || w?.workerId || "tekijä").slice(0, 200);
+          const t = Math.max(0, Number(w?.tunnit) || 0);
+          const r = Math.max(0, Math.round(Number(w?.tuntihintaCents) || 0));
+          if (t > 0 && r <= 0) {
+            return res.status(400).json({ error: `Tuntipalkka puuttuu (${nimi}). Täytä €/tunti ennen tuntimaksun luontia.` });
+          }
+        }
+      }
+
       const created: (typeof eraInvoices.$inferSelect)[] = [];
       const skipped: string[] = [];
       for (const w of rawWorkers) {

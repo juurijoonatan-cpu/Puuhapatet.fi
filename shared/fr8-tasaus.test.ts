@@ -246,6 +246,25 @@ describe("buildTasaus — tuntityö", () => {
     expect(t.result.transfer).toBeNull();
   });
 
+  it("ei lue laskuttamatonta tuntityötä laskutetuksi ansainnaksi", () => {
+    // Joonatan on tehnyt 10 h (260 €), mutta asiakkaalta ei ole laskutettu
+    // tunneista mitään. `invoicedEntitledCents` kertoo mitä LASKUTETUSTA
+    // rahasta kuuluu — kertymä ei saa näkyä siinä lainkaan.
+    const t = buildTasaus(hourlyProject([{ worker: "joonatan", hours: 10 }]), [], []);
+    expect(t.result.rows.find((r) => r.id === "joonatan")!.hoursOwnCents).toBe(260_00);
+    expect(t.invoicedEntitledCents.joonatan).toBe(0);
+    expect(t.invoicedEntitledCents.matias).toBe(0);
+  });
+
+  it("laskee tuntityön ansainnan kun tunnit on laskutettu", () => {
+    const t = buildTasaus(
+      hourlyProject([{ worker: "joonatan", hours: 10 }]),
+      [{ t: 1, amountCents: 260_00, scope: "hours", biller: { id: "joonatan" } }],
+      [],
+    );
+    expect(t.invoicedEntitledCents.joonatan).toBe(260_00);
+  });
+
   it("nimeää tuntilaskun ja yhdistetyn laskun omikseen eikä urakan eräksi", () => {
     const t = buildTasaus(
       hourlyProject([]),

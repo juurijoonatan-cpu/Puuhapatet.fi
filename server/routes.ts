@@ -11196,8 +11196,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           monthlyInvoicedCents[key] = (monthlyInvoicedCents[key] ?? 0) + cents;
         }
 
-        const gigInvoiced = t.input.p1PotCents + t.input.p2PotCents;
-        const gigWorkerEarned = t.input.workerP1EarnedCents + t.input.workerP2EarnedCents;
+        // KAIKKI KOLME POTTIA. Tuntipotti eriytettiin punaisista (jottei
+        // tuntilasku nostaisi €/ikkuna-hintaa), ja tämä kortti jäi laskemaan
+        // kahta: tuntikeikan koko liikevaihto katosi kortista, vaikka saman
+        // kortin kuukausikäyrä laskee sen maksuriveistä.
+        const gigInvoiced = t.input.p1PotCents + t.input.p2PotCents + (t.input.hoursPotCents ?? 0);
+        const gigWorkerEarned = t.input.workerP1EarnedCents + t.input.workerP2EarnedCents
+          + (t.input.workerHoursEarnedCents ?? 0);
         const gigWorkerPaid = t.result.rows.reduce((s, r) => s + r.paidOutCents, 0) + t.unattributedPaidCents;
 
         invoicedCents += gigInvoiced;

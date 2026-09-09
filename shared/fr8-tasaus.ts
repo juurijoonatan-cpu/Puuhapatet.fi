@@ -552,13 +552,35 @@ export function buildTasaus(
    */
   const p2AccruedCents = p2Bill.earnedCents ?? 0;
   const p2InvoicedShare = p2AccruedCents > 0 ? Math.min(1, p2PotCents / p2AccruedCents) : 0;
+  /**
+   * SAMA SKAALAUS TUNNEILLE. Tunnit ovat yhtä lailla kertymäperusteisia:
+   * johtajan oma tuntityö ja tekijöiden tuntipalkat kertyvät heti kun vuoro on
+   * kirjattu, myös silloin kun asiakkaalta ei ole laskutettu tunneista
+   * senttiäkään. Ilman skaalausta tämä "laskutetusta rahasta ansaittu" -kenttä
+   * antoi 20 tunnin kirjauksesta +600 € toiselle ja −600 € toiselle rahasta
+   * jota kukaan ei ole vielä laskuttanut — juuri se minkä estämiseksi tämä
+   * muunnelma on olemassa.
+   *
+   * Kertymä on asiakkaan tuntihinta × kaikki tunnit: se on sama luku josta
+   * tuntilasku muodostuu (`computeHourlyMoney.billableCents`).
+   */
+  const hoursAccruedCents = Math.round(
+    shiftStats.byWorker.reduce((sum, r) => sum + r.hours, 0) * founderHourCents,
+  );
+  const hoursInvoicedShare = hoursAccruedCents > 0 ? Math.min(1, hoursPotCents / hoursAccruedCents) : 0;
   const invoicedEntitledCents: Record<string, number> = {};
   {
     const scaled = computeTasaus({
       ...input,
-      founders: input.founders.map((f) => ({ ...f, p2OwnCents: Math.round(f.p2OwnCents * p2InvoicedShare) })),
+      founders: input.founders.map((f) => ({
+        ...f,
+        p2OwnCents: Math.round(f.p2OwnCents * p2InvoicedShare),
+        hoursOwnCents: Math.round((f.hoursOwnCents ?? 0) * hoursInvoicedShare),
+      })),
       p2PotCents: Math.round(p2PotCents * p2InvoicedShare),
       workerP2EarnedCents: Math.round(workerP2EarnedCents * p2InvoicedShare),
+      hoursPotCents: Math.round(hoursPotCents * hoursInvoicedShare),
+      workerHoursEarnedCents: Math.round(workerHoursEarnedCents * hoursInvoicedShare),
     });
     for (const r of scaled.rows) invoicedEntitledCents[r.id] = r.entitledCents;
   }

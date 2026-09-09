@@ -69,7 +69,7 @@ describe("buildTransferReport", () => {
     // Maksaja luetaan viimeisimmän asiakaserän saajasta kun laskua ei vielä ole.
     expect(toJani.fromId).toBe("joonatan");
     expect(toJani.why).toContain("ikkunaa");
-    expect(toJani.why).toContain("h ×");
+    expect(toJani.why).toContain("h tuntityötä");
   });
 
   it("erottaa hyväksyntää odottavan laskun ja laskuttamattoman velan", () => {
@@ -115,7 +115,7 @@ describe("buildTransferReport", () => {
     expect(jani.openHoursCents).toBe(60_00);
     const hoursLine = r.instructions.find((i) => i.toId === "jani" && i.status === "lasku_tekematta")!;
     expect(hoursLine.cents).toBe(60_00);
-    expect(hoursLine.why).toContain("4 h ×");
+    expect(hoursLine.why).toContain("4 h tuntityötä");
   });
 
   it("selite laskee jäljellä olevista ikkunoista, ei koko pestystä määrästä", () => {
@@ -144,7 +144,7 @@ describe("buildTransferReport", () => {
     const r = buildTransferReport({ title: "T", project: p, payments: [], invoices: [part] });
     const line = r.instructions.find((i) => i.toId === "jani")!;
     expect(line.cents).toBe(75_00);              // 5 h × 15 €
-    expect(line.why).toContain("5 h ×");
+    expect(line.why).toContain("5 h tuntityötä");
     expect(line.why).not.toContain("20 h");
   });
 

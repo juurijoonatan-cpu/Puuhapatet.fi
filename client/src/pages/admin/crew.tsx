@@ -1115,7 +1115,7 @@ function PayrollSummary({ crew, eraInvoices, p2Enabled }: {
   if (rows.length === 0) return null;
 
   const t = sumWorkerSettlements(rows);
-  const anyEra = rows.some((r) => r.eraSentCents > 0 || r.eraPendingCents > 0);
+  const anyEra = rows.some((r) => r.eraSentCents > 0 || r.pendingTotalCents > 0 || r.hoursSettledCents > 0);
 
   return (
     <div className="rounded-2xl border bg-card p-4 mb-5">
@@ -1138,7 +1138,9 @@ function PayrollSummary({ crew, eraInvoices, p2Enabled }: {
         </div>
         <div className="rounded-xl bg-muted/40 px-1 py-2">
           <p className="text-[10px] uppercase leading-tight tracking-wide text-muted-foreground">{anyEra ? "Hoidettu" : "Maksettu"}</p>
-          <p className="text-sm font-bold tabular-nums text-green-600">{eur(t.settledCents)}</p>
+          {/* Kaikki kolme virtaa: p1-kohtainen `settledCents` näytti tuntikeikalla
+              0 € vaikka tekijälle oli maksettu koko tuntilasku. */}
+          <p className="text-sm font-bold tabular-nums text-green-600">{eur(t.settledTotalCents)}</p>
         </div>
         <div className="rounded-xl bg-muted/40 px-1 py-2">
           <p className="text-[10px] uppercase leading-tight tracking-wide text-muted-foreground">Siirrettävä</p>
@@ -1180,7 +1182,7 @@ function PayrollSummary({ crew, eraInvoices, p2Enabled }: {
               <p className="text-sm font-medium truncate">{r.name}</p>
               <p className="flex flex-wrap items-center gap-x-1.5 text-[11px] leading-snug text-muted-foreground">
                 <span className="whitespace-nowrap">{fmtWindows(r.p1Washed)} punaista</span>
-                <span className="whitespace-nowrap">· hoidettu {eur(r.settledCents)}</span>
+                <span className="whitespace-nowrap">· hoidettu {eur(r.settledTotalCents)}</span>
                 {r.eraPendingCents > 0 && <span className="whitespace-nowrap">· kuittaamatta {eur(r.eraPendingCents)}</span>}
                 {r.settledEras.length > 0 && <span className="whitespace-nowrap">· erät {r.settledEras.join(", ")}</span>}
               </p>

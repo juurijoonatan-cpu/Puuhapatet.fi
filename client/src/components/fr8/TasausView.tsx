@@ -252,10 +252,17 @@ function defaultDueDate(): string {
   return new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString().slice(0, 10);
 }
 
-export default function TasausView({ jobId, canEdit = true }: {
+export default function TasausView({ jobId, canEdit = true, onChanged }: {
   jobId: number;
   /** Vain perustaja voi kirjata. Muille näkymä on lukutilassa. */
   canEdit?: boolean;
+  /**
+   * Kutsutaan kun tasaukseen on kirjattu jotain (siirto, kulu, käsin asetettu
+   * summa, tasauslasku). Kutsuja hakee omat lukunsa uudelleen — muuten
+   * Maksut-välilehden siirtolista ja otsikkosumma jäivät näyttämään jo
+   * kirjattua siirtoa kunnes sivu päivitettiin käsin.
+   */
+  onChanged?: () => void;
 }) {
   const [data, setData] = useState<Bundle | null>(null);
   const [loading, setLoading] = useState(true);
@@ -281,9 +288,9 @@ export default function TasausView({ jobId, canEdit = true }: {
     setBusy(true);
     const res = await api.saveTasaus(jobId, patch);
     setBusy(false);
-    if (res.ok && res.data?.tasaus) { setData(res.data.tasaus); setErr(null); }
+    if (res.ok && res.data?.tasaus) { setData(res.data.tasaus); setErr(null); onChanged?.(); }
     else setErr(res.error || "Tallennus epäonnistui");
-  }, [jobId]);
+  }, [jobId, onChanged]);
 
   // Kaksoislaskun varoitus. Palvelin palauttaa 409:n jos samalle parille on jo
   // tasauslasku; se EI ole virhe vaan tieto, joten se näytetään vahvistuksena.
@@ -311,12 +318,13 @@ export default function TasausView({ jobId, canEdit = true }: {
     if (res.ok && res.data) {
       setInvoiceDone(res.data.invoice.invoiceNumber || `#${res.data.invoice.id}`);
       setErr(null);
+      onChanged?.();
       return;
     }
     // 409 = tasauslasku on jo olemassa. Kysytään, ei estetä.
     if (res.status === 409) { setDuplicateWarning(res.error || "Tasauslasku on jo tehty."); return; }
     setErr(res.error || "Laskun lähetys epäonnistui");
-  }, [data, jobId, dueDate]);
+  }, [data, jobId, dueDate, onChanged]);
 
   const nameOf = useCallback(
     (id: string | null | undefined) => data?.founders.find((f) => f.id === id)?.name ?? id ?? "—",

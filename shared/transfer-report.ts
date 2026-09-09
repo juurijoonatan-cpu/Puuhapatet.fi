@@ -173,9 +173,11 @@ const num = (n: number) => n.toLocaleString("fi-FI", { maximumFractionDigits: 1 
 /**
  * Tekijän osuuden selite: vain ne virrat joissa on rahaa.
  *
- * Tunnit luetaan MAKSAMATTOMISTA tunneista (`openHours`), ei koko keikan
- * tuntimäärästä: osamaksun jälkeen "20 h × 15,00 € = 75,00 €" olisi rivi joka
- * ei täsmää itsensä kanssa.
+ * MÄÄRÄ JA SUMMA VIERETYSTEN, EI YHTÄLÖÄ. Tunnit luetaan maksamattomista
+ * tunneista (`openHours`), joka on pyöristetty yhteen desimaaliin ja voi olla
+ * laskettu eri taksalla maksetun osan jälkeen — kerrottu yhtälö ei siis
+ * täsmäisi itsensä kanssa ("6,7 h × 15,00 € = 100,00 €"). Sama sääntö kuin
+ * ikkunarivillä, joka on samasta syystä aina ollut "N ikkunaa X €".
  */
 function whyFor(r: TransferReportWorkerRow): string {
   const parts: string[] = [];
@@ -186,8 +188,8 @@ function whyFor(r: TransferReportWorkerRow): string {
   }
   if (r.openP2Cents > 0) parts.push(`keltaiset ${eur(r.openP2Cents)}`);
   if (r.openHoursCents > 0) {
-    parts.push(r.openHours > 0 && r.hourRateCents > 0
-      ? `${num(r.openHours)} h × ${eur(r.hourRateCents)} = ${eur(r.openHoursCents)}`
+    parts.push(r.openHours > 0
+      ? `${num(r.openHours)} h tuntityötä ${eur(r.openHoursCents)}`
       : `tuntityö ${eur(r.openHoursCents)}`);
   }
   return parts.join(" · ") || "—";

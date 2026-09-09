@@ -795,7 +795,10 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
           <SectionTitle icon={<Scale style={{ width: 15, height: 15, color: T.text.secondary }} />}>
             Keskinäiset siirrot
           </SectionTitle>
-          <TasausView jobId={jobId} canEdit={canEditTasaus} />
+          {/* Kirjaus tasauksessa muuttaa siirtolistan lukuja, joten raportti
+              haetaan uudelleen samalla — ei kahta eri totuutta välilehtien
+              välillä. */}
+          <TasausView jobId={jobId} canEdit={canEditTasaus} onChanged={load} />
 
           <Fold
             icon={<Users style={{ width: 15, height: 15, color: T.text.secondary }} />}

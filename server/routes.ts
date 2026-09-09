@@ -228,11 +228,12 @@ function buildTransferReportHtml(r: TransferReport): string {
             : `ikkunatyö ${eur(w.openP1Cents)}`);
         } else if (w.p1Washed > 0) bits.push(`${num(w.p1Washed)} ikkunaa pesty`);
         if (w.openP2Cents > 0) bits.push(`keltaiset ${eur(w.openP2Cents)}`);
-        // Tunnit MAKSAMATTOMISTA tunneista, ei koko keikan tuntimäärästä:
-        // osamaksun jälkeen kertolasku ei muuten täsmää omaan tulokseensa.
+        // Määrä ja summa vieretysten, ei kerrottua yhtälöä: maksamaton
+        // tuntimäärä on pyöristetty eikä välttämättä samalla taksalla laskettu
+        // kuin jo maksettu osa, joten yhtälö ei täsmäisi itsensä kanssa.
         if (w.hours > 0) {
-          bits.push(w.openHours > 0 && w.hourRateCents > 0
-            ? `${num(w.openHours)} h × ${eur(w.hourRateCents)} = ${eur(w.openHoursCents)}`
+          bits.push(w.openHours > 0
+            ? `${num(w.openHours)} h tuntityötä ${eur(w.openHoursCents)}`
             : `${num(w.hours)} h tehty · maksamatta ${eur(w.openHoursCents)}`);
         }
         return `

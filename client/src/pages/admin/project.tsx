@@ -33,6 +33,7 @@ import Toggle from "@/components/fr8/Toggle";
 import TaskBoard from "@/components/TaskBoard";
 import FounderEraInvoiceDialog from "@/components/fr8/FounderEraInvoiceDialog";
 import MaksutView from "@/components/fr8/MaksutView";
+import StorageCard from "@/components/fr8/StorageCard";
 import type { GigBillingState, EraInvoiceClient } from "@/lib/api";
 import { computeWorkerSettlements, eraSettlementByWorker, sumWorkerSettlements } from "@shared/worker-payouts";
 import { BRAND_BILLERS } from "@shared/billers";
@@ -1587,11 +1588,19 @@ export default function AdminProjectPage() {
             /* Kerrosten lukitus on apuasetus, ei päänäkymän asia — se renderöidään
                dashin alalaitaan omana slotina. */
             settingsSlot={
-              <FloorLockPanel
-                project={project}
-                onGuidedSet={onGuidedSet}
-                canSend={profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")}
-              />
+              <>
+                <FloorLockPanel
+                  project={project}
+                  onGuidedSet={onGuidedSet}
+                  canSend={profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")}
+                />
+                {/* Tallennustilan mittari asui Maksut-välilehdellä, jonne se ei
+                    kuulu: se ei ole rahaa eikä siirto, ja se oli yksi syy siihen
+                    että maksualue näytti sekavalta. Luku on silti tarpeellinen
+                    (siirtokiintiö loppui kerran kesken työpäivän), joten se on
+                    täällä keikan asetusten yhteydessä. Vain perustajalle. */}
+                {isFounderView && <StorageCard jobId={jobId} />}
+              </>
             }
             expensesTotalCents={(project.expenses || []).reduce((s, e) => s + e.amountCents, 0)}
             expensesSlot={

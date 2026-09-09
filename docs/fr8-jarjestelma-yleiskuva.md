@@ -49,7 +49,8 @@ Osapuolet ja pääsy:
 | `crew.ts` | `CrewMember`, `crewMemberStats` (p2-tietoinen), sessiot, sanitointi. |
 | `gig.ts` | `GigData`/`GigSector`/`GigPayment` (`scope?: "p1"|"p2"`), julkisen näkymän totalsit. |
 | `era-billing.ts` | Erälaskutuksen (arvomääräiset maksuerät) laskentamoottori + keltaisten maksupotti (`P2_ERA_NUMBER`, `ansaittuOverrideCents`). |
-| `worker-payouts.ts` | **Tekijöiden maksettava — yksi totuuden lähde.** `computeWorkerSettlements`/`settleWorker` (punaiset vs. keltaiset erikseen), `eraSettlementByWorker`, `p2InvoiceState`. Ks. "Rahan kaksi virtaa" alla. |
+| `worker-payouts.ts` | **Tekijöiden maksettava — yksi totuuden lähde.** `computeWorkerSettlements`/`settleWorker` (punaiset, keltaiset ja tunnit erikseen), `eraSettlementByWorker`, `p2InvoiceState`. Ks. "Rahan kolme virtaa" alla. |
+| `transfer-report.ts` | **Siirtoraportti: kenelle siirrän ja paljonko.** `buildTransferReport` kokoaa tekijöiden osuudet (ikkunat/keltaiset/tunnit) ja johtajien tasauksen yhdeksi listaksi. Sama funktio piirtää Maksut-välilehden Siirrot-näkymän ja lähtee sähköpostina molemmille johtajille asiakaslaskun mukana. |
 | `founder-settlement.ts` | **Johtajien tasaus — puhdas matematiikka.** `computeTasaus` (ansainta vs. kassa → nettosiirto), `splitEvenCents`, tallennettu tila `FounderSettlementState` + sanitoija. Ks. "Johtajien tasaus" alla. |
 | `fr8-tasaus.ts` | Tasauksen syötteen kokoaminen oikeasta keikkadatasta: `buildTasaus`, `founderWashCounts`. |
 | `payprogress.ts`, `tax.ts`, `team.ts`, `trainees.ts`, `billers.ts` | Paydate/verot/tiimi/harjoittelijat/laskuttajat. |
@@ -119,28 +120,35 @@ Erälaskutus (varsinainen lähetettävä laskutus) on neljäs, erillinen järjes
 `docs/fr8-era-laskutus-plan.md`. Ansio-/työaikamalli (dashboard-arviot):
 `docs/fr8-tyo-logiikka.md`.
 
-## Rahan kaksi virtaa — MITÄ EI SAA SEKOITTAA
+## Rahan kolme virtaa — MITÄ EI SAA SEKOITTAA
 
-Tämä on koko FR8:n herkin kohta. Punaiset ja keltaiset ovat kaksi eri rahaa, jotka
-liikkuvat eri aikaan, ja kaikki laskenta erottelee ne. Yksi totuuden lähde:
-**`shared/worker-payouts.ts`**.
+Tämä on koko FR8:n herkin kohta. Punaiset, keltaiset ja tuntityö ovat kolme eri
+rahaa, jotka liikkuvat eri aikaan, ja kaikki laskenta erottelee ne. Yksi totuuden
+lähde: **`shared/worker-payouts.ts`**.
 
-| | PUNAISET (P1) | KELTAISET (P2) |
-|---|---|---|
-| Asiakkaalta | 4 arvomääräistä erää (`gig.payments`, `scope !== "p2"`) | erillinen lasku (`scope: "p2"`), ei kuluta erälaskuria |
-| Tekijälle | tekijän oma €/ikkuna, maksetaan erämaksuina (`era_invoices`) | palkkiotaulukko, maksetaan **vasta kun asiakas on maksanut keltaisten laskun** |
-| Perustajalle | sisäinen kate (`dealInternalRateCents`) + tuotto-osuus | `computeP2Billing().marginCents` |
+| | PUNAISET (P1) | KELTAISET (P2) | TUNTITYÖ |
+|---|---|---|---|
+| Asiakkaalta | 4 arvomääräistä erää (`gig.payments`, `scope: "p1"` tai puuttuva) | erillinen lasku (`scope: "p2"`), ei kuluta erälaskuria | tuntilasku (`scope: "hours"`) tai yhdistetty (`scope: "all"`, osuudet `parts`issa) |
+| Tekijälle | tekijän oma €/ikkuna, maksetaan erämaksuina (`era_invoices`) | palkkiotaulukko, maksetaan **vasta kun asiakas on maksanut keltaisten laskun** | tunnit × `workerHourCents`, oma potti (`HOURS_ERA_NUMBER = 9`) |
+| Perustajalle | sisäinen kate (`dealInternalRateCents`) + tuotto-osuus | `computeP2Billing().marginCents` | oma tunti täydellä `hourRateCents`illä (ei katetta omasta työstä) + osuus työntekijätuntien katteesta |
+
+**Tuntipalkka on palkkaa VAIN tuntitilassa** (`billingMode: "hourly"`).
+Kohdennetulla keikalla `project.shifts` on seurantatietoa (ikkunaa/tunti,
+tehokkuus) ja palkka tulee ikkunoista — jos vuorot muutettaisiin siellä rahaksi,
+sama työ maksettaisiin kahdesti. Käsin sovitun tuntikorvauksen voi silti kirjata
+millä tahansa keikalla maksudialogin "Tunnit"-välilehdeltä.
 
 ### Jaetut funktiot (käytä näitä, älä kirjoita kaavaa uudelleen)
 
 | Funktio | Vastaa kysymykseen |
 |---|---|
-| `computeWorkerSettlements(project, {era})` | paljonko kullekin tekijälle on punaisista vielä siirtämättä (`openP1Cents` / `openP1Windows`) ja paljonko keltaisista odottaa (`openP2Cents`) |
+| `computeWorkerSettlements(project, {era, p2Era, hoursEra})` | paljonko kullekin tekijälle on vielä siirtämättä: punaisista (`openP1Cents` / `openP1Windows`), keltaisista (`openP2Cents`) ja tunneista (`openHoursCents` / `openHours`) — sekä `openTotalCents` niiden summana |
 | `settleWorker({stats, payouts, era, p2Enabled})` | sama yhdelle tekijälle, kun kutsujalla on valmiit `crewMemberStats` (Tiimi-sivu) |
 | `eraSettlementByWorker` / `eraMapsFor` | mitä erälaskuilla on jo hoidettu (lähetetty/hyväksytty) ja mikä odottaa kuittausta (luonnos) |
 | `p2InvoiceState(earnedCents, payments)` | keltaisten laskutettu / laskuttamatta + P1-maksujen määrä samasta suodatuksesta |
-| `eraSettlementByWorker(inv, "p1"\|"p2")` | kumman rahavirran maksut luetaan — keltaisen maksu ei kuittaa punaista velkaa |
-| `isP2EraSelection(eraNumbers)` | onko tämä maksu keltaisten potti (sentinel-erä `P2_ERA_NUMBER = 0`) |
+| `eraSettlementByWorker(inv, "p1"\|"p2"\|"hours")` | minkä rahavirran maksut luetaan — yhden virran maksu ei koskaan kuittaa toisen velkaa |
+| `eraScopeOf(eraNumbers)` / `eraScopeLabel(eraNumbers)` | minkä virran erävalinta tämä on, ja sen luettava nimi (sentinel ei koskaan vuoda näkyviin muodossa "Erä 0" / "Erä 9") |
+| `buildTransferReport({project, payments, invoices})` | **kenelle siirrän ja paljonko** — tekijöiden osuudet eriteltyinä + johtajien tasaus yhtenä listana |
 | `isTraineeMember(member)` | harjoittelija → EI tekijöiden maksulistalla (palkka johtajan kautta) |
 | `dealInternalRateCents(data, deal)` | perustajan sisäinen kate €/ikkuna (EFEKTIIVINEN sopimussumma ÷ punaiset) |
 | `settleWorker({..., adjustmentCents})` | sovittu vähennys/lisä tekijän punaiseen palkkaan (`p1PayableCents`) |
@@ -387,6 +395,14 @@ kun asiakas on hyväksynyt kaikki keltaiset.
 7. **Taaksepäin-yhteensopivuus**: `p2`, `guided`, `eraWindows` ovat valinnaisia
    kenttiä. Ilman niitä vanhat keikat round-trippaavat identtisesti. Ei
    DB-migraatioita näihin.
+8. **Kolme rahavirtaa eivät kuittaa toisiaan**: punaisten maksu ei vähennä
+   keltaista eikä tuntivelkaa, eikä toisinpäin. Virta luetaan AINA
+   `eraScopeOf(eraNumbers)`ista (sentinel-erät: `P2_ERA_NUMBER = 0`,
+   `HOURS_ERA_NUMBER = 9`), ei omalla ehdolla kutsupaikassa — kaksi tulkintaa
+   samasta kentästä tarkoittaa ennen pitkää kaksi eri summaa samasta laskusta.
+9. **Tuntipalkka vain tuntitilassa**: `project.shifts` muuttuu rahaksi vain kun
+   `billingMode === "hourly"`. Kohdennetulla keikalla samat rivit ovat
+   seurantatietoa, ja niiden maksaminen olisi tuplamaksu ikkunapalkan päälle.
 
 ## Kartta ja napit
 

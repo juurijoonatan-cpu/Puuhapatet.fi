@@ -773,16 +773,17 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
       {!loading && !err && tab === "johtajat" && (
         <>
           {/* VIIMEINEN ERÄ ENSIN. Se on se maksu jonka kohdalla tasaus
-              ratkaistaan: erät 1–3 laskutetaan Joonatanin ja erä 4 Matiaksen
-              Y-tunnuksella, joten viimeisen erän jälkeen kummankin kassassa on
-              raha jota ei enää tule lisää. */}
+              ratkaistaan: kumpi johtaja laskutti minkäkin erän Y-tunnuksellaan
+              valitaan laskua lähettäessä (ei kiinteä erän mukaan), joten
+              tässä ei arvata nimeä — viimeisen erän jälkeen kummankin
+              kassassa on raha jota ei enää tule lisää. */}
           {billing && billing.agreedTotalCents > 0 && (
             <div style={{
               ...card, marginTop: T.space.lg,
               borderColor: billing.p1PayCount >= 4 ? T.tone.goodBorder : T.tone.warnBorder,
               background: billing.p1PayCount >= 4 ? T.tone.goodBg : T.tone.warnBg,
             }}>
-              <div style={{ ...mono, marginBottom: T.space.xs }}>Viimeinen erä (erä 4 · Matias)</div>
+              <div style={{ ...mono, marginBottom: T.space.xs }}>Viimeinen erä (erä 4)</div>
               <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.title, fontWeight: 700, color: T.text.primary }}>
                 {billing.p1PayCount >= 4
                   ? <>Laskutettu ✓ · {fmtEurCents(billing.p1InvoicedCents)} / {fmtEurCents(billing.agreedTotalCents)}</>

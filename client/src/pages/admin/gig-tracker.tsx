@@ -1538,10 +1538,18 @@ export default function AdminGigTrackerPage() {
                   se on kortin alalaidassa — kaksi nappia tarkoittaisi
                   asiakkaalle kaksi laskua samasta työstä samana päivänä. */}
               {!hasTwoPots && (
-                <Button className="w-full" disabled={hoursRemainingCents <= 0 || !hourlyBill.matchesBilling || hourlyBill.money.rateInverted} onClick={sendHours}>
-                  <Send className="w-4 h-4 mr-2" />
-                  {hoursRemainingCents > 0 ? `Lähetä tuntilasku (${eur(hoursRemainingCents)})` : "Kaikki tunnit laskutettu ✓"}
-                </Button>
+                hoursRemainingCents > 0 ? (
+                  <Button className="w-full" disabled={!hourlyBill.matchesBilling || hourlyBill.money.rateInverted} onClick={sendHours}>
+                    <Send className="w-4 h-4 mr-2" />
+                    {`Lähetä tuntilasku (${eur(hoursRemainingCents)})`}
+                  </Button>
+                ) : (
+                  // Kaikki laskutettu: kuittausrivi, ei täysleveä (harmaa) nappi —
+                  // sama tapa kuin urakan 4/4 erää -tilassa alempana.
+                  <span className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700 dark:text-emerald-400">
+                    <Check className="w-4 h-4 shrink-0" /> Kaikki tunnit laskutettu
+                  </span>
+                )
               )}
             </>
           ) : deal && dealBilling ? (
@@ -1705,10 +1713,18 @@ export default function AdminGigTrackerPage() {
                     </p>
                   )}
                   {!hasTwoPots && (
-                    <Button className="w-full" disabled={p2Sending || p2RemainingCents <= 0} onClick={sendP2}>
-                      <Send className="w-4 h-4 mr-2" />
-                      {p2Sending ? "Lähetetään…" : p2RemainingCents > 0 ? `Lähetä lisätyölasku (${eur(p2RemainingCents)})` : "Kaikki lisätyöt laskutettu ✓"}
-                    </Button>
+                    p2RemainingCents > 0 ? (
+                      <Button className="w-full" disabled={p2Sending} onClick={sendP2}>
+                        <Send className="w-4 h-4 mr-2" />
+                        {p2Sending ? "Lähetetään…" : `Lähetä lisätyölasku (${eur(p2RemainingCents)})`}
+                      </Button>
+                    ) : (
+                      // Kaikki laskutettu: kuittausrivi, ei täysleveä (harmaa) nappi —
+                      // sama tapa kuin tuntilaskun ja urakan valmiissa tiloissa.
+                      <span className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700 dark:text-emerald-400">
+                        <Check className="w-4 h-4 shrink-0" /> Kaikki lisätyöt laskutettu
+                      </span>
+                    )
                   )}
                 </>
               )}

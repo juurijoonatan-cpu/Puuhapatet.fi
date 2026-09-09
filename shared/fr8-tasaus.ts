@@ -577,9 +577,20 @@ export function buildTasaus(
         p2OwnCents: Math.round(f.p2OwnCents * p2InvoicedShare),
         hoursOwnCents: Math.round((f.hoursOwnCents ?? 0) * hoursInvoicedShare),
       })),
-      p2PotCents: Math.round(p2PotCents * p2InvoicedShare),
+      /**
+       * POTTEJA EI SKAALATA — ne OVAT jo laskutettu raha.
+       *
+       * Skaalattavia ovat vain KERTYMÄPERUSTEISET luvut (johtajan oma työ ja
+       * tekijöiden palkat), koska ne kertyvät heti työn tekemisestä. Potin
+       * skaalaus laski sen toiseen kertaan: puoliksi laskutetusta 260 €:n
+       * tuntityöstä jaettavaksi jäi 65 € vaikka laskutettu oli 130 €, jolloin
+       * oman työnsä tehnyt johtaja sai 97,50 € ja toinen −32,50 € rahasta joka
+       * kattaa ensimmäisen työn kokonaan. Päätepisteissä (0 % / 100 %) virhe ei
+       * näkynyt, joten se eli osittain laskutetuissa keikoissa.
+       */
+      p2PotCents,
       workerP2EarnedCents: Math.round(workerP2EarnedCents * p2InvoicedShare),
-      hoursPotCents: Math.round(hoursPotCents * hoursInvoicedShare),
+      hoursPotCents,
       workerHoursEarnedCents: Math.round(workerHoursEarnedCents * hoursInvoicedShare),
     });
     for (const r of scaled.rows) invoicedEntitledCents[r.id] = r.entitledCents;

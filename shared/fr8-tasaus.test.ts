@@ -256,6 +256,19 @@ describe("buildTasaus — tuntityö", () => {
     expect(t.invoicedEntitledCents.matias).toBe(0);
   });
 
+  it("osittain laskutettu tuntityö ei paina toista johtajaa miinukselle", () => {
+    // Joonatan teki 10 h (260 €), asiakkaalta laskutettu puolet (130 €).
+    // Laskutettu raha kattaa hänen työtään 130 € edestä — se on hänen, eikä
+    // toiselle synny miinusta rahasta jota ei ole jaettu kenellekään.
+    const t = buildTasaus(
+      hourlyProject([{ worker: "joonatan", hours: 10 }]),
+      [{ t: 1, amountCents: 130_00, scope: "hours", biller: { id: "joonatan" } }],
+      [],
+    );
+    expect(t.invoicedEntitledCents.joonatan).toBe(130_00);
+    expect(t.invoicedEntitledCents.matias).toBe(0);
+  });
+
   it("laskee tuntityön ansainnan kun tunnit on laskutettu", () => {
     const t = buildTasaus(
       hourlyProject([{ worker: "joonatan", hours: 10 }]),

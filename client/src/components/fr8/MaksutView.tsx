@@ -694,7 +694,10 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
               )}
               <div style={{ display: "flex", flexDirection: "column", gap: T.space.sm }}>
                 {payable.map((r) => {
-                  const a = APPROVAL_CHIP[approvalOf(r)];
+                  // Tuntematon tila EI saa kaataa koko välilehteä: palvelin voi
+                  // olla uudempi kuin selaimen buildi. Sama varautuminen kuin
+                  // sähköpostiraportin puolella.
+                  const a = APPROVAL_CHIP[approvalOf(r)] ?? APPROVAL_CHIP.ei_laskua;
                   return (
                     <div key={r.workerId} style={{ ...card, padding: `${T.space.md}px ${T.space.lg}px` }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: T.space.sm + 2, flexWrap: "wrap" }}>

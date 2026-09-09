@@ -6429,7 +6429,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // agreed total. So if red windows were removed, the reduction (37,50 €/ikkuna)
       // lands entirely on the last invoice — the earlier erät stay at 25 %.
       const proj = parseProject(job.projectData ?? null);
-      const fixedDeal = !isP2Scope && !isHoursScope && proj ? fixedDealFor(proj) : null;
+      // Yhdistetty lasku EI ole urakan erä: sen summa on tunnit + lisätyöt, ja
+      // erälaskun luvut (sovittu kokonaishinta, erä n/4) puhuisivat aivan
+      // muusta rahasta sen vieressä. `isAllScope` puuttui tästä ehdosta.
+      const fixedDeal = !isP2Scope && !isHoursScope && !isAllScope && proj ? fixedDealFor(proj) : null;
       const rawInstalmentCents = fixedDeal ? Math.round(fixedDeal.capCents / 4) : null;
       const agreedTotalCents = fixedDeal && proj ? dealAgreedTotalCents(proj, fixedDeal) : null;
 
@@ -6734,6 +6737,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const invoiceDate = new Date().toLocaleDateString("fi-FI"); // laskun päivämäärä (AVL 209 e §)
       const accruedSoFar = totalsBefore.accruedCents;
       const previouslyInvoiced = totalsBefore.invoicedCents;
+      /**
+       * YHTEENVETO PUHUU SAMASTA RAHASTA KUIN VELOITUS.
+       *
+       * "Kertymä yhteensä" ja "Aiemmin laskutettu" luettiin `computeTotals`ista,
+       * eli KEIKAN SEKTOREISTA. Tuntilaskulla ja yhdistetyllä laskulla veloitus
+       * tulee aivan muualta (tunnit + kulut + ikkunat, ja lisätyöt), joten
+       * asiakas näki kertymän joka ei liity hänen maksettavaansa:
+       *
+       *   Tuntityö 884,00 € · Ikkunanpesu 360,00 €
+       *   Kertymä yhteensä   360,00 €        ← sektorikertymä
+       *   Maksettavaa nyt  1 244,00 €
+       *
+       * Kertymä pienempi kuin maksettava on laskulla lukukelvoton. Nyt nämä
+       * kaksi laskulajia tuovat oman kertymänsä samasta laskennasta josta
+       * summakin tulee.
+       */
+      const summaryAccrualCents = isAllScope
+        ? (hourly?.customerTotalCents ?? 0) + (p2Items?.totalCents ?? 0)
+        : (hourly?.customerTotalCents ?? 0);
+      const summaryInvoicedCents = isAllScope
+        ? invState.hoursInvoicedCents + p2InvoicedCents
+        : invState.hoursInvoicedCents;
+      const summaryAccrualRows =
+        `<tr><td style="padding:8px 0;color:#8C8A82;font-size:13px">Kertymä yhteensä</td><td style="padding:8px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">${fmtEur(summaryAccrualCents)}</td></tr>`
+        + (summaryInvoicedCents > 0
+          ? `<tr><td style="padding:4px 0;color:#8C8A82;font-size:13px">Aiemmin laskutettu</td><td style="padding:4px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">−${fmtEur(summaryInvoicedCents)}</td></tr>`
+          : "");
 
       // Verkkolasku mode: a short confirmation only — the founder sends the real,
       // priced invoice themselves via their own invoicing software to the address
@@ -6785,7 +6815,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         <tbody>${lineRows}</tbody>
       </table>
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px">
-        ${isP2Scope
+        ${isHoursScope || isAllScope
+          ? summaryAccrualRows
+          : isP2Scope
           ? `<tr><td style="padding:8px 0;color:#8C8A82;font-size:13px">Lisätöiden kertymä (pestyt sovitut ikkunat)</td><td style="padding:8px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">${fmtEur(p2b?.earnedCents ?? 0)}</td></tr>
              ${p2InvoicedCents > 0 ? `<tr><td style="padding:4px 0;color:#8C8A82;font-size:13px">Aiemmin laskutettu</td><td style="padding:4px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">−${fmtEur(p2InvoicedCents)}</td></tr>` : ""}`
           : fixedDeal

@@ -50,7 +50,10 @@ export default function HourlySummary({ hourly, theme: T }: Props) {
    * jossa lukee "Valotyöt": työsuoritus ei ole tarvike, ja asiakas lukee
    * otsikon ennen riviä.
    */
-  const hasWork = expenses.some((e) => e.kind === "subcontract");
+  // Alihankinta EIKÄ VAIN SE: sovittu lisä ("kiirelisä") ei myöskään ole
+  // tarvike, ja pelkkien lisien kanssa otsikko lupasi asiakkaalle että
+  // olemme hankkineet hänelle tavaraa. Molemmat ovat työtä tai sopimusasia.
+  const hasWork = expenses.some((e) => e.kind === "subcontract" || e.kind === "surcharge");
 
   const label: React.CSSProperties = {
     fontSize: 11, fontWeight: 700, letterSpacing: "0.08em",

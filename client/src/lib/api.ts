@@ -271,6 +271,8 @@ export interface GigBillingState {
   p2InvoicedCents: number;
   /** Montako pestyä ikkunaa on yhä laskuttamatta (keikan sektoreilta). */
   uninvoicedWindows?: number;
+  /** Jo laskutettujen pesujen määrä — vähennys tehdään samassa nimittäjässä. */
+  invoicedWindows?: number;
   p2RemainingCents: number;
   agreedTotalCents: number;
   nextInstalmentCents: number;

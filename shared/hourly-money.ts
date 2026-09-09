@@ -159,8 +159,8 @@ function splitEvenly(cents: number, ids: readonly string[]): Map<string, number>
 export type HourlyCostLine = CustomerChargeLine;
 
 export function computeHourlyMoney(
-  data: Pick<ProjectData, "shifts" | "hourRateCents" | "workerHourCents" | "expenses">,
-  opts?: { today?: string; stats?: ShiftStats; uninvoicedWindows?: number },
+  data: Pick<ProjectData, "shifts" | "hourRateCents" | "workerHourCents" | "expenses" | "p2">,
+  opts?: { today?: string; stats?: ShiftStats; uninvoicedWindows?: number; invoicedWindows?: number },
 ): HourlyMoney {
   const hourRateCents = hourRateOf(data);
   const workerHourCents = workerHourRateOf(data);
@@ -263,7 +263,7 @@ export function computeHourlyMoney(
    */
   let windows: WindowMoney | null = null;
   try {
-    const w = computeWindowMoney(data as ProjectData, { uninvoicedWindows: opts?.uninvoicedWindows });
+    const w = computeWindowMoney(data as ProjectData, { uninvoicedWindows: opts?.uninvoicedWindows, invoicedWindows: opts?.invoicedWindows });
     if (w.washedTotal > 0) windows = w;
   } catch { /* kartaton keikka: ei ikkunarahaa */ }
   const windowsCents = windows?.uninvoicedCents ?? 0;
@@ -325,10 +325,10 @@ export interface HourlyItemisation {
 
 export function hourlyItemisation(
   data: Pick<ProjectData, "shifts" | "hourRateCents" | "workerHourCents" | "expenses"
-    | "marks" | "customMarks" | "deleted" | "statuses" | "building" | "pricePerWindow">,
-  opts?: { today?: string; uninvoicedWindows?: number },
+    | "marks" | "customMarks" | "deleted" | "statuses" | "building" | "pricePerWindow" | "p2">,
+  opts?: { today?: string; uninvoicedWindows?: number; invoicedWindows?: number },
 ): HourlyItemisation {
-  const money = computeHourlyMoney(data, { today: opts?.today, uninvoicedWindows: opts?.uninvoicedWindows });
+  const money = computeHourlyMoney(data, { today: opts?.today, uninvoicedWindows: opts?.uninvoicedWindows, invoicedWindows: opts?.invoicedWindows });
   const lines: HourlyInvoiceLine[] = [];
 
   if (money.billableCents > 0) {
@@ -455,8 +455,8 @@ export interface WindowMoney {
  *   elää siellä eikä projektikartalla. Puuttuessaan kaikki ovat laskuttamatta.
  */
 export function computeWindowMoney(
-  data: Pick<ProjectData, "marks" | "customMarks" | "deleted" | "statuses" | "building" | "pricePerWindow" | "washedBy2" | "crew" | "workers">,
-  opts?: { uninvoicedWindows?: number },
+  data: Pick<ProjectData, "marks" | "customMarks" | "deleted" | "statuses" | "building" | "pricePerWindow" | "washedBy2" | "crew" | "workers" | "p2">,
+  opts?: { uninvoicedWindows?: number; invoicedWindows?: number },
 ): WindowMoney {
   const pricePerWindowCents = Math.round(pricePerWindowOf(data as ProjectData) * 100);
   const crew = getCrew(data as ProjectData);
@@ -469,10 +469,52 @@ export function computeWindowMoney(
   // on puolikas kummallekin. Eri sääntö tarkoittaisi että sama ikkuna maksetaan
   // eri tavalla riippuen siitä mikä näkymä sen laskee.
   const washedBy2 = (data as ProjectData).washedBy2 || {};
+  /**
+   * KELTAINEN IKKUNA ON P2:N RAHAA, EI IKKUNARAHAA.
+   *
+   * TÄMÄ OLI KAKSINKERTAINEN VELOITUS. Laskuttamattomat ikkunat luetaan keikan
+   * sektoreista, ja sektori ei erottele prioriteettia: kaikki pestyt ovat
+   * yhdessä luvussa. Keltainen ikkuna tuli siis laskulle KAHDESTI —
+   * ikkunarivillä perushinnalla ja toisen kerran keltaisten kertymänä sillä
+   * hinnalla jonka asiakas oli hyväksynyt. Yhdistetty lasku (`scope: "all"`)
+   * summaa juuri nämä kaksi, joten se veloitti molemmat samasta ikkunasta.
+   *
+   * Konkreettisesti: 10 punaista + 2 keltaista pestynä, ikkunahinta 30 € ja
+   * keltaiset hyväksytty 34 €:n hintaan → ikkunarivi 12 × 30 € = 360 € ja
+   * keltaisten kertymä 68 € päälle. Asiakkaalta 60 € liikaa.
+   *
+   * Kun P2 on käytössä, se OMISTAA keltaiset: niiden hinta on neuvoteltu ja
+   * niiden laskutusta seurataan omassa kertymässään. Ikkunaraha kattaa siis
+   * vain punaiset. Ilman P2:ta keltainen on pelkkä ikkuna ja veloitetaan
+   * ikkunahinnalla kuten ennenkin — muuten sen työ jäisi laskuttamatta.
+   */
+  const p2 = (data as ProjectData).p2;
+  /**
+   * OMISTAAKO P2 TÄMÄN IKKUNAN.
+   *
+   * Ehto EI ole `p2.enabled`. Vaihe voi olla kytketty pois vaikka hinnat on jo
+   * neuvoteltu ja lukittu — silloin `computeP2Billing` laskee kertymän yhä,
+   * mutta `enabled`-ehto olisi päästänyt saman ikkunan myös ikkunariville
+   * perushinnalla. Kytkin on näkymän tila, ei rahan tila.
+   *
+   * Ratkaisee siis TARJOUS: jos ikkunalla on P2-tarjous, sen hinta on P2:n
+   * asia. Lukitsematon tarjous odottaa asiakkaan hyväksyntää, eikä sitä
+   * veloiteta kummallakaan tavalla ennen sitä — se on oikea lopputulos, ei
+   * menetettyä rahaa: keltainen työ hinnoitellaan ennen laskutusta.
+   *
+   * Vaiheen ollessa päällä myös tarjoukseton keltainen kuuluu P2:lle, koska
+   * se on juuri se työ jota vaihe 2 hinnoittelee.
+   */
+  const p2Owns = (key: string, priority: number): boolean => {
+    if (!p2) return false;
+    if (p2.offers && p2.offers[key]) return true;
+    return !!p2.enabled && priority === 2;
+  };
   const credit = new Map<string, number>();
   let washedTotal = 0;
   for (const p of allPoints(data as ProjectData)) {
     if (p.status !== "pesty") continue;
+    if (p2Owns(p.key, p.p)) continue;
     washedTotal += 1;
     const second = washedBy2[p.key];
     if (p.washedBy) credit.set(p.washedBy, (credit.get(p.washedBy) ?? 0) + (second ? 0.5 : 1));
@@ -528,10 +570,35 @@ export function computeWindowMoney(
    * Rajataan pestyihin, ettei kirjausvirhe tuota laskulle ikkunoita joita ei
    * ole pesty.
    */
-  const uninvoicedWindows = Math.max(0, Math.min(
-    Math.round(washedTotal),
-    Math.round(opts?.uninvoicedWindows ?? 0),
-  ));
+  /**
+   * KAKSI NIMITTÄJÄÄ TUOTTI HAAMU-IKKUNOITA.
+   *
+   * `opts.uninvoicedWindows` tulee keikan sektoreista (`washed −
+   * invoicedWashed`), ja sektori EI erottele prioriteettia. `washedTotal`
+   * yllä laskee vain veloitettavat (P2:n omistamat pois). Kun näistä otettiin
+   * `min`, luku saattoi tarkoittaa ikkunaa jota ei ole:
+   *
+   *   10 punaista pesty ja laskutettu, sitten 1 keltainen pestään.
+   *   Sektori: washed 11 − invoicedWashed 10 = 1 laskuttamaton.
+   *   Kartta:  10 veloitettavaa pestyä.
+   *   min(10, 1) = 1  →  lasku veloitti YHDEN punaisen jota ei ole
+   *   pesemättä — ja sama keltainen tuli lisäksi P2:n kertymänä.
+   *
+   * Nyt vähennys tehdään SAMASSA nimittäjässä: veloitettavat pestyt miinus jo
+   * laskutetut. Oletus on että jo laskutetut yksiköt olivat veloitettavia
+   * (juuri niin lähetys merkitsee ne: `invoicedWashed = washed`), joten suunta
+   * on aina varovainen — ennemmin laskuttamatta kuin kahdesti.
+   *
+   * `uninvoicedWindows` on yhä portti sille TIEDETÄÄNKÖ laskutustila: kutsuja
+   * joka ei tunne sitä ei anna kumpaakaan lukua ja saa nollan, ei kaikkea.
+   * Tuntematon laskutustila ei keksi veloitusta.
+   */
+  const billableWashed = Math.round(washedTotal);
+  const knownState = Math.round(opts?.uninvoicedWindows ?? 0);
+  const invoiced = Math.round(opts?.invoicedWindows ?? 0);
+  const uninvoicedWindows = knownState > 0
+    ? Math.max(0, Math.min(billableWashed - invoiced, knownState))
+    : 0;
 
   return {
     pricePerWindowCents,

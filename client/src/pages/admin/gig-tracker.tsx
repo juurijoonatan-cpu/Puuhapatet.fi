@@ -731,7 +731,9 @@ export default function AdminGigTrackerPage() {
   // palvelimella (`washed − invoicedWashed`), jotta dialogissa näkyvä summa on
   // se joka lähtee. Eri luku tässä kaataisi lähetyksen erittelyvartijaan.
   const uninvoicedWindows = Math.max(0, totals.washedTotal - totals.invoicedWashed);
-  const hourlyBill = project && isHourlyGig(project) ? hourlyItemisation(project, { uninvoicedWindows }) : null;
+  const hourlyBill = project && isHourlyGig(project)
+    ? hourlyItemisation(project, { uninvoicedWindows, invoicedWindows: totals.invoicedWashed })
+    : null;
   const hoursInvoicedCents = invState.hoursInvoicedCents;
   const hoursRemainingCents = hourlyBill
     ? Math.max(0, hourlyBill.customerTotalCents - hoursInvoicedCents) : 0;
@@ -750,6 +752,13 @@ export default function AdminGigTrackerPage() {
    * summa kuin mitä järjestelmä pitää laskutettuna — ja käsin kirjoitettu
    * lasku olisi väärä ilman että mikään huomaa.
    */
+  // Erän summa lasketaan ENNEN nimikkeitä, koska urakan erärivi on yksi
+  // nimikkeistä — ks. `invoiceLines`.
+  const agreedTotalCents = (deal && project) ? dealAgreedTotalCents(project, deal) : 0;
+  const isFinalEra = !!deal && p1PayCount === 3;
+  const fixedInstallmentCents = deal
+    ? (isFinalEra ? Math.max(0, agreedTotalCents - p1InvoicedCents) : Math.round(deal.capCents / 4))
+    : 0;
   const invoiceLines: { label: string; cents: number }[] = (() => {
     const out: { label: string; cents: number }[] = [];
     if (invoiceScope === "hours" || invoiceScope === "all") {
@@ -758,6 +767,36 @@ export default function AdminGigTrackerPage() {
     if (invoiceScope === "p2" || invoiceScope === "all") {
       if (p2b && p2b.earnedCents > 0) out.push({ label: `Lisäikkunat (2. vaihe) — ${p2b.lockedWashedCount} kpl`, cents: p2b.earnedCents });
       for (const x of p2Extras) out.push({ label: x.customerLabel, cents: x.customerCents });
+    }
+    /**
+     * URAKAN ERÄ JA SEKTORILASKU KUULUVAT TÄHÄN MYÖS.
+     *
+     * Nimikkeitä kerättiin vain tunneille ja keltaisille, joten `scope: "p1"`
+     * -laskulla lista oli TYHJÄ — ja juuri se lista kopioidaan laskun
+     * viestikenttään. Verkkolaskutilassa kopio oli siis "Erittely" ja
+     * "Yhteensä: 0,00 €", vaikka lasku peri erän täyden summan. Nimikkeetön
+     * lasku on asiakkaalle lukukelvoton, ja 0,00 € viestikentässä näyttää
+     * siltä kuin laskulla ei olisi mitään.
+     *
+     * Rivit ovat samat jotka palvelin kirjoittaa sähköpostiin: kiinteällä
+     * urakalla yksi erärivi, muuten sektorit laskuttamattomalta osaltaan.
+     */
+    if (invoiceScope === "p1") {
+      if (deal) {
+        out.push({
+          label: `Maksuerä ${invForm.paymentNumber}/4 — kiinteähintainen sopimus`,
+          cents: fixedInstallmentCents,
+        });
+      } else {
+        for (const sec of gig.sectors) {
+          const delta = Math.max(0, sec.washed - Math.min(sec.washed, sec.invoicedWashed || 0));
+          if (delta <= 0) continue;
+          out.push({
+            label: `${sec.name} — ${delta} ${sec.unitLabel}a × ${eur2(sec.unitPriceCents)}`,
+            cents: delta * sec.unitPriceCents,
+          });
+        }
+      }
     }
     return out;
   })();
@@ -788,11 +827,6 @@ export default function AdminGigTrackerPage() {
     if (u) return u.name.split(" ")[0];
     return id ? id.charAt(0).toUpperCase() + id.slice(1) : id;
   };
-  const agreedTotalCents = (deal && project) ? dealAgreedTotalCents(project, deal) : 0;
-  const isFinalEra = !!deal && p1PayCount === 3;
-  const fixedInstallmentCents = deal
-    ? (isFinalEra ? Math.max(0, agreedTotalCents - p1InvoicedCents) : Math.round(deal.capCents / 4))
-    : 0;
   const invoiceAmountCents = invoiceScope === "all" ? combinedRemainingCents
     : invoiceScope === "hours" ? hoursRemainingCents
     : invoiceScope === "p2" ? p2RemainingCents

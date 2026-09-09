@@ -753,3 +753,167 @@ describe("sovittu lisä laskulle", () => {
       .toBe(m.customerTotalCents);
   });
 });
+
+/**
+ * KELTAISTA IKKUNAA EI VELOITETA KAHDESTI.
+ *
+ * MITÄ TAPAHTUI. Laskuttamattomat ikkunat luetaan KEIKAN sektoreista, ja
+ * sektori ei erottele prioriteettia — kaikki pestyt ovat yhdessä luvussa.
+ * Keltainen ikkuna päätyi siis laskulle kahdesti: ikkunarivillä perushinnalla
+ * ja toisen kerran keltaisten kertymänä asiakkaan hyväksymällä hinnalla.
+ * Yhdistetty lasku (`scope: "all"`) summaa juuri nämä kaksi.
+ *
+ * 10 punaista + 2 keltaista pestynä, ikkunahinta 30 €, keltaiset hyväksytty
+ * 34 €:n hintaan: ikkunarivi 12 × 30 € = 360 €, ja keltaisten 68 € päälle.
+ * Asiakkaalta 60 € liikaa yhdellä laskulla.
+ */
+describe("keltaiset eivät ole ikkunarahaa kun P2 on käytössä", () => {
+  function gigWith(p2Enabled: boolean) {
+    const d: any = emptyProjectData();
+    d.billingMode = "hourly";
+    d.pricePerWindow = 30;
+    d.building.floors = ["1"];
+    const marks: any[] = [];
+    for (let i = 0; i < 10; i++) marks.push({ x: i, y: 0, p: 1 });
+    for (let i = 0; i < 2; i++) marks.push({ x: i, y: 1, p: 2 });
+    d.marks = { "1": { marks, w: 100, h: 100 } };
+    d.statuses = {};
+    d.washedBy = {};
+    marks.forEach((_: unknown, i: number) => { d.statuses[`1#${i}`] = "pesty"; d.washedBy[`1#${i}`] = "jani"; });
+    if (p2Enabled) {
+      d.p2 = {
+        enabled: true, workerSharePct: 50, payoutSchedule: "onPayment", offers: {
+          "1#10": { status: "locked", lockedCents: 3400, lockedAt: 1, version: 1, priceCents: 3400 },
+          "1#11": { status: "locked", lockedCents: 3400, lockedAt: 1, version: 1, priceCents: 3400 },
+        },
+      };
+    }
+    return sanitizeProjectData(d);
+  }
+
+  it("P2 päällä: ikkunarivi kattaa vain punaiset", () => {
+    // Sektori kertoo 12 laskuttamatonta; keltaiset kuuluvat P2:lle.
+    const it0 = hourlyItemisation(gigWith(true) as never, { uninvoicedWindows: 12 });
+    const w = it0.money.windows!;
+    expect(w.washedTotal).toBe(10);
+    expect(w.uninvoicedWindows).toBe(10);
+    expect(w.uninvoicedCents).toBe(30000);
+    const line = it0.lines.find((l) => l.label.startsWith("Ikkunanpesu"));
+    expect(line?.cents).toBe(30000);
+    expect(it0.matchesBilling).toBe(true);
+  });
+
+  it("ilman P2:ta keltainen on pelkkä ikkuna eikä jää laskuttamatta", () => {
+    const it0 = hourlyItemisation(gigWith(false) as never, { uninvoicedWindows: 12 });
+    const w = it0.money.windows!;
+    expect(w.washedTotal).toBe(12);
+    expect(w.uninvoicedCents).toBe(36000);
+  });
+
+  /**
+   * Tämä on se luku joka meni asiakkaalle väärin: yhdistetyn laskun summa on
+   * tuntikertymä + keltaisten kertymä, ja keltaiset olivat molemmissa.
+   */
+  it("yhdistetty lasku ei sisällä keltaisia kahdesti", () => {
+    const proj = gigWith(true);
+    const hourly = hourlyItemisation(proj as never, { uninvoicedWindows: 12 });
+    const p2AccrualCents = 6800; // 2 × 34,00 €, asiakkaan hyväksymä hinta
+    const combined = hourly.customerTotalCents + p2AccrualCents;
+    // Ikkunatyö laskulla: 10 punaista × 30 € = 300 €, keltaiset 68 € erikseen.
+    expect(hourly.money.windows!.uninvoicedCents).toBe(30000);
+    expect(combined).toBe(30000 + p2AccrualCents);
+    // Ennen korjausta tämä oli 36000 + 6800 — 60,00 € liikaa.
+    expect(combined).not.toBe(36000 + p2AccrualCents);
+  });
+
+  it("tekijän ikkunapalkkaa ei makseta keltaisista kahdesti", () => {
+    // Keltaiset maksetaan P2:n osuutena (`p2WorkerPayoutCents`), joten ne
+    // eivät saa olla myös ikkunapalkassa.
+    const on = hourlyItemisation(gigWith(true) as never, { uninvoicedWindows: 12 }).money.windows!;
+    const off = hourlyItemisation(gigWith(false) as never, { uninvoicedWindows: 12 }).money.windows!;
+    expect(on.byWasher[0].windows).toBe(10);
+    expect(off.byWasher[0].windows).toBe(12);
+  });
+});
+
+/**
+ * JÄÄNNÖSVIAT: KELTAINEN LÄPI KAHDESTA MUUSTA REIÄSTÄ.
+ *
+ * Ensimmäinen korjaus rajasi keltaiset pois ikkunarahasta ehdolla
+ * `p2.enabled`, ja se sulki vain helpon tapauksen. Kaksi reikää jäi, ja
+ * molemmat veloittivat saman keltaisen ikkunan kahdesti:
+ *
+ *  B) Punaiset laskutettiin ensin, sitten keltainen pestiin. Sektorin luku
+ *     (washed 11 − invoicedWashed 10 = 1) ja kartan veloitettavat (10) ovat
+ *     ERI NIMITTÄJÄSSÄ, ja `min(10, 1)` tarkoitti "yksi punainen" — ikkunaa
+ *     jota ei ole pesemättä. Lasku veloitti sen 30 €, ja sama keltainen tuli
+ *     lisäksi P2:n kertymänä 34 €.
+ *
+ *  C) `p2.enabled === false` mutta hinta on jo lukittu. `computeP2Billing`
+ *     laskee kertymän yhä, mutta `enabled`-ehto päästi ikkunan myös
+ *     ikkunariville. Kytkin on näkymän tila, ei rahan tila.
+ */
+describe("keltainen ei vuoda ikkunarahaan kahdesta jäännösreiästä", () => {
+  /** 10 punaista + 1 keltainen (avain 1#10), hinta 30 € / ikkuna. */
+  function build(o: { p2Enabled: boolean; yellowWashed: boolean; locked: boolean }) {
+    const d: any = emptyProjectData();
+    d.billingMode = "hourly";
+    d.pricePerWindow = 30;
+    d.building.floors = ["1"];
+    const marks: any[] = [];
+    for (let i = 0; i < 10; i++) marks.push({ x: i, y: 0, p: 1 });
+    marks.push({ x: 0, y: 1, p: 2 });
+    d.marks = { "1": { marks, w: 100, h: 100 } };
+    d.statuses = {}; d.washedBy = {};
+    for (let i = 0; i < 10; i++) { d.statuses[`1#${i}`] = "pesty"; d.washedBy[`1#${i}`] = "jani"; }
+    if (o.yellowWashed) { d.statuses["1#10"] = "pesty"; d.washedBy["1#10"] = "jani"; }
+    d.p2 = {
+      enabled: o.p2Enabled, workerSharePct: 50, payoutSchedule: "onPayment",
+      offers: o.locked
+        ? { "1#10": { status: "locked", lockedCents: 3400, lockedAt: 1, version: 1, priceCents: 3400 } }
+        : {},
+    };
+    return sanitizeProjectData(d);
+  }
+
+  const windowsOf = (proj: unknown, uninvoiced: number, invoiced: number) =>
+    hourlyItemisation(proj as never, { uninvoicedWindows: uninvoiced, invoicedWindows: invoiced }).money.windows!;
+
+  it("B: punaiset laskutettu, sitten keltainen pesty — ei haamupunaista", () => {
+    // Sektori: washed 11, invoicedWashed 10 → yksi laskuttamaton, ja se on keltainen.
+    const w = windowsOf(build({ p2Enabled: true, yellowWashed: true, locked: true }), 1, 10);
+    expect(w.washedTotal).toBe(10);          // vain punaiset ovat ikkunarahaa
+    expect(w.uninvoicedWindows).toBe(0);     // ne kaikki on jo laskutettu
+    expect(w.uninvoicedCents).toBe(0);       // keltainen laskutetaan P2:n kautta
+  });
+
+  it("C: vaihe pois päältä mutta hinta lukittu — keltainen kuuluu silti P2:lle", () => {
+    const w = windowsOf(build({ p2Enabled: false, yellowWashed: true, locked: true }), 11, 0);
+    expect(w.washedTotal).toBe(10);
+    expect(w.uninvoicedCents).toBe(30000);   // 10 punaista, ei 11
+  });
+
+  it("perustapaus säilyy: ei mitään laskutettu, kaikki punaiset veloitetaan", () => {
+    const w = windowsOf(build({ p2Enabled: true, yellowWashed: true, locked: true }), 11, 0);
+    expect(w.uninvoicedWindows).toBe(10);
+    expect(w.uninvoicedCents).toBe(30000);
+  });
+
+  it("ilman P2-tarjousta ja vaihetta keltainen on pelkkä ikkuna", () => {
+    const w = windowsOf(build({ p2Enabled: false, yellowWashed: true, locked: false }), 11, 0);
+    expect(w.washedTotal).toBe(11);
+    expect(w.uninvoicedCents).toBe(33000);
+  });
+
+  /** Tuntematon laskutustila ei saa keksiä veloitusta — kutsuja kertoo sen. */
+  it("laskutustilaa tuntematon kutsuja saa nollan, ei kaikkea", () => {
+    const w = hourlyItemisation(build({ p2Enabled: true, yellowWashed: true, locked: true }) as never).money.windows!;
+    expect(w.uninvoicedWindows).toBe(0);
+    expect(w.uninvoicedCents).toBe(0);
+  });
+
+  it("jo laskutettuja enemmän kuin veloitettavia ei tuota miinusta", () => {
+    const w = windowsOf(build({ p2Enabled: true, yellowWashed: true, locked: true }), 5, 99);
+    expect(w.uninvoicedWindows).toBe(0);
+  });
+});

@@ -908,9 +908,12 @@ export default function AdminProjectPage() {
     // sektoreilla eikä projektidatassa, joten ilman sitä kortti ei voi tietää
     // mikä osa pesuista on jo laskutettu — ja näyttäisi ikkunarahan väärin.
     () => (project && isHourlyGig(project)
-      ? computeHourlyMoney(project, { uninvoicedWindows: billing?.uninvoicedWindows ?? 0 })
+      ? computeHourlyMoney(project, {
+          uninvoicedWindows: billing?.uninvoicedWindows ?? 0,
+          invoicedWindows: billing?.invoicedWindows ?? 0,
+        })
       : null),
-    [project, billing?.uninvoicedWindows],
+    [project, billing?.uninvoicedWindows, billing?.invoicedWindows],
   );
 
   // ── Render ──────────────────────────────────────────────────────────────────

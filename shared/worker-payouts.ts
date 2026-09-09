@@ -182,6 +182,13 @@ export interface WorkerSettlement {
   settledEras: number[];
   /** Keltaisista jo maksettu tai maksussa (kuittaa vain keltaista velkaa). */
   p2SettledCents: number;
+  /**
+   * Keltaisten LUONNOKSENA odottava summa — johtaja loi maksun, tekijä ei ole
+   * vielä kuitannut sitä. Luonnos varaa velan (`openP2Cents` ei sisällä sitä),
+   * joten ilman tätä lukua juuri tehty keltaisten maksu katosi näkyvistä
+   * kokonaan: siirrettävä putosi nollaan ennen kuin senttiäkään oli liikkunut.
+   */
+  p2InvoicePendingCents: number;
 
   // ─── TUNTITYÖ (kolmas rahavirta) ──────────────────────────────────────────
   //
@@ -420,6 +427,7 @@ export function settleWorker(input: {
   const openHours = openHoursCents <= 0 ? 0 : round1(Math.min(hoursFromLedger, hoursFromMoney));
 
   return {
+    p2InvoicePendingCents: input.p2Settled?.pendingCents ?? 0,
     // "Hoidettu" tarkoittaa oikeasti maksussa olevaa rahaa, ei luonnoksia:
     // luonnos odottaa yhä tekijän hyväksyntää (`eraPendingCents` kertoo sen
     // erikseen). Siksi tässä luetaan vain lähetetyt/hyväksytyt summat.

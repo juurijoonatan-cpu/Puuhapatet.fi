@@ -118,6 +118,22 @@ describe("buildTransferReport", () => {
     expect(hoursLine.why).toContain("4 h ×");
   });
 
+  it("selite laskee jäljellä olevista ikkunoista, ei koko pestystä määrästä", () => {
+    // 20 pestyä = 400 €. Puolet maksettu → jäljellä 200 € = 10 ikkunaa.
+    // "20 ikkunaa 200,00 €" väittäisi 10 €/ikkuna työstä joka on 20 €/ikkuna.
+    const p = gig({ red: 20 });
+    const paid: ReportEraInvoice = {
+      id: 7, kind: "tekija", tila: "hyväksytty", senderId: "jani", recipientId: "joonatan",
+      totalCents: 200_00, eraNumbers: [1, 2, 3],
+      rivit: { input: { pestytIkkunat: 10 }, computed: { ansaittuCents: 200_00 } },
+    };
+    const r = buildTransferReport({ title: "T", project: p, payments: [], invoices: [paid] });
+    const line = r.instructions.find((i) => i.toId === "jani")!;
+    expect(line.cents).toBe(200_00);
+    expect(line.why).toContain("10 ikkunaa");
+    expect(line.why).not.toContain("20 ikkunaa");
+  });
+
   it("selite laskee jäljellä olevista tunneista, ei koko keikan tunneista", () => {
     const p = gig({ shifts: [{ id: "s1", worker: "jani", day: "2026-01-02", hours: 20, at: 1 }] });
     const part: ReportEraInvoice = {
@@ -145,6 +161,33 @@ describe("buildTransferReport", () => {
     expect(jani.approval).toBe("hyvaksytty");
     expect(r.instructions.filter((i) => i.kind === "worker")).toEqual([]);
     expect(r.blockedCents).toBe(0);
+  });
+
+  it("pitää keltaisten luonnoksen näkyvissä — siirrettävä ei tipu ennen rahaa", () => {
+    // Keltaisten luonnos varaa velan, joten avoin summa on nolla. Ilman
+    // `p2InvoicePendingCents`iä koko tekijä katosi raportilta ja otsikko sanoi
+    // "kaikki maksettu ✓" ennen kuin senttiäkään oli liikkunut.
+    const p = gig({ red: 0 });
+    p.marks = { "1": { marks: [{ x: 0, y: 0, p: 2 }] } } as any;
+    p.statuses = { "1#0": "pesty" } as any;
+    p.washedBy = { "1#0": "jani" };
+    p.p2 = {
+      enabled: true, workerSharePct: 53, events: [],
+      offers: { "1#0": { status: "locked", priceCents: 3750, version: 1, lockedCents: 3750 } },
+    } as any;
+    const draft: ReportEraInvoice = {
+      id: 6, kind: "tekija", tila: "luonnos", senderId: "jani", recipientId: "joonatan",
+      totalCents: 20_00, eraNumbers: [0],
+      rivit: { input: { pestytIkkunat: 1 }, computed: { ansaittuCents: 20_00 } },
+    };
+    const r = buildTransferReport({ title: "T", project: p, payments: [], invoices: [draft] });
+    const jani = r.workers.find((w) => w.workerId === "jani");
+    expect(jani).toBeDefined();
+    expect(jani!.openP2Cents).toBe(0);            // luonnos varasi velan
+    expect(jani!.pendingCents).toBe(20_00);       // …ja se näkyy tässä
+    expect(jani!.approval).toBe("odottaa_tekijaa");
+    expect(r.awaitingApprovalCents).toBe(20_00);
+    expect(r.workerOpenTotalCents).toBe(20_00);
   });
 
   it("pitää pelkän tuntiluonnoksen tekijän raportilla", () => {

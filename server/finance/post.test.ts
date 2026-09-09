@@ -220,8 +220,10 @@ describe("buildDraftEntries — punaiset ja keltaiset eivät kaksinkerry", () =>
     // kumpikin kertaalleen (keltainen ei kuluta punaisten erälaskuria).
     expect(credit(drafts, J, SALES)).toBe(157500 + 42000);
     // Selite erottaa rahavirrat, jotta päiväkirjasta näkee kumpi on kumpi.
+    // Nimeäminen tulee jaetusta `eraScopeLabel`ista, joten sentinel-erä ei
+    // koskaan päädy kirjanpidon selitteeseen muodossa "erä 0" / "erä 9".
     expect(costs.map((c) => c.description).join(" ")).toContain("keltaiset");
-    expect(costs.map((c) => c.description).join(" ")).toContain("erä 1+2+3");
+    expect(costs.map((c) => c.description).join(" ")).toContain("erät 1–3");
   });
 
   it("mitätöity erä ei ole myyntiä, mutta tekijän lasku on yhä kulu", () => {

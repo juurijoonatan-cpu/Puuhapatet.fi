@@ -204,7 +204,10 @@ function buildTransferReportHtml(r: TransferReport): string {
     ? r.workers.map((w) => {
         const a = APPROVAL[w.approval] ?? APPROVAL.ei_laskua;
         const bits: string[] = [];
-        if (w.openP1Cents > 0 || w.p1Washed > 0) bits.push(`${num(w.p1Washed)} ikkunaa ${eur(w.openP1Cents)}`);
+        // Ikkunamäärä MAKSAMATTOMISTA ikkunoista: koko pesty määrä avoimen
+        // summan vieressä väittäisi osamaksun jälkeen väärää yksikköhintaa.
+        if (w.openP1Cents > 0) bits.push(`${num(w.openP1Windows || w.p1Washed)} ikkunaa ${eur(w.openP1Cents)}`);
+        else if (w.p1Washed > 0) bits.push(`${num(w.p1Washed)} ikkunaa pesty`);
         if (w.openP2Cents > 0) bits.push(`keltaiset ${eur(w.openP2Cents)}`);
         // Tunnit MAKSAMATTOMISTA tunneista, ei koko keikan tuntimäärästä:
         // osamaksun jälkeen kertolasku ei muuten täsmää omaan tulokseensa.

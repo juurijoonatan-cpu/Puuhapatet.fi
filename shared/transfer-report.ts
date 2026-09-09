@@ -57,6 +57,10 @@ export interface TransferReportWorkerRow {
   /** Ikkunatyö: pestyt punaiset ja niistä vielä siirtämättä. */
   p1Washed: number;
   openP1Cents: number;
+  /** MAKSAMATTOMAT punaiset ikkunat. Selite kirjoitetaan tästä eikä koko
+   *  pestystä määrästä: "34 ikkunaa 60,00 €" olisi rivi joka väittää
+   *  20 €/ikkuna-työstä 1,76 €/ikkuna. */
+  openP1Windows: number;
   /** Keltaiset (asiakkaan hyväksymä lisätyö). */
   p2Washed: number;
   openP2Cents: number;
@@ -170,7 +174,11 @@ const num = (n: number) => n.toLocaleString("fi-FI", { maximumFractionDigits: 1 
  */
 function whyFor(r: TransferReportWorkerRow): string {
   const parts: string[] = [];
-  if (r.openP1Cents > 0) parts.push(`${num(r.p1Washed)} ikkunaa ${eur(r.openP1Cents)}`);
+  if (r.openP1Cents > 0) {
+    parts.push(r.openP1Windows > 0
+      ? `${num(r.openP1Windows)} ikkunaa ${eur(r.openP1Cents)}`
+      : `ikkunatyö ${eur(r.openP1Cents)}`);
+  }
   if (r.openP2Cents > 0) parts.push(`keltaiset ${eur(r.openP2Cents)}`);
   if (r.openHoursCents > 0) {
     parts.push(r.openHours > 0 && r.hourRateCents > 0
@@ -290,13 +298,17 @@ export function buildTransferReport(input: {
 
   const workers: TransferReportWorkerRow[] = settlements
     .map((r) => {
-      const pendingCents = r.eraPendingCents + r.hoursPendingCents;
+      // KAIKKI KOLME VIRTAA. Keltaisten luonnos puuttui tästä, jolloin juuri
+      // tehty keltaisten maksu katosi raportilta: luonnos varaa velan, joten
+      // avoin summa oli nolla eikä mikään kenttä kertonut mihin se meni.
+      const pendingCents = r.eraPendingCents + r.hoursPendingCents + r.p2InvoicePendingCents;
       return {
         workerId: r.workerId,
         name: r.name,
         trainee: r.trainee,
         p1Washed: r.p1Washed,
         openP1Cents: r.openP1Cents,
+        openP1Windows: r.openP1Windows,
         p2Washed: r.p2Washed,
         openP2Cents: r.openP2Cents,
         hours: r.hours,

@@ -40,6 +40,7 @@ function gig(opts: { red?: number; workerId?: string; shifts?: ProjShift[]; crew
   p.washedBy = washedBy;
   p.crew = opts.crew ?? [member(workerId)];
   p.shifts = opts.shifts ?? [];
+  p.billingMode = "hourly";   // tuntipalkka lasketaan vain tuntitilassa
   return p;
 }
 

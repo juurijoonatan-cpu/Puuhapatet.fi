@@ -20,7 +20,7 @@
  * Puhdas laskenta: ei I/O:ta, ei Reactia. Sekä client että server importtaavat.
  */
 
-import { computeShiftStats, workerHourRateOf, hourRateOf, type ProjectData, type ProjShift } from "./project";
+import { computeShiftStats, workerHourRateOf, hourRateOf, isHourlyGig, type ProjectData, type ProjShift } from "./project";
 import { getCrew, crewMemberStats, type CrewMember, type CrewMemberStats } from "./crew";
 import { traineeForUserId, traineeForName } from "./trainees";
 import { eraScopeOf, type EraScope } from "./era-billing";
@@ -250,8 +250,17 @@ export function computeWorkerSettlements(
    * Nykyinen tuntikirjanpito on `project.shifts` (ajastin + käsinsyöttö), ja
    * juuri sen takia tuntityö ei näkynyt maksuissa lainkaan: raha laskettiin
    * kentästä johon mikään nykyinen näkymä ei enää kirjoita.
+   *
+   * VAIN TUNTITILASSA (`billingMode: "hourly"`). Kohdennetulla keikalla tekijä
+   * saa palkkansa IKKUNOISTA ja vuororivit ovat seurantatietoa (ikkunaa/tunti,
+   * tehokkuus). Jos ne muutettaisiin siellä rahaksi, sama työ maksettaisiin
+   * kahdesti — kerran ikkunoina ja kerran tunteina. Tuntipalkan voi silti aina
+   * kirjata käsin maksudialogin "Tunnit"-välilehdeltä, jos niin on sovittu.
    */
-  const shiftStats = computeShiftStats((project.shifts ?? []) as ProjShift[]);
+  const hourly = isHourlyGig(project);
+  const shiftStats = hourly
+    ? computeShiftStats((project.shifts ?? []) as ProjShift[])
+    : { byWorker: [] as { id: string; hours: number }[] };
   const hoursById = new Map(shiftStats.byWorker.map((r) => [r.id, r.hours]));
   const workerHourCents = workerHourRateOf(project);
   const founderHourCents = hourRateOf(project);

@@ -22,7 +22,7 @@
  *     tasausta satojen eurojen verran. Johtaja kohdentaa ne itse.
  */
 
-import { allPoints, computeShiftStats, hourRateOf, workerHourRateOf, type ProjectData, type ProjShift } from "./project";
+import { allPoints, computeShiftStats, hourRateOf, workerHourRateOf, isHourlyGig, type ProjectData, type ProjShift } from "./project";
 import { p2FounderOpts, computeP2Billing, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT } from "./p2";
 import { getCrew, DEFAULT_WORKER_PER_WINDOW_CENTS } from "./crew";
 import { eraScopeOf } from "./era-billing";
@@ -473,7 +473,13 @@ export function buildTasaus(
    * työtä täydellä asiakastuntihinnalla (ei katetta), työntekijän tunti hänen
    * omalla tuntipalkallaan ja erotus jää katteeksi jaettavaan pottiin.
    */
-  const shiftStats = computeShiftStats((project.shifts ?? []) as ProjShift[]);
+  // VAIN TUNTITILASSA. Kohdennetulla keikalla vuororivit ovat seurantatietoa
+  // eivätkä palkkaa (palkka tulee ikkunoista), joten niistä ei saa syntyä
+  // tekijäkulua eikä johtajan ansaintaa — muuten sama työ jaettaisiin kahdesti.
+  const hourly = isHourlyGig(project);
+  const shiftStats = hourly
+    ? computeShiftStats((project.shifts ?? []) as ProjShift[])
+    : { byWorker: [] as { id: string; hours: number }[] };
   const founderHourCents = hourRateOf(project);
   const workerHourCents = workerHourRateOf(project);
   const hoursOwnByFounder: Record<string, number> = {};

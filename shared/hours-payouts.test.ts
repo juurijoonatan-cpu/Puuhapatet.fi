@@ -47,6 +47,9 @@ function gig(opts: { workerId: string; red?: number; shifts?: ProjShift[]; worke
   p.washedBy = washedBy;
   p.crew = [member(opts.workerId)];
   p.shifts = opts.shifts ?? [];
+  // Tuntipalkka lasketaan VAIN tuntitilassa (ks. worker-payouts): kohdennetulla
+  // keikalla vuororivit ovat seurantatietoa eivätkä palkkaa.
+  p.billingMode = "hourly";
   if (opts.workerHourCents != null) p.workerHourCents = opts.workerHourCents;
   return p;
 }
@@ -137,6 +140,26 @@ describe("tuntityön tunnistus maksuissa", () => {
     const [row] = computeWorkerSettlements(p, { hoursEra: eraSettlementByWorker(invoices, "hours") });
     expect(row.openHoursCents).toBe(90_00);
     expect(row.openHours).toBe(6);
+  });
+});
+
+describe("tuntityö EI ole palkkaa kohdennetulla keikalla", () => {
+  it("ei muuta seurantatunteja rahaksi kun keikka ei ole tuntitilassa", () => {
+    // Sama työ maksettaisiin kahdesti: kerran ikkunoina, kerran tunteina.
+    const p = gig({ workerId: "jani", red: 10, shifts: [shift("jani", 8)] });
+    p.billingMode = "targeted";
+    const [row] = computeWorkerSettlements(p);
+    expect(row.hours).toBe(0);
+    expect(row.hoursEarnedCents).toBe(0);
+    expect(row.openHoursCents).toBe(0);
+    expect(row.openTotalCents).toBe(200_00);   // vain ikkunat
+  });
+
+  it("keikka ilman erikseen asetettua tilaa on kohdennettu, ei tuntitila", () => {
+    const p = gig({ workerId: "jani", shifts: [shift("jani", 8)] });
+    delete (p as { billingMode?: string }).billingMode;
+    const [row] = computeWorkerSettlements(p);
+    expect(row.hoursEarnedCents).toBe(0);
   });
 });
 

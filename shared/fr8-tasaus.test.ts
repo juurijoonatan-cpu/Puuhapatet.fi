@@ -199,8 +199,18 @@ describe("buildTasaus — tuntityö", () => {
         { id: "joonatan", token: "t-j", name: "Joonatan", role: "host", perWindowCents: 0 } as CrewMember,
       ],
       shifts: shifts.map((s, i) => ({ id: `s${i}`, worker: s.worker, day: "2026-01-02", hours: s.hours, at: i + 1 })),
+      // Tuntipalkka on palkkaa vain tuntitilassa; kohdennetulla keikalla samat
+      // rivit ovat pelkkää seurantaa eikä niistä synny kulua tai ansaintaa.
+      billingMode: "hourly" as const,
     };
   }
+
+  it("kohdennetulla keikalla vuororivit eivät ole rahaa", () => {
+    const p = { ...hourlyProject([{ worker: "jani", hours: 10 }]), billingMode: "targeted" as const };
+    const t = buildTasaus(p, [{ t: 1, amountCents: 260_00, scope: "p1", biller: { id: "joonatan" } }], []);
+    expect(t.input.workerHoursEarnedCents).toBe(0);
+    expect(t.result.rows.every((r) => r.hoursOwnCents === 0)).toBe(true);
+  });
 
   it("vähentää tekijöiden tuntipalkat jaettavasta potista", () => {
     // Asiakkaalta 10 h × 26 € = 260 €. Tekijän palkka 10 × 15 € = 150 €.

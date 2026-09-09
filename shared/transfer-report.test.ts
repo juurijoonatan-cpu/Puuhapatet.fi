@@ -222,6 +222,35 @@ describe("buildTransferReport", () => {
     expect(r.workerOpenTotalCents).toBe(0);
   });
 
+  it("varoittaa että johtajasiirto on väliaikainen kun tekijöille on velkaa", () => {
+    // Joonatan sai 1575 €, Janille on maksamatta 200 €. Tasaus jakaa
+    // maksamattoman velan tasan, joten siirto on liian iso siihen asti kun
+    // tekijät on maksettu — juuri näin siirretään vahingossa liikaa.
+    const p = gig({ red: 10 });
+    const r = buildTransferReport({
+      title: "T", project: p, payments: [payment(1575_00, "joonatan")], invoices: [],
+    });
+    const founderLine = r.instructions.find((i) => i.kind === "founder")!;
+    expect(r.reserveCents).toBeGreaterThan(0);
+    expect(founderLine.status).toBe("maksa_tekijat_ensin");
+    expect(founderLine.blocked).toBe(true);
+    expect(founderLine.why).toContain("maksa tekijät ensin");
+    // Tekijät maksettu → varoitus poistuu ja siirto on valmis tehtäväksi.
+    const paid: ReportEraInvoice = {
+      id: 9, kind: "tekija", tila: "hyväksytty", senderId: "jani", recipientId: "joonatan",
+      totalCents: 200_00, eraNumbers: [1, 2, 3],
+      rivit: { input: { pestytIkkunat: 10 }, computed: { ansaittuCents: 200_00 } },
+    };
+    const after = buildTransferReport({
+      title: "T", project: p, payments: [payment(1575_00, "joonatan")], invoices: [paid],
+    });
+    const afterLine = after.instructions.find((i) => i.kind === "founder")!;
+    expect(afterLine.status).toBe("valmis");
+    expect(afterLine.blocked).toBe(false);
+    // …ja siirto on PIENEMPI kuin ennen tekijöiden maksua.
+    expect(afterLine.cents).toBeLessThan(founderLine.cents);
+  });
+
   it("ottaa johtajien tasauksen samalle siirtolistalle", () => {
     // Joonatan laskutti ja sai koko 1575 €, kummallakaan ei ole omaa pesutyötä
     // → puolet kuuluu Matiakselle, ja se näkyy siirtona.
@@ -234,7 +263,6 @@ describe("buildTransferReport", () => {
     expect(r.founderTransfer!.toId).toBe("matias");
     const founderLine = r.instructions.find((i) => i.kind === "founder")!;
     expect(founderLine.cents).toBe(r.founderTransfer!.cents);
-    expect(founderLine.blocked).toBe(false);
     expect(r.founders.map((f) => f.id).sort()).toEqual(["joonatan", "matias"]);
   });
 

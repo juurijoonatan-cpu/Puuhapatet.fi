@@ -338,7 +338,7 @@ function TransferRow({ t }: { t: TransferInstruction }) {
         {t.blockedReason && (
           <p style={{
             margin: "3px 0 0", fontFamily: FONT, fontSize: T.size.xs,
-            color: t.status === "odottaa_hyvaksyntaa" ? T.tone.warn : T.tone.info,
+            color: t.status === "odottaa_hyvaksyntaa" || t.status === "maksa_tekijat_ensin" ? T.tone.warn : T.tone.info,
             display: "flex", alignItems: "center", gap: 5,
           }}>
             <Clock style={{ width: 11, height: 11, flexShrink: 0 }} /> {t.blockedReason}
@@ -348,7 +348,9 @@ function TransferRow({ t }: { t: TransferInstruction }) {
       <span style={{
         flexShrink: 0, fontFamily: FONT, fontSize: T.size.title, fontWeight: 800,
         fontVariantNumeric: "tabular-nums",
-        color: t.status === "valmis" ? T.tone.good : t.status === "odottaa_hyvaksyntaa" ? T.tone.warn : T.tone.info,
+        color: t.status === "valmis" ? T.tone.good
+          : t.status === "odottaa_hyvaksyntaa" || t.status === "maksa_tekijat_ensin" ? T.tone.warn
+          : T.tone.info,
       }}>
         {fmtEurCents(t.cents)}
       </span>
@@ -484,12 +486,12 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: T.space.sm + 2 }}>
         <h1 style={{ margin: 0, fontFamily: FONT, fontSize: T.size.display, fontWeight: 700, color: T.text.primary, letterSpacing: "-0.01em" }}>Maksut</h1>
-        <div style={{ display: "flex", alignItems: "center", gap: T.space.sm, flexShrink: 0 }}>
-          <SendInvoiceEmailDialog />
-          <button onClick={() => { setLoading(true); void load(); }} title="Päivitä" style={tokenButton()}>
-            <RefreshCw style={{ width: 13, height: 13 }} /> Päivitä
-          </button>
-        </div>
+        {/* Yläpalkissa vain päivitys. Vapaa sähköpostilähetys on arkiston
+            työkalu (vanhan laskun lähetys uudelleen) eikä kuulu siihen riviin
+            jolta katsotaan paljonko rahaa liikkuu nyt. */}
+        <button onClick={() => { setLoading(true); void load(); }} title="Päivitä" style={{ ...tokenButton(), flexShrink: 0 }}>
+          <RefreshCw style={{ width: 13, height: 13 }} /> Päivitä
+        </button>
       </div>
 
       {/* ── Välilehdet. Neljä näkymää, ei yhtä loputonta vieritystä. ────────── */}
@@ -560,7 +562,11 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
               </div>
             ) : (
               <p style={{ margin: `${T.space.md}px 0 0`, fontFamily: FONT, fontSize: T.size.sm, color: T.text.muted }}>
-                {report ? "Ei siirrettävää — kaikki on maksettu." : "Siirtoraporttia ei saatu ladattua. Päivitä sivu."}
+                {!report
+                  ? "Siirtoraporttia ei saatu ladattua. Päivitä sivu."
+                  : report.workerSettledTotalCents > 0 || report.invoicedTotalCents > 0
+                  ? "Ei siirrettävää — kaikki on maksettu."
+                  : "Ei vielä siirrettävää: tälle keikalle ei ole kertynyt palkkaa eikä laskutusta."}
               </p>
             )}
 
@@ -833,6 +839,16 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
       {/* ══ 4. ARKISTO ════════════════════════════════════════════════════════ */}
       {!loading && !err && tab === "arkisto" && (
         <>
+          {/* Vanhan laskun lähetys uudelleen: vapaa vastaanottaja + mikä tahansa
+              järjestelmän tuntema lasku-PDF liitteenä. */}
+          <div style={{ ...card, marginTop: T.space.lg, display: "flex", alignItems: "center", justifyContent: "space-between", gap: T.space.md, flexWrap: "wrap" }}>
+            <div style={{ minWidth: 0 }}>
+              <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.body, fontWeight: 700, color: T.text.primary }}>Lähetä lasku sähköpostilla</p>
+              <p style={{ ...subLabel }}>Mikä tahansa aiempi lasku liitteenä — johtajat saavat aina kopion.</p>
+            </div>
+            <SendInvoiceEmailDialog />
+          </div>
+
           <Fold
             icon={<Users style={{ width: 15, height: 15, color: T.text.secondary }} />}
             title="Tekijöille tehdyt maksut"

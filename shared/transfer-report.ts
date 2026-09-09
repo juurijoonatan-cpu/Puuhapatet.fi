@@ -95,7 +95,13 @@ export type TransferStatus =
   /** Lasku on tehty, tekijä ei ole vielä hyväksynyt sitä. */
   | "odottaa_hyvaksyntaa"
   /** Velkaa jolle ei ole vielä tehty laskua lainkaan. */
-  | "lasku_tekematta";
+  | "lasku_tekematta"
+  /**
+   * Johtajien siirto joka on VIELÄ VÄLIAIKAINEN: se sisältää tekijöille
+   * kuuluvaa rahaa tasan jaettuna, joten se pienenee kun tekijät on maksettu.
+   * Tässä järjestyksessä tehtynä kumpikaan ei siirrä liikaa.
+   */
+  | "maksa_tekijat_ensin";
 
 /** Yksi konkreettinen siirto: kuka maksaa, kenelle, paljonko ja miksi. */
 export interface TransferInstruction {
@@ -393,6 +399,23 @@ export function buildTransferReport(input: {
     }
   }
   if (founderTransfer) {
+    /**
+     * VAROITUS TEKIJÖILLE KUULUVASTA RAHASTA.
+     *
+     * Kun tekijöille on vielä maksamatta, se raha on jonkun johtajan taskussa
+     * ja tasaus jakaa varauksen (`reserveCents`) oletuksena tasan — kumpikaan
+     * ei rahoita sitä yksin. Se on oikea sääntö, mutta se tekee johtajasiirrosta
+     * VÄLIAIKAISEN: jos siirron tekee ennen tekijöiden maksua, siirtäjä maksaa
+     * ensin puolet varauksesta toiselle ja sitten koko tekijävelan itse — eli
+     * siirtää liikaa.
+     *
+     * Siksi rivi sanoo sen ääneen ja kehottaa maksamaan tekijät ensin. Luku
+     * päivittyy itsestään kun tekijät on maksettu (tasausnäkymässä voi myös
+     * merkitä kumpi varauksen kantaa).
+     */
+    const reserveWarning = tasaus.result.reserveCents > 0 && missingInvoiceCents + awaitingApprovalCents > 0
+      ? ` · HUOM: sisältää ${eur(tasaus.result.reserveCents)} tekijöille kuuluvaa rahaa tasan jaettuna — maksa tekijät ensin, niin tämä luku päivittyy`
+      : "";
     instructions.push({
       kind: "founder",
       fromId: founderTransfer.fromId,
@@ -400,9 +423,10 @@ export function buildTransferReport(input: {
       toId: founderTransfer.toId,
       toName: founderTransfer.toName,
       cents: founderTransfer.cents,
-      why: "Johtajien tasaus — oma työ + osuus katteesta vs. käsissä oleva raha",
-      status: "valmis",
-      blocked: false,
+      why: `Johtajien tasaus — oma työ + osuus katteesta vs. käsissä oleva raha${reserveWarning}`,
+      status: reserveWarning ? "maksa_tekijat_ensin" : "valmis",
+      blocked: !!reserveWarning,
+      ...(reserveWarning ? { blockedReason: "Maksa tekijät ensin — summa sisältää heille kuuluvaa rahaa" } : {}),
     });
   }
 

@@ -437,10 +437,21 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
   );
   const totals = useMemo(() => sumWorkerSettlements(payable), [payable]);
 
-  /** Tekijän hyväksyntätila raportista — sama lähde kuin siirtolistalla. */
+  /**
+   * Tekijän hyväksyntätila raportista — sama lähde kuin siirtolistalla.
+   *
+   * Raportti jättää pois tekijät joilla ei ole rahaa missään vaiheessa ketjua,
+   * ja se voi jäädä lataamatta kokonaan. Kumpikaan EI tarkoita "lasku
+   * tekemättä": oletus johdetaan silloin riviltä itseltään, ettei näkymä
+   * merkitse keltaisella tekijää jolle ei olla velkaa mitään.
+   */
   const approvalOf = useCallback(
-    (workerId: string): WorkerApproval =>
-      report?.workers.find((w) => w.workerId === workerId)?.approval ?? "ei_laskua",
+    (row: { workerId: string; openTotalCents: number; pendingTotalCents: number }): WorkerApproval => {
+      const fromReport = report?.workers.find((w) => w.workerId === row.workerId)?.approval;
+      if (fromReport) return fromReport;
+      if (row.pendingTotalCents > 0) return "odottaa_tekijaa";
+      return row.openTotalCents > 0 ? "ei_laskua" : "ei_maksettavaa";
+    },
     [report],
   );
 
@@ -677,7 +688,7 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
               )}
               <div style={{ display: "flex", flexDirection: "column", gap: T.space.sm }}>
                 {payable.map((r) => {
-                  const a = APPROVAL_CHIP[approvalOf(r.workerId)];
+                  const a = APPROVAL_CHIP[approvalOf(r)];
                   return (
                     <div key={r.workerId} style={{ ...card, padding: `${T.space.md}px ${T.space.lg}px` }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: T.space.sm + 2, flexWrap: "wrap" }}>

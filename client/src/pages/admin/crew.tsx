@@ -6,7 +6,7 @@
  * Hosts (Joonatan + Matias) get the full picture here; workers only ever see
  * their own /tyo/:token dashboard.
  */
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRoute, useLocation, Link } from "wouter";
 import { api, type HostCrewRow, type FounderSettlement, type EraInvoiceClient } from "@/lib/api";
 import { isFounder } from "@shared/team";
@@ -111,6 +111,15 @@ export default function AdminCrewPage() {
     setErr("Virheellinen keikkatunnus.");
     setLoading(false);
   }, [jobId, load]);
+
+  /**
+   * Erälaskuista johdetut summakartat KERRAN, ei kerran per tekijä per render.
+   * Jokainen `eraMapsFor` käy koko laskulistan läpi, ja niitä kutsuttiin
+   * maksuehdotuksessa kolmesti jokaista tekijäriviä kohti.
+   */
+  const p1Maps = useMemo(() => eraMapsFor(eraInvoices, "p1"), [eraInvoices]);
+  const p2Maps = useMemo(() => eraMapsFor(eraInvoices, "p2"), [eraInvoices]);
+  const hoursMaps = useMemo(() => eraMapsFor(eraInvoices, "hours"), [eraInvoices]);
 
   const seed = async () => { setBusy(true); await api.seedCrew(jobId); await load(); setBusy(false); };
   const addWorker = async () => { setBusy(true); await api.addCrewMember(jobId, {}); await load(); setBusy(false); };
@@ -303,14 +312,13 @@ export default function AdminCrewPage() {
                   // kuin palkkayhteenvedossa ja Maksut-välilehdellä). Aiemmin tässä oli
                   // `stats.earnedCents − maksut`, joka sisälsi keltaiset ja ohitti
                   // erälaskuilla jo hoidetut summat → ehdotus oli liian suuri.
-                  const hoursMaps = eraMapsFor(eraInvoices, "hours");
                   const settled = settleWorker({
                     id: member.id, name: member.name, active: true, founder: false,
                     stats, payouts: member.payouts || [], p2Enabled,
-                    era: eraMapsFor(eraInvoices, "p1"),
+                    era: p1Maps,
                     p2Settled: {
-                      sentCents: eraMapsFor(eraInvoices, "p2").eraSent[member.id] || 0,
-                      pendingCents: eraMapsFor(eraInvoices, "p2").eraPending[member.id] || 0,
+                      sentCents: p2Maps.eraSent[member.id] || 0,
+                      pendingCents: p2Maps.eraPending[member.id] || 0,
                     },
                     // Tuntityö mukaan: ilman näitä Tiimi-sivu näytti tuntikeikalla
                     // 0 € samaan aikaan kun Maksut-välilehti näytti todellisen velan.
@@ -326,7 +334,9 @@ export default function AdminCrewPage() {
                   return (
                     <PayoutPanel
                       member={member}
-                      suggestedCents={settled.openP1Cents}
+                      // Ikkunatyö JA tuntityö: käsin kirjattu maksu on yksi
+                      // summa tilille, ja tuntikeikalla ikkunaosuus on nolla.
+                      suggestedCents={settled.openP1Cents + settled.openHoursCents}
                       suggestedWindows={Math.max(0, round1(settled.openP1Windows - claimedWindows))}
                       onCreate={createPayout}
                       onMarkPaid={markPaid}
@@ -1132,9 +1142,19 @@ function PayrollSummary({ crew, eraInvoices, p2Enabled }: {
         </div>
         <div className="rounded-xl bg-muted/40 px-1 py-2">
           <p className="text-[10px] uppercase leading-tight tracking-wide text-muted-foreground">Siirrettävä</p>
-          <p className={`text-sm font-bold tabular-nums ${t.openP1Cents > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{eur(t.openP1Cents)}</p>
+          {/* Punaiset JA tunnit: tuntikeikalla punaisia ei ole lainkaan, joten
+              pelkkä `openP1Cents` näytti tässä 0 € samaan aikaan kun Maksut-
+              välilehti näytti todellisen velan. Keltaiset ovat yhä erikseen —
+              niitä ei makseta ennen kuin asiakas on maksanut oman laskunsa. */}
+          <p className={`text-sm font-bold tabular-nums ${t.openP1Cents + t.openHoursCents > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{eur(t.openP1Cents + t.openHoursCents)}</p>
         </div>
       </div>
+      {t.openHoursCents > 0 && (
+        <p className="-mt-1 mb-3 text-[11px] leading-snug text-muted-foreground">
+          Siitä tuntityötä <strong>{eur(t.openHoursCents)}</strong> ({fmtWindows(t.hours)} h) — maksetaan samalla tavalla
+          kuin ikkunatyö, omalla laskullaan.
+        </p>
+      )}
       {/* Keltaiset omana, korostettuna rivinä — EI mukana "Siirrettävä"ssä. */}
       {t.openP2Cents > 0 && (
         <p className="-mt-1 mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] leading-snug text-amber-700 dark:text-amber-400">
@@ -1164,6 +1184,12 @@ function PayrollSummary({ crew, eraInvoices, p2Enabled }: {
                 {r.eraPendingCents > 0 && <span className="whitespace-nowrap">· kuittaamatta {eur(r.eraPendingCents)}</span>}
                 {r.settledEras.length > 0 && <span className="whitespace-nowrap">· erät {r.settledEras.join(", ")}</span>}
               </p>
+              {r.hours > 0 && (
+                <p className="text-[11px] leading-snug text-muted-foreground">
+                  tunnit {fmtWindows(r.hours)} h × {eur(r.hourRateCents)}
+                  {r.openHoursCents > 0 ? ` · siirrettävä ${eur(r.openHoursCents)}` : " · maksettu"}
+                </p>
+              )}
               {/* Sovittu vähennys näkyviin myös täällä, samoin kuin Maksut-välilehdellä
                   — muuten luku näyttäisi tässä eri suuruiselta ilman selitystä. */}
               {r.p1AdjustmentCents !== 0 && (
@@ -1181,7 +1207,7 @@ function PayrollSummary({ crew, eraInvoices, p2Enabled }: {
             </div>
             <div className="shrink-0 text-right">
               <p className="text-[10px] uppercase leading-tight tracking-wide text-muted-foreground">Siirrettävä</p>
-              <p className={`text-base font-bold tabular-nums ${r.openP1Cents > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{eur(r.openP1Cents)}</p>
+              <p className={`text-base font-bold tabular-nums ${r.openP1Cents + r.openHoursCents > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{eur(r.openP1Cents + r.openHoursCents)}</p>
               {r.openP2Cents > 0 && (
                 <p className="text-[10px] leading-tight tabular-nums text-muted-foreground">+ keltaiset {eur(r.openP2Cents)}</p>
               )}

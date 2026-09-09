@@ -205,10 +205,16 @@ function buildTransferReportHtml(r: TransferReport): string {
     ? r.workers.map((w) => {
         const a = APPROVAL[w.approval] ?? APPROVAL.ei_laskua;
         const bits: string[] = [];
-        // Ikkunamäärä MAKSAMATTOMISTA ikkunoista: koko pesty määrä avoimen
-        // summan vieressä väittäisi osamaksun jälkeen väärää yksikköhintaa.
-        if (w.openP1Cents > 0) bits.push(`${num(w.openP1Windows || w.p1Washed)} ikkunaa ${eur(w.openP1Cents)}`);
-        else if (w.p1Washed > 0) bits.push(`${num(w.p1Washed)} ikkunaa pesty`);
+        // Ikkunamäärä MAKSAMATTOMISTA ikkunoista, sama sääntö kuin jaetussa
+        // `whyFor`issa: koko pesty määrä avoimen summan vieressä väittäisi
+        // osamaksun jälkeen väärää yksikköhintaa. Kun maksamatonta
+        // ikkunamäärää ei ole (esim. sovittu lisä ilman ikkunoita), rivi
+        // kertoo pelkän summan eikä keksi kappalemäärää.
+        if (w.openP1Cents > 0) {
+          bits.push(w.openP1Windows > 0
+            ? `${num(w.openP1Windows)} ikkunaa ${eur(w.openP1Cents)}`
+            : `ikkunatyö ${eur(w.openP1Cents)}`);
+        } else if (w.p1Washed > 0) bits.push(`${num(w.p1Washed)} ikkunaa pesty`);
         if (w.openP2Cents > 0) bits.push(`keltaiset ${eur(w.openP2Cents)}`);
         // Tunnit MAKSAMATTOMISTA tunneista, ei koko keikan tuntimäärästä:
         // osamaksun jälkeen kertolasku ei muuten täsmää omaan tulokseensa.

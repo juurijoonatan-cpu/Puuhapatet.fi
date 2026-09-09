@@ -152,16 +152,117 @@ function AmountEditor({ label, initialCents, onSave, onClear, clearLabel, busy }
   );
 }
 
+/**
+ * SUUNTA JA SUMMA — kumpi maksaa kummalle, paljonko.
+ *
+ * MIKSI OMA KOMPONENTTINSA: kirjaus ja käsin asetettu summa lukitsivat suunnan
+ * siihen mitä laskenta ehdotti (`result.transfer`), tai kun ehdotusta ei ollut,
+ * listan ensimmäiseen johtajaan. Silloin sovittua summaa ei saanut kirjattua
+ * toiseen suuntaan lainkaan — juuri se, ettei omaa lukua pystynyt laittamaan
+ * "Matiakselle tai se mulle". Suunta on nyt aina kaksi nappia, ja oletus on se
+ * mitä laskenta ehdottaa.
+ */
+function TransferEditor({ label, founders, defaultFromId, initialCents, onSave, onClear, clearLabel, busy }: {
+  label: string;
+  founders: { id: string; name: string }[];
+  /** Kumpi maksaa oletuksena. */
+  defaultFromId: string;
+  initialCents: number;
+  onSave: (fromId: string, toId: string, cents: number) => void | Promise<void>;
+  onClear?: () => void | Promise<void>;
+  clearLabel?: string;
+  busy?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState("");
+  const [fromId, setFromId] = useState(defaultFromId);
+  const parsed = parseEur(value);
+  const canSave = value.trim() !== "" && parsed != null && parsed >= 0 && founders.length >= 2;
+  const toId = founders.find((f) => f.id !== fromId)?.id ?? "";
+
+  const start = () => {
+    setValue(initialCents ? String(initialCents / 100).replace(".", ",") : "");
+    setFromId(defaultFromId || founders[0]?.id || "");
+    setOpen(true);
+  };
+
+  if (!open) {
+    return (
+      <span style={{ display: "inline-flex", gap: T.space.sm, flexWrap: "wrap" }}>
+        <button type="button" onClick={start} style={button()}>{label}</button>
+        {onClear && (
+          <button type="button" onClick={() => void onClear()} disabled={busy}
+            style={{ ...button(), background: "transparent", color: T.text.muted }}>
+            <Undo2 style={{ width: 13, height: 13 }} /> {clearLabel ?? "Palauta laskettu"}
+          </button>
+        )}
+      </span>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: T.space.sm, width: "100%" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: T.space.sm, flexWrap: "wrap" }}>
+        <span style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.muted }}>Kuka maksaa:</span>
+        {founders.map((f) => {
+          const active = fromId === f.id;
+          const other = founders.find((x) => x.id !== f.id);
+          return (
+            <button
+              key={f.id}
+              type="button"
+              onClick={() => setFromId(f.id)}
+              aria-pressed={active}
+              style={{
+                ...button(active ? "accent" : "ghost"),
+                minHeight: 36, padding: `6px ${T.space.md}px`, fontSize: T.size.xs,
+              }}
+            >
+              {first(f.name)} → {other ? first(other.name) : "—"}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: T.space.sm, flexWrap: "wrap" }}>
+        <input
+          type="text" inputMode="decimal" autoFocus value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && canSave) { void onSave(fromId, toId, parsed!); setOpen(false); } }}
+          aria-label={label}
+          style={{ ...inputStyle, width: 116, textAlign: "right" }}
+        />
+        <span style={{ fontFamily: T.font, fontSize: T.size.body, color: T.text.muted }}>€</span>
+        <button type="button" disabled={!canSave || busy}
+          onClick={() => { void onSave(fromId, toId, parsed!); setOpen(false); }}
+          style={{ ...button("accent"), opacity: canSave ? 1 : 0.4 }}>
+          {busy ? "Tallennetaan…" : "Tallenna"}
+        </button>
+        <button type="button" onClick={() => setOpen(false)}
+          style={{ ...button(), background: "transparent", color: T.text.muted }}>
+          Peru
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** Eräpäivän oletusehdotus: 14 vrk tästä hetkestä ("YYYY-MM-DD"). Sama käytäntö
  *  kuin muissakin FR8-laskuissa; johtaja voi aina vaihtaa sen. */
 function defaultDueDate(): string {
   return new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString().slice(0, 10);
 }
 
-export default function TasausView({ jobId, canEdit = true }: {
+export default function TasausView({ jobId, canEdit = true, onChanged }: {
   jobId: number;
   /** Vain perustaja voi kirjata. Muille näkymä on lukutilassa. */
   canEdit?: boolean;
+  /**
+   * Kutsutaan kun tasaukseen on kirjattu jotain (siirto, kulu, käsin asetettu
+   * summa, tasauslasku). Kutsuja hakee omat lukunsa uudelleen — muuten
+   * Maksut-välilehden siirtolista ja otsikkosumma jäivät näyttämään jo
+   * kirjattua siirtoa kunnes sivu päivitettiin käsin.
+   */
+  onChanged?: () => void;
 }) {
   const [data, setData] = useState<Bundle | null>(null);
   const [loading, setLoading] = useState(true);
@@ -187,9 +288,9 @@ export default function TasausView({ jobId, canEdit = true }: {
     setBusy(true);
     const res = await api.saveTasaus(jobId, patch);
     setBusy(false);
-    if (res.ok && res.data?.tasaus) { setData(res.data.tasaus); setErr(null); }
+    if (res.ok && res.data?.tasaus) { setData(res.data.tasaus); setErr(null); onChanged?.(); }
     else setErr(res.error || "Tallennus epäonnistui");
-  }, [jobId]);
+  }, [jobId, onChanged]);
 
   // Kaksoislaskun varoitus. Palvelin palauttaa 409:n jos samalle parille on jo
   // tasauslasku; se EI ole virhe vaan tieto, joten se näytetään vahvistuksena.
@@ -217,12 +318,13 @@ export default function TasausView({ jobId, canEdit = true }: {
     if (res.ok && res.data) {
       setInvoiceDone(res.data.invoice.invoiceNumber || `#${res.data.invoice.id}`);
       setErr(null);
+      onChanged?.();
       return;
     }
     // 409 = tasauslasku on jo olemassa. Kysytään, ei estetä.
     if (res.status === 409) { setDuplicateWarning(res.error || "Tasauslasku on jo tehty."); return; }
     setErr(res.error || "Laskun lähetys epäonnistui");
-  }, [data, jobId, dueDate]);
+  }, [data, jobId, dueDate, onChanged]);
 
   const nameOf = useCallback(
     (id: string | null | undefined) => data?.founders.find((f) => f.id === id)?.name ?? id ?? "—",
@@ -311,11 +413,16 @@ export default function TasausView({ jobId, canEdit = true }: {
 
         {canEdit && (
           <div style={{ display: "flex", gap: T.space.sm, flexWrap: "wrap", marginTop: T.space.lg }}>
-            <AmountEditor
+            {/* Summa JA suunta. Suunta oli ennen lukittu laskettuun siirtoon,
+                joten sovittua summaa ei saanut asetettua toiseen suuntaan
+                lainkaan — myöskään silloin kun laskenta sanoo "Tasan ✓". */}
+            <TransferEditor
               label={result.overridden ? "Muuta summaa" : "Aseta summa käsin"}
+              founders={founders}
+              defaultFromId={transfer?.fromId ?? founders[0]?.id ?? ""}
               initialCents={transfer?.cents ?? 0}
               busy={busy}
-              onSave={(cents) => save({ overrideCents: cents, overrideFromId: transfer?.fromId ?? founders[0]?.id })}
+              onSave={(fromId, _toId, cents) => save({ overrideCents: cents, overrideFromId: fromId })}
               onClear={result.overridden ? () => save({ overrideCents: null }) : undefined}
             />
             {/* Lähtölukujen käsinsyöttö. Siirtosumman ohitus korjaa vain
@@ -474,6 +581,10 @@ export default function TasausView({ jobId, canEdit = true }: {
               <div style={{ display: "flex", flexDirection: "column", gap: T.space.xs + 1 }}>
                 <Line label="Oma työ" sub={`${win(row.p1Windows)} punaista`} value={eur(row.ownWorkCents)} />
                 {row.p2OwnCents !== 0 && <Line label="Omat keltaiset" value={eur(row.p2OwnCents)} tone={T.tone.warn} />}
+                {/* Oma tuntityö: täysi asiakastuntihinta, omasta työstä ei
+                    oteta katetta. Ilman tätä riviä tuntikeikan johtaja näki
+                    ansaintanaan vain puolet katteesta — ei omaa työtään. */}
+                {row.hoursOwnCents !== 0 && <Line label="Oma tuntityö" value={eur(row.hoursOwnCents)} tone={T.tone.info} />}
                 <Line label="Osuus katteesta" value={eur(row.kateShareCents)} />
                 <div style={{ borderTop: T.border.divider, paddingTop: T.space.sm, marginTop: T.space.xs }}>
                   <Line label="Kuuluu yhteensä" value={eur(row.entitledCents)} strong />
@@ -511,8 +622,11 @@ export default function TasausView({ jobId, canEdit = true }: {
         <div style={{ ...mono, marginBottom: T.space.md }}>Mistä jaettava koostuu</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: T.space.sm }}>
           {([
-            ["Laskutettu", eur(data.input.p1PotCents + data.input.p2PotCents), T.text.primary],
-            ["Tekijöiden palkat", `−${eur(data.input.workerP1EarnedCents + data.input.workerP2EarnedCents)}`, T.text.secondary],
+            ["Laskutettu", eur(data.input.p1PotCents + data.input.p2PotCents + (data.input.hoursPotCents ?? 0)), T.text.primary],
+            // Tekijöiden palkat KAIKISTA kolmesta virrasta. Tuntipalkat
+            // puuttuivat tästä, joten jaettava näytti liian suurelta juuri sen
+            // verran kuin tekijöille oli tuntityöstä velkaa.
+            ["Tekijöiden palkat", `−${eur(data.input.workerP1EarnedCents + data.input.workerP2EarnedCents + (data.input.workerHoursEarnedCents ?? 0))}`, T.text.secondary],
             ["Jaettavaa", eur(result.distributableCents), T.tone.goodSoft],
             ["€ / punainen ikkuna", eur(result.xCents), T.text.primary],
           ] as [string, string, string][]).map(([label, value, tone]) => (
@@ -646,7 +760,7 @@ export default function TasausView({ jobId, canEdit = true }: {
                         {p.workerName}
                       </span>
                       <span style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint }}>
-                        {p.scope === "p2" ? " · keltaiset" : p.eraNumbers.length ? ` · erät ${p.eraNumbers.join(", ")}` : ""}
+                        {p.scope === "p2" ? " · keltaiset" : p.scope === "hours" ? " · tuntityö" : p.eraNumbers.length ? ` · erät ${p.eraNumbers.join(", ")}` : ""}
                         {p.invoiceId == null ? " · käsin kirjattu" : ""}
                         {p.overridden ? " · korjattu" : ""}
                       </span>
@@ -671,23 +785,24 @@ export default function TasausView({ jobId, canEdit = true }: {
 
           {/* Kirjatut siirrot */}
           <div style={{ ...card, padding: T.space.lg }}>
-            <div style={{ display: "flex", alignItems: "center", gap: T.space.sm, marginBottom: T.space.md }}>
+            {/* Otsikko ja kirjauslomake samassa laatikossa, mutta lomake saa
+                kietoutua omalle rivilleen: suuntanapit eivät mahdu otsikon
+                viereen puhelimessa. */}
+            <div style={{ display: "flex", alignItems: "center", gap: T.space.sm, flexWrap: "wrap", marginBottom: T.space.md }}>
               <span style={mono}>Jo tehdyt siirrot</span>
               {canEdit && founders.length >= 2 && (
-                <span style={{ marginLeft: "auto" }}>
-                  <AmountEditor
+                <div style={{ marginLeft: "auto", minWidth: 0 }}>
+                  {/* Kumpaan suuntaan tahansa: raha on voinut liikkua toisinkin
+                      kuin laskenta ehdottaa, ja kirjaus on tosiasian kirjaus. */}
+                  <TransferEditor
                     label="Kirjaa siirto"
+                    founders={founders}
+                    defaultFromId={result.transfer?.fromId ?? founders[0].id}
                     initialCents={0}
                     busy={busy}
-                    onSave={(cents) => save({
-                      addTransfer: {
-                        fromId: result.transfer?.fromId ?? founders[0].id,
-                        toId: result.transfer?.toId ?? founders[1].id,
-                        cents,
-                      },
-                    })}
+                    onSave={(fromId, toId, cents) => save({ addTransfer: { fromId, toId, cents } })}
                   />
-                </span>
+                </div>
               )}
             </div>
             {recorded.length === 0 ? (

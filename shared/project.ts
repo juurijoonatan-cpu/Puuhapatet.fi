@@ -225,6 +225,21 @@ export function workerHourRateOf(data: Pick<ProjectData, "workerHourCents">): nu
   return rateOr(data?.workerHourCents, DEFAULT_WORKER_HOUR_CENTS);
 }
 
+/**
+ * Työntekijän TODELLINEN tuntipalkka: koskaan ei yli asiakastuntihinnan.
+ *
+ * Miinuskate ei ole tulos vaan kirjausvirhe (`computeHourlyMoney.rateInverted`):
+ * jos tekijän tuntipalkaksi on vahingossa kirjattu enemmän kuin asiakas maksaa,
+ * kate rajataan nollaan ja tekijä saa asiakashinnan. Sääntö on tässä yhdessä
+ * paikassa, koska sen ohittaminen tarkoittaa että kaksi näkymää laskee saman
+ * tekijän palkan eri suurena — ja tasauksen jaettava voi painua miinukselle.
+ */
+export function effectiveWorkerHourRateOf(
+  data: Pick<ProjectData, "workerHourCents" | "hourRateCents">,
+): number {
+  return Math.min(workerHourRateOf(data), hourRateOf(data));
+}
+
 export function isHourlyGig(data: ProjectData | null | undefined): boolean {
   return billingModeOf(data) === "hourly";
 }

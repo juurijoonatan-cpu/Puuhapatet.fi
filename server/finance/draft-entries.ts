@@ -17,7 +17,7 @@ import { BRAND_BILLERS, inferBillerId } from "@shared/billers";
 import { effectiveJobTotal } from "@shared/team";
 import { sanitizeGigData, type GigData, livePayments } from "@shared/gig";
 import { isEraInvoiceSettled, eraInvoiceGrossCents, type EraInvoiceLike } from "@shared/worker-payouts";
-import { isP2EraSelection } from "@shared/era-billing";
+import { eraScopeLabel } from "@shared/era-billing";
 
 function parseGig(raw: string | null): GigData | null {
   if (!raw) return null;
@@ -170,7 +170,7 @@ export function buildDraftEntries(
    *
    * EI KAKSOISLASKENTAA PUNAISISTA JA KELTAISISTA: punaisten erämaksu ja
    * keltaisten potti ovat eri laskuja eri riveillä (`eraNumbers`, sentinel-erä
-   * 0 = keltaiset, `isP2EraSelection`). Kumpikin rivi kirjataan kertaalleen
+   * 0 = keltaiset, 9 = tuntityö; ks. `eraScopeOf`). Kumpikin rivi kirjataan kertaalleen
    * omana vientinään, joten kaksi rahavirtaa eivät voi summautua päällekkäin —
    * eikä sama euro voi tulla molempia teitä, koska lähde on rivi eikä kaava.
    *
@@ -202,9 +202,11 @@ export function buildDraftEntries(
     const gig = job?.gigData ? parseGig(job.gigData) : null;
     const gigName = gig?.company?.name || job?.description || `Keikka #${inv.jobId}`;
     const workerName = inv.rivit?.input?.name?.trim() || inv.senderId;
-    const eraLabel = isP2EraSelection(inv.eraNumbers)
-      ? "keltaiset"
-      : inv.eraNumbers?.length ? `erä ${inv.eraNumbers.join("+")}` : "erittelemätön";
+    // Sentinel-erät (keltaiset 0, tuntityö 9) ovat VARASTOMUOTO eivätkä nimi:
+    // ilman jaettua nimeämistä kirjanpidon selitteeseen päätyi "erä 9".
+    const eraLabel = inv.eraNumbers?.length
+      ? eraScopeLabel(inv.eraNumbers).toLowerCase()
+      : "erittelemätön";
     drafts.push({
       ledgerId: inv.recipientId,
       date: new Date(inv.sentAt ?? inv.createdAt),

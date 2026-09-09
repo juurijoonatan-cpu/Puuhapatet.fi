@@ -22,10 +22,10 @@
  *     tasausta satojen eurojen verran. Johtaja kohdentaa ne itse.
  */
 
-import { allPoints, type ProjectData } from "./project";
+import { allPoints, computeShiftStats, hourRateOf, effectiveWorkerHourRateOf, isHourlyGig, type ProjectData, type ProjShift } from "./project";
 import { p2FounderOpts, computeP2Billing, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT } from "./p2";
 import { getCrew, DEFAULT_WORKER_PER_WINDOW_CENTS } from "./crew";
-import { isP2EraSelection } from "./era-billing";
+import { eraScopeOf } from "./era-billing";
 import { BRAND_BILLERS } from "./billers";
 import {
   computeTasaus, type FounderSettlementState, type FounderSettlementManual, type TasausInput, type TasausResult,
@@ -46,7 +46,11 @@ export interface TasausEraRow {
   receivedById: string | null;
   /** Onko saaja kirjattu käsin (eroaa laskuttajasta)? */
   overridden: boolean;
-  scope: "p1" | "p2";
+  /** Mihin rahavirtaan tämä erä kuuluu. "all" = yhdistetty lasku, jonka osuudet
+   *  luetaan `parts`ista (yksi maksu kuittaa kahta kertymää). */
+  scope: "p1" | "p2" | "hours" | "all";
+  /** Yhdistetyn laskun osuudet sentteinä — vain `scope: "all"` -riveillä. */
+  parts?: { hours: number; p2: number };
   /** Mitätöity erä — näkyy historiassa, ei lasketa pottiin. */
   voided?: boolean;
 }
@@ -71,7 +75,7 @@ export interface TasausPayoutRow {
   /** Kuka OIKEASTI maksoi — käsin kirjattu tai laskun ostaja. */
   paidById: string | null;
   overridden: boolean;
-  scope: "p1" | "p2";
+  scope: "p1" | "p2" | "hours";
   eraNumbers: number[];
   /** Käsin kirjattu payout ilman maksajatietoa. */
   unattributed: boolean;
@@ -93,7 +97,9 @@ export interface TasausEraInvoice {
 export interface TasausPayment {
   t?: number;
   amountCents: number;
-  scope?: "p1" | "p2";
+  scope?: "p1" | "p2" | "hours" | "all";
+  /** Yhdistetyn laskun (`scope:"all"`) osuudet: sama summa kuittaa kahta kertymää. */
+  parts?: { hours?: number; p2?: number };
   biller?: { id?: string } | null;
   /** Mitätöity laskutuserä — säilyy tositteena, ei lasketa mihinkään summaan. */
   voided?: boolean;
@@ -161,12 +167,6 @@ function isLiveWorkerInvoice(inv: TasausEraInvoice): boolean {
 function grossOf(inv: TasausEraInvoice): number {
   const gross = inv.rivit?.computed?.ansaittuCents;
   return typeof gross === "number" && Number.isFinite(gross) ? gross : inv.totalCents;
-}
-
-function eraLabel(nums: number[] | undefined, index: number): string {
-  if (isP2EraSelection(nums)) return "Keltaiset";
-  if (!nums || nums.length === 0) return `Erä ${index + 1}`;
-  return nums.length === 1 ? `Erä ${nums[0]}` : `Erät ${nums[0]}–${nums[nums.length - 1]}`;
 }
 
 /**
@@ -305,16 +305,36 @@ export function buildTasaus(
     const billerId = p.biller?.id && founderIds.has(p.biller.id) ? p.biller.id : null;
     const manual = receivedBy[String(index)];
     const receivedById = manual && founderIds.has(manual) ? manual : billerId;
-    const scope: "p1" | "p2" = p.scope === "p2" ? "p2" : "p1";
+    /**
+     * KOLME VIRTAA, EI KAHTA. Ehto oli `p.scope === "p2" ? "p2" : "p1"`, eli
+     * tuntilasku ja yhdistetty lasku luettiin urakan eräksi: ne saivat oman
+     * eränumeronsa neljän erän sopimuksessa JA nostivat `x`:ää (€/punainen
+     * ikkuna) rahalla joka ei ole ikkunatyötä.
+     */
+    const scope: TasausEraRow["scope"] =
+      p.scope === "p2" ? "p2" : p.scope === "hours" ? "hours" : p.scope === "all" ? "all" : "p1";
+    const amountCents = Math.round(p.amountCents || 0);
+    const parts = scope === "all"
+      ? {
+          hours: Math.max(0, Math.round(p.parts?.hours ?? 0)),
+          p2: Math.max(0, Math.round(p.parts?.p2 ?? 0)),
+        }
+      : undefined;
+    const label =
+      scope === "p2" ? "Keltaiset"
+        : scope === "hours" ? "Tuntilasku"
+        : scope === "all" ? "Yhdistetty lasku"
+        : `Erä ${payments.slice(0, index + 1).filter((q) => (q.scope ?? "p1") === "p1" && !q.voided).length}`;
     return {
       index,
-      label: scope === "p2" ? "Keltaiset" : `Erä ${payments.slice(0, index + 1).filter((q) => (q.scope ?? "p1") !== "p2" && !q.voided).length}`,
-      amountCents: Math.round(p.amountCents || 0),
+      label,
+      amountCents,
       dateMs: p.t ?? null,
       billerId,
       receivedById,
       overridden: !!manual && manual !== billerId,
       scope,
+      ...(parts ? { parts } : {}),
       voided: !!p.voided,
     };
   });
@@ -322,11 +342,22 @@ export function buildTasaus(
   const receivedByFounder: Record<string, number> = {};
   let p1PotCents = 0;
   let p2PotCents = 0;
+  let hoursPotCents = 0;
   let unassignedEraCount = 0;
   for (const e of eras) {
     // Mitätöity erä näkyy rivinä (tosite), mutta ei ole rahaa kenellekään.
     if (e.voided) continue;
-    if (e.scope === "p2") p2PotCents += e.amountCents; else p1PotCents += e.amountCents;
+    if (e.scope === "p2") p2PotCents += e.amountCents;
+    else if (e.scope === "hours") hoursPotCents += e.amountCents;
+    else if (e.scope === "all") {
+      // Yhdistetty lasku kuittaa kahta kertymää yhdellä summalla: osuudet
+      // luetaan `parts`ista ja jäännös on urakan erää.
+      const hoursPart = e.parts?.hours ?? 0;
+      const p2Part = e.parts?.p2 ?? 0;
+      hoursPotCents += hoursPart;
+      p2PotCents += p2Part;
+      p1PotCents += Math.max(0, e.amountCents - hoursPart - p2Part);
+    } else p1PotCents += e.amountCents;
     if (!e.receivedById) { if (e.amountCents > 0) unassignedEraCount += 1; continue; }
     receivedByFounder[e.receivedById] = (receivedByFounder[e.receivedById] || 0) + e.amountCents;
   }
@@ -340,7 +371,7 @@ export function buildTasaus(
   for (const inv of invoices) {
     if (!isLiveWorkerInvoice(inv)) continue;
     const gross = grossOf(inv);
-    const scope: "p1" | "p2" = isP2EraSelection(inv.eraNumbers) ? "p2" : "p1";
+    const scope = eraScopeOf(inv.eraNumbers);
     const recipientId = founderIds.has(inv.recipientId) ? inv.recipientId : null;
     const manual = paidBy[String(inv.id)];
     const paidById = manual && founderIds.has(manual) ? manual : recipientId;
@@ -431,6 +462,37 @@ export function buildTasaus(
   workerP2EarnedCents = Math.max(0, (p2Bill.workerCostCents ?? 0) - founderP2Cents);
 
   /**
+   * TUNTITYÖ — kolmas virta, joka puuttui tasauksesta kokonaan.
+   *
+   * Ilman tätä tuntikeikan tasaus meni väärin kahdesta suunnasta yhtä aikaa:
+   * tekijöiden tuntipalkkoja ei vähennetty jaettavasta potista (johtajille
+   * jaettiin rahaa joka kuuluu tekijöille) eikä johtajan oma tuntityö näkynyt
+   * hänen ansaintanaan (enemmän tehnyt rahoitti vähemmän tehneen tunnit).
+   *
+   * Säännöt ovat samat kuin `computeHourlyMoney`issa: johtajan tunti on omaa
+   * työtä täydellä asiakastuntihinnalla (ei katetta), työntekijän tunti hänen
+   * omalla tuntipalkallaan ja erotus jää katteeksi jaettavaan pottiin.
+   */
+  // VAIN TUNTITILASSA. Kohdennetulla keikalla vuororivit ovat seurantatietoa
+  // eivätkä palkkaa (palkka tulee ikkunoista), joten niistä ei saa syntyä
+  // tekijäkulua eikä johtajan ansaintaa — muuten sama työ jaettaisiin kahdesti.
+  const hourly = isHourlyGig(project);
+  const shiftStats = hourly
+    ? computeShiftStats((project.shifts ?? []) as ProjShift[])
+    : { byWorker: [] as { id: string; hours: number }[] };
+  const founderHourCents = hourRateOf(project);
+  const workerHourCents = effectiveWorkerHourRateOf(project);
+  const hoursOwnByFounder: Record<string, number> = {};
+  let workerHoursEarnedCents = 0;
+  for (const row of shiftStats.byWorker) {
+    if (founderIds.has(row.id)) {
+      hoursOwnByFounder[row.id] = (hoursOwnByFounder[row.id] || 0) + Math.round(row.hours * founderHourCents);
+    } else {
+      workerHoursEarnedCents += Math.round(row.hours * workerHourCents);
+    }
+  }
+
+  /**
    * KÄSINSYÖTTÖ OHITTAA JOHDETUN ARVON — KENTTÄ KERRALLAAN.
    *
    * Kartasta johtaminen on oikein niin kauan kuin kartta kertoo totuuden.
@@ -455,6 +517,7 @@ export function buildTasaus(
     name: f.name,
     p1Windows: pick(man?.p1WindowsByFounder?.[f.id], p1ByFounder[f.id] || 0),
     p2OwnCents: p2CentsByFounder[f.id] || 0,
+    hoursOwnCents: hoursOwnByFounder[f.id] || 0,
     receivedCents: receivedByFounder[f.id] || 0,
     paidOutCents: paidByFounder[f.id] || 0,
     expensesCents: state?.expensesCents?.[f.id] || 0,
@@ -468,8 +531,10 @@ export function buildTasaus(
     founders: founderInputs,
     p1PotCents: effP1Pot,
     p2PotCents,
+    hoursPotCents,
     workerP1EarnedCents: effWorkerP1Earned,
     workerP2EarnedCents,
+    workerHoursEarnedCents,
     p1WindowsTotal: effP1WindowsTotal,
     transfers,
     overrideCents: state?.overrideCents ?? null,
@@ -487,13 +552,54 @@ export function buildTasaus(
    */
   const p2AccruedCents = p2Bill.earnedCents ?? 0;
   const p2InvoicedShare = p2AccruedCents > 0 ? Math.min(1, p2PotCents / p2AccruedCents) : 0;
+  /**
+   * SAMA SKAALAUS TUNNEILLE. Tunnit ovat yhtä lailla kertymäperusteisia:
+   * johtajan oma tuntityö ja tekijöiden tuntipalkat kertyvät heti kun vuoro on
+   * kirjattu, myös silloin kun asiakkaalta ei ole laskutettu tunneista
+   * senttiäkään. Ilman skaalausta tämä "laskutetusta rahasta ansaittu" -kenttä
+   * antoi 20 tunnin kirjauksesta +600 € toiselle ja −600 € toiselle rahasta
+   * jota kukaan ei ole vielä laskuttanut — juuri se minkä estämiseksi tämä
+   * muunnelma on olemassa.
+   *
+   * Kertymä on asiakkaan tuntihinta × kaikki tunnit
+   * (`computeHourlyMoney.billableCents`).
+   *
+   * OSUUS ON ARVIO, EI TARKKA LUKU — sama rajoitus kuin keltaisilla: tuntilasku
+   * on könttäsumma joka voi sisältää myös tarvikkeet, alihankinnan ja
+   * laskuttamattomat ikkunat, eikä maksurivi kanna tietoa siitä mikä osa siitä
+   * oli tunteja. Suhde rajataan siksi yhteen: enimmillään koko tuntikertymä
+   * luetaan laskutetuksi, ei koskaan enempää. Päätepisteissä (ei laskutettu /
+   * kaikki laskutettu) luku on tarkka. Tämä kenttä on etusivun "Oma tulo"
+   * -arvio; keikan oma tasaus (`result`) ei käytä sitä.
+   */
+  const hoursAccruedCents = Math.round(
+    shiftStats.byWorker.reduce((sum, r) => sum + r.hours, 0) * founderHourCents,
+  );
+  const hoursInvoicedShare = hoursAccruedCents > 0 ? Math.min(1, hoursPotCents / hoursAccruedCents) : 0;
   const invoicedEntitledCents: Record<string, number> = {};
   {
     const scaled = computeTasaus({
       ...input,
-      founders: input.founders.map((f) => ({ ...f, p2OwnCents: Math.round(f.p2OwnCents * p2InvoicedShare) })),
-      p2PotCents: Math.round(p2PotCents * p2InvoicedShare),
+      founders: input.founders.map((f) => ({
+        ...f,
+        p2OwnCents: Math.round(f.p2OwnCents * p2InvoicedShare),
+        hoursOwnCents: Math.round((f.hoursOwnCents ?? 0) * hoursInvoicedShare),
+      })),
+      /**
+       * POTTEJA EI SKAALATA — ne OVAT jo laskutettu raha.
+       *
+       * Skaalattavia ovat vain KERTYMÄPERUSTEISET luvut (johtajan oma työ ja
+       * tekijöiden palkat), koska ne kertyvät heti työn tekemisestä. Potin
+       * skaalaus laski sen toiseen kertaan: puoliksi laskutetusta 260 €:n
+       * tuntityöstä jaettavaksi jäi 65 € vaikka laskutettu oli 130 €, jolloin
+       * oman työnsä tehnyt johtaja sai 97,50 € ja toinen −32,50 € rahasta joka
+       * kattaa ensimmäisen työn kokonaan. Päätepisteissä (0 % / 100 %) virhe ei
+       * näkynyt, joten se eli osittain laskutetuissa keikoissa.
+       */
+      p2PotCents,
       workerP2EarnedCents: Math.round(workerP2EarnedCents * p2InvoicedShare),
+      hoursPotCents,
+      workerHoursEarnedCents: Math.round(workerHoursEarnedCents * hoursInvoicedShare),
     });
     for (const r of scaled.rows) invoicedEntitledCents[r.id] = r.entitledCents;
   }

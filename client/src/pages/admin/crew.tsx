@@ -6,7 +6,7 @@
  * Hosts (Joonatan + Matias) get the full picture here; workers only ever see
  * their own /tyo/:token dashboard.
  */
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRoute, useLocation, Link } from "wouter";
 import { api, type HostCrewRow, type FounderSettlement, type EraInvoiceClient } from "@/lib/api";
 import { isFounder } from "@shared/team";
@@ -112,6 +112,15 @@ export default function AdminCrewPage() {
     setLoading(false);
   }, [jobId, load]);
 
+  /**
+   * Erälaskuista johdetut summakartat KERRAN, ei kerran per tekijä per render.
+   * Jokainen `eraMapsFor` käy koko laskulistan läpi, ja niitä kutsuttiin
+   * maksuehdotuksessa kolmesti jokaista tekijäriviä kohti.
+   */
+  const p1Maps = useMemo(() => eraMapsFor(eraInvoices, "p1"), [eraInvoices]);
+  const p2Maps = useMemo(() => eraMapsFor(eraInvoices, "p2"), [eraInvoices]);
+  const hoursMaps = useMemo(() => eraMapsFor(eraInvoices, "hours"), [eraInvoices]);
+
   const seed = async () => { setBusy(true); await api.seedCrew(jobId); await load(); setBusy(false); };
   const addWorker = async () => { setBusy(true); await api.addCrewMember(jobId, {}); await load(); setBusy(false); };
   const update = async (id: string, data: Parameters<typeof api.updateCrewMember>[2]) => { await api.updateCrewMember(jobId, id, data); await load(); };
@@ -186,7 +195,7 @@ export default function AdminCrewPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {crew.map(({ member, stats, onboarded }) => (
+            {crew.map(({ member, stats, onboarded, shiftHours, hourRateCents }) => (
               <div key={member.id} className="rounded-2xl border bg-card p-4">
                 <WorkerCardHeader member={member} stats={stats} onboarded={onboarded} copied={copied} onCopy={copyLink} onUpdate={update} onRemove={remove} />
 
@@ -306,17 +315,28 @@ export default function AdminCrewPage() {
                   const settled = settleWorker({
                     id: member.id, name: member.name, active: true, founder: false,
                     stats, payouts: member.payouts || [], p2Enabled,
-                    era: eraMapsFor(eraInvoices, "p1"),
+                    era: p1Maps,
                     p2Settled: {
-                      sentCents: eraMapsFor(eraInvoices, "p2").eraSent[member.id] || 0,
-                      pendingCents: eraMapsFor(eraInvoices, "p2").eraPending[member.id] || 0,
+                      sentCents: p2Maps.eraSent[member.id] || 0,
+                      pendingCents: p2Maps.eraPending[member.id] || 0,
+                    },
+                    // Tuntityö mukaan: ilman näitä Tiimi-sivu näytti tuntikeikalla
+                    // 0 € samaan aikaan kun Maksut-välilehti näytti todellisen velan.
+                    hours: shiftHours ?? 0,
+                    hourRateCents: hourRateCents ?? 0,
+                    hoursSettled: {
+                      sentCents: hoursMaps.eraSent[member.id] || 0,
+                      pendingCents: hoursMaps.eraPending[member.id] || 0,
+                      hours: (hoursMaps.eraHours[member.id] || 0) + (hoursMaps.eraPendingHours[member.id] || 0),
                     },
                   });
                   const claimedWindows = (member.payouts || []).reduce((s, p) => s + (p.windows || 0), 0);
                   return (
                     <PayoutPanel
                       member={member}
-                      suggestedCents={settled.openP1Cents}
+                      // Ikkunatyö JA tuntityö: käsin kirjattu maksu on yksi
+                      // summa tilille, ja tuntikeikalla ikkunaosuus on nolla.
+                      suggestedCents={settled.openP1Cents + settled.openHoursCents}
                       suggestedWindows={Math.max(0, round1(settled.openP1Windows - claimedWindows))}
                       onCreate={createPayout}
                       onMarkPaid={markPaid}
@@ -1061,11 +1081,12 @@ function PayrollSummary({ crew, eraInvoices, p2Enabled }: {
 }) {
   const eraMaps = eraMapsFor(eraInvoices, "p1");
   const p2Maps = eraMapsFor(eraInvoices, "p2");
+  const hoursMaps = eraMapsFor(eraInvoices, "hours");
   const rows = crew
     // Harjoittelija (esim. Milja) ei ole maksulistalla: hänen palkkansa tilittää
     // vastuujohtaja. Deaktivoitu tekijä ei myöskään ole maksettavana.
     .filter((c) => c.member.active && !isTraineeMember(c.member))
-    .map(({ member, stats }) => settleWorker({
+    .map(({ member, stats, shiftHours, hourRateCents }) => settleWorker({
       id: member.id,
       name: member.name,
       active: true,
@@ -1078,14 +1099,23 @@ function PayrollSummary({ crew, eraInvoices, p2Enabled }: {
       adjustmentCents: member.payAdjustmentCents ?? 0,
       era: eraMaps,
       p2Settled: { sentCents: p2Maps.eraSent[member.id] || 0, pendingCents: p2Maps.eraPending[member.id] || 0 },
+      // Kolmas rahavirta mukaan, jotta palkkayhteenveto ja Maksut-välilehti
+      // kertovat saman velan samasta tekijästä.
+      hours: shiftHours ?? 0,
+      hourRateCents: hourRateCents ?? 0,
+      hoursSettled: {
+        sentCents: hoursMaps.eraSent[member.id] || 0,
+        pendingCents: hoursMaps.eraPending[member.id] || 0,
+        hours: (hoursMaps.eraHours[member.id] || 0) + (hoursMaps.eraPendingHours[member.id] || 0),
+      },
     }))
-    .filter((r) => r.earnedCents > 0 || r.washed > 0)
+    .filter((r) => r.earnedCents > 0 || r.washed > 0 || r.hoursEarnedCents > 0)
     .sort((a, b) => b.openP1Cents - a.openP1Cents || b.p1EarnedCents - a.p1EarnedCents);
 
   if (rows.length === 0) return null;
 
   const t = sumWorkerSettlements(rows);
-  const anyEra = rows.some((r) => r.eraSentCents > 0 || r.eraPendingCents > 0);
+  const anyEra = rows.some((r) => r.eraSentCents > 0 || r.pendingTotalCents > 0 || r.hoursSettledCents > 0);
 
   return (
     <div className="rounded-2xl border bg-card p-4 mb-5">
@@ -1108,13 +1138,25 @@ function PayrollSummary({ crew, eraInvoices, p2Enabled }: {
         </div>
         <div className="rounded-xl bg-muted/40 px-1 py-2">
           <p className="text-[10px] uppercase leading-tight tracking-wide text-muted-foreground">{anyEra ? "Hoidettu" : "Maksettu"}</p>
-          <p className="text-sm font-bold tabular-nums text-green-600">{eur(t.settledCents)}</p>
+          {/* Kaikki kolme virtaa: p1-kohtainen `settledCents` näytti tuntikeikalla
+              0 € vaikka tekijälle oli maksettu koko tuntilasku. */}
+          <p className="text-sm font-bold tabular-nums text-green-600">{eur(t.settledTotalCents)}</p>
         </div>
         <div className="rounded-xl bg-muted/40 px-1 py-2">
           <p className="text-[10px] uppercase leading-tight tracking-wide text-muted-foreground">Siirrettävä</p>
-          <p className={`text-sm font-bold tabular-nums ${t.openP1Cents > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{eur(t.openP1Cents)}</p>
+          {/* Punaiset JA tunnit: tuntikeikalla punaisia ei ole lainkaan, joten
+              pelkkä `openP1Cents` näytti tässä 0 € samaan aikaan kun Maksut-
+              välilehti näytti todellisen velan. Keltaiset ovat yhä erikseen —
+              niitä ei makseta ennen kuin asiakas on maksanut oman laskunsa. */}
+          <p className={`text-sm font-bold tabular-nums ${t.openP1Cents + t.openHoursCents > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{eur(t.openP1Cents + t.openHoursCents)}</p>
         </div>
       </div>
+      {t.openHoursCents > 0 && (
+        <p className="-mt-1 mb-3 text-[11px] leading-snug text-muted-foreground">
+          Siitä tuntityötä <strong>{eur(t.openHoursCents)}</strong> ({fmtWindows(t.hours)} h) — maksetaan samalla tavalla
+          kuin ikkunatyö, omalla laskullaan.
+        </p>
+      )}
       {/* Keltaiset omana, korostettuna rivinä — EI mukana "Siirrettävä"ssä. */}
       {t.openP2Cents > 0 && (
         <p className="-mt-1 mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] leading-snug text-amber-700 dark:text-amber-400">
@@ -1140,10 +1182,16 @@ function PayrollSummary({ crew, eraInvoices, p2Enabled }: {
               <p className="text-sm font-medium truncate">{r.name}</p>
               <p className="flex flex-wrap items-center gap-x-1.5 text-[11px] leading-snug text-muted-foreground">
                 <span className="whitespace-nowrap">{fmtWindows(r.p1Washed)} punaista</span>
-                <span className="whitespace-nowrap">· hoidettu {eur(r.settledCents)}</span>
+                <span className="whitespace-nowrap">· hoidettu {eur(r.settledTotalCents)}</span>
                 {r.eraPendingCents > 0 && <span className="whitespace-nowrap">· kuittaamatta {eur(r.eraPendingCents)}</span>}
                 {r.settledEras.length > 0 && <span className="whitespace-nowrap">· erät {r.settledEras.join(", ")}</span>}
               </p>
+              {r.hours > 0 && (
+                <p className="text-[11px] leading-snug text-muted-foreground">
+                  tunnit {fmtWindows(r.hours)} h × {eur(r.hourRateCents)}
+                  {r.openHoursCents > 0 ? ` · siirrettävä ${eur(r.openHoursCents)}` : " · maksettu"}
+                </p>
+              )}
               {/* Sovittu vähennys näkyviin myös täällä, samoin kuin Maksut-välilehdellä
                   — muuten luku näyttäisi tässä eri suuruiselta ilman selitystä. */}
               {r.p1AdjustmentCents !== 0 && (
@@ -1161,7 +1209,7 @@ function PayrollSummary({ crew, eraInvoices, p2Enabled }: {
             </div>
             <div className="shrink-0 text-right">
               <p className="text-[10px] uppercase leading-tight tracking-wide text-muted-foreground">Siirrettävä</p>
-              <p className={`text-base font-bold tabular-nums ${r.openP1Cents > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{eur(r.openP1Cents)}</p>
+              <p className={`text-base font-bold tabular-nums ${r.openP1Cents + r.openHoursCents > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{eur(r.openP1Cents + r.openHoursCents)}</p>
               {r.openP2Cents > 0 && (
                 <p className="text-[10px] leading-tight tabular-nums text-muted-foreground">+ keltaiset {eur(r.openP2Cents)}</p>
               )}

@@ -20,10 +20,11 @@
  * Puhdas laskenta: ei I/O:ta, ei Reactia. Sekä client että server importtaavat.
  */
 
-import type { ProjectData } from "./project";
+import { computeShiftStats, effectiveWorkerHourRateOf, hourRateOf, isHourlyGig, type ProjectData, type ProjShift } from "./project";
 import { getCrew, crewMemberStats, type CrewMember, type CrewMemberStats } from "./crew";
 import { traineeForUserId, traineeForName } from "./trainees";
-import { isP2EraSelection } from "./era-billing";
+import { eraScopeOf, type EraScope } from "./era-billing";
+import { isFounder } from "./team";
 
 /** Erälaskun tila joka tarkoittaa "tämä on tekijälle hoidettu". Luonnos odottaa
  *  vielä tekijää, hylätty ei koskaan maksettu. */
@@ -38,8 +39,9 @@ export interface EraInvoiceLike {
   /** Erät joita tämä lasku koskee (esim. [1,2,3] tai [4]). */
   eraNumbers?: number[];
   /** Tallennettu laskurivi. `input.pestytIkkunat` = montako ikkunaa lasku kattoi,
-   *  `computed.ansaittuCents` = BRUTTO ansio (ennen ennakon vähennystä). */
-  rivit?: { input?: { pestytIkkunat?: number }; computed?: { ansaittuCents?: number } } | null;
+   *  `input.tunnit` = montako tuntia, `computed.ansaittuCents` = BRUTTO ansio
+   *  (ennen ennakon vähennystä). */
+  rivit?: { input?: { pestytIkkunat?: number; tunnit?: number }; computed?: { ansaittuCents?: number } } | null;
 }
 
 /** Onko tämä erälasku tekijälle jo "hoidettu"? Lähetetty/hyväksytty = lukittu ja
@@ -75,6 +77,10 @@ export interface EraSettlementMaps {
   /** Tekijä-id → luonnoksissa olevat ikkunat — nämäkin vähennetään esitäytöstä,
    *  ettei samasta työstä synny toista maksua. */
   pendingWindowsByWorker: Record<string, number>;
+  /** Tekijä-id → erälaskuilla katetut TUNNIT (tuntityön esitäytön jäljellä-määrä). */
+  hoursByWorker: Record<string, number>;
+  /** Tekijä-id → luonnoksissa odottavat tunnit. */
+  pendingHoursByWorker: Record<string, number>;
 }
 
 /**
@@ -84,28 +90,35 @@ export interface EraSettlementMaps {
  * oletus) tai "p2" (keltaisten potti). Ne EIVÄT saa kuitata toisiaan — keltaisten
  * maksu ei vähennä punaista velkaa eikä toisinpäin.
  */
-export function eraSettlementByWorker(invoices: EraInvoiceLike[], scope: "p1" | "p2" = "p1"): EraSettlementMaps {
-  const wanted = scope === "p2";
-  invoices = invoices.filter((i) => isP2EraSelection(i.eraNumbers) === wanted);
+export function eraSettlementByWorker(invoices: EraInvoiceLike[], scope: EraScope = "p1"): EraSettlementMaps {
+  invoices = invoices.filter((i) => eraScopeOf(i.eraNumbers) === scope);
   const centsByWorker: Record<string, number> = {};
   const windowsByWorker: Record<string, number> = {};
   const eraNumbersByWorker: Record<string, number[]> = {};
   const pendingCentsByWorker: Record<string, number> = {};
   const pendingWindowsByWorker: Record<string, number> = {};
+  const hoursByWorker: Record<string, number> = {};
+  const pendingHoursByWorker: Record<string, number> = {};
   for (const inv of invoices) {
     const windows = inv.rivit?.input?.pestytIkkunat || 0;
+    const hours = inv.rivit?.input?.tunnit || 0;
     if (isEraInvoicePending(inv)) {
       pendingCentsByWorker[inv.senderId] = (pendingCentsByWorker[inv.senderId] || 0) + eraInvoiceGrossCents(inv);
       pendingWindowsByWorker[inv.senderId] = (pendingWindowsByWorker[inv.senderId] || 0) + windows;
+      pendingHoursByWorker[inv.senderId] = (pendingHoursByWorker[inv.senderId] || 0) + hours;
     }
     if (!isEraInvoiceSettled(inv)) continue;
     centsByWorker[inv.senderId] = (centsByWorker[inv.senderId] || 0) + eraInvoiceGrossCents(inv);
     windowsByWorker[inv.senderId] = (windowsByWorker[inv.senderId] || 0) + windows;
+    hoursByWorker[inv.senderId] = (hoursByWorker[inv.senderId] || 0) + hours;
     const list = eraNumbersByWorker[inv.senderId] || (eraNumbersByWorker[inv.senderId] = []);
     for (const n of inv.eraNumbers || []) if (!list.includes(n)) list.push(n);
   }
   for (const list of Object.values(eraNumbersByWorker)) list.sort((a, b) => a - b);
-  return { centsByWorker, windowsByWorker, eraNumbersByWorker, pendingCentsByWorker, pendingWindowsByWorker };
+  return {
+    centsByWorker, windowsByWorker, eraNumbersByWorker,
+    pendingCentsByWorker, pendingWindowsByWorker, hoursByWorker, pendingHoursByWorker,
+  };
 }
 
 export interface WorkerSettlement {
@@ -145,8 +158,18 @@ export interface WorkerSettlement {
   /** Luonnoksena odottavat erälaskut — johtaja loi maksun, tekijä ei ole vielä
    *  kuitannut. EI hoidettu, mutta ei myöskään uudelleen luotava. */
   eraPendingCents: number;
-  /** paid + eraSent — kaikki mitä tekijälle on hoidettu. */
+  /**
+   * paid + eraSent PUNAISISTA. Tämä luku on osa kohdennuslaskentaa (se kuittaa
+   * punaista velkaa), joten siihen EI saa lisätä keltaisten tai tuntien maksuja
+   * — muuten tuntimaksu kuittaisi ikkunavelkaa.
+   */
   settledCents: number;
+  /**
+   * KAIKKI mitä tekijälle on hoidettu, kaikista kolmesta virrasta yhteensä.
+   * Pelkkä näyttöluku: "hoidettu" näytti ennen vain punaisten osuuden, joten
+   * tuntikeikalla se luki 0 € vaikka tekijälle oli maksettu satoja euroja.
+   */
+  settledTotalCents: number;
   /** PUNAISISTA vielä siirtämättä. Tämä on se summa jonka perustaja maksaa
    *  erämaksulla. */
   openP1Cents: number;
@@ -159,6 +182,45 @@ export interface WorkerSettlement {
   settledEras: number[];
   /** Keltaisista jo maksettu tai maksussa (kuittaa vain keltaista velkaa). */
   p2SettledCents: number;
+  /**
+   * Keltaisten LUONNOKSENA odottava summa — johtaja loi maksun, tekijä ei ole
+   * vielä kuitannut sitä. Luonnos varaa velan (`openP2Cents` ei sisällä sitä),
+   * joten ilman tätä lukua juuri tehty keltaisten maksu katosi näkyvistä
+   * kokonaan: siirrettävä putosi nollaan ennen kuin senttiäkään oli liikkunut.
+   */
+  p2InvoicePendingCents: number;
+
+  // ─── TUNTITYÖ (kolmas rahavirta) ──────────────────────────────────────────
+  //
+  // Tuntikeikalla tekijän palkka ei tule ikkunoista lainkaan, joten ilman näitä
+  // kenttiä koko keikan maksettava näytti nollaa: ikkunoita ei ollut, ja
+  // tunneille ei ollut kenttää mihin ne olisi laskettu.
+  /** Tekijän tunnit tällä keikalla (`ProjShift`-riveistä, rajattu ≥ 0). */
+  hours: number;
+  /** Tekijän tuntipalkka sentteinä (perustajalla asiakashinta, ks. hourly-money). */
+  hourRateCents: number;
+  /** Tunneista kertynyt palkka BRUTTONA = tunnit × tuntipalkka. */
+  hoursEarnedCents: number;
+  /** Tunneista jo maksettu tai maksussa (tuntipotin erälaskut). */
+  hoursSettledCents: number;
+  /** Tunneista luonnoksena odottava — johtaja loi maksun, tekijä ei kuitannut. */
+  hoursPendingCents: number;
+  /**
+   * KAIKKI kuittausta odottava: punaisten, keltaisten ja tuntien luonnokset.
+   * Luonnos varaa velan, joten se katoaa `openTotalCents`ista — ilman tätä
+   * lukua juuri tehty maksu häviäisi näkymästä kokonaan ennen kuin tekijä on
+   * ehtinyt hyväksyä sen.
+   */
+  pendingTotalCents: number;
+  /** Tunneista VIELÄ siirtämättä. Tämä on se summa jonka johtaja maksaa. */
+  openHoursCents: number;
+  /** Maksamattomat tunnit — maksudialogin esitäyttö. */
+  openHours: number;
+  /**
+   * KAIKKI mitä tälle tekijälle on vielä siirrettävä: punaiset + keltaiset +
+   * tunnit. Yksi luku johtajalle, joka ei halua laskea kolmea yhteen päässään.
+   */
+  openTotalCents: number;
 }
 
 /**
@@ -176,6 +238,8 @@ export function computeWorkerSettlements(
     era?: Partial<EraSettlementMaps>;
     /** KELTAISTEN maksuista johdetut summat (`eraSettlementByWorker(inv, "p2")`). */
     p2Era?: Partial<EraSettlementMaps>;
+    /** TUNTITYÖN maksuista johdetut summat (`eraSettlementByWorker(inv, "hours")`). */
+    hoursEra?: Partial<EraSettlementMaps>;
     /** Jätä perustajat (role "host") pois — oletus true, koska perustajat
      *  tilittävät johtaja-välisillä laskuilla, eivät tekijämaksuilla. */
     includeFounders?: boolean;
@@ -192,6 +256,34 @@ export function computeWorkerSettlements(
 ): WorkerSettlement[] {
   const eraSent = opts.era?.centsByWorker ?? {};
   const p2Era = opts.p2Era ?? {};
+  const hoursEra = opts.hoursEra ?? {};
+  /**
+   * TUNNIT LUETAAN VUOROISTA, EI KARTALTA.
+   *
+   * `crewMemberStats().hours` on vanha, käsin kirjattu `project.hours`-kenttä.
+   * Nykyinen tuntikirjanpito on `project.shifts` (ajastin + käsinsyöttö), ja
+   * juuri sen takia tuntityö ei näkynyt maksuissa lainkaan: raha laskettiin
+   * kentästä johon mikään nykyinen näkymä ei enää kirjoita.
+   *
+   * VAIN TUNTITILASSA (`billingMode: "hourly"`). Kohdennetulla keikalla tekijä
+   * saa palkkansa IKKUNOISTA ja vuororivit ovat seurantatietoa (ikkunaa/tunti,
+   * tehokkuus). Jos ne muutettaisiin siellä rahaksi, sama työ maksettaisiin
+   * kahdesti — kerran ikkunoina ja kerran tunteina. Tuntipalkan voi silti aina
+   * kirjata käsin maksudialogin "Tunnit"-välilehdeltä, jos niin on sovittu.
+   *
+   * TUNTIKEIKALLA IKKUNAPALKKA JÄÄ VOIMAAN, ja se on tarkoitus eikä tuplaus:
+   * ikkunatyö on tuntikeikallakin oma veloituksensa tuntien rinnalla
+   * (`computeWindowMoney` laskuttaa laskuttamattomat ikkunat asiakkaalta ja
+   * maksaa pesijälle hänen ikkunataksansa). Ikkunat pestään usein ennen
+   * tuntitilaan siirtymistä, eikä sama työ ole molemmissa.
+   */
+  const hourly = isHourlyGig(project);
+  const shiftStats = hourly
+    ? computeShiftStats((project.shifts ?? []) as ProjShift[])
+    : { byWorker: [] as { id: string; hours: number }[] };
+  const hoursById = new Map(shiftStats.byWorker.map((r) => [r.id, r.hours]));
+  const workerHourCents = effectiveWorkerHourRateOf(project);
+  const founderHourCents = hourRateOf(project);
   const eraWindows = opts.era?.windowsByWorker ?? {};
   const eraNums = opts.era?.eraNumbersByWorker ?? {};
   const eraPending = opts.era?.pendingCentsByWorker ?? {};
@@ -220,10 +312,19 @@ export function computeWorkerSettlements(
         sentCents: p2Era.centsByWorker?.[member.id] || 0,
         pendingCents: p2Era.pendingCentsByWorker?.[member.id] || 0,
       },
+      hours: hoursById.get(member.id) ?? 0,
+      // Perustajan tunti on omaa työtä eikä siitä oteta katetta: hän ansaitsee
+      // koko asiakastuntihinnan (sama sääntö kuin `computeHourlyMoney`issa).
+      hourRateCents: founder || isFounder(member.id) ? founderHourCents : workerHourCents,
+      hoursSettled: {
+        sentCents: hoursEra.centsByWorker?.[member.id] || 0,
+        pendingCents: hoursEra.pendingCentsByWorker?.[member.id] || 0,
+        hours: (hoursEra.hoursByWorker?.[member.id] || 0) + (hoursEra.pendingHoursByWorker?.[member.id] || 0),
+      },
     }));
   }
 
-  return rows.sort((a, b) => b.openP1Cents - a.openP1Cents || b.p1EarnedCents - a.p1EarnedCents);
+  return rows.sort((a, b) => b.openTotalCents - a.openTotalCents || b.p1EarnedCents - a.p1EarnedCents);
 }
 
 /**
@@ -253,6 +354,12 @@ export function settleWorker(input: {
   p2Settled?: { sentCents: number; pendingCents: number };
   /** Sovittu muutos punaisten palkkaan (CrewMember.payAdjustmentCents). */
   adjustmentCents?: number;
+  /** Tekijän tunnit tällä keikalla (`computeShiftStats`). Puuttuva = 0. */
+  hours?: number;
+  /** Tekijän tuntipalkka sentteinä. Puuttuva = 0 → tuntityötä ei ole. */
+  hourRateCents?: number;
+  /** Tuntipotista jo maksettu / maksussa — kuittaa VAIN tuntivelkaa. */
+  hoursSettled?: { sentCents: number; pendingCents: number; hours?: number };
 }): WorkerSettlement {
   const { id, name, active, founder, stats, payouts, p2Enabled, era } = input;
   const trainee = input.trainee === true;
@@ -265,8 +372,9 @@ export function settleWorker(input: {
   // maksuilla. Luonnokset lasketaan mukaan kuittaukseen — muuten juuri luotu maksu
   // näkyisi yhä "Avoinna"na ja johtaja loisi sen toistamiseen (ks. eraPendingCents).
   //
-  // Käsin kirjatut payoutit (vanha kanava) eivät tiedä kummasta rahasta on kysymys,
-  // joten ne kuittaavat ensin punaista ja ylivuoto menee keltaiseen.
+  // Käsin kirjatut payoutit (vanha kanava) eivät tiedä mistä rahasta on kysymys,
+  // joten ne kuittaavat velkaa järjestyksessä punaiset → tunnit → keltaiset
+  // (ks. ylivuodon perustelu alempana).
   const p2SettledCents = (input.p2Settled?.sentCents ?? 0) + (input.p2Settled?.pendingCents ?? 0);
   // Sovittu vähennys/lisä pienentää (tai kasvattaa) maksettavaa punaista. Brutto
   // (`p1EarnedCents`) säilyy koskemattomana, jotta ikkunat ja raha täsmäävät yhä.
@@ -274,16 +382,27 @@ export function settleWorker(input: {
   const p1PayableCents = Math.max(0, stats.p1EarnedCents + p1AdjustmentCents);
   const reservedCents = settledCents + eraPendingCents;
   const p1Covered = Math.min(p1PayableCents, reservedCents);
-  // Ylivuoto keltaiseen lasketaan BRUTOSTA, ei vähennetystä summasta. Muuten
-  // sovittu vähennys olisi syönyt keltaisia: jos punaiset oli jo laskutettu
+  // Ylivuoto lasketaan BRUTOSTA, ei vähennetystä summasta. Muuten sovittu
+  // vähennys olisi syönyt seuraavaa pottia: jos punaiset oli jo laskutettu
   // täytenä (100 €) ja johtaja kirjasi jälkikäteen 10 € vähennyksen, erotus olisi
-  // valunut "ylivuotona" keltaisten päälle ja pienentänyt niitä 10 € — vaikka
-  // vähennys sovittiin punaisista. Aitoon ylimaksuun (yli bruton) sääntö pätee
-  // edelleen: käsin kirjattu liian iso maksu kuittaa keltaista.
-  const p1Overflow = Math.max(0, reservedCents - Math.max(p1PayableCents, stats.p1EarnedCents));
-  const p2Covered = Math.min(stats.p2EarnedCents, p2SettledCents + p1Overflow);
+  // valunut "ylivuotona" eteenpäin ja pienentänyt sitä 10 € — vaikka vähennys
+  // sovittiin punaisista. Aitoon ylimaksuun (yli bruton) sääntö pätee edelleen.
+  // Ylivuodon KOHDE ratkaistaan alempana, tuntien laskennan jälkeen.
+  /**
+   * Kuinka paljon punainen potti IMEE ennen kuin ylivuoto jatkaa eteenpäin.
+   *
+   * Bruttosuoja koskee VAIN kohdennettuja punaisia laskuja: jos punaiset on jo
+   * laskutettu täytenä ja vähennys kirjattiin jälkikäteen, erotus ei saa valua
+   * seuraavaan pottiin (se sovittiin punaisista). Käsin kirjattu maksu on eri
+   * asia — se on tuoretta rahaa, ja kaikki maksettavan ylittävä kuuluu
+   * seuraavalle potille. Aiemmin suoja laskettiin aina brutosta, jolloin
+   * maksuehdotuksen (punaiset + tunnit) maksaminen jätti tuntivelkaa auki
+   * juuri vähennyksen verran — ja sama tuntityö tuli maksettavaksi uudelleen.
+   */
+  const eraReservedCents = eraSentCents + eraPendingCents;
+  const p1AbsorbedCents = Math.max(p1PayableCents, Math.min(stats.p1EarnedCents, eraReservedCents));
+  const p1Overflow = Math.max(0, reservedCents - p1AbsorbedCents);
   const openP1Cents = Math.max(0, p1PayableCents - p1Covered);
-  const openP2Cents = Math.max(0, stats.p2EarnedCents - p2Covered);
 
   // Punaisia ikkunoita vielä maksamatta. Kun P2 ei ole päällä, keltaiset
   // maksetaan normaalilla taksalla (legacy), joten ne kuuluvat samaan pottiin.
@@ -315,7 +434,76 @@ export function settleWorker(input: {
   // näkyä, jotta kirjanpidollisen erälaskun voi tehdä jälkikäteen.
   const openP1Windows = p1PayableCents <= 0 ? 0 : round1(Math.min(windowsFromLedger, windowsFromMoney));
 
+  // ── TUNTITYÖ ────────────────────────────────────────────────────────────────
+  // Oma potti, omat kuittaukset. Tuntimaksu ei kuittaa ikkunavelkaa eikä
+  // toisinpäin — muuten yhden keikan ikkunapalkka katoaisi sillä että samalta
+  // keikalta maksettiin tunnit, ja tekijä jäisi ilman rahaa jonka hän ansaitsi.
+  const hours = Math.max(0, input.hours ?? 0);
+  const hourRateCents = Math.max(0, Math.round(input.hourRateCents ?? 0));
+  const hoursEarnedCents = Math.round(hours * hourRateCents);
+  const hoursSentCents = input.hoursSettled?.sentCents ?? 0;
+  const hoursPendingCents = input.hoursSettled?.pendingCents ?? 0;
+  const hoursSettledCents = hoursSentCents + hoursPendingCents;
+  /**
+   * Punaisten ylivuoto kuittaa tuntivelkaa ENNEN keltaisia: tunnit ovat
+   * maksettavaa nyt, keltaiset vasta asiakkaan maksun jälkeen.
+   *
+   * Ylivuotoa syntyy VAIN kohdentamattomasta rahasta (käsin kirjattu payout).
+   * Tuntipotin oma lasku on nimenomaisesti merkitty tunneiksi, joten se ei saa
+   * valua mihinkään muualle: sovittu 150 €:n tuntimaksu keikalla jolla ei ole
+   * tuntikertymää söi muuten tekijän keltaista velkaa, vaikka asiakas ei ollut
+   * maksanut keltaisista senttiäkään.
+   */
+  const hoursNeedCents = Math.max(0, hoursEarnedCents - hoursSettledCents);
+  const hoursFromOverflow = Math.min(hoursNeedCents, p1Overflow);
+  const openHoursCents = hoursNeedCents - hoursFromOverflow;
+  // Sama sääntö kuin ikkunoilla: ota PIENEMPI kahdesta lähteestä, ettei kumpikaan
+  // yksin nosta esitäyttöä. Rahasta johdettu tuntimäärä on lopullinen totuus.
+  const hoursFromLedger = Math.max(0, hours - (input.hoursSettled?.hours ?? 0));
+  // Ylivuoto ei kirjaa tunteja, joten ikkunoiden sääntö pätee tässäkin: raha on
+  // lopullinen totuus ja kirjanpito vain yläraja.
+  const hoursFromMoney = hourRateCents > 0 ? openHoursCents / hourRateCents : 0;
+  // ALASPÄIN, EI LÄHIMPÄÄN. Esitäyttö kerrotaan tuntipalkalla, joten ylöspäin
+  // pyöristetty tuntimäärä tekisi laskun joka ylittää avoimen summan (130,00 €
+  // → 8,7 h × 15,00 € = 130,50 €) ja laukaisisi näkymän oman ylilaskutus-
+  // varoituksen koskemattomilla oletuksilla. Täysillä tunneilla — mikä on
+  // normaali tapaus, koska vuorot pyöristetään täyteen tuntiin — luku on tarkka.
+  const openHours = openHoursCents <= 0 ? 0 : floor1(Math.min(hoursFromLedger, hoursFromMoney));
+
+  /**
+   * YLIVUODON JÄRJESTYS: PUNAISET → TUNNIT → KELTAISET.
+   *
+   * Käsin kirjattu payout (vanha kanava) ei tiedä mistä rahasta on kysymys,
+   * joten se kuittaa velkaa järjestyksessä. Järjestys ei ole mielivaltainen:
+   * punaiset ja tunnit ovat maksettavaa NYT, keltaiset vasta sen jälkeen kun
+   * asiakas on maksanut keltaisten laskun.
+   *
+   * Aiemmin ylivuoto meni punaisista suoraan keltaisiin. Tuntikeikalla se
+   * tarkoitti kahta virhettä yhdellä maksulla: keltainen velka kuittautui
+   * ennen kuin asiakas oli maksanut siitä senttiäkään, ja tuntivelka jäi
+   * silti auki — eli sama työ tuli maksettavaksi toisen kerran.
+   */
+  const hoursOverflow = p1Overflow - hoursFromOverflow;
+  const p2Covered = Math.min(stats.p2EarnedCents, p2SettledCents + hoursOverflow);
+  const openP2Cents = Math.max(0, stats.p2EarnedCents - p2Covered);
+
+  const p2InvoicePendingCents = input.p2Settled?.pendingCents ?? 0;
+
   return {
+    p2InvoicePendingCents,
+    pendingTotalCents: eraPendingCents + hoursPendingCents + p2InvoicePendingCents,
+    // "Hoidettu" tarkoittaa oikeasti maksussa olevaa rahaa, ei luonnoksia:
+    // luonnos odottaa yhä tekijän hyväksyntää (`eraPendingCents` kertoo sen
+    // erikseen). Siksi tässä luetaan vain lähetetyt/hyväksytyt summat.
+    settledTotalCents: settledCents + (input.p2Settled?.sentCents ?? 0) + hoursSentCents,
+    hours,
+    hourRateCents,
+    hoursEarnedCents,
+    hoursSettledCents,
+    hoursPendingCents,
+    openHoursCents,
+    openHours,
+    openTotalCents: openP1Cents + openP2Cents + openHoursCents,
     workerId: id,
     name,
     active,
@@ -351,7 +539,7 @@ export function isTraineeMember(member: { id: string; name?: string; linkedUserI
 
 /** `settleWorker`in era-parametri suoraan erälaskuista — kutsujan ei tarvitse
  *  koota viittä mappia itse. */
-export function eraMapsFor(invoices: EraInvoiceLike[], scope: "p1" | "p2" = "p1") {
+export function eraMapsFor(invoices: EraInvoiceLike[], scope: EraScope = "p1") {
   const m = eraSettlementByWorker(invoices, scope);
   return {
     eraSent: m.centsByWorker,
@@ -359,6 +547,8 @@ export function eraMapsFor(invoices: EraInvoiceLike[], scope: "p1" | "p2" = "p1"
     eraNums: m.eraNumbersByWorker,
     eraPending: m.pendingCentsByWorker,
     eraPendingWindows: m.pendingWindowsByWorker,
+    eraHours: m.hoursByWorker,
+    eraPendingHours: m.pendingHoursByWorker,
   };
 }
 
@@ -371,10 +561,20 @@ export interface WorkerSettlementTotals {
   p2EarnedCents: number;
   p2PendingCents: number;
   settledCents: number;
+  settledTotalCents: number;
   eraPendingCents: number;
+  /** Kaikki kuittausta odottava (punaiset + keltaiset + tunnit). */
+  pendingTotalCents: number;
   openP1Cents: number;
   openP2Cents: number;
   openP1Windows: number;
+  hours: number;
+  hoursEarnedCents: number;
+  hoursSettledCents: number;
+  openHoursCents: number;
+  openHours: number;
+  /** Punaiset + keltaiset + tunnit — yksi luku "paljonko pitää siirtää". */
+  openTotalCents: number;
 }
 
 /** Yhteissummat maksut-näkymän tiiliä varten. */
@@ -388,20 +588,35 @@ export function sumWorkerSettlements(rows: WorkerSettlement[]): WorkerSettlement
     p2EarnedCents: t.p2EarnedCents + r.p2EarnedCents,
     p2PendingCents: t.p2PendingCents + r.p2PendingCents,
     settledCents: t.settledCents + r.settledCents,
+    settledTotalCents: t.settledTotalCents + r.settledTotalCents,
     eraPendingCents: t.eraPendingCents + r.eraPendingCents,
+    pendingTotalCents: t.pendingTotalCents + r.pendingTotalCents,
     openP1Cents: t.openP1Cents + r.openP1Cents,
     openP2Cents: t.openP2Cents + r.openP2Cents,
     openP1Windows: round1(t.openP1Windows + r.openP1Windows),
+    hours: round1(t.hours + r.hours),
+    hoursEarnedCents: t.hoursEarnedCents + r.hoursEarnedCents,
+    hoursSettledCents: t.hoursSettledCents + r.hoursSettledCents,
+    openHoursCents: t.openHoursCents + r.openHoursCents,
+    openHours: round1(t.openHours + r.openHours),
+    openTotalCents: t.openTotalCents + r.openTotalCents,
   }), {
     workers: 0, p1Washed: 0, p2Washed: 0, p1EarnedCents: 0, p1AdjustmentCents: 0, p2EarnedCents: 0,
-    p2PendingCents: 0, settledCents: 0, eraPendingCents: 0, openP1Cents: 0,
+    p2PendingCents: 0, settledCents: 0, settledTotalCents: 0, eraPendingCents: 0, pendingTotalCents: 0, openP1Cents: 0,
     openP2Cents: 0, openP1Windows: 0,
+    hours: 0, hoursEarnedCents: 0, hoursSettledCents: 0, openHoursCents: 0, openHours: 0, openTotalCents: 0,
   });
 }
 
 /** Jaettuja ikkunoita on 0,5 — pidä yksi desimaali eikä liukulukuroskaa. */
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
+}
+
+/** Yksi desimaali ALASPÄIN. Käytetään esitäytöissä jotka kerrotaan hinnalla:
+ *  pyöristys ylöspäin tekisi laskun joka ylittää avoimen velan. */
+function floor1(n: number): number {
+  return Math.floor(n * 10) / 10;
 }
 
 // ─── P2-laskutuksen tila (asiakkaalta) ────────────────────────────────────────

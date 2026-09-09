@@ -13,7 +13,7 @@ import {
   computeEraBilling, TEKIJA_HINTA_CENTS, eraRecipientFounderId, normalizeEraNumbers,
   eraInvoiceRespondTransition,
   type EraInvoiceKind, type EraInvoiceTila, type EraInvoiceRespondAction,
-  isP2EraSelection,
+  isP2EraSelection, isHoursEraSelection, eraScopeLabel,
   isVoidedEraInvoiceExpired, voidedEraInvoicePurgeAt, isEraInvoiceReceipt,
 } from "@shared/era-billing";
 import { feeRateForWorker, effectiveJobTotal, FOUNDER_IDS, marketerCommissionCents, MARKETER_COMMISSION_RATE } from "@shared/team";
@@ -31,6 +31,7 @@ import {
 } from "@shared/pricing";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, signaturePrompt, contractPending, gigStatus, livePayments, withoutDashOnly, type GigData, MAX_CONTRACT_PAGES, MAX_CONTRACT_UPLOAD_LEN } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
+import { effectiveWorkerHourRateOf } from "@shared/project";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, isHourlyGig, billingModeOf, roundWorkHours, roundWorkHoursFromMinutes, cappedTimerHours, customerExpenses, customerHourRows, invoiceNaming, sanitizeBoard, sortedBoard, BOARD_CUSTOMER, MAX_BOARD_TEXT_LEN, MAX_BOARD_ENTRIES, toBoardKind, dayKey, isDayKey, addShiftEntry, computeShiftStats, MAX_SHIFT_NOTE_LEN, type ProjShift, type ProjBoardEntry, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeHourlyMoney, hourlyItemisation } from "@shared/hourly-money";
 import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2ExtraCharges, p2BillableCents, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
@@ -45,6 +46,7 @@ import {
 } from "./assets";
 import { contentDispositionFor } from "./http-headers";
 import { buildTasaus, type TasausEraInvoice, type TasausPayment } from "@shared/fr8-tasaus";
+import { buildTransferReport, type TransferReport, type ReportEraInvoice } from "@shared/transfer-report";
 import { p2InvoiceState, computeWorkerSettlements, eraSettlementByWorker, sumWorkerSettlements, type EraInvoiceLike } from "@shared/worker-payouts";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
@@ -150,21 +152,183 @@ const EXPENSE_KIND_LABELS: Record<string, string> = {
  */
 /** Keikan erälaskut raportointia varten. Migraatiovarma: jos taulua ei ole
  *  vielä ajettu kantaan, palautetaan tyhjä lista eikä kaadeta raporttia. */
-async function loadEraInvoicesForReport(jobId: number): Promise<EraInvoiceLike[]> {
+async function loadEraInvoicesForReport(jobId: number): Promise<ReportEraInvoice[]> {
   try {
     const rows = await db.select().from(eraInvoices).where(eq(eraInvoices.jobId, jobId));
     return rows.map((r) => ({
+      id: r.id,
       kind: r.kind,
       tila: r.tila,
       senderId: r.senderId,
+      recipientId: r.recipientId,
       totalCents: r.totalCents,
       eraNumbers: (() => { try { return JSON.parse(r.eraNumbers as any); } catch { return []; } })(),
       rivit: (() => { try { return JSON.parse(r.rivit as any); } catch { return null; } })(),
     }));
   } catch (e) {
-    if (!isMissingTableError(e)) console.warn("era invoice load for report failed:", (e as any)?.message);
+    /**
+     * VAIN PUUTTUVA TAULU NIELLÄÄN. Migraatio ajamatta = keikalla ei ole vielä
+     * yhtään erälaskua, ja tyhjä lista on silloin totuus.
+     *
+     * Muu virhe EI ole tyhjä lista: tämä lista ratkaisee mitä tekijöille on jo
+     * maksettu, ja siirtoraportti kertoisi hetkellisen kyselyvirheen jälkeen
+     * jokaisen tekijän koko velan maksamattomana — eli kutsuisi maksamaan
+     * uudelleen. Parempi kaatua näkyvästi kuin lähettää väärä siirtolista.
+     */
+    if (!isMissingTableError(e)) throw e;
     return [];
   }
+}
+
+/**
+ * SIIRTORAPORTIN SÄHKÖPOSTI — sama sisältö kuin Maksut-välilehden näkymässä.
+ *
+ * Yksi kysymys, yksi vastaus: kun asiakkaan raha tulee tilille, kenelle siirrän
+ * ja paljonko. Lista on tarkoituksella tekemisjärjestyksessä (siirrot ensin,
+ * perustelut sen jälkeen) — tämä luetaan puhelimesta pankkisovellus auki.
+ */
+function buildTransferReportHtml(r: TransferReport): string {
+  const eur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+  const esc = (v: string) => String(v).replace(/</g, "&lt;");
+  const num = (n: number) => n.toLocaleString("fi-FI", { maximumFractionDigits: 1 });
+  const APPROVAL: Record<string, { text: string; color: string }> = {
+    hyvaksytty: { text: "hyväksytty ✓", color: "#166534" },
+    odottaa_tekijaa: { text: "odottaa tekijän hyväksyntää", color: "#B45309" },
+    ei_laskua: { text: "laskua ei vielä luotu", color: "#B45309" },
+    ei_maksettavaa: { text: "ei maksettavaa", color: "#8C8A82" },
+  };
+
+  const transferRows = r.instructions.length
+    ? r.instructions.map((t) => `
+      <tr style="border-bottom:1px solid #E4E1D7">
+        <td style="padding:10px 0;font-size:14px;color:#1A1A1A">
+          <strong>${esc(t.fromName)} → ${esc(t.toName)}</strong>
+          <div style="color:#8C8A82;font-size:12px;margin-top:2px">${esc(t.why)}</div>
+          ${t.blockedReason ? `<div style="color:#B45309;font-size:12px;margin-top:2px">⏳ ${esc(t.blockedReason)}</div>` : ""}
+        </td>
+        <td style="padding:10px 0;text-align:right;font-size:17px;font-weight:800;color:${t.blocked ? "#B45309" : "#1A1A1A"};font-variant-numeric:tabular-nums;white-space:nowrap">${eur(t.cents)}</td>
+      </tr>`).join("")
+    : `<tr><td colspan="2" style="padding:12px 0;font-size:14px;color:#166534">Ei siirrettävää — kaikki on maksettu.</td></tr>`;
+
+  const workerRows = r.workers.length
+    ? r.workers.map((w) => {
+        // Sarake on avoin velka + kuittausta odottavat laskut, sama kuin
+        // otsikkosumma — muuten sarake ei voi laskea yhteen otsikkoluvuksi
+        // heti kun yksikin luonnos on olemassa.
+        const a = APPROVAL[w.approval] ?? APPROVAL.ei_laskua;
+        const bits: string[] = [];
+        // Ikkunamäärä MAKSAMATTOMISTA ikkunoista, sama sääntö kuin jaetussa
+        // `whyFor`issa: koko pesty määrä avoimen summan vieressä väittäisi
+        // osamaksun jälkeen väärää yksikköhintaa. Kun maksamatonta
+        // ikkunamäärää ei ole (esim. sovittu lisä ilman ikkunoita), rivi
+        // kertoo pelkän summan eikä keksi kappalemäärää.
+        if (w.openP1Cents > 0) {
+          bits.push(w.openP1Windows > 0
+            ? `${num(w.openP1Windows)} ikkunaa ${eur(w.openP1Cents)}`
+            : `ikkunatyö ${eur(w.openP1Cents)}`);
+        } else if (w.p1Washed > 0) bits.push(`${num(w.p1Washed)} ikkunaa pesty`);
+        if (w.openP2Cents > 0) bits.push(`keltaiset ${eur(w.openP2Cents)}`);
+        // Määrä ja summa vieretysten, ei kerrottua yhtälöä: maksamaton
+        // tuntimäärä on pyöristetty eikä välttämättä samalla taksalla laskettu
+        // kuin jo maksettu osa, joten yhtälö ei täsmäisi itsensä kanssa.
+        if (w.hours > 0) {
+          bits.push(w.openHours > 0
+            ? `${num(w.openHours)} h tuntityötä ${eur(w.openHoursCents)}`
+            : `${num(w.hours)} h tehty · maksamatta ${eur(w.openHoursCents)}`);
+        }
+        return `
+      <tr style="border-bottom:1px solid #E4E1D7">
+        <td style="padding:8px 0;font-size:13px;color:#1A1A1A">
+          ${esc(w.name)}${w.trainee ? ' <span style="color:#8C8A82;font-size:11px">(harjoittelija)</span>' : ""}
+          <div style="color:#8C8A82;font-size:12px;margin-top:2px">${bits.join(" · ") || "—"}</div>
+          <div style="color:${a.color};font-size:11px;margin-top:2px">${a.text}</div>
+        </td>
+        <td style="padding:8px 0;text-align:right;font-size:13px;color:#8C8A82;font-variant-numeric:tabular-nums">${eur(w.settledCents)}</td>
+        <td style="padding:8px 0;text-align:right;font-size:14px;font-weight:700;color:${w.openTotalCents + w.pendingCents > 0 ? "#B45309" : "#8C8A82"};font-variant-numeric:tabular-nums">${eur(w.openTotalCents + w.pendingCents)}</td>
+      </tr>`;
+      }).join("")
+    : `<tr><td colspan="3" style="padding:8px 0;font-size:13px;color:#8C8A82">Ei tekijöitä.</td></tr>`;
+
+  const founderRows = r.founders.map((f) => `
+      <tr style="border-bottom:1px solid #E4E1D7">
+        <td style="padding:8px 0;font-size:13px;color:#1A1A1A">${esc(f.name)}</td>
+        <td style="padding:8px 0;text-align:right;font-size:13px;color:#8C8A82;font-variant-numeric:tabular-nums">${eur(f.entitledCents)}</td>
+        <td style="padding:8px 0;text-align:right;font-size:13px;color:#8C8A82;font-variant-numeric:tabular-nums">${eur(f.holdsCents)}</td>
+        <td style="padding:8px 0;text-align:right;font-size:13px;font-weight:700;color:${f.remainingDueCents > 0 ? "#B45309" : f.remainingDueCents < 0 ? "#166534" : "#8C8A82"};font-variant-numeric:tabular-nums">${
+          f.remainingDueCents === 0 ? "tasan" : f.remainingDueCents > 0 ? `maksaa ${eur(f.remainingDueCents)}` : `saa ${eur(-f.remainingDueCents)}`
+        }</td>
+      </tr>`).join("");
+
+  const totalToMove = r.workerOpenTotalCents + (r.founderTransfer?.cents ?? 0);
+  const invoicedRest = r.p2InvoicedCents + r.hoursInvoicedCents;
+
+  return `
+<!DOCTYPE html><html lang="fi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#F6F4EE;font-family:'Poppins',ui-sans-serif,system-ui,-apple-system,sans-serif">
+  <div style="max-width:640px;margin:24px auto;background:#FFFFFF;border-radius:14px;overflow:hidden;border:1px solid #E4E1D7">
+    <div style="padding:24px 32px;border-bottom:1px solid #E4E1D7">
+      <p style="margin:0;color:#1A1A1A;font-size:18px;font-weight:700">Siirtoraportti</p>
+      <p style="margin:4px 0 0;color:#8C8A82;font-size:13px">${esc(r.title)} · ${new Date().toLocaleDateString("fi-FI")}</p>
+      ${r.latestInvoice ? `<p style="margin:8px 0 0;color:#1A1A1A;font-size:13px">Asiakkaalle lähti: <strong>${esc(r.latestInvoice.label)} · ${eur(r.latestInvoice.amountCents)}</strong>${r.latestInvoice.billerName ? ` · laskutti ${esc(r.latestInvoice.billerName)}` : ""}</p>` : ""}
+    </div>
+
+    <div style="padding:20px 32px">
+      <p style="margin:0 0 6px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Siirrä nämä</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-top:2px solid #1A1A1A">
+        <tbody>${transferRows}</tbody>
+      </table>
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:6px">
+        <tr>
+          <td style="padding:10px 0;border-top:2px solid #1A1A1A;font-size:15px;font-weight:700;color:#1A1A1A">Siirrettävää yhteensä</td>
+          <td style="padding:10px 0;border-top:2px solid #1A1A1A;text-align:right;font-size:20px;font-weight:800;color:#1A1A1A;font-variant-numeric:tabular-nums">${eur(totalToMove)}</td>
+        </tr>
+      </table>
+      ${r.awaitingApprovalCents > 0 ? `<p style="margin:10px 0 0;color:#B45309;font-size:12px;line-height:1.6">Näistä ${eur(r.awaitingApprovalCents)} odottaa tekijän hyväksyntää — älä siirrä ennen kuin lasku on hyväksytty.</p>` : ""}
+      ${r.missingInvoiceCents > 0 ? `<p style="margin:6px 0 0;color:#B45309;font-size:12px;line-height:1.6">${eur(r.missingInvoiceCents)} odottaa laskun luontia: tee tekijälle maksu Maksut-välilehdeltä, hyväksynnän jälkeen siirto.</p>` : ""}
+
+      <p style="margin:24px 0 6px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Kunkin tekijän osuus</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-top:2px solid #1A1A1A">
+        <thead><tr>
+          <td style="padding:6px 0;font-size:11px;color:#8C8A82">Tekijä · mistä</td>
+          <td style="padding:6px 0;text-align:right;font-size:11px;color:#8C8A82">Hoidettu</td>
+          <td style="padding:6px 0;text-align:right;font-size:11px;color:#8C8A82">Siirrettävä</td>
+        </tr></thead>
+        <tbody>${workerRows}</tbody>
+      </table>
+
+      <p style="margin:24px 0 6px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Johtajien välit</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-top:2px solid #1A1A1A">
+        <thead><tr>
+          <td style="padding:6px 0;font-size:11px;color:#8C8A82">Johtaja</td>
+          <td style="padding:6px 0;text-align:right;font-size:11px;color:#8C8A82">Kuuluu</td>
+          <td style="padding:6px 0;text-align:right;font-size:11px;color:#8C8A82">Käsissä</td>
+          <td style="padding:6px 0;text-align:right;font-size:11px;color:#8C8A82">Tasaus</td>
+        </tr></thead>
+        <tbody>${founderRows}</tbody>
+      </table>
+      ${r.founderTransfer
+        ? `<p style="margin:10px 0 0;color:#1A1A1A;font-size:14px"><strong>${esc(r.founderTransfer.fromName)} → ${esc(r.founderTransfer.toName)}: ${eur(r.founderTransfer.cents)}</strong></p>`
+        : `<p style="margin:10px 0 0;color:#166534;font-size:14px"><strong>Johtajien välit ovat tasan.</strong></p>`}
+      ${r.reserveCents !== 0 ? `<p style="margin:6px 0 0;color:#8C8A82;font-size:12px;line-height:1.6">${
+        r.reserveCents > 0
+          ? `Tekijöille kuuluvaa johtajien käsissä ${eur(r.reserveCents)} — se siirtyy tekijöille yllä olevan listan mukaan.`
+          : `Laskutettu ${eur(-r.reserveCents)} enemmän kuin käsissä on — tasaus olettaa rahan tulevan.`
+      }</p>` : ""}
+
+      <p style="margin:24px 0 6px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Asiakkaalta laskutettu</p>
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr><td style="padding:5px 0;font-size:13px;color:#8C8A82">Urakka (punaiset)</td><td style="padding:5px 0;text-align:right;font-size:13px;color:#1A1A1A;font-variant-numeric:tabular-nums">${eur(r.p1InvoicedCents)}</td></tr>
+        ${r.p2InvoicedCents > 0 ? `<tr><td style="padding:5px 0;font-size:13px;color:#8C8A82">Lisätyöt (keltaiset)</td><td style="padding:5px 0;text-align:right;font-size:13px;color:#1A1A1A;font-variant-numeric:tabular-nums">${eur(r.p2InvoicedCents)}</td></tr>` : ""}
+        ${r.hoursInvoicedCents > 0 ? `<tr><td style="padding:5px 0;font-size:13px;color:#8C8A82">Tuntityö</td><td style="padding:5px 0;text-align:right;font-size:13px;color:#1A1A1A;font-variant-numeric:tabular-nums">${eur(r.hoursInvoicedCents)}</td></tr>` : ""}
+        ${invoicedRest === 0 && r.invoicedTotalCents > r.p1InvoicedCents ? `<tr><td style="padding:5px 0;font-size:13px;color:#8C8A82">Muu laskutus</td><td style="padding:5px 0;text-align:right;font-size:13px;color:#1A1A1A;font-variant-numeric:tabular-nums">${eur(r.invoicedTotalCents - r.p1InvoicedCents)}</td></tr>` : ""}
+        <tr><td style="padding:10px 0;border-top:2px solid #1A1A1A;font-size:15px;font-weight:700;color:#1A1A1A">Yhteensä</td><td style="padding:10px 0;border-top:2px solid #1A1A1A;text-align:right;font-size:16px;font-weight:800;color:#1A1A1A;font-variant-numeric:tabular-nums">${eur(r.invoicedTotalCents)}</td></tr>
+      </table>
+    </div>
+    <div style="padding:14px 32px;border-top:1px solid #E4E1D7;background:#F6F4EE">
+      <p style="margin:0;color:#8C8A82;font-size:12px">Puuhapatet · sisäinen siirtoraportti · ei lähetetä asiakkaalle</p>
+    </div>
+  </div>
+</body></html>`;
 }
 
 function buildGigReportHtml(
@@ -250,16 +414,20 @@ function buildGigReportHtml(
     ? computeWorkerSettlements(project, {
         era: eraSettlementByWorker(eraInvoicesForReport),
         p2Era: eraSettlementByWorker(eraInvoicesForReport, "p2"),
+        // Tuntityö on kolmas rahavirta: ilman tätä raportin "avoinna
+        // alihankkijoille" jätti tuntipalkat pois ja kate näytti liian suurelta.
+        hoursEra: eraSettlementByWorker(eraInvoicesForReport, "hours"),
         includeTrainees: true,   // harjoittelijan palkka on oikeaa kulua
         includeInactive: true,   // jo tehty työ ei katoa deaktivoinnista
       })
     : [];
   let crewPaidTotal = 0, crewPendingTotal = 0;
   const crewRows = settlements.map((r) => {
-    const paid = r.settledCents;
-    // "Avoinna" = punaisista siirtämättä + keltaisista odottamassa. Molemmat
-    // ovat oikeaa velkaa tekijälle, vaikka ne maksetaan eri aikaan.
-    const pending = r.openP1Cents + r.openP2Cents;
+    const paid = r.settledTotalCents;
+    // "Avoinna" = kaikki kolme virtaa: punaisista siirtämättä, keltaisista
+    // odottamassa ja tuntityöstä maksamatta. Kaikki ovat oikeaa velkaa
+    // tekijälle, vaikka ne maksetaan eri aikaan.
+    const pending = r.openTotalCents;
     crewPaidTotal += paid; crewPendingTotal += pending;
     if (paid === 0 && pending === 0) return "";
     return `
@@ -2844,9 +3012,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // laskun otsikoksi ja sähköpostin aiheeksi tuli "Erä 0", mikä ei tarkoita
   // tekijälle mitään eikä vastaa mitään sovittua erää.
   const eraLabelOf = (nums: number[]) =>
-    isP2EraSelection(nums) ? "Lisätyöt (2. vaihe)"
-      : nums.length === 1 ? `Erä ${nums[0]}`
-      : `Erät ${nums[0]}–${nums[nums.length - 1]}`;
+    isP2EraSelection(nums) ? "Lisätyöt (2. vaihe)" : eraScopeLabel(nums);
 
   // Rakentaa generateEraInvoicePdf-parametrit tallennetusta, lukitusta
   // erälaskurivistä (kohta 4: lasku regeneroidaan aina deterministisesti
@@ -2900,6 +3066,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
       const buyer = resolveBuyer(row.recipientId);
       const ikkunat = Number(input.pestytIkkunat) || 0;
+      const tunnit = Number(input.tunnit) || 0;
+      const tuntihintaCents = Math.max(0, Math.round(Number(input.tuntihintaCents) || 0));
+      /**
+       * LASKUN ERITTELY: IKKUNAT JA TUNNIT OMINA RIVEINÄÄN.
+       *
+       * Kuvaus oli aina "Ikkunanpesu, N ikkunaa" — myös tuntityölaskulla, jolla
+       * ikkunoita on nolla. Tekijä sai laskun jossa luki "0 ikkunaa" ja summa
+       * jonka syytä ei näkynyt mistään. Nyt laskulla lukee se työ josta se on
+       * tehty; molemmat voivat olla samalla laskulla.
+       */
+      const bits: string[] = [];
+      if (ikkunat > 0) bits.push(`Ikkunanpesu ${ikkunat.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikkunaa`);
+      if (tunnit > 0) {
+        bits.push(tuntihintaCents > 0
+          ? `Tuntityö ${tunnit.toLocaleString("fi-FI", { maximumFractionDigits: 2 })} h × ${fmtEurCents(tuntihintaCents)}`
+          : `Tuntityö ${tunnit.toLocaleString("fi-FI", { maximumFractionDigits: 2 })} h`);
+      }
+      if (bits.length === 0) bits.push("Työkorvaus");
       return {
         invoiceNumber, referenceNumber, invoiceDate, dueDate,
         seller: {
@@ -2909,7 +3093,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           iban: member?.profile?.iban,
         },
         buyer: { name: buyer.name, yTunnus: buyer.yTunnus, address: buyer.address, email: buyer.email },
-        description: `Ikkunanpesu, ${ikkunat.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} ikkunaa — ${eraLabelOf(eraNumbers)}`,
+        description: `${bits.join(" · ")} — ${eraLabelOf(eraNumbers)}`,
         tax,
         totalCents: row.totalCents,
       };
@@ -3117,7 +3301,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
 
       const eraNumbers = normalizeEraNumbers(req.body?.eraNumbers);
-      if (!eraNumbers) return res.status(400).json({ error: "Virheellinen erävalinta (1-3 tai 4)" });
+      if (!eraNumbers) return res.status(400).json({ error: "Virheellinen erävalinta (1-3, 4, keltaiset tai tunnit)" });
       // Ostaja = johtaja jonka Y-tunnukselle tekijä laskuttaa, eli se joka
       // OIKEASTI siirtää rahat. Oletus tulee erän mukaan (erät 1-3 Joonatan,
       // erä 4 Matias), mutta se on vain oletus: käytännössä maksaja voi olla
@@ -3131,6 +3315,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const rawWorkers = Array.isArray(req.body?.workers) ? req.body.workers : [];
       if (rawWorkers.length === 0) return res.status(400).json({ error: "Tekijöitä puuttuu" });
+      // Tuntipotti ei ole "erä": samalle keikalle voi tulla useita tuntimaksuja
+      // (viikoittain), joten kaksoiskappalesuoja ei saa estää toista niistä.
+      const singleUseEra = !isHoursEraSelection(eraNumbers);
 
       // Kaksoiskappalesuoja: samalle tekijälle ei saa syntyä toista laskua samasta
       // erästä. Ilman tätä johtaja, joka ei nähnyt luonnosta "hoidettuna", loi
@@ -3139,7 +3326,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const force = req.body?.force === true;
       const eraKey = JSON.stringify(eraNumbers);
       let existingSenderIds = new Set<string>();
-      if (!force) {
+      if (!force && singleUseEra) {
         try {
           const existing = await db.select().from(eraInvoices).where(and(
             eq(eraInvoices.jobId, jobId),
@@ -3153,6 +3340,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
       }
 
+      /**
+       * TARKISTUS ENNEN YHTÄKÄÄN KIRJOITUSTA.
+       *
+       * Erä kirjoitetaan riveittäin, joten kesken silmukan palautettu virhe
+       * jättäisi osan laskuista kantaan. Punaiset ja keltaiset selviävät siitä
+       * kaksoiskappalesuojan ansiosta (uusi yritys ohittaa jo luodut), mutta
+       * tuntipotissa suojaa ei ole — sama tuntimaksu voisi syntyä kahdesti.
+       * Siksi kaikki rivit tarkistetaan ensin ja vasta sitten kirjoitetaan.
+       */
+      if (isHoursEraSelection(eraNumbers)) {
+        for (const w of rawWorkers) {
+          const nimi = String(w?.name || w?.workerId || "tekijä").slice(0, 200);
+          const t = Math.max(0, Number(w?.tunnit) || 0);
+          const r = Math.max(0, Math.round(Number(w?.tuntihintaCents) || 0));
+          if (t > 0 && r <= 0) {
+            return res.status(400).json({ error: `Tuntipalkka puuttuu (${nimi}). Täytä €/tunti ennen tuntimaksun luontia.` });
+          }
+        }
+      }
+
       const created: (typeof eraInvoices.$inferSelect)[] = [];
       const skipped: string[] = [];
       for (const w of rawWorkers) {
@@ -3163,9 +3370,43 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           continue;
         }
         const name = String(w?.name || workerId).slice(0, 200);
-        const pestytIkkunat = Math.max(0, Number(w?.pestytIkkunat) || 0);
+        const pestytIkkunat = isHoursEraSelection(eraNumbers) ? 0 : Math.max(0, Number(w?.pestytIkkunat) || 0);
         const sovittuMuutosCents = Math.round(Number(w?.sovittuMuutosCents) || 0);
         const ennakkoCents = Math.max(0, Math.round(Number(w?.ennakkoCents) || 0));
+        /**
+         * TUNTITYÖ. Kolmas rahavirta ikkunoiden ja keltaisten rinnalla. Tunnit
+         * kirjataan laskulle omina kenttinään, jotta jokainen näkymä (tekijän
+         * hyväksyntä, PDF, siirtoraportti, maksettavan laskenta) lukee saman
+         * luvun samasta paikasta — ennen tuntityö piti kirjoittaa "sovittu
+         * muutos" -kenttään, eikä mikään näistä osannut tunnistaa sitä.
+         */
+        /**
+         * YKSI LASKU = YKSI RAHAVIRTA.
+         *
+         * Maksettavan laskenta kohdistaa laskun kokonaisuudessaan sille
+         * virralle jonka erävalinta kertoo (`eraScopeOf`). Jos samalle laskulle
+         * kirjattaisiin sekä ikkunoita että tunteja, koko summa kuittaisi vain
+         * toista velkaa ja toinen jäisi auki — sama työ tulisi maksettavaksi
+         * kahdesti. Siksi kentät rajataan tässä erävalinnan mukaan: tuntipotti
+         * kirjaa tunnit, muut potit ikkunat.
+         */
+        const hoursEra = isHoursEraSelection(eraNumbers);
+        const tunnit = hoursEra ? Math.max(0, Number(w?.tunnit) || 0) : 0;
+        const tuntihintaCents = hoursEra ? Math.max(0, Math.round(Number(w?.tuntihintaCents) || 0)) : 0;
+        /**
+         * TUNTEJA EI KIRJATA ILMAN TUNTIPALKKAA.
+         *
+         * Nolla euron tuntipalkka tekisi nollan euron laskun, mutta sen tunnit
+         * kirjautuisivat silti "katetuiksi": maksamaton tuntimäärä painuisi
+         * pysyvästi nollaan vaikka koko velka on yhä auki, ja maksudialogi
+         * lukisi "maksamatta 0 h · 300,00 €". Pyydetään mieluummin puuttuva
+         * hinta kuin rikotaan tuntikirjanpito hiljaa.
+         */
+        if (tunnit > 0 && tuntihintaCents <= 0) {
+          return res.status(400).json({
+            error: `Tuntipalkka puuttuu (${name}). Täytä €/tunti ennen tuntimaksun luontia.`,
+          });
+        }
         // Keltaisten (2. vaihe) palkkio tulee palkkiotaulukosta per ikkuna, ei
         // kiinteästä 20 €:sta — client lähettää valmiin ansion, joka ohittaa
         // ikkunamäärä × vakio -laskennan. Vain P2-potissa hyväksytään.
@@ -3173,7 +3414,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const ansaittuOverrideCents = isP2EraSelection(eraNumbers) && Number.isFinite(rawOverride) && rawOverride >= 0
           ? Math.round(rawOverride)
           : undefined;
-        const result = computeEraBilling(0, [{ workerId, name, pestytIkkunat, sovittuMuutosCents, ennakkoCents, ansaittuOverrideCents }], []);
+        const result = computeEraBilling(0, [{ workerId, name, pestytIkkunat, sovittuMuutosCents, ennakkoCents, ansaittuOverrideCents, tunnit, tuntihintaCents }], []);
         const computed = result.workers[0];
         const [row] = await db.insert(eraInvoices).values({
           jobId,
@@ -3181,7 +3422,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           senderId: workerId,       // myyjä = tekijä (alihankkija laskuttaa omalla työllään)
           recipientId,              // ostaja = erän mukaan valittu johtaja
           eraNumbers: JSON.stringify(eraNumbers),
-          rivit: JSON.stringify({ input: { workerId, name, pestytIkkunat, sovittuMuutosCents, ennakkoCents, ...(ansaittuOverrideCents != null ? { ansaittuOverrideCents } : {}) }, computed }),
+          rivit: JSON.stringify({ input: { workerId, name, pestytIkkunat, sovittuMuutosCents, ennakkoCents, ...(tunnit > 0 ? { tunnit, tuntihintaCents } : {}), ...(ansaittuOverrideCents != null ? { ansaittuOverrideCents } : {}) }, computed }),
           totalCents: computed.maksettavaCents,
           dueDate,
           tila: "luonnos" satisfies EraInvoiceTila,
@@ -6931,13 +7172,44 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // + margin), not just the BCC'd customer invoice. Fire-and-forget — a report
       // failure must never break the actual invoicing.
       try {
-        const reportHtml = buildGigReportHtml({ id: job.id, description: job.description }, gig, proj, await loadEraInvoicesForReport(job.id));
+        const reportInvoices = await loadEraInvoicesForReport(job.id);
+        const reportHtml = buildGigReportHtml({ id: job.id, description: job.description }, gig, proj, reportInvoices);
         await resend.emails.send({
           from: FROM_EMAIL,
           to: WORKER_NOTIFICATION_EMAILS,
           subject: `Maksuraportti — ${gig.company?.name || job.description || `Keikka #${id}`} · Puuhapatet`,
           html: reportHtml,
         });
+        /**
+         * SIIRTORAPORTTI MOLEMMILLE JOHTAJILLE.
+         *
+         * Maksuraportti kertoo mitä on laskutettu ja mitä on maksettu; se ei
+         * kerro sitä mitä johtaja tässä hetkessä tarvitsee: **kenelle minä
+         * siirrän ja paljonko, kun tämä raha tulee tilille.** Siirtoraportti
+         * vastaa siihen — kunkin tekijän osuus tästä laskusta eriteltynä
+         * (ikkunat, keltaiset, tunnit) ja johtajien keskinäinen tasaus.
+         *
+         * Erillinen viesti eikä osio edellisen perässä: tämä on toimintalista,
+         * ja se luetaan pankkisovellus auki.
+         */
+        if (proj) {
+          const transfer = buildTransferReport({
+            title: gig.company?.name || job.description || `Keikka #${id}`,
+            project: proj,
+            payments: (gig.payments ?? []) as TasausPayment[],
+            invoices: reportInvoices,
+            settlement: proj.settlement,
+          });
+          const transferTo = Array.from(new Set([...WORKER_NOTIFICATION_EMAILS, ...INVOICE_BCC_EMAILS])).filter(Boolean);
+          if (transferTo.length) {
+            await resend.emails.send({
+              from: FROM_EMAIL,
+              to: transferTo,
+              subject: `Siirtoraportti — ${transfer.title} · siirrettävää ${fmtEurCents(transfer.workerOpenTotalCents + (transfer.founderTransfer?.cents ?? 0))}`,
+              html: buildTransferReportHtml(transfer),
+            });
+          }
+        }
       } catch (reportErr) {
         console.error("Gig report (auto) error:", reportErr);
       }
@@ -7245,6 +7517,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           p1InvoicedCents: p2State.p1InvoicedCents,
           p2InvoicedCents: p2State.invoicedCents,
           p2RemainingCents: p2State.remainingCents,
+          /**
+           * TUNTITYÖN LASKUTUS ASIAKKAALTA. Kolmas virta, joka puuttui tästä
+           * kokonaan: Maksut-välilehti näytti vain punaiset ja keltaiset, joten
+           * tuntikeikalla "asiakkaalta laskutettu" oli aina 0 € vaikka laskuja
+           * oli lähtenyt. Kokonaisluku on maksurivien summa sellaisenaan —
+           * jokainen euro kerran, riippumatta virrasta.
+           */
+          hoursInvoicedCents: p2State.hoursInvoicedCents,
+          hoursPayments: p2State.hoursPayments,
+          invoicedTotalCents: payments.reduce((sum, p) => sum + (p.amountCents || 0), 0),
           agreedTotalCents,
           nextInstalmentCents: projDeal
             ? (nextIsFinal ? Math.max(0, agreedTotalCents - p2State.p1InvoicedCents) : rawInstalmentCents)
@@ -7789,6 +8071,76 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
     return buildTasaus(project, (gig?.payments ?? []) as TasausPayment[], invoices, project.settlement);
   }
+
+  /**
+   * SIIRTORAPORTTI — "mitä minun pitää siirtää kenelle".
+   *
+   * Sama jaettu laskenta (`@shared/transfer-report`) kuin Maksut-välilehden
+   * näkymässä ja siinä sähköpostissa joka lähtee molemmille johtajille kun
+   * asiakkaan lasku lähtee. Yksi funktio, jotta ruudulla ja sähköpostissa ei
+   * voi lukea kahta eri summaa samasta siirrosta.
+   */
+  async function loadTransferReport(jobId: number, project: ProjectData): Promise<TransferReport> {
+    const job = await loadJobRow(jobId);
+    const gig = parseGig(job?.gigData ?? null);
+    // Migraatiovarmuus tulee `loadEraInvoicesForReport`ista: puuttuva taulu
+    // palauttaa tyhjän listan eikä kaada raporttia.
+    const invoices = await loadEraInvoicesForReport(jobId);
+    return buildTransferReport({
+      title: gig?.company?.name || job?.description || `Keikka #${jobId}`,
+      project,
+      payments: (gig?.payments ?? []) as TasausPayment[],
+      invoices,
+      settlement: project.settlement,
+    });
+  }
+
+  app.get("/api/jobs/:id/transfer-report", async (req, res) => {
+    try {
+      const sub = String((req as any).admin?.sub ?? "").toLowerCase();
+      if ((req as any).admin?.role !== "host" && !FOUNDER_IDS.includes(sub)) {
+        return res.status(403).json({ error: "Vain johtaja näkee siirtoraportin." });
+      }
+      const id = Number(req.params.id);
+      const job = await loadJobRow(id);
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const project = parseProject(job.projectData ?? null);
+      if (!project) return res.json({ ok: true, report: null });
+      res.json({ ok: true, report: await loadTransferReport(id, project) });
+    } catch (e: any) {
+      return fail(res, e, "GET /api/jobs/:id/transfer-report");
+    }
+  });
+
+  /** Lähetä siirtoraportti sähköpostilla MOLEMMILLE johtajille. Sama raportti
+   *  joka lähtee automaattisesti asiakaslaskun mukana — tämä on se nappi jolla
+   *  sen saa uudelleen ilman että asiakkaalle lähetetään mitään. */
+  app.post("/api/jobs/:id/transfer-report", async (req, res) => {
+    try {
+      const sub = String((req as any).admin?.sub ?? "").toLowerCase();
+      if ((req as any).admin?.role !== "host" && !FOUNDER_IDS.includes(sub)) {
+        return res.status(403).json({ error: "Vain johtaja voi lähettää siirtoraportin." });
+      }
+      if (!resend) return res.status(503).json({ error: "Sähköpostipalvelu ei käytössä." });
+      const id = Number(req.params.id);
+      const job = await loadJobRow(id);
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const project = parseProject(job.projectData ?? null);
+      if (!project) return res.status(400).json({ error: "Keikalla ei ole karttadataa." });
+      const report = await loadTransferReport(id, project);
+      const to = Array.from(new Set([...WORKER_NOTIFICATION_EMAILS, ...INVOICE_BCC_EMAILS])).filter(Boolean);
+      if (!to.length) return res.status(400).json({ error: "Johtajien sähköpostiosoitteita ei ole määritetty." });
+      const sent = await resend.emails.send({
+        from: FROM_EMAIL,
+        to,
+        subject: `Siirtoraportti — ${report.title} · siirrettävää ${fmtEurCents(report.workerOpenTotalCents + (report.founderTransfer?.cents ?? 0))}`,
+        html: buildTransferReportHtml(report),
+      });
+      res.json({ ok: true, id: sent.data?.id, to: to.join(", "), report });
+    } catch (e: any) {
+      return fail(res, e, "POST /api/jobs/:id/transfer-report");
+    }
+  });
 
   /** Johtajien tasaus yhdelle keikalle. Vain perustajille — tämä on koko keikan
    *  rahankulku, ei yksittäisen tekijän omat luvut. */
@@ -10372,12 +10724,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           })),
         })),
       });
+      /**
+       * TUNTITYÖ MUKAAN TIIMI-SIVULLE.
+       *
+       * Palkkayhteenveto laskee maksettavan `settleWorker`illa, joka tarvitsee
+       * tunnit ja tuntipalkan. Ne eivät ole `crewMemberStats`issa (se lukee
+       * vanhaa `project.hours`-kenttää), eikä clientillä ole vuororiveihin
+       * pääsyä — ilman näitä Tiimi-sivu näytti tuntikeikalla 0 € samaan aikaan
+       * kun Maksut-välilehti näytti todellisen velan.
+       */
+      const crewHourly = isHourlyGig(project);
+      const crewShiftHours = crewHourly
+        ? new Map(computeShiftStats((project.shifts ?? []) as ProjShift[]).byWorker.map((r) => [r.id, r.hours]))
+        : new Map<string, number>();
+      const crewHourRateCents = effectiveWorkerHourRateOf(project);
       const crew = (project.crew || [])
         .filter((m) => m.role !== "host")
         .map((m) => ({
           member: lightMember(m),
           stats: crewMemberStats(project, m),
           onboarded: isOnboarded(m, requiredAgreementIdsForSet(resolveAgreementSet(m)), WORKER_AGREEMENT_VERSION),
+          /** Vuoroista kertyneet tunnit — vain tuntitilassa (muualla ne ovat
+           *  seurantaa, eivät palkkaa). */
+          shiftHours: crewShiftHours.get(m.id) ?? 0,
+          hourRateCents: crewHourRateCents,
         }));
       // Deal + billable-window count so the payroll page can show the per-erä
       // kate (€1575 / erän ikkunat). eraWindows = founders' editable per-erä counts.
@@ -10861,8 +11231,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           monthlyInvoicedCents[key] = (monthlyInvoicedCents[key] ?? 0) + cents;
         }
 
-        const gigInvoiced = t.input.p1PotCents + t.input.p2PotCents;
-        const gigWorkerEarned = t.input.workerP1EarnedCents + t.input.workerP2EarnedCents;
+        // KAIKKI KOLME POTTIA. Tuntipotti eriytettiin punaisista (jottei
+        // tuntilasku nostaisi €/ikkuna-hintaa), ja tämä kortti jäi laskemaan
+        // kahta: tuntikeikan koko liikevaihto katosi kortista, vaikka saman
+        // kortin kuukausikäyrä laskee sen maksuriveistä.
+        const gigInvoiced = t.input.p1PotCents + t.input.p2PotCents + (t.input.hoursPotCents ?? 0);
+        const gigWorkerEarned = t.input.workerP1EarnedCents + t.input.workerP2EarnedCents
+          + (t.input.workerHoursEarnedCents ?? 0);
         const gigWorkerPaid = t.result.rows.reduce((s, r) => s + r.paidOutCents, 0) + t.unattributedPaidCents;
 
         invoicedCents += gigInvoiced;

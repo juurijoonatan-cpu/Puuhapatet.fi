@@ -223,6 +223,16 @@ export interface TasausFounderInput {
   p1Windows: number;
   /** Keltaisista kertynyt oma palkkio (palkkiotaulukko, ei punaisten taksa). */
   p2OwnCents: number;
+  /**
+   * TUNTITYÖSTÄ kertynyt oma palkkio: johtajan omat tunnit täydellä
+   * asiakastuntihinnalla (omasta työstä ei oteta katetta, ks. hourly-money).
+   *
+   * Ilman tätä tuntikeikan raha jakautui väärin kahdesti: johtajan oma työ ei
+   * näkynyt hänen ansaintanaan lainkaan, ja koko tuntilaskun tuotto valui
+   * "katteeksi" joka jaettiin tasan — eli enemmän tehnyt maksoi vähemmän
+   * tehneen tunnit puoliksi.
+   */
+  hoursOwnCents?: number;
   /** Asiakkaalta saatu raha: erät joiden laskuttaja/saaja tämä johtaja on. */
   receivedCents: number;
   /** Tekijöille TOSIASSA maksettu: erälaskut joiden maksaja on tämä johtaja
@@ -241,10 +251,21 @@ export interface TasausInput {
   p1PotCents: number;
   /** KELTAISTEN potti: asiakkaalta laskutettu lisätyö (`scope:"p2"`). */
   p2PotCents: number;
+  /**
+   * TUNTITYÖN potti: asiakkaalta laskutettu tuntityö (`scope:"hours"`).
+   *
+   * OMA POTTINSA eikä osa punaisia: `xCents` (€/punainen ikkuna) lasketaan
+   * punaisten potista, joten tuntilasku punaisissa nostaisi ikkunahintaa
+   * työstä joka ei ole ikkunatyötä — ja johtajien oma osuus laskettaisiin
+   * väärästä luvusta.
+   */
+  hoursPotCents?: number;
   /** Tekijöiden punaisista ansaitsema BRUTTO yhteensä (ei johtajia). */
   workerP1EarnedCents: number;
   /** Tekijöiden keltaisista ansaitsema BRUTTO yhteensä (ei johtajia). */
   workerP2EarnedCents: number;
+  /** Tekijöiden TUNTITYÖSTÄ ansaitsema BRUTTO yhteensä (ei johtajia). */
+  workerHoursEarnedCents?: number;
   /** Punaiset ikkunat yhteensä (tekijät + johtajat) — x:n nimittäjä. */
   p1WindowsTotal: number;
   /** Jo tehdyt tai lähetetyt johtajien väliset siirrot. Vähennetään lasketusta
@@ -285,9 +306,11 @@ export interface TasausFounderRow {
   ownWorkCents: number;
   /** Omat keltaiset palkkiot. */
   p2OwnCents: number;
+  /** Oma tuntityö täydellä tuntihinnalla. */
+  hoursOwnCents: number;
   /** Tasaosuus jäännöskatteesta. */
   kateShareCents: number;
-  /** ownWork + p2Own + kateShare = mitä tälle johtajalle kuuluu. */
+  /** ownWork + p2Own + hoursOwn + kateShare = mitä tälle johtajalle kuuluu. */
   entitledCents: number;
   receivedCents: number;
   paidOutCents: number;
@@ -326,7 +349,7 @@ export interface TasausResult {
   p1WindowsTotal: number;
   /** Potti josta johtajat jakavat: laskutettu − tekijöiden palkat − kulut. */
   distributableCents: number;
-  /** Jäännöskate = jaettava − johtajien oma työ (punainen + keltainen). */
+  /** Jäännöskate = jaettava − johtajien oma työ (punainen + keltainen + tunnit). */
   founderKateCents: number;
   rows: TasausFounderRow[];
   /**
@@ -386,15 +409,19 @@ export function computeTasaus(input: TasausInput): TasausResult {
 
   const p1Pot = r(input.p1PotCents);
   const p2Pot = r(input.p2PotCents);
-  const workerCost = r(input.workerP1EarnedCents) + r(input.workerP2EarnedCents);
-  const distributableCents = p1Pot + p2Pot - workerCost - expensesTotal;
+  const hoursPot = r(input.hoursPotCents ?? 0);
+  const workerCost = r(input.workerP1EarnedCents) + r(input.workerP2EarnedCents) + r(input.workerHoursEarnedCents ?? 0);
+  const distributableCents = p1Pot + p2Pot + hoursPot - workerCost - expensesTotal;
 
   const p1WindowsTotal = Number.isFinite(input.p1WindowsTotal) ? input.p1WindowsTotal : 0;
   const xCents = p1WindowsTotal > 0 ? r(p1Pot / p1WindowsTotal) : 0;
 
   const ownWork = founders.map((f) => r(xCents * (f.p1Windows || 0)));
   const p2Own = founders.map((f) => r(f.p2OwnCents ?? 0));
-  const ownSum = ownWork.reduce((s, c) => s + c, 0) + p2Own.reduce((s, c) => s + c, 0);
+  const hoursOwn = founders.map((f) => r(f.hoursOwnCents ?? 0));
+  const ownSum = ownWork.reduce((s, c) => s + c, 0)
+    + p2Own.reduce((s, c) => s + c, 0)
+    + hoursOwn.reduce((s, c) => s + c, 0);
 
   // Kate JÄÄNNÖKSENÄ, ei kaavalla — näin x:n senttipyöristys ei koskaan karkaa
   // ja rivien summa täsmää jaettavaan pottiin sentilleen.
@@ -403,7 +430,7 @@ export function computeTasaus(input: TasausInput): TasausResult {
 
   const rows: TasausFounderRow[] = founders.map((f, i) => {
     const expenses = r(f.expensesCents ?? 0);
-    const entitledCents = ownWork[i] + p2Own[i] + kateShares[i];
+    const entitledCents = ownWork[i] + p2Own[i] + hoursOwn[i] + kateShares[i];
     const holdsCents = r(f.receivedCents) - r(f.paidOutCents) - expenses;
     return {
       id: f.id,
@@ -411,6 +438,7 @@ export function computeTasaus(input: TasausInput): TasausResult {
       p1Windows: f.p1Windows || 0,
       ownWorkCents: ownWork[i],
       p2OwnCents: p2Own[i],
+      hoursOwnCents: hoursOwn[i],
       kateShareCents: kateShares[i],
       entitledCents,
       receivedCents: r(f.receivedCents),

@@ -37,6 +37,7 @@ import {
 import { computePayProgress } from "@shared/payprogress";
 import { MAX_PHOTO_DATAURL_LEN, MAX_PAYOUT_RECEIPT_LEN } from "@shared/crew";
 import { BRAND_BILLERS } from "@shared/billers";
+import { eraScopeLabel } from "@shared/era-billing";
 import { FOUNDER_IDS } from "@shared/team";
 import { isValidYTunnus } from "@shared/y-tunnus";
 // Sama dokumenttirakentaja jota johtajan Tiimi-sivu käyttää — molemmat
@@ -1999,7 +2000,10 @@ function EraInvoiceSection({ token, view, setView }: { token: string; view: Work
   // ajan tasalla jos johtajan nimi joskus muuttuu, sen sijaan että se olisi
   // kovakoodattu tänne erikseen.
   const founderName = (id: string) => BRAND_BILLERS.find((b) => b.id === id)?.name.split(" ")[0] || id;
-  const eraLabel = (nums: number[]) => (nums.length === 1 ? `Erä ${nums[0]}` : `Erät ${nums[0]}–${nums[nums.length - 1]}`);
+  // Erävalinnan nimi jaetusta moduulista: keltaisten (0) ja tuntityön (9)
+  // sentinel-erät ovat VARASTOMUOTO, eivät nimi — ilman tätä tekijän laskulla
+  // luki "Erä 9", mikä ei tarkoita hänelle mitään.
+  const eraLabel = (nums: number[]) => eraScopeLabel(nums);
   const fiDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("fi-FI") : "");
 
   return (
@@ -2016,6 +2020,20 @@ function EraInvoiceSection({ token, view, setView }: { token: string; view: Work
           const sovittuMuutos = Number(input.sovittuMuutosCents) || 0;
           const ennakko = Number(input.ennakkoCents) || 0;
           const ansaittu = Number(computed.ansaittuCents) || 0;
+          /**
+           * TUNTITYÖ ERITELTYNÄ. Tekijän pitää nähdä mistä summa muodostuu ennen
+           * kuin hän hyväksyy laskun. Ennen tässä oli vain "Pestyt ikkunat N" —
+           * tuntityölaskulla se luki "Pestyt ikkunat 0" ja koko summa näytti
+           * tulevan tyhjästä.
+           *
+           * Luvut luetaan laskulta (`computed`), ei lasketa uudelleen: lasku on
+           * lukittu tosite, ja kaksi laskentaa tuottaisi ennen pitkää kaksi eri
+           * lukua samasta rivistä.
+           */
+          const tunnit = Number(computed.tunnit ?? input.tunnit) || 0;
+          const tuntihintaCents = Number(computed.tuntihintaCents ?? input.tuntihintaCents) || 0;
+          const tunnitCents = Number(computed.tunnitCents) || Math.round(tunnit * tuntihintaCents);
+          const ikkunatCents = Number(computed.ikkunatCents ?? (ansaittu - sovittuMuutos - tunnitCents));
           // Sama vero-erittely kuin PayoutsTabissa (ja PDF:ssä, ks. kohta 4:
           // server/routes.ts buildEraInvoicePdfParams) — vero lasketaan koko
           // ansaitusta summasta, ennakko vähennetään sen jälkeen omana rivinään,
@@ -2051,7 +2069,17 @@ function EraInvoiceSection({ token, view, setView }: { token: string; view: Work
                   // taksallaan että keltaisia palkkiotaulukon mukaan, jolloin
                   // yhtä kerrointa ei ole. Rivi kertoo määrän ja summan; keksitty
                   // yksikköhinta ei tekisi siitä tarkistettavampaa vaan väärän.
-                  [`Pestyt ikkunat ${ikkunat.toLocaleString("fi-FI", { maximumFractionDigits: 1 })}`, fmtEurCents(ansaittu - sovittuMuutos), "rgba(255,255,255,0.7)"],
+                  ...(ikkunat > 0 || tunnit <= 0
+                    ? [[`Pestyt ikkunat ${ikkunat.toLocaleString("fi-FI", { maximumFractionDigits: 1 })}`, fmtEurCents(ikkunatCents), "rgba(255,255,255,0.7)"] as [string, string, string]]
+                    : []),
+                  ...(tunnit > 0
+                    ? [[
+                        tuntihintaCents > 0
+                          ? `Tuntityö ${tunnit.toLocaleString("fi-FI", { maximumFractionDigits: 2 })} h × ${fmtEurCents(tuntihintaCents)}`
+                          : `Tuntityö ${tunnit.toLocaleString("fi-FI", { maximumFractionDigits: 2 })} h`,
+                        fmtEurCents(tunnitCents), "rgba(255,255,255,0.7)",
+                      ] as [string, string, string]]
+                    : []),
                   ...(sovittuMuutos !== 0 ? [["Sovittu muutos", `${sovittuMuutos > 0 ? "+ " : "− "}${fmtEurCents(Math.abs(sovittuMuutos))}`, "rgba(255,255,255,0.7)"]] : []),
                   ...(tx.vatRegistered ? [[`ALV ${fmtPct(tx.vatRate)}`, "+ " + fmtEurCents(tx.vatCents), "rgba(255,255,255,0.7)"]] : []),
                   ...(tx.withheld ? [[`Ennakonpidätys ${fmtPct(tx.withholdingRate)}`, "− " + fmtEurCents(tx.withholdingCents), "#E0A800"]] : []),

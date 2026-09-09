@@ -73,6 +73,10 @@ interface Props {
   gigBilling?: GigBillingState | null;
   /** Paljonko tekijöille on PUNAISISTA vielä siirtämättä (shared/worker-payouts). */
   workerOpenP1Cents?: number;
+  /** Tekijöille siirrettävä KAIKISTA virroista (punaiset + keltaiset + tunnit).
+   *  Ilman tätä dashin "Tekijöille" näytti pelkät punaiset — tuntikeikalla siis
+   *  aina 0 €, vaikka tekijöille oli velkaa satoja euroja. */
+  workerOpenTotalCents?: number;
   /** Hyppy Maksut-välilehdelle, jossa tekijöille maksetaan. */
   onGoToMaksut?: () => void;
   /** Dynamic per-window rate for founders (sisäinen kate = capCents / totalRedWindows).
@@ -171,7 +175,7 @@ function RedFold({ label, value, children }: { label: string; value?: string; ch
   );
 }
 
-export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot, founderInvoiceSlot, gigBilling, workerLaborP2Cents, workerOpenP1Cents, onGoToMaksut, p2Slot, settingsSlot, onSetLampStatus, onSetLampCondition, onSetLampNote, onSetDoorStatus, onSetDoorNote, onSetFixtureOrder, onAddLampModel, onRemoveLampModel }: Props) {
+export default function Dashboard({ project, workerStats, workerName, onGoToFloor, deal, onSetEarnings, founderEarnings, workerLaborCents, founderRateEur, expensesTotalCents, expensesSlot, founderInvoiceSlot, gigBilling, workerLaborP2Cents, workerOpenP1Cents, workerOpenTotalCents, onGoToMaksut, p2Slot, settingsSlot, onSetLampStatus, onSetLampCondition, onSetLampNote, onSetDoorStatus, onSetDoorNote, onSetFixtureOrder, onAddLampModel, onRemoveLampModel }: Props) {
   const m = useIsMobile();
   const [editId, setEditId] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
@@ -708,9 +712,9 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                 },
                 {
                   label: "Tekijöille",
-                  val: euro((workerOpenP1Cents ?? 0) / 100),
-                  sub: (workerOpenP1Cents ?? 0) > 0 ? "punaisista siirrettävä" : "kaikki maksettu ✓",
-                  tone: (workerOpenP1Cents ?? 0) > 0 ? T.tone.warn : T.text.primary,
+                  val: euro((workerOpenTotalCents ?? workerOpenP1Cents ?? 0) / 100),
+                  sub: (workerOpenTotalCents ?? workerOpenP1Cents ?? 0) > 0 ? "siirrettävä yhteensä" : "kaikki maksettu ✓",
+                  tone: (workerOpenTotalCents ?? workerOpenP1Cents ?? 0) > 0 ? T.tone.warn : T.text.primary,
                 },
               ]).map((t) => (
                 <div key={t.label} style={inset}>
@@ -726,7 +730,10 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                   {([
                     ["Laskutettu", euro(gigBilling.p1InvoicedCents / 100), `${Math.min(4, gigBilling.p1PayCount)}/4 erää · ${euro(gigBilling.agreedTotalCents / 100)}`],
                     ["Laskuttamatta", euro(Math.max(0, gigBilling.agreedTotalCents - gigBilling.p1InvoicedCents) / 100), gigBilling.p1PayCount >= 4 ? "kaikki erät lähetetty ✓" : `seuraava ${euro(gigBilling.nextInstalmentCents / 100)}`],
-                    ["Tekijöille", euro((workerOpenP1Cents ?? 0) / 100), (workerOpenP1Cents ?? 0) > 0 ? "punaisista siirrettävä" : "kaikki maksettu ✓"],
+                    // Tämä taite käsittelee VAIN punaisia eriä, joten luku on
+                    // tarkoituksella punaisten osuus — yläpuolinen tiili näyttää
+                    // kaikkien virtojen summan. Alaotsikko sanoo kumpi on kumpi.
+                    ["Tekijöille punaisista", euro((workerOpenP1Cents ?? 0) / 100), (workerOpenP1Cents ?? 0) > 0 ? "punaisista siirrettävä" : "punaiset maksettu ✓"],
                   ] as [string, string, string][]).map(([lbl, val, sub]) => (
                     <div key={lbl} style={inset}>
                       <div style={statLabel}>{lbl}</div>

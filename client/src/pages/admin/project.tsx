@@ -33,6 +33,7 @@ import Toggle from "@/components/fr8/Toggle";
 import TaskBoard from "@/components/TaskBoard";
 import FounderEraInvoiceDialog from "@/components/fr8/FounderEraInvoiceDialog";
 import MaksutView from "@/components/fr8/MaksutView";
+import StorageCard from "@/components/fr8/StorageCard";
 import type { GigBillingState, EraInvoiceClient } from "@/lib/api";
 import { computeWorkerSettlements, eraSettlementByWorker, sumWorkerSettlements } from "@shared/worker-payouts";
 import { BRAND_BILLERS } from "@shared/billers";
@@ -1248,13 +1249,19 @@ export default function AdminProjectPage() {
     });
   };
 
-  // Paljonko tekijöille on punaisista vielä siirtämättä — sama jaettu laskenta
-  // kuin Maksut-välilehdellä ja Tiimi-sivulla, jotta dashin stats ei voi eriytyä.
+  // Paljonko tekijöille on vielä siirtämättä — sama jaettu laskenta kuin
+  // Maksut-välilehdellä ja Tiimi-sivulla, jotta dashin stats ei voi eriytyä.
+  // KAIKKI KOLME VIRTAA: ilman `hoursEra`a tuntikeikan siirrettävä oli aina 0 €.
   const dashPayable = computeWorkerSettlements(project, {
     era: eraSettlementByWorker(eraInvoices, "p1"),
     p2Era: eraSettlementByWorker(eraInvoices, "p2"),
+    hoursEra: eraSettlementByWorker(eraInvoices, "hours"),
   });
-  const dashOpenP1Cents = sumWorkerSettlements(dashPayable).openP1Cents;
+  const dashTotals = sumWorkerSettlements(dashPayable);
+  const dashOpenP1Cents = dashTotals.openP1Cents;
+  // Kuittaamaton luonnos on yhä siirrettävää: raha ei ole liikkunut. Sama
+  // sääntö kuin Maksut-välilehdellä ja siirtoraportissa.
+  const dashOpenTotalCents = dashTotals.openTotalCents + dashTotals.pendingTotalCents;
 
   // Display-name map + this gig's pickable crew (used by both the "who washed"
   // and "default washer" pickers).
@@ -1489,7 +1496,17 @@ export default function AdminProjectPage() {
         workers={gigWorkers}
         defaultWasherId={effectiveWasher}
         onChangeDefaultWasher={changeDefaultWasher}
-        showMaksutTab={!!deal && (profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || ""))}
+        /**
+         * MAKSUT-VÄLILEHTI ON KAIKILLA KEIKOILLA.
+         *
+         * Ehto oli `!!deal`, eli välilehti näkyi VAIN kiinteän FR8-urakan
+         * keikoilla. Juuri siksi "maksuissa ei näy mitään summia": tuntikeikalla
+         * ja kohdennetulla keikalla koko välilehteä ei ollut olemassa, joten
+         * asiakkaalta saatua rahaa tai tekijöille siirrettävää ei päässyt
+         * seuraamaan mistään. Raha liikkuu jokaisella keikalla, joten näkymä
+         * kuuluu jokaiselle keikalle — sisältö sopeutuu siihen mitä keikalla on.
+         */
+        showMaksutTab={profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")}
       />
       {isFounderView && celebrateMilestone && (
         <FounderCelebration jobId={jobId} />
@@ -1573,11 +1590,19 @@ export default function AdminProjectPage() {
             /* Kerrosten lukitus on apuasetus, ei päänäkymän asia — se renderöidään
                dashin alalaitaan omana slotina. */
             settingsSlot={
-              <FloorLockPanel
-                project={project}
-                onGuidedSet={onGuidedSet}
-                canSend={profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")}
-              />
+              <>
+                <FloorLockPanel
+                  project={project}
+                  onGuidedSet={onGuidedSet}
+                  canSend={profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")}
+                />
+                {/* Tallennustilan mittari asui Maksut-välilehdellä, jonne se ei
+                    kuulu: se ei ole rahaa eikä siirto, ja se oli yksi syy siihen
+                    että maksualue näytti sekavalta. Luku on silti tarpeellinen
+                    (siirtokiintiö loppui kerran kesken työpäivän), joten se on
+                    täällä keikan asetusten yhteydessä. Vain perustajalle. */}
+                {isFounderView && <StorageCard jobId={jobId} />}
+              </>
             }
             expensesTotalCents={(project.expenses || []).reduce((s, e) => s + e.amountCents, 0)}
             expensesSlot={
@@ -1614,6 +1639,7 @@ export default function AdminProjectPage() {
                -palkkeja ilman mitään tietoa siitä paljonko kuuluu maksaa. */
             gigBilling={billing}
             workerOpenP1Cents={dashOpenP1Cents}
+            workerOpenTotalCents={dashOpenTotalCents}
             onGoToMaksut={() => setTab("maksut")}
           />
         )}
@@ -1625,7 +1651,7 @@ export default function AdminProjectPage() {
             Kytkin alalaidassa ratkaisee mitä ASIAKAS näkee; se on eri asia kuin
             se mitä välilehteä johtaja katsoo, eikä sitä siksi aseteta
             välilehteä vaihtamalla. */}
-        {tab === "maksut" && deal && (profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")) && (
+        {tab === "maksut" && (profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")) && (
           <MaksutView
             jobId={jobId}
             project={project}

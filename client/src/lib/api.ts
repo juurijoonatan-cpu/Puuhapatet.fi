@@ -10,6 +10,7 @@ import type { WorkerAgreement } from "@shared/worker-agreements";
 import type { EraInvoiceKind, EraInvoiceTila } from "@shared/era-billing";
 import type { P2Billing, P2OfferStatus, P2State } from "@shared/p2";
 import type { GuidedState, GuidedWork } from "@shared/guided";
+import type { TransferReport } from "@shared/transfer-report";
 
 // ─── P2 (keltaiset ikkunat) — per-ikkuna hinnoittelu + neuvottelu ──────────────
 
@@ -212,6 +213,11 @@ export interface HostCrewRow {
   member: CrewMember;
   stats: CrewMemberStats;
   onboarded: boolean;
+  /** Vuoroista kertyneet tunnit tällä keikalla — 0 kun keikka ei ole
+   *  tuntitilassa (silloin vuorot ovat seurantaa, eivät palkkaa). */
+  shiftHours?: number;
+  /** Tekijän tuntipalkka sentteinä (rajattu asiakastuntihintaan). */
+  hourRateCents?: number;
 }
 
 /** Client-side shape of an `era_invoices` row — `eraNumbers`/`rivit` arrive as
@@ -274,6 +280,12 @@ export interface GigBillingState {
   p2RemainingCents: number;
   agreedTotalCents: number;
   nextInstalmentCents: number;
+  /** Tuntityöstä asiakkaalta laskutettu (`scope:"hours"` + yhdistettyjen osuus). */
+  hoursInvoicedCents?: number;
+  hoursPayments?: number;
+  /** KAIKKI asiakkaalta laskutettu, virrasta riippumatta. Yksi luku jota ei
+   *  tarvitse koota kolmesta kentästä — eikä siis voi koota väärin. */
+  invoicedTotalCents?: number;
 }
 
 /** Founder settlement for a fixed deal. The biller collects the full instalment;
@@ -997,7 +1009,12 @@ export const api = {
   // tekijä; jää tilaan "luonnos" kunnes tekijä itse hyväksyy/hylkää (vaihe 3).
   createWorkerEraInvoiceBatch: (jobId: number, data: {
     eraNumbers: number[];
-    workers: { workerId: string; name: string; pestytIkkunat: number; sovittuMuutosCents: number; ennakkoCents: number; ansaittuOverrideCents?: number }[];
+    workers: {
+      workerId: string; name: string; pestytIkkunat: number;
+      sovittuMuutosCents: number; ennakkoCents: number; ansaittuOverrideCents?: number;
+      /** Tuntityö: tunnit ja tuntipalkka. Näkyvät laskun erittelyssä omana rivinään. */
+      tunnit?: number; tuntihintaCents?: number;
+    }[];
     /** Eräpäivä, johtajan valitsema ("YYYY-MM-DD"). Puuttuessaan 14 vrk -oletus. */
     dueDate?: string;
     /** Ohita kaksoiskappalesuoja (tarkoituksellinen korjauslasku samasta erästä). */
@@ -1006,6 +1023,16 @@ export const api = {
      *  tulee erän mukaan; tällä sen voi valita itse ennen laskun luontia. */
     recipientId?: string;
   }) => request<{ ok: boolean; invoices: EraInvoiceClient[]; skipped?: string[] }>("POST", `/api/jobs/${jobId}/era-invoice/worker-batch`, data),
+  /**
+   * SIIRTORAPORTTI — "mitä minun pitää siirtää kenelle" (`@shared/transfer-report`).
+   * Sama laskenta jonka server lähettää sähköpostilla molemmille johtajille kun
+   * asiakkaan lasku lähtee, joten ruutu ja sähköposti eivät voi erota.
+   */
+  getTransferReport: (jobId: number) =>
+    request<{ ok: boolean; report: TransferReport | null }>("GET", `/api/jobs/${jobId}/transfer-report`),
+  /** Lähetä siirtoraportti sähköpostilla molemmille johtajille. */
+  sendTransferReport: (jobId: number) =>
+    request<{ ok: boolean; to?: string; report?: TransferReport }>("POST", `/api/jobs/${jobId}/transfer-report`, {}),
   /** Johtaja mitätöi tekijälaskun (väärä summa/maksaja). Hylätty lasku ei kuittaa
    *  velkaa, joten summa palaa avoimeksi ja uuden voi tehdä heti. */
   voidEraInvoice: (jobId: number, invoiceId: number) =>

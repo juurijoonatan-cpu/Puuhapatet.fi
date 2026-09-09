@@ -178,3 +178,119 @@ describe("buildTasaus — invoicedEntitledCents", () => {
     expect(sum).toBeLessThanOrEqual(t.input.p1PotCents + t.input.p2PotCents);
   });
 });
+
+/**
+ * TUNTITYÖ TASAUKSESSA.
+ *
+ * Tuntikeikka meni tasauksessa väärin kahdesta suunnasta yhtä aikaa:
+ * tekijöiden tuntipalkkoja ei vähennetty jaettavasta potista, ja johtajan oma
+ * tuntityö ei näkynyt hänen ansaintanaan. Nämä testit lukitsevat molemmat.
+ */
+describe("buildTasaus — tuntityö", () => {
+  /** Keikka, jolla on annetut tuntivuorot eikä yhtään ikkunaa. */
+  function hourlyProject(shifts: { worker: string; hours: number }[]): ProjectData {
+    const p = projectWith([]);
+    return {
+      ...p,
+      // Perustaja on crew-listalla roolilla "host", jotta hänen tuntinsa
+      // luetaan omaksi työksi eikä tekijäkuluksi.
+      crew: [
+        ...(p.crew ?? []),
+        { id: "joonatan", token: "t-j", name: "Joonatan", role: "host", perWindowCents: 0 } as CrewMember,
+      ],
+      shifts: shifts.map((s, i) => ({ id: `s${i}`, worker: s.worker, day: "2026-01-02", hours: s.hours, at: i + 1 })),
+      // Tuntipalkka on palkkaa vain tuntitilassa; kohdennetulla keikalla samat
+      // rivit ovat pelkkää seurantaa eikä niistä synny kulua tai ansaintaa.
+      billingMode: "hourly" as const,
+    };
+  }
+
+  it("kohdennetulla keikalla vuororivit eivät ole rahaa", () => {
+    const p = { ...hourlyProject([{ worker: "jani", hours: 10 }]), billingMode: "targeted" as const };
+    const t = buildTasaus(p, [{ t: 1, amountCents: 260_00, scope: "p1", biller: { id: "joonatan" } }], []);
+    expect(t.input.workerHoursEarnedCents).toBe(0);
+    expect(t.result.rows.every((r) => r.hoursOwnCents === 0)).toBe(true);
+  });
+
+  it("vähentää tekijöiden tuntipalkat jaettavasta potista", () => {
+    // Asiakkaalta 10 h × 26 € = 260 €. Tekijän palkka 10 × 15 € = 150 €.
+    // Jaettavaa on kate 110 €, ei koko 260 €.
+    const t = buildTasaus(
+      hourlyProject([{ worker: "jani", hours: 10 }]),
+      [{ t: 1, amountCents: 260_00, scope: "hours", biller: { id: "joonatan" } }],
+      [],
+    );
+    expect(t.input.hoursPotCents).toBe(260_00);
+    expect(t.input.workerHoursEarnedCents).toBe(150_00);
+    expect(t.result.distributableCents).toBe(110_00);
+    // Tuntilasku EI ole urakan erä eikä siis nosta €/ikkuna-hintaa.
+    expect(t.input.p1PotCents).toBe(0);
+    expect(t.result.xCents).toBe(0);
+  });
+
+  it("antaa johtajalle hänen oman tuntityönsä täydellä tuntihinnalla", () => {
+    // Joonatan teki itse 10 h → 260 € omaa työtä, ei katetta kummallekaan.
+    const t = buildTasaus(
+      hourlyProject([{ worker: "joonatan", hours: 10 }]),
+      [{ t: 1, amountCents: 260_00, scope: "hours", biller: { id: "joonatan" } }],
+      [],
+    );
+    const joonatan = t.result.rows.find((r) => r.id === "joonatan")!;
+    const matias = t.result.rows.find((r) => r.id === "matias")!;
+    expect(joonatan.hoursOwnCents).toBe(260_00);
+    expect(matias.hoursOwnCents).toBe(0);
+    expect(t.input.workerHoursEarnedCents).toBe(0);
+    // Koko potti on Joonatanin omaa työtä → ei jaettavaa katetta, ei siirtoa.
+    expect(t.result.founderKateCents).toBe(0);
+    expect(joonatan.entitledCents).toBe(260_00);
+    expect(t.result.transfer).toBeNull();
+  });
+
+  it("ei lue laskuttamatonta tuntityötä laskutetuksi ansainnaksi", () => {
+    // Joonatan on tehnyt 10 h (260 €), mutta asiakkaalta ei ole laskutettu
+    // tunneista mitään. `invoicedEntitledCents` kertoo mitä LASKUTETUSTA
+    // rahasta kuuluu — kertymä ei saa näkyä siinä lainkaan.
+    const t = buildTasaus(hourlyProject([{ worker: "joonatan", hours: 10 }]), [], []);
+    expect(t.result.rows.find((r) => r.id === "joonatan")!.hoursOwnCents).toBe(260_00);
+    expect(t.invoicedEntitledCents.joonatan).toBe(0);
+    expect(t.invoicedEntitledCents.matias).toBe(0);
+  });
+
+  it("osittain laskutettu tuntityö ei paina toista johtajaa miinukselle", () => {
+    // Joonatan teki 10 h (260 €), asiakkaalta laskutettu puolet (130 €).
+    // Laskutettu raha kattaa hänen työtään 130 € edestä — se on hänen, eikä
+    // toiselle synny miinusta rahasta jota ei ole jaettu kenellekään.
+    const t = buildTasaus(
+      hourlyProject([{ worker: "joonatan", hours: 10 }]),
+      [{ t: 1, amountCents: 130_00, scope: "hours", biller: { id: "joonatan" } }],
+      [],
+    );
+    expect(t.invoicedEntitledCents.joonatan).toBe(130_00);
+    expect(t.invoicedEntitledCents.matias).toBe(0);
+  });
+
+  it("laskee tuntityön ansainnan kun tunnit on laskutettu", () => {
+    const t = buildTasaus(
+      hourlyProject([{ worker: "joonatan", hours: 10 }]),
+      [{ t: 1, amountCents: 260_00, scope: "hours", biller: { id: "joonatan" } }],
+      [],
+    );
+    expect(t.invoicedEntitledCents.joonatan).toBe(260_00);
+  });
+
+  it("nimeää tuntilaskun ja yhdistetyn laskun omikseen eikä urakan eräksi", () => {
+    const t = buildTasaus(
+      hourlyProject([]),
+      [
+        { t: 1, amountCents: 100_00, scope: "p1", biller: { id: "joonatan" } },
+        { t: 2, amountCents: 200_00, scope: "hours", biller: { id: "joonatan" } },
+        { t: 3, amountCents: 300_00, scope: "all", parts: { hours: 120_00, p2: 80_00 }, biller: { id: "matias" } },
+      ],
+      [],
+    );
+    expect(t.eras.map((e) => e.label)).toEqual(["Erä 1", "Tuntilasku", "Yhdistetty lasku"]);
+    expect(t.input.p1PotCents).toBe(200_00);      // 100 + (300 − 120 − 80)
+    expect(t.input.hoursPotCents).toBe(320_00);   // 200 + 120
+    expect(t.input.p2PotCents).toBe(80_00);
+  });
+});

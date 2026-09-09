@@ -1248,11 +1248,13 @@ export default function AdminProjectPage() {
     });
   };
 
-  // Paljonko tekijöille on punaisista vielä siirtämättä — sama jaettu laskenta
-  // kuin Maksut-välilehdellä ja Tiimi-sivulla, jotta dashin stats ei voi eriytyä.
+  // Paljonko tekijöille on vielä siirtämättä — sama jaettu laskenta kuin
+  // Maksut-välilehdellä ja Tiimi-sivulla, jotta dashin stats ei voi eriytyä.
+  // KAIKKI KOLME VIRTAA: ilman `hoursEra`a tuntikeikan siirrettävä oli aina 0 €.
   const dashPayable = computeWorkerSettlements(project, {
     era: eraSettlementByWorker(eraInvoices, "p1"),
     p2Era: eraSettlementByWorker(eraInvoices, "p2"),
+    hoursEra: eraSettlementByWorker(eraInvoices, "hours"),
   });
   const dashOpenP1Cents = sumWorkerSettlements(dashPayable).openP1Cents;
 
@@ -1489,7 +1491,17 @@ export default function AdminProjectPage() {
         workers={gigWorkers}
         defaultWasherId={effectiveWasher}
         onChangeDefaultWasher={changeDefaultWasher}
-        showMaksutTab={!!deal && (profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || ""))}
+        /**
+         * MAKSUT-VÄLILEHTI ON KAIKILLA KEIKOILLA.
+         *
+         * Ehto oli `!!deal`, eli välilehti näkyi VAIN kiinteän FR8-urakan
+         * keikoilla. Juuri siksi "maksuissa ei näy mitään summia": tuntikeikalla
+         * ja kohdennetulla keikalla koko välilehteä ei ollut olemassa, joten
+         * asiakkaalta saatua rahaa tai tekijöille siirrettävää ei päässyt
+         * seuraamaan mistään. Raha liikkuu jokaisella keikalla, joten näkymä
+         * kuuluu jokaiselle keikalle — sisältö sopeutuu siihen mitä keikalla on.
+         */
+        showMaksutTab={profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")}
       />
       {isFounderView && celebrateMilestone && (
         <FounderCelebration jobId={jobId} />
@@ -1625,7 +1637,7 @@ export default function AdminProjectPage() {
             Kytkin alalaidassa ratkaisee mitä ASIAKAS näkee; se on eri asia kuin
             se mitä välilehteä johtaja katsoo, eikä sitä siksi aseteta
             välilehteä vaihtamalla. */}
-        {tab === "maksut" && deal && (profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")) && (
+        {tab === "maksut" && (profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "")) && (
           <MaksutView
             jobId={jobId}
             project={project}

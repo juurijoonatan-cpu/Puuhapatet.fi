@@ -40,6 +40,47 @@ export function isP2EraSelection(eraNumbers: number[] | null | undefined): boole
   return Array.isArray(eraNumbers) && eraNumbers.length === 1 && eraNumbers[0] === P2_ERA_NUMBER;
 }
 
+/**
+ * TUNTITYÖN maksupotti. Kolmas rahavirta punaisten erien ja keltaisten rinnalla:
+ * tuntikeikalla (`billingMode: "hourly"`) tekijä ansaitsee tuntipalkkaa, ei
+ * ikkunahintaa, eikä sitä saa laskea punaisten eriin — muuten yksi tuntimaksu
+ * kuluttaisi urakan neljän erän rajasta erän jota kukaan ei ole lähettänyt.
+ *
+ * Sama toteutustapa kuin keltaisilla: sentinel-erä tallennetussa
+ * `eraNumbers`-listassa, jotta DB-migraatiota ei tarvita. `isHoursEraSelection`
+ * on AINOA paikka jossa tätä tulkitaan.
+ */
+export const HOURS_ERA_NUMBER = 9;
+export const HOURS_ERA_NUMBERS: number[] = [HOURS_ERA_NUMBER];
+
+/** Onko tämä erävalinta tuntityön potti? */
+export function isHoursEraSelection(eraNumbers: number[] | null | undefined): boolean {
+  return Array.isArray(eraNumbers) && eraNumbers.length === 1 && eraNumbers[0] === HOURS_ERA_NUMBER;
+}
+
+/** Minkä rahavirran tämä erävalinta koskee. Yksi funktio, jotta kolme virtaa
+ *  eivät voi mennä eri näkymissä eri tavalla ristiin. */
+export type EraScope = "p1" | "p2" | "hours";
+export function eraScopeOf(eraNumbers: number[] | null | undefined): EraScope {
+  if (isP2EraSelection(eraNumbers)) return "p2";
+  if (isHoursEraSelection(eraNumbers)) return "hours";
+  return "p1";
+}
+
+/**
+ * Erävalinnan luettava nimi. Yksi paikka, jotta "Keltaiset" ja "Tuntityö" eivät
+ * kirjoitu eri tavalla laskulla, tekijän työpöydällä ja siirtoraportilla — ja
+ * ettei sentinel-erä koskaan vuoda käyttöliittymään muodossa "Erä 9".
+ */
+export function eraScopeLabel(eraNumbers: number[] | null | undefined): string {
+  const scope = eraScopeOf(eraNumbers);
+  if (scope === "p2") return "Keltaiset";
+  if (scope === "hours") return "Tuntityö";
+  const nums = eraNumbers ?? [];
+  if (nums.length === 0) return "Erä —";
+  return nums.length === 1 ? `Erä ${nums[0]}` : `Erät ${nums[0]}–${nums[nums.length - 1]}`;
+}
+
 /** Erät 1–3 laskutetaan Joonatanille, erä 4 Matiakselle (kohta 1). */
 export function eraRecipientFounderId(eraNumbers: number[]): "joonatan" | "matias" {
   return eraNumbers.includes(4) ? "matias" : "joonatan";
@@ -165,6 +206,7 @@ export function normalizeEraNumbers(raw: unknown): number[] | null {
   if (sorted.length === 3 && sorted[0] === 1 && sorted[1] === 2 && sorted[2] === 3) return [1, 2, 3];
   if (sorted.length === 1 && sorted[0] === 4) return [4];
   if (sorted.length === 1 && sorted[0] === P2_ERA_NUMBER) return [...P2_ERA_NUMBERS];
+  if (sorted.length === 1 && sorted[0] === HOURS_ERA_NUMBER) return [...HOURS_ERA_NUMBERS];
   return null;
 }
 
@@ -184,6 +226,18 @@ export interface TekijaPesu {
    * ikkunamäärä × vakio antaisi väärän summan.
    */
   ansaittuOverrideCents?: number;
+  /**
+   * TUNTITYÖ. Tuntikeikalla tekijä ansaitsee tunneista, ei ikkunoista — ja
+   * ennen tätä koko rahavirtaa ei tunnistettu laskulla lainkaan: maksun sai
+   * tehtyä vain kirjoittamalla tunnit käsin "sovittu muutos" -kenttään, jolloin
+   * lasku ei kertonut mistä summa tuli eikä mikään näkymä osannut lukea sitä.
+   *
+   * Molemmat voivat olla samalla laskulla: sama tekijä on voinut pestä ikkunoita
+   * JA tehdä tuntityötä. Siksi nämä LISÄTÄÄN ikkunoiden päälle, ei korvata.
+   */
+  tunnit?: number;
+  /** Tekijän tuntipalkka sentteinä (esim. 1500 = 15,00 €/h). */
+  tuntihintaCents?: number;
 }
 
 export interface JohtajaPesu {
@@ -197,10 +251,17 @@ export interface TekijaLaskuRivi {
   workerId: string;
   name: string;
   pestytIkkunat: number;
-  /** ansaittu = pestytIkkunat × 20 € + sovittuMuutos. Käytetään katteeseen. */
+  /** ansaittu = ikkunatCents + tunnitCents + sovittuMuutos. Käytetään katteeseen. */
   ansaittuCents: number;
   /** maksettava = ansaittu − ennakko. Tekijän lasku "nyt". */
   maksettavaCents: number;
+  /** Erittely: mitä ikkunoista, mitä tunneista. Nollia kun kyseistä työtä ei
+   *  ole — lasku ja tekijän työpöytä lukevat nämä suoraan, eivätkä laske
+   *  summaa uudelleen (kaksi laskentaa = kaksi eri lukua samasta laskusta). */
+  tunnit: number;
+  tuntihintaCents: number;
+  tunnitCents: number;
+  ikkunatCents: number;
 }
 
 export interface JohtajaLaskuRivi {
@@ -265,12 +326,22 @@ export function computeEraBilling(
   const kokonaisikkunat = sumWindows([...workerWindows, ...founderWindows]);
 
   const workerRows: TekijaLaskuRivi[] = workers.map((w) => {
-    const base = typeof w.ansaittuOverrideCents === "number" && Number.isFinite(w.ansaittuOverrideCents)
+    const tunnit = Math.max(0, w.tunnit || 0);
+    const tuntihintaCents = Math.max(0, roundCents(w.tuntihintaCents || 0));
+    const tunnitCents = roundCents(tunnit * tuntihintaCents);
+    const override = typeof w.ansaittuOverrideCents === "number" && Number.isFinite(w.ansaittuOverrideCents)
       ? Math.max(0, roundCents(w.ansaittuOverrideCents))
-      : roundCents((w.pestytIkkunat || 0) * TEKIJA_HINTA_CENTS);
-    const ansaittuCents = base + (w.sovittuMuutosCents || 0);
+      : null;
+    // Ikkunat ja tunnit ovat eri työtä, joten ne SUMMAUTUVAT. Valmis ansio
+    // (keltaiset) ohittaa ikkunalaskennan mutta ei tunteja: tuntityö on oma
+    // rivinsä laskulla eikä se saa kadota siksi että ikkunahinta annettiin.
+    const ikkunatCents = override != null ? override : roundCents((w.pestytIkkunat || 0) * TEKIJA_HINTA_CENTS);
+    const ansaittuCents = ikkunatCents + tunnitCents + (w.sovittuMuutosCents || 0);
     const maksettavaCents = ansaittuCents - (w.ennakkoCents || 0);
-    return { workerId: w.workerId, name: w.name, pestytIkkunat: w.pestytIkkunat, ansaittuCents, maksettavaCents };
+    return {
+      workerId: w.workerId, name: w.name, pestytIkkunat: w.pestytIkkunat,
+      ansaittuCents, maksettavaCents, tunnit, tuntihintaCents, tunnitCents, ikkunatCents,
+    };
   });
   const tekijatAnsaittuYhtCents = workerRows.reduce((sum, r) => sum + r.ansaittuCents, 0);
 

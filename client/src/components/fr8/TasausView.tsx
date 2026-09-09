@@ -474,6 +474,10 @@ export default function TasausView({ jobId, canEdit = true }: {
               <div style={{ display: "flex", flexDirection: "column", gap: T.space.xs + 1 }}>
                 <Line label="Oma työ" sub={`${win(row.p1Windows)} punaista`} value={eur(row.ownWorkCents)} />
                 {row.p2OwnCents !== 0 && <Line label="Omat keltaiset" value={eur(row.p2OwnCents)} tone={T.tone.warn} />}
+                {/* Oma tuntityö: täysi asiakastuntihinta, omasta työstä ei
+                    oteta katetta. Ilman tätä riviä tuntikeikan johtaja näki
+                    ansaintanaan vain puolet katteesta — ei omaa työtään. */}
+                {row.hoursOwnCents !== 0 && <Line label="Oma tuntityö" value={eur(row.hoursOwnCents)} tone={T.tone.info} />}
                 <Line label="Osuus katteesta" value={eur(row.kateShareCents)} />
                 <div style={{ borderTop: T.border.divider, paddingTop: T.space.sm, marginTop: T.space.xs }}>
                   <Line label="Kuuluu yhteensä" value={eur(row.entitledCents)} strong />
@@ -511,8 +515,11 @@ export default function TasausView({ jobId, canEdit = true }: {
         <div style={{ ...mono, marginBottom: T.space.md }}>Mistä jaettava koostuu</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: T.space.sm }}>
           {([
-            ["Laskutettu", eur(data.input.p1PotCents + data.input.p2PotCents), T.text.primary],
-            ["Tekijöiden palkat", `−${eur(data.input.workerP1EarnedCents + data.input.workerP2EarnedCents)}`, T.text.secondary],
+            ["Laskutettu", eur(data.input.p1PotCents + data.input.p2PotCents + (data.input.hoursPotCents ?? 0)), T.text.primary],
+            // Tekijöiden palkat KAIKISTA kolmesta virrasta. Tuntipalkat
+            // puuttuivat tästä, joten jaettava näytti liian suurelta juuri sen
+            // verran kuin tekijöille oli tuntityöstä velkaa.
+            ["Tekijöiden palkat", `−${eur(data.input.workerP1EarnedCents + data.input.workerP2EarnedCents + (data.input.workerHoursEarnedCents ?? 0))}`, T.text.secondary],
             ["Jaettavaa", eur(result.distributableCents), T.tone.goodSoft],
             ["€ / punainen ikkuna", eur(result.xCents), T.text.primary],
           ] as [string, string, string][]).map(([label, value, tone]) => (
@@ -646,7 +653,7 @@ export default function TasausView({ jobId, canEdit = true }: {
                         {p.workerName}
                       </span>
                       <span style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint }}>
-                        {p.scope === "p2" ? " · keltaiset" : p.eraNumbers.length ? ` · erät ${p.eraNumbers.join(", ")}` : ""}
+                        {p.scope === "p2" ? " · keltaiset" : p.scope === "hours" ? " · tuntityö" : p.eraNumbers.length ? ` · erät ${p.eraNumbers.join(", ")}` : ""}
                         {p.invoiceId == null ? " · käsin kirjattu" : ""}
                         {p.overridden ? " · korjattu" : ""}
                       </span>

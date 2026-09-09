@@ -20,10 +20,11 @@
  * Puhdas laskenta: ei I/O:ta, ei Reactia. Sekä client että server importtaavat.
  */
 
-import type { ProjectData } from "./project";
+import { computeShiftStats, workerHourRateOf, hourRateOf, type ProjectData, type ProjShift } from "./project";
 import { getCrew, crewMemberStats, type CrewMember, type CrewMemberStats } from "./crew";
 import { traineeForUserId, traineeForName } from "./trainees";
-import { isP2EraSelection } from "./era-billing";
+import { eraScopeOf, type EraScope } from "./era-billing";
+import { isFounder } from "./team";
 
 /** Erälaskun tila joka tarkoittaa "tämä on tekijälle hoidettu". Luonnos odottaa
  *  vielä tekijää, hylätty ei koskaan maksettu. */
@@ -38,8 +39,9 @@ export interface EraInvoiceLike {
   /** Erät joita tämä lasku koskee (esim. [1,2,3] tai [4]). */
   eraNumbers?: number[];
   /** Tallennettu laskurivi. `input.pestytIkkunat` = montako ikkunaa lasku kattoi,
-   *  `computed.ansaittuCents` = BRUTTO ansio (ennen ennakon vähennystä). */
-  rivit?: { input?: { pestytIkkunat?: number }; computed?: { ansaittuCents?: number } } | null;
+   *  `input.tunnit` = montako tuntia, `computed.ansaittuCents` = BRUTTO ansio
+   *  (ennen ennakon vähennystä). */
+  rivit?: { input?: { pestytIkkunat?: number; tunnit?: number }; computed?: { ansaittuCents?: number } } | null;
 }
 
 /** Onko tämä erälasku tekijälle jo "hoidettu"? Lähetetty/hyväksytty = lukittu ja
@@ -75,6 +77,10 @@ export interface EraSettlementMaps {
   /** Tekijä-id → luonnoksissa olevat ikkunat — nämäkin vähennetään esitäytöstä,
    *  ettei samasta työstä synny toista maksua. */
   pendingWindowsByWorker: Record<string, number>;
+  /** Tekijä-id → erälaskuilla katetut TUNNIT (tuntityön esitäytön jäljellä-määrä). */
+  hoursByWorker: Record<string, number>;
+  /** Tekijä-id → luonnoksissa odottavat tunnit. */
+  pendingHoursByWorker: Record<string, number>;
 }
 
 /**
@@ -84,28 +90,35 @@ export interface EraSettlementMaps {
  * oletus) tai "p2" (keltaisten potti). Ne EIVÄT saa kuitata toisiaan — keltaisten
  * maksu ei vähennä punaista velkaa eikä toisinpäin.
  */
-export function eraSettlementByWorker(invoices: EraInvoiceLike[], scope: "p1" | "p2" = "p1"): EraSettlementMaps {
-  const wanted = scope === "p2";
-  invoices = invoices.filter((i) => isP2EraSelection(i.eraNumbers) === wanted);
+export function eraSettlementByWorker(invoices: EraInvoiceLike[], scope: EraScope = "p1"): EraSettlementMaps {
+  invoices = invoices.filter((i) => eraScopeOf(i.eraNumbers) === scope);
   const centsByWorker: Record<string, number> = {};
   const windowsByWorker: Record<string, number> = {};
   const eraNumbersByWorker: Record<string, number[]> = {};
   const pendingCentsByWorker: Record<string, number> = {};
   const pendingWindowsByWorker: Record<string, number> = {};
+  const hoursByWorker: Record<string, number> = {};
+  const pendingHoursByWorker: Record<string, number> = {};
   for (const inv of invoices) {
     const windows = inv.rivit?.input?.pestytIkkunat || 0;
+    const hours = inv.rivit?.input?.tunnit || 0;
     if (isEraInvoicePending(inv)) {
       pendingCentsByWorker[inv.senderId] = (pendingCentsByWorker[inv.senderId] || 0) + eraInvoiceGrossCents(inv);
       pendingWindowsByWorker[inv.senderId] = (pendingWindowsByWorker[inv.senderId] || 0) + windows;
+      pendingHoursByWorker[inv.senderId] = (pendingHoursByWorker[inv.senderId] || 0) + hours;
     }
     if (!isEraInvoiceSettled(inv)) continue;
     centsByWorker[inv.senderId] = (centsByWorker[inv.senderId] || 0) + eraInvoiceGrossCents(inv);
     windowsByWorker[inv.senderId] = (windowsByWorker[inv.senderId] || 0) + windows;
+    hoursByWorker[inv.senderId] = (hoursByWorker[inv.senderId] || 0) + hours;
     const list = eraNumbersByWorker[inv.senderId] || (eraNumbersByWorker[inv.senderId] = []);
     for (const n of inv.eraNumbers || []) if (!list.includes(n)) list.push(n);
   }
   for (const list of Object.values(eraNumbersByWorker)) list.sort((a, b) => a - b);
-  return { centsByWorker, windowsByWorker, eraNumbersByWorker, pendingCentsByWorker, pendingWindowsByWorker };
+  return {
+    centsByWorker, windowsByWorker, eraNumbersByWorker,
+    pendingCentsByWorker, pendingWindowsByWorker, hoursByWorker, pendingHoursByWorker,
+  };
 }
 
 export interface WorkerSettlement {
@@ -145,8 +158,18 @@ export interface WorkerSettlement {
   /** Luonnoksena odottavat erälaskut — johtaja loi maksun, tekijä ei ole vielä
    *  kuitannut. EI hoidettu, mutta ei myöskään uudelleen luotava. */
   eraPendingCents: number;
-  /** paid + eraSent — kaikki mitä tekijälle on hoidettu. */
+  /**
+   * paid + eraSent PUNAISISTA. Tämä luku on osa kohdennuslaskentaa (se kuittaa
+   * punaista velkaa), joten siihen EI saa lisätä keltaisten tai tuntien maksuja
+   * — muuten tuntimaksu kuittaisi ikkunavelkaa.
+   */
   settledCents: number;
+  /**
+   * KAIKKI mitä tekijälle on hoidettu, kaikista kolmesta virrasta yhteensä.
+   * Pelkkä näyttöluku: "hoidettu" näytti ennen vain punaisten osuuden, joten
+   * tuntikeikalla se luki 0 € vaikka tekijälle oli maksettu satoja euroja.
+   */
+  settledTotalCents: number;
   /** PUNAISISTA vielä siirtämättä. Tämä on se summa jonka perustaja maksaa
    *  erämaksulla. */
   openP1Cents: number;
@@ -159,6 +182,31 @@ export interface WorkerSettlement {
   settledEras: number[];
   /** Keltaisista jo maksettu tai maksussa (kuittaa vain keltaista velkaa). */
   p2SettledCents: number;
+
+  // ─── TUNTITYÖ (kolmas rahavirta) ──────────────────────────────────────────
+  //
+  // Tuntikeikalla tekijän palkka ei tule ikkunoista lainkaan, joten ilman näitä
+  // kenttiä koko keikan maksettava näytti nollaa: ikkunoita ei ollut, ja
+  // tunneille ei ollut kenttää mihin ne olisi laskettu.
+  /** Tekijän tunnit tällä keikalla (`ProjShift`-riveistä, rajattu ≥ 0). */
+  hours: number;
+  /** Tekijän tuntipalkka sentteinä (perustajalla asiakashinta, ks. hourly-money). */
+  hourRateCents: number;
+  /** Tunneista kertynyt palkka BRUTTONA = tunnit × tuntipalkka. */
+  hoursEarnedCents: number;
+  /** Tunneista jo maksettu tai maksussa (tuntipotin erälaskut). */
+  hoursSettledCents: number;
+  /** Tunneista luonnoksena odottava — johtaja loi maksun, tekijä ei kuitannut. */
+  hoursPendingCents: number;
+  /** Tunneista VIELÄ siirtämättä. Tämä on se summa jonka johtaja maksaa. */
+  openHoursCents: number;
+  /** Maksamattomat tunnit — maksudialogin esitäyttö. */
+  openHours: number;
+  /**
+   * KAIKKI mitä tälle tekijälle on vielä siirrettävä: punaiset + keltaiset +
+   * tunnit. Yksi luku johtajalle, joka ei halua laskea kolmea yhteen päässään.
+   */
+  openTotalCents: number;
 }
 
 /**
@@ -176,6 +224,8 @@ export function computeWorkerSettlements(
     era?: Partial<EraSettlementMaps>;
     /** KELTAISTEN maksuista johdetut summat (`eraSettlementByWorker(inv, "p2")`). */
     p2Era?: Partial<EraSettlementMaps>;
+    /** TUNTITYÖN maksuista johdetut summat (`eraSettlementByWorker(inv, "hours")`). */
+    hoursEra?: Partial<EraSettlementMaps>;
     /** Jätä perustajat (role "host") pois — oletus true, koska perustajat
      *  tilittävät johtaja-välisillä laskuilla, eivät tekijämaksuilla. */
     includeFounders?: boolean;
@@ -192,6 +242,19 @@ export function computeWorkerSettlements(
 ): WorkerSettlement[] {
   const eraSent = opts.era?.centsByWorker ?? {};
   const p2Era = opts.p2Era ?? {};
+  const hoursEra = opts.hoursEra ?? {};
+  /**
+   * TUNNIT LUETAAN VUOROISTA, EI KARTALTA.
+   *
+   * `crewMemberStats().hours` on vanha, käsin kirjattu `project.hours`-kenttä.
+   * Nykyinen tuntikirjanpito on `project.shifts` (ajastin + käsinsyöttö), ja
+   * juuri sen takia tuntityö ei näkynyt maksuissa lainkaan: raha laskettiin
+   * kentästä johon mikään nykyinen näkymä ei enää kirjoita.
+   */
+  const shiftStats = computeShiftStats((project.shifts ?? []) as ProjShift[]);
+  const hoursById = new Map(shiftStats.byWorker.map((r) => [r.id, r.hours]));
+  const workerHourCents = workerHourRateOf(project);
+  const founderHourCents = hourRateOf(project);
   const eraWindows = opts.era?.windowsByWorker ?? {};
   const eraNums = opts.era?.eraNumbersByWorker ?? {};
   const eraPending = opts.era?.pendingCentsByWorker ?? {};
@@ -220,10 +283,19 @@ export function computeWorkerSettlements(
         sentCents: p2Era.centsByWorker?.[member.id] || 0,
         pendingCents: p2Era.pendingCentsByWorker?.[member.id] || 0,
       },
+      hours: hoursById.get(member.id) ?? 0,
+      // Perustajan tunti on omaa työtä eikä siitä oteta katetta: hän ansaitsee
+      // koko asiakastuntihinnan (sama sääntö kuin `computeHourlyMoney`issa).
+      hourRateCents: founder || isFounder(member.id) ? founderHourCents : workerHourCents,
+      hoursSettled: {
+        sentCents: hoursEra.centsByWorker?.[member.id] || 0,
+        pendingCents: hoursEra.pendingCentsByWorker?.[member.id] || 0,
+        hours: (hoursEra.hoursByWorker?.[member.id] || 0) + (hoursEra.pendingHoursByWorker?.[member.id] || 0),
+      },
     }));
   }
 
-  return rows.sort((a, b) => b.openP1Cents - a.openP1Cents || b.p1EarnedCents - a.p1EarnedCents);
+  return rows.sort((a, b) => b.openTotalCents - a.openTotalCents || b.p1EarnedCents - a.p1EarnedCents);
 }
 
 /**
@@ -253,6 +325,12 @@ export function settleWorker(input: {
   p2Settled?: { sentCents: number; pendingCents: number };
   /** Sovittu muutos punaisten palkkaan (CrewMember.payAdjustmentCents). */
   adjustmentCents?: number;
+  /** Tekijän tunnit tällä keikalla (`computeShiftStats`). Puuttuva = 0. */
+  hours?: number;
+  /** Tekijän tuntipalkka sentteinä. Puuttuva = 0 → tuntityötä ei ole. */
+  hourRateCents?: number;
+  /** Tuntipotista jo maksettu / maksussa — kuittaa VAIN tuntivelkaa. */
+  hoursSettled?: { sentCents: number; pendingCents: number; hours?: number };
 }): WorkerSettlement {
   const { id, name, active, founder, stats, payouts, p2Enabled, era } = input;
   const trainee = input.trainee === true;
@@ -315,7 +393,33 @@ export function settleWorker(input: {
   // näkyä, jotta kirjanpidollisen erälaskun voi tehdä jälkikäteen.
   const openP1Windows = p1PayableCents <= 0 ? 0 : round1(Math.min(windowsFromLedger, windowsFromMoney));
 
+  // ── TUNTITYÖ ────────────────────────────────────────────────────────────────
+  // Oma potti, omat kuittaukset. Tuntimaksu ei kuittaa ikkunavelkaa eikä
+  // toisinpäin — muuten yhden keikan ikkunapalkka katoaisi sillä että samalta
+  // keikalta maksettiin tunnit, ja tekijä jäisi ilman rahaa jonka hän ansaitsi.
+  const hours = Math.max(0, input.hours ?? 0);
+  const hourRateCents = Math.max(0, Math.round(input.hourRateCents ?? 0));
+  const hoursEarnedCents = Math.round(hours * hourRateCents);
+  const hoursSentCents = input.hoursSettled?.sentCents ?? 0;
+  const hoursPendingCents = input.hoursSettled?.pendingCents ?? 0;
+  const hoursSettledCents = hoursSentCents + hoursPendingCents;
+  const openHoursCents = Math.max(0, hoursEarnedCents - hoursSettledCents);
+  // Sama sääntö kuin ikkunoilla: ota PIENEMPI kahdesta lähteestä, ettei kumpikaan
+  // yksin nosta esitäyttöä. Rahasta johdettu tuntimäärä on lopullinen totuus.
+  const hoursFromLedger = Math.max(0, hours - (input.hoursSettled?.hours ?? 0));
+  const hoursFromMoney = hourRateCents > 0 ? openHoursCents / hourRateCents : 0;
+  const openHours = openHoursCents <= 0 ? 0 : round1(Math.min(hoursFromLedger, hoursFromMoney));
+
   return {
+    settledTotalCents: settledCents + p2SettledCents + hoursSettledCents,
+    hours,
+    hourRateCents,
+    hoursEarnedCents,
+    hoursSettledCents,
+    hoursPendingCents,
+    openHoursCents,
+    openHours,
+    openTotalCents: openP1Cents + openP2Cents + openHoursCents,
     workerId: id,
     name,
     active,
@@ -351,7 +455,7 @@ export function isTraineeMember(member: { id: string; name?: string; linkedUserI
 
 /** `settleWorker`in era-parametri suoraan erälaskuista — kutsujan ei tarvitse
  *  koota viittä mappia itse. */
-export function eraMapsFor(invoices: EraInvoiceLike[], scope: "p1" | "p2" = "p1") {
+export function eraMapsFor(invoices: EraInvoiceLike[], scope: EraScope = "p1") {
   const m = eraSettlementByWorker(invoices, scope);
   return {
     eraSent: m.centsByWorker,
@@ -359,6 +463,8 @@ export function eraMapsFor(invoices: EraInvoiceLike[], scope: "p1" | "p2" = "p1"
     eraNums: m.eraNumbersByWorker,
     eraPending: m.pendingCentsByWorker,
     eraPendingWindows: m.pendingWindowsByWorker,
+    eraHours: m.hoursByWorker,
+    eraPendingHours: m.pendingHoursByWorker,
   };
 }
 
@@ -371,10 +477,18 @@ export interface WorkerSettlementTotals {
   p2EarnedCents: number;
   p2PendingCents: number;
   settledCents: number;
+  settledTotalCents: number;
   eraPendingCents: number;
   openP1Cents: number;
   openP2Cents: number;
   openP1Windows: number;
+  hours: number;
+  hoursEarnedCents: number;
+  hoursSettledCents: number;
+  openHoursCents: number;
+  openHours: number;
+  /** Punaiset + keltaiset + tunnit — yksi luku "paljonko pitää siirtää". */
+  openTotalCents: number;
 }
 
 /** Yhteissummat maksut-näkymän tiiliä varten. */
@@ -388,14 +502,22 @@ export function sumWorkerSettlements(rows: WorkerSettlement[]): WorkerSettlement
     p2EarnedCents: t.p2EarnedCents + r.p2EarnedCents,
     p2PendingCents: t.p2PendingCents + r.p2PendingCents,
     settledCents: t.settledCents + r.settledCents,
+    settledTotalCents: t.settledTotalCents + r.settledTotalCents,
     eraPendingCents: t.eraPendingCents + r.eraPendingCents,
     openP1Cents: t.openP1Cents + r.openP1Cents,
     openP2Cents: t.openP2Cents + r.openP2Cents,
     openP1Windows: round1(t.openP1Windows + r.openP1Windows),
+    hours: round1(t.hours + r.hours),
+    hoursEarnedCents: t.hoursEarnedCents + r.hoursEarnedCents,
+    hoursSettledCents: t.hoursSettledCents + r.hoursSettledCents,
+    openHoursCents: t.openHoursCents + r.openHoursCents,
+    openHours: round1(t.openHours + r.openHours),
+    openTotalCents: t.openTotalCents + r.openTotalCents,
   }), {
     workers: 0, p1Washed: 0, p2Washed: 0, p1EarnedCents: 0, p1AdjustmentCents: 0, p2EarnedCents: 0,
-    p2PendingCents: 0, settledCents: 0, eraPendingCents: 0, openP1Cents: 0,
+    p2PendingCents: 0, settledCents: 0, settledTotalCents: 0, eraPendingCents: 0, openP1Cents: 0,
     openP2Cents: 0, openP1Windows: 0,
+    hours: 0, hoursEarnedCents: 0, hoursSettledCents: 0, openHoursCents: 0, openHours: 0, openTotalCents: 0,
   });
 }
 

@@ -143,6 +143,47 @@ describe("tuntityön tunnistus maksuissa", () => {
   });
 });
 
+describe("käsin kirjattu maksu kuittaa myös tuntivelkaa", () => {
+  it("vanhan kanavan payout kuittaa tunnit kun muuta velkaa ei ole", () => {
+    // Käsin kirjattu payout ei tiedä mistä rahasta on kysymys. Tuntikeikalla
+    // ikkunavelkaa ei ole, joten ilman ylivuotoa maksu ei kuitannut mitään ja
+    // maksudialogi esitäytti saman summan uudelleen — tuplamaksu.
+    const p = gig({ workerId: "jani", shifts: [shift("jani", 10)] });   // 150 €
+    p.crew = [member("jani", {
+      payouts: [{ id: "p1", amountCents: 150_00, windows: 0, status: "maksettu", createdAt: 1 }],
+    } as any)];
+    const [row] = computeWorkerSettlements(p);
+    expect(row.hoursEarnedCents).toBe(150_00);
+    expect(row.openHoursCents).toBe(0);
+    expect(row.openTotalCents).toBe(0);
+  });
+
+  it("ylivuoto menee ikkunoiden ja keltaisten JÄLKEEN, ei niiden ohi", () => {
+    // 10 punaista = 200 € + 10 h = 150 €. Käsin kirjattu 250 € kuittaa ensin
+    // punaiset (200 €) ja ylijäävä 50 € tunteja.
+    const p = gig({ workerId: "jani", red: 10, shifts: [shift("jani", 10)] });
+    p.crew = [member("jani", {
+      payouts: [{ id: "p1", amountCents: 250_00, windows: 0, status: "maksettu", createdAt: 1 }],
+    } as any)];
+    const [row] = computeWorkerSettlements(p);
+    expect(row.openP1Cents).toBe(0);
+    expect(row.openHoursCents).toBe(100_00);
+    expect(row.openTotalCents).toBe(100_00);
+  });
+});
+
+describe("tuntipalkka ei koskaan ylitä asiakastuntihintaa", () => {
+  it("rajaa väärin kirjatun tuntipalkan asiakashintaan", () => {
+    // Tekijän tuntipalkaksi on kirjattu 30 € vaikka asiakas maksaa 26 €.
+    // Miinuskate on kirjausvirhe: tekijä saa asiakashinnan, ei enempää —
+    // sama sääntö kuin `computeHourlyMoney.rateInverted`issa.
+    const p = gig({ workerId: "jani", shifts: [shift("jani", 10)], workerHourCents: 3000 });
+    const [row] = computeWorkerSettlements(p);
+    expect(row.hourRateCents).toBe(2600);
+    expect(row.hoursEarnedCents).toBe(260_00);
+  });
+});
+
 describe("tuntityö EI ole palkkaa kohdennetulla keikalla", () => {
   it("ei muuta seurantatunteja rahaksi kun keikka ei ole tuntitilassa", () => {
     // Sama työ maksettaisiin kahdesti: kerran ikkunoina, kerran tunteina.

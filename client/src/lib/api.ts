@@ -213,6 +213,11 @@ export interface HostCrewRow {
   member: CrewMember;
   stats: CrewMemberStats;
   onboarded: boolean;
+  /** Vuoroista kertyneet tunnit tällä keikalla — 0 kun keikka ei ole
+   *  tuntitilassa (silloin vuorot ovat seurantaa, eivät palkkaa). */
+  shiftHours?: number;
+  /** Tekijän tuntipalkka sentteinä (rajattu asiakastuntihintaan). */
+  hourRateCents?: number;
 }
 
 /** Client-side shape of an `era_invoices` row — `eraNumbers`/`rivit` arrive as

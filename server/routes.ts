@@ -31,6 +31,7 @@ import {
 } from "@shared/pricing";
 import { sanitizeGigData, computeTotals, emptyGigData, signatureRequired, signaturePrompt, contractPending, gigStatus, livePayments, withoutDashOnly, type GigData, MAX_CONTRACT_PAGES, MAX_CONTRACT_UPLOAD_LEN } from "@shared/gig";
 import { sanitizeMemberSignature } from "@shared/member-agreement";
+import { effectiveWorkerHourRateOf } from "@shared/project";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, isHourlyGig, billingModeOf, roundWorkHours, roundWorkHoursFromMinutes, cappedTimerHours, customerExpenses, customerHourRows, invoiceNaming, sanitizeBoard, sortedBoard, BOARD_CUSTOMER, MAX_BOARD_TEXT_LEN, MAX_BOARD_ENTRIES, toBoardKind, dayKey, isDayKey, addShiftEntry, computeShiftStats, MAX_SHIFT_NOTE_LEN, type ProjShift, type ProjBoardEntry, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeHourlyMoney, hourlyItemisation } from "@shared/hourly-money";
 import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2ExtraCharges, p2BillableCents, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
@@ -10659,12 +10660,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           })),
         })),
       });
+      /**
+       * TUNTITYÖ MUKAAN TIIMI-SIVULLE.
+       *
+       * Palkkayhteenveto laskee maksettavan `settleWorker`illa, joka tarvitsee
+       * tunnit ja tuntipalkan. Ne eivät ole `crewMemberStats`issa (se lukee
+       * vanhaa `project.hours`-kenttää), eikä clientillä ole vuororiveihin
+       * pääsyä — ilman näitä Tiimi-sivu näytti tuntikeikalla 0 € samaan aikaan
+       * kun Maksut-välilehti näytti todellisen velan.
+       */
+      const crewHourly = isHourlyGig(project);
+      const crewShiftHours = crewHourly
+        ? new Map(computeShiftStats((project.shifts ?? []) as ProjShift[]).byWorker.map((r) => [r.id, r.hours]))
+        : new Map<string, number>();
+      const crewHourRateCents = effectiveWorkerHourRateOf(project);
       const crew = (project.crew || [])
         .filter((m) => m.role !== "host")
         .map((m) => ({
           member: lightMember(m),
           stats: crewMemberStats(project, m),
           onboarded: isOnboarded(m, requiredAgreementIdsForSet(resolveAgreementSet(m)), WORKER_AGREEMENT_VERSION),
+          /** Vuoroista kertyneet tunnit — vain tuntitilassa (muualla ne ovat
+           *  seurantaa, eivät palkkaa). */
+          shiftHours: crewShiftHours.get(m.id) ?? 0,
+          hourRateCents: crewHourRateCents,
         }));
       // Deal + billable-window count so the payroll page can show the per-erä
       // kate (€1575 / erän ikkunat). eraWindows = founders' editable per-erä counts.

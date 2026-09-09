@@ -120,12 +120,18 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
     setSelectedIds(workers.filter((w) => (
       hrs ? w.openHoursCents > 0 : p2 ? w.openP2Cents > 0 : w.openP1Windows > 0 || w.openP1Cents > 0
     )).map((w) => w.workerId));
+    // Tuntitila esitäyttää maksamattomista tunneista. Muulla keikalla tunteja
+    // ei lasketa rahaksi lainkaan (ne ovat seurantaa), joten tämä välilehti on
+    // silloin KÄSINSYÖTTÖ: tekijän ja tuntien valinta on johtajan, ja kentät
+    // alkavat tyhjinä tuntipalkkaa lukuun ottamatta.
     const next: Record<string, WorkerRowState> = {};
     for (const w of workers) {
       next[w.workerId] = {
         // Tuntimaksulla ikkunoita ei laskuteta lainkaan: sama työ ei saa mennä
         // kahdesti (kerran tunteina, kerran ikkunoina).
         tunnit: hrs && w.openHours > 0 ? String(w.openHours) : "",
+        // Tuntipalkka esitäytetään aina kun tuntivälilehti on auki: se on keikan
+        // sovittu taksa, ja ilman sitä käsinsyöttö vaatisi sen muistamista.
         tuntihinta: hrs && w.hourRateCents > 0 ? String(w.hourRateCents / 100).replace(".", ",") : "",
         pestytIkkunat: hrs ? "" : p2
           ? (w.p2Washed > 0 ? String(w.p2Washed) : "")
@@ -185,8 +191,16 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
   });
   // Onko tälle erälle jo tehty maksu jollekin valitulle tekijälle?
   const alreadyPaidEra = isP2 || isHours ? [] : selectedWorkers.filter((w) => eraNumbers.every((n) => w.settledEras.includes(n)));
-  /** Tuntimaksun ylilaskutus: enemmän kuin tunneista on maksamatta. */
+  /**
+   * Tuntimaksun ylilaskutus: enemmän kuin tunneista on maksamatta.
+   *
+   * Varoitus vain kun järjestelmä TIETÄÄ paljonko tunneista kuuluu maksaa, eli
+   * kun tuntikertymää on olemassa. Käsin sovitulla tuntikorvauksella (keikka ei
+   * ole tuntitilassa, kertymä on nolla) jokainen oikeakin summa olisi muuten
+   * "ylilaskutusta" — varoitus joka palaa aina on varoitus jota ei lueta.
+   */
   const overHours = !isHours ? [] : selectedWorkers.filter((w) => {
+    if (w.hoursEarnedCents <= 0) return false;
     const line = preview.workers.find((t) => t.workerId === w.workerId);
     return !!line && line.ansaittuCents > w.openHoursCents + 1;
   });
@@ -319,7 +333,11 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
         </div>
 
         {selectedWorkers.length === 0 ? (
-          <p className="text-xs text-muted-foreground mb-3">Ei valittuja tekijöitä — valitse yllä olevasta listasta.</p>
+          <p className="text-xs text-muted-foreground mb-3">
+            {isHours && totalOpenHours <= 0
+              ? "Tälle keikalle ei ole kertynyt maksamattomia tunteja. Valitse tekijä yllä ja kirjaa sovitut tunnit käsin."
+              : "Ei valittuja tekijöitä — valitse yllä olevasta listasta."}
+          </p>
         ) : (
         <div className="space-y-3">
           {selectedWorkers.map((w) => {

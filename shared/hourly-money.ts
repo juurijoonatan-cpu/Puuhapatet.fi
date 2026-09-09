@@ -33,7 +33,7 @@
 import { FOUNDER_IDS, isFounder } from "./team";
 import { getCrew, DEFAULT_WORKER_PER_WINDOW_CENTS } from "./crew";
 import {
-  computeShiftStats, computeProjectTotals, expenseCustomerCents, expenseCustomerLabel, hourRateOf, workerHourRateOf,
+  computeShiftStats, computeProjectTotals, expenseCustomerCents, expenseCustomerLabel, hourRateOf, workerHourRateOf, effectiveWorkerHourRateOf,
   pricePerWindowOf, allPoints, customerChargeableExpenses,
   type CustomerChargeLine,
   type ProjectData, type ProjExpense, type ProjShift, type ShiftStats,
@@ -165,8 +165,10 @@ export function computeHourlyMoney(
   const hourRateCents = hourRateOf(data);
   const workerHourCents = workerHourRateOf(data);
   const rateInverted = workerHourCents > hourRateCents;
-  /** Miinuskate ei ole tulos vaan kirjausvirhe — tekijä saa silti omansa. */
-  const effectiveWorkerCents = rateInverted ? hourRateCents : workerHourCents;
+  /** Miinuskate ei ole tulos vaan kirjausvirhe — tekijä saa silti omansa.
+   *  Rajaus on jaettu (`effectiveWorkerHourRateOf`), jotta maksut ja tasaus
+   *  laskevat saman tekijän tuntipalkan täsmälleen samalla säännöllä. */
+  const effectiveWorkerCents = effectiveWorkerHourRateOf(data);
 
   const stats = opts?.stats
     ?? computeShiftStats((data.shifts ?? []) as ProjShift[], opts?.today);

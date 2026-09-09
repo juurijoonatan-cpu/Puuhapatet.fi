@@ -452,7 +452,14 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
     setMailDone(res.ok ? `Lähetetty: ${res.data?.to ?? "johtajille"}` : (res.error || "Lähetys epäonnistui"));
   };
 
-  const totalToMove = (report?.workerOpenTotalCents ?? totals.openTotalCents) + (report?.founderTransfer?.cents ?? 0);
+  /**
+   * SIIRRETTÄVÄÄ = avoin velka + kuittausta odottavat laskut. Luonnos varaa
+   * velan, joten pelkkä avoin summa tippuisi nollaan heti kun laskut on tehty
+   * — ennen kuin senttiäkään on liikkunut. Sama luku kuin siirtoraportissa,
+   * jotta välilehdet eivät voi olla eri mieltä samasta rahasta.
+   */
+  const workerToMove = report?.workerOpenTotalCents ?? (totals.openTotalCents + totals.pendingTotalCents);
+  const totalToMove = workerToMove + (report?.founderTransfer?.cents ?? 0);
 
   return (
     <div
@@ -636,9 +643,13 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
               <div style={{ display: "flex", flexWrap: "wrap", gap: T.space.sm + 2, marginBottom: T.space.md }}>
                 <StatTile
                   label="Siirrettävä yhteensä"
-                  value={fmtEurCents(totals.openTotalCents)}
-                  sub={totals.openTotalCents > 0 ? "punaiset + keltaiset + tunnit" : "kaikki maksettu ✓"}
-                  tone={totals.openTotalCents > 0 ? T.tone.warn : T.text.muted}
+                  value={fmtEurCents(workerToMove)}
+                  sub={workerToMove > 0
+                    ? (totals.pendingTotalCents > 0
+                        ? `punaiset + keltaiset + tunnit · ${fmtEurCents(totals.pendingTotalCents)} odottaa kuittausta`
+                        : "punaiset + keltaiset + tunnit")
+                    : "kaikki maksettu ✓"}
+                  tone={workerToMove > 0 ? T.tone.warn : T.text.muted}
                 />
                 <StatTile
                   label="Ikkunatyö"
@@ -653,7 +664,7 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                 <StatTile
                   label="Hoidettu"
                   value={fmtEurCents(totals.settledTotalCents)}
-                  sub={totals.eraPendingCents > 0 ? `+ ${fmtEurCents(totals.eraPendingCents)} odottaa kuittausta` : "maksut + erälaskut"}
+                  sub={totals.pendingTotalCents > 0 ? `+ ${fmtEurCents(totals.pendingTotalCents)} odottaa kuittausta` : "maksut + erälaskut"}
                   tone={T.tone.good}
                 />
               </div>
@@ -700,15 +711,17 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                             )}
                             <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.xs, color: T.text.faint }}>
                               hoidettu {fmtEurCents(r.settledTotalCents)}
-                              {r.eraPendingCents > 0 ? ` · kuittaamatta ${fmtEurCents(r.eraPendingCents)}` : ""}
+                              {r.pendingTotalCents > 0 ? ` · kuittaamatta ${fmtEurCents(r.pendingTotalCents)}` : ""}
                               {r.settledEras.length > 0 ? ` · erät ${r.settledEras.filter((n) => n > 0 && n < 9).join(", ") || "—"}` : ""}
                             </p>
                           </div>
                         </div>
                         <div style={{ textAlign: "right", flexShrink: 0 }}>
                           <p style={{ margin: 0, fontFamily: MONO, fontSize: T.size.label, letterSpacing: "0.1em", color: T.text.faint }}>SIIRRETTÄVÄ</p>
-                          <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: T.size.title, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: r.openTotalCents > 0 ? T.tone.warn : T.text.faint }}>
-                            {fmtEurCents(r.openTotalCents)}
+                          {/* Kuittaamaton luonnos on yhä siirrettävää rahaa:
+                              se ei ole vielä liikkunut mihinkään. */}
+                          <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: T.size.title, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: r.openTotalCents + r.pendingTotalCents > 0 ? T.tone.warn : T.text.faint }}>
+                            {fmtEurCents(r.openTotalCents + r.pendingTotalCents)}
                           </p>
                         </div>
                       </div>

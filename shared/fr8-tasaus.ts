@@ -22,7 +22,7 @@
  *     tasausta satojen eurojen verran. Johtaja kohdentaa ne itse.
  */
 
-import { allPoints, computeShiftStats, hourRateOf, workerHourRateOf, isHourlyGig, type ProjectData, type ProjShift } from "./project";
+import { allPoints, computeShiftStats, hourRateOf, effectiveWorkerHourRateOf, isHourlyGig, type ProjectData, type ProjShift } from "./project";
 import { p2FounderOpts, computeP2Billing, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT } from "./p2";
 import { getCrew, DEFAULT_WORKER_PER_WINDOW_CENTS } from "./crew";
 import { eraScopeOf } from "./era-billing";
@@ -481,7 +481,7 @@ export function buildTasaus(
     ? computeShiftStats((project.shifts ?? []) as ProjShift[])
     : { byWorker: [] as { id: string; hours: number }[] };
   const founderHourCents = hourRateOf(project);
-  const workerHourCents = workerHourRateOf(project);
+  const workerHourCents = effectiveWorkerHourRateOf(project);
   const hoursOwnByFounder: Record<string, number> = {};
   let workerHoursEarnedCents = 0;
   for (const row of shiftStats.byWorker) {

@@ -1259,7 +1259,9 @@ export default function AdminProjectPage() {
   });
   const dashTotals = sumWorkerSettlements(dashPayable);
   const dashOpenP1Cents = dashTotals.openP1Cents;
-  const dashOpenTotalCents = dashTotals.openTotalCents;
+  // Kuittaamaton luonnos on yhä siirrettävää: raha ei ole liikkunut. Sama
+  // sääntö kuin Maksut-välilehdellä ja siirtoraportissa.
+  const dashOpenTotalCents = dashTotals.openTotalCents + dashTotals.pendingTotalCents;
 
   // Display-name map + this gig's pickable crew (used by both the "who washed"
   // and "default washer" pickers).

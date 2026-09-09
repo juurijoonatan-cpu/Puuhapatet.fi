@@ -298,10 +298,10 @@ export function buildTransferReport(input: {
 
   const workers: TransferReportWorkerRow[] = settlements
     .map((r) => {
-      // KAIKKI KOLME VIRTAA. Keltaisten luonnos puuttui tästä, jolloin juuri
-      // tehty keltaisten maksu katosi raportilta: luonnos varaa velan, joten
-      // avoin summa oli nolla eikä mikään kenttä kertonut mihin se meni.
-      const pendingCents = r.eraPendingCents + r.hoursPendingCents + r.p2InvoicePendingCents;
+      // KAIKKI KOLME VIRTAA (`pendingTotalCents`). Luonnos varaa velan, joten
+      // ilman tätä juuri tehty maksu katosi raportilta: avoin summa oli nolla
+      // eikä mikään kenttä kertonut mihin se meni.
+      const pendingCents = r.pendingTotalCents;
       return {
         workerId: r.workerId,
         name: r.name,

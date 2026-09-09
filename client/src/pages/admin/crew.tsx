@@ -186,7 +186,7 @@ export default function AdminCrewPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {crew.map(({ member, stats, onboarded }) => (
+            {crew.map(({ member, stats, onboarded, shiftHours, hourRateCents }) => (
               <div key={member.id} className="rounded-2xl border bg-card p-4">
                 <WorkerCardHeader member={member} stats={stats} onboarded={onboarded} copied={copied} onCopy={copyLink} onUpdate={update} onRemove={remove} />
 
@@ -303,6 +303,7 @@ export default function AdminCrewPage() {
                   // kuin palkkayhteenvedossa ja Maksut-välilehdellä). Aiemmin tässä oli
                   // `stats.earnedCents − maksut`, joka sisälsi keltaiset ja ohitti
                   // erälaskuilla jo hoidetut summat → ehdotus oli liian suuri.
+                  const hoursMaps = eraMapsFor(eraInvoices, "hours");
                   const settled = settleWorker({
                     id: member.id, name: member.name, active: true, founder: false,
                     stats, payouts: member.payouts || [], p2Enabled,
@@ -310,6 +311,15 @@ export default function AdminCrewPage() {
                     p2Settled: {
                       sentCents: eraMapsFor(eraInvoices, "p2").eraSent[member.id] || 0,
                       pendingCents: eraMapsFor(eraInvoices, "p2").eraPending[member.id] || 0,
+                    },
+                    // Tuntityö mukaan: ilman näitä Tiimi-sivu näytti tuntikeikalla
+                    // 0 € samaan aikaan kun Maksut-välilehti näytti todellisen velan.
+                    hours: shiftHours ?? 0,
+                    hourRateCents: hourRateCents ?? 0,
+                    hoursSettled: {
+                      sentCents: hoursMaps.eraSent[member.id] || 0,
+                      pendingCents: hoursMaps.eraPending[member.id] || 0,
+                      hours: (hoursMaps.eraHours[member.id] || 0) + (hoursMaps.eraPendingHours[member.id] || 0),
                     },
                   });
                   const claimedWindows = (member.payouts || []).reduce((s, p) => s + (p.windows || 0), 0);
@@ -1061,11 +1071,12 @@ function PayrollSummary({ crew, eraInvoices, p2Enabled }: {
 }) {
   const eraMaps = eraMapsFor(eraInvoices, "p1");
   const p2Maps = eraMapsFor(eraInvoices, "p2");
+  const hoursMaps = eraMapsFor(eraInvoices, "hours");
   const rows = crew
     // Harjoittelija (esim. Milja) ei ole maksulistalla: hänen palkkansa tilittää
     // vastuujohtaja. Deaktivoitu tekijä ei myöskään ole maksettavana.
     .filter((c) => c.member.active && !isTraineeMember(c.member))
-    .map(({ member, stats }) => settleWorker({
+    .map(({ member, stats, shiftHours, hourRateCents }) => settleWorker({
       id: member.id,
       name: member.name,
       active: true,
@@ -1078,8 +1089,17 @@ function PayrollSummary({ crew, eraInvoices, p2Enabled }: {
       adjustmentCents: member.payAdjustmentCents ?? 0,
       era: eraMaps,
       p2Settled: { sentCents: p2Maps.eraSent[member.id] || 0, pendingCents: p2Maps.eraPending[member.id] || 0 },
+      // Kolmas rahavirta mukaan, jotta palkkayhteenveto ja Maksut-välilehti
+      // kertovat saman velan samasta tekijästä.
+      hours: shiftHours ?? 0,
+      hourRateCents: hourRateCents ?? 0,
+      hoursSettled: {
+        sentCents: hoursMaps.eraSent[member.id] || 0,
+        pendingCents: hoursMaps.eraPending[member.id] || 0,
+        hours: (hoursMaps.eraHours[member.id] || 0) + (hoursMaps.eraPendingHours[member.id] || 0),
+      },
     }))
-    .filter((r) => r.earnedCents > 0 || r.washed > 0)
+    .filter((r) => r.earnedCents > 0 || r.washed > 0 || r.hoursEarnedCents > 0)
     .sort((a, b) => b.openP1Cents - a.openP1Cents || b.p1EarnedCents - a.p1EarnedCents);
 
   if (rows.length === 0) return null;

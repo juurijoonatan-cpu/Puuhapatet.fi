@@ -561,8 +561,16 @@ export function buildTasaus(
    * jota kukaan ei ole vielä laskuttanut — juuri se minkä estämiseksi tämä
    * muunnelma on olemassa.
    *
-   * Kertymä on asiakkaan tuntihinta × kaikki tunnit: se on sama luku josta
-   * tuntilasku muodostuu (`computeHourlyMoney.billableCents`).
+   * Kertymä on asiakkaan tuntihinta × kaikki tunnit
+   * (`computeHourlyMoney.billableCents`).
+   *
+   * OSUUS ON ARVIO, EI TARKKA LUKU — sama rajoitus kuin keltaisilla: tuntilasku
+   * on könttäsumma joka voi sisältää myös tarvikkeet, alihankinnan ja
+   * laskuttamattomat ikkunat, eikä maksurivi kanna tietoa siitä mikä osa siitä
+   * oli tunteja. Suhde rajataan siksi yhteen: enimmillään koko tuntikertymä
+   * luetaan laskutetuksi, ei koskaan enempää. Päätepisteissä (ei laskutettu /
+   * kaikki laskutettu) luku on tarkka. Tämä kenttä on etusivun "Oma tulo"
+   * -arvio; keikan oma tasaus (`result`) ei käytä sitä.
    */
   const hoursAccruedCents = Math.round(
     shiftStats.byWorker.reduce((sum, r) => sum + r.hours, 0) * founderHourCents,

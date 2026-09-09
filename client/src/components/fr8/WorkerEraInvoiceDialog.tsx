@@ -212,6 +212,13 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
   const send = async () => {
     const activeWorkers = parsedWorkers.filter((w) => (w.ansaittuOverrideCents ?? 0) > 0 || w.pestytIkkunat > 0 || (w.tunnit ?? 0) > 0 || w.sovittuMuutosCents !== 0 || w.ennakkoCents !== 0);
     if (activeWorkers.length === 0) { setError("Valitse ainakin yksi tekijä ja täytä hänen tietonsa."); return; }
+    // Tunnit ilman tuntipalkkaa olisi nollan euron lasku, jonka tunnit silti
+    // kuittaisivat tuntikirjanpidon — velka jäisi auki ilman tuntimäärää.
+    const missingRate = activeWorkers.filter((w) => (w.tunnit ?? 0) > 0 && (w.tuntihintaCents ?? 0) <= 0);
+    if (missingRate.length > 0) {
+      setError(`Täytä €/tunti: ${missingRate.map((w) => w.name).join(", ")}.`);
+      return;
+    }
     setBusy(true);
     setError(null);
     const res = await api.createWorkerEraInvoiceBatch(jobId, { eraNumbers, workers: activeWorkers, dueDate, recipientId: payerId });

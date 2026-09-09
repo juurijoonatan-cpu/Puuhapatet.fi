@@ -86,8 +86,9 @@ describe("buildTransferReport", () => {
     const jani = r.workers.find((w) => w.workerId === "jani")!;
     expect(jani.pendingCents).toBe(100_00);
     expect(jani.openTotalCents).toBe(100_00);
-    // Avointa velkaa on → tekijä ei ole "hyväksytty" vaan laskua puuttuu.
-    expect(jani.approval).toBe("ei_laskua");
+    // Kuittaamaton luonnos on se tila josta merkin pitää kertoa: sen kanssa
+    // johtaja voisi luoda saman maksun toistamiseen.
+    expect(jani.approval).toBe("odottaa_tekijaa");
 
     const lines = r.instructions.filter((i) => i.toId === "jani");
     expect(lines.map((l) => l.status).sort()).toEqual(["lasku_tekematta", "odottaa_hyvaksyntaa"]);

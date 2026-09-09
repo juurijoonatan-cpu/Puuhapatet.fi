@@ -227,8 +227,12 @@ function payerFor(
  * MITÄTÖITY LASKU EI OLE HYVÄKSYNTÄ: se ei kuittaa velkaa eikä siirrä rahaa.
  */
 function approvalOf(pendingCents: number, openCents: number, hasLiveInvoice: boolean): WorkerApproval {
-  if (openCents > 0) return "ei_laskua";
+  // KUITTAAMATON LASKU ENSIN. Kun tekijällä on sekä hyväksymätön luonnos että
+  // laskuttamatonta velkaa, merkki kertoo luonnoksesta: se on se tila jossa
+  // johtaja voi tehdä kalliin virheen (luoda saman maksun toistamiseen).
+  // Laskuttamaton osuus näkyy silti omana summanaan ja omana siirtorivinään.
   if (pendingCents > 0) return "odottaa_tekijaa";
+  if (openCents > 0) return "ei_laskua";
   return hasLiveInvoice ? "hyvaksytty" : "ei_maksettavaa";
 }
 

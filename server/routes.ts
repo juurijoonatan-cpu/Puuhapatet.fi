@@ -3373,6 +3373,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const hoursEra = isHoursEraSelection(eraNumbers);
         const tunnit = hoursEra ? Math.max(0, Number(w?.tunnit) || 0) : 0;
         const tuntihintaCents = hoursEra ? Math.max(0, Math.round(Number(w?.tuntihintaCents) || 0)) : 0;
+        /**
+         * TUNTEJA EI KIRJATA ILMAN TUNTIPALKKAA.
+         *
+         * Nolla euron tuntipalkka tekisi nollan euron laskun, mutta sen tunnit
+         * kirjautuisivat silti "katetuiksi": maksamaton tuntimäärä painuisi
+         * pysyvästi nollaan vaikka koko velka on yhä auki, ja maksudialogi
+         * lukisi "maksamatta 0 h · 300,00 €". Pyydetään mieluummin puuttuva
+         * hinta kuin rikotaan tuntikirjanpito hiljaa.
+         */
+        if (tunnit > 0 && tuntihintaCents <= 0) {
+          return res.status(400).json({
+            error: `Tuntipalkka puuttuu (${name}). Täytä €/tunti ennen tuntimaksun luontia.`,
+          });
+        }
         // Keltaisten (2. vaihe) palkkio tulee palkkiotaulukosta per ikkuna, ei
         // kiinteästä 20 €:sta — client lähettää valmiin ansion, joka ohittaa
         // ikkunamäärä × vakio -laskennan. Vain P2-potissa hyväksytään.

@@ -163,9 +163,16 @@ function payerFor(
   return live?.recipientId || fallbackFounderId;
 }
 
-/** Tekijän hyväksyntätila hänen omista laskuistaan. */
+/**
+ * Tekijän hyväksyntätila hänen omista laskuistaan.
+ *
+ * MITÄTÖITY LASKU EI OLE HYVÄKSYNTÄ. Se ei kuittaa velkaa eikä siirrä rahaa,
+ * joten pelkkä hylätty lasku ei saa näyttää tekijää valmiiksi — muuten
+ * mitätöinnin jälkeen rivi jäisi lukemaan "hyväksytty ✓" vaikka mitään ei
+ * ole maksettu.
+ */
 function approvalFor(workerId: string, invoices: ReportEraInvoice[], openCents: number): WorkerApproval {
-  const own = invoices.filter((i) => i.kind === "tekija" && i.senderId === workerId);
+  const own = invoices.filter((i) => i.kind === "tekija" && i.senderId === workerId && i.tila !== "hylätty");
   if (own.some((i) => i.tila === "luonnos")) return "odottaa_tekijaa";
   if (openCents <= 0) return own.length > 0 ? "hyvaksytty" : "ei_maksettavaa";
   return "ei_laskua";

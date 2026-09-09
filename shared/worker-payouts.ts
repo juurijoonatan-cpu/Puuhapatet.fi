@@ -411,7 +411,10 @@ export function settleWorker(input: {
   const openHours = openHoursCents <= 0 ? 0 : round1(Math.min(hoursFromLedger, hoursFromMoney));
 
   return {
-    settledTotalCents: settledCents + p2SettledCents + hoursSettledCents,
+    // "Hoidettu" tarkoittaa oikeasti maksussa olevaa rahaa, ei luonnoksia:
+    // luonnos odottaa yhä tekijän hyväksyntää (`eraPendingCents` kertoo sen
+    // erikseen). Siksi tässä luetaan vain lähetetyt/hyväksytyt summat.
+    settledTotalCents: settledCents + (input.p2Settled?.sentCents ?? 0) + hoursSentCents,
     hours,
     hourRateCents,
     hoursEarnedCents,

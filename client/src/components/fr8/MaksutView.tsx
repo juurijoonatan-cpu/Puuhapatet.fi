@@ -534,6 +534,13 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
               {payable.length > 0 && (
                 <WorkerEraInvoiceDialog jobId={jobId} workers={payable} variant="button" onSent={() => void load()} />
               )}
+              {/* Johtajien siirto kirjataan tasausnäkymässä — vie sinne suoraan
+                  eikä jätä riviä listalle jota ei voi kuitata mistään. */}
+              {report?.founderTransfer && (
+                <button type="button" onClick={() => setTab("johtajat")} style={tokenButton()}>
+                  <Scale style={{ width: 13, height: 13 }} /> Kirjaa johtajien siirto
+                </button>
+              )}
               <button type="button" onClick={() => void sendReport()} disabled={mailBusy} style={tokenButton()}>
                 <Mail style={{ width: 13, height: 13 }} /> {mailBusy ? "Lähetetään…" : "Lähetä raportti meille"}
               </button>

@@ -1256,7 +1256,9 @@ export default function AdminProjectPage() {
     p2Era: eraSettlementByWorker(eraInvoices, "p2"),
     hoursEra: eraSettlementByWorker(eraInvoices, "hours"),
   });
-  const dashOpenP1Cents = sumWorkerSettlements(dashPayable).openP1Cents;
+  const dashTotals = sumWorkerSettlements(dashPayable);
+  const dashOpenP1Cents = dashTotals.openP1Cents;
+  const dashOpenTotalCents = dashTotals.openTotalCents;
 
   // Display-name map + this gig's pickable crew (used by both the "who washed"
   // and "default washer" pickers).
@@ -1626,6 +1628,7 @@ export default function AdminProjectPage() {
                -palkkeja ilman mitään tietoa siitä paljonko kuuluu maksaa. */
             gigBilling={billing}
             workerOpenP1Cents={dashOpenP1Cents}
+            workerOpenTotalCents={dashOpenTotalCents}
             onGoToMaksut={() => setTab("maksut")}
           />
         )}

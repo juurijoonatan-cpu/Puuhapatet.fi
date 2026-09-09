@@ -381,16 +381,20 @@ function buildGigReportHtml(
     ? computeWorkerSettlements(project, {
         era: eraSettlementByWorker(eraInvoicesForReport),
         p2Era: eraSettlementByWorker(eraInvoicesForReport, "p2"),
+        // Tuntityö on kolmas rahavirta: ilman tätä raportin "avoinna
+        // alihankkijoille" jätti tuntipalkat pois ja kate näytti liian suurelta.
+        hoursEra: eraSettlementByWorker(eraInvoicesForReport, "hours"),
         includeTrainees: true,   // harjoittelijan palkka on oikeaa kulua
         includeInactive: true,   // jo tehty työ ei katoa deaktivoinnista
       })
     : [];
   let crewPaidTotal = 0, crewPendingTotal = 0;
   const crewRows = settlements.map((r) => {
-    const paid = r.settledCents;
-    // "Avoinna" = punaisista siirtämättä + keltaisista odottamassa. Molemmat
-    // ovat oikeaa velkaa tekijälle, vaikka ne maksetaan eri aikaan.
-    const pending = r.openP1Cents + r.openP2Cents;
+    const paid = r.settledTotalCents;
+    // "Avoinna" = kaikki kolme virtaa: punaisista siirtämättä, keltaisista
+    // odottamassa ja tuntityöstä maksamatta. Kaikki ovat oikeaa velkaa
+    // tekijälle, vaikka ne maksetaan eri aikaan.
+    const pending = r.openTotalCents;
     crewPaidTotal += paid; crewPendingTotal += pending;
     if (paid === 0 && pending === 0) return "";
     return `

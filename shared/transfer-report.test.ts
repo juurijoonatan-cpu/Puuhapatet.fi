@@ -72,7 +72,10 @@ describe("buildTransferReport", () => {
     expect(toJani.why).toContain("h ×");
   });
 
-  it("estää siirron kunnes tekijä on hyväksynyt laskunsa", () => {
+  it("erottaa hyväksyntää odottavan laskun ja laskuttamattoman velan", () => {
+    // 10 punaista = 200 €. Luonnos kattaa puolet: 100 € odottaa tekijän
+    // hyväksyntää, 100 € odottaa että johtaja tekee laskun. Ne odottavat eri
+    // asiaa, joten ne ovat omina riveinään omilla selitteillään.
     const p = gig({ red: 10 });
     const draft: ReportEraInvoice = {
       id: 1, kind: "tekija", tila: "luonnos", senderId: "jani", recipientId: "matias",
@@ -81,13 +84,52 @@ describe("buildTransferReport", () => {
     };
     const r = buildTransferReport({ title: "T", project: p, payments: [], invoices: [draft] });
     const jani = r.workers.find((w) => w.workerId === "jani")!;
-    expect(jani.approval).toBe("odottaa_tekijaa");
-    // Luonnos varaa puolet velasta, loput 100 € on yhä siirrettävää.
+    expect(jani.pendingCents).toBe(100_00);
     expect(jani.openTotalCents).toBe(100_00);
+    // Avointa velkaa on → tekijä ei ole "hyväksytty" vaan laskua puuttuu.
+    expect(jani.approval).toBe("ei_laskua");
+
+    const lines = r.instructions.filter((i) => i.toId === "jani");
+    expect(lines.map((l) => l.status).sort()).toEqual(["lasku_tekematta", "odottaa_hyvaksyntaa"]);
+    expect(lines.every((l) => l.fromId === "matias")).toBe(true);  // laskun ostaja
+    expect(r.awaitingApprovalCents).toBe(100_00);
+    expect(r.missingInvoiceCents).toBe(100_00);
+    expect(r.blockedCents).toBe(200_00);
+    // Otsikkoluku ei tipu siitä että lasku on tehty — raha ei ole vielä liikkunut.
+    expect(r.workerOpenTotalCents).toBe(200_00);
+  });
+
+  it("luonnos yhdessä virrassa ei leimaa toisen virran velkaa hyväksyntää odottavaksi", () => {
+    // Punaisten luonnos kattaa punaiset kokonaan; tuntityö on yhä laskuttamatta.
+    // Ennen tämä rivi luki "Tekijä ei ole vielä hyväksynyt laskuaan" tunneista,
+    // joista ei ollut olemassa yhtään laskua.
+    const p = gig({ red: 10, shifts: [{ id: "s1", worker: "jani", day: "2026-01-02", hours: 4, at: 1 }] });
+    const draft: ReportEraInvoice = {
+      id: 1, kind: "tekija", tila: "luonnos", senderId: "jani", recipientId: "joonatan",
+      totalCents: 200_00, eraNumbers: [1, 2, 3],
+      rivit: { input: { pestytIkkunat: 10 }, computed: { ansaittuCents: 200_00 } },
+    };
+    const r = buildTransferReport({ title: "T", project: p, payments: [], invoices: [draft] });
+    const jani = r.workers.find((w) => w.workerId === "jani")!;
+    expect(jani.openP1Cents).toBe(0);
+    expect(jani.openHoursCents).toBe(60_00);
+    const hoursLine = r.instructions.find((i) => i.toId === "jani" && i.status === "lasku_tekematta")!;
+    expect(hoursLine.cents).toBe(60_00);
+    expect(hoursLine.why).toContain("4 h ×");
+  });
+
+  it("selite laskee jäljellä olevista tunneista, ei koko keikan tunneista", () => {
+    const p = gig({ shifts: [{ id: "s1", worker: "jani", day: "2026-01-02", hours: 20, at: 1 }] });
+    const part: ReportEraInvoice = {
+      id: 4, kind: "tekija", tila: "hyväksytty", senderId: "jani", recipientId: "joonatan",
+      totalCents: 225_00, eraNumbers: [...HOURS_ERA_NUMBERS],
+      rivit: { input: { tunnit: 15 }, computed: { ansaittuCents: 225_00 } },
+    };
+    const r = buildTransferReport({ title: "T", project: p, payments: [], invoices: [part] });
     const line = r.instructions.find((i) => i.toId === "jani")!;
-    expect(line.blocked).toBe(true);
-    expect(line.fromId).toBe("matias");        // laskun ostaja voittaa erän saajan
-    expect(r.blockedCents).toBe(100_00);
+    expect(line.cents).toBe(75_00);              // 5 h × 15 €
+    expect(line.why).toContain("5 h ×");
+    expect(line.why).not.toContain("20 h");
   });
 
   it("merkitsee tekijän hyväksytyksi kun velka on kokonaan katettu", () => {
@@ -103,6 +145,24 @@ describe("buildTransferReport", () => {
     expect(jani.approval).toBe("hyvaksytty");
     expect(r.instructions.filter((i) => i.kind === "worker")).toEqual([]);
     expect(r.blockedCents).toBe(0);
+  });
+
+  it("pitää pelkän tuntiluonnoksen tekijän raportilla", () => {
+    // Aiemmin suodatin katsoi vain punaisten luonnoksia, joten tekijä jonka
+    // ainoa tapahtuma oli tuntityön luonnos katosi raportilta kokonaan.
+    const p = gig({ shifts: [{ id: "s1", worker: "jani", day: "2026-01-02", hours: 10, at: 1 }] });
+    const draft: ReportEraInvoice = {
+      id: 5, kind: "tekija", tila: "luonnos", senderId: "jani", recipientId: "joonatan",
+      totalCents: 150_00, eraNumbers: [...HOURS_ERA_NUMBERS],
+      rivit: { input: { tunnit: 10 }, computed: { ansaittuCents: 150_00 } },
+    };
+    const r = buildTransferReport({ title: "T", project: p, payments: [], invoices: [draft] });
+    const jani = r.workers.find((w) => w.workerId === "jani");
+    expect(jani).toBeDefined();
+    expect(jani!.pendingCents).toBe(150_00);
+    expect(jani!.approval).toBe("odottaa_tekijaa");
+    expect(r.awaitingApprovalCents).toBe(150_00);
+    expect(r.workerOpenTotalCents).toBe(150_00);
   });
 
   it("laskee tuntipotin maksun tekijän tuntivelkaa vastaan", () => {
@@ -133,6 +193,36 @@ describe("buildTransferReport", () => {
     expect(founderLine.cents).toBe(r.founderTransfer!.cents);
     expect(founderLine.blocked).toBe(false);
     expect(r.founders.map((f) => f.id).sort()).toEqual(["joonatan", "matias"]);
+  });
+
+  it("erittelee asiakaslaskutuksen virroittain eikä lue tuntilaskua urakaksi", () => {
+    const p = gig({ red: 10 });
+    const r = buildTransferReport({
+      title: "T",
+      project: p,
+      payments: [
+        { t: 1, amountCents: 1575_00, scope: "p1", biller: { id: "joonatan" } },
+        { t: 2, amountCents: 950_00, scope: "hours", biller: { id: "joonatan" } },
+        { t: 3, amountCents: 300_00, scope: "all", parts: { hours: 120_00, p2: 80_00 }, biller: { id: "matias" } },
+      ],
+      invoices: [],
+    });
+    expect(r.p1InvoicedCents).toBe(1675_00);     // 1575 + (300 − 120 − 80)
+    expect(r.hoursInvoicedCents).toBe(1070_00);  // 950 + 120
+    expect(r.p2InvoicedCents).toBe(80_00);
+    expect(r.invoicedTotalCents).toBe(2825_00);  // jokainen euro kerran
+  });
+
+  it("ei listaa harjoittelijaa siirtona — hänelle ei voi tehdä laskua", () => {
+    // Harjoittelija ei laskuta meitä; hänen palkkansa tilittää vastuujohtaja.
+    // Jos hän olisi listalla, siirtoa ei saisi tehtyä mistään.
+    const p = gig({
+      red: 10, workerId: "milja",
+      crew: [member("milja", { name: "Milja" })],
+    });
+    const r = buildTransferReport({ title: "T", project: p, payments: [], invoices: [] });
+    expect(r.workers.some((w) => w.workerId === "milja")).toBe(false);
+    expect(r.instructions.filter((i) => i.kind === "worker")).toEqual([]);
   });
 
   it("kertoo viimeisimmän asiakaslaskun ja laskutuksen yhteensä", () => {

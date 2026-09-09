@@ -194,7 +194,7 @@ function buildTransferReportHtml(r: TransferReport): string {
         <td style="padding:10px 0;font-size:14px;color:#1A1A1A">
           <strong>${esc(t.fromName)} → ${esc(t.toName)}</strong>
           <div style="color:#8C8A82;font-size:12px;margin-top:2px">${esc(t.why)}</div>
-          ${t.blocked ? `<div style="color:#B45309;font-size:12px;margin-top:2px">⏳ ${esc(t.blockedReason || "Odottaa hyväksyntää")}</div>` : ""}
+          ${t.blockedReason ? `<div style="color:#B45309;font-size:12px;margin-top:2px">⏳ ${esc(t.blockedReason)}</div>` : ""}
         </td>
         <td style="padding:10px 0;text-align:right;font-size:17px;font-weight:800;color:${t.blocked ? "#B45309" : "#1A1A1A"};font-variant-numeric:tabular-nums;white-space:nowrap">${eur(t.cents)}</td>
       </tr>`).join("")
@@ -206,7 +206,13 @@ function buildTransferReportHtml(r: TransferReport): string {
         const bits: string[] = [];
         if (w.openP1Cents > 0 || w.p1Washed > 0) bits.push(`${num(w.p1Washed)} ikkunaa ${eur(w.openP1Cents)}`);
         if (w.openP2Cents > 0) bits.push(`keltaiset ${eur(w.openP2Cents)}`);
-        if (w.hours > 0) bits.push(`${num(w.hours)} h × ${eur(w.hourRateCents)} = ${eur(w.openHoursCents)}`);
+        // Tunnit MAKSAMATTOMISTA tunneista, ei koko keikan tuntimäärästä:
+        // osamaksun jälkeen kertolasku ei muuten täsmää omaan tulokseensa.
+        if (w.hours > 0) {
+          bits.push(w.openHours > 0 && w.hourRateCents > 0
+            ? `${num(w.openHours)} h × ${eur(w.hourRateCents)} = ${eur(w.openHoursCents)}`
+            : `${num(w.hours)} h tehty · maksamatta ${eur(w.openHoursCents)}`);
+        }
         return `
       <tr style="border-bottom:1px solid #E4E1D7">
         <td style="padding:8px 0;font-size:13px;color:#1A1A1A">
@@ -231,6 +237,7 @@ function buildTransferReportHtml(r: TransferReport): string {
       </tr>`).join("");
 
   const totalToMove = r.workerOpenTotalCents + (r.founderTransfer?.cents ?? 0);
+  const invoicedRest = r.p2InvoicedCents + r.hoursInvoicedCents;
 
   return `
 <!DOCTYPE html><html lang="fi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -253,7 +260,8 @@ function buildTransferReportHtml(r: TransferReport): string {
           <td style="padding:10px 0;border-top:2px solid #1A1A1A;text-align:right;font-size:20px;font-weight:800;color:#1A1A1A;font-variant-numeric:tabular-nums">${eur(totalToMove)}</td>
         </tr>
       </table>
-      ${r.blockedCents > 0 ? `<p style="margin:10px 0 0;color:#B45309;font-size:12px;line-height:1.6">Näistä ${eur(r.blockedCents)} odottaa vielä tekijän omaa hyväksyntää — älä siirrä ennen kuin lasku on hyväksytty.</p>` : ""}
+      ${r.awaitingApprovalCents > 0 ? `<p style="margin:10px 0 0;color:#B45309;font-size:12px;line-height:1.6">Näistä ${eur(r.awaitingApprovalCents)} odottaa tekijän hyväksyntää — älä siirrä ennen kuin lasku on hyväksytty.</p>` : ""}
+      ${r.missingInvoiceCents > 0 ? `<p style="margin:6px 0 0;color:#B45309;font-size:12px;line-height:1.6">${eur(r.missingInvoiceCents)} odottaa laskun luontia: tee tekijälle maksu Maksut-välilehdeltä, hyväksynnän jälkeen siirto.</p>` : ""}
 
       <p style="margin:24px 0 6px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Kunkin tekijän osuus</p>
       <table width="100%" cellpadding="0" cellspacing="0" style="border-top:2px solid #1A1A1A">
@@ -287,7 +295,9 @@ function buildTransferReportHtml(r: TransferReport): string {
       <p style="margin:24px 0 6px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Asiakkaalta laskutettu</p>
       <table width="100%" cellpadding="0" cellspacing="0">
         <tr><td style="padding:5px 0;font-size:13px;color:#8C8A82">Urakka (punaiset)</td><td style="padding:5px 0;text-align:right;font-size:13px;color:#1A1A1A;font-variant-numeric:tabular-nums">${eur(r.p1InvoicedCents)}</td></tr>
-        ${r.p2InvoicedCents > 0 ? `<tr><td style="padding:5px 0;font-size:13px;color:#8C8A82">Lisätyöt ja tuntityö</td><td style="padding:5px 0;text-align:right;font-size:13px;color:#1A1A1A;font-variant-numeric:tabular-nums">${eur(r.p2InvoicedCents)}</td></tr>` : ""}
+        ${r.p2InvoicedCents > 0 ? `<tr><td style="padding:5px 0;font-size:13px;color:#8C8A82">Lisätyöt (keltaiset)</td><td style="padding:5px 0;text-align:right;font-size:13px;color:#1A1A1A;font-variant-numeric:tabular-nums">${eur(r.p2InvoicedCents)}</td></tr>` : ""}
+        ${r.hoursInvoicedCents > 0 ? `<tr><td style="padding:5px 0;font-size:13px;color:#8C8A82">Tuntityö</td><td style="padding:5px 0;text-align:right;font-size:13px;color:#1A1A1A;font-variant-numeric:tabular-nums">${eur(r.hoursInvoicedCents)}</td></tr>` : ""}
+        ${invoicedRest === 0 && r.invoicedTotalCents > r.p1InvoicedCents ? `<tr><td style="padding:5px 0;font-size:13px;color:#8C8A82">Muu laskutus</td><td style="padding:5px 0;text-align:right;font-size:13px;color:#1A1A1A;font-variant-numeric:tabular-nums">${eur(r.invoicedTotalCents - r.p1InvoicedCents)}</td></tr>` : ""}
         <tr><td style="padding:10px 0;border-top:2px solid #1A1A1A;font-size:15px;font-weight:700;color:#1A1A1A">Yhteensä</td><td style="padding:10px 0;border-top:2px solid #1A1A1A;text-align:right;font-size:16px;font-weight:800;color:#1A1A1A;font-variant-numeric:tabular-nums">${eur(r.invoicedTotalCents)}</td></tr>
       </table>
     </div>

@@ -331,18 +331,24 @@ function TransferRow({ t }: { t: TransferInstruction }) {
           {t.fromName}
           <ArrowRight style={{ width: 13, height: 13, color: T.text.faint, flexShrink: 0 }} />
           {t.toName}
+          {t.status === "valmis" && <span style={chip(T.tone.good, T.tone.goodBg)}>siirrä nyt</span>}
           {t.kind === "founder" && <span style={chip(T.tone.info, T.tone.infoBg)}>johtajien tasaus</span>}
         </p>
         <p style={{ margin: "3px 0 0", fontFamily: FONT, fontSize: T.size.xs, color: T.text.muted, lineHeight: 1.45 }}>{t.why}</p>
-        {t.blocked && (
-          <p style={{ margin: "3px 0 0", fontFamily: FONT, fontSize: T.size.xs, color: T.tone.warn, display: "flex", alignItems: "center", gap: 5 }}>
+        {t.blockedReason && (
+          <p style={{
+            margin: "3px 0 0", fontFamily: FONT, fontSize: T.size.xs,
+            color: t.status === "odottaa_hyvaksyntaa" ? T.tone.warn : T.tone.info,
+            display: "flex", alignItems: "center", gap: 5,
+          }}>
             <Clock style={{ width: 11, height: 11, flexShrink: 0 }} /> {t.blockedReason}
           </p>
         )}
       </div>
       <span style={{
         flexShrink: 0, fontFamily: FONT, fontSize: T.size.title, fontWeight: 800,
-        fontVariantNumeric: "tabular-nums", color: t.blocked ? T.tone.warn : T.text.primary,
+        fontVariantNumeric: "tabular-nums",
+        color: t.status === "valmis" ? T.tone.good : t.status === "odottaa_hyvaksyntaa" ? T.tone.warn : T.tone.info,
       }}>
         {fmtEurCents(t.cents)}
       </span>
@@ -513,16 +519,26 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
             }}>
               {fmtEurCents(totalToMove)}
             </div>
-            {report && report.blockedCents > 0 && (
+            {/* Kaksi eri odotusta, kaksi eri tekemistä: hyväksyntää odottava
+                lasku on jo tehty, laskuton velka odottaa johtajaa. Yksi
+                yhteinen "estetty"-varoitus koko summan päälle ei kertonut
+                kummastakaan mitä pitäisi tehdä. */}
+            {report && report.awaitingApprovalCents > 0 && (
               <p style={{ margin: `${T.space.sm}px 0 0`, fontFamily: FONT, fontSize: T.size.sm, color: T.tone.warn, display: "flex", alignItems: "center", gap: 6 }}>
+                <Clock style={{ width: 13, height: 13, flexShrink: 0 }} />
+                {fmtEurCents(report.awaitingApprovalCents)} odottaa tekijän hyväksyntää.
+              </p>
+            )}
+            {report && report.missingInvoiceCents > 0 && (
+              <p style={{ margin: `${T.space.xs}px 0 0`, fontFamily: FONT, fontSize: T.size.sm, color: T.tone.info, display: "flex", alignItems: "center", gap: 6 }}>
                 <AlertTriangle style={{ width: 13, height: 13, flexShrink: 0 }} />
-                {fmtEurCents(report.blockedCents)} odottaa vielä tekijän omaa hyväksyntää.
+                {fmtEurCents(report.missingInvoiceCents)} odottaa laskun luontia — "Maksa tekijöille".
               </p>
             )}
 
             {report && report.instructions.length > 0 ? (
               <div style={{ marginTop: T.space.lg }}>
-                {report.instructions.map((t, i) => <TransferRow key={`${t.kind}-${t.toId}-${i}`} t={t} />)}
+                {report.instructions.map((t, i) => <TransferRow key={`${t.kind}-${t.toId}-${t.status}-${i}`} t={t} />)}
               </div>
             ) : (
               <p style={{ margin: `${T.space.md}px 0 0`, fontFamily: FONT, fontSize: T.size.sm, color: T.text.muted }}>

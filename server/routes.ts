@@ -166,7 +166,16 @@ async function loadEraInvoicesForReport(jobId: number): Promise<ReportEraInvoice
       rivit: (() => { try { return JSON.parse(r.rivit as any); } catch { return null; } })(),
     }));
   } catch (e) {
-    if (!isMissingTableError(e)) console.warn("era invoice load for report failed:", (e as any)?.message);
+    /**
+     * VAIN PUUTTUVA TAULU NIELLÄÄN. Migraatio ajamatta = keikalla ei ole vielä
+     * yhtään erälaskua, ja tyhjä lista on silloin totuus.
+     *
+     * Muu virhe EI ole tyhjä lista: tämä lista ratkaisee mitä tekijöille on jo
+     * maksettu, ja siirtoraportti kertoisi hetkellisen kyselyvirheen jälkeen
+     * jokaisen tekijän koko velan maksamattomana — eli kutsuisi maksamaan
+     * uudelleen. Parempi kaatua näkyvästi kuin lähettää väärä siirtolista.
+     */
+    if (!isMissingTableError(e)) throw e;
     return [];
   }
 }
@@ -203,6 +212,9 @@ function buildTransferReportHtml(r: TransferReport): string {
 
   const workerRows = r.workers.length
     ? r.workers.map((w) => {
+        // Sarake on avoin velka + kuittausta odottavat laskut, sama kuin
+        // otsikkosumma — muuten sarake ei voi laskea yhteen otsikkoluvuksi
+        // heti kun yksikin luonnos on olemassa.
         const a = APPROVAL[w.approval] ?? APPROVAL.ei_laskua;
         const bits: string[] = [];
         // Ikkunamäärä MAKSAMATTOMISTA ikkunoista, sama sääntö kuin jaetussa
@@ -231,7 +243,7 @@ function buildTransferReportHtml(r: TransferReport): string {
           <div style="color:${a.color};font-size:11px;margin-top:2px">${a.text}</div>
         </td>
         <td style="padding:8px 0;text-align:right;font-size:13px;color:#8C8A82;font-variant-numeric:tabular-nums">${eur(w.settledCents)}</td>
-        <td style="padding:8px 0;text-align:right;font-size:14px;font-weight:700;color:${w.openTotalCents > 0 ? "#B45309" : "#8C8A82"};font-variant-numeric:tabular-nums">${eur(w.openTotalCents)}</td>
+        <td style="padding:8px 0;text-align:right;font-size:14px;font-weight:700;color:${w.openTotalCents + w.pendingCents > 0 ? "#B45309" : "#8C8A82"};font-variant-numeric:tabular-nums">${eur(w.openTotalCents + w.pendingCents)}</td>
       </tr>`;
       }).join("")
     : `<tr><td colspan="3" style="padding:8px 0;font-size:13px;color:#8C8A82">Ei tekijöitä.</td></tr>`;

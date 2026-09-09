@@ -431,9 +431,19 @@ export function settleWorker(input: {
   const hoursSentCents = input.hoursSettled?.sentCents ?? 0;
   const hoursPendingCents = input.hoursSettled?.pendingCents ?? 0;
   const hoursSettledCents = hoursSentCents + hoursPendingCents;
-  // Punaisten ylivuoto kuittaa tuntivelkaa ENNEN keltaisia: tunnit ovat
-  // maksettavaa nyt, keltaiset vasta asiakkaan maksun jälkeen.
-  const openHoursCents = Math.max(0, hoursEarnedCents - (hoursSettledCents + p1Overflow));
+  /**
+   * Punaisten ylivuoto kuittaa tuntivelkaa ENNEN keltaisia: tunnit ovat
+   * maksettavaa nyt, keltaiset vasta asiakkaan maksun jälkeen.
+   *
+   * Ylivuotoa syntyy VAIN kohdentamattomasta rahasta (käsin kirjattu payout).
+   * Tuntipotin oma lasku on nimenomaisesti merkitty tunneiksi, joten se ei saa
+   * valua mihinkään muualle: sovittu 150 €:n tuntimaksu keikalla jolla ei ole
+   * tuntikertymää söi muuten tekijän keltaista velkaa, vaikka asiakas ei ollut
+   * maksanut keltaisista senttiäkään.
+   */
+  const hoursNeedCents = Math.max(0, hoursEarnedCents - hoursSettledCents);
+  const hoursFromOverflow = Math.min(hoursNeedCents, p1Overflow);
+  const openHoursCents = hoursNeedCents - hoursFromOverflow;
   // Sama sääntö kuin ikkunoilla: ota PIENEMPI kahdesta lähteestä, ettei kumpikaan
   // yksin nosta esitäyttöä. Rahasta johdettu tuntimäärä on lopullinen totuus.
   const hoursFromLedger = Math.max(0, hours - (input.hoursSettled?.hours ?? 0));
@@ -455,7 +465,7 @@ export function settleWorker(input: {
    * ennen kuin asiakas oli maksanut siitä senttiäkään, ja tuntivelka jäi
    * silti auki — eli sama työ tuli maksettavaksi toisen kerran.
    */
-  const hoursOverflow = Math.max(0, hoursSettledCents + p1Overflow - hoursEarnedCents);
+  const hoursOverflow = p1Overflow - hoursFromOverflow;
   const p2Covered = Math.min(stats.p2EarnedCents, p2SettledCents + hoursOverflow);
   const openP2Cents = Math.max(0, stats.p2EarnedCents - p2Covered);
 

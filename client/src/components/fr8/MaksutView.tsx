@@ -740,7 +740,11 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                         <AdjustmentControl
                           name={r.name}
                           cents={r.p1AdjustmentCents}
-                          onSave={(c) => onSetAdjustment(r.workerId, c)}
+                          // Vähennys muuttaa maksettavaa, joten siirtoraportti
+                          // haetaan uudelleen: muuten Siirrot-välilehti ja
+                          // otsikkosumma jäivät näyttämään vanhaa lukua samalla
+                          // kun tämä rivi päivittyi.
+                          onSave={async (c) => { await onSetAdjustment(r.workerId, c); await load(); }}
                         />
                       )}
                     </div>

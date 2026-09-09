@@ -205,6 +205,35 @@ describe("käsin kirjattu maksu kuittaa myös tuntivelkaa", () => {
   });
 });
 
+describe("kohdennettu raha ei valu toiseen pottiin", () => {
+  it("tuntipotin lasku ei kuittaa keltaista velkaa", () => {
+    // Sovittu 150 €:n tuntimaksu keikalla jolla ei ole tuntikertymää: lasku on
+    // merkitty tunneiksi, joten se ei saa syödä keltaista velkaa, jota asiakas
+    // ei ole vielä maksanut.
+    const p = gig({ workerId: "jani", red: 0 });
+    p.marks = { "1": { marks: Array.from({ length: 10 }, (_, i) => ({ x: i, y: 0, p: 2 as const })) } } as any;
+    const statuses: any = {};
+    const washedBy: Record<string, string> = {};
+    const offers: any = {};
+    for (let i = 0; i < 10; i++) {
+      statuses[`1#${i}`] = "pesty";
+      washedBy[`1#${i}`] = "jani";
+      offers[`1#${i}`] = { status: "locked", priceCents: 3750, version: 1, lockedCents: 3750 };
+    }
+    p.statuses = statuses;
+    p.washedBy = washedBy;
+    p.p2 = { enabled: true, workerSharePct: 53, offers, events: [] } as any;
+
+    const invoices = [hoursInvoice({ senderId: "jani", tunnit: 10, ansaittuCents: 150_00 })];
+    const [row] = computeWorkerSettlements(p, {
+      p2Era: eraSettlementByWorker(invoices, "p2"),
+      hoursEra: eraSettlementByWorker(invoices, "hours"),
+    });
+    expect(row.p2EarnedCents).toBeGreaterThan(0);
+    expect(row.openP2Cents).toBe(row.p2EarnedCents);   // keltaiset koskematta
+  });
+});
+
 describe("tuntipalkka ei koskaan ylitä asiakastuntihintaa", () => {
   it("rajaa väärin kirjatun tuntipalkan asiakashintaan", () => {
     // Tekijän tuntipalkaksi on kirjattu 30 € vaikka asiakas maksaa 26 €.

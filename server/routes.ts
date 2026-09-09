@@ -3337,7 +3337,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           continue;
         }
         const name = String(w?.name || workerId).slice(0, 200);
-        const pestytIkkunat = Math.max(0, Number(w?.pestytIkkunat) || 0);
+        const pestytIkkunat = isHoursEraSelection(eraNumbers) ? 0 : Math.max(0, Number(w?.pestytIkkunat) || 0);
         const sovittuMuutosCents = Math.round(Number(w?.sovittuMuutosCents) || 0);
         const ennakkoCents = Math.max(0, Math.round(Number(w?.ennakkoCents) || 0));
         /**
@@ -3347,8 +3347,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
          * luvun samasta paikasta — ennen tuntityö piti kirjoittaa "sovittu
          * muutos" -kenttään, eikä mikään näistä osannut tunnistaa sitä.
          */
-        const tunnit = Math.max(0, Number(w?.tunnit) || 0);
-        const tuntihintaCents = Math.max(0, Math.round(Number(w?.tuntihintaCents) || 0));
+        /**
+         * YKSI LASKU = YKSI RAHAVIRTA.
+         *
+         * Maksettavan laskenta kohdistaa laskun kokonaisuudessaan sille
+         * virralle jonka erävalinta kertoo (`eraScopeOf`). Jos samalle laskulle
+         * kirjattaisiin sekä ikkunoita että tunteja, koko summa kuittaisi vain
+         * toista velkaa ja toinen jäisi auki — sama työ tulisi maksettavaksi
+         * kahdesti. Siksi kentät rajataan tässä erävalinnan mukaan: tuntipotti
+         * kirjaa tunnit, muut potit ikkunat.
+         */
+        const hoursEra = isHoursEraSelection(eraNumbers);
+        const tunnit = hoursEra ? Math.max(0, Number(w?.tunnit) || 0) : 0;
+        const tuntihintaCents = hoursEra ? Math.max(0, Math.round(Number(w?.tuntihintaCents) || 0)) : 0;
         // Keltaisten (2. vaihe) palkkio tulee palkkiotaulukosta per ikkuna, ei
         // kiinteästä 20 €:sta — client lähettää valmiin ansion, joka ohittaa
         // ikkunamäärä × vakio -laskennan. Vain P2-potissa hyväksytään.

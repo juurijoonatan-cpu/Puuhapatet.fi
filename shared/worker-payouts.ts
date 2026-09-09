@@ -270,6 +270,12 @@ export function computeWorkerSettlements(
    * tehokkuus). Jos ne muutettaisiin siellä rahaksi, sama työ maksettaisiin
    * kahdesti — kerran ikkunoina ja kerran tunteina. Tuntipalkan voi silti aina
    * kirjata käsin maksudialogin "Tunnit"-välilehdeltä, jos niin on sovittu.
+   *
+   * TUNTIKEIKALLA IKKUNAPALKKA JÄÄ VOIMAAN, ja se on tarkoitus eikä tuplaus:
+   * ikkunatyö on tuntikeikallakin oma veloituksensa tuntien rinnalla
+   * (`computeWindowMoney` laskuttaa laskuttamattomat ikkunat asiakkaalta ja
+   * maksaa pesijälle hänen ikkunataksansa). Ikkunat pestään usein ennen
+   * tuntitilaan siirtymistä, eikä sama työ ole molemmissa.
    */
   const hourly = isHourlyGig(project);
   const shiftStats = hourly
@@ -366,8 +372,9 @@ export function settleWorker(input: {
   // maksuilla. Luonnokset lasketaan mukaan kuittaukseen — muuten juuri luotu maksu
   // näkyisi yhä "Avoinna"na ja johtaja loisi sen toistamiseen (ks. eraPendingCents).
   //
-  // Käsin kirjatut payoutit (vanha kanava) eivät tiedä kummasta rahasta on kysymys,
-  // joten ne kuittaavat ensin punaista ja ylivuoto menee keltaiseen.
+  // Käsin kirjatut payoutit (vanha kanava) eivät tiedä mistä rahasta on kysymys,
+  // joten ne kuittaavat velkaa järjestyksessä punaiset → tunnit → keltaiset
+  // (ks. ylivuodon perustelu alempana).
   const p2SettledCents = (input.p2Settled?.sentCents ?? 0) + (input.p2Settled?.pendingCents ?? 0);
   // Sovittu vähennys/lisä pienentää (tai kasvattaa) maksettavaa punaista. Brutto
   // (`p1EarnedCents`) säilyy koskemattomana, jotta ikkunat ja raha täsmäävät yhä.
@@ -375,24 +382,14 @@ export function settleWorker(input: {
   const p1PayableCents = Math.max(0, stats.p1EarnedCents + p1AdjustmentCents);
   const reservedCents = settledCents + eraPendingCents;
   const p1Covered = Math.min(p1PayableCents, reservedCents);
-  // Ylivuoto keltaiseen lasketaan BRUTOSTA, ei vähennetystä summasta. Muuten
-  // sovittu vähennys olisi syönyt keltaisia: jos punaiset oli jo laskutettu
+  // Ylivuoto lasketaan BRUTOSTA, ei vähennetystä summasta. Muuten sovittu
+  // vähennys olisi syönyt seuraavaa pottia: jos punaiset oli jo laskutettu
   // täytenä (100 €) ja johtaja kirjasi jälkikäteen 10 € vähennyksen, erotus olisi
-  // valunut "ylivuotona" keltaisten päälle ja pienentänyt niitä 10 € — vaikka
-  // vähennys sovittiin punaisista. Aitoon ylimaksuun (yli bruton) sääntö pätee
-  // edelleen: käsin kirjattu liian iso maksu kuittaa keltaista.
+  // valunut "ylivuotona" eteenpäin ja pienentänyt sitä 10 € — vaikka vähennys
+  // sovittiin punaisista. Aitoon ylimaksuun (yli bruton) sääntö pätee edelleen.
+  // Ylivuodon KOHDE ratkaistaan alempana, tuntien laskennan jälkeen.
   const p1Overflow = Math.max(0, reservedCents - Math.max(p1PayableCents, stats.p1EarnedCents));
-  const p2Covered = Math.min(stats.p2EarnedCents, p2SettledCents + p1Overflow);
   const openP1Cents = Math.max(0, p1PayableCents - p1Covered);
-  const openP2Cents = Math.max(0, stats.p2EarnedCents - p2Covered);
-  /**
-   * YLIVUOTO JATKUU TUNTEIHIN. Käsin kirjattu payout (vanha kanava) ei tiedä
-   * mistä rahasta on kysymys, joten se kuittaa ensin punaista, sitten keltaista
-   * ja lopuksi tuntivelkaa. Ilman viimeistä lenkkiä tuntikeikan käsin kirjattu
-   * maksu ei kuitannut mitään — ikkunavelkaa ei ole, keltaista ei ole — ja
-   * maksudialogi esitäytti saman summan uudelleen. Se on tuplamaksu.
-   */
-  const p2Overflow = Math.max(0, p2SettledCents + p1Overflow - stats.p2EarnedCents);
 
   // Punaisia ikkunoita vielä maksamatta. Kun P2 ei ole päällä, keltaiset
   // maksetaan normaalilla taksalla (legacy), joten ne kuuluvat samaan pottiin.
@@ -434,8 +431,9 @@ export function settleWorker(input: {
   const hoursSentCents = input.hoursSettled?.sentCents ?? 0;
   const hoursPendingCents = input.hoursSettled?.pendingCents ?? 0;
   const hoursSettledCents = hoursSentCents + hoursPendingCents;
-  const hoursCoveredCents = hoursSettledCents + p2Overflow;
-  const openHoursCents = Math.max(0, hoursEarnedCents - hoursCoveredCents);
+  // Punaisten ylivuoto kuittaa tuntivelkaa ENNEN keltaisia: tunnit ovat
+  // maksettavaa nyt, keltaiset vasta asiakkaan maksun jälkeen.
+  const openHoursCents = Math.max(0, hoursEarnedCents - (hoursSettledCents + p1Overflow));
   // Sama sääntö kuin ikkunoilla: ota PIENEMPI kahdesta lähteestä, ettei kumpikaan
   // yksin nosta esitäyttöä. Rahasta johdettu tuntimäärä on lopullinen totuus.
   const hoursFromLedger = Math.max(0, hours - (input.hoursSettled?.hours ?? 0));
@@ -443,6 +441,23 @@ export function settleWorker(input: {
   // lopullinen totuus ja kirjanpito vain yläraja.
   const hoursFromMoney = hourRateCents > 0 ? openHoursCents / hourRateCents : 0;
   const openHours = openHoursCents <= 0 ? 0 : round1(Math.min(hoursFromLedger, hoursFromMoney));
+
+  /**
+   * YLIVUODON JÄRJESTYS: PUNAISET → TUNNIT → KELTAISET.
+   *
+   * Käsin kirjattu payout (vanha kanava) ei tiedä mistä rahasta on kysymys,
+   * joten se kuittaa velkaa järjestyksessä. Järjestys ei ole mielivaltainen:
+   * punaiset ja tunnit ovat maksettavaa NYT, keltaiset vasta sen jälkeen kun
+   * asiakas on maksanut keltaisten laskun.
+   *
+   * Aiemmin ylivuoto meni punaisista suoraan keltaisiin. Tuntikeikalla se
+   * tarkoitti kahta virhettä yhdellä maksulla: keltainen velka kuittautui
+   * ennen kuin asiakas oli maksanut siitä senttiäkään, ja tuntivelka jäi
+   * silti auki — eli sama työ tuli maksettavaksi toisen kerran.
+   */
+  const hoursOverflow = Math.max(0, hoursSettledCents + p1Overflow - hoursEarnedCents);
+  const p2Covered = Math.min(stats.p2EarnedCents, p2SettledCents + hoursOverflow);
+  const openP2Cents = Math.max(0, stats.p2EarnedCents - p2Covered);
 
   const p2InvoicePendingCents = input.p2Settled?.pendingCents ?? 0;
 

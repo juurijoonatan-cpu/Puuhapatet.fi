@@ -232,8 +232,10 @@ export interface TekijaPesu {
    * tehtyä vain kirjoittamalla tunnit käsin "sovittu muutos" -kenttään, jolloin
    * lasku ei kertonut mistä summa tuli eikä mikään näkymä osannut lukea sitä.
    *
-   * Molemmat voivat olla samalla laskulla: sama tekijä on voinut pestä ikkunoita
-   * JA tehdä tuntityötä. Siksi nämä LISÄTÄÄN ikkunoiden päälle, ei korvata.
+   * Laskenta osaa summata tunnit ikkunoiden päälle, mutta TALLENNETTU lasku on
+   * aina yhden rahavirran lasku: maksettavan kohdennus lukee virran erävalinnasta
+   * (`eraScopeOf`), joten sekalasku kuittaisi vain toista velkaa ja jättäisi
+   * toisen auki. Server rajaa kentät erävalinnan mukaan (`worker-batch`).
    */
   tunnit?: number;
   /** Tekijän tuntipalkka sentteinä (esim. 1500 = 15,00 €/h). */

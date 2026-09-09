@@ -25,7 +25,6 @@
 
 import type { ProjectData } from "./project";
 import { getCrew } from "./crew";
-import { eraScopeOf } from "./era-billing";
 import {
   computeWorkerSettlements, eraSettlementByWorker, sumWorkerSettlements,
   type EraInvoiceLike, type WorkerSettlement,

@@ -158,7 +158,7 @@ describe("käsin kirjattu maksu kuittaa myös tuntivelkaa", () => {
     expect(row.openTotalCents).toBe(0);
   });
 
-  it("ylivuoto menee ikkunoiden ja keltaisten JÄLKEEN, ei niiden ohi", () => {
+  it("ylivuoto menee ikkunoiden JÄLKEEN tunteihin, ei niiden ohi", () => {
     // 10 punaista = 200 € + 10 h = 150 €. Käsin kirjattu 250 € kuittaa ensin
     // punaiset (200 €) ja ylijäävä 50 € tunteja.
     const p = gig({ workerId: "jani", red: 10, shifts: [shift("jani", 10)] });
@@ -169,6 +169,39 @@ describe("käsin kirjattu maksu kuittaa myös tuntivelkaa", () => {
     expect(row.openP1Cents).toBe(0);
     expect(row.openHoursCents).toBe(100_00);
     expect(row.openTotalCents).toBe(100_00);
+  });
+
+  it("ei kuittaa KELTAISIA ennen kuin punaiset ja tunnit on maksettu", () => {
+    // 10 punaista (200 €) + 5 keltaista à 37,50 € (palkkiotaulukko 20 €/kpl =
+    // 100 €) + 10 h (150 €). Käsin kirjattu 280 € riittää punaisiin ja osaan
+    // tunneista — keltaisiin se ei saa yltää, koska asiakas ei ole vielä
+    // maksanut niistä mitään.
+    const p = gig({ workerId: "jani", red: 10, shifts: [shift("jani", 10)] });
+    p.marks = {
+      "1": { marks: [
+        ...Array.from({ length: 10 }, (_, i) => ({ x: i, y: 0, p: 1 as const })),
+        ...Array.from({ length: 5 }, (_, i) => ({ x: i, y: 1, p: 2 as const })),
+      ] },
+    } as any;
+    const statuses: any = {};
+    const washedBy: Record<string, string> = {};
+    const offers: any = {};
+    for (let i = 0; i < 15; i++) {
+      statuses[`1#${i}`] = "pesty";
+      washedBy[`1#${i}`] = "jani";
+      if (i >= 10) offers[`1#${i}`] = { status: "locked", priceCents: 3750, version: 1, lockedCents: 3750 };
+    }
+    p.statuses = statuses;
+    p.washedBy = washedBy;
+    p.p2 = { enabled: true, workerSharePct: 53, offers, events: [] } as any;
+    p.crew = [member("jani", {
+      payouts: [{ id: "p1", amountCents: 280_00, windows: 0, status: "maksettu", createdAt: 1 }],
+    } as any)];
+    const [row] = computeWorkerSettlements(p);
+    expect(row.openP1Cents).toBe(0);
+    expect(row.openHoursCents).toBe(70_00);      // 150 − 80 ylivuotoa
+    expect(row.openP2Cents).toBe(row.p2EarnedCents);   // keltaiset koskematta
+    expect(row.p2EarnedCents).toBeGreaterThan(0);
   });
 });
 
@@ -239,7 +272,10 @@ describe("computeEraBilling — tuntityö laskun rivinä", () => {
     expect(row.maksettavaCents).toBe(112_50);
   });
 
-  it("ikkunat ja tunnit summautuvat samalla laskulla", () => {
+  // Puhtaana laskentana summaus toimii; tallennettu lasku on silti aina yhden
+  // virran lasku (server rajaa kentät erävalinnan mukaan), koska maksettavan
+  // kohdennus lukee virran erävalinnasta.
+  it("ikkunat ja tunnit summautuvat kun molemmat annetaan", () => {
     const r = computeEraBilling(0, [{
       workerId: "jani", name: "Jani", pestytIkkunat: 10,
       sovittuMuutosCents: 0, ennakkoCents: 0, tunnit: 2, tuntihintaCents: 1500,

@@ -730,7 +730,10 @@ export default function Dashboard({ project, workerStats, workerName, onGoToFloo
                   {([
                     ["Laskutettu", euro(gigBilling.p1InvoicedCents / 100), `${Math.min(4, gigBilling.p1PayCount)}/4 erää · ${euro(gigBilling.agreedTotalCents / 100)}`],
                     ["Laskuttamatta", euro(Math.max(0, gigBilling.agreedTotalCents - gigBilling.p1InvoicedCents) / 100), gigBilling.p1PayCount >= 4 ? "kaikki erät lähetetty ✓" : `seuraava ${euro(gigBilling.nextInstalmentCents / 100)}`],
-                    ["Tekijöille", euro((workerOpenP1Cents ?? 0) / 100), (workerOpenP1Cents ?? 0) > 0 ? "punaisista siirrettävä" : "kaikki maksettu ✓"],
+                    // Tämä taite käsittelee VAIN punaisia eriä, joten luku on
+                    // tarkoituksella punaisten osuus — yläpuolinen tiili näyttää
+                    // kaikkien virtojen summan. Alaotsikko sanoo kumpi on kumpi.
+                    ["Tekijöille punaisista", euro((workerOpenP1Cents ?? 0) / 100), (workerOpenP1Cents ?? 0) > 0 ? "punaisista siirrettävä" : "punaiset maksettu ✓"],
                   ] as [string, string, string][]).map(([lbl, val, sub]) => (
                     <div key={lbl} style={inset}>
                       <div style={statLabel}>{lbl}</div>

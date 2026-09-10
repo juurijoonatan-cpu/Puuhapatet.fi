@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { UNNAMED_WASHER_ID } from "./washers";
 import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, billingModeOf, isHourlyGig, roundWorkHours, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, invoiceNaming, sanitizeBoard, sortedBoard, openTaskCount, BOARD_CUSTOMER, sanitizeShifts, computeShiftStats, shiftHoursOf, dayKey, isDayKey, fmtDayLabel, shiftDay, shiftHoursOf, weekOf, weekdayLetter, dayOfMonth, monthLabel, MAX_SHIFTS, cappedTimerHours, MAX_TIMER_SHIFT_HOURS, addShiftEntry, shiftHoursOnDay, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
 import { emptyGigData, computeTotals } from "./gig";
 
@@ -64,6 +65,33 @@ describe("checkWindowAttribution — kohta 6.1 (ikkunamäärän täsmäytys)", (
     expect(check.dotCount).toBe(6);
     expect(check.attributedSum).toBe(6);
     expect(check.matches).toBe(true);
+  });
+
+  it("nimeämättömälle merkitty puolikas EI ole puuttuva pesijä", () => {
+    const data = emptyProjectData();
+    data.building.floors = ["1"];
+    data.marks = { "1": { marks: [{ x: 0, y: 0, p: 1 }] } } as never;
+    data.statuses = { "1#0": "pesty" } as never;
+    data.washedBy = { "1#0": "jani" };
+    data.washedBy2 = { "1#0": UNNAMED_WASHER_ID };
+
+    const check = checkWindowAttribution(data);
+    expect(check.unnamedSum).toBe(0.5);
+    expect(check.attributedSum).toBe(1);
+    // Dash ei saa jäädä huutamaan tilasta jonka järjestelmä itse tarjoaa.
+    expect(check.matches).toBe(true);
+  });
+
+  it("aito puuttuva pesijä jää yhä kiinni", () => {
+    const data = emptyProjectData();
+    data.building.floors = ["1"];
+    data.marks = { "1": { marks: [{ x: 0, y: 0, p: 1 }] } } as never;
+    data.statuses = { "1#0": "pesty" } as never;
+
+    const check = checkWindowAttribution(data);
+    expect(check.unnamedSum).toBe(0);
+    expect(check.matches).toBe(false);
+    expect(check.diff).toBe(1);
   });
 });
 

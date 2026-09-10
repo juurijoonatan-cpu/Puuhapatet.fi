@@ -20,6 +20,7 @@ import { DEFAULT_P2_WORKER_SHARE_PCT, p2WorkerPayoutCents, p2PendingPriceCents }
 import type { TaxBreakdown } from "./tax";
 import type { BuyerSnapshot } from "./billers";
 import type { WorkerAgreementSet } from "./worker-agreements";
+import { normalizedSecondWasher } from "./washers";
 
 export const DEFAULT_WORKER_PER_WINDOW_CENTS = 2000; // 20,00 €
 
@@ -332,7 +333,10 @@ export function crewMemberStats(project: ProjectData, member: CrewMember): CrewM
   for (const p of pts) {
     if (p.status !== "pesty") continue;
     // A window done together (50/50 split) counts as half for each washer.
-    const second = washedBy2[p.key];
+    // Normalised: the same person recorded at BOTH ends is not a split window —
+    // without this they were paid 0.5 here and 1.0 in the settlement, and half
+    // their own window quietly vanished.
+    const second = normalizedSecondWasher(p.washedBy, washedBy2[p.key]);
     let share = 0;
     if (p.washedBy === member.id) share = second ? 0.5 : 1;
     else if (second === member.id) share = 0.5;

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { UNNAMED_WASHER_ID } from "./washers";
 import { computeHourlyMoney, hourlyItemisation, computeWindowMoney } from "./hourly-money";
 import { p2InvoiceState } from "./worker-payouts";
 import { DEFAULT_HOUR_RATE_CENTS, DEFAULT_WORKER_HOUR_CENTS, DEFAULT_PRICE_PER_WINDOW, emptyProjectData, sanitizeProjectData, type ProjectData, type ProjExpense, type ProjShift } from "./project";
@@ -607,6 +608,26 @@ describe("ikkunaraha", () => {
     const founders = w.byFounder.reduce((n, f) => n + f.totalCents, 0);
     expect(w.workerCostCents + founders).toBe(w.customerCents);
     expect(w.customerCents).toBe(Math.round(3 * DEFAULT_PRICE_PER_WINDOW * 100));
+  });
+
+  it("kohdentamaton puolikas ei pudota asiakkaan ikkunasummaa", () => {
+    // Yksi ikkuna, tehty puoliksi nimeämättömän kanssa. Asiakas maksaa siitä
+    // kokonaisen, joten koko hinnan on löydyttävä laskennasta — ennen tätä
+    // puolikkaan tulo katosi kaikista sarakkeista.
+    const d = mapGig();
+    d.statuses["K#0"] = "pesty"; d.washedBy["K#0"] = "jani";
+    d.washedBy2 = { "K#0": UNNAMED_WASHER_ID };
+    d.crew = crewOf([{ id: "jani" }]) as never;
+    const w = computeWindowMoney(d);
+    const founders = w.byFounder.reduce((n, f) => n + f.totalCents, 0);
+
+    expect(w.unattributedWindows).toBe(0.5);
+    expect(w.byWasher.find((r) => r.id === "jani")!.windows).toBe(0.5);
+    // Nimeämätön ei ole kenenkään palkka…
+    expect(w.byWasher.some((r) => r.id === UNNAMED_WASHER_ID)).toBe(false);
+    // …mutta sen tulo pysyy laskennassa, ja osat summautuvat yhä täydeksi.
+    expect(w.workerCostCents + founders).toBe(w.customerCents);
+    expect(w.customerCents).toBe(Math.round(DEFAULT_PRICE_PER_WINDOW * 100));
   });
 
   it("VELOITETAAN vain laskuttamattomat ikkunat", () => {

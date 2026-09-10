@@ -32,6 +32,7 @@ import {
 import { buildTasaus, type TasausEraInvoice, type TasausPayment } from "./fr8-tasaus";
 import type { FounderSettlementState } from "./founder-settlement";
 import { BRAND_BILLERS } from "./billers";
+import { buildAttributionAudit, type AttributionAudit } from "./work-attribution";
 
 /** Erälasku sellaisena kuin siirtoraportti sen tarvitsee: tasauksen kentät
  *  (id, tila, ostaja) sekä `worker-payouts`in summat samasta rivistä. */
@@ -63,6 +64,9 @@ export interface TransferReportWorkerRow {
   /** Keltaiset (asiakkaan hyväksymä lisätyö). */
   p2Washed: number;
   openP2Cents: number;
+  /** MAKSAMATTOMAT keltaiset kappaleina — sama sääntö kuin punaisilla, jotta
+   *  selite ei väitä koko keikan kappalemäärää maksamattoman summan hinnaksi. */
+  openP2Windows: number;
   /** Tuntityö eriteltynä — tämä puuttui laskuilta ja näkymistä kokonaan. */
   hours: number;
   hourRateCents: number;
@@ -164,6 +168,15 @@ export interface TransferReport {
   missingInvoiceCents: number;
   /** Kaikki mikä odottaa jotain ennen siirtoa = awaiting + missing. */
   blockedCents: number;
+  /**
+   * PESTY TYÖ JOLLE EI OLE MAKSUNSAAJAA.
+   *
+   * Maksulista näyttää vain ne joille voi tehdä laskun, joten poistetun
+   * tekijän, harjoittelijan ja nimeämättömän puoliskon työ katosi aiemmin
+   * jokaisesta summasta — myös tästä raportista. Se raha on silti tehtyä työtä
+   * ja jonkun vastuulla, joten se kulkee nyt raportin mukana omana eränään.
+   */
+  attribution: AttributionAudit;
 }
 
 const eur = (c: number) =>
@@ -186,7 +199,11 @@ function whyFor(r: TransferReportWorkerRow): string {
       ? `${num(r.openP1Windows)} ikkunaa ${eur(r.openP1Cents)}`
       : `ikkunatyö ${eur(r.openP1Cents)}`);
   }
-  if (r.openP2Cents > 0) parts.push(`keltaiset ${eur(r.openP2Cents)}`);
+  if (r.openP2Cents > 0) {
+    parts.push(r.openP2Windows > 0
+      ? `${num(r.openP2Windows)} keltaista ${eur(r.openP2Cents)}`
+      : `keltaiset ${eur(r.openP2Cents)}`);
+  }
   if (r.openHoursCents > 0) {
     parts.push(r.openHours > 0
       ? `${num(r.openHours)} h tuntityötä ${eur(r.openHoursCents)}`
@@ -234,6 +251,22 @@ function approvalOf(pendingCents: number, openCents: number, hasLiveInvoice: boo
   if (pendingCents > 0) return "odottaa_tekijaa";
   if (openCents > 0) return "ei_laskua";
   return hasLiveInvoice ? "hyvaksytty" : "ei_maksettavaa";
+}
+
+/**
+ * Kaikkien virtojen erälaskuilla hoidettu raha id:ttäin — myös niille id:ille
+ * joita ei ole enää crew-listalla. `eraSettlementByWorker` rajaa yhteen
+ * virtaan kerrallaan, ja kohdentamattoman työn selvittämiseen tarvitaan
+ * kaikki kolme yhdessä.
+ */
+function settledByAnyWorker(invoices: ReportEraInvoice[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const scope of ["p1", "p2", "hours"] as const) {
+    const m = eraSettlementByWorker(invoices, scope);
+    for (const [id, cents] of Object.entries(m.centsByWorker)) out[id] = (out[id] || 0) + cents;
+    for (const [id, cents] of Object.entries(m.pendingCentsByWorker)) out[id] = (out[id] || 0) + cents;
+  }
+  return out;
 }
 
 export function buildTransferReport(input: {
@@ -322,6 +355,7 @@ export function buildTransferReport(input: {
         openP1Windows: r.openP1Windows,
         p2Washed: r.p2Washed,
         openP2Cents: r.openP2Cents,
+        openP2Windows: r.openP2Windows,
         hours: r.hours,
         hourRateCents: r.hourRateCents,
         openHoursCents: r.openHoursCents,
@@ -453,5 +487,8 @@ export function buildTransferReport(input: {
     awaitingApprovalCents,
     missingInvoiceCents,
     blockedCents: awaitingApprovalCents + missingInvoiceCents,
+    // Maksetut vähennetään: poistetulla tekijällä voi olla laskuja vaikka
+    // crew-riviä ei enää ole, eikä maksettu raha ole selvitettävää.
+    attribution: buildAttributionAudit(project, { settledCentsById: settledByAnyWorker(invoices) }),
   };
 }

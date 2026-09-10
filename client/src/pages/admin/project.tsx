@@ -7,6 +7,7 @@
  * per-worker attribution so the dashboard can show window counts and €/h.
  */
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import { UNNAMED_WASHER_ID, UNNAMED_WASHER_NAME } from "@shared/washers";
 import { useRoute, useLocation } from "wouter";
 import { api } from "@/lib/api";
 import { getAdminProfile, USERS, getPreferredWasher, setPreferredWasher } from "@/lib/admin-profile";
@@ -86,6 +87,10 @@ function computeWorkerMaps(project: ProjectData): {
   const workerNames: Record<string, string> = {};
   for (const u of USERS) workerNames[u.id] = u.name;
   for (const m of project.crew ?? []) workerNames[m.id] = m.name;
+  // Nimeämätön puolikas näkyy nimenä eikä raakana id:nä. Hän EI ole
+  // `gigWorkers`issa: häntä ei voi valita pesijäksi, vain jaon toiseksi
+  // puoliskoksi (ks. FloorViewin jakovalitsin).
+  workerNames[UNNAMED_WASHER_ID] = UNNAMED_WASHER_NAME;
   // Crew members who can't be picked: only inactive (removed) ones.
   const hiddenWorkerIds = new Set<string>();
   for (const m of project.crew ?? []) {
@@ -387,8 +392,17 @@ export default function AdminProjectPage() {
   const onSetSplit = useCallback((key: string, second: string | null) => {
     mutate((d) => {
       if (!d.washedBy2) d.washedBy2 = {};
-      if (second && d.washedBy[key] && d.washedBy[key] !== second) d.washedBy2[key] = second;
-      else delete d.washedBy2[key];
+      if (!second) { delete d.washedBy2[key]; return; }
+      // ILMAN PESIJÄÄ JAKO KATOSI HILJAA. Ehto vaati että ikkunalla on jo
+      // ensimmäinen pesijä, joten vanhalla (attribuoimattomalla) ikkunalla
+      // "Jaa 50/50" ei tehnyt yhtään mitään — nappi näytti toimivan ja puolikas
+      // jäi kirjaamatta. Nyt puuttuva ensimmäinen pesijä kirjataan
+      // nimeämättömäksi: jako on totta, ja selvittämätön puolisko näkyy
+      // Maksut-välilehden kohdentamattomassa työssä.
+      if (!d.washedBy[key]) d.washedBy[key] = UNNAMED_WASHER_ID;
+      // Sama henkilö molempiin päihin ei ole jako.
+      if (d.washedBy[key] === second) { delete d.washedBy2[key]; return; }
+      d.washedBy2[key] = second;
     });
   }, [mutate]);
 

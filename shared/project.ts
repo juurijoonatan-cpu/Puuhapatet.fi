@@ -13,6 +13,7 @@
  */
 
 import type { GigData, GigSector } from "./gig";
+import { isPayableWasherId, isUnnamedWasher, normalizedSecondWasher } from "./washers";
 import { sanitizeCrew, DEFAULT_WORKER_PER_WINDOW_CENTS, type CrewMember } from "./crew";
 import { PAY_PERIODS, eraWindowCounts } from "./payprogress";
 import { sanitizeP2State, type P2State } from "./p2";
@@ -1724,8 +1725,11 @@ export function computeWorkerStats(data: ProjectData): WorkerStat[] {
   // Union of configured workers + anyone who appears in attribution / hours.
   const ids = new Set<string>(data.workers || []);
   pts.forEach((p) => {
-    if (p.status === "pesty" && p.washedBy) ids.add(p.washedBy);
-    if (p.status === "pesty" && washedBy2[p.key]) ids.add(washedBy2[p.key]);
+    // NIMEÄMÄTÖN pesijä ei ole tekijä: hän ei saa omaa riviään tilastoihin.
+    // Hänen osuutensa näkyy "kohdentamaton työ" -pottina.
+    if (p.status === "pesty" && isPayableWasherId(p.washedBy)) ids.add(p.washedBy!);
+    const s2 = p.status === "pesty" ? normalizedSecondWasher(p.washedBy, washedBy2[p.key]) : "";
+    if (isPayableWasherId(s2)) ids.add(s2);
   });
   Object.keys(data.hours || {}).forEach((w) => ids.add(w));
   return Array.from(ids).map((worker) => {
@@ -1736,7 +1740,7 @@ export function computeWorkerStats(data: ProjectData): WorkerStat[] {
     let washedP2 = 0;
     for (const p of pts) {
       if (p.status !== "pesty") continue;
-      const second = washedBy2[p.key];
+      const second = normalizedSecondWasher(p.washedBy, washedBy2[p.key]);
       let share = 0;
       if (p.washedBy === worker) share = second ? 0.5 : 1;
       else if (second === worker) share = 0.5;
@@ -1778,13 +1782,37 @@ export interface WindowAttributionCheck {
   attributedSum: number;    // SUM(computeWorkerStats().washed), tarkoilla desimaaleilla
   diff: number;             // dotCount - attributedSum (0 = täsmää)
   matches: boolean;         // |diff| < 1e-6
+  /** Osuudet jotka on TARKOITUKSELLA merkitty nimeämättömälle tekijälle.
+   *  Nämä eivät ole puuttuvaa attribuutiota — ne on kirjattu, vaikka tekijää
+   *  ei ole järjestelmässä. Maksut-välilehden "Kohdentamaton työ" hoitaa ne. */
+  unnamedSum: number;
 }
 
+/**
+ * Täsmääkö pestyjen ikkunoiden määrä attribuoituun?
+ *
+ * NIMEÄMÄTÖN PUOLIKAS ON ATTRIBUUTIO, EI SEN PUUTE. `computeWorkerStats` ei
+ * anna nimeämättömälle omaa riviä (hän ei ole tekijä), joten ilman tätä
+ * lisäystä jokainen tarkoituksellinen 50/50-jako nimeämättömän kanssa olisi
+ * jättänyt dashiin pysyvän "pesijä puuttuu" -varoituksen tilasta jonka
+ * järjestelmä itse tarjoaa — ja varoitus jota ei voi koskaan kuitata on
+ * varoitus jonka lukija oppii ohittamaan. Aito puuttuva pesijä (`washedBy`
+ * tyhjä) jää yhä kiinni.
+ */
 export function checkWindowAttribution(data: ProjectData): WindowAttributionCheck {
   const dotCount = computeProjectTotals(data).washed;
-  const attributedSum = computeWorkerStats(data).reduce((s, w) => s + w.washed, 0);
+  const workerSum = computeWorkerStats(data).reduce((s, w) => s + w.washed, 0);
+  const by2 = data.washedBy2 || {};
+  let unnamedSum = 0;
+  for (const p of allPoints(data)) {
+    if (p.status !== "pesty") continue;
+    const second = normalizedSecondWasher(p.washedBy, by2[p.key]);
+    if (isUnnamedWasher(p.washedBy)) unnamedSum += second ? 0.5 : 1;
+    if (isUnnamedWasher(second)) unnamedSum += 0.5;
+  }
+  const attributedSum = workerSum + unnamedSum;
   const diff = dotCount - attributedSum;
-  return { dotCount, attributedSum, diff, matches: Math.abs(diff) < 1e-6 };
+  return { dotCount, attributedSum, unnamedSum, diff, matches: Math.abs(diff) < 1e-6 };
 }
 
 // ─── Lamput ja ovet (kalustepisteet) ──────────────────────────────────────────
@@ -2531,9 +2559,12 @@ export function computeEraDebts(
     // Credit each window to its washer(s) — a shared window splits 0.5 / 0.5.
     const credit = new Map<string, number>();
     for (const p of slice) {
-      const second = washedBy2[p.key];
-      if (p.washedBy) credit.set(p.washedBy, (credit.get(p.washedBy) || 0) + (second ? 0.5 : 1));
-      if (second) credit.set(second, (credit.get(second) || 0) + 0.5);
+      // Sama sääntö kuin muualla: jako puolittaa osuuden vaikka toista ei
+      // osata nimetä, mutta nimeämätön puolisko ei ole kenenkään velkaa.
+      const second = normalizedSecondWasher(p.washedBy, washedBy2[p.key]);
+      const primaryShare = second ? 0.5 : 1;
+      if (isPayableWasherId(p.washedBy)) credit.set(p.washedBy!, (credit.get(p.washedBy!) || 0) + primaryShare);
+      if (isPayableWasherId(second)) credit.set(second, (credit.get(second) || 0) + 0.5);
     }
     let founderWindows = 0;
     const workers: EraWorkerShare[] = [];

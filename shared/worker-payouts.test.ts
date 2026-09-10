@@ -593,3 +593,115 @@ describe("yhdistetty lasku (scope all)", () => {
     expect(st.invoicedCents).toBe(0);
   });
 });
+
+/**
+ * MAKSAMATTOMAT KELTAISET KAPPALEINA.
+ *
+ * Oikea tapaus ruudulta: "Keltaisia pesty 5 kpl · jo maksettu 80,00 € ·
+ * maksamatta 11,00 €". Kappaleet olivat koko keikalta ja euro vain
+ * maksamattomasta osasta, joten rivi väitti 2,20 €/keltainen — ja
+ * maksudialogi esitäytti ne samat viisi ikkunaa uudelleen laskulle, vaikka
+ * neljä niistä oli jo laskutettu.
+ */
+describe("openP2Windows — keltaisten esitäyttö osamaksun jälkeen", () => {
+  const yellowInvoice = (windows: number, cents: number) => ([{
+    kind: "tekija", tila: "hyväksytty", senderId: "oona", totalCents: cents,
+    eraNumbers: P2_ERA_NUMBERS,
+    rivit: { input: { pestytIkkunat: windows }, computed: { ansaittuCents: cents } },
+  }]);
+
+  it("laskee vain maksamattomat keltaiset, ei koko keikkaa", () => {
+    // 5 keltaista à 37,50 € → palkkiotaulukko 20 €/kpl = 100 € ansaittua.
+    const p = projectWith({ workerId: "oona", red: 0, yellow: 5, lockedCents: 3750 });
+    const invoices = yellowInvoice(4, 80_00);
+    const [row] = computeWorkerSettlements(p, { p2Era: eraSettlementByWorker(invoices, "p2") });
+
+    expect(row.p2Washed).toBe(5);            // koko keikka säilyy raportointiin
+    expect(row.p2SettledCents).toBe(80_00);
+    expect(row.openP2Cents).toBe(20_00);
+    expect(row.openP2Windows).toBe(1);       // EI 5 — neljä on jo laskutettu
+  });
+
+  it("on nolla kun keltaiset on maksettu kokonaan", () => {
+    const p = projectWith({ workerId: "oona", red: 0, yellow: 5, lockedCents: 3750 });
+    const invoices = yellowInvoice(5, 100_00);
+    const [row] = computeWorkerSettlements(p, { p2Era: eraSettlementByWorker(invoices, "p2") });
+    expect(row.openP2Cents).toBe(0);
+    expect(row.openP2Windows).toBe(0);
+  });
+
+  it("puolikas keltainen säilyy puolikkaana", () => {
+    const p = projectWith({ workerId: "selma", red: 0, yellow: 2, lockedCents: 3750 });
+    // Toinen keltainen on tehty yhdessä → 1,5 kpl tälle tekijälle.
+    p.washedBy2 = { "1#1": "oona" };
+    p.crew = [member({ id: "selma" }), member({ id: "oona" })];
+    const [selma] = computeWorkerSettlements(p).filter((r) => r.workerId === "selma");
+    expect(selma.p2Washed).toBe(1.5);
+    expect(selma.openP2Windows).toBe(1.5);
+  });
+
+  it("ei koskaan ylitä kirjanpitoa vaikka raha sanoisi enemmän", () => {
+    // Sovittu lisä nostaa avointa summaa, mutta ikkunoita ei ole enempää.
+    const p = projectWith({ workerId: "oona", red: 0, yellow: 2, lockedCents: 3750 });
+    const [row] = computeWorkerSettlements(p);
+    expect(row.openP2Windows).toBeLessThanOrEqual(row.p2Washed);
+  });
+});
+
+/**
+ * HYVÄKSYMÄTÖN KELTAINEN EI OLE MAKSAMATON KELTAINEN.
+ *
+ * `p2Washed` sisältää myös ne pestyt keltaiset joiden hintaa asiakas ei ole
+ * lukinnut. Ne ovat `p2PendingCents`iä eivätkä koskaan `openP2Cents`iä, joten
+ * jos kappalemäärä laskettaisiin niistäkin, kappaleet ja euro tulisivat eri
+ * joukosta — ja kun hinnat myöhemmin lukittuvat, luku kääntyisi nollaksi
+ * vaikka rahaa on yhä maksamatta.
+ */
+describe("openP2Windows — vain asiakkaan hyväksymät keltaiset", () => {
+  /** `red` punaista + `locked` lukittua keltaista + `pending` hinnoittelematonta. */
+  function mixedYellows(locked: number, pending: number): ProjectData {
+    const p = projectWith({ workerId: "oona", red: 0, yellow: locked + pending, lockedCents: 3750 });
+    // Muuta viimeiset `pending` tarjousta ehdotetuiksi (ei lukittu).
+    const offers = p.p2!.offers as Record<string, any>;
+    Object.keys(offers).slice(locked).forEach((k) => {
+      offers[k] = { status: "proposed", priceCents: 3750, version: 1 };
+    });
+    return p;
+  }
+
+  it("ei laske hyväksymättömiä keltaisia maksamattomiin kappaleisiin", () => {
+    const p = mixedYellows(4, 4);
+    const [row] = computeWorkerSettlements(p);
+    expect(row.p2Washed).toBe(8);            // koko pesty määrä säilyy
+    expect(row.p2PendingWashed).toBe(4);
+    expect(row.openP2Cents).toBe(80_00);     // vain lukitut ovat rahaa
+    expect(row.openP2Windows).toBe(4);       // EI 8
+  });
+
+  it("kun loputkin lukittuvat, kappalemäärä seuraa rahaa eikä nollaannu", () => {
+    const invoices = [{
+      kind: "tekija", tila: "hyväksytty", senderId: "oona", totalCents: 80_00,
+      eraNumbers: P2_ERA_NUMBERS,
+      rivit: { input: { pestytIkkunat: 4 }, computed: { ansaittuCents: 80_00 } },
+    }];
+    // Kaikki 8 lukittu, 4 jo maksettu.
+    const p = projectWith({ workerId: "oona", red: 0, yellow: 8, lockedCents: 3750 });
+    const [row] = computeWorkerSettlements(p, { p2Era: eraSettlementByWorker(invoices, "p2") });
+    expect(row.openP2Cents).toBe(80_00);
+    expect(row.openP2Windows).toBe(4);       // ennen korjausta 0
+  });
+
+  it("vaihtelevat keltaishinnat eivät väännä kappalemäärää", () => {
+    // Kaksi lukittua keltaista: 100 € ja 10 €. Kalliimpi on jo maksettu.
+    const p = projectWith({ workerId: "oona", red: 0, yellow: 2, lockedCents: 10000 });
+    (p.p2!.offers as Record<string, any>)["1#1"] = { status: "locked", priceCents: 1000, version: 1, lockedCents: 1000 };
+    const invoices = [{
+      kind: "tekija", tila: "hyväksytty", senderId: "oona", totalCents: 5300,
+      eraNumbers: P2_ERA_NUMBERS,
+      rivit: { input: { pestytIkkunat: 1 }, computed: { ansaittuCents: 5300 } },
+    }];
+    const [row] = computeWorkerSettlements(p, { p2Era: eraSettlementByWorker(invoices, "p2") });
+    expect(row.openP2Cents).toBeGreaterThan(0);
+    expect(row.openP2Windows).toBe(1);       // keskiarvolla tämä oli 0,2
+  });
+});

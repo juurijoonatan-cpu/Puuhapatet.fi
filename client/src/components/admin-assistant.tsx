@@ -69,10 +69,37 @@ export function AdminAssistant() {
   const [copied, setCopied] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  /**
+   * Nappi väistää vieritettäessä.
+   *
+   * Nappi on `position: fixed` oikeassa alakulmassa, ja juuri siinä kulmassa
+   * ovat kaikkien rahakorttien summat (ne ovat oikealle tasattuja). Sivun
+   * alapehmuste estää sen jäämästä sisällön PÄÄLLE lopussa, mutta ei kesken
+   * vierityksen: laskutuskortin euroja luettaessa nappi peitti ne. Nyt se
+   * häipyy heti kun sivu liikkuu ja palaa kun vieritys on pysähtynyt.
+   */
+  const [scrolling, setScrolling] = useState(false);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/ai-status`).then(r => r.json()).then(d => setAiEnabled(!!d.enabled)).catch(() => setAiEnabled(null));
   }, []);
+
+  // Vierityksen kuuntelu vain kun nappi on näkyvissä (auki-tilassa paneeli
+  // peittää muutenkin). `passive` — tämä ei koskaan estä vieritystä.
+  useEffect(() => {
+    if (open) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onScroll = () => {
+      setScrolling(true);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => setScrolling(false), 550);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true, capture: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll, { capture: true } as any);
+      if (timer) clearTimeout(timer);
+    };
+  }, [open]);
 
   useEffect(() => {
     try { sessionStorage.setItem(STORE_KEY, JSON.stringify(messages.slice(-40))); } catch { /* ignore */ }
@@ -193,11 +220,15 @@ export function AdminAssistant() {
         {!open && (
           <motion.button
             initial={{ scale: 0, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
+            animate={{ scale: 1, opacity: scrolling ? 0 : 1 }}
             exit={{ scale: 0, opacity: 0 }}
+            transition={{ duration: 0.15 }}
             whileTap={{ scale: 0.92 }}
             onClick={() => setOpen(true)}
-            style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 5.75rem)" }}
+            style={{
+              bottom: "calc(env(safe-area-inset-bottom, 0px) + 5.75rem)",
+              pointerEvents: scrolling ? "none" : "auto",
+            }}
             className="fixed right-4 md:!bottom-6 md:right-6 z-[55] w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/25 flex items-center justify-center ring-4 ring-background/80"
             aria-label="Avaa avustaja"
             data-testid="admin-assistant-launcher"

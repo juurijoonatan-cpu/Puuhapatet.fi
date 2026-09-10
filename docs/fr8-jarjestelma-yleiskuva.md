@@ -53,6 +53,8 @@ Osapuolet ja pääsy:
 | `transfer-report.ts` | **Siirtoraportti: kenelle siirrän ja paljonko.** `buildTransferReport` kokoaa tekijöiden osuudet (ikkunat/keltaiset/tunnit) ja johtajien tasauksen yhdeksi listaksi. Sama funktio piirtää Maksut-välilehden Siirrot-näkymän ja lähtee sähköpostina molemmille johtajille asiakaslaskun mukana. |
 | `founder-settlement.ts` | **Johtajien tasaus — puhdas matematiikka.** `computeTasaus` (ansainta vs. kassa → nettosiirto), `splitEvenCents`, tallennettu tila `FounderSettlementState` + sanitoija. Ks. "Johtajien tasaus" alla. |
 | `fr8-tasaus.ts` | Tasauksen syötteen kokoaminen oikeasta keikkadatasta: `buildTasaus`, `founderWashCounts`. |
+| `washers.ts` | Pesijätunnisteen perussäännöt (lehtimoduuli, ei importteja): `UNNAMED_WASHER_ID` (nimeämätön puolikas), `isPayableWasherId`, `normalizedSecondWasher`. Jokainen attribuutiota lukeva moduuli käyttää samaa sääntöä. |
+| `work-attribution.ts` | **Kohdentamaton työ: pesty työ jolle ei ole maksunsaajaa.** `buildAttributionAudit` erittelee poistetun tekijän, harjoittelijan ja nimeämättömän puoliskon (ikkunat + tunnit), vähentää jo maksetun ja nimeää harjoittelijan vastuujohtajan. Näkyy Maksut-välilehdellä ja siirtoraportin sähköpostissa. |
 | `payprogress.ts`, `tax.ts`, `team.ts`, `trainees.ts`, `billers.ts` | Paydate/verot/tiimi/harjoittelijat/laskuttajat. |
 
 ## Ikkunan identiteetti (window key)
@@ -150,6 +152,8 @@ millä tahansa keikalla maksudialogin "Tunnit"-välilehdeltä.
 | `eraScopeOf(eraNumbers)` / `eraScopeLabel(eraNumbers)` | minkä virran erävalinta tämä on, ja sen luettava nimi (sentinel ei koskaan vuoda näkyviin muodossa "Erä 0" / "Erä 9") |
 | `buildTransferReport({project, payments, invoices})` | **kenelle siirrän ja paljonko** — tekijöiden osuudet eriteltyinä + johtajien tasaus yhtenä listana |
 | `isTraineeMember(member)` | harjoittelija → EI tekijöiden maksulistalla (palkka johtajan kautta) |
+| `buildAttributionAudit(project, {settledCentsById})` | **työ jolle ei ole maksunsaajaa** — poistettu tekijä, harjoittelija, nimeämätön puolikas; ansaittu − jo maksettu |
+| `normalizedSecondWasher(primary, second)` | jaon toinen pesijä yhdellä säännöllä: sama henkilö molemmissa päissä EI ole jako |
 | `dealInternalRateCents(data, deal)` | perustajan sisäinen kate €/ikkuna (EFEKTIIVINEN sopimussumma ÷ punaiset) |
 | `settleWorker({..., adjustmentCents})` | sovittu vähennys/lisä tekijän punaiseen palkkaan (`p1PayableCents`) |
 
@@ -182,7 +186,8 @@ millä tahansa keikalla maksudialogin "Tunnit"-välilehdeltä.
    ole erämaksulistalla (`isTraineeMember`) — vastuujohtaja tilittää ja kirjaa
    maksun Tiimi-sivulla.
 8. **Deaktivoitu tekijä** katoaa dashista ja maksuista, ja palaa Tiimi-sivun
-   Aktiivinen-kytkimestä.
+   Aktiivinen-kytkimestä. Hänen MAKSAMATON työnsä ei silti katoa: se näkyy
+   Maksut-välilehden "Kohdentamaton työ" -kortilla (invariantti 24).
 9. **Keltaisten kate kuuluu perustajien ansioihin.** `computeP2Billing.marginCents`
    (pestyjen sovittujen keltaisten asiakashinta − tekijöiden palkkiot) jaetaan
    perustajien kesken (`p2MarginCents`). Ilman tätä perustajan kortti näytti
@@ -297,6 +302,26 @@ Säännöt:
    palkan peruste (`hours`, `computeEfficiency.totalHours`,
    `actualHoursPerWindow`). Julkinen näkymä saa vain suunnitellun kertoimen
    `estHoursPerWindow`, josta selain laskee työmäärämittarin asteikon.
+
+24. **Pesty työ jolle ei ole maksunsaajaa ei katoa — se näkyy erikseen.**
+   Maksulista rajaa pois perustajat, harjoittelijat, poistetut ja deaktivoidut.
+   Rajaus on oikea maksamiseen, mutta se teki kolmesta tapauksesta
+   näkymättömiä: poistetun tekijän työ (tasaus vähensi sen yhä tekijäkuluna,
+   mutta kukaan ei saanut rahaa), harjoittelijan työ (vastuujohtaja tilittää —
+   mutta kukaan ei nähnyt paljonko) ja nimeämätön puolisko.
+   `buildAttributionAudit` kokoaa ne yhdeksi eräksi (ikkunat JA tunnit),
+   vähentää jo maksetun (erälaskut + crew-rivin maksetut payoutit) ja näyttää
+   ne Maksut-välilehdellä sekä siirtoraportin sähköpostissa. Perustajan oma työ
+   EI ole tässä: se on katetta, ei maksamatonta velkaa.
+
+25. **Jako on jako, vaikka toista ei osata nimetä.** Ikkunan voi jakaa 50/50
+   myös nimeämättömälle tekijälle (`UNNAMED_WASHER_ID`), ja jako onnistuu
+   yhden tekijän keikallakin. Nimetty tekijä saa silloin 0,5 — ei koko ikkunaa
+   — ja selvittämätön puolisko kertyy kohdentamattomaan työhön (invariantti
+   24). Sama henkilö kirjattuna molempiin päihin EI ole jako
+   (`normalizedSecondWasher`): ennen tätä sääntöä hän sai 0,5 ikkunaa
+   `crewMemberStats`istä ja 1,0 tasauksesta, eli puolet omasta työstään katosi
+   sen mukaan mitä näkymää katsoi.
 
 ### Missä mikä toiminto asuu (ei duplikaatteja)
 

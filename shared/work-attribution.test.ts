@@ -257,3 +257,12 @@ describe("arvon säilyminen — mikään osuus ei putoa matkalla", () => {
     expect(f.p1WindowsTotal).toBe(6);
   });
 });
+
+describe("perustaja ilman crew-riviä", () => {
+  it("ei näy kadonneena rahana", () => {
+    const p = projectWith(1);
+    p.washedBy = { [key(0, p)]: "matias" };   // ei crew-riviä tällä keikalla
+    p.crew = [crewMember("oona")] as ProjectData["crew"];
+    expect(buildAttributionAudit(p).any).toBe(false);
+  });
+});

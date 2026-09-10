@@ -36,6 +36,7 @@ import {
 import { getCrew, DEFAULT_WORKER_PER_WINDOW_CENTS, type CrewMember } from "./crew";
 import { p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT } from "./p2";
 import { traineeForUserId, traineeForName, type TraineeInfo } from "./trainees";
+import { isFounder } from "./team";
 import { UNNAMED_WASHER_ID, UNNAMED_WASHER_NAME, isUnnamedWasher, normalizedSecondWasher } from "./washers";
 
 export {
@@ -172,6 +173,11 @@ export function buildAttributionAudit(
     if (!trimmed || isUnnamedWasher(trimmed)) {
       return upsert(acc, UNNAMED_WASHER_ID, UNNAMED_WASHER_NAME, "unnamed");
     }
+    // PERUSTAJA TUNNISTETAAN MYÖS ILMAN CREW-RIVIÄ. Ilman tätä johtajan oma
+    // ikkuna keikalla jolle häntä ei ole lisätty tekijäksi olisi näkynyt
+    // "kadonneena rahana" hänen omalla nimellään — varoitus joka syyttää
+    // väärää asiaa on pahempi kuin ei varoitusta.
+    if (isFounder(trimmed)) return null;
     const member = byId.get(trimmed);
     if (!member) {
       // Ei crew-riviä. Jos id silti tunnistetaan harjoittelijaksi, se on

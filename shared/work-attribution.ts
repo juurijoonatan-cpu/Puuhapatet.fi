@@ -132,14 +132,6 @@ function traineeOf(member: Pick<CrewMember, "id" | "name" | "linkedUserId">): Tr
   return traineeForUserId(member.linkedUserId) || traineeForUserId(member.id) || traineeForName(member.name);
 }
 
-/**
- * Kaikki pesty työ jota EI voi maksaa tekijämaksuna, eriteltynä syyn mukaan.
- *
- * Samat jakosäännöt kuin maksulaskennassa: jaettu ikkuna on 0,5 + 0,5, keltaisen
- * palkkio tulee palkkiotaulukosta ja lukitsematon keltainen on "odottaa
- * asiakasta" eikä ansaittua rahaa. Perustajien oma työ EI ole tässä — se ei ole
- * kadonnutta rahaa vaan katetta, ja tasaus käsittelee sen omalla puolellaan.
- */
 export interface AttributionAuditOptions {
   /**
    * Jo hoidettu raha id:ttäin (erälaskut kaikista virroista). Poistetulla
@@ -149,6 +141,14 @@ export interface AttributionAuditOptions {
   settledCentsById?: Record<string, number>;
 }
 
+/**
+ * Kaikki pesty työ jota EI voi maksaa tekijämaksuna, eriteltynä syyn mukaan.
+ *
+ * Samat jakosäännöt kuin maksulaskennassa: jaettu ikkuna on 0,5 + 0,5, keltaisen
+ * palkkio tulee palkkiotaulukosta ja lukitsematon keltainen on "odottaa
+ * asiakasta" eikä ansaittua rahaa. Perustajien oma työ EI ole tässä — se ei ole
+ * kadonnutta rahaa vaan katetta, ja tasaus käsittelee sen omalla puolellaan.
+ */
 export function buildAttributionAudit(
   project: ProjectData | null | undefined,
   opts: AttributionAuditOptions = {},

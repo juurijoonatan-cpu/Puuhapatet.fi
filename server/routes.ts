@@ -289,6 +289,8 @@ function buildTransferReportHtml(r: TransferReport): string {
               <div style="color:#8C8A82;font-size:12px;margin-top:2px">${
                 esc(UNPAYABLE_LABEL[b.kind] ?? b.kind)
               }${b.p1Windows + b.p2Windows > 0 ? ` · ${num(b.p1Windows + b.p2Windows)} ikkunaa` : ""}${
+                b.hours > 0 ? ` · ${num(b.hours)} h` : ""
+              }${
                 b.settledCents > 0 ? ` · ansaittu ${eur(b.earnedCents)} · maksettu ${eur(b.settledCents)}` : ""
               }${
                 b.responsibleLeaderName ? ` · tilittää ${esc(b.responsibleLeaderName)}` : ""

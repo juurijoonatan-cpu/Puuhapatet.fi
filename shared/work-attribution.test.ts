@@ -188,3 +188,72 @@ describe("jo maksettu ei ole selvitettävää", () => {
     expect(audit.unnamedCents).toBe(1000);
   });
 });
+
+describe("tuntityö", () => {
+  /** Tuntikeikka jossa `shifts` on ainoa palkanlähde. */
+  function hourlyGig(shifts: { worker: string; hours: number }[]): ProjectData {
+    const p = projectWith(0);
+    p.billingMode = "hourly";
+    p.workerHourRateCents = 1500;
+    p.shifts = shifts.map((s, i) => ({ id: `s${i}`, worker: s.worker, day: "2026-01-02", hours: s.hours, at: i + 1 }));
+    return p;
+  }
+
+  it("poistetun tekijän tunnit eivät katoa tuntikeikalla", () => {
+    const p = hourlyGig([{ worker: "haamu", hours: 4 }]);
+    p.crew = [crewMember("jani")] as ProjectData["crew"];
+    const audit = buildAttributionAudit(p);
+    expect(audit.removedCents).toBe(4 * 1500);
+    expect(audit.buckets[0]).toMatchObject({ hours: 4, hoursEarnedCents: 6000 });
+  });
+
+  it("harjoittelijan tunnit menevät vastuujohtajan tilitettäväksi", () => {
+    const p = hourlyGig([{ worker: "milja", hours: 3 }]);
+    p.crew = [crewMember("milja", { name: "Milja Pitkänen" })] as ProjectData["crew"];
+    const audit = buildAttributionAudit(p);
+    expect(audit.traineeCents).toBe(3 * 1500);
+    expect(audit.buckets[0].responsibleLeaderId).toBe("matias");
+  });
+
+  it("maksettavan tekijän tunnit eivät ole kohdentamattomia", () => {
+    const p = hourlyGig([{ worker: "jani", hours: 8 }]);
+    p.crew = [crewMember("jani")] as ProjectData["crew"];
+    expect(buildAttributionAudit(p).any).toBe(false);
+  });
+
+  it("kohdennetulla keikalla vuorot ovat seurantaa, ei rahaa", () => {
+    const p = hourlyGig([{ worker: "haamu", hours: 4 }]);
+    p.billingMode = "windows";
+    p.crew = [crewMember("jani")] as ProjectData["crew"];
+    expect(buildAttributionAudit(p).any).toBe(false);
+  });
+});
+
+describe("arvon säilyminen — mikään osuus ei putoa matkalla", () => {
+  it("jokainen pesty punainen päätyy johonkin pottiin, kerran", () => {
+    // Yksi ikkuna per tapaus: tekijä, perustaja, poistettu, harjoittelija,
+    // nimeämätön jako, pesijätön.
+    const p = projectWith(6);
+    p.washedBy = {
+      [key(0, p)]: "oona",
+      [key(1, p)]: "joonatan",
+      [key(2, p)]: "haamu",
+      [key(3, p)]: "milja",
+      [key(4, p)]: "oona",
+      // key(5) jätetään tarkoituksella ilman pesijää
+    };
+    p.washedBy2 = { [key(4, p)]: UNNAMED_WASHER_ID };
+    p.crew = [
+      crewMember("oona"),
+      crewMember("joonatan", { role: "host" }),
+      crewMember("milja", { name: "Milja Pitkänen" }),
+    ] as ProjectData["crew"];
+
+    const f = founderWashCounts(p);
+    const founderWindows = Object.values(f.p1ByFounder).reduce((a, b) => a + b, 0);
+    // Kaikki osuudet yhteensä = pestyt ikkunat. Jos jokin haara unohtaa
+    // osuutensa, tämä summa jää vajaaksi — juuri se oli kadonnut raha.
+    expect(founderWindows + f.workerP1Windows + f.unattributedP1Windows).toBe(f.p1WindowsTotal);
+    expect(f.p1WindowsTotal).toBe(6);
+  });
+});

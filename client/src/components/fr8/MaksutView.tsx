@@ -376,6 +376,14 @@ const UNPAYABLE_LABEL: Record<UnpayableBucket["kind"], string> = {
   trainee: "harjoittelija",
 };
 
+/** Mitä TÄLLE riville pitää tehdä. Varoitus ilman seuraavaa askelta on
+ *  varoitus jonka lukija oppii ohittamaan. */
+const UNPAYABLE_FIX: Record<UnpayableBucket["kind"], string> = {
+  unnamed: "Merkitse pesijä kartalla, niin summa siirtyy hänen maksuunsa.",
+  removed: "Palauta tekijä Tiimi-sivulla tai vaihda pesijä kartalla.",
+  trainee: "Vastuujohtaja maksaa itse — kirjaa maksu Tiimi-sivulla, niin rivi kuittaantuu.",
+};
+
 function UnattributedCard({ buckets, totalCents }: { buckets: UnpayableBucket[]; totalCents: number }) {
   return (
     <div style={{ ...card, marginBottom: T.space.md, borderColor: T.tone.warnBorder, background: T.tone.warnBg }}>
@@ -399,6 +407,7 @@ function UnattributedCard({ buckets, totalCents }: { buckets: UnpayableBucket[];
               <span style={{ color: T.text.muted }}>
                 {" · "}{UNPAYABLE_LABEL[b.kind]}
                 {b.p1Windows + b.p2Windows > 0 ? ` · ${fmtWin(b.p1Windows + b.p2Windows)} ikkunaa` : ""}
+                {b.hours > 0 ? ` · ${fmtWin(b.hours)} h` : ""}
                 {/* Harjoittelijalla raha ei ole kadonnut — se on nimetyn
                     johtajan tilitettävä. Se on eri asia kuin "kadonnut", ja
                     rivin pitää sanoa kumpi on kyseessä. */}
@@ -411,6 +420,15 @@ function UnattributedCard({ buckets, totalCents }: { buckets: UnpayableBucket[];
               {fmtEurCents(b.totalCents)}
             </span>
           </div>
+        ))}
+      </div>
+      {/* Seuraava askel per syy — samat kolme ohjetta, vain ne jotka koskevat
+          tätä keikkaa. */}
+      <div style={{ marginTop: T.space.sm, display: "flex", flexDirection: "column", gap: 2 }}>
+        {Array.from(new Set(buckets.map((b) => b.kind))).map((kind) => (
+          <p key={kind} style={{ margin: 0, fontFamily: FONT, fontSize: T.size.xs, color: T.text.muted, lineHeight: 1.5 }}>
+            {UNPAYABLE_FIX[kind]}
+          </p>
         ))}
       </div>
     </div>

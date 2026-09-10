@@ -29,7 +29,10 @@
  * Puhdas laskenta: ei I/O:ta, ei Reactia. Sekä client että server importtaavat.
  */
 
-import { allPoints, type ProjectData } from "./project";
+import {
+  allPoints, computeShiftStats, effectiveWorkerHourRateOf, isHourlyGig,
+  type ProjectData, type ProjShift,
+} from "./project";
 import { getCrew, DEFAULT_WORKER_PER_WINDOW_CENTS, type CrewMember } from "./crew";
 import { p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT } from "./p2";
 import { traineeForUserId, traineeForName, type TraineeInfo } from "./trainees";
@@ -62,6 +65,13 @@ export interface UnpayableBucket {
   p2EarnedCents: number;
   /** Keltaiset jotka odottavat vielä asiakkaan hyväksyntää. */
   p2PendingCents: number;
+  /**
+   * TUNTITYÖ. Tuntikeikalla palkka ei tule ikkunoista lainkaan, joten pelkkä
+   * ikkuna-auditointi olisi jättänyt poistetun tekijän ja harjoittelijan
+   * tunnit yhtä näkymättömiksi kuin ikkunat olivat ennen tätä moduulia.
+   */
+  hours: number;
+  hoursEarnedCents: number;
   /** Ansaittu yhteensä: p1 + p2 (ei pendingiä — se ei ole vielä ansaittua). */
   earnedCents: number;
   /** Tälle id:lle jo maksettu (erälaskut + käsin kirjatut maksut). */
@@ -106,6 +116,8 @@ interface Accum {
   p1EarnedCents: number;
   p2EarnedCents: number;
   p2PendingCents: number;
+  hours: number;
+  hoursEarnedCents: number;
   trainee?: TraineeInfo;
 }
 
@@ -226,6 +238,23 @@ export function buildAttributionAudit(
     }
   }
 
+  /**
+   * TUNNIT — vain tuntitilassa, sama rajaus kuin `computeWorkerSettlements`issä.
+   * Kohdennetulla keikalla vuororivit ovat seurantatietoa eivätkä rahaa, joten
+   * niiden lukeminen tässä maksaisi saman työn kahdesti.
+   */
+  if (isHourlyGig(project)) {
+    const workerHourCents = effectiveWorkerHourRateOf(project);
+    for (const row of computeShiftStats((project.shifts ?? []) as ProjShift[]).byWorker) {
+      const hours = Math.max(0, row.hours);
+      if (hours <= 0) continue;
+      const bucket = bucketFor(row.id);
+      if (!bucket) continue;
+      bucket.hours += hours;
+      bucket.hoursEarnedCents += hours * workerHourCents;
+    }
+  }
+
   const settledById = opts.settledCentsById ?? {};
   /** Käsin kirjatut, maksetut payoutit crew-riviltä (jos rivi on yhä olemassa). */
   const paidOnCrewRow = (id: string): number =>
@@ -237,7 +266,8 @@ export function buildAttributionAudit(
     .map((b) => {
       const p1EarnedCents = Math.round(b.p1EarnedCents);
       const p2EarnedCents = Math.round(b.p2EarnedCents);
-      const earnedCents = p1EarnedCents + p2EarnedCents;
+      const hoursEarnedCents = Math.round(b.hoursEarnedCents);
+      const earnedCents = p1EarnedCents + p2EarnedCents + hoursEarnedCents;
       // Nimeämättömälle ei voi olla maksuja: hänellä ei ole laskua eikä
       // crew-riviä. Muilla vähennetään kaikki mitä on jo hoidettu.
       const settledCents = b.kind === "unnamed"
@@ -252,6 +282,8 @@ export function buildAttributionAudit(
         p1EarnedCents,
         p2EarnedCents,
         p2PendingCents: Math.round(b.p2PendingCents),
+        hours: round1(b.hours),
+        hoursEarnedCents,
         earnedCents,
         settledCents,
         totalCents: Math.max(0, earnedCents - settledCents),
@@ -294,6 +326,7 @@ function upsert(acc: Map<string, Accum>, id: string, name: string, kind: Unpayab
   const fresh: Accum = {
     id, name, kind,
     p1Windows: 0, p2Windows: 0, p1EarnedCents: 0, p2EarnedCents: 0, p2PendingCents: 0,
+    hours: 0, hoursEarnedCents: 0,
   };
   acc.set(id, fresh);
   return fresh;

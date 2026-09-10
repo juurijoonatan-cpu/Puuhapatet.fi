@@ -377,6 +377,12 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
                     Tunteja kirjattu {fmtWin(w.hours)} h × {fmtEurCents(w.hourRateCents)} = {fmtEurCents(w.hoursEarnedCents)}
                     {" · jo maksettu "}{fmtEurCents(w.hoursSettledCents)}
                     {" · "}<strong className="text-foreground">maksamatta {fmtWin(w.openHours)} h · {fmtEurCents(w.openHoursCents)}</strong>
+                    {/* Sama muistutus toisinpäin — ks. keltaisten haara. */}
+                    {w.openP2Cents > 0 && (
+                      <span className="block text-amber-600 dark:text-amber-400">
+                        Myös keltaisia {fmtEurCents(w.openP2Cents)} maksamatta — tee se Keltaiset-välilehdeltä.
+                      </span>
+                    )}
                   </p>
                 ) : isP2 ? (
                   <p className="text-[11px] leading-snug text-muted-foreground">
@@ -386,6 +392,16 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
                         keikalta ja euro vain maksamattomasta osasta. */}
                     {" · "}<strong className="text-foreground">maksamatta {fmtWin(w.openP2Windows)} kpl · {fmtEurCents(w.openP2Cents)}</strong>
                     {w.p2PendingCents > 0 ? ` · odottaa asiakkaan hyväksyntää ${fmtEurCents(w.p2PendingCents)}` : ""}
+                    {/* TOINEN POTTI EI SAA UNOHTUA. Keltaiset ja tunnit ovat
+                        eri rahavirtoja eivätkä mahdu samalle laskulle (yksi
+                        lasku = yksi virta), joten sama tekijä tarvitsee kaksi
+                        maksua. Ilman tätä muistutusta toinen jäi helposti
+                        tekemättä: siirtolistalla ne näkyvät yhtenä summana. */}
+                    {w.openHoursCents > 0 && (
+                      <span className="block text-amber-600 dark:text-amber-400">
+                        Myös tuntityötä {fmtEurCents(w.openHoursCents)} maksamatta — tee se Tunnit-välilehdeltä.
+                      </span>
+                    )}
                   </p>
                 ) : (
                   <p className="text-[11px] leading-snug text-muted-foreground">

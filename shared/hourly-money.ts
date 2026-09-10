@@ -445,8 +445,14 @@ export interface WindowMoney {
   workerCostCents: number;
   /** Perustajien omista ikkunoista suoraan heille. */
   founderWindowCents: number;
-  /** Tekijöiden ikkunoista jäävä kate. */
+  /** Tekijöiden ikkunoista jäävä kate. Sisältää KOHDENTAMATTOMAN työn koko
+   *  ikkunahinnan: asiakas maksaa siitä, mutta palkansaajaa ei (vielä) ole.
+   *  `shared/work-attribution.ts` kertoo erikseen paljonko siitä on jonkun
+   *  saatavaa — tämä luku vain pitää huolen ettei euro katoa matkalla. */
   marginCents: number;
+  /** Pestyt ikkunat joilla ei ole maksettavaa pesijää (pesijätön tai
+   *  nimeämätön puolikas). Sama sääntö kuin `founderWashCounts`issa. */
+  unattributedWindows: number;
   byFounder: { id: string; windowCents: number; marginCents: number; totalCents: number }[];
   /** Mitä asiakas maksaa kaikista pestyistä ikkunoista (elinikäinen kertymä). */
   customerCents: number;
@@ -474,6 +480,7 @@ export function computeWindowMoney(
   const washedBy2 = (data as ProjectData).washedBy2 || {};
   const credit = new Map<string, number>();
   let washedTotal = 0;
+  let unattributedWindows = 0;
   for (const p of allPoints(data as ProjectData)) {
     if (p.status !== "pesty") continue;
     washedTotal += 1;
@@ -485,8 +492,11 @@ export function computeWindowMoney(
     const primaryShare = secondRaw ? 0.5 : 1;
     if (isPayableWasherId(p.washedBy)) {
       credit.set(p.washedBy!, (credit.get(p.washedBy!) ?? 0) + primaryShare);
+    } else {
+      unattributedWindows += primaryShare;
     }
     if (isPayableWasherId(secondRaw)) credit.set(secondRaw, (credit.get(secondRaw) ?? 0) + 0.5);
+    else if (secondRaw) unattributedWindows += 0.5;
   }
 
   const byWasher: WindowWasherRow[] = [];
@@ -514,6 +524,19 @@ export function computeWindowMoney(
     byWasher.push({ id, windows, isFounder: false, earnedCents: pay, perWindowCents: rate });
   }
   byWasher.sort((a, b) => b.windows - a.windows);
+
+  /**
+   * KOHDENTAMATON OSUUS ON TULOA JOLLE EI OLE PALKANSAAJAA.
+   *
+   * Asiakas maksaa koko ikkunasta myös silloin kun sen toinen puolisko on
+   * nimeämättömän tekemä, joten sen hinta EI saa pudota laskennasta: ilman
+   * tätä `customerCents` (= palkat + perustajien ikkunat + kate) jäi puolet
+   * ikkunahinnasta vajaaksi, eikä sitä euroa näkynyt yhdessäkään sarakkeessa.
+   * Sama ratkaisu kuin `founderWashCounts`issa: kohdentamaton pysyy katteessa,
+   * ja `shared/work-attribution.ts` kertoo erikseen mikä osa siitä on vielä
+   * jonkun saatavaa. Kun pesijä merkitään, palkka siirtyy katteesta hänelle.
+   */
+  marginCents += Math.round(unattributedWindows * pricePerWindowCents);
 
   const marginShare = splitEvenly(marginCents, FOUNDER_IDS);
   const founderIds = Array.from(new Set(FOUNDER_IDS.concat(Array.from(founderWindow.keys()))));
@@ -552,6 +575,7 @@ export function computeWindowMoney(
     workerCostCents,
     founderWindowCents,
     marginCents,
+    unattributedWindows: Math.round(unattributedWindows * 10) / 10,
     byFounder,
     customerCents: workerCostCents + founderWindowCents + marginCents,
   };

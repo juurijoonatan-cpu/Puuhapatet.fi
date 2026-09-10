@@ -1,6 +1,6 @@
 import type { Express, Request } from "express";
 import { type Server } from "http";
-import { eq, desc, sql, ne, and, isNotNull, isNull, inArray, lt, gte } from "drizzle-orm";
+import { eq, desc, sql, ne, and, or, isNotNull, isNull, inArray, lt, gte } from "drizzle-orm";
 import { Resend } from "resend";
 import bwipjs from "bwip-js";
 import PDFDocument from "pdfkit";
@@ -3514,6 +3514,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
        * järjestelmän kautta lainkaan, jos suunta oli "väärä".
        */
       const isTasaus = req.body?.kind === "tasaus";
+      /**
+       * Summa tulee clientiltä eikä sitä täsmäytetä laskettuun tasaukseen.
+       * Se on tietoinen valinta: johtajat voivat sopia laskennasta poikkeavan
+       * summan (`overrideCents`, "Muuta summaa"), ja tiukka vertailu hylkäisi
+       * juuri ne. Väärinkäyttöä vastaan on kolme muuta suojaa: kirjaajan pitää
+       * olla tasauksen osapuoli, lasku lähtee sähköpostilla MOLEMMILLE
+       * johtajille heti, ja kirjaaja merkitään riville (`createdBy`).
+       */
       const settlementCents = Math.abs(Math.round(Number(req.body?.settlementCents) || 0));
       const requestedRecipient = String(req.body?.recipientId || "").toLowerCase();
       const recipientId = isTasaus
@@ -3557,17 +3565,41 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Ohitus vain nimenomaisella `force`-lipulla (tarkoituksellinen korjaus).
       if (isTasaus && req.body?.force !== true) {
         try {
-          const existing = await db.select({ id: eraInvoices.id, totalCents: eraInvoices.totalCents })
+          /**
+           * MOLEMMAT SUUNNAT, VAIN TASAUSLASKUT.
+           *
+           * Suunta oli osa avainta, ja niin kauan kuin laskun sai luoda vain
+           * velkoja itse, se riitti. Nyt kumpi tahansa osapuoli saa kirjata
+           * sen, joten yksi ihminen pystyi tekemään saman tasauksen kahdesti
+           * kääntämällä suunnan: A→B ja B→A ovat eri pari, kumpikaan ei
+           * osunut toiseen, ja molemmat lähtivät oikeina laskuina numeroineen
+           * ja sähköposteineen.
+           *
+           * Rajaus tasauslaskuihin (`rivit.input.tasaus`) on samalla korjaus
+           * vanhaan ylitarkkuuteen: eräkohtainen johtajalasku samalle parille
+           * ei ole sama raha eikä saa estää tasauslaskua.
+           */
+          const pairRows = await db.select({
+            id: eraInvoices.id, totalCents: eraInvoices.totalCents,
+            senderId: eraInvoices.senderId, rivit: eraInvoices.rivit,
+          })
             .from(eraInvoices).where(and(
               eq(eraInvoices.jobId, jobId),
               eq(eraInvoices.kind, "johtaja_valinen" satisfies EraInvoiceKind),
-              eq(eraInvoices.senderId, senderId),
-              eq(eraInvoices.recipientId, recipientId),
               ne(eraInvoices.tila, "hylätty" satisfies EraInvoiceTila),
+              or(
+                and(eq(eraInvoices.senderId, senderId), eq(eraInvoices.recipientId, recipientId)),
+                and(eq(eraInvoices.senderId, recipientId), eq(eraInvoices.recipientId, senderId)),
+              ),
             ));
+          const existing = pairRows.filter((r) => {
+            try { return JSON.parse(r.rivit)?.input?.tasaus === true; } catch { return false; }
+          });
           if (existing.length > 0) {
+            const reversed = existing.some((r) => r.senderId !== senderId);
             return res.status(409).json({
-              error: `Tasauslasku on jo tehty (${existing.length} kpl, yhteensä ${fmtEurCents(existing.reduce((t, r) => t + r.totalCents, 0))}). ` +
+              error: `Tasauslasku on jo tehty (${existing.length} kpl, yhteensä ${fmtEurCents(existing.reduce((t, r) => t + r.totalCents, 0))})` +
+                (reversed ? " — toiseen suuntaan" : "") + ". " +
                 "Mitätöi vanha ensin tai lähetä force-lipulla jos teet tarkoituksella korjauslaskun.",
               existingCount: existing.length,
             });

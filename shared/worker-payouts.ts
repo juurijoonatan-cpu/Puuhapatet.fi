@@ -511,10 +511,27 @@ export function settleWorker(input: {
    * avoin summa muuttuu takaisin kappaleiksi.
    */
   const p2InvoicedWindows = input.p2Settled?.windows ?? 0;
-  const p2WindowsFromLedger = Math.max(0, stats.p2Washed - p2InvoicedWindows);
-  const perP2WindowCents = stats.p2Washed > 0 ? stats.p2EarnedCents / stats.p2Washed : 0;
-  const p2WindowsFromMoney = perP2WindowCents > 0 ? openP2Cents / perP2WindowCents : 0;
-  const openP2Windows = openP2Cents <= 0 ? 0 : round1(Math.min(p2WindowsFromLedger, p2WindowsFromMoney));
+  // VAIN ASIAKKAAN HYVÄKSYMÄT KELTAISET. `p2Washed` sisältää myös ne joiden
+  // hintaa asiakas ei ole vielä lukinnut (`p2PendingWashed`) — ne ovat
+  // `p2PendingCents`iä, eivät `p2EarnedCents`iä, joten `openP2Cents` ei tunne
+  // niitä lainkaan. Ilman tätä erotusta kappaleet ja euro laskettiin eri
+  // joukosta: 4 lukittua + 4 hyväksymätöntä näytti "8 kpl · 80,00 €", ja kun
+  // loput sitten lukittuivat, sama rivi näytti "0 kpl · 80,00 €".
+  const approvedP2Washed = Math.max(0, stats.p2Washed - (stats.p2PendingWashed ?? 0));
+  /**
+   * KIRJANPITO RATKAISEE, EI RAHASTA JOHDETTU KESKIARVO.
+   *
+   * Punaisilla otetaan pienempi kahdesta lähteestä, koska siellä kappalemäärä
+   * KERROTAAN taksalla eli se määrää laskun summan. Keltaisilla summa tulee
+   * suoraan avoimesta velasta (`ansaittuOverrideCents`), joten kappalemäärä on
+   * pelkkä selite — ja keltaisten hinta neuvotellaan ikkuna kerrallaan, joten
+   * "ansaittu ÷ pesty" on hinta jota kukaan ei ole sopinut (ks. shared/p2.ts).
+   * Sillä jaettu kappalemäärä valehteli aina kun hinnat vaihtelivat: 100 € ja
+   * 10 € keltainen, kalliimpi maksettu → jäljellä 1 ikkuna, keskiarvo väitti
+   * 0,2. Kirjanpito tietää tarkan määrän, ja koska maksu kirjaa saman luvun
+   * takaisin, se pysyy täsmällisenä.
+   */
+  const openP2Windows = openP2Cents <= 0 ? 0 : round1(Math.max(0, approvedP2Washed - p2InvoicedWindows));
 
   return {
     p2InvoicePendingCents,

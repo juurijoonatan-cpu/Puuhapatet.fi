@@ -13,7 +13,7 @@
  */
 
 import type { GigData, GigSector } from "./gig";
-import { isPayableWasherId, normalizedSecondWasher } from "./washers";
+import { isPayableWasherId, isUnnamedWasher, normalizedSecondWasher } from "./washers";
 import { sanitizeCrew, DEFAULT_WORKER_PER_WINDOW_CENTS, type CrewMember } from "./crew";
 import { PAY_PERIODS, eraWindowCounts } from "./payprogress";
 import { sanitizeP2State, type P2State } from "./p2";
@@ -1782,13 +1782,37 @@ export interface WindowAttributionCheck {
   attributedSum: number;    // SUM(computeWorkerStats().washed), tarkoilla desimaaleilla
   diff: number;             // dotCount - attributedSum (0 = täsmää)
   matches: boolean;         // |diff| < 1e-6
+  /** Osuudet jotka on TARKOITUKSELLA merkitty nimeämättömälle tekijälle.
+   *  Nämä eivät ole puuttuvaa attribuutiota — ne on kirjattu, vaikka tekijää
+   *  ei ole järjestelmässä. Maksut-välilehden "Kohdentamaton työ" hoitaa ne. */
+  unnamedSum: number;
 }
 
+/**
+ * Täsmääkö pestyjen ikkunoiden määrä attribuoituun?
+ *
+ * NIMEÄMÄTÖN PUOLIKAS ON ATTRIBUUTIO, EI SEN PUUTE. `computeWorkerStats` ei
+ * anna nimeämättömälle omaa riviä (hän ei ole tekijä), joten ilman tätä
+ * lisäystä jokainen tarkoituksellinen 50/50-jako nimeämättömän kanssa olisi
+ * jättänyt dashiin pysyvän "pesijä puuttuu" -varoituksen tilasta jonka
+ * järjestelmä itse tarjoaa — ja varoitus jota ei voi koskaan kuitata on
+ * varoitus jonka lukija oppii ohittamaan. Aito puuttuva pesijä (`washedBy`
+ * tyhjä) jää yhä kiinni.
+ */
 export function checkWindowAttribution(data: ProjectData): WindowAttributionCheck {
   const dotCount = computeProjectTotals(data).washed;
-  const attributedSum = computeWorkerStats(data).reduce((s, w) => s + w.washed, 0);
+  const workerSum = computeWorkerStats(data).reduce((s, w) => s + w.washed, 0);
+  const by2 = data.washedBy2 || {};
+  let unnamedSum = 0;
+  for (const p of allPoints(data)) {
+    if (p.status !== "pesty") continue;
+    const second = normalizedSecondWasher(p.washedBy, by2[p.key]);
+    if (isUnnamedWasher(p.washedBy)) unnamedSum += second ? 0.5 : 1;
+    if (isUnnamedWasher(second)) unnamedSum += 0.5;
+  }
+  const attributedSum = workerSum + unnamedSum;
   const diff = dotCount - attributedSum;
-  return { dotCount, attributedSum, diff, matches: Math.abs(diff) < 1e-6 };
+  return { dotCount, attributedSum, unnamedSum, diff, matches: Math.abs(diff) < 1e-6 };
 }
 
 // ─── Lamput ja ovet (kalustepisteet) ──────────────────────────────────────────

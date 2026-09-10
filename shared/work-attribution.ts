@@ -205,6 +205,13 @@ export function buildAttributionAudit(
     return upsert(acc, member.id, member.name || member.id, "removed");
   };
 
+  /**
+   * Poistetun tekijän oma taksa katosi crew-rivin mukana, joten hänen
+   * ikkunansa arvotetaan talon oletustaksalla (invariantti 5: sama fallback
+   * kaikkialla). Jos hänen sopimuksensa oli tätä korkeampi, luku on
+   * ALAKANTTIIN — rivi kertoo että selvitettävää on, ei sitä senttiin asti.
+   * Deaktivoidulla rivillä taksa on yhä luettavissa, joten se on tarkka.
+   */
   const rateOf = (id: string): number => byId.get(id)?.perWindowCents ?? DEFAULT_WORKER_PER_WINDOW_CENTS;
 
   for (const pt of allPoints(project)) {

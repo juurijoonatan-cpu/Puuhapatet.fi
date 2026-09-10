@@ -47,6 +47,7 @@ import {
 import { contentDispositionFor } from "./http-headers";
 import { buildTasaus, type TasausEraInvoice, type TasausPayment } from "@shared/fr8-tasaus";
 import { buildTransferReport, type TransferReport, type ReportEraInvoice } from "@shared/transfer-report";
+import { UNNAMED_WASHER_ID, UNNAMED_WASHER_NAME } from "@shared/washers";
 import { p2InvoiceState, computeWorkerSettlements, eraSettlementByWorker, sumWorkerSettlements, type EraInvoiceLike } from "@shared/worker-payouts";
 import {
   sanitizeCrew, sanitizeCrewMember, newCrewToken, findCrewByToken, crewMemberStats, isOnboarded,
@@ -227,7 +228,11 @@ function buildTransferReportHtml(r: TransferReport): string {
             ? `${num(w.openP1Windows)} ikkunaa ${eur(w.openP1Cents)}`
             : `ikkunatyö ${eur(w.openP1Cents)}`);
         } else if (w.p1Washed > 0) bits.push(`${num(w.p1Washed)} ikkunaa pesty`);
-        if (w.openP2Cents > 0) bits.push(`keltaiset ${eur(w.openP2Cents)}`);
+        if (w.openP2Cents > 0) {
+          bits.push(w.openP2Windows > 0
+            ? `${num(w.openP2Windows)} keltaista ${eur(w.openP2Cents)}`
+            : `keltaiset ${eur(w.openP2Cents)}`);
+        }
         // Määrä ja summa vieretysten, ei kerrottua yhtälöä: maksamaton
         // tuntimäärä on pyöristetty eikä välttämättä samalla taksalla laskettu
         // kuin jo maksettu osa, joten yhtälö ei täsmäisi itsensä kanssa.
@@ -261,6 +266,40 @@ function buildTransferReportHtml(r: TransferReport): string {
 
   const totalToMove = r.workerOpenTotalCents + (r.founderTransfer?.cents ?? 0);
   const invoicedRest = r.p2InvoicedCents + r.hoursInvoicedCents;
+
+  /**
+   * KOHDENTAMATON TYÖ. Pesty työ jolle ei ole maksunsaajaa: poistettu tekijä,
+   * harjoittelija (vastuujohtaja tilittää) tai nimeämätön puolikas. Nämä eivät
+   * ole yllä olevalla maksulistalla — juuri siksi ne pitää lukea tästä, eikä
+   * huomata vasta kun joku kysyy mihin raha meni.
+   */
+  const UNPAYABLE_LABEL: Record<string, string> = {
+    unnamed: "nimeämätön tekijä",
+    removed: "ei enää tekijälistalla",
+    trainee: "harjoittelija",
+  };
+  const attributionSection = r.attribution.any
+    ? `
+      <p style="margin:24px 0 6px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Kohdentamaton työ</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-top:2px solid #B45309">
+        <tbody>${r.attribution.buckets.map((b) => `
+          <tr style="border-bottom:1px solid #E4E1D7">
+            <td style="padding:8px 0;font-size:13px;color:#1A1A1A">
+              ${esc(b.name)}
+              <div style="color:#8C8A82;font-size:12px;margin-top:2px">${
+                esc(UNPAYABLE_LABEL[b.kind] ?? b.kind)
+              }${b.p1Windows + b.p2Windows > 0 ? ` · ${num(b.p1Windows + b.p2Windows)} ikkunaa` : ""}${
+                b.settledCents > 0 ? ` · ansaittu ${eur(b.earnedCents)} · maksettu ${eur(b.settledCents)}` : ""
+              }${
+                b.responsibleLeaderName ? ` · tilittää ${esc(b.responsibleLeaderName)}` : ""
+              }</div>
+            </td>
+            <td style="padding:8px 0;text-align:right;font-size:14px;font-weight:700;color:#B45309;font-variant-numeric:tabular-nums">${eur(b.totalCents)}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>
+      <p style="margin:8px 0 0;color:#8C8A82;font-size:12px;line-height:1.6">Tämä työ on tehty, mutta sille ei ole maksunsaajaa tekijälistalla — se ei ole yllä olevissa siirroissa. Selvitä kenelle se kuuluu.</p>`
+    : "";
 
   return `
 <!DOCTYPE html><html lang="fi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -314,6 +353,8 @@ function buildTransferReportHtml(r: TransferReport): string {
           ? `Tekijöille kuuluvaa johtajien käsissä ${eur(r.reserveCents)} — se siirtyy tekijöille yllä olevan listan mukaan.`
           : `Laskutettu ${eur(-r.reserveCents)} enemmän kuin käsissä on — tasaus olettaa rahan tulevan.`
       }</p>` : ""}
+
+      ${attributionSection}
 
       <p style="margin:24px 0 6px;color:#8C8A82;font-size:11px;letter-spacing:1px;text-transform:uppercase">Asiakkaalta laskutettu</p>
       <table width="100%" cellpadding="0" cellspacing="0">
@@ -3457,7 +3498,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const sub = String((req as any).admin?.sub ?? "").toLowerCase();
       const senderId = String(req.body?.senderId || "").toLowerCase();
       if (!FOUNDER_IDS.includes(senderId)) return res.status(400).json({ error: "Lähettäjän pitää olla johtaja" });
-      if (senderId !== sub) return res.status(403).json({ error: "Et voi lähettää laskua toisen puolesta" });
 
       const eraNumbers = normalizeEraNumbers(req.body?.eraNumbers);
       if (!eraNumbers) return res.status(400).json({ error: "Virheellinen erävalinta (1-3 tai 4)" });
@@ -3484,6 +3524,27 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             : "Et voi laskuttaa itseäsi tällä erällä — tämä erä laskutetaan toiselle johtajalle.",
         });
       }
+      /**
+       * KUKA SAA LUODA LASKUN.
+       *
+       * Eräkohtainen lasku on yhä vain lähettäjän omissa nimissä. TASAUSLASKU on
+       * poikkeus, ja se on tarkoituksellinen: laskun lähettää saaja (velkoja),
+       * mutta tasauksen huomaa yleensä MAKSAVA osapuoli — ja hän ei päässyt
+       * viemään asiaa loppuun mistään. Rivi jäi roikkumaan kunnes toinen sattui
+       * avaamaan saman näkymän. Molemmat ovat saman brändin johtajia, joten
+       * kumpi tahansa saa kirjata heidän keskinäisen tasauksensa; luoja
+       * merkitään riville, jotta jälkikäteen näkee kumpi sen teki.
+       */
+      const isParty = sub === senderId || sub === recipientId;
+      if (!(isTasaus ? isParty : senderId === sub)) {
+        return res.status(403).json({
+          error: isTasaus
+            ? "Tasauslaskun voi kirjata vain sen osapuoli."
+            : "Et voi lähettää laskua toisen puolesta",
+        });
+      }
+      /** Kirjattiinko lasku toisen puolesta? Tallennetaan riville tositteeksi. */
+      const createdBy = sub && sub !== senderId ? sub : undefined;
       if (isTasaus && settlementCents <= 0) {
         return res.status(400).json({ error: "Tasauslaskun summa puuttuu." });
       }
@@ -3587,6 +3648,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               // Tasauslasku merkitään erikseen, jotta jälkikäteen näkee ettei
               // summa tullut eräkaavasta vaan koko keikan tasauksesta.
               ...(isTasaus ? { tasaus: true, settlementCents } : {}),
+              // Kuka näpäytti nappia, kun se ei ollut lähettäjä itse.
+              ...(createdBy ? { createdBy } : {}),
             },
             computed: result,
           }),
@@ -9262,6 +9325,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     // washed each window ("Pesi Jani") and who left a note.
     const workerNames: Record<string, string> = {};
     for (const m of project.crew || []) workerNames[m.id] = m.name;
+    // Jaon nimeämätön puolisko näkyy tekijällekin nimenä, ei raakana id:nä.
+    workerNames[UNNAMED_WASHER_ID] = UNNAMED_WASHER_NAME;
     // Team leaderboard (workers only). Exposes name + windows + windows/hour — NO
     // pay rate, tokens or euros — so it's safe to show every worker the standings.
     //

@@ -274,6 +274,8 @@ export default function TasausView({ jobId, canEdit = true, onChanged }: {
   const [dueDate, setDueDate] = useState(defaultDueDate);
   const [invoiceDone, setInvoiceDone] = useState<string | null>(null);
   const me = getAdminProfile()?.id?.toLowerCase() ?? "";
+  /** Onko katsoja tämän tasauksen osapuoli (kumpi tahansa suunta)? */
+  const isParty = !!me && (me === data?.result.transfer?.fromId || me === data?.result.transfer?.toId);
 
   const load = useCallback(async () => {
     const res = await api.getTasaus(jobId);
@@ -446,14 +448,18 @@ export default function TasausView({ jobId, canEdit = true, onChanged }: {
                   onClick={() => save({ addTransfer: { fromId: transfer.fromId, toId: transfer.toId, cents: transfer.cents, note: "Kirjattu tasausnäkymästä" } })}>
                   <Check style={{ width: 14, height: 14 }} /> Merkitse siirretyksi
                 </button>
-                {/* LASKU TASAUKSESTA. Laskun lähettää se joka on saamassa
-                    rahaa (velkoja), koska palvelin vaatii että lähettäjä on
-                    kirjautunut johtaja itse. Jos katsoja on maksava osapuoli,
-                    hänelle kerrotaan kumpi laskun lähettää — nappi ei jää
-                    näyttämään siltä ettei se tee mitään. */}
-                {me === transfer.toId ? (
+                {/* LASKU TASAUKSESTA. Lasku on aina saajan (velkojan) nimissä
+                    — se on hänen myyntinsä — mutta sen saa KIRJATA kumpi
+                    tahansa osapuoli. Ennen sen pystyi tekemään vain velkoja
+                    itse, ja koska tasauksen huomaa yleensä maksava osapuoli,
+                    hän näki tässä pelkän ilmoituksen "laskun lähettää X"
+                    eikä päässyt viemään asiaa loppuun mistään: rivi jäi
+                    roikkumaan kunnes toinen sattui avaamaan saman näkymän.
+                    Palvelin merkitsee riville kumpi laskun kirjasi. */}
+                {isParty ? (
                   <button type="button" style={button()} onClick={() => setInvoiceOpen((v) => !v)}>
-                    <FileText style={{ width: 14, height: 14 }} /> Tee lasku tästä
+                    <FileText style={{ width: 14, height: 14 }} />
+                    {me === transfer.toId ? "Tee lasku tästä" : `Kirjaa lasku ${nameOf(transfer.toId)}n puolesta`}
                   </button>
                 ) : (
                   // Oma rivinsä (flexBasis 100 %): nappirivin sisällä tämä
@@ -473,8 +479,8 @@ export default function TasausView({ jobId, canEdit = true, onChanged }: {
           </div>
         )}
 
-        {/* Laskulomake — auki vain kun velkoja itse on avannut sen. */}
-        {canEdit && transfer && invoiceOpen && me === transfer.toId && (
+        {/* Laskulomake — auki vain kun tasauksen osapuoli on avannut sen. */}
+        {canEdit && transfer && invoiceOpen && isParty && (
           <div style={{ marginTop: T.space.lg, paddingTop: T.space.lg, borderTop: T.border.divider }}>
             {invoiceDone ? (
               <p style={{ margin: 0, fontFamily: T.font, fontSize: T.size.sm, color: T.tone.goodSoft }}>

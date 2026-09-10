@@ -318,3 +318,49 @@ describe("buildTransferReport", () => {
     expect(r.latestInvoice).toBeNull();
   });
 });
+
+/**
+ * KOHDENTAMATON TYÖ KULKEE RAPORTIN MUKANA.
+ *
+ * Raportti on sama laskenta jonka server lähettää sähköpostilla, joten juuri
+ * tämä on se paikka jossa "kenelle en voi maksaa" pitää näkyä: maksulista
+ * jättää nämä pois, ja ilman raporttia kukaan ei koskaan huomaisi niitä.
+ */
+describe("siirtoraportti — työ jolle ei ole maksunsaajaa", () => {
+  it("kertoo poistetun tekijän työn omana eränään", () => {
+    const p = gig({ red: 4, workerId: "haamu", crew: [member("jani")] });
+    const r = buildTransferReport({ title: "T", project: p, payments: [], invoices: [] });
+
+    // Maksulistalla häntä ei ole — mutta raportti tietää rahasta.
+    expect(r.workers.some((w) => w.workerId === "haamu")).toBe(false);
+    expect(r.attribution.removedCents).toBe(80_00);
+    expect(r.attribution.any).toBe(true);
+  });
+
+  it("vähentää poistetulle tekijälle jo tehdyt laskut", () => {
+    const p = gig({ red: 4, workerId: "haamu", crew: [member("jani")] });
+    const invoices: ReportEraInvoice[] = [{
+      id: 1, kind: "tekija", tila: "hyväksytty", senderId: "haamu", recipientId: "joonatan",
+      totalCents: 80_00, eraNumbers: [1, 2, 3],
+      rivit: { input: { pestytIkkunat: 4 }, computed: { ansaittuCents: 80_00 } },
+    } as unknown as ReportEraInvoice];
+    const r = buildTransferReport({ title: "T", project: p, payments: [], invoices });
+    expect(r.attribution.removedCents).toBe(0);
+    expect(r.attribution.any).toBe(false);
+  });
+
+  it("erottelee harjoittelijan rahan kadonneesta rahasta", () => {
+    const p = gig({ red: 2, workerId: "milja", crew: [member("milja", { name: "Milja Pitkänen" })] });
+    const r = buildTransferReport({ title: "T", project: p, payments: [], invoices: [] });
+    expect(r.attribution.traineeCents).toBe(40_00);
+    expect(r.attribution.removedCents).toBe(0);
+    expect(r.attribution.buckets[0].responsibleLeaderName).toBe("Matias Pitkänen");
+  });
+
+  it("on tyhjä kun kaikki työ on maksettavilla tekijöillä", () => {
+    const p = gig({ red: 5 });
+    const r = buildTransferReport({ title: "T", project: p, payments: [], invoices: [] });
+    expect(r.attribution.any).toBe(false);
+    expect(r.attribution.totalCents).toBe(0);
+  });
+});

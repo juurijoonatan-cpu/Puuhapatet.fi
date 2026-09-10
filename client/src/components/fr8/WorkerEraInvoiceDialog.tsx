@@ -133,8 +133,13 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
         // Tuntipalkka esitäytetään aina kun tuntivälilehti on auki: se on keikan
         // sovittu taksa, ja ilman sitä käsinsyöttö vaatisi sen muistamista.
         tuntihinta: hrs && w.hourRateCents > 0 ? String(w.hourRateCents / 100).replace(".", ",") : "",
+        // KELTAISET ESITÄYTTYVÄT MAKSAMATTOMISTA, EI KOKO KEIKASTA.
+        // Ennen tässä oli `p2Washed` eli tekijän kaikki keltaiset, samalla kun
+        // summa tuli avoimesta velasta: rivi väitti "5 kpl · 11,00 €" tekijälle
+        // jolle neljä niistä oli jo maksettu, ja sama ikkuna kirjautui laskulle
+        // toistamiseen.
         pestytIkkunat: hrs ? "" : p2
-          ? (w.p2Washed > 0 ? String(w.p2Washed) : "")
+          ? (w.openP2Windows > 0 ? String(w.openP2Windows) : "")
           : (w.openP1Windows > 0 ? String(w.openP1Windows) : ""),
         // Tekijän kanssa sovittu vähennys esitäytetään laskun omalle "sovittu
         // muutos" -riville. Ilman tätä lasku olisi laskenut ikkunat × taksa eli
@@ -376,7 +381,10 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
                 ) : isP2 ? (
                   <p className="text-[11px] leading-snug text-muted-foreground">
                     Keltaisia pesty {fmtWin(w.p2Washed)} kpl · jo maksettu {fmtEurCents(w.p2SettledCents)}
-                    {" · "}<strong className="text-foreground">maksamatta {fmtEurCents(w.openP2Cents)}</strong>
+                    {/* Kappaleet JA euro samasta lähteestä: "5 kpl · 11,00 €"
+                        näytti 2,20 €/keltainen, koska kappaleet olivat koko
+                        keikalta ja euro vain maksamattomasta osasta. */}
+                    {" · "}<strong className="text-foreground">maksamatta {fmtWin(w.openP2Windows)} kpl · {fmtEurCents(w.openP2Cents)}</strong>
                     {w.p2PendingCents > 0 ? ` · odottaa asiakkaan hyväksyntää ${fmtEurCents(w.p2PendingCents)}` : ""}
                   </p>
                 ) : (

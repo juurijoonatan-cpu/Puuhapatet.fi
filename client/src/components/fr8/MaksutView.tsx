@@ -35,6 +35,7 @@ import type { TransferReport, TransferInstruction, WorkerApproval } from "@share
 import type { ProjectData } from "@shared/project";
 import { fmtEurCents } from "@shared/tax";
 import { BRAND_BILLERS } from "@shared/billers";
+import { buildAttributionAudit, type UnpayableBucket } from "@shared/work-attribution";
 import { RefreshCw, Users, Mail, FileDown, Receipt, HandCoins, Scale, Trash2, Archive, ChevronDown, ArrowRight, Clock, CheckCircle2, AlertTriangle } from "lucide-react";
 import { T, card as tokenCard, mono, statLabel, subLabel, button as tokenButton, input as tokenInput, chip } from "./tokens";
 import SendInvoiceEmailDialog from "./SendInvoiceEmailDialog";
@@ -358,6 +359,64 @@ function TransferRow({ t }: { t: TransferInstruction }) {
   );
 }
 
+/**
+ * KOHDENTAMATON TYÖ — pesty työ jolle ei ole maksunsaajaa.
+ *
+ * Maksulista näyttää vain ne joille voi tehdä laskun. Se on oikein, mutta se
+ * teki kolmesta tapauksesta näkymättömiä: poistetun tekijän työ (raha katosi
+ * kirjaimellisesti — tasaus vähensi sen kuluna, kukaan ei saanut sitä),
+ * harjoittelijan työ (vastuujohtaja tilittää, mutta kukaan ei nähnyt paljonko)
+ * ja nimeämätön puolikas (jaettu ikkuna jonka toista tekijää ei ole
+ * järjestelmässä). Ne luetaan samasta jaetusta laskennasta kuin
+ * sähköpostiraportti, joten ruutu ja posti eivät voi olla eri mieltä.
+ */
+const UNPAYABLE_LABEL: Record<UnpayableBucket["kind"], string> = {
+  unnamed: "nimeämätön tekijä",
+  removed: "ei enää tekijälistalla",
+  trainee: "harjoittelija",
+};
+
+function UnattributedCard({ buckets, totalCents }: { buckets: UnpayableBucket[]; totalCents: number }) {
+  return (
+    <div style={{ ...card, marginBottom: T.space.md, borderColor: T.tone.warnBorder, background: T.tone.warnBg }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: T.space.sm, flexWrap: "wrap" }}>
+        <p style={{ margin: 0, display: "flex", alignItems: "center", gap: 6, fontFamily: FONT, fontSize: T.size.body, fontWeight: 700, color: T.text.primary }}>
+          <AlertTriangle style={{ width: 14, height: 14, flexShrink: 0, color: T.tone.warn }} />
+          Kohdentamaton työ
+        </p>
+        <span style={{ fontFamily: FONT, fontSize: T.size.title, fontWeight: 800, color: T.tone.warn, fontVariantNumeric: "tabular-nums" }}>
+          {fmtEurCents(totalCents)}
+        </span>
+      </div>
+      <p style={{ ...subLabel }}>
+        Tämä työ on tehty, mutta sille ei ole maksunsaajaa tekijälistalla — se ei ole siirroissa mukana.
+      </p>
+      <div style={{ marginTop: T.space.sm, display: "flex", flexDirection: "column", gap: T.space.xs }}>
+        {buckets.map((b) => (
+          <div key={`${b.kind}-${b.id}`} style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: T.space.sm, paddingTop: T.space.xs, borderTop: T.border.divider }}>
+            <span style={{ minWidth: 0, fontFamily: FONT, fontSize: T.size.sm, color: T.text.primary }}>
+              {b.name}
+              <span style={{ color: T.text.muted }}>
+                {" · "}{UNPAYABLE_LABEL[b.kind]}
+                {b.p1Windows + b.p2Windows > 0 ? ` · ${fmtWin(b.p1Windows + b.p2Windows)} ikkunaa` : ""}
+                {/* Harjoittelijalla raha ei ole kadonnut — se on nimetyn
+                    johtajan tilitettävä. Se on eri asia kuin "kadonnut", ja
+                    rivin pitää sanoa kumpi on kyseessä. */}
+                {b.responsibleLeaderName ? ` · tilittää ${b.responsibleLeaderName}` : ""}
+                {b.settledCents > 0 ? ` · ansaittu ${fmtEurCents(b.earnedCents)} · maksettu ${fmtEurCents(b.settledCents)}` : ""}
+                {b.p2PendingCents > 0 ? ` · odottaa asiakasta ${fmtEurCents(b.p2PendingCents)}` : ""}
+              </span>
+            </span>
+            <span style={{ flexShrink: 0, fontFamily: FONT, fontSize: T.size.body, fontWeight: 700, color: T.text.primary, fontVariantNumeric: "tabular-nums" }}>
+              {fmtEurCents(b.totalCents)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export interface MaksutBilling {
   p1PayCount: number;
   p1InvoicedCents: number;
@@ -438,6 +497,27 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
     [settlements],
   );
   const totals = useMemo(() => sumWorkerSettlements(payable), [payable]);
+  // Sama laskenta kuin siirtoraportissa. Luetaan mieluummin raportista kun se
+  // on ladattu, jotta ruutu ja sähköposti näyttävät varmasti saman luvun.
+  /**
+   * Viimeisin johtajien välinen lasku — uusin ensin, mitätöidyt pois. Sama
+   * lista kuin taittuvassa osiossa, mutta tämä yksi rivi näkyy aina.
+   */
+  const latestFounderInvoice = useMemo(() => {
+    const live = s.founderInvoices.filter((inv) => inv.tila !== "hylätty");
+    return live.slice().sort((a, b) => b.id - a.id)[0] ?? null;
+  }, [s.founderInvoices]);
+  const attribution = useMemo(() => {
+    if (report?.attribution) return report.attribution;
+    // Sama netotus kuin serverin raportissa: jo maksettu ei ole selvitettävää.
+    const settledCentsById: Record<string, number> = {};
+    for (const scope of ["p1", "p2", "hours"] as const) {
+      const m = eraSettlementByWorker(invoices, scope);
+      for (const [id, cents] of Object.entries(m.centsByWorker)) settledCentsById[id] = (settledCentsById[id] || 0) + cents;
+      for (const [id, cents] of Object.entries(m.pendingCentsByWorker)) settledCentsById[id] = (settledCentsById[id] || 0) + cents;
+    }
+    return buildAttributionAudit(project, { settledCentsById });
+  }, [report, project, invoices]);
 
   /**
    * Tekijän hyväksyntätila raportista — sama lähde kuin siirtolistalla.
@@ -555,6 +635,16 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                 {fmtEurCents(report.missingInvoiceCents)} odottaa laskun luontia — "Maksa tekijöille".
               </p>
             )}
+            {/* Kohdentamaton työ EI ole tässä summassa — juuri siksi se pitää
+                sanoa tässä. Ilman tätä riviä "siirrettävää yhteensä" näytti
+                täydelliseltä samalla kun poistetun tekijän tai nimeämättömän
+                puoliskon raha oli pudonnut listalta kokonaan. */}
+            {attribution.any && (
+              <p style={{ margin: `${T.space.xs}px 0 0`, fontFamily: FONT, fontSize: T.size.sm, color: T.tone.warn, display: "flex", alignItems: "center", gap: 6 }}>
+                <AlertTriangle style={{ width: 13, height: 13, flexShrink: 0 }} />
+                {fmtEurCents(attribution.totalCents)} tehtyä työtä ilman maksunsaajaa — katso "Tekijät".
+              </p>
+            )}
 
             {report && report.instructions.length > 0 ? (
               <div style={{ marginTop: T.space.lg }}>
@@ -654,11 +744,16 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
             Tekijöille maksettavaa
           </SectionTitle>
           {payable.length === 0 ? (
-            <div style={card}>
-              <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.sm, color: T.text.muted }}>
-                Ei tekijöitä tällä keikalla. Lisää tekijät Tiimi-sivulla.
-              </p>
-            </div>
+            <>
+              {attribution.any && (
+                <UnattributedCard buckets={attribution.buckets} totalCents={attribution.totalCents} />
+              )}
+              <div style={card}>
+                <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.sm, color: T.text.muted }}>
+                  Ei maksettavia tekijöitä tällä keikalla. Lisää tekijät Tiimi-sivulla.
+                </p>
+              </div>
+            </>
           ) : (
             <>
               <div style={{ display: "flex", flexWrap: "wrap", gap: T.space.sm + 2, marginBottom: T.space.md }}>
@@ -689,6 +784,9 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                   tone={T.tone.good}
                 />
               </div>
+              {attribution.any && (
+                <UnattributedCard buckets={attribution.buckets} totalCents={attribution.totalCents} />
+              )}
               {totals.p2PendingCents > 0 && (
                 <div style={{ ...card, marginBottom: T.space.md, borderColor: T.tone.infoBorder, background: T.tone.infoBg }}>
                   <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.sm, color: "rgba(190,205,255,0.95)", lineHeight: 1.5 }}>
@@ -724,7 +822,9 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                             </p>
                             {(r.p2Washed > 0 || r.openP2Cents > 0 || r.p2PendingCents > 0) && (
                               <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.xs, color: r.openP2Cents > 0 ? T.tone.warn : T.text.muted }}>
-                                keltaiset {fmtWin(r.p2Washed)} kpl · {fmtEurCents(r.openP2Cents)} siirrettävä
+                                keltaiset {fmtWin(r.p2Washed)} kpl pesty
+                                {r.openP2Cents > 0 ? ` · maksamatta ${fmtWin(r.openP2Windows)} kpl` : ""}
+                                {" · "}{fmtEurCents(r.openP2Cents)} siirrettävä
                                 {r.p2PendingCents > 0 ? ` · odottaa asiakasta ${fmtEurCents(r.p2PendingCents)}` : ""}
                               </p>
                             )}
@@ -804,6 +904,37 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
               haetaan uudelleen samalla — ei kahta eri totuutta välilehtien
               välillä. */}
           <TasausView jobId={jobId} canEdit={canEditTasaus} onChanged={load} />
+
+          {/* VIIMEISIN JOHTAJIEN LASKU HETI NÄKYVIIN.
+              Se oli ennen vain taittuvan "Johtajien väliset laskut" -osion
+              sisällä, joten juuri lähetetty tasauslasku ei näkynyt tällä
+              välilehdellä mitenkään: näkymä kysyi yhä samaa siirtoa jonka
+              johtaja oli äsken laskuttanut. */}
+          {latestFounderInvoice && (
+            <div style={{ ...card, marginTop: T.space.md }}>
+              <div style={{ ...mono, marginBottom: T.space.xs }}>Viimeisin johtajien lasku</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: T.space.sm + 2, flexWrap: "wrap" }}>
+                <div style={{ minWidth: 0 }}>
+                  <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.body, fontWeight: 700, color: T.text.primary, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    {founderName(latestFounderInvoice.senderId)}
+                    <ArrowRight style={{ width: 13, height: 13, color: T.text.faint, flexShrink: 0 }} />
+                    {founderName(latestFounderInvoice.recipientId)}
+                    <TilaChip tila={latestFounderInvoice.tila} />
+                  </p>
+                  <p style={{ margin: "2px 0 0", fontFamily: FONT, fontSize: T.size.sm, color: T.text.muted }}>
+                    {eraScopeLabel(latestFounderInvoice.eraNumbers)} · {fiDate(latestFounderInvoice.sentAt)}
+                    {latestFounderInvoice.invoiceNumber ? <> · <span style={{ fontFamily: MONO }}>{latestFounderInvoice.invoiceNumber}</span></> : null}
+                  </p>
+                </div>
+                <span style={{ flexShrink: 0, fontFamily: FONT, fontSize: T.size.title, fontWeight: 800, color: T.tone.good, fontVariantNumeric: "tabular-nums" }}>
+                  {fmtEurCents(latestFounderInvoice.totalCents)}
+                </span>
+              </div>
+              <div style={{ marginTop: T.space.sm, display: "flex", alignItems: "center", gap: T.space.sm, flexWrap: "wrap" }}>
+                <DownloadPdfButton jobId={jobId} invoiceId={latestFounderInvoice.id} />
+              </div>
+            </div>
+          )}
 
           <Fold
             icon={<Users style={{ width: 15, height: 15, color: T.text.secondary }} />}

@@ -178,6 +178,17 @@ export interface WorkerSettlement {
   openP2Cents: number;
   /** Ikkunamäärä joka on vielä maksamatta punaisista — erämaksun esitäyttö. */
   openP1Windows: number;
+  /**
+   * KELTAISIA vielä maksamatta, kappaleina — keltaisten maksun esitäyttö.
+   *
+   * Ilman tätä maksudialogi esitäytti keltaisten ikkunakentän tekijän KOKO
+   * keikan keltaisilla (`p2Washed`) samalla kun summa tuli avoimesta velasta.
+   * Rivi luki silloin "5 kpl · 11,00 €" tekijälle jolle oli jo maksettu 80 €
+   * neljästä ikkunasta: laskulle tallentui viisi ikkunaa toistamiseen, ja
+   * `eraSettlementByWorker`in ikkunakirjanpito kasvoi joka maksulla lisää
+   * ilman että yhtään uutta ikkunaa oli pesty.
+   */
+  openP2Windows: number;
   /** Erät jotka tälle tekijälle on jo laskutettu (esim. [1,2,3]). */
   settledEras: number[];
   /** Keltaisista jo maksettu tai maksussa (kuittaa vain keltaista velkaa). */
@@ -311,6 +322,7 @@ export function computeWorkerSettlements(
       p2Settled: {
         sentCents: p2Era.centsByWorker?.[member.id] || 0,
         pendingCents: p2Era.pendingCentsByWorker?.[member.id] || 0,
+        windows: (p2Era.windowsByWorker?.[member.id] || 0) + (p2Era.pendingWindowsByWorker?.[member.id] || 0),
       },
       hours: hoursById.get(member.id) ?? 0,
       // Perustajan tunti on omaa työtä eikä siitä oteta katetta: hän ansaitsee
@@ -350,8 +362,9 @@ export function settleWorker(input: {
     eraPending: Record<string, number>;
     eraPendingWindows: Record<string, number>;
   };
-  /** Keltaisista jo maksettu / maksussa oleva — kuittaa VAIN keltaista velkaa. */
-  p2Settled?: { sentCents: number; pendingCents: number };
+  /** Keltaisista jo maksettu / maksussa oleva — kuittaa VAIN keltaista velkaa.
+   *  `windows` = jo laskutetut keltaiset kappaleina (esitäytön yläraja). */
+  p2Settled?: { sentCents: number; pendingCents: number; windows?: number };
   /** Sovittu muutos punaisten palkkaan (CrewMember.payAdjustmentCents). */
   adjustmentCents?: number;
   /** Tekijän tunnit tällä keikalla (`computeShiftStats`). Puuttuva = 0. */
@@ -489,6 +502,20 @@ export function settleWorker(input: {
 
   const p2InvoicePendingCents = input.p2Settled?.pendingCents ?? 0;
 
+  /**
+   * MAKSAMATTOMAT KELTAISET KAPPALEINA — sama kahden lähteen sääntö kuin
+   * punaisilla: ota PIENEMPI kirjanpidosta ja rahasta johdetusta määrästä,
+   * ettei kumpikaan yksin nosta esitäyttöä. Keltaisen palkkio tulee
+   * palkkiotaulukosta eikä kiinteästä taksasta, joten "€ per keltainen" on
+   * tämän tekijän oma keskiarvo (ansaittu ÷ pesty) — juuri se luku jolla
+   * avoin summa muuttuu takaisin kappaleiksi.
+   */
+  const p2InvoicedWindows = input.p2Settled?.windows ?? 0;
+  const p2WindowsFromLedger = Math.max(0, stats.p2Washed - p2InvoicedWindows);
+  const perP2WindowCents = stats.p2Washed > 0 ? stats.p2EarnedCents / stats.p2Washed : 0;
+  const p2WindowsFromMoney = perP2WindowCents > 0 ? openP2Cents / perP2WindowCents : 0;
+  const openP2Windows = openP2Cents <= 0 ? 0 : round1(Math.min(p2WindowsFromLedger, p2WindowsFromMoney));
+
   return {
     p2InvoicePendingCents,
     pendingTotalCents: eraPendingCents + hoursPendingCents + p2InvoicePendingCents,
@@ -526,6 +553,7 @@ export function settleWorker(input: {
     openP1Cents,
     openP2Cents,
     openP1Windows,
+    openP2Windows,
     settledEras: era.eraNums[id] ?? [],
     p2SettledCents,
   };
@@ -568,6 +596,7 @@ export interface WorkerSettlementTotals {
   openP1Cents: number;
   openP2Cents: number;
   openP1Windows: number;
+  openP2Windows: number;
   hours: number;
   hoursEarnedCents: number;
   hoursSettledCents: number;
@@ -594,6 +623,7 @@ export function sumWorkerSettlements(rows: WorkerSettlement[]): WorkerSettlement
     openP1Cents: t.openP1Cents + r.openP1Cents,
     openP2Cents: t.openP2Cents + r.openP2Cents,
     openP1Windows: round1(t.openP1Windows + r.openP1Windows),
+    openP2Windows: round1(t.openP2Windows + r.openP2Windows),
     hours: round1(t.hours + r.hours),
     hoursEarnedCents: t.hoursEarnedCents + r.hoursEarnedCents,
     hoursSettledCents: t.hoursSettledCents + r.hoursSettledCents,
@@ -603,7 +633,7 @@ export function sumWorkerSettlements(rows: WorkerSettlement[]): WorkerSettlement
   }), {
     workers: 0, p1Washed: 0, p2Washed: 0, p1EarnedCents: 0, p1AdjustmentCents: 0, p2EarnedCents: 0,
     p2PendingCents: 0, settledCents: 0, settledTotalCents: 0, eraPendingCents: 0, pendingTotalCents: 0, openP1Cents: 0,
-    openP2Cents: 0, openP1Windows: 0,
+    openP2Cents: 0, openP1Windows: 0, openP2Windows: 0,
     hours: 0, hoursEarnedCents: 0, hoursSettledCents: 0, openHoursCents: 0, openHours: 0, openTotalCents: 0,
   });
 }

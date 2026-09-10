@@ -31,6 +31,7 @@
  */
 
 import { FOUNDER_IDS, isFounder } from "./team";
+import { isPayableWasherId, normalizedSecondWasher } from "./washers";
 import { getCrew, DEFAULT_WORKER_PER_WINDOW_CENTS } from "./crew";
 import {
   computeShiftStats, computeProjectTotals, expenseCustomerCents, expenseCustomerLabel, hourRateOf, workerHourRateOf, effectiveWorkerHourRateOf,
@@ -476,9 +477,16 @@ export function computeWindowMoney(
   for (const p of allPoints(data as ProjectData)) {
     if (p.status !== "pesty") continue;
     washedTotal += 1;
-    const second = washedBy2[p.key];
-    if (p.washedBy) credit.set(p.washedBy, (credit.get(p.washedBy) ?? 0) + (second ? 0.5 : 1));
-    if (second) credit.set(second, (credit.get(second) ?? 0) + 0.5);
+    // Jako pysyy jakona vaikka toista ei osata nimetä: osuus on 0,5 kummallekin,
+    // mutta NIMEÄMÄTÖN puolisko ei kirjaudu kenenkään palkaksi — se näkyy
+    // "kohdentamaton työ" -pottina (`shared/work-attribution.ts`) kunnes se
+    // selvitetään. Ilman eroa nimetty tekijä olisi saanut koko ikkunan.
+    const secondRaw = normalizedSecondWasher(p.washedBy, washedBy2[p.key]);
+    const primaryShare = secondRaw ? 0.5 : 1;
+    if (isPayableWasherId(p.washedBy)) {
+      credit.set(p.washedBy!, (credit.get(p.washedBy!) ?? 0) + primaryShare);
+    }
+    if (isPayableWasherId(secondRaw)) credit.set(secondRaw, (credit.get(secondRaw) ?? 0) + 0.5);
   }
 
   const byWasher: WindowWasherRow[] = [];

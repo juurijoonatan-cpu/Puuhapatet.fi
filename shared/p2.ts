@@ -21,6 +21,7 @@
  */
 
 import type { ProjectData } from "./project";
+import { isPayableWasherId, normalizedSecondWasher } from "./washers";
 import { allPoints, customerChargeableExpenses, isHourlyGig, type CustomerChargeLine } from "./project";
 import { FOUNDER_IDS } from "./team";
 
@@ -538,8 +539,10 @@ export function p2WorkerSplit(data: ProjectData, opts: P2SplitOpts = {}): P2Work
   const by2 = data.washedBy2 || {};
   const isFounder = opts.isFounder ?? (() => false);
   const add = (bucket: Record<string, number>, who: string | undefined, amount: number) => {
-    if (!who) return;
-    bucket[who] = (bucket[who] || 0) + amount;
+    // Nimeämätön pesijä ei ole ansaitsija: hänen osuutensa raportoidaan
+    // erikseen kohdentamattomana (`shared/work-attribution.ts`).
+    if (!isPayableWasherId(who)) return;
+    bucket[who!] = (bucket[who!] || 0) + amount;
   };
   /** Mitä TÄMÄ tekijä saa tästä ikkunasta: perustaja koko hinnan, muut taulukon. */
   const dueTo = (who: string | undefined, priceCents: number): number =>
@@ -547,8 +550,11 @@ export function p2WorkerSplit(data: ProjectData, opts: P2SplitOpts = {}): P2Work
   for (const pt of allPoints(data)) {
     if (pt.p !== 2 || pt.status !== "pesty") continue;
     const offer = p2.offers[pt.key];
-    const second = by2[pt.key];
-    const half = second ? 0.5 : 1;
+    // Sama henkilö molemmissa päissä ei ole jako; nimeämätön puolisko ei ole
+    // kenenkään ansiota, mutta se puolittaa silti nimetyn osuuden.
+    const secondRaw = normalizedSecondWasher(pt.washedBy, by2[pt.key]);
+    const second = isPayableWasherId(secondRaw) ? secondRaw : undefined;
+    const half = secondRaw ? 0.5 : 1;
     if (offer?.status === "locked" && offer.lockedCents) {
       // Puoliksi tehty ikkuna arvotetaan KUMMANKIN oman sääntönsä mukaan:
       // perustaja + työntekijä samassa ikkunassa ei ole sama kuin kaksi samaa.
@@ -963,7 +969,7 @@ export function computeP2Billing(data: ProjectData, opts: P2SplitOpts = {}): P2B
    */
   const payoutFor = (key: string, priceCents: number): number => {
     const first = data.washedBy?.[key];
-    const second = by2[key];
+    const second = normalizedSecondWasher(first, by2[key]);
     const rate = (who: string | undefined) =>
       who && isFounder(who) ? priceCents : p2WorkerPayoutCents(priceCents, sharePct, schedule);
     if (!second) return rate(first);

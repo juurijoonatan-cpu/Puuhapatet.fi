@@ -5,6 +5,7 @@
  * path differ.
  */
 import { useState, useRef, useEffect, useMemo } from "react";
+import { UNNAMED_WASHER_ID, UNNAMED_WASHER_NAME } from "@shared/washers";
 import type { ProjMarksData, WindowStatus, ProjCustomMark, ProjMapNote, ProjNoteKind, ProjActiveZone, ProjWindowObservation, FixedDeal, ProjBuilding, LampStatus, LampCondition, ProjLampMark, ProjFixtureNote, DoorStatus, ProjDoorMark, LampModel } from "@shared/project";
 import { NOTE_KINDS, planImageUrl, planRenderOf, hasAnyPlan, floorLabel, lampBucket, MAX_FIXTURE_NOTE_LEN, MAX_DOOR_LABEL_LEN } from "@shared/project";
 import type { P2Offer, P2NumberingInput } from "@shared/p2";
@@ -1995,12 +1996,21 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
             {/* 50/50 split — managers can credit a window done together to a
                 second worker. The window stays one washed window; only the
                 earnings/credit split half-and-half between the two. */}
-            {canEdit && onSetSplit && (statuses[activeOrb] || "ei") === "pesty" && workers && workers.length > 1 && (
+            {/* JAKO ONNISTUU MYÖS YKSIN. Ehto oli `workers.length > 1`, joten
+                yhden tekijän keikalla ikkunaa ei voinut jakaa lainkaan — vaikka
+                sen olisi tehnyt kaksi. Nyt toinen puolisko voi olla myös
+                nimeämätön, ja se näkyy Maksut-välilehden kohdentamattomassa
+                työssä kunnes se selvitetään. */}
+            {canEdit && onSetSplit && (statuses[activeOrb] || "ei") === "pesty" && workers && workers.length >= 1 && (
               <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
                 {washedBy2?.[activeOrb] ? (
                   <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "11.5px", color: "rgba(255,255,255,0.7)" }}>
                     <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      Jaettu 50/50: <strong style={{ color: "#fff", fontWeight: 600 }}>{workerNames?.[washedBy2[activeOrb]] ?? washedBy2[activeOrb]}</strong>
+                      Jaettu 50/50: <strong style={{ color: "#fff", fontWeight: 600 }}>{
+                        washedBy2[activeOrb] === UNNAMED_WASHER_ID
+                          ? UNNAMED_WASHER_NAME
+                          : (workerNames?.[washedBy2[activeOrb]] ?? washedBy2[activeOrb])
+                      }</strong>
                     </span>
                     <button onClick={() => { onSetSplit(activeOrb, null); setShowSplitPicker(false); }}
                       style={{ marginLeft: "auto", flexShrink: 0, background: "transparent", border: "none", color: "rgba(255,155,155,0.95)", fontSize: "11.5px", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-onest, system-ui, sans-serif)", padding: "2px 4px" }}>Poista jako</button>
@@ -2016,6 +2026,16 @@ export default function FloorView({ floors, planBase, building, planUrlBase, pla
                         <span style={{ flex: 1, textAlign: "left" }}>{w.name}</span>
                       </button>
                     ))}
+                    {/* Joku joka ei ole järjestelmässä: naapurin apu, kaveri,
+                        vielä perustamaton tekijärivi. Puolikas ei katoa — se
+                        kertyy Maksut-välilehden "Kohdentamaton työ" -pottiin
+                        euroineen, jotta se voidaan selvittää jälkikäteen. */}
+                    <button key={UNNAMED_WASHER_ID} className="status-opt-btn"
+                      onClick={() => { onSetSplit(activeOrb, UNNAMED_WASHER_ID); setShowSplitPicker(false); }}
+                      style={{ border: "1px solid transparent", background: "transparent", fontWeight: 500 }}>
+                      <span style={{ width: "18px", height: "18px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: 700, background: "rgba(255,255,255,0.10)", color: "rgba(255,255,255,0.65)", flexShrink: 0 }}>?</span>
+                      <span style={{ flex: 1, textAlign: "left" }}>{UNNAMED_WASHER_NAME}<span style={{ color: "rgba(255,255,255,0.45)" }}> · selvitetään myöhemmin</span></span>
+                    </button>
                   </>
                 ) : (
                   <button className="status-opt-btn" onClick={() => setShowSplitPicker(true)} style={{ border: "1px solid transparent", background: "transparent" }}>

@@ -593,3 +593,57 @@ describe("yhdistetty lasku (scope all)", () => {
     expect(st.invoicedCents).toBe(0);
   });
 });
+
+/**
+ * MAKSAMATTOMAT KELTAISET KAPPALEINA.
+ *
+ * Oikea tapaus ruudulta: "Keltaisia pesty 5 kpl · jo maksettu 80,00 € ·
+ * maksamatta 11,00 €". Kappaleet olivat koko keikalta ja euro vain
+ * maksamattomasta osasta, joten rivi väitti 2,20 €/keltainen — ja
+ * maksudialogi esitäytti ne samat viisi ikkunaa uudelleen laskulle, vaikka
+ * neljä niistä oli jo laskutettu.
+ */
+describe("openP2Windows — keltaisten esitäyttö osamaksun jälkeen", () => {
+  const yellowInvoice = (windows: number, cents: number) => ([{
+    kind: "tekija", tila: "hyväksytty", senderId: "oona", totalCents: cents,
+    eraNumbers: P2_ERA_NUMBERS,
+    rivit: { input: { pestytIkkunat: windows }, computed: { ansaittuCents: cents } },
+  }]);
+
+  it("laskee vain maksamattomat keltaiset, ei koko keikkaa", () => {
+    // 5 keltaista à 37,50 € → palkkiotaulukko 20 €/kpl = 100 € ansaittua.
+    const p = projectWith({ workerId: "oona", red: 0, yellow: 5, lockedCents: 3750 });
+    const invoices = yellowInvoice(4, 80_00);
+    const [row] = computeWorkerSettlements(p, { p2Era: eraSettlementByWorker(invoices, "p2") });
+
+    expect(row.p2Washed).toBe(5);            // koko keikka säilyy raportointiin
+    expect(row.p2SettledCents).toBe(80_00);
+    expect(row.openP2Cents).toBe(20_00);
+    expect(row.openP2Windows).toBe(1);       // EI 5 — neljä on jo laskutettu
+  });
+
+  it("on nolla kun keltaiset on maksettu kokonaan", () => {
+    const p = projectWith({ workerId: "oona", red: 0, yellow: 5, lockedCents: 3750 });
+    const invoices = yellowInvoice(5, 100_00);
+    const [row] = computeWorkerSettlements(p, { p2Era: eraSettlementByWorker(invoices, "p2") });
+    expect(row.openP2Cents).toBe(0);
+    expect(row.openP2Windows).toBe(0);
+  });
+
+  it("puolikas keltainen säilyy puolikkaana", () => {
+    const p = projectWith({ workerId: "selma", red: 0, yellow: 2, lockedCents: 3750 });
+    // Toinen keltainen on tehty yhdessä → 1,5 kpl tälle tekijälle.
+    p.washedBy2 = { "1#1": "oona" };
+    p.crew = [member({ id: "selma" }), member({ id: "oona" })];
+    const [selma] = computeWorkerSettlements(p).filter((r) => r.workerId === "selma");
+    expect(selma.p2Washed).toBe(1.5);
+    expect(selma.openP2Windows).toBe(1.5);
+  });
+
+  it("ei koskaan ylitä kirjanpitoa vaikka raha sanoisi enemmän", () => {
+    // Sovittu lisä nostaa avointa summaa, mutta ikkunoita ei ole enempää.
+    const p = projectWith({ workerId: "oona", red: 0, yellow: 2, lockedCents: 3750 });
+    const [row] = computeWorkerSettlements(p);
+    expect(row.openP2Windows).toBeLessThanOrEqual(row.p2Washed);
+  });
+});

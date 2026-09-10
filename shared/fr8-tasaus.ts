@@ -27,6 +27,7 @@ import { p2FounderOpts, computeP2Billing, p2WorkerPayoutCents, p2PendingPriceCen
 import { getCrew, DEFAULT_WORKER_PER_WINDOW_CENTS } from "./crew";
 import { eraScopeOf } from "./era-billing";
 import { BRAND_BILLERS } from "./billers";
+import { isPayableWasherId, normalizedSecondWasher } from "./washers";
 import {
   computeTasaus, type FounderSettlementState, type FounderSettlementManual, type TasausInput, type TasausResult,
   type TasausFounderInput, type TasausTransfer,
@@ -220,19 +221,30 @@ export function founderWashCounts(project: ProjectData): {
   // teki tästä O(tekijät × pisteet) jokaisella renderillä.
   for (const pt of allPoints(project)) {
     if (pt.status !== "pesty") continue;
-    const second = by2[pt.key];
+    // Sama henkilö molemmissa päissä ei ole jaettu ikkuna, ja NIMEÄMÄTÖN pesijä
+    // ei ole tekijä jolle voi maksaa — kumpikin käsitellään kuten "ei pesijää",
+    // eli kohdentamattomana. Näkyvyys tulee `work-attribution`in kautta, joten
+    // se ei katoa mihinkään vaikka se ei olekaan tekijäkulu.
+    const secondRaw = normalizedSecondWasher(pt.washedBy, by2[pt.key]);
+    // JAKO ON JAKO, VAIKKA TOISTA EI OSATA NIMETÄ. `hasSecond` ratkaisee
+    // osuuden (0,5) ja `second`/`primary` vain sen kenelle se kirjataan: ilman
+    // tätä eroa nimeämättömälle jaettu ikkuna olisi maksanut nimetylle
+    // tekijälle KOKO ikkunan, eli puolet toisen työstä.
+    const hasSecond = !!secondRaw;
+    const second = isPayableWasherId(secondRaw) ? secondRaw : "";
+    const primary = isPayableWasherId(pt.washedBy) ? pt.washedBy! : "";
     if (pt.p === 1) {
       // x:n nimittäjä on KAIKKI pestyt punaiset, myös ne joilla ei ole pesijää —
       // muuten puuttuva attribuutio nostaisi x:ää ja johtajat jakaisivat
       // enemmän kuin asiakkaalta on laskutettu.
       p1WindowsTotal += 1;
-      if (!pt.washedBy && !second) { unattributedP1Windows += 1; continue; }
-      const primaryShare = second ? 0.5 : 1;
-      if (pt.washedBy) {
-        if (isFounder(pt.washedBy)) p1ByFounder[pt.washedBy] = (p1ByFounder[pt.washedBy] || 0) + primaryShare;
+      if (!primary && !second) { unattributedP1Windows += 1; continue; }
+      const primaryShare = hasSecond ? 0.5 : 1;
+      if (primary) {
+        if (isFounder(primary)) p1ByFounder[primary] = (p1ByFounder[primary] || 0) + primaryShare;
         else {
           workerP1Windows += primaryShare;
-          workerP1WindowsByWorker[pt.washedBy] = (workerP1WindowsByWorker[pt.washedBy] || 0) + primaryShare;
+          workerP1WindowsByWorker[primary] = (workerP1WindowsByWorker[primary] || 0) + primaryShare;
         }
       } else {
         unattributedP1Windows += primaryShare;
@@ -243,6 +255,8 @@ export function founderWashCounts(project: ProjectData): {
           workerP1Windows += 0.5;
           workerP1WindowsByWorker[second] = (workerP1WindowsByWorker[second] || 0) + 0.5;
         }
+      } else if (hasSecond) {
+        unattributedP1Windows += 0.5;
       }
       continue;
     }
@@ -255,9 +269,9 @@ export function founderWashCounts(project: ProjectData): {
     // jos nämä eriytyvät, tasaus jakaa eri summan kuin dash näyttää.
     const payout = p2WorkerPayoutCents(offer.lockedCents, sharePct, schedule);
     const dueTo = (who: string) => (isFounder(who) ? offer.lockedCents! : payout);
-    if (pt.washedBy && isFounder(pt.washedBy)) {
-      const full = dueTo(pt.washedBy);
-      p2CentsByFounder[pt.washedBy] = (p2CentsByFounder[pt.washedBy] || 0) + (second ? full / 2 : full);
+    if (primary && isFounder(primary)) {
+      const full = dueTo(primary);
+      p2CentsByFounder[primary] = (p2CentsByFounder[primary] || 0) + (hasSecond ? full / 2 : full);
     }
     if (second && isFounder(second)) {
       p2CentsByFounder[second] = (p2CentsByFounder[second] || 0) + dueTo(second) / 2;

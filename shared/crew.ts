@@ -221,6 +221,24 @@ export interface CrewMember {
    * vain maksettavaan (`openP1Cents`).
    */
   payAdjustmentCents?: number;
+  /**
+   * SOVITTU KORJAUS SIIRRETTÄVÄÄN SUMMAAN (senttiä, etumerkillinen).
+   *
+   * `payAdjustmentCents` osuu VAIN punaisiin, ja se riitti niin kauan kuin
+   * punaiset olivat ainoa maksettava. Nyt maksettava koostuu kolmesta
+   * virrasta (punaiset, keltaiset, tunnit), ja ero on usein jossain muualla:
+   * keltainen ikkuna sovittiin 18 €:ksi vaikka taksa on 17 €, tai puoliksi
+   * merkitty iso ikkuna maksetaan kokonaisena.
+   *
+   * Punaisten korjaus ei auta siinä tilanteessa lainkaan — jos punaiset on jo
+   * katettu maksetulla rahalla, lisäys imeytyy kattavuuteen eikä siirrettävä
+   * muutu sentilläkään. Tämä korjaus osuu siksi SUMMAAN: se on se luku joka
+   * tekijälle oikeasti maksetaan, kun se on sovittu toisin kuin taksa laskee.
+   *
+   * Brutto ja ikkunamäärät säilyvät koskemattomina, joten työ ja raha
+   * täsmäävät yhä — korjaus näkyy omana rivinään eikä piilota mitään.
+   */
+  payoutFixCents?: number;
   active: boolean;
   pinHash?: string;             // optional 4-digit PIN, sha-256 hex (server-set)
   profile?: CrewProfile;
@@ -602,6 +620,9 @@ export function sanitizeCrewMember(input: any): CrewMember | null {
     payAdjustmentCents: input.payAdjustmentCents != null && Number.isFinite(Number(input.payAdjustmentCents)) && Math.round(Number(input.payAdjustmentCents)) !== 0
       // Etumerkillinen, kohtuullinen raja molempiin suuntiin.
       ? Math.max(-1_000_000, Math.min(1_000_000, Math.round(Number(input.payAdjustmentCents))))
+      : undefined,
+    payoutFixCents: input.payoutFixCents != null && Number.isFinite(Number(input.payoutFixCents)) && Math.round(Number(input.payoutFixCents)) !== 0
+      ? Math.max(-1_000_000, Math.min(1_000_000, Math.round(Number(input.payoutFixCents))))
       : undefined,
     manualEarningsCents: input.manualEarningsCents != null && Number.isFinite(Number(input.manualEarningsCents))
       ? Math.max(0, Math.min(10_000_000, Math.round(Number(input.manualEarningsCents))))

@@ -11848,6 +11848,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           payAdjustmentCents: req.body?.payAdjustmentCents === undefined
             ? m.payAdjustmentCents
             : (req.body.payAdjustmentCents == null || req.body.payAdjustmentCents === "" ? undefined : Number(req.body.payAdjustmentCents)),
+          // Sovittu korjaus siirrettävään summaan. Sama kuvio: puuttuva kenttä
+          // ei koske arvoon, tyhjä/null poistaa korjauksen.
+          payoutFixCents: req.body?.payoutFixCents === undefined
+            ? m.payoutFixCents
+            : (req.body.payoutFixCents == null || req.body.payoutFixCents === "" ? undefined : Number(req.body.payoutFixCents)),
           // Manual earnings override (managers' dashboard); null/"" clears it.
           manualEarningsCents: req.body?.manualEarningsCents === undefined
             ? m.manualEarningsCents

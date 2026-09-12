@@ -143,6 +143,8 @@ export interface WorkerSettlement {
   p1AdjustmentCents: number;
   /** p1Earned + sovittu muutos, ei koskaan alle nollan = maksettava brutto. */
   p1PayableCents: number;
+  /** Sovittu korjaus siirrettävään summaan (etumerkillinen, 0 = ei korjausta). */
+  payoutFixCents: number;
   /** Keltaisista kertynyt palkkio ASIAKKAAN HYVÄKSYMISTÄ ikkunoista. */
   p2EarnedCents: number;
   /** Keltaiset jotka on PESTY mutta joiden hintaa asiakas ei ole vielä
@@ -317,6 +319,7 @@ export function computeWorkerSettlements(
       stats: crewMemberStats(project, member),
       payouts: member.payouts || [],
       adjustmentCents: member.payAdjustmentCents ?? 0,
+      payoutFixCents: member.payoutFixCents ?? 0,
       p2Enabled: !!project.p2?.enabled,
       era: { eraSent, eraWindows, eraNums, eraPending, eraPendingWindows },
       p2Settled: {
@@ -367,6 +370,8 @@ export function settleWorker(input: {
   p2Settled?: { sentCents: number; pendingCents: number; windows?: number };
   /** Sovittu muutos punaisten palkkaan (CrewMember.payAdjustmentCents). */
   adjustmentCents?: number;
+  /** Sovittu korjaus SIIRRETTÄVÄÄN summaan (etumerkillinen). Ks. `payoutFixCents`. */
+  payoutFixCents?: number;
   /** Tekijän tunnit tällä keikalla (`computeShiftStats`). Puuttuva = 0. */
   hours?: number;
   /** Tekijän tuntipalkka sentteinä. Puuttuva = 0 → tuntityötä ei ole. */
@@ -392,6 +397,7 @@ export function settleWorker(input: {
   // Sovittu vähennys/lisä pienentää (tai kasvattaa) maksettavaa punaista. Brutto
   // (`p1EarnedCents`) säilyy koskemattomana, jotta ikkunat ja raha täsmäävät yhä.
   const p1AdjustmentCents = input.adjustmentCents ?? 0;
+  const payoutFixCents = input.payoutFixCents ?? 0;
   const p1PayableCents = Math.max(0, stats.p1EarnedCents + p1AdjustmentCents);
   const reservedCents = settledCents + eraPendingCents;
   const p1Covered = Math.min(p1PayableCents, reservedCents);
@@ -547,7 +553,16 @@ export function settleWorker(input: {
     hoursPendingCents,
     openHoursCents,
     openHours,
-    openTotalCents: openP1Cents + openP2Cents + openHoursCents,
+    payoutFixCents,
+    /**
+     * SIIRRETTÄVÄ SUMMA KORJAUKSEN JÄLKEEN.
+     *
+     * Korjaus osuu summaan eikä yksittäiseen virtaan, koska ero voi olla missä
+     * tahansa niistä — ja koska punaisten korjaus ei liikuta summaa lainkaan
+     * silloin kun punaiset on jo katettu maksetulla rahalla. Ei mene
+     * miinukselle: negatiivinen siirrettävä ei ole velkaa toiseen suuntaan.
+     */
+    openTotalCents: Math.max(0, openP1Cents + openP2Cents + openHoursCents + payoutFixCents),
     workerId: id,
     name,
     active,

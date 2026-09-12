@@ -144,11 +144,16 @@ function StatTile({ label, value, sub, tone }: { label: string; value: string; s
  * Oma pieni lomake eikä `window.prompt`: kotivalikkoon asennetussa iOS-PWA:ssa
  * natiivi prompt on epäluotettava — nappi näyttää siltä ettei se tee mitään.
  *
- * Syöte on POSITIIVINEN euromäärä = vähennys, koska johtaja ajattelee
- * "vähennetään 10 €". Tallennukseen se kääntyy negatiiviseksi sentiksi.
+ * Syöte on SE SUMMA JOKA TEKIJÄLLE MAKSETAAN, ei vähennys. Johtaja katsoo
+ * MobilePayn kuittia ja kirjoittaa sen luvun; korjaus taksaan lasketaan siitä.
+ * Aiemmin hän laski vähennyksen päässä, ja juuri siinä välivaiheessa luku
+ * meni väärin — eikä lisäystä voinut kirjata lainkaan, vaikka sovittu summa
+ * olisi taksaa suurempi (esim. iso ikkuna 18 € taksan 17 € sijaan).
  */
-function AdjustmentControl({ name, cents, onSave }: {
+function AdjustmentControl({ name, cents, currentTotalCents, onSave }: {
   name: string;
+  /** Mitä tekijälle nyt siirrettäisiin — korjaus mukaan luettuna. */
+  currentTotalCents: number;
   cents: number;
   onSave: (cents: number | null) => Promise<void> | void;
 }) {
@@ -157,7 +162,9 @@ function AdjustmentControl({ name, cents, onSave }: {
   const [busy, setBusy] = useState(false);
 
   const start = () => {
-    setValue(cents ? String(Math.abs(cents) / 100).replace(".", ",") : "");
+    // Kenttään NYKYINEN SIIRRETTÄVÄ, ei vähennys: johtaja kirjoittaa sen
+    // luvun jonka hän oikeasti maksaa.
+    setValue(String(currentTotalCents / 100).replace(".", ","));
     setOpen(true);
   };
   const commit = async (next: number | null) => {
@@ -167,7 +174,13 @@ function AdjustmentControl({ name, cents, onSave }: {
     setOpen(false);
   };
   const parsed = Number(value.trim().replace(",", "."));
-  const canSave = value.trim() !== "" && Number.isFinite(parsed) && parsed > 0;
+  const canSave = value.trim() !== "" && Number.isFinite(parsed) && parsed >= 0;
+  /**
+   * Syötetystä summasta korjaukseksi: paljonko taksan laskema luku on
+   * ohitettava jotta siirrettäväksi tulee juuri tämä. Nykyinen korjaus on jo
+   * mukana `currentTotalCents`issa, joten se lisätään erotukseen.
+   */
+  const nextFixCents = cents + (Math.round(parsed * 100) - currentTotalCents);
 
   const btn = tokenButton();
 
@@ -176,7 +189,7 @@ function AdjustmentControl({ name, cents, onSave }: {
       {!open ? (
         <div style={{ display: "flex", alignItems: "center", gap: T.space.sm, flexWrap: "wrap" }}>
           <button onClick={start} style={btn}>
-            {cents !== 0 ? "Muuta vähennystä" : "Sovittu vähennys"}
+            {cents !== 0 ? "Muuta summaa" : "Korjaa summa"}
           </button>
           {cents !== 0 && (
             <button onClick={() => void commit(null)} disabled={busy} style={{ ...btn, background: "transparent", color: T.text.muted }}>
@@ -187,7 +200,7 @@ function AdjustmentControl({ name, cents, onSave }: {
       ) : (
         <div>
           <p style={{ margin: `0 0 ${T.space.xs + 2}px`, fontFamily: FONT, fontSize: T.size.xs, color: T.text.muted }}>
-            Paljonko {name.split(/\s+/)[0]}lta vähennetään?
+            Paljonko {name.split(/\s+/)[0]}lle oikeasti maksetaan?
           </p>
           <div style={{ display: "flex", alignItems: "center", gap: T.space.sm, flexWrap: "wrap" }}>
             <input
@@ -196,14 +209,14 @@ function AdjustmentControl({ name, cents, onSave }: {
               autoFocus
               value={value}
               onChange={(e) => setValue(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && canSave) void commit(-Math.round(parsed * 100)); }}
-              placeholder="10"
-              aria-label={`Sovittu vähennys — ${name}`}
+              onKeyDown={(e) => { if (e.key === "Enter" && canSave) void commit(nextFixCents || null); }}
+              placeholder="78"
+              aria-label={`Siirrettävä summa — ${name}`}
               style={{ ...tokenInput, width: 90, textAlign: "right" }}
             />
             <span style={{ fontFamily: FONT, fontSize: T.size.body, color: T.text.muted }}>€</span>
             <button
-              onClick={() => void commit(-Math.round(parsed * 100))}
+              onClick={() => void commit(nextFixCents || null)}
               disabled={!canSave || busy}
               style={canSave ? tokenButton("accent") : { ...btn, opacity: 0.45 }}
             >
@@ -838,6 +851,16 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                                 </span>
                               )}
                             </p>
+                            {/* KORJAUS OMALLA RIVILLÄÄN. Se ei kuulu minkään
+                                yksittäisen virran perään: ero voi olla missä
+                                tahansa niistä, ja sen piilottaminen punaisten
+                                jatkoksi väittäisi sen koskevan punaisia. */}
+                            {r.payoutFixCents !== 0 && (
+                              <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.xs, color: "rgb(255,190,120)" }}>
+                                sovittu summa · korjaus {r.payoutFixCents < 0 ? "−" : "+"}{fmtEurCents(Math.abs(r.payoutFixCents))}
+                                {" · taksan mukaan "}{fmtEurCents(Math.max(0, r.openTotalCents + r.pendingTotalCents - r.payoutFixCents))}
+                              </p>
+                            )}
                             {(r.p2Washed > 0 || r.openP2Cents > 0 || r.p2PendingCents > 0) && (
                               <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.xs, color: r.openP2Cents > 0 ? T.tone.warn : T.text.muted }}>
                                 keltaiset {fmtWin(r.p2Washed)} kpl pesty
@@ -870,7 +893,8 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                       {onSetAdjustment && (
                         <AdjustmentControl
                           name={r.name}
-                          cents={r.p1AdjustmentCents}
+                          cents={r.payoutFixCents}
+                          currentTotalCents={r.openTotalCents + r.pendingTotalCents}
                           // Vähennys muuttaa maksettavaa, joten siirtoraportti
                           // haetaan uudelleen: muuten Siirrot-välilehti ja
                           // otsikkosumma jäivät näyttämään vanhaa lukua samalla

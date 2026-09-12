@@ -705,3 +705,65 @@ describe("openP2Windows — vain asiakkaan hyväksymät keltaiset", () => {
     expect(row.openP2Windows).toBe(1);       // keskiarvolla tämä oli 0,2
   });
 });
+
+/**
+ * SOVITTU SUMMA — KORJAUS SIIRRETTÄVÄÄN, EI PUNAISIIN.
+ *
+ * `payAdjustmentCents` osuu vain punaisiin, ja se riitti niin kauan kuin
+ * punaiset olivat ainoa maksettava. Todellinen tapaus: Selmalle maksettiin
+ * 78 € (4 h × 15 € + yksi ikkuna 18 €), taksa laski 77 €. Kun punaiset on jo
+ * katettu maksetulla rahalla, punaisten korjaus imeytyy kattavuuteen eikä
+ * siirrettävä muutu sentilläkään — siksi korjaus osuu summaan.
+ */
+describe("sovittu korjaus siirrettävään summaan", () => {
+  it("korjaus muuttaa siirrettävää myös kun punaiset on jo katettu", () => {
+    const paid = projectWith({
+      workerId: "selma", red: 5, yellow: 0,
+      crew: [member({ id: "selma", payouts: [{ id: "p1", amountCents: 110_00, status: "maksettu", createdAt: 1 } as any] })],
+    });
+    const [before] = computeWorkerSettlements(paid);
+    expect(before.openP1Cents).toBe(0);          // 100 € ansaittu, 110 € maksettu
+    expect(before.openTotalCents).toBe(0);
+
+    const fixed = projectWith({
+      workerId: "selma", red: 5, yellow: 0,
+      crew: [member({ id: "selma", payoutFixCents: 100, payouts: [{ id: "p1", amountCents: 110_00, status: "maksettu", createdAt: 1 } as any] })],
+    });
+    const [after] = computeWorkerSettlements(fixed);
+    expect(after.openTotalCents).toBe(100);      // +1,00 € läpi kattavuudesta
+
+    // Punaisten korjaus EI olisi tehnyt samaa: se imeytyy kattavuuteen.
+    const p1Adj = projectWith({
+      workerId: "selma", red: 5, yellow: 0,
+      crew: [member({ id: "selma", payAdjustmentCents: 100, payouts: [{ id: "p1", amountCents: 110_00, status: "maksettu", createdAt: 1 } as any] })],
+    });
+    expect(computeWorkerSettlements(p1Adj)[0].openTotalCents).toBe(0);
+  });
+
+  it("korjaus voi olla vähennys eikä vie miinukselle", () => {
+    const p = projectWith({
+      workerId: "doma", red: 5, yellow: 0,
+      crew: [member({ id: "doma", payoutFixCents: -1_000_00 })],
+    });
+    expect(computeWorkerSettlements(p)[0].openTotalCents).toBe(0);
+  });
+
+  it("brutto ja ikkunamäärät säilyvät koskemattomina", () => {
+    const p = projectWith({
+      workerId: "doma", red: 5, yellow: 0,
+      crew: [member({ id: "doma", payoutFixCents: 5_00 })],
+    });
+    const [row] = computeWorkerSettlements(p);
+    expect(row.p1EarnedCents).toBe(100_00);
+    expect(row.p1Washed).toBe(5);
+    expect(row.payoutFixCents).toBe(5_00);
+    expect(row.openTotalCents).toBe(105_00);
+  });
+
+  it("ilman korjausta mikään ei muutu", () => {
+    const p = projectWith({ workerId: "doma", red: 5, yellow: 0, crew: [member({ id: "doma" })] });
+    const [row] = computeWorkerSettlements(p);
+    expect(row.payoutFixCents).toBe(0);
+    expect(row.openTotalCents).toBe(100_00);
+  });
+});

@@ -1673,13 +1673,13 @@ export default function AdminProjectPage() {
             onOpenGig={backToGig}
             canEditTasaus={isFounderView}
             onSetAdjustment={async (workerId, cents) => {
-              // Sovittu vähennys tallentuu crew-riville, joten se pysyy ja näkyy
+              // Sovittu korjaus tallentuu crew-riville, joten se pysyy ja näkyy
               // kaikkialla samana (Maksut, Tiimi, maksudialogin esitäyttö).
-              const res = await api.updateCrewMember(jobId, workerId, { payAdjustmentCents: cents });
+              const res = await api.updateCrewMember(jobId, workerId, { payoutFixCents: cents });
               if (res.ok && res.data) {
                 setProject((cur) => (cur ? { ...cur, crew: res.data!.crew } : cur));
               } else {
-                setError(res.error || "Vähennyksen tallennus epäonnistui");
+                setError(res.error || "Summan korjauksen tallennus epäonnistui");
               }
             }}
           />

@@ -839,46 +839,74 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
                             {r.name}
                             <span style={chip(a.color, a.bg)}>{a.label}</span>
                           </p>
-                          {/* ERITTELY: kolme virtaa omina riveinään. Tuntityö
-                              näkyy tässä ensimmäistä kertaa — se on aina ollut
-                              kirjattuna, mutta ei koskaan laskettuna. */}
+                          {/* ERITTELY: VAIN NE RIVIT JOISSA ON RAHAA.
+                              Kortti listasi kaikki kolme virtaa aina, myös
+                              nollina: "punaiset 6 kpl · 0,00 € siirrettävä" on
+                              rivi joka vie tilan eikä vastaa mihinkään. Ja kun
+                              kaikki kolme näytettiin, se luku jota kortilta
+                              haetaan — paljonko maksan — hukkui muiden sekaan.
+                              Nyt rivi on olemassa vain jos siinä on siirrettävää.
+
+                              Kappalemäärä kerrotaan vain kun se on suurempi kuin
+                              nolla: "maksamatta 0 kpl · 17,00 € siirrettävä" luki
+                              ristiriitaa ääneen. Luvut tulevat eri lähteistä
+                              (euro velasta, kappaleet kirjanpidosta) ja se on
+                              oikein — mutta ristiriidan näyttäminen ei ole. */}
                           <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 2 }}>
-                            <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.xs, color: T.text.muted }}>
-                              punaiset {fmtWin(r.p1Washed)} kpl · {fmtEurCents(r.openP1Cents)} siirrettävä
-                              {r.p1AdjustmentCents !== 0 && (
-                                <span style={{ color: "rgb(255,150,150)" }}>
-                                  {" · sovittu "}{r.p1AdjustmentCents < 0 ? "vähennys −" : "lisä +"}{fmtEurCents(Math.abs(r.p1AdjustmentCents))}
-                                </span>
-                              )}
-                            </p>
+                            {r.openP1Cents > 0 && (
+                              <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.xs, color: T.tone.warn }}>
+                                punaiset {fmtWin(r.p1Washed)} kpl · {fmtEurCents(r.openP1Cents)}
+                              </p>
+                            )}
+                            {r.openP2Cents > 0 && (
+                              <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.xs, color: T.tone.warn }}>
+                                keltaiset{r.openP2Windows > 0 ? ` ${fmtWin(r.openP2Windows)} kpl` : ""} · {fmtEurCents(r.openP2Cents)}
+                              </p>
+                            )}
+                            {r.openHoursCents > 0 && (
+                              <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.xs, color: T.tone.warn }}>
+                                tunnit {fmtWin(r.hours)} h × {fmtEurCents(r.hourRateCents)} · {fmtEurCents(r.openHoursCents)}
+                              </p>
+                            )}
+                            {/* Vanha punaisten vähennys vaikuttaa yhä rahaan,
+                                joten se on kerrottava — piilotettuna se olisi
+                                selittämätön ero taksan ja summan välillä. */}
+                            {r.p1AdjustmentCents !== 0 && (
+                              <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.xs, color: "rgb(255,150,150)" }}>
+                                sovittu {r.p1AdjustmentCents < 0 ? "vähennys punaisista −" : "lisä punaisiin +"}{fmtEurCents(Math.abs(r.p1AdjustmentCents))}
+                              </p>
+                            )}
                             {/* KORJAUS OMALLA RIVILLÄÄN. Se ei kuulu minkään
                                 yksittäisen virran perään: ero voi olla missä
-                                tahansa niistä, ja sen piilottaminen punaisten
-                                jatkoksi väittäisi sen koskevan punaisia. */}
+                                tahansa niistä. */}
                             {r.payoutFixCents !== 0 && (
                               <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.xs, color: "rgb(255,190,120)" }}>
-                                sovittu summa · korjaus {r.payoutFixCents < 0 ? "−" : "+"}{fmtEurCents(Math.abs(r.payoutFixCents))}
-                                {" · taksan mukaan "}{fmtEurCents(Math.max(0, r.openTotalCents + r.pendingTotalCents - r.payoutFixCents))}
+                                sovittu summa · taksa laski {fmtEurCents(Math.max(0, r.openTotalCents + r.pendingTotalCents - r.payoutFixCents))}
                               </p>
                             )}
-                            {(r.p2Washed > 0 || r.openP2Cents > 0 || r.p2PendingCents > 0) && (
-                              <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.xs, color: r.openP2Cents > 0 ? T.tone.warn : T.text.muted }}>
-                                keltaiset {fmtWin(r.p2Washed)} kpl pesty
-                                {r.openP2Cents > 0 ? ` · maksamatta ${fmtWin(r.openP2Windows)} kpl` : ""}
-                                {" · "}{fmtEurCents(r.openP2Cents)} siirrettävä
-                                {r.p2PendingCents > 0 ? ` · odottaa asiakasta ${fmtEurCents(r.p2PendingCents)}` : ""}
+                            {/* Asiakasta odottavat keltaiset eivät ole vielä
+                                maksettavaa, mutta ne selittävät miksi pestyä
+                                työtä ei näy summassa. */}
+                            {r.p2PendingCents > 0 && (
+                              <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.xs, color: "rgb(150,175,255)" }}>
+                                odottaa asiakkaan hyväksyntää {fmtEurCents(r.p2PendingCents)}
                               </p>
                             )}
-                            {(r.hours > 0 || r.openHoursCents > 0) && (
-                              <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.xs, color: r.openHoursCents > 0 ? T.tone.warn : T.text.muted }}>
-                                tunnit {fmtWin(r.hours)} h × {fmtEurCents(r.hourRateCents)} · {fmtEurCents(r.openHoursCents)} siirrettävä
+                            {(r.settledTotalCents > 0 || r.pendingTotalCents > 0) && (
+                              <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.xs, color: T.text.faint }}>
+                                maksettu {fmtEurCents(r.settledTotalCents)}
+                                {r.pendingTotalCents > 0 ? ` · kuittaamatta ${fmtEurCents(r.pendingTotalCents)}` : ""}
                               </p>
                             )}
-                            <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.xs, color: T.text.faint }}>
-                              hoidettu {fmtEurCents(r.settledTotalCents)}
-                              {r.pendingTotalCents > 0 ? ` · kuittaamatta ${fmtEurCents(r.pendingTotalCents)}` : ""}
-                              {r.settledEras.length > 0 ? ` · erät ${r.settledEras.filter((n) => n > 0 && n < 9).join(", ") || "—"}` : ""}
-                            </p>
+                            {/* Vain kun rivillä ei ole muuta sanottavaa: "maksettu
+                                320 €" ja "kaikki maksettu" peräkkäin sanovat saman
+                                asian kahdesti, ja SIIRRETTÄVÄ 0,00 € sanoo sen jo
+                                kolmannen kerran. */}
+                            {r.openTotalCents + r.pendingTotalCents === 0 && r.settledTotalCents === 0 && (
+                              <p style={{ margin: 0, fontFamily: FONT, fontSize: T.size.xs, color: T.text.faint }}>
+                                ei siirrettävää
+                              </p>
+                            )}
                           </div>
                         </div>
                         <div style={{ textAlign: "right", flexShrink: 0 }}>

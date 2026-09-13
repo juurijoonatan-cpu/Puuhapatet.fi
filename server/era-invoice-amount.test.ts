@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { computeEraBilling, SETTLE_ERA_NUMBERS, isSettleEraSelection, isP2EraSelection } from "@shared/era-billing";
+import {
+  computeEraBilling, SETTLE_ERA_NUMBERS, isSettleEraSelection, isP2EraSelection,
+  isEmptyEraInvoiceDraft, summarizeEraInvoices,
+} from "@shared/era-billing";
 
 /**
  * VARTIJA — tekijän maksusta ei saa tulla 0,00 €.
@@ -80,5 +83,59 @@ describe("koko saldon maksun laskenta", () => {
     }], []);
     expect(res.workers[0].ansaittuCents).toBe(8400);
     expect(res.workers[0].maksettavaCents).toBe(8400);
+  });
+});
+
+/**
+ * VARTIJA — nollarivi ei saa jäädä roikkumaan eikä estää oikeaa maksua.
+ *
+ * Kun koko saldon maksun summa putosi matkalla pois, syntyi kaksi 0,00 €
+ * riviä. Ne eivät siirtäneet senttiäkään, mutta ne jäivät arkistoon "Odottaa
+ * tekijää" -tilaan JA lukitsivat kaksoiskappalesuojan: saman erän oikeaa
+ * maksua ei voinut enää luoda, ja virheilmoitus väitti että maksu on jo tehty.
+ * Pelkkä summabugin korjaus ei siis riittänyt — rivit olisivat jääneet.
+ */
+const emptyDraft = {
+  kind: "tekija", tila: "luonnos", totalCents: 0,
+  rivit: { input: { pestytIkkunat: 0 }, computed: { ansaittuCents: 0 } },
+} as any;
+
+describe("tyhjä luonnos ei ole maksu", () => {
+  it("nollan euron tekijäluonnos tunnistetaan tyhjäksi", () => {
+    expect(isEmptyEraInvoiceDraft(emptyDraft)).toBe(true);
+  });
+
+  it("ennakon nollaama lasku EI ole tyhjä — brutto ratkaisee, ei maksettava", () => {
+    // 84 € ansaittu, 84 € ennakkoa maksettu etukäteen: velka on oikeasti
+    // hoidettu ja rivi on kirjanpitoa. Tämä ei saa kadota siivouksessa.
+    expect(isEmptyEraInvoiceDraft({
+      ...emptyDraft, rivit: { computed: { ansaittuCents: 8400 } },
+    })).toBe(false);
+  });
+
+  it("lähetettyä laskua ei koskaan pidetä tyhjänä (tosite säilyy)", () => {
+    expect(isEmptyEraInvoiceDraft({ ...emptyDraft, invoiceNumber: "T-2026-4" })).toBe(false);
+    expect(isEmptyEraInvoiceDraft({ ...emptyDraft, tila: "hyväksytty" })).toBe(false);
+  });
+
+  it("tyhjä luonnos ei näy maksulistalla eikä laskurissa", () => {
+    const real = { kind: "tekija", tila: "luonnos", totalCents: 8400, rivit: { computed: { ansaittuCents: 8400 } } } as any;
+    const s = summarizeEraInvoices([emptyDraft, real, emptyDraft]);
+    expect(s.workerInvoices).toHaveLength(1);
+    expect(s.workerPendingSumCents).toBe(8400);
+  });
+
+  it("nollarivi ei estä saman erän oikeaa maksua (kaksoiskappalesuoja ohittaa sen)", () => {
+    const batch = workerBatchBody();
+    const dedupe = batch.slice(batch.indexOf("if (!force && singleUseEra)"));
+    expect(dedupe.slice(0, 1600)).toContain("!isEmptyEraInvoiceDraft");
+  });
+
+  it("serveri siivoaa tyhjät luonnokset kannasta listausta luettaessa", () => {
+    const start = SRC.indexOf('app.get("/api/jobs/:id/era-invoices"');
+    expect(start).toBeGreaterThan(0);
+    const list = SRC.slice(start, SRC.indexOf("\n  app.", start + 10));
+    expect(list).toContain("isEmptyEraInvoiceDraft");
+    expect(list).toContain("db.delete(eraInvoices)");
   });
 });

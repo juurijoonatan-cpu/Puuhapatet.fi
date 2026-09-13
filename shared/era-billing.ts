@@ -184,6 +184,34 @@ export function voidedEraInvoicePurgeAt(inv: EraInvoiceSummaryRow): number | nul
   return at + VOIDED_DRAFT_RETENTION_MS;
 }
 
+/**
+ * TYHJÄ LUONNOS — maksu jota ei ole olemassa.
+ *
+ * Nollan euron tekijämaksu ei ole ehdotus eikä tosite: se ei siirrä senttiäkään,
+ * mutta se näyttää maksulistalla maksulta, jää tekijälle odottamaan kuittausta
+ * tyhjästä ja — pahinta — laukaisee kaksoiskappalesuojan, joka estää saman erän
+ * OIKEAN maksun luonnin. Tällaisia rivejä syntyi kun koko saldon maksun summa
+ * putosi matkalla pois; suojaa ei silti poisteta korjauksen mukana, koska
+ * nollarivin haitat ovat samat riippumatta siitä mikä sen synnytti.
+ *
+ * Lähetettyä laskua tämä ei koskaan koske (`isEraInvoiceReceipt`): sillä on
+ * laskunumero ja se on tekijän kirjanpidossa, vaikka summa olisi mikä.
+ *
+ * Ennakko saa viedä maksettavan nollaan — silloin BRUTTO ansio on yhä
+ * positiivinen ja velka on oikeasti hoidettu. Siksi tyhjyys katsotaan
+ * bruttosta, ei `totalCents`istä.
+ */
+export function isEmptyEraInvoiceDraft(
+  inv: EraInvoiceSummaryRow & { kind: string; rivit?: { computed?: { ansaittuCents?: number } } | null },
+): boolean {
+  if (inv.kind !== "tekija") return false;
+  if (inv.tila !== "luonnos") return false;
+  if (isEraInvoiceReceipt(inv)) return false;
+  const gross = inv.rivit?.computed?.ansaittuCents;
+  const grossCents = typeof gross === "number" && Number.isFinite(gross) ? gross : inv.totalCents;
+  return grossCents <= 0 && inv.totalCents <= 0;
+}
+
 /** Onko mitätöidyn luonnoksen säilytysaika umpeutunut (`now` = Date.now())? */
 export function isVoidedEraInvoiceExpired(inv: EraInvoiceSummaryRow, now: number): boolean {
   const at = voidedEraInvoicePurgeAt(inv);
@@ -197,7 +225,13 @@ export function isVoidedEraInvoiceExpired(inv: EraInvoiceSummaryRow, now: number
  */
 export function summarizeEraInvoices<T extends EraInvoiceSummaryRow>(invoices: T[]) {
   const founderInvoices = invoices.filter((i) => i.kind === "johtaja_valinen");
-  const workerInvoices = invoices.filter((i) => i.kind === "tekija");
+  /**
+   * Nollan euron luonnos ei ole maksu (ks. `isEmptyEraInvoiceDraft`), joten se
+   * ei kuulu maksulistalle, laskuriin eikä summiin. Serveri poistaa ne itse,
+   * mutta ruutu ei saa odottaa sitä: väärä rivi arkistossa näyttää tekijälle
+   * luvatulta rahalta, jota kukaan ei ole siirtämässä.
+   */
+  const workerInvoices = invoices.filter((i) => i.kind === "tekija" && !isEmptyEraInvoiceDraft(i as any));
   const workerPending = workerInvoices.filter((i) => i.tila === "luonnos");
   const workerAccepted = workerInvoices.filter((i) => i.tila === "hyväksytty");
   const workerRejected = workerInvoices.filter((i) => i.tila === "hylätty");

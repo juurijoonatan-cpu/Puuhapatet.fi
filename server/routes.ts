@@ -14,7 +14,7 @@ import {
   eraInvoiceRespondTransition,
   type EraInvoiceKind, type EraInvoiceTila, type EraInvoiceRespondAction,
   isP2EraSelection, isHoursEraSelection, isSettleEraSelection, eraScopeLabel,
-  isVoidedEraInvoiceExpired, voidedEraInvoicePurgeAt, isEraInvoiceReceipt,
+  isVoidedEraInvoiceExpired, voidedEraInvoicePurgeAt, isEraInvoiceReceipt, isEmptyEraInvoiceDraft,
 } from "@shared/era-billing";
 import { feeRateForWorker, effectiveJobTotal, FOUNDER_IDS, marketerCommissionCents, MARKETER_COMMISSION_RATE } from "@shared/team";
 import { randomUUID, createHmac, timingSafeEqual, scryptSync, randomBytes } from "crypto";
@@ -3236,6 +3236,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           await db.delete(eraInvoices).where(inArray(eraInvoices.id, expired));
           rows = rows.filter((r) => !expired.includes(r.id));
         }
+        /**
+         * TYHJÄT LUONNOKSET POIS HETI — ei kahden vuorokauden odotusta.
+         *
+         * Nollan euron tekijämaksu ei ole ehdotus eikä tosite (ks.
+         * `isEmptyEraInvoiceDraft`). Se ei siirrä senttiäkään, mutta se roikkuu
+         * arkistossa "Odottaa tekijää" -tilassa ja laukaisee
+         * kaksoiskappalesuojan, joka estää saman erän OIKEAN maksun luonnin —
+         * eli johtaja ei pääse korjaamaan virhettä ilman että muistaa mitätöidä
+         * rivin käsin. Serveri siivoaa ne itse, samalla laiskalla luvulla kuin
+         * vanhentuneet mitätöinnit.
+         */
+        const emptyDrafts = rows.filter((r) => isEmptyEraInvoiceDraft(toClientEraInvoice(r) as any)).map((r) => r.id);
+        if (emptyDrafts.length > 0) {
+          await db.delete(eraInvoices).where(inArray(eraInvoices.id, emptyDrafts));
+          rows = rows.filter((r) => !emptyDrafts.includes(r.id));
+        }
         // Sähköposti_loki per lasku (kohta 3D: kopiot kummankin johtajan
         // sähköpostissa). Rivit syntyvät vasta vaiheessa 4 — siihen asti tyhjä.
         if (rows.length > 0) {
@@ -3377,7 +3393,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             eq(eraInvoices.eraNumbers, eraKey),
             ne(eraInvoices.tila, "hylätty" satisfies EraInvoiceTila),
           ));
-          existingSenderIds = new Set(existing.map((r) => r.senderId));
+          /**
+           * TYHJÄ LUONNOS EI OLE MAKSU, JOTEN SE EI SAA ESTÄÄ MAKSUA.
+           *
+           * Nollan euron rivi hoiti nolla euroa velkaa, mutta se lukitsi
+           * kaksoiskappalesuojan: johtaja ei päässyt luomaan saman erän oikeaa
+           * maksua ennen kuin muisti mitätöidä rivin käsin — eikä virheilmoitus
+           * ("tälle tekijälle on jo tehty tämän erän maksu") kertonut mitään
+           * siitä mikä oikeasti oli vialla. Serveri siivoaa nollarivit myös
+           * itse (GET /era-invoices), mutta suoja ei saa riippua siitä että
+           * lista on ehditty ladata.
+           */
+          existingSenderIds = new Set(
+            existing.filter((r) => !isEmptyEraInvoiceDraft(toClientEraInvoice(r) as any)).map((r) => r.senderId),
+          );
         } catch (e: any) {
           if (!isMissingTableError(e)) throw e;
         }
@@ -9354,7 +9383,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         eq(eraInvoices.kind, "tekija" satisfies EraInvoiceKind),
         eq(eraInvoices.senderId, member.id),
       )).orderBy(desc(eraInvoices.createdAt));
-      workerEraInvoices = rows.map(toClientEraInvoice);
+      // Nollan euron luonnos ei ole maksu (ks. `isEmptyEraInvoiceDraft`), eikä
+      // tekijää saa pyytää kuittaamaan tyhjää. Serveri poistaa ne johtajien
+      // listauksessa; tekijän näkymä ei voi odottaa sitä, koska hän voi avata
+      // oman sivunsa ensin.
+      workerEraInvoices = rows.map(toClientEraInvoice).filter((r) => !isEmptyEraInvoiceDraft(r as any));
     } catch (e: any) {
       if (!isMissingTableError(e)) console.error("workerView era_invoices query failed:", e?.message);
     }

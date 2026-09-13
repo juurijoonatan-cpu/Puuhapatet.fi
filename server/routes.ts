@@ -13,7 +13,7 @@ import {
   computeEraBilling, TEKIJA_HINTA_CENTS, eraRecipientFounderId, normalizeEraNumbers,
   eraInvoiceRespondTransition,
   type EraInvoiceKind, type EraInvoiceTila, type EraInvoiceRespondAction,
-  isP2EraSelection, isHoursEraSelection, eraScopeLabel,
+  isP2EraSelection, isHoursEraSelection, isSettleEraSelection, eraScopeLabel,
   isVoidedEraInvoiceExpired, voidedEraInvoicePurgeAt, isEraInvoiceReceipt,
 } from "@shared/era-billing";
 import { feeRateForWorker, effectiveJobTotal, FOUNDER_IDS, marketerCommissionCents, MARKETER_COMMISSION_RATE } from "@shared/team";
@@ -3344,7 +3344,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
 
       const eraNumbers = normalizeEraNumbers(req.body?.eraNumbers);
-      if (!eraNumbers) return res.status(400).json({ error: "Virheellinen erävalinta (1-3, 4, keltaiset tai tunnit)" });
+      if (!eraNumbers) return res.status(400).json({ error: "Virheellinen erävalinta (1-3, 4, keltaiset, tunnit tai koko saldo)" });
       // Ostaja = johtaja jonka Y-tunnukselle tekijä laskuttaa, eli se joka
       // OIKEASTI siirtää rahat. Oletus tulee erän mukaan (erät 1-3 Joonatan,
       // erä 4 Matias), mutta se on vain oletus: käytännössä maksaja voi olla
@@ -3392,37 +3392,29 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
        * tuntipotissa suojaa ei ole — sama tuntimaksu voisi syntyä kahdesti.
        * Siksi kaikki rivit tarkistetaan ensin ja vasta sitten kirjoitetaan.
        */
-      if (isHoursEraSelection(eraNumbers)) {
-        for (const w of rawWorkers) {
-          const nimi = String(w?.name || w?.workerId || "tekijä").slice(0, 200);
-          const t = Math.max(0, Number(w?.tunnit) || 0);
-          const r = Math.max(0, Math.round(Number(w?.tuntihintaCents) || 0));
-          if (t > 0 && r <= 0) {
-            return res.status(400).json({ error: `Tuntipalkka puuttuu (${nimi}). Täytä €/tunti ennen tuntimaksun luontia.` });
-          }
-        }
-      }
+      const hoursEra = isHoursEraSelection(eraNumbers);
+      const settleEra = isSettleEraSelection(eraNumbers);
+      /**
+       * VALMIS SUMMA OHITTAA IKKUNALASKENNAN — kahdessa potissa.
+       *
+       * Keltaisissa palkkio tulee palkkiotaulukosta per ikkuna, ei kiinteästä
+       * 20 €:sta. Koko saldon maksussa (sentinel-erä 8) summa ei ole johdettu
+       * ikkunoista lainkaan: se on tekijän koko maksamaton saldo, jonka johtaja
+       * voi vielä käsin korjata — ikkunoita ja tunteja ei lähetetä ollenkaan
+       * (ks. "YKSI LASKU = YKSI RAHAVIRTA" alempana).
+       *
+       * Tämä ehto luki aiemmin vain `isP2EraSelection`, jolloin koko saldon
+       * maksun summa putosi hiljaa pois ja laskuksi kirjautui 0,00 € vaikka
+       * dialogi näytti oikean summan. Jokainen uusi potti, joka lähettää
+       * valmiin summan, pitää lisätä tähän.
+       */
+      const overrideAllowed = isP2EraSelection(eraNumbers) || settleEra;
 
-      const created: (typeof eraInvoices.$inferSelect)[] = [];
-      const skipped: string[] = [];
-      for (const w of rawWorkers) {
+      /** Yhden pyyntörivin normalisointi. Sama funktio sekä tarkistuksessa että
+       *  kirjoituksessa, jottei tarkistus voi katsoa eri lukuja kuin kanta. */
+      const normalizeRow = (w: any) => {
         const workerId = String(w?.workerId || "").slice(0, 100);
-        if (!workerId) continue;
-        if (existingSenderIds.has(workerId)) {
-          skipped.push(String(w?.name || workerId));
-          continue;
-        }
-        const name = String(w?.name || workerId).slice(0, 200);
-        const pestytIkkunat = isHoursEraSelection(eraNumbers) ? 0 : Math.max(0, Number(w?.pestytIkkunat) || 0);
-        const sovittuMuutosCents = Math.round(Number(w?.sovittuMuutosCents) || 0);
-        const ennakkoCents = Math.max(0, Math.round(Number(w?.ennakkoCents) || 0));
-        /**
-         * TUNTITYÖ. Kolmas rahavirta ikkunoiden ja keltaisten rinnalla. Tunnit
-         * kirjataan laskulle omina kenttinään, jotta jokainen näkymä (tekijän
-         * hyväksyntä, PDF, siirtoraportti, maksettavan laskenta) lukee saman
-         * luvun samasta paikasta — ennen tuntityö piti kirjoittaa "sovittu
-         * muutos" -kenttään, eikä mikään näistä osannut tunnistaa sitä.
-         */
+        const name = String(w?.name || workerId || "tekijä").slice(0, 200);
         /**
          * YKSI LASKU = YKSI RAHAVIRTA.
          *
@@ -3430,35 +3422,75 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
          * virralle jonka erävalinta kertoo (`eraScopeOf`). Jos samalle laskulle
          * kirjattaisiin sekä ikkunoita että tunteja, koko summa kuittaisi vain
          * toista velkaa ja toinen jäisi auki — sama työ tulisi maksettavaksi
-         * kahdesti. Siksi kentät rajataan tässä erävalinnan mukaan: tuntipotti
-         * kirjaa tunnit, muut potit ikkunat.
+         * kahdesti. Siksi kentät rajataan erävalinnan mukaan: tuntipotti kirjaa
+         * tunnit, muut potit ikkunat, koko saldon maksu ei kumpaakaan (sen
+         * summa on jo kaikkien kolmen virran yhteenlaskettu saldo).
          */
-        const hoursEra = isHoursEraSelection(eraNumbers);
+        const pestytIkkunat = hoursEra || settleEra ? 0 : Math.max(0, Number(w?.pestytIkkunat) || 0);
         const tunnit = hoursEra ? Math.max(0, Number(w?.tunnit) || 0) : 0;
         const tuntihintaCents = hoursEra ? Math.max(0, Math.round(Number(w?.tuntihintaCents) || 0)) : 0;
+        const rawOverride = Number(w?.ansaittuOverrideCents);
+        const ansaittuOverrideCents = overrideAllowed && Number.isFinite(rawOverride) && rawOverride >= 0
+          ? Math.round(rawOverride)
+          : undefined;
+        const input = {
+          workerId, name, pestytIkkunat,
+          sovittuMuutosCents: Math.round(Number(w?.sovittuMuutosCents) || 0),
+          ennakkoCents: Math.max(0, Math.round(Number(w?.ennakkoCents) || 0)),
+          ansaittuOverrideCents, tunnit, tuntihintaCents,
+        };
+        return { input, computed: computeEraBilling(0, [input], []).workers[0] };
+      };
+
+      /**
+       * TARKISTUS ENNEN YHTÄKÄÄN KIRJOITUSTA.
+       *
+       * Erä kirjoitetaan riveittäin, joten kesken silmukan palautettu virhe
+       * jättäisi osan laskuista kantaan. Punaiset ja keltaiset selviävät siitä
+       * kaksoiskappalesuojan ansiosta (uusi yritys ohittaa jo luodut), mutta
+       * tuntipotissa suojaa ei ole — sama tuntimaksu voisi syntyä kahdesti.
+       * Siksi kaikki rivit tarkistetaan ensin ja vasta sitten kirjoitetaan.
+       */
+      for (const w of rawWorkers) {
+        const { input, computed } = normalizeRow(w);
+        if (!input.workerId) continue;
+        if (existingSenderIds.has(input.workerId)) continue;
         /**
          * TUNTEJA EI KIRJATA ILMAN TUNTIPALKKAA.
          *
-         * Nolla euron tuntipalkka tekisi nollan euron laskun, mutta sen tunnit
+         * Nollan euron tuntipalkka tekisi nollan euron laskun, mutta sen tunnit
          * kirjautuisivat silti "katetuiksi": maksamaton tuntimäärä painuisi
          * pysyvästi nollaan vaikka koko velka on yhä auki, ja maksudialogi
          * lukisi "maksamatta 0 h · 300,00 €". Pyydetään mieluummin puuttuva
          * hinta kuin rikotaan tuntikirjanpito hiljaa.
          */
-        if (tunnit > 0 && tuntihintaCents <= 0) {
-          return res.status(400).json({
-            error: `Tuntipalkka puuttuu (${name}). Täytä €/tunti ennen tuntimaksun luontia.`,
-          });
+        if (input.tunnit > 0 && input.tuntihintaCents <= 0) {
+          return res.status(400).json({ error: `Tuntipalkka puuttuu (${input.name}). Täytä €/tunti ennen tuntimaksun luontia.` });
         }
-        // Keltaisten (2. vaihe) palkkio tulee palkkiotaulukosta per ikkuna, ei
-        // kiinteästä 20 €:sta — client lähettää valmiin ansion, joka ohittaa
-        // ikkunamäärä × vakio -laskennan. Vain P2-potissa hyväksytään.
-        const rawOverride = Number(w?.ansaittuOverrideCents);
-        const ansaittuOverrideCents = isP2EraSelection(eraNumbers) && Number.isFinite(rawOverride) && rawOverride >= 0
-          ? Math.round(rawOverride)
-          : undefined;
-        const result = computeEraBilling(0, [{ workerId, name, pestytIkkunat, sovittuMuutosCents, ennakkoCents, ansaittuOverrideCents, tunnit, tuntihintaCents }], []);
-        const computed = result.workers[0];
+        /**
+         * NOLLAN EURON MAKSUA EI KIRJATA.
+         *
+         * Nollarivi näyttää maksulistalla maksulta mutta ei siirrä senttiäkään,
+         * ja tekijä jää odottamaan kuittausta tyhjästä — juuri näin koko saldon
+         * maksu epäonnistui hiljaa. Ennakko saa viedä maksettavan nollaan (velka
+         * on silloin oikeasti hoidettu), mutta jos koko ansio on nolla, jotain
+         * jäi lähettämättä. Pyydetään summa ennemmin kuin kirjataan tyhjä maksu.
+         */
+        if (computed.ansaittuCents <= 0) {
+          return res.status(400).json({ error: `Summa puuttuu (${input.name}). Täytä maksettava summa ennen maksun luontia.` });
+        }
+      }
+
+      const created: (typeof eraInvoices.$inferSelect)[] = [];
+      const skipped: string[] = [];
+      for (const w of rawWorkers) {
+        const { input, computed } = normalizeRow(w);
+        if (!input.workerId) continue;
+        if (existingSenderIds.has(input.workerId)) {
+          skipped.push(input.name);
+          continue;
+        }
+        const { workerId, name, pestytIkkunat, sovittuMuutosCents, ennakkoCents, tunnit, tuntihintaCents, ansaittuOverrideCents } = input;
         const [row] = await db.insert(eraInvoices).values({
           jobId,
           kind: "tekija" satisfies EraInvoiceKind,

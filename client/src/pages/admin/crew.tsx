@@ -1184,7 +1184,11 @@ function PayrollSummary({ crew, eraInvoices, p2Enabled }: {
                 <span className="whitespace-nowrap">{fmtWindows(r.p1Washed)} punaista</span>
                 <span className="whitespace-nowrap">· hoidettu {eur(r.settledTotalCents)}</span>
                 {r.eraPendingCents > 0 && <span className="whitespace-nowrap">· kuittaamatta {eur(r.eraPendingCents)}</span>}
-                {r.settledEras.length > 0 && <span className="whitespace-nowrap">· erät {r.settledEras.join(", ")}</span>}
+                {/* Vain urakan oikeat erät 1–4; sentinelit (keltaiset 0, koko saldo 8,
+                    tunnit 9) eivät ole eränumeroita eivätkä kuulu tähän. */}
+                {r.settledEras.filter((n) => n >= 1 && n <= 4).length > 0 && (
+                  <span className="whitespace-nowrap">· erät {r.settledEras.filter((n) => n >= 1 && n <= 4).join(", ")}</span>
+                )}
               </p>
               {r.hours > 0 && (
                 <p className="text-[11px] leading-snug text-muted-foreground">

@@ -215,10 +215,23 @@ function whyFor(r: TransferReportWorkerRow): string {
 /**
  * Kuka siirtää tälle tekijälle?
  *
- * Etusijajärjestys: (1) tekijän oman avoimen laskun ostaja — se johtaja jolle
- * lasku on osoitettu, (2) sen johtajan id joka sai viimeisimmän asiakaserän
- * rahat, (3) tyhjä. EI arvausta kolikonheitolla: tuntematon maksaja näkyy
- * raportilla tyhjänä, jotta johtaja kirjaa sen itse.
+ * Etusijajärjestys:
+ *   1. tekijän KUITTAAMATTA oleva luonnos — se johtaja jolle lasku on
+ *      osoitettu; raha on pakko tulla häneltä, muuten lasku ja siirto eivät
+ *      täsmää,
+ *   2. se johtaja joka otti viimeisimmän ASIAKASLASKUN — hänen tilillään raha
+ *      nyt on,
+ *   3. tekijän viimeisin aiempi lasku — viimeinen oljenkorsi kun asiakkaalle ei
+ *      ole vielä laskutettu mitään,
+ *   4. tyhjä. EI arvausta kolikonheitolla: tuntematon maksaja näkyy raportilla
+ *      tyhjänä, jotta johtaja kirjaa sen itse.
+ *
+ * KOHTA 2 ON KOHDAN 3 EDELLÄ TARKOITUKSELLA. Aiemmin mikä tahansa tekijän
+ * aiempi lasku kelpasi, myös jo hyväksytty ja maksettu. Silloin kertaalleen
+ * Matiaksen maksama keltaisten lasku viime kuulta määräsi maksajaksi Matiaksen
+ * vaikka Joonatan oli ottanut asiakaslaskun ja raha oli hänellä: raportti
+ * käski väärää johtajaa siirtämään rahaa jota hänellä ei ollut. Hoidettu lasku
+ * kertoo menneestä, ei siitä kuka maksaa seuraavan.
  */
 function payerFor(
   workerId: string,
@@ -228,8 +241,8 @@ function payerFor(
   const own = invoices
     .filter((i) => i.kind === "tekija" && i.senderId === workerId && i.tila !== "hylätty")
     .sort((a, b) => b.id - a.id);
-  const live = own.find((i) => i.tila === "luonnos") ?? own[0];
-  return live?.recipientId || fallbackFounderId;
+  const pending = own.find((i) => i.tila === "luonnos");
+  return pending?.recipientId || fallbackFounderId || own[0]?.recipientId || null;
 }
 
 /**

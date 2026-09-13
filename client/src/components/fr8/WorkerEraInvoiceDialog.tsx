@@ -20,16 +20,18 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { computeEraBilling, P2_ERA_NUMBERS, HOURS_ERA_NUMBERS, type TekijaPesu } from "@shared/era-billing";
+import { computeEraBilling, P2_ERA_NUMBERS, HOURS_ERA_NUMBERS, SETTLE_ERA_NUMBERS, type TekijaPesu } from "@shared/era-billing";
 import type { WorkerSettlement } from "@shared/worker-payouts";
 import { fmtEurCents } from "@shared/tax";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Wallet, Check, X, AlertTriangle } from "lucide-react";
 
 /** Punaisten erät, keltaisten (2. vaihe) potti tai tuntityö. */
-type EraChoice = "1-3" | "4" | "p2" | "tunnit";
+type EraChoice = "kaikki" | "1-3" | "4" | "p2" | "tunnit";
 
 interface WorkerRowState {
+  /** Koko saldon maksu: yksi summa, esitäytettynä sillä mikä on maksamatta. */
+  summa: string;
   pestytIkkunat: string;
   sovittuMuutosCents: string;
   ennakkoCents: string;
@@ -39,7 +41,7 @@ interface WorkerRowState {
   tuntihinta: string;
 }
 
-const EMPTY_ROW: WorkerRowState = { pestytIkkunat: "", sovittuMuutosCents: "", ennakkoCents: "", tunnit: "", tuntihinta: "" };
+const EMPTY_ROW: WorkerRowState = { summa: "", pestytIkkunat: "", sovittuMuutosCents: "", ennakkoCents: "", tunnit: "", tuntihinta: "" };
 
 /** Eräpäivän oletusehdotus: 14 vrk tästä hetkestä ("YYYY-MM-DD"). Johtaja voi
  *  aina vaihtaa tämän — ei enää kiinteä oletus laskun lähetyshetkellä. */
@@ -87,10 +89,15 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
    *  ole maksettavaa — tuntikeikalla se on ainoa potti, ja ilman tätä dialogi
    *  avautui aina "Erät 1-3" -välilehdelle jossa ei ole mitään. */
   const suggestedEra: EraChoice = useMemo(() => {
-    if (totalOpenP1 <= 0 && totalOpenP2 <= 0 && totalOpenHours > 0) return "tunnit";
-    if (totalOpenP1 <= 0 && totalOpenP2 > 0) return "p2";
+    // KOKO SALDO ON OLETUS. Maksaja ei maksa neljää kertaa: hän katsoo paljonko
+    // tekijälle kuuluu ja siirtää sen. Erittelyvälilehdet ovat yhä olemassa
+    // niitä tilanteita varten joissa maksu kohdistetaan yhteen pottiin.
+    if (totalOpenP1 + totalOpenP2 + totalOpenHours > 0) return "kaikki";
+    if (totalOpenHours > 0) return "tunnit";
+    if (totalOpenP2 > 0) return "p2";
     return workers.some((w) => w.settledEras.includes(3) || w.settledEras.includes(1)) ? "4" : "1-3";
   }, [workers, totalOpenP1, totalOpenP2, totalOpenHours]);
+  const isAll = era === "kaikki";
   const isP2 = era === "p2";
   const isHours = era === "tunnit";
 
@@ -117,8 +124,10 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
     if (!open) return;
     const p2 = era === "p2";
     const hrs = era === "tunnit";
+    const all = era === "kaikki";
     setSelectedIds(workers.filter((w) => (
-      hrs ? w.openHoursCents > 0 : p2 ? w.openP2Cents > 0 : w.openP1Windows > 0 || w.openP1Cents > 0
+      all ? w.openTotalCents + w.pendingTotalCents > 0
+        : hrs ? w.openHoursCents > 0 : p2 ? w.openP2Cents > 0 : w.openP1Windows > 0 || w.openP1Cents > 0
     )).map((w) => w.workerId));
     // Tuntitila esitäyttää maksamattomista tunneista. Muulla keikalla tunteja
     // ei lasketa rahaksi lainkaan (ne ovat seurantaa), joten tämä välilehti on
@@ -126,7 +135,18 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
     // alkavat tyhjinä tuntipalkkaa lukuun ottamatta.
     const next: Record<string, WorkerRowState> = {};
     for (const w of workers) {
+      const owed = w.openTotalCents + w.pendingTotalCents;
       next[w.workerId] = {
+        /**
+         * ESITÄYTTÖ = SE SUMMA JOKA MAKSUT-KORTILLA LUKEE.
+         *
+         * Siihen sisältyy myös sovittu korjaus (`payoutFixCents`), joka koskee
+         * tekijän KOKO saldoa eikä yhtäkään yksittäistä pottia. Juuri siksi
+         * korjaukset eivät näkyneet maksussa lainkaan: neljä välilehteä
+         * esitäyttyivät kukin omasta potistaan, eikä koko saldon korjaukselle
+         * ollut paikkaa missään.
+         */
+        summa: all && owed > 0 ? String(owed / 100).replace(".", ",") : "",
         // Tuntimaksulla ikkunoita ei laskuteta lainkaan: sama työ ei saa mennä
         // kahdesti (kerran tunteina, kerran ikkunoina).
         tunnit: hrs && w.openHours > 0 ? String(w.openHours) : "",
@@ -154,7 +174,7 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, era]);
 
-  const eraNumbers = isP2 ? P2_ERA_NUMBERS : isHours ? HOURS_ERA_NUMBERS : era === "4" ? [4] : [1, 2, 3];
+  const eraNumbers = isAll ? SETTLE_ERA_NUMBERS : isP2 ? P2_ERA_NUMBERS : isHours ? HOURS_ERA_NUMBERS : era === "4" ? [4] : [1, 2, 3];
   const selectedWorkers = workers.filter((w) => selectedIds.includes(w.workerId));
   const toggleWorker = (id: string) => {
     setSelectedIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
@@ -165,16 +185,18 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
     return {
       workerId: w.workerId,
       name: w.name,
-      pestytIkkunat: Math.max(0, parseFloat(r.pestytIkkunat.replace(",", ".")) || 0),
+      pestytIkkunat: isAll ? 0 : Math.max(0, parseFloat(r.pestytIkkunat.replace(",", ".")) || 0),
       sovittuMuutosCents: Math.round((parseFloat(r.sovittuMuutosCents.replace(",", ".")) || 0) * 100),
       ennakkoCents: Math.round((parseFloat(r.ennakkoCents.replace(",", ".")) || 0) * 100),
       // Tuntityö omana rivinään laskulle: tunnit × tuntipalkka. Nämä kulkevat
       // laskun `rivit.input`iin asti, joten tekijä, PDF ja siirtoraportti
       // näkevät saman erittelyn.
-      tunnit: Math.max(0, parseFloat(r.tunnit.replace(",", ".")) || 0),
+      tunnit: isAll ? 0 : Math.max(0, parseFloat(r.tunnit.replace(",", ".")) || 0),
       tuntihintaCents: Math.round((parseFloat(r.tuntihinta.replace(",", ".")) || 0) * 100),
       // Keltaisten palkkio tulee palkkiotaulukosta per ikkuna, ei 20 €/ikkuna —
       // siksi valmis summa ohittaa ikkunalaskennan.
+      // Koko saldon maksu: summa on annettu suoraan, ei johdettu ikkunoista.
+      ...(isAll ? { ansaittuOverrideCents: Math.max(0, Math.round((parseFloat(r.summa.replace(",", ".")) || 0) * 100)) } : {}),
       ...(isP2 ? { ansaittuOverrideCents: w.openP2Cents } : {}),
     };
   });
@@ -188,14 +210,14 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
   // ikkunoita), ja juuri se päästi läpi tapauksen jossa 60 € velasta olisi
   // laskutettu 440 €. Raha on lopullinen totuus — se on sama luku jonka
   // Maksut-välilehti näyttää siirrettävänä.
-  const overBilled = isP2 || isHours ? [] : selectedWorkers.filter((w) => {
+  const overBilled = isAll || isP2 || isHours ? [] : selectedWorkers.filter((w) => {
     const typed = Math.max(0, parseFloat((rows[w.workerId]?.pestytIkkunat || "").replace(",", ".")) || 0);
     if (typed > w.openP1Windows + 0.01) return true;
     const line = preview.workers.find((t) => t.workerId === w.workerId);
     return !!line && line.maksettavaCents > w.openP1Cents + 1;
   });
   // Onko tälle erälle jo tehty maksu jollekin valitulle tekijälle?
-  const alreadyPaidEra = isP2 || isHours ? [] : selectedWorkers.filter((w) => eraNumbers.every((n) => w.settledEras.includes(n)));
+  const alreadyPaidEra = isAll || isP2 || isHours ? [] : selectedWorkers.filter((w) => eraNumbers.every((n) => w.settledEras.includes(n)));
   /**
    * Tuntimaksun ylilaskutus: enemmän kuin tunneista on maksamatta.
    *
@@ -283,10 +305,12 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
       <DialogContent className="max-w-lg max-h-[88vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-1.5">
-            <Wallet className="h-4 w-4" /> Tekijöiden maksu — {isP2 ? "keltaiset" : isHours ? "tuntityö" : "punaiset"}
+            <Wallet className="h-4 w-4" /> Tekijöiden maksu{isAll ? "" : ` — ${isP2 ? "keltaiset" : isHours ? "tuntityö" : "punaiset"}`}
           </DialogTitle>
           <DialogDescription>
-            {isP2
+            {isAll
+              ? "Jokaiselle tekijälle yksi summa: se mikä hänelle on maksamatta, sovitut korjaukset mukaan luettuina. Summa on ehdotus — kirjoita päälle se minkä oikeasti maksat."
+              : isP2
               ? "Keltaisista kertynyt palkkio palkkiotaulukon mukaan. Vain asiakkaan hyväksymät ikkunat."
               : isHours
               ? "Esitäyttö = maksamatta olevat tunnit × tekijän tuntipalkka. Molemmat kentät ovat muokattavissa."
@@ -295,7 +319,7 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
         </DialogHeader>
 
         <div className="flex gap-2 mb-4">
-          {([["1-3", "Erät 1-3"], ["4", "Erä 4"], ["p2", "Keltaiset"], ["tunnit", "Tunnit"]] as [EraChoice, string][]).map(([e, label]) => (
+          {([["kaikki", "Koko saldo"], ["1-3", "Erät 1-3"], ["4", "Erä 4"], ["p2", "Keltaiset"], ["tunnit", "Tunnit"]] as [EraChoice, string][]).map(([e, label]) => (
             <button key={e} onClick={() => setEra(e)}
               className={`flex-1 rounded-xl border px-1.5 py-2.5 text-[13px] font-semibold ${era === e ? "border-primary bg-primary/10" : "border-border"}`}>
               {label}
@@ -338,7 +362,7 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
               <button key={w.workerId} type="button" onClick={() => toggleWorker(w.workerId)}
                 className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${active ? "border-primary bg-primary/10" : "border-border text-muted-foreground hover:bg-muted/40"}`}>
                 {active ? "✓ " : "+ "}{w.name}
-                <span className="ml-1 font-normal tabular-nums opacity-70">{fmtEurCents(isP2 ? w.openP2Cents : isHours ? w.openHoursCents : w.openP1Cents)}</span>
+                <span className="ml-1 font-normal tabular-nums opacity-70">{fmtEurCents(isAll ? w.openTotalCents + w.pendingTotalCents : isP2 ? w.openP2Cents : isHours ? w.openHoursCents : w.openP1Cents)}</span>
               </button>
             );
           })}
@@ -372,7 +396,20 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
                   </div>
                 </div>
                 {/* Läpinäkyvä tilanne: mistä esitäyttö tulee ja mitä on jo hoidettu. */}
-                {isHours ? (
+                {isAll ? (
+                  <p className="text-[11px] leading-snug text-muted-foreground">
+                    {[
+                      w.openP1Cents > 0 ? `punaiset ${fmtEurCents(w.openP1Cents)}` : "",
+                      w.openP2Cents > 0 ? `keltaiset ${fmtEurCents(w.openP2Cents)}` : "",
+                      w.openHoursCents > 0 ? `tunnit ${fmtEurCents(w.openHoursCents)}` : "",
+                    ].filter(Boolean).join(" · ") || "ei avointa saldoa"}
+                    {w.payoutFixCents !== 0 && (
+                      <span className="block text-amber-600 dark:text-amber-400">
+                        sisältää sovitun korjauksen {w.payoutFixCents < 0 ? "−" : "+"}{fmtEurCents(Math.abs(w.payoutFixCents))}
+                      </span>
+                    )}
+                  </p>
+                ) : isHours ? (
                   <p className="text-[11px] leading-snug text-muted-foreground">
                     Tunteja kirjattu {fmtWin(w.hours)} h × {fmtEurCents(w.hourRateCents)} = {fmtEurCents(w.hoursEarnedCents)}
                     {" · jo maksettu "}{fmtEurCents(w.hoursSettledCents)}
@@ -408,9 +445,21 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
                     Punaisia pesty {fmtWin(w.p1Washed)} kpl · jo hoidettu {fmtEurCents(w.settledCents)}
                     {w.eraPendingCents > 0 ? ` · odottaa kuittausta ${fmtEurCents(w.eraPendingCents)}` : ""}
                     {" · "}<strong className="text-foreground">maksamatta {fmtWin(w.openP1Windows)} kpl · {fmtEurCents(w.openP1Cents)}</strong>
-                    {w.settledEras.length > 0 ? ` · erät ${w.settledEras.join(", ")}` : ""}
+                    {/* Sentinel-erät (0, 8, 9) eivät ole urakan eriä eivätkä kuulu listaan. */}
+                    {(() => { const e = w.settledEras.filter((n) => n >= 1 && n <= 4); return e.length ? ` · erät ${e.join(", ")}` : ""; })()}
                   </p>
                 )}
+                {isAll ? (
+                  /* YKSI KENTTÄ. Ikkunat, tunnit, sovittu muutos ja ennakko ovat
+                     erittelyvälilehtien työkaluja; koko saldon maksussa on vain
+                     se luku joka siirretään. */
+                  <label className="block text-[11px] text-muted-foreground">
+                    Maksetaan (€)
+                    <Input type="text" inputMode="decimal" value={r.summa}
+                      onChange={(e) => setField(w.workerId, "summa", e.target.value)}
+                      className="h-11 mt-0.5 text-base font-semibold tabular-nums" />
+                  </label>
+                ) : (
                 <div className="grid grid-cols-3 gap-2">
                   {isHours ? (
                     <>
@@ -451,6 +500,7 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
                       className="h-9 mt-0.5 tabular-nums" />
                   </label>
                 </div>
+                )}
               </div>
             );
           })}

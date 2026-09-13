@@ -11,7 +11,7 @@ import {
   eraInvoiceGrossCents, isEraInvoiceSettled, isEraInvoicePending,
   p2InvoiceState, settleWorker, eraMapsFor,
 } from "./worker-payouts";
-import { computeEraBilling, normalizeEraNumbers, isP2EraSelection, P2_ERA_NUMBERS } from "./era-billing";
+import { computeEraBilling, normalizeEraNumbers, isP2EraSelection, P2_ERA_NUMBERS, SETTLE_ERA_NUMBER, SETTLE_ERA_NUMBERS, eraScopeLabel } from "./era-billing";
 import { emptyProjectData, type ProjectData } from "./project";
 import { DEFAULT_WORKER_PER_WINDOW_CENTS, type CrewMember } from "./crew";
 import type { P2State } from "./p2";
@@ -765,5 +765,39 @@ describe("sovittu korjaus siirrettävään summaan", () => {
     const [row] = computeWorkerSettlements(p);
     expect(row.payoutFixCents).toBe(0);
     expect(row.openTotalCents).toBe(100_00);
+  });
+});
+
+/**
+ * KOKO SALDON MAKSU — yksi maksu kattaa kaiken maksamattoman.
+ *
+ * Maksu oli jaettu neljään välilehteen, koska raha tulee neljästä paikasta.
+ * Maksaja ei kuitenkaan maksa neljää kertaa: hän siirtää yhden summan. Ja
+ * sovittu korjaus koskee tekijän KOKO saldoa, joten sille ei ollut paikkaa
+ * yhdessäkään yhden potin välilehdessä — juuri siksi korjaukset eivät
+ * näkyneet maksussa lainkaan.
+ *
+ * Sentinel-erä 8 on scope "p1", jolloin summa kuittaa velkaa samassa
+ * järjestyksessä kuin käsin kirjattu maksu: punaiset -> tunnit -> keltaiset.
+ */
+describe("koko saldon maksu (sentinel-era 8)", () => {
+  const inv = (cents: number) => ({
+    kind: "tekija", tila: "lähetetty", senderId: "doma", totalCents: cents,
+    eraNumbers: [SETTLE_ERA_NUMBER], rivit: { computed: { ansaittuCents: cents } },
+  });
+
+  it("kuittaa velkaa eikä ole urakan erä", () => {
+    const maps = eraSettlementByWorker([inv(100_00) as never]);
+    expect(maps.centsByWorker.doma).toBe(100_00);
+    expect((maps.eraNumbersByWorker.doma || []).filter((n) => n >= 1 && n <= 4)).toEqual([]);
+  });
+
+  it("ei sekoitu keltaisten eikä tuntien potteihin", () => {
+    expect(eraSettlementByWorker([inv(100_00) as never], "p2").centsByWorker.doma).toBeUndefined();
+    expect(eraSettlementByWorker([inv(100_00) as never], "hours").centsByWorker.doma).toBeUndefined();
+  });
+
+  it("nimi ei vuoda käyttöliittymään eränumerona", () => {
+    expect(eraScopeLabel(SETTLE_ERA_NUMBERS)).toBe("Koko saldo");
   });
 });

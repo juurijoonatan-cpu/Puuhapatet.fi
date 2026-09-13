@@ -58,6 +58,29 @@ export function isHoursEraSelection(eraNumbers: number[] | null | undefined): bo
   return Array.isArray(eraNumbers) && eraNumbers.length === 1 && eraNumbers[0] === HOURS_ERA_NUMBER;
 }
 
+/**
+ * KOKO SALDON MAKSU — yksi maksu joka kattaa tekijän kaiken maksamattoman.
+ *
+ * Maksu oli jaettu neljään välilehteen (erät 1–3, erä 4, keltaiset, tunnit),
+ * koska raha tulee neljästä eri paikasta. Maksaja ei kuitenkaan maksa neljää
+ * kertaa: hän katsoo paljonko tekijälle kuuluu ja siirtää sen summan kerralla.
+ * Neljä välilehteä tarkoitti neljä maksua, neljä kuittia ja neljä tilaisuutta
+ * unohtaa yksi — ja sovittu korjaus, joka koskee tekijän KOKO saldoa, ei
+ * mahtunut yhteenkään niistä.
+ *
+ * Tämä on `scope: "p1"` tarkoituksella: silloin summa kuittaa velkaa samassa
+ * järjestyksessä kuin käsin kirjattu maksu (punaiset → tunnit → keltaiset),
+ * eikä tarvita erillistä jakoa potteihin. Sentinel-erä pitää sen erossa
+ * urakan neljästä oikeasta erästä.
+ */
+export const SETTLE_ERA_NUMBER = 8;
+export const SETTLE_ERA_NUMBERS: number[] = [SETTLE_ERA_NUMBER];
+
+/** Onko tämä erävalinta koko saldon maksu? */
+export function isSettleEraSelection(eraNumbers: number[] | null | undefined): boolean {
+  return Array.isArray(eraNumbers) && eraNumbers.length === 1 && eraNumbers[0] === SETTLE_ERA_NUMBER;
+}
+
 /** Minkä rahavirran tämä erävalinta koskee. Yksi funktio, jotta kolme virtaa
  *  eivät voi mennä eri näkymissä eri tavalla ristiin. */
 export type EraScope = "p1" | "p2" | "hours";
@@ -76,6 +99,8 @@ export function eraScopeLabel(eraNumbers: number[] | null | undefined): string {
   const scope = eraScopeOf(eraNumbers);
   if (scope === "p2") return "Keltaiset";
   if (scope === "hours") return "Tuntityö";
+  // Sentinel ei saa koskaan vuotaa käyttöliittymään muodossa "Erä 8".
+  if (isSettleEraSelection(eraNumbers)) return "Koko saldo";
   const nums = eraNumbers ?? [];
   if (nums.length === 0) return "Erä —";
   return nums.length === 1 ? `Erä ${nums[0]}` : `Erät ${nums[0]}–${nums[nums.length - 1]}`;
@@ -207,6 +232,7 @@ export function normalizeEraNumbers(raw: unknown): number[] | null {
   if (sorted.length === 1 && sorted[0] === 4) return [4];
   if (sorted.length === 1 && sorted[0] === P2_ERA_NUMBER) return [...P2_ERA_NUMBERS];
   if (sorted.length === 1 && sorted[0] === HOURS_ERA_NUMBER) return [...HOURS_ERA_NUMBERS];
+  if (sorted.length === 1 && sorted[0] === SETTLE_ERA_NUMBER) return [...SETTLE_ERA_NUMBERS];
   return null;
 }
 

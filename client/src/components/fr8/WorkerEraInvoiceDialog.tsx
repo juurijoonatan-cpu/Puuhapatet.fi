@@ -558,7 +558,12 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
             heti kun tekijöitä oli pari — dialogista ei siis päässyt pois
             ilman että selasi koko listan takaisin ylös. Lähetysnappi oli
             saman listan alimmaisena. Nyt molemmat ovat aina kädessä. */}
-        <div className="sticky bottom-0 -mx-6 mt-4 border-t border-border bg-background px-6 pb-1 pt-3">
+        {/* Alareunan täyte kotipalkin verran: ilman sitä Lähetä-nappi jäi
+            iPhonen alapalkin alle juuri sen verran ettei siihen osunut. */}
+        <div
+          className="sticky bottom-0 -mx-6 mt-4 border-t border-border bg-background px-6 pt-3"
+          style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
+        >
           <div className="flex items-center justify-between gap-2">
             <span className="text-xs text-muted-foreground">
               Yhteensä <strong className="tabular-nums text-foreground">{fmtEurCents(preview.tekijatAnsaittuYhtCents)}</strong>

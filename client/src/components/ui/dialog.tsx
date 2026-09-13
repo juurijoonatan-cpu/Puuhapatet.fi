@@ -32,11 +32,35 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+>(({ className, children, style, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}
+      /**
+       * TURVA-ALUEET PUHELIMESSA.
+       *
+       * Dialogi keskitetään koko näkymän korkeudelle, joten pitkä dialogi
+       * levisi reunasta reunaan — ja iPhonella sen yläreuna jäi kellon ja
+       * notchin alle: otsikko ja sulkuruksi olivat osittain piilossa, eikä
+       * dialogista päässyt ulos ilman että sitä selasi ensin ylös.
+       *
+       * Kaksi korjausta yhdessä:
+       *   · korkeuskatto vähentää turva-alueet ja jättää marginaalin, joten
+       *     dialogi ei koskaan ylety kellon tasalle;
+       *   · keskitystä siirretään puolella turva-alueiden erotuksesta, koska
+       *     yläreunan lovi on isompi kuin alareunan palkki — pelkkä
+       *     keskittäminen jättäisi ylös liian vähän ja alas liikaa.
+       *
+       * `dvh` eikä `vh`: mobiiliselaimen osoiterivi muuttaa näkyvää korkeutta,
+       * ja `vh` laskee sen mukaan jota ei näy.
+       */
+      style={{
+        maxHeight:
+          "calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 3rem)",
+        top: "calc(50% + env(safe-area-inset-top) / 2 - env(safe-area-inset-bottom) / 2)",
+        ...style,
+      }}
       className={cn(
         "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg",
         className

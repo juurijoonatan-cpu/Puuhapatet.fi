@@ -126,7 +126,7 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
     const hrs = era === "tunnit";
     const all = era === "kaikki";
     setSelectedIds(workers.filter((w) => (
-      all ? w.openTotalCents + w.pendingTotalCents > 0
+      all ? w.openTotalCents > 0
         : hrs ? w.openHoursCents > 0 : p2 ? w.openP2Cents > 0 : w.openP1Windows > 0 || w.openP1Cents > 0
     )).map((w) => w.workerId));
     // Tuntitila esitäyttää maksamattomista tunneista. Muulla keikalla tunteja
@@ -135,7 +135,15 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
     // alkavat tyhjinä tuntipalkkaa lukuun ottamatta.
     const next: Record<string, WorkerRowState> = {};
     for (const w of workers) {
-      const owed = w.openTotalCents + w.pendingTotalCents;
+      /**
+       * ESITÄYTTÖ EI SISÄLLÄ KUITTAUSTA ODOTTAVAA.
+       *
+       * `openTotalCents` on se mitä tekijälle on vielä siirrettävä; jo luotu
+       * maksu on varannut oman osuutensa siitä pois. Jos odottava laskettaisiin
+       * mukaan, dialogi tarjoaisi samaa summaa toiseen kertaan ja tekijä saisi
+       * saman työn maksuna kahdesti.
+       */
+      const owed = w.openTotalCents;
       next[w.workerId] = {
         /**
          * ESITÄYTTÖ = SE SUMMA JOKA MAKSUT-KORTILLA LUKEE.
@@ -373,7 +381,13 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
               <button key={w.workerId} type="button" onClick={() => toggleWorker(w.workerId)}
                 className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${active ? "border-primary bg-primary/10" : "border-border text-muted-foreground hover:bg-muted/40"}`}>
                 {active ? "✓ " : "+ "}{w.name}
-                <span className="ml-1 font-normal tabular-nums opacity-70">{fmtEurCents(isAll ? w.openTotalCents + w.pendingTotalCents : isP2 ? w.openP2Cents : isHours ? w.openHoursCents : w.openP1Cents)}</span>
+                <span className="ml-1 font-normal tabular-nums opacity-70">{fmtEurCents(isAll ? w.openTotalCents : isP2 ? w.openP2Cents : isHours ? w.openHoursCents : w.openP1Cents)}</span>
+                {isAll && w.pendingTotalCents > 0 && (
+                  // Jo luotu maksu ei ole siirrettävää eikä sitä saa tarjota
+                  // uudelleen — mutta se pitää näkyä, ettei johtaja luule sen
+                  // kadonneen ja tee sitä toistamiseen.
+                  <span className="ml-1 font-normal tabular-nums opacity-50">+ {fmtEurCents(w.pendingTotalCents)} odottaa tekijää</span>
+                )}
               </button>
             );
           })}

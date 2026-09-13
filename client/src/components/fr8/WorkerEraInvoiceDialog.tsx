@@ -309,7 +309,7 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
           </DialogTitle>
           <DialogDescription>
             {isAll
-              ? "Jokaiselle tekijälle yksi summa: se mikä hänelle on maksamatta, sovitut korjaukset mukaan luettuina. Summa on ehdotus — kirjoita päälle se minkä oikeasti maksat."
+              ? "Summa on ehdotus — kirjoita päälle se minkä oikeasti maksat."
               : isP2
               ? "Keltaisista kertynyt palkkio palkkiotaulukon mukaan. Vain asiakkaan hyväksymät ikkunat."
               : isHours
@@ -318,17 +318,28 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex gap-2 mb-4">
-          {([["kaikki", "Koko saldo"], ["1-3", "Erät 1-3"], ["4", "Erä 4"], ["p2", "Keltaiset"], ["tunnit", "Tunnit"]] as [EraChoice, string][]).map(([e, label]) => (
-            <button key={e} onClick={() => setEra(e)}
-              className={`flex-1 rounded-xl border px-1.5 py-2.5 text-[13px] font-semibold ${era === e ? "border-primary bg-primary/10" : "border-border"}`}>
-              {label}
-              {suggestedEra === e && <span className="block text-[10px] font-normal text-muted-foreground">ehdotus</span>}
-            </button>
-          ))}
-        </div>
+        {/* VÄLILEHDET OVAT POIKKEUS, EIVÄT ETUSIVU.
+            Viisi välilehteä kiersi puhelimella kahdelle riville ja vei
+            ruudun yläosan — vaikka niistä neljä on niitä harvoja kertoja
+            varten jolloin maksu kohdistetaan yhteen pottiin. Oletus on koko
+            saldo; muut ovat linkin takana. */}
+        {!isAll ? (
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {([["kaikki", "Koko saldo"], ["1-3", "Erät 1-3"], ["4", "Erä 4"], ["p2", "Keltaiset"], ["tunnit", "Tunnit"]] as [EraChoice, string][]).map(([e, label]) => (
+              <button key={e} onClick={() => setEra(e)}
+                className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${era === e ? "border-primary bg-primary/10" : "border-border text-muted-foreground"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <button type="button" onClick={() => setEra("1-3")}
+            className="mb-3 text-[11px] text-muted-foreground underline underline-offset-2">
+            Kohdista maksu yhteen pottiin
+          </button>
+        )}
 
-        <div className="grid grid-cols-2 gap-3 mb-4">
+        <div className="grid grid-cols-2 gap-2 mb-3">
           <label className="block text-[11px] text-muted-foreground">
             Eräpäivä
             <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="h-9 mt-0.5" />
@@ -338,7 +349,7 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
               (erät 1-3 Joonatan, erä 4 Matias) eikä sitä voinut vaihtaa — laskulle
               päätyi väärä nimi, ja korjaaminen jälkikäteen oli mahdotonta. */}
           <label className="block text-[11px] text-muted-foreground">
-            Maksaja (kenelle laskutetaan)
+            Maksaja
             <select
               value={payerId}
               onChange={(e) => setPayerId(e.target.value)}
@@ -355,7 +366,7 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
         {/* Kenelle maksu lähetetään — vapaasti valittavissa. Chip näyttää heti
             paljonko tälle tekijälle on punaisista maksamatta. */}
         <p className="text-[11px] text-muted-foreground mb-1.5">Tekijät ({selectedWorkers.length}/{workers.length})</p>
-        <div className="flex flex-wrap gap-1.5 mb-4">
+        <div className="flex flex-wrap gap-1.5 mb-3">
           {workers.map((w) => {
             const active = selectedIds.includes(w.workerId);
             return (
@@ -380,11 +391,14 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
             const r = rows[w.workerId] || EMPTY_ROW;
             const row = preview.workers.find((pw) => pw.workerId === w.workerId);
             return (
-              <div key={w.workerId} className="rounded-xl border p-3 space-y-2">
+              <div key={w.workerId} className="rounded-xl border p-2.5 space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-sm font-semibold">{w.name}</span>
                   <div className="flex items-center gap-2">
-                    {row && (
+                    {/* Koko saldon maksussa tämä toisti kentän luvun kahdesti
+                        samalla rivillä ("ansaittu 84 € · maksettava 84 €"),
+                        kun kentässä lukee jo 84. */}
+                    {row && !isAll && (
                       <span className="text-xs tabular-nums text-muted-foreground">
                         ansaittu {fmtEurCents(row.ansaittuCents)} · maksettava {fmtEurCents(row.maksettavaCents)}
                       </span>
@@ -528,25 +542,38 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
             Tuntimaksu ylittää maksamattoman tuntityön: {overHours.map((w) => `${w.name} (max ${fmtEurCents(w.openHoursCents)})`).join(", ")}.
           </p>
         )}
-        {!isP2 && totalOpenP2 > 0 && (
+        {!isAll && !isP2 && totalOpenP2 > 0 && (
           <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
             Keltaisista odottaa {fmtEurCents(totalOpenP2)} — maksa ne "Keltaiset"-välilehdeltä.
           </p>
         )}
-        {!isHours && totalOpenHours > 0 && (
+        {!isAll && !isHours && totalOpenHours > 0 && (
           <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
             Tuntityöstä odottaa {fmtEurCents(totalOpenHours)} — maksa ne "Tunnit"-välilehdeltä.
           </p>
         )}
 
-        <div className="flex items-center justify-between gap-3 mt-4 pt-3 border-t border-border">
-          <span className="text-xs text-muted-foreground">
-            Tekijät ansaittu yhteensä: <strong className="tabular-nums">{fmtEurCents(preview.tekijatAnsaittuYhtCents)}</strong>
-          </span>
-          <button onClick={send} disabled={busy}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-foreground px-4 py-2 text-xs font-semibold text-background disabled:opacity-40">
-            {busy ? "Lähetetään…" : sentCount != null ? <><Check className="h-3.5 w-3.5" /> Lähetetty ({sentCount})</> : "Lähetä tekijöille"}
-          </button>
+        {/* ALAPALKKI PYSYY NÄKYVISSÄ.
+            Ainoa ulospääsy oli X aivan ylhäällä, ja se vieri pois näkyvistä
+            heti kun tekijöitä oli pari — dialogista ei siis päässyt pois
+            ilman että selasi koko listan takaisin ylös. Lähetysnappi oli
+            saman listan alimmaisena. Nyt molemmat ovat aina kädessä. */}
+        <div className="sticky bottom-0 -mx-6 mt-4 border-t border-border bg-background px-6 pb-1 pt-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-muted-foreground">
+              Yhteensä <strong className="tabular-nums text-foreground">{fmtEurCents(preview.tekijatAnsaittuYhtCents)}</strong>
+            </span>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => setOpen(false)}
+                className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground">
+                Sulje
+              </button>
+              <button onClick={send} disabled={busy}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-foreground px-4 py-2 text-xs font-semibold text-background disabled:opacity-40">
+                {busy ? "Lähetetään…" : sentCount != null ? <><Check className="h-3.5 w-3.5" /> Lähetetty ({sentCount})</> : "Lähetä"}
+              </button>
+            </div>
+          </div>
         </div>
         {skipped.length > 0 && (
           <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-2">

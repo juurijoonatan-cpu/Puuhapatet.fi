@@ -693,7 +693,7 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
 
             <div style={{ display: "flex", gap: T.space.sm, flexWrap: "wrap", marginTop: T.space.lg, paddingTop: T.space.md, borderTop: T.border.divider }}>
               {payable.length > 0 && (
-                <WorkerEraInvoiceDialog jobId={jobId} workers={payable} variant="button" onSent={() => void load()} />
+                <WorkerEraInvoiceDialog jobId={jobId} workers={payable} variant="button" onSent={() => void load()} defaultPayerId={report?.latestInvoice?.billerId ?? null} />
               )}
               {/* Johtajien siirto kirjataan tasausnäkymässä — vie sinne suoraan
                   eikä jätä riviä listalle jota ei voi kuitata mistään. */}
@@ -770,7 +770,7 @@ export default function MaksutView({ jobId, project, billing, onOpenGig, onSetAd
         <>
           <SectionTitle
             icon={<HandCoins style={{ width: 15, height: 15, color: T.text.secondary }} />}
-            right={payable.length > 0 ? <WorkerEraInvoiceDialog jobId={jobId} workers={payable} variant="button" onSent={() => void load()} /> : undefined}
+            right={payable.length > 0 ? <WorkerEraInvoiceDialog jobId={jobId} workers={payable} variant="button" onSent={() => void load()} defaultPayerId={report?.latestInvoice?.billerId ?? null} /> : undefined}
           >
             Tekijöille maksettavaa
           </SectionTitle>

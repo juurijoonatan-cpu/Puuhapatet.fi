@@ -57,13 +57,20 @@ const FOUNDER_PAYERS = [
   { id: "matias", name: "Matias Pitkänen" },
 ];
 
-export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant = "bar" }: {
+export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant = "bar", defaultPayerId }: {
   jobId: number;
   /** Tekijöiden maksutilanne — `computeWorkerSettlements`in tulos. */
   workers: WorkerSettlement[];
   onSent?: () => void;
   /** "bar" = leveä osiopalkki (tumma dash), "button" = tavallinen nappi. */
   variant?: "bar" | "button";
+  /**
+   * Kuka otti viimeisimmän asiakaslaskun — hänen tilillään raha nyt on, joten
+   * hän on oletusmaksaja. Ilman tätä oletus oli aina Joonatan, ja Matiaksen
+   * ottaman laskun jälkeen maksu kirjautui väärälle johtajalle jos sitä ei
+   * muistanut vaihtaa käsin.
+   */
+  defaultPayerId?: string | null;
 }) {
   const m = useIsMobile();
   const [open, setOpen] = useState(false);
@@ -73,8 +80,10 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
   // maksamatonta punaista työtä — täsmälleen ne joille maksu pitää tehdä.
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [dueDate, setDueDate] = useState(defaultDueDate);
-  /** Maksaja. Oletus erän mukaan, mutta johtaja voi vaihtaa sen. */
-  const [payerId, setPayerId] = useState<string>("joonatan");
+  /** Maksaja. Oletus = asiakaslaskun ottanut johtaja, mutta vaihdettavissa. */
+  const [payerId, setPayerId] = useState<string>(
+    FOUNDER_PAYERS.some((f) => f.id === defaultPayerId) ? String(defaultPayerId) : "joonatan",
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sentCount, setSentCount] = useState<number | null>(null);
@@ -122,6 +131,9 @@ export default function WorkerEraInvoiceDialog({ workers, jobId, onSent, variant
   // erävalinta vaihtuu — punaisilla ikkunamäärä, keltaisilla oma potti.
   useEffect(() => {
     if (!open) return;
+    // Maksaja uudelleen joka avauksella: raportti latautuu dialogin jälkeen,
+    // joten pelkkä useState-alkuarvo jäisi vanhaan oletukseen.
+    if (FOUNDER_PAYERS.some((f) => f.id === defaultPayerId)) setPayerId(String(defaultPayerId));
     const p2 = era === "p2";
     const hrs = era === "tunnit";
     const all = era === "kaikki";

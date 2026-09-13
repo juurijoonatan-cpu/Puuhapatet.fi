@@ -100,6 +100,53 @@ describe("buildTransferReport", () => {
     expect(r.workerOpenTotalCents).toBe(200_00);
   });
 
+  it("maksaja on asiakaslaskun ottanut johtaja, ei viime kuun maksun saaja", () => {
+    /**
+     * Selman viime kuun keltaisten lasku meni Matiakselle ja on jo hyväksytty.
+     * Nyt Joonatan otti asiakaslaskun, joten raha on HÄNELLÄ — ja hän siirtää.
+     * Ennen raportti luki hoidetunkin laskun ostajan ja käski Matiasta
+     * siirtämään rahaa jota hänellä ei ollut.
+     */
+    const p = gig({ red: 10 });
+    const settled: ReportEraInvoice = {
+      id: 1, kind: "tekija", tila: "hyväksytty", senderId: "jani", recipientId: "matias",
+      totalCents: 10_00, eraNumbers: [0],
+      rivit: { input: { pestytIkkunat: 0 }, computed: { ansaittuCents: 10_00 } },
+    };
+    const r = buildTransferReport({
+      title: "T", project: p, payments: [payment(500_00, "joonatan")], invoices: [settled],
+    });
+    expect(r.workers.find((w) => w.workerId === "jani")!.payerId).toBe("joonatan");
+    expect(r.instructions.filter((i) => i.toId === "jani").every((i) => i.fromId === "joonatan")).toBe(true);
+  });
+
+  it("kuittaamaton luonnos voittaa asiakaslaskun ottajan — raha tulee laskun ostajalta", () => {
+    // Lasku on osoitettu Matiakselle, joten siirron on tultava häneltä vaikka
+    // asiakaslaskun otti Joonatan; muuten lasku ja siirto eivät täsmää.
+    const p = gig({ red: 10 });
+    const draft: ReportEraInvoice = {
+      id: 2, kind: "tekija", tila: "luonnos", senderId: "jani", recipientId: "matias",
+      totalCents: 100_00, eraNumbers: [1, 2, 3],
+      rivit: { input: { pestytIkkunat: 5 }, computed: { ansaittuCents: 100_00 } },
+    };
+    const r = buildTransferReport({
+      title: "T", project: p, payments: [payment(500_00, "joonatan")], invoices: [draft],
+    });
+    expect(r.workers.find((w) => w.workerId === "jani")!.payerId).toBe("matias");
+  });
+
+  it("ilman asiakaslaskua maksaja päätellään tekijän viimeisimmästä laskusta", () => {
+    // Viimeinen oljenkorsi: parempi näyttää viime kerran maksaja kuin tyhjä.
+    const p = gig({ red: 10 });
+    const settled: ReportEraInvoice = {
+      id: 1, kind: "tekija", tila: "hyväksytty", senderId: "jani", recipientId: "matias",
+      totalCents: 10_00, eraNumbers: [0],
+      rivit: { input: { pestytIkkunat: 0 }, computed: { ansaittuCents: 10_00 } },
+    };
+    const r = buildTransferReport({ title: "T", project: p, payments: [], invoices: [settled] });
+    expect(r.workers.find((w) => w.workerId === "jani")!.payerId).toBe("matias");
+  });
+
   it("luonnos yhdessä virrassa ei leimaa toisen virran velkaa hyväksyntää odottavaksi", () => {
     // Punaisten luonnos kattaa punaiset kokonaan; tuntityö on yhä laskuttamatta.
     // Ennen tämä rivi luki "Tekijä ei ole vielä hyväksynyt laskuaan" tunneista,

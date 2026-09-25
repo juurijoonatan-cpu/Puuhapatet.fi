@@ -20,7 +20,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import {
-  computeShiftStats, dayKey, fmtDayLabel, fmtShiftHours, shiftHoursOf,
+  computeShiftStats, dayKey, isDayKey, fmtDayLabel, fmtShiftHours, shiftHoursOf,
   shiftDay, weekOf, weekdayLetter, dayOfMonth, monthLabel,
   type ProjShift,
 } from "@shared/project";
@@ -874,21 +874,30 @@ export default function HourlyPanel({
                 </div>
               )}
 
-              {/* PÄIVÄ VALITAAN KALENTERISTA, EI TÄSTÄ.
+              {/* PÄIVÄ: YKSI VALINTA, KOLME TAPAA ASETTAA SE.
 
-                  Tässä oli oma valitsimensa — Tänään / Eilen / päivämääräkenttä
-                  — ja kalenterin tultua niitä olisi ollut kaksi. Kaksi
-                  valitsinta samalle asialle on kahden totuuden vaara: ruudulla
-                  auki viime tiistai, lomakkeessa "Tänään", ja kirjaus menee
-                  sinne minne käyttäjä ei katso. Nyt valinta on yksi, ja tämä
-                  rivi kertoo sen ääneen sekä vie takaisin kalenteriin.
-                  Pikavalinnat jäivät, koska eilen kirjataan usein. */}
+                  Valinta on yhä yksi (`day`) — kalenteri, tämä rivi ja kirjaus
+                  lukevat kaikki samaa. Aiemmin tässä oli OMA päivänsä, ja se
+                  oli aito vika: ruudulla auki viime tiistai, lomakkeessa
+                  "Tänään", ja kirjaus meni sinne minne käyttäjä ei katsonut.
+                  Päivämääräkenttä ei ole toinen totuus vaan kolmas tapa asettaa
+                  se sama: se näyttää valitun päivän ja siirtää myös kalenterin.
+
+                  MIKSI KENTTÄ TARVITAAN. Pikavalinnat kattoivat vain tämän ja
+                  eilisen, ja viikon takaiseen päivään pääsi vain
+                  nuolinäppäimillä viikko kerrallaan — "Kaikki päivät" -lista ei
+                  auta, koska siinä on vain päiviä joille on JO kirjattu.
+                  Vanhaa, kirjaamatta jäänyttä työtä ei siis käytännössä saanut
+                  kirjattua lainkaan. Se on tavallisin kirjaus: työ muistetaan
+                  vasta laskua tehdessä.
+
+                  Tulevaa ei voi valita (`max`): tekemätöntä työtä ei ole. */}
               <div style={{ ...inset, padding: `${T.space.sm}px ${T.space.md}px`, display: "flex", alignItems: "center", gap: T.space.sm, flexWrap: "wrap" }}>
                 <span style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint }}>Kirjataan päivälle</span>
                 <span style={{ fontFamily: T.font, fontSize: T.size.sm, fontWeight: 700, textTransform: "capitalize" }}>
                   {fmtDayLabel(day)}{day === today ? " (tänään)" : ""}
                 </span>
-                <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                   {[{ k: today, label: "Tänään" }, { k: yesterday, label: "Eilen" }]
                     .filter((d) => d.k !== day)
                     .map((d) => (
@@ -898,6 +907,17 @@ export default function HourlyPanel({
                         {d.label}
                       </button>
                     ))}
+                  <input
+                    type="date"
+                    value={day}
+                    max={today}
+                    onChange={(e) => { const v = e.target.value; if (isDayKey(v) && v <= today) setDay(v); }}
+                    title="Valitse mikä tahansa mennyt päivä"
+                    aria-label="Valitse päivä"
+                    style={{ height: 28, padding: `0 ${T.space.sm}px`, borderRadius: T.radius.sm, border: T.border.subtle,
+                      background: "transparent", color: T.text.secondary, fontFamily: T.font, fontSize: T.size.xs,
+                      fontWeight: 600, cursor: "pointer", colorScheme: "dark", maxWidth: "100%" }}
+                  />
                 </div>
               </div>
 

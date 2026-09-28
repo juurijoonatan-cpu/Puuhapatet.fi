@@ -318,8 +318,8 @@ export default function RecruitmentPage() {
   useEffect(() => {
     const prev = document.title;
     document.title = fi
-      ? `Töihin Puuhapateille — ${HOURLY_PAY_LABEL}, ikkunat, piha ja kantoapu`
-      : `Work at Puuhapatet — ${HOURLY_PAY_LABEL}, windows, yard work and moving help`;
+      ? "Töihin Puuhapateille — hyvä palkka, ikkunat, piha ja kantoapu"
+      : "Work at Puuhapatet — good pay, windows, yard work and moving help";
     return () => {
       document.title = prev;
     };
@@ -345,10 +345,10 @@ export default function RecruitmentPage() {
   const perks = [
     {
       icon: Banknote,
-      title: fi ? `${HOURLY_PAY_LABEL} tuntipalkka` : `${HOURLY_PAY_LABEL} hourly pay`,
+      title: fi ? "Hyvä palkka" : "Good pay",
       desc: fi
-        ? "Tuntitöistä selkeä tuntipalkka, urakkakeikoilla ahkeruus näkyy suoraan tilillä."
-        : "A clear hourly rate for hourly jobs; on fixed-price jobs, hard work shows up directly in your account.",
+        ? "Selkeä maksurakenne: tuntitöistä tuntipalkka, urakkakeikoilla ahkeruus näkyy suoraan tilillä."
+        : "A clear pay structure: an hourly wage for hourly jobs, and on fixed-price jobs hard work shows up directly in your account.",
     },
     {
       icon: CalendarClock,
@@ -420,8 +420,8 @@ export default function RecruitmentPage() {
 
             <p className="mt-5 text-base sm:text-lg md:text-xl text-white/85 leading-relaxed max-w-xl sm:max-w-2xl text-balance">
               {fi
-                ? `Haemme reippaita tekijöitä pääkaupunkiseudulle: ikkunanpesua, huonekalujen kantoa, piha- ja puutarhatöitä ja muita kiinteistöhuollon hommia. Tuntipalkka ${HOURLY_PAY_LABEL}, aikataulu joustaa ja perehdytys on nopea.`
-                : `We're hiring energetic people in the Helsinki region: window cleaning, furniture carrying, yard and garden work and other property-maintenance jobs. ${HOURLY_PAY_LABEL} hourly pay, a flexible schedule and fast onboarding.`}
+                ? `Haemme reippaita tekijöitä pääkaupunkiseudulle: ikkunanpesua, huonekalujen kantoa, piha- ja puutarhatöitä ja muita kiinteistöhuollon hommia. Aikataulu joustaa ja perehdytys on nopea — pääset hommiin lähes saman tien.`
+                : `We're hiring energetic people in the Helsinki region: window cleaning, furniture carrying, yard and garden work and other property-maintenance jobs. The schedule is flexible and onboarding is fast — you'll be on the job almost right away.`}
             </p>
 
             <div className="mt-8 flex flex-col sm:flex-row items-start sm:items-center gap-4">
@@ -435,7 +435,7 @@ export default function RecruitmentPage() {
                   ? "Yksi viesti riittää — vastaamme yleensä saman päivän aikana."
                   : "One message is enough — we usually reply the same day."}
                 <br />
-                <span className="text-white/55">{fi ? `${HOURLY_PAY_LABEL} · 18+ · Ei sitoumuksia` : `${HOURLY_PAY_LABEL} · 18+ · No commitment`}</span>
+                <span className="text-white/55">{fi ? "18+ · Ei sitoumuksia" : "18+ · No commitment"}</span>
               </p>
             </div>
           </div>
@@ -521,8 +521,8 @@ export default function RecruitmentPage() {
           <div className="grid grid-cols-3 gap-2 sm:gap-4 max-w-4xl mx-auto mt-10">
             {[
               { video: "/rekry-kanto-1.mp4", poster: "/rekry-kanto-1-poster.jpg", caption: fi ? "Toimistomuutto: kaapit ja pöydät paikoilleen" : "Office move: cabinets and desks into place" },
-              { video: "/rekry-kanto-2.mp4", poster: "/rekry-kanto-2-poster.jpg", caption: fi ? "…ja lopputulos. Valmis toimisto." : "…and the result. Office done." },
-              { photo: "/rekry-hissi.jpg", caption: fi ? "Hissipeilitsekki ennen seuraavaa kuormaa" : "Elevator mirror check before the next load" },
+              { video: "/rekry-kanto-2.mp4", poster: "/rekry-kanto-2-poster.jpg", caption: fi ? "Kalusteiden irrottaminen" : "Taking the furniture apart" },
+              { photo: "/rekry-hissi.jpg", caption: fi ? "Brändin vermeet saat sovittaessa — omat duuniin sopivat vaatteet käyvät myös" : "We provide branded workwear when agreed — but your own work-appropriate clothes are fine too" },
             ].map((m, i) => (
               <Reveal key={m.caption} delay={i * 80}>
                 {m.video ? (
@@ -868,8 +868,8 @@ export default function RecruitmentPage() {
               </h3>
               <p className="mt-3 text-muted-foreground leading-relaxed">
                 {fi
-                  ? `${HOURLY_PAY_LABEL} tuntipalkka, ikkunoita, pihatöitä ja kantoapua. Pääset hommiin lähes heti ja perehdytys on nopea. Paikkoja on rajoitettu määrä.`
-                  : `${HOURLY_PAY_LABEL} hourly pay — windows, yard work and carrying help. Start almost immediately with fast onboarding. Spots are limited.`}
+                  ? `Hyvä palkka — ikkunoita, pihatöitä ja kantoapua. Pääset hommiin lähes heti ja perehdytys on nopea. Paikkoja on rajoitettu määrä.`
+                  : `Good pay — windows, yard work and carrying help. Start almost immediately with fast onboarding. Spots are limited.`}
               </p>
               <div className="mt-6">
                 <WhatsAppButton

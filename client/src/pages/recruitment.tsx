@@ -514,6 +514,28 @@ export default function RecruitmentPage() {
               </Reveal>
             ))}
           </div>
+
+          {/* Oikeaa kantoapua oikealta keikalta: toimistomuutto alusta loppuun.
+              Kuvatekstit alla eikä videon päällä, jotta ne mahtuvat puhelimella
+              kolmen kapean ruudun alle. */}
+          <div className="grid grid-cols-3 gap-2 sm:gap-4 max-w-4xl mx-auto mt-10">
+            {[
+              { video: "/rekry-kanto-1.mp4", poster: "/rekry-kanto-1-poster.jpg", caption: fi ? "Toimistomuutto: kaapit ja pöydät paikoilleen" : "Office move: cabinets and desks into place" },
+              { video: "/rekry-kanto-2.mp4", poster: "/rekry-kanto-2-poster.jpg", caption: fi ? "…ja lopputulos. Valmis toimisto." : "…and the result. Office done." },
+              { photo: "/rekry-hissi.jpg", caption: fi ? "Hissipeilitsekki ennen seuraavaa kuormaa" : "Elevator mirror check before the next load" },
+            ].map((m, i) => (
+              <Reveal key={m.caption} delay={i * 80}>
+                {m.video ? (
+                  <PortraitVideo src={m.video} poster={m.poster} />
+                ) : (
+                  <div className="rounded-3xl overflow-hidden premium-shadow bg-muted aspect-[9/16]">
+                    <img src={m.photo} alt={m.caption} loading="lazy" className="w-full h-full object-cover" />
+                  </div>
+                )}
+                <p className="mt-2 text-xs sm:text-sm text-muted-foreground leading-snug text-center">{m.caption}</p>
+              </Reveal>
+            ))}
+          </div>
         </div>
       </section>
 

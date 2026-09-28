@@ -1,7 +1,7 @@
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { ArrowRight, Sparkles, Clock, Shield, Snowflake, Leaf, PaintBucket, Shovel, ClipboardCheck, BadgePercent, ShieldCheck, Tag, Sun, Check } from "lucide-react";
+import { ArrowRight, Sparkles, Clock, Shield, Snowflake, Leaf, PaintBucket, Shovel, ClipboardCheck, BadgePercent, ShieldCheck, Tag, Sun, Check, Wrench } from "lucide-react";
 import { SiWhatsapp, SiInstagram } from "react-icons/si";
 import { Mail } from "lucide-react";
 import { Typewriter } from "@/components/typewriter";
@@ -47,12 +47,15 @@ export default function LandingPage() {
     ? [
         { icon: Snowflake, titleKey: "service.talvikiilto.title", descKey: "service.talvikiilto.desc", color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-500/10" },
         { icon: Shovel, titleKey: "service.lumityot.title", descKey: "service.lumityot.desc", color: "text-sky-600 dark:text-sky-400", bg: "bg-sky-500/10" },
+        { icon: Wrench, titleKey: "service.homehelp.title", descKey: "service.homehelp.desc", color: "text-orange-600 dark:text-orange-400", bg: "bg-orange-500/10" },
       ]
     : [
         { icon: Sparkles, titleKey: "service.basic.title", descKey: "service.basic.1", color: "text-primary", bg: "bg-primary/10" },
         { icon: Tag, titleKey: "service.signs.title", descKey: "service.signs.desc", color: "text-amber-600 dark:text-amber-400", bg: "bg-amber-500/10" },
         { icon: Sun, titleKey: "service.gutters.title", descKey: "service.gutters.desc", color: "text-yellow-600 dark:text-yellow-400", bg: "bg-yellow-500/10" },
-        { icon: Leaf, titleKey: "service.gardening.title", descKey: "service.gardening.desc", color: "text-lime-700 dark:text-lime-400", bg: "bg-lime-500/10" },
+        // Kiinteistöhuolto & kotiapu kattaa myös piha- ja puutarhatyöt, joten
+        // se korvaa pelkän pihakortin eikä neljän kortin rivi veny viideksi.
+        { icon: Wrench, titleKey: "service.homehelp.title", descKey: "service.homehelp.desc", color: "text-lime-700 dark:text-lime-400", bg: "bg-lime-500/10" },
       ];
 
   return (
@@ -318,7 +321,7 @@ export default function LandingPage() {
             <h2 className="text-xl font-semibold text-foreground mb-4 text-center">
               {t("featured.title")}
             </h2>
-            <div className={`grid gap-4 ${seasonalServices.length === 2 ? "md:grid-cols-2" : "md:grid-cols-2 lg:grid-cols-4"}`}>
+            <div className={`grid gap-4 ${seasonalServices.length === 3 ? "md:grid-cols-3" : "md:grid-cols-2 lg:grid-cols-4"}`}>
               {seasonalServices.map((svc, i) => {
                 const Icon = svc.icon;
                 return (

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   ArrowRight, Sparkles, Snowflake, Car, Building2, Check, Leaf, PaintBucket,
-  ShieldCheck, Shovel, ClipboardCheck, BadgePercent, ChevronDown, X, Tag, Sun,
+  ShieldCheck, Shovel, ClipboardCheck, BadgePercent, ChevronDown, X, Tag, Sun, Wrench,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useI18n } from "@/lib/i18n";
@@ -156,6 +156,34 @@ export default function ServicesPage() {
             </Card>
           ))}
         </div>
+
+        {/* Kiinteistöhuolto & kotiapu näkyy suoraan eikä piiloudu "Lisää palveluita" -
+            listaan: tuntityö on nyt iso osa sitä mitä teemme. */}
+        <Card className="p-6 md:p-8 bg-card border-0 premium-shadow mb-4" data-testid="service-homehelp">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 rounded-xl bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center flex-shrink-0">
+              <Wrench className="w-6 h-6 text-orange-600 dark:text-orange-400" />
+            </div>
+            <div className="flex-1">
+              <h2 className="text-xl font-semibold text-foreground mb-2">{t("service.homehelp.title")}</h2>
+              <p className="text-muted-foreground mb-3">{t("service.homehelp.desc")}</p>
+              <ul className="space-y-2 mb-4">
+                {(["1","2","3","4"] as const).map(n => (
+                  <li key={n} className="flex items-center gap-2 text-muted-foreground text-sm">
+                    <Check className="w-4 h-4 text-orange-600 dark:text-orange-400 flex-shrink-0" />
+                    <span>{t(`service.homehelp.${n}` as any)}</span>
+                  </li>
+                ))}
+              </ul>
+              <Link href="/tilaus">
+                <Button variant="outline" size="sm" className="text-orange-600 border-orange-300 hover:bg-orange-50 dark:text-orange-400 dark:border-orange-800 dark:hover:bg-orange-900/20">
+                  {t("service.homehelp.cta")}
+                  <ArrowRight className="w-4 h-4 ml-1" />
+                </Button>
+              </Link>
+            </div>
+          </div>
+        </Card>
 
         {/* ── More services collapsible ── */}
         <div className="mb-12">

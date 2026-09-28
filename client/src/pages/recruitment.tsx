@@ -10,9 +10,16 @@ import {
   X,
   CheckCircle2,
   MapPin,
+  Clock,
+  Sparkles,
+  Armchair,
+  Leaf,
+  Shovel,
+  Wrench,
 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { MARKETER_COMMISSION_RATE, STAFF_SERVICE_FEE_RATE } from "@shared/team";
+import { DEFAULT_WORKER_HOUR_CENTS } from "@shared/project";
 
 /** Matias Pitkänen's WhatsApp — leads go straight here, no pre-filled message. */
 const WHATSAPP_URL = "https://wa.me/358442350881";
@@ -21,6 +28,45 @@ const WHATSAPP_URL = "https://wa.me/358442350881";
 const WORKER_SHARE = 1 - STAFF_SERVICE_FEE_RATE;
 
 const eur0 = (n: number) => Math.round(n).toLocaleString("fi-FI") + " €";
+
+/** Tuntityön palkka tekijälle — sama luku jolla tuntikeikat oikeasti maksetaan
+ *  (@shared/project), ettei rekrysivu lupaa eri summaa kuin tilitys. */
+const HOURLY_PAY = DEFAULT_WORKER_HOUR_CENTS / 100;
+const HOURLY_PAY_LABEL = `${eur0(HOURLY_PAY)}/h`;
+
+/** Hourly-work card: the fixed rate, what the work is, and a worked example. */
+function HourlyEarnings({ fi }: { fi: boolean }) {
+  const [hours, setHours] = useState(6);
+  return (
+    <div className="h-full rounded-2xl border border-card-border bg-card p-6 md:p-7 premium-shadow">
+      <div className="flex items-center gap-2 text-sm font-medium text-primary">
+        <Clock className="w-4 h-4" />
+        {fi ? "Tuntityö" : "Hourly work"}
+      </div>
+      <p className="mt-2 text-4xl font-bold text-foreground">{HOURLY_PAY_LABEL}</p>
+      <p className="mt-2 text-sm text-muted-foreground leading-relaxed">
+        {fi
+          ? "Kantoapu, piha- ja puutarhatyöt, kiinteistöhuolto ja muut kotiapuhommat. Saat palkan jokaisesta tehdystä tunnista."
+          : "Carrying help, yard and garden work, property maintenance and other home-help jobs. You're paid for every hour you work."}
+      </p>
+      <div className="mt-6">
+        <Slider
+          label={fi ? "Tunnit" : "Hours"}
+          value={hours}
+          min={1}
+          max={40}
+          step={1}
+          onChange={setHours}
+          read={`${hours} h`}
+        />
+      </div>
+      <div className="mt-6 pt-6 border-t border-border">
+        <p className="text-xs text-muted-foreground">{fi ? "Sinulle" : "You earn"}</p>
+        <p className="text-2xl font-bold text-primary mt-0.5">{eur0(hours * HOURLY_PAY)}</p>
+      </div>
+    </div>
+  );
+}
 
 /** A clean, brand-accented range slider with a label + live readout. */
 function Slider({
@@ -68,7 +114,11 @@ function WorkerEarnings({ fi }: { fi: boolean }) {
   const yours = gig * WORKER_SHARE;
   const perHour = yours / Math.max(1, hours);
   return (
-    <div className="rounded-2xl border border-card-border bg-card p-6 md:p-7 premium-shadow">
+    <div className="h-full rounded-2xl border border-card-border bg-card p-6 md:p-7 premium-shadow">
+      <div className="flex items-center gap-2 text-sm font-medium text-primary mb-5">
+        <Sparkles className="w-4 h-4" />
+        {fi ? "Urakkakeikat (esim. ikkunanpesu)" : "Fixed-price jobs (e.g. window cleaning)"}
+      </div>
       <div className="space-y-5">
         <Slider
           label={fi ? "Keikan arvo" : "Job value"}
@@ -268,8 +318,8 @@ export default function RecruitmentPage() {
   useEffect(() => {
     const prev = document.title;
     document.title = fi
-      ? "Töihin Puuhapateille — ikkunanpesijöitä haetaan"
-      : "Work at Puuhapatet — window cleaners wanted";
+      ? `Töihin Puuhapateille — ${HOURLY_PAY_LABEL}, ikkunat, piha ja kantoapu`
+      : `Work at Puuhapatet — ${HOURLY_PAY_LABEL}, windows, yard work and moving help`;
     return () => {
       document.title = prev;
     };
@@ -295,10 +345,10 @@ export default function RecruitmentPage() {
   const perks = [
     {
       icon: Banknote,
-      title: fi ? "Reilu palkka" : "Fair pay",
+      title: fi ? `${HOURLY_PAY_LABEL} tuntipalkka` : `${HOURLY_PAY_LABEL} hourly pay`,
       desc: fi
-        ? "Aloituspalkka on arviolta ~40 % tavallista korkeampi. Ahkeruus näkyy suoraan tilillä."
-        : "Starting pay is an estimated ~40% above the usual. Hard work shows up directly in your account.",
+        ? "Tuntitöistä selkeä tuntipalkka, urakkakeikoilla ahkeruus näkyy suoraan tilillä."
+        : "A clear hourly rate for hourly jobs; on fixed-price jobs, hard work shows up directly in your account.",
     },
     {
       icon: CalendarClock,
@@ -370,8 +420,8 @@ export default function RecruitmentPage() {
 
             <p className="mt-5 text-base sm:text-lg md:text-xl text-white/85 leading-relaxed max-w-xl sm:max-w-2xl text-balance">
               {fi
-                ? "Haemme reippaita ikkunanpesijöitä pääkaupunkiseudulle. Aikataulu joustaa ja perehdytys on nopea — pääset hommiin lähes saman tien."
-                : "We're hiring energetic window cleaners in the Helsinki region. The schedule is flexible and onboarding is fast — you'll be on the job almost right away."}
+                ? `Haemme reippaita tekijöitä pääkaupunkiseudulle: ikkunanpesua, huonekalujen kantoa, piha- ja puutarhatöitä ja muita kiinteistöhuollon hommia. Tuntipalkka ${HOURLY_PAY_LABEL}, aikataulu joustaa ja perehdytys on nopea.`
+                : `We're hiring energetic people in the Helsinki region: window cleaning, furniture carrying, yard and garden work and other property-maintenance jobs. ${HOURLY_PAY_LABEL} hourly pay, a flexible schedule and fast onboarding.`}
             </p>
 
             <div className="mt-8 flex flex-col sm:flex-row items-start sm:items-center gap-4">
@@ -385,7 +435,7 @@ export default function RecruitmentPage() {
                   ? "Yksi viesti riittää — vastaamme yleensä saman päivän aikana."
                   : "One message is enough — we usually reply the same day."}
                 <br />
-                <span className="text-white/55">{fi ? "18+ · Ei sitoumuksia" : "18+ · No commitment"}</span>
+                <span className="text-white/55">{fi ? `${HOURLY_PAY_LABEL} · 18+ · Ei sitoumuksia` : `${HOURLY_PAY_LABEL} · 18+ · No commitment`}</span>
               </p>
             </div>
           </div>
@@ -430,6 +480,43 @@ export default function RecruitmentPage() {
         </div>
       </section>
 
+      {/* ───────────────────────── WHAT THE WORK IS ───────────────────────── */}
+      <section className="pb-16 md:pb-24">
+        <div className="container mx-auto px-4 md:px-6">
+          <Reveal className="text-center max-w-2xl mx-auto mb-10">
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium mb-4">
+              {fi ? "Mitä teet?" : "What you'll do"}
+            </div>
+            <h2 className="text-3xl md:text-4xl font-semibold text-foreground text-balance">
+              {fi ? "Paljon muutakin kuin ikkunoita" : "A lot more than windows"}
+            </h2>
+            <p className="mt-4 text-muted-foreground text-lg leading-relaxed">
+              {fi
+                ? "Teemme ikkunanpesun lisäksi kiinteistöhuoltoa ja kotiapua. Päivä voi olla ikkunoita, sohvan kantamista kolmanteen kerrokseen tai pihan laittamista kuntoon — vaihtelua riittää."
+                : "Alongside window cleaning we do property maintenance and home help. A day might be windows, carrying a sofa up three floors or getting a yard into shape — there's plenty of variety."}
+            </p>
+          </Reveal>
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4 max-w-4xl mx-auto">
+            {[
+              { icon: Sparkles, title: fi ? "Ikkunanpesu" : "Window cleaning", desc: fi ? "Kodit, taloyhtiöt ja liiketilat — ammattilaisten välineillä." : "Homes, housing companies and shops — with pro gear." },
+              { icon: Armchair, title: fi ? "Huonekalujen kanto" : "Furniture carrying", desc: fi ? "Muuttoapua ja tavaroiden siirtoa paikasta toiseen." : "Moving help and shifting things from A to B." },
+              { icon: Leaf, title: fi ? "Piha & puutarha" : "Yard & garden", desc: fi ? "Nurmikot, haravointi, pensaat ja pihan siistiminen." : "Lawns, raking, shrubs and tidying up the yard." },
+              { icon: Wrench, title: fi ? "Kiinteistöhuolto" : "Property maintenance", desc: fi ? "Rännit, terassit ja muut pienet huoltotyöt." : "Gutters, decks and other small maintenance jobs." },
+              { icon: Shovel, title: fi ? "Lumityöt" : "Snow work", desc: fi ? "Talvella pihat ja kulkuväylät auki." : "Keeping yards and paths clear in winter." },
+              { icon: Clock, title: fi ? "Muu kotiapu" : "Other home help", desc: fi ? "Mitä asiakas tarvitseekin — sovitaan tuntityönä." : "Whatever the customer needs — done as hourly work." },
+            ].map((task, i) => (
+              <Reveal key={task.title} delay={i * 60}>
+                <div className="h-full rounded-2xl bg-card border border-card-border/60 p-5 premium-shadow">
+                  <task.icon className="w-6 h-6 text-primary mb-3" />
+                  <p className="font-semibold text-foreground leading-snug">{task.title}</p>
+                  <p className="mt-1 text-sm text-muted-foreground leading-relaxed">{task.desc}</p>
+                </div>
+              </Reveal>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* ───────────────────────── EARNINGS (worker) ───────────────────────── */}
       <section className="py-16 md:py-24 bg-muted/30">
         <div className="container mx-auto px-4 md:px-6">
@@ -438,17 +525,22 @@ export default function RecruitmentPage() {
               {fi ? "Paljonko voit tienata?" : "How much can you make?"}
             </div>
             <h2 className="text-3xl md:text-4xl font-semibold text-foreground text-balance">
-              {fi ? "Liikuta liukuria — katso tuntipalkka" : "Drag the slider — see your hourly pay"}
+              {fi ? "Kaksi tapaa tienata" : "Two ways to earn"}
             </h2>
             <p className="mt-4 text-muted-foreground text-lg leading-relaxed">
               {fi
-                ? "Tienaat keikan koon mukaan, et kellokorttiin. Hyvällä tahdilla tuntipalkka nousee korkeaksi."
-                : "You earn by the job, not by the clock. At a good pace the hourly rate climbs high."}
+                ? `Tuntitöistä saat ${HOURLY_PAY_LABEL} jokaisesta tehdystä tunnista. Urakkakeikoilla tienaat keikan koon mukaan — hyvällä tahdilla tuntipalkka nousee vielä korkeammaksi.`
+                : `On hourly jobs you get ${HOURLY_PAY_LABEL} for every hour worked. On fixed-price jobs you earn by the job — at a good pace your hourly rate climbs even higher.`}
             </p>
           </Reveal>
-          <Reveal delay={120} className="max-w-xl mx-auto">
-            <WorkerEarnings fi={fi} />
-          </Reveal>
+          <div className="grid md:grid-cols-2 gap-5 max-w-4xl mx-auto">
+            <Reveal delay={80}>
+              <HourlyEarnings fi={fi} />
+            </Reveal>
+            <Reveal delay={160}>
+              <WorkerEarnings fi={fi} />
+            </Reveal>
+          </div>
         </div>
       </section>
 
@@ -461,8 +553,8 @@ export default function RecruitmentPage() {
             </h2>
             <p className="mt-4 text-muted-foreground text-lg leading-relaxed">
               {fi
-                ? "Oikeita keikkoja, oikealla porukalla. Hienoja kohteita ja näkyvää jälkeä."
-                : "Real jobs, with a real team. Great sites and visible results."}
+                ? "Oikeita keikkoja, oikealla porukalla. Ikkunoita, pihoja ja kotiapua — näkyvää jälkeä."
+                : "Real jobs, with a real team. Windows, yards and home help — visible results."}
             </p>
           </Reveal>
 
@@ -524,13 +616,15 @@ export default function RecruitmentPage() {
                   {(fi
                     ? [
                         "Motivoitunut ja ahkera tekijä",
-                        "Aikaisemmasta ikkunanpesukokemuksesta on hyötyä — ei pakollinen",
+                        "Et pelkää tarttua raskaampaankin hommaan, kuten kantamiseen tai pihatöihin",
+                        "Aiemmasta ikkunanpesu-, piha- tai muuttotyökokemuksesta on hyötyä — ei pakollinen",
                         "Täysi-ikäinen (18+)",
                         "Reilu meininki ja halu tehdä siistiä jälkeä",
                       ]
                     : [
                         "Motivated and hard-working",
-                        "Prior window-cleaning experience is a plus — not required",
+                        "Not afraid of heavier work like carrying or yard jobs",
+                        "Prior window-cleaning, yard or moving experience is a plus — not required",
                         "18 or over",
                         "A good attitude and pride in clean results",
                       ]
@@ -752,8 +846,8 @@ export default function RecruitmentPage() {
               </h3>
               <p className="mt-3 text-muted-foreground leading-relaxed">
                 {fi
-                  ? "Pääset hommiin lähes heti ja perehdytys on nopea. Paikkoja on rajoitettu määrä — tätä ei ole tarjolla aina."
-                  : "Start almost immediately with fast onboarding. Spots are limited — this isn't open all the time."}
+                  ? `${HOURLY_PAY_LABEL} tuntipalkka, ikkunoita, pihatöitä ja kantoapua. Pääset hommiin lähes heti ja perehdytys on nopea. Paikkoja on rajoitettu määrä.`
+                  : `${HOURLY_PAY_LABEL} hourly pay — windows, yard work and carrying help. Start almost immediately with fast onboarding. Spots are limited.`}
               </p>
               <div className="mt-6">
                 <WhatsAppButton

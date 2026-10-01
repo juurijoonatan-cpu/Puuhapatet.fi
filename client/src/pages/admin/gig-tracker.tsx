@@ -35,6 +35,7 @@ import {
 } from "@shared/gig";
 import { computeProjectTotals, fixedDealFor, computeDealBilling, dealAgreedTotalCents, eurFromCents, isHourlyGig, type ProjectData } from "@shared/project";
 import { hourlyItemisation } from "@shared/hourly-money";
+import { computeHoursPeriod, hoursPeriodLines } from "@shared/hours-period";
 import { computeP2Billing, p2BillableCents, p2ExtraCharges } from "@shared/p2";
 import { p2InvoiceState } from "@shared/worker-payouts";
 import { downloadGigContract, openGigContractForPrint } from "@/lib/gig-contract-doc";
@@ -733,8 +734,22 @@ export default function AdminGigTrackerPage() {
   const uninvoicedWindows = Math.max(0, totals.washedTotal - totals.invoicedWashed);
   const hourlyBill = project && isHourlyGig(project) ? hourlyItemisation(project, { uninvoicedWindows }) : null;
   const hoursInvoicedCents = invState.hoursInvoicedCents;
-  const hoursRemainingCents = hourlyBill
-    ? Math.max(0, hourlyBill.customerTotalCents - hoursInvoicedCents) : 0;
+  /**
+   * LASKUTUSKAUSI: mitä on tehty edellisen tuntilaskun jälkeen ja mitä
+   * seuraava lasku perii. Sama jaettu laskenta kuin palvelimen lähetyksessä
+   * ja tuntinäkymässä, joten tässä näkyvä summa on se joka lähtee.
+   */
+  const hoursPeriod = project && hourlyBill ? computeHoursPeriod(project, gig.payments ?? [], { uninvoicedWindows }) : null;
+  const hoursRemainingCents = hoursPeriod ? hoursPeriod.remainingCents : 0;
+  /**
+   * SEURAAVAN LASKUN ERITTELY. Laskun jälkeen vain kauden rivit — ennen tätä
+   * erittely luetteli koko keikan tunnit myös toisella laskulla, eikä siitä
+   * nähnyt mitä tämä lasku koskee. Ensimmäiseen laskuun asti kausi on koko
+   * keikka, joten rivit ovat samat kuin ennenkin.
+   */
+  const hoursLines = hoursPeriod && hoursPeriod.invoiceCount > 0 ? hoursPeriodLines(hoursPeriod) : (hourlyBill?.lines ?? []);
+  /** Kelpaako kauden erittely sellaisenaan laskulle (summautuu ilman korjausriviä). */
+  const hoursLinesExact = !!hoursPeriod && hoursPeriod.invoiceCount > 0 && hoursPeriod.adjustmentCents === 0;
   /**
    * KAIKKI LASKUTTAMATON YHTEENSÄ. Kun molemmissa kertymissä on rahaa,
    * asiakkaalle lähtee YKSI lasku eikä kahta samana päivänä.
@@ -753,7 +768,11 @@ export default function AdminGigTrackerPage() {
   const invoiceLines: { label: string; cents: number }[] = (() => {
     const out: { label: string; cents: number }[] = [];
     if (invoiceScope === "hours" || invoiceScope === "all") {
-      for (const l of hourlyBill?.lines ?? []) if (l.cents != null && l.cents > 0) out.push({ label: l.label, cents: l.cents });
+      // Laskun jälkeen kauden rivit, jotka summautuvat laskutettavaan — ne
+      // näpytellään laskuohjelmaan sellaisinaan. Jos jo laskutettua on
+      // muutettu, koko kertymä ja "jo laskutettu" kuten ennenkin.
+      const src = hoursLinesExact ? hoursLines : (hourlyBill?.lines ?? []);
+      for (const l of src) if (l.cents != null && l.cents > 0) out.push({ label: l.label, cents: l.cents });
     }
     if (invoiceScope === "p2" || invoiceScope === "all") {
       if (p2b && p2b.earnedCents > 0) out.push({ label: `Lisäikkunat (2. vaihe) — ${p2b.lockedWashedCount} kpl`, cents: p2b.earnedCents });
@@ -1457,9 +1476,12 @@ export default function AdminGigTrackerPage() {
                 ei lähetä summaa jonka koostumusta hän ei nähnyt. */}
           {hourlyBill ? (
             <>
+              {/* Kertynyt = jo laskutettu + laskuttamatta, joten kolme riviä
+                  täsmäävät aina keskenään. Aiemmin tässä oli kertymä jossa
+                  laskutetut ikkunat eivät enää olleet mukana. */}
               <div className="flex items-center justify-between mb-1">
                 <span className="text-sm text-muted-foreground">Kertynyt yhteensä</span>
-                <span className="text-sm font-semibold text-foreground tabular-nums">{eur(hourlyBill.customerTotalCents)}</span>
+                <span className="text-sm font-semibold text-foreground tabular-nums">{eur(hoursInvoicedCents + hoursRemainingCents)}</span>
               </div>
               {hoursInvoicedCents > 0 && (
                 <div className="flex items-center justify-between mb-1">
@@ -1474,12 +1496,20 @@ export default function AdminGigTrackerPage() {
                 </span>
               </div>
 
+              {/* EDELLISEN LASKUN JÄLKEEN. Kun tunneista on jo laskutettu,
+                  erittely kertoo vain sen mitä on tehty sen jälkeen — se mitä
+                  seuraava lasku perii. */}
+              {hoursPeriod && hoursPeriod.last && (
+                <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {`Edellisen laskun ${new Date(hoursPeriod.last.at).toLocaleDateString("fi-FI")} jälkeen · ${hoursPeriod.openHours.toLocaleString("fi-FI", { maximumFractionDigits: 1 })} h`}
+                </p>
+              )}
               {/* Erittely: mistä summa koostuu. Tiedoksi-rivit (esim. pestyt
                   ikkunat) näkyvät ilman euroa — ne eivät ole toinen veloitus
                   vaan kertovat mitä tunneilla tehtiin. */}
-              {hourlyBill.lines.length > 0 && (
+              {hoursLines.length > 0 && (
                 <div className="mb-3 rounded-xl bg-muted/40 p-2.5">
-                  {hourlyBill.lines.map((l, i) => (
+                  {hoursLines.map((l, i) => (
                     <div key={i} className="flex items-baseline justify-between gap-3 py-0.5">
                       <span className="text-[11px] text-muted-foreground">{l.label}</span>
                       <span className={`text-[11px] tabular-nums shrink-0 ${l.cents == null ? "text-muted-foreground/70" : "font-semibold text-foreground"}`}>
@@ -1494,15 +1524,18 @@ export default function AdminGigTrackerPage() {
                   "asiakkaalta 26 €/h" ja "tekijälle 15 €/h" näytä ristiriidalta.
                   Pomojen omista tunneista ei oteta katetta: ne ovat omaa työtä
                   ja näkyvät "Teille"-sarakkeessa täytenä. */}
-              {hourlyBill.customerTotalCents > 0 && (
-                <div className={`mb-3 grid gap-2 rounded-xl bg-muted/40 p-2.5 text-center ${hourlyBill.money.reimbursementCents > 0 ? "grid-cols-4" : "grid-cols-3"}`}>
+              {/* SAMA KOLMIJAKO TÄLLE LASKULLE — ei koko keikalle. Kulut
+                  takaisin ovat vain uusia kuluja: edellisen laskun kulut on
+                  jo peritty ja maksettu takaisin. */}
+              {hoursPeriod && hoursRemainingCents > 0 && (
+                <div className={`mb-3 grid gap-2 rounded-xl bg-muted/40 p-2.5 text-center ${hoursPeriod.money.reimbursementCents > 0 ? "grid-cols-4" : "grid-cols-3"}`}>
                   {([
-                    ["Asiakkaalta", eur(hourlyBill.customerTotalCents), "text-foreground"],
-                    ["Tekijöille", eur(hourlyBill.money.workerCostCents), "text-foreground"],
-                    ...(hourlyBill.money.reimbursementCents > 0
-                      ? [["Kulut takaisin", eur(hourlyBill.money.reimbursementCents), "text-foreground"] as [string, string, string]]
+                    ["Asiakkaalta", eur(hoursRemainingCents), "text-foreground"],
+                    ["Tekijöille", eur(hoursPeriod.money.workerCostCents), "text-foreground"],
+                    ...(hoursPeriod.money.reimbursementCents > 0
+                      ? [["Kulut takaisin", eur(hoursPeriod.money.reimbursementCents), "text-foreground"] as [string, string, string]]
                       : []),
-                    ["Teille", eur(hourlyBill.money.founderTotalCents), "text-green-600"],
+                    ["Teille", eur(hoursPeriod.money.founderTotalCents), "text-green-600"],
                   ] as [string, string, string][]).map(([l, v, tone]) => (
                     <div key={l}>
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{l}</p>
@@ -1513,10 +1546,10 @@ export default function AdminGigTrackerPage() {
               )}
               {/* Kenelle kulut palautuvat. Kohdentamatonta rahaa ei arvata:
                   jos maksajaa ei ole kirjattu, se sanotaan eikä jaeta. */}
-              {hourlyBill.money.reimbursementCents > 0 && (
+              {hoursPeriod && hoursPeriod.money.reimbursementCents > 0 && (
                 <p className="mb-3 text-[11px] leading-snug text-muted-foreground">
-                  {hourlyBill.money.byPayer.length > 0
-                    ? `Kulut takaisin maksajalle: ${hourlyBill.money.byPayer.map((pp) => `${payerName(pp.id)} ${eur(pp.cents)}`).join(" · ")}`
+                  {hoursPeriod.money.byPayer.length > 0
+                    ? `Kulut takaisin maksajalle: ${hoursPeriod.money.byPayer.map((pp) => `${payerName(pp.id)} ${eur(pp.cents)}`).join(" · ")}`
                     : "Kuluille ei ole kirjattu maksajaa — palautus jää kohdentamatta."}
                 </p>
               )}
@@ -1809,9 +1842,9 @@ export default function AdminGigTrackerPage() {
               </p>
               {/* Erittely myös dialogissa: lähetysnapin vieressä on nähtävä
                   mistä summa koostuu, ei vain montako euroa lähtee. */}
-              {invoiceScope === "hours" && hourlyBill && hourlyBill.lines.length > 0 && (
+              {invoiceScope === "hours" && hoursLines.length > 0 && (
                 <div className="mt-2 pt-2 border-t border-border/60 text-left">
-                  {hourlyBill.lines.map((l, i) => (
+                  {hoursLines.map((l, i) => (
                     <div key={i} className="flex items-baseline justify-between gap-3 py-0.5">
                       <span className="text-[11px] text-muted-foreground">{l.label}</span>
                       <span className={`text-[11px] tabular-nums shrink-0 ${l.cents == null ? "text-muted-foreground/70" : "font-semibold text-foreground"}`}>

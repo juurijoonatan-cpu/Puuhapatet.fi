@@ -70,6 +70,16 @@ export interface GigPayment {
    */
   parts?: { hours?: number; p2?: number };
   /**
+   * MITÄ TUNTILASKU KATTOI — talletetaan lähetyshetkellä (`scope` "hours" ja
+   * "all"). Ks. `shared/hours-period.ts`.
+   *
+   * Ilman tätä tuntivirran laskut olivat pelkkiä euroja: "laskutettu 884 €".
+   * Siitä ei voinut päätellä MITKÄ tunnit ja kulut laskulla olivat, joten
+   * tuntinäkymä näytti laskun jälkeenkin koko keikan tunnit ja jokaisen kulun
+   * yhä takaisin maksettavana. Kattavuus tekee seuraavan kauden näkyväksi.
+   */
+  cover?: HoursInvoiceCover;
+  /**
    * MITÄTÖITY erä. Lähetetty laskutuserä on kirjanpidon tosite (se kirjataan
    * myyntinä tilille 3000), joten sitä ei saa poistaa — virheellinen erä
    * merkitään mitätöidyksi ja se jää riviksi historiaan. Kaikki summat
@@ -78,6 +88,67 @@ export interface GigPayment {
   voided?: boolean;
   voidedAt?: number;
   voidedBy?: string;
+}
+
+/**
+ * TUNTILASKUN KATTAVUUS. Tunnit ja kulut ovat KUMULATIIVISIA lähetyshetkellä:
+ * "tähän laskuun mennessä", ei "tällä laskulla". Silloin uusin kattavuus
+ * yksin kertoo mitä on laskutettu, eikä laskujen ketjua tarvitse summata.
+ * Ikkunaraha on poikkeus — ks. `windowsCents`.
+ */
+export interface HoursInvoiceCover {
+  /**
+   * Tekijä → päivä ("YYYY-MM-DD") → kirjatut tunnit lähetyshetkellä — samat
+   * solut kuin `computeShiftStats` laskee. Päivätasolla, jotta laskun jälkeen
+   * tehty uusi työ ja laskutetun päivän korjaus eivät kuittaa toisiaan
+   * näkymättömiin saman tekijän summassa.
+   */
+  hours: Record<string, Record<string, number>>;
+  /** Asiakkaalta veloitettavat kulurivit jotka olivat laskutettuja lähetyshetkellä. */
+  expenseIds: string[];
+  /**
+   * Ikkunaraha jonka laskutusmerkintä (keikan sektoreilla) siirtyi TÄLLÄ
+   * lähetyksellä — ei kumulatiivinen. Merkinnän siirtyessä ikkunat putoavat
+   * kertymästä, joten kausi lisää tämän takaisin vertailuun; muuten seuraava
+   * lasku jäisi niiden hinnan verran vajaaksi.
+   */
+  windowsCents: number;
+  /**
+   * Osalasku: summa oli pienempi kuin laskuttamaton kertymä. Silloin laskulla
+   * ei ole kattanut kaikkea yllä lueteltua, eikä se siirrä kauden alkua.
+   */
+  partial?: boolean;
+}
+
+/** Siivoa tallennettu kattavuus. Rikkinäinen tai puuttuva → undefined. */
+export function sanitizeHoursCover(input: any): HoursInvoiceCover | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const hours: Record<string, Record<string, number>> = {};
+  const src = input.hours && typeof input.hours === "object" ? input.hours : {};
+  let cells = 0;
+  for (const k of Object.keys(src).slice(0, 200)) {
+    const id = String(k).trim().slice(0, 40);
+    const days = src[k] && typeof src[k] === "object" ? src[k] : null;
+    if (!id || !days) continue;
+    const row: Record<string, number> = {};
+    for (const d of Object.keys(days)) {
+      if (cells >= 5000) break;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+      const h = Math.round((Number(days[d]) || 0) * 100) / 100;
+      if (h > 0) { row[d] = h; cells += 1; }
+    }
+    if (Object.keys(row).length) hours[id] = row;
+  }
+  const expenseIds = Array.isArray(input.expenseIds)
+    ? Array.from(new Set(input.expenseIds.map((x: any) => String(x ?? "").trim().slice(0, 60)).filter(Boolean))).slice(0, 1000) as string[]
+    : [];
+  const w = Math.round(Number(input.windowsCents));
+  return {
+    hours,
+    expenseIds,
+    windowsCents: Number.isFinite(w) && w > 0 ? w : 0,
+    ...(input.partial === true ? { partial: true } : {}),
+  };
 }
 
 /**
@@ -575,6 +646,13 @@ export function sanitizeGigData(input: any): GigData {
             ...(clampNonNeg(Number(p.parts.p2)) ? { p2: clampNonNeg(Number(p.parts.p2)) } : {}),
           },
         } : {}),
+        // Kattavuus kulkee tallennusten läpi: adminin "Tallenna sopimus"
+        // lähettää koko blobin, ja ilman tätä riviä se pudottaisi kattavuuden
+        // jokaiselta laskulta.
+        ...((): { cover?: HoursInvoiceCover } => {
+          const cover = sanitizeHoursCover(p?.cover);
+          return cover ? { cover } : {};
+        })(),
         ...(p?.voided ? {
           voided: true as const,
           voidedAt: Number(p.voidedAt) || Date.now(),

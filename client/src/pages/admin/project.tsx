@@ -13,16 +13,16 @@ import { api } from "@/lib/api";
 import { getAdminProfile, USERS, getPreferredWasher, setPreferredWasher } from "@/lib/admin-profile";
 import { useCrewWorkerRedirect } from "@/lib/use-crew-redirect";
 import {
-  emptyProjectData, newGigProjectData, computeWorkerStats, computeProjectTotals, isFr8Plans, fixedDealFor, allPoints, computeDealBilling,
+  emptyProjectData, newGigProjectData, computeWorkerStats, isFr8Plans, fixedDealFor, allPoints, computeDealBilling,
   dealInternalRateCents, isCommunityGig,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense, type LampStatus,
   type LampCondition, type DoorStatus, type FixtureOrder, type LampModel, type ProjBoardEntry,
-  billingModeOf, type BillingMode, computeShiftStats, isHourlyGig, expenseCustomerLabel, type ProjShift,
+  billingModeOf, type BillingMode, isHourlyGig, expenseCustomerLabel, type ProjShift,
 } from "@shared/project";
 import { ArrowLeft } from "lucide-react";
 import { computeP2Billing, customerAddedKeys, p2FounderOpts, p2CustomerLocksSince, p2Itemisation, p2WashedYellows, p2WorkerSplit, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule, type P2WashedState } from "@shared/p2";
 import { computeGuided, type GuidedWork } from "@shared/guided";
-import { computeHourlyMoney } from "@shared/hourly-money";
+import { computeHoursPeriod } from "@shared/hours-period";
 import Navbar, { type Fr8Tab } from "@/components/fr8/Navbar";
 import ModeChooser, { type GigSide } from "@/components/fr8/ModeChooser";
 import { splitCentsEvenly, FOUNDER_IDS } from "@shared/team";
@@ -909,23 +909,29 @@ export default function AdminProjectPage() {
   const canEditLocks = profile?.role === "HOST" || FOUNDER_IDS.includes(profile?.id || "");
 
   /**
-   * TUNTITILAN RAHA yhdestä laskennasta. Sama funktio muodostaa laskun rivit
-   * palvelimella, joten tuntipaneelissa näkyvä summa ei voi olla eri kuin
-   * laskutettava — kate ja sen jako eivät ole näkymän omaa aritmetiikkaa.
+   * TUNTITILAN RAHA JA LASKUTUSKAUSI yhdestä laskennasta — mitä on tehty
+   * EDELLISEN tuntilaskun jälkeen, ja mitä seuraava lasku perii.
+   *
+   * Tuntinäkymä näytti ennen koko keikan tunnit ja kulut myös laskun jälkeen:
+   * luku ei nollautunut, eikä laskun jälkeen tehtyä työtä nähnyt mistään.
+   * Kausi lasketaan samalla jaetulla funktiolla kuin palvelimen lähetys
+   * (`computeHoursPeriod`), joten tässä näkyvä "laskuttamatta" on se summa
+   * jonka seuraava tuntilasku perii — kate ja sen jako eivät ole näkymän omaa
+   * aritmetiikkaa.
+   *
+   * `uninvoicedWindows` ja laskut tulevat palvelimelta: laskutusmerkinnät
+   * elävät keikan sektoreilla ja maksuriveillä, eivät projektidatassa.
    *
    * TÄMÄ ON POISTUMISTEN YLÄPUOLELLA. `project` on tässä vielä mahdollisesti
    * null (lataus kesken), joten ehto on siinä eikä hookin ympärillä: hook
    * poistumisen alapuolella tuottaisi #310:n heti kun data saapuu.
    * Ks. `project-hooks.test.ts`.
    */
-  const hourlyMoney = useMemo(
-    // `uninvoicedWindows` tulee palvelimelta: laskutusmerkintä elää keikan
-    // sektoreilla eikä projektidatassa, joten ilman sitä kortti ei voi tietää
-    // mikä osa pesuista on jo laskutettu — ja näyttäisi ikkunarahan väärin.
+  const hoursPeriod = useMemo(
     () => (project && isHourlyGig(project)
-      ? computeHourlyMoney(project, { uninvoicedWindows: billing?.uninvoicedWindows ?? 0 })
+      ? computeHoursPeriod(project, billing?.hoursInvoices ?? [], { uninvoicedWindows: billing?.uninvoicedWindows ?? 0 })
       : null),
-    [project, billing?.uninvoicedWindows],
+    [project, billing?.hoursInvoices, billing?.uninvoicedWindows],
   );
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -1313,13 +1319,12 @@ export default function AdminProjectPage() {
   /**
    * OVI. Kumpi puoli avataan — ks. `side`-tilan perustelu ylempänä.
    *
-   * Tilannerivit lasketaan tuntipuolen omasta kirjanpidosta ja projektipuolen
-   * ikkunaluvuista, jottei valintaa tarvitse tehdä muistin varassa.
+   * Kaksi nappia jotka ovat koko ruutu, reunasta reunaan. `main` ei lisää
+   * omaa reunustaan: aiempi 32 px + 24 px paddingi turva-alueiden päälle oli
+   * se musta kaista ylä- ja alalaidassa. Turva-alueet hoitaa ovi itse
+   * (`.fr8-door` index.css:ssä) — tausta jatkuu kellon alle, sisältö ei.
    */
   if (side === null) {
-    const hourStats = computeShiftStats(project.shifts);
-    const pointTotals = computeProjectTotals(project);
-    const runningNow = (crew ?? []).filter((c) => c.activeShiftAt).length;
     return shell(
       <main
         data-fr8-pane
@@ -1327,23 +1332,14 @@ export default function AdminProjectPage() {
           // Korkeus tulee kuoren omasta säännöstä (.fr8-root > main:
           // flex 1 1 auto + min-height 0). Oma `height: 100%` tässä oli juuri
           // se mikä ajoi edellisen version sisällön iOS:n tilapalkin alle.
-          position: "relative", zIndex: 10, overflowY: "auto", overflowX: "hidden",
-          boxSizing: "border-box",
-          padding: "calc(32px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-left)) calc(24px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-right))",
+          position: "relative", zIndex: 10, overflow: "hidden",
+          boxSizing: "border-box", display: "flex", flexDirection: "column", padding: 0,
         }}
       >
         <ModeChooser
           gigName={project.building.name || gigName || undefined}
-          address={project.building.address}
-          suggested={mode}
           onChoose={setSide}
           onBack={backToGig}
-          hourlyHint={
-            hourStats.totalHours > 0 || runningNow > 0
-              ? `${hourStats.todayHours} h tänään · ${hourStats.totalHours} h yhteensä${runningNow > 0 ? ` · ${runningNow} töissä nyt` : ""}`
-              : "Ei vielä kirjattuja tunteja"
-          }
-          targetedHint={pointTotals.total > 0 ? `${pointTotals.washed} / ${pointTotals.total} pesty` : undefined}
         />
       </main>,
     );
@@ -1397,7 +1393,8 @@ export default function AdminProjectPage() {
             onAddHours={canAdjustHours ? addShiftHours : undefined}
             people={hourPeople}
             onRemoveShift={canAdjustHours ? removeShift : undefined}
-            money={canAdjustHours ? hourlyMoney : null}
+            period={hoursPeriod}
+            showMoney={canAdjustHours}
             onSetRates={canAdjustHours ? onSetHourRates : undefined}
             busy={shiftBusy}
           />
@@ -1427,11 +1424,25 @@ export default function AdminProjectPage() {
                 summary={(() => {
                   const n = (project.expenses || []).length;
                   const cents = (project.expenses || []).reduce((a, e) => a + (e.amountCents || 0), 0);
-                  return n === 0 ? "lisää tarvike tai alihankkija"
-                    : `${n} kpl · ${(cents / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+                  const fmt = (c: number) => `${(c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+                  if (n === 0) return "lisää tarvike tai alihankkija";
+                  // Laskun jälkeen otsikko kertoo mikä on UUTTA: edellisen
+                  // laskun kulut on jo peritty, eikä niitä makseta takaisin
+                  // toiseen kertaan.
+                  if (hoursPeriod && hoursPeriod.invoiceCount > 0) {
+                    const openCents = hoursPeriod.money.costLines.reduce((a, l) => a + l.customerCents, 0);
+                    const fresh = hoursPeriod.openExpenseIds.length;
+                    return `${fresh} ${fresh === 1 ? "uusi" : "uutta"} laskulle · ${fmt(openCents)} · ${hoursPeriod.invoicedExpenseIds.length} laskutettu`;
+                  }
+                  return `${n} kpl · ${fmt(cents)}`;
                 })()}
               >
                 <ExpensesView
+                  invoiceState={hoursPeriod ? {
+                    invoicedIds: hoursPeriod.invoicedExpenseIds,
+                    openIds: hoursPeriod.openExpenseIds,
+                    lastInvoiceAt: hoursPeriod.last?.at,
+                  } : null}
                   expenses={project.expenses || []}
                   workers={[...gigWorkers, ...crew.filter((c) => !gigWorkers.some((w) => w.id === c.id)).map((c) => ({ id: c.id, name: resolveName(c.id) }))]}
                   currentWorker={currentWorker}
@@ -2641,8 +2652,18 @@ async function fileToReceiptDataUrl(file: File): Promise<string> {
 }
 
 function ExpensesView({
-  expenses, workers, currentWorker, resolveName, onAdd, onDelete, onToggleForCustomer,
+  expenses, workers, currentWorker, resolveName, onAdd, onDelete, onToggleForCustomer, invoiceState,
 }: {
+  /**
+   * TUNTILASKUN TILA kulurivillä — mitkä asiakkaalle veloitettavat kulut olivat
+   * jo laskulla ja mitkä menevät seuraavalle. Puuttuessaan (kohdennettu keikka)
+   * rivit näytetään kuten ennenkin.
+   *
+   * Ilman tätä jokainen kulu näytti samalta laskun jälkeenkin, ja rahakortti
+   * lupasi ne kaikki takaisin maksajalle — myös ne jotka edellinen lasku oli
+   * jo perinyt ja jotka oli jo maksettu takaisin.
+   */
+  invoiceState?: { invoicedIds: string[]; openIds: string[]; lastInvoiceAt?: number } | null;
   expenses: ProjExpense[];
   workers: { id: string; name: string }[];
   currentWorker: string;
@@ -2713,6 +2734,13 @@ function ExpensesView({
   };
 
   const sorted = [...expenses].sort((a, b) => b.ts - a.ts);
+  const invoicedSet = new Set(invoiceState?.invoicedIds ?? []);
+  const openSet = new Set(invoiceState?.openIds ?? []);
+  /** Laskutustilan merkki: yksi rivi myös kapeassa puhelimessa. */
+  const expenseChip: React.CSSProperties = {
+    display: "inline-block", maxWidth: "100%", padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 600,
+    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", verticalAlign: "middle",
+  };
 
   return (
     <div>
@@ -2939,6 +2967,24 @@ function ExpensesView({
                   {exp.kind === "subcontract" && (
                     <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
                       asiakkaalle: <span style={{ color: "#9ff0bd" }}>{expenseCustomerLabel(exp)}</span>
+                    </div>
+                  )}
+                  {/* LASKUTETTU VAI SEURAAVALLE LASKULLE. Vain asiakkaalta
+                      veloitettavilla riveillä: sisäinen kulu ei mene laskulle
+                      kummassakaan tapauksessa. */}
+                  {invoiceState && (invoicedSet.has(exp.id) || openSet.has(exp.id)) && (
+                    <div style={{ marginTop: 4 }}>
+                      {invoicedSet.has(exp.id) ? (
+                        <span style={{ ...expenseChip, border: "1px solid rgba(255,255,255,0.14)", color: "rgba(255,255,255,0.55)" }}
+                          title={`Oli laskulla${invoiceState.lastInvoiceAt ? ` viimeistään ${new Date(invoiceState.lastInvoiceAt).toLocaleDateString("fi-FI")}` : ""} — asiakas on laskutettu siitä, eikä sitä makseta takaisin uudelleen.`}>
+                          ✓ laskutettu
+                        </span>
+                      ) : (
+                        <span style={{ ...expenseChip, border: "1px solid rgba(255,206,40,0.35)", background: "rgba(255,206,40,0.10)", color: "#ffce28" }}
+                          title="Ei vielä millään laskulla — menee seuraavalle laskulle ja takaisin maksajalle.">
+                          laskuttamatta
+                        </span>
+                      )}
                     </div>
                   )}
                   <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>

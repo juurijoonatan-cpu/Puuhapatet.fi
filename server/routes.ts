@@ -34,6 +34,7 @@ import { sanitizeMemberSignature } from "@shared/member-agreement";
 import { effectiveWorkerHourRateOf } from "@shared/project";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, isHourlyGig, billingModeOf, roundWorkHours, roundWorkHoursFromMinutes, cappedTimerHours, customerExpenses, customerHourRows, invoiceNaming, sanitizeBoard, sortedBoard, BOARD_CUSTOMER, MAX_BOARD_TEXT_LEN, MAX_BOARD_ENTRIES, toBoardKind, dayKey, isDayKey, addShiftEntry, computeShiftStats, MAX_SHIFT_NOTE_LEN, type ProjShift, type ProjBoardEntry, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeHourlyMoney, hourlyItemisation } from "@shared/hourly-money";
+import { computeHoursPeriod, buildHoursCover, hoursPeriodLines, lastHoursInvoiceAt, isHoursStreamPayment } from "@shared/hours-period";
 import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2ExtraCharges, p2BillableCents, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
@@ -6742,6 +6743,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const storedGig = parseGig(job.gigData);
       if (storedGig?.contractFile) gig.contractFile = storedGig.contractFile;
       else delete gig.contractFile;
+      /**
+       * TUNTILASKUN KATTAVUUS ON SERVERIN KIRJOITTAMA (lähetysreitti). Vanha
+       * välimuistissa oleva selain ei tunne kenttää ja pudottaa sen omasta
+       * kopiostaan, joten sen "Tallenna sopimus" pyyhkisi kattavuuden
+       * jokaiselta laskulta. Palautetaan tallennettu kopio samalle maksuriville.
+       */
+      if (storedGig) {
+        for (const p of gig.payments) {
+          if (p.cover) continue;
+          const same = storedGig.payments.find((q) => q.t === p.t && q.amountCents === p.amountCents && q.scope === p.scope);
+          if (same?.cover) p.cover = same.cover;
+        }
+      }
       const totals = computeTotals(gig);
       // Keep agreedPrice in sync with the cap so dashboards/exports stay correct.
       await db.update(jobs)
@@ -6892,8 +6906,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const gigTotalsNow = computeTotals(gig);
       const uninvoicedWindows = Math.max(0, gigTotalsNow.washedTotal - gigTotalsNow.invoicedWashed);
       const hourly = (isHoursScope || isAllScope) && proj ? hourlyItemisation(proj, { uninvoicedWindows }) : null;
-      const hoursRemainingCents = hourly
-        ? Math.max(0, hourly.customerTotalCents - invState.hoursInvoicedCents) : 0;
+      /**
+       * KAUSI: mitä on kertynyt edellisen tuntilaskun jälkeen, ja mitä seuraava
+       * lasku perii. Sama jaettu laskenta kuin keikkasivun laskutuskortilla ja
+       * tuntinäkymässä (`shared/hours-period.ts`), joten dialogissa näkyvä
+       * summa on se joka tässä lähtee.
+       */
+      const period = hourly && proj ? computeHoursPeriod(proj, gig.payments, { uninvoicedWindows }) : null;
+      const hoursRemainingCents = period ? period.remainingCents : 0;
       const hoursAmountCents = hourly
         ? Math.min(hoursRemainingCents, Number.isInteger(reqAmountCents) && reqAmountCents > 0 ? reqAmountCents : hoursRemainingCents)
         : 0;
@@ -6998,31 +7018,50 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       /**
        * TUNTILASKUN RIVIT SUMMAUTUVAT AINA LASKUN LOPPUSUMMAAN.
        *
-       * Erittely kertoo KOKO kertymän. Kun lasku on osalasku — johtaja
-       * laskuttaa osan, tai osa on jo laskutettu aiemmin — täysi erittely
-       * veloitusriveinä väittäisi asiakkaalle eri summaa kuin lasku perii.
-       * Silloin erittely näytetään TIETONA (ei euroja veloitussarakkeessa) ja
-       * veloitus on yksi rivi: mitä nyt laskutetaan, ja mistä kertymästä.
+       * Kolme muotoa, ja jokainen veloittaa täsmälleen tuntiosuuden:
        *
-       * Täysi lasku on ehdoton: koko kertymä, eikä aiempia tuntilaskuja.
-       * Vain silloin rivit ovat itse veloitus.
+       *   1. ENSIMMÄINEN LASKU koko kertymästä: koko keikan erittely on itse
+       *      veloitus.
+       *   2. SEURAAVA LASKU: vain EDELLISEN LASKUN JÄLKEEN tehty työ
+       *      (`hoursPeriodLines`) — tunnit, kulut ja ikkunat tältä kaudelta.
+       *      Aiemmin seuraavallakin laskulla luki koko keikan tuntimäärä, ja
+       *      asiakas joutui vähentämään edellisen laskun itse nähdäkseen mitä
+       *      tämä lasku koskee.
+       *   3. MUU (osalasku, tai jo laskutettua on muutettu jälkikäteen): koko
+       *      kertymä TIETONA ja veloitus yhtenä rivinä — erittely ei silloin
+       *      väitä asiakkaalle eri summaa kuin lasku perii.
+       *
+       * Yhdistetyllä laskulla summa on tunti- JA lisätyöosuus, joten tuntirivit
+       * verrataan tuntiosuuteen (`hoursPartCents`), ei koko laskuun.
        */
+      const hoursPartCents = isHoursScope ? amountCents : isAllScope ? allHoursPart : 0;
       const hoursFullBill = !!hourly
         && invState.hoursInvoicedCents === 0
-        && amountCents === hourly.customerTotalCents;
-      const hourlyRows = hourly
-        ? hourly.lines.map((l) => `<tr style="border-bottom:1px solid #E4E1D7">
-            <td style="padding:10px 0;color:#1A1A1A;font-size:14px">${escHtml(l.label)}</td>
-            <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:${hoursFullBill ? "#1A1A1A" : "#8C8A82"};font-variant-numeric:tabular-nums">${l.cents == null ? "&mdash;" : fmtEur(l.cents)}</td>
-          </tr>`).join("")
-          + (hoursFullBill ? "" : `<tr style="border-bottom:1px solid #E4E1D7">
+        && hoursPartCents === hourly.customerTotalCents;
+      const periodLines = period && period.invoiceCount > 0 ? hoursPeriodLines(period) : [];
+      const hoursPeriodBill = !hoursFullBill && !!period
+        && period.adjustmentCents === 0
+        && periodLines.length > 0
+        && periodLines.reduce((n, l) => n + (l.cents ?? 0), 0) === hoursPartCents;
+      const hourRow = (label: string, cents: number | null, charge: boolean) => `<tr style="border-bottom:1px solid #E4E1D7">
+            <td style="padding:10px 0;color:#1A1A1A;font-size:14px">${escHtml(label)}</td>
+            <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:${charge ? "#1A1A1A" : "#8C8A82"};font-variant-numeric:tabular-nums">${cents == null ? "&mdash;" : fmtEur(cents)}</td>
+          </tr>`;
+      const lastHoursDate = period?.last ? new Date(period.last.at).toLocaleDateString("fi-FI") : "";
+      const hourlyRows = !hourly ? ""
+        : hoursFullBill
+        ? hourly.lines.map((l) => hourRow(l.label, l.cents, true)).join("")
+        : hoursPeriodBill
+        ? periodLines.map((l) => hourRow(l.label, l.cents, true)).join("")
+          + hourRow(`Edellisen laskun ${lastHoursDate} jälkeen tehty työ · aiemmin laskutettu ${fmtEur(invState.hoursInvoicedCents)}`, null, false)
+        : hourly.lines.map((l) => hourRow(l.label, l.cents, false)).join("")
+          + `<tr style="border-bottom:1px solid #E4E1D7">
             <td style="padding:10px 0;color:#1A1A1A;font-size:14px">
               Laskutetaan tällä laskulla<br>
               <span style="color:#8C8A82;font-size:12px">kertymä yhteensä ${fmtEur(hourly.customerTotalCents)}${invState.hoursInvoicedCents > 0 ? ` · aiemmin laskutettu ${fmtEur(invState.hoursInvoicedCents)}` : ""}</span>
             </td>
-            <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:#1A1A1A;font-variant-numeric:tabular-nums">${fmtEur(amountCents)}</td>
-          </tr>`)
-        : "";
+            <td style="padding:10px 0;text-align:right;font-size:14px;font-weight:600;color:#1A1A1A;font-variant-numeric:tabular-nums">${fmtEur(hoursPartCents)}</td>
+          </tr>`;
 
       /**
        * LISÄTYÖLASKUN RIVIT: keltaiset ikkunat JA kulut.
@@ -7169,7 +7208,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         <tbody>${lineRows}</tbody>
       </table>
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px">
-        ${isP2Scope
+        ${(isHoursScope || isAllScope)
+          // Tunti- ja yhdistetyllä laskulla rivit yllä kertovat jo mistä summa
+          // tulee ja mitä on laskutettu aiemmin. Alla olevat urakan luvut
+          // (sovittu kokonaishinta, ikkunasektorien kertymä) eivät koske tätä
+          // laskua lainkaan, ja tuntilaskun päällä ne näyttivät asiakkaalle
+          // urakan summia ikään kuin ne kuuluisivat tähän laskuun.
+          ? ""
+          : isP2Scope
           ? `<tr><td style="padding:8px 0;color:#8C8A82;font-size:13px">Lisätöiden kertymä (pestyt sovitut ikkunat)</td><td style="padding:8px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">${fmtEur(p2b?.earnedCents ?? 0)}</td></tr>
              ${p2InvoicedCents > 0 ? `<tr><td style="padding:4px 0;color:#8C8A82;font-size:13px">Aiemmin laskutettu</td><td style="padding:4px 0;text-align:right;color:#8C8A82;font-size:13px;font-variant-numeric:tabular-nums">−${fmtEur(p2InvoicedCents)}</td></tr>` : ""}`
           : fixedDeal
@@ -7275,7 +7321,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
        * laskutetuksi.
        */
       const hoursCoversWholeAccrual = !!hourly && amountCents >= hoursRemainingCents;
-      if (!isP2Scope && !isAllScope && (!isHoursScope || hoursCoversWholeAccrual)) {
+      /**
+       * KATTOIKO TUNTIVIRRAN OSUUS KOKO KERTYMÄN? Tuntilasku täydellä summalla
+       * tai yhdistetty lasku, jonka tuntiosa on aina koko kertymä. Vain silloin
+       * laskulla veloitetut ikkunat merkitään laskutetuiksi ja tuntien kausi
+       * alkaa alusta.
+       *
+       * YHDISTETTY LASKU EI SIIRTÄNYT MERKINTÄÄ, vaikka se veloitti ikkunat
+       * tuntiosassaan. Ikkunat jäivät näkymään laskuttamattomina, ja kun
+       * seuraava tuntilasku sitten siirsi merkinnän, sen summasta puuttui
+       * juuri niiden ikkunoiden hinta.
+       */
+      const hoursStreamCovered = isAllScope ? allHoursPart > 0 && !!hourly : isHoursScope && hoursCoversWholeAccrual;
+      // Ikkunaraha jonka laskutusmerkintä siirtyy tällä lähetyksellä. Se putoaa
+      // kertymästä, joten kausi lisää sen takaisin vertailuun (`cover.windowsCents`).
+      const advancedWindowsCents = hoursStreamCovered ? (hourly?.money.windowsCents ?? 0) : 0;
+      if (!isP2Scope && (!(isHoursScope || isAllScope) || hoursStreamCovered)) {
         gig.sectors.forEach((s) => { s.invoicedWashed = s.washed; });
       }
       const totalsAfter = computeTotals(gig);
@@ -7286,9 +7347,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
       gig.payments.push({
         t: Date.now(),
-        // Tuntilaskulla "montako yksikköä tähän asti" on tunteja, ei ikkunoita.
-        countThrough: isHoursScope ? Math.round((hourly?.money.totalHours ?? 0) * 100) / 100
-          : isP2Scope ? (p2b?.lockedWashedCount ?? 0) : totalsAfter.invoicedWashed,
+        /**
+         * IKKUNAMERKINTÄ TÄMÄN LASKUN JÄLKEEN — myös tuntilaskulla. Peruutus ja
+         * mitätöinti palauttavat sektorien merkinnät jäljelle jääneen laskun
+         * `countThrough`iin, joten luvun on oltava ikkunoita. Tuntilaskulla
+         * tässä oli ennen tuntimäärä, ja peruutus luki sen ikkunamääränä.
+         * Laskutetut tunnit ovat nyt kattavuudessa (`cover.hours`).
+         */
+        countThrough: isP2Scope ? (p2b?.lockedWashedCount ?? 0) : totalsAfter.invoicedWashed,
         amountCents,
         to: recipient,
         note: invoiceLabel,
@@ -7305,6 +7371,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           ? { scope: "all" as const, parts: { hours: allHoursPart, p2: allP2Part } }
           : isHoursScope ? { scope: "hours" as const }
           : isP2Scope ? { scope: "p2" as const } : {}),
+        /**
+         * MITÄ TÄMÄ LASKU KATTOI: kunkin tekijän tunnit ja laskulla olleet
+         * kulut lähetyshetkellä. Tästä tuntinäkymä tietää mitä on tehty
+         * laskun jälkeen, ja kulut erottuvat jo laskutettuihin ja uusiin.
+         * Osalasku ei kattanut kaikkea, joten se ei siirrä kauden alkua.
+         */
+        ...((isHoursScope || (isAllScope && allHoursPart > 0)) && proj
+          ? { cover: buildHoursCover(proj, { windowsCents: advancedWindowsCents, partial: !hoursStreamCovered }) }
+          : {}),
       });
       // For fixed-price contracts, invoicedCents = N completed instalments × fixed amount
       // (avoids mismatch between per-window accrual and agreed flat price).
@@ -7684,6 +7759,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
            */
           hoursInvoicedCents: p2State.hoursInvoicedCents,
           hoursPayments: p2State.hoursPayments,
+          /**
+           * TUNTIVIRRAN LASKUT KATTAVUUKSINEEN. Tuntinäkymä laskee näistä
+           * kauden — mitä on tehty edellisen laskun jälkeen — samalla
+           * funktiolla kuin lähetys (`computeHoursPeriod`). Vain se mitä
+           * laskenta tarvitsee: ei vastaanottajia eikä laskuttajaa.
+           */
+          hoursInvoices: payments.filter(isHoursStreamPayment).map((p) => ({
+            t: p.t, amountCents: p.amountCents, scope: p.scope,
+            ...(p.parts ? { parts: p.parts } : {}),
+            ...(p.cover ? { cover: p.cover } : {}),
+          })),
           invoicedTotalCents: payments.reduce((sum, p) => sum + (p.amountCents || 0), 0),
           agreedTotalCents,
           nextInstalmentCents: projDeal
@@ -7747,6 +7833,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const who = String(req.body?.by ?? "").trim().slice(0, 40) || "host";
       const action = String(req.body?.action ?? "");
       const worker = String(req.body?.worker ?? "").trim().slice(0, 40);
+      const lockedAt = hoursLockedAtOf(job);
 
       if (action === "start" || action === "stop") {
         if (!worker) return res.status(400).json({ error: "Tekijä puuttuu" });
@@ -7815,6 +7902,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
                 },
               },
               worker,
+              { lockedAt },
             );
           }
         }
@@ -7825,6 +7913,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           project.shifts ?? [],
           { add: { worker, hours: req.body?.hours, day: req.body?.day, note: req.body?.note } },
           who,
+          { lockedAt },
         );
       }
 
@@ -8655,6 +8744,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   }
 
   /**
+   * Viimeisimmän tuntilaskun hetki tältä keikalta. Sitä ennen kirjattuun
+   * riviin ei yhdistetä uusia tunteja (`addShiftEntry`n `lockedAt`), jotta
+   * laskun jälkeen kirjattu näkyy omana rivinään eikä katoa laskutettuun.
+   */
+  function hoursLockedAtOf(job: { gigData?: string | null }): number | undefined {
+    return lastHoursInvoiceAt(parseGig(job.gigData ?? null)?.payments);
+  }
+
+  /**
    * TUNTITILAN VUOROKIRJANPITO — yksi paikka jossa `shifts` muuttuu.
    *
    * Kirjoittajia on kolme (tekijän ajastin, johtajan käsin korjaus, johtajan
@@ -8669,6 +8767,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       remove?: { id: unknown };
     },
     by: string,
+    /** Viimeisimmän tuntilaskun hetki: laskutettuun riviin ei yhdistetä (ks. `addShiftEntry`). */
+    opts?: { lockedAt?: number },
   ): ProjShift[] {
     if (action.add) {
       const worker = String(action.add.worker ?? "").trim().slice(0, 40);
@@ -8691,7 +8791,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         // muuten jokaisella rivillä lukisi "kirjannut: hän itse".
         ...(by && by !== worker ? { by } : {}),
         ...(note ? { note } : {}),
-      });
+      }, { lockedAt: opts?.lockedAt });
       if (next === shifts) throw new Error("Ei vähennettäviä tunteja");
       return next;
     }
@@ -10250,6 +10350,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           project.shifts ?? [],
           { add: { worker: member.id, hours: creditedHours, day: dayKey(startedAt), startedAt } },
           member.id,
+          { lockedAt: hoursLockedAtOf(job) },
         );
       }
 
@@ -10311,6 +10412,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           project.shifts ?? [],
           { add: { worker: member.id, hours: roundWorkHours(delta), day: dayKey() } },
           member.id,
+          { lockedAt: hoursLockedAtOf(job) },
         );
       } else {
         project.hours[member.id] = Math.max(0, +(((project.hours[member.id] || 0) + delta).toFixed(2)));
@@ -10362,6 +10464,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           project.shifts ?? [],
           { add: { worker: member.id, hours: roundWorkHours(hours), day: dayKey(end) } },
           member.id,
+          { lockedAt: hoursLockedAtOf(job) },
         );
       } else {
         project.hours[member.id] = Math.max(0, +(((project.hours[member.id] || 0) + hours).toFixed(2)));
@@ -12096,6 +12199,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             project.shifts ?? [],
             { add: { worker: member.id, hours: roundWorkHours(hours), day: dayKey(end) } },
             "johtaja",
+            { lockedAt: hoursLockedAtOf(job) },
           );
         } else {
           project.hours[member.id] = Math.max(0, +(((project.hours[member.id] || 0) + hours).toFixed(2)));

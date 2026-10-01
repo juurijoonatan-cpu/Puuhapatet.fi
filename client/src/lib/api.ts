@@ -11,6 +11,7 @@ import type { EraInvoiceKind, EraInvoiceTila } from "@shared/era-billing";
 import type { P2Billing, P2OfferStatus, P2State } from "@shared/p2";
 import type { GuidedState, GuidedWork } from "@shared/guided";
 import type { TransferReport } from "@shared/transfer-report";
+import type { HoursPaymentLike } from "@shared/hours-period";
 
 // ─── P2 (keltaiset ikkunat) — per-ikkuna hinnoittelu + neuvottelu ──────────────
 
@@ -283,6 +284,12 @@ export interface GigBillingState {
   /** Tuntityöstä asiakkaalta laskutettu (`scope:"hours"` + yhdistettyjen osuus). */
   hoursInvoicedCents?: number;
   hoursPayments?: number;
+  /**
+   * Tuntivirran laskut kattavuuksineen — tuntinäkymä laskee niistä mitä on
+   * tehty edellisen laskun jälkeen (`computeHoursPeriod`). Puuttuu vanhalta
+   * palvelimelta, jolloin kausi on koko keikka.
+   */
+  hoursInvoices?: HoursPaymentLike[];
   /** KAIKKI asiakkaalta laskutettu, virrasta riippumatta. Yksi luku jota ei
    *  tarvitse koota kolmesta kentästä — eikä siis voi koota väärin. */
   invoicedTotalCents?: number;

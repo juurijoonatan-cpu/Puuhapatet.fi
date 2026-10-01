@@ -711,11 +711,23 @@ export function shiftHoursOnDay(shifts: ProjShift[] | undefined, worker: string,
  * miinukselle mennyt päivä katoaisi päiväkirjasta (siellä näkyvät vain päivät
  * joilla on tunteja) mutta jäisi vähentämään kokonaissummaa — jolloin
  * päiväkirja ei täsmäisi summan kanssa eikä eroa voisi mistään selittää.
+ *
+ * LASKUTETTUUN RIVIIN EI YHDISTETÄ (`lockedAt`).
+ *
+ * `lockedAt` on viimeisimmän tuntilaskun lähetyshetki. Sitä ennen kirjattu
+ * rivi on ollut laskulla, joten siihen ei enää yhdistetä uusia tunteja: uusi
+ * kirjaus samalle päivälle saa oman rivinsä. Muuten sama rivi sisältäisi sekä
+ * laskutettuja että laskuttamattomia tunteja, eikä päiväkirjasta näkisi mitä
+ * laskun jälkeen lisättiin. Vähennys purkaa ensin laskuttamattomat rivit —
+ * korjaus osuu ensisijaisesti siihen mitä ei ole vielä laskutettu.
  */
 export function addShiftEntry(
   shifts: ProjShift[],
   entry: { id: string; worker: string; hours: number; day: string; at: number; startedAt?: number; by?: string; note?: string },
+  opts?: { lockedAt?: number },
 ): ProjShift[] {
+  const lockedAt = opts?.lockedAt;
+  const isLocked = (s: ProjShift) => lockedAt !== undefined && (s.at || 0) <= lockedAt;
   const dayCur = shiftHoursOnDay(shifts, entry.worker, entry.day);
   const hours = entry.hours < 0 ? -Math.min(dayCur, -entry.hours) : entry.hours;
   if (!hours) return shifts;
@@ -745,10 +757,11 @@ export function addShiftEntry(
     const order = shifts
       .map((s, i) => ({ s, i }))
       .filter(({ s }) => s.worker === entry.worker && s.day === entry.day && s.hours > 0)
-      // Käsin kirjatut ensin, sitten ajastimen vuorot — kummatkin uusin ensin.
-      // Ajastimen alkuaika on tietoa työvuorosta, joten sitä kosketaan vasta
-      // kun korjausrivejä ei enää ole.
-      .sort((a, b) => (a.s.startedAt ? 1 : 0) - (b.s.startedAt ? 1 : 0) || b.s.at - a.s.at);
+      // Laskuttamattomat ensin (ks. `lockedAt`), sitten käsin kirjatut ennen
+      // ajastimen vuoroja — kaikki uusin ensin. Ajastimen alkuaika on tietoa
+      // työvuorosta, joten sitä kosketaan vasta kun korjausrivejä ei enää ole.
+      .sort((a, b) => (isLocked(a.s) ? 1 : 0) - (isLocked(b.s) ? 1 : 0)
+        || (a.s.startedAt ? 1 : 0) - (b.s.startedAt ? 1 : 0) || b.s.at - a.s.at);
 
     const cut = new Map<number, number>();
     for (const { s, i } of order) {
@@ -763,7 +776,7 @@ export function addShiftEntry(
   }
 
   if (!entry.startedAt) {
-    const idx = shifts.findIndex((s) => s.worker === entry.worker && s.day === entry.day && !s.startedAt);
+    const idx = shifts.findIndex((s) => s.worker === entry.worker && s.day === entry.day && !s.startedAt && !isLocked(s));
     if (idx >= 0) {
       const merged = Math.round((shifts[idx].hours + hours) * 100) / 100;
       // Nollaan kutistunut korjausrivi poistetaan: "+0 h" ei ole kirjaus.

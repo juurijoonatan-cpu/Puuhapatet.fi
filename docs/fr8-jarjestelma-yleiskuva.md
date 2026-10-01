@@ -54,6 +54,7 @@ Osapuolet ja pääsy:
 | `founder-settlement.ts` | **Johtajien tasaus — puhdas matematiikka.** `computeTasaus` (ansainta vs. kassa → nettosiirto), `splitEvenCents`, tallennettu tila `FounderSettlementState` + sanitoija. Ks. "Johtajien tasaus" alla. |
 | `fr8-tasaus.ts` | Tasauksen syötteen kokoaminen oikeasta keikkadatasta: `buildTasaus`, `founderWashCounts`. |
 | `washers.ts` | Pesijätunnisteen perussäännöt (lehtimoduuli, ei importteja): `UNNAMED_WASHER_ID` (nimeämätön puolikas), `isPayableWasherId`, `normalizedSecondWasher`. Jokainen attribuutiota lukeva moduuli käyttää samaa sääntöä. |
+| `hours-period.ts` | **Tuntilaskutuksen kausi: mitä on tehty EDELLISEN tuntilaskun jälkeen.** `computeHoursPeriod` antaa avoimet tunnit (tekijä × päivä), uudet ja jo laskutetut kulut, kauden rahan ja seuraavan laskun summan; `hoursPeriodLines` on seuraavan laskun erittely. Lähetys tallentaa maksuriville kattavuuden (`cover`), vanha lasku päätellään aikaleimoista. Ks. invariantti 26. |
 | `work-attribution.ts` | **Kohdentamaton työ: pesty työ jolle ei ole maksunsaajaa.** `buildAttributionAudit` erittelee poistetun tekijän, harjoittelijan ja nimeämättömän puoliskon (ikkunat + tunnit), vähentää jo maksetun ja nimeää harjoittelijan vastuujohtajan. Näkyy Maksut-välilehdellä ja siirtoraportin sähköpostissa. |
 | `payprogress.ts`, `tax.ts`, `team.ts`, `trainees.ts`, `billers.ts` | Paydate/verot/tiimi/harjoittelijat/laskuttajat. |
 
@@ -152,6 +153,7 @@ millä tahansa keikalla maksudialogin "Tunnit"-välilehdeltä.
 | `eraScopeOf(eraNumbers)` / `eraScopeLabel(eraNumbers)` | minkä virran erävalinta tämä on, ja sen luettava nimi (sentinel ei koskaan vuoda näkyviin muodossa "Erä 0" / "Erä 9") |
 | `buildTransferReport({project, payments, invoices})` | **kenelle siirrän ja paljonko** — tekijöiden osuudet eriteltyinä + johtajien tasaus yhtenä listana |
 | `isTraineeMember(member)` | harjoittelija → EI tekijöiden maksulistalla (palkka johtajan kautta) |
+| `computeHoursPeriod(project, payments, {uninvoicedWindows})` | **mitä on tehty edellisen tuntilaskun jälkeen** — avoimet tunnit tekijöittäin ja päivittäin, uudet/laskutetut kulut, kauden raha ja seuraavan tuntilaskun summa (`remainingCents`) + ero aiempaan (`adjustmentCents`) |
 | `buildAttributionAudit(project, {settledCentsById})` | **työ jolle ei ole maksunsaajaa** — poistettu tekijä, harjoittelija, nimeämätön puolikas; ansaittu − jo maksettu |
 | `normalizedSecondWasher(primary, second)` | jaon toinen pesijä yhdellä säännöllä: sama henkilö molemmissa päissä EI ole jako |
 | `dealInternalRateCents(data, deal)` | perustajan sisäinen kate €/ikkuna (EFEKTIIVINEN sopimussumma ÷ punaiset) |
@@ -323,6 +325,33 @@ Säännöt:
    `crewMemberStats`istä ja 1,0 tasauksesta, eli puolet omasta työstään katosi
    sen mukaan mitä näkymää katsoi.
 
+26. **Tuntilasku tallentaa mitä se kattoi — muuten mikään ei nollaudu.**
+   Tuntivirran lasku oli pelkkä summa, joten laskun jälkeen tuntinäkymä
+   näytti yhä koko keikan tunnit ja jokaisen kulun "takaisin maksajalle",
+   myös jo laskutetut ja maksetut. Nyt lähetys (`scope` "hours" ja "all")
+   tallentaa maksuriville `cover`in: kunkin tekijän tunnit PÄIVITTÄIN ja
+   laskulla olleet kulurivit lähetyshetkellä (kumulatiivisesti).
+   `computeHoursPeriod` vertaa nykytilaa siihen solu kerrallaan.
+   - **Laskun summa tulee yhä rahasta** (kertymä − laskutettu). Kauden
+     erittely kertoo mistä se koostuu; jos jo laskutettua on muutettu
+     jälkikäteen (tunti pois laskutetulta päivältä, laskutettu kulu poistettu,
+     hinta vaihdettu), ero on oma rivinsä "Korjaus aiemmin laskutettuun".
+     Asiakkaan sähköpostissa kauden rivit käytetään vain kun eroa ei ole —
+     muuten koko kertymä tietona ja yksi veloitusrivi kuten ennen.
+   - **Vanha lasku ilman kattavuutta päätellään aikaleimoista** (vuoro `at` /
+     kulu `ts` ≤ lähetys). Siksi laskutettuun riviin ei enää yhdistetä uusia
+     käsin kirjattuja tunteja (`addShiftEntry`n `lockedAt`): yhdistetty rivi
+     olisi siirtänyt kirjaushetkensä laskun jälkeen ja näyttänyt kokonaan
+     uudelta.
+   - **Laskutettu ikkunaraha palautetaan vertailuun** (`cover.windowsCents`).
+     Lasku joka veloitti ikkunat siirsi niiden merkinnän sektoreilla, jolloin
+     ne putosivat kertymästä mutta niiden euro jäi "laskutettuun" — seuraava
+     tuntilasku jäi juuri sen verran vajaaksi. Yhdistetty lasku ("all") siirtää
+     nyt merkinnän kuten tuntilaskukin, ja tuntilaskun `countThrough` on
+     ikkunamäärä (peruutus lukee sen sellaisena), ei tuntimäärä.
+   - Kattavuus on serverin kirjoittama: `PATCH /gig` palauttaa tallennetun
+     kopion jos (vanha) selain pudottaa sen.
+
 ### Missä mikä toiminto asuu (ei duplikaatteja)
 
 | Toiminto | Ainoa paikka |
@@ -340,6 +369,7 @@ Säännöt:
 | Urakkarahat koko brändin tasolla | Puuhapatet-adminin etusivu → "Urakkakeikat — raha" |
 | Keltaisten sopimusteksti | keikkanäkymän **Sopimus & asiakasnäkymä** (ei P2-paneelissa) |
 | Kerrosten lukitus | mustan dashin **KERROSTEN LUKITUS** (alalaita) |
+| Tunnit ja kulut edellisen laskun jälkeen | projektinäkymän ovi → **Tuntityö** (ylin kortti, kalenterin ✓-päivät, kulujen "laskutettu"/"laskuttamatta") |
 | Keltaisten laajuus **yhteisökeikalla** | asiakkaan seurantakartta → napauta keltaista (`scope`) |
 | Asiakkaan laajuusvastaus tekijälle | `FloorView` → merkki pisteen päällä (`scopeVotes`) |
 

@@ -25,7 +25,7 @@ import {
   type ProjShift,
 } from "@shared/project";
 import type { CrewMember } from "@shared/crew";
-import type { HourlyMoney } from "@shared/hourly-money";
+import type { HoursPeriod } from "@shared/hours-period";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { T, card, inset, mono, eur } from "./tokens";
 
@@ -49,13 +49,18 @@ interface Props {
   /** Poista väärin kirjattu rivi päiväkirjasta. */
   onRemoveShift?: (id: string) => void;
   /**
-   * TUNTITILAN RAHA — laskettuna kerran `computeHourlyMoney`illa, ei täällä.
-   *
-   * Puuttuessaan rahakorttia ei näytetä lainkaan: tuntipalkat, kate ja sen
-   * jako ovat perustajien tietoa, joten kutsuja antaa tämän vain heille.
-   * Paneeli ei itse päättele kuka saa nähdä mitä — pääsy on yhdessä paikassa.
+   * LASKUTUSKAUSI — mitä on tehty EDELLISEN tuntilaskun jälkeen, laskettuna
+   * kerran `computeHoursPeriod`illa (sama funktio jolla lasku lähtee).
+   * Puuttuessaan (kohdennettu keikka, jolla tunnit ovat seurantaa) näkymä ei
+   * puhu laskuista lainkaan.
    */
-  money?: HourlyMoney | null;
+  period?: HoursPeriod | null;
+  /**
+   * Saako rahaa näyttää. Puuttuessaan rahakorttia ei näytetä lainkaan:
+   * tuntipalkat, kate ja sen jako ovat perustajien tietoa, joten kutsuja
+   * päättää tämän. Paneeli ei itse päättele kuka saa nähdä mitä.
+   */
+  showMoney?: boolean;
   /**
    * Tämän keikan tuntihinnat. Puuttuessaan hinnat ovat lukemia eikä niitä voi
    * muuttaa — sama porras kuin rahakortilla: vain perustaja saa koskea.
@@ -84,10 +89,24 @@ function prevDayKey(ms: number): string {
   return dayKey(d.getTime());
 }
 
+/** "pe 26.9." — laskun päivä lyhyesti. */
+function fmtInvoiceDay(ms: number): string {
+  return fmtDayLabel(dayKey(ms));
+}
+
 export default function HourlyPanel({
-  shifts, crew, workerName, me, onStartShift, onStopShift, onAdjustHours, onAddHours, onRemoveShift, money, onSetRates, busy, people,
+  shifts, crew, workerName, me, onStartShift, onStopShift, onAdjustHours, onAddHours, onRemoveShift, period, showMoney, onSetRates, busy, people,
 }: Props) {
   const m = useIsMobile();
+  /**
+   * RAHAKORTTI NÄYTTÄÄ KAUDEN: laskun jälkeen kertyneen, ei koko keikkaa.
+   * Ennen kortti näytti koko keikan summat myös laskun jälkeen, ja "takaisin
+   * kulujen maksajalle" listasi jokaisen kulun — myös jo laskutetut ja
+   * takaisin maksetut. Ensimmäiseen laskuun asti kausi on koko keikka.
+   */
+  const money = showMoney && period ? period.money : null;
+  /** Onko tunneista jo lähetetty lasku — vasta silloin "laskuttamatta" eroaa kokonaisluvusta. */
+  const invoiced = !!period?.last;
   const [now, setNow] = useState(() => Date.now());
   /**
    * PÄIVÄKIRJA ON NYT SULJETTU OLETUKSENA — ja vasta nyt se saa olla.
@@ -243,6 +262,20 @@ export default function HourlyPanel({
   /** Omat tunnit VALITULLE päivälle — oman säädön raja ja kortin alarivi. */
   const myOnSelected = me ? workerHoursOn(me, day) : 0;
 
+  /**
+   * LASKUTTAMATTOMAT TUNNIT päivälle ja tekijälle — kaudesta, ei uudelleen
+   * laskettuna. Päivä jonka kaikki tunnit olivat jo laskulla näkyy
+   * kalenterissa kuitattuna, jotta laskun jälkeen tehty erottuu yhdellä
+   * silmäyksellä.
+   */
+  const openOn = (d: string): number => {
+    const row = period?.openByDay.find((x) => x.day === d);
+    if (!row) return 0;
+    if (!only) return row.hours;
+    return row.workers.find((w) => w.id === only)?.hours ?? 0;
+  };
+  const openOf = (id: string): number => period?.openByWorker.find((r) => r.id === id)?.hours ?? 0;
+
   const week = useMemo(() => weekOf(day), [day]);
   /** Tulevaa viikkoa ei selata: tekemätöntä työtä ei ole olemassa. */
   const canGoForward = !week.includes(today) && week[6] < today;
@@ -322,6 +355,47 @@ export default function HourlyPanel({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: m ? T.space.md : T.space.lg }}>
+      {/* 0. EDELLISEN LASKUN JÄLKEEN — se luku jota tältä sivulta tultiin
+          katsomaan ennen laskun tekemistä.
+
+          Tätä ei ollut. Laskun lähettämisen jälkeen jokainen luku näytti yhä
+          koko keikan tunnit, eikä mikään nollautunut: kysymykseen "paljonko
+          on tehty edellisen laskun jälkeen" piti laskea vastaus päässä
+          vähentämällä edellisen laskun tunnit kokonaismäärästä. Nyt se on
+          ensimmäinen asia sivulla, ja se nollautuu joka laskulla. */}
+      {period && (invoiced || stats.totalHours > 0) && (
+        <div style={{ ...card, padding: m ? T.space.lg : T.space.xl, border: `1px solid ${T.tone.goodBorder}` }}>
+          <div style={{ ...mono, color: T.text.faint }}>
+            {invoiced ? `EDELLISEN LASKUN JÄLKEEN · ${fmtInvoiceDay(period.last!.at)}` : "LASKUTTAMATTA · EI VIELÄ LASKUTETTU"}
+          </div>
+          <div style={{ fontFamily: T.font, fontSize: m ? T.size.hero - 6 : T.size.hero, fontWeight: 700, lineHeight: 1.1, marginTop: 2, color: T.tone.goodSoft }}>
+            {fmtShiftHours(period.openHours)} <span style={{ fontSize: T.size.title, fontWeight: 500, color: T.text.faint }}>h</span>
+          </div>
+          <div style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted, marginTop: T.space.xs, lineHeight: 1.55 }}>
+            {invoiced
+              ? `Laskutettu ${fmtShiftHours(period.invoicedHours)} h · koko keikka ${fmtShiftHours(stats.totalHours)} h${showMoney ? ` · seuraavalle laskulle ${eur(period.remainingCents)}` : ""}`
+              : `Kaikki kirjatut tunnit menevät seuraavalle laskulle${showMoney ? `: ${eur(period.remainingCents)}` : ""}.`}
+          </div>
+          {period.openByWorker.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: T.space.md }}>
+              {period.openByWorker.map((r) => (
+                <span key={r.id} style={{ padding: `4px ${T.space.md}px`, borderRadius: T.radius.pill, border: T.border.subtle,
+                  background: T.surface.inset, fontFamily: T.font, fontSize: T.size.xs, fontWeight: 600, color: T.text.secondary }}>
+                  {workerName(r.id)}{r.id === me ? " (sinä)" : ""} {fmtShiftHours(r.hours)} h
+                </span>
+              ))}
+            </div>
+          )}
+          {/* Jo laskutettuja tunteja on vähennetty jälkikäteen. Se ei ole
+              uutta työtä eikä se katoa: seuraava lasku hyvittää sen. */}
+          {period.reducedHours > 0 && (
+            <p style={{ margin: `${T.space.md}px 0 0`, fontFamily: T.font, fontSize: T.size.xs, color: T.tone.warn, lineHeight: 1.55 }}>
+              {fmtShiftHours(period.reducedHours)} h jo laskutettuja tunteja on sittemmin vähennetty tai poistettu — seuraava lasku hyvittää ne.
+            </p>
+          )}
+        </div>
+      )}
+
       {/* 1. KALENTERI — MIKÄ PÄIVÄ, PALJONKO SILLE ON TEHTY, KENEN TOIMESTA.
 
           Tämä oli näkymän suurin puute. Tunnit kirjautuivat oikein, mutta
@@ -361,13 +435,15 @@ export default function HourlyPanel({
             const isSel = d === day;
             const isToday = d === today;
             const future = d > today;
+            // Päivän kaikki tunnit olivat jo laskulla → kuitattu (✓).
+            const billed = invoiced && h > 0 && openOn(d) === 0;
             return (
               <button
                 key={d}
                 onClick={() => !future && setDay(d)}
                 disabled={future}
                 aria-current={isSel ? "date" : undefined}
-                title={fmtDayLabel(d)}
+                title={billed ? `${fmtDayLabel(d)} · laskutettu` : fmtDayLabel(d)}
                 style={{
                   display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
                   padding: `${T.space.sm}px 0`, borderRadius: T.radius.md,
@@ -386,8 +462,8 @@ export default function HourlyPanel({
                 </span>
                 {/* Tunnit ruudussa, ei pelkkä piste: "montako" on se kysymys
                     jonka takia kalenteria katsotaan. */}
-                <span style={{ fontSize: 10, fontWeight: 600, fontVariantNumeric: "tabular-nums", color: h > 0 ? (isSel ? T.tone.goodSoft : T.text.muted) : "transparent" }}>
-                  {h > 0 ? `${fmtShiftHours(h)} h` : "·"}
+                <span style={{ fontSize: 10, fontWeight: 600, fontVariantNumeric: "tabular-nums", color: h > 0 ? (billed ? T.text.faint : isSel ? T.tone.goodSoft : T.text.muted) : "transparent" }}>
+                  {h > 0 ? `${billed ? "✓ " : ""}${fmtShiftHours(h)} h` : "·"}
                 </span>
               </button>
             );
@@ -398,12 +474,16 @@ export default function HourlyPanel({
         <div style={{ marginTop: T.space.lg }}>
           <div style={{ ...mono, color: T.text.faint, textTransform: "uppercase" }}>
             {fmtDayLabel(day)}{day === today ? " · tänään" : ""}{only ? ` · ${workerName(only)}` : ""}
+            {invoiced && selHours > 0 && (openOn(day) === 0
+              ? " · ✓ laskutettu"
+              : openOn(day) < selHours ? ` · ${fmtShiftHours(openOn(day))} h laskuttamatta` : " · laskuttamatta")}
           </div>
           <div style={{ fontFamily: T.font, fontSize: m ? T.size.hero - 6 : T.size.hero, fontWeight: 700, lineHeight: 1.1, marginTop: 2 }}>
             {fmtShiftHours(selHours)} <span style={{ fontSize: T.size.title, fontWeight: 500, color: T.text.faint }}>h</span>
           </div>
           <div style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted, marginTop: T.space.xs }}>
             Viikko {fmtShiftHours(weekHours)} h · yhteensä {fmtShiftHours(only ? shiftHoursOf(shifts, only) : stats.totalHours)} h
+            {invoiced && ` · laskuttamatta ${fmtShiftHours(only ? openOf(only) : (period?.openHours ?? 0))} h`}
             {running.length > 0 && ` · ${running.length} töissä nyt`}
           </div>
         </div>
@@ -498,6 +578,11 @@ export default function HourlyPanel({
                   ? (myToday > 0 ? `tänään ${fmtShiftHours(myToday)} h` : "tänään ei vielä tunteja")
                   : `${fmtDayLabel(day)} ${fmtShiftHours(myOnSelected)} h`}
               </div>
+              {invoiced && (
+                <div style={{ fontFamily: T.font, fontSize: T.size.xs, fontWeight: 600, color: T.tone.goodSoft, marginTop: 2 }}>
+                  edellisen laskun jälkeen {fmtShiftHours(openOf(me))} h
+                </div>
+              )}
             </div>
             {/* Käsin lisäys on tässä eikä pelkästään tekijälistalla: omien
                 tuntien kirjaaminen on se mitä tällä kortilla tullaan tekemään. */}
@@ -563,11 +648,14 @@ export default function HourlyPanel({
           tuntihinnan tekijälleen; kate syntyy vain työntekijätunneista. Siksi
           "oma työ" ja "kate" ovat kortilla erillisinä riveinä eivätkä yhtenä
           summana — muuten kukaan ei näkisi kummasta raha tuli. */}
-      {money && (
+      {money && period && (
         <div style={{ ...card, padding: m ? T.space.lg : T.space.xl }}>
-          <div style={{ ...mono, color: T.text.faint }}>ASIAKKAALTA</div>
+          {/* SEURAAVALLE LASKULLE — sama summa jonka lähetys perii. Kortti
+              näytti ennen koko keikan summan myös laskun jälkeen, joten se ei
+              koskaan nollautunut. Kaikki alla oleva on tämän kauden rahaa. */}
+          <div style={{ ...mono, color: T.text.faint }}>{invoiced ? "SEURAAVALLE LASKULLE" : "ASIAKKAALTA"}</div>
           <div style={{ fontFamily: T.font, fontSize: m ? T.size.hero - 6 : T.size.hero, fontWeight: 700, lineHeight: 1.1, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
-            {eur(money.customerTotalCents)}
+            {eur(period.remainingCents)}
           </div>
           <div style={{ fontFamily: T.font, fontSize: T.size.sm, color: T.text.muted, marginTop: T.space.xs }}>
             {fmtShiftHours(money.totalHours)} h × {eur(money.hourRateCents)}/h
@@ -575,6 +663,23 @@ export default function HourlyPanel({
             {money.subcontractCostCents > 0 && ` · alihankinta ${eur(money.subcontractCostCents + money.subcontractMarginCents)}`}
             {money.windowsCents > 0 && ` · ikkunat ${eur(money.windowsCents)}`}
           </div>
+          {invoiced && (
+            <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, marginTop: T.space.xs, lineHeight: 1.55 }}>
+              Edellinen lasku {fmtInvoiceDay(period.last!.at)} · laskutettu yhteensä {eur(period.invoicedCents)}
+              {period.invoiceCount > 1 ? ` (${period.invoiceCount} laskua)` : ""}
+            </div>
+          )}
+
+          {/* KORJAUS AIEMMIN LASKUTETTUUN. Lasku perii aina kertymä − jo
+              laskutettu; jos jo laskutettua on muutettu jälkikäteen, se ero
+              sanotaan tässä eikä jätetä selittämättä. */}
+          {period.adjustmentCents !== 0 && (
+            <p style={{ margin: `${T.space.md}px 0 0`, padding: T.space.md, borderRadius: T.radius.md, border: `1px solid ${T.tone.warnBorder}`, background: T.tone.warnBg, fontFamily: T.font, fontSize: T.size.xs, color: T.tone.warn, lineHeight: 1.55 }}>
+              Korjaus aiemmin laskutettuun {period.adjustmentCents > 0 ? "+" : "−"}{eur(Math.abs(period.adjustmentCents))}:
+              {" "}jo laskutettua on muutettu jälkikäteen (tunteja vähennetty tai poistettu, laskutettu kulu poistettu
+              tai tuntihinta vaihdettu). Ero on seuraavalla laskulla omana rivinään.
+            </p>
+          )}
 
           {/* Väärinpäin kirjatut hinnat sanotaan ääneen. Ilman tätä kate vain
               katoaisi nollaan eikä mikään kertoisi miksi. */}
@@ -617,8 +722,8 @@ export default function HourlyPanel({
                     </label>
                   </div>
                   <p style={{ margin: `${T.space.sm}px 0 0`, fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, lineHeight: 1.55 }}>
-                    Koskee vain tätä keikkaa ja myös jo kirjattuja tunteja. Pomon tunnista ei oteta katetta:
-                    hän saa koko asiakashinnan.
+                    Koskee vain tätä keikkaa ja myös jo kirjattuja tunteja — jo laskutettujen tuntien hintaero
+                    tulee seuraavalle laskulle korjauksena. Pomon tunnista ei oteta katetta: hän saa koko asiakashinnan.
                   </p>
                   <div style={{ display: "flex", gap: T.space.sm, marginTop: T.space.md }}>
                     <button onClick={() => setRatesOpen(false)} disabled={busy}
@@ -769,7 +874,25 @@ export default function HourlyPanel({
                 </div>
               </div>
             )}
+            {/* Jo laskutetut kulut eivät ole tässä: lasku on ne perinyt ja ne
+                on maksettu takaisin. Sanotaan se, ettei puuttuva rivi näytä
+                kadonneelta rahalta. */}
+            {invoiced && period.invoicedExpenseIds.length > 0 && (
+              <div style={{ fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, lineHeight: 1.55 }}>
+                {period.invoicedExpenseIds.length} {period.invoicedExpenseIds.length === 1 ? "kulu oli" : "kulua oli"} jo laskulla
+                {" "}{fmtInvoiceDay(period.last!.at)} mennessä — ne on laskutettu eivätkä ole enää takaisin maksettavia.
+              </div>
+            )}
           </div>
+
+          {/* KOKO KEIKKA yhdellä rivillä — kokonaiskuva ei katoa, vaikka kortti
+              puhuu nyt tästä kaudesta. Laskutettu + laskuttamatta = kaikki. */}
+          {invoiced && (
+            <div style={{ marginTop: T.space.md, paddingTop: T.space.md, borderTop: T.border.divider, fontFamily: T.font, fontSize: T.size.xs, color: T.text.faint, lineHeight: 1.6 }}>
+              <span style={{ ...mono }}>KOKO KEIKKA</span>{" "}
+              {fmtShiftHours(period.lifetime.totalHours)} h · laskutettu {eur(period.invoicedCents)} · laskuttamatta {eur(period.remainingCents)}
+            </div>
+          )}
         </div>
       )}
 
@@ -810,6 +933,13 @@ export default function HourlyPanel({
                           {r.days} {r.days === 1 ? "työpäivä" : "työpäivää"}
                         </div>
                       ) : null}
+                      {/* Laskun jälkeen jokaisella rivillä näkyy myös se mikä
+                          on vielä laskuttamatta — iso luku on koko keikka. */}
+                      {invoiced && r.hours > 0 && (
+                        <div style={{ fontFamily: T.font, fontSize: T.size.xs, fontWeight: 600, color: openOf(r.id) > 0 ? T.tone.goodSoft : T.text.faint, marginTop: 2 }}>
+                          {openOf(r.id) > 0 ? `${fmtShiftHours(openOf(r.id))} h laskuttamatta` : "✓ kaikki laskutettu"}
+                        </div>
+                      )}
                     </div>
 
                     <div style={{ display: "flex", alignItems: "center", gap: T.space.sm, flexShrink: 0 }}>

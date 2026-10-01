@@ -591,6 +591,52 @@
   min-height: 0;
 }
 
+/* KEIKAN OVI (ModeChooser): kaksi nappia jotka ovat koko ruutu, reunasta
+   reunaan. Pystyssä päällekkäin, vaakatasossa rinnakkain.
+
+   Napin TAUSTA jatkuu kellon ja kotipalkin alle — muuten ylä- ja alalaitaan
+   jäisi musta kaista, juuri se joka tästä näkymästä haluttiin pois. Napin
+   SISÄLTÖ pysyy turva-alueiden sisällä (`env(safe-area-inset-*)`), jotta
+   kello, Dynamic Island tai kotipalkki ei peitä tekstiä. Ylimmän napin
+   yläreunassa on lisäksi tilaa takaisin-napille, joka leijuu sen päällä. */
+.fr8-door {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 2px;
+}
+.fr8-door-btn {
+  padding: 16px max(16px, env(safe-area-inset-right)) 16px max(16px, env(safe-area-inset-left));
+}
+.fr8-door-btn:first-child {
+  padding-top: calc(env(safe-area-inset-top) + 60px);
+}
+.fr8-door-btn:nth-child(2) {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 16px);
+}
+@media (orientation: landscape) {
+  .fr8-door {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr;
+  }
+  .fr8-door-btn {
+    padding-top: calc(env(safe-area-inset-top) + 60px);
+    padding-bottom: calc(env(safe-area-inset-bottom) + 16px);
+  }
+  .fr8-door-btn:first-child { padding-right: 16px; }
+  .fr8-door-btn:nth-child(2) { padding-left: 16px; }
+}
+.fr8-door-back {
+  position: absolute;
+  z-index: 2;
+  top: calc(env(safe-area-inset-top) + 10px);
+  left: max(10px, env(safe-area-inset-left));
+  max-width: calc(100% - 20px);
+}
+
 /* Osumakoko: dashin napit olivat 28–34 px korkeita, mikä on alle Applen ja
    Googlen 44 px minimin — kapea nappi + sormen kosketusalue = "ei osu".
    Tämä nostaa fr8-napit osumakelpoisiksi ilman että ulkoasu muuttuu (padding ei

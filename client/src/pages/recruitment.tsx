@@ -359,10 +359,10 @@ export default function RecruitmentPage() {
     },
     {
       icon: Zap,
-      title: fi ? "Nopea perehdytys" : "Fast onboarding",
+      title: fi ? "Valituille nopea alku" : "A fast start once selected",
       desc: fi
-        ? "Lyhyt perehdytys ja pääset hommiin lähes heti. Ei kuukausien odottelua."
-        : "A short onboarding and you're working almost right away. No months of waiting.",
+        ? "Kun tulet valituksi, perehdytys on lyhyt ja pääset keikoille nopeasti. Ei kuukausien odottelua."
+        : "Once you're selected, onboarding is short and you're on jobs quickly. No months of waiting.",
     },
     {
       icon: Users,
@@ -408,20 +408,20 @@ export default function RecruitmentPage() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#25D366] opacity-75" />
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#25D366]" />
               </span>
-              {fi ? "Paikkoja auki nyt — rajoitettu määrä" : "Positions open now — limited spots"}
+              {fi ? "Haku auki — paikkoja rajallisesti" : "Applications open — limited places"}
             </div>
 
             <h1 className="mt-6 text-[2rem] leading-[1.12] sm:text-5xl lg:text-6xl sm:leading-[1.08] font-semibold text-white text-balance">
               {fi ? "Hyvä palkka. Joustava arki." : "Great pay. A flexible week."}
               <span className="block text-[#7cf0a8]">
-                {fi ? "Pääset hommiin heti." : "Start working right away."}
+                {fi ? "Jos olet oikea tyyppi." : "If you're the right fit."}
               </span>
             </h1>
 
             <p className="mt-5 text-base sm:text-lg md:text-xl text-white/85 leading-relaxed max-w-xl sm:max-w-2xl text-balance">
               {fi
-                ? `Haemme reippaita tekijöitä pääkaupunkiseudulle: ikkunanpesua, huonekalujen kantoa, piha- ja puutarhatöitä ja muita kiinteistöhuollon hommia. Aikataulu joustaa ja perehdytys on nopea — pääset hommiin lähes saman tien.`
-                : `We're hiring energetic people in the Helsinki region: window cleaning, furniture carrying, yard and garden work and other property-maintenance jobs. The schedule is flexible and onboarding is fast — you'll be on the job almost right away.`}
+                ? `Haemme reippaita tekijöitä pääkaupunkiseudulle: ikkunanpesua, huonekalujen kantoa, piha- ja puutarhatöitä ja muita kiinteistöhuollon hommia. Emme ota kaikkia: valitsemme porukkaan tekijät, joihin asiakkaamme voivat luottaa.`
+                : `We're hiring energetic people in the Helsinki region: window cleaning, furniture carrying, yard and garden work and other property-maintenance jobs. We don't take everyone: we pick people our customers can rely on.`}
             </p>
 
             <div className="mt-8 flex flex-col sm:flex-row items-start sm:items-center gap-4">
@@ -432,10 +432,10 @@ export default function RecruitmentPage() {
               />
               <p className="text-sm text-white/70 leading-relaxed">
                 {fi
-                  ? "Yksi viesti riittää — vastaamme yleensä saman päivän aikana."
-                  : "One message is enough — we usually reply the same day."}
+                  ? "Kerro viestissä lyhyesti kuka olet — käymme jokaisen hakemuksen läpi."
+                  : "Tell us briefly who you are — we go through every application."}
                 <br />
-                <span className="text-white/55">{fi ? "18+ · Ei sitoumuksia" : "18+ · No commitment"}</span>
+                <span className="text-white/55">{fi ? "18+ · Pääkaupunkiseutu" : "18+ · Helsinki region"}</span>
               </p>
             </div>
           </div>
@@ -631,23 +631,25 @@ export default function RecruitmentPage() {
                 </h2>
                 <p className="mt-4 text-muted-foreground text-lg leading-relaxed">
                   {fi
-                    ? "Tärkeintä on oikea asenne. Loput opetamme."
-                    : "Attitude matters most. We'll teach you the rest."}
+                    ? "Taidot opetamme, asennetta emme. Siksi valitsemme tarkasti, kenet otamme mukaan."
+                    : "We can teach skills, not attitude. That's why we're picky about who joins."}
                 </p>
                 <ul className="mt-6 space-y-3">
                   {(fi
                     ? [
-                        "Motivoitunut ja ahkera tekijä",
+                        "Motivoitunut ja ahkera tekijä, joka hoitaa sovitun",
                         "Et pelkää tarttua raskaampaankin hommaan, kuten kantamiseen tai pihatöihin",
                         "Aiemmasta ikkunanpesu-, piha- tai muuttotyökokemuksesta on hyötyä — ei pakollinen",
                         "Täysi-ikäinen (18+)",
+                        "Luotettava: asiakkaan koti on sinulle yhtä tärkeä kuin oma",
                         "Reilu meininki ja halu tehdä siistiä jälkeä",
                       ]
                     : [
-                        "Motivated and hard-working",
+                        "Motivated and hard-working — you do what you agreed to",
                         "Not afraid of heavier work like carrying or yard jobs",
                         "Prior window-cleaning, yard or moving experience is a plus — not required",
                         "18 or over",
+                        "Trustworthy: a customer's home matters to you like your own",
                         "A good attitude and pride in clean results",
                       ]
                   ).map((item, i) => (
@@ -663,6 +665,47 @@ export default function RecruitmentPage() {
                 </div>
               </div>
             </Reveal>
+          </div>
+
+          {/* Haku on vaiheittainen eikä "yksi viesti ja olet sisällä": valinta
+              tekee paikasta arvokkaan, ja hakija tietää mitä odottaa. */}
+          <div className="max-w-4xl mx-auto mt-16 md:mt-20">
+            <Reveal className="text-center max-w-2xl mx-auto mb-8">
+              <h2 className="text-2xl md:text-3xl font-semibold text-foreground text-balance">
+                {fi ? "Näin haku etenee" : "How selection works"}
+              </h2>
+              <p className="mt-3 text-muted-foreground leading-relaxed">
+                {fi
+                  ? "Kaikki hakijat eivät tule valituiksi. Haluamme, että jokainen tekijämme on sellainen, jonka voi lähettää kenen tahansa asiakkaan kotiin."
+                  : "Not every applicant is selected. We want every one of our workers to be someone we'd send into any customer's home."}
+              </p>
+            </Reveal>
+            <ol className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+              {(fi
+                ? [
+                    ["Hakemus", "Laita WhatsApp-viesti: kuka olet, mitä olet tehnyt ja miksi sopisit porukkaan."],
+                    ["Haastattelu", "Lyhyt juttutuokio puhelimessa tai kasvokkain. Katsotaan, synkkaako."],
+                    ["Valinta", "Kerromme päätöksen nopeasti. Valitsemme vain ne, joihin luotamme täysin."],
+                    ["Perehdytys", "Valitut pääsevät perehdytykseen ja ensimmäisille keikoille."],
+                  ]
+                : [
+                    ["Apply", "Send a WhatsApp message: who you are, what you've done and why you'd fit in."],
+                    ["Interview", "A short chat by phone or in person. We see if it clicks."],
+                    ["Selection", "We tell you our decision quickly. We only pick people we fully trust."],
+                    ["Onboarding", "Those selected get onboarded and start on their first jobs."],
+                  ]
+              ).map(([title, desc], i) => (
+                <Reveal key={title} delay={i * 80}>
+                  <li className="h-full rounded-2xl bg-card border border-card-border/60 p-5 premium-shadow list-none">
+                    <span className="inline-flex w-8 h-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-semibold">
+                      {i + 1}
+                    </span>
+                    <p className="mt-3 font-semibold text-foreground">{title}</p>
+                    <p className="mt-1 text-sm text-muted-foreground leading-relaxed">{desc}</p>
+                  </li>
+                </Reveal>
+              ))}
+            </ol>
           </div>
         </div>
       </section>
@@ -796,12 +839,12 @@ export default function RecruitmentPage() {
               </div>
               <div className="relative z-10 max-w-2xl mx-auto">
                 <h2 className="text-3xl md:text-4xl font-semibold text-balance">
-                  {fi ? "Kiinnostuitko? Laita viesti." : "Interested? Send a message."}
+                  {fi ? "Sopisitko porukkaan? Hae nyt." : "Think you'd fit in? Apply now."}
                 </h2>
                 <p className="mt-4 text-primary-foreground/85 text-lg leading-relaxed">
                   {fi
-                    ? "Paikkoja on rajoitettu määrä ja rekry etenee nopeasti. Yksi WhatsApp-viesti riittää — kerromme loput."
-                    : "Spots are limited and we move fast. One WhatsApp message is all it takes — we'll tell you the rest."}
+                    ? "Paikkoja on rajallisesti ja valitsemme tekijät huolella. Kerro viestissä kuka olet ja miksi juuri sinut kannattaisi valita."
+                    : "Places are limited and we choose carefully. Tell us who you are and why we should pick you."}
                 </p>
                 <div className="mt-9 flex justify-center">
                   <WhatsAppButton
@@ -811,7 +854,7 @@ export default function RecruitmentPage() {
                   />
                 </div>
                 <p className="mt-5 text-sm text-primary-foreground/70">
-                  {fi ? "Vastaamme yleensä saman päivän aikana." : "We usually reply the same day."}
+                  {fi ? "Käymme jokaisen hakemuksen läpi ja vastaamme kaikille." : "We go through every application and reply to everyone."}
                 </p>
               </div>
             </div>
@@ -858,22 +901,22 @@ export default function RecruitmentPage() {
             <div className="rk-shine relative h-28 bg-gradient-to-br from-primary to-[#2d3b30] flex items-center px-6">
               <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/15 text-white text-xs font-semibold tracking-wide uppercase">
                 <Zap className="w-3.5 h-3.5" />
-                {fi ? "Rajoitettu mahdollisuus" : "Limited opportunity"}
+                {fi ? "Rajattu haku" : "Limited intake"}
               </div>
             </div>
 
             <div className="p-6">
               <h3 className="text-2xl font-semibold text-foreground leading-snug">
-                {fi ? "Pikarekry käynnissä nyt" : "Fast-track hiring is open now"}
+                {fi ? "Haku on auki — mutta ei kaikille" : "Applications are open — but not for everyone"}
               </h3>
               <p className="mt-3 text-muted-foreground leading-relaxed">
                 {fi
-                  ? `Hyvä palkka — ikkunoita, pihatöitä ja kantoapua. Pääset hommiin lähes heti ja perehdytys on nopea. Paikkoja on rajoitettu määrä.`
-                  : `Good pay — windows, yard work and carrying help. Start almost immediately with fast onboarding. Spots are limited.`}
+                  ? `Hyvä palkka — ikkunoita, pihatöitä ja kantoapua. Paikkoja on rajallisesti ja valitsemme hakijoista ne, joihin luotamme. Jos olet ahkera ja luotettava, hae.`
+                  : `Good pay — windows, yard work and carrying help. Places are limited and we pick the applicants we trust. If you're hard-working and reliable, apply.`}
               </p>
               <div className="mt-6">
                 <WhatsAppButton
-                  label={fi ? "Hae heti WhatsAppilla" : "Apply now on WhatsApp"}
+                  label={fi ? "Hae WhatsAppilla" : "Apply on WhatsApp"}
                   className="w-full"
                   testId="rekry-banner-whatsapp"
                 />

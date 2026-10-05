@@ -5,6 +5,7 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
+import { ensureFr8Crew } from "./ensure-crew";
 
 const app = express();
 const httpServer = createServer(app);
@@ -275,6 +276,8 @@ app.use((req, res, next) => {
   ]) {
     try { await db.execute(stmt); } catch (e: any) { console.warn("Migration warning:", e.message); }
   }
+
+  try { await ensureFr8Crew(); } catch (e: any) { console.warn("Crew seed warning:", e.message); }
 
   await registerRoutes(httpServer, app);
 

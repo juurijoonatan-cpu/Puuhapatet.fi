@@ -446,6 +446,17 @@ export const KNOWN_WORKER_LEGAL_NAMES: Record<string, string> = {
   doma: "Tomas Leinonen",
 };
 
+/**
+ * Tekijät jotka lisätään FR8-keikan tekijälistalle ENNEN kuin he ovat täyttäneet
+ * profiilinsa tai allekirjoittaneet sopimuksia, jotta heille voi kirjata tunteja
+ * heti. Rivi on tavallinen crew-rivi ilman `onboardedAt`ia ja allekirjoituksia
+ * ("Odottaa allekirjoitusta") — tunnit, palkka ja maksut eivät vaadi niitä, ja
+ * kun tekijä avaa oman linkkinsä hän täyttää tietonsa samaan riviin.
+ */
+export const FR8_PRESEEDED_CREW: { id: string; name: string }[] = [
+  { id: "ida", name: "Ida Kronholm" },
+];
+
 /** Resolve a known person's legal full name from their crew id, linked login id,
  *  or first name. Returns undefined for anyone not in the registry (their own
  *  entered name/nickname is then used as-is — unchanged behaviour). */

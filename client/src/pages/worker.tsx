@@ -396,6 +396,15 @@ const WORKER_INTROS: Record<string, WorkerIntro> = {
     line: "Kiva että lähdit mukaan! Tää on sun oma työpöytä: täältä näät oman duunisi ja ansiosi etenevän pitkin päivää. Otetaan rennosti ja tehdään yhdessä hyvää jälkeä. Nähdään keikalla! 🚀",
     accent: "#7CE0A6",
   },
+  // Ida — kuva näytetään vasta kun /public/fr8/ida.jpg lisätään tai hän lataa oman
+  // (puuttuva tiedosto piilottaa kuvan itsestään, ks. onError).
+  ida: {
+    photo: "/fr8/ida.jpg",
+    tagline: "Uusi tekijä",
+    greeting: "Tervetuloa tiimiin, Ida ✨",
+    line: "Kiva että lähdit mukaan! Tää on sun oma työpöytä: täältä näät oman duunisi ja ansiosi etenevän pitkin päivää. Otetaan rennosti ja tehdään yhdessä hyvää jälkeä. Nähdään keikalla! 🚀",
+    accent: "#7CE0A6",
+  },
 };
 function introFor(name: string) {
   const first = (name || "").trim().split(/\s+/)[0]?.toLowerCase();

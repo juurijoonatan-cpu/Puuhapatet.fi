@@ -169,6 +169,19 @@ export const USERS: AdminProfile[] = [
     dashboardOnly: true,
   },
   {
+    // FR8-tekijä (alihankkija, kuten Oona & Selma) — kirjautuu vain omaan keikka-
+    // dashboardiinsa (ei admin-näkymää). Ei vielä Y-tunnusta: profiilissa valitaan
+    // "Tulossa" ja Y-tunnus lisätään ennen ensimmäistä laskua. Tunnit voi kirjata
+    // jo ennen sopimuksia (shared/crew.ts FR8_PRESEEDED_CREW). Aloitussalasana on
+    // sama jaettu ADMIN_DEFAULT_PASSWORD (server routes.ts) kuin kaikilla muillakin;
+    // kirjautuessa pyydetään vaihtamaan oma salasana. Crew-linkitys: crew-id "ida"
+    // = kirjautumis-id, joten linkitys hoituu automaattisesti.
+    id: "ida",
+    name: "Ida Kronholm",
+    role: "STAFF",
+    dashboardOnly: true,
+  },
+  {
     // Ovelta ovelle -myyjä — kirjautuu vain myyntipaneeliin (/admin/myynti).
     // Kerää liidejä (asiakas + keikka tilassa "lead", submissionStatus
     // "pending_review"), jotka perustajat hyväksyvät/ottavat/hylkäävät. Saa

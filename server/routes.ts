@@ -817,7 +817,7 @@ const ADMIN_DEFAULT_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || "";
 // of whether their crew-onboarding data would satisfy loadOnboardedTeamRoster.
 // Anyone else must actually appear in that roster (entered the app + signed
 // their agreements) to log in — typing an arbitrary new name no longer works.
-const KNOWN_LOGIN_IDS = new Set(["joonatan", "matias", "myyja1", "jani", "milja", "oliver", "oona", "doma", "petrus", "selma"]);
+const KNOWN_LOGIN_IDS = new Set(["joonatan", "matias", "myyja1", "jani", "milja", "oliver", "oona", "doma", "petrus", "selma", "ida"]);
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 function b64url(buf: Buffer): string {

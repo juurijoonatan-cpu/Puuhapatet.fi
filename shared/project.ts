@@ -483,6 +483,25 @@ export function fmtShiftHours(h: number): string {
   return h.toLocaleString("fi-FI", { maximumFractionDigits: 1 });
 }
 
+/** Yhden tekijän yhden päivän tuntiraja käsin kirjattaessa — sama kuin ajastimen vuorokaudessa. */
+export const MAX_DAY_HOURS = 24;
+
+/**
+ * Käsin kirjoitettu tuntimäärä luvuksi: "7,5" → 7.5, "8" → 8, "abc" → null.
+ *
+ * Pilkku kelpaa desimaalierottimeksi, koska niin se kirjoitetaan. Tulos on
+ * 0–24 ja kahden desimaalin tarkkuudella (kuten `sanitizeShifts`). Kelvoton
+ * syöte palauttaa `null` eikä nollaa: nolla tarkoittaa tässä "poista päivän
+ * tunnit", ja sitä ei saa tapahtua kirjoitusvirheestä.
+ */
+export function parseHoursInput(text: string): number | null {
+  const t = String(text ?? "").trim().replace(",", ".");
+  if (!/^\d+(\.\d+)?$/.test(t)) return null;
+  const n = Math.round(parseFloat(t) * 100) / 100;
+  if (!Number.isFinite(n) || n < 0 || n > MAX_DAY_HOURS) return null;
+  return n;
+}
+
 export function sanitizeShifts(input: any): ProjShift[] {
   if (!Array.isArray(input)) return [];
   const out: ProjShift[] = [];

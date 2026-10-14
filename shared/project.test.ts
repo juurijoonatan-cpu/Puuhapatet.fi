@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { UNNAMED_WASHER_ID } from "./washers";
-import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, billingModeOf, isHourlyGig, roundWorkHours, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, invoiceNaming, sanitizeBoard, sortedBoard, openTaskCount, BOARD_CUSTOMER, sanitizeShifts, computeShiftStats, shiftHoursOf, dayKey, isDayKey, fmtDayLabel, shiftDay, shiftHoursOf, weekOf, weekdayLetter, dayOfMonth, monthLabel, MAX_SHIFTS, cappedTimerHours, MAX_TIMER_SHIFT_HOURS, addShiftEntry, shiftHoursOnDay, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
+import { emptyProjectData, newGigProjectData, checkWindowAttribution, computeProjectTotals, computeWorkerStats, computeEfficiency, syncGigSectorsFromProject, sanitizeProjectData, stripObservationImages, fixedDealFor, pricePerWindowOf, isCommunityGig, planRenderOf, floorLabel, estHoursPerWindowOf, sanitizeScopeState, scopeSummary, computeLampTotals, computeLampWorkerStats, computeDoorTotals, computeDoorWorkerStats, lampIsPublic, doorIsPublic, publicLampView, publicDoorView, allLampPoints, fixtureAttentionRows, lampBucket, lampNeedsBulb, computeLampFloorStats, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, sanitizeFixtureOrder, computeLampModelStats, sanitizeLampModels, billingModeOf, isHourlyGig, roundWorkHours, roundWorkHoursFromMinutes, customerExpenses, customerHourRows, invoiceNaming, sanitizeBoard, sortedBoard, openTaskCount, BOARD_CUSTOMER, sanitizeShifts, computeShiftStats, shiftHoursOf, dayKey, isDayKey, fmtDayLabel, shiftDay, shiftHoursOf, weekOf, weekdayLetter, dayOfMonth, monthLabel, MAX_SHIFTS, cappedTimerHours, MAX_TIMER_SHIFT_HOURS, addShiftEntry, shiftHoursOnDay, parseHoursInput, DEFAULT_PRICE_PER_WINDOW, FR8_PRICE_PER_WINDOW, FR8_CONTRACT_CAP_CENTS, type ProjectData } from "./project";
 import { emptyGigData, computeTotals } from "./gig";
 
 // Kohta 6.1 — kokonaistilanteen ikkunamäärän täsmäytys. Ks. docs/fr8-era-laskutus-plan.md.
@@ -1762,5 +1762,36 @@ describe("kululajit säilyvät", () => {
       expenses: [{ id: "e1", by: "joonatan", kind: "roska", desc: "x", amountCents: 100, ts: 1 }],
     });
     expect(clean.expenses[0].kind).toBe("other");
+  });
+});
+
+describe("parseHoursInput — tuntilistan käsin syötetyt tunnit", () => {
+  it("lukee kokonaisluvun ja pilkulla kirjoitetun desimaalin", () => {
+    expect(parseHoursInput("8")).toBe(8);
+    expect(parseHoursInput("7,5")).toBe(7.5);
+    expect(parseHoursInput(" 7.25 ")).toBe(7.25);
+    expect(parseHoursInput("24")).toBe(24);
+  });
+  it("kelvoton syöte on null, ei nolla (nolla = poisto)", () => {
+    for (const bad of ["", "abc", "-1", "7,", "25", "1e2", "7,5h", "1,2,3"]) expect(parseHoursInput(bad)).toBeNull();
+  });
+  it("pyöristää kahteen desimaaliin", () => {
+    expect(parseHoursInput("1,234")).toBe(1.23);
+    expect(parseHoursInput("0")).toBe(0);
+  });
+  it("asetus lukuun toimii erotuksena: nosto, lasku ja poisto päivän saldoon", () => {
+    const base = addShiftEntry([], { id: "a", worker: "w", hours: 4, day: "2026-10-01", at: 1 });
+    // 4 → 7,5: lisää 3,5
+    const up = addShiftEntry(base, { id: "b", worker: "w", hours: 3.5, day: "2026-10-01", at: 2 });
+    expect(shiftHoursOnDay(up, "w", "2026-10-01")).toBe(7.5);
+    // 7,5 → 2: vähennä 5,5
+    const down = addShiftEntry(up, { id: "c", worker: "w", hours: -5.5, day: "2026-10-01", at: 3 });
+    expect(shiftHoursOnDay(down, "w", "2026-10-01")).toBe(2);
+    // poisto = -nykyinen → rivi katoaa
+    const gone = addShiftEntry(down, { id: "d", worker: "w", hours: -2, day: "2026-10-01", at: 4 });
+    expect(gone).toHaveLength(0);
+    // päivä jolla ei ollut mitään → uusi rivi
+    const fresh = addShiftEntry(gone, { id: "e", worker: "w", hours: 6, day: "2026-09-20", at: 5 });
+    expect(computeShiftStats(fresh, "2026-10-14").byDay.map((d) => d.day)).toEqual(["2026-09-20"]);
   });
 });

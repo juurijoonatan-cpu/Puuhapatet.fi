@@ -17,7 +17,7 @@ import {
   dealInternalRateCents, isCommunityGig,
   type ProjectData, type ProjMarksData, type WindowStatus, type ProjNoteKind, type ProjExpense, type LampStatus,
   type LampCondition, type DoorStatus, type FixtureOrder, type LampModel, type ProjBoardEntry,
-  billingModeOf, type BillingMode, isHourlyGig, expenseCustomerLabel, type ProjShift,
+  billingModeOf, type BillingMode, isHourlyGig, expenseCustomerLabel, type ProjShift, computeShiftStats, fmtShiftHours,
 } from "@shared/project";
 import { ArrowLeft } from "lucide-react";
 import { computeP2Billing, customerAddedKeys, p2FounderOpts, p2CustomerLocksSince, p2Itemisation, p2WashedYellows, p2WorkerSplit, p2WorkerPayoutCents, p2PendingPriceCents, DEFAULT_P2_WORKER_SHARE_PCT, DEFAULT_P2_PAYOUT_SCHEDULE, P2_PRICE_PRESETS_CENTS, type P2State, type P2PayoutRule, type P2WashedState } from "@shared/p2";
@@ -30,6 +30,7 @@ import { traineeForUserId, traineeForName } from "@shared/trainees";
 import { DEFAULT_WORKER_PER_WINDOW_CENTS } from "@shared/crew";
 import Dashboard from "@/components/fr8/Dashboard";
 import HourlyPanel from "@/components/fr8/HourlyPanel";
+import HoursLedger from "@/components/fr8/HoursLedger";
 import Toggle from "@/components/fr8/Toggle";
 import TaskBoard from "@/components/TaskBoard";
 import FounderEraInvoiceDialog from "@/components/fr8/FounderEraInvoiceDialog";
@@ -1398,6 +1399,37 @@ export default function AdminProjectPage() {
             onSetRates={canAdjustHours ? onSetHourRates : undefined}
             busy={shiftBusy}
           />
+
+          {/* TUNTILISTA — LISÄNÄKYMÄ JOHTAJILLE.
+              Kaikki päivät allekkain, tekijät ja tunnit riveittäin, ja
+              jokaista voi muokata, poistaa tai lisätä myös päivälle jolla ei
+              ollut tunteja. Ei korvaa kalenteria: kirjoittaa samaa reittiä
+              (`addShiftHours`), joten palvelimen säännöt ovat samat. Taite
+              kiinni oletuksena — kalenteri hoitaa päivittäisen kirjaamisen. */}
+          {canAdjustHours && (
+            <div style={{ marginTop: 16 }}>
+              <Section
+                id="hourly-ledger"
+                label="📋 TUNTILISTA — MUOKKAA PÄIVIÄ"
+                summary={(() => {
+                  const st = computeShiftStats(shifts);
+                  return st.byDay.length === 0
+                    ? "ei kirjauksia"
+                    : `${st.byDay.length} ${st.byDay.length === 1 ? "päivä" : "päivää"} · ${fmtShiftHours(st.totalHours)} h`;
+                })()}
+              >
+                <HoursLedger
+                  shifts={shifts}
+                  people={hourPeople}
+                  workerName={resolveName}
+                  me={currentWorker}
+                  onAddHours={addShiftHours}
+                  period={hoursPeriod}
+                  busy={shiftBusy}
+                />
+              </Section>
+            </div>
+          )}
 
           {/* KULUT JA ALIHANKINTA — MYÖS TÄÄLLÄ.
               Tuntikeikan raha koostuu tunneista, asiakkaalle ostetuista

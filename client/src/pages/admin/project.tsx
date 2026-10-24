@@ -31,6 +31,7 @@ import { DEFAULT_WORKER_PER_WINDOW_CENTS } from "@shared/crew";
 import Dashboard from "@/components/fr8/Dashboard";
 import HourlyPanel from "@/components/fr8/HourlyPanel";
 import HoursLedger from "@/components/fr8/HoursLedger";
+import HoursStatementPanel from "@/components/fr8/HoursStatementPanel";
 import Toggle from "@/components/fr8/Toggle";
 import TaskBoard from "@/components/TaskBoard";
 import FounderEraInvoiceDialog from "@/components/fr8/FounderEraInvoiceDialog";
@@ -1426,6 +1427,28 @@ export default function AdminProjectPage() {
                   onAddHours={addShiftHours}
                   period={hoursPeriod}
                   busy={shiftBusy}
+                />
+              </Section>
+            </div>
+          )}
+
+          {/* ERITTELY ASIAKKAALLE — tuntilaskun liite kahden laskun jaosta.
+              Vain lukee jakson (`hoursPeriod`), ei kirjoita mitään. */}
+          {canAdjustHours && hoursPeriod && project && (
+            <div style={{ marginTop: 16 }}>
+              <Section
+                id="hourly-statement"
+                label="📄 ERITTELY ASIAKKAALLE"
+                summary={hoursPeriod.openHours > 0
+                  ? `${fmtShiftHours(hoursPeriod.openHours)} h · jako kahteen laskuun`
+                  : "ei laskuttamattomia tunteja"}
+              >
+                <HoursStatementPanel
+                  project={project}
+                  period={hoursPeriod}
+                  workerName={resolveName}
+                  title={gigName}
+                  storeKey={params?.id ?? "gig"}
                 />
               </Section>
             </div>

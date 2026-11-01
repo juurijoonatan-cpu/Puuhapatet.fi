@@ -55,6 +55,7 @@ Osapuolet ja pääsy:
 | `fr8-tasaus.ts` | Tasauksen syötteen kokoaminen oikeasta keikkadatasta: `buildTasaus`, `founderWashCounts`. |
 | `washers.ts` | Pesijätunnisteen perussäännöt (lehtimoduuli, ei importteja): `UNNAMED_WASHER_ID` (nimeämätön puolikas), `isPayableWasherId`, `normalizedSecondWasher`. Jokainen attribuutiota lukeva moduuli käyttää samaa sääntöä. |
 | `hours-period.ts` | **Tuntilaskutuksen kausi: mitä on tehty EDELLISEN tuntilaskun jälkeen.** `computeHoursPeriod` antaa avoimet tunnit (tekijä × päivä), uudet ja jo laskutetut kulut, kauden rahan ja seuraavan laskun summan; `hoursPeriodLines` on seuraavan laskun erittely. Lähetys tallentaa maksuriville kattavuuden (`cover`), vanha lasku päätellään aikaleimoista. Ks. invariantti 26. |
+| `manual-hours-invoice.ts` | **"Lasku lähetetty" -kirjaus käsin annetuilla summilla.** Validointi (`normalizeManualInvoices`), eurosyötteen luku (`parseEuroInput`), ero järjestelmän laskemaan (`reconcileManualInvoices`) ja maksurivien muodostus (`buildManualHoursPayments`). Ks. invariantti 27. |
 | `work-attribution.ts` | **Kohdentamaton työ: pesty työ jolle ei ole maksunsaajaa.** `buildAttributionAudit` erittelee poistetun tekijän, harjoittelijan ja nimeämättömän puoliskon (ikkunat + tunnit), vähentää jo maksetun ja nimeää harjoittelijan vastuujohtajan. Näkyy Maksut-välilehdellä ja siirtoraportin sähköpostissa. |
 | `payprogress.ts`, `tax.ts`, `team.ts`, `trainees.ts`, `billers.ts` | Paydate/verot/tiimi/harjoittelijat/laskuttajat. |
 
@@ -351,6 +352,31 @@ Säännöt:
      ikkunamäärä (peruutus lukee sen sellaisena), ei tuntimäärä.
    - Kattavuus on serverin kirjoittama: `PATCH /gig` palauttaa tallennetun
      kopion jos (vanha) selain pudottaa sen.
+
+27. **Käsin kirjattu tuntilasku on tavallinen tuntilasku — vain summa tulee ihmiseltä.**
+   Kun lasku lähtee järjestelmän ulkopuolta (johtajan oma laskutusohjelma),
+   "✓ Lasku lähetetty" -painike (tuntinäkymän kauden kortti ja keikkaseurannan
+   Laskutus-kortti, `MarkHoursInvoicedDialog`) kirjaa yhden tai useamman laskun
+   käsin annetuilla summilla: `POST /api/jobs/:id/gig/hours-invoice-record`.
+   - **Sama maksurivi kuin sähköpostilähetyksessä** (`scope: "hours"`, `cover`,
+     laskuttaja, ikkunamerkinnän siirto). Siksi keikan tulot, `gig-money`,
+     johtajien tasaus, ALV-liikevaihto ja kirjanpidon myyntivienti päivittyvät
+     kaikki ilman omaa koodiaan — ne lukevat `gig.payments`. Älä lisää toista
+     paikkaa johon laskutettu raha tallennetaan. Vartija:
+     `server/finance/manual-hours-invoice.test.ts`.
+   - **Kirjattu summa on totuus, ei järjestelmän arvio.** Jos se poikkeaa
+     laskemasta, ero näkyy vahvistusruudussa ja jää seuraavan laskun summaan
+     (alilaskutus) tai pienentää sitä (ylilaskutus, ei alle nollan). Kausi
+     nollautuu aina: kaikki kirjatut tunnit ja kulut ovat kattavuudessa.
+   - **Laskuttaja on pakollinen** laskuittain: kirjanpito ja ALV-raja lukevat
+     `biller.id`:n, eikä sitä arvata. Lähetyspäivä voi olla aiempi (kuukauden
+     vaihteen yli), mutta ei aiempi kuin edellinen tuntilasku eikä tulevaisuudessa.
+   - **Tuplakirjaus estetty**: pyyntö kantaa `expectInvoiceCount`in (montako
+     tuntilaskua näkymä näki); jos se ei täsmää → 409, mitään ei kirjata.
+   - **Ei sähköpostia asiakkaalle eikä raporttia johtajille.** Väärä kirjaus
+     mitätöidään normaalisti (`DELETE /gig-payment/:index`).
+   - Ikkunaraha (`cover.windowsCents`) kirjataan vain suurimmalle riville, ettei
+     kauden vertailu summaa samaa euroa kahdesti.
 
 ### Missä mikä toiminto asuu (ei duplikaatteja)
 

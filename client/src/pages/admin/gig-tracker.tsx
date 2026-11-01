@@ -36,6 +36,7 @@ import {
 import { computeProjectTotals, fixedDealFor, computeDealBilling, dealAgreedTotalCents, eurFromCents, isHourlyGig, type ProjectData } from "@shared/project";
 import { hourlyItemisation } from "@shared/hourly-money";
 import { computeHoursPeriod, hoursPeriodLines } from "@shared/hours-period";
+import MarkHoursInvoicedDialog from "@/components/fr8/MarkHoursInvoicedDialog";
 import { computeP2Billing, p2BillableCents, p2ExtraCharges } from "@shared/p2";
 import { p2InvoiceState } from "@shared/worker-payouts";
 import { downloadGigContract, openGigContractForPrint } from "@/lib/gig-contract-doc";
@@ -1583,6 +1584,33 @@ export default function AdminGigTrackerPage() {
                     <Check className="w-4 h-4 shrink-0" /> Kaikki tunnit laskutettu
                   </span>
                 )
+              )}
+
+              {/* LASKU LÄHETETTY MUUTA KAUTTA — kirjaa jo lähteneet laskut
+                  käsin annetuilla summilla (ei sähköpostia). Sama dialogi kuin
+                  FR8-tuntinäkymässä; kirjaus nollaa seuraavan laskun. */}
+              {hoursPeriod && (hoursPeriod.openHours > 0 || hoursRemainingCents > 0) && (
+                <div className="mt-2">
+                  <MarkHoursInvoicedDialog
+                    jobId={jobId}
+                    invoiceCount={hoursPeriod.invoiceCount}
+                    expectedCents={hoursRemainingCents}
+                    openHours={hoursPeriod.openHours}
+                    onRecorded={async () => {
+                      const jr = await api.getJobById(jobId);
+                      if (jr.ok && jr.data) {
+                        const data = jr.data as any;
+                        const job = data.job ?? data;
+                        try { setGig(sanitizeGigData(JSON.parse(job.gigData))); } catch { /* keep current */ }
+                      }
+                    }}
+                    trigger={
+                      <Button variant="outline" className="w-full">
+                        <Check className="w-4 h-4 mr-2" /> Lasku lähetetty (kirjaa käsin)
+                      </Button>
+                    }
+                  />
+                </div>
               )}
             </>
           ) : deal && dealBilling ? (

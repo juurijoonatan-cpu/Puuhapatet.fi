@@ -66,6 +66,12 @@ interface Props {
    * muuttaa — sama porras kuin rahakortilla: vain perustaja saa koskea.
    */
   onSetRates?: (hourRateCents: number, workerHourCents: number) => void;
+  /**
+   * "LASKU LÄHETETTY" -painike (johtajille). Kutsuja antaa valmiin painikkeen,
+   * koska kirjaus vaatii keikan id:n ja päivityksen jonka paneeli ei tunne.
+   * Näytetään kauden kortilla — siellä missä seuraavan laskun summa luetaan.
+   */
+  invoiceAction?: React.ReactNode;
   busy?: boolean;
 }
 
@@ -95,7 +101,7 @@ function fmtInvoiceDay(ms: number): string {
 }
 
 export default function HourlyPanel({
-  shifts, crew, workerName, me, onStartShift, onStopShift, onAdjustHours, onAddHours, onRemoveShift, period, showMoney, onSetRates, busy, people,
+  shifts, crew, workerName, me, onStartShift, onStopShift, onAdjustHours, onAddHours, onRemoveShift, period, showMoney, onSetRates, invoiceAction, busy, people,
 }: Props) {
   const m = useIsMobile();
   /**
@@ -392,6 +398,10 @@ export default function HourlyPanel({
             <p style={{ margin: `${T.space.md}px 0 0`, fontFamily: T.font, fontSize: T.size.xs, color: T.tone.warn, lineHeight: 1.55 }}>
               {fmtShiftHours(period.reducedHours)} h jo laskutettuja tunteja on sittemmin vähennetty tai poistettu — seuraava lasku hyvittää ne.
             </p>
+          )}
+          {/* LASKU LÄHETETTY — heti luvun alla, jotta se on siinä missä summa luetaan. */}
+          {showMoney && invoiceAction && (period.openHours > 0 || period.remainingCents > 0) && (
+            <div style={{ marginTop: T.space.md }}>{invoiceAction}</div>
           )}
         </div>
       )}

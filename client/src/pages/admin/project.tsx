@@ -32,6 +32,7 @@ import Dashboard from "@/components/fr8/Dashboard";
 import HourlyPanel from "@/components/fr8/HourlyPanel";
 import HoursLedger from "@/components/fr8/HoursLedger";
 import HoursStatementPanel from "@/components/fr8/HoursStatementPanel";
+import MarkHoursInvoicedDialog from "@/components/fr8/MarkHoursInvoicedDialog";
 import Toggle from "@/components/fr8/Toggle";
 import TaskBoard from "@/components/TaskBoard";
 import FounderEraInvoiceDialog from "@/components/fr8/FounderEraInvoiceDialog";
@@ -1398,6 +1399,27 @@ export default function AdminProjectPage() {
             period={hoursPeriod}
             showMoney={canAdjustHours}
             onSetRates={canAdjustHours ? onSetHourRates : undefined}
+            invoiceAction={canAdjustHours && hoursPeriod ? (
+              <MarkHoursInvoicedDialog
+                jobId={jobId}
+                invoiceCount={hoursPeriod.invoiceCount}
+                expectedCents={hoursPeriod.remainingCents}
+                openHours={hoursPeriod.openHours}
+                onRecorded={() => { void refreshBilling(); }}
+                trigger={
+                  <button
+                    type="button"
+                    style={{
+                      width: "100%", height: 44, borderRadius: 14, cursor: "pointer",
+                      border: "1px solid rgba(74,222,128,0.35)", background: "rgba(74,222,128,0.12)", color: "#86efac",
+                      fontFamily: "var(--font-onest, system-ui, sans-serif)", fontSize: 14, fontWeight: 700,
+                    }}
+                  >
+                    ✓ Lasku lähetetty
+                  </button>
+                }
+              />
+            ) : undefined}
             busy={shiftBusy}
           />
 

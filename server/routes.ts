@@ -35,6 +35,7 @@ import { effectiveWorkerHourRateOf } from "@shared/project";
 import { sanitizeProjectData, computeProjectTotals, computeWorkerStats, computeEfficiency, estHoursPerWindowOf, scopeSummary, syncGigSectorsFromProject, emptyProjectData, toNoteKind, isCommunityGig, hasAnyPlan, fixedDealFor, computeDealBilling, computeEraDebts, dealAgreedTotalCents, allPoints, stripObservationImages, MAX_OBSERVATION_IMAGE_LEN, MAX_EXPENSE_RECEIPT_LEN, MAX_FIXTURE_NOTE_LEN, toLampCondition, publicLampView, publicDoorView, computeLampInventory, computeDoorFloorStats, resolveFixtureOrder, sanitizeFixtureQuote, isHourlyGig, billingModeOf, roundWorkHours, roundWorkHoursFromMinutes, cappedTimerHours, customerExpenses, customerHourRows, invoiceNaming, sanitizeBoard, sortedBoard, BOARD_CUSTOMER, MAX_BOARD_TEXT_LEN, MAX_BOARD_ENTRIES, toBoardKind, dayKey, isDayKey, addShiftEntry, computeShiftStats, MAX_SHIFT_NOTE_LEN, type ProjShift, type ProjBoardEntry, type ProjectData, type ProjExpense, type ProjExpenseKind, type EraDebtBreakdown } from "@shared/project";
 import { computeHourlyMoney, hourlyItemisation } from "@shared/hourly-money";
 import { computeHoursPeriod, buildHoursCover, hoursPeriodLines, lastHoursInvoiceAt, isHoursStreamPayment } from "@shared/hours-period";
+import { normalizeManualInvoices, reconcileManualInvoices, manualInvoiceTime, buildManualHoursPayments } from "@shared/manual-hours-invoice";
 import { computeP2Billing, p2FounderOpts, customerAddedKeys, emptyP2State, p2CustomerLocksSince, p2Itemisation, p2ExtraCharges, p2BillableCents, p2PendingPriceCents, p2Transition, pointPriority, pushP2Event, p2WorkerPayoutCents, DEFAULT_P2_WORKER_SHARE_PCT, MAX_P2_PRICE_CENTS, MAX_P2_CUSTOMER_POINTS, MAX_P2_WISH_NOTE, type P2Action, type P2State } from "@shared/p2";
 import { computeGuided, isGuidedBlocked, sanitizeGuidedWork, type GuidedWork } from "@shared/guided";
 import { sanitizeFounderSettlementState, type FounderSettlementState } from "@shared/founder-settlement";
@@ -7694,6 +7695,93 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (e: any) {
       console.error("Gig invoice undo error:", e);
       res.status(500).json({ error: e.message || "Erän peruutus epäonnistui" });
+    }
+  });
+
+  /**
+   * TUNTILASKUT KIRJATTU LÄHETETYKSI KÄSIN.
+   *
+   * Lasku on voinut lähteä järjestelmän ulkopuolta (johtajan oma laskutusohjelma),
+   * ja sen summa on se mitä laskulle kirjoitettiin. Tämä reitti kirjaa yhden tai
+   * useamman laskun `scope: "hours"` -maksuriveinä KÄSIN ANNETUILLA summilla —
+   * samoiksi riveiksi kuin järjestelmän oma lähetys tekee, joten keikan tulot,
+   * johtajien tasaus, kirjanpito ja seuraava lasku lukevat ne kaikki samasta
+   * paikasta (`gig.payments`) eikä mitään tarvitse päivittää erikseen.
+   *
+   * EI LÄHETÄ SÄHKÖPOSTIA eikä kosketa asiakkaaseen. Kaikki tähän hetkeen
+   * kirjatut tunnit ja kulut merkitään laskutetuiksi (kattavuus), joten avoimet
+   * tunnit ja seuraavan laskun summa nollautuvat.
+   *
+   * VARTIJA: `expectInvoiceCount` on tuntilaskujen lukumäärä jonka selain näki.
+   * Jos se ei enää täsmää (tuplanapautus, toinen johtaja ehti ensin), mitään ei
+   * kirjata — muuten sama lasku päätyisi liikevaihtoon kahdesti.
+   */
+  app.post("/api/jobs/:id/gig/hours-invoice-record", async (req, res) => {
+    try {
+      const sub = String((req as any).admin?.sub ?? "").toLowerCase();
+      if ((req as any).admin?.role !== "host" && !FOUNDER_IDS.includes(sub)) {
+        return res.status(403).json({ error: "Vain perustaja voi merkitä laskun lähetetyksi." });
+      }
+      const id = Number(req.params.id);
+      const job = await loadJobRow(id);
+      if (!job) return res.status(404).json({ error: "Keikkaa ei löydy" });
+      const gig = parseGig(job.gigData);
+      if (!gig) return res.status(400).json({ error: "Keikalla ei ole seurantadataa" });
+      const proj = parseProject(job.projectData ?? null);
+      if (!proj || !isHourlyGig(proj)) return res.status(400).json({ error: "Tämä toiminto on vain tuntikeikoille." });
+
+      const parsed = normalizeManualInvoices(req.body?.invoices);
+      if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+
+      const uninvoicedWindows = (() => { const t = computeTotals(gig); return Math.max(0, t.washedTotal - t.invoicedWashed); })();
+      const period = computeHoursPeriod(proj, gig.payments, { uninvoicedWindows });
+
+      const expectCount = Number(req.body?.expectInvoiceCount);
+      if (!Number.isInteger(expectCount) || expectCount !== period.invoiceCount) {
+        return res.status(409).json({
+          error: "Tuntilaskujen tila muuttui tai ne kirjattiin jo. Päivitä sivu ja tarkista — mitään ei kirjattu.",
+        });
+      }
+
+      const now = Date.now();
+      const when = manualInvoiceTime(typeof req.body?.sentOn === "string" ? req.body.sentOn : undefined, now);
+      if (!when.ok) return res.status(400).json({ error: when.error });
+      const lastAt = lastHoursInvoiceAt(livePayments(gig.payments));
+      if (lastAt !== undefined && new Date(when.t).toISOString().slice(0, 10) < new Date(lastAt).toISOString().slice(0, 10)) {
+        return res.status(400).json({ error: "Päivämäärä ei voi olla aiemman tuntilaskun päivää aiempi." });
+      }
+
+      const cover = buildHoursCover(proj, { windowsCents: 0 });
+      // Ikkunat jotka laskutusmerkinnän siirto vie pois kertymästä — kausi lisää
+      // niiden rahan takaisin vertailuun, kuten järjestelmän omassa lähetyksessä.
+      const advancedWindowsCents = period.lifetime.windowsCents;
+      gig.sectors.forEach((s) => { s.invoicedWashed = s.washed; });
+      const totalsAfter = computeTotals(gig);
+      const made = buildManualHoursPayments({
+        invoices: parsed.invoices,
+        t: when.t,
+        countThrough: totalsAfter.invoicedWashed,
+        cover: { hours: cover.hours, expenseIds: cover.expenseIds },
+        windowsCents: advancedWindowsCents,
+      });
+      gig.payments.push(...made);
+
+      const rec = reconcileManualInvoices(period.remainingCents, parsed.totalCents);
+      const fmtEur = (c: number) => (c / 100).toLocaleString("fi-FI", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+      gig.log.push({
+        t: now,
+        text: `Tuntilasku kirjattu lähetetyksi käsin: ${made.length} ${made.length === 1 ? "lasku" : "laskua"}, yhteensä ${fmtEur(rec.enteredCents)} (${made.map((p) => fmtEur(p.amountCents)).join(" + ")})`
+          + (rec.diffCents !== 0 ? ` · järjestelmän laskema ${fmtEur(rec.expectedCents)}, ero ${rec.diffCents > 0 ? "+" : "−"}${fmtEur(Math.abs(rec.diffCents))}` : ""),
+      });
+      gig.updatedAt = now;
+      await db.update(jobs).set({ gigData: JSON.stringify(gig), updatedAt: new Date() }).where(eq(jobs.id, id));
+      // Kirjanpito rakentuu lähderiveistä; ajetaan uudelleen, jotta myynti näkyy heti.
+      void rebuildLedgers().catch((e) => console.warn("Ledger rebuild failed after manual hours invoice:", e?.message ?? e));
+
+      const after = computeHoursPeriod(proj, gig.payments, { uninvoicedWindows: 0 });
+      res.json({ ok: true, recordedCents: rec.enteredCents, count: made.length, reconcile: rec, nextRemainingCents: after.remainingCents, gigData: gig });
+    } catch (e: any) {
+      return fail(res, e, "POST /api/jobs/:id/gig/hours-invoice-record");
     }
   });
 

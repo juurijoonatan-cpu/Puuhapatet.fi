@@ -1552,6 +1552,23 @@ export const api = {
   sendGigReport: (jobId: number) =>
     request<{ ok: boolean; id?: string }>("POST", `/api/jobs/${jobId}/gig/report`, {}),
 
+  /**
+   * TUNTILASKUT KIRJATTU LÄHETETYKSI KÄSIN — summat annetaan laskuittain.
+   * Ei lähetä sähköpostia. `expectInvoiceCount` = tuntilaskujen määrä jonka
+   * näkymä näki; palvelin kieltäytyy (409) jos se on muuttunut, jottei sama
+   * lasku kirjaudu kahdesti.
+   */
+  recordHoursInvoices: (jobId: number, data: {
+    invoices: { amountCents: number; billerId: string; ref?: string }[];
+    expectInvoiceCount: number;
+    /** "YYYY-MM-DD"; puuttuva = tänään. */
+    sentOn?: string;
+  }) => request<{
+    ok: boolean; recordedCents: number; count: number; nextRemainingCents: number;
+    reconcile: { expectedCents: number; enteredCents: number; diffCents: number; nextRemainingCents: number };
+    gigData: GigData;
+  }>("POST", `/api/jobs/${jobId}/gig/hours-invoice-record`, data),
+
   /** Undo the most recent instalment in the gig's tracked state (does not recall a
    *  sent email) — resets the "next instalment" counter after a mistaken send. */
   undoGigInstalment: (jobId: number) =>

@@ -221,7 +221,6 @@ export default function AdminDashboard() {
    * mittalukuna; muu ylläpito näkee vain omat lukunsa — brändin summat ja
    * urakkaraha ovat perustajien tietoa (palvelin rajaa myös itse).
    */
-  const workerOpen = gigMoney?.totals.workerOpenCents ?? 0;
   const heroLabel = isHost ? "Laskutettu" : "Bruttotulo";
   const heroValue = isHost
     ? eur0(heroGigCents + heroSmallCents)
@@ -263,9 +262,6 @@ export default function AdminDashboard() {
         // rahasta, ei ansaittua eikä tilillä olevaa. Mikään kenttä ei tiedä
         // onko asiakas oikeasti maksanut, joten "saatu" olisi väärä sana.
         { label: "Oma tulo", value: eur0(heroMyIncome), sub: "laskutetusta", tone: "accent" },
-        // Tekijöille kuuluva raha käsissä — ainoa luku tässä joka voi vaatia
-        // toimenpiteen, siksi korostus vain kun se on yli nollan.
-        { label: "Tekijöille", value: eur0(workerOpen), tone: workerOpen > 0 ? "warn" : "ink" },
         // EI keikkamäärää: se on lukumäärä eikä rahaa, se on keikkalistan
         // otsikossa ("N keikkaa (omat)") ja navipalkissa yhden napautuksen
         // päässä. Avausnäkymään mahtuu vain tärkein.

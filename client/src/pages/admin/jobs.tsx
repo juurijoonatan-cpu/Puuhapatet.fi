@@ -208,6 +208,21 @@ export default function AdminJobsPage() {
 
   useEffect(() => { loadJobs(); }, []);
 
+  /**
+   * URAKKAKEIKAN LASKUTETTU YHTEENSÄ listan riville. Rivin oikean reunan luku oli
+   * `agreedPrice` eli sopimuksen katto (esim. 10 709 €), joka ei kerro paljonko
+   * on oikeasti laskutettu. Raha tulee samasta reitistä kuin keikkalistalla
+   * (`/api/admin/gig-money`, vain perustajille): kaikki virrat yhteensä, myös
+   * käsin kirjatut tuntilaskut. Ei-perustajalle luku jää ennalleen.
+   */
+  const [gigInvoiced, setGigInvoiced] = useState<Map<number, number> | null>(null);
+  useEffect(() => {
+    if (!isHost) return;
+    api.getGigMoney().then((res) => {
+      if (res.ok && res.data) setGigInvoiced(new Map(res.data.gigs.map((g) => [g.jobId, g.invoicedCents])));
+    });
+  }, [isHost]);
+
   // Populate edit fields + load expenses whenever a job is selected
   useEffect(() => {
     if (selected) {
@@ -2446,11 +2461,16 @@ export default function AdminJobsPage() {
                     <div className="flex items-center gap-3 ml-4 shrink-0">
                       <div className="text-right">
                         <p className="text-sm font-semibold text-foreground">
-                          {row.job.isTaloyhtiio && row.job.unitCount
+                          {row.job.isCustomGig && gigInvoiced
+                            ? ((gigInvoiced.get(row.job.id) ?? 0) / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })
+                            : row.job.isTaloyhtiio && row.job.unitCount
                             ? ((row.job.agreedPrice / 100) * row.job.unitCount).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })
                             : (row.job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })
                           }
                         </p>
+                        {row.job.isCustomGig && gigInvoiced && (
+                          <p className="text-[10px] text-muted-foreground">laskutettu yhteensä</p>
+                        )}
                         {row.job.isTaloyhtiio && row.job.unitCount && (
                           <p className="text-[10px] text-muted-foreground">
                             {(row.job.agreedPrice / 100).toLocaleString("fi-FI", { style: "currency", currency: "EUR" })}/as.

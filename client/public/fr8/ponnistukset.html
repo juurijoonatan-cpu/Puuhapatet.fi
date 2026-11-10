@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Viimeiset ponnistukset FR8...</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700;9..144,900&family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --green-deep: #0b1f0e;
+    --green-dark: #2d5016;
+    --green-mid: #3f7a22;
+    --green-lime: #b9e87a;
+    --cream: #f2f7e6;
+    --cream-soft: #d4e2bd;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; background: #0b1f0e; }
+  body {
+    min-height: 100vh;
+    font-family: 'Manrope', system-ui, sans-serif;
+    color: var(--cream);
+    background:
+      radial-gradient(900px 500px at 85% -10%, rgba(120, 190, 60, 0.28), transparent 60%),
+      radial-gradient(700px 500px at -10% 40%, rgba(63, 122, 34, 0.35), transparent 60%),
+      radial-gradient(800px 600px at 100% 100%, rgba(45, 80, 22, 0.6), transparent 60%),
+      linear-gradient(160deg, #123016 0%, var(--green-deep) 100%);
+    background-attachment: fixed;
+    padding: 56px 20px 80px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+
+  h1, .outro {
+    font-family: 'Fraunces', Georgia, serif;
+    font-weight: 900;
+    font-size: clamp(2.4rem, 8vw, 4.4rem);
+    line-height: 1.02;
+    letter-spacing: -0.02em;
+    margin-bottom: 40px;
+    background: linear-gradient(100deg, #ffffff 10%, var(--green-lime) 90%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-shadow: 0 0 40px rgba(185, 232, 122, 0.15);
+  }
+
+  .outro { margin: 72px 0 0; text-align: left; }
+
+  p.lead {
+    font-size: clamp(1.08rem, 3.4vw, 1.3rem);
+    line-height: 1.65;
+    color: var(--cream);
+    margin-bottom: 26px;
+  }
+
+  ul { list-style: none; display: grid; gap: 12px; margin-bottom: 36px; }
+  ul li {
+    position: relative;
+    padding: 18px 22px 18px 54px;
+    border-radius: 18px;
+    background: linear-gradient(135deg, rgba(255,255,255,0.09), rgba(255,255,255,0.03));
+    border: 1px solid rgba(185, 232, 122, 0.22);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255,255,255,0.08);
+    backdrop-filter: blur(6px);
+    font-size: clamp(1rem, 3.2vw, 1.15rem);
+    line-height: 1.55;
+    font-weight: 500;
+  }
+  ul li::before {
+    content: "";
+    position: absolute;
+    left: 22px;
+    top: 24px;
+    width: 14px;
+    height: 14px;
+  }
+  /* ylin lista: ontto valkoinen rengas */
+  ul.top li::before {
+    border-radius: 50%;
+    border: 3px solid var(--cream);
+    box-shadow: 0 0 12px rgba(242, 247, 230, 0.45);
+  }
+  /* alin lista: oranssi salmiakki */
+  ul.caps li::before {
+    width: 13px;
+    height: 13px;
+    top: 25px;
+    transform: rotate(45deg);
+    border-radius: 3px;
+    background: linear-gradient(135deg, #ffd27a, #ff9248);
+    box-shadow: 0 0 14px rgba(255, 160, 80, 0.65);
+  }
+  /* paivalista: paivamaarapilleri */
+  ul.days li {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 14px 22px 14px 16px;
+  }
+  ul.days li::before { display: none; }
+  .date {
+    flex: none;
+    min-width: 82px;
+    padding: 8px 10px;
+    border-radius: 14px;
+    text-align: center;
+    line-height: 1.15;
+    background: linear-gradient(160deg, #fff3c4, #ffd45e);
+    color: #3a2a00;
+    box-shadow: 0 6px 16px rgba(255, 200, 70, 0.3);
+  }
+  .date b { display: block; font-weight: 800; font-size: 0.78rem; letter-spacing: 0.08em; }
+  .date span { display: block; font-weight: 800; font-size: 1.15rem; }
+  .date.two span, .date.two b { font-size: 0.9rem; letter-spacing: 0.02em; }
+
+  .alert {
+    position: relative;
+    margin: 12px 0 28px;
+    padding: 26px 26px 26px 30px;
+    border-radius: 22px;
+    background: linear-gradient(135deg, var(--green-lime), #8fd14f);
+    color: #10260a;
+    font-weight: 800;
+    font-size: clamp(1.05rem, 3.6vw, 1.3rem);
+    line-height: 1.5;
+    letter-spacing: 0.01em;
+    box-shadow: 0 18px 50px rgba(120, 200, 60, 0.28), 0 0 0 1px rgba(255,255,255,0.25) inset;
+  }
+
+  ul.caps li {
+    font-weight: 800;
+    letter-spacing: 0.01em;
+    color: var(--cream);
+    border-color: rgba(185, 232, 122, 0.4);
+    background: linear-gradient(135deg, rgba(185,232,122,0.16), rgba(63,122,34,0.12));
+  }
+
+
+
+  /* rakennuksen varit */
+  .bb { fill: var(--b); stroke: var(--t, none); stroke-width: 1.4; }
+  .bw { fill: var(--w); }
+  .tree { fill: var(--tr, #2d5016); }
+  .s4 { border-color: #c9a0ff; background: #1b1233; transform: rotate(0.8deg); }
+  .ltr { transform-box: fill-box; transform-origin: center; animation: launch 7s ease-in infinite; animation-delay: var(--d); opacity: 0; }
+  .mini { transform-box: fill-box; transform-origin: center; animation: mini 5s ease-out infinite; animation-delay: var(--d); opacity: 0; }
+  .mer { transform-box: fill-box; transform-origin: center; animation: mer 6s linear infinite; }
+  .shine { animation: shine 4.5s ease-in-out infinite; }
+  @keyframes launch { 0% { transform: translate(0,0) rotate(0) scale(.7); opacity: 0; } 10% { transform: scale(1); opacity: 1; } 35% { transform: translate(0,-6px) rotate(0) scale(1); opacity: 1; } 100% { transform: translate(var(--tx), var(--ty)) rotate(var(--r)) scale(.12); opacity: 0; } }
+  @keyframes mini { 0% { transform: translate(0,0) rotate(0) scale(.4); opacity: 0; } 15% { opacity: 1; } 100% { transform: translate(var(--tx), var(--ty)) rotate(var(--r)) scale(1.1); opacity: 0; } }
+  @keyframes mer { 0% { transform: scaleX(1); } 50% { transform: scaleX(0.02); } 100% { transform: scaleX(1); } }
+  @keyframes shine { 0% { transform: translateX(0); } 70%,100% { transform: translateX(900px); } }
+  @keyframes ripple { 0% { box-shadow: 0 0 0 0 rgba(242,247,230,.6); } 100% { box-shadow: 0 0 0 16px rgba(242,247,230,0); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* ylimman listan animoidut merkit */
+  ul.top li { padding-left: 64px; }
+  ul.top li::before {
+    left: 26px; top: 24px; width: 18px; height: 18px;
+    border-radius: 50%; border: 0;
+    background: radial-gradient(circle at 35% 30%, #ffffff, #d4e2bd 70%);
+    box-shadow: 0 0 0 0 rgba(242,247,230,.6);
+    animation: ripple 2s ease-out infinite;
+  }
+  ul.top li::after {
+    content: ""; position: absolute; left: 19px; top: 17px; width: 32px; height: 32px;
+    border-radius: 50%;
+    border: 2px dashed rgba(185,232,122,.75);
+    background: radial-gradient(circle at 50% 0, #ffd45e 0 3.5px, transparent 4.5px);
+    animation: spin 5s linear infinite;
+  }
+  ul.top li:nth-child(2)::before, ul.top li:nth-child(2)::after { animation-delay: -1s; }
+
+
+  /* FR8 crazy 8-merkit */
+  ul.top li::before, ul.top li::after { content: none; animation: none; }
+  .m8 { position: absolute; left: 18px; top: 14px; width: 34px; height: 48px; filter: drop-shadow(0 0 8px rgba(255, 61, 240, 0.55)) drop-shadow(0 0 10px rgba(25, 227, 255, 0.4)); animation: m8sway 3s ease-in-out infinite; animation-delay: var(--dl); }
+  .m8 svg { width: 100%; height: 100%; overflow: visible; }
+  .m8 path { fill: none; stroke-width: 4.2; stroke-linecap: round; stroke-linejoin: round; }
+  .m8 .g0 { stroke: #ffffff; }
+  .m8 .g1 { stroke: #ff3df0; animation: glA 1.7s steps(1) infinite; animation-delay: var(--dl); }
+  .m8 .g2 { stroke: #19e3ff; animation: glB 1.7s steps(1) infinite; animation-delay: var(--dl); }
+  @keyframes glA { 0%,86% { transform: translate(-1.6px, 0); } 88% { transform: translate(-5px, -2px); } 92% { transform: translate(3px, 1px); } 96% { transform: translate(-3px, 2px); } 100% { transform: translate(-1.6px, 0); } }
+  @keyframes glB { 0%,86% { transform: translate(1.6px, 0); } 88% { transform: translate(5px, 2px); } 92% { transform: translate(-3px, -1px); } 96% { transform: translate(3px, -2px); } 100% { transform: translate(1.6px, 0); } }
+  @keyframes m8sway { 0%,100% { transform: rotate(-6deg) scale(1); } 50% { transform: rotate(6deg) scale(1.08); } }
+  .emp { transform-box: fill-box; transform-origin: center; animation: emp 7s ease-in-out infinite; opacity: 0; }
+  @keyframes emp { 0%,45% { opacity: 0; transform: scale(.9); } 65% { opacity: .95; transform: scale(1); } 92% { opacity: .95; transform: scale(1); } 100% { opacity: 0; transform: scale(1.04); } }
+
+  /* lopun visuaalinen tarina */
+  .story { margin-top: 48px; }
+  .scene { position: relative; border-radius: 30px; overflow: hidden; border: 3px solid; box-shadow: 0 26px 60px rgba(0,0,0,0.5); }
+  .scene .fig { position: relative; }
+  .scene svg { display: block; width: 100%; height: auto; }
+  .scene .txt {
+    padding: 22px 24px 26px;
+    font-weight: 800;
+    font-size: clamp(1.05rem, 3.8vw, 1.35rem);
+    line-height: 1.45;
+    letter-spacing: 0.01em;
+    color: var(--cream);
+  }
+  .s1 { border-color: #7fd6ff; background: #0e3a4a; transform: rotate(-1.2deg); }
+  .s2 { border-color: #ffd45e; background: #2b2409; transform: rotate(1deg); }
+  .s3 { border-color: #ff9248; background: #3a1c0a; transform: rotate(-0.7deg); }
+  .stamp { position: absolute; top: 14px; right: 14px; z-index: 2; transform: rotate(7deg); animation: wiggle 2.4s ease-in-out infinite; }
+  .stamp .date { padding: 10px 14px; min-width: 104px; border: 3px solid #3a2a00; }
+  .stamp .date span { font-size: 1.05rem; }
+  .link { position: relative; height: 64px; }
+  .link::before { content: ""; position: absolute; left: 50%; top: 6px; bottom: 20px; border-left: 4px dotted var(--green-lime); }
+  .link::after { content: ""; position: absolute; left: 50%; bottom: 8px; width: 16px; height: 16px; border-right: 4px solid var(--green-lime); border-bottom: 4px solid var(--green-lime); transform: translateX(-50%) rotate(45deg); animation: nudge 1.2s ease-in-out infinite; }
+  .fly { animation: fly 4s linear infinite; animation-delay: var(--d); opacity: 0; }
+  .route { animation: march 1s linear infinite; }
+  .pop { transform-box: fill-box; transform-origin: center; animation: pop 1.6s ease-in-out infinite; }
+  .truck { animation: bump 0.5s ease-in-out infinite; }
+  .spark { transform-box: fill-box; transform-origin: center; animation: twinkle 1.4s ease-in-out infinite; }
+  .crowd { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 4px; padding: 18px 16px 6px; background: linear-gradient(#1b3a14, #3a1c0a); }
+  .crowd i { position: relative; display: block; width: 30px; height: 46px; animation: hop 1.1s ease-in-out infinite; animation-delay: var(--d); }
+  .crowd i::before { content: ""; position: absolute; left: 9px; top: 0; width: 12px; height: 12px; border-radius: 50%; background: #f4d6b0; }
+  .crowd i::after { content: ""; position: absolute; left: 4px; top: 14px; width: 22px; height: 30px; border-radius: 12px 12px 4px 4px; background: var(--c); }
+  .crowd i.pro::before { background: linear-gradient(#ff9248 0 45%, #f4d6b0 45%); box-shadow: 0 -2px 0 1px #ff9248; }
+  .crowd i.pro::after { background: repeating-linear-gradient(0deg, #ff9248 0 8px, #fff3c4 8px 11px); }
+  @keyframes fly { 0% { transform: translate(0,0) scale(.6); opacity: 0; } 15% { opacity: 1; } 100% { transform: translate(330px,-185px) scale(1.25); opacity: 0; } }
+  @keyframes march { to { stroke-dashoffset: -15; } }
+  @keyframes pop { 0%,100% { transform: scale(1); } 50% { transform: scale(1.25); } }
+  @keyframes bump { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+  @keyframes twinkle { 0%,100% { transform: scale(.6) rotate(0); opacity: .5; } 50% { transform: scale(1.2) rotate(20deg); opacity: 1; } }
+  @keyframes hop { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+  @keyframes wiggle { 0%,100% { transform: rotate(5deg); } 50% { transform: rotate(10deg) scale(1.05); } }
+  @keyframes nudge { 0%,100% { transform: translateX(-50%) translateY(0) rotate(45deg); } 50% { transform: translateX(-50%) translateY(6px) rotate(45deg); } }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } .fly { opacity: 1; } }
+
+  @media (max-width: 520px) {
+    body { padding: 36px 16px 60px; }
+    ul li { padding: 16px 16px 16px 46px; }
+    ul li::before { left: 18px; top: 22px; }
+    ul.caps li::before { top: 23px; }
+    ul.days li { padding: 12px 14px; gap: 14px; }
+    ul.top li { padding-left: 62px; }
+    .m8 { left: 16px; }
+    ul.top li::before { left: 24px; top: 22px; }
+    ul.top li::after { left: 17px; top: 15px; }
+    .alert { padding: 22px; }
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><symbol id="bldg" viewBox="0 0 300 110"><rect class="bb" x="149" y="0" width="2" height="16"/><rect class="bb" x="104" y="16" width="92" height="94"/><rect class="bb" x="101" y="14" width="98" height="3"/><rect class="bw" x="106" y="17" width="2.4" height="4"/><rect class="bw" x="111" y="17" width="2.4" height="4"/><rect class="bw" x="116" y="17" width="2.4" height="4"/><rect class="bw" x="121" y="17" width="2.4" height="4"/><rect class="bw" x="126" y="17" width="2.4" height="4"/><rect class="bw" x="131" y="17" width="2.4" height="4"/><rect class="bw" x="136" y="17" width="2.4" height="4"/><rect class="bw" x="141" y="17" width="2.4" height="4"/><rect class="bw" x="146" y="17" width="2.4" height="4"/><rect class="bw" x="151" y="17" width="2.4" height="4"/><rect class="bw" x="156" y="17" width="2.4" height="4"/><rect class="bw" x="161" y="17" width="2.4" height="4"/><rect class="bw" x="166" y="17" width="2.4" height="4"/><rect class="bw" x="171" y="17" width="2.4" height="4"/><rect class="bw" x="176" y="17" width="2.4" height="4"/><rect class="bw" x="181" y="17" width="2.4" height="4"/><rect class="bw" x="186" y="17" width="2.4" height="4"/><rect class="bw" x="191" y="17" width="2.4" height="4"/><rect class="bb" x="10" y="38" width="94" height="72"/><rect class="bb" x="196" y="38" width="94" height="72"/><rect class="bw" x="12" y="39" width="2.4" height="4"/><rect class="bw" x="17" y="39" width="2.4" height="4"/><rect class="bw" x="22" y="39" width="2.4" height="4"/><rect class="bw" x="27" y="39" width="2.4" height="4"/><rect class="bw" x="32" y="39" width="2.4" height="4"/><rect class="bw" x="37" y="39" width="2.4" height="4"/><rect class="bw" x="42" y="39" width="2.4" height="4"/><rect class="bw" x="47" y="39" width="2.4" height="4"/><rect class="bw" x="52" y="39" width="2.4" height="4"/><rect class="bw" x="57" y="39" width="2.4" height="4"/><rect class="bw" x="62" y="39" width="2.4" height="4"/><rect class="bw" x="67" y="39" width="2.4" height="4"/><rect class="bw" x="72" y="39" width="2.4" height="4"/><rect class="bw" x="77" y="39" width="2.4" height="4"/><rect class="bw" x="82" y="39" width="2.4" height="4"/><rect class="bw" x="87" y="39" width="2.4" height="4"/><rect class="bw" x="92" y="39" width="2.4" height="4"/><rect class="bw" x="97" y="39" width="2.4" height="4"/><rect class="bw" x="198" y="39" width="2.4" height="4"/><rect class="bw" x="203" y="39" width="2.4" height="4"/><rect class="bw" x="208" y="39" width="2.4" height="4"/><rect class="bw" x="213" y="39" width="2.4" height="4"/><rect class="bw" x="218" y="39" width="2.4" height="4"/><rect class="bw" x="223" y="39" width="2.4" height="4"/><rect class="bw" x="228" y="39" width="2.4" height="4"/><rect class="bw" x="233" y="39" width="2.4" height="4"/><rect class="bw" x="238" y="39" width="2.4" height="4"/><rect class="bw" x="243" y="39" width="2.4" height="4"/><rect class="bw" x="248" y="39" width="2.4" height="4"/><rect class="bw" x="253" y="39" width="2.4" height="4"/><rect class="bw" x="258" y="39" width="2.4" height="4"/><rect class="bw" x="263" y="39" width="2.4" height="4"/><rect class="bw" x="268" y="39" width="2.4" height="4"/><rect class="bw" x="273" y="39" width="2.4" height="4"/><rect class="bw" x="278" y="39" width="2.4" height="4"/><rect class="bw" x="283" y="39" width="2.4" height="4"/><rect class="bb" x="0" y="28" width="40" height="82"/><rect class="bb" x="260" y="28" width="40" height="82"/><rect class="bw" x="2" y="29" width="2.4" height="4"/><rect class="bw" x="7" y="29" width="2.4" height="4"/><rect class="bw" x="12" y="29" width="2.4" height="4"/><rect class="bw" x="17" y="29" width="2.4" height="4"/><rect class="bw" x="22" y="29" width="2.4" height="4"/><rect class="bw" x="27" y="29" width="2.4" height="4"/><rect class="bw" x="32" y="29" width="2.4" height="4"/><rect class="bw" x="37" y="29" width="2.4" height="4"/><rect class="bw" x="262" y="29" width="2.4" height="4"/><rect class="bw" x="267" y="29" width="2.4" height="4"/><rect class="bw" x="272" y="29" width="2.4" height="4"/><rect class="bw" x="277" y="29" width="2.4" height="4"/><rect class="bw" x="282" y="29" width="2.4" height="4"/><rect class="bw" x="287" y="29" width="2.4" height="4"/><rect class="bw" x="292" y="29" width="2.4" height="4"/><rect class="bw" x="297" y="29" width="2.4" height="4"/><circle class="bw" cx="124" cy="34" r="4.5"/><circle class="bw" cx="150" cy="34" r="4.5"/><circle class="bw" cx="176" cy="34" r="4.5"/><rect class="bw" x="118" y="46" width="14" height="22" rx="1"/><rect class="bw" x="118" y="74" width="14" height="16" rx="1"/><rect class="bw" x="143" y="46" width="14" height="22" rx="1"/><rect class="bw" x="143" y="74" width="14" height="16" rx="1"/><rect class="bw" x="168" y="46" width="14" height="22" rx="1"/><rect class="bw" x="168" y="74" width="14" height="16" rx="1"/><rect class="bw" x="141" y="94" width="18" height="16"/><rect class="bw" x="46" y="48" width="8" height="10" rx="1"/><rect class="bw" x="59" y="48" width="8" height="10" rx="1"/><rect class="bw" x="72" y="48" width="8" height="10" rx="1"/><rect class="bw" x="85" y="48" width="8" height="10" rx="1"/><rect class="bw" x="202" y="48" width="8" height="10" rx="1"/><rect class="bw" x="215" y="48" width="8" height="10" rx="1"/><rect class="bw" x="228" y="48" width="8" height="10" rx="1"/><rect class="bw" x="241" y="48" width="8" height="10" rx="1"/><rect class="bw" x="46" y="64" width="8" height="10" rx="1"/><rect class="bw" x="59" y="64" width="8" height="10" rx="1"/><rect class="bw" x="72" y="64" width="8" height="10" rx="1"/><rect class="bw" x="85" y="64" width="8" height="10" rx="1"/><rect class="bw" x="202" y="64" width="8" height="10" rx="1"/><rect class="bw" x="215" y="64" width="8" height="10" rx="1"/><rect class="bw" x="228" y="64" width="8" height="10" rx="1"/><rect class="bw" x="241" y="64" width="8" height="10" rx="1"/><rect class="bw" x="46" y="80" width="8" height="10" rx="1"/><rect class="bw" x="59" y="80" width="8" height="10" rx="1"/><rect class="bw" x="72" y="80" width="8" height="10" rx="1"/><rect class="bw" x="85" y="80" width="8" height="10" rx="1"/><rect class="bw" x="202" y="80" width="8" height="10" rx="1"/><rect class="bw" x="215" y="80" width="8" height="10" rx="1"/><rect class="bw" x="228" y="80" width="8" height="10" rx="1"/><rect class="bw" x="241" y="80" width="8" height="10" rx="1"/><rect class="bw" x="46" y="96" width="8" height="10" rx="1"/><rect class="bw" x="59" y="96" width="8" height="10" rx="1"/><rect class="bw" x="72" y="96" width="8" height="10" rx="1"/><rect class="bw" x="85" y="96" width="8" height="10" rx="1"/><rect class="bw" x="202" y="96" width="8" height="10" rx="1"/><rect class="bw" x="215" y="96" width="8" height="10" rx="1"/><rect class="bw" x="228" y="96" width="8" height="10" rx="1"/><rect class="bw" x="241" y="96" width="8" height="10" rx="1"/><rect class="bw" x="5" y="40" width="8" height="11" rx="1"/><rect class="bw" x="16" y="40" width="8" height="11" rx="1"/><rect class="bw" x="27" y="40" width="8" height="11" rx="1"/><rect class="bw" x="265" y="40" width="8" height="11" rx="1"/><rect class="bw" x="276" y="40" width="8" height="11" rx="1"/><rect class="bw" x="287" y="40" width="8" height="11" rx="1"/><rect class="bw" x="5" y="57" width="8" height="11" rx="1"/><rect class="bw" x="16" y="57" width="8" height="11" rx="1"/><rect class="bw" x="27" y="57" width="8" height="11" rx="1"/><rect class="bw" x="265" y="57" width="8" height="11" rx="1"/><rect class="bw" x="276" y="57" width="8" height="11" rx="1"/><rect class="bw" x="287" y="57" width="8" height="11" rx="1"/><rect class="bw" x="5" y="74" width="8" height="11" rx="1"/><rect class="bw" x="16" y="74" width="8" height="11" rx="1"/><rect class="bw" x="27" y="74" width="8" height="11" rx="1"/><rect class="bw" x="265" y="74" width="8" height="11" rx="1"/><rect class="bw" x="276" y="74" width="8" height="11" rx="1"/><rect class="bw" x="287" y="74" width="8" height="11" rx="1"/><rect class="bw" x="5" y="91" width="8" height="11" rx="1"/><rect class="bw" x="16" y="91" width="8" height="11" rx="1"/><rect class="bw" x="27" y="91" width="8" height="11" rx="1"/><rect class="bw" x="265" y="91" width="8" height="11" rx="1"/><rect class="bw" x="276" y="91" width="8" height="11" rx="1"/><rect class="bw" x="287" y="91" width="8" height="11" rx="1"/><ellipse class="tree" cx="86" cy="92" rx="22" ry="26"/><ellipse class="tree" cx="214" cy="92" rx="22" ry="26"/></symbol></defs></svg>
+  <main class="wrap">
+    <h1>Viimeiset ponnistukset FR8...</h1>
+
+    <p class="lead">Nyt tällä viikolla huoneita valmiiksi → Meeting roomeiksi! Lista huoneista Sheetsissä! Kuvat huoneista Verhot ryhmään!</p>
+
+    <ul class="top">
+      <li><span class="m8" style="--dl:0s" aria-hidden="true"><svg viewBox="0 0 40 56"><path class="g1" d="M20 28 C 4 28 4 4 20 4 C 36 4 36 28 20 28 C 4 28 4 52 20 52 C 36 52 36 28 20 28 Z"/><path class="g2" d="M20 28 C 4 28 4 4 20 4 C 36 4 36 28 20 28 C 4 28 4 52 20 52 C 36 52 36 28 20 28 Z"/><path class="g0" d="M20 28 C 4 28 4 4 20 4 C 36 4 36 28 20 28 C 4 28 4 52 20 52 C 36 52 36 28 20 28 Z"/><circle r="3.4" fill="#ffd45e"><animateMotion dur="2.4s" repeatCount="indefinite" path="M20 28 C 4 28 4 4 20 4 C 36 4 36 28 20 28 C 4 28 4 52 20 52 C 36 52 36 28 20 28 Z"/></circle><circle r="3.4" fill="#ff3df0" opacity=".8"><animateMotion dur="2.4s" begin="-1.2s" repeatCount="indefinite" path="M20 28 C 4 28 4 4 20 4 C 36 4 36 28 20 28 C 4 28 4 52 20 52 C 36 52 36 28 20 28 Z"/></circle></svg></span>1. Prioriteettina: Huoneet, joissa ei työskentele tiimejä/ryhmiä ja missä ei ole suuria tavaroita/huonekaluja, jotka pitää siirtää!</li>
+      <li><span class="m8" style="--dl:-0.9s" aria-hidden="true"><svg viewBox="0 0 40 56"><path class="g1" d="M20 28 C 4 28 4 4 20 4 C 36 4 36 28 20 28 C 4 28 4 52 20 52 C 36 52 36 28 20 28 Z"/><path class="g2" d="M20 28 C 4 28 4 4 20 4 C 36 4 36 28 20 28 C 4 28 4 52 20 52 C 36 52 36 28 20 28 Z"/><path class="g0" d="M20 28 C 4 28 4 4 20 4 C 36 4 36 28 20 28 C 4 28 4 52 20 52 C 36 52 36 28 20 28 Z"/><circle r="3.4" fill="#ffd45e"><animateMotion dur="2.4s" repeatCount="indefinite" keyPoints="1;0" keyTimes="0;1" calcMode="linear" path="M20 28 C 4 28 4 4 20 4 C 36 4 36 28 20 28 C 4 28 4 52 20 52 C 36 52 36 28 20 28 Z"/></circle><circle r="3.4" fill="#ff3df0" opacity=".8"><animateMotion dur="2.4s" begin="-1.2s" repeatCount="indefinite" keyPoints="1;0" keyTimes="0;1" calcMode="linear" path="M20 28 C 4 28 4 4 20 4 C 36 4 36 28 20 28 C 4 28 4 52 20 52 C 36 52 36 28 20 28 Z"/></circle></svg></span>2. Tiimien huoneet, jotka myös listalla, muutetaan vasta viikonloppuna meeting roomeiksi!</li>
+    </ul>
+
+    <ul class="days">
+      <li><div class="date two"><span>LA 14.11</span><span>SU 15.11</span></div>ISOIN TARVE AVULLE, VÄHINTÄÄN 3 HENKILÖÄ LÄHES KOKO VIIKONLOPUN!</li>
+      <li><div class="date"><b>MA</b><span>16.11</span></div>Family and Friends Demo (kenraaliharjoitus)</li>
+      <li><div class="date"><b>TI</b><span>17.11</span></div>Oikea Demo Day</li>
+      <li><div class="date two"><span>KE 18.11</span><span>TO 19.11</span></div>Sijoittajakeskusteluita</li>
+    </ul>
+
+    <p class="alert">NOILLE PÄIVILLE MYÖS APUKÄSIÄ, ERITYISESTI MAANANTAISTA ALKAEN AAMUILLE, KOSKA TÄYTYY SAADA YHTEENSÄ 25 MEETING ROOMIA SIJOITTAJAKESKUSTELUILLE!</p>
+
+    <div class="story">
+      <article class="scene s1">
+        <div class="fig">
+          <div class="stamp"><div class="date two"><span>LA 21.11</span><span>SU 22.11</span></div></div>
+          <svg viewBox="0 0 600 280" aria-hidden="true">
+            <defs>
+              <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0b2d3d"/><stop offset=".6" stop-color="#1f5b52"/><stop offset="1" stop-color="#2d5016"/></linearGradient>
+              <radialGradient id="sun"><stop offset="0" stop-color="#fff1b0"/><stop offset="1" stop-color="#ff9248" stop-opacity="0"/></radialGradient>
+              <symbol id="plane" viewBox="0 0 24 24"><path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></symbol>
+            </defs>
+            <rect width="600" height="280" fill="url(#sky)"/>
+            <circle cx="470" cy="215" r="130" fill="url(#sun)"/>
+            <circle cx="470" cy="215" r="46" fill="#ffd27a"/>
+            <g fill="#fff" opacity=".8"><circle cx="60" cy="40" r="2"/><circle cx="150" cy="70" r="1.6"/><circle cx="260" cy="30" r="2"/><circle cx="360" cy="60" r="1.6"/><circle cx="520" cy="35" r="2"/><circle cx="560" cy="90" r="1.6"/></g>
+            <g fill="#fff" opacity=".13"><ellipse cx="120" cy="110" rx="60" ry="16"/><ellipse cx="160" cy="100" rx="40" ry="14"/><ellipse cx="400" cy="130" rx="70" ry="16"/><ellipse cx="440" cy="118" rx="42" ry="14"/></g>
+            <path d="M0 250 Q150 232 300 246 T600 240 V280 H0Z" fill="#12300f"/>
+            <use href="#bldg" x="20" y="150" width="300" height="110" style="--b:#0b1f0e;--w:#ffd27a;--tr:#0b1f0e"/>
+            <g class="plane-g">
+              <g transform="translate(70 220)"><g class="fly" style="--d:0s"><line x1="-8" y1="8" x2="-90" y2="90" stroke="#fff" stroke-opacity=".55" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 9"/><use href="#plane" width="42" height="42" x="-21" y="-21" transform="rotate(45)" fill="#fff"/></g></g>
+              <g transform="translate(130 205)"><g class="fly" style="--d:.8s"><line x1="-8" y1="8" x2="-90" y2="90" stroke="#fff" stroke-opacity=".55" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 9"/><use href="#plane" width="42" height="42" x="-21" y="-21" transform="rotate(45)" fill="#ffd27a"/></g></g>
+              <g transform="translate(190 225)"><g class="fly" style="--d:1.6s"><line x1="-8" y1="8" x2="-90" y2="90" stroke="#fff" stroke-opacity=".55" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 9"/><use href="#plane" width="42" height="42" x="-21" y="-21" transform="rotate(45)" fill="#b9e87a"/></g></g>
+              <g transform="translate(110 170)"><g class="fly" style="--d:2.4s"><line x1="-8" y1="8" x2="-90" y2="90" stroke="#fff" stroke-opacity=".55" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 9"/><use href="#plane" width="42" height="42" x="-21" y="-21" transform="rotate(45)" fill="#7fd6ff"/></g></g>
+              <g transform="translate(240 200)"><g class="fly" style="--d:3.2s"><line x1="-8" y1="8" x2="-90" y2="90" stroke="#fff" stroke-opacity=".55" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 9"/><use href="#plane" width="42" height="42" x="-21" y="-21" transform="rotate(45)" fill="#ff9248"/></g></g>
+            </g>
+          </svg>
+        </div>
+        <p class="txt">SEN JÄLKEEN VIIKONLOPPUNA KAIKILLA COHORTTILAISILLA LENNOT POIS! ELI TALO TYHJÄ!</p>
+      </article>
+
+      <div class="link"></div>
+
+      <article class="scene s2">
+        <div class="fig">
+          <svg viewBox="0 0 600 280" aria-hidden="true">
+            <defs>
+              <linearGradient id="bg2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3a2e08"/><stop offset="1" stop-color="#1b3a14"/></linearGradient>
+              <path id="route" d="M190 214 C 260 60, 350 60, 425 175"/>
+            </defs>
+            <rect width="600" height="280" fill="url(#bg2)"/>
+            <g fill="#ffd45e" opacity=".12"><circle cx="300" cy="40" r="90"/><circle cx="560" cy="250" r="70"/></g>
+            <use href="#bldg" x="20" y="118" width="330" height="121" style="--b:#e9efd8;--w:#12300f"/>
+            <!-- route -->
+            <path d="M190 214 C 260 60, 350 60, 425 175" fill="none" stroke="#b9e87a" stroke-width="4" stroke-linecap="round" stroke-dasharray="3 12" class="route"/>
+            <!-- pallet -->
+            <g>
+              <rect x="395" y="224" width="175" height="10" rx="2" fill="#d79a55"/>
+              <rect x="395" y="236" width="30" height="12" fill="#b57a3a"/><rect x="467" y="236" width="30" height="12" fill="#b57a3a"/><rect x="540" y="236" width="30" height="12" fill="#b57a3a"/>
+              <rect x="395" y="250" width="175" height="8" rx="2" fill="#d79a55"/>
+              <g font-family="Manrope, sans-serif" font-weight="800" font-size="18" text-anchor="middle" fill="#1d1403">
+                <g><rect x="402" y="190" width="48" height="34" rx="5" fill="#ff9248"/><rect x="422" y="190" width="8" height="34" fill="#fff" opacity=".35"/><text x="412" y="213">1</text></g>
+                <g><rect x="454" y="190" width="48" height="34" rx="5" fill="#b9e87a"/><rect x="474" y="190" width="8" height="34" fill="#fff" opacity=".35"/><text x="464" y="213">2</text></g>
+                <g><rect x="506" y="190" width="48" height="34" rx="5" fill="#ffd45e"/><rect x="526" y="190" width="8" height="34" fill="#fff" opacity=".35"/><text x="516" y="213">3</text></g>
+                <g><rect x="428" y="154" width="48" height="34" rx="5" fill="#7fd6ff"/><rect x="448" y="154" width="8" height="34" fill="#fff" opacity=".35"/><text x="438" y="177">4</text></g>
+                <g><rect x="480" y="154" width="48" height="34" rx="5" fill="#ff7aa8"/><rect x="500" y="154" width="8" height="34" fill="#fff" opacity=".35"/><text x="490" y="177">5</text></g>
+              </g>
+              <g class="pop"><circle cx="548" cy="150" r="17" fill="#b9e87a" stroke="#12300f" stroke-width="3"/><path d="M539 150 l7 7 l12 -14" fill="none" stroke="#12300f" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></g>
+            </g>
+            <!-- flying boxes -->
+            <g font-family="Manrope, sans-serif" font-weight="800" font-size="16" text-anchor="middle" fill="#1d1403">
+              <g><rect x="-20" y="-16" width="40" height="32" rx="5" fill="#ff9248"/><rect x="-4" y="-16" width="8" height="32" fill="#fff" opacity=".35"/><text x="-12" y="6">1</text><animateMotion dur="5s" begin="0s" repeatCount="indefinite" rotate="0"><mpath href="#route"/></animateMotion></g>
+              <g><rect x="-20" y="-16" width="40" height="32" rx="5" fill="#b9e87a"/><rect x="-4" y="-16" width="8" height="32" fill="#fff" opacity=".35"/><text x="-12" y="6">2</text><animateMotion dur="5s" begin="-1s" repeatCount="indefinite" rotate="0"><mpath href="#route"/></animateMotion></g>
+              <g><rect x="-20" y="-16" width="40" height="32" rx="5" fill="#ffd45e"/><rect x="-4" y="-16" width="8" height="32" fill="#fff" opacity=".35"/><text x="-12" y="6">3</text><animateMotion dur="5s" begin="-2s" repeatCount="indefinite" rotate="0"><mpath href="#route"/></animateMotion></g>
+              <g><rect x="-20" y="-16" width="40" height="32" rx="5" fill="#7fd6ff"/><rect x="-4" y="-16" width="8" height="32" fill="#fff" opacity=".35"/><text x="-12" y="6">4</text><animateMotion dur="5s" begin="-3s" repeatCount="indefinite" rotate="0"><mpath href="#route"/></animateMotion></g>
+              <g><rect x="-20" y="-16" width="40" height="32" rx="5" fill="#ff7aa8"/><rect x="-4" y="-16" width="8" height="32" fill="#fff" opacity=".35"/><text x="-12" y="6">5</text><animateMotion dur="5s" begin="-4s" repeatCount="indefinite" rotate="0"><mpath href="#route"/></animateMotion></g>
+            </g>
+          </svg>
+        </div>
+        <p class="txt">ELI VIIKKO AIKAA SAADA TALO TYHJÄKSI, KAMOJA RUVETAAN TUOMAAN YKKÖSEEN! JAETAAN HUONEISIIN KATEGORIAPERUSTEISESTI, MYÖS LAATIKOIHIN JA NIIDEN NUMEROINTI SEKÄ MERKKAAMINEN ALUSTALLE!</p>
+      </article>
+
+      <div class="link"></div>
+
+      <article class="scene s3">
+        <div class="fig">
+          <svg viewBox="0 0 600 190" aria-hidden="true">
+            <defs><linearGradient id="bg3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a2410"/><stop offset="1" stop-color="#1b3a14"/></linearGradient></defs>
+            <rect width="600" height="190" fill="url(#bg3)"/>
+            <circle cx="300" cy="190" r="150" fill="#ff9248" opacity=".14"/>
+            <rect y="160" width="600" height="30" fill="#12300f"/>
+            <use href="#bldg" x="6" y="66" width="260" height="95" style="--b:#12300f;--t:#b9e87a;--w:#050d06;--tr:#1b3a14"/>
+            <g class="spark" fill="#fff"><path d="M70 80 l3 8 l8 3 l-8 3 l-3 8 l-3 -8 l-8 -3 l8 -3z"/><path d="M200 96 l2 6 l6 2 l-6 2 l-2 6 l-2 -6 l-6 -2 l6 -2z"/></g>
+            <!-- truck -->
+            <g transform="translate(40 0)"><g class="truck">
+              <g stroke="#fff" stroke-opacity=".5" stroke-width="4" stroke-linecap="round"><line x1="236" y1="110" x2="272" y2="110"/><line x1="242" y1="128" x2="276" y2="128"/><line x1="236" y1="146" x2="268" y2="146"/></g>
+              <rect x="280" y="62" width="190" height="88" rx="8" fill="#f2f7e6"/>
+              <rect x="280" y="118" width="190" height="10" fill="#ff9248"/>
+              <path d="M474 86 h36 l26 30 v34 h-62z" fill="#ffd45e"/>
+              <path d="M484 94 h20 l16 20 h-36z" fill="#7fd6ff"/>
+              <rect x="296" y="74" width="36" height="30" rx="4" fill="#ff7aa8"/><rect x="338" y="74" width="36" height="30" rx="4" fill="#7fd6ff"/><rect x="380" y="74" width="36" height="30" rx="4" fill="#b9e87a"/>
+              <g fill="#0b1f0e"><circle cx="320" cy="154" r="18"/><circle cx="500" cy="154" r="18"/></g>
+              <g fill="#e9efd8"><circle cx="320" cy="154" r="8"/><circle cx="500" cy="154" r="8"/></g>
+            </g></g>
+          </svg>
+        </div>
+        <div class="crowd" id="crowd" aria-hidden="true"></div>
+        <p class="txt">LOPPUUN ASTI TALOA TYHJÄKSI, HOMMAA LOPUTTOMASTI, AINAKIN 50 IHMISTÄ TUOLLA APUNA, MYÖS AMMATTIMUUTTOMIEHIÄ!</p>
+      </article>
+
+      <div class="link"></div>
+
+      <article class="scene s4">
+        <div class="fig">
+          <div class="stamp"><div class="date"><b>MA</b><span>30.11</span></div></div>
+          <svg viewBox="0 0 600 320" aria-hidden="true">
+            <defs>
+              <linearGradient id="bg4" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#140c2e"/><stop offset=".65" stop-color="#1c2a4a"/><stop offset="1" stop-color="#2d5016"/></linearGradient>
+              <linearGradient id="lt4" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#b9e87a"/></linearGradient>
+              <linearGradient id="shine" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".95"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+              <mask id="bm4" maskUnits="userSpaceOnUse" x="0" y="0" width="600" height="320"><use href="#bldg" x="130" y="190" width="340" height="125" style="--b:#fff;--w:#000;--tr:#000"/></mask>
+            </defs>
+            <rect width="600" height="320" fill="url(#bg4)"/>
+            <g fill="#fff" opacity=".8"><circle cx="40" cy="40" r="2"/><circle cx="110" cy="90" r="1.5"/><circle cx="230" cy="30" r="2"/><circle cx="340" cy="50" r="1.5"/><circle cx="420" cy="20" r="2"/><circle cx="560" cy="60" r="1.6"/><circle cx="570" cy="170" r="1.5"/><circle cx="30" cy="170" r="1.6"/></g>
+            <!-- maapallo -->
+            <g transform="translate(500 90)" fill="none" stroke="#b9e87a" stroke-opacity=".35" stroke-width="1.6">
+              <circle r="62"/>
+              <ellipse class="mer" rx="62" ry="62" style="animation-delay:0s"/><ellipse class="mer" rx="62" ry="62" style="animation-delay:-2s"/><ellipse class="mer" rx="62" ry="62" style="animation-delay:-4s"/>
+              <line x1="-62" x2="62" y1="0" y2="0"/><path d="M-54 -30 H54 M-54 30 H54"/>
+            </g>
+            <!-- lentoreitit -->
+            <g fill="none" stroke="#fff" stroke-opacity=".35" stroke-width="2" stroke-linecap="round" stroke-dasharray="2 10" class="route">
+              <path d="M200 120 Q110 20 -10 40"/><path d="M300 110 Q330 -20 420 -10"/><path d="M400 120 Q470 40 520 60"/>
+            </g>
+            <text class="emp" x="280" y="156" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="58" letter-spacing="2" fill="#f2f7e6" stroke="#b9e87a" stroke-width="1.5">TALO TYHJÄ!</text>
+            <!-- iso FR8 taustalla -->
+            <g font-family="Fraunces, Georgia, serif" font-weight="900" font-size="150" text-anchor="middle" fill="url(#lt4)">
+              <text class="ltr" x="190" y="170" style="--tx:-250px;--ty:-150px;--r:-40deg;--d:0s">F</text>
+              <text class="ltr" x="300" y="170" style="--tx:170px;--ty:-230px;--r:30deg;--d:.5s">R</text>
+              <text class="ltr" x="410" y="170" style="--tx:150px;--ty:-70px;--r:55deg;--d:1s">8</text>
+            </g>
+            <g font-family="Manrope, sans-serif" font-weight="800" font-size="20" text-anchor="middle" fill="#fff"><text class="mini" x="300" y="120" style="--tx:-230px;--ty:-150px;--r:-25deg;--d:0s">FR8</text><text class="mini" x="300" y="120" style="--tx:220px;--ty:-170px;--r:20deg;--d:.9s">FR8</text><text class="mini" x="300" y="120" style="--tx:-150px;--ty:-210px;--r:-40deg;--d:1.8s">FR8</text><text class="mini" x="300" y="120" style="--tx:270px;--ty:-60px;--r:35deg;--d:2.7s">FR8</text><text class="mini" x="300" y="120" style="--tx:60px;--ty:-230px;--r:10deg;--d:3.6s">FR8</text><text class="mini" x="300" y="120" style="--tx:-280px;--ty:-40px;--r:-15deg;--d:4.4s">FR8</text></g>
+            <!-- tyhja talo -->
+            <rect y="310" width="600" height="10" fill="#0b1f0e"/>
+            <use href="#bldg" x="130" y="190" width="340" height="125" style="--b:#f2f7e6;--w:#0b1f0e;--tr:#2d5016"/>
+            <g mask="url(#bm4)"><g transform="skewX(-20)"><rect class="shine" x="-160" y="185" width="110" height="135" fill="url(#shine)"/></g></g>
+            <g class="spark" fill="#fff"><path d="M175 215 l3 8 l8 3 l-8 3 l-3 8 l-3 -8 l-8 -3 l8 -3z"/><path d="M430 240 l2 6 l6 2 l-6 2 l-2 6 l-2 -6 l-6 -2 l6 -2z"/></g>
+          </svg>
+        </div>
+      </article>
+    </div>
+
+    <h2 class="outro">Onneksi Puuhapatet hoitaa…</h2>
+  </main>
+<script>
+  (function () {
+    var box = document.getElementById('crowd');
+    var cols = ['#b9e87a', '#ffd45e', '#7fd6ff', '#ff7aa8', '#f2f7e6', '#c9a0ff'];
+    for (var n = 0; n < 50; n++) {
+      var el = document.createElement('i');
+      el.style.setProperty('--c', cols[n % cols.length]);
+      el.style.setProperty('--d', ((n * 0.13) % 1.1).toFixed(2) + 's');
+      if (n % 5 === 4) el.className = 'pro';
+      box.appendChild(el);
+    }
+  })();
+</script>
+</body>
+</html>
